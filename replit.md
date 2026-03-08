@@ -38,11 +38,23 @@ A mobile app that generates personalized daily task checklists with AI-powered a
 5. **Completion History** - Rolling 7-day history feeds into AI for personalized sizing
 6. **Goals Tab** - Create, edit, delete goals with progress tracking across categories
 7. **Insights Tab** - Smart recommendations, activity suggestions, stats dashboard
-8. **Profile Tab** - Connected platforms management, streak tracking, preferences
+8. **Profile Tab** - Level + XP bar, streak stats, badge achievements grid, connected calendars
+9. **Calendar Integrations** - Google Calendar + Outlook events appear as "Today's Events" on the Today tab; sync button top-right
+10. **Rewards System** - XP earned per task (10/15/20 pts by priority/goal-linked), level 1-10 with names, 7 badge types that auto-unlock; animated "+XP" toast on completion
+11. **Completed Section** - Both regular tasks AND calendar events move to the Completed section when checked off
 
 ## API Endpoints
 - `POST /api/ai/resize-task` - Takes taskTitle, detailLevel (1-5), direction (smaller/bigger), history
 - `POST /api/ai/generate-plan` - Takes goals, history, dayOfWeek; returns tasks + insight
+- `GET /api/calendar/status` - Returns {google: bool, outlook: bool} connection status
+- `GET /api/calendar/google/events?date=YYYY-MM-DD` - Today's events from all Google calendars
+- `GET /api/calendar/outlook/events?date=YYYY-MM-DD` - Today's events from Outlook calendar
+
+## Rewards System
+- XP: regular task +10, high priority +15, goal-linked +20, calendar event +10
+- Levels 1-10: Beginner → GamePlan Pro (thresholds: 0/100/250/500/1000/2000/3500/5000/7500/10000)
+- Badges: first_step, on_a_roll (3-day streak), week_warrior (7-day), centurion (100 tasks), goal_getter, calendar_pro, perfect_day
+- XpToast: animated yellow pill "+N XP" slides up from bottom on task completion
 
 ## Workflows
 - `Start Backend` (port 5000) - Express server

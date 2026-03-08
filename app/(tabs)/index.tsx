@@ -29,12 +29,16 @@ import {
   getCompletionHistory,
   updateGoalProgress,
   getTodayKey,
+  incrementStats,
+  awardBadge,
+  decrementStats,
   type DayPlan,
   type Goal,
   type Task,
 } from '@/lib/storage';
 import { apiRequest, getApiUrl } from '@/lib/query-client';
 import { formatDate } from '@/lib/helpers';
+import XpToast from '@/components/XpToast';
 
 export default function TodayScreen() {
   const insets = useSafeAreaInsets();
@@ -50,6 +54,8 @@ export default function TodayScreen() {
   const [logGoal, setLogGoal] = useState<Goal | null>(null);
   const [confirmingRefresh, setConfirmingRefresh] = useState(false);
   const [calendarEvents, setCalendarEvents] = useState<Task[]>([]);
+  const [xpToastVisible, setXpToastVisible] = useState(false);
+  const [xpEarned, setXpEarned] = useState(0);
 
   const loadCalendarEvents = useCallback(async () => {
     try {
@@ -195,6 +201,11 @@ export default function TodayScreen() {
     setConfirmingRefresh(false);
   }, []);
 
+  const showXpToast = useCallback((xp: number) => {
+    setXpEarned(xp);
+    setXpToastVisible(true);
+  }, []);
+
   const handleToggleTask = useCallback(async (taskId: string, completed: boolean) => {
     if (!plan) return;
 
@@ -213,20 +224,37 @@ export default function TodayScreen() {
       }
       return t;
     });
-    setPlan({ ...plan, tasks: updatedTasks });
+    const newPlan = { ...plan, tasks: updatedTasks };
+    setPlan(newPlan);
     await updateTaskCompletion(plan.date, taskId, completed);
 
-    if (completed && matchedTask && !matchedTask.isSubtask) {
-      const linkedGoal = matchedTask.goalId
-        ? goals.find(g => g.id === matchedTask!.goalId)
-        : goals.find(g => g.category === matchedTask!.category);
-      if (linkedGoal && linkedGoal.current < linkedGoal.target) {
-        setLogTask(matchedTask);
-        setLogGoal(linkedGoal);
-        setLogSheetVisible(true);
+    if (completed) {
+      const isGoalLinked = !!(matchedTask?.goalId);
+      const priority = matchedTask?.priority ?? 'medium';
+      const { xpEarned: earned } = await incrementStats(priority, isGoalLinked);
+      showXpToast(earned);
+
+      // Check perfect day
+      const allDone = newPlan.tasks.every(t =>
+        t.subtasks?.length ? t.subtasks.every(s => s.completed) : t.completed
+      ) && calendarEvents.every(e => e.completed);
+      if (allDone) await awardBadge('perfect_day');
+
+      if (matchedTask && !matchedTask.isSubtask) {
+        const linkedGoal = matchedTask.goalId
+          ? goals.find(g => g.id === matchedTask!.goalId)
+          : goals.find(g => g.category === matchedTask!.category);
+        if (linkedGoal && linkedGoal.current < linkedGoal.target) {
+          await awardBadge('goal_getter');
+          setLogTask(matchedTask);
+          setLogGoal(linkedGoal);
+          setLogSheetVisible(true);
+        }
       }
+    } else {
+      await decrementStats();
     }
-  }, [plan, goals]);
+  }, [plan, goals, calendarEvents, showXpToast]);
 
   const handleLogProgress = useCallback(async (amount: number) => {
     if (!logGoal) return;
@@ -283,6 +311,8 @@ export default function TodayScreen() {
   const incompleteTasks = plan.tasks.filter(t => !t.completed);
   const completedTasks = plan.tasks.filter(t => t.completed);
   const incompleteCalEvents = calendarEvents.filter(e => !e.completed);
+  const completedCalEvents = calendarEvents.filter(e => e.completed);
+  const allCompleted = [...completedTasks, ...completedCalEvents];
 
   return (
     <View style={styles.container}>
@@ -394,7 +424,21 @@ export default function TodayScreen() {
                 key={event.id}
                 task={event}
                 onToggle={async (id, done) => {
-                  setCalendarEvents(prev => prev.map(e => e.id === id ? { ...e, completed: done } : e));
+                  const updated = calendarEvents.map(e => e.id === id ? { ...e, completed: done } : e);
+                  setCalendarEvents(updated);
+                  if (done) {
+                    const { xpEarned: earned } = await incrementStats('high', false);
+                    showXpToast(earned);
+                    await awardBadge('calendar_pro');
+                    // Check perfect day
+                    const allTasksDone = plan?.tasks.every(t =>
+                      t.subtasks?.length ? t.subtasks.every(s => s.completed) : t.completed
+                    ) ?? true;
+                    const allCalDone = updated.every(e => e.completed);
+                    if (allTasksDone && allCalDone) await awardBadge('perfect_day');
+                  } else {
+                    await decrementStats();
+                  }
                 }}
               />
             ))}
@@ -415,15 +459,21 @@ export default function TodayScreen() {
           </View>
         ) : null}
 
-        {completedTasks.length > 0 ? (
+        {allCompleted.length > 0 ? (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Completed</Text>
-            {completedTasks.map((task) => (
+            {allCompleted.map((task) => (
               <TaskCard
                 key={task.id}
                 task={task}
-                onToggle={handleToggleTask}
-                onResize={handleOpenResizer}
+                onToggle={task.category === 'calendar'
+                  ? async (id, done) => {
+                      const updated = calendarEvents.map(e => e.id === id ? { ...e, completed: done } : e);
+                      setCalendarEvents(updated);
+                      if (!done) await decrementStats();
+                    }
+                  : handleToggleTask}
+                onResize={task.category !== 'calendar' ? handleOpenResizer : undefined}
               />
             ))}
           </View>
@@ -443,6 +493,12 @@ export default function TodayScreen() {
         goal={logGoal}
         onLog={handleLogProgress}
         onSkip={handleSkipLog}
+      />
+
+      <XpToast
+        visible={xpToastVisible}
+        xp={xpEarned}
+        onHide={() => setXpToastVisible(false)}
       />
     </View>
   );

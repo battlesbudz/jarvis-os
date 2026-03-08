@@ -52,6 +52,82 @@ export interface UserStats {
   streak: number;
   totalCompleted: number;
   bestStreak: number;
+  xp: number;
+  badges: string[];
+}
+
+export type BadgeId =
+  | 'first_step'
+  | 'on_a_roll'
+  | 'week_warrior'
+  | 'centurion'
+  | 'goal_getter'
+  | 'calendar_pro'
+  | 'perfect_day';
+
+export interface BadgeDefinition {
+  id: BadgeId;
+  label: string;
+  icon: string;
+  description: string;
+}
+
+export const ALL_BADGES: BadgeDefinition[] = [
+  { id: 'first_step',   label: 'First Step',    icon: 'star-outline',          description: 'Complete your first task' },
+  { id: 'on_a_roll',    label: 'On a Roll',     icon: 'flame-outline',         description: '3-day streak' },
+  { id: 'week_warrior', label: 'Week Warrior',  icon: 'trophy-outline',        description: '7-day streak' },
+  { id: 'centurion',    label: 'Centurion',     icon: 'ribbon-outline',        description: 'Complete 100 tasks' },
+  { id: 'goal_getter',  label: 'Goal Getter',   icon: 'flag-outline',          description: 'Log progress on a goal' },
+  { id: 'calendar_pro', label: 'Calendar Pro',  icon: 'calendar-outline',      description: 'Complete a calendar event' },
+  { id: 'perfect_day',  label: 'Perfect Day',   icon: 'checkmark-done-outline', description: 'Finish every task in a day' },
+];
+
+const LEVEL_THRESHOLDS = [0, 100, 250, 500, 1000, 2000, 3500, 5000, 7500, 10000];
+const LEVEL_NAMES = [
+  'Beginner', 'Planner', 'Achiever', 'Momentum',
+  'Focused', 'Dedicated', 'Elite', 'Master', 'Legend', 'GamePlan Pro',
+];
+
+export function getLevel(xp: number): number {
+  let level = 1;
+  for (let i = 1; i < LEVEL_THRESHOLDS.length; i++) {
+    if (xp >= LEVEL_THRESHOLDS[i]) level = i + 1;
+    else break;
+  }
+  return level;
+}
+
+export function getLevelName(xp: number): string {
+  return LEVEL_NAMES[Math.min(getLevel(xp) - 1, LEVEL_NAMES.length - 1)];
+}
+
+export function getXpForNextLevel(xp: number): { current: number; needed: number; level: number; progress: number } {
+  const level = getLevel(xp);
+  if (level >= LEVEL_THRESHOLDS.length) {
+    return { current: xp, needed: LEVEL_THRESHOLDS[LEVEL_THRESHOLDS.length - 1], level, progress: 1 };
+  }
+  const floorXp = LEVEL_THRESHOLDS[level - 1];
+  const ceilXp = LEVEL_THRESHOLDS[level];
+  const current = xp - floorXp;
+  const needed = ceilXp - floorXp;
+  return { current, needed, level, progress: Math.min(current / needed, 1) };
+}
+
+export function xpForTask(priority: 'high' | 'medium' | 'low', isGoalLinked = false): number {
+  if (isGoalLinked) return 20;
+  if (priority === 'high') return 15;
+  if (priority === 'medium') return 10;
+  return 10;
+}
+
+export function checkAutoAwardBadges(stats: UserStats): BadgeId[] {
+  const newBadges: BadgeId[] = [];
+  const has = (id: BadgeId) => stats.badges.includes(id);
+  if (!has('first_step') && stats.totalCompleted >= 1) newBadges.push('first_step');
+  if (!has('on_a_roll') && stats.streak >= 3) newBadges.push('on_a_roll');
+  if (!has('week_warrior') && stats.streak >= 7) newBadges.push('week_warrior');
+  if (!has('centurion') && stats.totalCompleted >= 100) newBadges.push('centurion');
+  return newBadges;
 }
 
 export interface CompletionHistoryItem {
@@ -447,25 +523,42 @@ export async function togglePlatform(id: string): Promise<void> {
 export async function getStats(): Promise<UserStats> {
   try {
     const raw = await AsyncStorage.getItem(KEYS.STATS);
-    return raw ? JSON.parse(raw) : { streak: 0, totalCompleted: 0, bestStreak: 0 };
+    const base = { streak: 0, totalCompleted: 0, bestStreak: 0, xp: 0, badges: [] };
+    return raw ? { ...base, ...JSON.parse(raw) } : base;
   } catch (e) {
     console.error('Failed to get stats:', e);
-    return { streak: 0, totalCompleted: 0, bestStreak: 0 };
+    return { streak: 0, totalCompleted: 0, bestStreak: 0, xp: 0, badges: [] };
   }
 }
 
-export async function incrementStats(): Promise<UserStats> {
+export async function incrementStats(
+  priority: 'high' | 'medium' | 'low' = 'medium',
+  isGoalLinked = false
+): Promise<{ stats: UserStats; xpEarned: number; newBadges: BadgeId[] }> {
   const stats = await getStats();
+  const xpEarned = xpForTask(priority, isGoalLinked);
   stats.totalCompleted += 1;
   stats.streak += 1;
+  stats.xp = (stats.xp || 0) + xpEarned;
   if (stats.streak > stats.bestStreak) stats.bestStreak = stats.streak;
+  const newBadges = checkAutoAwardBadges(stats);
+  stats.badges = [...new Set([...stats.badges, ...newBadges])];
   await AsyncStorage.setItem(KEYS.STATS, JSON.stringify(stats));
-  return stats;
+  return { stats, xpEarned, newBadges };
+}
+
+export async function awardBadge(badgeId: BadgeId): Promise<void> {
+  const stats = await getStats();
+  if (!stats.badges.includes(badgeId)) {
+    stats.badges = [...stats.badges, badgeId];
+    await AsyncStorage.setItem(KEYS.STATS, JSON.stringify(stats));
+  }
 }
 
 export async function decrementStats(): Promise<UserStats> {
   const stats = await getStats();
   stats.totalCompleted = Math.max(0, stats.totalCompleted - 1);
+  stats.xp = Math.max(0, (stats.xp || 0) - 10);
   await AsyncStorage.setItem(KEYS.STATS, JSON.stringify(stats));
   return stats;
 }
@@ -546,4 +639,4 @@ export function getSuggestions(): Suggestion[] {
   return suggestions;
 }
 
-export { generateId, getTodayKey, getGreeting };
+export { generateId, getTodayKey, getGreeting, awardBadge };
