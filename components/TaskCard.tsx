@@ -164,18 +164,18 @@ export default function TaskCard({ task, onToggle, onResize }: TaskCardProps) {
                 <Text style={styles.timerButtonText}>Focus</Text>
               </Pressable>
             )}
-            {!task.completed && !task.isSubtask && onResize && (
-              <Pressable
-                onPress={handleResize}
-                hitSlop={6}
-                style={({ pressed }) => [styles.resizeButton, { marginLeft: 'auto' }, pressed && { opacity: 0.75 }]}
-                testID={`resize-${task.id}`}
-              >
-                <Ionicons name="git-branch-outline" size={13} color={Colors.primary} />
-                <Text style={styles.resizeButtonText}>{hasSubtasks ? 'Change steps' : 'Break down'}</Text>
-              </Pressable>
-            )}
           </View>
+          {!task.completed && !task.isSubtask && onResize && (
+            <Pressable
+              onPress={handleResize}
+              hitSlop={6}
+              style={({ pressed }) => [styles.resizeButton, pressed && { opacity: 0.75 }]}
+              testID={`resize-${task.id}`}
+            >
+              <Ionicons name="git-branch-outline" size={13} color={Colors.primary} />
+              <Text style={styles.resizeButtonText}>{hasSubtasks ? 'Change steps' : 'Break down'}</Text>
+            </Pressable>
+          )}
 
           {hasSubtasks ? (
             <View style={styles.subtasksContainer}>
@@ -234,6 +234,7 @@ const styles = StyleSheet.create({
   resizeButton: {
     flexDirection: 'row',
     alignItems: 'center',
+    alignSelf: 'flex-start',
     gap: 4,
     paddingHorizontal: 8,
     paddingVertical: 4,
@@ -241,6 +242,7 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: Colors.primary,
     backgroundColor: Colors.primary + '12',
+    marginTop: 8,
   },
   resizeButtonText: {
     fontSize: 11,
