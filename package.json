@@ -42,6 +42,7 @@
     "expo-system-ui": "~6.0.9",
     "expo-web-browser": "~15.0.10",
     "express": "^5.0.1",
+    "googleapis": "^148.0.0",
     "http-proxy-middleware": "^3.0.5",
     "openai": "^6.27.0",
     "p-limit": "^7.3.0",
