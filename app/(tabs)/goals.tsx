@@ -6,7 +6,6 @@ import {
   Text,
   ScrollView,
   Pressable,
-  Alert,
   Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -24,6 +23,7 @@ export default function GoalsScreen() {
   const [showAdd, setShowAdd] = useState(false);
   const [editGoal, setEditGoal] = useState<Goal | null>(null);
   const [loading, setLoading] = useState(true);
+  const [deletingGoalId, setDeletingGoalId] = useState<string | null>(null);
 
   const loadGoals = useCallback(async () => {
     const loaded = await getGoals();
@@ -48,22 +48,19 @@ export default function GoalsScreen() {
   };
 
   const handleDelete = (goal: Goal) => {
-    Alert.alert(
-      'Delete Goal',
-      `Remove "${goal.title}"?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-            await deleteGoal(goal.id);
-            await loadGoals();
-          },
-        },
-      ],
-    );
+    setDeletingGoalId(goal.id);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  };
+
+  const handleConfirmDelete = async (goalId: string) => {
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+    setDeletingGoalId(null);
+    await deleteGoal(goalId);
+    await loadGoals();
+  };
+
+  const handleCancelDelete = () => {
+    setDeletingGoalId(null);
   };
 
   const handleEdit = (goal: Goal) => {
@@ -131,11 +128,36 @@ export default function GoalsScreen() {
           <View style={styles.goalsList}>
             {goals.map((goal, index) => (
               <Animated.View key={goal.id} entering={FadeInDown.duration(400).delay(200 + index * 80)}>
-                <GoalCard
-                  goal={goal}
-                  onPress={() => handleEdit(goal)}
-                  onDelete={() => handleDelete(goal)}
-                />
+                {deletingGoalId === goal.id ? (
+                  <View style={styles.deleteConfirm} testID={`delete-confirm-${goal.id}`}>
+                    <Text style={styles.deleteConfirmText} numberOfLines={1}>
+                      Remove "{goal.title}"?
+                    </Text>
+                    <View style={styles.deleteConfirmButtons}>
+                      <Pressable
+                        onPress={handleCancelDelete}
+                        style={({ pressed }) => [styles.deleteCancelBtn, pressed && { opacity: 0.7 }]}
+                        testID={`delete-cancel-${goal.id}`}
+                      >
+                        <Text style={styles.deleteCancelText}>Cancel</Text>
+                      </Pressable>
+                      <Pressable
+                        onPress={() => handleConfirmDelete(goal.id)}
+                        style={({ pressed }) => [styles.deleteConfirmBtn, pressed && { opacity: 0.85 }]}
+                        testID={`delete-confirm-btn-${goal.id}`}
+                      >
+                        <Ionicons name="trash" size={14} color={Colors.white} />
+                        <Text style={styles.deleteConfirmBtnText}>Delete</Text>
+                      </Pressable>
+                    </View>
+                  </View>
+                ) : (
+                  <GoalCard
+                    goal={goal}
+                    onPress={() => handleEdit(goal)}
+                    onDelete={() => handleDelete(goal)}
+                  />
+                )}
               </Animated.View>
             ))}
           </View>
@@ -234,5 +256,52 @@ const styles = StyleSheet.create({
   },
   goalsList: {
     marginTop: 0,
+  },
+  deleteConfirm: {
+    backgroundColor: Colors.white,
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 12,
+    borderWidth: 1.5,
+    borderColor: '#FCA5A5',
+    gap: 12,
+  },
+  deleteConfirmText: {
+    fontSize: 14,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.text,
+    textAlign: 'center',
+  },
+  deleteConfirmButtons: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  deleteCancelBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: Colors.border,
+    alignItems: 'center',
+  },
+  deleteCancelText: {
+    fontSize: 14,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.textSecondary,
+  },
+  deleteConfirmBtn: {
+    flex: 2,
+    flexDirection: 'row',
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: '#EF4444',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  deleteConfirmBtnText: {
+    fontSize: 14,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.white,
   },
 });

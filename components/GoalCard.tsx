@@ -56,11 +56,13 @@ export default function GoalCard({ goal, onPress, onDelete }: GoalCardProps) {
           </View>
           {onDelete && (
             <Pressable
-              onPress={() => {
+              onPress={(e) => {
+                e.stopPropagation();
                 Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
                 onDelete();
               }}
               hitSlop={12}
+              testID={`delete-${goal.id}`}
             >
               <Ionicons name="trash-outline" size={18} color={Colors.textTertiary} />
             </Pressable>
