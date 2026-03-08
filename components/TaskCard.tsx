@@ -109,7 +109,7 @@ export default function TaskCard({ task, onToggle, onResize }: TaskCardProps) {
                   testID={`resize-${task.id}`}
                 >
                   <Ionicons name="git-branch-outline" size={13} color={Colors.primary} />
-                  <Text style={styles.resizeButtonText}>Resize</Text>
+                  <Text style={styles.resizeButtonText}>Break down</Text>
                 </Pressable>
               )}
               <View style={[styles.priorityDot, { backgroundColor: priorityDot }]} />
