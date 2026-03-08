@@ -247,6 +247,7 @@ const KEYS = {
   VIEW_MODE: 'gameplan_view_mode',
   ENERGY_CHECKIN: 'gameplan_energy_checkin_',
   BRAIN_DUMP_INBOX: 'gameplan_brain_dump_inbox',
+  MIGRATION: 'gameplan_migration_version',
 };
 
 export interface BrainDumpItem {
@@ -895,6 +896,20 @@ export async function decrementStats(xpAmount = 10): Promise<UserStats> {
 
 export async function resetStats(): Promise<void> {
   await AsyncStorage.setItem(KEYS.STATS, JSON.stringify({ ...DEFAULT_STATS }));
+}
+
+// Run once after fixing the XP calculation bug (v2).
+// Resets inflated stats so users start with a clean slate.
+const CURRENT_MIGRATION_VERSION = 2;
+export async function runMigrations(): Promise<void> {
+  try {
+    const raw = await AsyncStorage.getItem(KEYS.MIGRATION);
+    const version = raw ? parseInt(raw, 10) : 0;
+    if (version < CURRENT_MIGRATION_VERSION) {
+      await resetStats();
+      await AsyncStorage.setItem(KEYS.MIGRATION, String(CURRENT_MIGRATION_VERSION));
+    }
+  } catch {}
 }
 
 export async function regeneratePlan(goals: Goal[]): Promise<DayPlan> {
