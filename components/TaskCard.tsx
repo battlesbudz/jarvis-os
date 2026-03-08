@@ -39,7 +39,7 @@ function SubtaskRow({ subtask, onToggle }: { subtask: Task; onToggle: (id: strin
         >
           {subtask.completed && <Ionicons name="checkmark" size={10} color={Colors.white} />}
         </Pressable>
-        <Text style={[styles.subtaskText, subtask.completed && styles.subtaskTextDone]} numberOfLines={2}>
+        <Text style={[styles.subtaskText, subtask.completed && styles.subtaskTextDone]}>
           {subtask.title}
         </Text>
       </View>
