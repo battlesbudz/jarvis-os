@@ -32,6 +32,7 @@ import {
   incrementStats,
   awardBadge,
   decrementStats,
+  ALL_BADGES,
   type DayPlan,
   type Goal,
   type Task,
@@ -56,6 +57,8 @@ export default function TodayScreen() {
   const [calendarEvents, setCalendarEvents] = useState<Task[]>([]);
   const [xpToastVisible, setXpToastVisible] = useState(false);
   const [xpEarned, setXpEarned] = useState(0);
+  const [badgeToastVisible, setBadgeToastVisible] = useState(false);
+  const [badgeToastLabel, setBadgeToastLabel] = useState('');
 
   const loadCalendarEvents = useCallback(async () => {
     try {
@@ -231,8 +234,18 @@ export default function TodayScreen() {
     if (completed) {
       const isGoalLinked = !!(matchedTask?.goalId);
       const priority = matchedTask?.priority ?? 'medium';
-      const { xpEarned: earned } = await incrementStats(priority, isGoalLinked);
+      const { xpEarned: earned, newBadges } = await incrementStats(priority, isGoalLinked);
       showXpToast(earned);
+
+      if (newBadges.length > 0) {
+        const badgeDef = ALL_BADGES.find(b => b.id === newBadges[0]);
+        if (badgeDef) {
+          setTimeout(() => {
+            setBadgeToastLabel(`Badge: ${badgeDef.label}`);
+            setBadgeToastVisible(true);
+          }, 1800);
+        }
+      }
 
       // Check perfect day
       const allDone = newPlan.tasks.every(t =>
@@ -499,6 +512,12 @@ export default function TodayScreen() {
         visible={xpToastVisible}
         xp={xpEarned}
         onHide={() => setXpToastVisible(false)}
+      />
+      <XpToast
+        visible={badgeToastVisible}
+        xp={0}
+        label={badgeToastLabel}
+        onHide={() => setBadgeToastVisible(false)}
       />
     </View>
   );

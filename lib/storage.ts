@@ -54,6 +54,67 @@ export interface UserStats {
   bestStreak: number;
   xp: number;
   badges: string[];
+  claimedRewards: Array<{ id: string; claimedAt: string }>;
+}
+
+export interface Reward {
+  id: string;
+  title: string;
+  description: string;
+  icon: string;
+  xpRequired: number;
+  tier: 1 | 2 | 3 | 4 | 5;
+  category: 'treat' | 'leisure' | 'social' | 'wellness' | 'splurge';
+  tip: string;
+}
+
+const TIER_COLORS: Record<number, string> = {
+  1: '#10B981',
+  2: '#6366F1',
+  3: '#F59E0B',
+  4: '#EC4899',
+  5: '#8B5CF6',
+};
+export { TIER_COLORS };
+
+export const ALL_REWARDS: Reward[] = [
+  // Tier 1 — 50 XP
+  { id: 'r1_drink',      tier: 1, xpRequired: 50,   category: 'treat',   icon: 'cafe-outline',         title: 'Favorite Drink Run',    description: 'Go get that drink you love — coffee, boba, smoothie, whatever calls to you.', tip: 'You showed up today. You deserve it.' },
+  { id: 'r1_snack',      tier: 1, xpRequired: 50,   category: 'treat',   icon: 'pizza-outline',        title: 'Guilt-Free Snack',      description: 'Eat whatever snack you\'ve been craving. Zero guilt, full enjoyment.', tip: 'Small wins deserve small treats.' },
+  { id: 'r1_scroll',     tier: 1, xpRequired: 50,   category: 'leisure', icon: 'phone-portrait-outline', title: 'Screen Time Pass',     description: 'Guilt-free 15 minutes of scrolling, videos, or whatever you feel like.', tip: 'A little mindless fun is good for the soul.' },
+  { id: 'r1_walk',       tier: 1, xpRequired: 50,   category: 'wellness',icon: 'walk-outline',         title: 'Fresh Air Break',       description: 'Take a 10-minute walk just for yourself. No destination, no purpose — just breathe.', tip: 'Your brain needs rest too.' },
+
+  // Tier 2 — 150 XP
+  { id: 'r2_gaming',     tier: 2, xpRequired: 150,  category: 'leisure', icon: 'game-controller-outline', title: 'Gaming Hour',         description: 'One full uninterrupted hour of whatever game you want. No guilt whatsoever.', tip: 'You\'ve earned your leisure time.' },
+  { id: 'r2_episode',    tier: 2, xpRequired: 150,  category: 'leisure', icon: 'tv-outline',           title: 'Binge Pass',            description: 'Watch one full TV episode or YouTube video right now. No skipping to be "productive".', tip: 'Entertainment is rest. Rest is productive.' },
+  { id: 'r2_takeout',    tier: 2, xpRequired: 150,  category: 'treat',   icon: 'bag-handle-outline',   title: 'Takeout Night',         description: 'Order from your go-to spot — no cooking, no dishes, just food you love.', tip: 'Nourish yourself. You\'ve been working hard.' },
+  { id: 'r2_bath',       tier: 2, xpRequired: 150,  category: 'wellness',icon: 'water-outline',        title: 'Long Shower/Bath',      description: 'Take your time. Candles, music, whatever makes it feel luxurious.', tip: 'Slow down and enjoy the silence.' },
+  { id: 'r2_nap',        tier: 2, xpRequired: 150,  category: 'wellness',icon: 'moon-outline',         title: 'Nap Pass',              description: 'Guilt-free nap, any length. Set your alarm or don\'t — you choose.', tip: 'Sleep is the ultimate productivity hack.' },
+
+  // Tier 3 — 400 XP
+  { id: 'r3_movie',      tier: 3, xpRequired: 400,  category: 'leisure', icon: 'film-outline',         title: 'Movie Night',           description: 'Full movie of your choice tonight. Popcorn mandatory. Judgment-free zone.', tip: 'Sit back, relax, and just enjoy.' },
+  { id: 'r3_sleepin',    tier: 3, xpRequired: 400,  category: 'wellness',icon: 'bed-outline',          title: 'Sleep In',              description: 'Set no alarm this coming weekend morning. Sleep until your body wakes you naturally.', tip: 'Your body knows what it needs.' },
+  { id: 'r3_purchase',   tier: 3, xpRequired: 400,  category: 'splurge', icon: 'cart-outline',         title: 'New Game or Book',      description: 'Buy that game, book, album, or app you\'ve been eyeing. Under $20, no justification needed.', tip: 'Investing in joy is always a good spend.' },
+  { id: 'r3_dessert',    tier: 3, xpRequired: 400,  category: 'treat',   icon: 'ice-cream-outline',    title: 'Dessert Run',           description: 'Go get your absolute favorite dessert. The good stuff — don\'t settle.', tip: 'Life is short. Eat the thing.' },
+  { id: 'r3_hobby',      tier: 3, xpRequired: 400,  category: 'leisure', icon: 'color-palette-outline', title: 'Hobby Hour',           description: 'Spend a full hour on any hobby with zero guilt — drawing, music, building, gaming, whatever lights you up.', tip: 'The things you love make you who you are.' },
+
+  // Tier 4 — 800 XP
+  { id: 'r4_daytrip',    tier: 4, xpRequired: 800,  category: 'social',  icon: 'map-outline',          title: 'Day Trip',              description: 'Plan a day trip somewhere you\'ve wanted to go. A nearby city, a park, a beach — you pick.', tip: 'You\'ve built enough momentum to go explore.' },
+  { id: 'r4_shopping',   tier: 4, xpRequired: 800,  category: 'splurge', icon: 'storefront-outline',   title: 'Retail Therapy',        description: 'Buy something you\'ve been holding off on. You know the thing. Go get it.', tip: 'Delayed gratification finally pays off.' },
+  { id: 'r4_selfcare',   tier: 4, xpRequired: 800,  category: 'wellness',icon: 'sparkles-outline',     title: 'Self-Care Day',         description: 'A full dedicated day: spa, haircut, grooming, face mask, whatever makes you feel like yourself again.', tip: 'You can\'t pour from an empty cup.' },
+  { id: 'r4_nightout',   tier: 4, xpRequired: 800,  category: 'social',  icon: 'people-outline',       title: 'Night Out',             description: 'Plan a proper night out — with friends, solo, or with your partner. Dinner, drinks, or whatever you want.', tip: 'Connection and celebration go hand in hand.' },
+  { id: 'r4_restaurant', tier: 4, xpRequired: 800,  category: 'treat',   icon: 'restaurant-outline',   title: 'Restaurant Splurge',    description: 'Book that nicer restaurant you\'ve been putting off. Get the good table. Order what you actually want.', tip: 'Experiences over things, every time.' },
+
+  // Tier 5 — 2000 XP
+  { id: 'r5_getaway',    tier: 5, xpRequired: 2000, category: 'splurge', icon: 'airplane-outline',     title: 'Weekend Getaway',       description: 'Book a trip anywhere for the weekend. Road trip, hotel, Airbnb — somewhere that isn\'t home.', tip: 'You\'ve built something real. Go celebrate it properly.' },
+  { id: 'r5_bigbuy',     tier: 5, xpRequired: 2000, category: 'splurge', icon: 'gift-outline',         title: 'Big Purchase',          description: 'That expensive thing you keep talking yourself out of. You know what it is. Go get it.', tip: 'You worked for this. You\'ve absolutely earned it.' },
+  { id: 'r5_dayoff',     tier: 5, xpRequired: 2000, category: 'wellness',icon: 'sunny-outline',        title: 'Full Day Off',          description: 'Take an entire day completely off — no work, no responsibilities, no guilt. Just live.', tip: 'Rest is not a reward. It\'s a right. Today it\'s both.' },
+  { id: 'r5_party',      tier: 5, xpRequired: 2000, category: 'social',  icon: 'balloon-outline',      title: 'Throw a Party',         description: 'Invite people over and celebrate yourself. You\'ve hit a major milestone and that deserves to be shared.', tip: 'You built the discipline. Now share the joy.' },
+  { id: 'r5_dreammeal',  tier: 5, xpRequired: 2000, category: 'treat',   icon: 'flame-outline',        title: 'Dream Meal',            description: 'Cook or order the most indulgent meal you can imagine. No calorie counting, no compromises.', tip: 'This is what finishing things tastes like.' },
+];
+
+export function getAvailableRewards(xp: number): Reward[] {
+  return ALL_REWARDS.filter(r => r.xpRequired <= xp).sort((a, b) => a.xpRequired - b.xpRequired);
 }
 
 export type BadgeId =
@@ -520,14 +581,26 @@ export async function togglePlatform(id: string): Promise<void> {
   }
 }
 
+const DEFAULT_STATS: UserStats = {
+  streak: 0, totalCompleted: 0, bestStreak: 0, xp: 0, badges: [], claimedRewards: [],
+};
+
 export async function getStats(): Promise<UserStats> {
   try {
     const raw = await AsyncStorage.getItem(KEYS.STATS);
-    const base = { streak: 0, totalCompleted: 0, bestStreak: 0, xp: 0, badges: [] };
-    return raw ? { ...base, ...JSON.parse(raw) } : base;
+    return raw ? { ...DEFAULT_STATS, ...JSON.parse(raw) } : { ...DEFAULT_STATS };
   } catch (e) {
     console.error('Failed to get stats:', e);
-    return { streak: 0, totalCompleted: 0, bestStreak: 0, xp: 0, badges: [] };
+    return { ...DEFAULT_STATS };
+  }
+}
+
+export async function claimReward(rewardId: string): Promise<void> {
+  const stats = await getStats();
+  const alreadyClaimed = stats.claimedRewards.some(r => r.id === rewardId);
+  if (!alreadyClaimed) {
+    stats.claimedRewards = [...stats.claimedRewards, { id: rewardId, claimedAt: new Date().toISOString() }];
+    await AsyncStorage.setItem(KEYS.STATS, JSON.stringify(stats));
   }
 }
 

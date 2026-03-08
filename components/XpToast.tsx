@@ -15,9 +15,10 @@ interface XpToastProps {
   visible: boolean;
   xp: number;
   onHide: () => void;
+  label?: string;
 }
 
-export default function XpToast({ visible, xp, onHide }: XpToastProps) {
+export default function XpToast({ visible, xp, onHide, label }: XpToastProps) {
   const insets = useSafeAreaInsets();
   const opacity = useSharedValue(0);
   const translateY = useSharedValue(20);
@@ -27,13 +28,13 @@ export default function XpToast({ visible, xp, onHide }: XpToastProps) {
       translateY.value = 20;
       opacity.value = withSequence(
         withTiming(1, { duration: 250 }),
-        withDelay(1200, withTiming(0, { duration: 350 }, (finished) => {
+        withDelay(1400, withTiming(0, { duration: 350 }, (finished) => {
           if (finished) runOnJS(onHide)();
         }))
       );
       translateY.value = withSequence(
         withTiming(0, { duration: 250 }),
-        withDelay(1200, withTiming(-10, { duration: 350 }))
+        withDelay(1400, withTiming(-10, { duration: 350 }))
       );
     }
   }, [visible]);
@@ -45,6 +46,11 @@ export default function XpToast({ visible, xp, onHide }: XpToastProps) {
 
   if (!visible) return null;
 
+  const isBadge = !!label;
+  const bgColor = isBadge ? '#8B5CF6' : '#F59E0B';
+  const iconName = isBadge ? 'ribbon' : 'star';
+  const displayText = isBadge ? label : `+${xp} XP`;
+
   return (
     <Animated.View
       style={[
@@ -54,9 +60,9 @@ export default function XpToast({ visible, xp, onHide }: XpToastProps) {
       ]}
       pointerEvents="none"
     >
-      <View style={styles.pill}>
-        <Ionicons name="star" size={14} color="#fff" />
-        <Text style={styles.text}>+{xp} XP</Text>
+      <View style={[styles.pill, { backgroundColor: bgColor, shadowColor: bgColor }]}>
+        <Ionicons name={iconName as any} size={14} color="#fff" />
+        <Text style={styles.text}>{displayText}</Text>
       </View>
     </Animated.View>
   );
@@ -74,11 +80,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: '#F59E0B',
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 99,
-    shadowColor: '#F59E0B',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.4,
     shadowRadius: 8,

@@ -15,13 +15,19 @@ import { useFocusEffect } from 'expo-router';
 import Colors from '@/constants/colors';
 import {
   getStats,
+  claimReward,
   getLevel,
   getLevelName,
   getXpForNextLevel,
+  getAvailableRewards,
   ALL_BADGES,
+  ALL_REWARDS,
+  TIER_COLORS,
   type UserStats,
+  type Reward,
 } from '@/lib/storage';
 import { getApiUrl } from '@/lib/query-client';
+import RewardClaimModal from '@/components/RewardClaimModal';
 
 interface CalendarStatus {
   google: boolean;
@@ -43,10 +49,12 @@ const PLATFORMS: PlatformInfo[] = [
 export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
   const [stats, setStats] = useState<UserStats>({
-    streak: 0, totalCompleted: 0, bestStreak: 0, xp: 0, badges: [],
+    streak: 0, totalCompleted: 0, bestStreak: 0, xp: 0, badges: [], claimedRewards: [],
   });
   const [calStatus, setCalStatus] = useState<CalendarStatus>({ google: false, outlook: false });
   const [loadingStatus, setLoadingStatus] = useState(true);
+  const [selectedReward, setSelectedReward] = useState<Reward | null>(null);
+  const [rewardModalVisible, setRewardModalVisible] = useState(false);
 
   const loadAll = useCallback(async () => {
     const [s] = await Promise.all([getStats()]);
@@ -73,6 +81,22 @@ export default function ProfileScreen() {
   const connectedCount = (calStatus.google ? 1 : 0) + (calStatus.outlook ? 1 : 0);
   const isConnected = (id: 'google' | 'outlook') =>
     id === 'google' ? calStatus.google : calStatus.outlook;
+
+  const claimedIds = new Set((stats.claimedRewards || []).map(r => r.id));
+  const availableRewards = getAvailableRewards(stats.xp || 0);
+  const unclaimedAvailable = availableRewards.filter(r => !claimedIds.has(r.id));
+
+  const handleOpenReward = (reward: Reward) => {
+    setSelectedReward(reward);
+    setRewardModalVisible(true);
+  };
+
+  const handleClaimReward = async () => {
+    if (!selectedReward) return;
+    await claimReward(selectedReward.id);
+    const updated = await getStats();
+    setStats(updated);
+  };
 
   return (
     <View style={styles.container}>
@@ -173,6 +197,63 @@ export default function ProfileScreen() {
           </View>
         </Animated.View>
 
+        {/* Rewards */}
+        <Animated.View entering={FadeInDown.duration(400).delay(350)}>
+          <Text style={[styles.sectionTitle, { marginTop: 28 }]}>Rewards</Text>
+          <Text style={styles.sectionSubtitle}>
+            {unclaimedAvailable.length > 0
+              ? `${unclaimedAvailable.length} reward${unclaimedAvailable.length !== 1 ? 's' : ''} available to claim`
+              : 'Complete tasks to unlock rewards'}
+          </Text>
+          <View style={styles.rewardsList}>
+            {ALL_REWARDS.map((reward) => {
+              const isAvailable = (stats.xp || 0) >= reward.xpRequired;
+              const isClaimed = claimedIds.has(reward.id);
+              const tierColor = TIER_COLORS[reward.tier];
+              return (
+                <Pressable
+                  key={reward.id}
+                  style={[styles.rewardRow, !isAvailable && styles.rewardRowLocked]}
+                  onPress={() => isAvailable ? handleOpenReward(reward) : undefined}
+                  disabled={!isAvailable}
+                >
+                  <View style={[styles.rewardIconCircle, { backgroundColor: isAvailable ? tierColor + '22' : '#F1F5F9' }]}>
+                    <Ionicons
+                      name={reward.icon as any}
+                      size={22}
+                      color={isAvailable ? tierColor : '#CBD5E1'}
+                    />
+                  </View>
+                  <View style={styles.rewardInfo}>
+                    <Text style={[styles.rewardTitle, !isAvailable && styles.rewardTitleLocked]}>
+                      {reward.title}
+                    </Text>
+                    <Text style={styles.rewardDesc} numberOfLines={1}>
+                      {reward.description}
+                    </Text>
+                    {!isAvailable && (
+                      <Text style={styles.rewardXp}>{reward.xpRequired} XP to unlock</Text>
+                    )}
+                  </View>
+                  {isClaimed ? (
+                    <View style={[styles.rewardPill, styles.rewardPillClaimed]}>
+                      <Text style={styles.rewardPillTextClaimed}>REDEEMED</Text>
+                    </View>
+                  ) : isAvailable ? (
+                    <View style={[styles.rewardPill, { backgroundColor: tierColor + '22' }]}>
+                      <Text style={[styles.rewardPillTextAvail, { color: tierColor }]}>CLAIM</Text>
+                    </View>
+                  ) : (
+                    <View style={[styles.rewardPill, styles.rewardPillLocked]}>
+                      <Text style={styles.rewardPillTextLocked}>LOCKED</Text>
+                    </View>
+                  )}
+                </Pressable>
+              );
+            })}
+          </View>
+        </Animated.View>
+
         {/* Connected Calendars */}
         <Animated.View entering={FadeInDown.duration(400).delay(400)}>
           <Text style={[styles.sectionTitle, { marginTop: 28 }]}>Connected Calendars</Text>
@@ -219,6 +300,17 @@ export default function ProfileScreen() {
           <Text style={styles.versionText}>GamePlan v1.0.0</Text>
         </Animated.View>
       </ScrollView>
+
+      <RewardClaimModal
+        visible={rewardModalVisible}
+        reward={selectedReward}
+        alreadyClaimed={selectedReward ? claimedIds.has(selectedReward.id) : false}
+        claimedAt={selectedReward
+          ? (stats.claimedRewards || []).find(r => r.id === selectedReward.id)?.claimedAt
+          : undefined}
+        onClaim={handleClaimReward}
+        onClose={() => { setRewardModalVisible(false); setSelectedReward(null); }}
+      />
     </View>
   );
 }
@@ -470,5 +562,85 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontFamily: 'Inter_400Regular',
     color: Colors.textTertiary,
+  },
+
+  /* Rewards */
+  rewardsList: {
+    backgroundColor: Colors.white,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    overflow: 'hidden',
+  },
+  rewardRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  rewardRowLocked: {
+    opacity: 0.6,
+  },
+  rewardIconCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  rewardInfo: {
+    flex: 1,
+  },
+  rewardTitle: {
+    fontSize: 14,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.text,
+  },
+  rewardTitleLocked: {
+    color: Colors.textTertiary,
+  },
+  rewardDesc: {
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+    marginTop: 2,
+  },
+  rewardXp: {
+    fontSize: 11,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.textTertiary,
+    marginTop: 3,
+  },
+  rewardPill: {
+    borderRadius: 20,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    marginLeft: 8,
+  },
+  rewardPillLocked: {
+    backgroundColor: '#F1F5F9',
+  },
+  rewardPillClaimed: {
+    backgroundColor: '#D1FAE5',
+  },
+  rewardPillTextLocked: {
+    fontSize: 10,
+    fontFamily: 'Inter_600SemiBold',
+    color: '#94A3B8',
+    letterSpacing: 0.5,
+  },
+  rewardPillTextClaimed: {
+    fontSize: 10,
+    fontFamily: 'Inter_600SemiBold',
+    color: '#10B981',
+    letterSpacing: 0.5,
+  },
+  rewardPillTextAvail: {
+    fontSize: 10,
+    fontFamily: 'Inter_600SemiBold',
+    letterSpacing: 0.5,
   },
 });

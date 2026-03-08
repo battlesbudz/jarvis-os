@@ -1,0 +1,308 @@
+import React, { useEffect } from 'react';
+import {
+  StyleSheet,
+  View,
+  Text,
+  Pressable,
+  Modal,
+  Platform,
+} from 'react-native';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withSpring,
+  withSequence,
+  withTiming,
+  withDelay,
+  withRepeat,
+} from 'react-native-reanimated';
+import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Colors from '@/constants/colors';
+import { TIER_COLORS, type Reward } from '@/lib/storage';
+
+interface RewardClaimModalProps {
+  visible: boolean;
+  reward: Reward | null;
+  onClose: () => void;
+  onClaim: () => void;
+  alreadyClaimed: boolean;
+  claimedAt?: string;
+}
+
+const TIER_LABELS: Record<number, string> = {
+  1: 'TIER 1 REWARD',
+  2: 'TIER 2 REWARD',
+  3: 'TIER 3 REWARD',
+  4: 'TIER 4 REWARD',
+  5: 'TIER 5 REWARD',
+};
+
+function Sparkle({ x, y, delay, color }: { x: number; y: number; delay: number; color: string }) {
+  const opacity = useSharedValue(0);
+  const scale = useSharedValue(0.3);
+  const ty = useSharedValue(0);
+
+  useEffect(() => {
+    opacity.value = withDelay(delay, withRepeat(
+      withSequence(withTiming(1, { duration: 600 }), withTiming(0, { duration: 600 })),
+      -1, true
+    ));
+    scale.value = withDelay(delay, withRepeat(
+      withSequence(withSpring(1.2), withSpring(0.6)),
+      -1, true
+    ));
+    ty.value = withDelay(delay, withRepeat(
+      withSequence(withTiming(-12, { duration: 900 }), withTiming(0, { duration: 900 })),
+      -1, true
+    ));
+  }, []);
+
+  const style = useAnimatedStyle(() => ({
+    opacity: opacity.value,
+    transform: [{ scale: scale.value }, { translateY: ty.value }],
+  }));
+
+  return (
+    <Animated.View style={[{ position: 'absolute', left: x, top: y }, style]}>
+      <Ionicons name="star" size={10} color={color} />
+    </Animated.View>
+  );
+}
+
+export default function RewardClaimModal({
+  visible,
+  reward,
+  onClose,
+  onClaim,
+  alreadyClaimed,
+  claimedAt,
+}: RewardClaimModalProps) {
+  const insets = useSafeAreaInsets();
+  const iconScale = useSharedValue(0.5);
+  const cardY = useSharedValue(60);
+  const cardOpacity = useSharedValue(0);
+
+  useEffect(() => {
+    if (visible) {
+      iconScale.value = withSpring(1, { damping: 10, stiffness: 100 });
+      cardY.value = withSpring(0, { damping: 16, stiffness: 120 });
+      cardOpacity.value = withTiming(1, { duration: 250 });
+    } else {
+      iconScale.value = 0.5;
+      cardY.value = 60;
+      cardOpacity.value = 0;
+    }
+  }, [visible]);
+
+  const iconStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: iconScale.value }],
+  }));
+
+  const cardStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: cardY.value }],
+    opacity: cardOpacity.value,
+  }));
+
+  if (!reward) return null;
+
+  const tierColor = TIER_COLORS[reward.tier] || Colors.primary;
+  const formattedDate = claimedAt
+    ? new Date(claimedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+    : null;
+
+  const sparklePositions = [
+    { x: 20, y: 20, delay: 0 },
+    { x: 260, y: 10, delay: 300 },
+    { x: 40, y: 120, delay: 600 },
+    { x: 240, y: 100, delay: 150 },
+    { x: 130, y: 5, delay: 450 },
+  ];
+
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <Pressable style={styles.overlay} onPress={onClose}>
+        <Animated.View style={[styles.card, cardStyle]} onStartShouldSetResponder={() => true}>
+          {/* Sparkles */}
+          {sparklePositions.map((s, i) => (
+            <Sparkle key={i} x={s.x} y={s.y} delay={s.delay} color={tierColor} />
+          ))}
+
+          {/* Tier badge */}
+          <View style={[styles.tierBadge, { backgroundColor: tierColor + '20', borderColor: tierColor + '40' }]}>
+            <Text style={[styles.tierBadgeText, { color: tierColor }]}>
+              {TIER_LABELS[reward.tier]}
+            </Text>
+          </View>
+
+          {/* Icon */}
+          <Animated.View style={[styles.iconCircle, { backgroundColor: tierColor + '18' }, iconStyle]}>
+            <Ionicons name={reward.icon as any} size={44} color={tierColor} />
+          </Animated.View>
+
+          {/* Content */}
+          <Text style={styles.title}>{reward.title}</Text>
+          <Text style={styles.description}>{reward.description}</Text>
+          <Text style={[styles.tip, { color: tierColor }]}>"{reward.tip}"</Text>
+
+          {/* Status / Action */}
+          {alreadyClaimed ? (
+            <View style={styles.claimedBlock}>
+              <View style={styles.claimedRow}>
+                <Ionicons name="checkmark-circle" size={18} color={Colors.success} />
+                <Text style={styles.claimedText}>
+                  Redeemed{formattedDate ? ` on ${formattedDate}` : ''}
+                </Text>
+              </View>
+              <Pressable
+                style={({ pressed }) => [styles.closeBtn, pressed && { opacity: 0.8 }]}
+                onPress={onClose}
+              >
+                <Text style={styles.closeBtnText}>Close</Text>
+              </Pressable>
+            </View>
+          ) : (
+            <View style={styles.actionBlock}>
+              <Pressable
+                style={({ pressed }) => [styles.claimBtn, { backgroundColor: tierColor }, pressed && { opacity: 0.85 }]}
+                onPress={onClaim}
+              >
+                <Ionicons name="gift-outline" size={18} color="#fff" />
+                <Text style={styles.claimBtnText}>Claim It!</Text>
+              </Pressable>
+              <Pressable onPress={onClose} style={({ pressed }) => [styles.maybeLater, pressed && { opacity: 0.7 }]}>
+                <Text style={styles.maybeLaterText}>Maybe later</Text>
+              </Pressable>
+            </View>
+          )}
+        </Animated.View>
+      </Pressable>
+    </Modal>
+  );
+}
+
+const styles = StyleSheet.create({
+  overlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  card: {
+    width: '100%',
+    maxWidth: 360,
+    backgroundColor: Colors.white,
+    borderRadius: 28,
+    padding: 28,
+    alignItems: 'center',
+    overflow: 'hidden',
+    ...(Platform.OS === 'web' ? { boxShadow: '0 24px 60px rgba(0,0,0,0.18)' } : {
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 12 },
+      shadowOpacity: 0.18,
+      shadowRadius: 24,
+      elevation: 20,
+    }),
+  },
+  tierBadge: {
+    borderRadius: 99,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    marginBottom: 18,
+  },
+  tierBadgeText: {
+    fontSize: 11,
+    fontFamily: 'Inter_700Bold',
+    letterSpacing: 1.2,
+  },
+  iconCircle: {
+    width: 90,
+    height: 90,
+    borderRadius: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 20,
+  },
+  title: {
+    fontSize: 22,
+    fontFamily: 'Inter_700Bold',
+    color: Colors.text,
+    textAlign: 'center',
+    marginBottom: 10,
+  },
+  description: {
+    fontSize: 14,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+    textAlign: 'center',
+    lineHeight: 21,
+    marginBottom: 14,
+    paddingHorizontal: 4,
+  },
+  tip: {
+    fontSize: 13,
+    fontFamily: 'Inter_500Medium',
+    textAlign: 'center',
+    fontStyle: 'italic',
+    marginBottom: 26,
+    paddingHorizontal: 8,
+    lineHeight: 19,
+  },
+  claimedBlock: {
+    width: '100%',
+    alignItems: 'center',
+    gap: 12,
+  },
+  claimedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  claimedText: {
+    fontSize: 14,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.success,
+  },
+  closeBtn: {
+    paddingVertical: 12,
+    paddingHorizontal: 32,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    width: '100%',
+    alignItems: 'center',
+  },
+  closeBtnText: {
+    fontSize: 15,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.textSecondary,
+  },
+  actionBlock: {
+    width: '100%',
+    gap: 10,
+  },
+  claimBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 15,
+    borderRadius: 16,
+  },
+  claimBtnText: {
+    fontSize: 16,
+    fontFamily: 'Inter_700Bold',
+    color: '#fff',
+  },
+  maybeLater: {
+    alignItems: 'center',
+    paddingVertical: 8,
+  },
+  maybeLaterText: {
+    fontSize: 13,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textTertiary,
+  },
+});

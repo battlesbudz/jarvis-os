@@ -54,7 +54,11 @@ A mobile app that generates personalized daily task checklists with AI-powered a
 - XP: regular task +10, high priority +15, goal-linked +20, calendar event +10
 - Levels 1-10: Beginner → GamePlan Pro (thresholds: 0/100/250/500/1000/2000/3500/5000/7500/10000)
 - Badges: first_step, on_a_roll (3-day streak), week_warrior (7-day), centurion (100 tasks), goal_getter, calendar_pro, perfect_day
-- XpToast: animated yellow pill "+N XP" slides up from bottom on task completion
+- XpToast: animated yellow pill "+N XP" on task completion; animated purple pill (ribbon icon) on badge unlock (1.8s delay after XP toast)
+- ALL_REWARDS: 25 real-world rewards across 5 tiers (50/150/400/800/2000 XP thresholds); rewards UNLOCKED not spent
+- TIER_COLORS: {1: '#10B981', 2: '#6366F1', 3: '#F59E0B', 4: '#EC4899', 5: '#8B5CF6'}
+- RewardClaimModal: full-screen celebration modal, spring-animated icon, floating sparkle particles, claim/already-claimed states
+- Profile screen Rewards section: vertical list between Achievements and Connected Calendars; LOCKED/CLAIM/REDEEMED pill states; tapping opens RewardClaimModal
 
 ## Workflows
 - `Start Backend` (port 5000) - Express server
