@@ -411,39 +411,42 @@ export default function InsightsScreen() {
         </Pressable>
       </View>
 
-      {isEmpty ? (
-        <Animated.View entering={FadeInDown.duration(400)} style={styles.emptyContainer}>
-          <View style={styles.emptyIconWrap}>
-            <Ionicons name="sparkles-outline" size={32} color={Colors.primary} />
-          </View>
-          <Text style={styles.emptyTitle}>Your AI Coach</Text>
-          <Text style={styles.emptySubtitle}>Ask anything about your goals, habits, and progress.</Text>
-          <View style={styles.suggestedGrid}>
-            {SUGGESTED_PROMPTS.map((prompt, i) => (
-              <Pressable
-                key={i}
-                style={styles.suggestedPill}
-                onPress={() => sendMessage(prompt)}
-              >
-                <Text style={styles.suggestedText}>{prompt}</Text>
-              </Pressable>
-            ))}
-          </View>
-        </Animated.View>
-      ) : (
-        <FlatList
-          ref={flatListRef}
-          data={listData}
-          keyExtractor={(item) => ('id' in item ? item.id : 'divider')}
-          renderItem={renderItem}
-          inverted
-          contentContainerStyle={[styles.listContent, { paddingBottom: 8 }]}
-          showsVerticalScrollIndicator={false}
-          keyboardDismissMode="interactive"
-          keyboardShouldPersistTaps="handled"
-          ListHeaderComponent={showTyping ? <TypingDots /> : null}
-        />
-      )}
+      <View style={styles.chatArea}>
+        {isEmpty ? (
+          <Animated.View entering={FadeInDown.duration(400)} style={styles.emptyContainer}>
+            <View style={styles.emptyIconWrap}>
+              <Ionicons name="sparkles-outline" size={32} color={Colors.primary} />
+            </View>
+            <Text style={styles.emptyTitle}>Your AI Coach</Text>
+            <Text style={styles.emptySubtitle}>Ask anything about your goals, habits, and progress.</Text>
+            <View style={styles.suggestedGrid}>
+              {SUGGESTED_PROMPTS.map((prompt, i) => (
+                <Pressable
+                  key={i}
+                  style={styles.suggestedPill}
+                  onPress={() => sendMessage(prompt)}
+                >
+                  <Text style={styles.suggestedText}>{prompt}</Text>
+                </Pressable>
+              ))}
+            </View>
+          </Animated.View>
+        ) : (
+          <FlatList
+            ref={flatListRef}
+            data={listData}
+            keyExtractor={(item) => ('id' in item ? item.id : 'divider')}
+            renderItem={renderItem}
+            inverted
+            style={styles.list}
+            contentContainerStyle={styles.listContent}
+            showsVerticalScrollIndicator={false}
+            keyboardDismissMode="interactive"
+            keyboardShouldPersistTaps="handled"
+            ListHeaderComponent={showTyping ? <TypingDots /> : null}
+          />
+        )}
+      </View>
 
       <View style={[styles.inputContainer, { paddingBottom: bottomPad + 8 }]}>
         <TextInput
@@ -510,9 +513,17 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter_600SemiBold',
     color: '#EF4444',
   },
+  chatArea: {
+    flex: 1,
+    overflow: 'hidden',
+  },
+  list: {
+    flex: 1,
+  },
   listContent: {
     paddingHorizontal: 16,
     paddingTop: 12,
+    paddingBottom: 8,
     flexGrow: 1,
   },
   messageRow: {
