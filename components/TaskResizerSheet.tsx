@@ -317,11 +317,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
-    paddingVertical: 12,
+    paddingVertical: 14,
     borderRadius: 12,
-    borderWidth: 1.5,
-    borderColor: Colors.border,
-    backgroundColor: Colors.surface,
+    borderWidth: 2,
+    borderColor: Colors.textSecondary,
+    backgroundColor: Colors.white,
   },
   directionActive: {
     backgroundColor: Colors.primary,
@@ -329,8 +329,8 @@ const styles = StyleSheet.create({
   },
   directionText: {
     fontSize: 14,
-    fontFamily: 'Inter_600SemiBold',
-    color: Colors.textSecondary,
+    fontFamily: 'Inter_700Bold',
+    color: Colors.text,
   },
   directionTextActive: {
     color: Colors.white,
