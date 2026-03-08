@@ -11,6 +11,7 @@ export interface Task {
   subtasks?: Task[];
   isSubtask?: boolean;
   parentId?: string;
+  goalId?: string;
 }
 
 export interface DayPlan {
@@ -120,6 +121,7 @@ function generateDailyTasks(goals: Goal[]): Task[] {
       priority: 'high',
       time: '7:00 AM',
       description: `Progress: ${fitnessGoal.current}/${fitnessGoal.target} ${fitnessGoal.unit}`,
+      goalId: fitnessGoal.id,
     });
   } else {
     tasks.push({
@@ -143,6 +145,7 @@ function generateDailyTasks(goals: Goal[]): Task[] {
       priority: 'medium',
       time: '12:00 PM',
       description: `Goal: ${financeGoal.title}`,
+      goalId: financeGoal.id,
     });
   }
 
@@ -393,6 +396,24 @@ export async function saveGoal(goal: Goal): Promise<void> {
     await AsyncStorage.setItem(KEYS.GOALS, JSON.stringify(goals));
   } catch (e) {
     console.error('Failed to save goal:', e);
+  }
+}
+
+export async function updateGoalProgress(goalId: string, amount: number): Promise<Goal | null> {
+  try {
+    const goals = await getGoals();
+    const idx = goals.findIndex(g => g.id === goalId);
+    if (idx < 0) return null;
+    const updated = {
+      ...goals[idx],
+      current: Math.min(goals[idx].target, goals[idx].current + amount),
+    };
+    goals[idx] = updated;
+    await AsyncStorage.setItem(KEYS.GOALS, JSON.stringify(goals));
+    return updated;
+  } catch (e) {
+    console.error('Failed to update goal progress:', e);
+    return null;
   }
 }
 

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   StyleSheet,
   View,
@@ -14,10 +14,12 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import Animated, { FadeInDown } from 'react-native-reanimated';
+import { useFocusEffect } from 'expo-router';
 import Colors from '@/constants/colors';
 import TaskCard from '@/components/TaskCard';
 import ProgressRing from '@/components/ProgressRing';
 import TaskResizerSheet from '@/components/TaskResizerSheet';
+import LogProgressSheet from '@/components/LogProgressSheet';
 import {
   getTodayPlan,
   updateTaskCompletion,
@@ -26,6 +28,7 @@ import {
   savePlan,
   replaceTaskWithSubtasks,
   getCompletionHistory,
+  updateGoalProgress,
   getTodayKey,
   type DayPlan,
   type Goal,
@@ -43,6 +46,9 @@ export default function TodayScreen() {
   const [generatingAI, setGeneratingAI] = useState(false);
   const [resizerVisible, setResizerVisible] = useState(false);
   const [resizerTask, setResizerTask] = useState<Task | null>(null);
+  const [logSheetVisible, setLogSheetVisible] = useState(false);
+  const [logTask, setLogTask] = useState<Task | null>(null);
+  const [logGoal, setLogGoal] = useState<Goal | null>(null);
 
   const loadData = useCallback(async () => {
     const loadedGoals = await getGoals();
@@ -55,6 +61,12 @@ export default function TodayScreen() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  useFocusEffect(
+    useCallback(() => {
+      getGoals().then(setGoals);
+    }, [])
+  );
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -76,6 +88,7 @@ export default function TodayScreen() {
 
       const res = await apiRequest('POST', '/api/ai/generate-plan', {
         goals: loadedGoals.map(g => ({
+          id: g.id,
           title: g.title,
           category: g.category,
           current: g.current,
@@ -102,6 +115,7 @@ export default function TodayScreen() {
             priority: validPriorities.includes(t.priority) ? t.priority : 'medium',
             time: t.time ? String(t.time) : undefined,
             description: t.description ? String(t.description) : undefined,
+            goalId: t.goalId ? String(t.goalId) : undefined,
           })),
           greeting: plan?.greeting || 'Good day',
           insight: data.insight || 'Start small, stay consistent.',
@@ -135,8 +149,11 @@ export default function TodayScreen() {
 
   const handleToggleTask = useCallback(async (taskId: string, completed: boolean) => {
     if (!plan) return;
+
+    let matchedTask: Task | undefined;
     const updatedTasks = plan.tasks.map(t => {
       if (t.id === taskId) {
+        matchedTask = t;
         return { ...t, completed };
       }
       if (t.subtasks) {
@@ -150,7 +167,35 @@ export default function TodayScreen() {
     });
     setPlan({ ...plan, tasks: updatedTasks });
     await updateTaskCompletion(plan.date, taskId, completed);
-  }, [plan]);
+
+    if (completed && matchedTask && !matchedTask.isSubtask) {
+      const linkedGoal = matchedTask.goalId
+        ? goals.find(g => g.id === matchedTask!.goalId)
+        : goals.find(g => g.category === matchedTask!.category);
+      if (linkedGoal && linkedGoal.current < linkedGoal.target) {
+        setLogTask(matchedTask);
+        setLogGoal(linkedGoal);
+        setLogSheetVisible(true);
+      }
+    }
+  }, [plan, goals]);
+
+  const handleLogProgress = useCallback(async (amount: number) => {
+    if (!logGoal) return;
+    setLogSheetVisible(false);
+    const updated = await updateGoalProgress(logGoal.id, amount);
+    if (updated) {
+      setGoals(prev => prev.map(g => g.id === updated.id ? updated : g));
+    }
+    setLogTask(null);
+    setLogGoal(null);
+  }, [logGoal]);
+
+  const handleSkipLog = useCallback(() => {
+    setLogSheetVisible(false);
+    setLogTask(null);
+    setLogGoal(null);
+  }, []);
 
   const handleOpenResizer = useCallback((task: Task) => {
     setResizerTask(task);
@@ -288,6 +333,14 @@ export default function TodayScreen() {
         task={resizerTask}
         onClose={() => { setResizerVisible(false); setResizerTask(null); }}
         onApply={handleApplyResize}
+      />
+
+      <LogProgressSheet
+        visible={logSheetVisible}
+        task={logTask}
+        goal={logGoal}
+        onLog={handleLogProgress}
+        onSkip={handleSkipLog}
       />
     </View>
   );

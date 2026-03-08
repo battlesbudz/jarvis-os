@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { useFocusEffect } from 'expo-router';
 import {
   StyleSheet,
   View,
@@ -33,6 +34,12 @@ export default function GoalsScreen() {
   useEffect(() => {
     loadGoals();
   }, [loadGoals]);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadGoals();
+    }, [loadGoals])
+  );
 
   const handleSave = async (goal: Goal) => {
     await saveGoal(goal);

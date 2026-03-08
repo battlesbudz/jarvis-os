@@ -26,7 +26,7 @@ export interface ResizeTaskResponse {
 }
 
 export interface GeneratePlanRequest {
-  goals: { title: string; category: string; current: number; target: number; unit: string }[];
+  goals: { id: string; title: string; category: string; current: number; target: number; unit: string }[];
   history: CompletionHistoryItem[];
   dayOfWeek: string;
 }
@@ -37,6 +37,7 @@ export interface GeneratePlanTask {
   priority: "high" | "medium" | "low";
   time: string;
   description: string;
+  goalId?: string;
 }
 
 export interface GeneratePlanResponse {
@@ -110,7 +111,7 @@ export async function generateSmartPlan(req: GeneratePlanRequest): Promise<Gener
   const skippedTasks = history.filter(h => !h.completed);
 
   const goalsText = goals.length > 0
-    ? goals.map(g => `- ${g.title} (${g.category}): ${g.current}/${g.target} ${g.unit}`).join('\n')
+    ? goals.map(g => `- [id:${g.id}] ${g.title} (${g.category}): ${g.current}/${g.target} ${g.unit}`).join('\n')
     : 'No specific goals set yet.';
 
   const historyText = history.length > 0
@@ -135,9 +136,11 @@ Create a daily plan with 5-8 tasks. For each task provide:
 - priority: "high", "medium", or "low"
 - time: suggested time like "7:00 AM", "9:30 AM", etc.
 - description: one-line helpful context
+- goalId: (optional) the id from the goals list above (e.g. "id:abc123") if this task directly works toward that specific goal — omit for general tasks
 
 Rules:
 - Align tasks with the user's goals
+- When a task directly advances a specific goal (e.g. a fitness task for a running goal), set goalId to that goal's id (the value in [id:...])
 - If they've been skipping fitness tasks, make fitness tasks easier/shorter
 - If they've been completing everything, add one slightly challenging stretch task
 - Include at least one personal/wellness task
