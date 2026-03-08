@@ -55,7 +55,7 @@ export default function TodayScreen() {
     try {
       const today = getTodayKey();
       const statusUrl = new URL('/api/calendar/status', getApiUrl());
-      const statusRes = await fetch(statusUrl.toString());
+      const statusRes = await fetch(statusUrl.toString(), { cache: 'no-store' });
       const status = await statusRes.json();
 
       const events: Task[] = [];
@@ -63,7 +63,7 @@ export default function TodayScreen() {
       const fetchEvents = async (source: 'google' | 'outlook') => {
         const url = new URL(`/api/calendar/${source}/events`, getApiUrl());
         url.searchParams.set('date', today);
-        const res = await fetch(url.toString());
+        const res = await fetch(url.toString(), { cache: 'no-store' });
         const data = await res.json();
         if (data.connected && data.events?.length) {
           data.events.forEach((e: any) => {
