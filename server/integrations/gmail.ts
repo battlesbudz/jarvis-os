@@ -1,3 +1,5 @@
+import { getUncachableGmailClient } from './gmailClient';
+
 export interface EmailCommitment {
   subject: string;
   snippet: string;
@@ -6,14 +8,7 @@ export interface EmailCommitment {
 
 export async function checkGmailConnection(): Promise<boolean> {
   try {
-    const connectorHostname = process.env.REPLIT_CONNECTORS_HOSTNAME;
-    const replIdentity = process.env.REPL_IDENTITY;
-    if (!connectorHostname || !replIdentity) return false;
-
-    const { getUncachableGmailClient } = await import('./gmailClient.js').catch(() => ({ getUncachableGmailClient: null }));
-    if (!getUncachableGmailClient) return false;
-
-    const client = await (getUncachableGmailClient as any)();
+    const client = await getUncachableGmailClient();
     if (!client) return false;
     return true;
   } catch {
@@ -23,11 +18,7 @@ export async function checkGmailConnection(): Promise<boolean> {
 
 export async function getRecentEmailCommitments(days: number = 7): Promise<EmailCommitment[]> {
   try {
-    const { getUncachableGmailClient } = await import('./gmailClient.js').catch(() => ({ getUncachableGmailClient: null }));
-    if (!getUncachableGmailClient) return [];
-
-    const gmail = await (getUncachableGmailClient as any)();
-    if (!gmail) return [];
+    const gmail = await getUncachableGmailClient();
 
     const afterDate = new Date();
     afterDate.setDate(afterDate.getDate() - days);
@@ -43,18 +34,19 @@ export async function getRecentEmailCommitments(days: number = 7): Promise<Email
     const results: EmailCommitment[] = [];
 
     for (const msg of messages.slice(0, 20)) {
+      if (!msg.id) continue;
       try {
         const detail = await gmail.users.messages.get({
           userId: 'me',
-          id: msg.id!,
+          id: msg.id,
           format: 'metadata',
           metadataHeaders: ['Subject', 'Date'],
         });
         const headers = detail.data.payload?.headers || [];
         const subject = headers.find((h: any) => h.name === 'Subject')?.value || '(no subject)';
         const date = headers.find((h: any) => h.name === 'Date')?.value || '';
-        const snippet = detail.data.snippet || '';
-        results.push({ subject, snippet: snippet.slice(0, 200), date });
+        const snippet = (detail.data.snippet || '').slice(0, 200);
+        results.push({ subject, snippet, date });
       } catch {
         continue;
       }

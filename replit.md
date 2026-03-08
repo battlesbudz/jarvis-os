@@ -1,26 +1,31 @@
 # GamePlan - Daily Game Plan App
 
 ## Overview
-A mobile app that generates personalized daily task checklists with AI-powered adaptive task sizing. Users can break tasks into smaller steps or combine them using a "detail level" slider (1-5), helping with executive dysfunction. The AI learns from 7-day completion history to suggest appropriately-sized tasks.
+A mobile app that generates personalized daily task checklists with AI-powered adaptive task sizing. Users can break tasks into smaller steps or combine them using a "detail level" slider (1-5), helping with executive dysfunction. The AI learns from 7-day completion history, life context, and Gmail signals to suggest appropriately-sized tasks.
 
 ## Tech Stack
 - **Frontend**: Expo Router (React Native) with file-based routing
 - **Backend**: Express.js (serves landing page and API)
-- **AI**: OpenAI via Replit AI Integrations (gpt-5-mini) for task resizing and smart plan generation
+- **AI**: OpenAI via Replit AI Integrations (gpt-5-mini) for task resizing, plan generation, and coaching
 - **State**: AsyncStorage for local persistence
 - **Styling**: React Native StyleSheet with Inter font family
 - **Icons**: @expo/vector-icons (Ionicons)
+- **Integrations**: Google Calendar, Outlook Calendar, Gmail (all via Replit OAuth connectors)
 
 ## Project Structure
 - `app/(tabs)/` - Tab screens: index (Today), goals, insights, profile
 - `app/(tabs)/_layout.tsx` - Tab navigation with NativeTabs (liquid glass) + classic fallback
-- `components/` - Reusable components: TaskCard, GoalCard, SuggestionCard, ProgressRing, AddGoalSheet, TaskResizerSheet
-- `lib/storage.ts` - AsyncStorage data layer for tasks, goals, platforms, stats, completion history
+- `components/` - Reusable components: TaskCard, GoalCard, ProgressRing, AddGoalSheet, TaskResizerSheet, LifeContextSheet, MarkdownText, RewardClaimModal
+- `lib/storage.ts` - AsyncStorage data layer for tasks, goals, stats, completion history, chat history, life context
 - `lib/helpers.ts` - Category colors, icons, labels, date formatting utilities
 - `lib/query-client.ts` - React Query client with apiRequest helper
 - `constants/colors.ts` - Theme colors (indigo primary, purple secondary)
 - `server/ai.ts` - AI logic for resizeTask() and generateSmartPlan()
-- `server/routes.ts` - API endpoints: POST /api/ai/resize-task, POST /api/ai/generate-plan
+- `server/routes.ts` - All API endpoints
+- `server/integrations/googleCalendar.ts` - Google Calendar client
+- `server/integrations/outlook.ts` - Outlook calendar client
+- `server/integrations/gmailClient.ts` - Gmail OAuth client (Replit connector token refresh)
+- `server/integrations/gmail.ts` - checkGmailConnection(), getRecentEmailCommitments()
 
 ## Color Palette
 - Primary: #6366F1 (indigo)
@@ -31,34 +36,40 @@ A mobile app that generates personalized daily task checklists with AI-powered a
 - Background: #FFFFFF, Surface: #F9FAFB
 
 ## Features
-1. **Today Tab** - Daily checklist with progress ring, task categories, completion tracking
+1. **Today Tab** - Daily checklist with progress ring, task categories, completion tracking; AI coaching check-in note shown daily
 2. **AI Task Resizer** - Break tasks into smaller steps or simplify them with a detail level slider (1-5)
-3. **Smart Plan Generation** - AI generates daily plans based on goals + 7-day completion history
+3. **Smart Plan Generation** - AI generates daily plans using goals + 7-day history + Life Context + Gmail signals
 4. **Subtasks** - Tasks can have nested subtasks with progress bars; parent auto-completes when all subtasks done
 5. **Completion History** - Rolling 7-day history feeds into AI for personalized sizing
 6. **Goals Tab** - Create, edit, delete goals with progress tracking across categories
-7. **Insights Tab** - Smart recommendations, activity suggestions, stats dashboard
-8. **Profile Tab** - Level + XP bar, streak stats, badge achievements grid, connected calendars
-9. **Calendar Integrations** - Google Calendar + Outlook events appear as "Today's Events" on the Today tab; sync button top-right
-10. **Rewards System** - XP earned per task (10/15/20 pts by priority/goal-linked), level 1-10 with names, 7 badge types that auto-unlock; animated "+XP" toast on completion
+7. **Insights Tab** - Streaming AI coach chat (gpt-5-mini), persistent chat history, calendar context, markdown bubbles, action buttons (+Add task/+Set goal), follow-up chips, daily check-in card
+8. **Profile Tab** - Level + XP bar, streak stats, badge achievements grid, About You section, Connected Apps (calendars + Gmail)
+9. **Calendar Integrations** - Google Calendar + Outlook events appear as "Today's Events" on the Today tab
+10. **Rewards System** - XP earned per task (10/15/20 pts by priority/goal-linked), level 1-10 with names, 7 badge types; animated "+XP" toast on completion
 11. **Completed Section** - Both regular tasks AND calendar events move to the Completed section when checked off
+12. **Life Context** - 5-question onboarding questionnaire (LifeContextSheet modal); answers stored in AsyncStorage; feeds into ALL AI calls (coach chat, plan generation, check-in, suggestions)
+13. **Gmail Integration** - Connected via OAuth; reads recent inbox emails (subject + snippet only); surfaces commitment/deadline signals to AI coach and plan generator
 
 ## API Endpoints
 - `POST /api/ai/resize-task` - Takes taskTitle, detailLevel (1-5), direction (smaller/bigger), history
-- `POST /api/ai/generate-plan` - Takes goals, history, dayOfWeek; returns tasks + insight
-- `GET /api/calendar/status` - Returns {google: bool, outlook: bool} connection status
-- `GET /api/calendar/google/events?date=YYYY-MM-DD` - Today's events from all Google calendars
-- `GET /api/calendar/outlook/events?date=YYYY-MM-DD` - Today's events from Outlook calendar
+- `POST /api/ai/generate-plan` - Takes goals, history, dayOfWeek, lifeContext, gmailItems; returns tasks + insight
+- `POST /api/coach/chat` - Streaming SSE; takes messages, goals, stats, history, calendarEvents, lifeContext, gmailItems
+- `POST /api/coach/checkin` - Takes goals, stats, history, lifeContext; returns {note}
+- `POST /api/coach/suggestions` - Takes lastAssistantMessage, goals; returns {actions, followups}
+- `GET /api/calendar/status` - Returns {google: bool, outlook: bool}
+- `GET /api/calendar/google/events?date=YYYY-MM-DD` - Today's events from Google Calendar
+- `GET /api/calendar/outlook/events?date=YYYY-MM-DD` - Today's events from Outlook
+- `GET /api/gmail/status` - Returns {connected: bool}
+- `GET /api/gmail/commitments` - Returns {connected: bool, items: EmailCommitment[]} (last 7 days, 20 emails max)
 
 ## Rewards System
 - XP: regular task +10, high priority +15, goal-linked +20, calendar event +10
 - Levels 1-10: Beginner → GamePlan Pro (thresholds: 0/100/250/500/1000/2000/3500/5000/7500/10000)
 - Badges: first_step, on_a_roll (3-day streak), week_warrior (7-day), centurion (100 tasks), goal_getter, calendar_pro, perfect_day
 - XpToast: animated yellow pill "+N XP" on task completion; animated purple pill (ribbon icon) on badge unlock (1.8s delay after XP toast)
-- ALL_REWARDS: 25 real-world rewards across 5 tiers (50/150/400/800/2000 XP thresholds); rewards UNLOCKED not spent
+- ALL_REWARDS: 25 real-world rewards across 5 tiers (50/150/400/800/2000 XP thresholds)
 - TIER_COLORS: {1: '#10B981', 2: '#6366F1', 3: '#F59E0B', 4: '#EC4899', 5: '#8B5CF6'}
-- RewardClaimModal: full-screen celebration modal, spring-animated icon, floating sparkle particles, claim/already-claimed states
-- Profile screen Rewards section: vertical list between Achievements and Connected Calendars; LOCKED/CLAIM/REDEEMED pill states; tapping opens RewardClaimModal
+- RewardClaimModal: full-screen celebration modal, spring-animated icon, floating sparkle particles
 
 ## Workflows
 - `Start Backend` (port 5000) - Express server
