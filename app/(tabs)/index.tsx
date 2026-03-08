@@ -34,6 +34,9 @@ import {
   decrementStats,
   calculateTaskXp,
   xpForSubtask,
+  getStats,
+  getDailyCoachNote,
+  saveDailyCoachNote,
   ALL_BADGES,
   type DayPlan,
   type Goal,
@@ -61,6 +64,7 @@ export default function TodayScreen() {
   const [xpEarned, setXpEarned] = useState(0);
   const [badgeToastVisible, setBadgeToastVisible] = useState(false);
   const [badgeToastLabel, setBadgeToastLabel] = useState('');
+  const [coachNote, setCoachNote] = useState<string | null>(null);
 
   const loadCalendarEvents = useCallback(async () => {
     try {
@@ -103,6 +107,29 @@ export default function TodayScreen() {
     }
   }, []);
 
+  const loadDailyCoachNote = useCallback(async (loadedGoals: Goal[]) => {
+    try {
+      const today = getTodayKey();
+      const cached = await getDailyCoachNote();
+      if (cached && cached.date === today && cached.note) {
+        setCoachNote(cached.note);
+        return;
+      }
+      const [stats, history] = await Promise.all([getStats(), getCompletionHistory()]);
+      const url = new URL('/api/coach/checkin', getApiUrl());
+      const res = await fetch(url.toString(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ goals: loadedGoals, stats, history }),
+      });
+      const data = await res.json();
+      if (data.note) {
+        setCoachNote(data.note);
+        await saveDailyCoachNote(data.note);
+      }
+    } catch {}
+  }, []);
+
   const loadData = useCallback(async () => {
     const loadedGoals = await getGoals();
     setGoals(loadedGoals);
@@ -110,7 +137,8 @@ export default function TodayScreen() {
     setPlan(todayPlan);
     setLoading(false);
     loadCalendarEvents();
-  }, [loadCalendarEvents]);
+    loadDailyCoachNote(loadedGoals);
+  }, [loadCalendarEvents, loadDailyCoachNote]);
 
   useEffect(() => {
     loadData();
@@ -395,6 +423,16 @@ export default function TodayScreen() {
           <Text style={styles.insightText}>{plan.insight}</Text>
         </Animated.View>
 
+        {coachNote ? (
+          <Animated.View entering={FadeInDown.duration(400).delay(340)} style={styles.coachNoteCard}>
+            <View style={styles.coachNoteHeader}>
+              <Ionicons name="sparkles-outline" size={15} color={Colors.secondary} />
+              <Text style={styles.coachNoteLabel}>Coach</Text>
+            </View>
+            <Text style={styles.coachNoteText}>{coachNote}</Text>
+          </Animated.View>
+        ) : null}
+
         <Animated.View entering={FadeInDown.duration(400).delay(350)}>
           {confirmingRefresh ? (
             <View style={styles.confirmRow}>
@@ -601,6 +639,33 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontFamily: 'Inter_600SemiBold',
     color: Colors.success,
+  },
+  coachNoteCard: {
+    backgroundColor: '#F5F3FF',
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#EDE9FE',
+  },
+  coachNoteHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 6,
+  },
+  coachNoteLabel: {
+    fontSize: 11,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.secondary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  coachNoteText: {
+    fontSize: 13,
+    fontFamily: 'Inter_400Regular',
+    color: '#4C1D95',
+    lineHeight: 20,
   },
   insightCard: {
     flexDirection: 'row',

@@ -239,7 +239,64 @@ const KEYS = {
   STATS: 'gameplan_stats',
   ONBOARDED: 'gameplan_onboarded',
   HISTORY: 'gameplan_history',
+  CHAT_HISTORY: 'gameplan_chat_history',
+  DAILY_CHECKIN: 'gameplan_daily_checkin',
 };
+
+export interface CoachAction {
+  type: 'task' | 'goal';
+  title: string;
+  category: string;
+  priority?: 'high' | 'medium' | 'low';
+  description?: string;
+}
+
+export interface ChatMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  actions?: CoachAction[];
+  followups?: string[];
+}
+
+export async function getChatHistory(): Promise<ChatMessage[]> {
+  try {
+    const raw = await AsyncStorage.getItem(KEYS.CHAT_HISTORY);
+    if (!raw) return [];
+    return JSON.parse(raw) as ChatMessage[];
+  } catch {
+    return [];
+  }
+}
+
+export async function saveChatHistory(messages: ChatMessage[]): Promise<void> {
+  try {
+    await AsyncStorage.setItem(KEYS.CHAT_HISTORY, JSON.stringify(messages));
+  } catch {}
+}
+
+export async function clearChatHistory(): Promise<void> {
+  try {
+    await AsyncStorage.removeItem(KEYS.CHAT_HISTORY);
+  } catch {}
+}
+
+export async function getDailyCoachNote(): Promise<{ note: string; date: string } | null> {
+  try {
+    const raw = await AsyncStorage.getItem(KEYS.DAILY_CHECKIN);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+export async function saveDailyCoachNote(note: string): Promise<void> {
+  try {
+    const today = getTodayKey();
+    await AsyncStorage.setItem(KEYS.DAILY_CHECKIN, JSON.stringify({ note, date: today }));
+  } catch {}
+}
 
 function generateId(): string {
   return Date.now().toString() + Math.random().toString(36).substr(2, 9);

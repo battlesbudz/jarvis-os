@@ -16,14 +16,24 @@ import { useFocusEffect } from 'expo-router';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import Animated, { FadeInDown, FadeIn } from 'react-native-reanimated';
 import Colors from '@/constants/colors';
-import { getGoals, getStats, getCompletionHistory, type Goal, type UserStats } from '@/lib/storage';
+import MarkdownText from '@/components/MarkdownText';
+import {
+  getGoals,
+  getStats,
+  getCompletionHistory,
+  getTodayPlan,
+  savePlan,
+  saveGoal,
+  getTodayKey,
+  getChatHistory,
+  saveChatHistory,
+  clearChatHistory,
+  type Goal,
+  type UserStats,
+  type ChatMessage,
+  type CoachAction,
+} from '@/lib/storage';
 import { getApiUrl } from '@/lib/query-client';
-
-interface ChatMessage {
-  id: string;
-  role: 'user' | 'assistant';
-  content: string;
-}
 
 const SUGGESTED_PROMPTS = [
   "How am I doing overall?",
@@ -31,6 +41,8 @@ const SUGGESTED_PROMPTS = [
   "Help me with my financial goals",
   "I'm struggling to stay consistent",
 ];
+
+const CONTEXT_WINDOW = 12;
 
 function generateId(): string {
   return Date.now().toString() + Math.random().toString(36).substr(2, 9);
@@ -48,8 +60,53 @@ function TypingDots() {
   );
 }
 
-function MessageBubble({ message, isFirst }: { message: ChatMessage; isFirst: boolean }) {
+interface MessageBubbleProps {
+  message: ChatMessage;
+  isFirst: boolean;
+  isLastAssistant: boolean;
+  goals: Goal[];
+  onFollowup: (text: string) => void;
+}
+
+function MessageBubble({ message, isFirst, isLastAssistant, goals, onFollowup }: MessageBubbleProps) {
   const isUser = message.role === 'user';
+  const [addedMap, setAddedMap] = useState<Record<string, boolean>>({});
+
+  const handleAddAction = useCallback(async (action: CoachAction, key: string) => {
+    if (addedMap[key]) return;
+    setAddedMap(prev => ({ ...prev, [key]: true }));
+    try {
+      if (action.type === 'task') {
+        const loadedGoals = await getGoals();
+        const plan = await getTodayPlan(loadedGoals);
+        const newTask = {
+          id: generateId(),
+          title: action.title,
+          category: action.category as any,
+          completed: false,
+          priority: (action.priority || 'medium') as any,
+          description: action.description,
+          goalId: undefined,
+        };
+        const updated = { ...plan, tasks: [...plan.tasks, newTask] };
+        await savePlan(updated);
+      } else {
+        const validCats = ['fitness', 'finance', 'career', 'personal', 'social'];
+        const cat = validCats.includes(action.category) ? action.category : 'personal';
+        const newGoal: Goal = {
+          id: generateId(),
+          title: action.title,
+          category: cat as Goal['category'],
+          target: 100,
+          current: 0,
+          unit: '',
+          createdAt: new Date().toISOString(),
+        };
+        await saveGoal(newGoal);
+      }
+    } catch {}
+  }, [addedMap]);
+
   return (
     <View style={[styles.messageRow, isUser ? styles.messageRowUser : styles.messageRowAssistant]}>
       {!isUser && isFirst && (
@@ -59,10 +116,46 @@ function MessageBubble({ message, isFirst }: { message: ChatMessage; isFirst: bo
         </View>
       )}
       <View style={[styles.bubble, isUser ? styles.bubbleUser : styles.bubbleAssistant]}>
-        <Text style={[styles.bubbleText, isUser ? styles.bubbleTextUser : styles.bubbleTextAssistant]}>
-          {message.content}
-        </Text>
+        <MarkdownText
+          text={message.content}
+          isUser={isUser}
+        />
       </View>
+
+      {!isUser && message.actions && message.actions.length > 0 && (
+        <View style={styles.actionRow}>
+          {message.actions.map((action, idx) => {
+            const key = `${action.type}-${idx}`;
+            const added = addedMap[key];
+            return (
+              <Pressable
+                key={key}
+                style={[styles.actionPill, added && styles.actionPillAdded]}
+                onPress={() => handleAddAction(action, key)}
+              >
+                <Ionicons
+                  name={added ? 'checkmark' : (action.type === 'task' ? 'add-circle-outline' : 'flag-outline')}
+                  size={13}
+                  color={added ? Colors.success : Colors.primary}
+                />
+                <Text style={[styles.actionPillText, added && styles.actionPillTextAdded]}>
+                  {added ? 'Added!' : (action.type === 'task' ? `Add: ${action.title}` : `Set goal: ${action.title}`)}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      )}
+
+      {!isUser && isLastAssistant && message.followups && message.followups.length > 0 && (
+        <View style={styles.followupRow}>
+          {message.followups.map((fup, idx) => (
+            <Pressable key={idx} style={styles.followupChip} onPress={() => onFollowup(fup)}>
+              <Text style={styles.followupChipText}>{fup}</Text>
+            </Pressable>
+          ))}
+        </View>
+      )}
     </View>
   );
 }
@@ -76,126 +169,224 @@ export default function InsightsScreen() {
   const [goals, setGoals] = useState<Goal[]>([]);
   const [stats, setStats] = useState<UserStats>({ streak: 0, totalCompleted: 0, bestStreak: 0 });
   const [history, setHistory] = useState<any[]>([]);
+  const [calendarEvents, setCalendarEvents] = useState<{ title: string; time: string }[]>([]);
+  const [confirmClear, setConfirmClear] = useState(false);
   const flatListRef = useRef<FlatList>(null);
+  const topPad = Platform.OS === 'web' ? 67 : insets.top;
 
-  const loadContext = useCallback(async () => {
-    const [g, s, h] = await Promise.all([getGoals(), getStats(), getCompletionHistory()]);
-    setGoals(g);
-    setStats(s);
-    setHistory(h);
+  const loadAll = useCallback(async () => {
+    const [loadedGoals, loadedStats, loadedHistory, savedMessages] = await Promise.all([
+      getGoals(),
+      getStats(),
+      getCompletionHistory(),
+      getChatHistory(),
+    ]);
+    setGoals(loadedGoals);
+    setStats(loadedStats);
+    setHistory(loadedHistory);
+    setMessages(savedMessages);
+
+    try {
+      const today = getTodayKey();
+      const calEvts: { title: string; time: string }[] = [];
+      const base = getApiUrl();
+
+      const fetchSource = async (source: 'google' | 'outlook') => {
+        const url = new URL(`/api/calendar/${source}/events`, base);
+        url.searchParams.set('date', today);
+        const res = await fetch(url.toString(), { cache: 'no-store' } as RequestInit);
+        const data = await res.json();
+        if (data.connected && data.events?.length) {
+          data.events.forEach((e: any) => {
+            calEvts.push({ title: e.title || e.summary || '', time: e.time || e.start || '' });
+          });
+        }
+      };
+
+      await Promise.allSettled([fetchSource('google'), fetchSource('outlook')]);
+      setCalendarEvents(calEvts);
+    } catch {}
   }, []);
 
+  useEffect(() => { loadAll(); }, [loadAll]);
+
   useFocusEffect(useCallback(() => {
-    loadContext();
-  }, [loadContext]));
+    getGoals().then(setGoals);
+    getStats().then(setStats);
+  }, []));
 
   const sendMessage = useCallback(async (text: string) => {
-    const trimmed = text.trim();
-    if (!trimmed || isStreaming) return;
+    if (!text.trim() || isStreaming) return;
+    const userMsg: ChatMessage = { id: generateId(), role: 'user', content: text.trim() };
+    const assistantId = generateId();
 
-    const userMsg: ChatMessage = { id: generateId(), role: 'user', content: trimmed };
-    const nextMessages = [...messages, userMsg];
-    setMessages(nextMessages);
+    setMessages(prev => {
+      const updated = [userMsg, ...prev];
+      saveChatHistory(updated);
+      return updated;
+    });
     setInput('');
     setShowTyping(true);
     setIsStreaming(true);
-
-    const assistantId = generateId();
-    let fullContent = '';
-    let assistantAdded = false;
+    setConfirmClear(false);
 
     try {
-      const baseUrl = getApiUrl();
-      const response = await fetch(`${baseUrl}api/coach/chat`, {
+      const currentMessages = await getChatHistory();
+      const contextMessages = currentMessages.slice(0, CONTEXT_WINDOW);
+      const apiMessages = contextMessages.map(m => ({ role: m.role, content: m.content })).reverse();
+
+      const url = new URL('/api/coach/chat', getApiUrl());
+      const response = await fetch(url.toString(), {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'text/event-stream',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          messages: nextMessages.map(m => ({ role: m.role, content: m.content })),
+          messages: apiMessages,
           goals,
           stats,
           history,
+          calendarEvents,
         }),
       });
 
-      if (!response.ok) throw new Error('Failed to get response');
+      setShowTyping(false);
+      const assistantMsg: ChatMessage = { id: assistantId, role: 'assistant', content: '' };
 
-      const reader = response.body?.getReader();
-      if (!reader) throw new Error('No response body');
+      setMessages(prev => {
+        const updated = [assistantMsg, ...prev];
+        return updated;
+      });
 
+      if (!response.body) throw new Error('No response body');
+      const reader = response.body.getReader();
       const decoder = new TextDecoder();
+      let fullContent = '';
       let buffer = '';
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
         buffer = lines.pop() || '';
 
         for (const line of lines) {
-          if (!line.startsWith('data: ')) continue;
-          const data = line.slice(6);
-          if (data === '[DONE]') continue;
-
-          try {
-            const parsed = JSON.parse(data);
-            if (parsed.content) {
-              fullContent += parsed.content;
-
-              if (!assistantAdded) {
-                setShowTyping(false);
-                setMessages(prev => [...prev, {
-                  id: assistantId,
-                  role: 'assistant',
-                  content: fullContent,
-                }]);
-                assistantAdded = true;
-              } else {
+          if (line.startsWith('data: ')) {
+            const data = line.slice(6).trim();
+            if (data === '[DONE]') continue;
+            try {
+              const parsed = JSON.parse(data);
+              if (parsed.content) {
+                fullContent += parsed.content;
+                const captured = fullContent;
                 setMessages(prev => {
                   const updated = [...prev];
-                  const lastIdx = updated.length - 1;
-                  if (updated[lastIdx]?.id === assistantId) {
-                    updated[lastIdx] = { ...updated[lastIdx], content: fullContent };
-                  }
+                  const idx = updated.findIndex(m => m.id === assistantId);
+                  if (idx !== -1) updated[idx] = { ...updated[idx], content: captured };
                   return updated;
                 });
               }
-            }
-          } catch {}
+            } catch {}
+          }
         }
       }
-    } catch {
-      setShowTyping(false);
-      if (!assistantAdded) {
-        setMessages(prev => [...prev, {
-          id: assistantId,
-          role: 'assistant',
-          content: "Sorry, I couldn't connect right now. Please try again.",
-        }]);
-      }
-    } finally {
+
       setIsStreaming(false);
+
+      const finalContent = fullContent;
+      setMessages(prev => {
+        const updated = [...prev];
+        const idx = updated.findIndex(m => m.id === assistantId);
+        if (idx !== -1) updated[idx] = { ...updated[idx], content: finalContent };
+        saveChatHistory(updated);
+        return updated;
+      });
+
+      try {
+        const suggestUrl = new URL('/api/coach/suggestions', getApiUrl());
+        const suggestRes = await fetch(suggestUrl.toString(), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ lastAssistantMessage: finalContent, goals }),
+        });
+        const suggestData = await suggestRes.json();
+        const actions: CoachAction[] = suggestData.actions || [];
+        const followups: string[] = suggestData.followups || [];
+
+        setMessages(prev => {
+          const updated = [...prev];
+          const idx = updated.findIndex(m => m.id === assistantId);
+          if (idx !== -1) updated[idx] = { ...updated[idx], actions, followups };
+          saveChatHistory(updated);
+          return updated;
+        });
+      } catch {}
+
+    } catch (error) {
       setShowTyping(false);
+      setIsStreaming(false);
+      const errMsg: ChatMessage = {
+        id: assistantId,
+        role: 'assistant',
+        content: 'Sorry, I had trouble connecting. Please try again.',
+      };
+      setMessages(prev => {
+        const updated = [errMsg, ...prev.filter(m => m.id !== assistantId)];
+        saveChatHistory(updated);
+        return updated;
+      });
     }
-  }, [messages, isStreaming, goals, stats, history]);
+  }, [isStreaming, goals, stats, history, calendarEvents]);
 
-  const handleSend = useCallback(() => {
-    sendMessage(input);
-  }, [input, sendMessage]);
+  const handleClearChat = useCallback(async () => {
+    if (!confirmClear) {
+      setConfirmClear(true);
+      return;
+    }
+    await clearChatHistory();
+    setMessages([]);
+    setConfirmClear(false);
+  }, [confirmClear]);
 
-  const handleSuggestedPrompt = useCallback((prompt: string) => {
-    sendMessage(prompt);
-  }, [sendMessage]);
+  const lastAssistantId = messages.find(m => m.role === 'assistant')?.id;
+  const totalMessages = messages.length;
+  const showDivider = totalMessages > CONTEXT_WINDOW;
 
-  const reversedMessages = [...messages].reverse();
-  const canSend = input.trim().length > 0 && !isStreaming;
+  const listData: (ChatMessage | { type: 'divider'; id: string })[] = showDivider
+    ? [
+        ...messages.slice(0, CONTEXT_WINDOW),
+        { type: 'divider' as const, id: 'divider' },
+        ...messages.slice(CONTEXT_WINDOW),
+      ]
+    : messages;
 
-  const topPad = insets.top + (Platform.OS === 'web' ? 67 : 0);
-  const bottomPad = insets.bottom + (Platform.OS === 'web' ? 34 : 0);
+  const renderItem = useCallback(({ item, index }: { item: ChatMessage | { type: 'divider'; id: string }; index: number }) => {
+    if ('type' in item && item.type === 'divider') {
+      return (
+        <View style={styles.dividerRow}>
+          <View style={styles.dividerLine} />
+          <Text style={styles.dividerText}>Earlier messages not sent to coach</Text>
+          <View style={styles.dividerLine} />
+        </View>
+      );
+    }
+    const msg = item as ChatMessage;
+    const prevItem = index > 0 ? listData[index - 1] : null;
+    const prevRole = prevItem && !('type' in prevItem) ? (prevItem as ChatMessage).role : null;
+    const isFirst = msg.role === 'assistant' && prevRole !== 'assistant';
+    return (
+      <MessageBubble
+        message={msg}
+        isFirst={isFirst}
+        isLastAssistant={msg.role === 'assistant' && msg.id === lastAssistantId}
+        goals={goals}
+        onFollowup={sendMessage}
+      />
+    );
+  }, [listData, lastAssistantId, goals, sendMessage]);
+
+  const isEmpty = messages.length === 0 && !isStreaming;
+
+  const bottomPad = Platform.OS === 'web' ? 34 : insets.bottom;
 
   return (
     <KeyboardAvoidingView
@@ -203,86 +394,80 @@ export default function InsightsScreen() {
       behavior="padding"
       keyboardVerticalOffset={0}
     >
-      <View style={[styles.header, { paddingTop: topPad + 12 }]}>
-        <Text style={styles.headerTitle}>Coach</Text>
-        <View style={styles.statsRow}>
-          <View style={styles.statPill}>
-            <Ionicons name="flame-outline" size={13} color={Colors.error} />
-            <Text style={styles.statPillText}>{stats.streak} day streak</Text>
-          </View>
-          <View style={styles.statPill}>
-            <Ionicons name="checkmark-circle-outline" size={13} color={Colors.success} />
-            <Text style={styles.statPillText}>{stats.totalCompleted} done</Text>
-          </View>
-          <View style={styles.statPill}>
-            <Ionicons name="star-outline" size={13} color={Colors.warning} />
-            <Text style={styles.statPillText}>{stats.xp || 0} XP</Text>
-          </View>
+      <View style={[styles.header, { paddingTop: topPad + 16 }]}>
+        <View style={styles.headerLeft}>
+          <Ionicons name="sparkles-outline" size={20} color={Colors.primary} />
+          <Text style={styles.headerTitle}>Coach</Text>
         </View>
+        <Pressable
+          style={styles.clearBtn}
+          onPress={handleClearChat}
+        >
+          {confirmClear ? (
+            <Text style={styles.clearConfirmText}>Clear?</Text>
+          ) : (
+            <Ionicons name="create-outline" size={20} color={Colors.textSecondary} />
+          )}
+        </Pressable>
       </View>
 
-      <FlatList
-        ref={flatListRef}
-        data={reversedMessages}
-        keyExtractor={(item) => item.id}
-        renderItem={({ item, index }) => (
-          <MessageBubble
-            message={item}
-            isFirst={item.role === 'assistant' && (index === reversedMessages.length - 1 || reversedMessages[index + 1]?.role === 'user')}
-          />
-        )}
-        inverted={messages.length > 0}
-        ListHeaderComponent={showTyping ? <TypingDots /> : null}
-        ListEmptyComponent={
-          <Animated.View entering={FadeInDown.duration(400)} style={styles.welcomeContainer}>
-            <View style={styles.welcomeIcon}>
-              <Ionicons name="sparkles" size={32} color={Colors.secondary} />
-            </View>
-            <Text style={styles.welcomeTitle}>Your Personal Coach</Text>
-            <Text style={styles.welcomeSubtitle}>
-              I know your goals and how you've been doing. Ask me anything.
-            </Text>
-            <View style={styles.suggestedContainer}>
-              {SUGGESTED_PROMPTS.map((prompt) => (
-                <Pressable
-                  key={prompt}
-                  style={({ pressed }) => [styles.suggestedChip, pressed && styles.suggestedChipPressed]}
-                  onPress={() => handleSuggestedPrompt(prompt)}
-                >
-                  <Text style={styles.suggestedChipText}>{prompt}</Text>
-                  <Ionicons name="arrow-forward-outline" size={14} color={Colors.primary} />
-                </Pressable>
-              ))}
-            </View>
-          </Animated.View>
-        }
-        contentContainerStyle={messages.length === 0 ? styles.emptyContent : styles.chatContent}
-        keyboardDismissMode="interactive"
-        keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}
-      />
+      {isEmpty ? (
+        <Animated.View entering={FadeInDown.duration(400)} style={styles.emptyContainer}>
+          <View style={styles.emptyIconWrap}>
+            <Ionicons name="sparkles-outline" size={32} color={Colors.primary} />
+          </View>
+          <Text style={styles.emptyTitle}>Your AI Coach</Text>
+          <Text style={styles.emptySubtitle}>Ask anything about your goals, habits, and progress.</Text>
+          <View style={styles.suggestedGrid}>
+            {SUGGESTED_PROMPTS.map((prompt, i) => (
+              <Pressable
+                key={i}
+                style={styles.suggestedPill}
+                onPress={() => sendMessage(prompt)}
+              >
+                <Text style={styles.suggestedText}>{prompt}</Text>
+              </Pressable>
+            ))}
+          </View>
+        </Animated.View>
+      ) : (
+        <FlatList
+          ref={flatListRef}
+          data={listData}
+          keyExtractor={(item) => ('id' in item ? item.id : 'divider')}
+          renderItem={renderItem}
+          inverted
+          contentContainerStyle={[styles.listContent, { paddingBottom: 8 }]}
+          showsVerticalScrollIndicator={false}
+          keyboardDismissMode="interactive"
+          keyboardShouldPersistTaps="handled"
+          ListHeaderComponent={showTyping ? <TypingDots /> : null}
+        />
+      )}
 
       <View style={[styles.inputContainer, { paddingBottom: bottomPad + 8 }]}>
         <TextInput
           style={styles.input}
           value={input}
           onChangeText={setInput}
-          placeholder="Ask your coach anything..."
-          placeholderTextColor={Colors.textTertiary}
+          placeholder="Message your coach..."
+          placeholderTextColor={Colors.textSecondary}
           multiline
           maxLength={1000}
-          returnKeyType="default"
-          onSubmitEditing={Platform.OS === 'web' ? handleSend : undefined}
+          editable={!isStreaming}
+          returnKeyType="send"
+          blurOnSubmit={false}
+          onSubmitEditing={() => sendMessage(input)}
         />
         <Pressable
-          style={[styles.sendButton, !canSend && styles.sendButtonDisabled]}
-          onPress={handleSend}
-          disabled={!canSend}
+          style={[styles.sendBtn, (!input.trim() || isStreaming) && styles.sendBtnDisabled]}
+          onPress={() => sendMessage(input)}
+          disabled={!input.trim() || isStreaming}
         >
           {isStreaming ? (
-            <ActivityIndicator size="small" color={Colors.white} />
+            <ActivityIndicator size="small" color="#fff" />
           ) : (
-            <Ionicons name="arrow-up" size={20} color={Colors.white} />
+            <Ionicons name="arrow-up" size={18} color="#fff" />
           )}
         </Pressable>
       </View>
@@ -293,130 +478,67 @@ export default function InsightsScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: Colors.surface,
+    backgroundColor: Colors.background,
   },
   header: {
-    paddingHorizontal: 20,
-    paddingBottom: 12,
-    backgroundColor: Colors.white,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
-  },
-  headerTitle: {
-    fontSize: 22,
-    fontFamily: 'Inter_700Bold',
-    color: Colors.text,
-    marginBottom: 8,
-  },
-  statsRow: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  statPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: Colors.surface,
-    borderRadius: 20,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  statPillText: {
-    fontSize: 12,
-    fontFamily: 'Inter_500Medium',
-    color: Colors.textSecondary,
-  },
-  chatContent: {
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 8,
-  },
-  emptyContent: {
-    flexGrow: 1,
-    paddingHorizontal: 16,
-  },
-  welcomeContainer: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingTop: 60,
-    paddingBottom: 24,
-  },
-  welcomeIcon: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    backgroundColor: Colors.secondary + '15',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 16,
-  },
-  welcomeTitle: {
-    fontSize: 20,
-    fontFamily: 'Inter_700Bold',
-    color: Colors.text,
-    marginBottom: 8,
-  },
-  welcomeSubtitle: {
-    fontSize: 14,
-    fontFamily: 'Inter_400Regular',
-    color: Colors.textSecondary,
-    textAlign: 'center',
-    maxWidth: 260,
-    lineHeight: 20,
-    marginBottom: 28,
-  },
-  suggestedContainer: {
-    width: '100%',
-    gap: 10,
-  },
-  suggestedChip: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: Colors.white,
-    borderRadius: 14,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    borderWidth: 1,
-    borderColor: Colors.border,
+    paddingHorizontal: 20,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+    backgroundColor: Colors.background,
   },
-  suggestedChipPressed: {
-    backgroundColor: Colors.primary + '08',
-    borderColor: Colors.primary + '40',
+  headerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
-  suggestedChipText: {
-    fontSize: 14,
-    fontFamily: 'Inter_500Medium',
+  headerTitle: {
+    fontSize: 20,
+    fontFamily: 'Inter_700Bold',
     color: Colors.text,
-    flex: 1,
-    marginRight: 8,
+  },
+  clearBtn: {
+    padding: 6,
+    minWidth: 44,
+    alignItems: 'flex-end',
+  },
+  clearConfirmText: {
+    fontSize: 14,
+    fontFamily: 'Inter_600SemiBold',
+    color: '#EF4444',
+  },
+  listContent: {
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    flexGrow: 1,
   },
   messageRow: {
-    marginBottom: 12,
-    maxWidth: '85%',
+    marginBottom: 10,
   },
   messageRowUser: {
-    alignSelf: 'flex-end',
+    alignItems: 'flex-end',
   },
   messageRowAssistant: {
-    alignSelf: 'flex-start',
+    alignItems: 'flex-start',
   },
   coachLabel: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
     marginBottom: 4,
-    marginLeft: 4,
   },
   coachLabelText: {
     fontSize: 11,
-    fontFamily: 'Inter_500Medium',
+    fontFamily: 'Inter_600SemiBold',
     color: Colors.secondary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
   },
   bubble: {
+    maxWidth: '85%',
     borderRadius: 18,
     paddingHorizontal: 14,
     paddingVertical: 10,
@@ -426,33 +548,87 @@ const styles = StyleSheet.create({
     borderBottomRightRadius: 4,
   },
   bubbleAssistant: {
-    backgroundColor: Colors.white,
+    backgroundColor: Colors.card,
+    borderBottomLeftRadius: 4,
     borderWidth: 1,
     borderColor: Colors.border,
-    borderBottomLeftRadius: 4,
   },
-  bubbleText: {
-    fontSize: 15,
-    lineHeight: 22,
+  actionRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 6,
+    paddingLeft: 2,
   },
-  bubbleTextUser: {
+  actionPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: '#EEF2FF',
+    borderRadius: 20,
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    borderWidth: 1,
+    borderColor: '#C7D2FE',
+  },
+  actionPillAdded: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#A7F3D0',
+  },
+  actionPillText: {
+    fontSize: 12,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.primary,
+  },
+  actionPillTextAdded: {
+    color: Colors.success,
+  },
+  followupRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 8,
+    paddingLeft: 2,
+  },
+  followupChip: {
+    backgroundColor: Colors.background,
+    borderRadius: 16,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  followupChipText: {
+    fontSize: 12,
     fontFamily: 'Inter_400Regular',
-    color: Colors.white,
+    color: Colors.textSecondary,
   },
-  bubbleTextAssistant: {
+  dividerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 12,
+    gap: 8,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: Colors.border,
+  },
+  dividerText: {
+    fontSize: 11,
     fontFamily: 'Inter_400Regular',
-    color: Colors.text,
+    color: Colors.textSecondary,
   },
   typingBubble: {
     alignSelf: 'flex-start',
-    backgroundColor: Colors.white,
+    backgroundColor: Colors.card,
     borderRadius: 18,
     borderBottomLeftRadius: 4,
-    borderWidth: 1,
-    borderColor: Colors.border,
     paddingHorizontal: 14,
     paddingVertical: 12,
-    marginBottom: 12,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: Colors.border,
   },
   typingDots: {
     flexDirection: 'row',
@@ -463,43 +639,87 @@ const styles = StyleSheet.create({
     width: 7,
     height: 7,
     borderRadius: 3.5,
-    backgroundColor: Colors.textTertiary,
+    backgroundColor: Colors.textSecondary,
+  },
+  emptyContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 32,
+    paddingBottom: 80,
+  },
+  emptyIconWrap: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: '#EEF2FF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
+  },
+  emptyTitle: {
+    fontSize: 22,
+    fontFamily: 'Inter_700Bold',
+    color: Colors.text,
+    marginBottom: 8,
+  },
+  emptySubtitle: {
+    fontSize: 15,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+    textAlign: 'center',
+    marginBottom: 28,
+    lineHeight: 22,
+  },
+  suggestedGrid: {
+    width: '100%',
+    gap: 8,
+  },
+  suggestedPill: {
+    backgroundColor: Colors.card,
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  suggestedText: {
+    fontSize: 14,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.text,
   },
   inputContainer: {
     flexDirection: 'row',
     alignItems: 'flex-end',
-    paddingHorizontal: 12,
-    paddingTop: 8,
-    backgroundColor: Colors.white,
+    paddingHorizontal: 16,
+    paddingTop: 10,
     borderTopWidth: 1,
     borderTopColor: Colors.border,
-    gap: 8,
+    backgroundColor: Colors.background,
+    gap: 10,
   },
   input: {
     flex: 1,
-    backgroundColor: Colors.surface,
+    backgroundColor: Colors.card,
     borderRadius: 22,
-    borderWidth: 1,
-    borderColor: Colors.border,
     paddingHorizontal: 16,
     paddingTop: 10,
     paddingBottom: 10,
     fontSize: 15,
     fontFamily: 'Inter_400Regular',
     color: Colors.text,
-    maxHeight: 120,
-    minHeight: 42,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    maxHeight: 100,
   },
-  sendButton: {
+  sendBtn: {
     width: 40,
     height: 40,
     borderRadius: 20,
     backgroundColor: Colors.primary,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 1,
   },
-  sendButtonDisabled: {
+  sendBtnDisabled: {
     backgroundColor: Colors.border,
   },
 });

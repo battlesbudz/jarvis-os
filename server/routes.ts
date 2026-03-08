@@ -16,7 +16,7 @@ const openai = new OpenAI({
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
 });
 
-function buildCoachSystemPrompt(goals: any[], stats: any, history: any[]): string {
+function buildCoachSystemPrompt(goals: any[], stats: any, history: any[], calendarEvents: any[] = []): string {
   const completedHistory = history.filter((h: any) => h.completed);
   const skippedHistory = history.filter((h: any) => !h.completed);
   const completionRate = history.length > 0
@@ -39,6 +39,10 @@ function buildCoachSystemPrompt(goals: any[], stats: any, history: any[]): strin
   const recentCompleted = completedHistory.slice(0, 8).map((h: any) => h.title).join(', ') || 'none';
   const recentSkipped = skippedHistory.slice(0, 8).map((h: any) => h.title).join(', ') || 'none';
 
+  const calendarText = calendarEvents.length > 0
+    ? calendarEvents.slice(0, 8).map((e: any) => `  - ${e.time ? e.time + ': ' : ''}${e.title}`).join('\n')
+    : '  - No calendar events today';
+
   return `You are GamePlan Coach — a sharp, supportive personal productivity coach embedded in the GamePlan app. You know this user's goals, habits, and patterns intimately. You give specific, actionable advice — not generic motivational fluff.
 
 ## User Profile
@@ -51,6 +55,9 @@ ${strugglingCategories.length > 0 ? `- Struggling most with: ${strugglingCategor
 
 ## Active Goals
 ${goalsText}
+
+## Today's Calendar
+${calendarText}
 
 ## Recent Activity (last 7 days)
 - Completed: ${recentCompleted}
@@ -119,13 +126,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/coach/chat", async (req: Request, res: Response) => {
     try {
-      const { messages, goals, stats, history } = req.body;
+      const { messages, goals, stats, history, calendarEvents } = req.body;
 
       if (!messages || !Array.isArray(messages)) {
         return res.status(400).json({ error: "messages array is required" });
       }
 
-      const systemPrompt = buildCoachSystemPrompt(goals || [], stats || {}, history || []);
+      const systemPrompt = buildCoachSystemPrompt(goals || [], stats || {}, history || [], calendarEvents || []);
 
       res.setHeader('Content-Type', 'text/event-stream');
       res.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -160,6 +167,95 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.write(`data: ${JSON.stringify({ error: "Stream interrupted" })}\n\n`);
         res.end();
       }
+    }
+  });
+
+  app.post("/api/coach/suggestions", async (req: Request, res: Response) => {
+    try {
+      const { lastAssistantMessage, goals } = req.body;
+      if (!lastAssistantMessage) {
+        return res.json({ actions: [], followups: [] });
+      }
+
+      const prompt = `Analyze this coaching message and extract structured suggestions.
+
+Coaching message:
+"${lastAssistantMessage}"
+
+User's active goals:
+${(goals || []).map((g: any) => `- ${g.title} (${g.category})`).join('\n') || 'None set'}
+
+Return a JSON object with:
+1. "actions": array of 0-2 specific, immediately actionable tasks or goals mentioned or implied in the message. Each action: { "type": "task" or "goal", "title": string (concise, starts with verb for tasks), "category": one of "fitness/finance/career/personal/social", "priority": "high"/"medium"/"low" (tasks only), "description": short one-line context }. Only include if genuinely specific and actionable — return empty array if message is conversational.
+2. "followups": array of exactly 3 short follow-up questions (max 7 words each) the user would naturally ask next.
+
+Return ONLY the JSON object.`;
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-5-mini",
+        messages: [{ role: "user", content: prompt }],
+        response_format: { type: "json_object" },
+        max_completion_tokens: 600,
+      });
+
+      const content = response.choices[0]?.message?.content || '{"actions":[],"followups":[]}';
+      try {
+        const parsed = JSON.parse(content);
+        res.json({
+          actions: Array.isArray(parsed.actions) ? parsed.actions.slice(0, 2) : [],
+          followups: Array.isArray(parsed.followups) ? parsed.followups.slice(0, 3) : [],
+        });
+      } catch {
+        res.json({ actions: [], followups: [] });
+      }
+    } catch (error) {
+      console.error("Error generating suggestions:", error);
+      res.json({ actions: [], followups: [] });
+    }
+  });
+
+  app.post("/api/coach/checkin", async (req: Request, res: Response) => {
+    try {
+      const { goals, stats, history } = req.body;
+
+      const completedHistory = (history || []).filter((h: any) => h.completed);
+      const skippedHistory = (history || []).filter((h: any) => !h.completed);
+      const completionRate = history?.length > 0
+        ? Math.round((completedHistory.length / history.length) * 100)
+        : 0;
+      const goalsText = (goals || []).length > 0
+        ? (goals as any[]).map((g: any) => `${g.title}: ${g.current}/${g.target} ${g.unit}`).join(', ')
+        : 'no goals set';
+
+      const prompt = `You are a personal productivity coach. Write a 1-2 sentence daily coaching note for this person.
+
+Their profile:
+- Streak: ${stats?.streak || 0} days, ${completionRate}% task completion this week
+- Goals: ${goalsText}
+- Recently completed: ${completedHistory.slice(0, 4).map((h: any) => h.title).join(', ') || 'nothing yet'}
+- Recently skipped: ${skippedHistory.slice(0, 3).map((h: any) => h.title).join(', ') || 'nothing'}
+
+Write ONE short, specific coaching observation. Be direct — name what's working or what to fix. No greeting, no sign-off.
+
+Return JSON: { "note": "your 1-2 sentence note here" }`;
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-5-mini",
+        messages: [{ role: "user", content: prompt }],
+        response_format: { type: "json_object" },
+        max_completion_tokens: 200,
+      });
+
+      const content = response.choices[0]?.message?.content || '{"note":""}';
+      try {
+        const parsed = JSON.parse(content);
+        res.json({ note: parsed.note || '' });
+      } catch {
+        res.json({ note: '' });
+      }
+    } catch (error) {
+      console.error("Error generating check-in:", error);
+      res.json({ note: '' });
     }
   });
 
