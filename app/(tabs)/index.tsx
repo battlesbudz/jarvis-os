@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   StyleSheet,
   View,
@@ -8,7 +8,6 @@ import {
   Pressable,
   Platform,
   ActivityIndicator,
-  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -49,6 +48,7 @@ export default function TodayScreen() {
   const [logSheetVisible, setLogSheetVisible] = useState(false);
   const [logTask, setLogTask] = useState<Task | null>(null);
   const [logGoal, setLogGoal] = useState<Goal | null>(null);
+  const [confirmingRefresh, setConfirmingRefresh] = useState(false);
 
   const loadData = useCallback(async () => {
     const loadedGoals = await getGoals();
@@ -137,15 +137,19 @@ export default function TodayScreen() {
   }, [plan]);
 
   const handleSmartRefresh = useCallback(() => {
-    Alert.alert(
-      'Replace today\'s tasks?',
-      'Smart Refresh will generate a brand-new plan based on your goals and history. Your current tasks — including any custom steps — will be replaced.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Refresh', style: 'destructive', onPress: runSmartRefresh },
-      ]
-    );
+    if (generatingAI) return;
+    setConfirmingRefresh(true);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  }, [generatingAI]);
+
+  const handleConfirmRefresh = useCallback(() => {
+    setConfirmingRefresh(false);
+    runSmartRefresh();
   }, [runSmartRefresh]);
+
+  const handleCancelRefresh = useCallback(() => {
+    setConfirmingRefresh(false);
+  }, []);
 
   const handleToggleTask = useCallback(async (taskId: string, completed: boolean) => {
     if (!plan) return;
@@ -282,21 +286,44 @@ export default function TodayScreen() {
         </Animated.View>
 
         <Animated.View entering={FadeInDown.duration(400).delay(350)}>
-          <Pressable
-            onPress={handleSmartRefresh}
-            disabled={generatingAI}
-            style={({ pressed }) => [styles.smartRefreshButton, pressed && { opacity: 0.85 }, generatingAI && { opacity: 0.7 }]}
-            testID="smart-refresh"
-          >
-            {generatingAI ? (
-              <ActivityIndicator size="small" color={Colors.white} />
-            ) : (
-              <Ionicons name="sparkles" size={16} color={Colors.white} />
-            )}
-            <Text style={styles.smartRefreshText}>
-              {generatingAI ? 'Generating...' : 'Smart Refresh'}
-            </Text>
-          </Pressable>
+          {confirmingRefresh ? (
+            <View style={styles.confirmRow}>
+              <Text style={styles.confirmText}>Replace today's tasks?</Text>
+              <View style={styles.confirmButtons}>
+                <Pressable
+                  onPress={handleCancelRefresh}
+                  style={({ pressed }) => [styles.confirmCancel, pressed && { opacity: 0.7 }]}
+                  testID="smart-refresh-cancel"
+                >
+                  <Text style={styles.confirmCancelText}>Cancel</Text>
+                </Pressable>
+                <Pressable
+                  onPress={handleConfirmRefresh}
+                  style={({ pressed }) => [styles.confirmGo, pressed && { opacity: 0.85 }]}
+                  testID="smart-refresh-confirm"
+                >
+                  <Ionicons name="sparkles" size={14} color={Colors.white} />
+                  <Text style={styles.confirmGoText}>Yes, refresh</Text>
+                </Pressable>
+              </View>
+            </View>
+          ) : (
+            <Pressable
+              onPress={handleSmartRefresh}
+              disabled={generatingAI}
+              style={({ pressed }) => [styles.smartRefreshButton, pressed && { opacity: 0.85 }, generatingAI && { opacity: 0.7 }]}
+              testID="smart-refresh"
+            >
+              {generatingAI ? (
+                <ActivityIndicator size="small" color={Colors.white} />
+              ) : (
+                <Ionicons name="sparkles" size={16} color={Colors.white} />
+              )}
+              <Text style={styles.smartRefreshText}>
+                {generatingAI ? 'Generating...' : 'Smart Refresh'}
+              </Text>
+            </Pressable>
+          )}
         </Animated.View>
 
         {incompleteTasks.length > 0 ? (
@@ -444,6 +471,53 @@ const styles = StyleSheet.create({
     marginBottom: 24,
   },
   smartRefreshText: {
+    fontSize: 14,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.white,
+  },
+  confirmRow: {
+    backgroundColor: Colors.white,
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 24,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    gap: 12,
+  },
+  confirmText: {
+    fontSize: 14,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.text,
+    textAlign: 'center',
+  },
+  confirmButtons: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  confirmCancel: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: Colors.border,
+    alignItems: 'center',
+  },
+  confirmCancelText: {
+    fontSize: 14,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.textSecondary,
+  },
+  confirmGo: {
+    flex: 2,
+    flexDirection: 'row',
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: Colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  confirmGoText: {
     fontSize: 14,
     fontFamily: 'Inter_600SemiBold',
     color: Colors.white,
