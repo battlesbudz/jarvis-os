@@ -31,18 +31,18 @@ function SubtaskRow({ subtask, onToggle }: { subtask: Task; onToggle: (id: strin
 
   return (
     <Animated.View style={animatedStyle}>
-      <Pressable
-        onPress={handlePress}
-        style={({ pressed }) => [styles.subtaskRow, pressed && { opacity: 0.85 }]}
-        testID={`subtask-${subtask.id}`}
-      >
-        <View style={[styles.subtaskCheck, subtask.completed && { backgroundColor: categoryColor, borderColor: categoryColor }]}>
+      <View style={styles.subtaskRow} testID={`subtask-${subtask.id}`}>
+        <Pressable
+          onPress={handlePress}
+          hitSlop={8}
+          style={[styles.subtaskCheck, subtask.completed && { backgroundColor: categoryColor, borderColor: categoryColor }]}
+        >
           {subtask.completed && <Ionicons name="checkmark" size={10} color={Colors.white} />}
-        </View>
+        </Pressable>
         <Text style={[styles.subtaskText, subtask.completed && styles.subtaskTextDone]} numberOfLines={2}>
           {subtask.title}
         </Text>
-      </Pressable>
+      </View>
     </Animated.View>
   );
 }
@@ -55,7 +55,7 @@ export default function TaskCard({ task, onToggle, onResize }: TaskCardProps) {
     transform: [{ scale: scale.value }],
   }));
 
-  const handlePress = () => {
+  const handleCheck = () => {
     if (task.subtasks && task.subtasks.length > 0) return;
     scale.value = withSpring(0.95, { damping: 15 }, () => {
       scale.value = withSpring(1);
@@ -77,18 +77,24 @@ export default function TaskCard({ task, onToggle, onResize }: TaskCardProps) {
 
   return (
     <Animated.View style={animatedStyle}>
-      <Pressable
-        onPress={handlePress}
-        style={({ pressed }) => [
+      <View
+        style={[
           styles.container,
           task.completed && styles.completedContainer,
-          pressed && !hasSubtasks && { opacity: 0.9 },
         ]}
         testID={`task-${task.id}`}
       >
-        <View style={[styles.checkCircle, task.completed && { backgroundColor: categoryColor, borderColor: categoryColor }]}>
+        <Pressable
+          onPress={handleCheck}
+          hitSlop={4}
+          style={[styles.checkCircle, task.completed && { backgroundColor: categoryColor, borderColor: categoryColor }]}
+          disabled={!!hasSubtasks}
+          testID={`check-${task.id}`}
+          accessibilityLabel={task.completed ? 'Mark incomplete' : 'Mark complete'}
+          accessibilityRole="checkbox"
+        >
           {task.completed && <Ionicons name="checkmark" size={14} color={Colors.white} />}
-        </View>
+        </Pressable>
         <View style={styles.content}>
           <View style={styles.topRow}>
             <Text style={[styles.title, task.completed && styles.completedText]} numberOfLines={1}>
@@ -140,7 +146,7 @@ export default function TaskCard({ task, onToggle, onResize }: TaskCardProps) {
             </View>
           ) : null}
         </View>
-      </Pressable>
+      </View>
     </Animated.View>
   );
 }

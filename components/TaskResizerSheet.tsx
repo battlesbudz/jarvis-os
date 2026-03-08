@@ -7,6 +7,7 @@ import {
   Modal,
   ActivityIndicator,
   Platform,
+  ScrollView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
@@ -113,58 +114,102 @@ export default function TaskResizerSheet({ visible, task, onClose, onApply }: Ta
             </Pressable>
           </View>
 
-          <View style={styles.taskPreview}>
-            <View style={[styles.taskDot, { backgroundColor: Colors.primary }]} />
-            <Text style={styles.taskPreviewText} numberOfLines={2}>{task.title}</Text>
-          </View>
-
-          <View style={styles.directionRow}>
-            <Pressable
-              onPress={() => { setDirection('smaller'); Haptics.selectionAsync(); setSteps([]); }}
-              style={[styles.directionButton, direction === 'smaller' && styles.directionActive]}
-            >
-              <Ionicons name="git-branch-outline" size={18} color={direction === 'smaller' ? Colors.white : Colors.textSecondary} />
-              <Text style={[styles.directionText, direction === 'smaller' && styles.directionTextActive]}>
-                Make Smaller
-              </Text>
-            </Pressable>
-            <Pressable
-              onPress={() => { setDirection('bigger'); Haptics.selectionAsync(); setSteps([]); }}
-              style={[styles.directionButton, direction === 'bigger' && styles.directionActive]}
-            >
-              <Ionicons name="git-merge-outline" size={18} color={direction === 'bigger' ? Colors.white : Colors.textSecondary} />
-              <Text style={[styles.directionText, direction === 'bigger' && styles.directionTextActive]}>
-                Simplify
-              </Text>
-            </Pressable>
-          </View>
-
-          {direction === 'smaller' && (
-            <View style={styles.sliderSection}>
-              <View style={styles.sliderHeader}>
-                <Text style={styles.sliderLabel}>Detail Level</Text>
-                <Text style={styles.sliderValue}>{DETAIL_LABELS[detailLevel - 1]}</Text>
-              </View>
-              <Text style={styles.sliderDescription}>{DETAIL_DESCRIPTIONS[detailLevel - 1]}</Text>
-              <View style={styles.sliderTrack}>
-                {[1, 2, 3, 4, 5].map((level) => (
-                  <Pressable
-                    key={level}
-                    onPress={() => { setDetailLevel(level); Haptics.selectionAsync(); setSteps([]); }}
-                    style={styles.sliderDotContainer}
-                  >
-                    <View style={[
-                      styles.sliderDot,
-                      level <= detailLevel && styles.sliderDotActive,
-                      level === detailLevel && styles.sliderDotCurrent,
-                    ]} />
-                  </Pressable>
-                ))}
-                <View style={styles.sliderLine} />
-                <View style={[styles.sliderLineFill, { width: `${((detailLevel - 1) / 4) * 100}%` }]} />
-              </View>
+          <ScrollView
+            style={styles.scrollArea}
+            contentContainerStyle={styles.scrollContent}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+          >
+            <View style={styles.taskPreview}>
+              <View style={[styles.taskDot, { backgroundColor: Colors.primary }]} />
+              <Text style={styles.taskPreviewText} numberOfLines={2}>{task.title}</Text>
             </View>
-          )}
+
+            <View style={styles.directionRow}>
+              <Pressable
+                onPress={() => { setDirection('smaller'); Haptics.selectionAsync(); setSteps([]); }}
+                style={[styles.directionButton, direction === 'smaller' && styles.directionActive]}
+              >
+                <Ionicons name="git-branch-outline" size={18} color={direction === 'smaller' ? Colors.white : Colors.textSecondary} />
+                <Text style={[styles.directionText, direction === 'smaller' && styles.directionTextActive]}>
+                  Make Smaller
+                </Text>
+              </Pressable>
+              <Pressable
+                onPress={() => { setDirection('bigger'); Haptics.selectionAsync(); setSteps([]); }}
+                style={[styles.directionButton, direction === 'bigger' && styles.directionActive]}
+              >
+                <Ionicons name="git-merge-outline" size={18} color={direction === 'bigger' ? Colors.white : Colors.textSecondary} />
+                <Text style={[styles.directionText, direction === 'bigger' && styles.directionTextActive]}>
+                  Simplify
+                </Text>
+              </Pressable>
+            </View>
+
+            {direction === 'smaller' && (
+              <View style={styles.sliderSection}>
+                <View style={styles.sliderHeader}>
+                  <Text style={styles.sliderLabel}>Detail Level</Text>
+                  <Text style={styles.sliderValue}>{DETAIL_LABELS[detailLevel - 1]}</Text>
+                </View>
+                <Text style={styles.sliderDescription}>{DETAIL_DESCRIPTIONS[detailLevel - 1]}</Text>
+                <View style={styles.sliderTrack}>
+                  {[1, 2, 3, 4, 5].map((level) => (
+                    <Pressable
+                      key={level}
+                      onPress={() => { setDetailLevel(level); Haptics.selectionAsync(); setSteps([]); }}
+                      style={styles.sliderDotContainer}
+                    >
+                      <View style={[
+                        styles.sliderDot,
+                        level <= detailLevel && styles.sliderDotActive,
+                        level === detailLevel && styles.sliderDotCurrent,
+                      ]} />
+                    </Pressable>
+                  ))}
+                  <View style={styles.sliderLine} />
+                  <View style={[styles.sliderLineFill, { width: `${((detailLevel - 1) / 4) * 100}%` }]} />
+                </View>
+              </View>
+            )}
+
+            {loading && (
+              <View style={styles.loadingContainer}>
+                <ActivityIndicator size="small" color={Colors.primary} />
+                <Text style={styles.loadingText}>Thinking...</Text>
+              </View>
+            )}
+
+            {error && (
+              <View style={styles.errorContainer}>
+                <Ionicons name="alert-circle-outline" size={20} color={Colors.error} />
+                <Text style={styles.errorText}>{error}</Text>
+                <Pressable onPress={handleGenerate} style={styles.retryButton}>
+                  <Text style={styles.retryButtonText}>Try again</Text>
+                </Pressable>
+              </View>
+            )}
+
+            {steps.length > 0 && (
+              <View style={styles.stepsContainer}>
+                <Text style={styles.stepsHeader}>
+                  {direction === 'smaller' ? 'Broken down into:' : 'Simplified to:'}
+                </Text>
+                {steps.map((step, index) => (
+                  <Animated.View
+                    key={index}
+                    entering={FadeInDown.duration(300).delay(index * 60)}
+                    style={styles.stepRow}
+                  >
+                    <View style={styles.stepBullet}>
+                      <Text style={styles.stepNumber}>{index + 1}</Text>
+                    </View>
+                    <Text style={styles.stepText}>{step}</Text>
+                  </Animated.View>
+                ))}
+              </View>
+            )}
+          </ScrollView>
 
           {!loading && steps.length === 0 && !error && (
             <Pressable
@@ -178,57 +223,22 @@ export default function TaskResizerSheet({ visible, task, onClose, onApply }: Ta
             </Pressable>
           )}
 
-          {loading && (
-            <View style={styles.loadingContainer}>
-              <ActivityIndicator size="small" color={Colors.primary} />
-              <Text style={styles.loadingText}>Thinking...</Text>
-            </View>
-          )}
-
-          {error && (
-            <View style={styles.errorContainer}>
-              <Ionicons name="alert-circle-outline" size={20} color={Colors.error} />
-              <Text style={styles.errorText}>{error}</Text>
-              <Pressable onPress={handleGenerate} style={styles.retryButton}>
-                <Text style={styles.retryButtonText}>Try again</Text>
-              </Pressable>
-            </View>
-          )}
-
           {steps.length > 0 && (
-            <View style={styles.stepsContainer}>
-              <Text style={styles.stepsHeader}>
-                {direction === 'smaller' ? 'Broken down into:' : 'Simplified to:'}
-              </Text>
-              {steps.map((step, index) => (
-                <Animated.View
-                  key={index}
-                  entering={FadeInDown.duration(300).delay(index * 60)}
-                  style={styles.stepRow}
-                >
-                  <View style={styles.stepBullet}>
-                    <Text style={styles.stepNumber}>{index + 1}</Text>
-                  </View>
-                  <Text style={styles.stepText}>{step}</Text>
-                </Animated.View>
-              ))}
-
-              <View style={styles.actionRow}>
-                <Pressable
-                  onPress={handleGenerate}
-                  style={({ pressed }) => [styles.regenerateButton, pressed && { opacity: 0.8 }]}
-                >
-                  <Ionicons name="refresh-outline" size={16} color={Colors.primary} />
-                  <Text style={styles.regenerateText}>Regenerate</Text>
-                </Pressable>
-                <Pressable
-                  onPress={handleApply}
-                  style={({ pressed }) => [styles.applyButton, pressed && { opacity: 0.9 }]}
-                >
-                  <Ionicons name="checkmark" size={18} color={Colors.white} />
-                  <Text style={styles.applyButtonText}>Apply</Text>
-                </Pressable>
-              </View>
+            <View style={styles.actionRow}>
+              <Pressable
+                onPress={handleGenerate}
+                style={({ pressed }) => [styles.regenerateButton, pressed && { opacity: 0.8 }]}
+              >
+                <Ionicons name="refresh-outline" size={16} color={Colors.primary} />
+                <Text style={styles.regenerateText}>Regenerate</Text>
+              </Pressable>
+              <Pressable
+                onPress={handleApply}
+                style={({ pressed }) => [styles.applyButton, pressed && { opacity: 0.9 }]}
+              >
+                <Ionicons name="checkmark" size={18} color={Colors.white} />
+                <Text style={styles.applyButtonText}>Apply to task</Text>
+              </Pressable>
             </View>
           )}
         </View>
@@ -249,6 +259,12 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 24,
     paddingHorizontal: 24,
     maxHeight: '88%',
+  },
+  scrollArea: {
+    flexShrink: 1,
+  },
+  scrollContent: {
+    paddingBottom: 8,
   },
   handle: {
     width: 40,
@@ -481,7 +497,10 @@ const styles = StyleSheet.create({
   actionRow: {
     flexDirection: 'row',
     gap: 10,
-    marginTop: 16,
+    paddingTop: 14,
+    marginTop: 4,
+    borderTopWidth: 1,
+    borderTopColor: Colors.borderLight,
   },
   regenerateButton: {
     flex: 1,
