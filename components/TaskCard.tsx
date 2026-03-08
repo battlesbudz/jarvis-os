@@ -4,7 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import Animated, { useAnimatedStyle, withSpring, useSharedValue, FadeInDown } from 'react-native-reanimated';
 import Colors from '@/constants/colors';
-import { Task, calculateTaskXp } from '@/lib/storage';
+import { Task, calculateTaskXp, xpForSubtask } from '@/lib/storage';
 import { getCategoryColor, getCategoryLabel } from '@/lib/helpers';
 
 interface TaskCardProps {
@@ -13,7 +13,7 @@ interface TaskCardProps {
   onResize?: (task: Task) => void;
 }
 
-function SubtaskRow({ subtask, onToggle }: { subtask: Task; onToggle: (id: string, completed: boolean) => void }) {
+function SubtaskRow({ subtask, onToggle, xpValue }: { subtask: Task; onToggle: (id: string, completed: boolean) => void; xpValue?: number }) {
   const scale = useSharedValue(1);
   const categoryColor = getCategoryColor(subtask.category);
 
@@ -29,7 +29,7 @@ function SubtaskRow({ subtask, onToggle }: { subtask: Task; onToggle: (id: strin
     onToggle(subtask.id, !subtask.completed);
   };
 
-  const subtaskXp = calculateTaskXp(subtask);
+  const subtaskXp = xpValue ?? calculateTaskXp(subtask);
 
   return (
     <Animated.View style={animatedStyle}>
@@ -82,6 +82,7 @@ export default function TaskCard({ task, onToggle, onResize }: TaskCardProps) {
   const subtasksDone = hasSubtasks ? task.subtasks!.filter(s => s.completed).length : 0;
   const subtasksTotal = hasSubtasks ? task.subtasks!.length : 0;
   const taskXp = calculateTaskXp(task);
+  const perSubtaskXp = hasSubtasks ? xpForSubtask(taskXp, subtasksTotal) : undefined;
 
   return (
     <Animated.View style={animatedStyle}>
@@ -159,7 +160,7 @@ export default function TaskCard({ task, onToggle, onResize }: TaskCardProps) {
             <View style={styles.subtasksContainer}>
               {task.subtasks!.map((st, idx) => (
                 <Animated.View key={st.id} entering={FadeInDown.duration(250).delay(idx * 40)}>
-                  <SubtaskRow subtask={st} onToggle={onToggle} />
+                  <SubtaskRow subtask={st} onToggle={onToggle} xpValue={perSubtaskXp} />
                 </Animated.View>
               ))}
             </View>

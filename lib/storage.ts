@@ -210,6 +210,10 @@ export function calculateTaskXp(task: { priority: 'high' | 'medium' | 'low'; goa
   return xpForTask(task.priority, !!task.goalId);
 }
 
+export function xpForSubtask(parentXp: number, subtaskCount: number): number {
+  return Math.max(1, Math.floor(parentXp / subtaskCount));
+}
+
 export function checkAutoAwardBadges(stats: UserStats): BadgeId[] {
   const newBadges: BadgeId[] = [];
   const has = (id: BadgeId) => stats.badges.includes(id);
@@ -638,10 +642,11 @@ export async function claimReward(rewardId: string): Promise<void> {
 
 export async function incrementStats(
   priority: 'high' | 'medium' | 'low' = 'medium',
-  isGoalLinked = false
+  isGoalLinked = false,
+  xpOverride?: number
 ): Promise<{ stats: UserStats; xpEarned: number; newBadges: BadgeId[] }> {
   const stats = await getStats();
-  const xpEarned = xpForTask(priority, isGoalLinked);
+  const xpEarned = xpOverride ?? xpForTask(priority, isGoalLinked);
   stats.totalCompleted += 1;
   stats.streak += 1;
   stats.xp = (stats.xp || 0) + xpEarned;

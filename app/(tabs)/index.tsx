@@ -32,6 +32,8 @@ import {
   incrementStats,
   awardBadge,
   decrementStats,
+  calculateTaskXp,
+  xpForSubtask,
   ALL_BADGES,
   type DayPlan,
   type Goal,
@@ -234,7 +236,15 @@ export default function TodayScreen() {
     if (completed) {
       const isGoalLinked = !!(matchedTask?.goalId);
       const priority = matchedTask?.priority ?? 'medium';
-      const { xpEarned: earned, newBadges } = await incrementStats(priority, isGoalLinked);
+      let xpOverride: number | undefined;
+      if (matchedTask?.isSubtask) {
+        const parentTask = plan.tasks.find(t => t.subtasks?.some(st => st.id === matchedTask!.id));
+        if (parentTask && parentTask.subtasks && parentTask.subtasks.length > 0) {
+          const parentXp = calculateTaskXp(parentTask);
+          xpOverride = xpForSubtask(parentXp, parentTask.subtasks.length);
+        }
+      }
+      const { xpEarned: earned, newBadges } = await incrementStats(priority, isGoalLinked, xpOverride);
       showXpToast(earned);
 
       if (newBadges.length > 0) {
