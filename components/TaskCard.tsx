@@ -102,8 +102,14 @@ export default function TaskCard({ task, onToggle, onResize }: TaskCardProps) {
             </Text>
             <View style={styles.topActions}>
               {!task.completed && !task.isSubtask && onResize && (
-                <Pressable onPress={handleResize} hitSlop={10} style={styles.resizeButton} testID={`resize-${task.id}`}>
-                  <Ionicons name="git-branch-outline" size={16} color={Colors.textTertiary} />
+                <Pressable
+                  onPress={handleResize}
+                  hitSlop={6}
+                  style={({ pressed }) => [styles.resizeButton, pressed && { opacity: 0.75 }]}
+                  testID={`resize-${task.id}`}
+                >
+                  <Ionicons name="git-branch-outline" size={13} color={Colors.primary} />
+                  <Text style={styles.resizeButtonText}>Resize</Text>
                 </Pressable>
               )}
               <View style={[styles.priorityDot, { backgroundColor: priorityDot }]} />
@@ -191,12 +197,20 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   resizeButton: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: Colors.surface,
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 20,
+    borderWidth: 1.5,
+    borderColor: Colors.primary,
+    backgroundColor: Colors.primary + '12',
+  },
+  resizeButtonText: {
+    fontSize: 11,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.primary,
   },
   title: {
     fontSize: 15,
