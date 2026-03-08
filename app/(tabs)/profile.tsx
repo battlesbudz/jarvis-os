@@ -20,6 +20,9 @@ import {
   getLevelName,
   getXpForNextLevel,
   getAvailableRewards,
+  getDailyXpEarned,
+  DAILY_XP_REQUIRED,
+  getTodayKey,
   ALL_BADGES,
   ALL_REWARDS,
   TIER_COLORS,
@@ -50,6 +53,7 @@ export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
   const [stats, setStats] = useState<UserStats>({
     streak: 0, totalCompleted: 0, bestStreak: 0, xp: 0, badges: [], claimedRewards: [],
+    dailyXpEarned: { date: '', xp: 0 },
   });
   const [calStatus, setCalStatus] = useState<CalendarStatus>({ google: false, outlook: false });
   const [loadingStatus, setLoadingStatus] = useState(true);
@@ -82,6 +86,9 @@ export default function ProfileScreen() {
   const isConnected = (id: 'google' | 'outlook') =>
     id === 'google' ? calStatus.google : calStatus.outlook;
 
+  const todayStr = getTodayKey();
+  const todayXp = getDailyXpEarned(stats);
+
   const claimCounts: Record<string, number> = {};
   const lastClaimedAt: Record<string, string> = {};
   for (const entry of (stats.claimedRewards || [])) {
@@ -91,7 +98,13 @@ export default function ProfileScreen() {
     }
   }
   const availableRewards = getAvailableRewards(stats.xp || 0);
-  const unclaimedAvailable = availableRewards.filter(r => !claimCounts[r.id]);
+  const unclaimedAvailable = availableRewards.filter(r => {
+    const dailyXpMet = todayXp >= DAILY_XP_REQUIRED[r.tier];
+    const claimedToday = (stats.claimedRewards || []).some(
+      e => e.id === r.id && e.claimedAt.startsWith(todayStr)
+    );
+    return dailyXpMet && !claimedToday;
+  });
 
   const handleOpenReward = (reward: Reward) => {
     setSelectedReward(reward);
@@ -214,43 +227,64 @@ export default function ProfileScreen() {
           </Text>
           <View style={styles.rewardsList}>
             {ALL_REWARDS.map((reward) => {
-              const isAvailable = (stats.xp || 0) >= reward.xpRequired;
+              const permanentlyUnlocked = (stats.xp || 0) >= reward.xpRequired;
+              const dailyXpRequired = DAILY_XP_REQUIRED[reward.tier];
+              const dailyXpMet = todayXp >= dailyXpRequired;
+              const claimedToday = (stats.claimedRewards || []).some(
+                e => e.id === reward.id && e.claimedAt.startsWith(todayStr)
+              );
               const count = claimCounts[reward.id] || 0;
               const tierColor = TIER_COLORS[reward.tier];
+
+              const canTap = permanentlyUnlocked && !claimedToday;
+
               return (
                 <Pressable
                   key={reward.id}
-                  style={[styles.rewardRow, !isAvailable && styles.rewardRowLocked]}
-                  onPress={() => isAvailable ? handleOpenReward(reward) : undefined}
-                  disabled={!isAvailable}
+                  style={[styles.rewardRow, !permanentlyUnlocked && styles.rewardRowLocked]}
+                  onPress={() => canTap ? handleOpenReward(reward) : undefined}
+                  disabled={!canTap}
                 >
-                  <View style={[styles.rewardIconCircle, { backgroundColor: isAvailable ? tierColor + '22' : '#F1F5F9' }]}>
+                  <View style={[styles.rewardIconCircle, { backgroundColor: permanentlyUnlocked ? tierColor + '22' : '#F1F5F9' }]}>
                     <Ionicons
                       name={reward.icon as any}
                       size={22}
-                      color={isAvailable ? tierColor : '#CBD5E1'}
+                      color={permanentlyUnlocked ? tierColor : '#CBD5E1'}
                     />
                   </View>
                   <View style={styles.rewardInfo}>
-                    <Text style={[styles.rewardTitle, !isAvailable && styles.rewardTitleLocked]}>
+                    <Text style={[styles.rewardTitle, !permanentlyUnlocked && styles.rewardTitleLocked]}>
                       {reward.title}
                     </Text>
                     <Text style={styles.rewardDesc} numberOfLines={1}>
                       {reward.description}
                     </Text>
-                    {!isAvailable && (
+                    {!permanentlyUnlocked && (
                       <Text style={styles.rewardXp}>{reward.xpRequired} XP to unlock</Text>
                     )}
+                    {permanentlyUnlocked && !claimedToday && !dailyXpMet && (
+                      <Text style={styles.rewardXpEarn}>
+                        {todayXp}/{dailyXpRequired} XP earned today
+                      </Text>
+                    )}
                   </View>
-                  {isAvailable ? (
+                  {!permanentlyUnlocked ? (
+                    <View style={[styles.rewardPill, styles.rewardPillLocked]}>
+                      <Text style={styles.rewardPillTextLocked}>LOCKED</Text>
+                    </View>
+                  ) : claimedToday ? (
+                    <View style={[styles.rewardPill, styles.rewardPillToday]}>
+                      <Text style={styles.rewardPillTextToday}>TODAY</Text>
+                    </View>
+                  ) : !dailyXpMet ? (
+                    <View style={[styles.rewardPill, styles.rewardPillEarn]}>
+                      <Text style={styles.rewardPillTextEarn}>EARN</Text>
+                    </View>
+                  ) : (
                     <View style={[styles.rewardPill, { backgroundColor: tierColor + '22' }]}>
                       <Text style={[styles.rewardPillTextAvail, { color: tierColor }]}>
                         {count > 0 ? `×${count}` : 'CLAIM'}
                       </Text>
-                    </View>
-                  ) : (
-                    <View style={[styles.rewardPill, styles.rewardPillLocked]}>
-                      <Text style={styles.rewardPillTextLocked}>LOCKED</Text>
                     </View>
                   )}
                 </Pressable>
@@ -311,6 +345,12 @@ export default function ProfileScreen() {
         reward={selectedReward}
         claimCount={selectedReward ? (claimCounts[selectedReward.id] || 0) : 0}
         lastClaimedAt={selectedReward ? lastClaimedAt[selectedReward.id] : undefined}
+        dailyXpMet={selectedReward ? todayXp >= DAILY_XP_REQUIRED[selectedReward.tier] : false}
+        dailyXpEarned={todayXp}
+        dailyXpRequired={selectedReward ? DAILY_XP_REQUIRED[selectedReward.tier] : 30}
+        claimedToday={selectedReward
+          ? (stats.claimedRewards || []).some(e => e.id === selectedReward.id && e.claimedAt.startsWith(todayStr))
+          : false}
         onClaim={handleClaimReward}
         onClose={() => { setRewardModalVisible(false); setSelectedReward(null); }}
       />
@@ -617,6 +657,12 @@ const styles = StyleSheet.create({
     color: Colors.textTertiary,
     marginTop: 3,
   },
+  rewardXpEarn: {
+    fontSize: 11,
+    fontFamily: 'Inter_500Medium',
+    color: '#D97706',
+    marginTop: 3,
+  },
   rewardPill: {
     borderRadius: 20,
     paddingHorizontal: 10,
@@ -626,7 +672,10 @@ const styles = StyleSheet.create({
   rewardPillLocked: {
     backgroundColor: '#F1F5F9',
   },
-  rewardPillClaimed: {
+  rewardPillEarn: {
+    backgroundColor: '#FEF3C7',
+  },
+  rewardPillToday: {
     backgroundColor: '#D1FAE5',
   },
   rewardPillTextLocked: {
@@ -635,10 +684,16 @@ const styles = StyleSheet.create({
     color: '#94A3B8',
     letterSpacing: 0.5,
   },
-  rewardPillTextClaimed: {
+  rewardPillTextEarn: {
     fontSize: 10,
     fontFamily: 'Inter_600SemiBold',
-    color: '#10B981',
+    color: '#D97706',
+    letterSpacing: 0.5,
+  },
+  rewardPillTextToday: {
+    fontSize: 10,
+    fontFamily: 'Inter_600SemiBold',
+    color: '#059669',
     letterSpacing: 0.5,
   },
   rewardPillTextAvail: {

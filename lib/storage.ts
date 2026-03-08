@@ -55,6 +55,7 @@ export interface UserStats {
   xp: number;
   badges: string[];
   claimedRewards: Array<{ id: string; claimedAt: string }>;
+  dailyXpEarned: { date: string; xp: number };
 }
 
 export interface Reward {
@@ -115,6 +116,20 @@ export const ALL_REWARDS: Reward[] = [
 
 export function getAvailableRewards(xp: number): Reward[] {
   return ALL_REWARDS.filter(r => r.xpRequired <= xp).sort((a, b) => a.xpRequired - b.xpRequired);
+}
+
+export const DAILY_XP_REQUIRED: Record<1 | 2 | 3 | 4 | 5, number> = {
+  1: 30,
+  2: 60,
+  3: 100,
+  4: 150,
+  5: 200,
+};
+
+export function getDailyXpEarned(stats: UserStats): number {
+  const today = getTodayKey();
+  if (!stats.dailyXpEarned || stats.dailyXpEarned.date !== today) return 0;
+  return stats.dailyXpEarned.xp;
 }
 
 export type BadgeId =
@@ -583,6 +598,7 @@ export async function togglePlatform(id: string): Promise<void> {
 
 const DEFAULT_STATS: UserStats = {
   streak: 0, totalCompleted: 0, bestStreak: 0, xp: 0, badges: [], claimedRewards: [],
+  dailyXpEarned: { date: '', xp: 0 },
 };
 
 export async function getStats(): Promise<UserStats> {
@@ -597,10 +613,13 @@ export async function getStats(): Promise<UserStats> {
 
 export async function claimReward(rewardId: string): Promise<void> {
   const stats = await getStats();
-  {
-    stats.claimedRewards = [...stats.claimedRewards, { id: rewardId, claimedAt: new Date().toISOString() }];
-    await AsyncStorage.setItem(KEYS.STATS, JSON.stringify(stats));
-  }
+  const todayStr = getTodayKey();
+  const alreadyToday = stats.claimedRewards.some(
+    r => r.id === rewardId && r.claimedAt.startsWith(todayStr)
+  );
+  if (alreadyToday) return;
+  stats.claimedRewards = [...stats.claimedRewards, { id: rewardId, claimedAt: new Date().toISOString() }];
+  await AsyncStorage.setItem(KEYS.STATS, JSON.stringify(stats));
 }
 
 export async function incrementStats(
@@ -613,6 +632,14 @@ export async function incrementStats(
   stats.streak += 1;
   stats.xp = (stats.xp || 0) + xpEarned;
   if (stats.streak > stats.bestStreak) stats.bestStreak = stats.streak;
+
+  const todayKey = getTodayKey();
+  if (!stats.dailyXpEarned || stats.dailyXpEarned.date !== todayKey) {
+    stats.dailyXpEarned = { date: todayKey, xp: xpEarned };
+  } else {
+    stats.dailyXpEarned = { date: todayKey, xp: stats.dailyXpEarned.xp + xpEarned };
+  }
+
   const newBadges = checkAutoAwardBadges(stats);
   stats.badges = [...new Set([...stats.badges, ...newBadges])];
   await AsyncStorage.setItem(KEYS.STATS, JSON.stringify(stats));
