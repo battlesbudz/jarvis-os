@@ -108,7 +108,8 @@ export default function TodayScreen() {
   useFocusEffect(
     useCallback(() => {
       getGoals().then(setGoals);
-    }, [])
+      loadCalendarEvents();
+    }, [loadCalendarEvents])
   );
 
   const onRefresh = useCallback(async () => {
@@ -298,9 +299,21 @@ export default function TodayScreen() {
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />
         }
       >
-        <Animated.View entering={FadeInDown.duration(400).delay(100)}>
-          <Text style={styles.greeting}>{plan.greeting}</Text>
-          <Text style={styles.dateText}>{todayLabel}</Text>
+        <Animated.View entering={FadeInDown.duration(400).delay(100)} style={styles.headerRow}>
+          <View>
+            <Text style={styles.greeting}>{plan.greeting}</Text>
+            <Text style={styles.dateText}>{todayLabel}</Text>
+          </View>
+          <Pressable
+            onPress={async () => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              await loadCalendarEvents();
+            }}
+            style={({ pressed }) => [styles.syncButton, pressed && { opacity: 0.7 }]}
+            testID="sync-calendar"
+          >
+            <Ionicons name="sync-outline" size={20} color={Colors.primary} />
+          </Pressable>
         </Animated.View>
 
         <Animated.View entering={FadeInDown.duration(400).delay(200)} style={styles.progressCard}>
@@ -583,6 +596,20 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontFamily: 'Inter_600SemiBold',
     color: Colors.white,
+  },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 0,
+  },
+  syncButton: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    backgroundColor: Colors.primary + '15',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   section: {
     marginBottom: 20,
