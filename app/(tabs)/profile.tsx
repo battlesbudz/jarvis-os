@@ -21,6 +21,7 @@ import {
   getXpForNextLevel,
   getAvailableRewards,
   getDailyXpEarned,
+  getDailyBudgetRemaining,
   DAILY_XP_REQUIRED,
   getTodayKey,
   ALL_BADGES,
@@ -88,6 +89,7 @@ export default function ProfileScreen() {
 
   const todayStr = getTodayKey();
   const todayXp = getDailyXpEarned(stats);
+  const budgetRemaining = getDailyBudgetRemaining(stats);
 
   const claimCounts: Record<string, number> = {};
   const lastClaimedAt: Record<string, string> = {};
@@ -99,11 +101,11 @@ export default function ProfileScreen() {
   }
   const availableRewards = getAvailableRewards(stats.xp || 0);
   const unclaimedAvailable = availableRewards.filter(r => {
-    const dailyXpMet = todayXp >= DAILY_XP_REQUIRED[r.tier];
+    const canAfford = budgetRemaining >= DAILY_XP_REQUIRED[r.tier];
     const claimedToday = (stats.claimedRewards || []).some(
       e => e.id === r.id && e.claimedAt.startsWith(todayStr)
     );
-    return dailyXpMet && !claimedToday;
+    return canAfford && !claimedToday;
   });
 
   const handleOpenReward = (reward: Reward) => {
@@ -221,22 +223,24 @@ export default function ProfileScreen() {
         <Animated.View entering={FadeInDown.duration(400).delay(350)}>
           <Text style={[styles.sectionTitle, { marginTop: 28 }]}>Rewards</Text>
           <Text style={styles.sectionSubtitle}>
-            {unclaimedAvailable.length > 0
-              ? `${unclaimedAvailable.length} reward${unclaimedAvailable.length !== 1 ? 's' : ''} available to claim`
-              : 'Complete tasks to unlock rewards'}
+            {todayXp === 0
+              ? 'Complete tasks to earn your daily reward budget'
+              : budgetRemaining > 0
+                ? `${budgetRemaining} XP budget remaining today`
+                : 'Daily budget spent — earn more tomorrow'}
           </Text>
           <View style={styles.rewardsList}>
             {ALL_REWARDS.map((reward) => {
               const permanentlyUnlocked = (stats.xp || 0) >= reward.xpRequired;
-              const dailyXpRequired = DAILY_XP_REQUIRED[reward.tier];
-              const dailyXpMet = todayXp >= dailyXpRequired;
+              const tierXpCost = DAILY_XP_REQUIRED[reward.tier];
+              const canAfford = budgetRemaining >= tierXpCost;
+              const budgetDepleted = permanentlyUnlocked && !canAfford && todayXp >= tierXpCost;
               const claimedToday = (stats.claimedRewards || []).some(
                 e => e.id === reward.id && e.claimedAt.startsWith(todayStr)
               );
               const count = claimCounts[reward.id] || 0;
               const tierColor = TIER_COLORS[reward.tier];
-
-              const canTap = permanentlyUnlocked && !claimedToday;
+              const canTap = permanentlyUnlocked && canAfford && !claimedToday;
 
               return (
                 <Pressable
@@ -262,9 +266,14 @@ export default function ProfileScreen() {
                     {!permanentlyUnlocked && (
                       <Text style={styles.rewardXp}>{reward.xpRequired} XP to unlock</Text>
                     )}
-                    {permanentlyUnlocked && !claimedToday && !dailyXpMet && (
+                    {permanentlyUnlocked && !claimedToday && !canAfford && !budgetDepleted && (
                       <Text style={styles.rewardXpEarn}>
-                        {todayXp}/{dailyXpRequired} XP earned today
+                        {todayXp}/{tierXpCost} XP earned today
+                      </Text>
+                    )}
+                    {budgetDepleted && (
+                      <Text style={styles.rewardXpSpent}>
+                        Budget spent on other rewards today
                       </Text>
                     )}
                   </View>
@@ -276,7 +285,11 @@ export default function ProfileScreen() {
                     <View style={[styles.rewardPill, styles.rewardPillToday]}>
                       <Text style={styles.rewardPillTextToday}>TODAY</Text>
                     </View>
-                  ) : !dailyXpMet ? (
+                  ) : budgetDepleted ? (
+                    <View style={[styles.rewardPill, styles.rewardPillSpent]}>
+                      <Text style={styles.rewardPillTextSpent}>SPENT</Text>
+                    </View>
+                  ) : !canAfford ? (
                     <View style={[styles.rewardPill, styles.rewardPillEarn]}>
                       <Text style={styles.rewardPillTextEarn}>EARN</Text>
                     </View>
@@ -345,8 +358,8 @@ export default function ProfileScreen() {
         reward={selectedReward}
         claimCount={selectedReward ? (claimCounts[selectedReward.id] || 0) : 0}
         lastClaimedAt={selectedReward ? lastClaimedAt[selectedReward.id] : undefined}
-        dailyXpMet={selectedReward ? todayXp >= DAILY_XP_REQUIRED[selectedReward.tier] : false}
-        dailyXpEarned={todayXp}
+        canClaim={selectedReward ? budgetRemaining >= DAILY_XP_REQUIRED[selectedReward.tier] : false}
+        budgetRemaining={budgetRemaining}
         dailyXpRequired={selectedReward ? DAILY_XP_REQUIRED[selectedReward.tier] : 30}
         claimedToday={selectedReward
           ? (stats.claimedRewards || []).some(e => e.id === selectedReward.id && e.claimedAt.startsWith(todayStr))
@@ -663,6 +676,12 @@ const styles = StyleSheet.create({
     color: '#D97706',
     marginTop: 3,
   },
+  rewardXpSpent: {
+    fontSize: 11,
+    fontFamily: 'Inter_500Medium',
+    color: '#DC2626',
+    marginTop: 3,
+  },
   rewardPill: {
     borderRadius: 20,
     paddingHorizontal: 10,
@@ -674,6 +693,9 @@ const styles = StyleSheet.create({
   },
   rewardPillEarn: {
     backgroundColor: '#FEF3C7',
+  },
+  rewardPillSpent: {
+    backgroundColor: '#FEE2E2',
   },
   rewardPillToday: {
     backgroundColor: '#D1FAE5',
@@ -688,6 +710,12 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontFamily: 'Inter_600SemiBold',
     color: '#D97706',
+    letterSpacing: 0.5,
+  },
+  rewardPillTextSpent: {
+    fontSize: 10,
+    fontFamily: 'Inter_600SemiBold',
+    color: '#DC2626',
     letterSpacing: 0.5,
   },
   rewardPillTextToday: {

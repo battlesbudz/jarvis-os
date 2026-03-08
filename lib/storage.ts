@@ -132,6 +132,18 @@ export function getDailyXpEarned(stats: UserStats): number {
   return stats.dailyXpEarned.xp;
 }
 
+export function getDailyBudgetRemaining(stats: UserStats): number {
+  const todayXp = getDailyXpEarned(stats);
+  const today = getTodayKey();
+  const spent = (stats.claimedRewards || [])
+    .filter(r => r.claimedAt.startsWith(today))
+    .reduce((sum, claim) => {
+      const reward = ALL_REWARDS.find(r => r.id === claim.id);
+      return sum + (reward ? DAILY_XP_REQUIRED[reward.tier] : 0);
+    }, 0);
+  return Math.max(0, todayXp - spent);
+}
+
 export type BadgeId =
   | 'first_step'
   | 'on_a_roll'

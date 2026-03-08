@@ -28,8 +28,8 @@ interface RewardClaimModalProps {
   onClaim: () => void;
   claimCount: number;
   lastClaimedAt?: string;
-  dailyXpMet: boolean;
-  dailyXpEarned: number;
+  canClaim: boolean;
+  budgetRemaining: number;
   dailyXpRequired: number;
   claimedToday: boolean;
 }
@@ -81,8 +81,8 @@ export default function RewardClaimModal({
   onClaim,
   claimCount,
   lastClaimedAt,
-  dailyXpMet,
-  dailyXpEarned,
+  canClaim,
+  budgetRemaining,
   dailyXpRequired,
   claimedToday,
 }: RewardClaimModalProps) {
@@ -170,10 +170,7 @@ export default function RewardClaimModal({
                 <Ionicons name="moon-outline" size={16} color="#D97706" />
                 <Text style={styles.todayText}>You've claimed this today — come back tomorrow!</Text>
               </View>
-              <Pressable
-                style={[styles.claimBtn, styles.claimBtnDisabled]}
-                disabled
-              >
+              <Pressable style={[styles.claimBtn, styles.claimBtnDisabled]} disabled>
                 <Ionicons name="checkmark-outline" size={18} color="#fff" />
                 <Text style={styles.claimBtnText}>Claimed Today</Text>
               </Pressable>
@@ -181,22 +178,30 @@ export default function RewardClaimModal({
                 <Text style={styles.maybeLaterText}>Close</Text>
               </Pressable>
             </View>
-          ) : !dailyXpMet ? (
+          ) : !canClaim ? (
             <View style={styles.actionBlock}>
               <View style={styles.xpProgressContainer}>
                 <View style={styles.xpProgressBg}>
-                  <View style={[styles.xpProgressFill, { width: `${Math.min(100, Math.round((dailyXpEarned / dailyXpRequired) * 100))}%` as any, backgroundColor: tierColor }]} />
+                  <View style={[styles.xpProgressFill, {
+                    width: `${Math.min(100, Math.round((budgetRemaining / dailyXpRequired) * 100))}%` as any,
+                    backgroundColor: tierColor,
+                  }]} />
                 </View>
-                <Text style={styles.xpProgressText}>
-                  {dailyXpRequired - dailyXpEarned} more XP needed today ({dailyXpEarned}/{dailyXpRequired})
-                </Text>
+                {budgetRemaining === 0 ? (
+                  <Text style={styles.xpProgressText}>
+                    Daily budget spent — complete more tasks to earn budget
+                  </Text>
+                ) : (
+                  <Text style={styles.xpProgressText}>
+                    Costs {dailyXpRequired} XP — {dailyXpRequired - budgetRemaining} more budget needed ({budgetRemaining} remaining)
+                  </Text>
+                )}
               </View>
-              <Pressable
-                style={[styles.claimBtn, styles.claimBtnDisabled]}
-                disabled
-              >
+              <Pressable style={[styles.claimBtn, styles.claimBtnDisabled]} disabled>
                 <Ionicons name="lock-closed-outline" size={18} color="#fff" />
-                <Text style={styles.claimBtnText}>Not Earned Yet</Text>
+                <Text style={styles.claimBtnText}>
+                  {budgetRemaining === 0 ? 'No Budget Left' : 'Not Enough Budget'}
+                </Text>
               </Pressable>
               <Pressable onPress={onClose} style={({ pressed }) => [styles.maybeLater, pressed && { opacity: 0.7 }]}>
                 <Text style={styles.maybeLaterText}>Maybe later</Text>
