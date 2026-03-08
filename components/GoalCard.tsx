@@ -13,9 +13,29 @@ interface GoalCardProps {
   onDelete?: () => void;
 }
 
+const CURRENCY_UNITS = ['$', '£', '€', 'usd', 'dollars', 'dollar'];
+
+function isCurrency(unit: string): boolean {
+  return CURRENCY_UNITS.includes(unit.trim().toLowerCase());
+}
+
+function formatValue(value: number, unit: string): string {
+  const formatted = value.toLocaleString();
+  if (isCurrency(unit)) {
+    const symbol = ['$', '£', '€'].includes(unit.trim()) ? unit.trim() : '$';
+    return `${symbol}${formatted}`;
+  }
+  return formatted;
+}
+
 export default function GoalCard({ goal, onPress, onDelete }: GoalCardProps) {
   const color = getCategoryColor(goal.category);
   const progress = getProgressPercentage(goal.current, goal.target);
+  const currency = isCurrency(goal.unit);
+
+  const currentDisplay = formatValue(goal.current, goal.unit);
+  const targetDisplay = formatValue(goal.target, goal.unit);
+  const unitSuffix = currency ? '' : ` ${goal.unit}`;
 
   return (
     <Pressable
@@ -48,7 +68,7 @@ export default function GoalCard({ goal, onPress, onDelete }: GoalCardProps) {
         </View>
         <Text style={styles.title} numberOfLines={2}>{goal.title}</Text>
         <Text style={styles.progressText}>
-          {goal.current} / {goal.target} {goal.unit}
+          {currentDisplay} / {targetDisplay}{unitSuffix}
         </Text>
       </View>
       <ProgressRing progress={progress} size={56} strokeWidth={4} color={color} />

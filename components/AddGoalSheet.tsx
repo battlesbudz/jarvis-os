@@ -26,6 +26,26 @@ interface AddGoalSheetProps {
 type GoalCategory = 'fitness' | 'finance' | 'career' | 'personal' | 'social';
 const CATEGORIES: GoalCategory[] = ['fitness', 'finance', 'career', 'personal', 'social'];
 
+const UNIT_SUGGESTIONS: Record<GoalCategory, string[]> = {
+  finance: ['$', '£', '€', 'deals', 'clients'],
+  fitness: ['miles', 'km', 'steps', 'workouts', 'lbs'],
+  career: ['applications', 'projects', 'certifications', 'hours'],
+  personal: ['days', 'hours', 'times', 'books'],
+  social: ['meetups', 'calls', 'events', 'days'],
+};
+
+function parseNumber(val: string): number {
+  return parseInt(val.replace(/,/g, ''), 10) || 0;
+}
+
+function formatPreview(val: string, unit: string): string {
+  const num = parseNumber(val);
+  if (!val.trim() || isNaN(num)) return '';
+  const formatted = num.toLocaleString();
+  const isCurrency = ['$', '£', '€'].includes(unit.trim());
+  return isCurrency ? `${unit.trim()}${formatted}` : `${formatted} ${unit.trim()}`.trim();
+}
+
 export default function AddGoalSheet({ visible, onClose, onSave, editGoal }: AddGoalSheetProps) {
   const insets = useSafeAreaInsets();
   const [title, setTitle] = useState('');
@@ -44,6 +64,19 @@ export default function AddGoalSheet({ visible, onClose, onSave, editGoal }: Add
     }
   }, [visible, editGoal]);
 
+  const handleCategoryChange = (cat: GoalCategory) => {
+    setCategory(cat);
+    Haptics.selectionAsync();
+    if (!editGoal && !unit) {
+      setUnit(UNIT_SUGGESTIONS[cat][0]);
+    }
+  };
+
+  const handleUnitChip = (suggestion: string) => {
+    setUnit(suggestion);
+    Haptics.selectionAsync();
+  };
+
   const handleSave = () => {
     if (!title.trim() || !target.trim() || !unit.trim()) return;
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -51,8 +84,8 @@ export default function AddGoalSheet({ visible, onClose, onSave, editGoal }: Add
       id: editGoal?.id || generateId(),
       title: title.trim(),
       category,
-      target: parseInt(target, 10) || 0,
-      current: parseInt(current, 10) || 0,
+      target: parseNumber(target),
+      current: parseNumber(current),
       unit: unit.trim(),
       createdAt: editGoal?.createdAt || new Date().toISOString(),
     });
@@ -64,7 +97,10 @@ export default function AddGoalSheet({ visible, onClose, onSave, editGoal }: Add
     onClose();
   };
 
-  const isValid = title.trim() && target.trim() && unit.trim();
+  const isValid = title.trim() && target.trim() && unit.trim() && parseNumber(target) > 0;
+  const targetPreview = formatPreview(target, unit);
+  const currentPreview = formatPreview(current, unit);
+  const suggestions = UNIT_SUGGESTIONS[category];
 
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
@@ -87,7 +123,7 @@ export default function AddGoalSheet({ visible, onClose, onSave, editGoal }: Add
               style={styles.input}
               value={title}
               onChangeText={setTitle}
-              placeholder="e.g., Run 100 miles this month"
+              placeholder="e.g., Save a million dollars"
               placeholderTextColor={Colors.textTertiary}
             />
 
@@ -99,10 +135,7 @@ export default function AddGoalSheet({ visible, onClose, onSave, editGoal }: Add
                 return (
                   <Pressable
                     key={cat}
-                    onPress={() => {
-                      setCategory(cat);
-                      Haptics.selectionAsync();
-                    }}
+                    onPress={() => handleCategoryChange(cat)}
                     style={[
                       styles.categoryChip,
                       isSelected && { backgroundColor: color + '20', borderColor: color },
@@ -116,6 +149,28 @@ export default function AddGoalSheet({ visible, onClose, onSave, editGoal }: Add
               })}
             </View>
 
+            <Text style={styles.label}>Unit</Text>
+            <View style={styles.unitSuggestions}>
+              {suggestions.map((s) => (
+                <Pressable
+                  key={s}
+                  onPress={() => handleUnitChip(s)}
+                  style={[styles.unitChip, unit === s && styles.unitChipActive]}
+                >
+                  <Text style={[styles.unitChipText, unit === s && styles.unitChipTextActive]}>
+                    {s}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+            <TextInput
+              style={styles.input}
+              value={unit}
+              onChangeText={setUnit}
+              placeholder={suggestions[0]}
+              placeholderTextColor={Colors.textTertiary}
+            />
+
             <View style={styles.row}>
               <View style={styles.halfInput}>
                 <Text style={styles.label}>Target</Text>
@@ -123,32 +178,29 @@ export default function AddGoalSheet({ visible, onClose, onSave, editGoal }: Add
                   style={styles.input}
                   value={target}
                   onChangeText={setTarget}
-                  placeholder="100"
+                  placeholder="1,000,000"
                   placeholderTextColor={Colors.textTertiary}
-                  keyboardType="number-pad"
+                  keyboardType="numeric"
                 />
+                {targetPreview ? (
+                  <Text style={styles.preview}>{targetPreview}</Text>
+                ) : null}
               </View>
               <View style={styles.halfInput}>
-                <Text style={styles.label}>Unit</Text>
+                <Text style={styles.label}>Current</Text>
                 <TextInput
                   style={styles.input}
-                  value={unit}
-                  onChangeText={setUnit}
-                  placeholder="miles"
+                  value={current}
+                  onChangeText={setCurrent}
+                  placeholder="0"
                   placeholderTextColor={Colors.textTertiary}
+                  keyboardType="numeric"
                 />
+                {currentPreview ? (
+                  <Text style={styles.preview}>{currentPreview}</Text>
+                ) : null}
               </View>
             </View>
-
-            <Text style={styles.label}>Current Progress</Text>
-            <TextInput
-              style={styles.input}
-              value={current}
-              onChangeText={setCurrent}
-              placeholder="0"
-              placeholderTextColor={Colors.textTertiary}
-              keyboardType="number-pad"
-            />
 
             <Pressable
               onPress={handleSave}
@@ -181,7 +233,7 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     paddingHorizontal: 24,
-    maxHeight: '85%',
+    maxHeight: '90%',
   },
   handle: {
     width: 40,
@@ -221,6 +273,13 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.borderLight,
   },
+  preview: {
+    fontSize: 12,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.primary,
+    marginTop: 5,
+    marginLeft: 4,
+  },
   categoryRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -238,6 +297,33 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontFamily: 'Inter_500Medium',
     color: Colors.textSecondary,
+  },
+  unitSuggestions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 10,
+  },
+  unitChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+    borderWidth: 1.5,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surface,
+  },
+  unitChipActive: {
+    backgroundColor: Colors.primary + '15',
+    borderColor: Colors.primary,
+  },
+  unitChipText: {
+    fontSize: 13,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.textSecondary,
+  },
+  unitChipTextActive: {
+    color: Colors.primary,
+    fontFamily: 'Inter_700Bold',
   },
   row: {
     flexDirection: 'row',
