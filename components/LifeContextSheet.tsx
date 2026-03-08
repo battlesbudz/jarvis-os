@@ -82,6 +82,7 @@ export default function LifeContextSheet({ visible, existing, onComplete, onClos
 
   const currentQ = QUESTIONS[step];
   const currentAnswer = answers[currentQ.field] || '';
+  const isFirst = step === 0;
   const isLast = step === QUESTIONS.length - 1;
   const progress = (step + 1) / QUESTIONS.length;
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
@@ -104,6 +105,11 @@ export default function LifeContextSheet({ visible, existing, onComplete, onClos
     }
   };
 
+  const handleBack = () => {
+    setStep(s => s - 1);
+    setKey(k => k + 1);
+  };
+
   const handleSkip = () => {
     setAnswers(prev => ({ ...prev, [currentQ.field]: '' }));
     if (isLast) {
@@ -114,16 +120,36 @@ export default function LifeContextSheet({ visible, existing, onComplete, onClos
     }
   };
 
+  const handleClose = async () => {
+    const hasAnyAnswer = Object.values(answers).some(v => v && v.trim().length > 0);
+    if (hasAnyAnswer) {
+      const ctx: LifeContext = {
+        priorityGoal: answers.priorityGoal || existing?.priorityGoal || '',
+        upcomingDeadline: answers.upcomingDeadline || existing?.upcomingDeadline || '',
+        improvementArea: answers.improvementArea || existing?.improvementArea || '',
+        currentBlocker: answers.currentBlocker || existing?.currentBlocker || '',
+        freeText: answers.freeText || existing?.freeText || '',
+        lastUpdated: new Date().toISOString(),
+      };
+      await saveLifeContext(ctx);
+    }
+    onClose();
+  };
+
   return (
-    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
+    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={handleClose}>
       <KeyboardAvoidingView
         style={styles.container}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
         <View style={[styles.inner, { paddingTop: topPad + 12 }]}>
           <View style={styles.topBar}>
-            <Pressable onPress={onClose} style={styles.closeBtn}>
-              <Ionicons name="close" size={22} color={Colors.textSecondary} />
+            <Pressable onPress={isFirst ? handleClose : handleBack} style={styles.navBtn}>
+              <Ionicons
+                name={isFirst ? 'close' : 'arrow-back'}
+                size={22}
+                color={Colors.textSecondary}
+              />
             </Pressable>
             <Text style={styles.stepIndicator}>{step + 1} of {QUESTIONS.length}</Text>
           </View>
@@ -189,7 +215,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginBottom: 16,
   },
-  closeBtn: {
+  navBtn: {
     padding: 4,
   },
   stepIndicator: {
