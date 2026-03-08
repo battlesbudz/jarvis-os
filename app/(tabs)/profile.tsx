@@ -13,6 +13,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { useFocusEffect } from 'expo-router';
 import Colors from '@/constants/colors';
+import * as Haptics from 'expo-haptics';
 import {
   getStats,
   claimReward,
@@ -32,6 +33,7 @@ import {
   type Reward,
   type LifeContext,
 } from '@/lib/storage';
+import { areNotificationsEnabled, setNotificationsEnabled } from '@/lib/notifications';
 import { getApiUrl } from '@/lib/query-client';
 import RewardClaimModal from '@/components/RewardClaimModal';
 import LifeContextSheet from '@/components/LifeContextSheet';
@@ -66,11 +68,17 @@ export default function ProfileScreen() {
   const [lifeContext, setLifeContext] = useState<LifeContext | null>(null);
   const [sheetVisible, setSheetVisible] = useState(false);
   const [gmailConnected, setGmailConnected] = useState(false);
+  const [notificationsEnabled, setNotificationsEnabledState] = useState(true);
 
   const loadAll = useCallback(async () => {
-    const [s, lc] = await Promise.all([getStats(), getLifeContext()]);
+    const [s, lc, notifications] = await Promise.all([
+      getStats(),
+      getLifeContext(),
+      areNotificationsEnabled()
+    ]);
     setStats(s);
     setLifeContext(lc);
+    setNotificationsEnabledState(notifications);
     try {
       const [calUrl, gmailUrl] = [
         new URL('/api/calendar/status', getApiUrl()),
@@ -130,11 +138,11 @@ export default function ProfileScreen() {
     setRewardModalVisible(true);
   };
 
-  const handleClaimReward = async () => {
-    if (!selectedReward) return;
-    await claimReward(selectedReward.id);
-    const updated = await getStats();
-    setStats(updated);
+  const handleToggleNotifications = async () => {
+    const newValue = !notificationsEnabled;
+    setNotificationsEnabledState(newValue);
+    await setNotificationsEnabled(newValue);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   };
 
   return (
@@ -437,6 +445,32 @@ export default function ProfileScreen() {
           <Text style={styles.connectionHint}>
             To connect or reconnect, open your Replit account integrations.
           </Text>
+        </Animated.View>
+
+        {/* Settings */}
+        <Animated.View entering={FadeInDown.duration(400).delay(480)}>
+          <Text style={[styles.sectionTitle, { marginTop: 28 }]}>Settings</Text>
+          <View style={styles.platformsList}>
+            <Pressable 
+              style={styles.platformRow}
+              onPress={handleToggleNotifications}
+            >
+              <View style={[styles.platformIcon, { backgroundColor: Colors.primary + '15' }]}>
+                <Ionicons name="notifications-outline" size={20} color={Colors.primary} />
+              </View>
+              <View style={styles.platformInfo}>
+                <Text style={styles.platformName}>Daily Reminders</Text>
+                <Text style={styles.platformStatus}>
+                  {notificationsEnabled ? 'Enabled' : 'Disabled'}
+                </Text>
+              </View>
+              <Ionicons 
+                name={notificationsEnabled ? "toggle" : "toggle-outline"} 
+                size={32} 
+                color={notificationsEnabled ? Colors.primary : Colors.border} 
+              />
+            </Pressable>
+          </View>
         </Animated.View>
 
         <Animated.View entering={FadeInDown.duration(400).delay(500)} style={styles.versionRow}>

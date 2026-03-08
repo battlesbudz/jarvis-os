@@ -140,7 +140,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/ai/generate-plan", async (req: Request, res: Response) => {
     try {
-      const { goals, history, dayOfWeek, lifeContext, gmailItems } = req.body;
+      const { goals, history, dayOfWeek, lifeContext, gmailItems, energyCheckin } = req.body;
 
       const result = await generateSmartPlan({
         goals: goals || [],
@@ -148,6 +148,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         dayOfWeek: dayOfWeek || new Date().toLocaleDateString('en-US', { weekday: 'long' }),
         lifeContext: lifeContext || null,
         gmailItems: gmailItems || [],
+        energyCheckin: energyCheckin || null,
       });
 
       res.json(result);

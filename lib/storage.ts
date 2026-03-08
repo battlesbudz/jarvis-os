@@ -242,7 +242,126 @@ const KEYS = {
   CHAT_HISTORY: 'gameplan_chat_history',
   DAILY_CHECKIN: 'gameplan_daily_checkin',
   LIFE_CONTEXT: 'gameplan_life_context',
+  TIMER_SETTINGS: 'gameplan_timer_settings',
+  VIEW_MODE: 'gameplan_view_mode',
+  ENERGY_CHECKIN: 'gameplan_energy_checkin_',
+  BRAIN_DUMP_INBOX: 'gameplan_brain_dump_inbox',
 };
+
+export interface BrainDumpItem {
+  id: string;
+  text: string;
+  createdAt: string;
+}
+
+export async function getBrainDumpInbox(): Promise<BrainDumpItem[]> {
+  try {
+    const raw = await AsyncStorage.getItem(KEYS.BRAIN_DUMP_INBOX);
+    if (!raw) return [];
+    return JSON.parse(raw) as BrainDumpItem[];
+  } catch {
+    return [];
+  }
+}
+
+export async function saveBrainDumpItem(text: string): Promise<void> {
+  try {
+    const inbox = await getBrainDumpInbox();
+    const newItem: BrainDumpItem = {
+      id: generateId(),
+      text,
+      createdAt: new Date().toISOString(),
+    };
+    inbox.push(newItem);
+    await AsyncStorage.setItem(KEYS.BRAIN_DUMP_INBOX, JSON.stringify(inbox));
+  } catch {}
+}
+
+export async function clearBrainDumpItem(id: string): Promise<void> {
+  try {
+    const inbox = await getBrainDumpInbox();
+    const updated = inbox.filter(item => item.id !== id);
+    await AsyncStorage.setItem(KEYS.BRAIN_DUMP_INBOX, JSON.stringify(updated));
+  } catch {}
+}
+
+export async function addTaskToToday(task: Partial<Task>): Promise<void> {
+  try {
+    const goals = await getGoals();
+    const plan = await getTodayPlan(goals);
+    const newTask: Task = {
+      id: generateId(),
+      title: task.title || 'Untitled Task',
+      category: (task.category as any) || 'personal',
+      completed: false,
+      priority: task.priority || 'low',
+      ...task,
+    };
+    plan.tasks.push(newTask);
+    await savePlan(plan);
+  } catch {}
+}
+
+export interface EnergyCheckin {
+  energy: number;
+  focus: string;
+  date: string;
+}
+
+export async function getEnergyCheckin(date?: string): Promise<EnergyCheckin | null> {
+  try {
+    const key = date || getTodayKey();
+    const raw = await AsyncStorage.getItem(KEYS.ENERGY_CHECKIN + key);
+    if (!raw) return null;
+    return JSON.parse(raw) as EnergyCheckin;
+  } catch {
+    return null;
+  }
+}
+
+export async function saveEnergyCheckin(checkin: EnergyCheckin): Promise<void> {
+  try {
+    await AsyncStorage.setItem(KEYS.ENERGY_CHECKIN + checkin.date, JSON.stringify(checkin));
+  } catch {}
+}
+
+export type ViewMode = 'list' | 'timeline';
+
+export async function getViewMode(): Promise<ViewMode> {
+  try {
+    const mode = await AsyncStorage.getItem(KEYS.VIEW_MODE);
+    return (mode as ViewMode) || 'list';
+  } catch {
+    return 'list';
+  }
+}
+
+export async function saveViewMode(mode: ViewMode): Promise<void> {
+  try {
+    await AsyncStorage.setItem(KEYS.VIEW_MODE, mode);
+  } catch {}
+}
+
+export interface TimerSettings {
+  workDuration: number; // in minutes
+  breakDuration: number; // in minutes
+}
+
+export async function getTimerSettings(): Promise<TimerSettings> {
+  try {
+    const raw = await AsyncStorage.getItem(KEYS.TIMER_SETTINGS);
+    if (!raw) return { workDuration: 25, breakDuration: 5 };
+    return JSON.parse(raw);
+  } catch {
+    return { workDuration: 25, breakDuration: 5 };
+  }
+}
+
+export async function saveTimerSettings(settings: TimerSettings): Promise<void> {
+  try {
+    await AsyncStorage.setItem(KEYS.TIMER_SETTINGS, JSON.stringify(settings));
+  } catch {}
+}
 
 export interface LifeContext {
   priorityGoal: string;
@@ -840,4 +959,4 @@ export function getSuggestions(): Suggestion[] {
   return suggestions;
 }
 
-export { generateId, getTodayKey, getGreeting, awardBadge };
+export { generateId, getTodayKey, getGreeting };

@@ -19,6 +19,8 @@ import TaskCard from '@/components/TaskCard';
 import ProgressRing from '@/components/ProgressRing';
 import TaskResizerSheet from '@/components/TaskResizerSheet';
 import LogProgressSheet from '@/components/LogProgressSheet';
+import TimelineView from '@/components/TimelineView';
+import BrainDumpModal from '@/components/BrainDumpModal';
 import {
   getTodayPlan,
   updateTaskCompletion,
@@ -38,14 +40,26 @@ import {
   getDailyCoachNote,
   saveDailyCoachNote,
   getLifeContext,
+  getViewMode,
+  saveViewMode,
   ALL_BADGES,
+  getBrainDumpInbox,
+  saveBrainDumpItem,
+  clearBrainDumpItem,
+  addTaskToToday,
   type DayPlan,
   type Goal,
   type Task,
+  type ViewMode,
+  type BrainDumpItem,
 } from '@/lib/storage';
+import { scheduleAllTaskReminders, requestNotificationPermissions } from '@/lib/notifications';
 import { apiRequest, getApiUrl } from '@/lib/query-client';
 import { formatDate } from '@/lib/helpers';
 import XpToast from '@/components/XpToast';
+import JustOneThingModal from '@/components/JustOneThingModal';
+import EnergyCheckIn from '@/components/EnergyCheckIn';
+import { getEnergyCheckin, type EnergyCheckin } from '@/lib/storage';
 
 export default function TodayScreen() {
   const insets = useSafeAreaInsets();
@@ -66,6 +80,14 @@ export default function TodayScreen() {
   const [badgeToastVisible, setBadgeToastVisible] = useState(false);
   const [badgeToastLabel, setBadgeToastLabel] = useState('');
   const [coachNote, setCoachNote] = useState<string | null>(null);
+  const [brainDumpVisible, setBrainDumpVisible] = useState(false);
+  const [brainDumpInbox, setBrainDumpInbox] = useState<BrainDumpItem[]>([]);
+  const [jotVisible, setJotVisible] = useState(false);
+  const [viewMode, setViewMode] = useState<ViewMode>('list');
+  const [jotTask, setJotTask] = useState<Task | null>(null);
+  const [jotTaskIndex, setJotTaskIndex] = useState(0);
+  const [energyCheckin, setEnergyCheckin] = useState<EnergyCheckin | null>(null);
+  const [energyCheckInVisible, setEnergyCheckInVisible] = useState(false);
 
   const loadCalendarEvents = useCallback(async () => {
     try {
@@ -136,10 +158,35 @@ export default function TodayScreen() {
     setGoals(loadedGoals);
     const todayPlan = await getTodayPlan(loadedGoals);
     setPlan(todayPlan);
+    const [checkin, mode, inbox] = await Promise.all([
+      getEnergyCheckin(),
+      getViewMode(),
+      getBrainDumpInbox()
+    ]);
+    setEnergyCheckin(checkin);
+    if (!checkin) {
+      setEnergyCheckInVisible(true);
+    }
+    setViewMode(mode);
+    setBrainDumpInbox(inbox);
     setLoading(false);
     loadCalendarEvents();
     loadDailyCoachNote(loadedGoals);
+    
+    // Request notification permissions and schedule reminders
+    requestNotificationPermissions().then(granted => {
+      if (granted && todayPlan.tasks.length > 0) {
+        scheduleAllTaskReminders(todayPlan.tasks);
+      }
+    });
   }, [loadCalendarEvents, loadDailyCoachNote]);
+
+  const toggleViewMode = useCallback(async () => {
+    const newMode = viewMode === 'list' ? 'timeline' : 'list';
+    setViewMode(newMode);
+    await saveViewMode(newMode);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  }, [viewMode]);
 
   useEffect(() => {
     loadData();
@@ -190,6 +237,7 @@ export default function TodayScreen() {
         dayOfWeek,
         lifeContext,
         gmailItems,
+        energyCheckin,
       });
       const data = await res.json();
 
@@ -216,6 +264,7 @@ export default function TodayScreen() {
         await savePlan(newPlan);
         setPlan(newPlan);
         setGoals(loadedGoals);
+        scheduleAllTaskReminders(newPlan.tasks);
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       }
     } catch (e) {
@@ -347,6 +396,86 @@ export default function TodayScreen() {
     }
   }, [plan]);
 
+  const handleSaveToToday = useCallback(async (text: string) => {
+    await addTaskToToday({ title: text, category: 'personal', priority: 'low' });
+    const loadedGoals = await getGoals();
+    const todayPlan = await getTodayPlan(loadedGoals);
+    setPlan(todayPlan);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+  }, []);
+
+  const handleSaveToInbox = useCallback(async (text: string) => {
+    await saveBrainDumpItem(text);
+    const inbox = await getBrainDumpInbox();
+    setBrainDumpInbox(inbox);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+  }, []);
+
+  const handlePromoteInboxItem = useCallback(async (item: BrainDumpItem) => {
+    await addTaskToToday({ title: item.text, category: 'personal', priority: 'low' });
+    await clearBrainDumpItem(item.id);
+    const [loadedGoals, inbox] = await Promise.all([getGoals(), getBrainDumpInbox()]);
+    const todayPlan = await getTodayPlan(loadedGoals);
+    setPlan(todayPlan);
+    setBrainDumpInbox(inbox);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+  }, []);
+
+  const handleDismissInboxItem = useCallback(async (id: string) => {
+    await clearBrainDumpItem(id);
+    const inbox = await getBrainDumpInbox();
+    setBrainDumpInbox(inbox);
+  }, []);
+
+  const getJotTasks = useCallback(() => {
+    if (!plan) return [];
+    
+    // Pick incomplete tasks
+    let candidates = plan.tasks.filter(t => !t.completed);
+    
+    // If energy is low (<= 2), prioritize low-priority tasks (which we'll use as a proxy for low-effort)
+    // Actually, T003 says "filter to low-effort tasks when energy <= 2"
+    // Since we don't have an explicit effort field, we use priority 'low' or 'medium' as proxy
+    if (energyCheckin && energyCheckin.energy <= 2) {
+      const lowEffort = candidates.filter(t => t.priority === 'low');
+      if (lowEffort.length > 0) {
+        candidates = lowEffort;
+      } else {
+        const medEffort = candidates.filter(t => t.priority === 'medium');
+        if (medEffort.length > 0) {
+          candidates = medEffort;
+        }
+      }
+    } else {
+      // Normal energy: sort by priority high -> med -> low
+      candidates.sort((a, b) => {
+        const score = { high: 3, medium: 2, low: 1 };
+        return score[b.priority] - score[a.priority];
+      });
+    }
+
+    return candidates;
+  }, [plan, energyCheckin]);
+
+  const handleOpenJot = useCallback(() => {
+    const tasks = getJotTasks();
+    if (tasks.length > 0) {
+      setJotTask(tasks[0]);
+      setJotTaskIndex(0);
+      setJotVisible(true);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    }
+  }, [getJotTasks]);
+
+  const handleJotPickAnother = useCallback(() => {
+    const tasks = getJotTasks();
+    if (tasks.length > 1) {
+      const nextIndex = (jotTaskIndex + 1) % tasks.length;
+      setJotTaskIndex(nextIndex);
+      setJotTask(tasks[nextIndex]);
+    }
+  }, [getJotTasks, jotTaskIndex]);
+
   if (loading || !plan) {
     return (
       <View style={[styles.loadingContainer, { paddingTop: insets.top + (Platform.OS === 'web' ? 67 : 0) }]}>
@@ -395,16 +524,25 @@ export default function TodayScreen() {
             <Text style={styles.greeting}>{plan.greeting}</Text>
             <Text style={styles.dateText}>{todayLabel}</Text>
           </View>
-          <Pressable
-            onPress={async () => {
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-              await loadCalendarEvents();
-            }}
-            style={({ pressed }) => [styles.syncButton, pressed && { opacity: 0.7 }]}
-            testID="sync-calendar"
-          >
-            <Ionicons name="sync-outline" size={20} color={Colors.primary} />
-          </Pressable>
+          <View style={styles.headerActions}>
+            <Pressable
+              onPress={toggleViewMode}
+              style={({ pressed }) => [styles.syncButton, { marginRight: 8 }, pressed && { opacity: 0.7 }]}
+              testID="toggle-view-mode"
+            >
+              <Ionicons name={viewMode === 'list' ? "calendar-outline" : "list-outline"} size={22} color={Colors.primary} />
+            </Pressable>
+            <Pressable
+              onPress={async () => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                await loadCalendarEvents();
+              }}
+              style={({ pressed }) => [styles.syncButton, pressed && { opacity: 0.7 }]}
+              testID="sync-calendar"
+            >
+              <Ionicons name="sync-outline" size={20} color={Colors.primary} />
+            </Pressable>
+          </View>
         </Animated.View>
 
         <Animated.View entering={FadeInDown.duration(400).delay(200)} style={styles.progressCard}>
@@ -484,71 +622,132 @@ export default function TodayScreen() {
           )}
         </Animated.View>
 
-        {incompleteCalEvents.length > 0 ? (
-          <View style={styles.section}>
-            <View style={styles.sectionHeader}>
-              <Ionicons name="calendar" size={15} color="#4285F4" />
-              <Text style={[styles.sectionTitle, { color: '#4285F4' }]}>Today's Events</Text>
-            </View>
-            {incompleteCalEvents.map((event) => (
-              <TaskCard
-                key={event.id}
-                task={event}
-                onToggle={async (id, done) => {
-                  const updated = calendarEvents.map(e => e.id === id ? { ...e, completed: done } : e);
-                  setCalendarEvents(updated);
-                  if (done) {
-                    const { xpEarned: earned } = await incrementStats('high', false);
-                    showXpToast(earned);
-                    await awardBadge('calendar_pro');
-                    // Check perfect day
-                    const allTasksDone = plan?.tasks.every(t =>
-                      t.subtasks?.length ? t.subtasks.every(s => s.completed) : t.completed
-                    ) ?? true;
-                    const allCalDone = updated.every(e => e.completed);
-                    if (allTasksDone && allCalDone) await awardBadge('perfect_day');
-                  } else {
-                    await decrementStats();
-                  }
-                }}
-              />
-            ))}
-          </View>
-        ) : null}
+        {viewMode === 'list' ? (
+          <>
+            {brainDumpInbox.length > 0 ? (
+              <View style={styles.inboxSection}>
+                <View style={styles.sectionHeader}>
+                  <Ionicons name="archive-outline" size={15} color={Colors.textSecondary} />
+                  <Text style={styles.inboxSectionTitle}>Inbox</Text>
+                </View>
+                {brainDumpInbox.map((item) => (
+                  <View key={item.id} style={styles.inboxItem}>
+                    <Text style={styles.inboxItemText}>{item.text}</Text>
+                    <View style={styles.inboxActions}>
+                      <Pressable
+                        onPress={() => handleDismissInboxItem(item.id)}
+                        style={({ pressed }) => [styles.inboxAction, pressed && { opacity: 0.6 }]}
+                      >
+                        <Ionicons name="trash-outline" size={18} color={Colors.textTertiary} />
+                      </Pressable>
+                      <Pressable
+                        onPress={() => handlePromoteInboxItem(item)}
+                        style={({ pressed }) => [styles.inboxAction, styles.promoteAction, pressed && { opacity: 0.8 }]}
+                      >
+                        <Ionicons name="add" size={20} color={Colors.white} />
+                      </Pressable>
+                    </View>
+                  </View>
+                ))}
+              </View>
+            ) : null}
 
-        {incompleteTasks.length > 0 ? (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>To Do</Text>
-            {incompleteTasks.map((task) => (
-              <TaskCard
-                key={task.id}
-                task={task}
-                onToggle={handleToggleTask}
-                onResize={handleOpenResizer}
-              />
-            ))}
-          </View>
-        ) : null}
-
-        {allCompleted.length > 0 ? (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Completed</Text>
-            {allCompleted.map((task) => (
-              <TaskCard
-                key={task.id}
-                task={task}
-                onToggle={task.category === 'calendar'
-                  ? async (id, done) => {
+            {incompleteCalEvents.length > 0 ? (
+              <View style={styles.section}>
+                <View style={styles.sectionHeader}>
+                  <Ionicons name="calendar" size={15} color="#4285F4" />
+                  <Text style={[styles.sectionTitle, { color: '#4285F4' }]}>Today's Events</Text>
+                </View>
+                {incompleteCalEvents.map((event) => (
+                  <TaskCard
+                    key={event.id}
+                    task={event}
+                    onToggle={async (id, done) => {
                       const updated = calendarEvents.map(e => e.id === id ? { ...e, completed: done } : e);
                       setCalendarEvents(updated);
-                      if (!done) await decrementStats();
-                    }
-                  : handleToggleTask}
-                onResize={task.category !== 'calendar' ? handleOpenResizer : undefined}
-              />
-            ))}
-          </View>
-        ) : null}
+                      if (done) {
+                        const { xpEarned: earned } = await incrementStats('high', false);
+                        showXpToast(earned);
+                        await awardBadge('calendar_pro');
+                        // Check perfect day
+                        const allTasksDone = plan?.tasks.every(t =>
+                          t.subtasks?.length ? t.subtasks.every(s => s.completed) : t.completed
+                        ) ?? true;
+                        const allCalDone = updated.every(e => e.completed);
+                        if (allTasksDone && allCalDone) await awardBadge('perfect_day');
+                      } else {
+                        await decrementStats();
+                      }
+                    }}
+                  />
+                ))}
+              </View>
+            ) : null}
+
+            {incompleteTasks.length > 0 ? (
+              <View style={styles.section}>
+                <View style={styles.sectionHeaderRow}>
+                  <Text style={styles.sectionTitle}>To Do</Text>
+                  <Pressable
+                    onPress={handleOpenJot}
+                    style={({ pressed }) => [styles.jotSmallButton, pressed && { opacity: 0.7 }]}
+                  >
+                    <Ionicons name="flash" size={12} color={Colors.primary} />
+                    <Text style={styles.jotSmallButtonText}>Overwhelmed?</Text>
+                  </Pressable>
+                </View>
+                {incompleteTasks.map((task) => (
+                  <TaskCard
+                    key={task.id}
+                    task={task}
+                    onToggle={handleToggleTask}
+                    onResize={handleOpenResizer}
+                  />
+                ))}
+              </View>
+            ) : null}
+
+            {allCompleted.length > 0 ? (
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Completed</Text>
+                {allCompleted.map((task) => (
+                  <TaskCard
+                    key={task.id}
+                    task={task}
+                    onToggle={task.category === 'calendar'
+                      ? async (id, done) => {
+                          const updated = calendarEvents.map(e => e.id === id ? { ...e, completed: done } : e);
+                          setCalendarEvents(updated);
+                          if (!done) await decrementStats();
+                        }
+                      : handleToggleTask}
+                    onResize={task.category !== 'calendar' ? handleOpenResizer : undefined}
+                  />
+                ))}
+              </View>
+            ) : null}
+          </>
+        ) : (
+          <TimelineView
+            tasks={[...calendarEvents, ...plan.tasks]}
+            onToggle={(id, done) => {
+              if (id.startsWith('cal-')) {
+                const updated = calendarEvents.map(e => e.id === id ? { ...e, completed: done } : e);
+                setCalendarEvents(updated);
+                if (done) {
+                  incrementStats('high', false).then(({ xpEarned: earned }) => {
+                    showXpToast(earned);
+                    awardBadge('calendar_pro');
+                  });
+                } else {
+                  decrementStats();
+                }
+              } else {
+                handleToggleTask(id, done);
+              }
+            }}
+          />
+        )}
       </ScrollView>
 
       <TaskResizerSheet
@@ -577,6 +776,37 @@ export default function TodayScreen() {
         label={badgeToastLabel}
         onHide={() => setBadgeToastVisible(false)}
       />
+      <JustOneThingModal
+        visible={jotVisible}
+        task={jotTask}
+        onClose={() => setJotVisible(false)}
+        onComplete={handleToggleTask}
+        onPickAnother={handleJotPickAnother}
+      />
+      <BrainDumpModal
+        visible={brainDumpVisible}
+        onClose={() => setBrainDumpVisible(false)}
+        onSaveToToday={handleSaveToToday}
+        onSaveToInbox={handleSaveToInbox}
+      />
+
+      <EnergyCheckIn
+        visible={energyCheckInVisible}
+        onComplete={(checkin) => {
+          setEnergyCheckInVisible(false);
+          setEnergyCheckin(checkin);
+        }}
+      />
+
+      <Pressable
+        style={[styles.fab, { bottom: (Platform.OS === 'web' ? 34 : 0) + 90 }]}
+        onPress={() => {
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+          setBrainDumpVisible(true);
+        }}
+      >
+        <Ionicons name="add" size={30} color={Colors.white} />
+      </Pressable>
     </View>
   );
 }
@@ -771,6 +1001,67 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  inboxSection: {
+    backgroundColor: Colors.white,
+    borderRadius: 20,
+    padding: 16,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  inboxSectionTitle: {
+    fontSize: 13,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.textSecondary,
+    marginLeft: 4,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  inboxItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.borderLight,
+  },
+  inboxItemText: {
+    flex: 1,
+    fontSize: 15,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.text,
+    marginRight: 12,
+  },
+  inboxActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  inboxAction: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  promoteAction: {
+    backgroundColor: Colors.primary,
+  },
+  fab: {
+    position: 'absolute',
+    right: 20,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: Colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: Colors.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 5,
+  },
   section: {
     marginBottom: 20,
   },
@@ -780,10 +1071,29 @@ const styles = StyleSheet.create({
     gap: 6,
     marginBottom: 12,
   },
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
   sectionTitle: {
     fontSize: 16,
     fontFamily: 'Inter_700Bold',
     color: Colors.text,
-    marginBottom: 12,
+  },
+  jotSmallButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 12,
+    backgroundColor: Colors.primary + '15',
+  },
+  jotSmallButtonText: {
+    fontSize: 12,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.primary,
   },
 });

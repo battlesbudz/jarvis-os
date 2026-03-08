@@ -37,6 +37,7 @@ export interface GeneratePlanRequest {
     freeText?: string;
   } | null;
   gmailItems?: { subject: string; snippet: string; date: string }[];
+  energyCheckin?: { energy: number; focus: string; date: string } | null;
 }
 
 export interface GeneratePlanTask {
@@ -113,10 +114,18 @@ Return ONLY a JSON object with a "steps" array of strings. No other text.`;
 }
 
 export async function generateSmartPlan(req: GeneratePlanRequest): Promise<GeneratePlanResponse> {
-  const { goals, history, dayOfWeek, lifeContext, gmailItems } = req;
+  const { goals, history, dayOfWeek, lifeContext, gmailItems, energyCheckin } = req;
 
   const completedTasks = history.filter(h => h.completed);
   const skippedTasks = history.filter(h => !h.completed);
+
+  const energyFocusText = energyCheckin
+    ? `\nMorning Check-in (Today's state):
+- Energy Level: ${energyCheckin.energy}/5
+- Focus Quality: ${energyCheckin.focus}
+${energyCheckin.energy <= 2 ? "The user has low energy today. Keep the plan very light, focusing only on essential or low-effort tasks." : ""}
+${energyCheckin.focus === 'Low' ? "The user is feeling foggy. Break tasks into even smaller, more manageable steps if possible, or avoid high-complexity deep work." : ""}`
+    : '';
 
   const goalsText = goals.length > 0
     ? goals.map(g => `- [id:${g.id}] ${g.title} (${g.category}): ${g.current}/${g.target} ${g.unit}`).join('\n')
@@ -150,7 +159,7 @@ User's goals:
 ${goalsText}
 
 Recent activity:
-${historyText}${lifeCtxSection}${gmailSection}
+${historyText}${energyFocusText}${lifeCtxSection}${gmailSection}
 
 Create a daily plan with 5-8 tasks. For each task provide:
 - title: short, action-oriented task name

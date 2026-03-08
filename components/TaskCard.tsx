@@ -1,8 +1,9 @@
 import React from 'react';
 import { StyleSheet, View, Text, Pressable } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons, Feather } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import Animated, { useAnimatedStyle, withSpring, useSharedValue, FadeInDown } from 'react-native-reanimated';
+import { useRouter } from 'expo-router';
 import Colors from '@/constants/colors';
 import { Task, calculateTaskXp, xpForSubtask } from '@/lib/storage';
 import { getCategoryColor, getCategoryLabel } from '@/lib/helpers';
@@ -55,6 +56,7 @@ function SubtaskRow({ subtask, onToggle, xpValue }: { subtask: Task; onToggle: (
 }
 
 export default function TaskCard({ task, onToggle, onResize }: TaskCardProps) {
+  const router = useRouter();
   const scale = useSharedValue(1);
   const categoryColor = getCategoryColor(task.category);
 
@@ -74,6 +76,14 @@ export default function TaskCard({ task, onToggle, onResize }: TaskCardProps) {
   const handleResize = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     onResize?.(task);
+  };
+
+  const handleStartTimer = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    router.push({
+      pathname: '/focus-timer' as any,
+      params: { taskTitle: task.title }
+    });
   };
 
   const priorityDot = task.priority === 'high' ? Colors.error : task.priority === 'medium' ? Colors.warning : Colors.textTertiary;
@@ -143,6 +153,17 @@ export default function TaskCard({ task, onToggle, onResize }: TaskCardProps) {
             <View style={[styles.categoryBadge, { backgroundColor: categoryColor + '15' }]}>
               <Text style={[styles.categoryText, { color: categoryColor }]}>{getCategoryLabel(task.category)}</Text>
             </View>
+            {!task.completed && (
+              <Pressable
+                onPress={handleStartTimer}
+                hitSlop={6}
+                style={({ pressed }) => [styles.timerButton, pressed && { opacity: 0.75 }]}
+                testID={`timer-${task.id}`}
+              >
+                <Feather name="clock" size={13} color={Colors.textTertiary} />
+                <Text style={styles.timerButtonText}>Focus</Text>
+              </Pressable>
+            )}
             {!task.completed && !task.isSubtask && onResize && (
               <Pressable
                 onPress={handleResize}
@@ -270,6 +291,22 @@ const styles = StyleSheet.create({
   categoryText: {
     fontSize: 11,
     fontFamily: 'Inter_500Medium',
+  },
+  timerButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.white,
+  },
+  timerButtonText: {
+    fontSize: 11,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.textTertiary,
   },
   priorityDot: {
     width: 8,

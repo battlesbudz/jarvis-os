@@ -50,6 +50,14 @@ A mobile app that generates personalized daily task checklists with AI-powered a
 12. **Life Context** - 5-question onboarding questionnaire (LifeContextSheet modal); answers stored in AsyncStorage; feeds into ALL AI calls (coach chat, plan generation, check-in, suggestions)
 13. **Gmail Integration** - Connected via OAuth; reads recent inbox emails (subject + snippet only); surfaces commitment/deadline signals to AI coach and plan generator
 
+### ADHD / Executive Dysfunction Features
+14. **Energy Check-in** - Morning modal on first daily app open; user selects energy level (1-5) and focus quality (Foggy/Steady/Sharp); stored in AsyncStorage; feeds into AI plan generation to adjust task difficulty. Has "Skip for today" option.
+15. **Quick Capture / Brain Dump** - Floating + button on Today screen; opens BrainDumpModal for rapid thought capture; "Add to Today" creates a task immediately, "Save for Later" stores in inbox; inbox items shown at top of Today screen for later action.
+16. **"Just One Thing" Mode** - "Overwhelmed?" button near task list header; opens JustOneThingModal showing exactly one prioritized task; energy check-in data influences task selection (low energy = low effort tasks); "Done" marks complete, "Pick Another" cycles tasks.
+17. **Focus Timer** - Pomodoro-style timer at `/focus-timer` modal route; 25min work / 5min break cycles; circular progress ring; per-task launch from "Focus" button on TaskCard; haptic feedback + local notifications on session complete; settings persisted in AsyncStorage.
+18. **Visual Time Blocks** - Toggle in Today header switches between list view and timeline view; timeline shows hours 6am–10pm with tasks pinned to their scheduled time; unscheduled tasks shown separately; view preference persisted.
+19. **Transition Reminders** - Local notifications scheduled 10 min before tasks with a set `time`; enabled/disabled toggle in Profile; web-safe (lib/notifications.web.ts stub); focus timer fires completion nudge notifications.
+
 ## API Endpoints
 - `POST /api/ai/resize-task` - Takes taskTitle, detailLevel (1-5), direction (smaller/bigger), history
 - `POST /api/ai/generate-plan` - Takes goals, history, dayOfWeek, lifeContext, gmailItems; returns tasks + insight
