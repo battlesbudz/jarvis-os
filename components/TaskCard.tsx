@@ -4,7 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import Animated, { useAnimatedStyle, withSpring, useSharedValue, FadeInDown } from 'react-native-reanimated';
 import Colors from '@/constants/colors';
-import { Task } from '@/lib/storage';
+import { Task, calculateTaskXp } from '@/lib/storage';
 import { getCategoryColor, getCategoryLabel } from '@/lib/helpers';
 
 interface TaskCardProps {
@@ -29,6 +29,8 @@ function SubtaskRow({ subtask, onToggle }: { subtask: Task; onToggle: (id: strin
     onToggle(subtask.id, !subtask.completed);
   };
 
+  const subtaskXp = calculateTaskXp(subtask);
+
   return (
     <Animated.View style={animatedStyle}>
       <View style={styles.subtaskRow} testID={`subtask-${subtask.id}`}>
@@ -39,9 +41,14 @@ function SubtaskRow({ subtask, onToggle }: { subtask: Task; onToggle: (id: strin
         >
           {subtask.completed && <Ionicons name="checkmark" size={10} color={Colors.white} />}
         </Pressable>
-        <Text style={[styles.subtaskText, subtask.completed && styles.subtaskTextDone]}>
+        <Text style={[styles.subtaskText, subtask.completed && styles.subtaskTextDone]} numberOfLines={1}>
           {subtask.title}
         </Text>
+        {!subtask.completed && (
+          <View style={styles.xpBadge}>
+            <Text style={styles.xpBadgeText}>+{subtaskXp} XP</Text>
+          </View>
+        )}
       </View>
     </Animated.View>
   );
@@ -74,6 +81,7 @@ export default function TaskCard({ task, onToggle, onResize }: TaskCardProps) {
   const hasSubtasks = task.subtasks && task.subtasks.length > 0;
   const subtasksDone = hasSubtasks ? task.subtasks!.filter(s => s.completed).length : 0;
   const subtasksTotal = hasSubtasks ? task.subtasks!.length : 0;
+  const taskXp = calculateTaskXp(task);
 
   return (
     <Animated.View style={animatedStyle}>
@@ -101,6 +109,11 @@ export default function TaskCard({ task, onToggle, onResize }: TaskCardProps) {
               {task.title}
             </Text>
             <View style={styles.topActions}>
+              {!task.completed && !hasSubtasks && (
+                <View style={styles.xpBadge}>
+                  <Text style={styles.xpBadgeText}>+{taskXp} XP</Text>
+                </View>
+              )}
               <View style={[styles.priorityDot, { backgroundColor: priorityDot }]} />
             </View>
           </View>
@@ -291,9 +304,21 @@ const styles = StyleSheet.create({
   },
   subtaskRow: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
     paddingVertical: 6,
     gap: 8,
+  },
+  xpBadge: {
+    backgroundColor: '#FEF3C7',
+    borderRadius: 20,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+  },
+  xpBadgeText: {
+    fontSize: 10,
+    fontFamily: 'Inter_600SemiBold',
+    color: '#D97706',
+    letterSpacing: 0.3,
   },
   subtaskCheck: {
     width: 18,

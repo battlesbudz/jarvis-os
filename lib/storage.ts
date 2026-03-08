@@ -202,10 +202,12 @@ export function getXpForNextLevel(xp: number): { current: number; needed: number
 }
 
 export function xpForTask(priority: 'high' | 'medium' | 'low', isGoalLinked = false): number {
-  if (isGoalLinked) return 20;
-  if (priority === 'high') return 15;
-  if (priority === 'medium') return 10;
-  return 10;
+  const base = priority === 'high' ? 15 : priority === 'medium' ? 10 : 5;
+  return base + (isGoalLinked ? 10 : 0);
+}
+
+export function calculateTaskXp(task: { priority: 'high' | 'medium' | 'low'; goalId?: string }): number {
+  return xpForTask(task.priority, !!task.goalId);
 }
 
 export function checkAutoAwardBadges(stats: UserStats): BadgeId[] {
