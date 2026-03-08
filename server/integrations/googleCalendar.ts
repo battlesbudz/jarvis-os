@@ -64,29 +64,53 @@ export interface CalendarEvent {
 
 export async function getGoogleCalendarEvents(date: string): Promise<CalendarEvent[]> {
   const calendar = await getUncachableGoogleCalendarClient();
-  const startOfDay = new Date(date + 'T00:00:00');
-  const endOfDay = new Date(date + 'T23:59:59');
+  const startOfDay = new Date(date + 'T00:00:00Z');
+  const endOfDay = new Date(date + 'T23:59:59Z');
 
-  const res = await calendar.events.list({
-    calendarId: 'primary',
-    timeMin: startOfDay.toISOString(),
-    timeMax: endOfDay.toISOString(),
-    singleEvents: true,
-    orderBy: 'startTime',
-    maxResults: 20,
-  });
+  // Fetch all calendars the user has access to
+  const calList = await calendar.calendarList.list({ minAccessRole: 'reader' });
+  const calendarIds = (calList.data.items || [])
+    .filter((c) => !c.deleted)
+    .map((c) => c.id!)
+    .filter(Boolean);
 
-  const items = res.data.items || [];
-  return items
-    .filter((e) => e.summary)
-    .map((e) => ({
-      id: e.id || String(Math.random()),
-      title: e.summary || 'Event',
-      start: e.start?.dateTime || e.start?.date || date,
-      end: e.end?.dateTime || e.end?.date || date,
-      description: e.description || undefined,
-      location: e.location || undefined,
-    }));
+  const allEvents: CalendarEvent[] = [];
+  const seenIds = new Set<string>();
+
+  await Promise.all(
+    calendarIds.map(async (calId) => {
+      try {
+        const res = await calendar.events.list({
+          calendarId: calId,
+          timeMin: startOfDay.toISOString(),
+          timeMax: endOfDay.toISOString(),
+          singleEvents: true,
+          orderBy: 'startTime',
+          maxResults: 20,
+        });
+        const items = res.data.items || [];
+        items
+          .filter((e) => e.summary && !seenIds.has(e.id || ''))
+          .forEach((e) => {
+            seenIds.add(e.id || '');
+            allEvents.push({
+              id: e.id || String(Math.random()),
+              title: e.summary || 'Event',
+              start: e.start?.dateTime || e.start?.date || date,
+              end: e.end?.dateTime || e.end?.date || date,
+              description: e.description || undefined,
+              location: e.location || undefined,
+            });
+          });
+      } catch {
+        // Skip calendars we can't read
+      }
+    })
+  );
+
+  // Sort by start time
+  allEvents.sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime());
+  return allEvents;
 }
 
 export async function checkGoogleCalendarConnection(): Promise<boolean> {
