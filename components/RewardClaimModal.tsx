@@ -26,8 +26,8 @@ interface RewardClaimModalProps {
   reward: Reward | null;
   onClose: () => void;
   onClaim: () => void;
-  alreadyClaimed: boolean;
-  claimedAt?: string;
+  claimCount: number;
+  lastClaimedAt?: string;
 }
 
 const TIER_LABELS: Record<number, string> = {
@@ -75,8 +75,8 @@ export default function RewardClaimModal({
   reward,
   onClose,
   onClaim,
-  alreadyClaimed,
-  claimedAt,
+  claimCount,
+  lastClaimedAt,
 }: RewardClaimModalProps) {
   const insets = useSafeAreaInsets();
   const iconScale = useSharedValue(0.5);
@@ -107,8 +107,8 @@ export default function RewardClaimModal({
   if (!reward) return null;
 
   const tierColor = TIER_COLORS[reward.tier] || Colors.primary;
-  const formattedDate = claimedAt
-    ? new Date(claimedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+  const formattedDate = lastClaimedAt
+    ? new Date(lastClaimedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
     : null;
 
   const sparklePositions = [
@@ -145,36 +145,29 @@ export default function RewardClaimModal({
           <Text style={styles.description}>{reward.description}</Text>
           <Text style={[styles.tip, { color: tierColor }]}>"{reward.tip}"</Text>
 
-          {/* Status / Action */}
-          {alreadyClaimed ? (
-            <View style={styles.claimedBlock}>
-              <View style={styles.claimedRow}>
-                <Ionicons name="checkmark-circle" size={18} color={Colors.success} />
-                <Text style={styles.claimedText}>
-                  Redeemed{formattedDate ? ` on ${formattedDate}` : ''}
-                </Text>
-              </View>
-              <Pressable
-                style={({ pressed }) => [styles.closeBtn, pressed && { opacity: 0.8 }]}
-                onPress={onClose}
-              >
-                <Text style={styles.closeBtnText}>Close</Text>
-              </Pressable>
-            </View>
-          ) : (
-            <View style={styles.actionBlock}>
-              <Pressable
-                style={({ pressed }) => [styles.claimBtn, { backgroundColor: tierColor }, pressed && { opacity: 0.85 }]}
-                onPress={onClaim}
-              >
-                <Ionicons name="gift-outline" size={18} color="#fff" />
-                <Text style={styles.claimBtnText}>Claim It!</Text>
-              </Pressable>
-              <Pressable onPress={onClose} style={({ pressed }) => [styles.maybeLater, pressed && { opacity: 0.7 }]}>
-                <Text style={styles.maybeLaterText}>Maybe later</Text>
-              </Pressable>
+          {/* Prior claim history */}
+          {claimCount > 0 && (
+            <View style={styles.claimedRow}>
+              <Ionicons name="checkmark-circle" size={16} color={Colors.success} />
+              <Text style={styles.claimedText}>
+                Redeemed ×{claimCount}{formattedDate ? ` — last ${formattedDate}` : ''}
+              </Text>
             </View>
           )}
+
+          {/* Action */}
+          <View style={[styles.actionBlock, claimCount > 0 && { marginTop: 16 }]}>
+            <Pressable
+              style={({ pressed }) => [styles.claimBtn, { backgroundColor: tierColor }, pressed && { opacity: 0.85 }]}
+              onPress={onClaim}
+            >
+              <Ionicons name="gift-outline" size={18} color="#fff" />
+              <Text style={styles.claimBtnText}>{claimCount > 0 ? 'Claim Again!' : 'Claim It!'}</Text>
+            </Pressable>
+            <Pressable onPress={onClose} style={({ pressed }) => [styles.maybeLater, pressed && { opacity: 0.7 }]}>
+              <Text style={styles.maybeLaterText}>Maybe later</Text>
+            </Pressable>
+          </View>
         </Animated.View>
       </Pressable>
     </Modal>
@@ -250,11 +243,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     lineHeight: 19,
   },
-  claimedBlock: {
-    width: '100%',
-    alignItems: 'center',
-    gap: 12,
-  },
   claimedRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -264,20 +252,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontFamily: 'Inter_500Medium',
     color: Colors.success,
-  },
-  closeBtn: {
-    paddingVertical: 12,
-    paddingHorizontal: 32,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    width: '100%',
-    alignItems: 'center',
-  },
-  closeBtnText: {
-    fontSize: 15,
-    fontFamily: 'Inter_600SemiBold',
-    color: Colors.textSecondary,
   },
   actionBlock: {
     width: '100%',

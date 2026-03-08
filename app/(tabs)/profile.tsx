@@ -82,9 +82,16 @@ export default function ProfileScreen() {
   const isConnected = (id: 'google' | 'outlook') =>
     id === 'google' ? calStatus.google : calStatus.outlook;
 
-  const claimedIds = new Set((stats.claimedRewards || []).map(r => r.id));
+  const claimCounts: Record<string, number> = {};
+  const lastClaimedAt: Record<string, string> = {};
+  for (const entry of (stats.claimedRewards || [])) {
+    claimCounts[entry.id] = (claimCounts[entry.id] || 0) + 1;
+    if (!lastClaimedAt[entry.id] || entry.claimedAt > lastClaimedAt[entry.id]) {
+      lastClaimedAt[entry.id] = entry.claimedAt;
+    }
+  }
   const availableRewards = getAvailableRewards(stats.xp || 0);
-  const unclaimedAvailable = availableRewards.filter(r => !claimedIds.has(r.id));
+  const unclaimedAvailable = availableRewards.filter(r => !claimCounts[r.id]);
 
   const handleOpenReward = (reward: Reward) => {
     setSelectedReward(reward);
@@ -208,7 +215,7 @@ export default function ProfileScreen() {
           <View style={styles.rewardsList}>
             {ALL_REWARDS.map((reward) => {
               const isAvailable = (stats.xp || 0) >= reward.xpRequired;
-              const isClaimed = claimedIds.has(reward.id);
+              const count = claimCounts[reward.id] || 0;
               const tierColor = TIER_COLORS[reward.tier];
               return (
                 <Pressable
@@ -235,13 +242,11 @@ export default function ProfileScreen() {
                       <Text style={styles.rewardXp}>{reward.xpRequired} XP to unlock</Text>
                     )}
                   </View>
-                  {isClaimed ? (
-                    <View style={[styles.rewardPill, styles.rewardPillClaimed]}>
-                      <Text style={styles.rewardPillTextClaimed}>REDEEMED</Text>
-                    </View>
-                  ) : isAvailable ? (
+                  {isAvailable ? (
                     <View style={[styles.rewardPill, { backgroundColor: tierColor + '22' }]}>
-                      <Text style={[styles.rewardPillTextAvail, { color: tierColor }]}>CLAIM</Text>
+                      <Text style={[styles.rewardPillTextAvail, { color: tierColor }]}>
+                        {count > 0 ? `×${count}` : 'CLAIM'}
+                      </Text>
                     </View>
                   ) : (
                     <View style={[styles.rewardPill, styles.rewardPillLocked]}>
@@ -304,10 +309,8 @@ export default function ProfileScreen() {
       <RewardClaimModal
         visible={rewardModalVisible}
         reward={selectedReward}
-        alreadyClaimed={selectedReward ? claimedIds.has(selectedReward.id) : false}
-        claimedAt={selectedReward
-          ? (stats.claimedRewards || []).find(r => r.id === selectedReward.id)?.claimedAt
-          : undefined}
+        claimCount={selectedReward ? (claimCounts[selectedReward.id] || 0) : 0}
+        lastClaimedAt={selectedReward ? lastClaimedAt[selectedReward.id] : undefined}
         onClaim={handleClaimReward}
         onClose={() => { setRewardModalVisible(false); setSelectedReward(null); }}
       />

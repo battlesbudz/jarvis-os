@@ -597,8 +597,7 @@ export async function getStats(): Promise<UserStats> {
 
 export async function claimReward(rewardId: string): Promise<void> {
   const stats = await getStats();
-  const alreadyClaimed = stats.claimedRewards.some(r => r.id === rewardId);
-  if (!alreadyClaimed) {
+  {
     stats.claimedRewards = [...stats.claimedRewards, { id: rewardId, claimedAt: new Date().toISOString() }];
     await AsyncStorage.setItem(KEYS.STATS, JSON.stringify(stats));
   }
