@@ -35,7 +35,9 @@ import {
   awardBadge,
   decrementStats,
   calculateTaskXp,
+  xpForTask,
   xpForSubtask,
+  resetStats,
   getStats,
   getDailyCoachNote,
   saveDailyCoachNote,
@@ -370,7 +372,20 @@ export default function TodayScreen() {
         }
       }
     } else {
-      await decrementStats();
+      let xpToRemove = 10;
+      if (matchedTask) {
+        if (matchedTask.isSubtask) {
+          const parentTask = plan.tasks.find(t => t.subtasks?.some(st => st.id === matchedTask!.id));
+          if (parentTask && parentTask.subtasks && parentTask.subtasks.length > 0) {
+            xpToRemove = xpForSubtask(calculateTaskXp(parentTask), parentTask.subtasks.length);
+          } else {
+            xpToRemove = calculateTaskXp(matchedTask);
+          }
+        } else {
+          xpToRemove = calculateTaskXp(matchedTask);
+        }
+      }
+      await decrementStats(xpToRemove);
     }
   }, [plan, goals, calendarEvents, showXpToast]);
 
@@ -738,7 +753,7 @@ export default function TodayScreen() {
                         const allCalDone = updated.every(e => e.completed);
                         if (allTasksDone && allCalDone) await awardBadge('perfect_day');
                       } else {
-                        await decrementStats();
+                        await decrementStats(xpForTask('high', false));
                       }
                     }}
                   />
@@ -774,7 +789,7 @@ export default function TodayScreen() {
                           const updated = calendarEvents.map(e => e.id === id ? { ...e, completed: done } : e);
                           setCalendarEvents(updated);
                           await saveCompletedCalendarId(id, done);
-                          if (!done) await decrementStats();
+                          if (!done) await decrementStats(xpForTask('high', false));
                         }
                       : handleToggleTask}
                     onResize={task.category !== 'calendar' ? handleOpenResizer : undefined}
@@ -797,7 +812,7 @@ export default function TodayScreen() {
                     awardBadge('calendar_pro');
                   });
                 } else {
-                  decrementStats();
+                  decrementStats(xpForTask('high', false));
                 }
               } else {
                 handleToggleTask(id, done);

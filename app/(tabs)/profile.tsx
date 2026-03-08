@@ -7,6 +7,7 @@ import {
   Pressable,
   Platform,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -17,6 +18,7 @@ import * as Haptics from 'expo-haptics';
 import {
   getStats,
   claimReward,
+  resetStats,
   getLevel,
   getLevelName,
   getXpForNextLevel,
@@ -152,6 +154,26 @@ export default function ProfileScreen() {
     setNotificationsEnabledState(newValue);
     await setNotificationsEnabled(newValue);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  };
+
+  const handleResetStats = () => {
+    Alert.alert(
+      'Reset All XP & Stats',
+      'This will reset your XP, streak, and completed task count to zero. Badges and rewards are kept. This cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Reset',
+          style: 'destructive',
+          onPress: async () => {
+            await resetStats();
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+            const updated = await getStats();
+            setStats(updated);
+          },
+        },
+      ]
+    );
   };
 
   return (
@@ -461,7 +483,7 @@ export default function ProfileScreen() {
           <Text style={[styles.sectionTitle, { marginTop: 28 }]}>Settings</Text>
           <View style={styles.platformsList}>
             <Pressable 
-              style={styles.platformRow}
+              style={[styles.platformRow, styles.platformRowBorder]}
               onPress={handleToggleNotifications}
             >
               <View style={[styles.platformIcon, { backgroundColor: Colors.primary + '15' }]}>
@@ -478,6 +500,18 @@ export default function ProfileScreen() {
                 size={32} 
                 color={notificationsEnabled ? Colors.primary : Colors.border} 
               />
+            </Pressable>
+            <Pressable
+              style={styles.platformRow}
+              onPress={handleResetStats}
+            >
+              <View style={[styles.platformIcon, { backgroundColor: '#FEE2E2' }]}>
+                <Ionicons name="refresh-outline" size={20} color="#EF4444" />
+              </View>
+              <View style={styles.platformInfo}>
+                <Text style={[styles.platformName, { color: '#EF4444' }]}>Reset XP & Stats</Text>
+                <Text style={styles.platformStatus}>Clear all progress data</Text>
+              </View>
             </Pressable>
           </View>
         </Animated.View>

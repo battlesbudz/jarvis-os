@@ -56,6 +56,7 @@ export interface UserStats {
   badges: string[];
   claimedRewards: Array<{ id: string; claimedAt: string }>;
   dailyXpEarned: { date: string; xp: number };
+  lastStreakDate?: string;
 }
 
 export interface Reward {
@@ -850,11 +851,16 @@ export async function incrementStats(
   const stats = await getStats();
   const xpEarned = xpOverride ?? xpForTask(priority, isGoalLinked);
   stats.totalCompleted += 1;
-  stats.streak += 1;
   stats.xp = (stats.xp || 0) + xpEarned;
-  if (stats.streak > stats.bestStreak) stats.bestStreak = stats.streak;
 
+  // Increment streak only once per calendar day
   const todayKey = getTodayKey();
+  if (stats.lastStreakDate !== todayKey) {
+    stats.streak += 1;
+    stats.lastStreakDate = todayKey;
+    if (stats.streak > stats.bestStreak) stats.bestStreak = stats.streak;
+  }
+
   if (!stats.dailyXpEarned || stats.dailyXpEarned.date !== todayKey) {
     stats.dailyXpEarned = { date: todayKey, xp: xpEarned };
   } else {
@@ -875,12 +881,20 @@ export async function awardBadge(badgeId: BadgeId): Promise<void> {
   }
 }
 
-export async function decrementStats(): Promise<UserStats> {
+export async function decrementStats(xpAmount = 10): Promise<UserStats> {
   const stats = await getStats();
   stats.totalCompleted = Math.max(0, stats.totalCompleted - 1);
-  stats.xp = Math.max(0, (stats.xp || 0) - 10);
+  stats.xp = Math.max(0, (stats.xp || 0) - xpAmount);
+  const todayKey = getTodayKey();
+  if (stats.dailyXpEarned && stats.dailyXpEarned.date === todayKey) {
+    stats.dailyXpEarned = { date: todayKey, xp: Math.max(0, stats.dailyXpEarned.xp - xpAmount) };
+  }
   await AsyncStorage.setItem(KEYS.STATS, JSON.stringify(stats));
   return stats;
+}
+
+export async function resetStats(): Promise<void> {
+  await AsyncStorage.setItem(KEYS.STATS, JSON.stringify({ ...DEFAULT_STATS }));
 }
 
 export async function regeneratePlan(goals: Goal[]): Promise<DayPlan> {
