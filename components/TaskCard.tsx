@@ -42,7 +42,7 @@ function SubtaskRow({ subtask, onToggle, xpValue }: { subtask: Task; onToggle: (
         >
           {subtask.completed && <Ionicons name="checkmark" size={10} color={Colors.white} />}
         </Pressable>
-        <Text style={[styles.subtaskText, subtask.completed && styles.subtaskTextDone]} numberOfLines={1}>
+        <Text style={[styles.subtaskText, subtask.completed && styles.subtaskTextDone]}>
           {subtask.title}
         </Text>
         {!subtask.completed && (
@@ -116,7 +116,7 @@ export default function TaskCard({ task, onToggle, onResize }: TaskCardProps) {
         </Pressable>
         <View style={styles.content}>
           <View style={styles.topRow}>
-            <Text style={[styles.title, task.completed && styles.completedText]} numberOfLines={1}>
+            <Text style={[styles.title, task.completed && styles.completedText]}>
               {task.title}
             </Text>
             <View style={styles.topActions}>
