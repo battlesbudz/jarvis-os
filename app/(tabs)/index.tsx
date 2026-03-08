@@ -7,6 +7,7 @@ import {
   RefreshControl,
   Pressable,
   Platform,
+  ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -15,15 +16,21 @@ import Animated, { FadeInDown } from 'react-native-reanimated';
 import Colors from '@/constants/colors';
 import TaskCard from '@/components/TaskCard';
 import ProgressRing from '@/components/ProgressRing';
+import TaskResizerSheet from '@/components/TaskResizerSheet';
 import {
   getTodayPlan,
   updateTaskCompletion,
   getGoals,
   regeneratePlan,
+  savePlan,
+  replaceTaskWithSubtasks,
+  getCompletionHistory,
   getTodayKey,
   type DayPlan,
   type Goal,
+  type Task,
 } from '@/lib/storage';
+import { apiRequest } from '@/lib/query-client';
 import { formatDate } from '@/lib/helpers';
 
 export default function TodayScreen() {
@@ -32,6 +39,9 @@ export default function TodayScreen() {
   const [goals, setGoals] = useState<Goal[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [generatingAI, setGeneratingAI] = useState(false);
+  const [resizerVisible, setResizerVisible] = useState(false);
+  const [resizerTask, setResizerTask] = useState<Task | null>(null);
 
   const loadData = useCallback(async () => {
     const loadedGoals = await getGoals();
@@ -55,13 +65,92 @@ export default function TodayScreen() {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
   }, []);
 
+  const handleSmartRefresh = useCallback(async () => {
+    setGeneratingAI(true);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    try {
+      const loadedGoals = await getGoals();
+      const history = await getCompletionHistory();
+      const dayOfWeek = new Date().toLocaleDateString('en-US', { weekday: 'long' });
+
+      const res = await apiRequest('POST', '/api/ai/generate-plan', {
+        goals: loadedGoals.map(g => ({
+          title: g.title,
+          category: g.category,
+          current: g.current,
+          target: g.target,
+          unit: g.unit,
+        })),
+        history,
+        dayOfWeek,
+      });
+      const data = await res.json();
+
+      const validCategories = ['calendar', 'fitness', 'finance', 'career', 'personal', 'social'];
+      const validPriorities = ['high', 'medium', 'low'];
+
+      if (data.tasks && data.tasks.length > 0) {
+        const generateId = () => Date.now().toString() + Math.random().toString(36).substr(2, 9);
+        const newPlan: DayPlan = {
+          date: getTodayKey(),
+          tasks: data.tasks.map((t: any) => ({
+            id: generateId(),
+            title: String(t.title || 'Task'),
+            category: validCategories.includes(t.category) ? t.category : 'personal',
+            completed: false,
+            priority: validPriorities.includes(t.priority) ? t.priority : 'medium',
+            time: t.time ? String(t.time) : undefined,
+            description: t.description ? String(t.description) : undefined,
+          })),
+          greeting: plan?.greeting || 'Good day',
+          insight: data.insight || 'Start small, stay consistent.',
+        };
+        await savePlan(newPlan);
+        setPlan(newPlan);
+        setGoals(loadedGoals);
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      }
+    } catch (e) {
+      console.error('AI plan generation failed, falling back:', e);
+      const loadedGoals = await getGoals();
+      const fallbackPlan = await regeneratePlan(loadedGoals);
+      setPlan(fallbackPlan);
+      setGoals(loadedGoals);
+    } finally {
+      setGeneratingAI(false);
+    }
+  }, [plan]);
+
   const handleToggleTask = useCallback(async (taskId: string, completed: boolean) => {
     if (!plan) return;
-    const updatedTasks = plan.tasks.map(t =>
-      t.id === taskId ? { ...t, completed } : t
-    );
+    const updatedTasks = plan.tasks.map(t => {
+      if (t.id === taskId) {
+        return { ...t, completed };
+      }
+      if (t.subtasks) {
+        const updatedSubs = t.subtasks.map(st =>
+          st.id === taskId ? { ...st, completed } : st
+        );
+        const allDone = updatedSubs.every(st => st.completed) && updatedSubs.length > 0;
+        return { ...t, subtasks: updatedSubs, completed: allDone };
+      }
+      return t;
+    });
     setPlan({ ...plan, tasks: updatedTasks });
     await updateTaskCompletion(plan.date, taskId, completed);
+  }, [plan]);
+
+  const handleOpenResizer = useCallback((task: Task) => {
+    setResizerTask(task);
+    setResizerVisible(true);
+  }, []);
+
+  const handleApplyResize = useCallback(async (taskId: string, steps: string[]) => {
+    if (!plan) return;
+    const updatedPlan = await replaceTaskWithSubtasks(plan.date, taskId, steps);
+    if (updatedPlan) {
+      setPlan(updatedPlan);
+    }
   }, [plan]);
 
   if (loading || !plan) {
@@ -76,9 +165,15 @@ export default function TodayScreen() {
     );
   }
 
-  const completedCount = plan.tasks.filter(t => t.completed).length;
-  const totalCount = plan.tasks.length;
-  const progress = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
+  const allTasks = plan.tasks.reduce((count, t) => {
+    if (t.subtasks && t.subtasks.length > 0) return count + t.subtasks.length;
+    return count + 1;
+  }, 0);
+  const completedCount = plan.tasks.reduce((count, t) => {
+    if (t.subtasks && t.subtasks.length > 0) return count + t.subtasks.filter(s => s.completed).length;
+    return count + (t.completed ? 1 : 0);
+  }, 0);
+  const progress = allTasks > 0 ? Math.round((completedCount / allTasks) * 100) : 0;
   const todayLabel = formatDate(getTodayKey());
   const incompleteTasks = plan.tasks.filter(t => !t.completed);
   const completedTasks = plan.tasks.filter(t => t.completed);
@@ -107,7 +202,7 @@ export default function TodayScreen() {
           <View style={styles.progressLeft}>
             <Text style={styles.progressTitle}>Today's Progress</Text>
             <Text style={styles.progressSubtitle}>
-              {completedCount} of {totalCount} tasks done
+              {completedCount} of {allTasks} tasks done
             </Text>
             {progress === 100 ? (
               <View style={styles.completeBadge}>
@@ -129,11 +224,34 @@ export default function TodayScreen() {
           <Text style={styles.insightText}>{plan.insight}</Text>
         </Animated.View>
 
+        <Animated.View entering={FadeInDown.duration(400).delay(350)}>
+          <Pressable
+            onPress={handleSmartRefresh}
+            disabled={generatingAI}
+            style={({ pressed }) => [styles.smartRefreshButton, pressed && { opacity: 0.85 }, generatingAI && { opacity: 0.7 }]}
+            testID="smart-refresh"
+          >
+            {generatingAI ? (
+              <ActivityIndicator size="small" color={Colors.white} />
+            ) : (
+              <Ionicons name="sparkles" size={16} color={Colors.white} />
+            )}
+            <Text style={styles.smartRefreshText}>
+              {generatingAI ? 'Generating...' : 'Smart Refresh'}
+            </Text>
+          </Pressable>
+        </Animated.View>
+
         {incompleteTasks.length > 0 ? (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>To Do</Text>
             {incompleteTasks.map((task) => (
-              <TaskCard key={task.id} task={task} onToggle={handleToggleTask} />
+              <TaskCard
+                key={task.id}
+                task={task}
+                onToggle={handleToggleTask}
+                onResize={handleOpenResizer}
+              />
             ))}
           </View>
         ) : null}
@@ -142,11 +260,23 @@ export default function TodayScreen() {
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Completed</Text>
             {completedTasks.map((task) => (
-              <TaskCard key={task.id} task={task} onToggle={handleToggleTask} />
+              <TaskCard
+                key={task.id}
+                task={task}
+                onToggle={handleToggleTask}
+                onResize={handleOpenResizer}
+              />
             ))}
           </View>
         ) : null}
       </ScrollView>
+
+      <TaskResizerSheet
+        visible={resizerVisible}
+        task={resizerTask}
+        onClose={() => { setResizerVisible(false); setResizerTask(null); }}
+        onApply={handleApplyResize}
+      />
     </View>
   );
 }
@@ -226,7 +356,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFBEB',
     borderRadius: 14,
     padding: 14,
-    marginBottom: 24,
+    marginBottom: 16,
     gap: 10,
     borderWidth: 1,
     borderColor: '#FEF3C7',
@@ -237,6 +367,21 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter_500Medium',
     color: '#92400E',
     lineHeight: 20,
+  },
+  smartRefreshButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: Colors.primary,
+    borderRadius: 12,
+    paddingVertical: 12,
+    marginBottom: 24,
+  },
+  smartRefreshText: {
+    fontSize: 14,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.white,
   },
   section: {
     marginBottom: 20,

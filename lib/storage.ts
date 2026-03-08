@@ -8,6 +8,9 @@ export interface Task {
   priority: 'high' | 'medium' | 'low';
   time?: string;
   description?: string;
+  subtasks?: Task[];
+  isSubtask?: boolean;
+  parentId?: string;
 }
 
 export interface DayPlan {
@@ -50,12 +53,21 @@ export interface UserStats {
   bestStreak: number;
 }
 
+export interface CompletionHistoryItem {
+  title: string;
+  category: string;
+  completed: boolean;
+  hadSubtasks: boolean;
+  date: string;
+}
+
 const KEYS = {
   PLANS: 'gameplan_plans',
   GOALS: 'gameplan_goals',
   PLATFORMS: 'gameplan_platforms',
   STATS: 'gameplan_stats',
   ONBOARDED: 'gameplan_onboarded',
+  HISTORY: 'gameplan_history',
 };
 
 function generateId(): string {
@@ -201,25 +213,84 @@ const INSIGHTS = [
   'Remember: progress, not perfection. You\'re doing great.',
 ];
 
+export async function getCompletionHistory(): Promise<CompletionHistoryItem[]> {
+  try {
+    const raw = await AsyncStorage.getItem(KEYS.HISTORY);
+    if (!raw) return [];
+    const history: CompletionHistoryItem[] = JSON.parse(raw);
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    const cutoff = sevenDaysAgo.toISOString().split('T')[0];
+    return history.filter(h => h.date >= cutoff);
+  } catch (e) {
+    console.error('Failed to get history:', e);
+    return [];
+  }
+}
+
+export async function recordCompletion(task: Task, completed: boolean): Promise<void> {
+  try {
+    const history = await getCompletionHistory();
+    const today = getTodayKey();
+    const existing = history.findIndex(h => h.title === task.title && h.date === today);
+    const item: CompletionHistoryItem = {
+      title: task.title,
+      category: task.category,
+      completed,
+      hadSubtasks: !!(task.subtasks && task.subtasks.length > 0),
+      date: today,
+    };
+    if (existing >= 0) {
+      history[existing] = item;
+    } else {
+      history.push(item);
+    }
+    await AsyncStorage.setItem(KEYS.HISTORY, JSON.stringify(history));
+  } catch (e) {
+    console.error('Failed to record completion:', e);
+  }
+}
+
 export async function getTodayPlan(goals: Goal[]): Promise<DayPlan> {
   const key = getTodayKey();
-  const raw = await AsyncStorage.getItem(KEYS.PLANS);
-  const plans: Record<string, DayPlan> = raw ? JSON.parse(raw) : {};
+  try {
+    const raw = await AsyncStorage.getItem(KEYS.PLANS);
+    const plans: Record<string, DayPlan> = raw ? JSON.parse(raw) : {};
 
-  if (plans[key]) {
-    return plans[key];
+    if (plans[key]) {
+      return plans[key];
+    }
+
+    const plan: DayPlan = {
+      date: key,
+      tasks: generateDailyTasks(goals),
+      greeting: getGreeting(),
+      insight: INSIGHTS[Math.floor(Math.random() * INSIGHTS.length)],
+    };
+
+    plans[key] = plan;
+    await AsyncStorage.setItem(KEYS.PLANS, JSON.stringify(plans));
+    return plan;
+  } catch (e) {
+    console.error('Failed to get plan:', e);
+    return {
+      date: key,
+      tasks: generateDailyTasks(goals),
+      greeting: getGreeting(),
+      insight: INSIGHTS[0],
+    };
   }
+}
 
-  const plan: DayPlan = {
-    date: key,
-    tasks: generateDailyTasks(goals),
-    greeting: getGreeting(),
-    insight: INSIGHTS[Math.floor(Math.random() * INSIGHTS.length)],
-  };
-
-  plans[key] = plan;
-  await AsyncStorage.setItem(KEYS.PLANS, JSON.stringify(plans));
-  return plan;
+export async function savePlan(plan: DayPlan): Promise<void> {
+  try {
+    const raw = await AsyncStorage.getItem(KEYS.PLANS);
+    const plans: Record<string, DayPlan> = raw ? JSON.parse(raw) : {};
+    plans[plan.date] = plan;
+    await AsyncStorage.setItem(KEYS.PLANS, JSON.stringify(plans));
+  } catch (e) {
+    console.error('Failed to save plan:', e);
+  }
 }
 
 export async function updateTaskCompletion(date: string, taskId: string, completed: boolean): Promise<void> {
@@ -227,10 +298,34 @@ export async function updateTaskCompletion(date: string, taskId: string, complet
     const raw = await AsyncStorage.getItem(KEYS.PLANS);
     const plans: Record<string, DayPlan> = raw ? JSON.parse(raw) : {};
     if (plans[date]) {
-      plans[date].tasks = plans[date].tasks.map(t =>
-        t.id === taskId ? { ...t, completed } : t
-      );
+      let foundTask: Task | undefined;
+      plans[date].tasks = plans[date].tasks.map(t => {
+        if (t.id === taskId) {
+          foundTask = t;
+          return { ...t, completed };
+        }
+        if (t.subtasks) {
+          const updatedSubtasks = t.subtasks.map(st => {
+            if (st.id === taskId) {
+              foundTask = st;
+              return { ...st, completed };
+            }
+            return st;
+          });
+          const allSubtasksDone = updatedSubtasks.every(st => st.completed) && updatedSubtasks.length > 0;
+          return {
+            ...t,
+            subtasks: updatedSubtasks,
+            completed: allSubtasksDone,
+          };
+        }
+        return t;
+      });
       await AsyncStorage.setItem(KEYS.PLANS, JSON.stringify(plans));
+
+      if (foundTask) {
+        await recordCompletion(foundTask, completed);
+      }
     }
     if (completed) {
       await incrementStats();
@@ -239,6 +334,40 @@ export async function updateTaskCompletion(date: string, taskId: string, complet
     }
   } catch (e) {
     console.error('Failed to update task:', e);
+  }
+}
+
+export async function replaceTaskWithSubtasks(
+  date: string,
+  taskId: string,
+  subtaskTitles: string[]
+): Promise<DayPlan | null> {
+  try {
+    const raw = await AsyncStorage.getItem(KEYS.PLANS);
+    const plans: Record<string, DayPlan> = raw ? JSON.parse(raw) : {};
+    if (!plans[date]) return null;
+
+    plans[date].tasks = plans[date].tasks.map(t => {
+      if (t.id === taskId) {
+        const subtasks: Task[] = subtaskTitles.map(title => ({
+          id: generateId(),
+          title,
+          category: t.category,
+          completed: false,
+          priority: t.priority,
+          isSubtask: true,
+          parentId: t.id,
+        }));
+        return { ...t, completed: false, subtasks };
+      }
+      return t;
+    });
+
+    await AsyncStorage.setItem(KEYS.PLANS, JSON.stringify(plans));
+    return plans[date];
+  } catch (e) {
+    console.error('Failed to replace task with subtasks:', e);
+    return null;
   }
 }
 

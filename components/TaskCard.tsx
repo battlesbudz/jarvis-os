@@ -2,7 +2,7 @@ import React from 'react';
 import { StyleSheet, View, Text, Pressable } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import Animated, { useAnimatedStyle, withSpring, useSharedValue } from 'react-native-reanimated';
+import Animated, { useAnimatedStyle, withSpring, useSharedValue, FadeInDown } from 'react-native-reanimated';
 import Colors from '@/constants/colors';
 import { Task } from '@/lib/storage';
 import { getCategoryColor, getCategoryLabel } from '@/lib/helpers';
@@ -10,9 +10,44 @@ import { getCategoryColor, getCategoryLabel } from '@/lib/helpers';
 interface TaskCardProps {
   task: Task;
   onToggle: (id: string, completed: boolean) => void;
+  onResize?: (task: Task) => void;
 }
 
-export default function TaskCard({ task, onToggle }: TaskCardProps) {
+function SubtaskRow({ subtask, onToggle }: { subtask: Task; onToggle: (id: string, completed: boolean) => void }) {
+  const scale = useSharedValue(1);
+  const categoryColor = getCategoryColor(subtask.category);
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
+  }));
+
+  const handlePress = () => {
+    scale.value = withSpring(0.96, { damping: 15 }, () => {
+      scale.value = withSpring(1);
+    });
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    onToggle(subtask.id, !subtask.completed);
+  };
+
+  return (
+    <Animated.View style={animatedStyle}>
+      <Pressable
+        onPress={handlePress}
+        style={({ pressed }) => [styles.subtaskRow, pressed && { opacity: 0.85 }]}
+        testID={`subtask-${subtask.id}`}
+      >
+        <View style={[styles.subtaskCheck, subtask.completed && { backgroundColor: categoryColor, borderColor: categoryColor }]}>
+          {subtask.completed && <Ionicons name="checkmark" size={10} color={Colors.white} />}
+        </View>
+        <Text style={[styles.subtaskText, subtask.completed && styles.subtaskTextDone]} numberOfLines={2}>
+          {subtask.title}
+        </Text>
+      </Pressable>
+    </Animated.View>
+  );
+}
+
+export default function TaskCard({ task, onToggle, onResize }: TaskCardProps) {
   const scale = useSharedValue(1);
   const categoryColor = getCategoryColor(task.category);
 
@@ -21,6 +56,7 @@ export default function TaskCard({ task, onToggle }: TaskCardProps) {
   }));
 
   const handlePress = () => {
+    if (task.subtasks && task.subtasks.length > 0) return;
     scale.value = withSpring(0.95, { damping: 15 }, () => {
       scale.value = withSpring(1);
     });
@@ -28,7 +64,16 @@ export default function TaskCard({ task, onToggle }: TaskCardProps) {
     onToggle(task.id, !task.completed);
   };
 
+  const handleResize = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    onResize?.(task);
+  };
+
   const priorityDot = task.priority === 'high' ? Colors.error : task.priority === 'medium' ? Colors.warning : Colors.textTertiary;
+
+  const hasSubtasks = task.subtasks && task.subtasks.length > 0;
+  const subtasksDone = hasSubtasks ? task.subtasks!.filter(s => s.completed).length : 0;
+  const subtasksTotal = hasSubtasks ? task.subtasks!.length : 0;
 
   return (
     <Animated.View style={animatedStyle}>
@@ -37,7 +82,7 @@ export default function TaskCard({ task, onToggle }: TaskCardProps) {
         style={({ pressed }) => [
           styles.container,
           task.completed && styles.completedContainer,
-          pressed && { opacity: 0.9 },
+          pressed && !hasSubtasks && { opacity: 0.9 },
         ]}
         testID={`task-${task.id}`}
       >
@@ -49,13 +94,30 @@ export default function TaskCard({ task, onToggle }: TaskCardProps) {
             <Text style={[styles.title, task.completed && styles.completedText]} numberOfLines={1}>
               {task.title}
             </Text>
-            <View style={[styles.priorityDot, { backgroundColor: priorityDot }]} />
+            <View style={styles.topActions}>
+              {!task.completed && !task.isSubtask && onResize && (
+                <Pressable onPress={handleResize} hitSlop={10} style={styles.resizeButton} testID={`resize-${task.id}`}>
+                  <Ionicons name="git-branch-outline" size={16} color={Colors.textTertiary} />
+                </Pressable>
+              )}
+              <View style={[styles.priorityDot, { backgroundColor: priorityDot }]} />
+            </View>
           </View>
-          {task.description ? (
+          {task.description && !hasSubtasks ? (
             <Text style={[styles.description, task.completed && styles.completedSubText]} numberOfLines={1}>
               {task.description}
             </Text>
           ) : null}
+
+          {hasSubtasks ? (
+            <View style={styles.subtaskProgress}>
+              <View style={styles.subtaskProgressBar}>
+                <View style={[styles.subtaskProgressFill, { width: `${subtasksTotal > 0 ? (subtasksDone / subtasksTotal) * 100 : 0}%`, backgroundColor: categoryColor }]} />
+              </View>
+              <Text style={styles.subtaskProgressText}>{subtasksDone}/{subtasksTotal}</Text>
+            </View>
+          ) : null}
+
           <View style={styles.metaRow}>
             {task.time ? (
               <View style={styles.timeBadge}>
@@ -67,6 +129,16 @@ export default function TaskCard({ task, onToggle }: TaskCardProps) {
               <Text style={[styles.categoryText, { color: categoryColor }]}>{getCategoryLabel(task.category)}</Text>
             </View>
           </View>
+
+          {hasSubtasks ? (
+            <View style={styles.subtasksContainer}>
+              {task.subtasks!.map((st, idx) => (
+                <Animated.View key={st.id} entering={FadeInDown.duration(250).delay(idx * 40)}>
+                  <SubtaskRow subtask={st} onToggle={onToggle} />
+                </Animated.View>
+              ))}
+            </View>
+          ) : null}
         </View>
       </Pressable>
     </Animated.View>
@@ -106,6 +178,19 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+  },
+  topActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  resizeButton: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: Colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   title: {
     fontSize: 15,
@@ -156,5 +241,59 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
+  },
+  subtaskProgress: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 8,
+  },
+  subtaskProgressBar: {
+    flex: 1,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: Colors.borderLight,
+  },
+  subtaskProgressFill: {
+    height: 4,
+    borderRadius: 2,
+  },
+  subtaskProgressText: {
+    fontSize: 11,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.textTertiary,
+  },
+  subtasksContainer: {
+    marginTop: 12,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: Colors.borderLight,
+  },
+  subtaskRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    paddingVertical: 6,
+    gap: 8,
+  },
+  subtaskCheck: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    borderWidth: 1.5,
+    borderColor: Colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 1,
+  },
+  subtaskText: {
+    flex: 1,
+    fontSize: 13,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.text,
+    lineHeight: 18,
+  },
+  subtaskTextDone: {
+    textDecorationLine: 'line-through',
+    color: Colors.textTertiary,
   },
 });
