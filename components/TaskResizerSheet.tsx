@@ -108,7 +108,9 @@ export default function TaskResizerSheet({ visible, task, onClose, onApply }: Ta
           <View style={styles.handle} />
 
           <View style={styles.header}>
-            <Text style={styles.headerTitle}>Resize Task</Text>
+            <Text style={styles.headerTitle}>
+              {task.subtasks && task.subtasks.length > 0 ? 'Change Steps' : 'Break Down'}
+            </Text>
             <Pressable onPress={handleClose} hitSlop={12}>
               <Ionicons name="close" size={24} color={Colors.textSecondary} />
             </Pressable>
@@ -124,6 +126,15 @@ export default function TaskResizerSheet({ visible, task, onClose, onApply }: Ta
               <View style={[styles.taskDot, { backgroundColor: Colors.primary }]} />
               <Text style={styles.taskPreviewText} numberOfLines={2}>{task.title}</Text>
             </View>
+
+            {task.subtasks && task.subtasks.length > 0 && (
+              <View style={styles.existingStepsNote}>
+                <Ionicons name="information-circle-outline" size={15} color={Colors.textSecondary} />
+                <Text style={styles.existingStepsText}>
+                  Currently {task.subtasks.length} steps — generating new ones will replace them.
+                </Text>
+              </View>
+            )}
 
             <View style={styles.directionRow}>
               <Pressable
@@ -305,6 +316,23 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontFamily: 'Inter_500Medium',
     color: Colors.text,
+  },
+  existingStepsNote: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: Colors.surface,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginBottom: 16,
+  },
+  existingStepsText: {
+    flex: 1,
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+    lineHeight: 16,
   },
   directionRow: {
     flexDirection: 'row',
