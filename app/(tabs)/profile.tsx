@@ -27,11 +27,14 @@ import {
   ALL_BADGES,
   ALL_REWARDS,
   TIER_COLORS,
+  getLifeContext,
   type UserStats,
   type Reward,
+  type LifeContext,
 } from '@/lib/storage';
 import { getApiUrl } from '@/lib/query-client';
 import RewardClaimModal from '@/components/RewardClaimModal';
+import LifeContextSheet from '@/components/LifeContextSheet';
 
 interface CalendarStatus {
   google: boolean;
@@ -60,15 +63,29 @@ export default function ProfileScreen() {
   const [loadingStatus, setLoadingStatus] = useState(true);
   const [selectedReward, setSelectedReward] = useState<Reward | null>(null);
   const [rewardModalVisible, setRewardModalVisible] = useState(false);
+  const [lifeContext, setLifeContext] = useState<LifeContext | null>(null);
+  const [sheetVisible, setSheetVisible] = useState(false);
+  const [gmailConnected, setGmailConnected] = useState(false);
 
   const loadAll = useCallback(async () => {
-    const [s] = await Promise.all([getStats()]);
+    const [s, lc] = await Promise.all([getStats(), getLifeContext()]);
     setStats(s);
+    setLifeContext(lc);
     try {
-      const url = new URL('/api/calendar/status', getApiUrl());
-      const res = await fetch(url.toString(), { cache: 'no-store' });
-      const data = await res.json();
-      setCalStatus(data);
+      const [calUrl, gmailUrl] = [
+        new URL('/api/calendar/status', getApiUrl()),
+        new URL('/api/gmail/status', getApiUrl()),
+      ];
+      const [calRes, gmailRes] = await Promise.all([
+        fetch(calUrl.toString(), { cache: 'no-store' }),
+        fetch(gmailUrl.toString(), { cache: 'no-store' }).catch(() => null),
+      ]);
+      const calData = await calRes.json();
+      setCalStatus(calData);
+      if (gmailRes) {
+        const gmailData = await gmailRes.json();
+        setGmailConnected(gmailData.connected ?? false);
+      }
     } catch {
       setCalStatus({ google: false, outlook: false });
     } finally {
@@ -306,11 +323,66 @@ export default function ProfileScreen() {
           </View>
         </Animated.View>
 
-        {/* Connected Calendars */}
+        {/* About You */}
         <Animated.View entering={FadeInDown.duration(400).delay(400)}>
-          <Text style={[styles.sectionTitle, { marginTop: 28 }]}>Connected Calendars</Text>
+          <View style={styles.sectionHeaderRow}>
+            <Text style={[styles.sectionTitle, { marginTop: 28 }]}>About You</Text>
+            {lifeContext && (
+              <Pressable style={styles.editBtn} onPress={() => setSheetVisible(true)}>
+                <Ionicons name="pencil-outline" size={15} color={Colors.primary} />
+                <Text style={styles.editBtnText}>Edit</Text>
+              </Pressable>
+            )}
+          </View>
           <Text style={styles.sectionSubtitle}>
-            Real events appear in your daily plan
+            Help your coach understand your life and goals
+          </Text>
+
+          {!lifeContext ? (
+            <Pressable style={styles.aboutEmptyCard} onPress={() => setSheetVisible(true)}>
+              <View style={styles.aboutEmptyIcon}>
+                <Ionicons name="sparkles-outline" size={22} color={Colors.primary} />
+              </View>
+              <View style={styles.aboutEmptyText}>
+                <Text style={styles.aboutEmptyTitle}>Tell your coach about you</Text>
+                <Text style={styles.aboutEmptySub}>Personalize your plan with 5 quick questions</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={Colors.textTertiary} />
+            </Pressable>
+          ) : (
+            <View style={styles.aboutFilledCard}>
+              {[
+                { label: 'Priority', value: lifeContext.priorityGoal },
+                { label: 'Commitment', value: lifeContext.upcomingDeadline },
+                { label: 'Improvement area', value: lifeContext.improvementArea },
+                { label: 'Current blocker', value: lifeContext.currentBlocker },
+                { label: 'Additional context', value: lifeContext.freeText },
+              ]
+                .filter(row => row.value && row.value.trim())
+                .map((row, i, arr) => (
+                  <View key={row.label} style={[styles.aboutRow, i < arr.length - 1 && styles.aboutRowBorder]}>
+                    <Text style={styles.aboutLabel}>{row.label.toUpperCase()}</Text>
+                    <Text style={styles.aboutValue} numberOfLines={2}>{row.value}</Text>
+                  </View>
+                ))
+              }
+              <View style={styles.aboutFooter}>
+                <Text style={styles.aboutUpdated}>
+                  Updated {formatRelativeDate(lifeContext.lastUpdated)}
+                </Text>
+                <Pressable onPress={() => setSheetVisible(true)}>
+                  <Text style={styles.aboutUpdateBtn}>Update</Text>
+                </Pressable>
+              </View>
+            </View>
+          )}
+        </Animated.View>
+
+        {/* Connected Apps */}
+        <Animated.View entering={FadeInDown.duration(400).delay(450)}>
+          <Text style={[styles.sectionTitle, { marginTop: 28 }]}>Connected Apps</Text>
+          <Text style={styles.sectionSubtitle}>
+            Real data feeds your daily plan and coach
           </Text>
           <View style={styles.platformsList}>
             {PLATFORMS.map((platform, index) => {
@@ -320,7 +392,7 @@ export default function ProfileScreen() {
                   key={platform.id}
                   style={[
                     styles.platformRow,
-                    index < PLATFORMS.length - 1 && styles.platformRowBorder,
+                    styles.platformRowBorder,
                   ]}
                 >
                   <View style={[styles.platformIcon, { backgroundColor: platform.color + '15' }]}>
@@ -342,9 +414,28 @@ export default function ProfileScreen() {
                 </View>
               );
             })}
+            {/* Gmail row */}
+            <View style={styles.platformRow}>
+              <View style={[styles.platformIcon, { backgroundColor: '#EA433515' }]}>
+                <Ionicons name="mail-outline" size={20} color="#EA4335" />
+              </View>
+              <View style={styles.platformInfo}>
+                <Text style={styles.platformName}>Gmail</Text>
+                <Text style={[styles.platformStatus, gmailConnected && styles.platformStatusConnected]}>
+                  {loadingStatus ? 'Checking...' : gmailConnected ? 'Connected — emails feed your coach' : 'Not connected'}
+                </Text>
+              </View>
+              {loadingStatus ? (
+                <ActivityIndicator size="small" color={Colors.textTertiary} />
+              ) : gmailConnected ? (
+                <Ionicons name="checkmark-circle" size={22} color={Colors.success} />
+              ) : (
+                <Ionicons name="ellipse-outline" size={22} color={Colors.border} />
+              )}
+            </View>
           </View>
           <Text style={styles.connectionHint}>
-            To reconnect, open your Replit account integrations.
+            To connect or reconnect, open your Replit account integrations.
           </Text>
         </Animated.View>
 
@@ -367,8 +458,35 @@ export default function ProfileScreen() {
         onClaim={handleClaimReward}
         onClose={() => { setRewardModalVisible(false); setSelectedReward(null); }}
       />
+
+      <LifeContextSheet
+        visible={sheetVisible}
+        existing={lifeContext}
+        onComplete={async () => {
+          setSheetVisible(false);
+          const updated = await getLifeContext();
+          setLifeContext(updated);
+        }}
+        onClose={() => setSheetVisible(false)}
+      />
     </View>
   );
+}
+
+function formatRelativeDate(iso: string): string {
+  try {
+    const date = new Date(iso);
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+    if (diffDays === 0) return 'today';
+    if (diffDays === 1) return 'yesterday';
+    if (diffDays < 7) return `${diffDays} days ago`;
+    if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks ago`;
+    return `${Math.floor(diffDays / 30)} months ago`;
+  } catch {
+    return '';
+  }
 }
 
 const styles = StyleSheet.create({
@@ -609,6 +727,105 @@ const styles = StyleSheet.create({
     color: Colors.textTertiary,
     marginTop: 10,
     textAlign: 'center',
+  },
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 0,
+  },
+  editBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 28,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+  },
+  editBtnText: {
+    fontSize: 13,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.primary,
+  },
+  aboutEmptyCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.white,
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    gap: 12,
+  },
+  aboutEmptyIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 12,
+    backgroundColor: '#EEF2FF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  aboutEmptyText: {
+    flex: 1,
+  },
+  aboutEmptyTitle: {
+    fontSize: 15,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.text,
+    marginBottom: 2,
+  },
+  aboutEmptySub: {
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+  },
+  aboutFilledCard: {
+    backgroundColor: Colors.white,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    overflow: 'hidden',
+  },
+  aboutRow: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  aboutRowBorder: {
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.borderLight,
+  },
+  aboutLabel: {
+    fontSize: 10,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.textTertiary,
+    letterSpacing: 0.6,
+    marginBottom: 3,
+  },
+  aboutValue: {
+    fontSize: 14,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.text,
+    lineHeight: 20,
+  },
+  aboutFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderTopWidth: 1,
+    borderTopColor: Colors.borderLight,
+    backgroundColor: Colors.surface,
+  },
+  aboutUpdated: {
+    fontSize: 11,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textTertiary,
+  },
+  aboutUpdateBtn: {
+    fontSize: 13,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.primary,
   },
   versionRow: {
     alignItems: 'center',

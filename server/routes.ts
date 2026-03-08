@@ -10,13 +10,17 @@ import {
   getOutlookCalendarEvents,
   checkOutlookConnection,
 } from "./integrations/outlook";
+import {
+  checkGmailConnection,
+  getRecentEmailCommitments,
+} from "./integrations/gmail";
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
 });
 
-function buildCoachSystemPrompt(goals: any[], stats: any, history: any[], calendarEvents: any[] = []): string {
+function buildCoachSystemPrompt(goals: any[], stats: any, history: any[], calendarEvents: any[] = [], lifeContext?: any, gmailItems?: any[]): string {
   const completedHistory = history.filter((h: any) => h.completed);
   const skippedHistory = history.filter((h: any) => !h.completed);
   const completionRate = history.length > 0
@@ -43,6 +47,21 @@ function buildCoachSystemPrompt(goals: any[], stats: any, history: any[], calend
     ? calendarEvents.slice(0, 8).map((e: any) => `  - ${e.time ? e.time + ': ' : ''}${e.title}`).join('\n')
     : '  - No calendar events today';
 
+  const lifeContextSection = lifeContext
+    ? `\n## About This Person\n` +
+      (lifeContext.priorityGoal ? `- Priority right now: ${lifeContext.priorityGoal}\n` : '') +
+      (lifeContext.upcomingDeadline ? `- Upcoming commitment: ${lifeContext.upcomingDeadline}\n` : '') +
+      (lifeContext.improvementArea ? `- Wants to improve: ${lifeContext.improvementArea}\n` : '') +
+      (lifeContext.currentBlocker ? `- Current blocker: ${lifeContext.currentBlocker}\n` : '') +
+      (lifeContext.freeText ? `- Additional context: ${lifeContext.freeText}` : '')
+    : '';
+
+  const gmailSection = gmailItems && gmailItems.length > 0
+    ? `\n## Recent Email Signals (last 7 days)\n` +
+      gmailItems.slice(0, 10).map((i: any) => `- "${i.subject}": ${i.snippet}`).join('\n') +
+      `\n(Use these to detect commitments, deadlines, or projects the user may have forgotten to log.)`
+    : '';
+
   return `You are GamePlan Coach — a sharp, supportive personal productivity coach embedded in the GamePlan app. You know this user's goals, habits, and patterns intimately. You give specific, actionable advice — not generic motivational fluff.
 
 ## User Profile
@@ -51,13 +70,13 @@ function buildCoachSystemPrompt(goals: any[], stats: any, history: any[], calend
 - Total tasks completed: ${stats.totalCompleted || 0}
 - Total XP earned: ${stats.xp || 0}
 - Task completion rate (last 7 days): ${completionRate}% (${completedHistory.length} completed, ${skippedHistory.length} skipped)
-${strugglingCategories.length > 0 ? `- Struggling most with: ${strugglingCategories.join(', ')}` : ''}
+${strugglingCategories.length > 0 ? `- Struggling most with: ${strugglingCategories.join(', ')}` : ''}${lifeContextSection}
 
 ## Active Goals
 ${goalsText}
 
 ## Today's Calendar
-${calendarText}
+${calendarText}${gmailSection}
 
 ## Recent Activity (last 7 days)
 - Completed: ${recentCompleted}
@@ -109,12 +128,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/ai/generate-plan", async (req: Request, res: Response) => {
     try {
-      const { goals, history, dayOfWeek } = req.body;
+      const { goals, history, dayOfWeek, lifeContext, gmailItems } = req.body;
 
       const result = await generateSmartPlan({
         goals: goals || [],
         history: history || [],
         dayOfWeek: dayOfWeek || new Date().toLocaleDateString('en-US', { weekday: 'long' }),
+        lifeContext: lifeContext || null,
+        gmailItems: gmailItems || [],
       });
 
       res.json(result);
@@ -126,13 +147,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/coach/chat", async (req: Request, res: Response) => {
     try {
-      const { messages, goals, stats, history, calendarEvents } = req.body;
+      const { messages, goals, stats, history, calendarEvents, lifeContext, gmailItems } = req.body;
 
       if (!messages || !Array.isArray(messages)) {
         return res.status(400).json({ error: "messages array is required" });
       }
 
-      const systemPrompt = buildCoachSystemPrompt(goals || [], stats || {}, history || [], calendarEvents || []);
+      const systemPrompt = buildCoachSystemPrompt(goals || [], stats || {}, history || [], calendarEvents || [], lifeContext || null, gmailItems || []);
 
       res.setHeader('Content-Type', 'text/event-stream');
       res.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -216,7 +237,7 @@ Return ONLY the JSON object.`;
 
   app.post("/api/coach/checkin", async (req: Request, res: Response) => {
     try {
-      const { goals, stats, history } = req.body;
+      const { goals, stats, history, lifeContext } = req.body;
 
       const completedHistory = (history || []).filter((h: any) => h.completed);
       const skippedHistory = (history || []).filter((h: any) => !h.completed);
@@ -227,15 +248,21 @@ Return ONLY the JSON object.`;
         ? (goals as any[]).map((g: any) => `${g.title}: ${g.current}/${g.target} ${g.unit}`).join(', ')
         : 'no goals set';
 
+      const lifeCtxText = lifeContext
+        ? `\n- Priority: ${lifeContext.priorityGoal || 'not set'}` +
+          (lifeContext.currentBlocker ? `\n- Known blocker: ${lifeContext.currentBlocker}` : '') +
+          (lifeContext.improvementArea ? `\n- Wants to improve: ${lifeContext.improvementArea}` : '')
+        : '';
+
       const prompt = `You are a personal productivity coach. Write a 1-2 sentence daily coaching note for this person.
 
 Their profile:
 - Streak: ${stats?.streak || 0} days, ${completionRate}% task completion this week
 - Goals: ${goalsText}
 - Recently completed: ${completedHistory.slice(0, 4).map((h: any) => h.title).join(', ') || 'nothing yet'}
-- Recently skipped: ${skippedHistory.slice(0, 3).map((h: any) => h.title).join(', ') || 'nothing'}
+- Recently skipped: ${skippedHistory.slice(0, 3).map((h: any) => h.title).join(', ') || 'nothing'}${lifeCtxText}
 
-Write ONE short, specific coaching observation. Be direct — name what's working or what to fix. No greeting, no sign-off.
+Write ONE short, specific coaching observation. Be direct — name what's working or what to fix. If they have a clear priority or blocker, reference it specifically. No greeting, no sign-off.
 
 Return JSON: { "note": "your 1-2 sentence note here" }`;
 
@@ -297,6 +324,28 @@ Return JSON: { "note": "your 1-2 sentence note here" }`;
         return res.json({ connected: false, events: [] });
       }
       res.json({ connected: true, events: [] });
+    }
+  });
+
+  app.get("/api/gmail/status", async (_req: Request, res: Response) => {
+    try {
+      const connected = await checkGmailConnection();
+      res.json({ connected });
+    } catch (error) {
+      console.error("Error checking Gmail status:", error);
+      res.json({ connected: false });
+    }
+  });
+
+  app.get("/api/gmail/commitments", async (_req: Request, res: Response) => {
+    try {
+      const connected = await checkGmailConnection();
+      if (!connected) return res.json({ connected: false, items: [] });
+      const items = await getRecentEmailCommitments(7);
+      res.json({ connected: true, items });
+    } catch (error) {
+      console.error("Error fetching Gmail commitments:", error);
+      res.json({ connected: false, items: [] });
     }
   });
 

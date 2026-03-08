@@ -241,7 +241,33 @@ const KEYS = {
   HISTORY: 'gameplan_history',
   CHAT_HISTORY: 'gameplan_chat_history',
   DAILY_CHECKIN: 'gameplan_daily_checkin',
+  LIFE_CONTEXT: 'gameplan_life_context',
 };
+
+export interface LifeContext {
+  priorityGoal: string;
+  upcomingDeadline: string;
+  improvementArea: string;
+  currentBlocker: string;
+  freeText: string;
+  lastUpdated: string;
+}
+
+export async function getLifeContext(): Promise<LifeContext | null> {
+  try {
+    const raw = await AsyncStorage.getItem(KEYS.LIFE_CONTEXT);
+    if (!raw) return null;
+    return JSON.parse(raw) as LifeContext;
+  } catch {
+    return null;
+  }
+}
+
+export async function saveLifeContext(ctx: LifeContext): Promise<void> {
+  try {
+    await AsyncStorage.setItem(KEYS.LIFE_CONTEXT, JSON.stringify(ctx));
+  } catch {}
+}
 
 export interface CoachAction {
   type: 'task' | 'goal';

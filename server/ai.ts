@@ -29,6 +29,14 @@ export interface GeneratePlanRequest {
   goals: { id: string; title: string; category: string; current: number; target: number; unit: string }[];
   history: CompletionHistoryItem[];
   dayOfWeek: string;
+  lifeContext?: {
+    priorityGoal?: string;
+    upcomingDeadline?: string;
+    improvementArea?: string;
+    currentBlocker?: string;
+    freeText?: string;
+  } | null;
+  gmailItems?: { subject: string; snippet: string; date: string }[];
 }
 
 export interface GeneratePlanTask {
@@ -105,7 +113,7 @@ Return ONLY a JSON object with a "steps" array of strings. No other text.`;
 }
 
 export async function generateSmartPlan(req: GeneratePlanRequest): Promise<GeneratePlanResponse> {
-  const { goals, history, dayOfWeek } = req;
+  const { goals, history, dayOfWeek, lifeContext, gmailItems } = req;
 
   const completedTasks = history.filter(h => h.completed);
   const skippedTasks = history.filter(h => !h.completed);
@@ -122,13 +130,27 @@ ${skippedTasks.length > completedTasks.length ? 'This person tends to skip more 
 ${completedTasks.length > skippedTasks.length ? 'This person is on a good streak — maintain momentum with a balanced plan.' : ''}`
     : 'No history yet — create a balanced starter plan.';
 
+  const lifeCtxSection = lifeContext
+    ? `\nAbout this person:\n` +
+      (lifeContext.priorityGoal ? `- Current priority: ${lifeContext.priorityGoal}\n` : '') +
+      (lifeContext.upcomingDeadline ? `- Upcoming deadline: ${lifeContext.upcomingDeadline}\n` : '') +
+      (lifeContext.improvementArea ? `- Wants to improve: ${lifeContext.improvementArea}\n` : '') +
+      (lifeContext.currentBlocker ? `- Known blocker: ${lifeContext.currentBlocker}\n` : '') +
+      (lifeContext.freeText ? `- Additional context: ${lifeContext.freeText}` : '')
+    : '';
+
+  const gmailSection = gmailItems && gmailItems.length > 0
+    ? `\nRecent email signals (possible commitments/deadlines):\n` +
+      gmailItems.slice(0, 8).map(i => `- "${i.subject}": ${i.snippet}`).join('\n')
+    : '';
+
   const prompt = `You create personalized daily task plans for people. Today is ${dayOfWeek}.
 
 User's goals:
 ${goalsText}
 
 Recent activity:
-${historyText}
+${historyText}${lifeCtxSection}${gmailSection}
 
 Create a daily plan with 5-8 tasks. For each task provide:
 - title: short, action-oriented task name

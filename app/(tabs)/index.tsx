@@ -37,6 +37,7 @@ import {
   getStats,
   getDailyCoachNote,
   saveDailyCoachNote,
+  getLifeContext,
   ALL_BADGES,
   type DayPlan,
   type Goal,
@@ -115,12 +116,12 @@ export default function TodayScreen() {
         setCoachNote(cached.note);
         return;
       }
-      const [stats, history] = await Promise.all([getStats(), getCompletionHistory()]);
+      const [stats, history, lc] = await Promise.all([getStats(), getCompletionHistory(), getLifeContext()]);
       const url = new URL('/api/coach/checkin', getApiUrl());
       const res = await fetch(url.toString(), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ goals: loadedGoals, stats, history }),
+        body: JSON.stringify({ goals: loadedGoals, stats, history, lifeContext: lc }),
       });
       const data = await res.json();
       if (data.note) {
@@ -169,6 +170,13 @@ export default function TodayScreen() {
       const history = await getCompletionHistory();
       const dayOfWeek = new Date().toLocaleDateString('en-US', { weekday: 'long' });
 
+      const [lc, gmailData] = await Promise.allSettled([
+        getLifeContext(),
+        fetch(new URL('/api/gmail/commitments', getApiUrl()).toString(), { cache: 'no-store' }).then(r => r.json()).catch(() => ({ connected: false, items: [] })),
+      ]);
+      const lifeContext = lc.status === 'fulfilled' ? lc.value : null;
+      const gmailItems = gmailData.status === 'fulfilled' && gmailData.value.connected ? gmailData.value.items : [];
+
       const res = await apiRequest('POST', '/api/ai/generate-plan', {
         goals: loadedGoals.map(g => ({
           id: g.id,
@@ -180,6 +188,8 @@ export default function TodayScreen() {
         })),
         history,
         dayOfWeek,
+        lifeContext,
+        gmailItems,
       });
       const data = await res.json();
 

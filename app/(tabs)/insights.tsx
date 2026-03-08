@@ -29,10 +29,12 @@ import {
   getChatHistory,
   saveChatHistory,
   clearChatHistory,
+  getLifeContext,
   type Goal,
   type UserStats,
   type ChatMessage,
   type CoachAction,
+  type LifeContext,
 } from '@/lib/storage';
 import { getApiUrl } from '@/lib/query-client';
 
@@ -171,6 +173,8 @@ export default function InsightsScreen() {
   const [stats, setStats] = useState<UserStats>({ streak: 0, totalCompleted: 0, bestStreak: 0 });
   const [history, setHistory] = useState<any[]>([]);
   const [calendarEvents, setCalendarEvents] = useState<{ title: string; time: string }[]>([]);
+  const [lifeContext, setLifeContext] = useState<LifeContext | null>(null);
+  const [gmailItems, setGmailItems] = useState<{ subject: string; snippet: string; date: string }[]>([]);
   const [confirmClear, setConfirmClear] = useState(false);
   const flatListRef = useRef<FlatList>(null);
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
@@ -178,16 +182,18 @@ export default function InsightsScreen() {
   const tabBarHeight = tabBarCtx ?? (Platform.OS === 'web' ? 84 : 50 + insets.bottom);
 
   const loadAll = useCallback(async () => {
-    const [loadedGoals, loadedStats, loadedHistory, savedMessages] = await Promise.all([
+    const [loadedGoals, loadedStats, loadedHistory, savedMessages, lc] = await Promise.all([
       getGoals(),
       getStats(),
       getCompletionHistory(),
       getChatHistory(),
+      getLifeContext(),
     ]);
     setGoals(loadedGoals);
     setStats(loadedStats);
     setHistory(loadedHistory);
     setMessages(savedMessages);
+    setLifeContext(lc);
 
     try {
       const today = getTodayKey();
@@ -206,7 +212,16 @@ export default function InsightsScreen() {
         }
       };
 
-      await Promise.allSettled([fetchSource('google'), fetchSource('outlook')]);
+      const fetchGmail = async () => {
+        const url = new URL('/api/gmail/commitments', base);
+        const res = await fetch(url.toString(), { cache: 'no-store' } as RequestInit);
+        const data = await res.json();
+        if (data.connected && data.items?.length) {
+          setGmailItems(data.items);
+        }
+      };
+
+      await Promise.allSettled([fetchSource('google'), fetchSource('outlook'), fetchGmail()]);
       setCalendarEvents(calEvts);
     } catch {}
   }, []);
@@ -248,6 +263,8 @@ export default function InsightsScreen() {
           stats,
           history,
           calendarEvents,
+          lifeContext,
+          gmailItems,
         }),
       });
 
