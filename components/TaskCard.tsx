@@ -105,7 +105,7 @@ export default function TaskCard({ task, onToggle, onResize }: TaskCardProps) {
             </View>
           </View>
           {task.description && !hasSubtasks ? (
-            <Text style={[styles.description, task.completed && styles.completedSubText]} numberOfLines={1}>
+            <Text style={[styles.description, task.completed && styles.completedSubText]}>
               {task.description}
             </Text>
           ) : null}

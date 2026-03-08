@@ -8,6 +8,7 @@ import {
   Pressable,
   Platform,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -65,7 +66,7 @@ export default function TodayScreen() {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
   }, []);
 
-  const handleSmartRefresh = useCallback(async () => {
+  const runSmartRefresh = useCallback(async () => {
     setGeneratingAI(true);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     try {
@@ -120,6 +121,17 @@ export default function TodayScreen() {
       setGeneratingAI(false);
     }
   }, [plan]);
+
+  const handleSmartRefresh = useCallback(() => {
+    Alert.alert(
+      'Replace today\'s tasks?',
+      'Smart Refresh will generate a brand-new plan based on your goals and history. Your current tasks — including any custom steps — will be replaced.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Refresh', style: 'destructive', onPress: runSmartRefresh },
+      ]
+    );
+  }, [runSmartRefresh]);
 
   const handleToggleTask = useCallback(async (taskId: string, completed: boolean) => {
     if (!plan) return;
