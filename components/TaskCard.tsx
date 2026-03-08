@@ -101,17 +101,6 @@ export default function TaskCard({ task, onToggle, onResize }: TaskCardProps) {
               {task.title}
             </Text>
             <View style={styles.topActions}>
-              {!task.completed && !task.isSubtask && onResize && (
-                <Pressable
-                  onPress={handleResize}
-                  hitSlop={6}
-                  style={({ pressed }) => [styles.resizeButton, pressed && { opacity: 0.75 }]}
-                  testID={`resize-${task.id}`}
-                >
-                  <Ionicons name="git-branch-outline" size={13} color={Colors.primary} />
-                  <Text style={styles.resizeButtonText}>Break down</Text>
-                </Pressable>
-              )}
               <View style={[styles.priorityDot, { backgroundColor: priorityDot }]} />
             </View>
           </View>
@@ -140,6 +129,17 @@ export default function TaskCard({ task, onToggle, onResize }: TaskCardProps) {
             <View style={[styles.categoryBadge, { backgroundColor: categoryColor + '15' }]}>
               <Text style={[styles.categoryText, { color: categoryColor }]}>{getCategoryLabel(task.category)}</Text>
             </View>
+            {!task.completed && !task.isSubtask && onResize && (
+              <Pressable
+                onPress={handleResize}
+                hitSlop={6}
+                style={({ pressed }) => [styles.resizeButton, { marginLeft: 'auto' }, pressed && { opacity: 0.75 }]}
+                testID={`resize-${task.id}`}
+              >
+                <Ionicons name="git-branch-outline" size={13} color={Colors.primary} />
+                <Text style={styles.resizeButtonText}>Break down</Text>
+              </Pressable>
+            )}
           </View>
 
           {hasSubtasks ? (
