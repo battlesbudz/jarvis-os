@@ -959,4 +959,30 @@ export function getSuggestions(): Suggestion[] {
   return suggestions;
 }
 
+const COMPLETED_CAL_KEY_PREFIX = 'completed_cal_ids_';
+
+export async function getCompletedCalendarIds(): Promise<string[]> {
+  try {
+    const key = `${COMPLETED_CAL_KEY_PREFIX}${getTodayKey()}`;
+    const raw = await AsyncStorage.getItem(key);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function saveCompletedCalendarId(id: string, completed: boolean): Promise<void> {
+  try {
+    const key = `${COMPLETED_CAL_KEY_PREFIX}${getTodayKey()}`;
+    const existing = await getCompletedCalendarIds();
+    let updated: string[];
+    if (completed) {
+      updated = Array.from(new Set([...existing, id]));
+    } else {
+      updated = existing.filter(i => i !== id);
+    }
+    await AsyncStorage.setItem(key, JSON.stringify(updated));
+  } catch {}
+}
+
 export { generateId, getTodayKey, getGreeting };

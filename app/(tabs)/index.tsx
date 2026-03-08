@@ -47,6 +47,8 @@ import {
   saveBrainDumpItem,
   clearBrainDumpItem,
   addTaskToToday,
+  getCompletedCalendarIds,
+  saveCompletedCalendarId,
   type DayPlan,
   type Goal,
   type Task,
@@ -124,7 +126,13 @@ export default function TodayScreen() {
       if (status.google) await fetchEvents('google');
       if (status.outlook) await fetchEvents('outlook');
 
-      setCalendarEvents(events);
+      // Restore previously completed calendar events for today
+      const completedIds = await getCompletedCalendarIds();
+      const eventsWithCompletion = events.map(e =>
+        completedIds.includes(e.id) ? { ...e, completed: true } : e
+      );
+
+      setCalendarEvents(eventsWithCompletion);
     } catch {
       setCalendarEvents([]);
     }
@@ -522,7 +530,21 @@ export default function TodayScreen() {
         <Animated.View entering={FadeInDown.duration(400).delay(100)} style={styles.headerRow}>
           <View>
             <Text style={styles.greeting}>{plan.greeting}</Text>
-            <Text style={styles.dateText}>{todayLabel}</Text>
+            <View style={styles.headerDateRow}>
+              <Text style={styles.dateText}>{todayLabel}</Text>
+              {energyCheckin && (
+                <View style={[styles.energyPill, energyCheckin.energy <= 2 && styles.energyPillLow]}>
+                  <Ionicons
+                    name={energyCheckin.energy >= 4 ? 'flash' : energyCheckin.energy <= 2 ? 'bed-outline' : 'bicycle-outline'}
+                    size={11}
+                    color={energyCheckin.energy >= 4 ? '#D97706' : energyCheckin.energy <= 2 ? '#6B7280' : Colors.primary}
+                  />
+                  <Text style={[styles.energyPillText, energyCheckin.energy >= 4 && { color: '#D97706' }, energyCheckin.energy <= 2 && { color: '#6B7280' }]}>
+                    {energyCheckin.energy === 1 ? 'Dead' : energyCheckin.energy === 2 ? 'Low Energy' : energyCheckin.energy === 3 ? 'Okay' : energyCheckin.energy === 4 ? 'Good' : 'On Fire'}
+                  </Text>
+                </View>
+              )}
+            </View>
           </View>
           <View style={styles.headerActions}>
             <Pressable
@@ -581,6 +603,13 @@ export default function TodayScreen() {
           </Animated.View>
         ) : null}
 
+        {energyCheckin && energyCheckin.energy <= 2 ? (
+          <Animated.View entering={FadeInDown.duration(400).delay(345)} style={styles.lowEnergyBanner}>
+            <Ionicons name="moon-outline" size={15} color="#6B7280" />
+            <Text style={styles.lowEnergyText}>Low energy mode — lighter tasks are prioritized for you today</Text>
+          </Animated.View>
+        ) : null}
+
         <Animated.View entering={FadeInDown.duration(400).delay(350)}>
           {confirmingRefresh ? (
             <View style={styles.confirmRow}>
@@ -621,6 +650,38 @@ export default function TodayScreen() {
             </Pressable>
           )}
         </Animated.View>
+
+        {viewMode === 'list' && (incompleteTasks.length > 0 || incompleteCalEvents.length > 0) ? (
+          <Animated.View entering={FadeInDown.duration(400).delay(355)} style={styles.focusToolsRow}>
+            <Pressable
+              style={({ pressed }) => [styles.focusTool, pressed && { opacity: 0.75 }]}
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                setBrainDumpVisible(true);
+              }}
+            >
+              <View style={[styles.focusToolIcon, { backgroundColor: Colors.primary + '18' }]}>
+                <Ionicons name="create-outline" size={20} color={Colors.primary} />
+              </View>
+              <Text style={styles.focusToolLabel}>Brain Dump</Text>
+              <Text style={styles.focusToolSub}>Clear your head</Text>
+            </Pressable>
+            <View style={styles.focusToolDivider} />
+            <Pressable
+              style={({ pressed }) => [styles.focusTool, pressed && { opacity: 0.75 }]}
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                handleOpenJot();
+              }}
+            >
+              <View style={[styles.focusToolIcon, { backgroundColor: '#FEF3C7' }]}>
+                <Ionicons name="flash" size={20} color="#D97706" />
+              </View>
+              <Text style={styles.focusToolLabel}>Just One Thing</Text>
+              <Text style={styles.focusToolSub}>Feeling overwhelmed?</Text>
+            </Pressable>
+          </Animated.View>
+        ) : null}
 
         {viewMode === 'list' ? (
           <>
@@ -665,6 +726,7 @@ export default function TodayScreen() {
                     onToggle={async (id, done) => {
                       const updated = calendarEvents.map(e => e.id === id ? { ...e, completed: done } : e);
                       setCalendarEvents(updated);
+                      await saveCompletedCalendarId(id, done);
                       if (done) {
                         const { xpEarned: earned } = await incrementStats('high', false);
                         showXpToast(earned);
@@ -688,13 +750,6 @@ export default function TodayScreen() {
               <View style={styles.section}>
                 <View style={styles.sectionHeaderRow}>
                   <Text style={styles.sectionTitle}>To Do</Text>
-                  <Pressable
-                    onPress={handleOpenJot}
-                    style={({ pressed }) => [styles.jotSmallButton, pressed && { opacity: 0.7 }]}
-                  >
-                    <Ionicons name="flash" size={12} color={Colors.primary} />
-                    <Text style={styles.jotSmallButtonText}>Overwhelmed?</Text>
-                  </Pressable>
                 </View>
                 {incompleteTasks.map((task) => (
                   <TaskCard
@@ -718,6 +773,7 @@ export default function TodayScreen() {
                       ? async (id, done) => {
                           const updated = calendarEvents.map(e => e.id === id ? { ...e, completed: done } : e);
                           setCalendarEvents(updated);
+                          await saveCompletedCalendarId(id, done);
                           if (!done) await decrementStats();
                         }
                       : handleToggleTask}
@@ -730,10 +786,11 @@ export default function TodayScreen() {
         ) : (
           <TimelineView
             tasks={[...calendarEvents, ...plan.tasks]}
-            onToggle={(id, done) => {
+            onToggle={async (id, done) => {
               if (id.startsWith('cal-')) {
                 const updated = calendarEvents.map(e => e.id === id ? { ...e, completed: done } : e);
                 setCalendarEvents(updated);
+                await saveCompletedCalendarId(id, done);
                 if (done) {
                   incrementStats('high', false).then(({ xpEarned: earned }) => {
                     showXpToast(earned);
@@ -805,7 +862,7 @@ export default function TodayScreen() {
           setBrainDumpVisible(true);
         }}
       >
-        <Ionicons name="add" size={30} color={Colors.white} />
+        <Ionicons name="create-outline" size={24} color={Colors.white} />
       </Pressable>
     </View>
   );
@@ -842,7 +899,6 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontFamily: 'Inter_400Regular',
     color: Colors.textSecondary,
-    marginBottom: 20,
   },
   progressCard: {
     flexDirection: 'row',
@@ -992,6 +1048,88 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     marginBottom: 0,
+  },
+  headerDateRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 20,
+  },
+  energyPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 20,
+    backgroundColor: Colors.primary + '15',
+  },
+  energyPillLow: {
+    backgroundColor: '#F3F4F6',
+  },
+  energyPillText: {
+    fontSize: 11,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.primary,
+  },
+  lowEnergyBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#F3F4F6',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  lowEnergyText: {
+    flex: 1,
+    fontSize: 13,
+    fontFamily: 'Inter_400Regular',
+    color: '#4B5563',
+    lineHeight: 18,
+  },
+  focusToolsRow: {
+    flexDirection: 'row',
+    backgroundColor: Colors.white,
+    borderRadius: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    overflow: 'hidden',
+  },
+  focusTool: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: 8,
+    gap: 4,
+  },
+  focusToolIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
+  },
+  focusToolLabel: {
+    fontSize: 13,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.text,
+    textAlign: 'center',
+  },
+  focusToolSub: {
+    fontSize: 11,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textTertiary,
+    textAlign: 'center',
+  },
+  focusToolDivider: {
+    width: 1,
+    backgroundColor: Colors.border,
+    marginVertical: 12,
   },
   syncButton: {
     width: 38,
