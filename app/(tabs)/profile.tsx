@@ -5,49 +5,62 @@ import {
   Text,
   ScrollView,
   Pressable,
-  Switch,
   Platform,
+  ActivityIndicator,
 } from 'react-native';
-import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import Colors from '@/constants/colors';
-import {
-  getPlatforms,
-  togglePlatform,
-  getStats,
-  type ConnectedPlatform,
-  type UserStats,
-} from '@/lib/storage';
+import { getStats, type UserStats } from '@/lib/storage';
+import { getApiUrl } from '@/lib/query-client';
 
-const PLATFORM_ICONS: Record<string, keyof typeof Ionicons.glyphMap> = {
-  calendar: 'calendar-outline',
-  'heart-pulse': 'heart-outline',
-  'credit-card': 'card-outline',
-  briefcase: 'briefcase-outline',
-  bike: 'bicycle-outline',
-  mail: 'mail-outline',
-};
+interface CalendarStatus {
+  google: boolean;
+  outlook: boolean;
+}
+
+interface PlatformInfo {
+  id: 'google' | 'outlook';
+  name: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  color: string;
+}
+
+const PLATFORMS: PlatformInfo[] = [
+  { id: 'google', name: 'Google Calendar', icon: 'calendar-outline', color: '#4285F4' },
+  { id: 'outlook', name: 'Microsoft Outlook', icon: 'mail-outline', color: '#0078D4' },
+];
 
 export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
-  const [platforms, setPlatforms] = useState<ConnectedPlatform[]>([]);
   const [stats, setStats] = useState<UserStats>({ streak: 0, totalCompleted: 0, bestStreak: 0 });
+  const [calStatus, setCalStatus] = useState<CalendarStatus>({ google: false, outlook: false });
+  const [loadingStatus, setLoadingStatus] = useState(true);
 
-  useEffect(() => {
-    getPlatforms().then(setPlatforms);
-    getStats().then(setStats);
+  const loadStatus = useCallback(async () => {
+    try {
+      const url = new URL('/api/calendar/status', getApiUrl());
+      const res = await fetch(url.toString());
+      const data = await res.json();
+      setCalStatus(data);
+    } catch {
+      setCalStatus({ google: false, outlook: false });
+    } finally {
+      setLoadingStatus(false);
+    }
   }, []);
 
-  const handleToggle = async (id: string) => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    await togglePlatform(id);
-    const updated = await getPlatforms();
-    setPlatforms(updated);
-  };
+  useEffect(() => {
+    getStats().then(setStats);
+    loadStatus();
+  }, [loadStatus]);
 
-  const connectedCount = platforms.filter(p => p.connected).length;
+  const connectedCount = (calStatus.google ? 1 : 0) + (calStatus.outlook ? 1 : 0);
+
+  const isConnected = (id: 'google' | 'outlook') =>
+    id === 'google' ? calStatus.google : calStatus.outlook;
 
   return (
     <View style={styles.container}>
@@ -71,7 +84,9 @@ export default function ProfileScreen() {
           </View>
           <View style={styles.avatarInfo}>
             <Text style={styles.userName}>Your GamePlan</Text>
-            <Text style={styles.userSubtitle}>{connectedCount} platform{connectedCount !== 1 ? 's' : ''} connected</Text>
+            <Text style={styles.userSubtitle}>
+              {connectedCount} calendar{connectedCount !== 1 ? 's' : ''} connected
+            </Text>
           </View>
         </Animated.View>
 
@@ -98,35 +113,48 @@ export default function ProfileScreen() {
         </Animated.View>
 
         <Animated.View entering={FadeInDown.duration(400).delay(400)}>
-          <Text style={styles.sectionTitle}>Connected Platforms</Text>
+          <Text style={styles.sectionTitle}>Connected Calendars</Text>
           <Text style={styles.sectionSubtitle}>
-            Connect services to get smarter daily plans
+            Real events appear in your daily plan
           </Text>
           <View style={styles.platformsList}>
-            {platforms.map((platform) => (
-              <View key={platform.id} style={styles.platformRow}>
-                <View style={[styles.platformIcon, { backgroundColor: platform.connected ? Colors.primary + '15' : Colors.surfaceAlt }]}>
-                  <Ionicons
-                    name={PLATFORM_ICONS[platform.icon] || 'ellipse-outline'}
-                    size={20}
-                    color={platform.connected ? Colors.primary : Colors.textTertiary}
-                  />
+            {PLATFORMS.map((platform, index) => {
+              const connected = !loadingStatus && isConnected(platform.id);
+              return (
+                <View
+                  key={platform.id}
+                  style={[
+                    styles.platformRow,
+                    index < PLATFORMS.length - 1 && styles.platformRowBorder,
+                  ]}
+                >
+                  <View style={[styles.platformIcon, { backgroundColor: platform.color + '15' }]}>
+                    <Ionicons name={platform.icon} size={20} color={platform.color} />
+                  </View>
+                  <View style={styles.platformInfo}>
+                    <Text style={styles.platformName}>{platform.name}</Text>
+                    <Text style={[styles.platformStatus, connected && styles.platformStatusConnected]}>
+                      {loadingStatus ? 'Checking...' : connected ? 'Connected' : 'Not connected'}
+                    </Text>
+                  </View>
+                  {loadingStatus ? (
+                    <ActivityIndicator size="small" color={Colors.textTertiary} />
+                  ) : connected ? (
+                    <View style={styles.connectedBadge}>
+                      <Ionicons name="checkmark-circle" size={22} color={Colors.success} />
+                    </View>
+                  ) : (
+                    <View style={styles.notConnectedBadge}>
+                      <Ionicons name="ellipse-outline" size={22} color={Colors.border} />
+                    </View>
+                  )}
                 </View>
-                <View style={styles.platformInfo}>
-                  <Text style={styles.platformName}>{platform.name}</Text>
-                  <Text style={styles.platformCategory}>
-                    {platform.category.charAt(0).toUpperCase() + platform.category.slice(1)}
-                  </Text>
-                </View>
-                <Switch
-                  value={platform.connected}
-                  onValueChange={() => handleToggle(platform.id)}
-                  trackColor={{ false: Colors.border, true: Colors.primaryLight }}
-                  thumbColor={platform.connected ? Colors.primary : Colors.textTertiary}
-                />
-              </View>
-            ))}
+              );
+            })}
           </View>
+          <Text style={styles.connectionHint}>
+            To reconnect, open your Replit account integrations.
+          </Text>
         </Animated.View>
 
         <Animated.View entering={FadeInDown.duration(400).delay(500)}>
@@ -260,17 +288,19 @@ const styles = StyleSheet.create({
   platformRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 14,
+    padding: 16,
+  },
+  platformRowBorder: {
     borderBottomWidth: 1,
     borderBottomColor: Colors.borderLight,
   },
   platformIcon: {
-    width: 40,
-    height: 40,
+    width: 42,
+    height: 42,
     borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 12,
+    marginRight: 14,
   },
   platformInfo: {
     flex: 1,
@@ -280,11 +310,28 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter_500Medium',
     color: Colors.text,
   },
-  platformCategory: {
+  platformStatus: {
     fontSize: 12,
     fontFamily: 'Inter_400Regular',
     color: Colors.textTertiary,
     marginTop: 2,
+  },
+  platformStatusConnected: {
+    color: Colors.success,
+    fontFamily: 'Inter_500Medium',
+  },
+  connectedBadge: {
+    marginLeft: 8,
+  },
+  notConnectedBadge: {
+    marginLeft: 8,
+  },
+  connectionHint: {
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textTertiary,
+    marginTop: 10,
+    textAlign: 'center',
   },
   prefsList: {
     backgroundColor: Colors.white,

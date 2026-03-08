@@ -33,7 +33,7 @@ import {
   type Goal,
   type Task,
 } from '@/lib/storage';
-import { apiRequest } from '@/lib/query-client';
+import { apiRequest, getApiUrl } from '@/lib/query-client';
 import { formatDate } from '@/lib/helpers';
 
 export default function TodayScreen() {
@@ -49,6 +49,48 @@ export default function TodayScreen() {
   const [logTask, setLogTask] = useState<Task | null>(null);
   const [logGoal, setLogGoal] = useState<Goal | null>(null);
   const [confirmingRefresh, setConfirmingRefresh] = useState(false);
+  const [calendarEvents, setCalendarEvents] = useState<Task[]>([]);
+
+  const loadCalendarEvents = useCallback(async () => {
+    try {
+      const today = getTodayKey();
+      const statusUrl = new URL('/api/calendar/status', getApiUrl());
+      const statusRes = await fetch(statusUrl.toString());
+      const status = await statusRes.json();
+
+      const events: Task[] = [];
+
+      const fetchEvents = async (source: 'google' | 'outlook') => {
+        const url = new URL(`/api/calendar/${source}/events`, getApiUrl());
+        url.searchParams.set('date', today);
+        const res = await fetch(url.toString());
+        const data = await res.json();
+        if (data.connected && data.events?.length) {
+          data.events.forEach((e: any) => {
+            const startTime = e.start
+              ? new Date(e.start).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+              : undefined;
+            events.push({
+              id: `cal-${source}-${e.id}`,
+              title: e.title,
+              category: 'calendar',
+              completed: false,
+              priority: 'high',
+              time: startTime,
+              description: e.location ? `📍 ${e.location}` : e.description,
+            });
+          });
+        }
+      };
+
+      if (status.google) await fetchEvents('google');
+      if (status.outlook) await fetchEvents('outlook');
+
+      setCalendarEvents(events);
+    } catch {
+      setCalendarEvents([]);
+    }
+  }, []);
 
   const loadData = useCallback(async () => {
     const loadedGoals = await getGoals();
@@ -56,7 +98,8 @@ export default function TodayScreen() {
     const todayPlan = await getTodayPlan(loadedGoals);
     setPlan(todayPlan);
     setLoading(false);
-  }, []);
+    loadCalendarEvents();
+  }, [loadCalendarEvents]);
 
   useEffect(() => {
     loadData();
@@ -238,6 +281,7 @@ export default function TodayScreen() {
   const todayLabel = formatDate(getTodayKey());
   const incompleteTasks = plan.tasks.filter(t => !t.completed);
   const completedTasks = plan.tasks.filter(t => t.completed);
+  const incompleteCalEvents = calendarEvents.filter(e => !e.completed);
 
   return (
     <View style={styles.container}>
@@ -325,6 +369,24 @@ export default function TodayScreen() {
             </Pressable>
           )}
         </Animated.View>
+
+        {incompleteCalEvents.length > 0 ? (
+          <View style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <Ionicons name="calendar" size={15} color="#4285F4" />
+              <Text style={[styles.sectionTitle, { color: '#4285F4' }]}>Today's Events</Text>
+            </View>
+            {incompleteCalEvents.map((event) => (
+              <TaskCard
+                key={event.id}
+                task={event}
+                onToggle={async (id, done) => {
+                  setCalendarEvents(prev => prev.map(e => e.id === id ? { ...e, completed: done } : e));
+                }}
+              />
+            ))}
+          </View>
+        ) : null}
 
         {incompleteTasks.length > 0 ? (
           <View style={styles.section}>
@@ -524,6 +586,12 @@ const styles = StyleSheet.create({
   },
   section: {
     marginBottom: 20,
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 12,
   },
   sectionTitle: {
     fontSize: 16,

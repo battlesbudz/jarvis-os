@@ -88,12 +88,8 @@ function getGreeting(): string {
 }
 
 const DEFAULT_PLATFORMS: ConnectedPlatform[] = [
-  { id: '1', name: 'Google Calendar', category: 'calendar', connected: false, icon: 'calendar' },
-  { id: '2', name: 'Apple Health', category: 'fitness', connected: false, icon: 'heart-pulse' },
-  { id: '3', name: 'Mint', category: 'finance', connected: false, icon: 'credit-card' },
-  { id: '4', name: 'LinkedIn', category: 'social', connected: false, icon: 'briefcase' },
-  { id: '5', name: 'Strava', category: 'fitness', connected: false, icon: 'bike' },
-  { id: '6', name: 'Outlook', category: 'calendar', connected: false, icon: 'mail' },
+  { id: 'google-calendar', name: 'Google Calendar', category: 'calendar', connected: false, icon: 'calendar' },
+  { id: 'outlook', name: 'Microsoft Outlook', category: 'calendar', connected: false, icon: 'mail' },
 ];
 
 function generateDailyTasks(goals: Goal[]): Task[] {
