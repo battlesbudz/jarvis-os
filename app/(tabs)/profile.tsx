@@ -138,6 +138,15 @@ export default function ProfileScreen() {
     setRewardModalVisible(true);
   };
 
+  const handleClaimReward = async (reward: Reward) => {
+    await claimReward(reward.id);
+    setRewardModalVisible(false);
+    setSelectedReward(null);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    const updated = await getStats();
+    setStats(updated);
+  };
+
   const handleToggleNotifications = async () => {
     const newValue = !notificationsEnabled;
     setNotificationsEnabledState(newValue);
