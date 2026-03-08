@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useRef, useEffect, useContext } from 'react';
 import {
   StyleSheet,
   View,
@@ -12,6 +12,7 @@ import {
 import { fetch } from 'expo/fetch';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { BottomTabBarHeightContext } from '@react-navigation/bottom-tabs';
 import { useFocusEffect } from 'expo-router';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import Animated, { FadeInDown, FadeIn } from 'react-native-reanimated';
@@ -173,6 +174,8 @@ export default function InsightsScreen() {
   const [confirmClear, setConfirmClear] = useState(false);
   const flatListRef = useRef<FlatList>(null);
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
+  const tabBarCtx = useContext(BottomTabBarHeightContext);
+  const tabBarHeight = tabBarCtx ?? (Platform.OS === 'web' ? 84 : 50 + insets.bottom);
 
   const loadAll = useCallback(async () => {
     const [loadedGoals, loadedStats, loadedHistory, savedMessages] = await Promise.all([
@@ -386,13 +389,11 @@ export default function InsightsScreen() {
 
   const isEmpty = messages.length === 0 && !isStreaming;
 
-  const bottomPad = Platform.OS === 'web' ? 34 : insets.bottom;
-
   return (
     <KeyboardAvoidingView
       style={styles.container}
       behavior="padding"
-      keyboardVerticalOffset={0}
+      keyboardVerticalOffset={tabBarHeight}
     >
       <View style={[styles.header, { paddingTop: topPad + 16 }]}>
         <View style={styles.headerLeft}>
@@ -448,7 +449,7 @@ export default function InsightsScreen() {
         )}
       </View>
 
-      <View style={[styles.inputContainer, { paddingBottom: bottomPad + 8 }]}>
+      <View style={[styles.inputContainer, { paddingBottom: tabBarHeight + 8 }]}>
         <TextInput
           style={styles.input}
           value={input}
@@ -657,7 +658,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 32,
-    paddingBottom: 80,
   },
   emptyIconWrap: {
     width: 64,
