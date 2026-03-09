@@ -8,6 +8,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   Modal,
+  ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
@@ -16,8 +17,8 @@ import Colors from '@/constants/colors';
 interface BrainDumpModalProps {
   visible: boolean;
   onClose: () => void;
-  onSaveToToday: (text: string) => void;
-  onSaveToInbox: (text: string) => void;
+  onSaveToToday: (text: string) => Promise<void>;
+  onSaveToInbox: (text: string) => Promise<void>;
 }
 
 export default function BrainDumpModal({
@@ -27,27 +28,39 @@ export default function BrainDumpModal({
   onSaveToInbox,
 }: BrainDumpModalProps) {
   const [text, setText] = useState('');
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     if (visible) {
       setText('');
+      setLoading(false);
     }
   }, [visible]);
 
-  const handleSaveToToday = () => {
-    if (!text.trim()) return;
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    onSaveToToday(text.trim());
-    setText('');
-    onClose();
+  const handleSaveToToday = async () => {
+    if (!text.trim() || loading) return;
+    setLoading(true);
+    try {
+      await onSaveToToday(text.trim());
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      setText('');
+      onClose();
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleSaveToInbox = () => {
-    if (!text.trim()) return;
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    onSaveToInbox(text.trim());
-    setText('');
-    onClose();
+  const handleSaveToInbox = async () => {
+    if (!text.trim() || loading) return;
+    setLoading(true);
+    try {
+      await onSaveToInbox(text.trim());
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      setText('');
+      onClose();
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -58,45 +71,59 @@ export default function BrainDumpModal({
       onRequestClose={onClose}
     >
       <View style={styles.overlay}>
-        <Pressable style={styles.dismissArea} onPress={onClose} />
+        <Pressable style={styles.dismissArea} onPress={loading ? undefined : onClose} />
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           style={styles.content}
         >
           <View style={styles.header}>
-            <Text style={styles.title}>Brain Dump</Text>
-            <Pressable onPress={onClose} style={styles.closeButton}>
-              <Ionicons name="close" size={24} color={Colors.textSecondary} />
+            <View>
+              <Text style={styles.title}>Brain Dump</Text>
+              {loading && (
+                <Text style={styles.analyzingText}>Analyzing your thoughts...</Text>
+              )}
+            </View>
+            <Pressable onPress={loading ? undefined : onClose} style={styles.closeButton}>
+              <Ionicons name="close" size={24} color={loading ? Colors.borderLight : Colors.textSecondary} />
             </Pressable>
           </View>
 
           <TextInput
-            style={styles.input}
-            placeholder="What's on your mind? Capture it fast..."
+            style={[styles.input, loading && styles.inputDisabled]}
+            placeholder="What's on your mind? Capture it all — tasks, ideas, reminders..."
             placeholderTextColor={Colors.textTertiary}
             multiline
             autoFocus
             value={text}
             onChangeText={setText}
             textAlignVertical="top"
+            editable={!loading}
           />
 
           <View style={styles.footer}>
             <Pressable
               onPress={handleSaveToInbox}
-              style={[styles.button, styles.inboxButton, !text.trim() && styles.disabledButton]}
-              disabled={!text.trim()}
+              style={[styles.button, styles.inboxButton, (!text.trim() || loading) && styles.disabledButton]}
+              disabled={!text.trim() || loading}
             >
-              <Ionicons name="archive-outline" size={20} color={Colors.text} />
+              {loading ? (
+                <ActivityIndicator size="small" color={Colors.text} />
+              ) : (
+                <Ionicons name="archive-outline" size={20} color={Colors.text} />
+              )}
               <Text style={styles.buttonText}>Save for Later</Text>
             </Pressable>
 
             <Pressable
               onPress={handleSaveToToday}
-              style={[styles.button, styles.todayButton, !text.trim() && styles.disabledButton]}
-              disabled={!text.trim()}
+              style={[styles.button, styles.todayButton, (!text.trim() || loading) && styles.disabledButton]}
+              disabled={!text.trim() || loading}
             >
-              <Ionicons name="flash-outline" size={20} color={Colors.white} />
+              {loading ? (
+                <ActivityIndicator size="small" color={Colors.white} />
+              ) : (
+                <Ionicons name="flash-outline" size={20} color={Colors.white} />
+              )}
               <Text style={[styles.buttonText, styles.todayButtonText]}>Add to Today</Text>
             </Pressable>
           </View>
@@ -125,13 +152,19 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     marginBottom: 20,
   },
   title: {
     fontSize: 20,
     fontFamily: 'Inter_700Bold',
     color: Colors.text,
+  },
+  analyzingText: {
+    fontSize: 13,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.primary,
+    marginTop: 2,
   },
   closeButton: {
     padding: 4,
@@ -143,6 +176,9 @@ const styles = StyleSheet.create({
     color: Colors.text,
     minHeight: 120,
     marginBottom: 24,
+  },
+  inputDisabled: {
+    opacity: 0.5,
   },
   footer: {
     flexDirection: 'row',

@@ -433,20 +433,66 @@ export default function TodayScreen() {
     }
   }, [plan]);
 
+  const parseBrainDump = useCallback(async (text: string) => {
+    try {
+      const url = new URL('/api/ai/parse-brain-dump', getApiUrl());
+      const res = await fetch(url.toString(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+      });
+      const data = await res.json();
+      if (Array.isArray(data.tasks) && data.tasks.length > 0) return data.tasks;
+    } catch {}
+    return null;
+  }, []);
+
   const handleSaveToToday = useCallback(async (text: string) => {
-    await addTaskToToday({ title: text, category: 'personal', priority: 'low' });
+    const mkId = () => Date.now().toString() + Math.random().toString(36).substr(2, 9);
+    const parsed = await parseBrainDump(text);
+    if (parsed && parsed.length > 0) {
+      for (const t of parsed) {
+        const subtaskObjs = Array.isArray(t.subtasks) && t.subtasks.length > 0
+          ? t.subtasks.map((s: string) => ({
+              id: mkId(),
+              title: s,
+              category: t.category || 'personal',
+              completed: false,
+              priority: 'low' as const,
+              isSubtask: true,
+            }))
+          : undefined;
+        await addTaskToToday({
+          title: t.title || text,
+          description: t.description || undefined,
+          category: t.category || 'personal',
+          priority: t.priority || 'low',
+          subtasks: subtaskObjs,
+        });
+      }
+    } else {
+      await addTaskToToday({ title: text, category: 'personal', priority: 'low' });
+    }
     const loadedGoals = await getGoals();
     const todayPlan = await getTodayPlan(loadedGoals);
     setPlan(todayPlan);
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-  }, []);
+  }, [parseBrainDump]);
 
   const handleSaveToInbox = useCallback(async (text: string) => {
-    await saveBrainDumpItem(text);
+    const parsed = await parseBrainDump(text);
+    if (parsed && parsed.length > 0) {
+      for (const t of parsed) {
+        const itemText = t.description
+          ? `${t.title}: ${t.description}`
+          : t.title;
+        await saveBrainDumpItem(itemText || text);
+      }
+    } else {
+      await saveBrainDumpItem(text);
+    }
     const inbox = await getBrainDumpInbox();
     setBrainDumpInbox(inbox);
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-  }, []);
+  }, [parseBrainDump]);
 
   const handlePromoteInboxItem = useCallback(async (item: BrainDumpItem) => {
     await addTaskToToday({ title: item.text, category: 'personal', priority: 'low' });
