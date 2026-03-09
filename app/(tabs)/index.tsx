@@ -3,12 +3,13 @@ import {
   StyleSheet,
   View,
   Text,
+  ScrollView,
   RefreshControl,
   Pressable,
   Platform,
   ActivityIndicator,
 } from 'react-native';
-import { ScaleDecorator, RenderItemParams, NestableScrollContainer, NestableDraggableFlatList } from 'react-native-draggable-flatlist';
+import SortableList from '@/components/SortableList';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
@@ -570,7 +571,7 @@ export default function TodayScreen() {
 
   return (
     <View style={styles.container}>
-      <NestableScrollContainer
+      <ScrollView
         contentContainerStyle={[
           styles.scrollContent,
           {
@@ -808,26 +809,21 @@ export default function TodayScreen() {
                   <Text style={styles.sectionTitle}>To Do</Text>
                   <View style={styles.dragHint}>
                     <Ionicons name="reorder-three-outline" size={14} color={Colors.textTertiary} />
-                    <Text style={styles.dragHintText}>Hold to reorder</Text>
+                    <Text style={styles.dragHintText}>Drag handle to reorder</Text>
                   </View>
                 </View>
-                <NestableDraggableFlatList
+                <SortableList
                   data={incompleteTasks}
                   keyExtractor={(item) => item.id}
-                  onDragEnd={({ data }) => handleReorderTasks(data)}
-                  activationDistance={10}
-                  renderItem={({ item, drag, isActive }: RenderItemParams<Task>) => (
-                    <ScaleDecorator activeScale={1.02}>
-                      <Pressable onLongPress={drag} delayLongPress={300}>
-                        <TaskCard
-                          task={item}
-                          onToggle={handleToggleTask}
-                          onResize={handleOpenResizer}
-                          onEdit={handleOpenEdit}
-                          isDragging={isActive}
-                        />
-                      </Pressable>
-                    </ScaleDecorator>
+                  onReorder={handleReorderTasks}
+                  renderItem={({ item, isActive }) => (
+                    <TaskCard
+                      task={item}
+                      onToggle={handleToggleTask}
+                      onResize={handleOpenResizer}
+                      onEdit={handleOpenEdit}
+                      isDragging={isActive}
+                    />
                   )}
                 />
               </View>
@@ -884,7 +880,7 @@ export default function TodayScreen() {
             }}
           />
         )}
-      </NestableScrollContainer>
+      </ScrollView>
 
       <TaskResizerSheet
         visible={resizerVisible}
