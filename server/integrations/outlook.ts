@@ -55,10 +55,10 @@ export interface CalendarEvent {
   location?: string;
 }
 
-export async function getOutlookCalendarEvents(date: string): Promise<CalendarEvent[]> {
+export async function getOutlookCalendarEvents(date: string, startTime?: string, endTime?: string): Promise<CalendarEvent[]> {
   const client = await getUncachableOutlookClient();
-  const startOfDay = new Date(date + 'T00:00:00').toISOString();
-  const endOfDay = new Date(date + 'T23:59:59').toISOString();
+  const startOfDay = startTime ? new Date(startTime).toISOString() : new Date(date + 'T00:00:00').toISOString();
+  const endOfDay = endTime ? new Date(endTime).toISOString() : new Date(date + 'T23:59:59').toISOString();
 
   const res = await client
     .api('/me/calendarView')

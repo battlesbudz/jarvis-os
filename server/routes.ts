@@ -315,7 +315,9 @@ Return JSON: { "note": "your 1-2 sentence note here" }`;
   app.get("/api/calendar/google/events", async (req: Request, res: Response) => {
     try {
       const date = (req.query.date as string) || new Date().toISOString().split('T')[0];
-      const events = await getGoogleCalendarEvents(date);
+      const startTime = req.query.startTime as string | undefined;
+      const endTime = req.query.endTime as string | undefined;
+      const events = await getGoogleCalendarEvents(date, startTime, endTime);
       res.json({ connected: true, events });
     } catch (error: any) {
       console.error("Error fetching Google Calendar events:", error);
@@ -329,7 +331,9 @@ Return JSON: { "note": "your 1-2 sentence note here" }`;
   app.get("/api/calendar/outlook/events", async (req: Request, res: Response) => {
     try {
       const date = (req.query.date as string) || new Date().toISOString().split('T')[0];
-      const events = await getOutlookCalendarEvents(date);
+      const startTime = req.query.startTime as string | undefined;
+      const endTime = req.query.endTime as string | undefined;
+      const events = await getOutlookCalendarEvents(date, startTime, endTime);
       res.json({ connected: true, events });
     } catch (error: any) {
       console.error("Error fetching Outlook events:", error);

@@ -114,6 +114,9 @@ export default function TodayScreen() {
       const fetchEvents = async (source: 'google' | 'outlook') => {
         const url = new URL(`/api/calendar/${source}/events`, getApiUrl());
         url.searchParams.set('date', today);
+        // Pass local-timezone UTC bounds so server uses correct day window
+        url.searchParams.set('startTime', new Date(today + 'T00:00:00').toISOString());
+        url.searchParams.set('endTime', new Date(today + 'T23:59:59').toISOString());
         const res = await fetch(url.toString(), { cache: 'no-store' });
         const data = await res.json();
         if (data.connected && data.events?.length) {

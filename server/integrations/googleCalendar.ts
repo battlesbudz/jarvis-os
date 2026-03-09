@@ -52,10 +52,10 @@ export interface CalendarEvent {
   location?: string;
 }
 
-export async function getGoogleCalendarEvents(date: string): Promise<CalendarEvent[]> {
+export async function getGoogleCalendarEvents(date: string, startTime?: string, endTime?: string): Promise<CalendarEvent[]> {
   const calendar = await getUncachableGoogleCalendarClient();
-  const startOfDay = new Date(date + 'T00:00:00Z');
-  const endOfDay = new Date(date + 'T23:59:59Z');
+  const startOfDay = startTime ? new Date(startTime) : new Date(date + 'T00:00:00Z');
+  const endOfDay = endTime ? new Date(endTime) : new Date(date + 'T23:59:59Z');
 
   // Fetch all calendars the user has access to
   const calList = await calendar.calendarList.list({ minAccessRole: 'reader' });
