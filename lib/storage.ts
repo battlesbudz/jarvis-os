@@ -65,10 +65,15 @@ export interface UserStats {
   totalCompleted: number;
   bestStreak: number;
   xp: number;
+  lifetimeXp?: number;
   badges: string[];
   claimedRewards: Array<{ id: string; claimedAt: string }>;
   dailyXpEarned: { date: string; xp: number };
   lastStreakDate?: string;
+}
+
+export function getLifetimeXp(stats: UserStats): number {
+  return stats.lifetimeXp ?? stats.xp ?? 0;
 }
 
 export interface Reward {
@@ -869,7 +874,7 @@ export async function togglePlatform(id: string): Promise<void> {
 }
 
 const DEFAULT_STATS: UserStats = {
-  streak: 0, totalCompleted: 0, bestStreak: 0, xp: 0, badges: [], claimedRewards: [],
+  streak: 0, totalCompleted: 0, bestStreak: 0, xp: 0, lifetimeXp: 0, badges: [], claimedRewards: [],
   dailyXpEarned: { date: '', xp: 0 },
 };
 
@@ -890,6 +895,9 @@ export async function claimReward(rewardId: string): Promise<void> {
     r => r.id === rewardId && r.claimedAt.startsWith(todayStr)
   );
   if (alreadyToday) return;
+  const reward = ALL_REWARDS.find(r => r.id === rewardId);
+  const cost = reward ? DAILY_XP_REQUIRED[reward.tier] : 0;
+  stats.xp = Math.max(0, (stats.xp || 0) - cost);
   stats.claimedRewards = [...stats.claimedRewards, { id: rewardId, claimedAt: new Date().toISOString() }];
   await AsyncStorage.setItem(KEYS.STATS, JSON.stringify(stats));
 }
@@ -902,7 +910,9 @@ export async function incrementStats(
   const stats = await getStats();
   const xpEarned = xpOverride ?? xpForTask(priority, isGoalLinked);
   stats.totalCompleted += 1;
-  stats.xp = (stats.xp || 0) + xpEarned;
+  const prevXp = stats.xp || 0;
+  stats.xp = prevXp + xpEarned;
+  stats.lifetimeXp = (stats.lifetimeXp ?? prevXp) + xpEarned;
 
   // Increment streak only once per calendar day
   const todayKey = getTodayKey();

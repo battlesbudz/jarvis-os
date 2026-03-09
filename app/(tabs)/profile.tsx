@@ -23,6 +23,7 @@ import {
   getAvailableRewards,
   getDailyXpEarned,
   getDailyBudgetRemaining,
+  getLifetimeXp,
   DAILY_XP_REQUIRED,
   getTodayKey,
   ALL_BADGES,
@@ -109,9 +110,10 @@ export default function ProfileScreen() {
 
   useFocusEffect(useCallback(() => { loadAll(); }, [loadAll]));
 
-  const xpInfo = getXpForNextLevel(stats.xp || 0);
-  const level = getLevel(stats.xp || 0);
-  const levelName = getLevelName(stats.xp || 0);
+  const lifetimeXp = getLifetimeXp(stats);
+  const xpInfo = getXpForNextLevel(lifetimeXp);
+  const level = getLevel(lifetimeXp);
+  const levelName = getLevelName(lifetimeXp);
   const connectedCount = (calStatus.google ? 1 : 0) + (calStatus.outlook ? 1 : 0);
   const isConnected = (id: 'google' | 'outlook') =>
     id === 'google' ? calStatus.google : calStatus.outlook;
@@ -128,7 +130,7 @@ export default function ProfileScreen() {
       lastClaimedAt[entry.id] = entry.claimedAt;
     }
   }
-  const availableRewards = getAvailableRewards(stats.xp || 0);
+  const availableRewards = getAvailableRewards(lifetimeXp);
   const unclaimedAvailable = availableRewards.filter(r => {
     const canAfford = budgetRemaining >= DAILY_XP_REQUIRED[r.tier];
     const claimedToday = (stats.claimedRewards || []).some(
@@ -182,7 +184,7 @@ export default function ProfileScreen() {
             </View>
             <View style={styles.levelInfo}>
               <Text style={styles.levelName}>{levelName}</Text>
-              <Text style={styles.levelXpText}>{stats.xp || 0} XP total</Text>
+              <Text style={styles.levelXpText}>{stats.xp || 0} XP  ·  {lifetimeXp} earned</Text>
             </View>
             <View style={styles.avatarSmall}>
               <Ionicons name="person" size={20} color={Colors.white} />
@@ -269,7 +271,7 @@ export default function ProfileScreen() {
           </Text>
           <View style={styles.rewardsList}>
             {ALL_REWARDS.map((reward) => {
-              const permanentlyUnlocked = (stats.xp || 0) >= reward.xpRequired;
+              const permanentlyUnlocked = lifetimeXp >= reward.xpRequired;
               const tierXpCost = DAILY_XP_REQUIRED[reward.tier];
               const canAfford = budgetRemaining >= tierXpCost;
               const budgetDepleted = permanentlyUnlocked && !canAfford && todayXp >= tierXpCost;
@@ -301,27 +303,33 @@ export default function ProfileScreen() {
                     <Text style={styles.rewardDesc} numberOfLines={1}>
                       {reward.description}
                     </Text>
-                    {!permanentlyUnlocked && (
+                    {!permanentlyUnlocked ? (
                       <Text style={styles.rewardXp}>{reward.xpRequired} XP to unlock</Text>
-                    )}
-                    {permanentlyUnlocked && !claimedToday && !canAfford && !budgetDepleted && (
-                      <Text style={styles.rewardXpEarn}>
-                        {todayXp}/{tierXpCost} XP earned today
+                    ) : claimedToday ? (
+                      <Text style={[styles.rewardXpCost, { color: Colors.textTertiary }]}>
+                        ⚡ {tierXpCost} XP · claimed today
                       </Text>
-                    )}
-                    {budgetDepleted && (
+                    ) : budgetDepleted ? (
                       <Text style={styles.rewardXpSpent}>
-                        Budget spent on other rewards today
+                        ⚡ {tierXpCost} XP · budget used today
+                      </Text>
+                    ) : !canAfford ? (
+                      <Text style={styles.rewardXpEarn}>
+                        ⚡ {tierXpCost} XP · need {tierXpCost - todayXp > 0 ? tierXpCost - todayXp : 0} more today
+                      </Text>
+                    ) : (
+                      <Text style={[styles.rewardXpCost, { color: tierColor }]}>
+                        ⚡ {tierXpCost} XP to claim
                       </Text>
                     )}
                   </View>
                   {!permanentlyUnlocked ? (
                     <View style={[styles.rewardPill, styles.rewardPillLocked]}>
-                      <Text style={styles.rewardPillTextLocked}>LOCKED</Text>
+                      <Ionicons name="lock-closed" size={10} color="#94A3B8" />
                     </View>
                   ) : claimedToday ? (
                     <View style={[styles.rewardPill, styles.rewardPillToday]}>
-                      <Text style={styles.rewardPillTextToday}>TODAY</Text>
+                      <Ionicons name="checkmark" size={12} color="#059669" />
                     </View>
                   ) : budgetDepleted ? (
                     <View style={[styles.rewardPill, styles.rewardPillSpent]}>
@@ -329,13 +337,11 @@ export default function ProfileScreen() {
                     </View>
                   ) : !canAfford ? (
                     <View style={[styles.rewardPill, styles.rewardPillEarn]}>
-                      <Text style={styles.rewardPillTextEarn}>EARN</Text>
+                      <Ionicons name="flash-outline" size={12} color="#D97706" />
                     </View>
                   ) : (
                     <View style={[styles.rewardPill, { backgroundColor: tierColor + '22' }]}>
-                      <Text style={[styles.rewardPillTextAvail, { color: tierColor }]}>
-                        {count > 0 ? `×${count}` : 'CLAIM'}
-                      </Text>
+                      <Ionicons name="gift-outline" size={12} color={tierColor} />
                     </View>
                   )}
                 </Pressable>
@@ -502,7 +508,7 @@ export default function ProfileScreen() {
         claimedToday={selectedReward
           ? (stats.claimedRewards || []).some(e => e.id === selectedReward.id && e.claimedAt.startsWith(todayStr))
           : false}
-        onClaim={handleClaimReward}
+        onClaim={() => selectedReward && handleClaimReward(selectedReward)}
         onClose={() => { setRewardModalVisible(false); setSelectedReward(null); }}
       />
 
@@ -932,6 +938,11 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontFamily: 'Inter_500Medium',
     color: Colors.textTertiary,
+    marginTop: 3,
+  },
+  rewardXpCost: {
+    fontSize: 11,
+    fontFamily: 'Inter_600SemiBold',
     marginTop: 3,
   },
   rewardXpEarn: {

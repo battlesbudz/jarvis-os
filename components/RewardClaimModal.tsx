@@ -90,6 +90,8 @@ export default function RewardClaimModal({
   const iconScale = useSharedValue(0.5);
   const cardY = useSharedValue(60);
   const cardOpacity = useSharedValue(0);
+  const checkScale = useSharedValue(0);
+  const [claimed, setClaimed] = React.useState(false);
 
   useEffect(() => {
     if (visible) {
@@ -100,6 +102,8 @@ export default function RewardClaimModal({
       iconScale.value = 0.5;
       cardY.value = 60;
       cardOpacity.value = 0;
+      setClaimed(false);
+      checkScale.value = 0;
     }
   }, [visible]);
 
@@ -111,6 +115,16 @@ export default function RewardClaimModal({
     transform: [{ translateY: cardY.value }],
     opacity: cardOpacity.value,
   }));
+
+  const checkStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: checkScale.value }],
+  }));
+
+  const handleClaim = () => {
+    setClaimed(true);
+    checkScale.value = withSpring(1, { damping: 8, stiffness: 120 });
+    onClaim();
+  };
 
   if (!reward) return null;
 
@@ -129,97 +143,128 @@ export default function RewardClaimModal({
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable style={styles.overlay} onPress={onClose}>
+      <Pressable style={styles.overlay} onPress={claimed ? undefined : onClose}>
         <Animated.View style={[styles.card, cardStyle]} onStartShouldSetResponder={() => true}>
-          {/* Sparkles */}
-          {sparklePositions.map((s, i) => (
-            <Sparkle key={i} x={s.x} y={s.y} delay={s.delay} color={tierColor} />
-          ))}
 
-          {/* Tier badge */}
-          <View style={[styles.tierBadge, { backgroundColor: tierColor + '20', borderColor: tierColor + '40' }]}>
-            <Text style={[styles.tierBadgeText, { color: tierColor }]}>
-              {TIER_LABELS[reward.tier]}
-            </Text>
-          </View>
-
-          {/* Icon */}
-          <Animated.View style={[styles.iconCircle, { backgroundColor: tierColor + '18' }, iconStyle]}>
-            <Ionicons name={reward.icon as any} size={44} color={tierColor} />
-          </Animated.View>
-
-          {/* Content */}
-          <Text style={styles.title}>{reward.title}</Text>
-          <Text style={styles.description}>{reward.description}</Text>
-          <Text style={[styles.tip, { color: tierColor }]}>"{reward.tip}"</Text>
-
-          {/* Prior claim history */}
-          {claimCount > 0 && !claimedToday && (
-            <View style={styles.claimedRow}>
-              <Ionicons name="checkmark-circle" size={16} color={Colors.success} />
-              <Text style={styles.claimedText}>
-                Redeemed ×{claimCount}{formattedDate ? ` — last ${formattedDate}` : ''}
-              </Text>
-            </View>
-          )}
-
-          {/* Action */}
-          {claimedToday ? (
-            <View style={styles.actionBlock}>
-              <View style={styles.todayRow}>
-                <Ionicons name="moon-outline" size={16} color="#D97706" />
-                <Text style={styles.todayText}>You've claimed this today — come back tomorrow!</Text>
+          {claimed ? (
+            /* ── Success view ── */
+            <View style={styles.successContainer}>
+              <Animated.View style={[styles.successCheck, checkStyle]}>
+                <Ionicons name="checkmark-circle" size={80} color="#10B981" />
+              </Animated.View>
+              <Text style={styles.successTitle}>Reward Claimed!</Text>
+              <Text style={[styles.successRewardName, { color: tierColor }]}>{reward.title}</Text>
+              <Text style={styles.successMessage}>You've earned it — go enjoy it!</Text>
+              <View style={styles.successXpRow}>
+                <Ionicons name="flash" size={14} color="#DC2626" />
+                <Text style={styles.successXpText}>−{dailyXpRequired} XP spent</Text>
               </View>
-              <Pressable style={[styles.claimBtn, styles.claimBtnDisabled]} disabled>
-                <Ionicons name="checkmark-outline" size={18} color="#fff" />
-                <Text style={styles.claimBtnText}>Claimed Today</Text>
-              </Pressable>
-              <Pressable onPress={onClose} style={({ pressed }) => [styles.maybeLater, pressed && { opacity: 0.7 }]}>
-                <Text style={styles.maybeLaterText}>Close</Text>
-              </Pressable>
-            </View>
-          ) : !canClaim ? (
-            <View style={styles.actionBlock}>
-              <View style={styles.xpProgressContainer}>
-                <View style={styles.xpProgressBg}>
-                  <View style={[styles.xpProgressFill, {
-                    width: `${Math.min(100, Math.round((budgetRemaining / dailyXpRequired) * 100))}%` as any,
-                    backgroundColor: tierColor,
-                  }]} />
-                </View>
-                {budgetRemaining === 0 ? (
-                  <Text style={styles.xpProgressText}>
-                    Daily budget spent — complete more tasks to earn budget
-                  </Text>
-                ) : (
-                  <Text style={styles.xpProgressText}>
-                    Costs {dailyXpRequired} XP — {dailyXpRequired - budgetRemaining} more budget needed ({budgetRemaining} remaining)
-                  </Text>
-                )}
-              </View>
-              <Pressable style={[styles.claimBtn, styles.claimBtnDisabled]} disabled>
-                <Ionicons name="lock-closed-outline" size={18} color="#fff" />
-                <Text style={styles.claimBtnText}>
-                  {budgetRemaining === 0 ? 'No Budget Left' : 'Not Enough Budget'}
-                </Text>
-              </Pressable>
-              <Pressable onPress={onClose} style={({ pressed }) => [styles.maybeLater, pressed && { opacity: 0.7 }]}>
-                <Text style={styles.maybeLaterText}>Maybe later</Text>
+              <Pressable
+                style={({ pressed }) => [styles.claimBtn, { backgroundColor: tierColor, marginTop: 24 }, pressed && { opacity: 0.85 }]}
+                onPress={onClose}
+              >
+                <Text style={styles.claimBtnText}>Enjoy! 🎉</Text>
               </Pressable>
             </View>
           ) : (
-            <View style={[styles.actionBlock, claimCount > 0 && { marginTop: 16 }]}>
-              <Pressable
-                style={({ pressed }) => [styles.claimBtn, { backgroundColor: tierColor }, pressed && { opacity: 0.85 }]}
-                onPress={onClaim}
-              >
-                <Ionicons name="gift-outline" size={18} color="#fff" />
-                <Text style={styles.claimBtnText}>{claimCount > 0 ? 'Claim Again!' : 'Claim It!'}</Text>
-              </Pressable>
-              <Pressable onPress={onClose} style={({ pressed }) => [styles.maybeLater, pressed && { opacity: 0.7 }]}>
-                <Text style={styles.maybeLaterText}>Maybe later</Text>
-              </Pressable>
-            </View>
+            <>
+              {/* Sparkles */}
+              {sparklePositions.map((s, i) => (
+                <Sparkle key={i} x={s.x} y={s.y} delay={s.delay} color={tierColor} />
+              ))}
+
+              {/* Tier badge */}
+              <View style={[styles.tierBadge, { backgroundColor: tierColor + '20', borderColor: tierColor + '40' }]}>
+                <Text style={[styles.tierBadgeText, { color: tierColor }]}>
+                  {TIER_LABELS[reward.tier]}
+                </Text>
+              </View>
+
+              {/* Icon */}
+              <Animated.View style={[styles.iconCircle, { backgroundColor: tierColor + '18' }, iconStyle]}>
+                <Ionicons name={reward.icon as any} size={44} color={tierColor} />
+              </Animated.View>
+
+              {/* Content */}
+              <Text style={styles.title}>{reward.title}</Text>
+              <Text style={styles.description}>{reward.description}</Text>
+              <Text style={[styles.tip, { color: tierColor }]}>"{reward.tip}"</Text>
+
+              {/* XP cost badge */}
+              <View style={[styles.xpCostBadge, { backgroundColor: tierColor + '15', borderColor: tierColor + '30' }]}>
+                <Ionicons name="flash" size={13} color={tierColor} />
+                <Text style={[styles.xpCostText, { color: tierColor }]}>Costs {dailyXpRequired} XP</Text>
+              </View>
+
+              {/* Prior claim history */}
+              {claimCount > 0 && !claimedToday && (
+                <View style={styles.claimedRow}>
+                  <Ionicons name="checkmark-circle" size={16} color={Colors.success} />
+                  <Text style={styles.claimedText}>
+                    Redeemed ×{claimCount}{formattedDate ? ` — last ${formattedDate}` : ''}
+                  </Text>
+                </View>
+              )}
+
+              {/* Action */}
+              {claimedToday ? (
+                <View style={styles.actionBlock}>
+                  <View style={styles.todayRow}>
+                    <Ionicons name="moon-outline" size={16} color="#D97706" />
+                    <Text style={styles.todayText}>You've claimed this today — come back tomorrow!</Text>
+                  </View>
+                  <Pressable style={[styles.claimBtn, styles.claimBtnDisabled]} disabled>
+                    <Ionicons name="checkmark-outline" size={18} color="#fff" />
+                    <Text style={styles.claimBtnText}>Claimed Today</Text>
+                  </Pressable>
+                  <Pressable onPress={onClose} style={({ pressed }) => [styles.maybeLater, pressed && { opacity: 0.7 }]}>
+                    <Text style={styles.maybeLaterText}>Close</Text>
+                  </Pressable>
+                </View>
+              ) : !canClaim ? (
+                <View style={styles.actionBlock}>
+                  <View style={styles.xpProgressContainer}>
+                    <View style={styles.xpProgressBg}>
+                      <View style={[styles.xpProgressFill, {
+                        width: `${Math.min(100, Math.round((budgetRemaining / dailyXpRequired) * 100))}%` as any,
+                        backgroundColor: tierColor,
+                      }]} />
+                    </View>
+                    {budgetRemaining === 0 ? (
+                      <Text style={styles.xpProgressText}>
+                        Daily budget spent — complete more tasks to earn budget
+                      </Text>
+                    ) : (
+                      <Text style={styles.xpProgressText}>
+                        Costs {dailyXpRequired} XP — {dailyXpRequired - budgetRemaining} more budget needed ({budgetRemaining} remaining)
+                      </Text>
+                    )}
+                  </View>
+                  <Pressable style={[styles.claimBtn, styles.claimBtnDisabled]} disabled>
+                    <Ionicons name="lock-closed-outline" size={18} color="#fff" />
+                    <Text style={styles.claimBtnText}>
+                      {budgetRemaining === 0 ? 'No Budget Left' : 'Not Enough Budget'}
+                    </Text>
+                  </Pressable>
+                  <Pressable onPress={onClose} style={({ pressed }) => [styles.maybeLater, pressed && { opacity: 0.7 }]}>
+                    <Text style={styles.maybeLaterText}>Maybe later</Text>
+                  </Pressable>
+                </View>
+              ) : (
+                <View style={[styles.actionBlock, claimCount > 0 && { marginTop: 16 }]}>
+                  <Pressable
+                    style={({ pressed }) => [styles.claimBtn, { backgroundColor: tierColor }, pressed && { opacity: 0.85 }]}
+                    onPress={handleClaim}
+                  >
+                    <Ionicons name="gift-outline" size={18} color="#fff" />
+                    <Text style={styles.claimBtnText}>{claimCount > 0 ? 'Claim Again!' : 'Claim It!'}</Text>
+                  </Pressable>
+                  <Pressable onPress={onClose} style={({ pressed }) => [styles.maybeLater, pressed && { opacity: 0.7 }]}>
+                    <Text style={styles.maybeLaterText}>Maybe later</Text>
+                  </Pressable>
+                </View>
+              )}
+            </>
           )}
         </Animated.View>
       </Pressable>
@@ -372,5 +417,62 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontFamily: 'Inter_400Regular',
     color: Colors.textTertiary,
+  },
+  xpCostBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 20,
+    borderWidth: 1,
+    marginBottom: 18,
+  },
+  xpCostText: {
+    fontSize: 12,
+    fontFamily: 'Inter_600SemiBold',
+  },
+  successContainer: {
+    alignItems: 'center',
+    paddingVertical: 12,
+    width: '100%',
+  },
+  successCheck: {
+    marginBottom: 18,
+  },
+  successTitle: {
+    fontSize: 24,
+    fontFamily: 'Inter_700Bold',
+    color: Colors.text,
+    marginBottom: 6,
+    textAlign: 'center',
+  },
+  successRewardName: {
+    fontSize: 16,
+    fontFamily: 'Inter_600SemiBold',
+    marginBottom: 10,
+    textAlign: 'center',
+  },
+  successMessage: {
+    fontSize: 14,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+    textAlign: 'center',
+    marginBottom: 14,
+    lineHeight: 20,
+  },
+  successXpRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: '#FEE2E2',
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 20,
+  },
+  successXpText: {
+    fontSize: 13,
+    fontFamily: 'Inter_600SemiBold',
+    color: '#DC2626',
   },
 });
