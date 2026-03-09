@@ -1,7 +1,7 @@
 import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "node:http";
 import OpenAI from "openai";
-import { resizeTask, generateSmartPlan } from "./ai";
+import { resizeTask, generateSmartPlan, unblockTask } from "./ai";
 import {
   getGoogleCalendarEvents,
   checkGoogleCalendarConnection,
@@ -140,7 +140,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/ai/generate-plan", async (req: Request, res: Response) => {
     try {
-      const { goals, history, dayOfWeek, lifeContext, gmailItems, energyCheckin, brainDumpTasks } = req.body;
+      const { goals, history, dayOfWeek, lifeContext, gmailItems, energyCheckin, brainDumpTasks, carriedOverTasks, blockedTasks } = req.body;
 
       const result = await generateSmartPlan({
         goals: goals || [],
@@ -150,12 +150,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
         gmailItems: gmailItems || [],
         energyCheckin: energyCheckin || null,
         existingTasks: brainDumpTasks || [],
+        carriedOverTasks: carriedOverTasks || [],
+        blockedTasks: blockedTasks || [],
       });
 
       res.json(result);
     } catch (error) {
       console.error("Error generating plan:", error);
       res.status(500).json({ error: "Failed to generate plan" });
+    }
+  });
+
+  app.post("/api/ai/unblock-task", async (req: Request, res: Response) => {
+    try {
+      const { taskTitle, taskDescription, blockerType, skipDays } = req.body;
+      if (!taskTitle || !blockerType) {
+        return res.status(400).json({ error: "taskTitle and blockerType are required" });
+      }
+      const result = await unblockTask({ taskTitle, taskDescription, blockerType, skipDays: skipDays || 1 });
+      res.json(result);
+    } catch (error) {
+      console.error("Error unblocking task:", error);
+      res.status(500).json({ error: "Failed to generate suggestion" });
     }
   });
 

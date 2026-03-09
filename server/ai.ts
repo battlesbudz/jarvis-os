@@ -39,6 +39,19 @@ export interface GeneratePlanRequest {
   gmailItems?: { subject: string; snippet: string; date: string }[];
   energyCheckin?: { energy: number; focus: string; date: string } | null;
   existingTasks?: { title: string; description?: string; category: string }[];
+  carriedOverTasks?: { title: string; category: string; skipDays: number }[];
+  blockedTasks?: { title: string; skipDays: number; blockerType?: string }[];
+}
+
+export interface UnblockTaskRequest {
+  taskTitle: string;
+  taskDescription?: string;
+  blockerType: 'too_big' | 'bad_timing' | 'need_info' | 'low_energy' | 'unknown';
+  skipDays: number;
+}
+
+export interface UnblockTaskResponse {
+  suggestion: string;
 }
 
 export interface GeneratePlanTask {
@@ -114,8 +127,46 @@ Return ONLY a JSON object with a "steps" array of strings. No other text.`;
   }
 }
 
+export async function unblockTask(req: UnblockTaskRequest): Promise<UnblockTaskResponse> {
+  const { taskTitle, taskDescription, blockerType, skipDays } = req;
+
+  const blockerGuide: Record<string, string> = {
+    too_big: 'Identify the single smallest possible first action — something takeable in under 5 minutes — and describe it concretely.',
+    bad_timing: 'Suggest a specific time block or trigger today when this task would fit naturally.',
+    need_info: 'Identify exactly what information is missing and one specific place to find it.',
+    low_energy: 'Either shrink the scope dramatically to a version doable in 10 minutes, or identify the one upcoming time today when energy will be higher.',
+    unknown: 'Ask one clarifying question that would help identify the real blocker, then give a default starting action.',
+  };
+
+  const prompt = `You help people overcome mental blocks on tasks. Be direct, specific, and practical. No pep talk.
+
+Task: "${taskTitle}"${taskDescription ? `\nContext: ${taskDescription}` : ''}
+Days carried without completing: ${skipDays}
+What the person says is blocking them: ${blockerType.replace('_', ' ')}
+
+${blockerGuide[blockerType] || blockerGuide.unknown}
+
+Write 2-3 sentences max. Focus on one concrete next action, not general advice. Make it feel achievable right now.
+
+Return ONLY a JSON object: {"suggestion": "your 2-3 sentence response"}`;
+
+  const response = await openai.chat.completions.create({
+    model: 'gpt-5-mini',
+    messages: [{ role: 'user', content: prompt }],
+    response_format: { type: 'json_object' },
+    max_completion_tokens: 512,
+  });
+
+  try {
+    const parsed = JSON.parse(response.choices[0]?.message?.content || '{}');
+    return { suggestion: parsed.suggestion || 'Try starting with just one minute on this task — set a timer and begin.' };
+  } catch {
+    return { suggestion: 'Try starting with just one minute on this task — set a timer and begin.' };
+  }
+}
+
 export async function generateSmartPlan(req: GeneratePlanRequest): Promise<GeneratePlanResponse> {
-  const { goals, history, dayOfWeek, lifeContext, gmailItems, energyCheckin, existingTasks } = req;
+  const { goals, history, dayOfWeek, lifeContext, gmailItems, energyCheckin, existingTasks, carriedOverTasks, blockedTasks } = req;
 
   const completedTasks = history.filter(h => h.completed);
   const skippedTasks = history.filter(h => !h.completed);
@@ -160,13 +211,23 @@ ${completedTasks.length > skippedTasks.length ? 'This person is on a good streak
       `\nThese count toward your task total. Add goal-aligned tasks to reach 5-8 total.`
     : '';
 
+  const carriedOverSection = carriedOverTasks && carriedOverTasks.length > 0
+    ? `\nCarried-over tasks (incomplete from previous days — MUST include all of them; consider breaking into a smaller first step if they've been skipped multiple days):\n` +
+      carriedOverTasks.map(t => `- ${t.title} (${t.category}, skipped ${t.skipDays} day${t.skipDays > 1 ? 's' : ''})`).join('\n')
+    : '';
+
+  const blockedSection = blockedTasks && blockedTasks.length > 0
+    ? `\nChronically stuck tasks (skipped 2+ days in a row — do NOT just repeat them verbatim; instead include a concrete "prepare to tackle" micro-task or a broken-down first step):\n` +
+      blockedTasks.map(t => `- "${t.title}" (stuck ${t.skipDays} days${t.blockerType ? `, blocker: ${t.blockerType.replace('_', ' ')}` : ''})`).join('\n')
+    : '';
+
   const prompt = `You create personalized daily task plans for people. Today is ${dayOfWeek}.
 
 User's goals:
 ${goalsText}
 
 Recent activity:
-${historyText}${energyFocusText}${lifeCtxSection}${gmailSection}${existingTasksSection}
+${historyText}${energyFocusText}${lifeCtxSection}${gmailSection}${existingTasksSection}${carriedOverSection}${blockedSection}
 
 Create a daily plan with 5-8 tasks. For each task provide:
 - title: short, action-oriented task name

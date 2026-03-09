@@ -13,6 +13,7 @@ interface TaskCardProps {
   onToggle: (id: string, completed: boolean) => void;
   onResize?: (task: Task) => void;
   onEdit?: (task: Task) => void;
+  onBlockerTap?: (task: Task) => void;
   isDragging?: boolean;
 }
 
@@ -57,7 +58,7 @@ function SubtaskRow({ subtask, onToggle, xpValue }: { subtask: Task; onToggle: (
   );
 }
 
-export default function TaskCard({ task, onToggle, onResize, onEdit, isDragging }: TaskCardProps) {
+export default function TaskCard({ task, onToggle, onResize, onEdit, onBlockerTap, isDragging }: TaskCardProps) {
   const router = useRouter();
   const scale = useSharedValue(1);
   const categoryColor = getCategoryColor(task.category);
@@ -91,6 +92,11 @@ export default function TaskCard({ task, onToggle, onResize, onEdit, isDragging 
       pathname: '/focus-timer' as any,
       params: { taskTitle: task.title }
     });
+  };
+
+  const handleBlockerTap = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    onBlockerTap?.(task);
   };
 
   const priorityDot = task.priority === 'high' ? Colors.error : task.priority === 'medium' ? Colors.warning : Colors.textTertiary;
@@ -172,6 +178,18 @@ export default function TaskCard({ task, onToggle, onResize, onEdit, isDragging 
             <View style={[styles.categoryBadge, { backgroundColor: categoryColor + '15' }]}>
               <Text style={[styles.categoryText, { color: categoryColor }]}>{getCategoryLabel(task.category)}</Text>
             </View>
+            {task.fromCarryover && !task.completed ? (
+              <View style={styles.carryoverPill}>
+                <Ionicons name="return-up-back-outline" size={11} color="#9CA3AF" />
+                <Text style={styles.carryoverPillText}>Rolled over</Text>
+              </View>
+            ) : null}
+            {task.skipDays && task.skipDays >= 2 && !task.completed && onBlockerTap ? (
+              <Pressable onPress={handleBlockerTap} style={styles.stuckBadge} hitSlop={6} testID={`stuck-${task.id}`}>
+                <Ionicons name="warning-outline" size={11} color="#D97706" />
+                <Text style={styles.stuckBadgeText}>Stuck?</Text>
+              </Pressable>
+            ) : null}
             {!task.completed && (
               <Pressable
                 onPress={handleStartTimer}
@@ -340,6 +358,36 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontFamily: 'Inter_500Medium',
     color: Colors.textTertiary,
+  },
+  carryoverPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 20,
+    backgroundColor: '#F3F4F6',
+  },
+  carryoverPillText: {
+    fontSize: 10,
+    fontFamily: 'Inter_500Medium',
+    color: '#9CA3AF',
+  },
+  stuckBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 20,
+    backgroundColor: '#FEF3C7',
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+  },
+  stuckBadgeText: {
+    fontSize: 10,
+    fontFamily: 'Inter_600SemiBold',
+    color: '#D97706',
   },
   priorityDot: {
     width: 8,

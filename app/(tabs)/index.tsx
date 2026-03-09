@@ -23,6 +23,7 @@ import TaskEditSheet from '@/components/TaskEditSheet';
 import LogProgressSheet from '@/components/LogProgressSheet';
 import TimelineView from '@/components/TimelineView';
 import BrainDumpModal from '@/components/BrainDumpModal';
+import BlockerModal from '@/components/BlockerModal';
 import {
   getTodayPlan,
   updateTaskCompletion,
@@ -61,6 +62,8 @@ import {
   getPlanSnapshot,
   clearPlanSnapshot,
   restorePlanSnapshot,
+  getBlockedTasks,
+  saveBlockerAnswer,
   type DayPlan,
   type Goal,
   type Task,
@@ -106,6 +109,7 @@ export default function TodayScreen() {
   const [editSheetVisible, setEditSheetVisible] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [canUndo, setCanUndo] = useState(false);
+  const [blockerTask, setBlockerTask] = useState<Task | null>(null);
 
   const loadCalendarEvents = useCallback(async () => {
     try {
@@ -247,6 +251,10 @@ export default function TodayScreen() {
       const loadedGoals = await getGoals();
       const currentPlan = await getTodayPlan(loadedGoals);
       const brainDumpTasks = currentPlan.tasks.filter(t => t.fromBrainDump && !t.completed);
+      const carriedOverTasks = currentPlan.tasks
+        .filter(t => t.fromCarryover && !t.completed)
+        .map(t => ({ title: t.title, category: t.category, skipDays: t.skipDays ?? 1 }));
+      const blockedTasksList = await getBlockedTasks();
       const history = await getCompletionHistory();
       const dayOfWeek = new Date().toLocaleDateString('en-US', { weekday: 'long' });
 
@@ -275,6 +283,12 @@ export default function TodayScreen() {
           title: t.title,
           description: t.description,
           category: t.category,
+        })),
+        carriedOverTasks,
+        blockedTasks: blockedTasksList.map(bt => ({
+          title: bt.title,
+          skipDays: bt.skipDays,
+          blockerType: bt.blockerType,
         })),
       });
       const data = await res.json();
@@ -359,6 +373,14 @@ export default function TodayScreen() {
   const handleDismissUndo = useCallback(async () => {
     await clearPlanSnapshot();
     setCanUndo(false);
+  }, []);
+
+  const handleBlockerSolved = useCallback(async (task: Task, blockerType: string, suggestion: string) => {
+    await saveBlockerAnswer(task.title, blockerType, suggestion);
+    setBlockerTask(null);
+    const loadedGoals = await getGoals();
+    const refreshed = await getTodayPlan(loadedGoals);
+    setPlan(refreshed);
   }, []);
 
   const showXpToast = useCallback((xp: number) => {
@@ -931,6 +953,7 @@ export default function TodayScreen() {
                       onToggle={handleToggleTask}
                       onResize={handleOpenResizer}
                       onEdit={handleOpenEdit}
+                      onBlockerTap={setBlockerTask}
                       isDragging={isActive}
                     />
                   )}
@@ -1045,6 +1068,13 @@ export default function TodayScreen() {
         onClose={() => { setEditSheetVisible(false); setEditingTask(null); }}
         onSave={handleSaveEdit}
         onDelete={handleDeleteTask}
+      />
+
+      <BlockerModal
+        visible={blockerTask !== null}
+        task={blockerTask}
+        onClose={() => setBlockerTask(null)}
+        onSolved={handleBlockerSolved}
       />
 
       <Pressable

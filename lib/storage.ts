@@ -13,6 +13,17 @@ export interface Task {
   parentId?: string;
   goalId?: string;
   fromBrainDump?: boolean;
+  fromCarryover?: boolean;
+  skipDays?: number;
+}
+
+export interface BlockedTask {
+  title: string;
+  category: string;
+  skipDays: number;
+  lastSkipDate: string;
+  blockerType?: string;
+  aiSuggestion?: string;
 }
 
 export interface DayPlan {
@@ -253,6 +264,7 @@ const KEYS = {
   BRAIN_DUMP_INBOX: 'gameplan_brain_dump_inbox',
   MIGRATION: 'gameplan_migration_version',
   PLAN_SNAPSHOT: 'gameplan_plan_snapshot',
+  BLOCKED_TASKS: 'gameplan_blocked_tasks',
 };
 
 export interface BrainDumpItem {
@@ -607,9 +619,28 @@ export async function getTodayPlan(goals: Goal[]): Promise<DayPlan> {
       return plans[key];
     }
 
+    const baseTasks = generateDailyTasks(goals);
+
+    const carryovers = await getCarryoverTasks();
+    const enrichedCarryovers: Task[] = [];
+    for (const ct of carryovers) {
+      const baseWords = baseTasks.map(t => t.title.toLowerCase().split(/\s+/).filter(w => w.length > 3)).flat();
+      const ctWords = ct.title.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+      const isDupe = ctWords.some(w => baseWords.includes(w));
+      if (!isDupe) {
+        await recordTaskSkip(ct);
+        const blocked = await getBlockedTask(ct.title);
+        enrichedCarryovers.push({
+          ...ct,
+          fromCarryover: true,
+          skipDays: blocked?.skipDays ?? 1,
+        });
+      }
+    }
+
     const plan: DayPlan = {
       date: key,
-      tasks: generateDailyTasks(goals),
+      tasks: [...enrichedCarryovers, ...baseTasks],
       greeting: getGreeting(),
       insight: INSIGHTS[Math.floor(Math.random() * INSIGHTS.length)],
     };
@@ -714,6 +745,9 @@ export async function updateTaskCompletion(date: string, taskId: string, complet
 
       if (foundTask) {
         await recordCompletion(foundTask, completed);
+        if (completed && foundTask.fromCarryover) {
+          await clearBlockedTask(foundTask.title);
+        }
       }
     }
     if (completed) {
@@ -1152,6 +1186,93 @@ export async function addSubtaskManually(date: string, parentId: string, title: 
     await AsyncStorage.setItem(KEYS.PLANS, JSON.stringify(plans));
   } catch (e) {
     console.error('Failed to add subtask:', e);
+  }
+}
+
+export async function getBlockedTasks(): Promise<BlockedTask[]> {
+  try {
+    const raw = await AsyncStorage.getItem(KEYS.BLOCKED_TASKS);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function getBlockedTask(title: string): Promise<BlockedTask | null> {
+  const all = await getBlockedTasks();
+  return all.find(b => b.title === title) ?? null;
+}
+
+export async function recordTaskSkip(task: Task): Promise<void> {
+  try {
+    const all = await getBlockedTasks();
+    const today = getTodayKey();
+    const idx = all.findIndex(b => b.title === task.title);
+    if (idx >= 0) {
+      if (all[idx].lastSkipDate !== today) {
+        all[idx].skipDays += 1;
+        all[idx].lastSkipDate = today;
+      }
+    } else {
+      all.push({
+        title: task.title,
+        category: task.category,
+        skipDays: 1,
+        lastSkipDate: today,
+      });
+    }
+    await AsyncStorage.setItem(KEYS.BLOCKED_TASKS, JSON.stringify(all));
+  } catch (e) {
+    console.error('Failed to record task skip:', e);
+  }
+}
+
+export async function clearBlockedTask(title: string): Promise<void> {
+  try {
+    const all = await getBlockedTasks();
+    const updated = all.filter(b => b.title !== title);
+    await AsyncStorage.setItem(KEYS.BLOCKED_TASKS, JSON.stringify(updated));
+  } catch (e) {
+    console.error('Failed to clear blocked task:', e);
+  }
+}
+
+export async function saveBlockerAnswer(title: string, blockerType: string, aiSuggestion: string): Promise<void> {
+  try {
+    const all = await getBlockedTasks();
+    const idx = all.findIndex(b => b.title === title);
+    if (idx >= 0) {
+      all[idx].blockerType = blockerType;
+      all[idx].aiSuggestion = aiSuggestion;
+    } else {
+      all.push({
+        title,
+        category: 'personal',
+        skipDays: 1,
+        lastSkipDate: getTodayKey(),
+        blockerType,
+        aiSuggestion,
+      });
+    }
+    await AsyncStorage.setItem(KEYS.BLOCKED_TASKS, JSON.stringify(all));
+  } catch (e) {
+    console.error('Failed to save blocker answer:', e);
+  }
+}
+
+export async function getCarryoverTasks(): Promise<Task[]> {
+  try {
+    const raw = await AsyncStorage.getItem(KEYS.PLANS);
+    if (!raw) return [];
+    const plans: Record<string, DayPlan> = JSON.parse(raw);
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yKey = `${yesterday.getFullYear()}-${String(yesterday.getMonth() + 1).padStart(2, '0')}-${String(yesterday.getDate()).padStart(2, '0')}`;
+    const yPlan = plans[yKey];
+    if (!yPlan) return [];
+    return yPlan.tasks.filter(t => !t.completed && t.category !== 'calendar' && !t.isSubtask);
+  } catch {
+    return [];
   }
 }
 
