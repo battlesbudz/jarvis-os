@@ -79,6 +79,15 @@ A mobile app that generates personalized daily task checklists with AI-powered a
 - TIER_COLORS: {1: '#10B981', 2: '#6366F1', 3: '#F59E0B', 4: '#EC4899', 5: '#8B5CF6'}
 - RewardClaimModal: full-screen celebration modal, spring-animated icon, floating sparkle particles
 
+## Task Management (Edit, Delete, Reorder, Sub-tasks)
+- Edit icon (pencil) on each incomplete task card opens `TaskEditSheet` modal
+- TaskEditSheet fields: title, description, priority chips, category chips, time, sub-tasks section
+- Sub-tasks: add manually via text input + "Add" button; remove with X button; existing AI-subtasks editable
+- Delete: two-step inline confirmation (no native Alert) — "Delete Task" → shows "Delete this task? Cancel / Delete"
+- Drag-to-reorder: long-press (300ms) any task in "To Do" to drag it to a new position; uses `react-native-draggable-flatlist` v4
+- New storage functions: `updateTask`, `deleteTask`, `reorderTasks`, `addSubtaskManually` in `lib/storage.ts`
+- Edit/delete only available on incomplete non-calendar tasks; completed section is read-only
+
 ## Onboarding & Multi-User Support
 - New users are redirected to `/onboarding` on first launch (checked via `gameplan_onboarding_complete` in AsyncStorage)
 - Onboarding flow: 7 steps — name → 4 life context questions (skippable) → first goal → connect apps info

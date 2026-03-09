@@ -12,6 +12,8 @@ interface TaskCardProps {
   task: Task;
   onToggle: (id: string, completed: boolean) => void;
   onResize?: (task: Task) => void;
+  onEdit?: (task: Task) => void;
+  isDragging?: boolean;
 }
 
 function SubtaskRow({ subtask, onToggle, xpValue }: { subtask: Task; onToggle: (id: string, completed: boolean) => void; xpValue?: number }) {
@@ -55,7 +57,7 @@ function SubtaskRow({ subtask, onToggle, xpValue }: { subtask: Task; onToggle: (
   );
 }
 
-export default function TaskCard({ task, onToggle, onResize }: TaskCardProps) {
+export default function TaskCard({ task, onToggle, onResize, onEdit, isDragging }: TaskCardProps) {
   const router = useRouter();
   const scale = useSharedValue(1);
   const categoryColor = getCategoryColor(task.category);
@@ -76,6 +78,11 @@ export default function TaskCard({ task, onToggle, onResize }: TaskCardProps) {
   const handleResize = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     onResize?.(task);
+  };
+
+  const handleEdit = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    onEdit?.(task);
   };
 
   const handleStartTimer = () => {
@@ -100,6 +107,7 @@ export default function TaskCard({ task, onToggle, onResize }: TaskCardProps) {
         style={[
           styles.container,
           task.completed && styles.completedContainer,
+          isDragging && styles.draggingContainer,
         ]}
         testID={`task-${task.id}`}
       >
@@ -126,6 +134,17 @@ export default function TaskCard({ task, onToggle, onResize }: TaskCardProps) {
                 </View>
               )}
               <View style={[styles.priorityDot, { backgroundColor: priorityDot }]} />
+              {onEdit && !task.completed && (
+                <Pressable
+                  onPress={handleEdit}
+                  hitSlop={8}
+                  style={styles.editBtn}
+                  testID={`edit-${task.id}`}
+                  accessibilityLabel="Edit task"
+                >
+                  <Ionicons name="create-outline" size={16} color={Colors.textTertiary} />
+                </Pressable>
+              )}
             </View>
           </View>
           {task.description && !hasSubtasks ? (
@@ -206,6 +225,18 @@ const styles = StyleSheet.create({
   completedContainer: {
     opacity: 0.6,
     backgroundColor: Colors.surface,
+  },
+  draggingContainer: {
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 8,
+    borderColor: Colors.primary + '40',
+    transform: [{ scale: 1.02 }],
+  },
+  editBtn: {
+    padding: 2,
   },
   checkCircle: {
     width: 24,

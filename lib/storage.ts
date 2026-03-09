@@ -1027,4 +1027,87 @@ export async function setOnboardingComplete(): Promise<void> {
   } catch {}
 }
 
+export async function updateTask(date: string, taskId: string, updates: Partial<Task>): Promise<void> {
+  try {
+    const raw = await AsyncStorage.getItem(KEYS.PLANS);
+    const plans: Record<string, DayPlan> = raw ? JSON.parse(raw) : {};
+    if (!plans[date]) return;
+    plans[date].tasks = plans[date].tasks.map(t => {
+      if (t.id === taskId) return { ...t, ...updates };
+      if (t.subtasks) {
+        return {
+          ...t,
+          subtasks: t.subtasks.map(st =>
+            st.id === taskId ? { ...st, ...updates } : st
+          ),
+        };
+      }
+      return t;
+    });
+    await AsyncStorage.setItem(KEYS.PLANS, JSON.stringify(plans));
+  } catch (e) {
+    console.error('Failed to update task:', e);
+  }
+}
+
+export async function deleteTask(date: string, taskId: string): Promise<void> {
+  try {
+    const raw = await AsyncStorage.getItem(KEYS.PLANS);
+    const plans: Record<string, DayPlan> = raw ? JSON.parse(raw) : {};
+    if (!plans[date]) return;
+    const newTasks: Task[] = [];
+    for (const t of plans[date].tasks) {
+      if (t.id === taskId) continue;
+      if (t.subtasks) {
+        const filteredSubs = t.subtasks.filter(st => st.id !== taskId);
+        newTasks.push({ ...t, subtasks: filteredSubs });
+      } else {
+        newTasks.push(t);
+      }
+    }
+    plans[date].tasks = newTasks;
+    await AsyncStorage.setItem(KEYS.PLANS, JSON.stringify(plans));
+  } catch (e) {
+    console.error('Failed to delete task:', e);
+  }
+}
+
+export async function reorderTasks(date: string, newOrder: Task[]): Promise<void> {
+  try {
+    const raw = await AsyncStorage.getItem(KEYS.PLANS);
+    const plans: Record<string, DayPlan> = raw ? JSON.parse(raw) : {};
+    if (!plans[date]) return;
+    const completedTasks = plans[date].tasks.filter(t => t.completed);
+    plans[date].tasks = [...newOrder, ...completedTasks];
+    await AsyncStorage.setItem(KEYS.PLANS, JSON.stringify(plans));
+  } catch (e) {
+    console.error('Failed to reorder tasks:', e);
+  }
+}
+
+export async function addSubtaskManually(date: string, parentId: string, title: string): Promise<void> {
+  try {
+    const raw = await AsyncStorage.getItem(KEYS.PLANS);
+    const plans: Record<string, DayPlan> = raw ? JSON.parse(raw) : {};
+    if (!plans[date]) return;
+    plans[date].tasks = plans[date].tasks.map(t => {
+      if (t.id !== parentId) return t;
+      const newSubtask: Task = {
+        id: generateId(),
+        title: title.trim(),
+        category: t.category,
+        completed: false,
+        priority: t.priority,
+        isSubtask: true,
+        parentId: t.id,
+      };
+      const existingSubs = t.subtasks || [];
+      return { ...t, subtasks: [...existingSubs, newSubtask], completed: false };
+    });
+    await AsyncStorage.setItem(KEYS.PLANS, JSON.stringify(plans));
+  } catch (e) {
+    console.error('Failed to add subtask:', e);
+  }
+}
+
 export { generateId, getTodayKey, getGreeting };

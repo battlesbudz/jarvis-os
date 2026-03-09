@@ -9,6 +9,7 @@ import {
   Platform,
   ActivityIndicator,
 } from 'react-native';
+import DraggableFlatList, { ScaleDecorator, RenderItemParams } from 'react-native-draggable-flatlist';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
@@ -18,6 +19,7 @@ import Colors from '@/constants/colors';
 import TaskCard from '@/components/TaskCard';
 import ProgressRing from '@/components/ProgressRing';
 import TaskResizerSheet from '@/components/TaskResizerSheet';
+import TaskEditSheet from '@/components/TaskEditSheet';
 import LogProgressSheet from '@/components/LogProgressSheet';
 import TimelineView from '@/components/TimelineView';
 import BrainDumpModal from '@/components/BrainDumpModal';
@@ -52,6 +54,9 @@ import {
   getCompletedCalendarIds,
   saveCompletedCalendarId,
   getUserName,
+  updateTask,
+  deleteTask,
+  reorderTasks,
   type DayPlan,
   type Goal,
   type Task,
@@ -94,6 +99,8 @@ export default function TodayScreen() {
   const [energyCheckin, setEnergyCheckin] = useState<EnergyCheckin | null>(null);
   const [energyCheckInVisible, setEnergyCheckInVisible] = useState(false);
   const [userName, setUserName] = useState('');
+  const [editSheetVisible, setEditSheetVisible] = useState(false);
+  const [editingTask, setEditingTask] = useState<Task | null>(null);
 
   const loadCalendarEvents = useCallback(async () => {
     try {
@@ -454,6 +461,37 @@ export default function TodayScreen() {
     setBrainDumpInbox(inbox);
   }, []);
 
+  const handleOpenEdit = useCallback((task: Task) => {
+    setEditingTask(task);
+    setEditSheetVisible(true);
+  }, []);
+
+  const handleSaveEdit = useCallback(async (updatedTask: Task) => {
+    if (!plan) return;
+    await updateTask(plan.date, updatedTask.id, updatedTask);
+    const loadedGoals = await getGoals();
+    const refreshed = await getTodayPlan(loadedGoals);
+    setPlan(refreshed);
+    setEditSheetVisible(false);
+    setEditingTask(null);
+  }, [plan]);
+
+  const handleDeleteTask = useCallback(async (taskId: string) => {
+    if (!plan) return;
+    await deleteTask(plan.date, taskId);
+    const loadedGoals = await getGoals();
+    const refreshed = await getTodayPlan(loadedGoals);
+    setPlan(refreshed);
+    setEditSheetVisible(false);
+    setEditingTask(null);
+  }, [plan]);
+
+  const handleReorderTasks = useCallback(async (newOrder: Task[]) => {
+    if (!plan) return;
+    setPlan(prev => prev ? { ...prev, tasks: [...newOrder, ...prev.tasks.filter(t => t.completed)] } : prev);
+    await reorderTasks(plan.date, newOrder);
+  }, [plan]);
+
   const getJotTasks = useCallback(() => {
     if (!plan) return [];
     
@@ -769,15 +807,31 @@ export default function TodayScreen() {
               <View style={styles.section}>
                 <View style={styles.sectionHeaderRow}>
                   <Text style={styles.sectionTitle}>To Do</Text>
+                  <View style={styles.dragHint}>
+                    <Ionicons name="reorder-three-outline" size={14} color={Colors.textTertiary} />
+                    <Text style={styles.dragHintText}>Hold to reorder</Text>
+                  </View>
                 </View>
-                {incompleteTasks.map((task) => (
-                  <TaskCard
-                    key={task.id}
-                    task={task}
-                    onToggle={handleToggleTask}
-                    onResize={handleOpenResizer}
-                  />
-                ))}
+                <DraggableFlatList
+                  data={incompleteTasks}
+                  keyExtractor={(item) => item.id}
+                  onDragEnd={({ data }) => handleReorderTasks(data)}
+                  scrollEnabled={false}
+                  activationDistance={10}
+                  renderItem={({ item, drag, isActive }: RenderItemParams<Task>) => (
+                    <ScaleDecorator activeScale={1.02}>
+                      <Pressable onLongPress={drag} delayLongPress={300}>
+                        <TaskCard
+                          task={item}
+                          onToggle={handleToggleTask}
+                          onResize={handleOpenResizer}
+                          onEdit={handleOpenEdit}
+                          isDragging={isActive}
+                        />
+                      </Pressable>
+                    </ScaleDecorator>
+                  )}
+                />
               </View>
             ) : allCompleted.length === 0 && incompleteCalEvents.length === 0 ? (
               <View style={styles.emptyState}>
@@ -880,6 +934,14 @@ export default function TodayScreen() {
           setEnergyCheckInVisible(false);
           setEnergyCheckin(checkin);
         }}
+      />
+
+      <TaskEditSheet
+        task={editingTask}
+        visible={editSheetVisible}
+        onClose={() => { setEditSheetVisible(false); setEditingTask(null); }}
+        onSave={handleSaveEdit}
+        onDelete={handleDeleteTask}
       />
 
       <Pressable
@@ -1241,6 +1303,22 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     marginBottom: 12,
+  },
+  dragHint: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  dragHintText: {
+    fontSize: 11,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textTertiary,
+  },
+  dragPlaceholder: {
+    height: 72,
+    borderRadius: 16,
+    backgroundColor: Colors.borderLight,
+    marginBottom: 10,
   },
   sectionTitle: {
     fontSize: 16,
