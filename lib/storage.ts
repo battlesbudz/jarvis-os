@@ -12,6 +12,7 @@ export interface Task {
   isSubtask?: boolean;
   parentId?: string;
   goalId?: string;
+  fromBrainDump?: boolean;
 }
 
 export interface DayPlan {

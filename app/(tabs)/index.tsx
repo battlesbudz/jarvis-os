@@ -246,6 +246,7 @@ export default function TodayScreen() {
     try {
       const loadedGoals = await getGoals();
       const currentPlan = await getTodayPlan(loadedGoals);
+      const brainDumpTasks = currentPlan.tasks.filter(t => t.fromBrainDump && !t.completed);
       const history = await getCompletionHistory();
       const dayOfWeek = new Date().toLocaleDateString('en-US', { weekday: 'long' });
 
@@ -270,6 +271,11 @@ export default function TodayScreen() {
         lifeContext,
         gmailItems,
         energyCheckin,
+        brainDumpTasks: brainDumpTasks.map(t => ({
+          title: t.title,
+          description: t.description,
+          category: t.category,
+        })),
       });
       const data = await res.json();
 
@@ -278,18 +284,31 @@ export default function TodayScreen() {
 
       if (data.tasks && data.tasks.length > 0) {
         const generateId = () => Date.now().toString() + Math.random().toString(36).substr(2, 9);
+        const aiTasks = data.tasks.map((t: any) => ({
+          id: generateId(),
+          title: String(t.title || 'Task'),
+          category: validCategories.includes(t.category) ? t.category : 'personal',
+          completed: false,
+          priority: validPriorities.includes(t.priority) ? t.priority : 'medium',
+          time: t.time ? String(t.time) : undefined,
+          description: t.description ? String(t.description) : undefined,
+          goalId: t.goalId ? String(t.goalId) : undefined,
+        }));
+
+        const isBrainDumpCovered = (btTitle: string): boolean => {
+          const btWords = btTitle.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+          if (btWords.length === 0) return false;
+          return aiTasks.some((nt: Task) => {
+            const ntWords = nt.title.toLowerCase().split(/\s+/);
+            return btWords.some(bw => ntWords.some(nw => nw.includes(bw) || bw.includes(nw)));
+          });
+        };
+
+        const missedBrainDumpTasks = brainDumpTasks.filter(bt => !isBrainDumpCovered(bt.title));
+
         const newPlan: DayPlan = {
           date: getTodayKey(),
-          tasks: data.tasks.map((t: any) => ({
-            id: generateId(),
-            title: String(t.title || 'Task'),
-            category: validCategories.includes(t.category) ? t.category : 'personal',
-            completed: false,
-            priority: validPriorities.includes(t.priority) ? t.priority : 'medium',
-            time: t.time ? String(t.time) : undefined,
-            description: t.description ? String(t.description) : undefined,
-            goalId: t.goalId ? String(t.goalId) : undefined,
-          })),
+          tasks: [...aiTasks, ...missedBrainDumpTasks],
           greeting: plan?.greeting || 'Good day',
           insight: data.insight || 'Start small, stay consistent.',
         };
@@ -493,10 +512,11 @@ export default function TodayScreen() {
           category: t.category || 'personal',
           priority: t.priority || 'low',
           subtasks: subtaskObjs,
+          fromBrainDump: true,
         });
       }
     } else {
-      await addTaskToToday({ title: text, category: 'personal', priority: 'low' });
+      await addTaskToToday({ title: text, category: 'personal', priority: 'low', fromBrainDump: true });
     }
     const loadedGoals = await getGoals();
     const todayPlan = await getTodayPlan(loadedGoals);
@@ -520,7 +540,7 @@ export default function TodayScreen() {
   }, [parseBrainDump]);
 
   const handlePromoteInboxItem = useCallback(async (item: BrainDumpItem) => {
-    await addTaskToToday({ title: item.text, category: 'personal', priority: 'low' });
+    await addTaskToToday({ title: item.text, category: 'personal', priority: 'low', fromBrainDump: true });
     await clearBrainDumpItem(item.id);
     const [loadedGoals, inbox] = await Promise.all([getGoals(), getBrainDumpInbox()]);
     const todayPlan = await getTodayPlan(loadedGoals);

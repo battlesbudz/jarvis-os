@@ -38,6 +38,7 @@ export interface GeneratePlanRequest {
   } | null;
   gmailItems?: { subject: string; snippet: string; date: string }[];
   energyCheckin?: { energy: number; focus: string; date: string } | null;
+  existingTasks?: { title: string; description?: string; category: string }[];
 }
 
 export interface GeneratePlanTask {
@@ -114,7 +115,7 @@ Return ONLY a JSON object with a "steps" array of strings. No other text.`;
 }
 
 export async function generateSmartPlan(req: GeneratePlanRequest): Promise<GeneratePlanResponse> {
-  const { goals, history, dayOfWeek, lifeContext, gmailItems, energyCheckin } = req;
+  const { goals, history, dayOfWeek, lifeContext, gmailItems, energyCheckin, existingTasks } = req;
 
   const completedTasks = history.filter(h => h.completed);
   const skippedTasks = history.filter(h => !h.completed);
@@ -153,13 +154,19 @@ ${completedTasks.length > skippedTasks.length ? 'This person is on a good streak
       gmailItems.slice(0, 8).map(i => `- "${i.subject}": ${i.snippet}`).join('\n')
     : '';
 
+  const existingTasksSection = existingTasks && existingTasks.length > 0
+    ? `\nUser-committed tasks (MUST include ALL of these in the plan — you may refine the wording for clarity but do not drop or skip any):\n` +
+      existingTasks.map(t => `- ${t.title}${t.description ? `: ${t.description}` : ''}`).join('\n') +
+      `\nThese count toward your task total. Add goal-aligned tasks to reach 5-8 total.`
+    : '';
+
   const prompt = `You create personalized daily task plans for people. Today is ${dayOfWeek}.
 
 User's goals:
 ${goalsText}
 
 Recent activity:
-${historyText}${energyFocusText}${lifeCtxSection}${gmailSection}
+${historyText}${energyFocusText}${lifeCtxSection}${gmailSection}${existingTasksSection}
 
 Create a daily plan with 5-8 tasks. For each task provide:
 - title: short, action-oriented task name
