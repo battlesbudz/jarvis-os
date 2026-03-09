@@ -51,6 +51,7 @@ import {
   addTaskToToday,
   getCompletedCalendarIds,
   saveCompletedCalendarId,
+  getUserName,
   type DayPlan,
   type Goal,
   type Task,
@@ -92,6 +93,7 @@ export default function TodayScreen() {
   const [jotTaskIndex, setJotTaskIndex] = useState(0);
   const [energyCheckin, setEnergyCheckin] = useState<EnergyCheckin | null>(null);
   const [energyCheckInVisible, setEnergyCheckInVisible] = useState(false);
+  const [userName, setUserName] = useState('');
 
   const loadCalendarEvents = useCallback(async () => {
     try {
@@ -168,11 +170,13 @@ export default function TodayScreen() {
     setGoals(loadedGoals);
     const todayPlan = await getTodayPlan(loadedGoals);
     setPlan(todayPlan);
-    const [checkin, mode, inbox] = await Promise.all([
+    const [checkin, mode, inbox, name] = await Promise.all([
       getEnergyCheckin(),
       getViewMode(),
-      getBrainDumpInbox()
+      getBrainDumpInbox(),
+      getUserName(),
     ]);
+    setUserName(name);
     setEnergyCheckin(checkin);
     if (!checkin) {
       setEnergyCheckInVisible(true);
@@ -544,7 +548,7 @@ export default function TodayScreen() {
       >
         <Animated.View entering={FadeInDown.duration(400).delay(100)} style={styles.headerRow}>
           <View>
-            <Text style={styles.greeting}>{plan.greeting}</Text>
+            <Text style={styles.greeting}>{plan.greeting}{userName ? `, ${userName}` : ''}</Text>
             <View style={styles.headerDateRow}>
               <Text style={styles.dateText}>{todayLabel}</Text>
               {energyCheckin && (
@@ -774,6 +778,14 @@ export default function TodayScreen() {
                     onResize={handleOpenResizer}
                   />
                 ))}
+              </View>
+            ) : allCompleted.length === 0 && incompleteCalEvents.length === 0 ? (
+              <View style={styles.emptyState}>
+                <Ionicons name="flag-outline" size={40} color={Colors.borderLight} />
+                <Text style={styles.emptyStateTitle}>No tasks yet</Text>
+                <Text style={styles.emptyStateText}>
+                  Head to the Goals tab to set your first goal, then tap the AI button to generate your daily plan.
+                </Text>
               </View>
             ) : null}
 
@@ -1248,5 +1260,25 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontFamily: 'Inter_600SemiBold',
     color: Colors.primary,
+  },
+  emptyState: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 48,
+    paddingHorizontal: 32,
+    gap: 12,
+  },
+  emptyStateTitle: {
+    fontSize: 17,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.textSecondary,
+    textAlign: 'center',
+  },
+  emptyStateText: {
+    fontSize: 14,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textTertiary,
+    textAlign: 'center',
+    lineHeight: 20,
   },
 });

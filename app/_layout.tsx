@@ -1,4 +1,3 @@
-// template
 import {
   Inter_400Regular,
   Inter_500Medium,
@@ -7,22 +6,38 @@ import {
   useFonts,
 } from "@expo-google-fonts/inter";
 import { QueryClientProvider } from "@tanstack/react-query";
-import { Stack } from "expo-router";
+import { Stack, router } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
-import React, { useEffect } from "react";
+import React, { useEffect, useRef } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { queryClient } from "@/lib/query-client";
-import { runMigrations } from "@/lib/storage";
+import { runMigrations, isOnboardingComplete } from "@/lib/storage";
 
-// Prevent the splash screen from auto-hiding before asset loading is complete.
 SplashScreen.preventAutoHideAsync();
 
-function RootLayoutNav() {
+function AppNavigator() {
+  const redirected = useRef(false);
+
+  useEffect(() => {
+    if (redirected.current) return;
+
+    async function checkOnboarding() {
+      const done = await isOnboardingComplete();
+      if (!done) {
+        redirected.current = true;
+        router.replace('/onboarding');
+      }
+    }
+
+    checkOnboarding();
+  }, []);
+
   return (
     <Stack screenOptions={{ headerBackTitle: "Back" }}>
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+      <Stack.Screen name="onboarding" options={{ headerShown: false, gestureEnabled: false }} />
       <Stack.Screen name="focus-timer" options={{ presentation: 'modal', headerShown: false }} />
     </Stack>
   );
@@ -53,7 +68,7 @@ export default function RootLayout() {
       <QueryClientProvider client={queryClient}>
         <GestureHandlerRootView>
           <KeyboardProvider>
-            <RootLayoutNav />
+            <AppNavigator />
           </KeyboardProvider>
         </GestureHandlerRootView>
       </QueryClientProvider>

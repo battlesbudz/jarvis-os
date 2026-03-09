@@ -239,6 +239,9 @@ const KEYS = {
   PLATFORMS: 'gameplan_platforms',
   STATS: 'gameplan_stats',
   ONBOARDED: 'gameplan_onboarded',
+  ONBOARDING_COMPLETE: 'gameplan_onboarding_complete',
+  USER_NAME: 'gameplan_user_name',
+  USER_ID: 'gameplan_user_id',
   HISTORY: 'gameplan_history',
   CHAT_HISTORY: 'gameplan_chat_history',
   DAILY_CHECKIN: 'gameplan_daily_checkin',
@@ -467,41 +470,23 @@ const DEFAULT_PLATFORMS: ConnectedPlatform[] = [
 ];
 
 function generateDailyTasks(goals: Goal[]): Task[] {
+  if (goals.length === 0) return [];
+
   const today = new Date();
   const dayOfWeek = today.getDay();
   const tasks: Task[] = [];
-
-  tasks.push({
-    id: generateId(),
-    title: 'Review today\'s calendar',
-    category: 'calendar',
-    completed: false,
-    priority: 'high',
-    time: '8:00 AM',
-    description: 'Check upcoming meetings and deadlines',
-  });
 
   const fitnessGoal = goals.find(g => g.category === 'fitness');
   if (fitnessGoal) {
     tasks.push({
       id: generateId(),
-      title: `${fitnessGoal.title} - ${fitnessGoal.unit}`,
+      title: `${fitnessGoal.title}`,
       category: 'fitness',
       completed: false,
       priority: 'high',
       time: '7:00 AM',
       description: `Progress: ${fitnessGoal.current}/${fitnessGoal.target} ${fitnessGoal.unit}`,
       goalId: fitnessGoal.id,
-    });
-  } else {
-    tasks.push({
-      id: generateId(),
-      title: '30-minute workout',
-      category: 'fitness',
-      completed: false,
-      priority: 'medium',
-      time: '7:00 AM',
-      description: 'Stay active to boost energy',
     });
   }
 
@@ -519,59 +504,45 @@ function generateDailyTasks(goals: Goal[]): Task[] {
     });
   }
 
-  tasks.push({
-    id: generateId(),
-    title: 'Focus block: Deep work',
-    category: 'career',
-    completed: false,
-    priority: 'high',
-    time: '9:30 AM',
-    description: 'No meetings, pure productivity',
-  });
-
-  if (dayOfWeek >= 1 && dayOfWeek <= 5) {
+  const careerGoal = goals.find(g => g.category === 'career');
+  if (careerGoal) {
     tasks.push({
       id: generateId(),
-      title: 'Professional development',
+      title: `Work on: ${careerGoal.title}`,
       category: 'career',
       completed: false,
-      priority: 'low',
-      time: '5:00 PM',
-      description: 'Read, learn, or network for 20 mins',
+      priority: 'high',
+      time: '9:30 AM',
+      description: 'Dedicated focus block',
+      goalId: careerGoal.id,
     });
   }
 
-  tasks.push({
-    id: generateId(),
-    title: 'Mindful break',
-    category: 'personal',
-    completed: false,
-    priority: 'medium',
-    time: '3:00 PM',
-    description: 'Step away, breathe, reset',
-  });
-
-  if (dayOfWeek === 5 || dayOfWeek === 6) {
+  const personalGoal = goals.find(g => g.category === 'personal');
+  if (personalGoal) {
     tasks.push({
       id: generateId(),
-      title: 'Plan something fun',
-      category: 'social',
+      title: `${personalGoal.title}`,
+      category: 'personal',
       completed: false,
       priority: 'medium',
       time: '6:00 PM',
-      description: 'Reach out to friends or plan a date',
+      description: 'Daily progress toward your personal goal',
+      goalId: personalGoal.id,
     });
   }
 
-  tasks.push({
-    id: generateId(),
-    title: 'Evening reflection',
-    category: 'personal',
-    completed: false,
-    priority: 'low',
-    time: '9:00 PM',
-    description: 'Review the day and set tomorrow\'s intention',
-  });
+  if (dayOfWeek >= 1 && dayOfWeek <= 5 && tasks.length < 3) {
+    tasks.push({
+      id: generateId(),
+      title: 'Focus block: Deep work',
+      category: 'career',
+      completed: false,
+      priority: 'high',
+      time: '9:30 AM',
+      description: 'No distractions, pure productivity',
+    });
+  }
 
   return tasks;
 }
@@ -1011,6 +982,48 @@ export async function saveCompletedCalendarId(id: string, completed: boolean): P
       updated = existing.filter(i => i !== id);
     }
     await AsyncStorage.setItem(key, JSON.stringify(updated));
+  } catch {}
+}
+
+export async function getUserId(): Promise<string> {
+  try {
+    const existing = await AsyncStorage.getItem(KEYS.USER_ID);
+    if (existing) return existing;
+    const newId = Date.now().toString(36) + Math.random().toString(36).substr(2, 9);
+    await AsyncStorage.setItem(KEYS.USER_ID, newId);
+    return newId;
+  } catch {
+    return 'local';
+  }
+}
+
+export async function getUserName(): Promise<string> {
+  try {
+    const name = await AsyncStorage.getItem(KEYS.USER_NAME);
+    return name || '';
+  } catch {
+    return '';
+  }
+}
+
+export async function saveUserName(name: string): Promise<void> {
+  try {
+    await AsyncStorage.setItem(KEYS.USER_NAME, name);
+  } catch {}
+}
+
+export async function isOnboardingComplete(): Promise<boolean> {
+  try {
+    const val = await AsyncStorage.getItem(KEYS.ONBOARDING_COMPLETE);
+    return val === 'true';
+  } catch {
+    return false;
+  }
+}
+
+export async function setOnboardingComplete(): Promise<void> {
+  try {
+    await AsyncStorage.setItem(KEYS.ONBOARDING_COMPLETE, 'true');
   } catch {}
 }
 

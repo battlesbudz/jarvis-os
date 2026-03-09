@@ -29,6 +29,7 @@ import {
   ALL_REWARDS,
   TIER_COLORS,
   getLifeContext,
+  getUserName,
   type UserStats,
   type Reward,
   type LifeContext,
@@ -69,16 +70,19 @@ export default function ProfileScreen() {
   const [sheetVisible, setSheetVisible] = useState(false);
   const [gmailConnected, setGmailConnected] = useState(false);
   const [notificationsEnabled, setNotificationsEnabledState] = useState(true);
+  const [userName, setUserName] = useState('');
 
   const loadAll = useCallback(async () => {
-    const [s, lc, notifications] = await Promise.all([
+    const [s, lc, notifications, name] = await Promise.all([
       getStats(),
       getLifeContext(),
-      areNotificationsEnabled()
+      areNotificationsEnabled(),
+      getUserName(),
     ]);
     setStats(s);
     setLifeContext(lc);
     setNotificationsEnabledState(notifications);
+    setUserName(name);
     try {
       const [calUrl, gmailUrl] = [
         new URL('/api/calendar/status', getApiUrl()),
@@ -167,7 +171,7 @@ export default function ProfileScreen() {
         showsVerticalScrollIndicator={false}
       >
         <Animated.View entering={FadeInDown.duration(400).delay(100)}>
-          <Text style={styles.title}>Profile</Text>
+          <Text style={styles.title}>{userName || 'Profile'}</Text>
         </Animated.View>
 
         {/* Level + XP card */}

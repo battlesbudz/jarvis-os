@@ -79,6 +79,15 @@ A mobile app that generates personalized daily task checklists with AI-powered a
 - TIER_COLORS: {1: '#10B981', 2: '#6366F1', 3: '#F59E0B', 4: '#EC4899', 5: '#8B5CF6'}
 - RewardClaimModal: full-screen celebration modal, spring-animated icon, floating sparkle particles
 
+## Onboarding & Multi-User Support
+- New users are redirected to `/onboarding` on first launch (checked via `gameplan_onboarding_complete` in AsyncStorage)
+- Onboarding flow: 7 steps — name → 4 life context questions (skippable) → first goal → connect apps info
+- User name stored in `gameplan_user_name`, displayed in Today greeting ("Good morning, [name]") and Profile title
+- Each device gets a unique `gameplan_user_id` (UUID) stored in AsyncStorage, sent as `X-User-ID` header on API requests
+- All user data (tasks, goals, stats, life context, chat history) is stored in device AsyncStorage — fully isolated per device
+- Calendar/Gmail integrations (Google Calendar, Outlook, Gmail) are tied to Replit account-level OAuth at the infrastructure level (cannot be per-user); new users see calendar events from the configured connector
+- Empty states: Today tab shows "No tasks yet" if no goals set; Goals tab shows "No goals yet" CTA
+
 ## Workflows
 - `Start Backend` (port 5000) - Express server
 - `Start Frontend` (port 8081) - Expo dev server
