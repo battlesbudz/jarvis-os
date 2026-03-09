@@ -3,13 +3,12 @@ import {
   StyleSheet,
   View,
   Text,
-  ScrollView,
   RefreshControl,
   Pressable,
   Platform,
   ActivityIndicator,
 } from 'react-native';
-import DraggableFlatList, { ScaleDecorator, RenderItemParams } from 'react-native-draggable-flatlist';
+import { ScaleDecorator, RenderItemParams, NestableScrollContainer, NestableDraggableFlatList } from 'react-native-draggable-flatlist';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
@@ -571,7 +570,7 @@ export default function TodayScreen() {
 
   return (
     <View style={styles.container}>
-      <ScrollView
+      <NestableScrollContainer
         contentContainerStyle={[
           styles.scrollContent,
           {
@@ -812,11 +811,10 @@ export default function TodayScreen() {
                     <Text style={styles.dragHintText}>Hold to reorder</Text>
                   </View>
                 </View>
-                <DraggableFlatList
+                <NestableDraggableFlatList
                   data={incompleteTasks}
                   keyExtractor={(item) => item.id}
                   onDragEnd={({ data }) => handleReorderTasks(data)}
-                  scrollEnabled={false}
                   activationDistance={10}
                   renderItem={({ item, drag, isActive }: RenderItemParams<Task>) => (
                     <ScaleDecorator activeScale={1.02}>
@@ -886,7 +884,7 @@ export default function TodayScreen() {
             }}
           />
         )}
-      </ScrollView>
+      </NestableScrollContainer>
 
       <TaskResizerSheet
         visible={resizerVisible}
