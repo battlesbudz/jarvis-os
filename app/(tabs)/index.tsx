@@ -57,6 +57,10 @@ import {
   updateTask,
   deleteTask,
   reorderTasks,
+  savePlanSnapshot,
+  getPlanSnapshot,
+  clearPlanSnapshot,
+  restorePlanSnapshot,
   type DayPlan,
   type Goal,
   type Task,
@@ -101,6 +105,7 @@ export default function TodayScreen() {
   const [userName, setUserName] = useState('');
   const [editSheetVisible, setEditSheetVisible] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
+  const [canUndo, setCanUndo] = useState(false);
 
   const loadCalendarEvents = useCallback(async () => {
     try {
@@ -196,6 +201,8 @@ export default function TodayScreen() {
     setLoading(false);
     loadCalendarEvents();
     loadDailyCoachNote(loadedGoals);
+    const snapshot = await getPlanSnapshot();
+    if (snapshot) setCanUndo(true);
     
     // Request notification permissions and schedule reminders
     requestNotificationPermissions().then(granted => {
@@ -238,6 +245,7 @@ export default function TodayScreen() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     try {
       const loadedGoals = await getGoals();
+      const currentPlan = await getTodayPlan(loadedGoals);
       const history = await getCompletionHistory();
       const dayOfWeek = new Date().toLocaleDateString('en-US', { weekday: 'long' });
 
@@ -285,9 +293,11 @@ export default function TodayScreen() {
           greeting: plan?.greeting || 'Good day',
           insight: data.insight || 'Start small, stay consistent.',
         };
+        if (currentPlan.tasks.length > 0) await savePlanSnapshot(currentPlan);
         await savePlan(newPlan);
         setPlan(newPlan);
         setGoals(loadedGoals);
+        setCanUndo(true);
         scheduleAllTaskReminders(newPlan.tasks);
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       }
@@ -315,6 +325,21 @@ export default function TodayScreen() {
 
   const handleCancelRefresh = useCallback(() => {
     setConfirmingRefresh(false);
+  }, []);
+
+  const handleUndo = useCallback(async () => {
+    const loadedGoals = await getGoals();
+    const restored = await restorePlanSnapshot(loadedGoals);
+    if (restored) {
+      setPlan(restored);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    }
+    setCanUndo(false);
+  }, []);
+
+  const handleDismissUndo = useCallback(async () => {
+    await clearPlanSnapshot();
+    setCanUndo(false);
   }, []);
 
   const showXpToast = useCallback((xp: number) => {
@@ -706,6 +731,21 @@ export default function TodayScreen() {
               <Text style={styles.coachNoteLabel}>Coach</Text>
             </View>
             <Text style={styles.coachNoteText}>{coachNote}</Text>
+          </Animated.View>
+        ) : null}
+
+        {canUndo ? (
+          <Animated.View entering={FadeInDown.duration(300)} style={styles.undoBanner}>
+            <Pressable
+              style={styles.undoBannerMain}
+              onPress={handleUndo}
+            >
+              <Ionicons name="arrow-undo-outline" size={16} color="#fff" />
+              <Text style={styles.undoBannerText}>Plan replaced — tap to undo</Text>
+            </Pressable>
+            <Pressable onPress={handleDismissUndo} style={styles.undoBannerDismiss} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <Ionicons name="close" size={16} color="rgba(255,255,255,0.7)" />
+            </Pressable>
           </Animated.View>
         ) : null}
 
@@ -1221,6 +1261,32 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter_400Regular',
     color: '#4B5563',
     lineHeight: 18,
+  },
+  undoBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1F2937',
+    borderRadius: 14,
+    marginBottom: 12,
+    overflow: 'hidden',
+  },
+  undoBannerMain: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+  },
+  undoBannerText: {
+    flex: 1,
+    fontSize: 13,
+    fontFamily: 'Inter_500Medium',
+    color: '#fff',
+  },
+  undoBannerDismiss: {
+    paddingVertical: 12,
+    paddingHorizontal: 14,
   },
   focusToolsRow: {
     flexDirection: 'row',

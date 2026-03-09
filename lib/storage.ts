@@ -251,6 +251,7 @@ const KEYS = {
   ENERGY_CHECKIN: 'gameplan_energy_checkin_',
   BRAIN_DUMP_INBOX: 'gameplan_brain_dump_inbox',
   MIGRATION: 'gameplan_migration_version',
+  PLAN_SNAPSHOT: 'gameplan_plan_snapshot',
 };
 
 export interface BrainDumpItem {
@@ -634,6 +635,49 @@ export async function savePlan(plan: DayPlan): Promise<void> {
     await AsyncStorage.setItem(KEYS.PLANS, JSON.stringify(plans));
   } catch (e) {
     console.error('Failed to save plan:', e);
+  }
+}
+
+export async function savePlanSnapshot(plan: DayPlan): Promise<void> {
+  try {
+    await AsyncStorage.setItem(
+      KEYS.PLAN_SNAPSHOT,
+      JSON.stringify({ date: plan.date, tasks: plan.tasks })
+    );
+  } catch (e) {
+    console.error('Failed to save plan snapshot:', e);
+  }
+}
+
+export async function getPlanSnapshot(): Promise<{ date: string; tasks: Task[] } | null> {
+  try {
+    const raw = await AsyncStorage.getItem(KEYS.PLAN_SNAPSHOT);
+    if (!raw) return null;
+    const snapshot = JSON.parse(raw) as { date: string; tasks: Task[] };
+    if (snapshot.date !== getTodayKey()) return null;
+    return snapshot;
+  } catch {
+    return null;
+  }
+}
+
+export async function clearPlanSnapshot(): Promise<void> {
+  try {
+    await AsyncStorage.removeItem(KEYS.PLAN_SNAPSHOT);
+  } catch {}
+}
+
+export async function restorePlanSnapshot(goals: Goal[]): Promise<DayPlan | null> {
+  try {
+    const snapshot = await getPlanSnapshot();
+    if (!snapshot) return null;
+    const current = await getTodayPlan(goals);
+    const restored: DayPlan = { ...current, tasks: snapshot.tasks };
+    await savePlan(restored);
+    await clearPlanSnapshot();
+    return restored;
+  } catch {
+    return null;
   }
 }
 
