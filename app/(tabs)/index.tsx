@@ -1044,7 +1044,7 @@ export default function TodayScreen() {
         visible={jotVisible}
         task={jotTask}
         onClose={() => setJotVisible(false)}
-        onComplete={handleToggleTask}
+        onComplete={(taskId) => handleToggleTask(taskId, true)}
         onPickAnother={handleJotPickAnother}
       />
       <BrainDumpModal
