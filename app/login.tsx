@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -19,45 +19,83 @@ export default function LoginScreen() {
   const { loginWithToken } = useAuth();
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const popupRef = useRef<Window | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const topPadding = Platform.OS === "web" ? 67 : insets.top;
 
   useEffect(() => {
     if (Platform.OS !== "web" || typeof window === "undefined") return;
-    const params = new URLSearchParams(window.location.search);
-    const googleToken = params.get("googleToken");
-    const googleError = params.get("googleError");
 
-    if (googleToken) {
-      window.history.replaceState({}, "", window.location.pathname);
-      setLoading(true);
-      loginWithToken(googleToken)
-        .catch((e: any) => setError(e.message || "Sign-in failed"))
-        .finally(() => setLoading(false));
-    } else if (googleError) {
-      window.history.replaceState({}, "", window.location.pathname);
-      if (googleError === "cancelled") {
-        setError("Sign-in was cancelled");
-      } else {
-        setError(`Sign-in failed (${googleError})`);
+    function onMessage(event: MessageEvent) {
+      const data = event.data;
+      if (!data || typeof data !== "object") return;
+
+      if (data.type === "GOOGLE_AUTH_SUCCESS" && data.token) {
+        clearPolling();
+        setLoading(true);
+        loginWithToken(data.token)
+          .catch((e: any) => setError(e.message || "Sign-in failed"))
+          .finally(() => setLoading(false));
+      } else if (data.type === "GOOGLE_AUTH_ERROR") {
+        clearPolling();
+        setLoading(false);
+        setError(data.error === "cancelled" ? "Sign-in was cancelled" : `Sign-in failed (${data.error})`);
       }
     }
-  }, []);
+
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [loginWithToken]);
+
+  function clearPolling() {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+    if (popupRef.current && !popupRef.current.closed) {
+      popupRef.current.close();
+    }
+    popupRef.current = null;
+  }
 
   async function handleGooglePress() {
     setError("");
     setLoading(true);
+
     try {
       const baseUrl = getApiUrl();
       const startUrl = new URL("/api/auth/google/start", baseUrl).toString();
 
       if (Platform.OS === "web") {
-        window.location.href = startUrl;
-      } else {
-        const result = await WebBrowser.openAuthSessionAsync(
+        const width = 520;
+        const height = 680;
+        const left = window.screenX + (window.outerWidth - width) / 2;
+        const top = window.screenY + (window.outerHeight - height) / 2;
+        const popup = window.open(
           startUrl,
-          "gameplan://"
+          "google_oauth",
+          `width=${width},height=${height},left=${left},top=${top},toolbar=no,menubar=no,scrollbars=yes,resizable=yes`
         );
+
+        if (!popup) {
+          setError("Popup was blocked. Please allow popups for this site and try again.");
+          setLoading(false);
+          return;
+        }
+
+        popupRef.current = popup;
+
+        pollRef.current = setInterval(() => {
+          if (popup.closed) {
+            clearInterval(pollRef.current!);
+            pollRef.current = null;
+            popupRef.current = null;
+            setLoading(false);
+          }
+        }, 500);
+      } else {
+        const result = await WebBrowser.openAuthSessionAsync(startUrl, "gameplan://");
         if (result.type === "success" && result.url) {
           const url = new URL(result.url);
           const token = url.searchParams.get("googleToken");
