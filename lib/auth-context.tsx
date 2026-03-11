@@ -13,7 +13,7 @@ interface AuthState {
 interface AuthContextType extends AuthState {
   login: (username: string, password: string) => Promise<void>;
   register: (username: string, password: string) => Promise<void>;
-  loginWithGoogle: (accessToken: string) => Promise<void>;
+  loginWithGoogle: (idToken: string | null, accessToken: string | null) => Promise<void>;
   logout: () => Promise<void>;
 }
 
@@ -125,12 +125,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
   }, []);
 
-  const loginWithGoogle = useCallback(async (accessToken: string) => {
+  const loginWithGoogle = useCallback(async (idToken: string | null, accessToken: string | null) => {
     const baseUrl = getApiUrl();
     const res = await fetch(new URL("/api/auth/google", baseUrl).toString(), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ accessToken }),
+      body: JSON.stringify({ idToken, accessToken }),
     });
 
     if (!res.ok) {

@@ -26,12 +26,19 @@ export default function LoginScreen() {
 
   const [request, response, promptAsync] = Google.useAuthRequest({
     webClientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID,
-    scopes: ["profile", "email"],
+    scopes: ["openid", "profile", "email"],
   });
 
   useEffect(() => {
-    if (response?.type === "success" && response.authentication?.accessToken) {
-      handleGoogleToken(response.authentication.accessToken);
+    if (response?.type === "success") {
+      const idToken = response.authentication?.idToken;
+      const accessToken = response.authentication?.accessToken;
+      if (idToken || accessToken) {
+        handleGoogleAuth(idToken ?? null, accessToken ?? null);
+      } else {
+        setError("No token received from Google");
+        setLoading(false);
+      }
     } else if (response?.type === "error") {
       setError("Google sign-in was cancelled or failed");
       setLoading(false);
@@ -40,11 +47,11 @@ export default function LoginScreen() {
     }
   }, [response]);
 
-  async function handleGoogleToken(accessToken: string) {
+  async function handleGoogleAuth(idToken: string | null, accessToken: string | null) {
     setLoading(true);
     setError("");
     try {
-      await loginWithGoogle(accessToken);
+      await loginWithGoogle(idToken, accessToken);
     } catch (e: any) {
       setError(e.message || "Sign-in failed");
     } finally {

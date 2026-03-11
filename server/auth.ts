@@ -113,27 +113,67 @@ authRouter.post("/login", async (req: Request, res: Response) => {
 
 authRouter.post("/google", async (req: Request, res: Response) => {
   try {
-    const { accessToken } = req.body;
+    const { idToken, accessToken } = req.body;
 
-    if (!accessToken) {
-      return res.status(400).json({ error: "Access token is required" });
+    if (!idToken && !accessToken) {
+      return res.status(400).json({ error: "ID token or access token is required" });
     }
 
-    const googleRes = await fetch(
-      `https://www.googleapis.com/userinfo/v2/me`,
-      { headers: { Authorization: `Bearer ${accessToken}` } }
-    );
+    let googleUser: { id: string; name?: string; email?: string };
 
-    if (!googleRes.ok) {
-      return res.status(401).json({ error: "Invalid Google access token" });
+    if (idToken) {
+      const tokenInfoRes = await fetch(
+        `https://oauth2.googleapis.com/tokeninfo?id_token=${idToken}`
+      );
+
+      if (!tokenInfoRes.ok) {
+        return res.status(401).json({ error: "Invalid Google ID token" });
+      }
+
+      const tokenInfo = await tokenInfoRes.json() as {
+        sub: string;
+        name?: string;
+        email?: string;
+        aud?: string;
+        error_description?: string;
+      };
+
+      if (tokenInfo.error_description) {
+        return res.status(401).json({ error: "Invalid Google ID token" });
+      }
+
+      const expectedAud = process.env.GOOGLE_WEB_CLIENT_ID;
+      if (expectedAud && tokenInfo.aud !== expectedAud) {
+        return res.status(401).json({ error: "Token audience mismatch" });
+      }
+
+      if (!tokenInfo.sub) {
+        return res.status(401).json({ error: "Could not retrieve Google user info" });
+      }
+
+      googleUser = { id: tokenInfo.sub, name: tokenInfo.name, email: tokenInfo.email };
+    } else {
+      const userInfoRes = await fetch(
+        `https://www.googleapis.com/userinfo/v2/me`,
+        { headers: { Authorization: `Bearer ${accessToken}` } }
+      );
+
+      if (!userInfoRes.ok) {
+        return res.status(401).json({ error: "Invalid Google access token" });
+      }
+
+      const info = await userInfoRes.json() as {
+        id: string;
+        name?: string;
+        email?: string;
+      };
+
+      if (!info.id) {
+        return res.status(401).json({ error: "Could not retrieve Google user info" });
+      }
+
+      googleUser = info;
     }
-
-    const googleUser = await googleRes.json() as {
-      id: string;
-      name?: string;
-      email?: string;
-      picture?: string;
-    };
 
     if (!googleUser.id) {
       return res.status(401).json({ error: "Could not retrieve Google user info" });
