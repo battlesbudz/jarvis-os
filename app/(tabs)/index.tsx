@@ -62,7 +62,6 @@ import {
   restorePlanSnapshot,
   getBlockedTasks,
   saveBlockerAnswer,
-  getPlatforms,
   type DayPlan,
   type Goal,
   type Task,
@@ -146,14 +145,8 @@ export default function TodayScreen() {
         }
       };
 
-      const platforms = await getPlatforms();
-      const isEnabled = (platformId: string) => {
-        const p = platforms.find(pl => pl.id === platformId);
-        return p ? p.connected : false;
-      };
-
-      if (status.google && isEnabled('google-calendar')) await fetchEvents('google');
-      if (status.outlook && isEnabled('outlook')) await fetchEvents('outlook');
+      if (status.google) await fetchEvents('google');
+      if (status.outlook) await fetchEvents('outlook');
 
       // Restore previously completed calendar events for today
       const completedIds = await getCompletedCalendarIds();

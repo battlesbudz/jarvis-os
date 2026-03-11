@@ -364,6 +364,7 @@ async function apiDelete(path: string): Promise<ApiDataResponse> {
 const DEFAULT_PLATFORMS: ConnectedPlatform[] = [
   { id: 'google-calendar', name: 'Google Calendar', category: 'calendar', connected: false, icon: 'calendar' },
   { id: 'outlook', name: 'Microsoft Outlook', category: 'calendar', connected: false, icon: 'mail' },
+  { id: 'gmail', name: 'Gmail', category: 'calendar', connected: false, icon: 'mail' },
 ];
 
 function generateDailyTasks(goals: Goal[]): Task[] {
@@ -918,7 +919,12 @@ export async function getPlatforms(): Promise<ConnectedPlatform[]> {
   try {
     const result = await apiGet('/api/data/user-preferences');
     const prefs = (result.data || {}) as UserPreferencesData;
-    return prefs.platforms || DEFAULT_PLATFORMS;
+    const saved = prefs.platforms || [];
+    if (saved.length === 0) return DEFAULT_PLATFORMS;
+    return DEFAULT_PLATFORMS.map(def => {
+      const found = saved.find(p => p.id === def.id);
+      return found ? { ...def, connected: found.connected } : def;
+    });
   } catch (e) {
     console.error('Failed to get platforms:', e);
     return DEFAULT_PLATFORMS;

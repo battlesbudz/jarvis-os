@@ -31,12 +31,9 @@ import {
   TIER_COLORS,
   getLifeContext,
   getUserName,
-  getPlatforms,
-  togglePlatform,
   type UserStats,
   type Reward,
   type LifeContext,
-  type ConnectedPlatform,
 } from '@/lib/storage';
 import { areNotificationsEnabled, setNotificationsEnabled } from '@/lib/notifications';
 import { getApiUrl, apiRequest } from '@/lib/query-client';
@@ -47,18 +44,21 @@ import LifeContextSheet from '@/components/LifeContextSheet';
 interface CalendarStatus {
   google: boolean;
   outlook: boolean;
+  gmail: boolean;
 }
 
 interface PlatformInfo {
-  id: 'google' | 'outlook';
+  id: 'google' | 'outlook' | 'gmail';
   name: string;
   icon: keyof typeof Ionicons.glyphMap;
   color: string;
+  description: string;
 }
 
 const PLATFORMS: PlatformInfo[] = [
-  { id: 'google', name: 'Google Calendar', icon: 'calendar-outline', color: '#4285F4' },
-  { id: 'outlook', name: 'Microsoft Outlook', icon: 'mail-outline', color: '#0078D4' },
+  { id: 'google', name: 'Google Calendar', icon: 'calendar-outline', color: '#4285F4', description: 'Events pulled into your daily plan' },
+  { id: 'outlook', name: 'Microsoft Outlook', icon: 'calendar-outline', color: '#0078D4', description: 'Events pulled into your daily plan' },
+  { id: 'gmail', name: 'Gmail', icon: 'mail-outline', color: '#EA4335', description: 'Emails feed your AI coach' },
 ];
 
 export default function ProfileScreen() {
@@ -68,43 +68,36 @@ export default function ProfileScreen() {
     streak: 0, totalCompleted: 0, bestStreak: 0, xp: 0, badges: [], claimedRewards: [],
     dailyXpEarned: { date: '', xp: 0 },
   });
-  const [calStatus, setCalStatus] = useState<CalendarStatus>({ google: false, outlook: false });
+  const [calStatus, setCalStatus] = useState<CalendarStatus>({ google: false, outlook: false, gmail: false });
   const [loadingStatus, setLoadingStatus] = useState(true);
   const [selectedReward, setSelectedReward] = useState<Reward | null>(null);
   const [rewardModalVisible, setRewardModalVisible] = useState(false);
   const [lifeContext, setLifeContext] = useState<LifeContext | null>(null);
   const [sheetVisible, setSheetVisible] = useState(false);
-  const [gmailConnected, setGmailConnected] = useState(false);
   const [notificationsEnabled, setNotificationsEnabledState] = useState(true);
   const [userName, setUserName] = useState('');
-  const [userPlatforms, setUserPlatforms] = useState<ConnectedPlatform[]>([]);
 
   const loadAll = useCallback(async () => {
-    const [s, lc, notifications, name, platforms] = await Promise.all([
+    const [s, lc, notifications, name] = await Promise.all([
       getStats(),
       getLifeContext(),
       areNotificationsEnabled(),
       getUserName(),
-      getPlatforms(),
     ]);
     setStats(s);
     setLifeContext(lc);
     setNotificationsEnabledState(notifications);
     setUserName(name);
-    setUserPlatforms(platforms);
     try {
       const [calRes, gmailRes] = await Promise.all([
         apiRequest('GET', '/api/calendar/status'),
         apiRequest('GET', '/api/gmail/status').catch(() => null),
       ]);
       const calData = await calRes.json();
-      setCalStatus(calData);
-      if (gmailRes) {
-        const gmailData = await gmailRes.json();
-        setGmailConnected(gmailData.connected ?? false);
-      }
+      const gmailData = gmailRes ? await gmailRes.json().catch(() => ({ connected: false })) : { connected: false };
+      setCalStatus({ google: calData.google ?? false, outlook: calData.outlook ?? false, gmail: gmailData.connected ?? false });
     } catch {
-      setCalStatus({ google: false, outlook: false });
+      setCalStatus({ google: false, outlook: false, gmail: false });
     } finally {
       setLoadingStatus(false);
     }
@@ -118,16 +111,10 @@ export default function ProfileScreen() {
   const xpInfo = getXpForNextLevel(lifetimeXp);
   const level = getLevel(lifetimeXp);
   const levelName = getLevelName(lifetimeXp);
-  const isUserPlatformEnabled = (platformId: string): boolean => {
-    const platform = userPlatforms.find(p => p.id === platformId);
-    return platform ? platform.connected : false;
-  };
-  const connectedCount = (calStatus.google && isUserPlatformEnabled('google-calendar') ? 1 : 0)
-    + (calStatus.outlook && isUserPlatformEnabled('outlook') ? 1 : 0);
-  const isConnected = (id: 'google' | 'outlook') => {
-    const oauthConnected = id === 'google' ? calStatus.google : calStatus.outlook;
-    const platformId = id === 'google' ? 'google-calendar' : 'outlook';
-    return oauthConnected && isUserPlatformEnabled(platformId);
+  const getOAuthStatus = (id: 'google' | 'outlook' | 'gmail'): boolean => {
+    if (id === 'google') return calStatus.google;
+    if (id === 'outlook') return calStatus.outlook;
+    return calStatus.gmail;
   };
 
   const todayStr = getTodayKey();
@@ -424,72 +411,40 @@ export default function ProfileScreen() {
             Real data feeds your daily plan and coach
           </Text>
           <View style={styles.platformsList}>
-            {PLATFORMS.map((platform) => {
-              const oauthConnected = platform.id === 'google' ? calStatus.google : calStatus.outlook;
-              const platformId = platform.id === 'google' ? 'google-calendar' : 'outlook';
-              const userEnabled = isUserPlatformEnabled(platformId);
-              const fullyConnected = !loadingStatus && oauthConnected && userEnabled;
-              const handleToggle = async () => {
-                await togglePlatform(platformId);
-                const updated = await getPlatforms();
-                setUserPlatforms(updated);
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-              };
+            {PLATFORMS.map((platform, index) => {
+              const connected = getOAuthStatus(platform.id);
+              const isLast = index === PLATFORMS.length - 1;
               return (
-                <Pressable
+                <View
                   key={platform.id}
-                  style={[
-                    styles.platformRow,
-                    styles.platformRowBorder,
-                  ]}
-                  onPress={oauthConnected ? handleToggle : undefined}
+                  style={[styles.platformRow, !isLast && styles.platformRowBorder]}
                 >
-                  <View style={[styles.platformIcon, { backgroundColor: platform.color + '15' }]}>
+                  <View style={[styles.platformIcon, { backgroundColor: platform.color + '18' }]}>
                     <Ionicons name={platform.icon} size={20} color={platform.color} />
                   </View>
                   <View style={styles.platformInfo}>
                     <Text style={styles.platformName}>{platform.name}</Text>
-                    <Text style={[styles.platformStatus, fullyConnected && styles.platformStatusConnected]}>
-                      {loadingStatus ? 'Checking...' : !oauthConnected ? 'Not connected' : fullyConnected ? 'Connected' : 'Disabled'}
+                    <Text style={[styles.platformStatus, connected && styles.platformStatusConnected]}>
+                      {loadingStatus
+                        ? 'Checking...'
+                        : connected
+                        ? platform.description
+                        : 'Not connected'}
                     </Text>
                   </View>
                   {loadingStatus ? (
                     <ActivityIndicator size="small" color={Colors.textTertiary} />
-                  ) : !oauthConnected ? (
-                    <Ionicons name="ellipse-outline" size={22} color={Colors.border} />
+                  ) : connected ? (
+                    <View style={styles.connectedBadge}>
+                      <Ionicons name="checkmark" size={13} color="#fff" />
+                    </View>
                   ) : (
-                    <Ionicons 
-                      name={userEnabled ? "toggle" : "toggle-outline"} 
-                      size={32} 
-                      color={userEnabled ? Colors.primary : Colors.border} 
-                    />
+                    <View style={styles.disconnectedDot} />
                   )}
-                </Pressable>
+                </View>
               );
             })}
-            {/* Gmail row */}
-            <View style={styles.platformRow}>
-              <View style={[styles.platformIcon, { backgroundColor: '#EA433515' }]}>
-                <Ionicons name="mail-outline" size={20} color="#EA4335" />
-              </View>
-              <View style={styles.platformInfo}>
-                <Text style={styles.platformName}>Gmail</Text>
-                <Text style={[styles.platformStatus, gmailConnected && styles.platformStatusConnected]}>
-                  {loadingStatus ? 'Checking...' : gmailConnected ? 'Connected — emails feed your coach' : 'Not connected'}
-                </Text>
-              </View>
-              {loadingStatus ? (
-                <ActivityIndicator size="small" color={Colors.textTertiary} />
-              ) : gmailConnected ? (
-                <Ionicons name="checkmark-circle" size={22} color={Colors.success} />
-              ) : (
-                <Ionicons name="ellipse-outline" size={22} color={Colors.border} />
-              )}
-            </View>
           </View>
-          <Text style={styles.connectionHint}>
-            To connect or reconnect, open your Replit account integrations.
-          </Text>
         </Animated.View>
 
         {/* Settings */}
@@ -814,6 +769,21 @@ const styles = StyleSheet.create({
   platformStatusConnected: {
     color: Colors.success,
     fontFamily: 'Inter_500Medium',
+  },
+  connectedBadge: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: Colors.success,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  disconnectedDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: Colors.border,
+    marginRight: 6,
   },
   connectionHint: {
     fontSize: 12,
