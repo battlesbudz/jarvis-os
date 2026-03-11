@@ -37,9 +37,7 @@ import {
   incrementStats,
   awardBadge,
   decrementStats,
-  calculateTaskXp,
   xpForTask,
-  xpForSubtask,
   resetStats,
   getStats,
   getDailyCoachNote,
@@ -64,6 +62,7 @@ import {
   restorePlanSnapshot,
   getBlockedTasks,
   saveBlockerAnswer,
+  getPlatforms,
   type DayPlan,
   type Goal,
   type Task,
@@ -147,8 +146,14 @@ export default function TodayScreen() {
         }
       };
 
-      if (status.google) await fetchEvents('google');
-      if (status.outlook) await fetchEvents('outlook');
+      const platforms = await getPlatforms();
+      const isEnabled = (platformId: string) => {
+        const p = platforms.find(pl => pl.id === platformId);
+        return p ? p.connected : false;
+      };
+
+      if (status.google && isEnabled('google-calendar')) await fetchEvents('google');
+      if (status.outlook && isEnabled('outlook')) await fetchEvents('outlook');
 
       // Restore previously completed calendar events for today
       const completedIds = await getCompletedCalendarIds();
@@ -409,21 +414,10 @@ export default function TodayScreen() {
     });
     const newPlan = { ...plan, tasks: updatedTasks };
     setPlan(newPlan);
-    await updateTaskCompletion(plan.date, taskId, completed);
+    const { xpEarned: earned, newBadges } = await updateTaskCompletion(plan.date, taskId, completed);
 
     if (completed) {
-      const isGoalLinked = !!(matchedTask?.goalId);
-      const priority = matchedTask?.priority ?? 'medium';
-      let xpOverride: number | undefined;
-      if (matchedTask?.isSubtask) {
-        const parentTask = plan.tasks.find(t => t.subtasks?.some(st => st.id === matchedTask!.id));
-        if (parentTask && parentTask.subtasks && parentTask.subtasks.length > 0) {
-          const parentXp = calculateTaskXp(parentTask);
-          xpOverride = xpForSubtask(parentXp, parentTask.subtasks.length);
-        }
-      }
-      const { xpEarned: earned, newBadges } = await incrementStats(priority, isGoalLinked, xpOverride);
-      showXpToast(earned);
+      if (earned > 0) showXpToast(earned);
 
       if (newBadges.length > 0) {
         const badgeDef = ALL_BADGES.find(b => b.id === newBadges[0]);
@@ -435,7 +429,6 @@ export default function TodayScreen() {
         }
       }
 
-      // Check perfect day
       const allDone = newPlan.tasks.every(t =>
         t.subtasks?.length ? t.subtasks.every(s => s.completed) : t.completed
       ) && calendarEvents.every(e => e.completed);
@@ -452,21 +445,6 @@ export default function TodayScreen() {
           setLogSheetVisible(true);
         }
       }
-    } else {
-      let xpToRemove = 10;
-      if (matchedTask) {
-        if (matchedTask.isSubtask) {
-          const parentTask = plan.tasks.find(t => t.subtasks?.some(st => st.id === matchedTask!.id));
-          if (parentTask && parentTask.subtasks && parentTask.subtasks.length > 0) {
-            xpToRemove = xpForSubtask(calculateTaskXp(parentTask), parentTask.subtasks.length);
-          } else {
-            xpToRemove = calculateTaskXp(matchedTask);
-          }
-        } else {
-          xpToRemove = calculateTaskXp(matchedTask);
-        }
-      }
-      await decrementStats(xpToRemove);
     }
   }, [plan, goals, calendarEvents, showXpToast]);
 

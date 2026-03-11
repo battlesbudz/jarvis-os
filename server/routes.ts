@@ -15,6 +15,7 @@ import {
   getRecentEmailCommitments,
 } from "./integrations/gmail";
 import { authRouter, authMiddleware } from "./auth";
+import { registerDataRoutes } from "./dataRoutes";
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
@@ -110,6 +111,8 @@ ${calendarText}${gmailSection}
 export async function registerRoutes(app: Express): Promise<Server> {
   app.use("/api/auth", authRouter);
   app.use(authMiddleware);
+
+  registerDataRoutes(app);
 
   app.post("/api/ai/resize-task", async (req: Request, res: Response) => {
     try {

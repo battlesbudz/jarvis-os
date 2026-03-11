@@ -31,9 +31,12 @@ import {
   TIER_COLORS,
   getLifeContext,
   getUserName,
+  getPlatforms,
+  togglePlatform,
   type UserStats,
   type Reward,
   type LifeContext,
+  type ConnectedPlatform,
 } from '@/lib/storage';
 import { areNotificationsEnabled, setNotificationsEnabled } from '@/lib/notifications';
 import { getApiUrl, apiRequest } from '@/lib/query-client';
@@ -74,18 +77,21 @@ export default function ProfileScreen() {
   const [gmailConnected, setGmailConnected] = useState(false);
   const [notificationsEnabled, setNotificationsEnabledState] = useState(true);
   const [userName, setUserName] = useState('');
+  const [userPlatforms, setUserPlatforms] = useState<ConnectedPlatform[]>([]);
 
   const loadAll = useCallback(async () => {
-    const [s, lc, notifications, name] = await Promise.all([
+    const [s, lc, notifications, name, platforms] = await Promise.all([
       getStats(),
       getLifeContext(),
       areNotificationsEnabled(),
       getUserName(),
+      getPlatforms(),
     ]);
     setStats(s);
     setLifeContext(lc);
     setNotificationsEnabledState(notifications);
     setUserName(name);
+    setUserPlatforms(platforms);
     try {
       const [calRes, gmailRes] = await Promise.all([
         apiRequest('GET', '/api/calendar/status'),
@@ -112,9 +118,17 @@ export default function ProfileScreen() {
   const xpInfo = getXpForNextLevel(lifetimeXp);
   const level = getLevel(lifetimeXp);
   const levelName = getLevelName(lifetimeXp);
-  const connectedCount = (calStatus.google ? 1 : 0) + (calStatus.outlook ? 1 : 0);
-  const isConnected = (id: 'google' | 'outlook') =>
-    id === 'google' ? calStatus.google : calStatus.outlook;
+  const isUserPlatformEnabled = (platformId: string): boolean => {
+    const platform = userPlatforms.find(p => p.id === platformId);
+    return platform ? platform.connected : false;
+  };
+  const connectedCount = (calStatus.google && isUserPlatformEnabled('google-calendar') ? 1 : 0)
+    + (calStatus.outlook && isUserPlatformEnabled('outlook') ? 1 : 0);
+  const isConnected = (id: 'google' | 'outlook') => {
+    const oauthConnected = id === 'google' ? calStatus.google : calStatus.outlook;
+    const platformId = id === 'google' ? 'google-calendar' : 'outlook';
+    return oauthConnected && isUserPlatformEnabled(platformId);
+  };
 
   const todayStr = getTodayKey();
   const todayXp = getDailyXpEarned(stats);
@@ -410,33 +424,47 @@ export default function ProfileScreen() {
             Real data feeds your daily plan and coach
           </Text>
           <View style={styles.platformsList}>
-            {PLATFORMS.map((platform, index) => {
-              const connected = !loadingStatus && isConnected(platform.id);
+            {PLATFORMS.map((platform) => {
+              const oauthConnected = platform.id === 'google' ? calStatus.google : calStatus.outlook;
+              const platformId = platform.id === 'google' ? 'google-calendar' : 'outlook';
+              const userEnabled = isUserPlatformEnabled(platformId);
+              const fullyConnected = !loadingStatus && oauthConnected && userEnabled;
+              const handleToggle = async () => {
+                await togglePlatform(platformId);
+                const updated = await getPlatforms();
+                setUserPlatforms(updated);
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              };
               return (
-                <View
+                <Pressable
                   key={platform.id}
                   style={[
                     styles.platformRow,
                     styles.platformRowBorder,
                   ]}
+                  onPress={oauthConnected ? handleToggle : undefined}
                 >
                   <View style={[styles.platformIcon, { backgroundColor: platform.color + '15' }]}>
                     <Ionicons name={platform.icon} size={20} color={platform.color} />
                   </View>
                   <View style={styles.platformInfo}>
                     <Text style={styles.platformName}>{platform.name}</Text>
-                    <Text style={[styles.platformStatus, connected && styles.platformStatusConnected]}>
-                      {loadingStatus ? 'Checking...' : connected ? 'Connected' : 'Not connected'}
+                    <Text style={[styles.platformStatus, fullyConnected && styles.platformStatusConnected]}>
+                      {loadingStatus ? 'Checking...' : !oauthConnected ? 'Not connected' : fullyConnected ? 'Connected' : 'Disabled'}
                     </Text>
                   </View>
                   {loadingStatus ? (
                     <ActivityIndicator size="small" color={Colors.textTertiary} />
-                  ) : connected ? (
-                    <Ionicons name="checkmark-circle" size={22} color={Colors.success} />
-                  ) : (
+                  ) : !oauthConnected ? (
                     <Ionicons name="ellipse-outline" size={22} color={Colors.border} />
+                  ) : (
+                    <Ionicons 
+                      name={userEnabled ? "toggle" : "toggle-outline"} 
+                      size={32} 
+                      color={userEnabled ? Colors.primary : Colors.border} 
+                    />
                   )}
-                </View>
+                </Pressable>
               );
             })}
             {/* Gmail row */}

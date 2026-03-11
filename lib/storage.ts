@@ -1,4 +1,5 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getApiUrl } from '@/lib/query-client';
+import { getAuthToken } from '@/lib/auth-context';
 
 export interface Task {
   id: string;
@@ -97,34 +98,25 @@ const TIER_COLORS: Record<number, string> = {
 export { TIER_COLORS };
 
 export const ALL_REWARDS: Reward[] = [
-  // Tier 1 — 50 XP
   { id: 'r1_drink',      tier: 1, xpRequired: 50,   category: 'treat',   icon: 'cafe-outline',         title: 'Favorite Drink Run',    description: 'Go get that drink you love — coffee, boba, smoothie, whatever calls to you.', tip: 'You showed up today. You deserve it.' },
   { id: 'r1_snack',      tier: 1, xpRequired: 50,   category: 'treat',   icon: 'pizza-outline',        title: 'Guilt-Free Snack',      description: 'Eat whatever snack you\'ve been craving. Zero guilt, full enjoyment.', tip: 'Small wins deserve small treats.' },
   { id: 'r1_scroll',     tier: 1, xpRequired: 50,   category: 'leisure', icon: 'phone-portrait-outline', title: 'Screen Time Pass',     description: 'Guilt-free 15 minutes of scrolling, videos, or whatever you feel like.', tip: 'A little mindless fun is good for the soul.' },
   { id: 'r1_walk',       tier: 1, xpRequired: 50,   category: 'wellness',icon: 'walk-outline',         title: 'Fresh Air Break',       description: 'Take a 10-minute walk just for yourself. No destination, no purpose — just breathe.', tip: 'Your brain needs rest too.' },
-
-  // Tier 2 — 150 XP
   { id: 'r2_gaming',     tier: 2, xpRequired: 150,  category: 'leisure', icon: 'game-controller-outline', title: 'Gaming Hour',         description: 'One full uninterrupted hour of whatever game you want. No guilt whatsoever.', tip: 'You\'ve earned your leisure time.' },
   { id: 'r2_episode',    tier: 2, xpRequired: 150,  category: 'leisure', icon: 'tv-outline',           title: 'Binge Pass',            description: 'Watch one full TV episode or YouTube video right now. No skipping to be "productive".', tip: 'Entertainment is rest. Rest is productive.' },
   { id: 'r2_takeout',    tier: 2, xpRequired: 150,  category: 'treat',   icon: 'bag-handle-outline',   title: 'Takeout Night',         description: 'Order from your go-to spot — no cooking, no dishes, just food you love.', tip: 'Nourish yourself. You\'ve been working hard.' },
   { id: 'r2_bath',       tier: 2, xpRequired: 150,  category: 'wellness',icon: 'water-outline',        title: 'Long Shower/Bath',      description: 'Take your time. Candles, music, whatever makes it feel luxurious.', tip: 'Slow down and enjoy the silence.' },
   { id: 'r2_nap',        tier: 2, xpRequired: 150,  category: 'wellness',icon: 'moon-outline',         title: 'Nap Pass',              description: 'Guilt-free nap, any length. Set your alarm or don\'t — you choose.', tip: 'Sleep is the ultimate productivity hack.' },
-
-  // Tier 3 — 400 XP
   { id: 'r3_movie',      tier: 3, xpRequired: 400,  category: 'leisure', icon: 'film-outline',         title: 'Movie Night',           description: 'Full movie of your choice tonight. Popcorn mandatory. Judgment-free zone.', tip: 'Sit back, relax, and just enjoy.' },
   { id: 'r3_sleepin',    tier: 3, xpRequired: 400,  category: 'wellness',icon: 'bed-outline',          title: 'Sleep In',              description: 'Set no alarm this coming weekend morning. Sleep until your body wakes you naturally.', tip: 'Your body knows what it needs.' },
   { id: 'r3_purchase',   tier: 3, xpRequired: 400,  category: 'splurge', icon: 'cart-outline',         title: 'New Game or Book',      description: 'Buy that game, book, album, or app you\'ve been eyeing. Under $20, no justification needed.', tip: 'Investing in joy is always a good spend.' },
   { id: 'r3_dessert',    tier: 3, xpRequired: 400,  category: 'treat',   icon: 'ice-cream-outline',    title: 'Dessert Run',           description: 'Go get your absolute favorite dessert. The good stuff — don\'t settle.', tip: 'Life is short. Eat the thing.' },
   { id: 'r3_hobby',      tier: 3, xpRequired: 400,  category: 'leisure', icon: 'color-palette-outline', title: 'Hobby Hour',           description: 'Spend a full hour on any hobby with zero guilt — drawing, music, building, gaming, whatever lights you up.', tip: 'The things you love make you who you are.' },
-
-  // Tier 4 — 800 XP
   { id: 'r4_daytrip',    tier: 4, xpRequired: 800,  category: 'social',  icon: 'map-outline',          title: 'Day Trip',              description: 'Plan a day trip somewhere you\'ve wanted to go. A nearby city, a park, a beach — you pick.', tip: 'You\'ve built enough momentum to go explore.' },
   { id: 'r4_shopping',   tier: 4, xpRequired: 800,  category: 'splurge', icon: 'storefront-outline',   title: 'Retail Therapy',        description: 'Buy something you\'ve been holding off on. You know the thing. Go get it.', tip: 'Delayed gratification finally pays off.' },
   { id: 'r4_selfcare',   tier: 4, xpRequired: 800,  category: 'wellness',icon: 'sparkles-outline',     title: 'Self-Care Day',         description: 'A full dedicated day: spa, haircut, grooming, face mask, whatever makes you feel like yourself again.', tip: 'You can\'t pour from an empty cup.' },
   { id: 'r4_nightout',   tier: 4, xpRequired: 800,  category: 'social',  icon: 'people-outline',       title: 'Night Out',             description: 'Plan a proper night out — with friends, solo, or with your partner. Dinner, drinks, or whatever you want.', tip: 'Connection and celebration go hand in hand.' },
   { id: 'r4_restaurant', tier: 4, xpRequired: 800,  category: 'treat',   icon: 'restaurant-outline',   title: 'Restaurant Splurge',    description: 'Book that nicer restaurant you\'ve been putting off. Get the good table. Order what you actually want.', tip: 'Experiences over things, every time.' },
-
-  // Tier 5 — 2000 XP
   { id: 'r5_getaway',    tier: 5, xpRequired: 2000, category: 'splurge', icon: 'airplane-outline',     title: 'Weekend Getaway',       description: 'Book a trip anywhere for the weekend. Road trip, hotel, Airbnb — somewhere that isn\'t home.', tip: 'You\'ve built something real. Go celebrate it properly.' },
   { id: 'r5_bigbuy',     tier: 5, xpRequired: 2000, category: 'splurge', icon: 'gift-outline',         title: 'Big Purchase',          description: 'That expensive thing you keep talking yourself out of. You know what it is. Go get it.', tip: 'You worked for this. You\'ve absolutely earned it.' },
   { id: 'r5_dayoff',     tier: 5, xpRequired: 2000, category: 'wellness',icon: 'sunny-outline',        title: 'Full Day Off',          description: 'Take an entire day completely off — no work, no responsibilities, no guilt. Just live.', tip: 'Rest is not a reward. It\'s a right. Today it\'s both.' },
@@ -250,80 +242,10 @@ export interface CompletionHistoryItem {
   date: string;
 }
 
-const KEYS = {
-  PLANS: 'gameplan_plans',
-  GOALS: 'gameplan_goals',
-  PLATFORMS: 'gameplan_platforms',
-  STATS: 'gameplan_stats',
-  ONBOARDED: 'gameplan_onboarded',
-  ONBOARDING_COMPLETE: 'gameplan_onboarding_complete',
-  USER_NAME: 'gameplan_user_name',
-  USER_ID: 'gameplan_user_id',
-  HISTORY: 'gameplan_history',
-  CHAT_HISTORY: 'gameplan_chat_history',
-  DAILY_CHECKIN: 'gameplan_daily_checkin',
-  LIFE_CONTEXT: 'gameplan_life_context',
-  TIMER_SETTINGS: 'gameplan_timer_settings',
-  VIEW_MODE: 'gameplan_view_mode',
-  ENERGY_CHECKIN: 'gameplan_energy_checkin_',
-  BRAIN_DUMP_INBOX: 'gameplan_brain_dump_inbox',
-  MIGRATION: 'gameplan_migration_version',
-  PLAN_SNAPSHOT: 'gameplan_plan_snapshot',
-  BLOCKED_TASKS: 'gameplan_blocked_tasks',
-};
-
 export interface BrainDumpItem {
   id: string;
   text: string;
   createdAt: string;
-}
-
-export async function getBrainDumpInbox(): Promise<BrainDumpItem[]> {
-  try {
-    const raw = await AsyncStorage.getItem(KEYS.BRAIN_DUMP_INBOX);
-    if (!raw) return [];
-    return JSON.parse(raw) as BrainDumpItem[];
-  } catch {
-    return [];
-  }
-}
-
-export async function saveBrainDumpItem(text: string): Promise<void> {
-  try {
-    const inbox = await getBrainDumpInbox();
-    const newItem: BrainDumpItem = {
-      id: generateId(),
-      text,
-      createdAt: new Date().toISOString(),
-    };
-    inbox.push(newItem);
-    await AsyncStorage.setItem(KEYS.BRAIN_DUMP_INBOX, JSON.stringify(inbox));
-  } catch {}
-}
-
-export async function clearBrainDumpItem(id: string): Promise<void> {
-  try {
-    const inbox = await getBrainDumpInbox();
-    const updated = inbox.filter(item => item.id !== id);
-    await AsyncStorage.setItem(KEYS.BRAIN_DUMP_INBOX, JSON.stringify(updated));
-  } catch {}
-}
-
-export async function addTaskToToday(task: Partial<Task>): Promise<void> {
-  try {
-    const goals = await getGoals();
-    const plan = await getTodayPlan(goals);
-    const newTask: Task = {
-      id: generateId(),
-      title: task.title || 'Untitled Task',
-      category: (task.category as any) || 'personal',
-      completed: false,
-      priority: task.priority || 'low',
-      ...task,
-    };
-    plan.tasks.push(newTask);
-    await savePlan(plan);
-  } catch {}
 }
 
 export interface EnergyCheckin {
@@ -332,59 +254,11 @@ export interface EnergyCheckin {
   date: string;
 }
 
-export async function getEnergyCheckin(date?: string): Promise<EnergyCheckin | null> {
-  try {
-    const key = date || getTodayKey();
-    const raw = await AsyncStorage.getItem(KEYS.ENERGY_CHECKIN + key);
-    if (!raw) return null;
-    return JSON.parse(raw) as EnergyCheckin;
-  } catch {
-    return null;
-  }
-}
-
-export async function saveEnergyCheckin(checkin: EnergyCheckin): Promise<void> {
-  try {
-    await AsyncStorage.setItem(KEYS.ENERGY_CHECKIN + checkin.date, JSON.stringify(checkin));
-  } catch {}
-}
-
 export type ViewMode = 'list' | 'timeline';
 
-export async function getViewMode(): Promise<ViewMode> {
-  try {
-    const mode = await AsyncStorage.getItem(KEYS.VIEW_MODE);
-    return (mode as ViewMode) || 'list';
-  } catch {
-    return 'list';
-  }
-}
-
-export async function saveViewMode(mode: ViewMode): Promise<void> {
-  try {
-    await AsyncStorage.setItem(KEYS.VIEW_MODE, mode);
-  } catch {}
-}
-
 export interface TimerSettings {
-  workDuration: number; // in minutes
-  breakDuration: number; // in minutes
-}
-
-export async function getTimerSettings(): Promise<TimerSettings> {
-  try {
-    const raw = await AsyncStorage.getItem(KEYS.TIMER_SETTINGS);
-    if (!raw) return { workDuration: 25, breakDuration: 5 };
-    return JSON.parse(raw);
-  } catch {
-    return { workDuration: 25, breakDuration: 5 };
-  }
-}
-
-export async function saveTimerSettings(settings: TimerSettings): Promise<void> {
-  try {
-    await AsyncStorage.setItem(KEYS.TIMER_SETTINGS, JSON.stringify(settings));
-  } catch {}
+  workDuration: number;
+  breakDuration: number;
 }
 
 export interface LifeContext {
@@ -394,22 +268,6 @@ export interface LifeContext {
   currentBlocker: string;
   freeText: string;
   lastUpdated: string;
-}
-
-export async function getLifeContext(): Promise<LifeContext | null> {
-  try {
-    const raw = await AsyncStorage.getItem(KEYS.LIFE_CONTEXT);
-    if (!raw) return null;
-    return JSON.parse(raw) as LifeContext;
-  } catch {
-    return null;
-  }
-}
-
-export async function saveLifeContext(ctx: LifeContext): Promise<void> {
-  try {
-    await AsyncStorage.setItem(KEYS.LIFE_CONTEXT, JSON.stringify(ctx));
-  } catch {}
 }
 
 export interface CoachAction {
@@ -428,45 +286,6 @@ export interface ChatMessage {
   followups?: string[];
 }
 
-export async function getChatHistory(): Promise<ChatMessage[]> {
-  try {
-    const raw = await AsyncStorage.getItem(KEYS.CHAT_HISTORY);
-    if (!raw) return [];
-    return JSON.parse(raw) as ChatMessage[];
-  } catch {
-    return [];
-  }
-}
-
-export async function saveChatHistory(messages: ChatMessage[]): Promise<void> {
-  try {
-    await AsyncStorage.setItem(KEYS.CHAT_HISTORY, JSON.stringify(messages));
-  } catch {}
-}
-
-export async function clearChatHistory(): Promise<void> {
-  try {
-    await AsyncStorage.removeItem(KEYS.CHAT_HISTORY);
-  } catch {}
-}
-
-export async function getDailyCoachNote(): Promise<{ note: string; date: string } | null> {
-  try {
-    const raw = await AsyncStorage.getItem(KEYS.DAILY_CHECKIN);
-    if (!raw) return null;
-    return JSON.parse(raw);
-  } catch {
-    return null;
-  }
-}
-
-export async function saveDailyCoachNote(note: string): Promise<void> {
-  try {
-    const today = getTodayKey();
-    await AsyncStorage.setItem(KEYS.DAILY_CHECKIN, JSON.stringify({ note, date: today }));
-  } catch {}
-}
-
 function generateId(): string {
   return Date.now().toString() + Math.random().toString(36).substr(2, 9);
 }
@@ -481,6 +300,65 @@ function getGreeting(): string {
   if (hour < 12) return 'Good morning';
   if (hour < 17) return 'Good afternoon';
   return 'Good evening';
+}
+
+async function getAuthHeaders(): Promise<Record<string, string>> {
+  const token = await getAuthToken();
+  if (token) {
+    return { Authorization: `Bearer ${token}` };
+  }
+  return {};
+}
+
+interface ApiDataResponse {
+  data: unknown;
+  ok?: boolean;
+}
+
+interface UserPreferencesData {
+  viewMode?: ViewMode;
+  userName?: string;
+  onboardingComplete?: boolean;
+  dailyCoachNote?: { note: string; date: string } | null;
+  platforms?: ConnectedPlatform[];
+  migrationVersion?: number;
+  [key: string]: unknown;
+}
+
+async function apiGet(path: string): Promise<ApiDataResponse> {
+  const baseUrl = getApiUrl();
+  const url = new URL(path, baseUrl);
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(url.toString(), {
+    headers: { ...authHeaders },
+  });
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  return res.json() as Promise<ApiDataResponse>;
+}
+
+async function apiPut(path: string, data: unknown): Promise<ApiDataResponse> {
+  const baseUrl = getApiUrl();
+  const url = new URL(path, baseUrl);
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(url.toString(), {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...authHeaders },
+    body: JSON.stringify({ data }),
+  });
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  return res.json() as Promise<ApiDataResponse>;
+}
+
+async function apiDelete(path: string): Promise<ApiDataResponse> {
+  const baseUrl = getApiUrl();
+  const url = new URL(path, baseUrl);
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(url.toString(), {
+    method: 'DELETE',
+    headers: { ...authHeaders },
+  });
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  return res.json() as Promise<ApiDataResponse>;
 }
 
 const DEFAULT_PLATFORMS: ConnectedPlatform[] = [
@@ -576,11 +454,169 @@ const INSIGHTS = [
   'Remember: progress, not perfection. You\'re doing great.',
 ];
 
+const DEFAULT_STATS: UserStats = {
+  streak: 0, totalCompleted: 0, bestStreak: 0, xp: 0, lifetimeXp: 0, badges: [], claimedRewards: [],
+  dailyXpEarned: { date: '', xp: 0 },
+};
+
+export async function getBrainDumpInbox(): Promise<BrainDumpItem[]> {
+  try {
+    const result = await apiGet('/api/data/brain-dump-inbox');
+    return (result.data as BrainDumpItem[]) || [];
+  } catch {
+    return [];
+  }
+}
+
+export async function saveBrainDumpItem(text: string): Promise<void> {
+  try {
+    const inbox = await getBrainDumpInbox();
+    const newItem: BrainDumpItem = {
+      id: generateId(),
+      text,
+      createdAt: new Date().toISOString(),
+    };
+    inbox.push(newItem);
+    await apiPut('/api/data/brain-dump-inbox', inbox);
+  } catch {}
+}
+
+export async function clearBrainDumpItem(id: string): Promise<void> {
+  try {
+    const inbox = await getBrainDumpInbox();
+    const updated = inbox.filter(item => item.id !== id);
+    await apiPut('/api/data/brain-dump-inbox', updated);
+  } catch {}
+}
+
+export async function addTaskToToday(task: Partial<Task>): Promise<void> {
+  try {
+    const goals = await getGoals();
+    const plan = await getTodayPlan(goals);
+    const newTask: Task = {
+      id: generateId(),
+      title: task.title || 'Untitled Task',
+      category: (task.category || 'personal') as Task['category'],
+      completed: false,
+      priority: task.priority || 'low',
+      ...task,
+    };
+    plan.tasks.push(newTask);
+    await savePlan(plan);
+  } catch {}
+}
+
+export async function getEnergyCheckin(date?: string): Promise<EnergyCheckin | null> {
+  try {
+    const key = date || getTodayKey();
+    const result = await apiGet(`/api/data/energy-checkins/${key}`);
+    return (result.data as EnergyCheckin) || null;
+  } catch {
+    return null;
+  }
+}
+
+export async function saveEnergyCheckin(checkin: EnergyCheckin): Promise<void> {
+  try {
+    await apiPut(`/api/data/energy-checkins/${checkin.date}`, checkin);
+  } catch {}
+}
+
+export async function getViewMode(): Promise<ViewMode> {
+  try {
+    const result = await apiGet('/api/data/user-preferences');
+    const prefs = (result.data || {}) as UserPreferencesData;
+    return prefs.viewMode || 'list';
+  } catch {
+    return 'list';
+  }
+}
+
+export async function saveViewMode(mode: ViewMode): Promise<void> {
+  try {
+    const result = await apiGet('/api/data/user-preferences');
+    const prefs = (result.data || {}) as UserPreferencesData;
+    prefs.viewMode = mode;
+    await apiPut('/api/data/user-preferences', prefs);
+  } catch {}
+}
+
+export async function getTimerSettings(): Promise<TimerSettings> {
+  try {
+    const result = await apiGet('/api/data/timer-settings');
+    if (!result.data) return { workDuration: 25, breakDuration: 5 };
+    return result.data as TimerSettings;
+  } catch {
+    return { workDuration: 25, breakDuration: 5 };
+  }
+}
+
+export async function saveTimerSettings(settings: TimerSettings): Promise<void> {
+  try {
+    await apiPut('/api/data/timer-settings', settings);
+  } catch {}
+}
+
+export async function getLifeContext(): Promise<LifeContext | null> {
+  try {
+    const result = await apiGet('/api/data/life-context');
+    return (result.data as LifeContext) || null;
+  } catch {
+    return null;
+  }
+}
+
+export async function saveLifeContext(ctx: LifeContext): Promise<void> {
+  try {
+    await apiPut('/api/data/life-context', ctx);
+  } catch {}
+}
+
+export async function getChatHistory(): Promise<ChatMessage[]> {
+  try {
+    const result = await apiGet('/api/data/chat-history');
+    return (result.data as ChatMessage[]) || [];
+  } catch {
+    return [];
+  }
+}
+
+export async function saveChatHistory(messages: ChatMessage[]): Promise<void> {
+  try {
+    await apiPut('/api/data/chat-history', messages);
+  } catch {}
+}
+
+export async function clearChatHistory(): Promise<void> {
+  try {
+    await apiDelete('/api/data/chat-history');
+  } catch {}
+}
+
+export async function getDailyCoachNote(): Promise<{ note: string; date: string } | null> {
+  try {
+    const result = await apiGet('/api/data/user-preferences');
+    const prefs = (result.data || {}) as UserPreferencesData;
+    return prefs.dailyCoachNote || null;
+  } catch {
+    return null;
+  }
+}
+
+export async function saveDailyCoachNote(note: string): Promise<void> {
+  try {
+    const today = getTodayKey();
+    const result = await apiGet('/api/data/user-preferences');
+    const prefs = (result.data || {}) as UserPreferencesData;
+    prefs.dailyCoachNote = { note, date: today };
+    await apiPut('/api/data/user-preferences', prefs);
+  } catch {}
+}
+
 export async function getCompletionHistory(): Promise<CompletionHistoryItem[]> {
   try {
-    const raw = await AsyncStorage.getItem(KEYS.HISTORY);
-    if (!raw) return [];
-    const history: CompletionHistoryItem[] = JSON.parse(raw);
+    const result = await apiGet('/api/data/completion-history');
+    const history = (result.data as CompletionHistoryItem[]) || [];
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
     const cutoff = sevenDaysAgo.toISOString().split('T')[0];
@@ -608,7 +644,7 @@ export async function recordCompletion(task: Task, completed: boolean): Promise<
     } else {
       history.push(item);
     }
-    await AsyncStorage.setItem(KEYS.HISTORY, JSON.stringify(history));
+    await apiPut('/api/data/completion-history', history);
   } catch (e) {
     console.error('Failed to record completion:', e);
   }
@@ -617,11 +653,9 @@ export async function recordCompletion(task: Task, completed: boolean): Promise<
 export async function getTodayPlan(goals: Goal[]): Promise<DayPlan> {
   const key = getTodayKey();
   try {
-    const raw = await AsyncStorage.getItem(KEYS.PLANS);
-    const plans: Record<string, DayPlan> = raw ? JSON.parse(raw) : {};
-
-    if (plans[key]) {
-      return plans[key];
+    const result = await apiGet(`/api/data/plans/${key}`);
+    if (result.data) {
+      return result.data as DayPlan;
     }
 
     const baseTasks = generateDailyTasks(goals);
@@ -650,8 +684,7 @@ export async function getTodayPlan(goals: Goal[]): Promise<DayPlan> {
       insight: INSIGHTS[Math.floor(Math.random() * INSIGHTS.length)],
     };
 
-    plans[key] = plan;
-    await AsyncStorage.setItem(KEYS.PLANS, JSON.stringify(plans));
+    await apiPut(`/api/data/plans/${key}`, plan);
     return plan;
   } catch (e) {
     console.error('Failed to get plan:', e);
@@ -666,10 +699,7 @@ export async function getTodayPlan(goals: Goal[]): Promise<DayPlan> {
 
 export async function savePlan(plan: DayPlan): Promise<void> {
   try {
-    const raw = await AsyncStorage.getItem(KEYS.PLANS);
-    const plans: Record<string, DayPlan> = raw ? JSON.parse(raw) : {};
-    plans[plan.date] = plan;
-    await AsyncStorage.setItem(KEYS.PLANS, JSON.stringify(plans));
+    await apiPut(`/api/data/plans/${plan.date}`, plan);
   } catch (e) {
     console.error('Failed to save plan:', e);
   }
@@ -677,10 +707,7 @@ export async function savePlan(plan: DayPlan): Promise<void> {
 
 export async function savePlanSnapshot(plan: DayPlan): Promise<void> {
   try {
-    await AsyncStorage.setItem(
-      KEYS.PLAN_SNAPSHOT,
-      JSON.stringify({ date: plan.date, tasks: plan.tasks })
-    );
+    await apiPut('/api/data/plan-snapshots', { date: plan.date, tasks: plan.tasks });
   } catch (e) {
     console.error('Failed to save plan snapshot:', e);
   }
@@ -688,9 +715,9 @@ export async function savePlanSnapshot(plan: DayPlan): Promise<void> {
 
 export async function getPlanSnapshot(): Promise<{ date: string; tasks: Task[] } | null> {
   try {
-    const raw = await AsyncStorage.getItem(KEYS.PLAN_SNAPSHOT);
-    if (!raw) return null;
-    const snapshot = JSON.parse(raw) as { date: string; tasks: Task[] };
+    const result = await apiGet('/api/data/plan-snapshots');
+    if (!result.data) return null;
+    const snapshot = result.data as { date: string; tasks: Task[] };
     if (snapshot.date !== getTodayKey()) return null;
     return snapshot;
   } catch {
@@ -700,7 +727,7 @@ export async function getPlanSnapshot(): Promise<{ date: string; tasks: Task[] }
 
 export async function clearPlanSnapshot(): Promise<void> {
   try {
-    await AsyncStorage.removeItem(KEYS.PLAN_SNAPSHOT);
+    await apiDelete('/api/data/plan-snapshots');
   } catch {}
 }
 
@@ -718,50 +745,86 @@ export async function restorePlanSnapshot(goals: Goal[]): Promise<DayPlan | null
   }
 }
 
-export async function updateTaskCompletion(date: string, taskId: string, completed: boolean): Promise<void> {
-  try {
-    const raw = await AsyncStorage.getItem(KEYS.PLANS);
-    const plans: Record<string, DayPlan> = raw ? JSON.parse(raw) : {};
-    if (plans[date]) {
-      let foundTask: Task | undefined;
-      plans[date].tasks = plans[date].tasks.map(t => {
-        if (t.id === taskId) {
-          foundTask = t;
-          return { ...t, completed };
-        }
-        if (t.subtasks) {
-          const updatedSubtasks = t.subtasks.map(st => {
-            if (st.id === taskId) {
-              foundTask = st;
-              return { ...st, completed };
-            }
-            return st;
-          });
-          const allSubtasksDone = updatedSubtasks.every(st => st.completed) && updatedSubtasks.length > 0;
-          return {
-            ...t,
-            subtasks: updatedSubtasks,
-            completed: allSubtasksDone,
-          };
-        }
-        return t;
-      });
-      await AsyncStorage.setItem(KEYS.PLANS, JSON.stringify(plans));
+export interface TaskCompletionResult {
+  task: Task | null;
+  xpEarned: number;
+  newBadges: string[];
+}
 
-      if (foundTask) {
-        await recordCompletion(foundTask, completed);
-        if (completed && foundTask.fromCarryover) {
-          await clearBlockedTask(foundTask.title);
+export async function updateTaskCompletion(
+  date: string,
+  taskId: string,
+  completed: boolean,
+  allTasks?: Task[]
+): Promise<TaskCompletionResult> {
+  const emptyResult: TaskCompletionResult = { task: null, xpEarned: 0, newBadges: [] };
+  try {
+    const result = await apiGet(`/api/data/plans/${date}`);
+    const plan = result.data as DayPlan | null;
+    if (!plan) return emptyResult;
+
+    let foundTask: Task | undefined;
+    let parentTask: Task | undefined;
+    plan.tasks = plan.tasks.map(t => {
+      if (t.id === taskId) {
+        foundTask = t;
+        return { ...t, completed };
+      }
+      if (t.subtasks) {
+        const updatedSubtasks = t.subtasks.map(st => {
+          if (st.id === taskId) {
+            foundTask = st;
+            parentTask = t;
+            return { ...st, completed };
+          }
+          return st;
+        });
+        const allSubtasksDone = updatedSubtasks.every(st => st.completed) && updatedSubtasks.length > 0;
+        return {
+          ...t,
+          subtasks: updatedSubtasks,
+          completed: allSubtasksDone,
+        };
+      }
+      return t;
+    });
+    await apiPut(`/api/data/plans/${date}`, plan);
+
+    let xpEarned = 0;
+    let newBadges: string[] = [];
+
+    if (foundTask) {
+      await recordCompletion(foundTask, completed);
+      if (completed && foundTask.fromCarryover) {
+        await clearBlockedTask(foundTask.title);
+      }
+
+      if (completed) {
+        let xpOverride: number | undefined;
+        if (foundTask.isSubtask && parentTask && parentTask.subtasks && parentTask.subtasks.length > 0) {
+          const parentXp = calculateTaskXp(parentTask);
+          xpOverride = xpForSubtask(parentXp, parentTask.subtasks.length);
         }
+        const isGoalLinked = !!foundTask.goalId;
+        const priority = foundTask.priority ?? 'medium';
+        const statsResult = await incrementStats(priority, isGoalLinked, xpOverride);
+        xpEarned = statsResult.xpEarned;
+        newBadges = statsResult.newBadges;
+      } else {
+        let xpToRemove = 10;
+        if (foundTask.isSubtask && parentTask && parentTask.subtasks && parentTask.subtasks.length > 0) {
+          xpToRemove = xpForSubtask(calculateTaskXp(parentTask), parentTask.subtasks.length);
+        } else {
+          xpToRemove = calculateTaskXp(foundTask);
+        }
+        await decrementStats(xpToRemove);
       }
     }
-    if (completed) {
-      await incrementStats();
-    } else {
-      await decrementStats();
-    }
+
+    return { task: foundTask || null, xpEarned, newBadges };
   } catch (e) {
     console.error('Failed to update task:', e);
+    return emptyResult;
   }
 }
 
@@ -771,11 +834,11 @@ export async function replaceTaskWithSubtasks(
   subtaskTitles: string[]
 ): Promise<DayPlan | null> {
   try {
-    const raw = await AsyncStorage.getItem(KEYS.PLANS);
-    const plans: Record<string, DayPlan> = raw ? JSON.parse(raw) : {};
-    if (!plans[date]) return null;
+    const result = await apiGet(`/api/data/plans/${date}`);
+    const plan = result.data as DayPlan | null;
+    if (!plan) return null;
 
-    plans[date].tasks = plans[date].tasks.map(t => {
+    plan.tasks = plan.tasks.map(t => {
       if (t.id === taskId) {
         const subtasks: Task[] = subtaskTitles.map(title => ({
           id: generateId(),
@@ -791,8 +854,8 @@ export async function replaceTaskWithSubtasks(
       return t;
     });
 
-    await AsyncStorage.setItem(KEYS.PLANS, JSON.stringify(plans));
-    return plans[date];
+    await apiPut(`/api/data/plans/${date}`, plan);
+    return plan;
   } catch (e) {
     console.error('Failed to replace task with subtasks:', e);
     return null;
@@ -801,8 +864,8 @@ export async function replaceTaskWithSubtasks(
 
 export async function getGoals(): Promise<Goal[]> {
   try {
-    const raw = await AsyncStorage.getItem(KEYS.GOALS);
-    return raw ? JSON.parse(raw) : [];
+    const result = await apiGet('/api/data/goals');
+    return (result.data as Goal[]) || [];
   } catch (e) {
     console.error('Failed to get goals:', e);
     return [];
@@ -818,7 +881,7 @@ export async function saveGoal(goal: Goal): Promise<void> {
     } else {
       goals.push(goal);
     }
-    await AsyncStorage.setItem(KEYS.GOALS, JSON.stringify(goals));
+    await apiPut('/api/data/goals', goals);
   } catch (e) {
     console.error('Failed to save goal:', e);
   }
@@ -834,7 +897,7 @@ export async function updateGoalProgress(goalId: string, amount: number): Promis
       current: Math.min(goals[idx].target, goals[idx].current + amount),
     };
     goals[idx] = updated;
-    await AsyncStorage.setItem(KEYS.GOALS, JSON.stringify(goals));
+    await apiPut('/api/data/goals', goals);
     return updated;
   } catch (e) {
     console.error('Failed to update goal progress:', e);
@@ -845,7 +908,7 @@ export async function updateGoalProgress(goalId: string, amount: number): Promis
 export async function deleteGoal(id: string): Promise<void> {
   try {
     const goals = await getGoals();
-    await AsyncStorage.setItem(KEYS.GOALS, JSON.stringify(goals.filter(g => g.id !== id)));
+    await apiPut('/api/data/goals', goals.filter(g => g.id !== id));
   } catch (e) {
     console.error('Failed to delete goal:', e);
   }
@@ -853,8 +916,9 @@ export async function deleteGoal(id: string): Promise<void> {
 
 export async function getPlatforms(): Promise<ConnectedPlatform[]> {
   try {
-    const raw = await AsyncStorage.getItem(KEYS.PLATFORMS);
-    return raw ? JSON.parse(raw) : DEFAULT_PLATFORMS;
+    const result = await apiGet('/api/data/user-preferences');
+    const prefs = (result.data || {}) as UserPreferencesData;
+    return prefs.platforms || DEFAULT_PLATFORMS;
   } catch (e) {
     console.error('Failed to get platforms:', e);
     return DEFAULT_PLATFORMS;
@@ -867,21 +931,19 @@ export async function togglePlatform(id: string): Promise<void> {
     const updated = platforms.map(p =>
       p.id === id ? { ...p, connected: !p.connected } : p
     );
-    await AsyncStorage.setItem(KEYS.PLATFORMS, JSON.stringify(updated));
+    const result = await apiGet('/api/data/user-preferences');
+    const prefs = (result.data || {}) as UserPreferencesData;
+    prefs.platforms = updated;
+    await apiPut('/api/data/user-preferences', prefs);
   } catch (e) {
     console.error('Failed to toggle platform:', e);
   }
 }
 
-const DEFAULT_STATS: UserStats = {
-  streak: 0, totalCompleted: 0, bestStreak: 0, xp: 0, lifetimeXp: 0, badges: [], claimedRewards: [],
-  dailyXpEarned: { date: '', xp: 0 },
-};
-
 export async function getStats(): Promise<UserStats> {
   try {
-    const raw = await AsyncStorage.getItem(KEYS.STATS);
-    return raw ? { ...DEFAULT_STATS, ...JSON.parse(raw) } : { ...DEFAULT_STATS };
+    const result = await apiGet('/api/data/stats');
+    return result.data ? { ...DEFAULT_STATS, ...(result.data as UserStats) } : { ...DEFAULT_STATS };
   } catch (e) {
     console.error('Failed to get stats:', e);
     return { ...DEFAULT_STATS };
@@ -899,7 +961,7 @@ export async function claimReward(rewardId: string): Promise<void> {
   const cost = reward ? DAILY_XP_REQUIRED[reward.tier] : 0;
   stats.xp = Math.max(0, (stats.xp || 0) - cost);
   stats.claimedRewards = [...stats.claimedRewards, { id: rewardId, claimedAt: new Date().toISOString() }];
-  await AsyncStorage.setItem(KEYS.STATS, JSON.stringify(stats));
+  await apiPut('/api/data/stats', stats);
 }
 
 export async function incrementStats(
@@ -914,7 +976,6 @@ export async function incrementStats(
   stats.xp = prevXp + xpEarned;
   stats.lifetimeXp = (stats.lifetimeXp ?? prevXp) + xpEarned;
 
-  // Increment streak only once per calendar day
   const todayKey = getTodayKey();
   if (stats.lastStreakDate !== todayKey) {
     stats.streak += 1;
@@ -930,7 +991,7 @@ export async function incrementStats(
 
   const newBadges = checkAutoAwardBadges(stats);
   stats.badges = [...new Set([...stats.badges, ...newBadges])];
-  await AsyncStorage.setItem(KEYS.STATS, JSON.stringify(stats));
+  await apiPut('/api/data/stats', stats);
   return { stats, xpEarned, newBadges };
 }
 
@@ -938,7 +999,7 @@ export async function awardBadge(badgeId: BadgeId): Promise<void> {
   const stats = await getStats();
   if (!stats.badges.includes(badgeId)) {
     stats.badges = [...stats.badges, badgeId];
-    await AsyncStorage.setItem(KEYS.STATS, JSON.stringify(stats));
+    await apiPut('/api/data/stats', stats);
   }
 }
 
@@ -950,32 +1011,30 @@ export async function decrementStats(xpAmount = 10): Promise<UserStats> {
   if (stats.dailyXpEarned && stats.dailyXpEarned.date === todayKey) {
     stats.dailyXpEarned = { date: todayKey, xp: Math.max(0, stats.dailyXpEarned.xp - xpAmount) };
   }
-  await AsyncStorage.setItem(KEYS.STATS, JSON.stringify(stats));
+  await apiPut('/api/data/stats', stats);
   return stats;
 }
 
 export async function resetStats(): Promise<void> {
-  await AsyncStorage.setItem(KEYS.STATS, JSON.stringify({ ...DEFAULT_STATS }));
+  await apiPut('/api/data/stats', { ...DEFAULT_STATS });
 }
 
-// Run once after fixing the XP calculation bug (v2).
-// Resets inflated stats so users start with a clean slate.
 const CURRENT_MIGRATION_VERSION = 2;
 export async function runMigrations(): Promise<void> {
   try {
-    const raw = await AsyncStorage.getItem(KEYS.MIGRATION);
-    const version = raw ? parseInt(raw, 10) : 0;
+    const result = await apiGet('/api/data/user-preferences');
+    const prefs = (result.data || {}) as UserPreferencesData;
+    const version = prefs.migrationVersion || 0;
     if (version < CURRENT_MIGRATION_VERSION) {
       await resetStats();
-      await AsyncStorage.setItem(KEYS.MIGRATION, String(CURRENT_MIGRATION_VERSION));
+      prefs.migrationVersion = CURRENT_MIGRATION_VERSION;
+      await apiPut('/api/data/user-preferences', prefs);
     }
   } catch {}
 }
 
 export async function regeneratePlan(goals: Goal[]): Promise<DayPlan> {
   const key = getTodayKey();
-  const raw = await AsyncStorage.getItem(KEYS.PLANS);
-  const plans: Record<string, DayPlan> = raw ? JSON.parse(raw) : {};
 
   const plan: DayPlan = {
     date: key,
@@ -984,8 +1043,7 @@ export async function regeneratePlan(goals: Goal[]): Promise<DayPlan> {
     insight: INSIGHTS[Math.floor(Math.random() * INSIGHTS.length)],
   };
 
-  plans[key] = plan;
-  await AsyncStorage.setItem(KEYS.PLANS, JSON.stringify(plans));
+  await apiPut(`/api/data/plans/${key}`, plan);
   return plan;
 }
 
@@ -1048,13 +1106,11 @@ export function getSuggestions(): Suggestion[] {
   return suggestions;
 }
 
-const COMPLETED_CAL_KEY_PREFIX = 'completed_cal_ids_';
-
 export async function getCompletedCalendarIds(): Promise<string[]> {
   try {
-    const key = `${COMPLETED_CAL_KEY_PREFIX}${getTodayKey()}`;
-    const raw = await AsyncStorage.getItem(key);
-    return raw ? JSON.parse(raw) : [];
+    const key = getTodayKey();
+    const result = await apiGet(`/api/data/completed-calendar-ids/${key}`);
+    return (result.data as string[]) || [];
   } catch {
     return [];
   }
@@ -1062,7 +1118,7 @@ export async function getCompletedCalendarIds(): Promise<string[]> {
 
 export async function saveCompletedCalendarId(id: string, completed: boolean): Promise<void> {
   try {
-    const key = `${COMPLETED_CAL_KEY_PREFIX}${getTodayKey()}`;
+    const key = getTodayKey();
     const existing = await getCompletedCalendarIds();
     let updated: string[];
     if (completed) {
@@ -1070,26 +1126,17 @@ export async function saveCompletedCalendarId(id: string, completed: boolean): P
     } else {
       updated = existing.filter(i => i !== id);
     }
-    await AsyncStorage.setItem(key, JSON.stringify(updated));
+    await apiPut(`/api/data/completed-calendar-ids/${key}`, updated);
   } catch {}
 }
 
-export async function getUserId(): Promise<string> {
-  try {
-    const existing = await AsyncStorage.getItem(KEYS.USER_ID);
-    if (existing) return existing;
-    const newId = Date.now().toString(36) + Math.random().toString(36).substr(2, 9);
-    await AsyncStorage.setItem(KEYS.USER_ID, newId);
-    return newId;
-  } catch {
-    return 'local';
-  }
-}
+
 
 export async function getUserName(): Promise<string> {
   try {
-    const name = await AsyncStorage.getItem(KEYS.USER_NAME);
-    return name || '';
+    const result = await apiGet('/api/data/user-preferences');
+    const prefs = (result.data || {}) as UserPreferencesData;
+    return prefs.userName || '';
   } catch {
     return '';
   }
@@ -1097,14 +1144,18 @@ export async function getUserName(): Promise<string> {
 
 export async function saveUserName(name: string): Promise<void> {
   try {
-    await AsyncStorage.setItem(KEYS.USER_NAME, name);
+    const result = await apiGet('/api/data/user-preferences');
+    const prefs = (result.data || {}) as UserPreferencesData;
+    prefs.userName = name;
+    await apiPut('/api/data/user-preferences', prefs);
   } catch {}
 }
 
 export async function isOnboardingComplete(): Promise<boolean> {
   try {
-    const val = await AsyncStorage.getItem(KEYS.ONBOARDING_COMPLETE);
-    return val === 'true';
+    const result = await apiGet('/api/data/user-preferences');
+    const prefs = (result.data || {}) as UserPreferencesData;
+    return prefs.onboardingComplete === true;
   } catch {
     return false;
   }
@@ -1112,16 +1163,19 @@ export async function isOnboardingComplete(): Promise<boolean> {
 
 export async function setOnboardingComplete(): Promise<void> {
   try {
-    await AsyncStorage.setItem(KEYS.ONBOARDING_COMPLETE, 'true');
+    const result = await apiGet('/api/data/user-preferences');
+    const prefs = (result.data || {}) as UserPreferencesData;
+    prefs.onboardingComplete = true;
+    await apiPut('/api/data/user-preferences', prefs);
   } catch {}
 }
 
 export async function updateTask(date: string, taskId: string, updates: Partial<Task>): Promise<void> {
   try {
-    const raw = await AsyncStorage.getItem(KEYS.PLANS);
-    const plans: Record<string, DayPlan> = raw ? JSON.parse(raw) : {};
-    if (!plans[date]) return;
-    plans[date].tasks = plans[date].tasks.map(t => {
+    const result = await apiGet(`/api/data/plans/${date}`);
+    const plan = result.data as DayPlan | null;
+    if (!plan) return;
+    plan.tasks = plan.tasks.map(t => {
       if (t.id === taskId) return { ...t, ...updates };
       if (t.subtasks) {
         return {
@@ -1133,7 +1187,7 @@ export async function updateTask(date: string, taskId: string, updates: Partial<
       }
       return t;
     });
-    await AsyncStorage.setItem(KEYS.PLANS, JSON.stringify(plans));
+    await apiPut(`/api/data/plans/${date}`, plan);
   } catch (e) {
     console.error('Failed to update task:', e);
   }
@@ -1141,11 +1195,11 @@ export async function updateTask(date: string, taskId: string, updates: Partial<
 
 export async function deleteTask(date: string, taskId: string): Promise<void> {
   try {
-    const raw = await AsyncStorage.getItem(KEYS.PLANS);
-    const plans: Record<string, DayPlan> = raw ? JSON.parse(raw) : {};
-    if (!plans[date]) return;
+    const result = await apiGet(`/api/data/plans/${date}`);
+    const plan = result.data as DayPlan | null;
+    if (!plan) return;
     const newTasks: Task[] = [];
-    for (const t of plans[date].tasks) {
+    for (const t of plan.tasks) {
       if (t.id === taskId) continue;
       if (t.subtasks) {
         const filteredSubs = t.subtasks.filter(st => st.id !== taskId);
@@ -1154,8 +1208,8 @@ export async function deleteTask(date: string, taskId: string): Promise<void> {
         newTasks.push(t);
       }
     }
-    plans[date].tasks = newTasks;
-    await AsyncStorage.setItem(KEYS.PLANS, JSON.stringify(plans));
+    plan.tasks = newTasks;
+    await apiPut(`/api/data/plans/${date}`, plan);
   } catch (e) {
     console.error('Failed to delete task:', e);
   }
@@ -1163,12 +1217,12 @@ export async function deleteTask(date: string, taskId: string): Promise<void> {
 
 export async function reorderTasks(date: string, newOrder: Task[]): Promise<void> {
   try {
-    const raw = await AsyncStorage.getItem(KEYS.PLANS);
-    const plans: Record<string, DayPlan> = raw ? JSON.parse(raw) : {};
-    if (!plans[date]) return;
-    const completedTasks = plans[date].tasks.filter(t => t.completed);
-    plans[date].tasks = [...newOrder, ...completedTasks];
-    await AsyncStorage.setItem(KEYS.PLANS, JSON.stringify(plans));
+    const result = await apiGet(`/api/data/plans/${date}`);
+    const plan = result.data as DayPlan | null;
+    if (!plan) return;
+    const completedTasks = plan.tasks.filter(t => t.completed);
+    plan.tasks = [...newOrder, ...completedTasks];
+    await apiPut(`/api/data/plans/${date}`, plan);
   } catch (e) {
     console.error('Failed to reorder tasks:', e);
   }
@@ -1176,10 +1230,10 @@ export async function reorderTasks(date: string, newOrder: Task[]): Promise<void
 
 export async function addSubtaskManually(date: string, parentId: string, title: string): Promise<void> {
   try {
-    const raw = await AsyncStorage.getItem(KEYS.PLANS);
-    const plans: Record<string, DayPlan> = raw ? JSON.parse(raw) : {};
-    if (!plans[date]) return;
-    plans[date].tasks = plans[date].tasks.map(t => {
+    const result = await apiGet(`/api/data/plans/${date}`);
+    const plan = result.data as DayPlan | null;
+    if (!plan) return;
+    plan.tasks = plan.tasks.map(t => {
       if (t.id !== parentId) return t;
       const newSubtask: Task = {
         id: generateId(),
@@ -1193,7 +1247,7 @@ export async function addSubtaskManually(date: string, parentId: string, title: 
       const existingSubs = t.subtasks || [];
       return { ...t, subtasks: [...existingSubs, newSubtask], completed: false };
     });
-    await AsyncStorage.setItem(KEYS.PLANS, JSON.stringify(plans));
+    await apiPut(`/api/data/plans/${date}`, plan);
   } catch (e) {
     console.error('Failed to add subtask:', e);
   }
@@ -1201,8 +1255,8 @@ export async function addSubtaskManually(date: string, parentId: string, title: 
 
 export async function getBlockedTasks(): Promise<BlockedTask[]> {
   try {
-    const raw = await AsyncStorage.getItem(KEYS.BLOCKED_TASKS);
-    return raw ? JSON.parse(raw) : [];
+    const result = await apiGet('/api/data/blocked-tasks');
+    return (result.data as BlockedTask[]) || [];
   } catch {
     return [];
   }
@@ -1231,7 +1285,7 @@ export async function recordTaskSkip(task: Task): Promise<void> {
         lastSkipDate: today,
       });
     }
-    await AsyncStorage.setItem(KEYS.BLOCKED_TASKS, JSON.stringify(all));
+    await apiPut('/api/data/blocked-tasks', all);
   } catch (e) {
     console.error('Failed to record task skip:', e);
   }
@@ -1241,7 +1295,7 @@ export async function clearBlockedTask(title: string): Promise<void> {
   try {
     const all = await getBlockedTasks();
     const updated = all.filter(b => b.title !== title);
-    await AsyncStorage.setItem(KEYS.BLOCKED_TASKS, JSON.stringify(updated));
+    await apiPut('/api/data/blocked-tasks', updated);
   } catch (e) {
     console.error('Failed to clear blocked task:', e);
   }
@@ -1264,7 +1318,7 @@ export async function saveBlockerAnswer(title: string, blockerType: string, aiSu
         aiSuggestion,
       });
     }
-    await AsyncStorage.setItem(KEYS.BLOCKED_TASKS, JSON.stringify(all));
+    await apiPut('/api/data/blocked-tasks', all);
   } catch (e) {
     console.error('Failed to save blocker answer:', e);
   }
@@ -1272,13 +1326,11 @@ export async function saveBlockerAnswer(title: string, blockerType: string, aiSu
 
 export async function getCarryoverTasks(): Promise<Task[]> {
   try {
-    const raw = await AsyncStorage.getItem(KEYS.PLANS);
-    if (!raw) return [];
-    const plans: Record<string, DayPlan> = JSON.parse(raw);
     const yesterday = new Date();
     yesterday.setDate(yesterday.getDate() - 1);
     const yKey = `${yesterday.getFullYear()}-${String(yesterday.getMonth() + 1).padStart(2, '0')}-${String(yesterday.getDate()).padStart(2, '0')}`;
-    const yPlan = plans[yKey];
+    const result = await apiGet(`/api/data/plans/${yKey}`);
+    const yPlan = result.data as DayPlan | null;
     if (!yPlan) return [];
     return yPlan.tasks.filter(t => !t.completed && t.category !== 'calendar' && !t.isSubtask);
   } catch {

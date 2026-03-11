@@ -7,9 +7,9 @@ A mobile app that generates personalized daily task checklists with AI-powered a
 - **Frontend**: Expo Router (React Native) with file-based routing
 - **Backend**: Express.js (serves landing page and API)
 - **AI**: OpenAI via Replit AI Integrations (gpt-5-mini) for task resizing, plan generation, and coaching
-- **Database**: PostgreSQL (Replit built-in) with Drizzle ORM for user accounts
+- **Database**: PostgreSQL with Drizzle ORM for user accounts and server-side data persistence
 - **Auth**: JWT (jsonwebtoken) + bcryptjs password hashing
-- **State**: AsyncStorage for local persistence
+- **State**: Server-side PostgreSQL (AsyncStorage only for auth token/user ID)
 - **Styling**: React Native StyleSheet with Inter font family
 - **Icons**: @expo/vector-icons (Ionicons)
 - **Integrations**: Google Calendar, Outlook Calendar, Gmail (all via Replit OAuth connectors)
@@ -18,7 +18,10 @@ A mobile app that generates personalized daily task checklists with AI-powered a
 - `app/(tabs)/` - Tab screens: index (Today), goals, insights, profile
 - `app/(tabs)/_layout.tsx` - Tab navigation with NativeTabs (liquid glass) + classic fallback
 - `components/` - Reusable components: TaskCard, GoalCard, ProgressRing, AddGoalSheet, TaskResizerSheet, LifeContextSheet, MarkdownText, RewardClaimModal
-- `lib/storage.ts` - AsyncStorage data layer for tasks, goals, stats, completion history, chat history, life context
+- `lib/storage.ts` - Server API data layer for tasks, goals, stats, completion history, chat history, life context (uses JWT auth token from auth-context)
+- `server/db.ts` - Drizzle ORM PostgreSQL connection
+- `server/dataRoutes.ts` - CRUD API routes for all user data categories
+- `shared/schema.ts` - Drizzle schema: users, plans, goals, stats, brain_dump_inbox, energy_checkins, chat_history, life_context, timer_settings, user_preferences, completion_history, blocked_tasks, completed_calendar_ids, plan_snapshots
 - `lib/helpers.ts` - Category colors, icons, labels, date formatting utilities
 - `lib/query-client.ts` - React Query client with apiRequest helper (sends Authorization header)
 - `lib/auth-context.tsx` - Auth context provider (login, register, logout, token persistence)
@@ -83,6 +86,11 @@ A mobile app that generates personalized daily task checklists with AI-powered a
 - `GET /api/calendar/outlook/events?date=YYYY-MM-DD` - Today's events from Outlook
 - `GET /api/gmail/status` - Returns {connected: bool}
 - `GET /api/gmail/commitments` - Returns {connected: bool, items: EmailCommitment[]} (last 7 days, 20 emails max)
+- `GET/PUT /api/data/plans/:date` - Per-user daily plan CRUD
+- `GET /api/data/plans` - All plans for user
+- `GET/PUT/DELETE /api/data/{goals,stats,brain-dump-inbox,chat-history,life-context,timer-settings,user-preferences,completion-history,blocked-tasks,plan-snapshots}` - Per-user data CRUD
+- `GET/PUT /api/data/energy-checkins/:date` - Per-user daily energy checkin
+- `GET/PUT /api/data/completed-calendar-ids/:date` - Per-user completed calendar event IDs
 
 ## Rewards System
 - XP: regular task +10, high priority +15, goal-linked +20, calendar event +10
@@ -107,7 +115,7 @@ A mobile app that generates personalized daily task checklists with AI-powered a
 - Onboarding flow: 7 steps — name → 4 life context questions (skippable) → first goal → connect apps info
 - User name stored in `gameplan_user_name`, displayed in Today greeting ("Good morning, [name]") and Profile title
 - Users authenticate with username/password; JWT token persists across restarts
-- All user data (tasks, goals, stats, life context, chat history) is stored in device AsyncStorage — fully isolated per device
+- All user data (tasks, goals, stats, life context, chat history) is stored server-side in PostgreSQL, scoped by user ID — accessible from any device
 - Calendar/Gmail integrations (Google Calendar, Outlook, Gmail) are tied to Replit account-level OAuth at the infrastructure level (cannot be per-user); new users see calendar events from the configured connector
 - Empty states: Today tab shows "No tasks yet" if no goals set; Goals tab shows "No goals yet" CTA
 
