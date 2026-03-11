@@ -14,6 +14,7 @@ interface AuthContextType extends AuthState {
   login: (username: string, password: string) => Promise<void>;
   register: (username: string, password: string) => Promise<void>;
   loginWithGoogle: (idToken: string | null, accessToken: string | null) => Promise<void>;
+  loginWithToken: (token: string) => Promise<void>;
   logout: () => Promise<void>;
 }
 
@@ -150,6 +151,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
   }, []);
 
+  const loginWithToken = useCallback(async (token: string) => {
+    const baseUrl = getApiUrl();
+    const res = await fetch(new URL("/api/auth/me", baseUrl).toString(), {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) throw new Error("Invalid token");
+    const data = await res.json();
+    await setAuthStorage(token, data.userId, data.username);
+    setState({
+      token,
+      userId: data.userId,
+      username: data.username,
+      isLoading: false,
+      isAuthenticated: true,
+    });
+  }, []);
+
   const logout = useCallback(async () => {
     await AsyncStorage.multiRemove([AUTH_TOKEN_KEY, AUTH_USER_ID_KEY, AUTH_USERNAME_KEY]);
     setState({
@@ -162,7 +180,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ ...state, login, register, loginWithGoogle, logout }}>
+    <AuthContext.Provider value={{ ...state, login, register, loginWithGoogle, loginWithToken, logout }}>
       {children}
     </AuthContext.Provider>
   );

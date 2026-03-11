@@ -9,72 +9,71 @@ import {
   Image,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import * as Google from "expo-auth-session/providers/google";
-import * as AuthSession from "expo-auth-session";
 import * as WebBrowser from "expo-web-browser";
 import { useAuth } from "@/lib/auth-context";
 import { Ionicons } from "@expo/vector-icons";
-
-WebBrowser.maybeCompleteAuthSession();
-
-const redirectUri =
-  Platform.OS === "web" && typeof window !== "undefined"
-    ? window.location.origin
-    : AuthSession.makeRedirectUri({ scheme: "gameplan" });
+import { getApiUrl } from "@/lib/query-client";
 
 export default function LoginScreen() {
   const insets = useSafeAreaInsets();
-  const { loginWithGoogle } = useAuth();
+  const { loginWithToken } = useAuth();
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
   const topPadding = Platform.OS === "web" ? 67 : insets.top;
 
-  const [request, response, promptAsync] = Google.useAuthRequest({
-    webClientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID,
-    iosClientId: process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID,
-    androidClientId: process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID,
-    redirectUri,
-    scopes: ["openid", "profile", "email"],
-  });
-
   useEffect(() => {
-    if (response?.type === "success") {
-      const idToken = response.authentication?.idToken;
-      const accessToken = response.authentication?.accessToken;
-      if (idToken || accessToken) {
-        handleGoogleAuth(idToken ?? null, accessToken ?? null);
-      } else {
-        setError("No token received from Google");
-        setLoading(false);
-      }
-    } else if (response?.type === "error") {
-      setError("Google sign-in was cancelled or failed");
-      setLoading(false);
-    } else if (response?.type === "dismiss") {
-      setLoading(false);
-    }
-  }, [response]);
+    if (Platform.OS !== "web" || typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const googleToken = params.get("googleToken");
+    const googleError = params.get("googleError");
 
-  async function handleGoogleAuth(idToken: string | null, accessToken: string | null) {
-    setLoading(true);
-    setError("");
-    try {
-      await loginWithGoogle(idToken, accessToken);
-    } catch (e: any) {
-      setError(e.message || "Sign-in failed");
-    } finally {
-      setLoading(false);
+    if (googleToken) {
+      window.history.replaceState({}, "", window.location.pathname);
+      setLoading(true);
+      loginWithToken(googleToken)
+        .catch((e: any) => setError(e.message || "Sign-in failed"))
+        .finally(() => setLoading(false));
+    } else if (googleError) {
+      window.history.replaceState({}, "", window.location.pathname);
+      if (googleError === "cancelled") {
+        setError("Sign-in was cancelled");
+      } else {
+        setError(`Sign-in failed (${googleError})`);
+      }
     }
-  }
+  }, []);
 
   async function handleGooglePress() {
     setError("");
     setLoading(true);
     try {
-      await promptAsync();
+      const baseUrl = getApiUrl();
+      const startUrl = new URL("/api/auth/google/start", baseUrl).toString();
+
+      if (Platform.OS === "web") {
+        window.location.href = startUrl;
+      } else {
+        const result = await WebBrowser.openAuthSessionAsync(
+          startUrl,
+          "gameplan://"
+        );
+        if (result.type === "success" && result.url) {
+          const url = new URL(result.url);
+          const token = url.searchParams.get("googleToken");
+          const err = url.searchParams.get("googleError");
+          if (token) {
+            await loginWithToken(token);
+          } else if (err) {
+            setError(err === "cancelled" ? "Sign-in cancelled" : `Sign-in failed (${err})`);
+          }
+        } else if (result.type === "cancel" || result.type === "dismiss") {
+          setError("Sign-in was cancelled");
+        }
+        setLoading(false);
+      }
     } catch (e: any) {
-      setError(e.message || "Could not open sign-in");
+      setError(e.message || "Could not start sign-in");
       setLoading(false);
     }
   }
@@ -96,9 +95,9 @@ export default function LoginScreen() {
           {error ? <Text style={styles.error}>{error}</Text> : null}
 
           <TouchableOpacity
-            style={[styles.googleButton, (loading || !request) && styles.buttonDisabled]}
+            style={[styles.googleButton, loading && styles.buttonDisabled]}
             onPress={handleGooglePress}
-            disabled={loading || !request}
+            disabled={loading}
             testID="google-sign-in-button"
           >
             {loading ? (
