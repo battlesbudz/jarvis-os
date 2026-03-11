@@ -17,7 +17,7 @@ import {
 import { authRouter, authMiddleware } from "./auth";
 import { registerDataRoutes } from "./dataRoutes";
 import { isIntegrationOwner, claimIntegrationOwnership } from "./integrationOwner";
-import { oauthRouter } from "./oauthRoutes";
+import { oauthRouter, oauthCallbackRouter } from "./oauthRoutes";
 import { getValidGoogleToken, getValidMicrosoftToken } from "./userTokenStore";
 
 const openai = new OpenAI({
@@ -113,6 +113,7 @@ ${calendarText}${gmailSection}
 
 export async function registerRoutes(app: Express): Promise<Server> {
   app.use("/api/auth", authRouter);
+  app.use("/api/oauth", oauthCallbackRouter);
   app.use(authMiddleware);
   app.use("/api/oauth", oauthRouter);
 
