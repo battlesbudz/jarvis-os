@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   View,
   Text,
@@ -9,54 +9,133 @@ import {
   Image,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import * as WebBrowser from "expo-web-browser";
+import * as AuthSession from "expo-auth-session";
 import { useAuth } from "@/lib/auth-context";
 import { Ionicons } from "@expo/vector-icons";
-import { getApiUrl } from "@/lib/query-client";
+
+declare global {
+  interface Window {
+    google?: {
+      accounts: {
+        id: {
+          initialize: (config: {
+            client_id: string;
+            callback: (response: { credential: string }) => void;
+            auto_select?: boolean;
+          }) => void;
+          prompt: (notification?: (n: { isNotDisplayed: () => boolean; isSkippedMoment: () => boolean }) => void) => void;
+          renderButton: (parent: HTMLElement, options: Record<string, unknown>) => void;
+        };
+      };
+    };
+  }
+}
+
+const GOOGLE_DISCOVERY = {
+  authorizationEndpoint: "https://accounts.google.com/o/oauth2/v2/auth",
+  tokenEndpoint: "https://oauth2.googleapis.com/token",
+};
+
+function loadGisScript(): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (typeof window === "undefined") return reject(new Error("Not in browser"));
+    if (window.google?.accounts?.id) return resolve();
+
+    const existing = document.querySelector('script[src*="accounts.google.com/gsi/client"]');
+    if (existing) {
+      existing.addEventListener("load", () => resolve());
+      return;
+    }
+
+    const script = document.createElement("script");
+    script.src = "https://accounts.google.com/gsi/client";
+    script.async = true;
+    script.defer = true;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error("Failed to load Google Identity Services"));
+    document.head.appendChild(script);
+  });
+}
 
 export default function LoginScreen() {
   const insets = useSafeAreaInsets();
-  const { loginWithToken } = useAuth();
+  const { loginWithGoogle } = useAuth();
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const popupRef = useRef<Window | null>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [gisReady, setGisReady] = useState(false);
+  const gisInitialized = useRef(false);
 
   const topPadding = Platform.OS === "web" ? 67 : insets.top;
+
+  const handleGisCredential = useCallback(
+    async (response: { credential: string }) => {
+      setLoading(true);
+      setError("");
+      try {
+        await loginWithGoogle(response.credential, null);
+      } catch (e: any) {
+        setError(e.message || "Google sign-in failed");
+      } finally {
+        setLoading(false);
+      }
+    },
+    [loginWithGoogle]
+  );
 
   useEffect(() => {
     if (Platform.OS !== "web" || typeof window === "undefined") return;
 
-    function onMessage(event: MessageEvent) {
-      const data = event.data;
-      if (!data || typeof data !== "object") return;
+    const clientId = process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID;
+    if (!clientId) return;
 
-      if (data.type === "GOOGLE_AUTH_SUCCESS" && data.token) {
-        clearPolling();
-        setLoading(true);
-        loginWithToken(data.token)
-          .catch((e: any) => setError(e.message || "Sign-in failed"))
-          .finally(() => setLoading(false));
-      } else if (data.type === "GOOGLE_AUTH_ERROR") {
-        clearPolling();
-        setLoading(false);
-        setError(data.error === "cancelled" ? "Sign-in was cancelled" : `Sign-in failed (${data.error})`);
+    loadGisScript()
+      .then(() => {
+        if (gisInitialized.current) return;
+        gisInitialized.current = true;
+
+        window.google!.accounts.id.initialize({
+          client_id: clientId,
+          callback: handleGisCredential,
+        });
+        setGisReady(true);
+      })
+      .catch((err) => {
+        console.error("GIS load error:", err);
+      });
+  }, [handleGisCredential]);
+
+  async function handleNativeGoogleSignIn() {
+    const clientId = process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID;
+    if (!clientId) {
+      setError("Google client ID not configured");
+      setLoading(false);
+      return;
+    }
+
+    const redirectUri = AuthSession.makeRedirectUri({ scheme: "gameplan" });
+
+    const request = new AuthSession.AuthRequest({
+      clientId,
+      redirectUri,
+      scopes: ["openid", "profile", "email"],
+      responseType: AuthSession.ResponseType.Token,
+      extraParams: { nonce: Date.now().toString() },
+    });
+
+    const result = await request.promptAsync(GOOGLE_DISCOVERY);
+
+    if (result.type === "success" && result.authentication?.accessToken) {
+      try {
+        await loginWithGoogle(null, result.authentication.accessToken);
+      } catch (e: any) {
+        setError(e.message || "Google sign-in failed");
       }
+    } else if (result.type === "cancel" || result.type === "dismiss") {
+      setError("Sign-in was cancelled");
+    } else {
+      setError("Sign-in failed. Please try again.");
     }
-
-    window.addEventListener("message", onMessage);
-    return () => window.removeEventListener("message", onMessage);
-  }, [loginWithToken]);
-
-  function clearPolling() {
-    if (pollRef.current) {
-      clearInterval(pollRef.current);
-      pollRef.current = null;
-    }
-    if (popupRef.current && !popupRef.current.closed) {
-      popupRef.current.close();
-    }
-    popupRef.current = null;
+    setLoading(false);
   }
 
   async function handleGooglePress() {
@@ -64,51 +143,21 @@ export default function LoginScreen() {
     setLoading(true);
 
     try {
-      const baseUrl = getApiUrl();
-      const startUrl = new URL("/api/auth/google/start", baseUrl).toString();
-
       if (Platform.OS === "web") {
-        const width = 520;
-        const height = 680;
-        const left = window.screenX + (window.outerWidth - width) / 2;
-        const top = window.screenY + (window.outerHeight - height) / 2;
-        const popup = window.open(
-          startUrl,
-          "google_oauth",
-          `width=${width},height=${height},left=${left},top=${top},toolbar=no,menubar=no,scrollbars=yes,resizable=yes`
-        );
-
-        if (!popup) {
-          setError("Popup was blocked. Please allow popups for this site and try again.");
+        if (!gisReady || !window.google?.accounts?.id) {
+          setError("Google sign-in is not ready yet. Please try again.");
           setLoading(false);
           return;
         }
 
-        popupRef.current = popup;
-
-        pollRef.current = setInterval(() => {
-          if (popup.closed) {
-            clearInterval(pollRef.current!);
-            pollRef.current = null;
-            popupRef.current = null;
-            setLoading(false);
-          }
-        }, 500);
-      } else {
-        const result = await WebBrowser.openAuthSessionAsync(startUrl, "gameplan://");
-        if (result.type === "success" && result.url) {
-          const url = new URL(result.url);
-          const token = url.searchParams.get("googleToken");
-          const err = url.searchParams.get("googleError");
-          if (token) {
-            await loginWithToken(token);
-          } else if (err) {
-            setError(err === "cancelled" ? "Sign-in cancelled" : `Sign-in failed (${err})`);
-          }
-        } else if (result.type === "cancel" || result.type === "dismiss") {
-          setError("Sign-in was cancelled");
-        }
         setLoading(false);
+        window.google.accounts.id.prompt((notification) => {
+          if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
+            setError("Google sign-in popup was blocked or dismissed. Make sure popups are allowed and third-party cookies are enabled.");
+          }
+        });
+      } else {
+        await handleNativeGoogleSignIn();
       }
     } catch (e: any) {
       setError(e.message || "Could not start sign-in");

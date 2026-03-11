@@ -68,12 +68,21 @@ A mobile app that generates personalized daily task checklists with AI-powered a
 19. **Transition Reminders** - Local notifications scheduled 10 min before tasks with a set `time`; enabled/disabled toggle in Profile; web-safe (lib/notifications.web.ts stub); focus timer fires completion nudge notifications.
 
 ## Authentication
-- **Login screen**: `/login` route with Log In / Create Account tabs
-- **Endpoints**: `POST /api/auth/register`, `POST /api/auth/login`, `GET /api/auth/me`
+- **Login screen**: `/login` route with Google Sign-In button
+- **Web sign-in**: Uses Google Identity Services (GIS) — loads `accounts.google.com/gsi/client` script, calls `google.accounts.id.prompt()` to show Google's own popup, receives ID token via JS callback, sends to `POST /api/auth/google`
+- **Native sign-in**: Uses expo-auth-session with Google's OAuth endpoints to obtain an access token, sends to `POST /api/auth/google`
+- **Endpoints**: `POST /api/auth/register`, `POST /api/auth/login`, `POST /api/auth/google`, `GET /api/auth/me`
 - **JWT tokens**: 30-day expiry, stored in AsyncStorage, sent as `Authorization: Bearer <token>`
 - **Auth middleware**: All `/api/*` routes (except `/api/auth/*`) require valid JWT
-- **AuthProvider**: Wraps entire app in `_layout.tsx`, exposes `useAuth()` hook with `login`, `register`, `logout`, `isAuthenticated`, `userId`, `username`
+- **AuthProvider**: Wraps entire app in `_layout.tsx`, exposes `useAuth()` hook with `login`, `register`, `loginWithGoogle`, `logout`, `isAuthenticated`, `userId`, `username`
 - **Logout**: Available in Profile > Settings section
+
+### Google Sign-In Setup (Authorized JavaScript Origins)
+For web Google Sign-In to work, the Replit dev domain must be added to **Authorized JavaScript origins** in Google Cloud Console:
+1. Go to [Google Cloud Console → APIs & Services → Credentials](https://console.cloud.google.com/apis/credentials)
+2. Edit the OAuth 2.0 Client ID used by this app
+3. Under "Authorized JavaScript origins", add: `https://<your-replit-dev-domain>` (the domain shown in the browser when running the app)
+4. No redirect URIs are needed for GIS — it uses a JavaScript callback, not a redirect
 
 ## API Endpoints
 - `POST /api/ai/resize-task` - Takes taskTitle, detailLevel (1-5), direction (smaller/bigger), history
