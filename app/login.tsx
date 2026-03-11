@@ -1,147 +1,109 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   View,
   Text,
-  TextInput,
   TouchableOpacity,
   StyleSheet,
   ActivityIndicator,
   Platform,
-  KeyboardAvoidingView,
+  Image,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import * as Google from "expo-auth-session/providers/google";
+import * as WebBrowser from "expo-web-browser";
 import { useAuth } from "@/lib/auth-context";
+import { Ionicons } from "@expo/vector-icons";
 
-type Mode = "login" | "register";
+WebBrowser.maybeCompleteAuthSession();
 
 export default function LoginScreen() {
   const insets = useSafeAreaInsets();
-  const { login, register } = useAuth();
-  const [mode, setMode] = useState<Mode>("login");
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
+  const { loginWithGoogle } = useAuth();
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
   const topPadding = Platform.OS === "web" ? 67 : insets.top;
 
-  async function handleSubmit() {
-    setError("");
+  const [request, response, promptAsync] = Google.useAuthRequest({
+    webClientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID,
+    scopes: ["profile", "email"],
+  });
 
-    if (!username.trim() || !password) {
-      setError("Please fill in all fields");
-      return;
+  useEffect(() => {
+    if (response?.type === "success" && response.authentication?.accessToken) {
+      handleGoogleToken(response.authentication.accessToken);
+    } else if (response?.type === "error") {
+      setError("Google sign-in was cancelled or failed");
+      setLoading(false);
+    } else if (response?.type === "dismiss") {
+      setLoading(false);
     }
+  }, [response]);
 
-    if (mode === "register") {
-      if (username.trim().length < 3) {
-        setError("Username must be at least 3 characters");
-        return;
-      }
-      if (password.length < 6) {
-        setError("Password must be at least 6 characters");
-        return;
-      }
-      if (password !== confirmPassword) {
-        setError("Passwords don't match");
-        return;
-      }
-    }
-
+  async function handleGoogleToken(accessToken: string) {
     setLoading(true);
+    setError("");
     try {
-      if (mode === "login") {
-        await login(username.trim(), password);
-      } else {
-        await register(username.trim(), password);
-      }
+      await loginWithGoogle(accessToken);
     } catch (e: any) {
-      setError(e.message || "Something went wrong");
+      setError(e.message || "Sign-in failed");
     } finally {
       setLoading(false);
     }
   }
 
+  async function handleGooglePress() {
+    setError("");
+    setLoading(true);
+    try {
+      await promptAsync();
+    } catch (e: any) {
+      setError(e.message || "Could not open sign-in");
+      setLoading(false);
+    }
+  }
+
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-    >
+    <View style={styles.container}>
       <View style={[styles.inner, { paddingTop: topPadding + 40, paddingBottom: Platform.OS === "web" ? 34 : insets.bottom + 20 }]}>
         <View style={styles.header}>
+          <View style={styles.iconCircle}>
+            <Ionicons name="game-controller" size={48} color="#6366F1" />
+          </View>
           <Text style={styles.appName}>GamePlan</Text>
           <Text style={styles.tagline}>Your personal productivity coach</Text>
         </View>
 
         <View style={styles.card}>
-          <View style={styles.tabs}>
-            <TouchableOpacity
-              style={[styles.tab, mode === "login" && styles.activeTab]}
-              onPress={() => { setMode("login"); setError(""); }}
-            >
-              <Text style={[styles.tabText, mode === "login" && styles.activeTabText]}>Log In</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.tab, mode === "register" && styles.activeTab]}
-              onPress={() => { setMode("register"); setError(""); }}
-            >
-              <Text style={[styles.tabText, mode === "register" && styles.activeTabText]}>Create Account</Text>
-            </TouchableOpacity>
-          </View>
+          <Text style={styles.welcomeText}>Sign in to sync your tasks, goals, and progress across all your devices.</Text>
 
-          <View style={styles.form}>
-            <TextInput
-              style={styles.input}
-              placeholder="Username"
-              placeholderTextColor="#999"
-              value={username}
-              onChangeText={setUsername}
-              autoCapitalize="none"
-              autoCorrect={false}
-              testID="username-input"
-            />
-            <TextInput
-              style={styles.input}
-              placeholder="Password"
-              placeholderTextColor="#999"
-              value={password}
-              onChangeText={setPassword}
-              secureTextEntry
-              testID="password-input"
-            />
-            {mode === "register" && (
-              <TextInput
-                style={styles.input}
-                placeholder="Confirm Password"
-                placeholderTextColor="#999"
-                value={confirmPassword}
-                onChangeText={setConfirmPassword}
-                secureTextEntry
-                testID="confirm-password-input"
-              />
+          {error ? <Text style={styles.error}>{error}</Text> : null}
+
+          <TouchableOpacity
+            style={[styles.googleButton, (loading || !request) && styles.buttonDisabled]}
+            onPress={handleGooglePress}
+            disabled={loading || !request}
+            testID="google-sign-in-button"
+          >
+            {loading ? (
+              <ActivityIndicator color="#000" />
+            ) : (
+              <>
+                <Image
+                  source={{ uri: "https://developers.google.com/identity/images/g-logo.png" }}
+                  style={styles.googleIcon}
+                />
+                <Text style={styles.googleButtonText}>Sign in with Google</Text>
+              </>
             )}
-
-            {error ? <Text style={styles.error}>{error}</Text> : null}
-
-            <TouchableOpacity
-              style={[styles.button, loading && styles.buttonDisabled]}
-              onPress={handleSubmit}
-              disabled={loading}
-              testID="submit-button"
-            >
-              {loading ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <Text style={styles.buttonText}>
-                  {mode === "login" ? "Log In" : "Create Account"}
-                </Text>
-              )}
-            </TouchableOpacity>
-          </View>
+          </TouchableOpacity>
         </View>
+
+        <Text style={styles.footer}>
+          By signing in, you agree to let GamePlan store your productivity data.
+        </Text>
       </View>
-    </KeyboardAvoidingView>
+    </View>
   );
 }
 
@@ -159,6 +121,15 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 40,
   },
+  iconCircle: {
+    width: 88,
+    height: 88,
+    borderRadius: 44,
+    backgroundColor: "rgba(99, 102, 241, 0.15)",
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: 20,
+  },
   appName: {
     fontSize: 36,
     fontFamily: "Inter_700Bold",
@@ -174,44 +145,15 @@ const styles = StyleSheet.create({
   card: {
     backgroundColor: "#1A1A1A",
     borderRadius: 16,
-    overflow: "hidden",
+    padding: 24,
+    gap: 20,
   },
-  tabs: {
-    flexDirection: "row",
-    borderBottomWidth: 1,
-    borderBottomColor: "#2A2A2A",
-  },
-  tab: {
-    flex: 1,
-    paddingVertical: 14,
-    alignItems: "center",
-  },
-  activeTab: {
-    borderBottomWidth: 2,
-    borderBottomColor: "#4F8EF7",
-  },
-  tabText: {
+  welcomeText: {
     fontSize: 15,
-    fontFamily: "Inter_500Medium",
-    color: "#666",
-  },
-  activeTabText: {
-    color: "#4F8EF7",
-  },
-  form: {
-    padding: 20,
-    gap: 14,
-  },
-  input: {
-    backgroundColor: "#252525",
-    borderRadius: 10,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    fontSize: 16,
     fontFamily: "Inter_400Regular",
-    color: "#fff",
-    borderWidth: 1,
-    borderColor: "#333",
+    color: "#999",
+    textAlign: "center",
+    lineHeight: 22,
   },
   error: {
     color: "#FF6B6B",
@@ -219,19 +161,33 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_400Regular",
     textAlign: "center",
   },
-  button: {
-    backgroundColor: "#4F8EF7",
-    borderRadius: 10,
-    paddingVertical: 16,
+  googleButton: {
+    flexDirection: "row",
     alignItems: "center",
-    marginTop: 4,
+    justifyContent: "center",
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    paddingVertical: 16,
+    gap: 12,
   },
   buttonDisabled: {
     opacity: 0.6,
   },
-  buttonText: {
-    color: "#fff",
+  googleIcon: {
+    width: 20,
+    height: 20,
+  },
+  googleButtonText: {
     fontSize: 16,
     fontFamily: "Inter_600SemiBold",
+    color: "#333",
+  },
+  footer: {
+    fontSize: 12,
+    fontFamily: "Inter_400Regular",
+    color: "#555",
+    textAlign: "center",
+    marginTop: 24,
+    paddingHorizontal: 20,
   },
 });

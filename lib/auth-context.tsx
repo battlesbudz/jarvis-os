@@ -13,6 +13,7 @@ interface AuthState {
 interface AuthContextType extends AuthState {
   login: (username: string, password: string) => Promise<void>;
   register: (username: string, password: string) => Promise<void>;
+  loginWithGoogle: (accessToken: string) => Promise<void>;
   logout: () => Promise<void>;
 }
 
@@ -21,6 +22,14 @@ const AUTH_USER_ID_KEY = "@gameplan_auth_user_id";
 const AUTH_USERNAME_KEY = "@gameplan_auth_username";
 
 const AuthContext = createContext<AuthContextType | null>(null);
+
+async function setAuthStorage(token: string, userId: string, username: string) {
+  await AsyncStorage.multiSet([
+    [AUTH_TOKEN_KEY, token],
+    [AUTH_USER_ID_KEY, userId],
+    [AUTH_USERNAME_KEY, username],
+  ]);
+}
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<AuthState>({
@@ -80,11 +89,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     const data = await res.json();
-    await AsyncStorage.multiSet([
-      [AUTH_TOKEN_KEY, data.token],
-      [AUTH_USER_ID_KEY, data.userId],
-      [AUTH_USERNAME_KEY, data.username],
-    ]);
+    await setAuthStorage(data.token, data.userId, data.username);
 
     setState({
       token: data.token,
@@ -109,11 +114,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     const data = await res.json();
-    await AsyncStorage.multiSet([
-      [AUTH_TOKEN_KEY, data.token],
-      [AUTH_USER_ID_KEY, data.userId],
-      [AUTH_USERNAME_KEY, data.username],
-    ]);
+    await setAuthStorage(data.token, data.userId, data.username);
+
+    setState({
+      token: data.token,
+      userId: data.userId,
+      username: data.username,
+      isLoading: false,
+      isAuthenticated: true,
+    });
+  }, []);
+
+  const loginWithGoogle = useCallback(async (accessToken: string) => {
+    const baseUrl = getApiUrl();
+    const res = await fetch(new URL("/api/auth/google", baseUrl).toString(), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ accessToken }),
+    });
+
+    if (!res.ok) {
+      const data = await res.json();
+      throw new Error(data.error || "Google sign-in failed");
+    }
+
+    const data = await res.json();
+    await setAuthStorage(data.token, data.userId, data.username);
 
     setState({
       token: data.token,
@@ -136,7 +162,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ ...state, login, register, logout }}>
+    <AuthContext.Provider value={{ ...state, login, register, loginWithGoogle, logout }}>
       {children}
     </AuthContext.Provider>
   );

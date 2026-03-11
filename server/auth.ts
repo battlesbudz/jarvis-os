@@ -89,6 +89,10 @@ authRouter.post("/login", async (req: Request, res: Response) => {
       return res.status(401).json({ error: "Invalid username or password" });
     }
 
+    if (!user.password) {
+      return res.status(401).json({ error: "This account uses Google Sign-In" });
+    }
+
     const valid = await bcrypt.compare(password, user.password);
     if (!valid) {
       return res.status(401).json({ error: "Invalid username or password" });
@@ -107,6 +111,80 @@ authRouter.post("/login", async (req: Request, res: Response) => {
   }
 });
 
+authRouter.post("/google", async (req: Request, res: Response) => {
+  try {
+    const { accessToken } = req.body;
+
+    if (!accessToken) {
+      return res.status(400).json({ error: "Access token is required" });
+    }
+
+    const googleRes = await fetch(
+      `https://www.googleapis.com/userinfo/v2/me`,
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+
+    if (!googleRes.ok) {
+      return res.status(401).json({ error: "Invalid Google access token" });
+    }
+
+    const googleUser = await googleRes.json() as {
+      id: string;
+      name?: string;
+      email?: string;
+      picture?: string;
+    };
+
+    if (!googleUser.id) {
+      return res.status(401).json({ error: "Could not retrieve Google user info" });
+    }
+
+    const existing = await db.select().from(users)
+      .where(eq(users.googleId, googleUser.id))
+      .limit(1);
+
+    let user;
+    if (existing.length > 0) {
+      user = existing[0];
+      if (googleUser.name && googleUser.name !== user.displayName) {
+        await db.update(users)
+          .set({ displayName: googleUser.name })
+          .where(eq(users.id, user.id));
+        user = { ...user, displayName: googleUser.name };
+      }
+    } else {
+      const username = googleUser.email
+        ? googleUser.email.split("@")[0]
+        : `google_${googleUser.id.slice(0, 8)}`;
+
+      let uniqueUsername = username;
+      const existingUsername = await db.select().from(users)
+        .where(eq(users.username, username)).limit(1);
+      if (existingUsername.length > 0) {
+        uniqueUsername = `${username}_${Date.now().toString(36)}`;
+      }
+
+      const [newUser] = await db.insert(users).values({
+        username: uniqueUsername,
+        googleId: googleUser.id,
+        displayName: googleUser.name || uniqueUsername,
+      }).returning();
+      user = newUser;
+    }
+
+    const token = generateToken(user.id);
+
+    res.json({
+      token,
+      userId: user.id,
+      username: user.displayName || user.username,
+    });
+  } catch (error) {
+    console.error("Google auth error:", error);
+    res.status(500).json({ error: "Failed to authenticate with Google" });
+  }
+});
+
 authRouter.get("/me", async (req: Request, res: Response) => {
   try {
     const authHeader = req.headers.authorization;
@@ -120,6 +198,7 @@ authRouter.get("/me", async (req: Request, res: Response) => {
     const [user] = await db.select({
       id: users.id,
       username: users.username,
+      displayName: users.displayName,
       createdAt: users.createdAt,
     }).from(users).where(eq(users.id, payload.userId)).limit(1);
 
@@ -129,7 +208,7 @@ authRouter.get("/me", async (req: Request, res: Response) => {
 
     res.json({
       userId: user.id,
-      username: user.username,
+      username: user.displayName || user.username,
     });
   } catch (error) {
     return res.status(401).json({ error: "Invalid token" });
