@@ -142,8 +142,13 @@ authRouter.post("/google", async (req: Request, res: Response) => {
         return res.status(401).json({ error: "Invalid Google ID token" });
       }
 
-      const expectedAud = process.env.GOOGLE_WEB_CLIENT_ID;
-      if (expectedAud && tokenInfo.aud !== expectedAud) {
+      const validClientIds = [
+        process.env.GOOGLE_WEB_CLIENT_ID,
+        process.env.GOOGLE_IOS_CLIENT_ID,
+        process.env.GOOGLE_ANDROID_CLIENT_ID,
+      ].filter(Boolean);
+
+      if (validClientIds.length > 0 && tokenInfo.aud && !validClientIds.includes(tokenInfo.aud)) {
         return res.status(401).json({ error: "Token audience mismatch" });
       }
 
