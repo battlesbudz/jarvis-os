@@ -8,7 +8,7 @@ A mobile app that generates personalized daily task checklists with AI-powered a
 - **Backend**: Express.js (serves landing page and API)
 - **AI**: OpenAI via Replit AI Integrations (gpt-5-mini) for task resizing, plan generation, and coaching
 - **Database**: PostgreSQL with Drizzle ORM for user accounts and server-side data persistence
-- **Auth**: JWT (jsonwebtoken) + bcryptjs password hashing
+- **Auth**: JWT (jsonwebtoken) + Google OAuth (expo-auth-session) — Google Sign-In only; bcryptjs kept for legacy username/password accounts
 - **State**: Server-side PostgreSQL (AsyncStorage only for auth token/user ID)
 - **Styling**: React Native StyleSheet with Inter font family
 - **Icons**: @expo/vector-icons (Ionicons)
@@ -24,11 +24,11 @@ A mobile app that generates personalized daily task checklists with AI-powered a
 - `shared/schema.ts` - Drizzle schema: users, plans, goals, stats, brain_dump_inbox, energy_checkins, chat_history, life_context, timer_settings, user_preferences, completion_history, blocked_tasks, completed_calendar_ids, plan_snapshots
 - `lib/helpers.ts` - Category colors, icons, labels, date formatting utilities
 - `lib/query-client.ts` - React Query client with apiRequest helper (sends Authorization header)
-- `lib/auth-context.tsx` - Auth context provider (login, register, logout, token persistence)
+- `lib/auth-context.tsx` - Auth context provider (login, register, loginWithGoogle, logout, token persistence)
 - `constants/colors.ts` - Theme colors (indigo primary, purple secondary)
 - `server/ai.ts` - AI logic for resizeTask() and generateSmartPlan()
 - `server/routes.ts` - All API endpoints (auth middleware applied)
-- `server/auth.ts` - Auth endpoints (register, login, me) and JWT auth middleware
+- `server/auth.ts` - Auth endpoints (register, login, google, me) and JWT auth middleware; `/api/auth/google` verifies Google access token via userinfo API and upserts user
 - `server/db.ts` - PostgreSQL connection with Drizzle ORM
 - `shared/schema.ts` - Drizzle schema (users table with hashed passwords)
 - `server/integrations/googleCalendar.ts` - Google Calendar client
