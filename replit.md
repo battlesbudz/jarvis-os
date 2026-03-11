@@ -125,7 +125,7 @@ For web Google Sign-In to work, the Replit dev domain must be added to **Authori
 - User name stored in `gameplan_user_name`, displayed in Today greeting ("Good morning, [name]") and Profile title
 - Users authenticate with username/password; JWT token persists across restarts
 - All user data (tasks, goals, stats, life context, chat history) is stored server-side in PostgreSQL, scoped by user ID — accessible from any device
-- Calendar/Gmail integrations (Google Calendar, Outlook, Gmail) are tied to Replit account-level OAuth at the infrastructure level (cannot be per-user); new users see calendar events from the configured connector
+- Calendar/Gmail integrations (Google Calendar, Outlook, Gmail) use Replit OAuth connectors but are scoped per-user: the first user who checks status when connectors are available is stored as the integration owner in the `integration_owner` table; only that user sees integrations as connected and can access calendar events / Gmail data; all other users see "Not connected"
 - Empty states: Today tab shows "No tasks yet" if no goals set; Goals tab shows "No goals yet" CTA
 
 ## Workflows

@@ -16,6 +16,7 @@ import {
 } from "./integrations/gmail";
 import { authRouter, authMiddleware } from "./auth";
 import { registerDataRoutes } from "./dataRoutes";
+import { isIntegrationOwner, claimIntegrationOwnership } from "./integrationOwner";
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
@@ -366,12 +367,24 @@ Return JSON: { "note": "your 1-2 sentence note here" }`;
     }
   });
 
-  app.get("/api/calendar/status", async (_req: Request, res: Response) => {
+  app.get("/api/calendar/status", async (req: Request, res: Response) => {
     try {
+      const userId = req.userId;
+      if (!userId) return res.json({ google: false, outlook: false });
+
       const [google, outlook] = await Promise.all([
         checkGoogleCalendarConnection(),
         checkOutlookConnection(),
       ]);
+
+      const anyConnected = google || outlook;
+      if (anyConnected) {
+        await claimIntegrationOwnership(userId);
+      }
+
+      const isOwner = await isIntegrationOwner(userId);
+      if (!isOwner) return res.json({ google: false, outlook: false });
+
       res.json({ google, outlook });
     } catch (error) {
       console.error("Error checking calendar status:", error);
@@ -381,6 +394,10 @@ Return JSON: { "note": "your 1-2 sentence note here" }`;
 
   app.get("/api/calendar/google/events", async (req: Request, res: Response) => {
     try {
+      const userId = req.userId;
+      if (!userId || !(await isIntegrationOwner(userId))) {
+        return res.json({ connected: false, events: [] });
+      }
       const date = (req.query.date as string) || new Date().toISOString().split('T')[0];
       const startTime = req.query.startTime as string | undefined;
       const endTime = req.query.endTime as string | undefined;
@@ -397,6 +414,10 @@ Return JSON: { "note": "your 1-2 sentence note here" }`;
 
   app.get("/api/calendar/outlook/events", async (req: Request, res: Response) => {
     try {
+      const userId = req.userId;
+      if (!userId || !(await isIntegrationOwner(userId))) {
+        return res.json({ connected: false, events: [] });
+      }
       const date = (req.query.date as string) || new Date().toISOString().split('T')[0];
       const startTime = req.query.startTime as string | undefined;
       const endTime = req.query.endTime as string | undefined;
@@ -411,9 +432,19 @@ Return JSON: { "note": "your 1-2 sentence note here" }`;
     }
   });
 
-  app.get("/api/gmail/status", async (_req: Request, res: Response) => {
+  app.get("/api/gmail/status", async (req: Request, res: Response) => {
     try {
+      const userId = req.userId;
+      if (!userId) return res.json({ connected: false });
+
       const connected = await checkGmailConnection();
+      if (connected) {
+        await claimIntegrationOwnership(userId);
+      }
+
+      const isOwner = await isIntegrationOwner(userId);
+      if (!isOwner) return res.json({ connected: false });
+
       res.json({ connected });
     } catch (error) {
       console.error("Error checking Gmail status:", error);
@@ -421,8 +452,12 @@ Return JSON: { "note": "your 1-2 sentence note here" }`;
     }
   });
 
-  app.get("/api/gmail/commitments", async (_req: Request, res: Response) => {
+  app.get("/api/gmail/commitments", async (req: Request, res: Response) => {
     try {
+      const userId = req.userId;
+      if (!userId || !(await isIntegrationOwner(userId))) {
+        return res.json({ connected: false, items: [] });
+      }
       const connected = await checkGmailConnection();
       if (!connected) return res.json({ connected: false, items: [] });
       const items = await getRecentEmailCommitments(7);

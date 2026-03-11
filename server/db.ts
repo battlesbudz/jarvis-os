@@ -141,6 +141,13 @@ export async function ensureTablesExist() {
       )
     `);
 
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS integration_owner (
+        owner_user_id VARCHAR NOT NULL PRIMARY KEY REFERENCES users(id),
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+
     console.log("Database tables verified");
   } catch (error) {
     console.error("Failed to ensure database tables exist:", error);
