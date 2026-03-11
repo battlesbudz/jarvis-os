@@ -145,6 +145,18 @@ export async function ensureTablesExist() {
       CREATE TABLE IF NOT EXISTS integration_owner (
         owner_user_id VARCHAR NOT NULL PRIMARY KEY REFERENCES users(id),
         created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS user_oauth_tokens (
+        user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        provider VARCHAR NOT NULL,
+        access_token TEXT NOT NULL,
+        refresh_token TEXT,
+        expires_at TIMESTAMP,
+        scopes TEXT,
+        account_email TEXT,
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (user_id, provider)
       )
     `);
 

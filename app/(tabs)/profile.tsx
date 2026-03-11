@@ -38,27 +38,43 @@ import {
 import { areNotificationsEnabled, setNotificationsEnabled } from '@/lib/notifications';
 import { getApiUrl, apiRequest } from '@/lib/query-client';
 import { useAuth } from '@/lib/auth-context';
+import * as WebBrowser from 'expo-web-browser';
 import RewardClaimModal from '@/components/RewardClaimModal';
 import LifeContextSheet from '@/components/LifeContextSheet';
 
-interface CalendarStatus {
-  google: boolean;
-  outlook: boolean;
-  gmail: boolean;
+interface OAuthProviderStatus {
+  connected: boolean;
+  email?: string;
+}
+
+interface OAuthStatus {
+  google: OAuthProviderStatus;
+  microsoft: OAuthProviderStatus;
 }
 
 interface PlatformInfo {
-  id: 'google' | 'outlook' | 'gmail';
+  id: 'google' | 'microsoft';
   name: string;
+  subtitle: string;
   icon: keyof typeof Ionicons.glyphMap;
   color: string;
-  description: string;
 }
 
 const PLATFORMS: PlatformInfo[] = [
-  { id: 'google', name: 'Google Calendar', icon: 'calendar-outline', color: '#4285F4', description: 'Events pulled into your daily plan' },
-  { id: 'outlook', name: 'Microsoft Outlook', icon: 'calendar-outline', color: '#0078D4', description: 'Events pulled into your daily plan' },
-  { id: 'gmail', name: 'Gmail', icon: 'mail-outline', color: '#EA4335', description: 'Emails feed your AI coach' },
+  {
+    id: 'google',
+    name: 'Google Account',
+    subtitle: 'Calendar + Gmail',
+    icon: 'logo-google',
+    color: '#4285F4',
+  },
+  {
+    id: 'microsoft',
+    name: 'Microsoft Account',
+    subtitle: 'Outlook Calendar',
+    icon: 'logo-windows',
+    color: '#0078D4',
+  },
 ];
 
 export default function ProfileScreen() {
@@ -68,14 +84,33 @@ export default function ProfileScreen() {
     streak: 0, totalCompleted: 0, bestStreak: 0, xp: 0, badges: [], claimedRewards: [],
     dailyXpEarned: { date: '', xp: 0 },
   });
-  const [calStatus, setCalStatus] = useState<CalendarStatus>({ google: false, outlook: false, gmail: false });
+  const [oauthStatus, setOAuthStatus] = useState<OAuthStatus>({
+    google: { connected: false },
+    microsoft: { connected: false },
+  });
   const [loadingStatus, setLoadingStatus] = useState(true);
+  const [connectingId, setConnectingId] = useState<string | null>(null);
   const [selectedReward, setSelectedReward] = useState<Reward | null>(null);
   const [rewardModalVisible, setRewardModalVisible] = useState(false);
   const [lifeContext, setLifeContext] = useState<LifeContext | null>(null);
   const [sheetVisible, setSheetVisible] = useState(false);
   const [notificationsEnabled, setNotificationsEnabledState] = useState(true);
   const [userName, setUserName] = useState('');
+
+  const loadOAuthStatus = useCallback(async () => {
+    try {
+      const res = await apiRequest('GET', '/api/oauth/status');
+      const data = await res.json();
+      setOAuthStatus({
+        google: data.google ?? { connected: false },
+        microsoft: data.microsoft ?? { connected: false },
+      });
+    } catch {
+      setOAuthStatus({ google: { connected: false }, microsoft: { connected: false } });
+    } finally {
+      setLoadingStatus(false);
+    }
+  }, []);
 
   const loadAll = useCallback(async () => {
     const [s, lc, notifications, name] = await Promise.all([
@@ -88,20 +123,43 @@ export default function ProfileScreen() {
     setLifeContext(lc);
     setNotificationsEnabledState(notifications);
     setUserName(name);
+    await loadOAuthStatus();
+  }, [loadOAuthStatus]);
+
+  const handleConnect = useCallback(async (provider: 'google' | 'microsoft') => {
+    setConnectingId(provider);
     try {
-      const [calRes, gmailRes] = await Promise.all([
-        apiRequest('GET', '/api/calendar/status'),
-        apiRequest('GET', '/api/gmail/status').catch(() => null),
-      ]);
-      const calData = await calRes.json();
-      const gmailData = gmailRes ? await gmailRes.json().catch(() => ({ connected: false })) : { connected: false };
-      setCalStatus({ google: calData.google ?? false, outlook: calData.outlook ?? false, gmail: gmailData.connected ?? false });
-    } catch {
-      setCalStatus({ google: false, outlook: false, gmail: false });
+      const res = await apiRequest('GET', `/api/oauth/${provider}/authorize`);
+      const data = await res.json();
+      if (!data.url) {
+        if (data.error === 'Microsoft OAuth not configured') {
+          alert('Microsoft OAuth is not yet configured. Add MICROSOFT_CLIENT_ID and MICROSOFT_CLIENT_SECRET to connect Outlook.');
+        }
+        return;
+      }
+      await WebBrowser.openBrowserAsync(data.url, {
+        presentationStyle: WebBrowser.WebBrowserPresentationStyle.FORM_SHEET,
+      });
+      await loadOAuthStatus();
+    } catch (e) {
+      console.error('Connect error:', e);
     } finally {
-      setLoadingStatus(false);
+      setConnectingId(null);
     }
-  }, []);
+  }, [loadOAuthStatus]);
+
+  const handleDisconnect = useCallback(async (provider: 'google' | 'microsoft') => {
+    setConnectingId(provider);
+    try {
+      await apiRequest('DELETE', `/api/oauth/${provider}/disconnect`);
+      await loadOAuthStatus();
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (e) {
+      console.error('Disconnect error:', e);
+    } finally {
+      setConnectingId(null);
+    }
+  }, [loadOAuthStatus]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
@@ -111,11 +169,6 @@ export default function ProfileScreen() {
   const xpInfo = getXpForNextLevel(lifetimeXp);
   const level = getLevel(lifetimeXp);
   const levelName = getLevelName(lifetimeXp);
-  const getOAuthStatus = (id: 'google' | 'outlook' | 'gmail'): boolean => {
-    if (id === 'google') return calStatus.google;
-    if (id === 'outlook') return calStatus.outlook;
-    return calStatus.gmail;
-  };
 
   const todayStr = getTodayKey();
   const todayXp = getDailyXpEarned(stats);
@@ -412,8 +465,11 @@ export default function ProfileScreen() {
           </Text>
           <View style={styles.platformsList}>
             {PLATFORMS.map((platform, index) => {
-              const connected = getOAuthStatus(platform.id);
+              const status = oauthStatus[platform.id];
+              const connected = status?.connected ?? false;
+              const email = status?.email;
               const isLast = index === PLATFORMS.length - 1;
+              const isLoading = connectingId === platform.id;
               return (
                 <View
                   key={platform.id}
@@ -424,27 +480,38 @@ export default function ProfileScreen() {
                   </View>
                   <View style={styles.platformInfo}>
                     <Text style={styles.platformName}>{platform.name}</Text>
-                    <Text style={[styles.platformStatus, connected && styles.platformStatusConnected]}>
-                      {loadingStatus
-                        ? 'Checking...'
-                        : connected
-                        ? platform.description
-                        : 'Not connected'}
-                    </Text>
+                    <Text style={styles.platformSubtitle}>{platform.subtitle}</Text>
+                    {connected && email ? (
+                      <Text style={styles.platformEmail}>{email}</Text>
+                    ) : null}
                   </View>
                   {loadingStatus ? (
                     <ActivityIndicator size="small" color={Colors.textTertiary} />
+                  ) : isLoading ? (
+                    <ActivityIndicator size="small" color={platform.color} />
                   ) : connected ? (
-                    <View style={styles.connectedBadge}>
-                      <Ionicons name="checkmark" size={13} color="#fff" />
-                    </View>
+                    <Pressable
+                      style={styles.disconnectBtn}
+                      onPress={() => handleDisconnect(platform.id)}
+                    >
+                      <Ionicons name="checkmark-circle" size={18} color={Colors.success} />
+                      <Text style={styles.disconnectBtnText}>Disconnect</Text>
+                    </Pressable>
                   ) : (
-                    <View style={styles.disconnectedDot} />
+                    <Pressable
+                      style={[styles.connectBtn, { borderColor: platform.color }]}
+                      onPress={() => handleConnect(platform.id)}
+                    >
+                      <Text style={[styles.connectBtnText, { color: platform.color }]}>Connect</Text>
+                    </Pressable>
                   )}
                 </View>
               );
             })}
           </View>
+          <Text style={styles.connectionHint}>
+            Your data stays private — each account connects independently.
+          </Text>
         </Animated.View>
 
         {/* Settings */}
@@ -770,20 +837,38 @@ const styles = StyleSheet.create({
     color: Colors.success,
     fontFamily: 'Inter_500Medium',
   },
-  connectedBadge: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: Colors.success,
-    alignItems: 'center',
-    justifyContent: 'center',
+  platformSubtitle: {
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textTertiary,
+    marginTop: 1,
   },
-  disconnectedDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: Colors.border,
-    marginRight: 6,
+  platformEmail: {
+    fontSize: 11,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.success,
+    marginTop: 3,
+  },
+  connectBtn: {
+    borderWidth: 1.5,
+    borderRadius: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+  },
+  connectBtnText: {
+    fontSize: 13,
+    fontFamily: 'Inter_600SemiBold',
+  },
+  disconnectBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  disconnectBtnText: {
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textTertiary,
+    textDecorationLine: 'underline',
   },
   connectionHint: {
     fontSize: 12,

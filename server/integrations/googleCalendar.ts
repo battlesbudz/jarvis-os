@@ -1,7 +1,7 @@
-// Google Calendar integration — uses Replit connector: google-calendar
+// Google Calendar integration — uses per-user OAuth token when available, falls back to Replit connector
 import { google } from 'googleapis';
 
-async function getAccessToken() {
+async function getProjectAccessToken(): Promise<string> {
   const hostname = process.env.REPLIT_CONNECTORS_HOSTNAME;
   const xReplitToken = process.env.REPL_IDENTITY
     ? 'repl ' + process.env.REPL_IDENTITY
@@ -9,18 +9,11 @@ async function getAccessToken() {
     ? 'depl ' + process.env.WEB_REPL_RENEWAL
     : null;
 
-  if (!xReplitToken) {
-    throw new Error('X-Replit-Token not found for repl/depl');
-  }
+  if (!xReplitToken) throw new Error('X-Replit-Token not available');
 
   const connectionSettings = await fetch(
     'https://' + hostname + '/api/v2/connection?include_secrets=true&connector_names=google-calendar',
-    {
-      headers: {
-        Accept: 'application/json',
-        'X-Replit-Token': xReplitToken,
-      },
-    }
+    { headers: { Accept: 'application/json', 'X-Replit-Token': xReplitToken } }
   )
     .then((res) => res.json())
     .then((data) => data.items?.[0]);
@@ -29,15 +22,11 @@ async function getAccessToken() {
     connectionSettings?.settings?.access_token ||
     connectionSettings?.settings?.oauth?.credentials?.access_token;
 
-  if (!connectionSettings || !accessToken) {
-    throw new Error('Google Calendar not connected');
-  }
+  if (!accessToken) throw new Error('Google Calendar not connected');
   return accessToken;
 }
 
-// WARNING: Never cache this client. Tokens expire.
-export async function getUncachableGoogleCalendarClient() {
-  const accessToken = await getAccessToken();
+function buildCalendarClient(accessToken: string) {
   const oauth2Client = new google.auth.OAuth2();
   oauth2Client.setCredentials({ access_token: accessToken });
   return google.calendar({ version: 'v3', auth: oauth2Client });
@@ -52,12 +41,18 @@ export interface CalendarEvent {
   location?: string;
 }
 
-export async function getGoogleCalendarEvents(date: string, startTime?: string, endTime?: string): Promise<CalendarEvent[]> {
-  const calendar = await getUncachableGoogleCalendarClient();
+export async function getGoogleCalendarEvents(
+  date: string,
+  startTime?: string,
+  endTime?: string,
+  userAccessToken?: string | null
+): Promise<CalendarEvent[]> {
+  const accessToken = userAccessToken ?? (await getProjectAccessToken());
+  const calendar = buildCalendarClient(accessToken);
+
   const startOfDay = startTime ? new Date(startTime) : new Date(date + 'T00:00:00Z');
   const endOfDay = endTime ? new Date(endTime) : new Date(date + 'T23:59:59Z');
 
-  // Fetch all calendars the user has access to
   const calList = await calendar.calendarList.list({ minAccessRole: 'reader' });
   const calendarIds = (calList.data.items || [])
     .filter((c) => !c.deleted)
@@ -92,20 +87,18 @@ export async function getGoogleCalendarEvents(date: string, startTime?: string, 
               location: e.location || undefined,
             });
           });
-      } catch {
-        // Skip calendars we can't read
-      }
+      } catch {}
     })
   );
 
-  // Sort by start time
   allEvents.sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime());
   return allEvents;
 }
 
-export async function checkGoogleCalendarConnection(): Promise<boolean> {
+export async function checkGoogleCalendarConnection(userAccessToken?: string | null): Promise<boolean> {
   try {
-    await getAccessToken();
+    if (userAccessToken) return true;
+    await getProjectAccessToken();
     return true;
   } catch {
     return false;

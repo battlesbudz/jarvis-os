@@ -265,6 +265,10 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction) 
     return next();
   }
 
+  if (req.path === "/api/oauth/google/callback" || req.path === "/api/oauth/microsoft/callback") {
+    return next();
+  }
+
   if (!req.path.startsWith("/api/")) {
     return next();
   }
