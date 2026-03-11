@@ -77,6 +77,7 @@ ensurePreviewReachable = "/status"
 [userenv]
 
 [userenv.shared]
+JWT_SECRET = "e10122508bac4e9e61cd7b85f5357d52754ad76014ccf7564983d64faa3ce468"
 
 [postMerge]
 path = "scripts/post-merge.sh"
