@@ -3,6 +3,7 @@ import type { Request, Response } from 'express';
 import { saveUserToken, deleteUserToken, getUserOAuthStatus } from './userTokenStore';
 
 export const oauthRouter = Router();
+export const oauthCallbackRouter = Router();
 
 function getBaseUrl(req: Request): string {
   const domain = process.env.REPLIT_DOMAINS?.split(',')[0];
@@ -105,7 +106,7 @@ oauthRouter.get('/google/authorize', (req: Request, res: Response) => {
   res.json({ url, redirectUri });
 });
 
-oauthRouter.get('/google/callback', async (req: Request, res: Response) => {
+oauthCallbackRouter.get('/google/callback', async (req: Request, res: Response) => {
   const { code, state: userId, error } = req.query as Record<string, string>;
 
   if (error || !code || !userId) {
@@ -197,7 +198,7 @@ oauthRouter.get('/microsoft/authorize', (req: Request, res: Response) => {
   res.json({ url, redirectUri });
 });
 
-oauthRouter.get('/microsoft/callback', async (req: Request, res: Response) => {
+oauthCallbackRouter.get('/microsoft/callback', async (req: Request, res: Response) => {
   const { code, state: userId, error, error_description } = req.query as Record<string, string>;
 
   if (error || !code || !userId) {
