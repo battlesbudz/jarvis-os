@@ -35,6 +35,124 @@ function generateToken(userId: string): string {
 
 export const authRouter = Router();
 
+function getGoogleRedirectUri(req: Request): string {
+  const host = req.hostname;
+  return `https://${host}/api/auth/google/callback`;
+}
+
+authRouter.get("/google/start", (req: Request, res: Response) => {
+  const clientId = process.env.GOOGLE_WEB_CLIENT_ID;
+  if (!clientId) {
+    return res.status(500).json({ error: "Google client ID not configured" });
+  }
+  const redirectUri = getGoogleRedirectUri(req);
+  const params = new URLSearchParams({
+    client_id: clientId,
+    redirect_uri: redirectUri,
+    response_type: "code",
+    scope: "openid profile email",
+    access_type: "offline",
+    prompt: "select_account",
+  });
+  res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params}`);
+});
+
+authRouter.get("/google/callback", async (req: Request, res: Response) => {
+  try {
+    const { code, error } = req.query as { code?: string; error?: string };
+
+    if (error || !code) {
+      return res.redirect("/?googleError=cancelled");
+    }
+
+    const clientId = process.env.GOOGLE_WEB_CLIENT_ID;
+    const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+    if (!clientId || !clientSecret) {
+      return res.redirect("/?googleError=config");
+    }
+
+    const redirectUri = getGoogleRedirectUri(req);
+
+    const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        code,
+        client_id: clientId,
+        client_secret: clientSecret,
+        redirect_uri: redirectUri,
+        grant_type: "authorization_code",
+      }),
+    });
+
+    if (!tokenRes.ok) {
+      const err = await tokenRes.text();
+      console.error("Token exchange failed:", err);
+      return res.redirect("/?googleError=token");
+    }
+
+    const tokens = await tokenRes.json() as {
+      access_token?: string;
+      id_token?: string;
+      error?: string;
+    };
+
+    if (tokens.error || !tokens.access_token) {
+      return res.redirect("/?googleError=token");
+    }
+
+    const userInfoRes = await fetch("https://www.googleapis.com/userinfo/v2/me", {
+      headers: { Authorization: `Bearer ${tokens.access_token}` },
+    });
+
+    if (!userInfoRes.ok) {
+      return res.redirect("/?googleError=userinfo");
+    }
+
+    const googleUser = await userInfoRes.json() as {
+      id: string;
+      name?: string;
+      email?: string;
+    };
+
+    if (!googleUser.id) {
+      return res.redirect("/?googleError=userinfo");
+    }
+
+    const existing = await db.select().from(users)
+      .where(eq(users.googleId, googleUser.id)).limit(1);
+
+    let user;
+    if (existing.length > 0) {
+      user = existing[0];
+      if (googleUser.name && googleUser.name !== user.displayName) {
+        await db.update(users).set({ displayName: googleUser.name }).where(eq(users.id, user.id));
+        user = { ...user, displayName: googleUser.name };
+      }
+    } else {
+      const base = googleUser.email ? googleUser.email.split("@")[0] : `google_${googleUser.id.slice(0, 8)}`;
+      let uniqueUsername = base;
+      const existingUsername = await db.select().from(users).where(eq(users.username, base)).limit(1);
+      if (existingUsername.length > 0) {
+        uniqueUsername = `${base}_${Date.now().toString(36)}`;
+      }
+      const [newUser] = await db.insert(users).values({
+        username: uniqueUsername,
+        googleId: googleUser.id,
+        displayName: googleUser.name || uniqueUsername,
+      }).returning();
+      user = newUser;
+    }
+
+    const jwtToken = generateToken(user.id);
+    const displayName = encodeURIComponent(user.displayName || user.username);
+    res.redirect(`/?googleToken=${jwtToken}&username=${displayName}`);
+  } catch (error) {
+    console.error("Google callback error:", error);
+    res.redirect("/?googleError=server");
+  }
+});
+
 authRouter.post("/register", async (req: Request, res: Response) => {
   try {
     const { username, password } = req.body;
