@@ -1,6 +1,6 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { getApiUrl } from "@/lib/query-client";
+import { getApiUrl, setOnUnauthorized, queryClient } from "@/lib/query-client";
 
 interface AuthState {
   token: string | null;
@@ -8,6 +8,7 @@ interface AuthState {
   username: string | null;
   isLoading: boolean;
   isAuthenticated: boolean;
+  sessionExpired: boolean;
 }
 
 interface AuthContextType extends AuthState {
@@ -16,6 +17,7 @@ interface AuthContextType extends AuthState {
   loginWithGoogle: (idToken: string | null, accessToken: string | null) => Promise<void>;
   loginWithToken: (token: string) => Promise<void>;
   logout: () => Promise<void>;
+  clearSessionExpired: () => void;
 }
 
 const AUTH_TOKEN_KEY = "@gameplan_auth_token";
@@ -32,6 +34,10 @@ async function setAuthStorage(token: string, userId: string, username: string) {
   ]);
 }
 
+async function clearAuthStorage() {
+  await AsyncStorage.multiRemove([AUTH_TOKEN_KEY, AUTH_USER_ID_KEY, AUTH_USERNAME_KEY]);
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<AuthState>({
     token: null,
@@ -39,7 +45,33 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     username: null,
     isLoading: true,
     isAuthenticated: false,
+    sessionExpired: false,
   });
+
+  const logoutCalledRef = useRef(false);
+
+  const forceLogout = useCallback(async () => {
+    if (logoutCalledRef.current) return;
+    logoutCalledRef.current = true;
+
+    await clearAuthStorage();
+    queryClient.clear();
+    setState({
+      token: null,
+      userId: null,
+      username: null,
+      isLoading: false,
+      isAuthenticated: false,
+      sessionExpired: true,
+    });
+
+    setTimeout(() => { logoutCalledRef.current = false; }, 2000);
+  }, []);
+
+  useEffect(() => {
+    setOnUnauthorized(() => { forceLogout(); });
+    return () => { setOnUnauthorized(null); };
+  }, [forceLogout]);
 
   useEffect(() => {
     checkStoredToken();
@@ -66,10 +98,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           username: data.username,
           isLoading: false,
           isAuthenticated: true,
+          sessionExpired: false,
         });
       } else {
-        await AsyncStorage.multiRemove([AUTH_TOKEN_KEY, AUTH_USER_ID_KEY, AUTH_USERNAME_KEY]);
-        setState(s => ({ ...s, isLoading: false }));
+        await clearAuthStorage();
+        const expired = res.status === 401;
+        setState(s => ({ ...s, isLoading: false, sessionExpired: expired }));
       }
     } catch {
       setState(s => ({ ...s, isLoading: false }));
@@ -98,6 +132,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       username: data.username,
       isLoading: false,
       isAuthenticated: true,
+      sessionExpired: false,
     });
   }, []);
 
@@ -123,6 +158,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       username: data.username,
       isLoading: false,
       isAuthenticated: true,
+      sessionExpired: false,
     });
   }, []);
 
@@ -148,6 +184,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       username: data.username,
       isLoading: false,
       isAuthenticated: true,
+      sessionExpired: false,
     });
   }, []);
 
@@ -165,22 +202,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       username: data.username,
       isLoading: false,
       isAuthenticated: true,
+      sessionExpired: false,
     });
   }, []);
 
   const logout = useCallback(async () => {
-    await AsyncStorage.multiRemove([AUTH_TOKEN_KEY, AUTH_USER_ID_KEY, AUTH_USERNAME_KEY]);
+    await clearAuthStorage();
+    queryClient.clear();
     setState({
       token: null,
       userId: null,
       username: null,
       isLoading: false,
       isAuthenticated: false,
+      sessionExpired: false,
     });
   }, []);
 
+  const clearSessionExpired = useCallback(() => {
+    setState(s => ({ ...s, sessionExpired: false }));
+  }, []);
+
   return (
-    <AuthContext.Provider value={{ ...state, login, register, loginWithGoogle, loginWithToken, logout }}>
+    <AuthContext.Provider value={{ ...state, login, register, loginWithGoogle, loginWithToken, logout, clearSessionExpired }}>
       {children}
     </AuthContext.Provider>
   );
