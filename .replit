@@ -79,6 +79,7 @@ ensurePreviewReachable = "/status"
 [userenv.shared]
 JWT_SECRET = "e10122508bac4e9e61cd7b85f5357d52754ad76014ccf7564983d64faa3ce468"
 EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID = "464052645678-au43qstbkio1gc6foomqo1a40c9f5vpk.apps.googleusercontent.com"
+GOOGLE_WEB_CLIENT_ID = "464052645678-au43qstbkio1gc6foomqo1a40c9f5vpk.apps.googleusercontent.com"
 
 [postMerge]
 path = "scripts/post-merge.sh"
