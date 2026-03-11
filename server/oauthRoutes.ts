@@ -6,7 +6,7 @@ export const oauthRouter = Router();
 
 function getBaseUrl(req: Request): string {
   const domain = process.env.REPLIT_DOMAINS?.split(',')[0];
-  if (domain) return `https://${domain}`;
+  if (domain) return `https://${domain}:5000`;
   return `${req.protocol}://${req.get('host')}`;
 }
 
