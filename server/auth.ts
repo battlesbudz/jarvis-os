@@ -62,13 +62,15 @@ authRouter.get("/google/callback", async (req: Request, res: Response) => {
     const { code, error } = req.query as { code?: string; error?: string };
 
     if (error || !code) {
-      return res.redirect("/login?googleError=cancelled");
+      res.setHeader("Content-Type", "text/html");
+      return res.send(oauthErrorPage("cancelled"));
     }
 
     const clientId = process.env.GOOGLE_WEB_CLIENT_ID;
     const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
     if (!clientId || !clientSecret) {
-      return res.redirect("/login?googleError=config");
+      res.setHeader("Content-Type", "text/html");
+      return res.send(oauthErrorPage("config"));
     }
 
     const redirectUri = getGoogleRedirectUri(req);
@@ -88,7 +90,8 @@ authRouter.get("/google/callback", async (req: Request, res: Response) => {
     if (!tokenRes.ok) {
       const err = await tokenRes.text();
       console.error("Token exchange failed:", err);
-      return res.redirect("/login?googleError=token");
+      res.setHeader("Content-Type", "text/html");
+      return res.send(oauthErrorPage("token"));
     }
 
     const tokens = await tokenRes.json() as {
@@ -98,7 +101,8 @@ authRouter.get("/google/callback", async (req: Request, res: Response) => {
     };
 
     if (tokens.error || !tokens.access_token) {
-      return res.redirect("/login?googleError=token");
+      res.setHeader("Content-Type", "text/html");
+      return res.send(oauthErrorPage("token"));
     }
 
     const userInfoRes = await fetch("https://www.googleapis.com/userinfo/v2/me", {
@@ -106,7 +110,8 @@ authRouter.get("/google/callback", async (req: Request, res: Response) => {
     });
 
     if (!userInfoRes.ok) {
-      return res.redirect("/login?googleError=userinfo");
+      res.setHeader("Content-Type", "text/html");
+      return res.send(oauthErrorPage("userinfo"));
     }
 
     const googleUser = await userInfoRes.json() as {
@@ -116,7 +121,8 @@ authRouter.get("/google/callback", async (req: Request, res: Response) => {
     };
 
     if (!googleUser.id) {
-      return res.redirect("/login?googleError=userinfo");
+      res.setHeader("Content-Type", "text/html");
+      return res.send(oauthErrorPage("userinfo"));
     }
 
     const existing = await db.select().from(users)
@@ -145,13 +151,55 @@ authRouter.get("/google/callback", async (req: Request, res: Response) => {
     }
 
     const jwtToken = generateToken(user.id);
-    const displayName = encodeURIComponent(user.displayName || user.username);
-    res.redirect(`/login?googleToken=${jwtToken}&username=${displayName}`);
+    const displayName = user.displayName || user.username;
+    res.setHeader("Content-Type", "text/html");
+    res.send(oauthSuccessPage(jwtToken, displayName));
   } catch (error) {
     console.error("Google callback error:", error);
-    res.redirect("/login?googleError=server");
+    res.setHeader("Content-Type", "text/html");
+    res.send(oauthErrorPage("server"));
   }
 });
+
+function oauthSuccessPage(token: string, displayName: string): string {
+  return `<!DOCTYPE html>
+<html>
+<head><title>Signing in...</title>
+<style>body{font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#0F0F0F;color:#fff;}</style>
+</head>
+<body>
+<p>Signing you in...</p>
+<script>
+  var payload = ${JSON.stringify({ type: "GOOGLE_AUTH_SUCCESS", token, displayName })};
+  if (window.opener) {
+    window.opener.postMessage(payload, "*");
+    window.close();
+  } else {
+    window.location.href = "/login?googleToken=" + encodeURIComponent(payload.token);
+  }
+</script>
+</body></html>`;
+}
+
+function oauthErrorPage(error: string): string {
+  return `<!DOCTYPE html>
+<html>
+<head><title>Sign-in failed</title>
+<style>body{font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#0F0F0F;color:#fff;}</style>
+</head>
+<body>
+<p>Sign-in failed. Closing...</p>
+<script>
+  var payload = ${JSON.stringify({ type: "GOOGLE_AUTH_ERROR", error })};
+  if (window.opener) {
+    window.opener.postMessage(payload, "*");
+    window.close();
+  } else {
+    window.location.href = "/login?googleError=" + encodeURIComponent(payload.error);
+  }
+</script>
+</body></html>`;
+}
 
 authRouter.post("/register", async (req: Request, res: Response) => {
   try {
