@@ -76,11 +76,9 @@ export const getQueryFn: <T>(options: {
       credentials: "include",
     });
 
-    if (res.status === 401) {
+    if (unauthorizedBehavior === "returnNull" && res.status === 401) {
       _onUnauthorized?.();
-      if (unauthorizedBehavior === "returnNull") {
-        return null;
-      }
+      return null;
     }
 
     await throwIfResNotOk(res);

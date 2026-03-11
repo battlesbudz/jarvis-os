@@ -20,20 +20,27 @@ import { AuthProvider, useAuth } from "@/lib/auth-context";
 SplashScreen.preventAutoHideAsync();
 
 function useProtectedRoute() {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, consumeReturnRoute } = useAuth();
   const segments = useSegments();
   const hasNavigated = useRef(false);
+  const lastRouteRef = useRef<string>("/");
 
   useEffect(() => {
     if (isLoading) return;
 
     const onLoginPage = segments[0] === "login";
+    const currentRoute = "/" + segments.join("/");
 
     if (!isAuthenticated && !onLoginPage) {
+      lastRouteRef.current = currentRoute !== "/" ? currentRoute : "/";
       router.replace("/login");
     } else if (isAuthenticated && onLoginPage) {
       hasNavigated.current = false;
-      router.replace("/");
+      consumeReturnRoute().then((savedRoute) => {
+        const target = savedRoute || lastRouteRef.current || "/";
+        lastRouteRef.current = "/";
+        router.replace(target as any);
+      });
     }
   }, [isAuthenticated, isLoading, segments]);
 
