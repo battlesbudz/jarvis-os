@@ -59,7 +59,7 @@ function loadGisScript(): Promise<void> {
 
 export default function LoginScreen() {
   const insets = useSafeAreaInsets();
-  const { loginWithGoogle } = useAuth();
+  const { loginWithGoogle, sessionExpired, clearSessionExpired } = useAuth();
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [gisReady, setGisReady] = useState(false);
@@ -140,6 +140,7 @@ export default function LoginScreen() {
 
   async function handleGooglePress() {
     setError("");
+    if (sessionExpired) clearSessionExpired();
     setLoading(true);
 
     try {
@@ -177,7 +178,14 @@ export default function LoginScreen() {
         </View>
 
         <View style={styles.card}>
-          <Text style={styles.welcomeText}>Sign in to sync your tasks, goals, and progress across all your devices.</Text>
+          {sessionExpired ? (
+            <View style={styles.sessionExpiredBanner}>
+              <Ionicons name="alert-circle" size={20} color="#F59E0B" />
+              <Text style={styles.sessionExpiredText}>Your session expired. Please sign in again — your data is safe.</Text>
+            </View>
+          ) : (
+            <Text style={styles.welcomeText}>Sign in to sync your tasks, goals, and progress across all your devices.</Text>
+          )}
 
           {error ? <Text style={styles.error}>{error}</Text> : null}
 
@@ -256,6 +264,21 @@ const styles = StyleSheet.create({
     color: "#999",
     textAlign: "center",
     lineHeight: 22,
+  },
+  sessionExpiredBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(245, 158, 11, 0.1)",
+    borderRadius: 10,
+    padding: 14,
+    gap: 10,
+  },
+  sessionExpiredText: {
+    flex: 1,
+    fontSize: 14,
+    fontFamily: "Inter_500Medium",
+    color: "#F59E0B",
+    lineHeight: 20,
   },
   error: {
     color: "#FF6B6B",
