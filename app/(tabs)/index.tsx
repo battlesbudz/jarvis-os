@@ -72,6 +72,7 @@ import {
 } from '@/lib/storage';
 import { scheduleAllTaskReminders, requestNotificationPermissions } from '@/lib/notifications';
 import { apiRequest, getApiUrl } from '@/lib/query-client';
+import { authFetch } from '@/lib/auth-context';
 import { formatDate } from '@/lib/helpers';
 import XpToast from '@/components/XpToast';
 import JustOneThingModal from '@/components/JustOneThingModal';
@@ -115,7 +116,7 @@ export default function TodayScreen() {
     try {
       const today = getTodayKey();
       const statusUrl = new URL('/api/calendar/status', getApiUrl());
-      const statusRes = await fetch(statusUrl.toString(), { cache: 'no-store' });
+      const statusRes = await authFetch(statusUrl.toString(), { cache: 'no-store' });
       const status = await statusRes.json();
 
       const events: Task[] = [];
@@ -126,7 +127,7 @@ export default function TodayScreen() {
         // Pass local-timezone UTC bounds so server uses correct day window
         url.searchParams.set('startTime', new Date(today + 'T00:00:00').toISOString());
         url.searchParams.set('endTime', new Date(today + 'T23:59:59').toISOString());
-        const res = await fetch(url.toString(), { cache: 'no-store' });
+        const res = await authFetch(url.toString(), { cache: 'no-store' });
         const data = await res.json();
         if (data.connected && data.events?.length) {
           data.events.forEach((e: any) => {
@@ -171,7 +172,7 @@ export default function TodayScreen() {
       }
       const [stats, history, lc] = await Promise.all([getStats(), getCompletionHistory(), getLifeContext()]);
       const url = new URL('/api/coach/checkin', getApiUrl());
-      const res = await fetch(url.toString(), {
+      const res = await authFetch(url.toString(), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ goals: loadedGoals, stats, history, lifeContext: lc }),
@@ -260,7 +261,7 @@ export default function TodayScreen() {
 
       const [lc, gmailData] = await Promise.allSettled([
         getLifeContext(),
-        fetch(new URL('/api/gmail/commitments', getApiUrl()).toString(), { cache: 'no-store' }).then(r => r.json()).catch(() => ({ connected: false, items: [] })),
+        authFetch(new URL('/api/gmail/commitments', getApiUrl()).toString(), { cache: 'no-store' }).then(r => r.json()).catch(() => ({ connected: false, items: [] })),
       ]);
       const lifeContext = lc.status === 'fulfilled' ? lc.value : null;
       const gmailItems = gmailData.status === 'fulfilled' && gmailData.value.connected ? gmailData.value.items : [];
@@ -502,7 +503,7 @@ export default function TodayScreen() {
   const parseBrainDump = useCallback(async (text: string) => {
     try {
       const url = new URL('/api/ai/parse-brain-dump', getApiUrl());
-      const res = await fetch(url.toString(), {
+      const res = await authFetch(url.toString(), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text }),

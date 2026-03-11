@@ -6,36 +6,68 @@ import {
   useFonts,
 } from "@expo-google-fonts/inter";
 import { QueryClientProvider } from "@tanstack/react-query";
-import { Stack, router } from "expo-router";
+import { Stack, router, useSegments } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import React, { useEffect, useRef } from "react";
+import { ActivityIndicator, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { queryClient } from "@/lib/query-client";
 import { runMigrations, isOnboardingComplete } from "@/lib/storage";
+import { AuthProvider, useAuth } from "@/lib/auth-context";
 
 SplashScreen.preventAutoHideAsync();
 
-function AppNavigator() {
-  const redirected = useRef(false);
+function useProtectedRoute() {
+  const { isAuthenticated, isLoading } = useAuth();
+  const segments = useSegments();
+  const hasNavigated = useRef(false);
 
   useEffect(() => {
-    if (redirected.current) return;
+    if (isLoading) return;
+
+    const onLoginPage = segments[0] === "login";
+
+    if (!isAuthenticated && !onLoginPage) {
+      router.replace("/login");
+    } else if (isAuthenticated && onLoginPage) {
+      hasNavigated.current = false;
+      router.replace("/");
+    }
+  }, [isAuthenticated, isLoading, segments]);
+
+  useEffect(() => {
+    if (isLoading || !isAuthenticated || hasNavigated.current) return;
 
     async function checkOnboarding() {
       const done = await isOnboardingComplete();
       if (!done) {
-        redirected.current = true;
+        hasNavigated.current = true;
         router.replace('/onboarding');
       }
     }
 
     checkOnboarding();
-  }, []);
+  }, [isLoading, isAuthenticated]);
+
+  return { isLoading };
+}
+
+function AppNavigator() {
+  const { isLoading } = useProtectedRoute();
+
+  if (isLoading) {
+    return (
+      <View style={{ flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "#0F0F0F" }}>
+        <ActivityIndicator size="large" color="#4F8EF7" />
+      </View>
+    );
+  }
 
   return (
     <Stack screenOptions={{ headerBackTitle: "Back" }}>
+      <Stack.Screen name="login" options={{ headerShown: false, gestureEnabled: false }} />
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
       <Stack.Screen name="onboarding" options={{ headerShown: false, gestureEnabled: false }} />
       <Stack.Screen name="focus-timer" options={{ presentation: 'modal', headerShown: false }} />
@@ -66,11 +98,13 @@ export default function RootLayout() {
   return (
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>
-        <GestureHandlerRootView>
-          <KeyboardProvider>
-            <AppNavigator />
-          </KeyboardProvider>
-        </GestureHandlerRootView>
+        <AuthProvider>
+          <GestureHandlerRootView>
+            <KeyboardProvider>
+              <AppNavigator />
+            </KeyboardProvider>
+          </GestureHandlerRootView>
+        </AuthProvider>
       </QueryClientProvider>
     </ErrorBoundary>
   );

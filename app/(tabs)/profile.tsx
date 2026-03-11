@@ -36,7 +36,8 @@ import {
   type LifeContext,
 } from '@/lib/storage';
 import { areNotificationsEnabled, setNotificationsEnabled } from '@/lib/notifications';
-import { getApiUrl } from '@/lib/query-client';
+import { getApiUrl, apiRequest } from '@/lib/query-client';
+import { useAuth } from '@/lib/auth-context';
 import RewardClaimModal from '@/components/RewardClaimModal';
 import LifeContextSheet from '@/components/LifeContextSheet';
 
@@ -59,6 +60,7 @@ const PLATFORMS: PlatformInfo[] = [
 
 export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
+  const { logout, username: authUsername } = useAuth();
   const [stats, setStats] = useState<UserStats>({
     streak: 0, totalCompleted: 0, bestStreak: 0, xp: 0, badges: [], claimedRewards: [],
     dailyXpEarned: { date: '', xp: 0 },
@@ -85,13 +87,9 @@ export default function ProfileScreen() {
     setNotificationsEnabledState(notifications);
     setUserName(name);
     try {
-      const [calUrl, gmailUrl] = [
-        new URL('/api/calendar/status', getApiUrl()),
-        new URL('/api/gmail/status', getApiUrl()),
-      ];
       const [calRes, gmailRes] = await Promise.all([
-        fetch(calUrl.toString(), { cache: 'no-store' }),
-        fetch(gmailUrl.toString(), { cache: 'no-store' }).catch(() => null),
+        apiRequest('GET', '/api/calendar/status'),
+        apiRequest('GET', '/api/gmail/status').catch(() => null),
       ]);
       const calData = await calRes.json();
       setCalStatus(calData);
@@ -488,6 +486,21 @@ export default function ProfileScreen() {
                 size={32} 
                 color={notificationsEnabled ? Colors.primary : Colors.border} 
               />
+            </Pressable>
+            <Pressable 
+              style={styles.platformRow}
+              onPress={logout}
+            >
+              <View style={[styles.platformIcon, { backgroundColor: '#FF3B3015' }]}>
+                <Ionicons name="log-out-outline" size={20} color="#FF3B30" />
+              </View>
+              <View style={styles.platformInfo}>
+                <Text style={[styles.platformName, { color: '#FF3B30' }]}>Log Out</Text>
+                <Text style={styles.platformStatus}>
+                  {authUsername ? `Signed in as ${authUsername}` : 'Sign out of your account'}
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={Colors.textTertiary} />
             </Pressable>
           </View>
         </Animated.View>

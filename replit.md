@@ -7,6 +7,8 @@ A mobile app that generates personalized daily task checklists with AI-powered a
 - **Frontend**: Expo Router (React Native) with file-based routing
 - **Backend**: Express.js (serves landing page and API)
 - **AI**: OpenAI via Replit AI Integrations (gpt-5-mini) for task resizing, plan generation, and coaching
+- **Database**: PostgreSQL (Replit built-in) with Drizzle ORM for user accounts
+- **Auth**: JWT (jsonwebtoken) + bcryptjs password hashing
 - **State**: AsyncStorage for local persistence
 - **Styling**: React Native StyleSheet with Inter font family
 - **Icons**: @expo/vector-icons (Ionicons)
@@ -18,10 +20,14 @@ A mobile app that generates personalized daily task checklists with AI-powered a
 - `components/` - Reusable components: TaskCard, GoalCard, ProgressRing, AddGoalSheet, TaskResizerSheet, LifeContextSheet, MarkdownText, RewardClaimModal
 - `lib/storage.ts` - AsyncStorage data layer for tasks, goals, stats, completion history, chat history, life context
 - `lib/helpers.ts` - Category colors, icons, labels, date formatting utilities
-- `lib/query-client.ts` - React Query client with apiRequest helper
+- `lib/query-client.ts` - React Query client with apiRequest helper (sends Authorization header)
+- `lib/auth-context.tsx` - Auth context provider (login, register, logout, token persistence)
 - `constants/colors.ts` - Theme colors (indigo primary, purple secondary)
 - `server/ai.ts` - AI logic for resizeTask() and generateSmartPlan()
-- `server/routes.ts` - All API endpoints
+- `server/routes.ts` - All API endpoints (auth middleware applied)
+- `server/auth.ts` - Auth endpoints (register, login, me) and JWT auth middleware
+- `server/db.ts` - PostgreSQL connection with Drizzle ORM
+- `shared/schema.ts` - Drizzle schema (users table with hashed passwords)
 - `server/integrations/googleCalendar.ts` - Google Calendar client
 - `server/integrations/outlook.ts` - Outlook calendar client
 - `server/integrations/gmailClient.ts` - Gmail OAuth client (Replit connector token refresh)
@@ -58,6 +64,14 @@ A mobile app that generates personalized daily task checklists with AI-powered a
 18. **Visual Time Blocks** - Toggle in Today header switches between list view and timeline view; timeline shows hours 6am–10pm with tasks pinned to their scheduled time; unscheduled tasks shown separately; view preference persisted.
 19. **Transition Reminders** - Local notifications scheduled 10 min before tasks with a set `time`; enabled/disabled toggle in Profile; web-safe (lib/notifications.web.ts stub); focus timer fires completion nudge notifications.
 
+## Authentication
+- **Login screen**: `/login` route with Log In / Create Account tabs
+- **Endpoints**: `POST /api/auth/register`, `POST /api/auth/login`, `GET /api/auth/me`
+- **JWT tokens**: 30-day expiry, stored in AsyncStorage, sent as `Authorization: Bearer <token>`
+- **Auth middleware**: All `/api/*` routes (except `/api/auth/*`) require valid JWT
+- **AuthProvider**: Wraps entire app in `_layout.tsx`, exposes `useAuth()` hook with `login`, `register`, `logout`, `isAuthenticated`, `userId`, `username`
+- **Logout**: Available in Profile > Settings section
+
 ## API Endpoints
 - `POST /api/ai/resize-task` - Takes taskTitle, detailLevel (1-5), direction (smaller/bigger), history
 - `POST /api/ai/generate-plan` - Takes goals, history, dayOfWeek, lifeContext, gmailItems; returns tasks + insight
@@ -92,7 +106,7 @@ A mobile app that generates personalized daily task checklists with AI-powered a
 - New users are redirected to `/onboarding` on first launch (checked via `gameplan_onboarding_complete` in AsyncStorage)
 - Onboarding flow: 7 steps — name → 4 life context questions (skippable) → first goal → connect apps info
 - User name stored in `gameplan_user_name`, displayed in Today greeting ("Good morning, [name]") and Profile title
-- Each device gets a unique `gameplan_user_id` (UUID) stored in AsyncStorage, sent as `X-User-ID` header on API requests
+- Users authenticate with username/password; JWT token persists across restarts
 - All user data (tasks, goals, stats, life context, chat history) is stored in device AsyncStorage — fully isolated per device
 - Calendar/Gmail integrations (Google Calendar, Outlook, Gmail) are tied to Replit account-level OAuth at the infrastructure level (cannot be per-user); new users see calendar events from the configured connector
 - Empty states: Today tab shows "No tasks yet" if no goals set; Goals tab shows "No goals yet" CTA

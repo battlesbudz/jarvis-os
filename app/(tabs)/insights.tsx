@@ -9,7 +9,7 @@ import {
   ActivityIndicator,
   Platform,
 } from 'react-native';
-import { fetch } from 'expo/fetch';
+import { fetch as expoFetch } from 'expo/fetch';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BottomTabBarHeightContext } from '@react-navigation/bottom-tabs';
@@ -37,6 +37,7 @@ import {
   type LifeContext,
 } from '@/lib/storage';
 import { getApiUrl } from '@/lib/query-client';
+import { authFetch, getAuthToken } from '@/lib/auth-context';
 
 const SUGGESTED_PROMPTS = [
   "How am I doing overall?",
@@ -203,7 +204,7 @@ export default function InsightsScreen() {
       const fetchSource = async (source: 'google' | 'outlook') => {
         const url = new URL(`/api/calendar/${source}/events`, base);
         url.searchParams.set('date', today);
-        const res = await fetch(url.toString(), { cache: 'no-store' } as RequestInit);
+        const res = await authFetch(url.toString(), { cache: 'no-store' } as RequestInit);
         const data = await res.json();
         if (data.connected && data.events?.length) {
           data.events.forEach((e: any) => {
@@ -214,7 +215,7 @@ export default function InsightsScreen() {
 
       const fetchGmail = async () => {
         const url = new URL('/api/gmail/commitments', base);
-        const res = await fetch(url.toString(), { cache: 'no-store' } as RequestInit);
+        const res = await authFetch(url.toString(), { cache: 'no-store' } as RequestInit);
         const data = await res.json();
         if (data.connected && data.items?.length) {
           setGmailItems(data.items);
@@ -254,9 +255,12 @@ export default function InsightsScreen() {
       const apiMessages = contextMessages.map(m => ({ role: m.role, content: m.content })).reverse();
 
       const url = new URL('/api/coach/chat', getApiUrl());
-      const response = await fetch(url.toString(), {
+      const token = await getAuthToken();
+      const streamHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) streamHeaders['Authorization'] = `Bearer ${token}`;
+      const response = await expoFetch(url.toString(), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: streamHeaders,
         body: JSON.stringify({
           messages: apiMessages,
           goals,
@@ -323,7 +327,7 @@ export default function InsightsScreen() {
 
       try {
         const suggestUrl = new URL('/api/coach/suggestions', getApiUrl());
-        const suggestRes = await fetch(suggestUrl.toString(), {
+        const suggestRes = await authFetch(suggestUrl.toString(), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ lastAssistantMessage: finalContent, goals }),
