@@ -62,13 +62,13 @@ authRouter.get("/google/callback", async (req: Request, res: Response) => {
     const { code, error } = req.query as { code?: string; error?: string };
 
     if (error || !code) {
-      return res.redirect("/?googleError=cancelled");
+      return res.redirect("/login?googleError=cancelled");
     }
 
     const clientId = process.env.GOOGLE_WEB_CLIENT_ID;
     const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
     if (!clientId || !clientSecret) {
-      return res.redirect("/?googleError=config");
+      return res.redirect("/login?googleError=config");
     }
 
     const redirectUri = getGoogleRedirectUri(req);
@@ -88,7 +88,7 @@ authRouter.get("/google/callback", async (req: Request, res: Response) => {
     if (!tokenRes.ok) {
       const err = await tokenRes.text();
       console.error("Token exchange failed:", err);
-      return res.redirect("/?googleError=token");
+      return res.redirect("/login?googleError=token");
     }
 
     const tokens = await tokenRes.json() as {
@@ -98,7 +98,7 @@ authRouter.get("/google/callback", async (req: Request, res: Response) => {
     };
 
     if (tokens.error || !tokens.access_token) {
-      return res.redirect("/?googleError=token");
+      return res.redirect("/login?googleError=token");
     }
 
     const userInfoRes = await fetch("https://www.googleapis.com/userinfo/v2/me", {
@@ -106,7 +106,7 @@ authRouter.get("/google/callback", async (req: Request, res: Response) => {
     });
 
     if (!userInfoRes.ok) {
-      return res.redirect("/?googleError=userinfo");
+      return res.redirect("/login?googleError=userinfo");
     }
 
     const googleUser = await userInfoRes.json() as {
@@ -116,7 +116,7 @@ authRouter.get("/google/callback", async (req: Request, res: Response) => {
     };
 
     if (!googleUser.id) {
-      return res.redirect("/?googleError=userinfo");
+      return res.redirect("/login?googleError=userinfo");
     }
 
     const existing = await db.select().from(users)
@@ -146,10 +146,10 @@ authRouter.get("/google/callback", async (req: Request, res: Response) => {
 
     const jwtToken = generateToken(user.id);
     const displayName = encodeURIComponent(user.displayName || user.username);
-    res.redirect(`/?googleToken=${jwtToken}&username=${displayName}`);
+    res.redirect(`/login?googleToken=${jwtToken}&username=${displayName}`);
   } catch (error) {
     console.error("Google callback error:", error);
-    res.redirect("/?googleError=server");
+    res.redirect("/login?googleError=server");
   }
 });
 
