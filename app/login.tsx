@@ -10,11 +10,17 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Google from "expo-auth-session/providers/google";
+import * as AuthSession from "expo-auth-session";
 import * as WebBrowser from "expo-web-browser";
 import { useAuth } from "@/lib/auth-context";
 import { Ionicons } from "@expo/vector-icons";
 
 WebBrowser.maybeCompleteAuthSession();
+
+const redirectUri =
+  Platform.OS === "web" && typeof window !== "undefined"
+    ? window.location.origin
+    : AuthSession.makeRedirectUri({ scheme: "gameplan" });
 
 export default function LoginScreen() {
   const insets = useSafeAreaInsets();
@@ -28,6 +34,7 @@ export default function LoginScreen() {
     webClientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID,
     iosClientId: process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID,
     androidClientId: process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID,
+    redirectUri,
     scopes: ["openid", "profile", "email"],
   });
 
