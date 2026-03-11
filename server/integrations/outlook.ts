@@ -1,8 +1,7 @@
-// Outlook integration — uses Replit connector: outlook
-// Uses @microsoft/microsoft-graph-client@3.0.7
+// Outlook integration — uses per-user OAuth token when available, falls back to Replit connector
 import { Client } from '@microsoft/microsoft-graph-client';
 
-async function getAccessToken() {
+async function getProjectAccessToken(): Promise<string> {
   const hostname = process.env.REPLIT_CONNECTORS_HOSTNAME;
   const xReplitToken = process.env.REPL_IDENTITY
     ? 'repl ' + process.env.REPL_IDENTITY
@@ -10,18 +9,11 @@ async function getAccessToken() {
     ? 'depl ' + process.env.WEB_REPL_RENEWAL
     : null;
 
-  if (!xReplitToken) {
-    throw new Error('X-Replit-Token not found for repl/depl');
-  }
+  if (!xReplitToken) throw new Error('X-Replit-Token not available');
 
   const connectionSettings = await fetch(
     'https://' + hostname + '/api/v2/connection?include_secrets=true&connector_names=outlook',
-    {
-      headers: {
-        Accept: 'application/json',
-        'X-Replit-Token': xReplitToken,
-      },
-    }
+    { headers: { Accept: 'application/json', 'X-Replit-Token': xReplitToken } }
   )
     .then((res) => res.json())
     .then((data) => data.items?.[0]);
@@ -30,19 +22,13 @@ async function getAccessToken() {
     connectionSettings?.settings?.access_token ||
     connectionSettings?.settings?.oauth?.credentials?.access_token;
 
-  if (!connectionSettings || !accessToken) {
-    throw new Error('Outlook not connected');
-  }
+  if (!accessToken) throw new Error('Outlook not connected');
   return accessToken;
 }
 
-// WARNING: Never cache this client. Tokens expire.
-export async function getUncachableOutlookClient() {
-  const accessToken = await getAccessToken();
+function buildOutlookClient(accessToken: string) {
   return Client.initWithMiddleware({
-    authProvider: {
-      getAccessToken: async () => accessToken,
-    },
+    authProvider: { getAccessToken: async () => accessToken },
   });
 }
 
@@ -55,10 +41,21 @@ export interface CalendarEvent {
   location?: string;
 }
 
-export async function getOutlookCalendarEvents(date: string, startTime?: string, endTime?: string): Promise<CalendarEvent[]> {
-  const client = await getUncachableOutlookClient();
-  const startOfDay = startTime ? new Date(startTime).toISOString() : new Date(date + 'T00:00:00').toISOString();
-  const endOfDay = endTime ? new Date(endTime).toISOString() : new Date(date + 'T23:59:59').toISOString();
+export async function getOutlookCalendarEvents(
+  date: string,
+  startTime?: string,
+  endTime?: string,
+  userAccessToken?: string | null
+): Promise<CalendarEvent[]> {
+  const accessToken = userAccessToken ?? (await getProjectAccessToken());
+  const client = buildOutlookClient(accessToken);
+
+  const startOfDay = startTime
+    ? new Date(startTime).toISOString()
+    : new Date(date + 'T00:00:00').toISOString();
+  const endOfDay = endTime
+    ? new Date(endTime).toISOString()
+    : new Date(date + 'T23:59:59').toISOString();
 
   const res = await client
     .api('/me/calendarView')
@@ -74,14 +71,17 @@ export async function getOutlookCalendarEvents(date: string, startTime?: string,
     title: e.subject || 'Event',
     start: e.start?.dateTime || date,
     end: e.end?.dateTime || date,
-    description: e.body?.content ? e.body.content.replace(/<[^>]+>/g, '').trim().slice(0, 120) : undefined,
+    description: e.body?.content
+      ? e.body.content.replace(/<[^>]+>/g, '').trim().slice(0, 120)
+      : undefined,
     location: e.location?.displayName || undefined,
   }));
 }
 
-export async function checkOutlookConnection(): Promise<boolean> {
+export async function checkOutlookConnection(userAccessToken?: string | null): Promise<boolean> {
   try {
-    await getAccessToken();
+    if (userAccessToken) return true;
+    await getProjectAccessToken();
     return true;
   } catch {
     return false;

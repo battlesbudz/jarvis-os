@@ -1,4 +1,4 @@
-import { getUncachableGmailClient } from './gmailClient';
+import { getGmailClient } from './gmailClient';
 
 export interface EmailCommitment {
   subject: string;
@@ -6,19 +6,21 @@ export interface EmailCommitment {
   date: string;
 }
 
-export async function checkGmailConnection(): Promise<boolean> {
+export async function checkGmailConnection(userAccessToken?: string | null): Promise<boolean> {
   try {
-    const client = await getUncachableGmailClient();
-    if (!client) return false;
+    await getGmailClient(userAccessToken);
     return true;
   } catch {
     return false;
   }
 }
 
-export async function getRecentEmailCommitments(days: number = 7): Promise<EmailCommitment[]> {
+export async function getRecentEmailCommitments(
+  days: number = 7,
+  userAccessToken?: string | null
+): Promise<EmailCommitment[]> {
   try {
-    const gmail = await getUncachableGmailClient();
+    const gmail = await getGmailClient(userAccessToken);
 
     const afterDate = new Date();
     afterDate.setDate(afterDate.getDate() - days);

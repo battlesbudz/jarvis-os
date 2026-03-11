@@ -17,6 +17,8 @@ import {
 import { authRouter, authMiddleware } from "./auth";
 import { registerDataRoutes } from "./dataRoutes";
 import { isIntegrationOwner, claimIntegrationOwnership } from "./integrationOwner";
+import { oauthRouter } from "./oauthRoutes";
+import { getValidGoogleToken, getValidMicrosoftToken } from "./userTokenStore";
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
@@ -112,6 +114,7 @@ ${calendarText}${gmailSection}
 export async function registerRoutes(app: Express): Promise<Server> {
   app.use("/api/auth", authRouter);
   app.use(authMiddleware);
+  app.use("/api/oauth", oauthRouter);
 
   registerDataRoutes(app);
 
@@ -372,20 +375,28 @@ Return JSON: { "note": "your 1-2 sentence note here" }`;
       const userId = req.userId;
       if (!userId) return res.json({ google: false, outlook: false });
 
-      const [google, outlook] = await Promise.all([
-        checkGoogleCalendarConnection(),
-        checkOutlookConnection(),
+      const [googleToken, microsoftToken] = await Promise.all([
+        getValidGoogleToken(userId),
+        getValidMicrosoftToken(userId),
       ]);
 
-      const anyConnected = google || outlook;
-      if (anyConnected) {
-        await claimIntegrationOwnership(userId);
+      let googleConnected = !!googleToken;
+      let outlookConnected = !!microsoftToken;
+
+      if (!googleConnected || !outlookConnected) {
+        const isOwner = await isIntegrationOwner(userId);
+        if (isOwner) {
+          const [projGoogle, projOutlook] = await Promise.all([
+            googleConnected ? true : checkGoogleCalendarConnection(),
+            outlookConnected ? true : checkOutlookConnection(),
+          ]);
+          googleConnected = googleConnected || projGoogle;
+          outlookConnected = outlookConnected || projOutlook;
+          if (projGoogle || projOutlook) await claimIntegrationOwnership(userId);
+        }
       }
 
-      const isOwner = await isIntegrationOwner(userId);
-      if (!isOwner) return res.json({ google: false, outlook: false });
-
-      res.json({ google, outlook });
+      res.json({ google: googleConnected, outlook: outlookConnected });
     } catch (error) {
       console.error("Error checking calendar status:", error);
       res.json({ google: false, outlook: false });
@@ -395,19 +406,21 @@ Return JSON: { "note": "your 1-2 sentence note here" }`;
   app.get("/api/calendar/google/events", async (req: Request, res: Response) => {
     try {
       const userId = req.userId;
-      if (!userId || !(await isIntegrationOwner(userId))) {
-        return res.json({ connected: false, events: [] });
+      if (!userId) return res.json({ connected: false, events: [] });
+
+      let accessToken = await getValidGoogleToken(userId);
+      if (!accessToken) {
+        if (!(await isIntegrationOwner(userId))) return res.json({ connected: false, events: [] });
       }
+
       const date = (req.query.date as string) || new Date().toISOString().split('T')[0];
       const startTime = req.query.startTime as string | undefined;
       const endTime = req.query.endTime as string | undefined;
-      const events = await getGoogleCalendarEvents(date, startTime, endTime);
+      const events = await getGoogleCalendarEvents(date, startTime, endTime, accessToken);
       res.json({ connected: true, events });
     } catch (error: any) {
       console.error("Error fetching Google Calendar events:", error);
-      if (error.message?.includes('not connected')) {
-        return res.json({ connected: false, events: [] });
-      }
+      if (error.message?.includes('not connected')) return res.json({ connected: false, events: [] });
       res.json({ connected: true, events: [] });
     }
   });
@@ -415,19 +428,21 @@ Return JSON: { "note": "your 1-2 sentence note here" }`;
   app.get("/api/calendar/outlook/events", async (req: Request, res: Response) => {
     try {
       const userId = req.userId;
-      if (!userId || !(await isIntegrationOwner(userId))) {
-        return res.json({ connected: false, events: [] });
+      if (!userId) return res.json({ connected: false, events: [] });
+
+      let accessToken = await getValidMicrosoftToken(userId);
+      if (!accessToken) {
+        if (!(await isIntegrationOwner(userId))) return res.json({ connected: false, events: [] });
       }
+
       const date = (req.query.date as string) || new Date().toISOString().split('T')[0];
       const startTime = req.query.startTime as string | undefined;
       const endTime = req.query.endTime as string | undefined;
-      const events = await getOutlookCalendarEvents(date, startTime, endTime);
+      const events = await getOutlookCalendarEvents(date, startTime, endTime, accessToken);
       res.json({ connected: true, events });
     } catch (error: any) {
       console.error("Error fetching Outlook events:", error);
-      if (error.message?.includes('not connected')) {
-        return res.json({ connected: false, events: [] });
-      }
+      if (error.message?.includes('not connected')) return res.json({ connected: false, events: [] });
       res.json({ connected: true, events: [] });
     }
   });
@@ -437,14 +452,14 @@ Return JSON: { "note": "your 1-2 sentence note here" }`;
       const userId = req.userId;
       if (!userId) return res.json({ connected: false });
 
-      const connected = await checkGmailConnection();
-      if (connected) {
-        await claimIntegrationOwnership(userId);
-      }
+      const googleToken = await getValidGoogleToken(userId);
+      if (googleToken) return res.json({ connected: true });
 
       const isOwner = await isIntegrationOwner(userId);
       if (!isOwner) return res.json({ connected: false });
 
+      const connected = await checkGmailConnection();
+      if (connected) await claimIntegrationOwnership(userId);
       res.json({ connected });
     } catch (error) {
       console.error("Error checking Gmail status:", error);
@@ -455,12 +470,16 @@ Return JSON: { "note": "your 1-2 sentence note here" }`;
   app.get("/api/gmail/commitments", async (req: Request, res: Response) => {
     try {
       const userId = req.userId;
-      if (!userId || !(await isIntegrationOwner(userId))) {
-        return res.json({ connected: false, items: [] });
+      if (!userId) return res.json({ connected: false, items: [] });
+
+      let accessToken = await getValidGoogleToken(userId);
+      if (!accessToken) {
+        if (!(await isIntegrationOwner(userId))) return res.json({ connected: false, items: [] });
+        const connected = await checkGmailConnection();
+        if (!connected) return res.json({ connected: false, items: [] });
       }
-      const connected = await checkGmailConnection();
-      if (!connected) return res.json({ connected: false, items: [] });
-      const items = await getRecentEmailCommitments(7);
+
+      const items = await getRecentEmailCommitments(7, accessToken);
       res.json({ connected: true, items });
     } catch (error) {
       console.error("Error fetching Gmail commitments:", error);
