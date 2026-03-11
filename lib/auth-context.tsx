@@ -18,11 +18,13 @@ interface AuthContextType extends AuthState {
   loginWithToken: (token: string) => Promise<void>;
   logout: () => Promise<void>;
   clearSessionExpired: () => void;
+  consumeReturnRoute: () => Promise<string | null>;
 }
 
 const AUTH_TOKEN_KEY = "@gameplan_auth_token";
 const AUTH_USER_ID_KEY = "@gameplan_auth_user_id";
 const AUTH_USERNAME_KEY = "@gameplan_auth_username";
+const AUTH_RETURN_ROUTE_KEY = "@gameplan_return_route";
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
@@ -50,10 +52,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logoutCalledRef = useRef(false);
 
-  const forceLogout = useCallback(async () => {
+  const forceLogout = useCallback(async (returnRoute?: string) => {
     if (logoutCalledRef.current) return;
     logoutCalledRef.current = true;
 
+    if (returnRoute) {
+      await AsyncStorage.setItem(AUTH_RETURN_ROUTE_KEY, returnRoute);
+    }
     await clearAuthStorage();
     queryClient.clear();
     setState({
@@ -223,8 +228,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setState(s => ({ ...s, sessionExpired: false }));
   }, []);
 
+  const consumeReturnRoute = useCallback(async (): Promise<string | null> => {
+    const route = await AsyncStorage.getItem(AUTH_RETURN_ROUTE_KEY);
+    if (route) await AsyncStorage.removeItem(AUTH_RETURN_ROUTE_KEY);
+    return route;
+  }, []);
+
   return (
-    <AuthContext.Provider value={{ ...state, login, register, loginWithGoogle, loginWithToken, logout, clearSessionExpired }}>
+    <AuthContext.Provider value={{ ...state, login, register, loginWithGoogle, loginWithToken, logout, clearSessionExpired, consumeReturnRoute }}>
       {children}
     </AuthContext.Provider>
   );
