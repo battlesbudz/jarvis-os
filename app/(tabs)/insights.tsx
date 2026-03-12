@@ -469,8 +469,10 @@ export default function InsightsScreen() {
         await audioEl.play();
       } else {
         await Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true });
+        const tmpUri = FileSystem.cacheDirectory + 'coach_speech.mp3';
+        await FileSystem.writeAsStringAsync(tmpUri, data.audio, { encoding: FileSystem.EncodingType.Base64 });
         const { sound } = await Audio.Sound.createAsync(
-          { uri: `data:audio/mp3;base64,${data.audio}` },
+          { uri: tmpUri },
           { shouldPlay: true }
         );
         soundRef.current = sound;
