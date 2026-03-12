@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   StyleSheet,
   View,
@@ -9,9 +9,15 @@ import {
   Platform,
   Modal,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
+import { Audio } from 'expo-av';
+import * as FileSystem from 'expo-file-system';
+import Animated, { useSharedValue, withRepeat, withTiming, Easing, useAnimatedStyle } from 'react-native-reanimated';
+import { getApiUrl } from '@/lib/query-client';
+import { authFetch } from '@/lib/auth-context';
 import Colors from '@/constants/colors';
 
 interface BrainDumpModalProps {
@@ -29,6 +35,58 @@ export default function BrainDumpModal({
 }: BrainDumpModalProps) {
   const [text, setText] = useState('');
   const [loading, setLoading] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const recordingRef = useRef<Audio.Recording | null>(null);
+  const webRecorderRef = useRef<MediaRecorder | null>(null);
+  const webChunksRef = useRef<Blob[]>([]);
+  const micPulse = useSharedValue(1);
+
+  useEffect(() => {
+    if (isRecording) {
+      micPulse.value = withRepeat(
+        withTiming(0.4, { duration: 600, easing: Easing.inOut(Easing.ease) }),
+        -1,
+        true
+      );
+    } else {
+      micPulse.value = withTiming(1, { duration: 200 });
+    }
+  }, [isRecording, micPulse]);
+
+  const micPulseStyle = useAnimatedStyle(() => ({
+    opacity: micPulse.value,
+  }));
+
+  const cleanupRecording = useCallback(() => {
+    if (Platform.OS === 'web') {
+      const recorder = webRecorderRef.current;
+      if (recorder && recorder.state !== 'inactive') {
+        try {
+          recorder.stop();
+          recorder.stream.getTracks().forEach(t => t.stop());
+        } catch {}
+      }
+      webRecorderRef.current = null;
+    } else {
+      recordingRef.current?.stopAndUnloadAsync().catch(() => {});
+      recordingRef.current = null;
+    }
+    setIsRecording(false);
+  }, []);
+
+  useEffect(() => {
+    if (!visible) {
+      cleanupRecording();
+      setIsTranscribing(false);
+    }
+  }, [visible, cleanupRecording]);
+
+  useEffect(() => {
+    return () => {
+      cleanupRecording();
+    };
+  }, [cleanupRecording]);
 
   useEffect(() => {
     if (visible) {
@@ -36,6 +94,116 @@ export default function BrainDumpModal({
       setLoading(false);
     }
   }, [visible]);
+
+  const transcribeAudio = useCallback(async (base64: string) => {
+    setIsTranscribing(true);
+    try {
+      const url = new URL('/api/coach/transcribe', getApiUrl());
+      const res = await authFetch(url.toString(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ audio: base64 }),
+      });
+      const data = await res.json();
+      if (data.text && data.text.trim()) {
+        setText(prev => {
+          if (prev.trim()) {
+            return prev.trimEnd() + '\n' + data.text.trim();
+          }
+          return data.text.trim();
+        });
+      }
+    } catch (error) {
+      console.error('Failed to transcribe:', error);
+    } finally {
+      setIsTranscribing(false);
+    }
+  }, []);
+
+  const startRecording = useCallback(async () => {
+    try {
+      if (Platform.OS === 'web') {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const recorder = new MediaRecorder(stream);
+        webChunksRef.current = [];
+        recorder.ondataavailable = (e) => {
+          if (e.data.size > 0) webChunksRef.current.push(e.data);
+        };
+        recorder.start();
+        webRecorderRef.current = recorder;
+        setIsRecording(true);
+      } else {
+        const { status } = await Audio.requestPermissionsAsync();
+        if (status !== 'granted') {
+          Alert.alert('Permission Required', 'Microphone access is needed to use voice input.');
+          return;
+        }
+        await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
+        const { recording } = await Audio.Recording.createAsync(
+          Audio.RecordingOptionsPresets.HIGH_QUALITY
+        );
+        recordingRef.current = recording;
+        setIsRecording(true);
+      }
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    } catch (error) {
+      console.error('Failed to start recording:', error);
+      if (Platform.OS === 'web') {
+        Alert.alert('Permission Required', 'Microphone access is needed to use voice input.');
+      }
+    }
+  }, []);
+
+  const stopRecordingAndTranscribe = useCallback(async () => {
+    setIsRecording(false);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+
+    if (Platform.OS === 'web') {
+      const recorder = webRecorderRef.current;
+      if (!recorder) return;
+      webRecorderRef.current = null;
+
+      const base64 = await new Promise<string>((resolve, reject) => {
+        recorder.onstop = () => {
+          const blob = new Blob(webChunksRef.current, { type: recorder.mimeType });
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            const result = reader.result as string;
+            resolve(result.split(',')[1]);
+          };
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        };
+        recorder.stop();
+        recorder.stream.getTracks().forEach(t => t.stop());
+      });
+      transcribeAudio(base64);
+    } else {
+      const recording = recordingRef.current;
+      if (!recording) return;
+      recordingRef.current = null;
+
+      try {
+        await recording.stopAndUnloadAsync();
+        await Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true });
+        const uri = recording.getURI();
+        if (!uri) throw new Error('No recording URI');
+        const base64 = await FileSystem.readAsStringAsync(uri, { encoding: 'base64' });
+        transcribeAudio(base64);
+      } catch (error) {
+        console.error('Failed to process recording:', error);
+        setIsTranscribing(false);
+      }
+    }
+  }, [transcribeAudio]);
+
+  const handleMicPress = useCallback(() => {
+    if (isRecording) {
+      stopRecordingAndTranscribe();
+    } else {
+      startRecording();
+    }
+  }, [isRecording, startRecording, stopRecordingAndTranscribe]);
 
   const handleSaveToToday = async () => {
     if (!text.trim() || loading) return;
@@ -63,6 +231,37 @@ export default function BrainDumpModal({
     }
   };
 
+  const renderMicButton = () => {
+    if (isTranscribing) {
+      return (
+        <Pressable style={styles.micButton} disabled>
+          <ActivityIndicator size="small" color={Colors.primary} />
+        </Pressable>
+      );
+    }
+
+    if (isRecording) {
+      return (
+        <Pressable onPress={handleMicPress} style={styles.micButton} testID="mic-button">
+          <Animated.View style={micPulseStyle}>
+            <Ionicons name="radio-button-on" size={24} color="#EF4444" />
+          </Animated.View>
+        </Pressable>
+      );
+    }
+
+    return (
+      <Pressable
+        onPress={handleMicPress}
+        style={styles.micButton}
+        disabled={loading}
+        testID="mic-button"
+      >
+        <Ionicons name="mic-outline" size={24} color={loading ? Colors.borderLight : Colors.textSecondary} />
+      </Pressable>
+    );
+  };
+
   return (
     <Modal
       visible={visible}
@@ -83,15 +282,18 @@ export default function BrainDumpModal({
                 <Text style={styles.analyzingText}>Analyzing your thoughts...</Text>
               )}
             </View>
-            <Pressable onPress={loading ? undefined : onClose} style={styles.closeButton}>
-              <Ionicons name="close" size={24} color={loading ? Colors.borderLight : Colors.textSecondary} />
-            </Pressable>
+            <View style={styles.headerButtons}>
+              {renderMicButton()}
+              <Pressable onPress={loading ? undefined : onClose} style={styles.closeButton}>
+                <Ionicons name="close" size={24} color={loading ? Colors.borderLight : Colors.textSecondary} />
+              </Pressable>
+            </View>
           </View>
 
           <TextInput
             style={[styles.input, loading && styles.inputDisabled]}
-            placeholder="What's on your mind? Capture it all — tasks, ideas, reminders..."
-            placeholderTextColor={Colors.textTertiary}
+            placeholder={isRecording ? "Listening..." : "What's on your mind? Capture it all — tasks, ideas, reminders..."}
+            placeholderTextColor={isRecording ? '#EF4444' : Colors.textTertiary}
             multiline
             autoFocus
             value={text}
@@ -155,6 +357,11 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     marginBottom: 20,
   },
+  headerButtons: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
   title: {
     fontSize: 20,
     fontFamily: 'Inter_700Bold',
@@ -167,6 +374,9 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   closeButton: {
+    padding: 4,
+  },
+  micButton: {
     padding: 4,
   },
   input: {
