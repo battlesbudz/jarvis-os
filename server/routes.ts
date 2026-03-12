@@ -25,7 +25,7 @@ const openai = new OpenAI({
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
 });
 
-function buildCoachSystemPrompt(goals: any[], stats: any, history: any[], calendarEvents: any[] = [], lifeContext?: any, gmailItems?: any[]): string {
+function buildCoachSystemPrompt(goals: any[], stats: any, history: any[], calendarEvents: any[] = [], lifeContext?: any, gmailItems?: any[], gmailConnected?: boolean): string {
   const completedHistory = history.filter((h: any) => h.completed);
   const skippedHistory = history.filter((h: any) => !h.completed);
   const completionRate = history.length > 0
@@ -62,10 +62,12 @@ function buildCoachSystemPrompt(goals: any[], stats: any, history: any[], calend
     : '';
 
   const gmailSection = gmailItems && gmailItems.length > 0
-    ? `\n## Recent Email Signals (last 7 days)\n` +
-      gmailItems.slice(0, 10).map((i: any) => `- "${i.subject}": ${i.snippet}`).join('\n') +
-      `\n(Use these to detect commitments, deadlines, or projects the user may have forgotten to log.)`
-    : '';
+    ? `\n## Recent Emails (last 7 days)\n` +
+      gmailItems.slice(0, 15).map((i: any) => `- [${i.date ? new Date(i.date).toLocaleDateString('en-US', {month:'short',day:'numeric'}) : ''}] From: ${i.from || 'unknown'} | "${i.subject}" — ${i.snippet}`).join('\n') +
+      `\n(Use these to identify commitments, deadlines, or threads the user hasn't logged as tasks yet. When asked about emails, refer to these directly — do not ask for more info.)`
+    : gmailConnected
+      ? `\n## Recent Emails\nGmail is connected but no emails were found in the last 7 days. Do not pretend to have email data you don't have.`
+      : `\n## Recent Emails\nGmail is not connected — you have no access to the user's inbox. If asked about emails, tell them to connect Gmail in the Profile tab.`;
 
   const now = new Date();
   const dayOfWeek = now.toLocaleDateString('en-US', { weekday: 'long' });
@@ -189,13 +191,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/coach/chat", async (req: Request, res: Response) => {
     try {
-      const { messages, goals, stats, history, calendarEvents, lifeContext, gmailItems } = req.body;
+      const { messages, goals, stats, history, calendarEvents, lifeContext, gmailItems, gmailConnected } = req.body;
 
       if (!messages || !Array.isArray(messages)) {
         return res.status(400).json({ error: "messages array is required" });
       }
 
-      const systemPrompt = buildCoachSystemPrompt(goals || [], stats || {}, history || [], calendarEvents || [], lifeContext || null, gmailItems || []);
+      const systemPrompt = buildCoachSystemPrompt(goals || [], stats || {}, history || [], calendarEvents || [], lifeContext || null, gmailItems || [], gmailConnected ?? false);
 
       res.setHeader('Content-Type', 'text/event-stream');
       res.setHeader('Cache-Control', 'no-cache, no-transform');
