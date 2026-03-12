@@ -520,6 +520,89 @@ Return JSON: { "note": "your 1-2 sentence note here" }`;
     }
   });
 
+  app.post("/api/gmail/scan-for-tasks", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.json({ suggestions: [] });
+
+      const { goals } = req.body;
+      if (!goals || !Array.isArray(goals) || goals.length === 0) {
+        return res.json({ suggestions: [] });
+      }
+
+      const userTokens = await getUserTokens(userId, 'google');
+      let allEmails: any[] = [];
+
+      if (userTokens.length === 0) {
+        if (!(await isIntegrationOwner(userId))) return res.json({ suggestions: [] });
+        const connected = await checkGmailConnection();
+        if (!connected) return res.json({ suggestions: [] });
+        const items = await getRecentEmailCommitments(7, undefined);
+        allEmails = items;
+      } else {
+        const perAccountItems = await Promise.all(
+          userTokens.map(async (t) => {
+            const emails = await getRecentEmailCommitments(7, t.accessToken).catch(() => []);
+            return emails.map((e) => ({ ...e, accountEmail: t.accountEmail }));
+          })
+        );
+        allEmails = perAccountItems.flat();
+      }
+
+      if (allEmails.length === 0) {
+        return res.json({ suggestions: [] });
+      }
+
+      const goalsText = goals.map((g: any) => `- ${g.title} (${g.category}): ${g.current}/${g.target} ${g.unit}`).join('\n');
+
+      const emailsText = allEmails.slice(0, 30).map((e: any) => {
+        const acct = e.accountEmail ? ` [Account: ${e.accountEmail}]` : '';
+        const labels = e.labels ? ` [Labels: ${e.labels.join(', ')}]` : '';
+        return `- From: ${e.from || 'unknown'}${acct}${labels} | Subject: "${e.subject}" | Snippet: ${e.snippet}`;
+      }).join('\n');
+
+      const prompt = `You are a productivity assistant. Given the user's goals and recent emails, identify 3–5 specific tasks they should do. Prioritise emails that are Starred, Important, or from real people (not newsletters/promotions).
+
+Goals:
+${goalsText}
+
+Recent emails (last 7 days):
+${emailsText}
+
+Return JSON:
+{ "suggestions": [
+  {
+    "title": "action-verb task title (concise)",
+    "emailSubject": "email that triggered this",
+    "emailFrom": "sender",
+    "accountEmail": "which Gmail account",
+    "goalTitle": "which goal this serves (or 'General' if no specific goal)",
+    "reason": "one sentence why this task matters"
+  }
+]}
+Only return the JSON object, no extra text.`;
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-5-mini",
+        messages: [{ role: "user", content: prompt }],
+        response_format: { type: "json_object" },
+        max_completion_tokens: 1000,
+      });
+
+      const content = response.choices[0]?.message?.content || '{"suggestions":[]}';
+      try {
+        const parsed = JSON.parse(content);
+        const suggestions = Array.isArray(parsed.suggestions) ? parsed.suggestions.slice(0, 5) : [];
+        res.json({ suggestions });
+      } catch {
+        res.json({ suggestions: [] });
+      }
+    } catch (error) {
+      console.error("Error scanning emails for tasks:", error);
+      res.json({ suggestions: [] });
+    }
+  });
+
   const httpServer = createServer(app);
   return httpServer;
 }
