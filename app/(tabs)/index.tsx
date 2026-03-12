@@ -50,6 +50,7 @@ import {
   saveBrainDumpItem,
   clearBrainDumpItem,
   addTaskToToday,
+  sortTasksByEnergy,
   getCompletedCalendarIds,
   saveCompletedCalendarId,
   getUserName,
@@ -118,6 +119,7 @@ export default function TodayScreen() {
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [canUndo, setCanUndo] = useState(false);
   const [blockerTask, setBlockerTask] = useState<Task | null>(null);
+  const [energySortApplied, setEnergySortApplied] = useState(false);
 
   const orchestrateProactiveNotifications = useCallback(async (
     tasks: Task[],
@@ -274,6 +276,13 @@ export default function TodayScreen() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  useEffect(() => {
+    if (energySortApplied) {
+      const timer = setTimeout(() => setEnergySortApplied(false), 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [energySortApplied]);
 
   useFocusEffect(
     useCallback(() => {
@@ -557,10 +566,10 @@ export default function TodayScreen() {
           priority: t.priority || 'low',
           subtasks: subtaskObjs,
           fromBrainDump: true,
-        });
+        }, energyCheckin?.energy);
       }
     } else {
-      await addTaskToToday({ title: text, category: 'personal', priority: 'low', fromBrainDump: true });
+      await addTaskToToday({ title: text, category: 'personal', priority: 'low', fromBrainDump: true }, energyCheckin?.energy);
     }
     const loadedGoals = await getGoals();
     const todayPlan = await getTodayPlan(loadedGoals);
@@ -581,17 +590,17 @@ export default function TodayScreen() {
     }
     const inbox = await getBrainDumpInbox();
     setBrainDumpInbox(inbox);
-  }, [parseBrainDump]);
+  }, [parseBrainDump, energyCheckin]);
 
   const handlePromoteInboxItem = useCallback(async (item: BrainDumpItem) => {
-    await addTaskToToday({ title: item.text, category: 'personal', priority: 'low', fromBrainDump: true });
+    await addTaskToToday({ title: item.text, category: 'personal', priority: 'low', fromBrainDump: true }, energyCheckin?.energy);
     await clearBrainDumpItem(item.id);
     const [loadedGoals, inbox] = await Promise.all([getGoals(), getBrainDumpInbox()]);
     const todayPlan = await getTodayPlan(loadedGoals);
     setPlan(todayPlan);
     setBrainDumpInbox(inbox);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-  }, []);
+  }, [energyCheckin]);
 
   const handleDismissInboxItem = useCallback(async (id: string) => {
     await clearBrainDumpItem(id);
@@ -965,6 +974,9 @@ export default function TodayScreen() {
                     <Text style={styles.dragHintText}>Drag handle to reorder</Text>
                   </View>
                 </View>
+                {energySortApplied && (
+                  <Text style={styles.energySortLabel}>⚡ Ordered for your energy</Text>
+                )}
                 <SortableList
                   data={incompleteTasks}
                   keyExtractor={(item) => item.id}
@@ -1078,9 +1090,16 @@ export default function TodayScreen() {
 
       <EnergyCheckIn
         visible={energyCheckInVisible}
-        onComplete={(checkin) => {
+        onComplete={async (checkin) => {
+          const wasFresh = energyCheckin === null;
           setEnergyCheckInVisible(false);
           setEnergyCheckin(checkin);
+          if (wasFresh && plan) {
+            const reordered = sortTasksByEnergy(plan.tasks, checkin.energy);
+            await savePlan({ ...plan, tasks: reordered });
+            setPlan({ ...plan, tasks: reordered });
+            setEnergySortApplied(true);
+          }
         }}
       />
 
@@ -1505,6 +1524,12 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontFamily: 'Inter_700Bold',
     color: Colors.text,
+  },
+  energySortLabel: {
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textTertiary,
+    marginBottom: 6,
   },
   jotSmallButton: {
     flexDirection: 'row',

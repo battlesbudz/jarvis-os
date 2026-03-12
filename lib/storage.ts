@@ -491,7 +491,98 @@ export async function clearBrainDumpItem(id: string): Promise<void> {
   } catch {}
 }
 
-export async function addTaskToToday(task: Partial<Task>): Promise<void> {
+function isLikelyQuick(title: string): boolean {
+  const quickWords = /\b(quick|fast|brief|small|simple|easy|check|read|reply|send|call|text|ping|remind|look up|google|note)\b/i;
+  return quickWords.test(title);
+}
+
+function countLeadingQuickWins(tasks: Task[]): number {
+  let count = 0;
+  for (const t of tasks) {
+    if (isLikelyQuick(t.title)) {
+      count++;
+    } else {
+      break;
+    }
+  }
+  return count;
+}
+
+function findLastHighMedIndex(tasks: Task[]): number {
+  let idx = -1;
+  for (let i = 0; i < tasks.length; i++) {
+    if (tasks[i].priority === 'high' || tasks[i].priority === 'medium') {
+      idx = i;
+    }
+  }
+  return idx;
+}
+
+function insertTaskAtOptimalPosition(tasks: Task[], newTask: Task, energyLevel?: number): Task[] {
+  const incomplete = tasks.filter(t => !t.completed);
+  const completed = tasks.filter(t => t.completed);
+
+  const isQuickWin = isLikelyQuick(newTask.title);
+  const isHighPriority = newTask.priority === 'high';
+  const isLowPriority = newTask.priority === 'low';
+  const isLowEnergy = (energyLevel ?? 3) <= 2;
+
+  if (isLowEnergy) {
+    if (isQuickWin || isLowPriority) {
+      return [newTask, ...incomplete, ...completed];
+    } else {
+      return [...incomplete, newTask, ...completed];
+    }
+  }
+
+  if (isQuickWin) {
+    return [newTask, ...incomplete, ...completed];
+  }
+  if (isHighPriority) {
+    const quickWinCount = countLeadingQuickWins(incomplete);
+    return [
+      ...incomplete.slice(0, quickWinCount),
+      newTask,
+      ...incomplete.slice(quickWinCount),
+      ...completed,
+    ];
+  }
+  if (isLowPriority) {
+    return [...incomplete, newTask, ...completed];
+  }
+  const lastHighMedIdx = findLastHighMedIndex(incomplete);
+  return [
+    ...incomplete.slice(0, lastHighMedIdx + 1),
+    newTask,
+    ...incomplete.slice(lastHighMedIdx + 1),
+    ...completed,
+  ];
+}
+
+export function sortTasksByEnergy(tasks: Task[], energyLevel: number): Task[] {
+  const incomplete = tasks.filter(t => !t.completed);
+  const completed = tasks.filter(t => t.completed);
+
+  if (energyLevel <= 2) {
+    return [
+      ...incomplete.filter(t => t.priority === 'low' || isLikelyQuick(t.title)),
+      ...incomplete.filter(t => t.priority === 'medium' && !isLikelyQuick(t.title)),
+      ...incomplete.filter(t => t.priority === 'high' && !isLikelyQuick(t.title)),
+      ...completed,
+    ];
+  }
+  const quickWins = incomplete.filter(t => isLikelyQuick(t.title));
+  const rest = incomplete.filter(t => !isLikelyQuick(t.title));
+  return [
+    ...quickWins,
+    ...rest.filter(t => t.priority === 'high'),
+    ...rest.filter(t => t.priority === 'medium'),
+    ...rest.filter(t => t.priority === 'low'),
+    ...completed,
+  ];
+}
+
+export async function addTaskToToday(task: Partial<Task>, energyLevel?: number): Promise<void> {
   try {
     const goals = await getGoals();
     const plan = await getTodayPlan(goals);
@@ -503,7 +594,7 @@ export async function addTaskToToday(task: Partial<Task>): Promise<void> {
       priority: task.priority || 'low',
       ...task,
     };
-    plan.tasks.push(newTask);
+    plan.tasks = insertTaskAtOptimalPosition(plan.tasks, newTask, energyLevel);
     await savePlan(plan);
   } catch {}
 }
