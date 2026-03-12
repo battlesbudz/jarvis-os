@@ -8,7 +8,7 @@ export interface UserToken {
   refreshToken?: string | null;
   expiresAt?: Date | null;
   scopes?: string | null;
-  accountEmail?: string | null;
+  accountEmail: string;
 }
 
 export async function saveUserToken(token: UserToken): Promise<void> {
@@ -18,13 +18,12 @@ export async function saveUserToken(token: UserToken): Promise<void> {
     VALUES
       (${token.userId}, ${token.provider}, ${token.accessToken},
        ${token.refreshToken ?? null}, ${token.expiresAt ?? null},
-       ${token.scopes ?? null}, ${token.accountEmail ?? null}, NOW())
-    ON CONFLICT (user_id, provider) DO UPDATE SET
+       ${token.scopes ?? null}, ${token.accountEmail}, NOW())
+    ON CONFLICT (user_id, provider, account_email) DO UPDATE SET
       access_token = EXCLUDED.access_token,
       refresh_token = COALESCE(EXCLUDED.refresh_token, user_oauth_tokens.refresh_token),
       expires_at = EXCLUDED.expires_at,
       scopes = EXCLUDED.scopes,
-      account_email = EXCLUDED.account_email,
       updated_at = NOW()
   `);
 }
@@ -34,6 +33,7 @@ export async function getUserToken(userId: string, provider: string): Promise<Us
     SELECT user_id, provider, access_token, refresh_token, expires_at, scopes, account_email
     FROM user_oauth_tokens
     WHERE user_id = ${userId} AND provider = ${provider}
+    LIMIT 1
   `);
   const row = (rows as any).rows?.[0] ?? (Array.isArray(rows) ? rows[0] : null);
   if (!row) return null;
@@ -44,30 +44,56 @@ export async function getUserToken(userId: string, provider: string): Promise<Us
     refreshToken: row.refresh_token,
     expiresAt: row.expires_at ? new Date(row.expires_at) : null,
     scopes: row.scopes,
-    accountEmail: row.account_email,
+    accountEmail: row.account_email ?? '',
   };
 }
 
-export async function deleteUserToken(userId: string, provider: string): Promise<void> {
-  await db.execute(sql`
-    DELETE FROM user_oauth_tokens WHERE user_id = ${userId} AND provider = ${provider}
+export async function getUserTokens(userId: string, provider: string): Promise<UserToken[]> {
+  const rows = await db.execute(sql`
+    SELECT user_id, provider, access_token, refresh_token, expires_at, scopes, account_email
+    FROM user_oauth_tokens
+    WHERE user_id = ${userId} AND provider = ${provider}
   `);
+  const items = (rows as any).rows ?? (Array.isArray(rows) ? rows : []);
+  return items.map((row: any) => ({
+    userId: row.user_id,
+    provider: row.provider,
+    accessToken: row.access_token,
+    refreshToken: row.refresh_token,
+    expiresAt: row.expires_at ? new Date(row.expires_at) : null,
+    scopes: row.scopes,
+    accountEmail: row.account_email ?? '',
+  }));
 }
 
-export async function getUserOAuthStatus(userId: string): Promise<Record<string, { connected: boolean; email?: string }>> {
+export async function deleteUserToken(userId: string, provider: string, accountEmail?: string): Promise<void> {
+  if (accountEmail) {
+    await db.execute(sql`
+      DELETE FROM user_oauth_tokens WHERE user_id = ${userId} AND provider = ${provider} AND account_email = ${accountEmail}
+    `);
+  } else {
+    await db.execute(sql`
+      DELETE FROM user_oauth_tokens WHERE user_id = ${userId} AND provider = ${provider}
+    `);
+  }
+}
+
+export async function getUserOAuthStatus(userId: string): Promise<Record<string, { connected: boolean; email?: string; accounts: { email: string }[] }>> {
   const rows = await db.execute(sql`
     SELECT provider, account_email, expires_at FROM user_oauth_tokens WHERE user_id = ${userId}
   `);
-  const result: Record<string, { connected: boolean; email?: string }> = {
-    google: { connected: false },
-    microsoft: { connected: false },
+  const result: Record<string, { connected: boolean; email?: string; accounts: { email: string }[] }> = {
+    google: { connected: false, accounts: [] },
+    microsoft: { connected: false, accounts: [] },
   };
   const items = (rows as any).rows ?? (Array.isArray(rows) ? rows : []);
   for (const row of items) {
-    result[row.provider] = {
-      connected: true,
-      email: row.account_email ?? undefined,
-    };
+    if (!result[row.provider]) {
+      result[row.provider] = { connected: false, accounts: [] };
+    }
+    result[row.provider].connected = true;
+    result[row.provider].email = row.account_email || undefined;
+    result[row.provider].accounts.push({ email: row.account_email || '' });
   }
   return result;
 }
@@ -114,6 +140,20 @@ export async function getValidGoogleToken(userId: string): Promise<string | null
     return refreshed?.accessToken ?? null;
   }
   return token.accessToken;
+}
+
+export async function getValidGoogleTokens(userId: string): Promise<string[]> {
+  const tokens = await getUserTokens(userId, 'google');
+  const accessTokens: string[] = [];
+  for (const token of tokens) {
+    if (token.expiresAt && token.expiresAt.getTime() < Date.now() + 60_000) {
+      const refreshed = await refreshGoogleToken(token);
+      if (refreshed?.accessToken) accessTokens.push(refreshed.accessToken);
+    } else {
+      accessTokens.push(token.accessToken);
+    }
+  }
+  return accessTokens;
 }
 
 export async function refreshMicrosoftToken(token: UserToken): Promise<UserToken | null> {

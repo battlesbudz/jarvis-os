@@ -45,6 +45,7 @@ import LifeContextSheet from '@/components/LifeContextSheet';
 interface OAuthProviderStatus {
   connected: boolean;
   email?: string;
+  accounts?: { email: string }[];
 }
 
 interface OAuthStatus {
@@ -102,11 +103,11 @@ export default function ProfileScreen() {
       const res = await apiRequest('GET', '/api/oauth/status');
       const data = await res.json();
       setOAuthStatus({
-        google: data.google ?? { connected: false },
-        microsoft: data.microsoft ?? { connected: false },
+        google: data.google ?? { connected: false, accounts: [] },
+        microsoft: data.microsoft ?? { connected: false, accounts: [] },
       });
     } catch {
-      setOAuthStatus({ google: { connected: false }, microsoft: { connected: false } });
+      setOAuthStatus({ google: { connected: false, accounts: [] }, microsoft: { connected: false, accounts: [] } });
     } finally {
       setLoadingStatus(false);
     }
@@ -148,10 +149,13 @@ export default function ProfileScreen() {
     }
   }, [loadOAuthStatus]);
 
-  const handleDisconnect = useCallback(async (provider: 'google' | 'microsoft') => {
-    setConnectingId(provider);
+  const handleDisconnect = useCallback(async (provider: 'google' | 'microsoft', email?: string) => {
+    setConnectingId(provider + (email || ''));
     try {
-      await apiRequest('DELETE', `/api/oauth/${provider}/disconnect`);
+      const url = email
+        ? `/api/oauth/${provider}/disconnect?email=${encodeURIComponent(email)}`
+        : `/api/oauth/${provider}/disconnect`;
+      await apiRequest('DELETE', url);
       await loadOAuthStatus();
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (e) {
@@ -466,9 +470,70 @@ export default function ProfileScreen() {
           <View style={styles.platformsList}>
             {PLATFORMS.map((platform, index) => {
               const status = oauthStatus[platform.id];
-              const connected = status?.connected ?? false;
-              const email = status?.email;
+              const accounts = status?.accounts ?? [];
+              const connected = accounts.length > 0 || (status?.connected ?? false);
               const isLast = index === PLATFORMS.length - 1;
+
+              if (platform.id === 'google' && accounts.length > 0) {
+                return (
+                  <View key={platform.id} style={[!isLast && styles.platformRowBorder]}>
+                    {accounts.map((account, accIdx) => {
+                      const accLoading = connectingId === platform.id + account.email;
+                      return (
+                        <View
+                          key={account.email || accIdx}
+                          style={[styles.platformRow, accIdx < accounts.length - 1 && styles.platformRowBorder]}
+                        >
+                          <View style={[styles.platformIcon, { backgroundColor: platform.color + '18' }]}>
+                            <Ionicons name={platform.icon} size={20} color={platform.color} />
+                          </View>
+                          <View style={styles.platformInfo}>
+                            <Text style={styles.platformName}>{platform.name}</Text>
+                            {account.email ? (
+                              <Text style={styles.platformEmail}>{account.email}</Text>
+                            ) : (
+                              <Text style={styles.platformSubtitle}>{platform.subtitle}</Text>
+                            )}
+                          </View>
+                          {loadingStatus ? (
+                            <ActivityIndicator size="small" color={Colors.textTertiary} />
+                          ) : accLoading ? (
+                            <ActivityIndicator size="small" color={platform.color} />
+                          ) : (
+                            <Pressable
+                              style={styles.disconnectBtn}
+                              onPress={() => handleDisconnect(platform.id, account.email)}
+                            >
+                              <Ionicons name="checkmark-circle" size={18} color={Colors.success} />
+                              <Text style={styles.disconnectBtnText}>Disconnect</Text>
+                            </Pressable>
+                          )}
+                        </View>
+                      );
+                    })}
+                    <View style={[styles.platformRow, styles.platformRowBorder]}>
+                      <View style={[styles.platformIcon, { backgroundColor: platform.color + '18' }]}>
+                        <Ionicons name="add-circle-outline" size={20} color={platform.color} />
+                      </View>
+                      <View style={styles.platformInfo}>
+                        <Text style={[styles.platformName, { color: platform.color }]}>Add Google Account</Text>
+                        <Text style={styles.platformSubtitle}>{platform.subtitle}</Text>
+                      </View>
+                      {connectingId === platform.id ? (
+                        <ActivityIndicator size="small" color={platform.color} />
+                      ) : (
+                        <Pressable
+                          style={[styles.connectBtn, { borderColor: platform.color }]}
+                          onPress={() => handleConnect(platform.id)}
+                        >
+                          <Text style={[styles.connectBtnText, { color: platform.color }]}>Add</Text>
+                        </Pressable>
+                      )}
+                    </View>
+                  </View>
+                );
+              }
+
               const isLoading = connectingId === platform.id;
               return (
                 <View
@@ -481,8 +546,8 @@ export default function ProfileScreen() {
                   <View style={styles.platformInfo}>
                     <Text style={styles.platformName}>{platform.name}</Text>
                     <Text style={styles.platformSubtitle}>{platform.subtitle}</Text>
-                    {connected && email ? (
-                      <Text style={styles.platformEmail}>{email}</Text>
+                    {connected && status?.email ? (
+                      <Text style={styles.platformEmail}>{status.email}</Text>
                     ) : null}
                   </View>
                   {loadingStatus ? (
