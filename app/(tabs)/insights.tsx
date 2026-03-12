@@ -175,7 +175,8 @@ export default function InsightsScreen() {
   const [history, setHistory] = useState<any[]>([]);
   const [calendarEvents, setCalendarEvents] = useState<{ title: string; time: string }[]>([]);
   const [lifeContext, setLifeContext] = useState<LifeContext | null>(null);
-  const [gmailItems, setGmailItems] = useState<{ subject: string; snippet: string; date: string }[]>([]);
+  const [gmailItems, setGmailItems] = useState<{ subject: string; snippet: string; date: string; from?: string }[]>([]);
+  const [gmailConnected, setGmailConnected] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
   const flatListRef = useRef<FlatList>(null);
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
@@ -217,6 +218,7 @@ export default function InsightsScreen() {
         const url = new URL('/api/gmail/commitments', base);
         const res = await authFetch(url.toString(), { cache: 'no-store' } as RequestInit);
         const data = await res.json();
+        setGmailConnected(!!data.connected);
         if (data.connected && data.items?.length) {
           setGmailItems(data.items);
         }
@@ -269,6 +271,7 @@ export default function InsightsScreen() {
           calendarEvents,
           lifeContext,
           gmailItems,
+          gmailConnected,
         }),
       });
 
