@@ -18,7 +18,7 @@ import { authRouter, authMiddleware } from "./auth";
 import { registerDataRoutes } from "./dataRoutes";
 import { isIntegrationOwner, claimIntegrationOwnership } from "./integrationOwner";
 import { oauthRouter, oauthCallbackRouter } from "./oauthRoutes";
-import { getValidGoogleTokens, getValidMicrosoftToken } from "./userTokenStore";
+import { getValidGoogleTokens, getValidMicrosoftToken, getUserTokens } from "./userTokenStore";
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
@@ -63,8 +63,12 @@ function buildCoachSystemPrompt(goals: any[], stats: any, history: any[], calend
 
   const gmailSection = gmailItems && gmailItems.length > 0
     ? `\n## Recent Emails (last 7 days)\n` +
-      gmailItems.slice(0, 15).map((i: any) => `- [${i.date ? new Date(i.date).toLocaleDateString('en-US', {month:'short',day:'numeric'}) : ''}] From: ${i.from || 'unknown'} | "${i.subject}" — ${i.snippet}`).join('\n') +
-      `\n(Use these to identify commitments, deadlines, or threads the user hasn't logged as tasks yet. When asked about emails, refer to these directly — do not ask for more info.)`
+      gmailItems.slice(0, 30).map((i: any) => {
+        const dateStr = i.date ? new Date(i.date).toLocaleDateString('en-US', {month:'short',day:'numeric'}) : '';
+        const acct = i.accountEmail ? ` [${i.accountEmail}]` : '';
+        return `- [${dateStr}]${acct} From: ${i.from || 'unknown'} | "${i.subject}" — ${i.snippet}`;
+      }).join('\n') +
+      `\n(Use these to identify commitments, deadlines, or threads the user hasn't logged as tasks yet. Each email is labelled with which Gmail account it came from. When asked about a specific account, filter to those rows. Refer to these directly — do not ask for more info.)`
     : gmailConnected
       ? `\n## Recent Emails\nGmail is connected but no emails were found in the last 7 days. Do not pretend to have email data you don't have.`
       : `\n## Recent Emails\nGmail is not connected — you have no access to the user's inbox. If asked about emails, tell them to connect Gmail in the Profile tab.`;
@@ -484,8 +488,8 @@ Return JSON: { "note": "your 1-2 sentence note here" }`;
       const userId = req.userId;
       if (!userId) return res.json({ connected: false, items: [] });
 
-      const accessTokens = await getValidGoogleTokens(userId);
-      if (accessTokens.length === 0) {
+      const userTokens = await getUserTokens(userId, 'google');
+      if (userTokens.length === 0) {
         if (!(await isIntegrationOwner(userId))) return res.json({ connected: false, items: [] });
         const connected = await checkGmailConnection();
         if (!connected) return res.json({ connected: false, items: [] });
@@ -493,13 +497,22 @@ Return JSON: { "note": "your 1-2 sentence note here" }`;
         return res.json({ connected: true, items });
       }
 
-      const allItems = await Promise.all(
-        accessTokens.map(token =>
-          getRecentEmailCommitments(7, token).catch(() => [])
-        )
+      const perAccountItems = await Promise.all(
+        userTokens.map(async (t) => {
+          const emails = await getRecentEmailCommitments(7, t.accessToken).catch(() => []);
+          return emails.map((e) => ({ ...e, accountEmail: t.accountEmail }));
+        })
       );
-      const items = allItems.flat();
-      res.json({ connected: true, items });
+
+      // Interleave results so both accounts appear in the list
+      const interleaved: any[] = [];
+      const maxLen = Math.max(...perAccountItems.map((a) => a.length));
+      for (let i = 0; i < maxLen; i++) {
+        for (const account of perAccountItems) {
+          if (i < account.length) interleaved.push(account[i]);
+        }
+      }
+      res.json({ connected: true, items: interleaved });
     } catch (error) {
       console.error("Error fetching Gmail commitments:", error);
       res.json({ connected: false, items: [] });
