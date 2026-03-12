@@ -8,6 +8,7 @@ import {
   FlatList,
   ActivityIndicator,
   Platform,
+  Alert,
 } from 'react-native';
 import { fetch as expoFetch } from 'expo/fetch';
 import { Ionicons } from '@expo/vector-icons';
@@ -15,7 +16,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BottomTabBarHeightContext } from '@react-navigation/bottom-tabs';
 import { useFocusEffect } from 'expo-router';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
-import Animated, { FadeInDown, FadeIn } from 'react-native-reanimated';
+import Animated, { FadeInDown, FadeIn, useSharedValue, useAnimatedStyle, withRepeat, withTiming, Easing } from 'react-native-reanimated';
+import { Audio } from 'expo-av';
+import * as FileSystem from 'expo-file-system';
 import Colors from '@/constants/colors';
 import MarkdownText from '@/components/MarkdownText';
 import {
@@ -101,9 +104,12 @@ interface MessageBubbleProps {
   isLastAssistant: boolean;
   goals: Goal[];
   onFollowup: (text: string) => void;
+  onSpeak?: (text: string) => void;
+  isSpeaking?: boolean;
+  isStreaming?: boolean;
 }
 
-function MessageBubble({ message, isFirst, isLastAssistant, goals, onFollowup }: MessageBubbleProps) {
+function MessageBubble({ message, isFirst, isLastAssistant, goals, onFollowup, onSpeak, isSpeaking, isStreaming }: MessageBubbleProps) {
   const isUser = message.role === 'user';
   const [addedMap, setAddedMap] = useState<Record<string, boolean>>({});
   const [draftStatus, setDraftStatus] = useState<'idle' | 'saving' | 'saved' | 'error' | 'reconnect'>('idle');
@@ -188,6 +194,19 @@ function MessageBubble({ message, isFirst, isLastAssistant, goals, onFollowup }:
           isUser={isUser}
         />
       </View>
+
+      {!isUser && isLastAssistant && !isStreaming && message.content.length > 0 && onSpeak && (
+        <Pressable
+          style={styles.speakBtn}
+          onPress={() => onSpeak(message.content)}
+        >
+          <Ionicons
+            name={isSpeaking ? "volume-high" : "volume-medium-outline"}
+            size={16}
+            color={isSpeaking ? Colors.primary : Colors.textSecondary}
+          />
+        </Pressable>
+      )}
 
       {!isUser && parsedDraft && (
         <View style={styles.draftRow}>
@@ -287,12 +306,185 @@ export default function InsightsScreen() {
   const [scanLoading, setScanLoading] = useState(false);
   const [addedSuggestions, setAddedSuggestions] = useState<Record<number, boolean>>({});
   const [inboxCollapsed, setInboxCollapsed] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const recordingRef = useRef<Audio.Recording | null>(null);
+  const soundRef = useRef<Audio.Sound | null>(null);
+  const webRecorderRef = useRef<MediaRecorder | null>(null);
+  const webChunksRef = useRef<Blob[]>([]);
+  const sendMessageRef = useRef<(text: string) => void>(() => {});
   const hasScrolledRef = useRef(false);
   const initialScanDoneRef = useRef(false);
   const flatListRef = useRef<FlatList>(null);
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const tabBarCtx = useContext(BottomTabBarHeightContext);
   const tabBarHeight = tabBarCtx ?? (Platform.OS === 'web' ? 84 : 50 + insets.bottom);
+  const micPulse = useSharedValue(1);
+
+  useEffect(() => {
+    if (isRecording) {
+      micPulse.value = withRepeat(
+        withTiming(0.4, { duration: 600, easing: Easing.inOut(Easing.ease) }),
+        -1,
+        true
+      );
+    } else {
+      micPulse.value = withTiming(1, { duration: 200 });
+    }
+  }, [isRecording, micPulse]);
+
+  const micPulseStyle = useAnimatedStyle(() => ({
+    opacity: micPulse.value,
+  }));
+
+  useEffect(() => {
+    return () => {
+      recordingRef.current?.stopAndUnloadAsync().catch(() => {});
+      soundRef.current?.unloadAsync().catch(() => {});
+    };
+  }, []);
+
+  const transcribeAndSend = useCallback(async (base64: string) => {
+    setIsTranscribing(true);
+    try {
+      const url = new URL('/api/coach/transcribe', getApiUrl());
+      const res = await authFetch(url.toString(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ audio: base64 }),
+      });
+      const data = await res.json();
+      if (data.text && data.text.trim()) {
+        setIsTranscribing(false);
+        setInput(data.text);
+        sendMessageRef.current(data.text);
+      } else {
+        setIsTranscribing(false);
+      }
+    } catch (error) {
+      console.error('Failed to transcribe:', error);
+      setIsTranscribing(false);
+    }
+  }, []);
+
+  const startRecording = useCallback(async () => {
+    try {
+      if (Platform.OS === 'web') {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const recorder = new MediaRecorder(stream);
+        webChunksRef.current = [];
+        recorder.ondataavailable = (e) => {
+          if (e.data.size > 0) webChunksRef.current.push(e.data);
+        };
+        recorder.start();
+        webRecorderRef.current = recorder;
+        setIsRecording(true);
+      } else {
+        const { status } = await Audio.requestPermissionsAsync();
+        if (status !== 'granted') {
+          Alert.alert('Permission Required', 'Microphone access is needed to use voice input.');
+          return;
+        }
+        await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
+        const { recording } = await Audio.Recording.createAsync(
+          Audio.RecordingOptionsPresets.HIGH_QUALITY
+        );
+        recordingRef.current = recording;
+        setIsRecording(true);
+      }
+    } catch (error) {
+      console.error('Failed to start recording:', error);
+      if (Platform.OS === 'web') {
+        Alert.alert('Permission Required', 'Microphone access is needed to use voice input.');
+      }
+    }
+  }, []);
+
+  const stopRecordingAndSend = useCallback(async () => {
+    setIsRecording(false);
+
+    if (Platform.OS === 'web') {
+      const recorder = webRecorderRef.current;
+      if (!recorder) return;
+      webRecorderRef.current = null;
+
+      const base64 = await new Promise<string>((resolve, reject) => {
+        recorder.onstop = () => {
+          const blob = new Blob(webChunksRef.current, { type: recorder.mimeType });
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            const result = reader.result as string;
+            resolve(result.split(',')[1]);
+          };
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        };
+        recorder.stop();
+        recorder.stream.getTracks().forEach(t => t.stop());
+      });
+      transcribeAndSend(base64);
+    } else {
+      const recording = recordingRef.current;
+      if (!recording) return;
+      recordingRef.current = null;
+
+      try {
+        await recording.stopAndUnloadAsync();
+        await Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true });
+        const uri = recording.getURI();
+        if (!uri) throw new Error('No recording URI');
+        const base64 = await FileSystem.readAsStringAsync(uri, { encoding: 'base64' });
+        transcribeAndSend(base64);
+      } catch (error) {
+        console.error('Failed to process recording:', error);
+        setIsTranscribing(false);
+      }
+    }
+  }, [transcribeAndSend]);
+
+  const speakText = useCallback(async (text: string) => {
+    try {
+      if (soundRef.current) {
+        await soundRef.current.unloadAsync();
+        soundRef.current = null;
+      }
+      setIsSpeaking(true);
+      const url = new URL('/api/coach/speak', getApiUrl());
+      const res = await authFetch(url.toString(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: text.slice(0, 4000) }),
+      });
+      const data = await res.json();
+      if (!data.audio) {
+        setIsSpeaking(false);
+        return;
+      }
+
+      if (Platform.OS === 'web') {
+        const audioEl = new window.Audio(`data:audio/mp3;base64,${data.audio}`);
+        audioEl.onended = () => setIsSpeaking(false);
+        audioEl.onerror = () => setIsSpeaking(false);
+        await audioEl.play();
+      } else {
+        await Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true });
+        const { sound } = await Audio.Sound.createAsync(
+          { uri: `data:audio/mp3;base64,${data.audio}` },
+          { shouldPlay: true }
+        );
+        soundRef.current = sound;
+        sound.setOnPlaybackStatusUpdate((status) => {
+          if ('didJustFinish' in status && status.didJustFinish) {
+            setIsSpeaking(false);
+          }
+        });
+      }
+    } catch (error) {
+      console.error('Failed to speak:', error);
+      setIsSpeaking(false);
+    }
+  }, []);
 
   const scanForTasks = useCallback(async (currentGoals: Goal[]) => {
     if (currentGoals.length === 0) return;
@@ -532,6 +724,10 @@ export default function InsightsScreen() {
     }
   }, [isStreaming, goals, stats, history, calendarEvents]);
 
+  useEffect(() => {
+    sendMessageRef.current = sendMessage;
+  }, [sendMessage]);
+
   const handleClearChat = useCallback(async () => {
     if (!confirmClear) {
       setConfirmClear(true);
@@ -575,9 +771,12 @@ export default function InsightsScreen() {
         isLastAssistant={msg.role === 'assistant' && msg.id === lastAssistantId}
         goals={goals}
         onFollowup={sendMessage}
+        onSpeak={speakText}
+        isSpeaking={isSpeaking}
+        isStreaming={isStreaming}
       />
     );
-  }, [listData, lastAssistantId, goals, sendMessage]);
+  }, [listData, lastAssistantId, goals, sendMessage, speakText, isSpeaking, isStreaming]);
 
   const isEmpty = messages.length === 0 && !isStreaming;
 
@@ -719,15 +918,30 @@ export default function InsightsScreen() {
       </View>
 
       <View style={[styles.inputContainer, { paddingBottom: tabBarHeight + 8 }]}>
+        <Pressable
+          style={[styles.micBtn, isRecording && styles.micBtnRecording]}
+          onPress={isRecording ? stopRecordingAndSend : startRecording}
+          disabled={isStreaming || isTranscribing}
+        >
+          {isTranscribing ? (
+            <ActivityIndicator size="small" color={Colors.primary} />
+          ) : isRecording ? (
+            <Animated.View style={micPulseStyle}>
+              <Ionicons name="radio-button-on" size={20} color="#EF4444" />
+            </Animated.View>
+          ) : (
+            <Ionicons name="mic" size={20} color={Colors.textSecondary} />
+          )}
+        </Pressable>
         <TextInput
           style={styles.input}
           value={input}
           onChangeText={setInput}
-          placeholder="Message your coach..."
-          placeholderTextColor={Colors.textSecondary}
+          placeholder={isRecording ? "Listening..." : isTranscribing ? "Transcribing..." : "Message your coach..."}
+          placeholderTextColor={isRecording ? '#EF4444' : Colors.textSecondary}
           multiline
           maxLength={1000}
-          editable={!isStreaming}
+          editable={!isStreaming && !isRecording && !isTranscribing}
           returnKeyType="send"
           blurOnSubmit={false}
           onSubmitEditing={() => sendMessage(input)}
@@ -991,6 +1205,16 @@ const styles = StyleSheet.create({
     borderColor: Colors.border,
     maxHeight: 100,
   },
+  micBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  micBtnRecording: {
+    backgroundColor: '#FEE2E2',
+  },
   sendBtn: {
     width: 40,
     height: 40,
@@ -1001,6 +1225,11 @@ const styles = StyleSheet.create({
   },
   sendBtnDisabled: {
     backgroundColor: Colors.border,
+  },
+  speakBtn: {
+    marginTop: 4,
+    padding: 6,
+    alignSelf: 'flex-start',
   },
   inboxSection: {
     marginTop: 12,

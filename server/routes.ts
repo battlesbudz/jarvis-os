@@ -731,6 +731,54 @@ Return JSON: { "title": "short title (max 40 chars)", "body": "1-2 sentence body
     }
   });
 
+  app.post("/api/coach/transcribe", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+
+      const { audio } = req.body;
+      if (!audio || typeof audio !== 'string') {
+        return res.status(400).json({ error: "audio (base64) is required" });
+      }
+
+      const { speechToText, ensureCompatibleFormat } = await import('./replit_integrations/audio/client');
+      const rawBuffer = Buffer.from(audio, 'base64');
+      const { buffer, format } = await ensureCompatibleFormat(rawBuffer);
+      const text = await speechToText(buffer, format);
+      res.json({ text });
+    } catch (error) {
+      console.error("Error transcribing audio:", error);
+      res.status(500).json({ error: "Failed to transcribe audio" });
+    }
+  });
+
+  app.post("/api/coach/speak", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+
+      const { text, voice } = req.body;
+      if (!text || typeof text !== 'string') {
+        return res.status(400).json({ error: "text is required" });
+      }
+
+      let trimmedText = text.slice(0, 4000);
+      if (text.length > 4000) {
+        const lastSentence = trimmedText.lastIndexOf('.');
+        if (lastSentence > 0) {
+          trimmedText = trimmedText.slice(0, lastSentence + 1);
+        }
+      }
+
+      const { textToSpeech } = await import('./replit_integrations/audio/client');
+      const audioBuffer = await textToSpeech(trimmedText, voice || 'alloy', 'mp3');
+      res.json({ audio: audioBuffer.toString('base64') });
+    } catch (error) {
+      console.error("Error generating speech:", error);
+      res.status(500).json({ error: "Failed to generate speech" });
+    }
+  });
+
   const httpServer = createServer(app);
   return httpServer;
 }
