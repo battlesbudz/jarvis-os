@@ -308,9 +308,14 @@ export default function InsightsScreen() {
   const [inboxCollapsed, setInboxCollapsed] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [isTTSLoading, setIsTTSLoading] = useState(false);
+  const speakingTextRef = useRef<string | null>(null);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const recordingRef = useRef<Audio.Recording | null>(null);
   const soundRef = useRef<Audio.Sound | null>(null);
+  const webAudioRef = useRef<HTMLAudioElement | null>(null);
+  const speakAbortRef = useRef<AbortController | null>(null);
+  const isSpeakingRef = useRef(false);
   const webRecorderRef = useRef<MediaRecorder | null>(null);
   const webChunksRef = useRef<Blob[]>([]);
   const sendMessageRef = useRef<(text: string) => void>(() => {});
@@ -342,6 +347,11 @@ export default function InsightsScreen() {
     return () => {
       recordingRef.current?.stopAndUnloadAsync().catch(() => {});
       soundRef.current?.unloadAsync().catch(() => {});
+      speakAbortRef.current?.abort();
+      if (Platform.OS === 'web') {
+        webAudioRef.current?.pause();
+        webAudioRef.current = null;
+      }
     };
   }, []);
 
@@ -443,29 +453,66 @@ export default function InsightsScreen() {
     }
   }, [transcribeAndSend]);
 
+  const stopSpeaking = useCallback(() => {
+    speakAbortRef.current?.abort();
+    speakAbortRef.current = null;
+    isSpeakingRef.current = false;
+    speakingTextRef.current = null;
+    if (Platform.OS === 'web') {
+      webAudioRef.current?.pause();
+      webAudioRef.current = null;
+    } else {
+      soundRef.current?.stopAsync().catch(() => {});
+      soundRef.current?.unloadAsync().catch(() => {});
+      soundRef.current = null;
+    }
+    setIsSpeaking(false);
+    setIsTTSLoading(false);
+  }, []);
+
   const speakText = useCallback(async (text: string) => {
+    if (isSpeaking && speakingTextRef.current === text) {
+      stopSpeaking();
+      return;
+    }
+    stopSpeaking();
+    isSpeakingRef.current = true;
+    speakingTextRef.current = text;
+    setIsSpeaking(true);
+    setIsTTSLoading(true);
     try {
-      if (soundRef.current) {
-        await soundRef.current.unloadAsync();
-        soundRef.current = null;
-      }
-      setIsSpeaking(true);
+      const abortController = new AbortController();
+      speakAbortRef.current = abortController;
       const url = new URL('/api/coach/speak', getApiUrl());
       const res = await authFetch(url.toString(), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: text.slice(0, 4000) }),
+        signal: abortController.signal,
       });
+      if (!isSpeakingRef.current) return;
       const data = await res.json();
-      if (!data.audio) {
+      setIsTTSLoading(false);
+      if (!data.audio || !isSpeakingRef.current) {
+        isSpeakingRef.current = false;
+        speakingTextRef.current = null;
         setIsSpeaking(false);
         return;
       }
 
       if (Platform.OS === 'web') {
         const audioEl = new window.Audio(`data:audio/mp3;base64,${data.audio}`);
-        audioEl.onended = () => setIsSpeaking(false);
-        audioEl.onerror = () => setIsSpeaking(false);
+        webAudioRef.current = audioEl;
+        audioEl.onended = () => {
+          isSpeakingRef.current = false;
+          speakingTextRef.current = null;
+          setIsSpeaking(false);
+        };
+        audioEl.onerror = () => {
+          isSpeakingRef.current = false;
+          speakingTextRef.current = null;
+          setIsSpeaking(false);
+        };
         await audioEl.play();
       } else {
         await Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true });
@@ -478,15 +525,21 @@ export default function InsightsScreen() {
         soundRef.current = sound;
         sound.setOnPlaybackStatusUpdate((status) => {
           if ('didJustFinish' in status && status.didJustFinish) {
+            isSpeakingRef.current = false;
+            speakingTextRef.current = null;
             setIsSpeaking(false);
           }
         });
       }
-    } catch (error) {
+    } catch (error: unknown) {
+      if (error instanceof Error && error.name === 'AbortError') return;
       console.error('Failed to speak:', error);
+      isSpeakingRef.current = false;
+      speakingTextRef.current = null;
       setIsSpeaking(false);
+      setIsTTSLoading(false);
     }
-  }, []);
+  }, [isSpeaking, stopSpeaking]);
 
   const scanForTasks = useCallback(async (currentGoals: Goal[]) => {
     if (currentGoals.length === 0) return;
@@ -922,11 +975,18 @@ export default function InsightsScreen() {
       <View style={[styles.inputContainer, { paddingBottom: tabBarHeight + 8 }]}>
         <Pressable
           style={[styles.micBtn, isRecording && styles.micBtnRecording]}
-          onPress={isRecording ? stopRecordingAndSend : startRecording}
-          disabled={isStreaming || isTranscribing}
+          onPress={isSpeaking ? stopSpeaking : isRecording ? stopRecordingAndSend : startRecording}
+          disabled={isTranscribing}
         >
           {isTranscribing ? (
             <ActivityIndicator size="small" color={Colors.primary} />
+          ) : isTTSLoading ? (
+            <View style={styles.micLoadingWrap}>
+              <Ionicons name="stop" size={16} color={Colors.primary} />
+              <ActivityIndicator size="small" color={Colors.primary} style={styles.micLoadingSpinner} />
+            </View>
+          ) : isSpeaking ? (
+            <Ionicons name="stop" size={20} color={Colors.primary} />
           ) : isRecording ? (
             <Animated.View style={micPulseStyle}>
               <Ionicons name="radio-button-on" size={20} color="#EF4444" />
@@ -1213,6 +1273,14 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  micLoadingWrap: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+  },
+  micLoadingSpinner: {
+    position: 'absolute',
   },
   micBtnRecording: {
     backgroundColor: '#FEE2E2',
