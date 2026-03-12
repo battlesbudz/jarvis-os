@@ -63,12 +63,13 @@ function buildCoachSystemPrompt(goals: any[], stats: any, history: any[], calend
 
   const gmailSection = gmailItems && gmailItems.length > 0
     ? `\n## Recent Emails (last 7 days)\n` +
-      gmailItems.slice(0, 30).map((i: any) => {
+      gmailItems.slice(0, 40).map((i: any) => {
         const dateStr = i.date ? new Date(i.date).toLocaleDateString('en-US', {month:'short',day:'numeric'}) : '';
         const acct = i.accountEmail ? ` [${i.accountEmail}]` : '';
-        return `- [${dateStr}]${acct} From: ${i.from || 'unknown'} | "${i.subject}" — ${i.snippet}`;
+        const labelStr = i.labels?.length ? ` [${i.labels.join(', ')}]` : '';
+        return `- [${dateStr}]${acct}${labelStr} From: ${i.from || 'unknown'} | "${i.subject}" — ${i.snippet}`;
       }).join('\n') +
-      `\n(Use these to identify commitments, deadlines, or threads the user hasn't logged as tasks yet. Each email is labelled with which Gmail account it came from. When asked about a specific account, filter to those rows. Refer to these directly — do not ask for more info.)`
+      `\n(Use these to identify commitments, deadlines, or threads the user hasn't logged as tasks yet. Each email is labelled with which Gmail account it came from. When asked about a specific account, filter to those rows. Labels like ⭐ Starred and Important indicate priority. Promotions/Social are lower signal. Refer to these directly — do not ask for more info.)`
     : gmailConnected
       ? `\n## Recent Emails\nGmail is connected but no emails were found in the last 7 days. Do not pretend to have email data you don't have.`
       : `\n## Recent Emails\nGmail is not connected — you have no access to the user's inbox. If asked about emails, tell them to connect Gmail in the Profile tab.`;

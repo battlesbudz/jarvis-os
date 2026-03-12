@@ -5,7 +5,21 @@ export interface EmailCommitment {
   snippet: string;
   date: string;
   from?: string;
+  labels: string[];
 }
+
+const LABEL_NAMES: Record<string, string> = {
+  STARRED: '⭐ Starred',
+  INBOX: 'Inbox',
+  IMPORTANT: 'Important',
+  CATEGORY_PERSONAL: 'Personal',
+  CATEGORY_UPDATES: 'Updates',
+  CATEGORY_PROMOTIONS: 'Promotions',
+  CATEGORY_SOCIAL: 'Social',
+  CATEGORY_FORUMS: 'Forums',
+  SENT: 'Sent',
+  DRAFT: 'Draft',
+};
 
 export async function checkGmailConnection(userAccessToken?: string | null): Promise<boolean> {
   try {
@@ -30,13 +44,13 @@ export async function getRecentEmailCommitments(
     const listRes = await gmail.users.messages.list({
       userId: 'me',
       q: `after:${afterDateStr}`,
-      maxResults: 25,
+      maxResults: 50,
     });
 
     const messages = listRes.data.messages || [];
     const results: EmailCommitment[] = [];
 
-    for (const msg of messages.slice(0, 25)) {
+    for (const msg of messages.slice(0, 40)) {
       if (!msg.id) continue;
       try {
         const detail = await gmail.users.messages.get({
@@ -50,7 +64,11 @@ export async function getRecentEmailCommitments(
         const date = headers.find((h: any) => h.name === 'Date')?.value || '';
         const from = headers.find((h: any) => h.name === 'From')?.value || '';
         const snippet = (detail.data.snippet || '').slice(0, 150);
-        results.push({ subject, snippet, date, from });
+
+        const labelIds: string[] = (detail.data.labelIds as string[]) || [];
+        const labels = labelIds.map((id) => LABEL_NAMES[id] || id);
+
+        results.push({ subject, snippet, date, from, labels });
       } catch {
         continue;
       }
