@@ -13,6 +13,7 @@ import {
 import {
   checkGmailConnection,
   getRecentEmailCommitments,
+  createGmailDraft,
 } from "./integrations/gmail";
 import { authRouter, authMiddleware } from "./auth";
 import { registerDataRoutes } from "./dataRoutes";
@@ -115,7 +116,17 @@ ${calendarText}${gmailSection}
 - For financial/career topics: think like a business advisor. Suggest specific resources (tools, books, frameworks) by name.
 - You know what they've been skipping — call it out when relevant.
 - Never say "I don't have access to your data" — everything is above.
-- Respond in the same language the user writes in.`;
+- Respond in the same language the user writes in.
+
+## Email Drafting
+When asked to write or draft an email, format your response like this:
+---EMAIL DRAFT---
+To: [recipient]
+Subject: [subject line]
+Body:
+[email body]
+---END DRAFT---
+Then add a brief note like "I've formatted this as a draft — tap 'Save to Drafts' to send it to your Gmail."`;
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
@@ -600,6 +611,54 @@ Only return the JSON object, no extra text.`;
     } catch (error) {
       console.error("Error scanning emails for tasks:", error);
       res.json({ suggestions: [] });
+    }
+  });
+
+  app.post("/api/gmail/create-draft", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: 'Not authenticated' });
+
+      const { to, subject, body, accountEmail } = req.body;
+      if (!to || !subject || !body) {
+        return res.status(400).json({ error: 'to, subject, and body are required' });
+      }
+
+      const userTokens = await getUserTokens(userId, 'google');
+      if (userTokens.length === 0) {
+        return res.status(400).json({ error: 'no_google_account', message: 'Connect your Google account in Profile to enable drafting' });
+      }
+
+      let token: typeof userTokens[0] | undefined;
+      if (accountEmail) {
+        token = userTokens.find(t => t.accountEmail === accountEmail);
+      }
+      if (!token) {
+        token = userTokens.find(t => t.scopes?.includes('gmail.compose'));
+      }
+      if (!token) {
+        token = userTokens[0];
+      }
+
+      if (!token.scopes?.includes('gmail.compose')) {
+        return res.json({ error: 'reconnect_required', message: 'Reconnect your Google account to enable drafting' });
+      }
+
+      let accessToken = token.accessToken;
+      if (token.expiresAt && token.expiresAt.getTime() < Date.now() + 60_000) {
+        const { refreshGoogleToken } = await import('./userTokenStore');
+        const refreshed = await refreshGoogleToken(token);
+        if (!refreshed) {
+          return res.json({ error: 'reconnect_required', message: 'Your Google token has expired. Please reconnect in Profile.' });
+        }
+        accessToken = refreshed.accessToken;
+      }
+
+      const result = await createGmailDraft(accessToken, to, subject, body);
+      res.json(result);
+    } catch (error) {
+      console.error("Error creating Gmail draft:", error);
+      res.status(500).json({ error: 'Failed to create draft' });
     }
   });
 

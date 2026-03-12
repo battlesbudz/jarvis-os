@@ -38,6 +38,7 @@ import {
 } from '@/lib/storage';
 import { getApiUrl } from '@/lib/query-client';
 import { authFetch, getAuthToken } from '@/lib/auth-context';
+import { Linking } from 'react-native';
 
 interface EmailSuggestion {
   title: string;
@@ -59,6 +60,27 @@ const CONTEXT_WINDOW = 12;
 
 function generateId(): string {
   return Date.now().toString() + Math.random().toString(36).substr(2, 9);
+}
+
+interface ParsedDraft {
+  to: string;
+  subject: string;
+  body: string;
+}
+
+function parseEmailDraft(content: string): ParsedDraft | null {
+  const draftMatch = content.match(/---EMAIL DRAFT---\s*\n([\s\S]*?)---END DRAFT---/);
+  if (!draftMatch) return null;
+  const block = draftMatch[1];
+  const toMatch = block.match(/^To:\s*(.+)$/m);
+  const subjectMatch = block.match(/^Subject:\s*(.+)$/m);
+  const bodyMatch = block.match(/^Body:\s*\n([\s\S]*?)$/m);
+  if (!toMatch || !subjectMatch) return null;
+  return {
+    to: toMatch[1].trim(),
+    subject: subjectMatch[1].trim(),
+    body: bodyMatch ? bodyMatch[1].trim() : '',
+  };
 }
 
 function TypingDots() {
@@ -84,6 +106,38 @@ interface MessageBubbleProps {
 function MessageBubble({ message, isFirst, isLastAssistant, goals, onFollowup }: MessageBubbleProps) {
   const isUser = message.role === 'user';
   const [addedMap, setAddedMap] = useState<Record<string, boolean>>({});
+  const [draftStatus, setDraftStatus] = useState<'idle' | 'saving' | 'saved' | 'error' | 'reconnect'>('idle');
+  const [gmailUrl, setGmailUrl] = useState<string | null>(null);
+
+  const parsedDraft = !isUser ? parseEmailDraft(message.content) : null;
+
+  const handleSaveDraft = useCallback(async () => {
+    if (!parsedDraft || draftStatus === 'saving' || draftStatus === 'saved') return;
+    setDraftStatus('saving');
+    try {
+      const url = new URL('/api/gmail/create-draft', getApiUrl());
+      const res = await authFetch(url.toString(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          to: parsedDraft.to,
+          subject: parsedDraft.subject,
+          body: parsedDraft.body,
+        }),
+      });
+      const data = await res.json();
+      if (data.error === 'reconnect_required') {
+        setDraftStatus('reconnect');
+      } else if (data.draftId) {
+        setDraftStatus('saved');
+        setGmailUrl(data.gmailUrl);
+      } else {
+        setDraftStatus('error');
+      }
+    } catch {
+      setDraftStatus('error');
+    }
+  }, [parsedDraft, draftStatus]);
 
   const handleAddAction = useCallback(async (action: CoachAction, key: string) => {
     if (addedMap[key]) return;
@@ -134,6 +188,48 @@ function MessageBubble({ message, isFirst, isLastAssistant, goals, onFollowup }:
           isUser={isUser}
         />
       </View>
+
+      {!isUser && parsedDraft && (
+        <View style={styles.draftRow}>
+          {draftStatus === 'idle' && (
+            <Pressable style={styles.draftBtn} onPress={handleSaveDraft}>
+              <Ionicons name="mail-outline" size={14} color="#fff" />
+              <Text style={styles.draftBtnText}>Save to Drafts</Text>
+            </Pressable>
+          )}
+          {draftStatus === 'saving' && (
+            <View style={styles.draftBtn}>
+              <ActivityIndicator size="small" color="#fff" />
+              <Text style={styles.draftBtnText}>Saving...</Text>
+            </View>
+          )}
+          {draftStatus === 'saved' && (
+            <View style={styles.draftSavedRow}>
+              <View style={styles.draftSavedPill}>
+                <Ionicons name="checkmark-circle" size={14} color={Colors.success} />
+                <Text style={styles.draftSavedText}>Draft saved</Text>
+              </View>
+              {gmailUrl && (
+                <Pressable onPress={() => Linking.openURL(gmailUrl)}>
+                  <Text style={styles.draftOpenLink}>Open in Gmail</Text>
+                </Pressable>
+              )}
+            </View>
+          )}
+          {draftStatus === 'error' && (
+            <Pressable style={[styles.draftBtn, styles.draftBtnError]} onPress={handleSaveDraft}>
+              <Ionicons name="refresh-outline" size={14} color="#fff" />
+              <Text style={styles.draftBtnText}>Retry</Text>
+            </Pressable>
+          )}
+          {draftStatus === 'reconnect' && (
+            <View style={styles.draftReconnectPill}>
+              <Ionicons name="warning-outline" size={14} color="#D97706" />
+              <Text style={styles.draftReconnectText}>Reconnect Google in Profile to enable drafting</Text>
+            </View>
+          )}
+        </View>
+      )}
 
       {!isUser && message.actions && message.actions.length > 0 && (
         <View style={styles.actionRow}>
@@ -1009,5 +1105,71 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontFamily: 'Inter_500Medium',
     color: Colors.success,
+  },
+  draftRow: {
+    marginTop: 8,
+    paddingLeft: 2,
+  },
+  draftBtn: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: 6,
+    backgroundColor: Colors.primary,
+    borderRadius: 20,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    alignSelf: 'flex-start' as const,
+  },
+  draftBtnText: {
+    fontSize: 13,
+    fontFamily: 'Inter_600SemiBold',
+    color: '#fff',
+  },
+  draftBtnError: {
+    backgroundColor: '#EF4444',
+  },
+  draftSavedRow: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: 10,
+  },
+  draftSavedPill: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: 5,
+    backgroundColor: '#ECFDF5',
+    borderRadius: 20,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  draftSavedText: {
+    fontSize: 13,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.success,
+  },
+  draftOpenLink: {
+    fontSize: 13,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.primary,
+    textDecorationLine: 'underline' as const,
+  },
+  draftReconnectPill: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: 6,
+    backgroundColor: '#FEF3C7',
+    borderRadius: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+  },
+  draftReconnectText: {
+    fontSize: 12,
+    fontFamily: 'Inter_500Medium',
+    color: '#92400E',
+    flex: 1,
   },
 });
