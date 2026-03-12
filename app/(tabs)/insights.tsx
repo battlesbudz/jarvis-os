@@ -321,6 +321,14 @@ export default function InsightsScreen() {
   const sendMessageRef = useRef<(text: string) => void>(() => {});
   const hasScrolledRef = useRef(false);
   const initialScanDoneRef = useRef(false);
+  const [isContextLoading, setIsContextLoading] = useState(true);
+  const gmailItemsRef = useRef<typeof gmailItems>([]);
+  const gmailConnectedRef = useRef(false);
+  const calendarEventsRef = useRef<typeof calendarEvents>([]);
+  const goalsRef = useRef<typeof goals>([]);
+  const statsRef = useRef<typeof stats>({ streak: 0, totalCompleted: 0, bestStreak: 0 });
+  const historyRef = useRef<typeof history>([]);
+  const lifeContextRef = useRef<typeof lifeContext>(null);
   const flatListRef = useRef<FlatList>(null);
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const tabBarCtx = useContext(BottomTabBarHeightContext);
@@ -342,6 +350,14 @@ export default function InsightsScreen() {
   const micPulseStyle = useAnimatedStyle(() => ({
     opacity: micPulse.value,
   }));
+
+  useEffect(() => { gmailItemsRef.current = gmailItems; }, [gmailItems]);
+  useEffect(() => { gmailConnectedRef.current = gmailConnected; }, [gmailConnected]);
+  useEffect(() => { calendarEventsRef.current = calendarEvents; }, [calendarEvents]);
+  useEffect(() => { goalsRef.current = goals; }, [goals]);
+  useEffect(() => { statsRef.current = stats; }, [stats]);
+  useEffect(() => { historyRef.current = history; }, [history]);
+  useEffect(() => { lifeContextRef.current = lifeContext; }, [lifeContext]);
 
   useEffect(() => {
     return () => {
@@ -592,55 +608,60 @@ export default function InsightsScreen() {
   }, [addedSuggestions]);
 
   const loadAll = useCallback(async () => {
-    const [loadedGoals, loadedStats, loadedHistory, savedMessages, lc] = await Promise.all([
-      getGoals(),
-      getStats(),
-      getCompletionHistory(),
-      getChatHistory(),
-      getLifeContext(),
-    ]);
-    setGoals(loadedGoals);
-    setStats(loadedStats);
-    setHistory(loadedHistory);
-    setMessages(savedMessages);
-    setLifeContext(lc);
-
-    let isGmailConnected = false;
-
+    setIsContextLoading(true);
     try {
-      const today = getTodayKey();
-      const calEvts: { title: string; time: string }[] = [];
-      const base = getApiUrl();
+      const [loadedGoals, loadedStats, loadedHistory, savedMessages, lc] = await Promise.all([
+        getGoals(),
+        getStats(),
+        getCompletionHistory(),
+        getChatHistory(),
+        getLifeContext(),
+      ]);
+      setGoals(loadedGoals);
+      setStats(loadedStats);
+      setHistory(loadedHistory);
+      setMessages(savedMessages);
+      setLifeContext(lc);
 
-      const fetchSource = async (source: 'google' | 'outlook') => {
-        const url = new URL(`/api/calendar/${source}/events`, base);
-        url.searchParams.set('date', today);
-        const res = await authFetch(url.toString(), { cache: 'no-store' } as RequestInit);
-        const data = await res.json();
-        if (data.connected && data.events?.length) {
-          data.events.forEach((e: any) => {
-            calEvts.push({ title: e.title || e.summary || '', time: e.time || e.start || '' });
-          });
-        }
-      };
+      let isGmailConnected = false;
 
-      const fetchGmail = async () => {
-        const url = new URL('/api/gmail/commitments', base);
-        const res = await authFetch(url.toString(), { cache: 'no-store' } as RequestInit);
-        const data = await res.json();
-        isGmailConnected = !!data.connected;
-        setGmailConnected(isGmailConnected);
-        if (data.connected && data.items?.length) {
-          setGmailItems(data.items);
-        }
-      };
+      try {
+        const today = getTodayKey();
+        const calEvts: { title: string; time: string }[] = [];
+        const base = getApiUrl();
 
-      await Promise.allSettled([fetchSource('google'), fetchSource('outlook'), fetchGmail()]);
-      setCalendarEvents(calEvts);
-    } catch {}
+        const fetchSource = async (source: 'google' | 'outlook') => {
+          const url = new URL(`/api/calendar/${source}/events`, base);
+          url.searchParams.set('date', today);
+          const res = await authFetch(url.toString(), { cache: 'no-store' } as RequestInit);
+          const data = await res.json();
+          if (data.connected && data.events?.length) {
+            data.events.forEach((e: any) => {
+              calEvts.push({ title: e.title || e.summary || '', time: e.time || e.start || '' });
+            });
+          }
+        };
 
-    if (isGmailConnected && loadedGoals.length > 0) {
-      scanForTasks(loadedGoals);
+        const fetchGmail = async () => {
+          const url = new URL('/api/gmail/commitments', base);
+          const res = await authFetch(url.toString(), { cache: 'no-store' } as RequestInit);
+          const data = await res.json();
+          isGmailConnected = !!data.connected;
+          setGmailConnected(isGmailConnected);
+          if (data.connected && data.items?.length) {
+            setGmailItems(data.items);
+          }
+        };
+
+        await Promise.allSettled([fetchSource('google'), fetchSource('outlook'), fetchGmail()]);
+        setCalendarEvents(calEvts);
+      } catch {}
+
+      if (isGmailConnected && loadedGoals.length > 0) {
+        scanForTasks(loadedGoals);
+      }
+    } finally {
+      setIsContextLoading(false);
     }
   }, [scanForTasks]);
 
@@ -680,13 +701,13 @@ export default function InsightsScreen() {
         headers: streamHeaders,
         body: JSON.stringify({
           messages: apiMessages,
-          goals,
-          stats,
-          history,
-          calendarEvents,
-          lifeContext,
-          gmailItems,
-          gmailConnected,
+          goals: goalsRef.current,
+          stats: statsRef.current,
+          history: historyRef.current,
+          calendarEvents: calendarEventsRef.current,
+          lifeContext: lifeContextRef.current,
+          gmailItems: gmailItemsRef.current,
+          gmailConnected: gmailConnectedRef.current,
         }),
       });
 
@@ -748,7 +769,7 @@ export default function InsightsScreen() {
         const suggestRes = await authFetch(suggestUrl.toString(), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ lastAssistantMessage: finalContent, goals }),
+          body: JSON.stringify({ lastAssistantMessage: finalContent, goals: goalsRef.current }),
         });
         const suggestData = await suggestRes.json();
         const actions: CoachAction[] = suggestData.actions || [];
@@ -777,7 +798,7 @@ export default function InsightsScreen() {
         return updated;
       });
     }
-  }, [isStreaming, goals, stats, history, calendarEvents]);
+  }, [isStreaming]);
 
   useEffect(() => {
     sendMessageRef.current = sendMessage;
@@ -940,8 +961,9 @@ export default function InsightsScreen() {
               {SUGGESTED_PROMPTS.map((prompt, i) => (
                 <Pressable
                   key={i}
-                  style={styles.suggestedPill}
+                  style={[styles.suggestedPill, isContextLoading && { opacity: 0.4 }]}
                   onPress={() => sendMessage(prompt)}
+                  disabled={isContextLoading}
                 >
                   <Text style={styles.suggestedText}>{prompt}</Text>
                 </Pressable>
@@ -974,9 +996,9 @@ export default function InsightsScreen() {
 
       <View style={[styles.inputContainer, { paddingBottom: tabBarHeight + 8 }]}>
         <Pressable
-          style={[styles.micBtn, isRecording && styles.micBtnRecording]}
+          style={[styles.micBtn, isRecording && styles.micBtnRecording, isContextLoading && { opacity: 0.4 }]}
           onPress={isSpeaking ? stopSpeaking : isRecording ? stopRecordingAndSend : startRecording}
-          disabled={isTranscribing}
+          disabled={isTranscribing || isContextLoading}
         >
           {isTranscribing ? (
             <ActivityIndicator size="small" color={Colors.primary} />
@@ -996,22 +1018,22 @@ export default function InsightsScreen() {
           )}
         </Pressable>
         <TextInput
-          style={styles.input}
+          style={[styles.input, isContextLoading && { opacity: 0.5 }]}
           value={input}
           onChangeText={setInput}
-          placeholder={isRecording ? "Listening..." : isTranscribing ? "Transcribing..." : "Message your coach..."}
+          placeholder={isContextLoading ? "Loading your context\u2026" : isRecording ? "Listening..." : isTranscribing ? "Transcribing..." : "Message your coach..."}
           placeholderTextColor={isRecording ? '#EF4444' : Colors.textSecondary}
           multiline
           maxLength={1000}
-          editable={!isStreaming && !isRecording && !isTranscribing}
+          editable={!isStreaming && !isRecording && !isTranscribing && !isContextLoading}
           returnKeyType="send"
           blurOnSubmit={false}
           onSubmitEditing={() => sendMessage(input)}
         />
         <Pressable
-          style={[styles.sendBtn, (!input.trim() || isStreaming) && styles.sendBtnDisabled]}
+          style={[styles.sendBtn, (!input.trim() || isStreaming || isContextLoading) && styles.sendBtnDisabled]}
           onPress={() => sendMessage(input)}
-          disabled={!input.trim() || isStreaming}
+          disabled={!input.trim() || isStreaming || isContextLoading}
         >
           {isStreaming ? (
             <ActivityIndicator size="small" color="#fff" />
