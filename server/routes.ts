@@ -662,72 +662,105 @@ Only return the JSON object, no extra text.`;
     }
   });
 
-  const morningBriefCache = new Map<string, { title: string; body: string }>();
-
   app.post("/api/notifications/morning-brief", async (req: Request, res: Response) => {
     try {
-      const userId = req.userId || 'anonymous';
-      const today = new Date().toISOString().split('T')[0];
-      const cacheKey = `${userId}-${today}`;
+      const { tasks, calendarEvents, goals, stats, energyLevel } = req.body;
 
-      const cached = morningBriefCache.get(cacheKey);
-      if (cached) {
-        return res.json(cached);
+      if (typeof energyLevel !== 'number' || energyLevel < 1 || energyLevel > 5) {
+        return res.status(400).json({ error: "energyLevel must be a number between 1 and 5" });
       }
 
-      const { tasks, calendarEvents, goals, stats } = req.body;
+      const taskList = Array.isArray(tasks) ? tasks : [];
+      const eventList = Array.isArray(calendarEvents) ? calendarEvents : [];
+      const goalList = Array.isArray(goals) ? goals : [];
 
-      const tasksText = Array.isArray(tasks)
-        ? tasks.slice(0, 8).map((t: any) => `- ${t.title}${t.time ? ' at ' + t.time : ''}${t.completed ? ' (done)' : ''}`).join('\n')
-        : 'No tasks';
+      const tasksText = taskList.length > 0
+        ? taskList.map((t: any) => `- [${t.priority || 'medium'}] ${t.title}${t.description ? ': ' + t.description : ''} (id: ${t.id})`).join('\n')
+        : 'No tasks planned yet';
 
-      const eventsText = Array.isArray(calendarEvents)
-        ? calendarEvents.slice(0, 6).map((e: any) => `- ${e.title}${e.time ? ' at ' + e.time : ''}`).join('\n')
-        : 'No events';
+      const eventsText = eventList.length > 0
+        ? eventList.slice(0, 8).map((e: any) => `- ${e.time ? e.time + ': ' : ''}${e.title}`).join('\n')
+        : 'No events today';
 
-      const staleGoals = Array.isArray(goals)
-        ? goals.filter((g: any) => {
-            if (!g.updatedAt) return true;
-            const daysSince = (Date.now() - new Date(g.updatedAt).getTime()) / 86400000;
-            return daysSince >= 3;
-          }).map((g: any) => `${g.title} (${g.category}): ${g.current}/${g.target}`)
-        : [];
+      const goalsText = goalList.length > 0
+        ? goalList.map((g: any) => `- ${g.title} (${g.category}): ${g.current}/${g.target} ${g.unit}`).join('\n')
+        : 'No goals set';
 
-      const staleGoalsText = staleGoals.length > 0 ? staleGoals.join(', ') : 'None';
-      const streak = stats?.streak || 0;
+      const energyDescriptions: Record<number, string> = {
+        1: 'Dead — barely functional',
+        2: 'Low — limited capacity',
+        3: 'Okay — moderate capacity',
+        4: 'Good — solid capacity',
+        5: 'On Fire — peak capacity',
+      };
 
-      const prompt = `Generate a punchy morning notification for a productivity app. Max 2 sentences. Mention 1-2 specific things from their day. Be specific and motivating — not generic.
+      const orderingGuidance = energyLevel >= 4
+        ? 'High energy: put the hardest/most important task first. Front-load cognitively demanding work.'
+        : energyLevel === 3
+        ? 'Medium energy: start with a quick win for momentum, then the most important task, then a medium one.'
+        : 'Low energy: put the easiest tasks first. Defer anything cognitively heavy. Protect their time.';
 
-Context:
-- Today's tasks: ${tasksText}
-- Calendar: ${eventsText}
-- Goals behind: ${staleGoalsText}
-- Streak: ${streak} days
+      const prompt = `You are a productivity coach for someone with ADHD. Given their energy level and tasks, generate a morning briefing card and optimal task order using Atomic Habits principles (momentum-building).
 
-Return JSON: { "title": "short title (max 40 chars)", "body": "1-2 sentence body (max 100 chars)" }`;
+Energy level: ${energyLevel}/5 (${energyDescriptions[energyLevel]})
+
+Today's tasks:
+${tasksText}
+
+Today's calendar:
+${eventsText}
+
+Goals:
+${goalsText}
+
+Stats: streak ${stats?.streak || 0} days, ${stats?.totalCompleted || 0} tasks completed total
+
+Ordering strategy: ${orderingGuidance}
+
+Return JSON with:
+{
+  "headline": "1 punchy sentence based on energy (max 8 words). Examples: 'You're on fire today' or 'Easy does it today'",
+  "suggestion": "1 sentence of specific advice referencing their actual tasks",
+  "taskOrder": ["task id 1", "task id 2", "task id 3"]
+}
+
+taskOrder: Return up to 3 task IDs from the task list above, reordered optimally for this energy level. Only include IDs that appear in the task list. Prioritise momentum-building.
+
+Return ONLY the JSON object.`;
 
       const response = await openai.chat.completions.create({
         model: "gpt-5-mini",
         messages: [{ role: "user", content: prompt }],
         response_format: { type: "json_object" },
-        max_completion_tokens: 200,
+        max_completion_tokens: 300,
       });
 
       const content = response.choices[0]?.message?.content || '{}';
       try {
         const parsed = JSON.parse(content);
-        const result = {
-          title: parsed.title || 'Good morning!',
-          body: parsed.body || 'Time to crush your goals today.',
-        };
-        morningBriefCache.set(cacheKey, result);
-        res.json(result);
+        res.json({
+          title: "Good morning! \uD83C\uDFAF",
+          body: "Set your energy level and plan your day.",
+          card: {
+            headline: parsed.headline || (energyLevel >= 4 ? "You're on fire today" : energyLevel <= 2 ? "Easy does it today" : "Steady day ahead"),
+            suggestion: parsed.suggestion || "Start with something small to build momentum.",
+            taskOrder: Array.isArray(parsed.taskOrder) ? parsed.taskOrder.slice(0, 3) : [],
+          },
+        });
       } catch {
-        res.json({ title: 'Good morning!', body: 'Time to crush your goals today.' });
+        res.json({
+          title: "Good morning! \uD83C\uDFAF",
+          body: "Set your energy level and plan your day.",
+          card: {
+            headline: energyLevel >= 4 ? "You're on fire today" : energyLevel <= 2 ? "Easy does it today" : "Steady day ahead",
+            suggestion: "Start with something small to build momentum.",
+            taskOrder: [],
+          },
+        });
       }
     } catch (error) {
       console.error("Error generating morning brief:", error);
-      res.json({ title: 'Good morning!', body: 'Time to crush your goals today.' });
+      res.status(500).json({ error: "Failed to generate morning brief" });
     }
   });
 
