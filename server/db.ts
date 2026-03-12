@@ -160,6 +160,26 @@ export async function ensureTablesExist() {
       )
     `);
 
+    await db.execute(sql`
+      UPDATE user_oauth_tokens SET account_email = '' WHERE account_email IS NULL
+    `).catch(() => {});
+
+    await db.execute(sql`
+      ALTER TABLE user_oauth_tokens DROP CONSTRAINT IF EXISTS user_oauth_tokens_pkey
+    `).catch(() => {});
+
+    await db.execute(sql`
+      ALTER TABLE user_oauth_tokens ALTER COLUMN account_email SET DEFAULT ''
+    `).catch(() => {});
+
+    await db.execute(sql`
+      ALTER TABLE user_oauth_tokens ALTER COLUMN account_email SET NOT NULL
+    `).catch(() => {});
+
+    await db.execute(sql`
+      ALTER TABLE user_oauth_tokens ADD CONSTRAINT user_oauth_tokens_pkey PRIMARY KEY (user_id, provider, account_email)
+    `).catch(() => {});
+
     console.log("Database tables verified");
   } catch (error) {
     console.error("Failed to ensure database tables exist:", error);

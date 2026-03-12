@@ -18,7 +18,7 @@ import { authRouter, authMiddleware } from "./auth";
 import { registerDataRoutes } from "./dataRoutes";
 import { isIntegrationOwner, claimIntegrationOwnership } from "./integrationOwner";
 import { oauthRouter, oauthCallbackRouter } from "./oauthRoutes";
-import { getValidGoogleToken, getValidMicrosoftToken } from "./userTokenStore";
+import { getValidGoogleTokens, getValidMicrosoftToken } from "./userTokenStore";
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
@@ -378,12 +378,12 @@ Return JSON: { "note": "your 1-2 sentence note here" }`;
       const userId = req.userId;
       if (!userId) return res.json({ google: false, outlook: false });
 
-      const [googleToken, microsoftToken] = await Promise.all([
-        getValidGoogleToken(userId),
+      const [googleTokens, microsoftToken] = await Promise.all([
+        getValidGoogleTokens(userId),
         getValidMicrosoftToken(userId),
       ]);
 
-      let googleConnected = !!googleToken;
+      let googleConnected = googleTokens.length > 0;
       let outlookConnected = !!microsoftToken;
 
       if (!googleConnected || !outlookConnected) {
@@ -411,15 +411,24 @@ Return JSON: { "note": "your 1-2 sentence note here" }`;
       const userId = req.userId;
       if (!userId) return res.json({ connected: false, events: [] });
 
-      let accessToken = await getValidGoogleToken(userId);
-      if (!accessToken) {
+      const accessTokens = await getValidGoogleTokens(userId);
+      let hasIntegration = false;
+      if (accessTokens.length === 0) {
         if (!(await isIntegrationOwner(userId))) return res.json({ connected: false, events: [] });
+        hasIntegration = true;
       }
 
       const date = (req.query.date as string) || new Date().toISOString().split('T')[0];
       const startTime = req.query.startTime as string | undefined;
       const endTime = req.query.endTime as string | undefined;
-      const events = await getGoogleCalendarEvents(date, startTime, endTime, accessToken);
+
+      const tokensToFetch = accessTokens.length > 0 ? accessTokens : [undefined];
+      const allEvents = await Promise.all(
+        tokensToFetch.map(token =>
+          getGoogleCalendarEvents(date, startTime, endTime, token).catch(() => [])
+        )
+      );
+      const events = allEvents.flat();
       res.json({ connected: true, events });
     } catch (error: any) {
       console.error("Error fetching Google Calendar events:", error);
@@ -455,8 +464,8 @@ Return JSON: { "note": "your 1-2 sentence note here" }`;
       const userId = req.userId;
       if (!userId) return res.json({ connected: false });
 
-      const googleToken = await getValidGoogleToken(userId);
-      if (googleToken) return res.json({ connected: true });
+      const googleTokens = await getValidGoogleTokens(userId);
+      if (googleTokens.length > 0) return res.json({ connected: true });
 
       const isOwner = await isIntegrationOwner(userId);
       if (!isOwner) return res.json({ connected: false });
@@ -475,14 +484,21 @@ Return JSON: { "note": "your 1-2 sentence note here" }`;
       const userId = req.userId;
       if (!userId) return res.json({ connected: false, items: [] });
 
-      let accessToken = await getValidGoogleToken(userId);
-      if (!accessToken) {
+      const accessTokens = await getValidGoogleTokens(userId);
+      if (accessTokens.length === 0) {
         if (!(await isIntegrationOwner(userId))) return res.json({ connected: false, items: [] });
         const connected = await checkGmailConnection();
         if (!connected) return res.json({ connected: false, items: [] });
+        const items = await getRecentEmailCommitments(7, undefined);
+        return res.json({ connected: true, items });
       }
 
-      const items = await getRecentEmailCommitments(7, accessToken);
+      const allItems = await Promise.all(
+        accessTokens.map(token =>
+          getRecentEmailCommitments(7, token).catch(() => [])
+        )
+      );
+      const items = allItems.flat();
       res.json({ connected: true, items });
     } catch (error) {
       console.error("Error fetching Gmail commitments:", error);

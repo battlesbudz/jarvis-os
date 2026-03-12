@@ -161,7 +161,7 @@ oauthCallbackRouter.get('/google/callback', async (req: Request, res: Response) 
       refreshToken: tokenData.refresh_token,
       expiresAt,
       scopes: tokenData.scope,
-      accountEmail,
+      accountEmail: accountEmail || '',
     });
 
     return res.send(successHtml('google', accountEmail));
@@ -254,7 +254,7 @@ oauthCallbackRouter.get('/microsoft/callback', async (req: Request, res: Respons
       refreshToken: tokenData.refresh_token,
       expiresAt,
       scopes: tokenData.scope,
-      accountEmail,
+      accountEmail: accountEmail || '',
     });
 
     return res.send(successHtml('microsoft', accountEmail));
@@ -286,7 +286,8 @@ oauthRouter.delete('/:provider/disconnect', async (req: Request, res: Response) 
     return res.status(400).json({ error: 'Unknown provider' });
   }
   try {
-    await deleteUserToken(userId, provider);
+    const email = req.query.email as string | undefined;
+    await deleteUserToken(userId, provider, email);
     res.json({ success: true });
   } catch (err) {
     console.error('Disconnect error:', err);
