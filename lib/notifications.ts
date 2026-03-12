@@ -122,16 +122,32 @@ export async function scheduleTimerNotification(title: string, body: string) {
   });
 }
 
-export async function scheduleMorningBriefing(title: string, body: string) {
+export async function scheduleMorningBriefing() {
   if (Platform.OS === 'web') return;
+
+  const enabled = await areNotificationsEnabled();
+  if (!enabled) return;
+
   await Notifications.cancelScheduledNotificationAsync('morning-briefing').catch(() => {});
-  const trigger = new Date();
-  if (trigger.getHours() >= 8) trigger.setDate(trigger.getDate() + 1);
-  trigger.setHours(8, 0, 0, 0);
+
+  const now = new Date();
+  const target = new Date();
+  target.setHours(8, 0, 0, 0);
+  if (target.getTime() <= now.getTime()) {
+    target.setDate(target.getDate() + 1);
+  }
+
   await Notifications.scheduleNotificationAsync({
     identifier: 'morning-briefing',
-    content: { title, body, data: { screen: 'today' } },
-    trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: trigger },
+    content: {
+      title: 'Good morning! \uD83C\uDFAF',
+      body: 'Set your energy level and plan your day.',
+      data: { screen: 'today' },
+    },
+    trigger: {
+      type: Notifications.SchedulableTriggerInputTypes.DATE,
+      date: target,
+    },
   });
 }
 

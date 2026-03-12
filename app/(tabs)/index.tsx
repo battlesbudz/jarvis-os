@@ -81,6 +81,7 @@ import {
 } from '@/lib/notifications';
 import { apiRequest, getApiUrl } from '@/lib/query-client';
 import { authFetch } from '@/lib/auth-context';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { formatDate } from '@/lib/helpers';
 import XpToast from '@/components/XpToast';
 import JustOneThingModal from '@/components/JustOneThingModal';
@@ -120,6 +121,12 @@ export default function TodayScreen() {
   const [canUndo, setCanUndo] = useState(false);
   const [blockerTask, setBlockerTask] = useState<Task | null>(null);
   const [energySortApplied, setEnergySortApplied] = useState(false);
+  const [morningCard, setMorningCard] = useState<{
+    headline: string;
+    suggestion: string;
+    taskOrder: string[];
+  } | null>(null);
+  const [cardDismissed, setCardDismissed] = useState(false);
 
   const orchestrateProactiveNotifications = useCallback(async (
     tasks: Task[],
@@ -249,6 +256,9 @@ export default function TodayScreen() {
     }
     setViewMode(mode);
     setBrainDumpInbox(inbox);
+    const dismissKey = `morning_card_dismissed_${getTodayKey()}`;
+    const wasDismissed = await AsyncStorage.getItem(dismissKey);
+    if (wasDismissed === 'true') setCardDismissed(true);
     setLoading(false);
     const calEventsLoaded = loadCalendarEvents();
     loadDailyCoachNote(loadedGoals);
@@ -260,6 +270,7 @@ export default function TodayScreen() {
         scheduleAllTaskReminders(todayPlan.tasks);
       }
       if (granted) {
+        scheduleMorningBriefing();
         const [stats, calEvts] = await Promise.all([getStats(), calEventsLoaded]);
         orchestrateProactiveNotifications(todayPlan.tasks, loadedGoals, calEvts, stats);
       }
@@ -807,6 +818,85 @@ export default function TodayScreen() {
           </Animated.View>
         ) : null}
 
+        {morningCard && !cardDismissed ? (
+          <Animated.View
+            entering={FadeInDown.duration(400).delay(350)}
+            style={[
+              styles.morningCard,
+              energyCheckin && energyCheckin.energy >= 4
+                ? styles.morningCardHigh
+                : energyCheckin && energyCheckin.energy <= 2
+                ? styles.morningCardLow
+                : styles.morningCardMedium,
+            ]}
+            testID="morning-briefing-card"
+          >
+            <View style={styles.morningCardContent}>
+              <View style={styles.morningCardIcon}>
+                <Ionicons
+                  name={
+                    energyCheckin && energyCheckin.energy >= 4
+                      ? 'flash'
+                      : energyCheckin && energyCheckin.energy <= 2
+                      ? 'moon-outline'
+                      : 'sunny-outline'
+                  }
+                  size={18}
+                  color={
+                    energyCheckin && energyCheckin.energy >= 4
+                      ? '#D97706'
+                      : energyCheckin && energyCheckin.energy <= 2
+                      ? '#6B7280'
+                      : Colors.primary
+                  }
+                />
+              </View>
+              <View style={styles.morningCardText}>
+                <Text style={[
+                  styles.morningCardHeadline,
+                  energyCheckin && energyCheckin.energy >= 4 && { color: '#92400E' },
+                  energyCheckin && energyCheckin.energy <= 2 && { color: '#374151' },
+                ]}>
+                  {morningCard.headline}
+                </Text>
+                <Text style={[
+                  styles.morningCardSuggestion,
+                  energyCheckin && energyCheckin.energy >= 4 && { color: '#B45309' },
+                  energyCheckin && energyCheckin.energy <= 2 && { color: '#6B7280' },
+                ]}>
+                  {morningCard.suggestion}
+                </Text>
+              </View>
+            </View>
+            <Pressable
+              onPress={async () => {
+                setCardDismissed(true);
+                const dismissKey = `morning_card_dismissed_${getTodayKey()}`;
+                await AsyncStorage.setItem(dismissKey, 'true');
+              }}
+              style={({ pressed }) => [styles.morningCardDismiss, pressed && { opacity: 0.7 }]}
+              testID="dismiss-morning-card"
+            >
+              <Text style={[
+                styles.morningCardDismissText,
+                energyCheckin && energyCheckin.energy >= 4 && { color: '#B45309' },
+                energyCheckin && energyCheckin.energy <= 2 && { color: '#6B7280' },
+              ]}>Got it</Text>
+              <Ionicons
+                name="close"
+                size={14}
+                color={
+                  energyCheckin && energyCheckin.energy >= 4
+                    ? '#B45309'
+                    : energyCheckin && energyCheckin.energy <= 2
+                    ? '#6B7280'
+                    : Colors.primary
+                }
+              />
+            </Pressable>
+          </Animated.View>
+        ) : null}
+
         {canUndo ? (
           <Animated.View entering={FadeInDown.duration(300)} style={styles.undoBanner}>
             <Pressable
@@ -1095,10 +1185,65 @@ export default function TodayScreen() {
           setEnergyCheckInVisible(false);
           setEnergyCheckin(checkin);
           if (wasFresh && plan) {
-            const reordered = sortTasksByEnergy(plan.tasks, checkin.energy);
-            await savePlan({ ...plan, tasks: reordered });
-            setPlan({ ...plan, tasks: reordered });
+            const sorted = sortTasksByEnergy(plan.tasks, checkin.energy);
+            await savePlan({ ...plan, tasks: sorted });
+            setPlan({ ...plan, tasks: sorted });
             setEnergySortApplied(true);
+          }
+          try {
+            const currentPlan = await getTodayPlan(await getGoals());
+            const [currentStats, currentGoals] = await Promise.all([getStats(), getGoals()]);
+            const url = new URL('/api/notifications/morning-brief', getApiUrl());
+            const briefRes = await authFetch(url.toString(), {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                tasks: currentPlan?.tasks.filter(t => !t.completed).map(t => ({
+                  id: t.id,
+                  title: t.title,
+                  priority: t.priority,
+                  description: t.description,
+                  category: t.category,
+                })) || [],
+                calendarEvents: calendarEvents.map(e => ({
+                  title: e.title,
+                  time: e.time,
+                })),
+                goals: currentGoals.map(g => ({
+                  title: g.title,
+                  category: g.category,
+                  current: g.current,
+                  target: g.target,
+                  unit: g.unit,
+                })),
+                stats: currentStats,
+                energyLevel: checkin.energy,
+              }),
+            });
+            const briefData = await briefRes.json();
+            if (briefData.card) {
+              setMorningCard(briefData.card);
+              setCardDismissed(false);
+              if (briefData.card.taskOrder?.length > 0 && currentPlan) {
+                const orderedIds = briefData.card.taskOrder as string[];
+                const taskMap = new Map(currentPlan.tasks.map(t => [t.id, t]));
+                const reordered: Task[] = [];
+                for (const id of orderedIds) {
+                  const task = taskMap.get(id);
+                  if (task && !task.completed) {
+                    reordered.push(task);
+                    taskMap.delete(id);
+                  }
+                }
+                const remaining = currentPlan.tasks.filter(t => !reordered.find(r => r.id === t.id));
+                const newTasks = [...reordered, ...remaining.filter(t => !t.completed), ...remaining.filter(t => t.completed)];
+                const newPlan = { ...currentPlan, tasks: newTasks };
+                await savePlan(newPlan);
+                setPlan(newPlan);
+              }
+            }
+          } catch (e) {
+            console.error('Morning brief fetch failed:', e);
           }
         }}
       />
@@ -1564,5 +1709,67 @@ const styles = StyleSheet.create({
     color: Colors.textTertiary,
     textAlign: 'center',
     lineHeight: 20,
+  },
+  morningCard: {
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 12,
+    borderWidth: 1,
+  },
+  morningCardHigh: {
+    backgroundColor: '#FFFBEB',
+    borderColor: '#FDE68A',
+  },
+  morningCardMedium: {
+    backgroundColor: Colors.primary + '10',
+    borderColor: Colors.primary + '30',
+  },
+  morningCardLow: {
+    backgroundColor: '#F3F4F6',
+    borderColor: '#E5E7EB',
+  },
+  morningCardContent: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    marginBottom: 10,
+  },
+  morningCardIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.6)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 2,
+  },
+  morningCardText: {
+    flex: 1,
+  },
+  morningCardHeadline: {
+    fontSize: 15,
+    fontFamily: 'Inter_700Bold',
+    color: Colors.text,
+    marginBottom: 4,
+  },
+  morningCardSuggestion: {
+    fontSize: 13,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+    lineHeight: 19,
+  },
+  morningCardDismiss: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-end',
+    gap: 4,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+  },
+  morningCardDismissText: {
+    fontSize: 13,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.primary,
   },
 });
