@@ -319,6 +319,7 @@ export default function InsightsScreen() {
   const webRecorderRef = useRef<MediaRecorder | null>(null);
   const webChunksRef = useRef<Blob[]>([]);
   const sendMessageRef = useRef<(text: string) => void>(() => {});
+  const messagesRef = useRef<ChatMessage[]>([]);
   const hasScrolledRef = useRef(false);
   const initialScanDoneRef = useRef(false);
   const [isBaseLoading, setIsBaseLoading] = useState(true);
@@ -359,6 +360,7 @@ export default function InsightsScreen() {
   useEffect(() => { statsRef.current = stats; }, [stats]);
   useEffect(() => { historyRef.current = history; }, [history]);
   useEffect(() => { lifeContextRef.current = lifeContext; }, [lifeContext]);
+  useEffect(() => { messagesRef.current = messages; }, [messages]);
 
   useEffect(() => {
     return () => {
@@ -695,8 +697,7 @@ export default function InsightsScreen() {
     setConfirmClear(false);
 
     try {
-      const currentMessages = await getChatHistory();
-      const contextMessages = currentMessages.slice(0, CONTEXT_WINDOW);
+      const contextMessages = [userMsg, ...messagesRef.current].slice(0, CONTEXT_WINDOW);
       const apiMessages = contextMessages.map(m => ({ role: m.role, content: m.content })).reverse();
 
       const url = new URL('/api/coach/chat', getApiUrl());
