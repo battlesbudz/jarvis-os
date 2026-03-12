@@ -68,7 +68,16 @@ import {
   type ViewMode,
   type BrainDumpItem,
 } from '@/lib/storage';
-import { scheduleAllTaskReminders, requestNotificationPermissions } from '@/lib/notifications';
+import {
+  scheduleAllTaskReminders,
+  requestNotificationPermissions,
+  areNotificationsEnabled,
+  scheduleMorningBriefing,
+  scheduleStreakProtection,
+  cancelStreakProtection,
+  scheduleGoalNudges,
+  scheduleMeetingPrepAlerts,
+} from '@/lib/notifications';
 import { apiRequest, getApiUrl } from '@/lib/query-client';
 import { authFetch } from '@/lib/auth-context';
 import { formatDate } from '@/lib/helpers';
@@ -109,6 +118,41 @@ export default function TodayScreen() {
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [canUndo, setCanUndo] = useState(false);
   const [blockerTask, setBlockerTask] = useState<Task | null>(null);
+
+  const orchestrateProactiveNotifications = useCallback(async (
+    tasks: Task[],
+    loadedGoals: Goal[],
+    calEvents: Task[],
+    stats: { streak: number; totalCompleted: number }
+  ) => {
+    if (Platform.OS === 'web') return;
+    const enabled = await areNotificationsEnabled();
+    if (!enabled) return;
+
+    authFetch(new URL('/api/notifications/morning-brief', getApiUrl()).toString(), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        tasks: tasks.map(t => ({ title: t.title, time: t.time, completed: t.completed })),
+        calendarEvents: calEvents.map(e => ({ title: e.title, time: e.time })),
+        goals: loadedGoals.map(g => ({ title: g.title, category: g.category, current: g.current, target: g.target, updatedAt: g.updatedAt })),
+        stats,
+      }),
+    })
+      .then(r => r.json())
+      .then(({ title, body }: { title: string; body: string }) => {
+        if (title && body) scheduleMorningBriefing(title, body);
+      })
+      .catch(() => {});
+
+    const anyCompleted = tasks.some(t => t.completed);
+    if (!anyCompleted) scheduleStreakProtection(stats.streak);
+    else cancelStreakProtection();
+
+    scheduleGoalNudges(loadedGoals);
+
+    scheduleMeetingPrepAlerts(calEvents.map(e => ({ title: e.title, time: e.time })));
+  }, []);
 
   const loadCalendarEvents = useCallback(async () => {
     try {
@@ -155,8 +199,10 @@ export default function TodayScreen() {
       );
 
       setCalendarEvents(eventsWithCompletion);
+      return eventsWithCompletion;
     } catch {
       setCalendarEvents([]);
+      return [];
     }
   }, []);
 
@@ -202,18 +248,21 @@ export default function TodayScreen() {
     setViewMode(mode);
     setBrainDumpInbox(inbox);
     setLoading(false);
-    loadCalendarEvents();
+    const calEventsLoaded = loadCalendarEvents();
     loadDailyCoachNote(loadedGoals);
     const snapshot = await getPlanSnapshot();
     if (snapshot) setCanUndo(true);
     
-    // Request notification permissions and schedule reminders
-    requestNotificationPermissions().then(granted => {
+    requestNotificationPermissions().then(async (granted) => {
       if (granted && todayPlan.tasks.length > 0) {
         scheduleAllTaskReminders(todayPlan.tasks);
       }
+      if (granted) {
+        const [stats, calEvts] = await Promise.all([getStats(), calEventsLoaded]);
+        orchestrateProactiveNotifications(todayPlan.tasks, loadedGoals, calEvts, stats);
+      }
     });
-  }, [loadCalendarEvents, loadDailyCoachNote]);
+  }, [loadCalendarEvents, loadDailyCoachNote, orchestrateProactiveNotifications]);
 
   const toggleViewMode = useCallback(async () => {
     const newMode = viewMode === 'list' ? 'timeline' : 'list';
@@ -410,6 +459,7 @@ export default function TodayScreen() {
     const { xpEarned: earned, newBadges } = await updateTaskCompletion(plan.date, taskId, completed);
 
     if (completed) {
+      cancelStreakProtection();
       if (earned > 0) showXpToast(earned);
 
       if (newBadges.length > 0) {
