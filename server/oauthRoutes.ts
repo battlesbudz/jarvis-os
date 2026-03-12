@@ -96,6 +96,7 @@ oauthRouter.get('/google/authorize', (req: Request, res: Response) => {
       'email',
       'https://www.googleapis.com/auth/calendar.readonly',
       'https://www.googleapis.com/auth/gmail.readonly',
+      'https://www.googleapis.com/auth/gmail.compose',
     ].join(' '),
     access_type: 'offline',
     prompt: 'consent',

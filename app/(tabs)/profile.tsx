@@ -45,7 +45,7 @@ import LifeContextSheet from '@/components/LifeContextSheet';
 interface OAuthProviderStatus {
   connected: boolean;
   email?: string;
-  accounts?: { email: string }[];
+  accounts?: { email: string; scopes?: string }[];
 }
 
 interface OAuthStatus {
@@ -479,6 +479,7 @@ export default function ProfileScreen() {
                   <View key={platform.id} style={[!isLast && styles.platformRowBorder]}>
                     {accounts.map((account, accIdx) => {
                       const accLoading = connectingId === platform.id + account.email;
+                      const needsCompose = account.scopes && !account.scopes.includes('gmail.compose');
                       return (
                         <View
                           key={account.email || accIdx}
@@ -493,6 +494,11 @@ export default function ProfileScreen() {
                               <Text style={styles.platformEmail}>{account.email}</Text>
                             ) : (
                               <Text style={styles.platformSubtitle}>{platform.subtitle}</Text>
+                            )}
+                            {needsCompose && (
+                              <Pressable onPress={() => handleConnect(platform.id)}>
+                                <Text style={styles.upgradePermText}>Tap to upgrade permissions</Text>
+                              </Pressable>
                             )}
                           </View>
                           {loadingStatus ? (
@@ -934,6 +940,18 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter_400Regular',
     color: Colors.textTertiary,
     textDecorationLine: 'underline',
+  },
+  upgradePermText: {
+    fontSize: 11,
+    fontFamily: 'Inter_600SemiBold',
+    color: '#D97706',
+    marginTop: 3,
+    backgroundColor: '#FEF3C7',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    overflow: 'hidden' as const,
+    alignSelf: 'flex-start' as const,
   },
   connectionHint: {
     fontSize: 12,

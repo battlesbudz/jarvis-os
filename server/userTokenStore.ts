@@ -78,11 +78,11 @@ export async function deleteUserToken(userId: string, provider: string, accountE
   }
 }
 
-export async function getUserOAuthStatus(userId: string): Promise<Record<string, { connected: boolean; email?: string; accounts: { email: string }[] }>> {
+export async function getUserOAuthStatus(userId: string): Promise<Record<string, { connected: boolean; email?: string; accounts: { email: string; scopes?: string }[] }>> {
   const rows = await db.execute(sql`
-    SELECT provider, account_email, expires_at FROM user_oauth_tokens WHERE user_id = ${userId}
+    SELECT provider, account_email, expires_at, scopes FROM user_oauth_tokens WHERE user_id = ${userId}
   `);
-  const result: Record<string, { connected: boolean; email?: string; accounts: { email: string }[] }> = {
+  const result: Record<string, { connected: boolean; email?: string; accounts: { email: string; scopes?: string }[] }> = {
     google: { connected: false, accounts: [] },
     microsoft: { connected: false, accounts: [] },
   };
@@ -93,7 +93,7 @@ export async function getUserOAuthStatus(userId: string): Promise<Record<string,
     }
     result[row.provider].connected = true;
     result[row.provider].email = row.account_email || undefined;
-    result[row.provider].accounts.push({ email: row.account_email || '' });
+    result[row.provider].accounts.push({ email: row.account_email || '', scopes: row.scopes || undefined });
   }
   return result;
 }

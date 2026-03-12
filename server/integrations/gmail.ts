@@ -1,4 +1,5 @@
 import { getGmailClient } from './gmailClient';
+import { Buffer } from 'node:buffer';
 
 export interface EmailCommitment {
   subject: string;
@@ -20,6 +21,44 @@ const LABEL_NAMES: Record<string, string> = {
   SENT: 'Sent',
   DRAFT: 'Draft',
 };
+
+export async function createGmailDraft(
+  userAccessToken: string,
+  to: string,
+  subject: string,
+  body: string
+): Promise<{ draftId: string; gmailUrl: string }> {
+  const gmail = await getGmailClient(userAccessToken);
+
+  const messageParts = [
+    `To: ${to}`,
+    `Subject: ${subject}`,
+    'Content-Type: text/plain; charset="UTF-8"',
+    '',
+    body,
+  ].join('\r\n');
+
+  const encodedMessage = Buffer.from(messageParts)
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+
+  const res = await gmail.users.drafts.create({
+    userId: 'me',
+    requestBody: {
+      message: {
+        raw: encodedMessage,
+      },
+    },
+  });
+
+  const draftId = res.data.id || '';
+  const messageId = res.data.message?.id || '';
+  const gmailUrl = `https://mail.google.com/mail/#drafts/${messageId}`;
+
+  return { draftId, gmailUrl };
+}
 
 export async function checkGmailConnection(userAccessToken?: string | null): Promise<boolean> {
   try {
