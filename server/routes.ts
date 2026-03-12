@@ -662,6 +662,75 @@ Only return the JSON object, no extra text.`;
     }
   });
 
+  const morningBriefCache = new Map<string, { title: string; body: string }>();
+
+  app.post("/api/notifications/morning-brief", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId || 'anonymous';
+      const today = new Date().toISOString().split('T')[0];
+      const cacheKey = `${userId}-${today}`;
+
+      const cached = morningBriefCache.get(cacheKey);
+      if (cached) {
+        return res.json(cached);
+      }
+
+      const { tasks, calendarEvents, goals, stats } = req.body;
+
+      const tasksText = Array.isArray(tasks)
+        ? tasks.slice(0, 8).map((t: any) => `- ${t.title}${t.time ? ' at ' + t.time : ''}${t.completed ? ' (done)' : ''}`).join('\n')
+        : 'No tasks';
+
+      const eventsText = Array.isArray(calendarEvents)
+        ? calendarEvents.slice(0, 6).map((e: any) => `- ${e.title}${e.time ? ' at ' + e.time : ''}`).join('\n')
+        : 'No events';
+
+      const staleGoals = Array.isArray(goals)
+        ? goals.filter((g: any) => {
+            if (!g.updatedAt) return true;
+            const daysSince = (Date.now() - new Date(g.updatedAt).getTime()) / 86400000;
+            return daysSince >= 3;
+          }).map((g: any) => `${g.title} (${g.category}): ${g.current}/${g.target}`)
+        : [];
+
+      const staleGoalsText = staleGoals.length > 0 ? staleGoals.join(', ') : 'None';
+      const streak = stats?.streak || 0;
+
+      const prompt = `Generate a punchy morning notification for a productivity app. Max 2 sentences. Mention 1-2 specific things from their day. Be specific and motivating — not generic.
+
+Context:
+- Today's tasks: ${tasksText}
+- Calendar: ${eventsText}
+- Goals behind: ${staleGoalsText}
+- Streak: ${streak} days
+
+Return JSON: { "title": "short title (max 40 chars)", "body": "1-2 sentence body (max 100 chars)" }`;
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-5-mini",
+        messages: [{ role: "user", content: prompt }],
+        response_format: { type: "json_object" },
+        max_completion_tokens: 200,
+      });
+
+      const content = response.choices[0]?.message?.content || '{}';
+      try {
+        const parsed = JSON.parse(content);
+        const result = {
+          title: parsed.title || 'Good morning!',
+          body: parsed.body || 'Time to crush your goals today.',
+        };
+        morningBriefCache.set(cacheKey, result);
+        res.json(result);
+      } catch {
+        res.json({ title: 'Good morning!', body: 'Time to crush your goals today.' });
+      }
+    } catch (error) {
+      console.error("Error generating morning brief:", error);
+      res.json({ title: 'Good morning!', body: 'Time to crush your goals today.' });
+    }
+  });
+
   const httpServer = createServer(app);
   return httpServer;
 }

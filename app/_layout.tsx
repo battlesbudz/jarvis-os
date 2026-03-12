@@ -8,8 +8,9 @@ import {
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Stack, router, useSegments } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
+import * as Notifications from "expo-notifications";
 import React, { useEffect, useRef } from "react";
-import { ActivityIndicator, View } from "react-native";
+import { ActivityIndicator, Platform, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
@@ -63,6 +64,17 @@ function useProtectedRoute() {
 
 function AppNavigator() {
   const { isLoading } = useProtectedRoute();
+
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    const subscription = Notifications.addNotificationResponseReceivedListener(response => {
+      const screen = response.notification.request.content.data?.screen;
+      if (screen === 'goals') router.push('/(tabs)/goals' as any);
+      else if (screen === 'today') router.push('/(tabs)' as any);
+      else if (screen === 'coach') router.push('/(tabs)/insights' as any);
+    });
+    return () => subscription.remove();
+  }, []);
 
   if (isLoading) {
     return (

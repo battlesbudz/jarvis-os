@@ -42,7 +42,7 @@ export default function GoalsScreen() {
   );
 
   const handleSave = async (goal: Goal) => {
-    await saveGoal(goal);
+    await saveGoal({ ...goal, updatedAt: new Date().toISOString() });
     setEditGoal(null);
     await loadGoals();
   };

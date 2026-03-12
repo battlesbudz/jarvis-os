@@ -42,6 +42,7 @@ export interface Goal {
   current: number;
   unit: string;
   createdAt: string;
+  updatedAt?: string;
 }
 
 export interface Suggestion {
@@ -896,6 +897,7 @@ export async function updateGoalProgress(goalId: string, amount: number): Promis
     const updated = {
       ...goals[idx],
       current: Math.min(goals[idx].target, goals[idx].current + amount),
+      updatedAt: new Date().toISOString(),
     };
     goals[idx] = updated;
     await apiPut('/api/data/goals', goals);
