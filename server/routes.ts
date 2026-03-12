@@ -634,7 +634,12 @@ Only return the JSON object, no extra text.`;
         token = userTokens.find(t => t.accountEmail === accountEmail);
       }
       if (!token) {
-        token = userTokens.find(t => t.scopes?.includes('gmail.compose'));
+        // Pick the first compose-capable account alphabetically for deterministic selection
+        // In future: let user pick which account to draft from
+        const composeTokens = userTokens
+          .filter(t => t.scopes?.includes('gmail.compose'))
+          .sort((a, b) => (a.accountEmail ?? '').localeCompare(b.accountEmail ?? ''));
+        token = composeTokens[0];
       }
       if (!token) {
         token = userTokens[0];
