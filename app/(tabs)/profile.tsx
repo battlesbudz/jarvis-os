@@ -489,7 +489,19 @@ export default function ProfileScreen() {
                             <Ionicons name={platform.icon} size={20} color={platform.color} />
                           </View>
                           <View style={styles.platformInfo}>
-                            <Text style={styles.platformName}>{platform.name}</Text>
+                            <View style={styles.platformNameRow}>
+                              <Text style={styles.platformName}>{platform.name}</Text>
+                              {account.scopes?.includes('gmail.compose') ? (
+                                <View style={styles.draftsBadge}>
+                                  <Ionicons name="checkmark" size={10} color="#059669" />
+                                  <Text style={styles.draftsBadgeText}>Drafts</Text>
+                                </View>
+                              ) : (
+                                <View style={styles.readOnlyBadge}>
+                                  <Text style={styles.readOnlyBadgeText}>Read only</Text>
+                                </View>
+                              )}
+                            </View>
                             {account.email ? (
                               <Text style={styles.platformEmail}>{account.email}</Text>
                             ) : (
@@ -497,7 +509,7 @@ export default function ProfileScreen() {
                             )}
                             {needsCompose && (
                               <Pressable onPress={() => handleConnect(platform.id)}>
-                                <Text style={styles.upgradePermText}>Tap to upgrade permissions</Text>
+                                <Text style={styles.upgradePermText}>Grant draft access</Text>
                               </Pressable>
                             )}
                           </View>
@@ -952,6 +964,36 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     overflow: 'hidden' as const,
     alignSelf: 'flex-start' as const,
+  },
+  platformNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  draftsBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  draftsBadgeText: {
+    fontSize: 10,
+    fontFamily: 'Inter_600SemiBold',
+    color: '#059669',
+  },
+  readOnlyBadge: {
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  readOnlyBadgeText: {
+    fontSize: 10,
+    fontFamily: 'Inter_500Medium',
+    color: '#94A3B8',
   },
   connectionHint: {
     fontSize: 12,
