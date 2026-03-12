@@ -119,6 +119,7 @@ export default function LoginScreen() {
       redirectUri,
       scopes: ["openid", "profile", "email"],
       responseType: AuthSession.ResponseType.Token,
+      usePKCE: false,
       extraParams: { nonce: Date.now().toString() },
     });
 
