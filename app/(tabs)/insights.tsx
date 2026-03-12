@@ -321,7 +321,8 @@ export default function InsightsScreen() {
   const sendMessageRef = useRef<(text: string) => void>(() => {});
   const hasScrolledRef = useRef(false);
   const initialScanDoneRef = useRef(false);
-  const [isContextLoading, setIsContextLoading] = useState(true);
+  const [isBaseLoading, setIsBaseLoading] = useState(true);
+  const [isEmailLoading, setIsEmailLoading] = useState(true);
   const gmailItemsRef = useRef<typeof gmailItems>([]);
   const gmailConnectedRef = useRef(false);
   const calendarEventsRef = useRef<typeof calendarEvents>([]);
@@ -608,60 +609,66 @@ export default function InsightsScreen() {
   }, [addedSuggestions]);
 
   const loadAll = useCallback(async () => {
-    setIsContextLoading(true);
+    setIsBaseLoading(true);
+    setIsEmailLoading(true);
+
+    let loadedGoals: Goal[] = [];
     try {
-      const [loadedGoals, loadedStats, loadedHistory, savedMessages, lc] = await Promise.all([
+      const [lg, loadedStats, loadedHistory, savedMessages, lc] = await Promise.all([
         getGoals(),
         getStats(),
         getCompletionHistory(),
         getChatHistory(),
         getLifeContext(),
       ]);
-      setGoals(loadedGoals);
+      loadedGoals = lg;
+      setGoals(lg);
       setStats(loadedStats);
       setHistory(loadedHistory);
       setMessages(savedMessages);
       setLifeContext(lc);
-
-      let isGmailConnected = false;
-
-      try {
-        const today = getTodayKey();
-        const calEvts: { title: string; time: string }[] = [];
-        const base = getApiUrl();
-
-        const fetchSource = async (source: 'google' | 'outlook') => {
-          const url = new URL(`/api/calendar/${source}/events`, base);
-          url.searchParams.set('date', today);
-          const res = await authFetch(url.toString(), { cache: 'no-store' } as RequestInit);
-          const data = await res.json();
-          if (data.connected && data.events?.length) {
-            data.events.forEach((e: any) => {
-              calEvts.push({ title: e.title || e.summary || '', time: e.time || e.start || '' });
-            });
-          }
-        };
-
-        const fetchGmail = async () => {
-          const url = new URL('/api/gmail/commitments', base);
-          const res = await authFetch(url.toString(), { cache: 'no-store' } as RequestInit);
-          const data = await res.json();
-          isGmailConnected = !!data.connected;
-          setGmailConnected(isGmailConnected);
-          if (data.connected && data.items?.length) {
-            setGmailItems(data.items);
-          }
-        };
-
-        await Promise.allSettled([fetchSource('google'), fetchSource('outlook'), fetchGmail()]);
-        setCalendarEvents(calEvts);
-      } catch {}
-
-      if (isGmailConnected && loadedGoals.length > 0) {
-        scanForTasks(loadedGoals);
-      }
     } finally {
-      setIsContextLoading(false);
+      setIsBaseLoading(false);
+    }
+
+    let isGmailConnected = false;
+    try {
+      const today = getTodayKey();
+      const calEvts: { title: string; time: string }[] = [];
+      const base = getApiUrl();
+
+      const fetchSource = async (source: 'google' | 'outlook') => {
+        const url = new URL(`/api/calendar/${source}/events`, base);
+        url.searchParams.set('date', today);
+        const res = await authFetch(url.toString(), { cache: 'no-store' } as RequestInit);
+        const data = await res.json();
+        if (data.connected && data.events?.length) {
+          data.events.forEach((e: any) => {
+            calEvts.push({ title: e.title || e.summary || '', time: e.time || e.start || '' });
+          });
+        }
+      };
+
+      const fetchGmail = async () => {
+        const url = new URL('/api/gmail/commitments', base);
+        const res = await authFetch(url.toString(), { cache: 'no-store' } as RequestInit);
+        const data = await res.json();
+        isGmailConnected = !!data.connected;
+        setGmailConnected(isGmailConnected);
+        if (data.connected && data.items?.length) {
+          setGmailItems(data.items);
+        }
+      };
+
+      await Promise.allSettled([fetchSource('google'), fetchSource('outlook'), fetchGmail()]);
+      setCalendarEvents(calEvts);
+    } catch {
+    } finally {
+      setIsEmailLoading(false);
+    }
+
+    if (isGmailConnected && loadedGoals.length > 0) {
+      scanForTasks(loadedGoals);
     }
   }, [scanForTasks]);
 
@@ -948,6 +955,13 @@ export default function InsightsScreen() {
         </Pressable>
       </View>
 
+      {isEmailLoading && (
+        <View style={styles.emailLoadingBanner}>
+          <ActivityIndicator size="small" color={Colors.textSecondary} />
+          <Text style={styles.emailLoadingText}>Loading email context…</Text>
+        </View>
+      )}
+
       <View style={styles.chatArea}>
         {gmailConnected && isEmpty && renderInboxSection({ paddingHorizontal: 16 })}
         {isEmpty ? (
@@ -961,9 +975,9 @@ export default function InsightsScreen() {
               {SUGGESTED_PROMPTS.map((prompt, i) => (
                 <Pressable
                   key={i}
-                  style={[styles.suggestedPill, isContextLoading && { opacity: 0.4 }]}
+                  style={[styles.suggestedPill, isBaseLoading && { opacity: 0.4 }]}
                   onPress={() => sendMessage(prompt)}
-                  disabled={isContextLoading}
+                  disabled={isBaseLoading}
                 >
                   <Text style={styles.suggestedText}>{prompt}</Text>
                 </Pressable>
@@ -996,9 +1010,9 @@ export default function InsightsScreen() {
 
       <View style={[styles.inputContainer, { paddingBottom: tabBarHeight + 8 }]}>
         <Pressable
-          style={[styles.micBtn, isRecording && styles.micBtnRecording, isContextLoading && { opacity: 0.4 }]}
+          style={[styles.micBtn, isRecording && styles.micBtnRecording, isBaseLoading && { opacity: 0.4 }]}
           onPress={isSpeaking ? stopSpeaking : isRecording ? stopRecordingAndSend : startRecording}
-          disabled={isTranscribing || isContextLoading}
+          disabled={isTranscribing || isBaseLoading}
         >
           {isTranscribing ? (
             <ActivityIndicator size="small" color={Colors.primary} />
@@ -1018,22 +1032,22 @@ export default function InsightsScreen() {
           )}
         </Pressable>
         <TextInput
-          style={[styles.input, isContextLoading && { opacity: 0.5 }]}
+          style={[styles.input, isBaseLoading && { opacity: 0.5 }]}
           value={input}
           onChangeText={setInput}
-          placeholder={isContextLoading ? "Loading your context\u2026" : isRecording ? "Listening..." : isTranscribing ? "Transcribing..." : "Message your coach..."}
+          placeholder={isBaseLoading ? "Loading your context\u2026" : isRecording ? "Listening..." : isTranscribing ? "Transcribing..." : "Message your coach..."}
           placeholderTextColor={isRecording ? '#EF4444' : Colors.textSecondary}
           multiline
           maxLength={1000}
-          editable={!isStreaming && !isRecording && !isTranscribing && !isContextLoading}
+          editable={!isStreaming && !isRecording && !isTranscribing && !isBaseLoading}
           returnKeyType="send"
           blurOnSubmit={false}
           onSubmitEditing={() => sendMessage(input)}
         />
         <Pressable
-          style={[styles.sendBtn, (!input.trim() || isStreaming || isContextLoading) && styles.sendBtnDisabled]}
+          style={[styles.sendBtn, (!input.trim() || isStreaming || isBaseLoading) && styles.sendBtnDisabled]}
           onPress={() => sendMessage(input)}
-          disabled={!input.trim() || isStreaming || isContextLoading}
+          disabled={!input.trim() || isStreaming || isBaseLoading}
         >
           {isStreaming ? (
             <ActivityIndicator size="small" color="#fff" />
@@ -1080,6 +1094,19 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontFamily: 'Inter_600SemiBold',
     color: '#EF4444',
+  },
+  emailLoadingBanner: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+    backgroundColor: Colors.background,
+  },
+  emailLoadingText: {
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
   },
   chatArea: {
     flex: 1,
