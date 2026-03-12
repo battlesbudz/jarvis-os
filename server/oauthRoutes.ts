@@ -12,7 +12,7 @@ function getBaseUrl(req: Request): string {
 }
 
 function successHtml(provider: string, email?: string): string {
-  const displayName = provider === 'google' ? 'Google (Calendar & Gmail)' : 'Microsoft Outlook';
+  const displayName = provider === 'google' ? 'Google (Calendar & Gmail)' : provider === 'slack' ? 'Slack' : 'Microsoft Outlook';
   return `<!DOCTYPE html>
 <html>
 <head>
@@ -265,6 +265,97 @@ oauthCallbackRouter.get('/microsoft/callback', async (req: Request, res: Respons
   }
 });
 
+/* ─── Slack OAuth ─────────────────────────────────────────────── */
+
+oauthRouter.get('/slack/authorize', (req: Request, res: Response) => {
+  const userId = req.userId;
+  if (!userId) return res.status(401).json({ error: 'Not authenticated' });
+
+  const clientId = process.env.SLACK_CLIENT_ID;
+  if (!clientId) return res.status(503).json({ error: 'Slack OAuth not configured' });
+
+  const baseUrl = getBaseUrl(req);
+  const redirectUri = `${baseUrl}/api/oauth/slack/callback`;
+
+  const params = new URLSearchParams({
+    client_id: clientId,
+    user_scope: 'channels:history,channels:read,im:history,im:read,groups:history,groups:read,users:read',
+    redirect_uri: redirectUri,
+    state: userId,
+  });
+
+  const url = `https://slack.com/oauth/v2/authorize?${params.toString()}`;
+  res.json({ url, redirectUri });
+});
+
+oauthCallbackRouter.get('/slack/callback', async (req: Request, res: Response) => {
+  const { code, state: userId, error: oauthError } = req.query as Record<string, string>;
+
+  if (oauthError || !code || !userId) {
+    return res.send(errorHtml(oauthError || 'Authorization was cancelled.'));
+  }
+
+  const clientId = process.env.SLACK_CLIENT_ID;
+  const clientSecret = process.env.SLACK_CLIENT_SECRET;
+  if (!clientId || !clientSecret) {
+    return res.send(errorHtml('Slack OAuth credentials not configured on the server.'));
+  }
+
+  const baseUrl = getBaseUrl(req);
+  const redirectUri = `${baseUrl}/api/oauth/slack/callback`;
+
+  try {
+    const tokenRes = await fetch('https://slack.com/api/oauth.v2.access', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        code,
+        client_id: clientId,
+        client_secret: clientSecret,
+        redirect_uri: redirectUri,
+      }),
+    });
+
+    const tokenData = await tokenRes.json() as any;
+    const userToken = tokenData.authed_user?.access_token;
+    if (!userToken) {
+      console.error('Slack token exchange failed:', tokenData);
+      return res.send(errorHtml('Failed to exchange authorization code. Please try again.'));
+    }
+
+    const authedUserId = tokenData.authed_user?.id || '';
+    let accountEmail = '';
+    let teamName = tokenData.team?.name || '';
+
+    try {
+      const userInfoRes = await fetch('https://slack.com/api/users.info', {
+        headers: { Authorization: `Bearer ${userToken}` },
+      });
+      const userInfo = await userInfoRes.json() as any;
+      if (userInfo.ok && userInfo.user) {
+        accountEmail = userInfo.user.profile?.email || teamName || authedUserId;
+      }
+    } catch {}
+
+    if (!accountEmail) accountEmail = teamName || authedUserId;
+
+    await saveUserToken({
+      userId,
+      provider: 'slack',
+      accessToken: userToken,
+      refreshToken: null,
+      expiresAt: null,
+      scopes: 'channels:history,channels:read,im:history,im:read,groups:history,groups:read,users:read',
+      accountEmail,
+    });
+
+    return res.send(successHtml('slack', accountEmail));
+  } catch (err) {
+    console.error('Slack OAuth callback error:', err);
+    return res.send(errorHtml('An unexpected error occurred. Please try again.'));
+  }
+});
+
 /* ─── Shared endpoints ─────────────────────────────────────────── */
 
 oauthRouter.get('/status', async (req: Request, res: Response) => {
@@ -275,7 +366,7 @@ oauthRouter.get('/status', async (req: Request, res: Response) => {
     res.json(status);
   } catch (err) {
     console.error('OAuth status error:', err);
-    res.json({ google: { connected: false }, microsoft: { connected: false } });
+    res.json({ google: { connected: false }, microsoft: { connected: false }, slack: { connected: false } });
   }
 });
 
@@ -283,7 +374,7 @@ oauthRouter.delete('/:provider/disconnect', async (req: Request, res: Response) 
   const userId = req.userId;
   if (!userId) return res.status(401).json({ error: 'Not authenticated' });
   const { provider } = req.params;
-  if (!['google', 'microsoft'].includes(provider)) {
+  if (!['google', 'microsoft', 'slack'].includes(provider)) {
     return res.status(400).json({ error: 'Unknown provider' });
   }
   try {

@@ -301,6 +301,8 @@ export default function InsightsScreen() {
   const [lifeContext, setLifeContext] = useState<LifeContext | null>(null);
   const [gmailItems, setGmailItems] = useState<{ subject: string; snippet: string; date: string; from?: string }[]>([]);
   const [gmailConnected, setGmailConnected] = useState(false);
+  const [slackMessages, setSlackMessages] = useState<any[]>([]);
+  const [slackConnected, setSlackConnected] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
   const [emailSuggestions, setEmailSuggestions] = useState<EmailSuggestion[]>([]);
   const [scanLoading, setScanLoading] = useState(false);
@@ -326,6 +328,8 @@ export default function InsightsScreen() {
   const [isEmailLoading, setIsEmailLoading] = useState(true);
   const gmailItemsRef = useRef<typeof gmailItems>([]);
   const gmailConnectedRef = useRef(false);
+  const slackMessagesRef = useRef<any[]>([]);
+  const slackConnectedRef = useRef(false);
   const calendarEventsRef = useRef<typeof calendarEvents>([]);
   const goalsRef = useRef<typeof goals>([]);
   const statsRef = useRef<typeof stats>({ streak: 0, totalCompleted: 0, bestStreak: 0 });
@@ -355,6 +359,8 @@ export default function InsightsScreen() {
 
   useEffect(() => { gmailItemsRef.current = gmailItems; }, [gmailItems]);
   useEffect(() => { gmailConnectedRef.current = gmailConnected; }, [gmailConnected]);
+  useEffect(() => { slackMessagesRef.current = slackMessages; }, [slackMessages]);
+  useEffect(() => { slackConnectedRef.current = slackConnected; }, [slackConnected]);
   useEffect(() => { calendarEventsRef.current = calendarEvents; }, [calendarEvents]);
   useEffect(() => { goalsRef.current = goals; }, [goals]);
   useEffect(() => { statsRef.current = stats; }, [stats]);
@@ -662,7 +668,15 @@ export default function InsightsScreen() {
         }
       };
 
-      await Promise.allSettled([fetchSource('google'), fetchSource('outlook'), fetchGmail()]);
+      const fetchSlack = async () => {
+        const url = new URL('/api/slack/messages', base);
+        const res = await authFetch(url.toString(), { cache: 'no-store' } as RequestInit);
+        const data = await res.json();
+        setSlackConnected(!!data.connected);
+        setSlackMessages(data.connected && data.messages?.length ? data.messages : []);
+      };
+
+      await Promise.allSettled([fetchSource('google'), fetchSource('outlook'), fetchGmail(), fetchSlack()]);
       setCalendarEvents(calEvts);
     } catch {
     } finally {
@@ -716,6 +730,8 @@ export default function InsightsScreen() {
           lifeContext: lifeContextRef.current,
           gmailItems: gmailItemsRef.current,
           gmailConnected: gmailConnectedRef.current,
+          slackMessages: slackMessagesRef.current,
+          slackConnected: slackConnectedRef.current,
         }),
       });
 
@@ -959,7 +975,7 @@ export default function InsightsScreen() {
       {isEmailLoading && (
         <View style={styles.emailLoadingBanner}>
           <ActivityIndicator size="small" color={Colors.textSecondary} />
-          <Text style={styles.emailLoadingText}>Loading email context…</Text>
+          <Text style={styles.emailLoadingText}>Loading email & Slack context…</Text>
         </View>
       )}
 

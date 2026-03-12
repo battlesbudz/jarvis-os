@@ -51,10 +51,11 @@ interface OAuthProviderStatus {
 interface OAuthStatus {
   google: OAuthProviderStatus;
   microsoft: OAuthProviderStatus;
+  slack: OAuthProviderStatus;
 }
 
 interface PlatformInfo {
-  id: 'google' | 'microsoft';
+  id: 'google' | 'microsoft' | 'slack';
   name: string;
   subtitle: string;
   icon: keyof typeof Ionicons.glyphMap;
@@ -76,6 +77,13 @@ const PLATFORMS: PlatformInfo[] = [
     icon: 'logo-windows',
     color: '#0078D4',
   },
+  {
+    id: 'slack',
+    name: 'Slack',
+    subtitle: 'Messages & Channels',
+    icon: 'chatbubbles-outline',
+    color: '#4A154B',
+  },
 ];
 
 export default function ProfileScreen() {
@@ -88,6 +96,7 @@ export default function ProfileScreen() {
   const [oauthStatus, setOAuthStatus] = useState<OAuthStatus>({
     google: { connected: false },
     microsoft: { connected: false },
+    slack: { connected: false },
   });
   const [loadingStatus, setLoadingStatus] = useState(true);
   const [connectingId, setConnectingId] = useState<string | null>(null);
@@ -105,9 +114,10 @@ export default function ProfileScreen() {
       setOAuthStatus({
         google: data.google ?? { connected: false, accounts: [] },
         microsoft: data.microsoft ?? { connected: false, accounts: [] },
+        slack: data.slack ?? { connected: false, accounts: [] },
       });
     } catch {
-      setOAuthStatus({ google: { connected: false, accounts: [] }, microsoft: { connected: false, accounts: [] } });
+      setOAuthStatus({ google: { connected: false, accounts: [] }, microsoft: { connected: false, accounts: [] }, slack: { connected: false, accounts: [] } });
     } finally {
       setLoadingStatus(false);
     }
@@ -127,7 +137,7 @@ export default function ProfileScreen() {
     await loadOAuthStatus();
   }, [loadOAuthStatus]);
 
-  const handleConnect = useCallback(async (provider: 'google' | 'microsoft') => {
+  const handleConnect = useCallback(async (provider: 'google' | 'microsoft' | 'slack') => {
     setConnectingId(provider);
     try {
       const res = await apiRequest('GET', `/api/oauth/${provider}/authorize`);
@@ -135,6 +145,8 @@ export default function ProfileScreen() {
       if (!data.url) {
         if (data.error === 'Microsoft OAuth not configured') {
           alert('Microsoft OAuth is not yet configured. Add MICROSOFT_CLIENT_ID and MICROSOFT_CLIENT_SECRET to connect Outlook.');
+        } else if (data.error === 'Slack OAuth not configured') {
+          alert('Slack OAuth is not yet configured. Add SLACK_CLIENT_ID and SLACK_CLIENT_SECRET to connect Slack.');
         }
         return;
       }
@@ -149,7 +161,7 @@ export default function ProfileScreen() {
     }
   }, [loadOAuthStatus]);
 
-  const handleDisconnect = useCallback(async (provider: 'google' | 'microsoft', email?: string) => {
+  const handleDisconnect = useCallback(async (provider: 'google' | 'microsoft' | 'slack', email?: string) => {
     setConnectingId(provider + (email || ''));
     try {
       const url = email
