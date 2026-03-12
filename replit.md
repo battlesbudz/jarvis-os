@@ -66,6 +66,7 @@ A mobile app that generates personalized daily task checklists with AI-powered a
 17. **Focus Timer** - Pomodoro-style timer at `/focus-timer` modal route; 25min work / 5min break cycles; circular progress ring; per-task launch from "Focus" button on TaskCard; haptic feedback + local notifications on session complete; settings persisted in AsyncStorage.
 18. **Visual Time Blocks** - Toggle in Today header switches between list view and timeline view; timeline shows hours 6am–10pm with tasks pinned to their scheduled time; unscheduled tasks shown separately; view preference persisted.
 19. **Transition Reminders** - Local notifications scheduled 10 min before tasks with a set `time`; enabled/disabled toggle in Profile; web-safe (lib/notifications.web.ts stub); focus timer fires completion nudge notifications.
+20. **Voice Interface** - Mic button in Coach input bar records speech (expo-av), transcribes via Whisper (POST /api/coach/transcribe), auto-sends to coach. Speaker button on last assistant message plays TTS response aloud (POST /api/coach/speak, OpenAI TTS "alloy" voice). Works on iOS/Android/web.
 
 ## Authentication
 - **Login screen**: `/login` route with Google Sign-In button
@@ -90,6 +91,8 @@ For web Google Sign-In to work, the Replit dev domain must be added to **Authori
 - `POST /api/coach/chat` - Streaming SSE; takes messages, goals, stats, history, calendarEvents, lifeContext, gmailItems
 - `POST /api/coach/checkin` - Takes goals, stats, history, lifeContext; returns {note}
 - `POST /api/coach/suggestions` - Takes lastAssistantMessage, goals; returns {actions, followups}
+- `POST /api/coach/transcribe` - Takes {audio: base64}; returns {text} (speech-to-text via Whisper)
+- `POST /api/coach/speak` - Takes {text, voice?}; returns {audio: base64} (text-to-speech via OpenAI TTS)
 - `GET /api/calendar/status` - Returns {google: bool, outlook: bool}
 - `GET /api/calendar/google/events?date=YYYY-MM-DD` - Today's events from Google Calendar
 - `GET /api/calendar/outlook/events?date=YYYY-MM-DD` - Today's events from Outlook
