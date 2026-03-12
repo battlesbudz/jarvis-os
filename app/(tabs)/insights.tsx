@@ -39,6 +39,15 @@ import {
 import { getApiUrl } from '@/lib/query-client';
 import { authFetch, getAuthToken } from '@/lib/auth-context';
 
+interface EmailSuggestion {
+  title: string;
+  emailSubject: string;
+  emailFrom: string;
+  accountEmail: string;
+  goalTitle: string;
+  reason: string;
+}
+
 const SUGGESTED_PROMPTS = [
   "How am I doing overall?",
   "What should I focus on this week?",
@@ -178,10 +187,66 @@ export default function InsightsScreen() {
   const [gmailItems, setGmailItems] = useState<{ subject: string; snippet: string; date: string; from?: string }[]>([]);
   const [gmailConnected, setGmailConnected] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
+  const [emailSuggestions, setEmailSuggestions] = useState<EmailSuggestion[]>([]);
+  const [scanLoading, setScanLoading] = useState(false);
+  const [addedSuggestions, setAddedSuggestions] = useState<Record<number, boolean>>({});
+  const [inboxCollapsed, setInboxCollapsed] = useState(false);
+  const hasScrolledRef = useRef(false);
+  const initialScanDoneRef = useRef(false);
   const flatListRef = useRef<FlatList>(null);
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const tabBarCtx = useContext(BottomTabBarHeightContext);
   const tabBarHeight = tabBarCtx ?? (Platform.OS === 'web' ? 84 : 50 + insets.bottom);
+
+  const scanForTasks = useCallback(async (currentGoals: Goal[]) => {
+    if (currentGoals.length === 0) return;
+    setScanLoading(true);
+    try {
+      const url = new URL('/api/gmail/scan-for-tasks', getApiUrl());
+      const res = await authFetch(url.toString(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ goals: currentGoals }),
+      });
+      const data = await res.json();
+      if (data.suggestions && Array.isArray(data.suggestions)) {
+        setEmailSuggestions(data.suggestions);
+        setAddedSuggestions({});
+        if (!initialScanDoneRef.current) {
+          initialScanDoneRef.current = true;
+          if (hasScrolledRef.current) {
+            setInboxCollapsed(true);
+          }
+        }
+      }
+    } catch {}
+    setScanLoading(false);
+  }, []);
+
+  const handleAddEmailSuggestion = useCallback(async (suggestion: EmailSuggestion, index: number) => {
+    if (addedSuggestions[index]) return;
+    setAddedSuggestions(prev => ({ ...prev, [index]: true }));
+    try {
+      const loadedGoals = await getGoals();
+      const plan = await getTodayPlan(loadedGoals);
+      const matchedGoal = loadedGoals.find(g => g.title === suggestion.goalTitle);
+      const validCats = ['fitness', 'finance', 'career', 'personal', 'social'];
+      const category = matchedGoal && validCats.includes(matchedGoal.category)
+        ? matchedGoal.category
+        : 'personal';
+      const newTask = {
+        id: generateId(),
+        title: suggestion.title,
+        category: category as any,
+        completed: false,
+        priority: 'medium' as any,
+        description: suggestion.reason,
+        goalId: matchedGoal?.id,
+      };
+      const updated = { ...plan, tasks: [...plan.tasks, newTask] };
+      await savePlan(updated);
+    } catch {}
+  }, [addedSuggestions]);
 
   const loadAll = useCallback(async () => {
     const [loadedGoals, loadedStats, loadedHistory, savedMessages, lc] = await Promise.all([
@@ -196,6 +261,8 @@ export default function InsightsScreen() {
     setHistory(loadedHistory);
     setMessages(savedMessages);
     setLifeContext(lc);
+
+    let isGmailConnected = false;
 
     try {
       const today = getTodayKey();
@@ -218,7 +285,8 @@ export default function InsightsScreen() {
         const url = new URL('/api/gmail/commitments', base);
         const res = await authFetch(url.toString(), { cache: 'no-store' } as RequestInit);
         const data = await res.json();
-        setGmailConnected(!!data.connected);
+        isGmailConnected = !!data.connected;
+        setGmailConnected(isGmailConnected);
         if (data.connected && data.items?.length) {
           setGmailItems(data.items);
         }
@@ -227,7 +295,11 @@ export default function InsightsScreen() {
       await Promise.allSettled([fetchSource('google'), fetchSource('outlook'), fetchGmail()]);
       setCalendarEvents(calEvts);
     } catch {}
-  }, []);
+
+    if (isGmailConnected && loadedGoals.length > 0) {
+      scanForTasks(loadedGoals);
+    }
+  }, [scanForTasks]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
@@ -413,6 +485,75 @@ export default function InsightsScreen() {
 
   const isEmpty = messages.length === 0 && !isStreaming;
 
+  const renderInboxSection = (extraStyle?: any) => (
+    <View style={[styles.inboxSection, extraStyle]}>
+      <Pressable style={styles.inboxHeader} onPress={() => setInboxCollapsed(prev => !prev)}>
+        <View style={styles.inboxHeaderLeft}>
+          <Ionicons name="mail-outline" size={16} color={Colors.primary} />
+          <Text style={styles.inboxHeaderTitle}>From Your Inbox</Text>
+        </View>
+        <View style={styles.inboxHeaderRight}>
+          <Pressable
+            style={styles.scanAgainBtn}
+            onPress={(e) => {
+              e.stopPropagation();
+              scanForTasks(goals);
+            }}
+            disabled={scanLoading}
+          >
+            <Ionicons name="refresh-outline" size={14} color={Colors.primary} />
+            <Text style={styles.scanAgainText}>Scan again</Text>
+          </Pressable>
+          <Ionicons
+            name={inboxCollapsed ? 'chevron-down' : 'chevron-up'}
+            size={16}
+            color={Colors.textSecondary}
+          />
+        </View>
+      </Pressable>
+      {!inboxCollapsed && (
+        scanLoading ? (
+          <View style={styles.scanLoadingWrap}>
+            <ActivityIndicator size="small" color={Colors.primary} />
+            <Text style={styles.scanLoadingText}>Scanning emails...</Text>
+          </View>
+        ) : emailSuggestions.length === 0 ? (
+          <View style={styles.scanLoadingWrap}>
+            <Text style={styles.scanLoadingText}>No task suggestions found. Tap "Scan again" to retry.</Text>
+          </View>
+        ) : (
+          emailSuggestions.map((suggestion, idx) => (
+            <View key={idx} style={styles.suggestionCard}>
+              <View style={styles.suggestionContent}>
+                <Text style={styles.suggestionTitle}>{suggestion.title}</Text>
+                <Text style={styles.suggestionEmail} numberOfLines={1}>
+                  {'\\u{1F4E7}'} {suggestion.emailSubject} · {suggestion.accountEmail || suggestion.emailFrom}
+                </Text>
+                <Text style={styles.suggestionGoal} numberOfLines={1}>
+                  {'\\u{1F3AF}'} {suggestion.goalTitle} · {suggestion.reason}
+                </Text>
+              </View>
+              <Pressable
+                style={[styles.addSuggestionBtn, addedSuggestions[idx] && styles.addSuggestionBtnAdded]}
+                onPress={() => handleAddEmailSuggestion(suggestion, idx)}
+                disabled={!!addedSuggestions[idx]}
+              >
+                <Ionicons
+                  name={addedSuggestions[idx] ? 'checkmark' : 'add'}
+                  size={16}
+                  color={addedSuggestions[idx] ? Colors.success : Colors.primary}
+                />
+                {addedSuggestions[idx] && (
+                  <Text style={styles.addedText}>Added</Text>
+                )}
+              </Pressable>
+            </View>
+          ))
+        )
+      )}
+    </View>
+  );
+
   return (
     <KeyboardAvoidingView
       style={styles.container}
@@ -437,6 +578,7 @@ export default function InsightsScreen() {
       </View>
 
       <View style={styles.chatArea}>
+        {gmailConnected && isEmpty && renderInboxSection({ paddingHorizontal: 16 })}
         {isEmpty ? (
           <Animated.View entering={FadeInDown.duration(400)} style={styles.emptyContainer}>
             <View style={styles.emptyIconWrap}>
@@ -468,7 +610,14 @@ export default function InsightsScreen() {
             showsVerticalScrollIndicator={false}
             keyboardDismissMode="interactive"
             keyboardShouldPersistTaps="handled"
+            onScrollBeginDrag={() => {
+              hasScrolledRef.current = true;
+              if (initialScanDoneRef.current && !inboxCollapsed) {
+                setInboxCollapsed(true);
+              }
+            }}
             ListHeaderComponent={showTyping ? <TypingDots /> : null}
+            ListFooterComponent={gmailConnected ? renderInboxSection() : null}
           />
         )}
       </View>
@@ -756,5 +905,109 @@ const styles = StyleSheet.create({
   },
   sendBtnDisabled: {
     backgroundColor: Colors.border,
+  },
+  inboxSection: {
+    marginTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+    paddingTop: 12,
+  },
+  inboxHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 4,
+    marginBottom: 8,
+  },
+  inboxHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  inboxHeaderTitle: {
+    fontSize: 14,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.text,
+  },
+  inboxHeaderRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  scanAgainBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+  },
+  scanAgainText: {
+    fontSize: 12,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.primary,
+  },
+  scanLoadingWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 16,
+  },
+  scanLoadingText: {
+    fontSize: 13,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+  },
+  suggestionCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.card,
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  suggestionContent: {
+    flex: 1,
+    marginRight: 10,
+  },
+  suggestionTitle: {
+    fontSize: 14,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.text,
+    marginBottom: 4,
+  },
+  suggestionEmail: {
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+    marginBottom: 2,
+  },
+  suggestionGoal: {
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+    opacity: 0.8,
+  },
+  addSuggestionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#EEF2FF',
+    borderRadius: 20,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: '#C7D2FE',
+  },
+  addSuggestionBtnAdded: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#A7F3D0',
+  },
+  addedText: {
+    fontSize: 12,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.success,
   },
 });
