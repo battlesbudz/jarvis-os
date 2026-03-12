@@ -12,7 +12,7 @@ A mobile app that generates personalized daily task checklists with AI-powered a
 - **State**: Server-side PostgreSQL (AsyncStorage only for auth token/user ID)
 - **Styling**: React Native StyleSheet with Inter font family
 - **Icons**: @expo/vector-icons (Ionicons)
-- **Integrations**: Google Calendar, Outlook Calendar, Gmail (all via Replit OAuth connectors)
+- **Integrations**: Google Calendar, Outlook Calendar, Gmail (all via Replit OAuth connectors), Slack (user OAuth)
 
 ## Project Structure
 - `app/(tabs)/` - Tab screens: index (Today), goals, insights, profile
@@ -35,6 +35,7 @@ A mobile app that generates personalized daily task checklists with AI-powered a
 - `server/integrations/outlook.ts` - Outlook calendar client
 - `server/integrations/gmailClient.ts` - Gmail OAuth client (Replit connector token refresh)
 - `server/integrations/gmail.ts` - checkGmailConnection(), getRecentEmailCommitments()
+- `server/integrations/slack.ts` - getSlackMessages() Slack Web API client
 
 ## Color Palette
 - Primary: #6366F1 (indigo)
@@ -58,15 +59,16 @@ A mobile app that generates personalized daily task checklists with AI-powered a
 11. **Completed Section** - Both regular tasks AND calendar events move to the Completed section when checked off
 12. **Life Context** - 5-question onboarding questionnaire (LifeContextSheet modal); answers stored in AsyncStorage; feeds into ALL AI calls (coach chat, plan generation, check-in, suggestions)
 13. **Gmail Integration** - Connected via OAuth; reads recent inbox emails (subject + snippet only); surfaces commitment/deadline signals to AI coach and plan generator
+14. **Slack Integration** - Connected via user OAuth (SLACK_CLIENT_ID/SLACK_CLIENT_SECRET required); reads recent messages from top 5 active channels/DMs (last 7 days, up to 30 messages each); surfaces to AI coach for commitment/follow-up identification; connect/disconnect in Profile tab
 
 ### ADHD / Executive Dysfunction Features
-14. **Energy Check-in** - Morning modal on first daily app open; user selects energy level (1-5) and focus quality (Foggy/Steady/Sharp); stored in AsyncStorage; feeds into AI plan generation to adjust task difficulty. Has "Skip for today" option.
-15. **Quick Capture / Brain Dump** - Floating + button on Today screen; opens BrainDumpModal for rapid thought capture; "Add to Today" creates a task immediately, "Save for Later" stores in inbox; inbox items shown at top of Today screen for later action.
-16. **"Just One Thing" Mode** - "Overwhelmed?" button near task list header; opens JustOneThingModal showing exactly one prioritized task; energy check-in data influences task selection (low energy = low effort tasks); "Done" marks complete, "Pick Another" cycles tasks.
-17. **Focus Timer** - Pomodoro-style timer at `/focus-timer` modal route; 25min work / 5min break cycles; circular progress ring; per-task launch from "Focus" button on TaskCard; haptic feedback + local notifications on session complete; settings persisted in AsyncStorage.
-18. **Visual Time Blocks** - Toggle in Today header switches between list view and timeline view; timeline shows hours 6am–10pm with tasks pinned to their scheduled time; unscheduled tasks shown separately; view preference persisted.
-19. **Transition Reminders** - Local notifications scheduled 10 min before tasks with a set `time`; enabled/disabled toggle in Profile; web-safe (lib/notifications.web.ts stub); focus timer fires completion nudge notifications.
-20. **Voice Interface** - Mic button in Coach input bar records speech (expo-av), transcribes via Whisper (POST /api/coach/transcribe), auto-sends to coach. Speaker button on last assistant message plays TTS response aloud (POST /api/coach/speak, OpenAI TTS "alloy" voice). Works on iOS/Android/web.
+15. **Energy Check-in** - Morning modal on first daily app open; user selects energy level (1-5) and focus quality (Foggy/Steady/Sharp); stored in AsyncStorage; feeds into AI plan generation to adjust task difficulty. Has "Skip for today" option.
+16. **Quick Capture / Brain Dump** - Floating + button on Today screen; opens BrainDumpModal for rapid thought capture; "Add to Today" creates a task immediately, "Save for Later" stores in inbox; inbox items shown at top of Today screen for later action.
+17. **"Just One Thing" Mode** - "Overwhelmed?" button near task list header; opens JustOneThingModal showing exactly one prioritized task; energy check-in data influences task selection (low energy = low effort tasks); "Done" marks complete, "Pick Another" cycles tasks.
+18. **Focus Timer** - Pomodoro-style timer at `/focus-timer` modal route; 25min work / 5min break cycles; circular progress ring; per-task launch from "Focus" button on TaskCard; haptic feedback + local notifications on session complete; settings persisted in AsyncStorage.
+19. **Visual Time Blocks** - Toggle in Today header switches between list view and timeline view; timeline shows hours 6am–10pm with tasks pinned to their scheduled time; unscheduled tasks shown separately; view preference persisted.
+20. **Transition Reminders** - Local notifications scheduled 10 min before tasks with a set `time`; enabled/disabled toggle in Profile; web-safe (lib/notifications.web.ts stub); focus timer fires completion nudge notifications.
+21. **Voice Interface** - Mic button in Coach input bar records speech (expo-av), transcribes via Whisper (POST /api/coach/transcribe), auto-sends to coach. Speaker button on last assistant message plays TTS response aloud (POST /api/coach/speak, OpenAI TTS "alloy" voice). Works on iOS/Android/web.
 
 ## Authentication
 - **Login screen**: `/login` route with Google Sign-In button
@@ -98,6 +100,8 @@ For web Google Sign-In to work, the Replit dev domain must be added to **Authori
 - `GET /api/calendar/outlook/events?date=YYYY-MM-DD` - Today's events from Outlook
 - `GET /api/gmail/status` - Returns {connected: bool}
 - `GET /api/gmail/commitments` - Returns {connected: bool, items: EmailCommitment[]} (last 7 days, 20 emails max)
+- `GET /api/slack/status` - Returns {slack: bool}
+- `GET /api/slack/messages` - Returns {connected: bool, messages: SlackMessage[]} (last 7 days, top 5 channels, up to 30 msgs each)
 - `GET/PUT /api/data/plans/:date` - Per-user daily plan CRUD
 - `GET /api/data/plans` - All plans for user
 - `GET/PUT/DELETE /api/data/{goals,stats,brain-dump-inbox,chat-history,life-context,timer-settings,user-preferences,completion-history,blocked-tasks,plan-snapshots}` - Per-user data CRUD

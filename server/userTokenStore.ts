@@ -85,6 +85,7 @@ export async function getUserOAuthStatus(userId: string): Promise<Record<string,
   const result: Record<string, { connected: boolean; email?: string; accounts: { email: string; scopes?: string }[] }> = {
     google: { connected: false, accounts: [] },
     microsoft: { connected: false, accounts: [] },
+    slack: { connected: false, accounts: [] },
   };
   const items = (rows as any).rows ?? (Array.isArray(rows) ? rows : []);
   for (const row of items) {

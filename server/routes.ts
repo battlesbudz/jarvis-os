@@ -15,18 +15,19 @@ import {
   getRecentEmailCommitments,
   createGmailDraft,
 } from "./integrations/gmail";
+import { getSlackMessages } from "./integrations/slack";
 import { authRouter, authMiddleware } from "./auth";
 import { registerDataRoutes } from "./dataRoutes";
 import { isIntegrationOwner, claimIntegrationOwnership } from "./integrationOwner";
 import { oauthRouter, oauthCallbackRouter } from "./oauthRoutes";
-import { getValidGoogleTokens, getValidMicrosoftToken, getUserTokens } from "./userTokenStore";
+import { getValidGoogleTokens, getValidMicrosoftToken, getUserTokens, getUserToken } from "./userTokenStore";
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
 });
 
-function buildCoachSystemPrompt(goals: any[], stats: any, history: any[], calendarEvents: any[] = [], lifeContext?: any, gmailItems?: any[], gmailConnected?: boolean): string {
+function buildCoachSystemPrompt(goals: any[], stats: any, history: any[], calendarEvents: any[] = [], lifeContext?: any, gmailItems?: any[], gmailConnected?: boolean, slackMessages?: any[], slackConnected?: boolean): string {
   const completedHistory = history.filter((h: any) => h.completed);
   const skippedHistory = history.filter((h: any) => !h.completed);
   const completionRate = history.length > 0
@@ -75,6 +76,18 @@ function buildCoachSystemPrompt(goals: any[], stats: any, history: any[], calend
       ? `\n## Recent Emails\nGmail is connected but no emails were found in the last 7 days. Do not pretend to have email data you don't have.`
       : `\n## Recent Emails\nGmail is not connected — you have no access to the user's inbox. If asked about emails, tell them to connect Gmail in the Profile tab.`;
 
+  const slackSection = slackConnected
+    ? (slackMessages && slackMessages.length > 0
+        ? `\n## Recent Slack Messages (last 7 days)\n` +
+          slackMessages.slice(0, 50).map((m: any) => {
+            const dateStr = m.timestamp ? new Date(m.timestamp).toLocaleDateString('en-US', {month:'short',day:'numeric'}) : '';
+            const channelLabel = m.channelType === 'dm' ? 'DM' : m.channelType === 'group' ? 'Group' : `#${m.channel}`;
+            return `- [${dateStr}] [${channelLabel}] ${m.user}: ${m.text}`;
+          }).join('\n') +
+          `\n(Use these to identify commitments, follow-ups, and unresolved discussions. Treat Slack messages like emails — surface actionable items without asking for more info.)`
+        : `\n## Recent Slack Messages\nSlack is connected but no messages were found in the last 7 days.`)
+    : '';
+
   const now = new Date();
   const dayOfWeek = now.toLocaleDateString('en-US', { weekday: 'long' });
   const dateStr = now.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
@@ -95,7 +108,7 @@ ${strugglingCategories.length > 0 ? `- Struggling most with: ${strugglingCategor
 ${goalsText}
 
 ## Today's Calendar
-${calendarText}${gmailSection}
+${calendarText}${gmailSection}${slackSection}
 
 ## Recent Activity (last 7 days)
 - Completed: ${recentCompleted}
@@ -207,13 +220,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/coach/chat", async (req: Request, res: Response) => {
     try {
-      const { messages, goals, stats, history, calendarEvents, lifeContext, gmailItems, gmailConnected } = req.body;
+      const { messages, goals, stats, history, calendarEvents, lifeContext, gmailItems, gmailConnected, slackMessages, slackConnected } = req.body;
 
       if (!messages || !Array.isArray(messages)) {
         return res.status(400).json({ error: "messages array is required" });
       }
 
-      const systemPrompt = buildCoachSystemPrompt(goals || [], stats || {}, history || [], calendarEvents || [], lifeContext || null, gmailItems || [], gmailConnected ?? false);
+      const systemPrompt = buildCoachSystemPrompt(goals || [], stats || {}, history || [], calendarEvents || [], lifeContext || null, gmailItems || [], gmailConnected ?? false, slackMessages || [], slackConnected ?? false);
 
       res.setHeader('Content-Type', 'text/event-stream');
       res.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -664,6 +677,35 @@ Only return the JSON object, no extra text.`;
     } catch (error) {
       console.error("Error creating Gmail draft:", error);
       res.status(500).json({ error: 'Failed to create draft' });
+    }
+  });
+
+  app.get("/api/slack/status", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.json({ slack: false });
+
+      const token = await getUserToken(userId, 'slack');
+      res.json({ slack: !!token });
+    } catch (error) {
+      console.error("Error checking Slack status:", error);
+      res.json({ slack: false });
+    }
+  });
+
+  app.get("/api/slack/messages", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.json({ connected: false, messages: [] });
+
+      const token = await getUserToken(userId, 'slack');
+      if (!token) return res.json({ connected: false, messages: [] });
+
+      const messages = await getSlackMessages(token.accessToken);
+      res.json({ connected: true, messages });
+    } catch (error) {
+      console.error("Error fetching Slack messages:", error);
+      res.json({ connected: false, messages: [] });
     }
   });
 
