@@ -2,7 +2,7 @@ import express from "express";
 import type { Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { ensureTablesExist } from "./db";
-import { registerTelegramWebhook, startProactiveScheduler, startTelegramPolling, startEmailAlertScanner } from "./telegramRoutes";
+import { registerTelegramWebhook, startProactiveScheduler, startTelegramPolling, startEmailAlertScanner, startMeetingBriefScanner } from "./telegramRoutes";
 import { isTelegramConfigured, logTelegramStatus, setWebhook } from "./integrations/telegram";
 import { startScheduler } from "./scheduler";
 import * as fs from "fs";
@@ -284,6 +284,9 @@ function setupErrorHandler(app: express.Application) {
         });
         startEmailAlertScanner().catch(err => {
           console.error("Failed to start email alert scanner:", err);
+        });
+        startMeetingBriefScanner().catch(err => {
+          console.error("Failed to start meeting brief scanner:", err);
         });
       }
     },

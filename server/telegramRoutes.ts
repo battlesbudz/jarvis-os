@@ -3,7 +3,7 @@ import { db } from "./db";
 import { eq, and, desc, sql, gte } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { sendMessage, isTelegramConfigured, getUpdates, downloadTelegramFile, downloadTelegramFileBuffer } from "./integrations/telegram";
-import { getRecentEmailCommitments, getEmailsSince, gmailModifyMessage } from "./integrations/gmail";
+import { getRecentEmailCommitments, getEmailsSince, getStarredFollowUpEmails, gmailModifyMessage } from "./integrations/gmail";
 import { getGoogleCalendarEvents } from "./integrations/googleCalendar";
 import { getValidGoogleTokens } from "./userTokenStore";
 import { tavilySearch, formatSearchResults } from "./integrations/search";
@@ -835,14 +835,19 @@ async function generateProactiveMessage(
   if (type === 'morning') {
     const dueToday = (context.commitments || []).filter((c: any) => c.dueDate === context.dateKey);
     const overdue = (context.commitments || []).filter((c: any) => c.dueDate && c.dueDate < context.dateKey!);
+    const tomorrow = new Date(context.dateKey + 'T12:00:00');
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const tomorrowKey = tomorrow.toISOString().slice(0, 10);
+    const dueTomorrow = (context.commitments || []).filter((c: any) => c.dueDate === tomorrowKey);
     prompt = `Today is ${dayName}, ${dateFull}. User has ${incompleteTasks.length} task(s) planned.
 Tasks: ${incompleteTasks.map((t: any) => t.title).join(', ') || 'none planned'}
 Goals: ${goalsText}
 Due today: ${dueToday.map((c: any) => `"${c.content}"`).join(', ') || 'none'}
 Overdue: ${overdue.map((c: any) => `"${c.content}"`).join(', ') || 'none'}
+Due TOMORROW: ${dueTomorrow.map((c: any) => `"${c.content}"`).join(', ') || 'none'}
 Streak: ${context.stats?.streak || 0} days
 
-Write a sharp, energizing morning check-in (3-4 sentences). Be specific to their actual tasks/goals. No generic phrases like "Good morning!" Start with something direct.`;
+Write a sharp, energizing morning check-in (3-4 sentences). Be specific to their actual tasks/goals. No generic phrases like "Good morning!" Start with something direct. If there are items due tomorrow, give a heads-up so they can plan ahead.`;
   } else if (type === 'commitment_check') {
     const dueToday = (context.commitments || []).filter((c: any) => c.dueDate === context.dateKey);
     const overdue = (context.commitments || []).filter((c: any) => c.dueDate && c.dueDate < context.dateKey!);
@@ -853,13 +858,18 @@ Overdue: ${overdue.map((c: any) => `"${c.content}" (${c.dueDate})`).join(', ') |
 
 Write a brief mid-day accountability check-in (2-3 sentences). Direct, no lecture. Ask what progress has been made on the specific items.`;
   } else if (type === 'evening') {
+    const tomorrow = new Date(context.dateKey + 'T12:00:00');
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const tomorrowKey = tomorrow.toISOString().slice(0, 10);
+    const dueTomorrow = (context.commitments || []).filter((c: any) => c.dueDate === tomorrowKey);
     prompt = `Today is ${dayName}, ${dateFull}.
 Completed: ${completedTasks.length}/${allTasks.length} tasks
 Remaining: ${incompleteTasks.slice(0, 3).map((t: any) => t.title).join(', ') || 'none'}
 Open commitments: ${commitmentList}
+Due TOMORROW: ${dueTomorrow.map((c: any) => `"${c.content}"`).join(', ') || 'none'}
 Streak: ${context.stats?.streak || 0} days
 
-Write a concise evening recap (3-4 sentences). Acknowledge what was done, note what's still open, end with something forward-looking. No platitudes.`;
+Write a concise evening recap (3-4 sentences). Acknowledge what was done, note what's still open. If there are items due tomorrow, specifically call them out so the user can plan tonight. End with something forward-looking. No platitudes.`;
   } else if (type === 'weekly') {
     prompt = `Weekly review.
 Streak: ${context.stats?.streak || 0} days | XP: ${context.stats?.xp || 0}
@@ -896,6 +906,7 @@ export async function startProactiveScheduler(): Promise<void> {
   const SCHEDULE = [
     { type: 'morning', hour: 8, minute: 0 },
     { type: 'commitment_check', hour: 10, minute: 0 },
+    { type: 'followup_check', hour: 12, minute: 0 },
     { type: 'evening', hour: 20, minute: 0 },
     { type: 'weekly', dayOfWeek: 0, hour: 19, minute: 0 },
   ];
@@ -934,6 +945,25 @@ export async function startProactiveScheduler(): Promise<void> {
           lastSent[sentKey] = dateKey;
 
           try {
+            if (schedule.type === 'followup_check') {
+              const tokens = await getValidGoogleTokens(link.userId).catch(() => []);
+              if (!tokens || tokens.length === 0) continue;
+              const token = tokens[0];
+
+              const starredEmails = await getStarredFollowUpEmails(token, 3);
+              if (starredEmails.length === 0) continue;
+
+              const emailList = starredEmails.slice(0, 10).map((e) => {
+                const senderName = e.from.replace(/<.*>/, '').trim() || e.from;
+                return `${senderName} (${e.ageDays}d) — "${e.subject}"`;
+              }).join('\n');
+
+              const msg = `📬 ${starredEmails.length} starred/important email${starredEmails.length === 1 ? '' : 's'} sitting >3 days:\n\n${emailList}\n\nStill relevant? Reply, archive, or unstar anything you've handled.`;
+              console.log(`[Proactive] Sending followup_check to user ${link.userId} (${timezone})`);
+              await sendMessage(link.chatId, msg);
+              continue;
+            }
+
             let userGoals: any[] = [];
             let todayPlan: any = null;
             let userStats: any = {};
@@ -974,6 +1004,127 @@ export async function startProactiveScheduler(): Promise<void> {
   }, 60 * 1000);
 
   console.log('Telegram proactive scheduler started');
+}
+
+export async function startMeetingBriefScanner(): Promise<void> {
+  if (!isTelegramConfigured()) return;
+
+  const SCAN_INTERVAL_MS = 5 * 60 * 1000;
+  const sentBriefs = new Set<string>();
+
+  const runScan = async () => {
+    try {
+      const links = await db.select().from(schema.telegramLinks);
+      if (links.length === 0) return;
+
+      const allPrefs = await db.select().from(schema.userPreferences);
+      const prefsMap: Record<string, any> = {};
+      for (const p of allPrefs) prefsMap[p.userId] = (p.data as any) || {};
+
+      const now = new Date();
+
+      const utcDateKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+      const oldKeys = Array.from(sentBriefs).filter(k => !k.includes(utcDateKey));
+      for (const k of oldKeys) sentBriefs.delete(k);
+
+      for (const link of links) {
+        try {
+          const tokens = await getValidGoogleTokens(link.userId).catch(() => []);
+          if (!tokens || tokens.length === 0) continue;
+          const token = tokens[0];
+
+          const timezone = prefsMap[link.userId]?.timezone || 'America/New_York';
+          const localDate = new Date(now.toLocaleString('en-US', { timeZone: timezone }));
+          const localDateStr = `${localDate.getFullYear()}-${String(localDate.getMonth() + 1).padStart(2, '0')}-${String(localDate.getDate()).padStart(2, '0')}`;
+
+          const events = await getGoogleCalendarEvents(localDateStr, undefined, undefined, token);
+          if (events.length === 0) continue;
+
+          const nowMs = now.getTime();
+
+          for (const event of events) {
+            const eventStart = new Date(event.start).getTime();
+            const minutesUntil = (eventStart - nowMs) / (60 * 1000);
+
+            if (minutesUntil < 10 || minutesUntil > 20) continue;
+
+            const briefKey = `${link.userId}-${event.id}-${localDateStr}`;
+            if (sentBriefs.has(briefKey)) continue;
+            sentBriefs.add(briefKey);
+
+            let relevantEmails: string[] = [];
+            try {
+              const titleWords = event.title
+                .split(/[\s,\-—]+/)
+                .filter(w => w.length > 3)
+                .map(w => w.toLowerCase());
+
+              if (titleWords.length > 0) {
+                const recentEmails = await getEmailsSince(Date.now() - 7 * 24 * 60 * 60 * 1000, token);
+                relevantEmails = recentEmails
+                  .filter(e => {
+                    const subjectLower = e.subject.toLowerCase();
+                    return titleWords.some(w => subjectLower.includes(w));
+                  })
+                  .slice(0, 3)
+                  .map(e => {
+                    const senderName = e.from.replace(/<.*>/, '').trim() || e.from;
+                    return `"${e.subject}" from ${senderName}`;
+                  });
+              }
+            } catch {}
+
+            const eventTime = new Date(event.start).toLocaleTimeString('en-US', {
+              hour: 'numeric',
+              minute: '2-digit',
+              hour12: true,
+            });
+
+            let briefPrompt = `Upcoming meeting in ~15 minutes:
+Event: "${event.title}"
+Time: ${eventTime}
+${event.location ? `Location: ${event.location}` : ''}
+${event.description ? `Description: ${event.description.slice(0, 300)}` : ''}
+${relevantEmails.length > 0 ? `\nRelated recent emails:\n${relevantEmails.map(e => `- ${e}`).join('\n')}` : ''}
+
+Write a sharp 2-3 sentence meeting prep brief. Include what the meeting is about, highlight any relevant email context if provided, and end with one clear action item or thing to focus on. Be direct, no fluff.`;
+
+            try {
+              const resp = await openai.chat.completions.create({
+                model: 'gpt-5-mini',
+                messages: [
+                  {
+                    role: 'system',
+                    content: 'You are GamePlan Coach Jarvis — a direct, sharp productivity coach. You send pre-meeting prep briefs via Telegram. Keep it SHORT (2-3 sentences). Plain text only, no markdown, no bullet points.',
+                  },
+                  { role: 'user', content: briefPrompt },
+                ],
+                max_completion_tokens: 1500,
+              });
+
+              const briefMessage = resp.choices[0]?.message?.content;
+              if (briefMessage) {
+                const header = `📅 Meeting in ~15 min: ${event.title} (${eventTime})${event.location ? `\n📍 ${event.location}` : ''}`;
+                const fullMsg = `${header}\n\n${briefMessage}`;
+                console.log(`[MeetingBrief] Sending brief for "${event.title}" to user ${link.userId}`);
+                await sendMessage(link.chatId, fullMsg);
+              }
+            } catch (err) {
+              console.error(`[MeetingBrief] AI generation failed for "${event.title}":`, err);
+            }
+          }
+        } catch (err) {
+          console.error(`[MeetingBrief] Error for user ${link.userId}:`, err);
+        }
+      }
+    } catch (err) {
+      console.error('[MeetingBrief] Scanner error:', err);
+    }
+  };
+
+  setTimeout(runScan, 10 * 1000);
+  setInterval(runScan, SCAN_INTERVAL_MS);
+  console.log('Meeting brief scanner started (5-min interval)');
 }
 
 export async function startEmailAlertScanner(): Promise<void> {
