@@ -21,7 +21,7 @@ A mobile app that generates personalized daily task checklists with AI-powered a
 - `lib/storage.ts` - Server API data layer for tasks, goals, stats, completion history, chat history, life context (uses JWT auth token from auth-context)
 - `server/db.ts` - Drizzle ORM PostgreSQL connection
 - `server/dataRoutes.ts` - CRUD API routes for all user data categories
-- `shared/schema.ts` - Drizzle schema: users, plans, goals, stats, brain_dump_inbox, energy_checkins, chat_history, life_context, timer_settings, user_preferences, completion_history, blocked_tasks, completed_calendar_ids, plan_snapshots
+- `shared/schema.ts` - Drizzle schema: users, plans, goals, stats, brain_dump_inbox, energy_checkins, chat_history, life_context, timer_settings, user_preferences, completion_history, blocked_tasks, completed_calendar_ids, plan_snapshots, commitments
 - `lib/helpers.ts` - Category colors, icons, labels, date formatting utilities
 - `lib/query-client.ts` - React Query client with apiRequest helper (sends Authorization header)
 - `lib/auth-context.tsx` - Auth context provider (login, register, loginWithGoogle, logout, token persistence)
@@ -60,6 +60,7 @@ A mobile app that generates personalized daily task checklists with AI-powered a
 12. **Life Context** - 5-question onboarding questionnaire (LifeContextSheet modal); answers stored in AsyncStorage; feeds into ALL AI calls (coach chat, plan generation, check-in, suggestions)
 13. **Gmail Integration** - Connected via OAuth; reads recent inbox emails (subject + snippet only); surfaces commitment/deadline signals to AI coach and plan generator
 14. **Slack Integration** - Connected via user OAuth (SLACK_CLIENT_ID/SLACK_CLIENT_SECRET required); reads recent messages from top 5 active channels/DMs (last 7 days, up to 30 messages each); surfaces to AI coach for commitment/follow-up identification; connect/disconnect in Profile tab
+15. **Accountability Engine** - Commitment tracking: AI auto-extracts commitments from chat ("I'll do X by Friday"), stores in `commitments` table, shows in collapsible "Open Commitments" section on Coach tab with due date badges (green/orange/red). Proactive check-ins: on app open, Jarvis surfaces accountability message if tasks were left incomplete yesterday or commitments are overdue. Push notifications: evening accountability (8pm), mid-day nudge (1pm), commitment due-date reminders (10am), weekly review (Sunday 7pm). Weekly review endpoint generates structured review with wins/patterns/avoided/focus. Coach system prompt and daily check-in note now include open commitments for smarter coaching.
 
 ### ADHD / Executive Dysfunction Features
 14. **Energy Check-in** - Morning modal on first daily app open; user selects energy level (1-5) and focus quality (Foggy/Steady/Sharp); stored in AsyncStorage; feeds into AI plan generation to adjust task difficulty. Has "Skip for today" option.
@@ -109,6 +110,12 @@ For web Google Sign-In to work, the Replit dev domain must be added to **Authori
 - `GET/PUT/DELETE /api/data/{goals,stats,brain-dump-inbox,chat-history,life-context,timer-settings,user-preferences,completion-history,blocked-tasks,plan-snapshots}` - Per-user data CRUD
 - `GET/PUT /api/data/energy-checkins/:date` - Per-user daily energy checkin
 - `GET/PUT /api/data/completed-calendar-ids/:date` - Per-user completed calendar event IDs
+- `GET /api/commitments` - Pending commitments for user
+- `PUT /api/commitments/:id` - Update commitment status (done/skipped/pending)
+- `DELETE /api/commitments/:id` - Delete a commitment
+- `POST /api/commitments/extract` - AI extracts commitments from user message text
+- `POST /api/coach/proactive` - Generates proactive accountability message from Jarvis (streaming SSE)
+- `POST /api/coach/weekly-review` - Generates structured weekly review (headline, wins, patterns, avoided, nextWeekFocus)
 
 ## Rewards System
 - XP: regular task +10, high priority +15, goal-linked +20, calendar event +10

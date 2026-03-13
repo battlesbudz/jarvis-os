@@ -108,3 +108,14 @@ export const planSnapshots = pgTable("plan_snapshots", {
   data: jsonb("data").notNull(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
+
+export const commitments = pgTable("commitments", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  content: text("content").notNull(),
+  dueDate: varchar("due_date"),
+  status: varchar("status").notNull().default("pending"),
+  extractedAt: timestamp("extracted_at").defaultNow().notNull(),
+  resolvedAt: timestamp("resolved_at"),
+  sourceMessage: text("source_message"),
+});
