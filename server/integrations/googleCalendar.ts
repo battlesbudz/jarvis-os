@@ -59,6 +59,8 @@ export async function getGoogleCalendarEvents(
     .map((c) => c.id!)
     .filter(Boolean);
 
+  console.log(`[Calendar] Found ${calendarIds.length} calendar(s) for token. Querying ${startOfDay.toISOString()} → ${endOfDay.toISOString()}`);
+
   const allEvents: CalendarEvent[] = [];
   const seenIds = new Set<string>();
 
@@ -74,6 +76,7 @@ export async function getGoogleCalendarEvents(
           maxResults: 20,
         });
         const items = res.data.items || [];
+        console.log(`[Calendar] Cal "${calId}": ${items.length} event(s)`);
         items
           .filter((e) => e.summary && !seenIds.has(e.id || ''))
           .forEach((e) => {
@@ -87,7 +90,9 @@ export async function getGoogleCalendarEvents(
               location: e.location || undefined,
             });
           });
-      } catch {}
+      } catch (err: any) {
+        console.error(`[Calendar] Error fetching events for cal "${calId}":`, err?.message || err);
+      }
     })
   );
 
