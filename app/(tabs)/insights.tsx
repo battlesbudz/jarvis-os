@@ -341,6 +341,8 @@ export default function InsightsScreen() {
   const [gmailConnected, setGmailConnected] = useState(false);
   const [slackMessages, setSlackMessages] = useState<any[]>([]);
   const [slackConnected, setSlackConnected] = useState(false);
+  const [telegramMessages, setTelegramMessages] = useState<any[]>([]);
+  const [telegramConnected, setTelegramConnected] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
   const [emailSuggestions, setEmailSuggestions] = useState<EmailSuggestion[]>([]);
   const [scanLoading, setScanLoading] = useState(false);
@@ -374,6 +376,8 @@ export default function InsightsScreen() {
   const gmailConnectedRef = useRef(false);
   const slackMessagesRef = useRef<any[]>([]);
   const slackConnectedRef = useRef(false);
+  const telegramMessagesRef = useRef<any[]>([]);
+  const telegramConnectedRef = useRef(false);
   const calendarEventsRef = useRef<typeof calendarEvents>([]);
   const goalsRef = useRef<typeof goals>([]);
   const statsRef = useRef<typeof stats>({ streak: 0, totalCompleted: 0, bestStreak: 0 });
@@ -407,6 +411,8 @@ export default function InsightsScreen() {
   useEffect(() => { gmailConnectedRef.current = gmailConnected; }, [gmailConnected]);
   useEffect(() => { slackMessagesRef.current = slackMessages; }, [slackMessages]);
   useEffect(() => { slackConnectedRef.current = slackConnected; }, [slackConnected]);
+  useEffect(() => { telegramMessagesRef.current = telegramMessages; }, [telegramMessages]);
+  useEffect(() => { telegramConnectedRef.current = telegramConnected; }, [telegramConnected]);
   useEffect(() => { calendarEventsRef.current = calendarEvents; }, [calendarEvents]);
   useEffect(() => { goalsRef.current = goals; }, [goals]);
   useEffect(() => { statsRef.current = stats; }, [stats]);
@@ -878,7 +884,15 @@ export default function InsightsScreen() {
         setSlackMessages(data.connected && data.messages?.length ? data.messages : []);
       };
 
-      await Promise.allSettled([fetchSource('google'), fetchSource('outlook'), fetchGmail(), fetchSlack()]);
+      const fetchTelegram = async () => {
+        const url = new URL('/api/telegram/messages', base);
+        const res = await authFetch(url.toString(), { cache: 'no-store' } as RequestInit);
+        const data = await res.json();
+        setTelegramConnected(!!data.connected);
+        setTelegramMessages(data.connected && data.messages?.length ? data.messages : []);
+      };
+
+      await Promise.allSettled([fetchSource('google'), fetchSource('outlook'), fetchGmail(), fetchSlack(), fetchTelegram()]);
       setCalendarEvents(calEvts);
     } catch {
     } finally {
@@ -934,6 +948,8 @@ export default function InsightsScreen() {
           gmailConnected: gmailConnectedRef.current,
           slackMessages: slackMessagesRef.current,
           slackConnected: slackConnectedRef.current,
+          telegramMessages: telegramMessagesRef.current,
+          telegramConnected: telegramConnectedRef.current,
           commitments: commitmentsRef.current,
           coachingMode: coachingModeRef.current,
         }),
