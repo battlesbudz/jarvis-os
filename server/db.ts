@@ -233,6 +233,26 @@ export async function ensureTablesExist() {
       )
     `);
 
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS morning_voice_notes (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id VARCHAR NOT NULL REFERENCES users(id),
+        recorded_at DATE NOT NULL,
+        transcript TEXT NOT NULL,
+        mood_signal VARCHAR NOT NULL DEFAULT 'calm'
+          CHECK (mood_signal IN ('calm', 'energized', 'stressed', 'overwhelmed', 'uncertain')),
+        themes JSONB NOT NULL DEFAULT '[]'::jsonb,
+        blockers JSONB NOT NULL DEFAULT '[]'::jsonb,
+        wins JSONB NOT NULL DEFAULT '[]'::jsonb,
+        intention TEXT,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        UNIQUE (user_id, recorded_at)
+      )
+    `);
+    await db.execute(sql`ALTER TABLE morning_voice_notes ALTER COLUMN recorded_at TYPE DATE USING recorded_at::DATE`).catch(() => {});
+    await db.execute(sql`ALTER TABLE morning_voice_notes ADD CONSTRAINT morning_voice_notes_mood_check CHECK (mood_signal IN ('calm', 'energized', 'stressed', 'overwhelmed', 'uncertain'))`).catch(() => {});
+    await db.execute(sql`ALTER TABLE morning_voice_notes ADD CONSTRAINT morning_voice_notes_user_date_unique UNIQUE (user_id, recorded_at)`).catch(() => {});
+
     console.log("Database tables verified");
   } catch (error) {
     console.error("Failed to ensure database tables exist:", error);

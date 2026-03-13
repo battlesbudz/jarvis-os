@@ -51,6 +51,38 @@ interface Memory {
   extractedAt: string;
 }
 
+interface MorningVoiceNote {
+  id: string;
+  recordedAt: string;
+  transcript: string;
+  moodSignal: string;
+  themes: string[];
+  blockers: string[];
+  wins: string[];
+  intention: string | null;
+}
+
+const MOOD_COLORS: Record<string, string> = {
+  calm: '#10B981',
+  energized: '#F59E0B',
+  stressed: '#EF4444',
+  overwhelmed: '#8B5CF6',
+  uncertain: '#6B7280',
+};
+
+function formatNoteDate(dateStr: string): string {
+  const [year, month, day] = dateStr.split('-').map(Number);
+  const date = new Date(year, month - 1, day);
+  const today = new Date();
+  const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  if (dateStr === todayStr) return 'Today';
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const yesterdayStr = `${yesterday.getFullYear()}-${String(yesterday.getMonth() + 1).padStart(2, '0')}-${String(yesterday.getDate()).padStart(2, '0')}`;
+  if (dateStr === yesterdayStr) return 'Yesterday';
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
 interface OAuthProviderStatus {
   connected: boolean;
   email?: string;
@@ -145,6 +177,9 @@ export default function ProfileScreen() {
   const [userName, setUserName] = useState('');
   const [memories, setMemories] = useState<Memory[]>([]);
   const [memoriesLoading, setMemoriesLoading] = useState(true);
+  const [morningNotes, setMorningNotes] = useState<MorningVoiceNote[]>([]);
+  const [morningNotesLoading, setMorningNotesLoading] = useState(true);
+  const [expandedNoteId, setExpandedNoteId] = useState<string | null>(null);
   const [timezone, setTimezone] = useState('America/New_York');
   const [showTimezoneModal, setShowTimezoneModal] = useState(false);
   const [emailAlertsEnabled, setEmailAlertsEnabled] = useState(true);
@@ -203,6 +238,18 @@ export default function ProfileScreen() {
     }
   }, [loadMemories]);
 
+  const loadMorningNotes = useCallback(async () => {
+    setMorningNotesLoading(true);
+    try {
+      const res = await apiRequest('GET', '/api/morning-voice-notes?limit=30');
+      const data = await res.json();
+      if (data.notes && Array.isArray(data.notes)) {
+        setMorningNotes(data.notes);
+      }
+    } catch {}
+    setMorningNotesLoading(false);
+  }, []);
+
   const loadAll = useCallback(async () => {
     const [s, lc, notifications, name] = await Promise.all([
       getStats(),
@@ -214,14 +261,14 @@ export default function ProfileScreen() {
     setLifeContext(lc);
     setNotificationsEnabledState(notifications);
     setUserName(name);
-    await Promise.all([loadOAuthStatus(), loadMemories(), loadTelegramStatus()]);
+    await Promise.all([loadOAuthStatus(), loadMemories(), loadTelegramStatus(), loadMorningNotes()]);
     try {
       const res = await apiRequest('GET', '/api/preferences');
       const prefs = await res.json();
       if (prefs.timezone) setTimezone(prefs.timezone);
       if (typeof prefs.emailAlertsEnabled === 'boolean') setEmailAlertsEnabled(prefs.emailAlertsEnabled);
     } catch {}
-  }, [loadOAuthStatus, loadMemories, loadTelegramStatus]);
+  }, [loadOAuthStatus, loadMemories, loadTelegramStatus, loadMorningNotes]);
 
   const handleToggleEmailAlerts = useCallback(async () => {
     const newValue = !emailAlertsEnabled;
@@ -707,6 +754,80 @@ export default function ProfileScreen() {
                   </Pressable>
                 </View>
               ))}
+            </View>
+          )}
+        </Animated.View>
+
+        {/* Morning Notes */}
+        <Animated.View entering={FadeInDown.duration(400).delay(440)}>
+          <Text style={[styles.sectionTitle, { marginTop: 28 }]}>Morning Notes</Text>
+          <Text style={styles.sectionSubtitle}>
+            Your daily voice check-ins and patterns
+          </Text>
+          {morningNotesLoading ? (
+            <View style={styles.memoryEmptyCard}>
+              <ActivityIndicator size="small" color={Colors.textTertiary} />
+            </View>
+          ) : morningNotes.length === 0 ? (
+            <View style={styles.memoryEmptyCard}>
+              <View style={styles.memoryEmptyIcon}>
+                <Ionicons name="mic-outline" size={22} color={Colors.textTertiary} />
+              </View>
+              <Text style={styles.memoryEmptyText}>
+                No morning notes yet — record one during your morning check-in
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.memoryList}>
+              {morningNotes.map((note, idx) => {
+                const isExpanded = expandedNoteId === note.id;
+                return (
+                  <Pressable
+                    key={note.id}
+                    onPress={() => setExpandedNoteId(isExpanded ? null : note.id)}
+                    style={[styles.morningNoteRow, idx < morningNotes.length - 1 && styles.memoryRowBorder]}
+                  >
+                    <View style={styles.morningNoteHeader}>
+                      <View style={[styles.moodDot, { backgroundColor: MOOD_COLORS[note.moodSignal] || Colors.textTertiary }]} />
+                      <Text style={styles.morningNoteDate}>{formatNoteDate(note.recordedAt)}</Text>
+                      <View style={styles.morningNoteThemes}>
+                        {(note.themes as string[]).slice(0, 2).map((theme, ti) => (
+                          <View key={ti} style={styles.morningNotePill}>
+                            <Text style={styles.morningNotePillText}>{theme}</Text>
+                          </View>
+                        ))}
+                        {(note.themes as string[]).length > 2 && (
+                          <Text style={styles.morningNoteMore}>+{(note.themes as string[]).length - 2}</Text>
+                        )}
+                      </View>
+                      <Ionicons name={isExpanded ? 'chevron-up' : 'chevron-down'} size={16} color={Colors.textTertiary} />
+                    </View>
+                    {isExpanded && (
+                      <View style={styles.morningNoteBody}>
+                        <Text style={styles.morningNoteTranscript}>{note.transcript}</Text>
+                        {note.intention && (
+                          <View style={styles.morningNoteIntentionRow}>
+                            <Ionicons name="flag-outline" size={13} color={Colors.primary} />
+                            <Text style={styles.morningNoteIntention}>{note.intention}</Text>
+                          </View>
+                        )}
+                        {(note.wins as string[]).length > 0 && (
+                          <View style={styles.morningNoteSubRow}>
+                            <Text style={styles.morningNoteSubLabel}>Wins:</Text>
+                            <Text style={styles.morningNoteSubText}>{(note.wins as string[]).join(', ')}</Text>
+                          </View>
+                        )}
+                        {(note.blockers as string[]).length > 0 && (
+                          <View style={styles.morningNoteSubRow}>
+                            <Text style={styles.morningNoteSubLabel}>Blockers:</Text>
+                            <Text style={styles.morningNoteSubText}>{(note.blockers as string[]).join(', ')}</Text>
+                          </View>
+                        )}
+                      </View>
+                    )}
+                  </Pressable>
+                );
+              })}
             </View>
           )}
         </Animated.View>
@@ -1785,5 +1906,85 @@ const styles = StyleSheet.create({
   tzRowLabelSelected: {
     color: Colors.primary,
     fontFamily: 'Inter_600SemiBold',
+  },
+  morningNoteRow: {
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+  },
+  morningNoteHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  moodDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+  },
+  morningNoteDate: {
+    fontSize: 13,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.text,
+    minWidth: 70,
+  },
+  morningNoteThemes: {
+    flex: 1,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 4,
+  },
+  morningNotePill: {
+    backgroundColor: Colors.primary + '12',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 12,
+  },
+  morningNotePillText: {
+    fontSize: 11,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.primary,
+  },
+  morningNoteMore: {
+    fontSize: 11,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.textTertiary,
+    alignSelf: 'center',
+  },
+  morningNoteBody: {
+    marginTop: 10,
+    gap: 8,
+  },
+  morningNoteTranscript: {
+    fontSize: 13,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+    lineHeight: 19,
+  },
+  morningNoteIntentionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  morningNoteIntention: {
+    flex: 1,
+    fontSize: 13,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.primary,
+    fontStyle: 'italic',
+  },
+  morningNoteSubRow: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  morningNoteSubLabel: {
+    fontSize: 12,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.textTertiary,
+  },
+  morningNoteSubText: {
+    flex: 1,
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
   },
 });
