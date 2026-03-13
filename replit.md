@@ -38,6 +38,7 @@ A mobile app that generates personalized daily task checklists with AI-powered a
 - `server/integrations/slack.ts` - getSlackMessages() Slack Web API client
 - `server/integrations/telegram.ts` - Telegram Bot API client (sendMessage, setWebhook)
 - `server/telegramRoutes.ts` - Telegram webhook, link-code, status, disconnect, messages, notify routes + proactive scheduler
+- `server/scheduler.ts` - Daily auto-plan scheduler: startScheduler() runs at 7am, builds plans for users with empty plans via buildPlanForUser()
 
 ## Color Palette
 - Primary: #6366F1 (indigo)
@@ -75,6 +76,7 @@ A mobile app that generates personalized daily task checklists with AI-powered a
 20. **Voice Interface** - Mic button in Coach input bar records speech (expo-av), transcribes via Whisper (POST /api/coach/transcribe), auto-sends to coach. Speaker button on last assistant message plays TTS response aloud (POST /api/coach/speak, OpenAI TTS "alloy" voice). Works on iOS/Android/web.
 21. **Jarvis Autonomous Daily Planning** - "Build My Day" button (empty state) or "Jarvis" pill (To Do header) triggers Jarvis to analyze goals, calendar, emails, brain dump, and completion history to build a prioritized 4-7 task plan. Preview modal (JarvisPlanModal) shows reasoning + proposed tasks with Accept/Start Over options. Accepted tasks are prepended to today's plan with undo support.
 22. **Coach Memory** - After each coach conversation, a background AI call extracts 0-3 notable facts about the user (goals, patterns, preferences, achievements). Stored in `user_memories` DB table per user. Injected into coach system prompt as "What I Know About You" section. Profile tab shows Coach Memory card where users can view and delete individual memories. Deduplication via AI prompt that includes existing memories.
+23. **Auto-Daily Plan Scheduler** - Server-side scheduler (`server/scheduler.ts`) runs at 7am daily, auto-builds plans for all users with empty plans using `buildPlanForUser()`. Stores `autoBuiltPlan` metadata in userPreferences (date, topTask, reasoning, taskCount). Morning notification shows top task when auto-plan exists. Dismiss endpoint at `POST /api/data/auto-built-plan/dismiss`. Manual "Build My Day" still works as override.
 
 ## Authentication
 - **Login screen**: `/login` route with Google Sign-In button
@@ -112,6 +114,7 @@ For web Google Sign-In to work, the Replit dev domain must be added to **Authori
 - `GET/PUT /api/data/plans/:date` - Per-user daily plan CRUD
 - `GET /api/data/plans` - All plans for user
 - `GET/PUT/DELETE /api/data/{goals,stats,brain-dump-inbox,chat-history,life-context,timer-settings,user-preferences,completion-history,blocked-tasks,plan-snapshots}` - Per-user data CRUD
+- `POST /api/data/auto-built-plan/dismiss` - Marks autoBuiltPlan as dismissed in userPreferences
 - `GET/PUT /api/data/energy-checkins/:date` - Per-user daily energy checkin
 - `GET/PUT /api/data/completed-calendar-ids/:date` - Per-user completed calendar event IDs
 - `GET /api/commitments` - Pending commitments for user
