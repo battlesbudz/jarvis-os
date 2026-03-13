@@ -91,3 +91,11 @@ export async function setWebhook(webhookUrl: string): Promise<void> {
 export function isTelegramConfigured(): boolean {
   return !!BOT_TOKEN;
 }
+
+export function logTelegramStatus(): void {
+  if (BOT_TOKEN) {
+    console.log('Telegram: configured ✓');
+  } else {
+    console.log('Telegram: not configured (set TELEGRAM_BOT_TOKEN in Replit Secrets)');
+  }
+}
