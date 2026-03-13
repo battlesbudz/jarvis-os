@@ -3,7 +3,7 @@ import { db } from "./db";
 import { eq, and, desc, sql, gte } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { sendMessage, isTelegramConfigured, getUpdates, downloadTelegramFile, downloadTelegramFileBuffer } from "./integrations/telegram";
-import { getRecentEmailCommitments, getEmailsSince } from "./integrations/gmail";
+import { getRecentEmailCommitments, getEmailsSince, gmailModifyMessage } from "./integrations/gmail";
 import { getGoogleCalendarEvents } from "./integrations/googleCalendar";
 import { getValidGoogleTokens } from "./userTokenStore";
 import { tavilySearch, formatSearchResults } from "./integrations/search";
@@ -33,6 +33,7 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
     let gmailItems: any[] = [];
     let calendarEvents: any[] = [];
     let gmailConnected = false;
+    let googleAccessToken: string | null = null;
 
     const [goalsRow, statsRow, lcRow, chatRow, commitmentsRows, googleTokens, prefsRow] = await Promise.allSettled([
       db.select().from(schema.goals).where(eq(schema.goals.userId, userId)).limit(1),
@@ -61,6 +62,7 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
     if (googleTokens.status === 'fulfilled' && googleTokens.value.length > 0) {
       gmailConnected = true;
       const token = googleTokens.value[0];
+      googleAccessToken = token;
       const today = new Date().toISOString().split('T')[0];
       console.log(`[Telegram] Fetching Gmail+Calendar for user ${userId}, token length: ${token?.length}`);
 
@@ -106,8 +108,8 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
 
     const gmailSection = gmailItems.length > 0
       ? `## Recent Emails (last 14 days from Gmail)\n` +
-        gmailItems.slice(0, 100).map((i: any) => `- From: ${i.from || 'unknown'} | "${i.subject}" — ${i.snippet}`).join('\n') +
-        `\n(Refer to these directly when asked. Do not say you cannot access email — you have the data above.)`
+        gmailItems.slice(0, 100).map((i: any) => `- [id:${i.id}] From: ${i.from || 'unknown'} | "${i.subject}" — ${i.snippet}`).join('\n') +
+        `\n(Refer to these directly when asked. Do not say you cannot access email — you have the data above. Use the gmail_action tool with the message id to act on emails when asked.)`
       : gmailConnected
         ? `## Recent Emails\nGmail is connected but no emails found in the last 7 days.`
         : `## Recent Emails\nGmail not connected — if asked about emails, let the user know.`;
@@ -188,6 +190,22 @@ Be direct, specific, actionable. No fluff. You have full access to the user's em
         },
       };
 
+      const gmailActionTool = {
+        type: "function" as const,
+        function: {
+          name: "gmail_action",
+          description: "Perform an action on a Gmail email. Use the message id from the email list provided in the system prompt.",
+          parameters: {
+            type: "object",
+            properties: {
+              message_id: { type: "string", description: "The Gmail message ID (from [id:...] in the email list)" },
+              action: { type: "string", enum: ["star", "unstar", "archive", "mark_read", "mark_unread", "spam", "trash"], description: "The action to perform on the email" },
+            },
+            required: ["message_id", "action"],
+          },
+        },
+      };
+
       const baseMessages: any[] = [
         { role: "system", content: systemPrompt },
         ...recentMessages.map((m: any) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
@@ -197,7 +215,7 @@ Be direct, specific, actionable. No fluff. You have full access to the user's em
       const response = await openai.chat.completions.create({
         model: "gpt-5-mini",
         messages: baseMessages,
-        tools: [searchTool],
+        tools: [searchTool, gmailActionTool],
         tool_choice: "auto",
         max_completion_tokens: 2000,
       });
@@ -225,6 +243,52 @@ Be direct, specific, actionable. No fluff. You have full access to the user's em
               ...baseMessages,
               response.choices[0].message,
               { role: "tool" as const, tool_call_id: toolCall.id, content: searchResult },
+            ],
+            max_completion_tokens: 2000,
+          });
+          console.log(`[Telegram] Follow-up finish_reason: ${followUp.choices?.[0]?.finish_reason}`);
+          reply = followUp.choices[0]?.message?.content || reply;
+        } else if (toolCall?.function?.name === 'gmail_action') {
+          let actionResult = 'Gmail action failed.';
+          try {
+            const args = JSON.parse(toolCall.function.arguments);
+            console.log(`[Telegram] Gmail action: ${args.action} on message ${args.message_id}`);
+
+            if (!googleAccessToken) {
+              actionResult = 'Gmail is not connected. Ask the user to connect their Google account first.';
+            } else if (gmailItems.length > 0 && !gmailItems.some((e: any) => e.id === args.message_id)) {
+              actionResult = `Message ID "${args.message_id}" not found in the current email list. Please use a valid message ID from the emails shown.`;
+            } else {
+              const actionMap: Record<string, { add: string[]; remove: string[] }> = {
+                star: { add: ['STARRED'], remove: [] },
+                unstar: { add: [], remove: ['STARRED'] },
+                archive: { add: [], remove: ['INBOX'] },
+                mark_read: { add: [], remove: ['UNREAD'] },
+                mark_unread: { add: ['UNREAD'], remove: [] },
+                spam: { add: ['SPAM'], remove: ['INBOX'] },
+                trash: { add: ['TRASH'], remove: ['INBOX'] },
+              };
+
+              const mapping = actionMap[args.action];
+              if (!mapping) {
+                actionResult = `Unknown action: ${args.action}`;
+              } else {
+                await gmailModifyMessage(args.message_id, mapping.add, mapping.remove, googleAccessToken);
+                actionResult = `Successfully performed "${args.action}" on the email.`;
+                console.log(`[Telegram] Gmail action succeeded: ${args.action} on ${args.message_id}`);
+              }
+            }
+          } catch (gmailErr: any) {
+            console.error('[Telegram] Gmail action failed:', gmailErr.message);
+            actionResult = `Gmail action failed: ${gmailErr.message}`;
+          }
+
+          const followUp = await openai.chat.completions.create({
+            model: "gpt-5-mini",
+            messages: [
+              ...baseMessages,
+              response.choices[0].message,
+              { role: "tool" as const, tool_call_id: toolCall.id, content: actionResult },
             ],
             max_completion_tokens: 2000,
           });
