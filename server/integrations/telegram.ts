@@ -98,6 +98,28 @@ export async function deleteWebhook(): Promise<void> {
   }
 }
 
+export async function downloadTelegramFile(fileId: string): Promise<string | null> {
+  if (!BOT_TOKEN) return null;
+  try {
+    const infoRes = await fetch(`${BASE}/getFile?file_id=${fileId}`);
+    if (!infoRes.ok) return null;
+    const info = await infoRes.json() as { ok: boolean; result?: { file_path: string } };
+    if (!info.ok || !info.result?.file_path) return null;
+
+    const fileUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${info.result.file_path}`;
+    const fileRes = await fetch(fileUrl);
+    if (!fileRes.ok) return null;
+
+    const buffer = await fileRes.arrayBuffer();
+    const base64 = Buffer.from(buffer).toString('base64');
+    const ext = info.result.file_path.split('.').pop()?.toLowerCase() || 'jpg';
+    const mime = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
+    return `data:${mime};base64,${base64}`;
+  } catch {
+    return null;
+  }
+}
+
 export async function getUpdates(offset: number): Promise<TelegramUpdate[]> {
   if (!BOT_TOKEN) return [];
   try {
