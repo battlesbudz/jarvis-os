@@ -2,6 +2,7 @@ import { getGmailClient } from './gmailClient';
 import { Buffer } from 'node:buffer';
 
 export interface EmailCommitment {
+  id: string;
   subject: string;
   snippet: string;
   date: string;
@@ -174,7 +175,7 @@ export async function getRecentEmailCommitments(
             const snippet = (detail.data.snippet || '').slice(0, 150);
             const labelIds: string[] = (detail.data.labelIds as string[]) || [];
             const labels = labelIds.map((id) => LABEL_NAMES[id] || id);
-            return { subject, snippet, date, from, labels } as EmailCommitment;
+            return { id: msg.id, subject, snippet, date, from, labels } as EmailCommitment;
           } catch {
             return null;
           }
@@ -190,4 +191,21 @@ export async function getRecentEmailCommitments(
     console.error('[Gmail] getRecentEmailCommitments error:', err);
     return [];
   }
+}
+
+export async function gmailModifyMessage(
+  messageId: string,
+  addLabelIds: string[],
+  removeLabelIds: string[],
+  userAccessToken: string
+): Promise<void> {
+  const gmail = await getGmailClient(userAccessToken);
+  await gmail.users.messages.modify({
+    userId: 'me',
+    id: messageId,
+    requestBody: {
+      addLabelIds: addLabelIds.length > 0 ? addLabelIds : undefined,
+      removeLabelIds: removeLabelIds.length > 0 ? removeLabelIds : undefined,
+    },
+  });
 }
