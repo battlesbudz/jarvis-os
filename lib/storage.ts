@@ -499,7 +499,9 @@ export async function saveBrainDumpItem(text: string): Promise<void> {
     };
     inbox.push(newItem);
     await apiPut('/api/data/brain-dump-inbox', inbox);
-  } catch {}
+  } catch (e) {
+    console.error('[storage] saveBrainDumpItem failed:', e);
+  }
 }
 
 export async function clearBrainDumpItem(id: string): Promise<void> {
@@ -507,7 +509,9 @@ export async function clearBrainDumpItem(id: string): Promise<void> {
     const inbox = await getBrainDumpInbox();
     const updated = inbox.filter(item => item.id !== id);
     await apiPut('/api/data/brain-dump-inbox', updated);
-  } catch {}
+  } catch (e) {
+    console.error('[storage] clearBrainDumpItem failed:', e);
+  }
 }
 
 function isLikelyQuick(title: string): boolean {
@@ -615,7 +619,9 @@ export async function addTaskToToday(task: Partial<Task>, energyLevel?: number):
     };
     plan.tasks = insertTaskAtOptimalPosition(plan.tasks, newTask, energyLevel);
     await savePlan(plan);
-  } catch {}
+  } catch (e) {
+    console.error('[storage] addTaskToToday failed:', e);
+  }
 }
 
 export async function getEnergyCheckin(date?: string): Promise<EnergyCheckin | null> {
@@ -631,7 +637,9 @@ export async function getEnergyCheckin(date?: string): Promise<EnergyCheckin | n
 export async function saveEnergyCheckin(checkin: EnergyCheckin): Promise<void> {
   try {
     await apiPut(`/api/data/energy-checkins/${checkin.date}`, checkin);
-  } catch {}
+  } catch (e) {
+    console.error('[storage] saveEnergyCheckin failed:', e);
+  }
 }
 
 export type CoachingMode = 'sharp' | 'drill' | 'mentor' | 'strategist' | 'flow';
@@ -652,7 +660,9 @@ export async function saveCoachingMode(mode: CoachingMode): Promise<void> {
     const prefs = (result.data || {}) as UserPreferencesData;
     prefs.coachingMode = mode;
     await apiPut('/api/data/user-preferences', prefs);
-  } catch {}
+  } catch (e) {
+    console.error('[storage] saveCoachingMode failed:', e);
+  }
 }
 
 export async function getViewMode(): Promise<ViewMode> {
@@ -671,7 +681,9 @@ export async function saveViewMode(mode: ViewMode): Promise<void> {
     const prefs = (result.data || {}) as UserPreferencesData;
     prefs.viewMode = mode;
     await apiPut('/api/data/user-preferences', prefs);
-  } catch {}
+  } catch (e) {
+    console.error('[storage] saveViewMode failed:', e);
+  }
 }
 
 export async function getTimerSettings(): Promise<TimerSettings> {
@@ -687,7 +699,9 @@ export async function getTimerSettings(): Promise<TimerSettings> {
 export async function saveTimerSettings(settings: TimerSettings): Promise<void> {
   try {
     await apiPut('/api/data/timer-settings', settings);
-  } catch {}
+  } catch (e) {
+    console.error('[storage] saveTimerSettings failed:', e);
+  }
 }
 
 export async function getLifeContext(): Promise<LifeContext | null> {
@@ -702,7 +716,10 @@ export async function getLifeContext(): Promise<LifeContext | null> {
 export async function saveLifeContext(ctx: LifeContext): Promise<void> {
   try {
     await apiPut('/api/data/life-context', ctx);
-  } catch {}
+  } catch (e) {
+    console.error('[storage] saveLifeContext failed:', e);
+    throw e;
+  }
 }
 
 export async function getChatHistory(): Promise<ChatMessage[]> {
@@ -717,13 +734,17 @@ export async function getChatHistory(): Promise<ChatMessage[]> {
 export async function saveChatHistory(messages: ChatMessage[]): Promise<void> {
   try {
     await apiPut('/api/data/chat-history', messages);
-  } catch {}
+  } catch (e) {
+    console.error('[storage] saveChatHistory failed:', e);
+  }
 }
 
 export async function clearChatHistory(): Promise<void> {
   try {
     await apiDelete('/api/data/chat-history');
-  } catch {}
+  } catch (e) {
+    console.error('[storage] clearChatHistory failed:', e);
+  }
 }
 
 export async function getDailyCoachNote(): Promise<{ note: string; date: string } | null> {
@@ -743,7 +764,9 @@ export async function saveDailyCoachNote(note: string): Promise<void> {
     const prefs = (result.data || {}) as UserPreferencesData;
     prefs.dailyCoachNote = { note, date: today };
     await apiPut('/api/data/user-preferences', prefs);
-  } catch {}
+  } catch (e) {
+    console.error('[storage] saveDailyCoachNote failed:', e);
+  }
 }
 
 export async function getCompletionHistory(): Promise<CompletionHistoryItem[]> {
@@ -861,7 +884,9 @@ export async function getPlanSnapshot(): Promise<{ date: string; tasks: Task[] }
 export async function clearPlanSnapshot(): Promise<void> {
   try {
     await apiDelete('/api/data/plan-snapshots');
-  } catch {}
+  } catch (e) {
+    console.error('[storage] clearPlanSnapshot failed:', e);
+  }
 }
 
 export async function restorePlanSnapshot(goals: Goal[]): Promise<DayPlan | null> {
@@ -1169,7 +1194,9 @@ export async function runMigrations(): Promise<void> {
       prefs.migrationVersion = CURRENT_MIGRATION_VERSION;
       await apiPut('/api/data/user-preferences', prefs);
     }
-  } catch {}
+  } catch (e) {
+    console.error('[storage] runMigrations failed:', e);
+  }
 }
 
 export async function regeneratePlan(goals: Goal[]): Promise<DayPlan> {
@@ -1266,7 +1293,9 @@ export async function saveCompletedCalendarId(id: string, completed: boolean): P
       updated = existing.filter(i => i !== id);
     }
     await apiPut(`/api/data/completed-calendar-ids/${key}`, updated);
-  } catch {}
+  } catch (e) {
+    console.error('[storage] toggleCompletedCalendarId failed:', e);
+  }
 }
 
 
@@ -1287,7 +1316,9 @@ export async function saveUserName(name: string): Promise<void> {
     const prefs = (result.data || {}) as UserPreferencesData;
     prefs.userName = name;
     await apiPut('/api/data/user-preferences', prefs);
-  } catch {}
+  } catch (e) {
+    console.error('[storage] saveUserName failed:', e);
+  }
 }
 
 export async function isOnboardingComplete(): Promise<boolean> {
@@ -1306,7 +1337,9 @@ export async function setOnboardingComplete(): Promise<void> {
     const prefs = (result.data || {}) as UserPreferencesData;
     prefs.onboardingComplete = true;
     await apiPut('/api/data/user-preferences', prefs);
-  } catch {}
+  } catch (e) {
+    console.error('[storage] setOnboardingComplete failed:', e);
+  }
 }
 
 export async function updateTask(date: string, taskId: string, updates: Partial<Task>): Promise<void> {

@@ -2,8 +2,9 @@ import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "node:http";
 import OpenAI from "openai";
 import { db } from "./db";
-import { eq, and } from "drizzle-orm";
+import { eq, and, desc, sql } from "drizzle-orm";
 import * as schema from "@shared/schema";
+import { userMemories } from "@shared/schema";
 import { resizeTask, generateSmartPlan, unblockTask } from "./ai";
 import {
   getGoogleCalendarEvents,
@@ -25,10 +26,6 @@ import { registerTelegramRoutes } from "./telegramRoutes";
 import { isIntegrationOwner, claimIntegrationOwnership } from "./integrationOwner";
 import { oauthRouter, oauthCallbackRouter } from "./oauthRoutes";
 import { getValidGoogleTokens, getValidMicrosoftToken, getUserTokens, getUserToken } from "./userTokenStore";
-import { db } from "./db";
-import { eq, and, desc, sql } from "drizzle-orm";
-import * as schema from "@shared/schema";
-import { userMemories } from "@shared/schema";
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,

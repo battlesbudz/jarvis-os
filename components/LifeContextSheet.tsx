@@ -9,6 +9,7 @@ import {
   Platform,
   KeyboardAvoidingView,
   ScrollView,
+  Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, { FadeInRight, FadeOutLeft } from 'react-native-reanimated';
@@ -87,6 +88,8 @@ export default function LifeContextSheet({ visible, existing, onComplete, onClos
   const progress = (step + 1) / QUESTIONS.length;
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
 
+  const [saving, setSaving] = useState(false);
+
   const handleNext = async () => {
     if (isLast) {
       const ctx: LifeContext = {
@@ -97,8 +100,17 @@ export default function LifeContextSheet({ visible, existing, onComplete, onClos
         freeText: answers.freeText || '',
         lastUpdated: new Date().toISOString(),
       };
-      await saveLifeContext(ctx);
-      onComplete();
+      setSaving(true);
+      try {
+        await saveLifeContext(ctx);
+        Alert.alert('Saved', 'Your profile has been updated.');
+        onComplete();
+      } catch (e) {
+        console.error('[LifeContextSheet] handleNext save failed:', e);
+        Alert.alert('Save failed', 'Could not save your profile. Please try again.');
+      } finally {
+        setSaving(false);
+      }
     } else {
       setStep(s => s + 1);
       setKey(k => k + 1);
@@ -131,7 +143,17 @@ export default function LifeContextSheet({ visible, existing, onComplete, onClos
         freeText: answers.freeText || existing?.freeText || '',
         lastUpdated: new Date().toISOString(),
       };
-      await saveLifeContext(ctx);
+      setSaving(true);
+      try {
+        await saveLifeContext(ctx);
+        onClose();
+      } catch (e) {
+        console.error('[LifeContextSheet] handleClose save failed:', e);
+        Alert.alert('Save failed', 'Could not save your answers. Please try again or discard changes.');
+      } finally {
+        setSaving(false);
+      }
+      return;
     }
     onClose();
   };
@@ -183,14 +205,15 @@ export default function LifeContextSheet({ visible, existing, onComplete, onClos
           </ScrollView>
 
           <View style={[styles.footer, { paddingBottom: insets.bottom + 16 }]}>
-            <Pressable style={styles.skipBtn} onPress={handleSkip}>
-              <Text style={styles.skipText}>Skip</Text>
+            <Pressable style={styles.skipBtn} onPress={handleSkip} disabled={saving}>
+              <Text style={[styles.skipText, saving && { opacity: 0.5 }]}>Skip</Text>
             </Pressable>
             <Pressable
-              style={[styles.nextBtn, !currentAnswer.trim() && styles.nextBtnDim]}
+              style={[styles.nextBtn, (!currentAnswer.trim() || saving) && styles.nextBtnDim]}
               onPress={handleNext}
+              disabled={saving}
             >
-              <Text style={styles.nextText}>{isLast ? 'Done' : 'Next'}</Text>
+              <Text style={styles.nextText}>{saving ? 'Saving...' : isLast ? 'Done' : 'Next'}</Text>
               <Ionicons name={isLast ? 'checkmark' : 'arrow-forward'} size={16} color="#fff" />
             </Pressable>
           </View>
