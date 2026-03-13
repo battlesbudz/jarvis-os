@@ -21,7 +21,7 @@ A mobile app that generates personalized daily task checklists with AI-powered a
 - `lib/storage.ts` - Server API data layer for tasks, goals, stats, completion history, chat history, life context (uses JWT auth token from auth-context)
 - `server/db.ts` - Drizzle ORM PostgreSQL connection
 - `server/dataRoutes.ts` - CRUD API routes for all user data categories
-- `shared/schema.ts` - Drizzle schema: users, plans, goals, stats, brain_dump_inbox, energy_checkins, chat_history, life_context, timer_settings, user_preferences, completion_history, blocked_tasks, completed_calendar_ids, plan_snapshots, commitments
+- `shared/schema.ts` - Drizzle schema: users, plans, goals, stats, brain_dump_inbox, energy_checkins, chat_history, life_context, timer_settings, user_preferences, completion_history, blocked_tasks, completed_calendar_ids, plan_snapshots, commitments, user_memories
 - `lib/helpers.ts` - Category colors, icons, labels, date formatting utilities
 - `lib/query-client.ts` - React Query client with apiRequest helper (sends Authorization header)
 - `lib/auth-context.tsx` - Auth context provider (login, register, loginWithGoogle, logout, token persistence)
@@ -71,6 +71,7 @@ A mobile app that generates personalized daily task checklists with AI-powered a
 19. **Transition Reminders** - Local notifications scheduled 10 min before tasks with a set `time`; enabled/disabled toggle in Profile; web-safe (lib/notifications.web.ts stub); focus timer fires completion nudge notifications.
 20. **Voice Interface** - Mic button in Coach input bar records speech (expo-av), transcribes via Whisper (POST /api/coach/transcribe), auto-sends to coach. Speaker button on last assistant message plays TTS response aloud (POST /api/coach/speak, OpenAI TTS "alloy" voice). Works on iOS/Android/web.
 21. **Jarvis Autonomous Daily Planning** - "Build My Day" button (empty state) or "Jarvis" pill (To Do header) triggers Jarvis to analyze goals, calendar, emails, brain dump, and completion history to build a prioritized 4-7 task plan. Preview modal (JarvisPlanModal) shows reasoning + proposed tasks with Accept/Start Over options. Accepted tasks are prepended to today's plan with undo support.
+22. **Coach Memory** - After each coach conversation, a background AI call extracts 0-3 notable facts about the user (goals, patterns, preferences, achievements). Stored in `user_memories` DB table per user. Injected into coach system prompt as "What I Know About You" section. Profile tab shows Coach Memory card where users can view and delete individual memories. Deduplication via AI prompt that includes existing memories.
 
 ## Authentication
 - **Login screen**: `/login` route with Google Sign-In button
