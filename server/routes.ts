@@ -2,9 +2,9 @@ import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "node:http";
 import OpenAI from "openai";
 import { db } from "./db";
-import { eq, and, desc, sql } from "drizzle-orm";
+import { eq, and, desc, sql, gte } from "drizzle-orm";
 import * as schema from "@shared/schema";
-import { userMemories } from "@shared/schema";
+import { userMemories, morningVoiceNotes, userPreferences } from "@shared/schema";
 import { resizeTask, generateSmartPlan, unblockTask } from "./ai";
 import {
   getGoogleCalendarEvents,
@@ -59,7 +59,75 @@ function getPersonaBlock(coachingMode?: string): string {
   return PERSONA_BLOCKS[coachingMode || 'sharp'] || PERSONA_BLOCKS.sharp;
 }
 
-function buildCoachSystemPrompt(goals: any[], stats: any, history: any[], calendarEvents: any[] = [], lifeContext?: any, gmailItems?: any[], gmailConnected?: boolean, slackMessages?: any[], slackConnected?: boolean, commitmentsList?: any[], coachingMode?: string, memories?: { content: string; category: string }[], telegramMessages?: any[], telegramConnected?: boolean): string {
+const morningNoteSummaryCache = new Map<string, { summary: string; date: string }>();
+
+async function getUserLocalDate(userId: string): Promise<string> {
+  try {
+    const prefs = await db.select({ data: userPreferences.data })
+      .from(userPreferences)
+      .where(eq(userPreferences.userId, userId))
+      .limit(1);
+    const tz = (prefs[0]?.data as Record<string, string>)?.timezone || 'America/New_York';
+    return new Date().toLocaleDateString('en-CA', { timeZone: tz });
+  } catch {
+    return new Date().toISOString().slice(0, 10);
+  }
+}
+
+async function getMorningNoteSummary(userId: string): Promise<string> {
+  const today = await getUserLocalDate(userId);
+  const cached = morningNoteSummaryCache.get(userId);
+  if (cached && cached.date === today) return cached.summary;
+
+  try {
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const cutoffDate = thirtyDaysAgo.toISOString().slice(0, 10);
+
+    const notes = await db.select()
+      .from(morningVoiceNotes)
+      .where(and(
+        eq(morningVoiceNotes.userId, userId),
+        gte(morningVoiceNotes.recordedAt, cutoffDate)
+      ))
+      .orderBy(desc(morningVoiceNotes.recordedAt))
+      .limit(30);
+
+    if (notes.length === 0) return '';
+
+    const moodCounts: Record<string, number> = {};
+    const allThemes: Record<string, number> = {};
+    const allBlockers: Record<string, number> = {};
+    const recentIntentions: string[] = [];
+
+    for (const note of notes) {
+      moodCounts[note.moodSignal] = (moodCounts[note.moodSignal] || 0) + 1;
+      const themes = (note.themes as string[]) || [];
+      for (const t of themes) allThemes[t] = (allThemes[t] || 0) + 1;
+      const blockers = (note.blockers as string[]) || [];
+      for (const b of blockers) allBlockers[b] = (allBlockers[b] || 0) + 1;
+      if (note.intention) recentIntentions.push(note.intention);
+    }
+
+    const topMoods = Object.entries(moodCounts).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([m, c]) => `${m} (${c}x)`).join(', ');
+    const topThemes = Object.entries(allThemes).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([t, c]) => `${t} (${c}x)`).join(', ');
+    const topBlockers = Object.entries(allBlockers).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([b, c]) => `${b} (${c}x)`).join(', ');
+
+    let summary = `\n## Morning Voice Note Patterns (last ${notes.length} days)\n`;
+    summary += `- Mood trend: ${topMoods}\n`;
+    if (topThemes) summary += `- Recurring themes: ${topThemes}\n`;
+    if (topBlockers) summary += `- Common blockers: ${topBlockers}\n`;
+    if (recentIntentions.length > 0) summary += `- Recent intentions: ${recentIntentions.slice(0, 3).map(i => `"${i}"`).join(', ')}\n`;
+    summary += `Use these patterns to provide personalized coaching. Reference specific trends when relevant.`;
+
+    morningNoteSummaryCache.set(userId, { summary, date: today });
+    return summary;
+  } catch {
+    return '';
+  }
+}
+
+function buildCoachSystemPrompt(goals: any[], stats: any, history: any[], calendarEvents: any[] = [], lifeContext?: any, gmailItems?: any[], gmailConnected?: boolean, slackMessages?: any[], slackConnected?: boolean, commitmentsList?: any[], coachingMode?: string, memories?: { content: string; category: string }[], telegramMessages?: any[], telegramConnected?: boolean, morningNoteSummary?: string): string {
   const completedHistory = history.filter((h: any) => h.completed);
   const skippedHistory = history.filter((h: any) => !h.completed);
   const completionRate = history.length > 0
@@ -176,7 +244,7 @@ ${calendarText}${gmailSection}${slackSection}${telegramSection}
 ## Recent Activity (last 7 days)
 - Completed: ${recentCompleted}
 - Left undone: ${recentSkipped}
-${commitmentsSection}
+${commitmentsSection}${morningNoteSummary || ''}
 ## How you coach
 
 **Response length**: Keep replies short. 2–4 sentences is the default. Use a bullet list only when you have 3+ specific items to name. Never write multi-paragraph essays — the user is on their phone.
@@ -724,18 +792,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       let memories: { content: string; category: string }[] = [];
+      let morningNoteSummary = '';
       if (userId) {
         try {
-          const rows = await db.select({ content: userMemories.content, category: userMemories.category })
-            .from(userMemories)
-            .where(eq(userMemories.userId, userId))
-            .orderBy(desc(userMemories.extractedAt))
-            .limit(20);
+          const [rows, noteSummary] = await Promise.all([
+            db.select({ content: userMemories.content, category: userMemories.category })
+              .from(userMemories)
+              .where(eq(userMemories.userId, userId))
+              .orderBy(desc(userMemories.extractedAt))
+              .limit(20),
+            getMorningNoteSummary(userId),
+          ]);
           memories = rows;
+          morningNoteSummary = noteSummary;
         } catch {}
       }
 
-      const systemPrompt = buildCoachSystemPrompt(goals || [], stats || {}, history || [], calendarEvents || [], lifeContext || null, gmailItems || [], gmailConnected ?? false, slackMessages || [], slackConnected ?? false, userCommitments, coachingMode, memories, telegramMessages || [], telegramConnected ?? false);
+      const systemPrompt = buildCoachSystemPrompt(goals || [], stats || {}, history || [], calendarEvents || [], lifeContext || null, gmailItems || [], gmailConnected ?? false, slackMessages || [], slackConnected ?? false, userCommitments, coachingMode, memories, telegramMessages || [], telegramConnected ?? false, morningNoteSummary);
 
       const chatMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
         { role: "system", content: systemPrompt + "\n\nYou can take actions on the user's behalf using the available tools. When a user asks you to add a task, log progress, update their context, etc., use the appropriate tool. Respond naturally — do not mention 'tool calls' or 'functions' to the user. Just confirm what you did conversationally." },
@@ -1788,6 +1861,180 @@ Return an empty array if nothing notable was said. Do NOT repeat or rephrase exi
     } catch (error) {
       console.error("Error saving preferences:", error);
       return res.status(500).json({ error: "Failed to save preferences" });
+    }
+  });
+
+  app.get("/api/morning-voice-notes", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const limit = parseInt(req.query.limit as string) || 30;
+      const notes = await db.select()
+        .from(morningVoiceNotes)
+        .where(eq(morningVoiceNotes.userId, userId))
+        .orderBy(desc(morningVoiceNotes.recordedAt))
+        .limit(limit);
+      res.json({ notes });
+    } catch (error) {
+      console.error("Error fetching morning voice notes:", error);
+      res.status(500).json({ error: "Failed to fetch morning voice notes" });
+    }
+  });
+
+  app.get("/api/morning-voice-notes/today", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const today = await getUserLocalDate(userId);
+      const notes = await db.select()
+        .from(morningVoiceNotes)
+        .where(and(eq(morningVoiceNotes.userId, userId), eq(morningVoiceNotes.recordedAt, today)))
+        .limit(1);
+      res.json({ note: notes[0] || null });
+    } catch (error) {
+      console.error("Error fetching today's morning voice note:", error);
+      res.status(500).json({ error: "Failed to fetch today's morning voice note" });
+    }
+  });
+
+  async function extractMorningNoteSignals(transcript: string) {
+    const extractionPrompt = `Analyze this morning voice note transcript and extract structured data.
+
+Transcript: "${transcript}"
+
+Extract:
+1. moodSignal: one of "calm", "energized", "stressed", "overwhelmed", "uncertain" — infer from tone and content
+2. themes: up to 5 short topic phrases mentioned (e.g. "client presentation", "exercise", "sleep quality")
+3. blockers: up to 3 things preventing progress (e.g. "waiting on feedback", "too many meetings")
+4. wins: up to 3 positive things mentioned (e.g. "finished report", "good workout")
+5. intention: one sentence capturing what they want to accomplish or focus on today
+
+Return JSON: { "moodSignal": "...", "themes": [...], "blockers": [...], "wins": [...], "intention": "..." }
+Return ONLY the JSON object.`;
+
+    const extraction = await openai.chat.completions.create({
+      model: "gpt-5-mini",
+      messages: [{ role: "user", content: extractionPrompt }],
+      response_format: { type: "json_object" },
+      max_completion_tokens: 400,
+    });
+
+    const extractionContent = extraction.choices[0]?.message?.content || '{}';
+    let parsed: Record<string, unknown> = {};
+    try { parsed = JSON.parse(extractionContent); } catch {}
+
+    const validMoods = ['calm', 'energized', 'stressed', 'overwhelmed', 'uncertain'];
+    const moodSignal = validMoods.includes(parsed.moodSignal as string) ? (parsed.moodSignal as string) : 'calm';
+    const themes = Array.isArray(parsed.themes) ? parsed.themes.slice(0, 5).map(String) : [];
+    const blockers = Array.isArray(parsed.blockers) ? parsed.blockers.slice(0, 3).map(String) : [];
+    const wins = Array.isArray(parsed.wins) ? parsed.wins.slice(0, 3).map(String) : [];
+    const intention = typeof parsed.intention === 'string' ? parsed.intention : null;
+
+    return { moodSignal, themes, blockers, wins, intention };
+  }
+
+  app.post("/api/morning-voice-notes/extract", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const { transcript } = req.body;
+      if (!transcript || typeof transcript !== 'string' || !transcript.trim()) {
+        return res.status(400).json({ error: "transcript is required" });
+      }
+
+      const extracted = await extractMorningNoteSignals(transcript.trim());
+      res.json({ extracted });
+    } catch (error) {
+      console.error("Error extracting morning note signals:", error);
+      res.status(500).json({ error: "Failed to extract signals" });
+    }
+  });
+
+  app.post("/api/morning-voice-notes", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const { transcript, extracted: preExtracted } = req.body;
+      if (!transcript || typeof transcript !== 'string' || !transcript.trim()) {
+        return res.status(400).json({ error: "transcript is required" });
+      }
+
+      const today = await getUserLocalDate(userId);
+
+      const existing = await db.select({ id: morningVoiceNotes.id })
+        .from(morningVoiceNotes)
+        .where(and(eq(morningVoiceNotes.userId, userId), eq(morningVoiceNotes.recordedAt, today)))
+        .limit(1);
+      if (existing.length > 0) {
+        return res.status(409).json({ error: "Morning note already recorded today" });
+      }
+
+      const extracted = preExtracted && preExtracted.moodSignal
+        ? preExtracted
+        : await extractMorningNoteSignals(transcript.trim());
+
+      const validMoods = ['calm', 'energized', 'stressed', 'overwhelmed', 'uncertain'];
+      const moodSignal = validMoods.includes(extracted.moodSignal) ? extracted.moodSignal : 'calm';
+      const themes = Array.isArray(extracted.themes) ? extracted.themes.slice(0, 5).map(String) : [];
+      const blockers = Array.isArray(extracted.blockers) ? extracted.blockers.slice(0, 3).map(String) : [];
+      const wins = Array.isArray(extracted.wins) ? extracted.wins.slice(0, 3).map(String) : [];
+      const intention = typeof extracted.intention === 'string' ? extracted.intention : null;
+
+      const [inserted] = await db.insert(morningVoiceNotes).values({
+        userId,
+        recordedAt: today,
+        transcript: transcript.trim(),
+        moodSignal,
+        themes,
+        blockers,
+        wins,
+        intention,
+      }).returning();
+
+      const memorySummary = `Morning note (${today}): Mood=${moodSignal}. Themes: ${themes.join(', ') || 'none'}. ${intention ? `Intention: ${intention}` : ''}`;
+      try {
+        await db.insert(userMemories).values({
+          userId,
+          content: memorySummary,
+          category: 'pattern',
+        });
+      } catch {}
+
+      morningNoteSummaryCache.delete(userId);
+
+      res.json({
+        note: inserted,
+        extracted: { moodSignal, themes, blockers, wins, intention },
+      });
+    } catch (error) {
+      console.error("Error creating morning voice note:", error);
+      res.status(500).json({ error: "Failed to create morning voice note" });
+    }
+  });
+
+  app.post("/api/morning-voice-notes/transcribe", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+
+      const { audioBase64, mimeType } = req.body;
+      if (!audioBase64) {
+        return res.status(400).json({ error: "audioBase64 is required" });
+      }
+
+      const buffer = Buffer.from(audioBase64, 'base64');
+      const ext = (mimeType || 'audio/webm').includes('mp4') ? 'mp4' : 'webm';
+      const file = new File([buffer], `recording.${ext}`, { type: mimeType || 'audio/webm' });
+
+      const transcription = await openai.audio.transcriptions.create({
+        model: "whisper-1",
+        file,
+      });
+
+      res.json({ transcript: transcription.text || '' });
+    } catch (error) {
+      console.error("Error transcribing audio:", error);
+      res.status(500).json({ error: "Failed to transcribe audio" });
     }
   });
 

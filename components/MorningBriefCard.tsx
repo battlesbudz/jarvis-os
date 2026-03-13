@@ -1,10 +1,13 @@
-import React, { useState } from 'react';
-import { StyleSheet, View, Text, Pressable } from 'react-native';
+import React, { useState, useEffect, useCallback } from 'react';
+import { StyleSheet, View, Text, Pressable, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import Colors from '@/constants/colors';
 import { saveEnergyCheckin, getTodayKey, type EnergyCheckin } from '@/lib/storage';
+import MorningNoteRecorder from '@/components/MorningNoteRecorder';
+import { getApiUrl } from '@/lib/query-client';
+import { authFetch } from '@/lib/auth-context';
 
 interface AutoBuiltPlan {
   date: string;
@@ -41,11 +44,31 @@ export default function MorningBriefCard({
   onEnergySet,
 }: MorningBriefCardProps) {
   const [selectedEnergy, setSelectedEnergy] = useState<number | null>(null);
+  const [morningNoteRecorded, setMorningNoteRecorded] = useState<boolean | null>(null);
+  const [morningNoteSkipped, setMorningNoteSkipped] = useState(false);
 
   const reasoning = autoBuiltPlan?.reasoning || coachNote || null;
   const topTaskName = autoBuiltPlan?.topTask || null;
   const isAutoPlanned = !!autoBuiltPlan;
   const needsEnergy = !energyCheckin && !selectedEnergy;
+  const energyDone = !!energyCheckin || !!selectedEnergy;
+  const noteCheckLoaded = morningNoteRecorded !== null;
+  const showMorningNote = energyDone && morningNoteRecorded === false && !morningNoteSkipped;
+  const showPlanContent = energyDone && noteCheckLoaded && !showMorningNote;
+
+  useEffect(() => {
+    const checkTodayNote = async () => {
+      try {
+        const url = new URL('/api/morning-voice-notes/today', getApiUrl());
+        const res = await authFetch(url.toString());
+        const data = await res.json();
+        setMorningNoteRecorded(!!data.note);
+      } catch {
+        setMorningNoteRecorded(false);
+      }
+    };
+    checkTodayNote();
+  }, []);
 
   const handleEnergyTap = async (level: number) => {
     setSelectedEnergy(level);
@@ -58,6 +81,14 @@ export default function MorningBriefCard({
     await saveEnergyCheckin(checkin);
     onEnergySet(checkin);
   };
+
+  const handleNoteComplete = useCallback(() => {
+    setMorningNoteRecorded(true);
+  }, []);
+
+  const handleNoteSkip = useCallback(() => {
+    setMorningNoteSkipped(true);
+  }, []);
 
   return (
     <Animated.View
@@ -103,8 +134,21 @@ export default function MorningBriefCard({
             ))}
           </View>
         </View>
+      ) : showMorningNote ? (
+        <MorningNoteRecorder onComplete={handleNoteComplete} onSkip={handleNoteSkip} />
+      ) : !showPlanContent ? (
+        <View style={{ paddingVertical: 16, alignItems: 'center' }}>
+          <ActivityIndicator size="small" color={Colors.primary} />
+        </View>
       ) : (
         <>
+          {morningNoteRecorded && (
+            <View style={styles.noteRecordedRow}>
+              <Ionicons name="checkmark-circle" size={16} color={Colors.success} />
+              <Text style={styles.noteRecordedText}>Morning note recorded</Text>
+            </View>
+          )}
+
           {reasoning && (
             <Text style={styles.reasoning}>"{reasoning}"</Text>
           )}
@@ -284,5 +328,21 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontFamily: 'Inter_400Regular',
     color: Colors.textTertiary,
+  },
+  noteRecordedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 8,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    backgroundColor: Colors.success + '10',
+    borderRadius: 8,
+    alignSelf: 'flex-start',
+  },
+  noteRecordedText: {
+    fontSize: 13,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.success,
   },
 });

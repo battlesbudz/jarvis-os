@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, jsonb, timestamp, primaryKey } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, jsonb, timestamp, date, primaryKey } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -150,4 +150,17 @@ export const userMemories = pgTable("user_memories", {
   content: text("content").notNull(),
   category: varchar("category").notNull().default("fact"),
   extractedAt: timestamp("extracted_at").defaultNow().notNull(),
+});
+
+export const morningVoiceNotes = pgTable("morning_voice_notes", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  recordedAt: date("recorded_at").notNull(),
+  transcript: text("transcript").notNull(),
+  moodSignal: varchar("mood_signal").notNull().default("calm"),
+  themes: jsonb("themes").notNull().default(sql`'[]'::jsonb`),
+  blockers: jsonb("blockers").notNull().default(sql`'[]'::jsonb`),
+  wins: jsonb("wins").notNull().default(sql`'[]'::jsonb`),
+  intention: text("intention"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
 });
