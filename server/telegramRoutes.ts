@@ -269,19 +269,27 @@ async function processUpdate(update: any): Promise<void> {
       if (downloaded) imageUrl = downloaded;
     }
 
-    const voiceFileId = message.voice?.file_id || message.audio?.file_id || message.video_note?.file_id;
-    if (voiceFileId && !text) {
+    let audioFileId = message.voice?.file_id || message.audio?.file_id || message.video_note?.file_id;
+    if (!audioFileId && message.document && message.document.mime_type?.startsWith('audio/')) {
+      audioFileId = message.document.file_id;
+    }
+    if (audioFileId && !text) {
       try {
-        const file = await downloadTelegramFileBuffer(voiceFileId);
-        if (file) {
-          const { speechToText, ensureCompatibleFormat } = await import('./replit_integrations/audio/client');
-          const { buffer, format } = await ensureCompatibleFormat(file.buffer);
-          const transcript = await speechToText(buffer, format);
-          if (transcript && transcript.trim()) {
-            text = transcript.trim();
-            await sendMessage(chatId, `🎤 Heard: "${text.length > 120 ? text.slice(0, 120) + '...' : text}"`);
-          }
+        const file = await downloadTelegramFileBuffer(audioFileId);
+        if (!file) {
+          await sendMessage(chatId, "Sorry, I couldn't download that voice message. Could you try again or type it out?");
+          return;
         }
+        const { speechToText, ensureCompatibleFormat } = await import('./replit_integrations/audio/client');
+        const { buffer, format } = await ensureCompatibleFormat(file.buffer);
+        const transcript = await speechToText(buffer, format);
+        if (!transcript || !transcript.trim()) {
+          await sendMessage(chatId, "Sorry, I couldn't make out what you said. Could you try again or type it out?");
+          return;
+        }
+        text = transcript.trim();
+        const preview = text.length > 100 ? text.slice(0, 100) + '...' : text;
+        await sendMessage(chatId, `(🎤 Voice: "${preview}")`);
       } catch (err) {
         console.error('[Telegram] Voice transcription failed:', err);
         await sendMessage(chatId, "Sorry, I couldn't understand that voice message. Could you try again or type it out?");
