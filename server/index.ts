@@ -3,7 +3,7 @@ import type { Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { ensureTablesExist } from "./db";
 import { registerTelegramWebhook, startProactiveScheduler } from "./telegramRoutes";
-import { setWebhook, isTelegramConfigured } from "./integrations/telegram";
+import { setWebhook, isTelegramConfigured, logTelegramStatus } from "./integrations/telegram";
 import { startScheduler } from "./scheduler";
 import * as fs from "fs";
 import * as path from "path";
@@ -232,6 +232,7 @@ function setupErrorHandler(app: express.Application) {
 
 (async () => {
   await ensureTablesExist();
+  logTelegramStatus();
 
   setupCors(app);
   setupBodyParsing(app);

@@ -217,10 +217,19 @@ export default function ProfileScreen() {
   const handleConnectTelegram = useCallback(async () => {
     setConnectingId('telegram');
     try {
-      const res = await apiRequest('POST', '/api/telegram/link-code');
+      const url = new URL('/api/telegram/link-code', getApiUrl());
+      const res = await authFetch(url.toString(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
       const data = await res.json();
-      if (data.error) {
-        alert(data.error);
+      if (!res.ok || data.error) {
+        const msg = data.error || 'Could not generate link code.';
+        if (msg.includes('not configured')) {
+          alert('Telegram bot not set up yet. Add TELEGRAM_BOT_TOKEN in Replit Secrets to enable this.');
+        } else {
+          alert(msg);
+        }
         setConnectingId(null);
         return;
       }
