@@ -1,6 +1,6 @@
 import type { Express, Request, Response } from "express";
 import { db } from "./db";
-import { eq, and, desc, sql, gte } from "drizzle-orm";
+import { eq, and, desc, sql, gte, lte } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { sendMessage, isTelegramConfigured, getUpdates, downloadTelegramFile, downloadTelegramFileBuffer } from "./integrations/telegram";
 import { getRecentEmailCommitments, getEmailsSince, getStarredFollowUpEmails, gmailModifyMessage } from "./integrations/gmail";
@@ -136,7 +136,7 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
       { hour: 20, minute: 0, label: '8:00 PM evening recap' },
     ];
     if (localDay === 0) {
-      scheduleSlots.push({ hour: 19, minute: 0, label: '7:00 PM weekly review (Sunday)' });
+      scheduleSlots.push({ hour: 19, minute: 0, label: '7:00 PM weekly planning session (Sunday)' });
       scheduleSlots.sort((a, b) => a.hour - b.hour || a.minute - b.minute);
     }
     const nextSlot = scheduleSlots.find(s => s.hour > localHour || (s.hour === localHour && s.minute > localMinute));
@@ -152,7 +152,7 @@ Today is ${dayOfWeek}, ${dateStr}. User's timezone: ${userTimezone}.
 - 8:00 AM: Morning check-in with today's plan and inbox highlights
 - 10:00 AM: Commitment accountability check (ONLY fires if there are items due today or overdue — otherwise skipped)
 - 8:00 PM: Evening recap of what was completed and what's still open
-- 7:00 PM Sundays: Weekly review
+- 7:00 PM Sundays: Weekly planning session (comprehensive week review + pattern insights + next week intentions)
 - Every 30 minutes: Email scanner checks Gmail and sends a Telegram alert ONLY for genuinely urgent emails
 All times are in the user's timezone (${userTimezone}). These fire automatically — you cannot pause, delay, reschedule, or skip them. You have no log of whether a specific notification was actually sent.
 ${nextScheduledText}
@@ -182,7 +182,9 @@ You can manage the user's tasks and commitments using the manage_tasks tool:
 - Add commitments with optional due dates (add_commitment)
 - Mark commitments as done using their [id:...] (complete_commitment)
 - List today's tasks and open commitments (list_tasks)
+- Analyze behavioral patterns from 30 days of data (analyze_patterns)
 When the user asks to add, complete, or list tasks/commitments, use the manage_tasks tool.
+If the user asks about their patterns, habits, trends, what you notice about them, their best/worst days, or anything about how they work over time, use manage_tasks with action analyze_patterns.
 
 Be direct, specific, actionable. No fluff. You have full access to the user's email and calendar data above — use it. Respond in the same language the user writes in.`;
 
@@ -230,13 +232,13 @@ Be direct, specific, actionable. No fluff. You have full access to the user's em
         type: "function" as const,
         function: {
           name: "manage_tasks",
-          description: "Manage the user's daily plan tasks and commitments. Use this to add tasks to today's plan, add commitments, complete/resolve commitments, or list current tasks and commitments.",
+          description: "Manage the user's daily plan tasks and commitments. Use this to add tasks to today's plan, add commitments, complete/resolve commitments, list current tasks, or analyze behavioral patterns from historical data.",
           parameters: {
             type: "object",
             properties: {
               action: {
                 type: "string",
-                enum: ["add_plan_task", "add_commitment", "complete_commitment", "list_tasks"],
+                enum: ["add_plan_task", "add_commitment", "complete_commitment", "list_tasks", "analyze_patterns"],
                 description: "The action to perform",
               },
               title: {
@@ -431,6 +433,28 @@ Be direct, specific, actionable. No fluff. You have full access to the user's em
               }
               taskResult = listing;
               console.log(`[Telegram] Listed tasks: ${planTasks.length} plan tasks, ${pendingCommitments.length} commitments`);
+            } else if (args.action === 'analyze_patterns') {
+              const today = new Date();
+              const thirtyDaysAgo = new Date(today);
+              thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+              const startDate = thirtyDaysAgo.toISOString().slice(0, 10);
+              const endDate = today.toISOString().slice(0, 10);
+
+              const plans = await getPlansForDateRange(userId, startDate, endDate);
+              if (plans.length < 3) {
+                taskResult = 'Not enough data yet for pattern analysis. Need at least a few days of plan data to identify meaningful patterns.';
+              } else {
+                const allCommitments = await db.select().from(schema.commitments)
+                  .where(eq(schema.commitments.userId, userId)).limit(200);
+                const scopedCommitments = allCommitments.filter((c: any) =>
+                  (c.dueDate && c.dueDate >= startDate && c.dueDate <= endDate) ||
+                  (c.extractedAt && c.extractedAt >= new Date(startDate) && c.extractedAt <= new Date(endDate + 'T23:59:59')) ||
+                  (c.resolvedAt && c.resolvedAt >= new Date(startDate) && c.resolvedAt <= new Date(endDate + 'T23:59:59'))
+                );
+                const patternData = computePatternInsights(plans, scopedCommitments);
+                taskResult = `Here is the user's behavioral pattern data from the last 30 days. Analyze this and provide 3-5 sharp, specific behavioral observations. Name each pattern (e.g. "Friday drop-off", "Health task avoidance", "Overplanning on Mondays"). Use specific numbers from the data. Be direct and insightful, not generic.\n\n${patternData}`;
+              }
+              console.log(`[Telegram] Pattern analysis: ${plans.length} days of data`);
             } else {
               taskResult = `Unknown action: ${args.action}`;
             }
@@ -810,6 +834,121 @@ function formatCommitmentsForMessage(commitments: any[], dateKey: string): strin
   return parts.join('');
 }
 
+async function getPlansForDateRange(userId: string, startDate: string, endDate: string): Promise<{ date: string; tasks: any[] }[]> {
+  try {
+    const rows = await db.select().from(schema.plans)
+      .where(and(
+        eq(schema.plans.userId, userId),
+        gte(schema.plans.date, startDate),
+        lte(schema.plans.date, endDate),
+      ));
+    return rows.map(r => ({
+      date: r.date,
+      tasks: ((r.data as any)?.tasks as any[]) || [],
+    }));
+  } catch {
+    return [];
+  }
+}
+
+function computePatternInsights(plans: { date: string; tasks: any[] }[], commitments?: any[]): string {
+  const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const dayStats: Record<string, { planned: number; completed: number; days: number }> = {};
+  for (const d of dayNames) dayStats[d] = { planned: 0, completed: 0, days: 0 };
+
+  const categoryStats: Record<string, { planned: number; completed: number }> = {};
+  let totalPlanned = 0;
+  let totalCompleted = 0;
+  const dailyCounts: { date: string; planned: number; completed: number }[] = [];
+  const streakBreakDays: Record<string, number> = {};
+  for (const d of dayNames) streakBreakDays[d] = 0;
+
+  for (const plan of plans) {
+    const dayOfWeek = dayNames[new Date(plan.date + 'T12:00:00').getDay()];
+    const planned = plan.tasks.length;
+    const completed = plan.tasks.filter((t: any) => t.completed).length;
+
+    dayStats[dayOfWeek].planned += planned;
+    dayStats[dayOfWeek].completed += completed;
+    dayStats[dayOfWeek].days += 1;
+    totalPlanned += planned;
+    totalCompleted += completed;
+    dailyCounts.push({ date: plan.date, planned, completed });
+
+    for (const task of plan.tasks) {
+      const cat = (task as any).category || 'uncategorized';
+      if (!categoryStats[cat]) categoryStats[cat] = { planned: 0, completed: 0 };
+      categoryStats[cat].planned += 1;
+      if ((task as any).completed) categoryStats[cat].completed += 1;
+    }
+  }
+
+  const sortedDays = dailyCounts.sort((a, b) => a.date.localeCompare(b.date));
+  const planDates = new Set(sortedDays.map(d => d.date));
+  if (sortedDays.length >= 2) {
+    const firstDate = new Date(sortedDays[0].date + 'T12:00:00');
+    const lastDate = new Date(sortedDays[sortedDays.length - 1].date + 'T12:00:00');
+    const allDatesInRange: { date: string; planned: number; completed: number }[] = [];
+    for (let d = new Date(firstDate); d <= lastDate; d.setDate(d.getDate() + 1)) {
+      const dk = d.toISOString().slice(0, 10);
+      const existing = sortedDays.find(s => s.date === dk);
+      allDatesInRange.push(existing || { date: dk, planned: 0, completed: 0 });
+    }
+    let prevActive = false;
+    for (const day of allDatesInRange) {
+      const rate = day.planned > 0 ? day.completed / day.planned : 0;
+      const isActiveDay = (rate >= 0.5 && day.planned > 0);
+      if (prevActive && !isActiveDay) {
+        const dayOfWeek = dayNames[new Date(day.date + 'T12:00:00').getDay()];
+        streakBreakDays[dayOfWeek] += 1;
+      }
+      prevActive = isActiveDay;
+    }
+  }
+
+  let stats = `BEHAVIORAL DATA (${plans.length} days analyzed):\n\n`;
+
+  stats += `Overall: ${totalCompleted}/${totalPlanned} tasks completed (${totalPlanned > 0 ? Math.round(totalCompleted / totalPlanned * 100) : 0}%)\n`;
+  stats += `Avg tasks planned per day: ${plans.length > 0 ? (totalPlanned / plans.length).toFixed(1) : '0'}\n\n`;
+
+  stats += `Day-of-week completion rates:\n`;
+  for (const day of dayNames) {
+    const s = dayStats[day];
+    if (s.days === 0) continue;
+    const rate = s.planned > 0 ? Math.round(s.completed / s.planned * 100) : 0;
+    stats += `  ${day}: ${rate}% (${s.completed}/${s.planned} across ${s.days} day${s.days > 1 ? 's' : ''})\n`;
+  }
+
+  const catEntries = Object.entries(categoryStats).filter(([_, v]) => v.planned >= 2);
+  if (catEntries.length > 0) {
+    stats += `\nCategory completion rates:\n`;
+    for (const [cat, v] of catEntries) {
+      stats += `  ${cat}: ${Math.round(v.completed / v.planned * 100)}% (${v.completed}/${v.planned})\n`;
+    }
+  }
+
+  const breakEntries = Object.entries(streakBreakDays).filter(([_, v]) => v > 0).sort((a, b) => b[1] - a[1]);
+  if (breakEntries.length > 0) {
+    stats += `\nStreak break days (days where momentum dropped):\n`;
+    for (const [day, count] of breakEntries) {
+      stats += `  ${day}: ${count} break${count > 1 ? 's' : ''}\n`;
+    }
+  }
+
+  if (commitments && commitments.length > 0) {
+    const resolved = commitments.filter((c: any) => c.status === 'done').length;
+    const expired = commitments.filter((c: any) => c.status === 'expired').length;
+    const pending = commitments.filter((c: any) => c.status === 'pending').length;
+    const total = commitments.length;
+    stats += `\nCommitment follow-through:\n`;
+    stats += `  Resolved: ${resolved}/${total} (${Math.round(resolved / total * 100)}%)\n`;
+    if (expired > 0) stats += `  Expired: ${expired}/${total}\n`;
+    if (pending > 0) stats += `  Still pending: ${pending}\n`;
+  }
+
+  return stats;
+}
+
 async function generateProactiveMessage(
   type: string,
   context: {
@@ -818,6 +957,7 @@ async function generateProactiveMessage(
     commitments?: any[];
     stats?: any;
     dateKey?: string;
+    userId?: string;
   }
 ): Promise<string | null> {
   const now = new Date();
@@ -870,28 +1010,167 @@ Due TOMORROW: ${dueTomorrow.map((c: any) => `"${c.content}"`).join(', ') || 'non
 Streak: ${context.stats?.streak || 0} days
 
 Write a concise evening recap (3-4 sentences). Acknowledge what was done, note what's still open. If there are items due tomorrow, specifically call them out so the user can plan tonight. End with something forward-looking. No platitudes.`;
-  } else if (type === 'weekly') {
-    prompt = `Weekly review.
+  } else if (type === 'weekly' || type === 'weekly_planning') {
+    const userId = context.userId;
+    if (userId) {
+      const endDate = context.dateKey || new Date().toISOString().slice(0, 10);
+      const anchorDate = new Date(endDate + 'T12:00:00');
+      const startOfWeekDate = new Date(anchorDate);
+      startOfWeekDate.setDate(startOfWeekDate.getDate() - 6);
+      const startDate = startOfWeekDate.toISOString().slice(0, 10);
+
+      const weekPlans = await getPlansForDateRange(userId, startDate, endDate);
+      const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+      let dayByDay = '';
+      let weekCompleted = 0;
+      let weekPlanned = 0;
+      const categoryBreakdown: Record<string, { done: number; total: number }> = {};
+      const droppedCategories: Record<string, number> = {};
+
+      for (let i = 0; i < 7; i++) {
+        const d = new Date(startOfWeekDate);
+        d.setDate(d.getDate() + i);
+        const dk = d.toISOString().slice(0, 10);
+        const dayName = dayNames[d.getDay()];
+        const plan = weekPlans.find(p => p.date === dk);
+        if (plan && plan.tasks.length > 0) {
+          const done = plan.tasks.filter((t: any) => t.completed).length;
+          const total = plan.tasks.length;
+          weekCompleted += done;
+          weekPlanned += total;
+          dayByDay += `  ${dayName}: ${done}/${total} completed\n`;
+
+          for (const task of plan.tasks) {
+            const cat = (task as any).category || 'general';
+            if (!categoryBreakdown[cat]) categoryBreakdown[cat] = { done: 0, total: 0 };
+            categoryBreakdown[cat].total += 1;
+            if ((task as any).completed) {
+              categoryBreakdown[cat].done += 1;
+            } else {
+              droppedCategories[cat] = (droppedCategories[cat] || 0) + 1;
+            }
+          }
+        } else {
+          dayByDay += `  ${dayName}: no plan\n`;
+        }
+      }
+
+      const weekRate = weekPlanned > 0 ? Math.round(weekCompleted / weekPlanned * 100) : 0;
+
+      const catSummary = Object.entries(categoryBreakdown)
+        .map(([cat, v]) => `  ${cat}: ${v.done}/${v.total} (${Math.round(v.done / v.total * 100)}%)`)
+        .join('\n');
+
+      const droppedTypeEntries = Object.entries(droppedCategories).sort((a, b) => b[1] - a[1]);
+      const droppedSummary = droppedTypeEntries.length > 0
+        ? `Top dropped task types: ${droppedTypeEntries.slice(0, 5).map(([cat, count]) => `${cat} (${count})`).join(', ')}`
+        : 'No incomplete tasks this week';
+
+      const allWeekCommitments = await db.select().from(schema.commitments)
+        .where(eq(schema.commitments.userId, userId)).limit(200);
+      const weekDueCommitments = allWeekCommitments.filter((c: any) =>
+        c.dueDate && c.dueDate >= startDate && c.dueDate <= endDate
+      );
+      const weekDueDone = weekDueCommitments.filter((c: any) => c.status === 'done').length;
+      const weekDueExpired = weekDueCommitments.filter((c: any) => c.status === 'expired').length;
+      const weekDueUnresolved = weekDueCommitments.filter((c: any) => c.status === 'pending').length;
+      const weekDueTotal = weekDueCommitments.length;
+      const commitmentRate = weekDueTotal > 0 ? Math.round(weekDueDone / weekDueTotal * 100) : 0;
+
+      let goalDeltaText = '';
+      try {
+        const goalsData = (context.goals || []);
+        if (goalsData.length > 0) {
+          const statsHistory = (context.stats as any)?.goalHistory as any[] | undefined;
+
+          const goalDeltas = goalsData.map((g: any) => {
+            const current = g.current || 0;
+            let baseline = current;
+            if (statsHistory) {
+              const priorEntries = statsHistory
+                .filter((h: any) => h.goalId === g.id && h.date && h.date <= startDate)
+                .sort((a: any, b: any) => (b.date || '').localeCompare(a.date || ''));
+              if (priorEntries.length > 0) baseline = priorEntries[0].value || 0;
+            }
+            if (baseline === current && g.previousValue !== undefined) baseline = g.previousValue;
+            const delta = current - baseline;
+            const deltaStr = delta > 0 ? `+${delta}` : delta === 0 ? 'no change' : `${delta}`;
+            return `  ${g.title}: ${current}/${g.target} ${g.unit} (${deltaStr} this week)`;
+          });
+          goalDeltaText = goalDeltas.join('\n');
+        }
+      } catch {}
+      if (!goalDeltaText) goalDeltaText = goalsText;
+
+      let patternSection = '';
+      try {
+        const thirtyDaysAgoDate = new Date(anchorDate);
+        thirtyDaysAgoDate.setDate(thirtyDaysAgoDate.getDate() - 30);
+        const thirtyDayStart = thirtyDaysAgoDate.toISOString().slice(0, 10);
+        const allPlans = await getPlansForDateRange(userId, thirtyDayStart, endDate);
+        const allCommitmentsRaw = await db.select().from(schema.commitments)
+          .where(eq(schema.commitments.userId, userId)).limit(200);
+        const scopedCommitments30d = allCommitmentsRaw.filter((c: any) =>
+          (c.dueDate && c.dueDate >= thirtyDayStart && c.dueDate <= endDate) ||
+          (c.extractedAt && c.extractedAt >= new Date(thirtyDayStart) && c.extractedAt <= new Date(endDate + 'T23:59:59')) ||
+          (c.resolvedAt && c.resolvedAt >= new Date(thirtyDayStart) && c.resolvedAt <= new Date(endDate + 'T23:59:59'))
+        );
+        if (allPlans.length >= 7) {
+          patternSection = computePatternInsights(allPlans, scopedCommitments30d);
+        }
+      } catch {}
+
+      prompt = `WEEKLY PLANNING SESSION — Sunday Review
+
+Day-by-day this week:
+${dayByDay}
+Week completion rate: ${weekRate}% (${weekCompleted}/${weekPlanned})
+${catSummary ? `Category breakdown:\n${catSummary}` : ''}
+${droppedSummary}
+Commitments due this week: ${weekDueTotal > 0 ? `${commitmentRate}% follow-through (${weekDueDone} resolved / ${weekDueTotal} due)${weekDueExpired > 0 ? ` | ${weekDueExpired} expired` : ''}${weekDueUnresolved > 0 ? ` | ${weekDueUnresolved} still unresolved` : ''}` : 'none due this week'}
+
+Streak: ${context.stats?.streak || 0} days | XP: ${context.stats?.xp || 0}
+Goal progress (this week):
+${goalDeltaText}
+Open commitments: ${commitmentList}
+
+${patternSection ? `PATTERN DATA (30 days):\n${patternSection}` : ''}
+
+Write a comprehensive weekly planning session. Structure it as:
+1. WEEK RECAP — what happened day-by-day, what the overall trend was, honest assessment
+2. GOAL CHECK — how goals moved (or didn't)
+3. CARRY FORWARD — what dropped tasks or commitments should carry into next week
+4. INTENTIONS — 3 specific, actionable intentions for next week based on what you see in the data
+${patternSection ? '5. PATTERNS — include the top 2-3 behavioral observations from the 30-day pattern data. Name each pattern (e.g. "Friday drop-off", "Health task avoidance"). Be specific with numbers.' : ''}
+
+Use line breaks between sections for readability. Plain text, no markdown. Be direct and honest. This is allowed to be thorough (8-15 sentences total).`;
+    } else {
+      prompt = `Weekly review.
 Streak: ${context.stats?.streak || 0} days | XP: ${context.stats?.xp || 0}
 Goals: ${goalsText}
 Open commitments: ${commitmentList}
 
 Write a sharp weekly summary (3-4 sentences). What's the trend? What needs focus next week? Be honest and direct.`;
+    }
   }
 
   if (!prompt) return null;
 
+  const isWeeklyPlanning = type === 'weekly' || type === 'weekly_planning';
   try {
     const resp = await openai.chat.completions.create({
       model: 'gpt-5-mini',
       messages: [
         {
           role: 'system',
-          content: 'You are GamePlan Coach Jarvis — a direct, sharp, ADHD-friendly productivity coach. Messages go via Telegram. Keep it SHORT (3-4 sentences max). Plain text only, no markdown, no bullet points.',
+          content: isWeeklyPlanning
+            ? 'You are GamePlan Coach Jarvis — a direct, sharp, ADHD-friendly productivity coach. Messages go via Telegram. This is the weekly planning session — you are allowed to be comprehensive (8-15 sentences). Use line breaks between sections for readability. Plain text only, no markdown, no bullet points, no asterisks.'
+            : 'You are GamePlan Coach Jarvis — a direct, sharp, ADHD-friendly productivity coach. Messages go via Telegram. Keep it SHORT (3-4 sentences max). Plain text only, no markdown, no bullet points.',
         },
         { role: 'user', content: prompt },
       ],
-      max_completion_tokens: 2000,
+      max_completion_tokens: isWeeklyPlanning ? 4000 : 2000,
     });
     return resp.choices[0]?.message?.content || null;
   } catch (err) {
@@ -908,7 +1187,7 @@ export async function startProactiveScheduler(): Promise<void> {
     { type: 'commitment_check', hour: 10, minute: 0 },
     { type: 'followup_check', hour: 12, minute: 0 },
     { type: 'evening', hour: 20, minute: 0 },
-    { type: 'weekly', dayOfWeek: 0, hour: 19, minute: 0 },
+    { type: 'weekly_planning', dayOfWeek: 0, hour: 19, minute: 0 },
   ];
 
   const lastSent: Record<string, string> = {};
@@ -938,7 +1217,7 @@ export async function startProactiveScheduler(): Promise<void> {
 
         for (const schedule of SCHEDULE) {
           if (localHour !== schedule.hour || localMinute !== schedule.minute) continue;
-          if (schedule.type === 'weekly' && localDay !== schedule.dayOfWeek) continue;
+          if (schedule.type === 'weekly_planning' && localDay !== schedule.dayOfWeek) continue;
 
           const sentKey = `${link.userId}-${schedule.type}-${dateKey}`;
           if (lastSent[sentKey]) continue;
@@ -987,6 +1266,7 @@ export async function startProactiveScheduler(): Promise<void> {
               commitments,
               stats: userStats,
               dateKey,
+              userId: link.userId,
             });
 
             if (message) {
