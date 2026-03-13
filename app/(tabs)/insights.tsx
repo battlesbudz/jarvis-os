@@ -6,6 +6,7 @@ import {
   TextInput,
   Pressable,
   FlatList,
+  ScrollView,
   ActivityIndicator,
   Platform,
   Alert,
@@ -33,12 +34,15 @@ import {
   saveChatHistory,
   clearChatHistory,
   getLifeContext,
+  getCoachingMode,
+  saveCoachingMode,
   type Goal,
   type UserStats,
   type ChatMessage,
   type CoachAction,
   type LifeContext,
   type Commitment,
+  type CoachingMode,
 } from '@/lib/storage';
 import {
   scheduleEveningAccountability,
@@ -59,6 +63,14 @@ interface EmailSuggestion {
   goalTitle: string;
   reason: string;
 }
+
+const COACHING_MODES: { key: CoachingMode; label: string; icon: string }[] = [
+  { key: 'sharp', label: 'Sharp', icon: '\u26A1' },
+  { key: 'drill', label: 'Drill', icon: '\uD83C\uDF96\uFE0F' },
+  { key: 'mentor', label: 'Mentor', icon: '\uD83C\uDF31' },
+  { key: 'strategist', label: 'Strategist', icon: '\uD83D\uDCC8' },
+  { key: 'flow', label: 'Flow', icon: '\uD83C\uDF0A' },
+];
 
 const SUGGESTED_PROMPTS = [
   "How am I doing overall?",
@@ -316,6 +328,8 @@ export default function InsightsScreen() {
   const [scanLoading, setScanLoading] = useState(false);
   const [addedSuggestions, setAddedSuggestions] = useState<Record<number, boolean>>({});
   const [inboxCollapsed, setInboxCollapsed] = useState(false);
+  const [coachingMode, setCoachingMode] = useState<CoachingMode>('sharp');
+  const coachingModeRef = useRef<CoachingMode>('sharp');
   const [isRecording, setIsRecording] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isTTSLoading, setIsTTSLoading] = useState(false);
@@ -370,6 +384,7 @@ export default function InsightsScreen() {
   }));
 
   useEffect(() => { commitmentsRef.current = commitments; }, [commitments]);
+  useEffect(() => { coachingModeRef.current = coachingMode; }, [coachingMode]);
   useEffect(() => { gmailItemsRef.current = gmailItems; }, [gmailItems]);
   useEffect(() => { gmailConnectedRef.current = gmailConnected; }, [gmailConnected]);
   useEffect(() => { slackMessagesRef.current = slackMessages; }, [slackMessages]);
@@ -699,6 +714,8 @@ export default function InsightsScreen() {
           stats: loadedStats,
           history: loadedHistory,
           lifeContext: loadedLifeContext,
+          commitments: loadedCommitments,
+          coachingMode: coachingModeRef.current,
         }),
       });
 
@@ -760,12 +777,13 @@ export default function InsightsScreen() {
     let loadedLifeContext: LifeContext | null = null;
     let loadedCommitments: Commitment[] = [];
     try {
-      const [lg, ls, lh, savedMessages, lc] = await Promise.all([
+      const [lg, ls, lh, savedMessages, lc, savedMode] = await Promise.all([
         getGoals(),
         getStats(),
         getCompletionHistory(),
         getChatHistory(),
         getLifeContext(),
+        getCoachingMode(),
       ]);
       loadedGoals = lg;
       loadedStats = ls;
@@ -776,6 +794,8 @@ export default function InsightsScreen() {
       setHistory(lh);
       setMessages(savedMessages);
       setLifeContext(lc);
+      setCoachingMode(savedMode);
+      coachingModeRef.current = savedMode;
 
       // Fetch commitments
       try {
@@ -896,6 +916,8 @@ export default function InsightsScreen() {
           gmailConnected: gmailConnectedRef.current,
           slackMessages: slackMessagesRef.current,
           slackConnected: slackConnectedRef.current,
+          commitments: commitmentsRef.current,
+          coachingMode: coachingModeRef.current,
         }),
       });
 
@@ -957,7 +979,7 @@ export default function InsightsScreen() {
         const suggestRes = await authFetch(suggestUrl.toString(), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ lastAssistantMessage: finalContent, goals: goalsRef.current }),
+          body: JSON.stringify({ lastAssistantMessage: finalContent, goals: goalsRef.current, coachingMode: coachingModeRef.current }),
         });
         const suggestData = await suggestRes.json();
         const actions: CoachAction[] = suggestData.actions || [];
@@ -1006,6 +1028,12 @@ export default function InsightsScreen() {
   useEffect(() => {
     sendMessageRef.current = sendMessage;
   }, [sendMessage]);
+
+  const handleModeChange = useCallback((mode: CoachingMode) => {
+    setCoachingMode(mode);
+    coachingModeRef.current = mode;
+    saveCoachingMode(mode);
+  }, []);
 
   const handleClearChat = useCallback(async () => {
     if (!confirmClear) {
@@ -1200,6 +1228,23 @@ export default function InsightsScreen() {
         </Pressable>
       </View>
 
+      <View style={styles.modeRow}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.modeScrollContent}>
+          {COACHING_MODES.map((mode) => (
+            <Pressable
+              key={mode.key}
+              style={[styles.modePill, coachingMode === mode.key && styles.modePillActive]}
+              onPress={() => handleModeChange(mode.key)}
+            >
+              <Text style={styles.modePillIcon}>{mode.icon}</Text>
+              <Text style={[styles.modePillText, coachingMode === mode.key && styles.modePillTextActive]}>
+                {mode.label}
+              </Text>
+            </Pressable>
+          ))}
+        </ScrollView>
+      </View>
+
       {isEmailLoading && (
         <View style={styles.emailLoadingBanner}>
           <ActivityIndicator size="small" color={Colors.textSecondary} />
@@ -1341,6 +1386,42 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontFamily: 'Inter_600SemiBold',
     color: '#EF4444',
+  },
+  modeRow: {
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+    backgroundColor: Colors.background,
+  },
+  modeScrollContent: {
+    paddingHorizontal: 16,
+    gap: 8,
+  },
+  modePill: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: 4,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.background,
+  },
+  modePillActive: {
+    backgroundColor: Colors.primary,
+    borderColor: Colors.primary,
+  },
+  modePillIcon: {
+    fontSize: 12,
+  },
+  modePillText: {
+    fontSize: 13,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.textSecondary,
+  },
+  modePillTextActive: {
+    color: '#fff',
   },
   emailLoadingBanner: {
     flexDirection: 'row' as const,

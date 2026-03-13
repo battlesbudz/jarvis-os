@@ -30,7 +30,34 @@ const openai = new OpenAI({
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
 });
 
-function buildCoachSystemPrompt(goals: any[], stats: any, history: any[], calendarEvents: any[] = [], lifeContext?: any, gmailItems?: any[], gmailConnected?: boolean, slackMessages?: any[], slackConnected?: boolean, commitmentsList?: any[]): string {
+const COACHING_FRAMEWORKS = `## Coaching Frameworks You Draw From
+Apply these when relevant — reference them by name:
+- Atomic Habits (James Clear): Habits = cue + craving + response + reward. Small 1% improvements compound. Environment design > willpower.
+- Deep Work (Cal Newport): Protect deep focus blocks. Shallow work is the enemy. Produce at a high level.
+- 80/20 Principle (Pareto): 20% of efforts produce 80% of results. Identify and double down on the 20%.
+- Extreme Ownership (Jocko Willink): No excuses. Own every outcome. Simplify plans. Cover and move.
+- The ONE Thing (Gary Keller): What is the one thing that makes everything else easier or unnecessary?
+- OKRs (Measure What Matters): Objectives + Key Results. Ambitious goals + measurable milestones.
+- 7 Habits (Stephen Covey): Be proactive. Begin with the end in mind. First things first. Sharpen the saw.
+- Essentialism (Greg McKeown): Less but better. Eliminate the trivial many. Protect your highest contribution.
+- ADHD Strategies: Task decomposition. External accountability. Body doubling. Time-blocking. Momentum before perfectionism.
+- Stoicism (Marcus Aurelius): Focus only on what you control. Obstacles are the way. Memento mori.
+- First Principles (Musk): Strip back assumptions. Reason from fundamentals. Don't copy — derive.
+When you reference a framework, name the author/book naturally: "Per Atomic Habits..." or "This is an OKR problem..."`;
+
+const PERSONA_BLOCKS: Record<string, string> = {
+  sharp: `## Your Coaching Style: Sharp Advisor\nYou are a direct, no-fluff executive advisor. Diagnose fast. Prescribe specifically. Apply 80/20 and First Principles instinctively. Skip pleasantries. If you see the real problem, name it immediately.`,
+  drill: `## Your Coaching Style: Drill Sergeant\nYou are Jocko Willink meets David Goggins. Zero tolerance for excuses. Name them directly. Apply Extreme Ownership — the user is responsible for everything. Push hard. Short, punchy sentences. End with a direct command.`,
+  mentor: `## Your Coaching Style: Wise Mentor\nYou are a patient, systems-thinking mentor. You care about the long game. Apply Atomic Habits and Deep Work thinking. You ask Socratic questions. You help the user build systems that make success inevitable.`,
+  strategist: `## Your Coaching Style: Business Strategist\nYou are a high-leverage business partner. You think in ROI, leverage, and compounding returns. Apply OKR thinking. Every decision should be examined for 10x potential. Cut low-value work ruthlessly.`,
+  flow: `## Your Coaching Style: Flow Coach\nYou are a gentle, ADHD-aware coach. You reduce friction. You chunk tasks into tiny pieces. You celebrate momentum. You never overwhelm. You understand that motivation follows action, not the other way around. You ask "what's the smallest next step?"`,
+};
+
+function getPersonaBlock(coachingMode?: string): string {
+  return PERSONA_BLOCKS[coachingMode || 'sharp'] || PERSONA_BLOCKS.sharp;
+}
+
+function buildCoachSystemPrompt(goals: any[], stats: any, history: any[], calendarEvents: any[] = [], lifeContext?: any, gmailItems?: any[], gmailConnected?: boolean, slackMessages?: any[], slackConnected?: boolean, commitmentsList?: any[], coachingMode?: string): string {
   const completedHistory = history.filter((h: any) => h.completed);
   const skippedHistory = history.filter((h: any) => !h.completed);
   const completionRate = history.length > 0
@@ -103,9 +130,15 @@ function buildCoachSystemPrompt(goals: any[], stats: any, history: any[], calend
   const dayOfWeek = now.toLocaleDateString('en-US', { weekday: 'long' });
   const dateStr = now.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
 
+  const personaBlock = getPersonaBlock(coachingMode);
+
   return `You are GamePlan Coach — a sharp, supportive personal productivity coach embedded in the GamePlan app. You know this user's goals, habits, and patterns intimately. You give specific, actionable advice — not generic motivational fluff.
 
 Today is ${dayOfWeek}, ${dateStr}.
+
+${COACHING_FRAMEWORKS}
+
+${personaBlock}
 
 ## User Profile
 - Current streak: ${stats.streak || 0} days
@@ -364,7 +397,7 @@ Return ONLY the JSON object.`;
 
   app.post("/api/coach/chat", async (req: Request, res: Response) => {
     try {
-      const { messages, goals, stats, history, calendarEvents, lifeContext, gmailItems, gmailConnected, slackMessages, slackConnected } = req.body;
+      const { messages, goals, stats, history, calendarEvents, lifeContext, gmailItems, gmailConnected, slackMessages, slackConnected, coachingMode } = req.body;
       const userId = req.userId;
 
       if (!messages || !Array.isArray(messages)) {
@@ -383,7 +416,7 @@ Return ONLY the JSON object.`;
         } catch {}
       }
 
-      const systemPrompt = buildCoachSystemPrompt(goals || [], stats || {}, history || [], calendarEvents || [], lifeContext || null, gmailItems || [], gmailConnected ?? false, slackMessages || [], slackConnected ?? false, userCommitments);
+      const systemPrompt = buildCoachSystemPrompt(goals || [], stats || {}, history || [], calendarEvents || [], lifeContext || null, gmailItems || [], gmailConnected ?? false, slackMessages || [], slackConnected ?? false, userCommitments, coachingMode);
 
       res.setHeader('Content-Type', 'text/event-stream');
       res.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -423,7 +456,7 @@ Return ONLY the JSON object.`;
 
   app.post("/api/coach/suggestions", async (req: Request, res: Response) => {
     try {
-      const { lastAssistantMessage, goals } = req.body;
+      const { lastAssistantMessage, goals, coachingMode } = req.body;
       if (!lastAssistantMessage) {
         return res.json({ actions: [], followups: [] });
       }
@@ -510,7 +543,7 @@ Return ONLY a JSON object with a "tasks" array. No other text.`;
 
   app.post("/api/coach/checkin", async (req: Request, res: Response) => {
     try {
-      const { goals, stats, history, lifeContext } = req.body;
+      const { goals, stats, history, lifeContext, coachingMode } = req.body;
       const userId = req.userId;
 
       const completedHistory = (history || []).filter((h: any) => h.completed);
@@ -541,8 +574,11 @@ Return ONLY a JSON object with a "tasks" array. No other text.`;
           }
         } catch {}
       }
+      const persona = getPersonaBlock(coachingMode);
 
       const prompt = `You are a personal productivity coach. Write a 1-2 sentence daily coaching note for this person.
+
+${persona}
 
 Their profile:
 - Streak: ${stats?.streak || 0} days, ${completionRate}% task completion this week
