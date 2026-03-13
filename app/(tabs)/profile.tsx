@@ -226,7 +226,7 @@ export default function ProfileScreen() {
       if (!res.ok || data.error) {
         const msg = data.error || 'Could not generate link code.';
         if (msg.includes('not configured')) {
-          alert('Telegram bot not set up yet. Add TELEGRAM_BOT_TOKEN in Replit Secrets to enable this.');
+          alert('Telegram bot not set up yet — add your TELEGRAM_BOT_TOKEN in Replit Secrets to enable this.');
         } else {
           alert(msg);
         }
