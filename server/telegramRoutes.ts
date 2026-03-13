@@ -34,7 +34,7 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
     let calendarEvents: any[] = [];
     let gmailConnected = false;
 
-    const [goalsRow, statsRow, lcRow, chatRow, commitmentsRows, googleTokens] = await Promise.allSettled([
+    const [goalsRow, statsRow, lcRow, chatRow, commitmentsRows, googleTokens, prefsRow] = await Promise.allSettled([
       db.select().from(schema.goals).where(eq(schema.goals.userId, userId)).limit(1),
       db.select().from(schema.stats).where(eq(schema.stats.userId, userId)).limit(1),
       db.select().from(schema.lifeContext).where(eq(schema.lifeContext.userId, userId)).limit(1),
@@ -43,13 +43,20 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
         .where(and(eq(schema.commitments.userId, userId), eq(schema.commitments.status, 'pending')))
         .orderBy(desc(schema.commitments.extractedAt)).limit(10),
       getValidGoogleTokens(userId),
+      db.select().from(schema.userPreferences).where(eq(schema.userPreferences.userId, userId)).limit(1),
     ]);
+
+    let userTimezone = 'America/New_York';
 
     if (goalsRow.status === 'fulfilled') userGoals = (goalsRow.value[0]?.data as any[]) || [];
     if (statsRow.status === 'fulfilled') userStats = statsRow.value[0]?.data || {};
     if (lcRow.status === 'fulfilled') userLifeContext = lcRow.value[0]?.data || null;
     if (chatRow.status === 'fulfilled') chatMessages = (chatRow.value[0]?.data as any[]) || [];
     if (commitmentsRows.status === 'fulfilled') userCommitments = commitmentsRows.value;
+    if (prefsRow.status === 'fulfilled') {
+      const prefs = (prefsRow.value[0]?.data as any) || {};
+      if (prefs.timezone) userTimezone = prefs.timezone;
+    }
 
     if (googleTokens.status === 'fulfilled' && googleTokens.value.length > 0) {
       gmailConnected = true;
@@ -105,9 +112,40 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
         ? `## Recent Emails\nGmail is connected but no emails found in the last 7 days.`
         : `## Recent Emails\nGmail not connected — if asked about emails, let the user know.`;
 
-    const systemPrompt = `You are GamePlan Coach — a sharp, supportive personal productivity coach. You're responding via Telegram, so keep messages SHORT (2-4 sentences max). Use plain text, no markdown headers.
+    const localNow = new Date(now.toLocaleString('en-US', { timeZone: userTimezone }));
+    const localHour = localNow.getHours();
+    const localDay = localNow.getDay();
+    const scheduleSlots = [
+      { hour: 8, label: '8:00 AM morning check-in' },
+      { hour: 10, label: '10:00 AM commitment check (only if items due/overdue)' },
+      { hour: 20, label: '8:00 PM evening recap' },
+    ];
+    const nextSlot = scheduleSlots.find(s => s.hour > localHour);
+    let nextScheduledText = nextSlot
+      ? `Next scheduled notification: ${nextSlot.label} (${userTimezone})`
+      : 'All scheduled notifications for today have already passed. Next: 8:00 AM tomorrow morning check-in';
+    if (localDay === 0 && localHour < 19) {
+      nextScheduledText += '\nAlso today: 7:00 PM weekly review (Sunday)';
+    }
 
-Today is ${dayOfWeek}, ${dateStr}.
+    const systemPrompt = `You are GamePlan Coach Jarvis — a sharp, supportive personal productivity coach. You're responding via Telegram, so keep messages SHORT (2-4 sentences max). Use plain text, no markdown headers.
+
+Today is ${dayOfWeek}, ${dateStr}. User's timezone: ${userTimezone}.
+
+## What You Do Automatically (you do NOT control these — the system runs them)
+- 8:00 AM: Morning check-in with today's plan and inbox highlights
+- 10:00 AM: Commitment accountability check (ONLY fires if there are items due today or overdue — otherwise skipped)
+- 8:00 PM: Evening recap of what was completed and what's still open
+- 7:00 PM Sundays: Weekly review
+- Every 30 minutes: Email scanner checks Gmail and sends a Telegram alert ONLY for genuinely urgent emails
+All times are in the user's timezone (${userTimezone}). These fire automatically — you cannot pause, delay, reschedule, or skip them. You have no log of whether a specific notification was actually sent.
+${nextScheduledText}
+
+## What You Must NEVER Do
+- NEVER claim you "paused", "held", "scheduled", "decided to wait", or took any autonomous action regarding notifications. You don't have that ability.
+- NEVER invent a narrative about your own past behavior or past conversations you don't have in your message history below.
+- If asked whether a notification went out, be honest: "I don't have a record of which notifications fired. The morning check-in is scheduled for 8 AM — I can tell you what's in your data right now."
+- If asked about past conversations not in your message history, say so. Don't fabricate.
 
 ## User Profile
 - Streak: ${userStats.streak || 0} days
