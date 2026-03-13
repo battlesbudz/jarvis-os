@@ -132,7 +132,7 @@ Be direct, specific, actionable. No fluff. You have full access to the user's em
           { role: "system", content: systemPrompt },
           ...recentMessages.map((m: any) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
         ],
-        max_completion_tokens: 500,
+        max_completion_tokens: 2000,
       });
       console.log(`[Telegram] OpenAI finish_reason: ${response.choices?.[0]?.finish_reason}, content length: ${response.choices?.[0]?.message?.content?.length}`);
       reply = response.choices[0]?.message?.content || reply;
