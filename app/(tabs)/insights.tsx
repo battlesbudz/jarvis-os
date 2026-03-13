@@ -38,7 +38,15 @@ import {
   type ChatMessage,
   type CoachAction,
   type LifeContext,
+  type Commitment,
 } from '@/lib/storage';
+import {
+  scheduleEveningAccountability,
+  scheduleMidDayNudge,
+  cancelMidDayNudge,
+  scheduleCommitmentDueDateReminder,
+  scheduleWeeklyReview,
+} from '@/lib/notifications';
 import { getApiUrl } from '@/lib/query-client';
 import { authFetch, getAuthToken } from '@/lib/auth-context';
 import { Linking } from 'react-native';
@@ -324,8 +332,12 @@ export default function InsightsScreen() {
   const messagesRef = useRef<ChatMessage[]>([]);
   const hasScrolledRef = useRef(false);
   const initialScanDoneRef = useRef(false);
+  const [commitments, setCommitments] = useState<Commitment[]>([]);
+  const [commitmentsCollapsed, setCommitmentsCollapsed] = useState(false);
   const [isBaseLoading, setIsBaseLoading] = useState(true);
   const [isEmailLoading, setIsEmailLoading] = useState(true);
+  const commitmentsRef = useRef<Commitment[]>([]);
+  const proactiveCheckedRef = useRef(false);
   const gmailItemsRef = useRef<typeof gmailItems>([]);
   const gmailConnectedRef = useRef(false);
   const slackMessagesRef = useRef<any[]>([]);
@@ -357,6 +369,7 @@ export default function InsightsScreen() {
     opacity: micPulse.value,
   }));
 
+  useEffect(() => { commitmentsRef.current = commitments; }, [commitments]);
   useEffect(() => { gmailItemsRef.current = gmailItems; }, [gmailItems]);
   useEffect(() => { gmailConnectedRef.current = gmailConnected; }, [gmailConnected]);
   useEffect(() => { slackMessagesRef.current = slackMessages; }, [slackMessages]);
@@ -616,13 +629,138 @@ export default function InsightsScreen() {
     } catch {}
   }, [addedSuggestions]);
 
+  const fetchCommitments = useCallback(async () => {
+    try {
+      const url = new URL('/api/commitments', getApiUrl());
+      const res = await authFetch(url.toString());
+      const data = await res.json();
+      if (data.commitments && Array.isArray(data.commitments)) {
+        setCommitments(data.commitments);
+      }
+    } catch {}
+  }, []);
+
+  const markCommitmentDone = useCallback(async (id: string) => {
+    try {
+      const url = new URL(`/api/commitments/${id}`, getApiUrl());
+      await authFetch(url.toString(), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'done' }),
+      });
+      setCommitments(prev => prev.filter(c => c.id !== id));
+    } catch {}
+  }, []);
+
+  const dismissCommitment = useCallback(async (id: string) => {
+    try {
+      const url = new URL(`/api/commitments/${id}`, getApiUrl());
+      await authFetch(url.toString(), { method: 'DELETE' });
+      setCommitments(prev => prev.filter(c => c.id !== id));
+    } catch {}
+  }, []);
+
+  const checkAccountabilityOnMount = useCallback(async (loadedHistory: any[], loadedCommitments: Commitment[], loadedGoals: Goal[], loadedStats: UserStats, loadedLifeContext: LifeContext | null) => {
+    if (proactiveCheckedRef.current) return;
+    proactiveCheckedRef.current = true;
+
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayKey = `${yesterday.getFullYear()}-${String(yesterday.getMonth() + 1).padStart(2, '0')}-${String(yesterday.getDate()).padStart(2, '0')}`;
+
+    const yesterdayIncomplete = loadedHistory.filter((h: any) => !h.completed && h.date === yesterdayKey);
+    const today = getTodayKey();
+    const overdueCommitments = loadedCommitments.filter(c => c.dueDate && c.dueDate < today && c.status === 'pending');
+
+    if (yesterdayIncomplete.length === 0 && overdueCommitments.length === 0) return;
+
+    const parts: string[] = [];
+    if (yesterdayIncomplete.length > 0) {
+      parts.push(`User left ${yesterdayIncomplete.length} task(s) incomplete yesterday: ${yesterdayIncomplete.slice(0, 5).map((h: any) => h.title).join(', ')}.`);
+    }
+    if (overdueCommitments.length > 0) {
+      parts.push(`User has ${overdueCommitments.length} overdue commitment(s): ${overdueCommitments.slice(0, 5).map(c => `"${c.content}" (due ${c.dueDate})`).join(', ')}.`);
+    }
+    const context = parts.join(' ');
+
+    try {
+      const proactiveId = generateId();
+      const url = new URL('/api/coach/proactive', getApiUrl());
+      const token = await getAuthToken();
+      const streamHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) streamHeaders['Authorization'] = `Bearer ${token}`;
+
+      const response = await expoFetch(url.toString(), {
+        method: 'POST',
+        headers: streamHeaders,
+        body: JSON.stringify({
+          context,
+          goals: loadedGoals,
+          stats: loadedStats,
+          history: loadedHistory,
+          lifeContext: loadedLifeContext,
+        }),
+      });
+
+      if (!response.body) return;
+
+      const proactiveMsg: ChatMessage = { id: proactiveId, role: 'assistant', content: '' };
+      setMessages(prev => [proactiveMsg, ...prev]);
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let fullContent = '';
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const data = line.slice(6).trim();
+            if (data === '[DONE]') continue;
+            try {
+              const parsed = JSON.parse(data);
+              if (parsed.content) {
+                fullContent += parsed.content;
+                const captured = fullContent;
+                setMessages(prev => {
+                  const updated = [...prev];
+                  const idx = updated.findIndex(m => m.id === proactiveId);
+                  if (idx !== -1) updated[idx] = { ...updated[idx], content: captured };
+                  return updated;
+                });
+              }
+            } catch {}
+          }
+        }
+      }
+
+      setMessages(prev => {
+        const updated = [...prev];
+        const idx = updated.findIndex(m => m.id === proactiveId);
+        if (idx !== -1) updated[idx] = { ...updated[idx], content: fullContent };
+        saveChatHistory(updated);
+        return updated;
+      });
+    } catch {}
+  }, []);
+
   const loadAll = useCallback(async () => {
     setIsBaseLoading(true);
     setIsEmailLoading(true);
 
     let loadedGoals: Goal[] = [];
+    let loadedHistory: any[] = [];
+    let loadedStats: UserStats = { streak: 0, totalCompleted: 0, bestStreak: 0 } as UserStats;
+    let loadedLifeContext: LifeContext | null = null;
+    let loadedCommitments: Commitment[] = [];
     try {
-      const [lg, loadedStats, loadedHistory, savedMessages, lc] = await Promise.all([
+      const [lg, ls, lh, savedMessages, lc] = await Promise.all([
         getGoals(),
         getStats(),
         getCompletionHistory(),
@@ -630,14 +768,40 @@ export default function InsightsScreen() {
         getLifeContext(),
       ]);
       loadedGoals = lg;
+      loadedStats = ls;
+      loadedHistory = lh;
+      loadedLifeContext = lc;
       setGoals(lg);
-      setStats(loadedStats);
-      setHistory(loadedHistory);
+      setStats(ls);
+      setHistory(lh);
       setMessages(savedMessages);
       setLifeContext(lc);
+
+      // Fetch commitments
+      try {
+        const commUrl = new URL('/api/commitments', getApiUrl());
+        const commRes = await authFetch(commUrl.toString());
+        const commData = await commRes.json();
+        if (commData.commitments && Array.isArray(commData.commitments)) {
+          loadedCommitments = commData.commitments;
+          setCommitments(commData.commitments);
+        }
+      } catch {}
     } finally {
       setIsBaseLoading(false);
     }
+
+    // Schedule accountability notifications
+    try {
+      const todayPlan = await getTodayPlan(loadedGoals);
+      scheduleEveningAccountability(todayPlan.tasks, loadedCommitments).catch(() => {});
+      scheduleMidDayNudge().catch(() => {});
+      scheduleCommitmentDueDateReminder(loadedCommitments).catch(() => {});
+      scheduleWeeklyReview().catch(() => {});
+    } catch {}
+
+    // Check accountability on mount (proactive Jarvis message)
+    checkAccountabilityOnMount(loadedHistory, loadedCommitments, loadedGoals, loadedStats, loadedLifeContext).catch(() => {});
 
     let isGmailConnected = false;
     try {
@@ -808,6 +972,21 @@ export default function InsightsScreen() {
         });
       } catch {}
 
+      // Fire-and-forget: extract commitments from user message
+      try {
+        const extractUrl = new URL('/api/commitments/extract', getApiUrl());
+        authFetch(extractUrl.toString(), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: text.trim() }),
+        }).then(async (r) => {
+          const data = await r.json();
+          if (data.hasCommitment) {
+            fetchCommitments();
+          }
+        }).catch(() => {});
+      } catch {}
+
     } catch (error) {
       setShowTyping(false);
       setIsStreaming(false);
@@ -879,6 +1058,55 @@ export default function InsightsScreen() {
   }, [listData, lastAssistantId, goals, sendMessage, speakText, isSpeaking, isStreaming]);
 
   const isEmpty = messages.length === 0 && !isStreaming;
+
+  const getCommitmentDueBadgeStyle = (dueDate: string | null) => {
+    if (!dueDate) return { bg: '#F3F4F6', color: '#6B7280', label: 'Open' };
+    const today = getTodayKey();
+    if (dueDate < today) return { bg: '#FEE2E2', color: '#DC2626', label: 'Overdue' };
+    if (dueDate === today) return { bg: '#FEF3C7', color: '#D97706', label: 'Today' };
+    return { bg: '#ECFDF5', color: '#059669', label: dueDate };
+  };
+
+  const renderCommitmentsSection = () => {
+    if (commitments.length === 0) return null;
+    return (
+      <View style={styles.commitmentsSection}>
+        <Pressable style={styles.commitmentsHeader} onPress={() => setCommitmentsCollapsed(prev => !prev)}>
+          <View style={styles.commitmentsHeaderLeft}>
+            <Ionicons name="flag-outline" size={16} color={Colors.primary} />
+            <Text style={styles.commitmentsHeaderTitle}>Open Commitments</Text>
+            <View style={styles.commitmentsBadge}>
+              <Text style={styles.commitmentsBadgeText}>{commitments.length}</Text>
+            </View>
+          </View>
+          <Ionicons
+            name={commitmentsCollapsed ? 'chevron-down' : 'chevron-up'}
+            size={16}
+            color={Colors.textSecondary}
+          />
+        </Pressable>
+        {!commitmentsCollapsed && commitments.map((c) => {
+          const badge = getCommitmentDueBadgeStyle(c.dueDate);
+          return (
+            <View key={c.id} style={styles.commitmentCard}>
+              <Pressable style={styles.commitmentCheckbox} onPress={() => markCommitmentDone(c.id)}>
+                <Ionicons name="square-outline" size={20} color={Colors.textSecondary} />
+              </Pressable>
+              <View style={styles.commitmentContent}>
+                <Text style={styles.commitmentText}>{c.content}</Text>
+                <View style={[styles.commitmentDueBadge, { backgroundColor: badge.bg }]}>
+                  <Text style={[styles.commitmentDueText, { color: badge.color }]}>{badge.label}</Text>
+                </View>
+              </View>
+              <Pressable style={styles.commitmentDismiss} onPress={() => dismissCommitment(c.id)}>
+                <Ionicons name="close" size={16} color={Colors.textSecondary} />
+              </Pressable>
+            </View>
+          );
+        })}
+      </View>
+    );
+  };
 
   const renderInboxSection = (extraStyle?: any) => (
     <View style={[styles.inboxSection, extraStyle]}>
@@ -978,6 +1206,8 @@ export default function InsightsScreen() {
           <Text style={styles.emailLoadingText}>Loading email & Slack context…</Text>
         </View>
       )}
+
+      {renderCommitmentsSection()}
 
       <View style={styles.chatArea}>
         {gmailConnected && isEmpty && renderInboxSection({ paddingHorizontal: 16 })}
@@ -1536,5 +1766,78 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter_500Medium',
     color: '#92400E',
     flex: 1,
+  },
+  commitmentsSection: {
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  commitmentsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 6,
+  },
+  commitmentsHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  commitmentsHeaderTitle: {
+    fontSize: 14,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.text,
+  },
+  commitmentsBadge: {
+    backgroundColor: Colors.primary,
+    borderRadius: 10,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    minWidth: 20,
+    alignItems: 'center',
+  },
+  commitmentsBadgeText: {
+    fontSize: 11,
+    fontFamily: 'Inter_600SemiBold',
+    color: '#fff',
+  },
+  commitmentCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.card,
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 6,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  commitmentCheckbox: {
+    marginRight: 8,
+    padding: 2,
+  },
+  commitmentContent: {
+    flex: 1,
+    gap: 4,
+  },
+  commitmentText: {
+    fontSize: 13,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.text,
+  },
+  commitmentDueBadge: {
+    alignSelf: 'flex-start',
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  commitmentDueText: {
+    fontSize: 11,
+    fontFamily: 'Inter_600SemiBold',
+  },
+  commitmentDismiss: {
+    padding: 4,
+    marginLeft: 4,
   },
 });

@@ -287,6 +287,17 @@ export interface ChatMessage {
   followups?: string[];
 }
 
+export interface Commitment {
+  id: string;
+  userId: string;
+  content: string;
+  dueDate: string | null;
+  status: 'pending' | 'done' | 'skipped';
+  extractedAt: string;
+  resolvedAt: string | null;
+  sourceMessage: string | null;
+}
+
 function generateId(): string {
   return Date.now().toString() + Math.random().toString(36).substr(2, 9);
 }

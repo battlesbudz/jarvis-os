@@ -142,6 +142,19 @@ export async function ensureTablesExist() {
     `);
 
     await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS commitments (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id VARCHAR NOT NULL REFERENCES users(id),
+        content TEXT NOT NULL,
+        due_date VARCHAR,
+        status VARCHAR NOT NULL DEFAULT 'pending',
+        extracted_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        resolved_at TIMESTAMP,
+        source_message TEXT
+      )
+    `);
+
+    await db.execute(sql`
       CREATE TABLE IF NOT EXISTS integration_owner (
         owner_user_id VARCHAR NOT NULL PRIMARY KEY REFERENCES users(id),
         created_at TIMESTAMP NOT NULL DEFAULT NOW()

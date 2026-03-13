@@ -1,6 +1,6 @@
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
-import { Task, Goal, getTodayKey } from './storage';
+import { Task, Goal, getTodayKey, type Commitment } from './storage';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const NOTIFICATIONS_ENABLED_KEY = 'gameplan_notifications_enabled';
@@ -216,6 +216,120 @@ function parseEventTime(timeStr: string): Date {
 export interface CalendarEvent {
   title: string;
   time?: string;
+}
+
+export async function scheduleEveningAccountability(incompleteTasks: Task[], commitments: Commitment[]) {
+  if (Platform.OS === 'web') return;
+  const enabled = await areNotificationsEnabled();
+  if (!enabled) return;
+
+  await Notifications.cancelScheduledNotificationAsync('evening-accountability').catch(() => {});
+
+  const hasIncomplete = incompleteTasks.some(t => !t.completed);
+  if (!hasIncomplete && commitments.length === 0) return;
+
+  const trigger = new Date();
+  trigger.setHours(20, 0, 0, 0);
+  if (trigger <= new Date()) return;
+
+  await Notifications.scheduleNotificationAsync({
+    identifier: 'evening-accountability',
+    content: {
+      title: "Jarvis checking in \uD83D\uDC41\uFE0F",
+      body: hasIncomplete
+        ? `You still have ${incompleteTasks.filter(t => !t.completed).length} tasks open. Did you get to them?`
+        : `How did you do on your commitments today?`,
+      data: { screen: 'coach' },
+    },
+    trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: trigger },
+  });
+}
+
+export async function scheduleMidDayNudge() {
+  if (Platform.OS === 'web') return;
+  const enabled = await areNotificationsEnabled();
+  if (!enabled) return;
+
+  await Notifications.cancelScheduledNotificationAsync('midday-nudge').catch(() => {});
+
+  const trigger = new Date();
+  trigger.setHours(13, 0, 0, 0);
+  if (trigger <= new Date()) return;
+
+  await Notifications.scheduleNotificationAsync({
+    identifier: 'midday-nudge',
+    content: {
+      title: "Still nothing done? \uD83D\uDD25",
+      body: "Jarvis says it's time to start. One thing. Right now.",
+      data: { screen: 'today' },
+    },
+    trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: trigger },
+  });
+}
+
+export async function cancelMidDayNudge() {
+  if (Platform.OS === 'web') return;
+  await Notifications.cancelScheduledNotificationAsync('midday-nudge').catch(() => {});
+}
+
+export async function scheduleCommitmentDueDateReminder(commitments: Commitment[]) {
+  if (Platform.OS === 'web') return;
+  const enabled = await areNotificationsEnabled();
+  if (!enabled) return;
+
+  const scheduled = await Notifications.getAllScheduledNotificationsAsync();
+  for (const n of scheduled) {
+    if (n.identifier.startsWith('commitment-due-')) {
+      await Notifications.cancelScheduledNotificationAsync(n.identifier);
+    }
+  }
+
+  const today = getTodayKey();
+  const dueToday = commitments.filter(c => c.dueDate === today && c.status === 'pending');
+
+  for (const c of dueToday) {
+    const trigger = new Date();
+    trigger.setHours(10, 0, 0, 0);
+    if (trigger <= new Date()) continue;
+
+    await Notifications.scheduleNotificationAsync({
+      identifier: `commitment-due-${c.id}`,
+      content: {
+        title: "Commitment due today \u23F0",
+        body: `You said you'd: "${c.content}"`,
+        data: { screen: 'coach' },
+      },
+      trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: trigger },
+    });
+  }
+}
+
+export async function scheduleWeeklyReview() {
+  if (Platform.OS === 'web') return;
+  const enabled = await areNotificationsEnabled();
+  if (!enabled) return;
+
+  await Notifications.cancelScheduledNotificationAsync('weekly-review').catch(() => {});
+
+  const now = new Date();
+  const dayOfWeek = now.getDay();
+  const daysUntilSunday = dayOfWeek === 0 ? 0 : 7 - dayOfWeek;
+  const trigger = new Date();
+  trigger.setDate(trigger.getDate() + daysUntilSunday);
+  trigger.setHours(19, 0, 0, 0);
+  if (trigger <= now) {
+    trigger.setDate(trigger.getDate() + 7);
+  }
+
+  await Notifications.scheduleNotificationAsync({
+    identifier: 'weekly-review',
+    content: {
+      title: "Time for your weekly review \uD83D\uDCCB",
+      body: "Let's look at what you accomplished this week with Jarvis.",
+      data: { screen: 'coach' },
+    },
+    trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: trigger },
+  });
 }
 
 export async function scheduleMeetingPrepAlerts(events: CalendarEvent[]) {

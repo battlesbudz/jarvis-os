@@ -21,13 +21,16 @@ import { registerDataRoutes } from "./dataRoutes";
 import { isIntegrationOwner, claimIntegrationOwnership } from "./integrationOwner";
 import { oauthRouter, oauthCallbackRouter } from "./oauthRoutes";
 import { getValidGoogleTokens, getValidMicrosoftToken, getUserTokens, getUserToken } from "./userTokenStore";
+import { db } from "./db";
+import { eq, and, desc } from "drizzle-orm";
+import * as schema from "@shared/schema";
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
 });
 
-function buildCoachSystemPrompt(goals: any[], stats: any, history: any[], calendarEvents: any[] = [], lifeContext?: any, gmailItems?: any[], gmailConnected?: boolean, slackMessages?: any[], slackConnected?: boolean): string {
+function buildCoachSystemPrompt(goals: any[], stats: any, history: any[], calendarEvents: any[] = [], lifeContext?: any, gmailItems?: any[], gmailConnected?: boolean, slackMessages?: any[], slackConnected?: boolean, commitmentsList?: any[]): string {
   const completedHistory = history.filter((h: any) => h.completed);
   const skippedHistory = history.filter((h: any) => !h.completed);
   const completionRate = history.length > 0
@@ -61,6 +64,14 @@ function buildCoachSystemPrompt(goals: any[], stats: any, history: any[], calend
       (lifeContext.improvementArea ? `- Wants to improve: ${lifeContext.improvementArea}\n` : '') +
       (lifeContext.currentBlocker ? `- Current blocker: ${lifeContext.currentBlocker}\n` : '') +
       (lifeContext.freeText ? `- Additional context: ${lifeContext.freeText}` : '')
+    : '';
+
+  const commitmentsSection = commitmentsList && commitmentsList.length > 0
+    ? `\n## Open Commitments (user said they would do these)\n` +
+      commitmentsList.filter((c: any) => c.status === 'pending').slice(0, 10)
+        .map((c: any) => `- "${c.content}"${c.dueDate ? ` (due ${c.dueDate})` : ''}`)
+        .join('\n') +
+      `\nIf relevant, ask about progress on these commitments. Hold the user accountable to what they promised.`
     : '';
 
   const gmailSection = gmailItems && gmailItems.length > 0
@@ -113,7 +124,7 @@ ${calendarText}${gmailSection}${slackSection}
 ## Recent Activity (last 7 days)
 - Completed: ${recentCompleted}
 - Left undone: ${recentSkipped}
-
+${commitmentsSection}
 ## How you coach
 
 **Response length**: Keep replies short. 2–4 sentences is the default. Use a bullet list only when you have 3+ specific items to name. Never write multi-paragraph essays — the user is on their phone.
@@ -354,12 +365,25 @@ Return ONLY the JSON object.`;
   app.post("/api/coach/chat", async (req: Request, res: Response) => {
     try {
       const { messages, goals, stats, history, calendarEvents, lifeContext, gmailItems, gmailConnected, slackMessages, slackConnected } = req.body;
+      const userId = req.userId;
 
       if (!messages || !Array.isArray(messages)) {
         return res.status(400).json({ error: "messages array is required" });
       }
 
-      const systemPrompt = buildCoachSystemPrompt(goals || [], stats || {}, history || [], calendarEvents || [], lifeContext || null, gmailItems || [], gmailConnected ?? false, slackMessages || [], slackConnected ?? false);
+      let userCommitments: any[] = [];
+      if (userId) {
+        try {
+          userCommitments = await db
+            .select()
+            .from(schema.commitments)
+            .where(and(eq(schema.commitments.userId, userId), eq(schema.commitments.status, 'pending')))
+            .orderBy(desc(schema.commitments.extractedAt))
+            .limit(20);
+        } catch {}
+      }
+
+      const systemPrompt = buildCoachSystemPrompt(goals || [], stats || {}, history || [], calendarEvents || [], lifeContext || null, gmailItems || [], gmailConnected ?? false, slackMessages || [], slackConnected ?? false, userCommitments);
 
       res.setHeader('Content-Type', 'text/event-stream');
       res.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -487,6 +511,7 @@ Return ONLY a JSON object with a "tasks" array. No other text.`;
   app.post("/api/coach/checkin", async (req: Request, res: Response) => {
     try {
       const { goals, stats, history, lifeContext } = req.body;
+      const userId = req.userId;
 
       const completedHistory = (history || []).filter((h: any) => h.completed);
       const skippedHistory = (history || []).filter((h: any) => !h.completed);
@@ -503,15 +528,29 @@ Return ONLY a JSON object with a "tasks" array. No other text.`;
           (lifeContext.improvementArea ? `\n- Wants to improve: ${lifeContext.improvementArea}` : '')
         : '';
 
+      let commitmentText = '';
+      if (userId) {
+        try {
+          const pendingCommitments = await db
+            .select()
+            .from(schema.commitments)
+            .where(and(eq(schema.commitments.userId, userId), eq(schema.commitments.status, 'pending')))
+            .limit(5);
+          if (pendingCommitments.length > 0) {
+            commitmentText = `\n- Open commitments: ${pendingCommitments.map((c: any) => `"${c.content}"${c.dueDate ? ` (due ${c.dueDate})` : ''}`).join(', ')}`;
+          }
+        } catch {}
+      }
+
       const prompt = `You are a personal productivity coach. Write a 1-2 sentence daily coaching note for this person.
 
 Their profile:
 - Streak: ${stats?.streak || 0} days, ${completionRate}% task completion this week
 - Goals: ${goalsText}
 - Recently completed: ${completedHistory.slice(0, 4).map((h: any) => h.title).join(', ') || 'nothing yet'}
-- Recently skipped: ${skippedHistory.slice(0, 3).map((h: any) => h.title).join(', ') || 'nothing'}${lifeCtxText}
+- Recently skipped: ${skippedHistory.slice(0, 3).map((h: any) => h.title).join(', ') || 'nothing'}${lifeCtxText}${commitmentText}
 
-Write ONE short, specific coaching observation. Be direct — name what's working or what to fix. If they have a clear priority or blocker, reference it specifically. No greeting, no sign-off.
+Write ONE short, specific coaching observation. Be direct — name what's working or what to fix. If they have a clear priority or blocker, reference it specifically. If they have open commitments, call out specific ones by name. No greeting, no sign-off.
 
 Return JSON: { "note": "your 1-2 sentence note here" }`;
 
@@ -989,6 +1028,231 @@ Return ONLY the JSON object.`;
     } catch (error) {
       console.error("Error generating speech:", error);
       res.status(500).json({ error: "Failed to generate speech" });
+    }
+  });
+
+  // --- Commitment CRUD routes ---
+  app.get("/api/commitments", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const rows = await db
+        .select()
+        .from(schema.commitments)
+        .where(and(eq(schema.commitments.userId, userId), eq(schema.commitments.status, 'pending')))
+        .orderBy(desc(schema.commitments.extractedAt));
+      res.json({ commitments: rows });
+    } catch (error) {
+      console.error("Error fetching commitments:", error);
+      res.status(500).json({ error: "Failed to fetch commitments" });
+    }
+  });
+
+  app.put("/api/commitments/:id", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const { id } = req.params;
+      const { status } = req.body;
+      if (!status || !['done', 'skipped', 'pending'].includes(status)) {
+        return res.status(400).json({ error: "status must be 'done', 'skipped', or 'pending'" });
+      }
+      await db
+        .update(schema.commitments)
+        .set({ status, resolvedAt: status !== 'pending' ? new Date() : null })
+        .where(and(eq(schema.commitments.id, id), eq(schema.commitments.userId, userId)));
+      res.json({ ok: true });
+    } catch (error) {
+      console.error("Error updating commitment:", error);
+      res.status(500).json({ error: "Failed to update commitment" });
+    }
+  });
+
+  app.delete("/api/commitments/:id", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const { id } = req.params;
+      await db
+        .delete(schema.commitments)
+        .where(and(eq(schema.commitments.id, id), eq(schema.commitments.userId, userId)));
+      res.json({ ok: true });
+    } catch (error) {
+      console.error("Error deleting commitment:", error);
+      res.status(500).json({ error: "Failed to delete commitment" });
+    }
+  });
+
+  // --- Commitment extraction from user messages ---
+  app.post("/api/commitments/extract", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const { message } = req.body;
+      if (!message || typeof message !== 'string') {
+        return res.json({ hasCommitment: false });
+      }
+
+      const prompt = `Did this message from the user contain any explicit commitment ('I will', 'I'll', 'by tomorrow', 'I need to', 'I'm going to', 'I promise', 'I plan to', 'I'm committing to')? If yes, extract the commitment. Today's date is ${new Date().toISOString().split('T')[0]}.
+
+User message: "${message}"
+
+Return ONLY JSON: { "hasCommitment": boolean, "commitment": "the thing they committed to" or null, "dueDate": "YYYY-MM-DD" or null }`;
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-5-mini",
+        messages: [{ role: "user", content: prompt }],
+        response_format: { type: "json_object" },
+        max_completion_tokens: 200,
+      });
+
+      const content = response.choices[0]?.message?.content || '{"hasCommitment":false}';
+      const parsed = JSON.parse(content);
+
+      if (parsed.hasCommitment && parsed.commitment) {
+        await db.insert(schema.commitments).values({
+          userId,
+          content: parsed.commitment,
+          dueDate: parsed.dueDate || null,
+          sourceMessage: message,
+        });
+        res.json({ hasCommitment: true, commitment: parsed.commitment, dueDate: parsed.dueDate || null });
+      } else {
+        res.json({ hasCommitment: false });
+      }
+    } catch (error) {
+      console.error("Error extracting commitment:", error);
+      res.json({ hasCommitment: false });
+    }
+  });
+
+  // --- Proactive coach message (Jarvis speaks first) ---
+  app.post("/api/coach/proactive", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const { context, goals, stats, history, lifeContext } = req.body;
+      if (!context) return res.status(400).json({ error: "context is required" });
+
+      let userCommitments: any[] = [];
+      try {
+        userCommitments = await db
+          .select()
+          .from(schema.commitments)
+          .where(and(eq(schema.commitments.userId, userId), eq(schema.commitments.status, 'pending')))
+          .orderBy(desc(schema.commitments.extractedAt))
+          .limit(10);
+      } catch {}
+
+      const systemPrompt = buildCoachSystemPrompt(goals || [], stats || {}, history || [], [], lifeContext || null, [], false, [], false, userCommitments);
+
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache, no-transform');
+      res.setHeader('X-Accel-Buffering', 'no');
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.flushHeaders();
+
+      const stream = await openai.chat.completions.create({
+        model: "gpt-5-mini",
+        messages: [
+          { role: "system", content: systemPrompt + `\n\nIMPORTANT: You are initiating the conversation proactively — the user hasn't said anything yet. Address the following accountability context directly. Be brief (2-3 sentences max). Don't greet — get right to the point.\n\nAccountability context:\n${context}` },
+          { role: "user", content: "[Jarvis is checking in proactively — no user message. Address the accountability context above.]" },
+        ],
+        stream: true,
+        max_completion_tokens: 300,
+      });
+
+      for await (const chunk of stream) {
+        const content = chunk.choices[0]?.delta?.content || '';
+        if (content) {
+          res.write(`data: ${JSON.stringify({ content })}\n\n`);
+        }
+      }
+
+      res.write('data: [DONE]\n\n');
+      res.end();
+    } catch (error) {
+      console.error("Error in proactive coach:", error);
+      if (!res.headersSent) {
+        res.status(500).json({ error: "Failed to generate proactive message" });
+      } else {
+        res.end();
+      }
+    }
+  });
+
+  // --- Weekly review ---
+  app.post("/api/coach/weekly-review", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const { goals, stats, history } = req.body;
+
+      let weekCommitments: any[] = [];
+      try {
+        const sevenDaysAgo = new Date();
+        sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+        weekCommitments = await db
+          .select()
+          .from(schema.commitments)
+          .where(eq(schema.commitments.userId, userId))
+          .orderBy(desc(schema.commitments.extractedAt))
+          .limit(30);
+        weekCommitments = weekCommitments.filter((c: any) =>
+          new Date(c.extractedAt).getTime() >= sevenDaysAgo.getTime()
+        );
+      } catch {}
+
+      const completedHistory = (history || []).filter((h: any) => h.completed);
+      const skippedHistory = (history || []).filter((h: any) => !h.completed);
+      const doneCommitments = weekCommitments.filter((c: any) => c.status === 'done');
+      const pendingCommitments = weekCommitments.filter((c: any) => c.status === 'pending');
+
+      const prompt = `Generate a weekly productivity review. Be specific and direct.
+
+This week's data:
+- Tasks completed: ${completedHistory.length} (${completedHistory.slice(0, 10).map((h: any) => h.title).join(', ') || 'none'})
+- Tasks skipped/incomplete: ${skippedHistory.length} (${skippedHistory.slice(0, 10).map((h: any) => h.title).join(', ') || 'none'})
+- Commitments made: ${weekCommitments.length}
+- Commitments fulfilled: ${doneCommitments.length} (${doneCommitments.map((c: any) => c.content).join(', ') || 'none'})
+- Commitments still pending: ${pendingCommitments.length} (${pendingCommitments.map((c: any) => c.content).join(', ') || 'none'})
+- Goals: ${(goals || []).map((g: any) => `${g.title} (${g.current}/${g.target} ${g.unit})`).join(', ') || 'none'}
+- Current streak: ${stats?.streak || 0} days
+
+Return JSON:
+{
+  "headline": "One punchy sentence summarizing the week (max 10 words)",
+  "wins": ["specific win 1", "specific win 2"],
+  "patterns": ["pattern or observation 1", "pattern 2"],
+  "avoided": ["thing they avoided or skipped consistently"],
+  "nextWeekFocus": "One specific thing to focus on next week"
+}
+
+Return ONLY the JSON object.`;
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-5-mini",
+        messages: [{ role: "user", content: prompt }],
+        response_format: { type: "json_object" },
+        max_completion_tokens: 500,
+      });
+
+      const content = response.choices[0]?.message?.content || '{}';
+      try {
+        const parsed = JSON.parse(content);
+        res.json({
+          headline: parsed.headline || 'Week in review',
+          wins: Array.isArray(parsed.wins) ? parsed.wins : [],
+          patterns: Array.isArray(parsed.patterns) ? parsed.patterns : [],
+          avoided: Array.isArray(parsed.avoided) ? parsed.avoided : [],
+          nextWeekFocus: parsed.nextWeekFocus || '',
+        });
+      } catch {
+        res.json({ headline: 'Week in review', wins: [], patterns: [], avoided: [], nextWeekFocus: '' });
+      }
+    } catch (error) {
+      console.error("Error generating weekly review:", error);
+      res.status(500).json({ error: "Failed to generate weekly review" });
     }
   });
 
