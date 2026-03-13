@@ -3,6 +3,9 @@ import { db } from "./db";
 import { eq, and, desc, sql, gte } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { sendMessage, isTelegramConfigured, getUpdates, deleteWebhook } from "./integrations/telegram";
+import { getRecentEmailCommitments } from "./integrations/gmail";
+import { getGoogleCalendarEvents } from "./integrations/googleCalendar";
+import { getValidGoogleTokens } from "./userTokenStore";
 import OpenAI from "openai";
 
 const openai = new OpenAI({
@@ -23,44 +26,43 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
   try {
     let userGoals: any[] = [];
     let userStats: any = {};
-    let userHistory: any[] = [];
     let userLifeContext: any = null;
     let userCommitments: any[] = [];
     let chatMessages: any[] = [];
+    let gmailItems: any[] = [];
+    let calendarEvents: any[] = [];
+    let gmailConnected = false;
 
-    try {
-      const goalsRow = await db.select().from(schema.goals).where(eq(schema.goals.userId, userId)).limit(1);
-      userGoals = goalsRow[0]?.data as any[] || [];
-    } catch {}
-
-    try {
-      const statsRow = await db.select().from(schema.stats).where(eq(schema.stats.userId, userId)).limit(1);
-      userStats = statsRow[0]?.data || {};
-    } catch {}
-
-    try {
-      const historyRow = await db.select().from(schema.completionHistory).where(eq(schema.completionHistory.userId, userId)).limit(1);
-      userHistory = historyRow[0]?.data as any[] || [];
-    } catch {}
-
-    try {
-      const lcRow = await db.select().from(schema.lifeContext).where(eq(schema.lifeContext.userId, userId)).limit(1);
-      userLifeContext = lcRow[0]?.data || null;
-    } catch {}
-
-    try {
-      userCommitments = await db
-        .select()
-        .from(schema.commitments)
+    const [goalsRow, statsRow, lcRow, chatRow, commitmentsRows, googleTokens] = await Promise.allSettled([
+      db.select().from(schema.goals).where(eq(schema.goals.userId, userId)).limit(1),
+      db.select().from(schema.stats).where(eq(schema.stats.userId, userId)).limit(1),
+      db.select().from(schema.lifeContext).where(eq(schema.lifeContext.userId, userId)).limit(1),
+      db.select().from(schema.chatHistory).where(eq(schema.chatHistory.userId, userId)).limit(1),
+      db.select().from(schema.commitments)
         .where(and(eq(schema.commitments.userId, userId), eq(schema.commitments.status, 'pending')))
-        .orderBy(desc(schema.commitments.extractedAt))
-        .limit(10);
-    } catch {}
+        .orderBy(desc(schema.commitments.extractedAt)).limit(10),
+      getValidGoogleTokens(userId),
+    ]);
 
-    try {
-      const chatRow = await db.select().from(schema.chatHistory).where(eq(schema.chatHistory.userId, userId)).limit(1);
-      chatMessages = chatRow[0]?.data as any[] || [];
-    } catch {}
+    if (goalsRow.status === 'fulfilled') userGoals = (goalsRow.value[0]?.data as any[]) || [];
+    if (statsRow.status === 'fulfilled') userStats = statsRow.value[0]?.data || {};
+    if (lcRow.status === 'fulfilled') userLifeContext = lcRow.value[0]?.data || null;
+    if (chatRow.status === 'fulfilled') chatMessages = (chatRow.value[0]?.data as any[]) || [];
+    if (commitmentsRows.status === 'fulfilled') userCommitments = commitmentsRows.value;
+
+    if (googleTokens.status === 'fulfilled' && googleTokens.value.length > 0) {
+      gmailConnected = true;
+      const token = googleTokens.value[0];
+      const today = new Date().toISOString().split('T')[0];
+
+      const [emailResult, calResult] = await Promise.allSettled([
+        getRecentEmailCommitments(7, token),
+        getGoogleCalendarEvents(today, undefined, undefined, token),
+      ]);
+
+      if (emailResult.status === 'fulfilled') gmailItems = emailResult.value;
+      if (calResult.status === 'fulfilled') calendarEvents = calResult.value;
+    }
 
     const recentMessages = chatMessages.slice(0, 10).reverse();
     recentMessages.push({ role: 'user', content: userText });
@@ -77,6 +79,16 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
       ? userCommitments.map((c: any) => `- "${c.content}"${c.dueDate ? ` (due ${c.dueDate})` : ''}`).join('\n')
       : '';
 
+    const calendarText = calendarEvents.length > 0
+      ? calendarEvents.slice(0, 8).map((e: any) => `- ${e.time ? e.time + ': ' : ''}${e.title}`).join('\n')
+      : '';
+
+    const gmailText = gmailItems.length > 0
+      ? gmailItems.slice(0, 15).map((i: any) => `- From: ${i.from || 'unknown'} | "${i.subject}" — ${i.snippet}`).join('\n')
+      : gmailConnected
+        ? 'Gmail connected but no recent emails found.'
+        : 'Gmail not connected.';
+
     const systemPrompt = `You are GamePlan Coach — a sharp, supportive personal productivity coach. You're responding via Telegram, so keep messages SHORT (2-4 sentences max). Use plain text, no markdown headers.
 
 Today is ${dayOfWeek}, ${dateStr}.
@@ -89,6 +101,10 @@ Today is ${dayOfWeek}, ${dateStr}.
 ## Active Goals
 ${goalsText}
 ${commitmentsText ? `\n## Open Commitments\n${commitmentsText}` : ''}
+${calendarText ? `\n## Today's Calendar\n${calendarText}` : ''}
+
+## Recent Emails
+${gmailText}
 ${userLifeContext?.priorityGoal ? `\n## Context\n- Priority: ${userLifeContext.priorityGoal}` : ''}
 
 Be direct, specific, actionable. No fluff. Respond in the same language the user writes in.`;
