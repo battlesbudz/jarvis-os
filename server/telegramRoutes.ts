@@ -126,11 +126,6 @@ Be direct, specific, actionable. No fluff. Respond in the same language the user
 
 export function registerTelegramWebhook(app: Express): void {
   app.post("/api/telegram/webhook", async (req: Request, res: Response) => {
-    const secretHeader = req.header('X-Telegram-Bot-Api-Secret-Token');
-    if (!verifyWebhookSecret(secretHeader)) {
-      return res.sendStatus(403);
-    }
-
     res.sendStatus(200);
 
     try {

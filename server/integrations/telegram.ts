@@ -70,14 +70,12 @@ export async function sendMessage(chatId: string, text: string): Promise<void> {
 
 export async function setWebhook(webhookUrl: string): Promise<void> {
   if (!BOT_TOKEN) return;
-  const secret = getWebhookSecret();
   const res = await fetch(`${BASE}/setWebhook`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       url: webhookUrl,
       allowed_updates: ['message', 'my_chat_member'],
-      secret_token: secret,
     }),
   });
   const data = await res.json();
