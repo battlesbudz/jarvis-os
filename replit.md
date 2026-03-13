@@ -17,7 +17,7 @@ A mobile app that generates personalized daily task checklists with AI-powered a
 ## Project Structure
 - `app/(tabs)/` - Tab screens: index (Today), goals, insights, profile
 - `app/(tabs)/_layout.tsx` - Tab navigation with NativeTabs (liquid glass) + classic fallback
-- `components/` - Reusable components: TaskCard, GoalCard, ProgressRing, AddGoalSheet, TaskResizerSheet, LifeContextSheet, MarkdownText, RewardClaimModal
+- `components/` - Reusable components: TaskCard, GoalCard, ProgressRing, AddGoalSheet, TaskResizerSheet, LifeContextSheet, MarkdownText, RewardClaimModal, JarvisPlanModal
 - `lib/storage.ts` - Server API data layer for tasks, goals, stats, completion history, chat history, life context (uses JWT auth token from auth-context)
 - `server/db.ts` - Drizzle ORM PostgreSQL connection
 - `server/dataRoutes.ts` - CRUD API routes for all user data categories
@@ -62,13 +62,14 @@ A mobile app that generates personalized daily task checklists with AI-powered a
 14. **Slack Integration** - Connected via user OAuth (SLACK_CLIENT_ID/SLACK_CLIENT_SECRET required); reads recent messages from top 5 active channels/DMs (last 7 days, up to 30 messages each); surfaces to AI coach for commitment/follow-up identification; connect/disconnect in Profile tab
 
 ### ADHD / Executive Dysfunction Features
-15. **Energy Check-in** - Morning modal on first daily app open; user selects energy level (1-5) and focus quality (Foggy/Steady/Sharp); stored in AsyncStorage; feeds into AI plan generation to adjust task difficulty. Has "Skip for today" option.
-16. **Quick Capture / Brain Dump** - Floating + button on Today screen; opens BrainDumpModal for rapid thought capture; "Add to Today" creates a task immediately, "Save for Later" stores in inbox; inbox items shown at top of Today screen for later action.
-17. **"Just One Thing" Mode** - "Overwhelmed?" button near task list header; opens JustOneThingModal showing exactly one prioritized task; energy check-in data influences task selection (low energy = low effort tasks); "Done" marks complete, "Pick Another" cycles tasks.
-18. **Focus Timer** - Pomodoro-style timer at `/focus-timer` modal route; 25min work / 5min break cycles; circular progress ring; per-task launch from "Focus" button on TaskCard; haptic feedback + local notifications on session complete; settings persisted in AsyncStorage.
-19. **Visual Time Blocks** - Toggle in Today header switches between list view and timeline view; timeline shows hours 6am–10pm with tasks pinned to their scheduled time; unscheduled tasks shown separately; view preference persisted.
-20. **Transition Reminders** - Local notifications scheduled 10 min before tasks with a set `time`; enabled/disabled toggle in Profile; web-safe (lib/notifications.web.ts stub); focus timer fires completion nudge notifications.
-21. **Voice Interface** - Mic button in Coach input bar records speech (expo-av), transcribes via Whisper (POST /api/coach/transcribe), auto-sends to coach. Speaker button on last assistant message plays TTS response aloud (POST /api/coach/speak, OpenAI TTS "alloy" voice). Works on iOS/Android/web.
+14. **Energy Check-in** - Morning modal on first daily app open; user selects energy level (1-5) and focus quality (Foggy/Steady/Sharp); stored in AsyncStorage; feeds into AI plan generation to adjust task difficulty. Has "Skip for today" option.
+15. **Quick Capture / Brain Dump** - Floating + button on Today screen; opens BrainDumpModal for rapid thought capture; "Add to Today" creates a task immediately, "Save for Later" stores in inbox; inbox items shown at top of Today screen for later action.
+16. **"Just One Thing" Mode** - "Overwhelmed?" button near task list header; opens JustOneThingModal showing exactly one prioritized task; energy check-in data influences task selection (low energy = low effort tasks); "Done" marks complete, "Pick Another" cycles tasks.
+17. **Focus Timer** - Pomodoro-style timer at `/focus-timer` modal route; 25min work / 5min break cycles; circular progress ring; per-task launch from "Focus" button on TaskCard; haptic feedback + local notifications on session complete; settings persisted in AsyncStorage.
+18. **Visual Time Blocks** - Toggle in Today header switches between list view and timeline view; timeline shows hours 6am–10pm with tasks pinned to their scheduled time; unscheduled tasks shown separately; view preference persisted.
+19. **Transition Reminders** - Local notifications scheduled 10 min before tasks with a set `time`; enabled/disabled toggle in Profile; web-safe (lib/notifications.web.ts stub); focus timer fires completion nudge notifications.
+20. **Voice Interface** - Mic button in Coach input bar records speech (expo-av), transcribes via Whisper (POST /api/coach/transcribe), auto-sends to coach. Speaker button on last assistant message plays TTS response aloud (POST /api/coach/speak, OpenAI TTS "alloy" voice). Works on iOS/Android/web.
+21. **Jarvis Autonomous Daily Planning** - "Build My Day" button (empty state) or "Jarvis" pill (To Do header) triggers Jarvis to analyze goals, calendar, emails, brain dump, and completion history to build a prioritized 4-7 task plan. Preview modal (JarvisPlanModal) shows reasoning + proposed tasks with Accept/Start Over options. Accepted tasks are prepended to today's plan with undo support.
 
 ## Authentication
 - **Login screen**: `/login` route with Google Sign-In button
@@ -91,6 +92,7 @@ For web Google Sign-In to work, the Replit dev domain must be added to **Authori
 - `POST /api/ai/resize-task` - Takes taskTitle, detailLevel (1-5), direction (smaller/bigger), history
 - `POST /api/ai/generate-plan` - Takes goals, history, dayOfWeek, lifeContext, gmailItems; returns tasks + insight
 - `POST /api/coach/chat` - Streaming SSE; takes messages, goals, stats, history, calendarEvents, lifeContext, gmailItems
+- `POST /api/coach/build-plan` - Takes goals, calendarEvents, gmailItems, brainDump, completionHistory, energyLevel, coachingMode, existingTasks, date; returns {reasoning, tasks[]} — Jarvis autonomous daily planning
 - `POST /api/coach/checkin` - Takes goals, stats, history, lifeContext; returns {note}
 - `POST /api/coach/suggestions` - Takes lastAssistantMessage, goals; returns {actions, followups}
 - `POST /api/coach/transcribe` - Takes {audio: base64}; returns {text} (speech-to-text via Whisper)

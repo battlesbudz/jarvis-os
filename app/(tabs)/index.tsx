@@ -86,6 +86,7 @@ import { formatDate } from '@/lib/helpers';
 import XpToast from '@/components/XpToast';
 import JustOneThingModal from '@/components/JustOneThingModal';
 import EnergyCheckIn from '@/components/EnergyCheckIn';
+import JarvisPlanModal from '@/components/JarvisPlanModal';
 import { getEnergyCheckin, type EnergyCheckin } from '@/lib/storage';
 
 export default function TodayScreen() {
@@ -127,6 +128,10 @@ export default function TodayScreen() {
     taskOrder: string[];
   } | null>(null);
   const [cardDismissed, setCardDismissed] = useState(false);
+  const [jarvisModalVisible, setJarvisModalVisible] = useState(false);
+  const [jarvisLoading, setJarvisLoading] = useState(false);
+  const [jarvisReasoning, setJarvisReasoning] = useState('');
+  const [jarvisTasks, setJarvisTasks] = useState<{ title: string; category: string; priority: string; duration?: number; time?: string; description?: string }[]>([]);
 
   const orchestrateProactiveNotifications = useCallback(async (
     tasks: Task[],
@@ -441,6 +446,114 @@ export default function TodayScreen() {
   const handleDismissUndo = useCallback(async () => {
     await clearPlanSnapshot();
     setCanUndo(false);
+  }, []);
+
+  const handleBuildMyDay = useCallback(async () => {
+    if (jarvisLoading) return;
+    setJarvisModalVisible(true);
+    setJarvisLoading(true);
+    setJarvisReasoning('');
+    setJarvisTasks([]);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+
+    try {
+      const loadedGoals = await getGoals();
+      const currentPlan = await getTodayPlan(loadedGoals);
+      const [history, lc, inbox, checkin, gmailData] = await Promise.all([
+        getCompletionHistory(),
+        getLifeContext(),
+        getBrainDumpInbox(),
+        getEnergyCheckin(),
+        authFetch(new URL('/api/gmail/commitments', getApiUrl()).toString(), { cache: 'no-store' })
+          .then(r => r.json())
+          .catch(() => ({ connected: false, items: [] })),
+      ]);
+
+      const gmailItems = gmailData.connected ? gmailData.items : [];
+
+      const url = new URL('/api/coach/build-plan', getApiUrl());
+      const res = await authFetch(url.toString(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          goals: loadedGoals.map(g => ({
+            title: g.title,
+            category: g.category,
+            current: g.current,
+            target: g.target,
+            unit: g.unit,
+          })),
+          calendarEvents: calendarEvents.map(e => ({
+            title: e.title,
+            time: e.time,
+            description: e.description,
+          })),
+          gmailItems,
+          brainDump: inbox,
+          completionHistory: history,
+          energyLevel: checkin?.energy ?? energyCheckin?.energy ?? 3,
+          existingTasks: currentPlan.tasks.map(t => ({
+            title: t.title,
+            category: t.category,
+            priority: t.priority,
+            completed: t.completed,
+          })),
+          date: getTodayKey(),
+        }),
+      });
+      const data = await res.json();
+      if (data.tasks && data.tasks.length > 0) {
+        setJarvisReasoning(data.reasoning || '');
+        setJarvisTasks(data.tasks);
+      } else {
+        setJarvisModalVisible(false);
+      }
+    } catch (e) {
+      console.error('Jarvis build plan failed:', e);
+      setJarvisModalVisible(false);
+    } finally {
+      setJarvisLoading(false);
+    }
+  }, [calendarEvents, energyCheckin, jarvisLoading]);
+
+  const handleAcceptJarvisPlan = useCallback(async () => {
+    if (jarvisTasks.length === 0) return;
+    const mkId = () => Date.now().toString() + Math.random().toString(36).substr(2, 9);
+    const validCategories = ['fitness', 'finance', 'career', 'personal', 'social'];
+    const validPriorities = ['high', 'medium', 'low'];
+
+    const newTasks: Task[] = jarvisTasks.map(t => ({
+      id: mkId(),
+      title: t.title,
+      category: (validCategories.includes(t.category) ? t.category : 'personal') as Task['category'],
+      completed: false,
+      priority: (validPriorities.includes(t.priority) ? t.priority : 'medium') as Task['priority'],
+      time: t.time,
+      description: t.description,
+    }));
+
+    const currentPlan = plan || { date: getTodayKey(), tasks: [], greeting: 'Good day', insight: '' };
+    if (currentPlan.tasks.length > 0) {
+      await savePlanSnapshot(currentPlan);
+      setCanUndo(true);
+    }
+    const updatedPlan: DayPlan = {
+      ...currentPlan,
+      tasks: [...newTasks, ...currentPlan.tasks],
+    };
+    await savePlan(updatedPlan);
+    setPlan(updatedPlan);
+    setJarvisModalVisible(false);
+    setJarvisTasks([]);
+    setJarvisReasoning('');
+    scheduleAllTaskReminders(updatedPlan.tasks);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+  }, [jarvisTasks, plan]);
+
+  const handleDismissJarvisPlan = useCallback(() => {
+    setJarvisModalVisible(false);
+    setJarvisTasks([]);
+    setJarvisReasoning('');
   }, []);
 
   const handleBlockerSolved = useCallback(async (task: Task, blockerType: string, suggestion: string) => {
@@ -1059,10 +1172,14 @@ export default function TodayScreen() {
               <View style={styles.section}>
                 <View style={styles.sectionHeaderRow}>
                   <Text style={styles.sectionTitle}>To Do</Text>
-                  <View style={styles.dragHint}>
-                    <Ionicons name="reorder-three-outline" size={14} color={Colors.textTertiary} />
-                    <Text style={styles.dragHintText}>Drag handle to reorder</Text>
-                  </View>
+                  <Pressable
+                    style={({ pressed }) => [styles.rebuildJarvisBtn, pressed && { opacity: 0.7 }]}
+                    onPress={handleBuildMyDay}
+                    testID="rebuild-with-jarvis"
+                  >
+                    <Ionicons name="sparkles" size={12} color={Colors.primary} />
+                    <Text style={styles.rebuildJarvisText}>Jarvis</Text>
+                  </Pressable>
                 </View>
                 {energySortApplied && (
                   <Text style={styles.energySortLabel}>⚡ Ordered for your energy</Text>
@@ -1085,11 +1202,21 @@ export default function TodayScreen() {
               </View>
             ) : allCompleted.length === 0 && incompleteCalEvents.length === 0 ? (
               <View style={styles.emptyState}>
-                <Ionicons name="flag-outline" size={40} color={Colors.borderLight} />
-                <Text style={styles.emptyStateTitle}>No tasks yet</Text>
+                <View style={styles.jarvisEmptyIcon}>
+                  <Ionicons name="sparkles" size={32} color={Colors.primary} />
+                </View>
+                <Text style={styles.emptyStateTitle}>Let Jarvis plan your day</Text>
                 <Text style={styles.emptyStateText}>
-                  Head to the Goals tab to set your first goal, then tap the AI button to generate your daily plan.
+                  Jarvis will read your calendar, emails, goals, and brain dump to build a prioritized plan.
                 </Text>
+                <Pressable
+                  style={({ pressed }) => [styles.buildMyDayBtn, pressed && { opacity: 0.85 }]}
+                  onPress={handleBuildMyDay}
+                  testID="build-my-day"
+                >
+                  <Ionicons name="sparkles" size={18} color="#fff" />
+                  <Text style={styles.buildMyDayText}>Build My Day</Text>
+                </Pressable>
               </View>
             ) : null}
 
@@ -1261,6 +1388,15 @@ export default function TodayScreen() {
         task={blockerTask}
         onClose={() => setBlockerTask(null)}
         onSolved={handleBlockerSolved}
+      />
+
+      <JarvisPlanModal
+        visible={jarvisModalVisible}
+        loading={jarvisLoading}
+        reasoning={jarvisReasoning}
+        tasks={jarvisTasks}
+        onAccept={handleAcceptJarvisPlan}
+        onDismiss={handleDismissJarvisPlan}
       />
 
       <Pressable
@@ -1697,6 +1833,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: 32,
     gap: 12,
   },
+  jarvisEmptyIcon: {
+    width: 64,
+    height: 64,
+    borderRadius: 20,
+    backgroundColor: Colors.primary + '15',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
+  },
   emptyStateTitle: {
     fontSize: 17,
     fontFamily: 'Inter_600SemiBold',
@@ -1709,6 +1854,36 @@ const styles = StyleSheet.create({
     color: Colors.textTertiary,
     textAlign: 'center',
     lineHeight: 20,
+  },
+  buildMyDayBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: Colors.primary,
+    borderRadius: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 28,
+    marginTop: 8,
+  },
+  buildMyDayText: {
+    fontSize: 16,
+    fontFamily: 'Inter_600SemiBold',
+    color: '#fff',
+  },
+  rebuildJarvisBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 12,
+    backgroundColor: Colors.primary + '15',
+  },
+  rebuildJarvisText: {
+    fontSize: 12,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.primary,
   },
   morningCard: {
     borderRadius: 14,
