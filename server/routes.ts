@@ -218,6 +218,139 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.post("/api/coach/build-plan", async (req: Request, res: Response) => {
+    try {
+      const { goals, calendarEvents, gmailItems, brainDump, completionHistory, energyLevel, coachingMode, existingTasks, date } = req.body;
+
+      const goalsText = Array.isArray(goals) && goals.length > 0
+        ? goals.map((g: any) => `- ${g.title} (${g.category}): ${g.current}/${g.target} ${g.unit} — ${Math.round((g.current / Math.max(g.target, 1)) * 100)}% complete`).join('\n')
+        : 'No goals set';
+
+      const calendarText = Array.isArray(calendarEvents) && calendarEvents.length > 0
+        ? calendarEvents.map((e: any) => `- ${e.time ? e.time + ': ' : ''}${e.title}${e.description ? ' (' + e.description + ')' : ''}`).join('\n')
+        : 'No calendar events today';
+
+      const gmailText = Array.isArray(gmailItems) && gmailItems.length > 0
+        ? gmailItems.slice(0, 20).map((e: any) => `- From: ${e.from || 'unknown'} | "${e.subject}" — ${e.snippet}`).join('\n')
+        : 'No emails available';
+
+      const brainDumpText = Array.isArray(brainDump) && brainDump.length > 0
+        ? brainDump.map((b: any) => `- ${b.text || b}`).join('\n')
+        : 'No brain dump items';
+
+      const historyText = Array.isArray(completionHistory) && completionHistory.length > 0
+        ? (() => {
+            const completed = completionHistory.filter((h: any) => h.completed).slice(0, 8);
+            const skipped = completionHistory.filter((h: any) => !h.completed).slice(0, 8);
+            return `Completed recently: ${completed.map((h: any) => h.title).join(', ') || 'none'}\nLeft undone recently: ${skipped.map((h: any) => h.title).join(', ') || 'none'}`;
+          })()
+        : 'No history available';
+
+      const existingText = Array.isArray(existingTasks) && existingTasks.length > 0
+        ? existingTasks.map((t: any) => `- ${t.title} (${t.category}, ${t.priority}${t.completed ? ', done' : ''})`).join('\n')
+        : 'No existing tasks';
+
+      const energyDescriptions: Record<number, string> = {
+        1: 'Dead — barely functional, needs very light tasks',
+        2: 'Low — limited capacity, keep it simple',
+        3: 'Okay — moderate capacity, balanced day',
+        4: 'Good — solid capacity, can handle challenging work',
+        5: 'On Fire — peak capacity, front-load the hard stuff',
+      };
+      const energyText = typeof energyLevel === 'number' && energyLevel >= 1 && energyLevel <= 5
+        ? `${energyLevel}/5 — ${energyDescriptions[energyLevel]}`
+        : 'Not checked in';
+
+      const modeInstructions: Record<string, string> = {
+        mentor: 'Coaching style: Mentor mode — include Deep Work blocks, be supportive, suggest learning and growth tasks.',
+        drill: 'Coaching style: Drill Sergeant mode — aggressive prioritization, no fluff, only the tasks that move the needle.',
+        friend: 'Coaching style: Friend mode — balanced and encouraging, mix of productive and enjoyable tasks.',
+      };
+      const modeText = coachingMode && modeInstructions[coachingMode]
+        ? modeInstructions[coachingMode]
+        : '';
+
+      const now = new Date();
+      const dayOfWeek = now.toLocaleDateString('en-US', { weekday: 'long' });
+      const dateStr = now.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+
+      const prompt = `You are Jarvis, an autonomous planning AI. Build a realistic, prioritized daily plan for this person.
+
+Today is ${dayOfWeek}, ${dateStr}.
+
+## Calendar
+${calendarText}
+
+## Goals
+${goalsText}
+
+## Recent Emails
+${gmailText}
+
+## Brain Dump (unprocessed thoughts/tasks)
+${brainDumpText}
+
+## Recent History
+${historyText}
+
+## Currently Planned Tasks
+${existingText}
+
+## Energy Level
+${energyText}
+
+${modeText}
+
+## Rules
+- Use their actual calendar to block around meetings (leave 10min buffer before/after)
+- Pull tasks from brain dump that should be actioned today
+- Surface email commitments that need a response or action today
+- Apply their goals — at least one task should move a goal forward
+- Match energy level to task difficulty
+- Generate 4-7 tasks max — quality over quantity
+- Be specific: "Review Q2 proposal draft" not "Work on proposal"
+- For each task, add a brief description referencing WHY it made the cut (email, goal, deadline, brain dump)
+- Do NOT duplicate calendar events as tasks
+- Each task needs: title, category (one of: fitness, finance, career, personal, social), priority (high, medium, low), and optionally: duration (minutes), time (e.g. "9:30 AM"), description
+
+Return JSON: { "reasoning": "2-3 sentences on your planning logic, referencing specific data points", "tasks": [{ "title": "...", "category": "...", "priority": "...", "duration": 60, "time": "9:30 AM", "description": "..." }] }
+Return ONLY the JSON object.`;
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-5-mini",
+        messages: [{ role: "user", content: prompt }],
+        response_format: { type: "json_object" },
+        max_completion_tokens: 2000,
+      });
+
+      const content = response.choices[0]?.message?.content || '{"reasoning":"","tasks":[]}';
+      try {
+        const parsed = JSON.parse(content);
+        const validCategories = ['fitness', 'finance', 'career', 'personal', 'social'];
+        const validPriorities = ['high', 'medium', 'low'];
+        const tasks = Array.isArray(parsed.tasks)
+          ? parsed.tasks.slice(0, 7).map((t: any) => ({
+              title: String(t.title || 'Task'),
+              category: validCategories.includes(t.category) ? t.category : 'personal',
+              priority: validPriorities.includes(t.priority) ? t.priority : 'medium',
+              duration: typeof t.duration === 'number' ? t.duration : undefined,
+              time: t.time ? String(t.time) : undefined,
+              description: t.description ? String(t.description) : undefined,
+            }))
+          : [];
+        res.json({
+          reasoning: String(parsed.reasoning || ''),
+          tasks,
+        });
+      } catch {
+        res.json({ reasoning: '', tasks: [] });
+      }
+    } catch (error) {
+      console.error("Error building plan:", error);
+      res.status(500).json({ error: "Failed to build plan" });
+    }
+  });
+
   app.post("/api/coach/chat", async (req: Request, res: Response) => {
     try {
       const { messages, goals, stats, history, calendarEvents, lifeContext, gmailItems, gmailConnected, slackMessages, slackConnected } = req.body;
