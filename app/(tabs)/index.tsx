@@ -14,7 +14,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import Animated, { FadeInDown } from 'react-native-reanimated';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import Colors from '@/constants/colors';
 import TaskCard from '@/components/TaskCard';
 import ProgressRing from '@/components/ProgressRing';
@@ -87,11 +87,13 @@ import { formatDate } from '@/lib/helpers';
 import XpToast from '@/components/XpToast';
 import JustOneThingModal from '@/components/JustOneThingModal';
 import EnergyCheckIn from '@/components/EnergyCheckIn';
+import MorningBriefCard from '@/components/MorningBriefCard';
 import JarvisPlanModal from '@/components/JarvisPlanModal';
-import { getEnergyCheckin, type EnergyCheckin } from '@/lib/storage';
+import { getEnergyCheckin, getUserPreferences, type EnergyCheckin } from '@/lib/storage';
 
 export default function TodayScreen() {
   const insets = useSafeAreaInsets();
+  const router = useRouter();
   const [plan, setPlan] = useState<DayPlan | null>(null);
   const [goals, setGoals] = useState<Goal[]>([]);
   const [refreshing, setRefreshing] = useState(false);
@@ -133,6 +135,11 @@ export default function TodayScreen() {
   const [jarvisLoading, setJarvisLoading] = useState(false);
   const [jarvisReasoning, setJarvisReasoning] = useState('');
   const [jarvisTasks, setJarvisTasks] = useState<{ title: string; category: string; priority: string; duration?: number; time?: string; description?: string }[]>([]);
+  const [autoBuiltPlan, setAutoBuiltPlan] = useState<{
+    date: string; topTask: string; reasoning: string; taskCount: number;
+  } | null>(null);
+  const [briefDismissed, setBriefDismissed] = useState(false);
+  const energyModalTimeoutRef = React.useRef<any>(null);
 
   const orchestrateProactiveNotifications = useCallback(async (
     tasks: Task[],
@@ -257,14 +264,23 @@ export default function TodayScreen() {
     ]);
     setUserName(name);
     setEnergyCheckin(checkin);
-    if (!checkin) {
-      setEnergyCheckInVisible(true);
-    }
     setViewMode(mode);
     setBrainDumpInbox(inbox);
     const dismissKey = `morning_card_dismissed_${getTodayKey()}`;
     const wasDismissed = await AsyncStorage.getItem(dismissKey);
     if (wasDismissed === 'true') setCardDismissed(true);
+    const briefKey = `brief_dismissed_${getTodayKey()}`;
+    const briefWasDismissed = await AsyncStorage.getItem(briefKey);
+    if (briefWasDismissed === 'true') setBriefDismissed(true);
+    try {
+      const prefs = await getUserPreferences();
+      if (prefs?.autoBuiltPlan?.date === getTodayKey()) {
+        setAutoBuiltPlan(prefs.autoBuiltPlan);
+      }
+    } catch {}
+    if (!checkin && briefWasDismissed === 'true') {
+      setEnergyCheckInVisible(true);
+    }
     setLoading(false);
     const calEventsLoaded = loadCalendarEvents();
     loadDailyCoachNote(loadedGoals);
@@ -308,6 +324,9 @@ export default function TodayScreen() {
 
   useEffect(() => {
     loadData();
+    return () => {
+      if (energyModalTimeoutRef.current) clearTimeout(energyModalTimeoutRef.current);
+    };
   }, [loadData]);
 
   useEffect(() => {
@@ -810,6 +829,37 @@ export default function TodayScreen() {
     return candidates;
   }, [plan, energyCheckin]);
 
+  const handleStartTopTask = useCallback(() => {
+    if (!plan) return;
+    const topTask = autoBuiltPlan
+      ? plan.tasks.find(t => !t.completed && t.title === autoBuiltPlan.topTask) || plan.tasks.find(t => !t.completed)
+      : plan.tasks.find(t => !t.completed);
+    if (!topTask) return;
+    router.push({
+      pathname: '/focus-timer' as any,
+      params: { taskTitle: topTask.title },
+    });
+  }, [plan, autoBuiltPlan, router]);
+
+  const handleDismissBrief = useCallback(async () => {
+    setBriefDismissed(true);
+    const key = `brief_dismissed_${getTodayKey()}`;
+    await AsyncStorage.setItem(key, 'true');
+    if (!energyCheckin) {
+      if (energyModalTimeoutRef.current) clearTimeout(energyModalTimeoutRef.current);
+      energyModalTimeoutRef.current = setTimeout(() => {
+        setEnergyCheckInVisible(true);
+      }, 30000);
+    }
+  }, [energyCheckin]);
+
+  const handleStartFocusOnTask = useCallback((task: Task) => {
+    router.push({
+      pathname: '/focus-timer' as any,
+      params: { taskTitle: task.title },
+    });
+  }, [router]);
+
   const handleOpenJot = useCallback(() => {
     const tasks = getJotTasks();
     if (tasks.length > 0) {
@@ -938,7 +988,26 @@ export default function TodayScreen() {
           <Text style={styles.insightText}>{plan.insight}</Text>
         </Animated.View>
 
-        {coachNote ? (
+        {!briefDismissed && (autoBuiltPlan || coachNote) ? (
+          <MorningBriefCard
+            autoBuiltPlan={autoBuiltPlan}
+            coachNote={coachNote}
+            firstCalendarEvent={calendarEvents.length > 0 ? { title: calendarEvents[0].title, time: calendarEvents[0].time } : null}
+            energyCheckin={energyCheckin}
+            onStartTopTask={handleStartTopTask}
+            onDismiss={handleDismissBrief}
+            onEnergySet={(checkin) => {
+              setEnergyCheckin(checkin);
+              setEnergyCheckInVisible(false);
+              if (plan) {
+                const sorted = sortTasksByEnergy(plan.tasks, checkin.energy);
+                savePlan({ ...plan, tasks: sorted });
+                setPlan({ ...plan, tasks: sorted });
+                setEnergySortApplied(true);
+              }
+            }}
+          />
+        ) : coachNote && briefDismissed ? (
           <Animated.View entering={FadeInDown.duration(400).delay(340)} style={styles.coachNoteCard}>
             <View style={styles.coachNoteHeader}>
               <Ionicons name="sparkles-outline" size={15} color={Colors.secondary} />
@@ -1188,7 +1257,15 @@ export default function TodayScreen() {
             {incompleteTasks.length > 0 ? (
               <View style={styles.section}>
                 <View style={styles.sectionHeaderRow}>
-                  <Text style={styles.sectionTitle}>To Do</Text>
+                  <View style={styles.sectionHeaderLeft}>
+                    <Text style={styles.sectionTitle}>To Do</Text>
+                    {autoBuiltPlan && (
+                      <View style={styles.jarvisBadge}>
+                        <Ionicons name="sparkles" size={10} color={Colors.secondary} />
+                        <Text style={styles.jarvisBadgeText}>Built by Jarvis</Text>
+                      </View>
+                    )}
+                  </View>
                   <Pressable
                     style={({ pressed }) => [styles.rebuildJarvisBtn, pressed && { opacity: 0.7 }]}
                     onPress={handleBuildMyDay}
@@ -1212,6 +1289,7 @@ export default function TodayScreen() {
                       onResize={handleOpenResizer}
                       onEdit={handleOpenEdit}
                       onBlockerTap={setBlockerTask}
+                      onStartFocus={handleStartFocusOnTask}
                       isDragging={isActive}
                     />
                   )}
@@ -1801,6 +1879,26 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     marginBottom: 12,
+  },
+  sectionHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flex: 1,
+  },
+  jarvisBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: '#F5F3FF',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 20,
+  },
+  jarvisBadgeText: {
+    fontSize: 10,
+    fontFamily: 'Inter_600SemiBold',
+    color: '#8B5CF6',
   },
   dragHint: {
     flexDirection: 'row',

@@ -1477,4 +1477,13 @@ export async function getCarryoverTasks(): Promise<Task[]> {
   }
 }
 
+export async function getUserPreferences(): Promise<Record<string, any>> {
+  try {
+    const result = await apiGet('/api/data/user-preferences');
+    return (result.data as Record<string, any>) || {};
+  } catch {
+    return {};
+  }
+}
+
 export { generateId, getTodayKey, getGreeting };

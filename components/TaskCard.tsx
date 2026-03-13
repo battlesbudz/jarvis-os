@@ -14,6 +14,7 @@ interface TaskCardProps {
   onResize?: (task: Task) => void;
   onEdit?: (task: Task) => void;
   onBlockerTap?: (task: Task) => void;
+  onStartFocus?: (task: Task) => void;
   isDragging?: boolean;
 }
 
@@ -58,7 +59,7 @@ function SubtaskRow({ subtask, onToggle, xpValue }: { subtask: Task; onToggle: (
   );
 }
 
-export default function TaskCard({ task, onToggle, onResize, onEdit, onBlockerTap, isDragging }: TaskCardProps) {
+export default function TaskCard({ task, onToggle, onResize, onEdit, onBlockerTap, onStartFocus, isDragging }: TaskCardProps) {
   const router = useRouter();
   const scale = useSharedValue(1);
   const categoryColor = getCategoryColor(task.category);
@@ -138,6 +139,20 @@ export default function TaskCard({ task, onToggle, onResize, onEdit, onBlockerTa
                 <View style={styles.xpBadge}>
                   <Text style={styles.xpBadgeText}>+{taskXp} XP</Text>
                 </View>
+              )}
+              {!task.completed && onStartFocus && (
+                <Pressable
+                  onPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                    onStartFocus(task);
+                  }}
+                  hitSlop={8}
+                  style={styles.quickPlayBtn}
+                  testID={`quick-start-${task.id}`}
+                  accessibilityLabel="Start focus session"
+                >
+                  <Ionicons name="play-circle" size={24} color={Colors.primary} />
+                </Pressable>
               )}
               <View style={[styles.priorityDot, { backgroundColor: priorityDot }]} />
               {onEdit && !task.completed && (
@@ -254,6 +269,9 @@ const styles = StyleSheet.create({
     transform: [{ scale: 1.02 }],
   },
   editBtn: {
+    padding: 2,
+  },
+  quickPlayBtn: {
     padding: 2,
   },
   checkCircle: {
