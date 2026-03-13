@@ -90,6 +90,27 @@ export function isTelegramConfigured(): boolean {
   return !!BOT_TOKEN;
 }
 
+export async function deleteWebhook(): Promise<void> {
+  if (!BOT_TOKEN) return;
+  try {
+    await fetch(`${BASE}/deleteWebhook`, { method: 'POST' });
+  } catch {
+    // ignore
+  }
+}
+
+export async function getUpdates(offset: number): Promise<TelegramUpdate[]> {
+  if (!BOT_TOKEN) return [];
+  try {
+    const res = await fetch(`${BASE}/getUpdates?offset=${offset}&timeout=5&limit=100`);
+    if (!res.ok) return [];
+    const data = await res.json() as { ok: boolean; result: TelegramUpdate[] };
+    return data.ok ? (data.result || []) : [];
+  } catch {
+    return [];
+  }
+}
+
 export function logTelegramStatus(): void {
   if (BOT_TOKEN) {
     console.log('Telegram: configured ✓');

@@ -2,7 +2,7 @@ import type { Express, Request, Response } from "express";
 import { db } from "./db";
 import { eq, and, desc, sql, gte } from "drizzle-orm";
 import * as schema from "@shared/schema";
-import { sendMessage, isTelegramConfigured, verifyWebhookSecret } from "./integrations/telegram";
+import { sendMessage, isTelegramConfigured, getUpdates, deleteWebhook } from "./integrations/telegram";
 import OpenAI from "openai";
 
 const openai = new OpenAI({
@@ -124,133 +124,148 @@ Be direct, specific, actionable. No fluff. Respond in the same language the user
   }
 }
 
+async function processUpdate(update: any): Promise<void> {
+  try {
+    if (update.my_chat_member) {
+      const chatMember = update.my_chat_member;
+      const chat = chatMember.chat;
+      const status = chatMember.new_chat_member?.status;
+      if ((chat.type === 'group' || chat.type === 'supergroup') && (status === 'member' || status === 'administrator')) {
+        const fromUserId = chatMember.from?.id?.toString();
+        if (fromUserId) {
+          try {
+            const link = await db.select().from(schema.telegramLinks).where(
+              sql`${schema.telegramLinks.chatId} = ${fromUserId}`
+            ).limit(1);
+            if (link[0]) {
+              const currentGroups = (link[0].groupChatIds as string[]) || [];
+              const chatIdStr = chat.id.toString();
+              if (!currentGroups.includes(chatIdStr)) {
+                currentGroups.push(chatIdStr);
+                await db.update(schema.telegramLinks)
+                  .set({ groupChatIds: currentGroups })
+                  .where(eq(schema.telegramLinks.userId, link[0].userId));
+              }
+            }
+          } catch (err) {
+            console.error("Error handling group join:", err);
+          }
+        }
+      }
+      return;
+    }
+
+    const message = update.message;
+    if (!message || !message.text) return;
+
+    const chatId = message.chat.id.toString();
+    const chatType = message.chat.type;
+    const text = message.text.trim();
+
+    if (chatType === 'group' || chatType === 'supergroup') {
+      try {
+        const links = await db.select().from(schema.telegramLinks).where(
+          sql`${schema.telegramLinks.groupChatIds}::jsonb @> ${JSON.stringify([chatId])}::jsonb`
+        );
+        for (const link of links) {
+          await db.insert(schema.telegramGroupMessages).values({
+            userId: link.userId,
+            chatId,
+            chatTitle: message.chat.title || '',
+            fromUser: message.from?.first_name || message.from?.username || 'Unknown',
+            text: text.slice(0, 500),
+            messageDate: new Date(message.date * 1000),
+          });
+        }
+      } catch (err) {
+        console.error("Error storing group message:", err);
+      }
+      return;
+    }
+
+    if (text.startsWith('/start ') || (text.length === 6 && /^[A-Z0-9]+$/.test(text))) {
+      const code = text.startsWith('/start ') ? text.slice(7).trim() : text;
+      try {
+        const codeRows = await db.select().from(schema.telegramLinkCodes).where(eq(schema.telegramLinkCodes.code, code));
+        if (codeRows.length === 0) {
+          await sendMessage(chatId, "Invalid or expired link code. Please generate a new one from the app.");
+          return;
+        }
+        const { userId } = codeRows[0];
+        const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000);
+        if (codeRows[0].createdAt < fiveMinAgo) {
+          await db.delete(schema.telegramLinkCodes).where(eq(schema.telegramLinkCodes.code, code));
+          await sendMessage(chatId, "This link code has expired. Please generate a new one from the app.");
+          return;
+        }
+        await db.insert(schema.telegramLinks)
+          .values({ userId, chatId, username: message.from?.username || message.from?.first_name || null })
+          .onConflictDoUpdate({
+            target: schema.telegramLinks.userId,
+            set: { chatId, username: message.from?.username || message.from?.first_name || null, linkedAt: new Date() },
+          });
+        await db.delete(schema.telegramLinkCodes).where(eq(schema.telegramLinkCodes.code, code));
+        await sendMessage(chatId, "✅ You're connected to GamePlan! Jarvis will send you morning check-ins and you can chat anytime right here.");
+        console.log(`[Telegram] Linked user ${userId} to chat ${chatId}`);
+      } catch (err) {
+        console.error("Error linking Telegram:", err);
+        await sendMessage(chatId, "Something went wrong linking your account. Please try again.");
+      }
+      return;
+    }
+
+    if (text === '/start') {
+      await sendMessage(chatId, "Welcome to GamePlan Coach! To connect your account, generate a link code from the GamePlan app (Profile → Connected Apps → Telegram), then send it here.");
+      return;
+    }
+
+    try {
+      const link = await db.select().from(schema.telegramLinks).where(eq(schema.telegramLinks.chatId, chatId)).limit(1);
+      if (link.length === 0) {
+        await sendMessage(chatId, "Your Telegram isn't linked to a GamePlan account yet. Open the app, go to Profile > Connected Apps > Telegram, and send the link code here.");
+        return;
+      }
+      await handleCoachReply(link[0].userId, chatId, text);
+    } catch (err) {
+      console.error("Error handling Telegram message:", err);
+      await sendMessage(chatId, "Sorry, something went wrong. Please try again.");
+    }
+  } catch (error) {
+    console.error("Telegram processUpdate error:", error);
+  }
+}
+
+let pollingOffset = 0;
+let pollingActive = false;
+
+export async function startTelegramPolling(): Promise<void> {
+  if (!isTelegramConfigured()) return;
+  if (pollingActive) return;
+  pollingActive = true;
+  await deleteWebhook();
+  console.log('[Telegram] Polling started');
+
+  const poll = async () => {
+    if (!pollingActive) return;
+    try {
+      const updates = await getUpdates(pollingOffset);
+      for (const update of updates) {
+        await processUpdate(update);
+        pollingOffset = update.update_id + 1;
+      }
+    } catch (err) {
+      console.error('[Telegram] Polling error:', err);
+    }
+    setTimeout(poll, 2000);
+  };
+
+  poll();
+}
+
 export function registerTelegramWebhook(app: Express): void {
   app.post("/api/telegram/webhook", async (req: Request, res: Response) => {
     res.sendStatus(200);
-
-    try {
-      const update = req.body;
-
-      if (update.my_chat_member) {
-        const chatMember = update.my_chat_member;
-        const chat = chatMember.chat;
-        const status = chatMember.new_chat_member?.status;
-
-        if ((chat.type === 'group' || chat.type === 'supergroup') && (status === 'member' || status === 'administrator')) {
-          const fromUserId = chatMember.from?.id?.toString();
-          if (fromUserId) {
-            try {
-              const link = await db.select().from(schema.telegramLinks).where(
-                sql`${schema.telegramLinks.chatId} = ${fromUserId}`
-              ).limit(1);
-              if (link[0]) {
-                const currentGroups = (link[0].groupChatIds as string[]) || [];
-                const chatIdStr = chat.id.toString();
-                if (!currentGroups.includes(chatIdStr)) {
-                  currentGroups.push(chatIdStr);
-                  await db.update(schema.telegramLinks)
-                    .set({ groupChatIds: currentGroups })
-                    .where(eq(schema.telegramLinks.userId, link[0].userId));
-                }
-              }
-            } catch (err) {
-              console.error("Error handling group join:", err);
-            }
-          }
-        }
-        return;
-      }
-
-      const message = update.message;
-      if (!message || !message.text) return;
-
-      const chatId = message.chat.id.toString();
-      const chatType = message.chat.type;
-      const text = message.text.trim();
-
-      if (chatType === 'group' || chatType === 'supergroup') {
-        try {
-          const links = await db.select().from(schema.telegramLinks).where(
-            sql`${schema.telegramLinks.groupChatIds}::jsonb @> ${JSON.stringify([chatId])}::jsonb`
-          );
-          for (const link of links) {
-            await db.insert(schema.telegramGroupMessages).values({
-              userId: link.userId,
-              chatId,
-              chatTitle: message.chat.title || '',
-              fromUser: message.from?.first_name || message.from?.username || 'Unknown',
-              text: text.slice(0, 500),
-              messageDate: new Date(message.date * 1000),
-            });
-          }
-        } catch (err) {
-          console.error("Error storing group message:", err);
-        }
-        return;
-      }
-
-      if (text.startsWith('/start ') || (text.length === 6 && /^[A-Z0-9]+$/.test(text))) {
-        const code = text.startsWith('/start ') ? text.slice(7).trim() : text;
-
-        try {
-          const codeRows = await db.select().from(schema.telegramLinkCodes).where(eq(schema.telegramLinkCodes.code, code));
-          if (codeRows.length === 0) {
-            await sendMessage(chatId, "Invalid or expired link code. Please generate a new one from the app.");
-            return;
-          }
-
-          const { userId } = codeRows[0];
-          const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000);
-          if (codeRows[0].createdAt < fiveMinAgo) {
-            await db.delete(schema.telegramLinkCodes).where(eq(schema.telegramLinkCodes.code, code));
-            await sendMessage(chatId, "This link code has expired. Please generate a new one from the app.");
-            return;
-          }
-
-          await db.insert(schema.telegramLinks)
-            .values({
-              userId,
-              chatId,
-              username: message.from?.username || message.from?.first_name || null,
-            })
-            .onConflictDoUpdate({
-              target: schema.telegramLinks.userId,
-              set: {
-                chatId,
-                username: message.from?.username || message.from?.first_name || null,
-                linkedAt: new Date(),
-              },
-            });
-
-          await db.delete(schema.telegramLinkCodes).where(eq(schema.telegramLinkCodes.code, code));
-          await sendMessage(chatId, "You're connected to GamePlan Coach! I'll send you proactive check-ins and you can chat with me anytime right here.");
-        } catch (err) {
-          console.error("Error linking Telegram:", err);
-          await sendMessage(chatId, "Something went wrong linking your account. Please try again.");
-        }
-        return;
-      }
-
-      if (text === '/start') {
-        await sendMessage(chatId, "Welcome to GamePlan Coach! To connect your account, generate a link code from the GamePlan app Profile > Connected Apps > Telegram, then send it here.");
-        return;
-      }
-
-      try {
-        const link = await db.select().from(schema.telegramLinks).where(eq(schema.telegramLinks.chatId, chatId)).limit(1);
-        if (link.length === 0) {
-          await sendMessage(chatId, "Your Telegram isn't linked to a GamePlan account yet. Open the app, go to Profile > Connected Apps > Telegram, and send the link code here.");
-          return;
-        }
-
-        await handleCoachReply(link[0].userId, chatId, text);
-      } catch (err) {
-        console.error("Error handling Telegram message:", err);
-        await sendMessage(chatId, "Sorry, something went wrong. Please try again.");
-      }
-    } catch (error) {
-      console.error("Telegram webhook error:", error);
-    }
+    await processUpdate(req.body);
   });
 }
 
