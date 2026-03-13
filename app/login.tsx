@@ -112,7 +112,7 @@ export default function LoginScreen() {
       return;
     }
 
-    const redirectUri = AuthSession.makeRedirectUri({ scheme: "gameplan" });
+    const redirectUri = AuthSession.makeRedirectUri({ useProxy: true });
 
     const request = new AuthSession.AuthRequest({
       clientId,
