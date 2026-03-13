@@ -1,6 +1,9 @@
 import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "node:http";
 import OpenAI from "openai";
+import { db } from "./db";
+import { eq, and } from "drizzle-orm";
+import * as schema from "@shared/schema";
 import { resizeTask, generateSmartPlan, unblockTask } from "./ai";
 import {
   getGoogleCalendarEvents,
@@ -395,6 +398,212 @@ Return ONLY the JSON object.`;
     }
   });
 
+  const coachTools: OpenAI.Chat.Completions.ChatCompletionTool[] = [
+    {
+      type: "function",
+      function: {
+        name: "add_task",
+        description: "Add a new task to the user's plan for today",
+        parameters: {
+          type: "object",
+          properties: {
+            title: { type: "string", description: "Task title" },
+            category: { type: "string", enum: ["health", "work", "personal", "learning", "finance", "social"], description: "Task category" },
+            duration: { type: "number", description: "Estimated duration in minutes" },
+          },
+          required: ["title", "category"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "add_to_brain_dump",
+        description: "Add an item to the user's brain dump inbox",
+        parameters: {
+          type: "object",
+          properties: { text: { type: "string" } },
+          required: ["text"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "log_goal_progress",
+        description: "Log progress toward a goal",
+        parameters: {
+          type: "object",
+          properties: {
+            goalTitle: { type: "string", description: "Partial or full goal title to match" },
+            amount: { type: "number", description: "Amount to add to current progress" },
+          },
+          required: ["goalTitle", "amount"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "update_life_context",
+        description: "Update one or more life context fields for the user",
+        parameters: {
+          type: "object",
+          properties: {
+            priorityGoal: { type: "string" },
+            currentBlocker: { type: "string" },
+            improvementArea: { type: "string" },
+            upcomingDeadline: { type: "string" },
+            freeText: { type: "string" },
+          },
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "complete_task",
+        description: "Mark a task as complete in today's plan",
+        parameters: {
+          type: "object",
+          properties: {
+            taskTitle: { type: "string", description: "Partial or full title of the task to complete" },
+          },
+          required: ["taskTitle"],
+        },
+      },
+    },
+  ];
+
+  function fuzzyMatch(needle: string, haystack: string): boolean {
+    const n = needle.toLowerCase().trim();
+    const h = haystack.toLowerCase().trim();
+    return h.includes(n) || n.includes(h);
+  }
+
+  async function executeCoachTool(
+    toolName: string,
+    args: any,
+    userId: string
+  ): Promise<{ result: 'success' | 'error'; label: string; detail: string }> {
+    const todayKey = new Date().toISOString().slice(0, 10);
+    try {
+      switch (toolName) {
+        case 'add_task': {
+          const planResult = await db
+            .select({ data: schema.plans.data })
+            .from(schema.plans)
+            .where(and(eq(schema.plans.userId, userId), eq(schema.plans.date, todayKey)));
+          const plan: any = planResult.length > 0 ? planResult[0].data : { date: todayKey, tasks: [], greeting: '', insight: '' };
+          const tasks = Array.isArray(plan.tasks) ? plan.tasks : [];
+          const catMap: Record<string, string> = { health: 'fitness', work: 'career', learning: 'personal' };
+          const category = catMap[args.category] || args.category || 'personal';
+          const newTask = {
+            id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+            title: args.title,
+            category,
+            completed: false,
+            priority: 'medium',
+          };
+          tasks.push(newTask);
+          const updatedPlan = { ...plan, tasks };
+          await db.insert(schema.plans)
+            .values({ userId, date: todayKey, data: updatedPlan, updatedAt: new Date() })
+            .onConflictDoUpdate({
+              target: [schema.plans.userId, schema.plans.date],
+              set: { data: updatedPlan, updatedAt: new Date() },
+            });
+          return { result: 'success', label: `Task added to today`, detail: `Added "${args.title}"` };
+        }
+        case 'add_to_brain_dump': {
+          const bdResult = await db
+            .select({ data: schema.brainDumpInbox.data })
+            .from(schema.brainDumpInbox)
+            .where(eq(schema.brainDumpInbox.userId, userId));
+          const items: any[] = bdResult.length > 0 ? (Array.isArray(bdResult[0].data) ? bdResult[0].data : []) : [];
+          items.unshift({
+            id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+            text: args.text,
+            createdAt: new Date().toISOString(),
+          });
+          await db.insert(schema.brainDumpInbox)
+            .values({ userId, data: items, updatedAt: new Date() })
+            .onConflictDoUpdate({
+              target: [schema.brainDumpInbox.userId],
+              set: { data: items, updatedAt: new Date() },
+            });
+          return { result: 'success', label: `Added to brain dump`, detail: `Added "${args.text}"` };
+        }
+        case 'log_goal_progress': {
+          const goalsResult = await db
+            .select({ data: schema.goals.data })
+            .from(schema.goals)
+            .where(eq(schema.goals.userId, userId));
+          if (goalsResult.length === 0) return { result: 'error', label: 'No goals found', detail: 'User has no goals set' };
+          const goalsList: any[] = Array.isArray(goalsResult[0].data) ? goalsResult[0].data : [];
+          const matched = goalsList.find((g: any) => fuzzyMatch(args.goalTitle, g.title));
+          if (!matched) return { result: 'error', label: `Goal not found`, detail: `Could not find goal matching "${args.goalTitle}"` };
+          matched.current = (matched.current || 0) + args.amount;
+          matched.updatedAt = new Date().toISOString();
+          await db.insert(schema.goals)
+            .values({ userId, data: goalsList, updatedAt: new Date() })
+            .onConflictDoUpdate({
+              target: [schema.goals.userId],
+              set: { data: goalsList, updatedAt: new Date() },
+            });
+          return { result: 'success', label: `Progress logged`, detail: `Added ${args.amount} to "${matched.title}"` };
+        }
+        case 'update_life_context': {
+          const lcResult = await db
+            .select({ data: schema.lifeContext.data })
+            .from(schema.lifeContext)
+            .where(eq(schema.lifeContext.userId, userId));
+          const existing: any = lcResult.length > 0 ? lcResult[0].data : {};
+          const merged = { ...existing };
+          if (args.priorityGoal) merged.priorityGoal = args.priorityGoal;
+          if (args.currentBlocker) merged.currentBlocker = args.currentBlocker;
+          if (args.improvementArea) merged.improvementArea = args.improvementArea;
+          if (args.upcomingDeadline) merged.upcomingDeadline = args.upcomingDeadline;
+          if (args.freeText) merged.freeText = args.freeText;
+          merged.lastUpdated = new Date().toISOString();
+          await db.insert(schema.lifeContext)
+            .values({ userId, data: merged, updatedAt: new Date() })
+            .onConflictDoUpdate({
+              target: [schema.lifeContext.userId],
+              set: { data: merged, updatedAt: new Date() },
+            });
+          const updatedFields = Object.keys(args).filter(k => args[k]).join(', ');
+          return { result: 'success', label: `Context updated`, detail: `Updated: ${updatedFields}` };
+        }
+        case 'complete_task': {
+          const planResult = await db
+            .select({ data: schema.plans.data })
+            .from(schema.plans)
+            .where(and(eq(schema.plans.userId, userId), eq(schema.plans.date, todayKey)));
+          if (planResult.length === 0) return { result: 'error', label: 'No plan today', detail: 'No plan found for today' };
+          const plan: any = planResult[0].data;
+          const tasks: any[] = Array.isArray(plan.tasks) ? plan.tasks : [];
+          const matched = tasks.find((t: any) => !t.completed && fuzzyMatch(args.taskTitle, t.title));
+          if (!matched) return { result: 'error', label: `Task not found`, detail: `Could not find incomplete task matching "${args.taskTitle}"` };
+          matched.completed = true;
+          const updatedPlan = { ...plan, tasks };
+          await db.insert(schema.plans)
+            .values({ userId, date: todayKey, data: updatedPlan, updatedAt: new Date() })
+            .onConflictDoUpdate({
+              target: [schema.plans.userId, schema.plans.date],
+              set: { data: updatedPlan, updatedAt: new Date() },
+            });
+          return { result: 'success', label: `Task completed`, detail: `Marked "${matched.title}" as done` };
+        }
+        default:
+          return { result: 'error', label: 'Unknown action', detail: `Unknown tool: ${toolName}` };
+      }
+    } catch (error) {
+      console.error(`Error executing tool ${toolName}:`, error);
+      return { result: 'error', label: 'Action failed', detail: String(error) };
+    }
+  }
+
   app.post("/api/coach/chat", async (req: Request, res: Response) => {
     try {
       const { messages, goals, stats, history, calendarEvents, lifeContext, gmailItems, gmailConnected, slackMessages, slackConnected, coachingMode } = req.body;
@@ -418,18 +627,69 @@ Return ONLY the JSON object.`;
 
       const systemPrompt = buildCoachSystemPrompt(goals || [], stats || {}, history || [], calendarEvents || [], lifeContext || null, gmailItems || [], gmailConnected ?? false, slackMessages || [], slackConnected ?? false, userCommitments, coachingMode);
 
+      const chatMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+        { role: "system", content: systemPrompt + "\n\nYou can take actions on the user's behalf using the available tools. When a user asks you to add a task, log progress, update their context, etc., use the appropriate tool. Respond naturally — do not mention 'tool calls' or 'functions' to the user. Just confirm what you did conversationally." },
+        ...messages.map((m: any) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
+      ];
+
+      const actionResults: { tool: string; result: 'success' | 'error'; label: string }[] = [];
+      let toolMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [];
+
+      if (userId) {
+        const phase1 = await openai.chat.completions.create({
+          model: "gpt-5-mini",
+          messages: chatMessages,
+          tools: coachTools,
+          max_completion_tokens: 2048,
+        });
+
+        const choice = phase1.choices[0];
+        if (choice.finish_reason === 'tool_calls' && choice.message.tool_calls?.length) {
+          toolMessages.push(choice.message);
+
+          for (const tc of choice.message.tool_calls) {
+            let args: any = {};
+            try { args = JSON.parse(tc.function.arguments); } catch {}
+            const execResult = await executeCoachTool(tc.function.name, args, userId);
+            actionResults.push({ tool: tc.function.name, result: execResult.result, label: execResult.label });
+            toolMessages.push({
+              role: "tool",
+              tool_call_id: tc.id,
+              content: JSON.stringify({ result: execResult.result, detail: execResult.detail }),
+            });
+          }
+        } else if (choice.message.content) {
+          res.setHeader('Content-Type', 'text/event-stream');
+          res.setHeader('Cache-Control', 'no-cache, no-transform');
+          res.setHeader('X-Accel-Buffering', 'no');
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          res.flushHeaders();
+
+          const words = choice.message.content;
+          res.write(`data: ${JSON.stringify({ content: words })}\n\n`);
+          res.write('data: [DONE]\n\n');
+          res.end();
+          return;
+        }
+      }
+
       res.setHeader('Content-Type', 'text/event-stream');
       res.setHeader('Cache-Control', 'no-cache, no-transform');
       res.setHeader('X-Accel-Buffering', 'no');
       res.setHeader('Access-Control-Allow-Origin', '*');
       res.flushHeaders();
 
+      if (actionResults.length > 0) {
+        res.write(`data: ${JSON.stringify({ type: 'actions', actions: actionResults })}\n\n`);
+      }
+
+      const streamMessages = toolMessages.length > 0
+        ? [...chatMessages, ...toolMessages]
+        : chatMessages;
+
       const stream = await openai.chat.completions.create({
         model: "gpt-5-mini",
-        messages: [
-          { role: "system", content: systemPrompt },
-          ...messages.map((m: any) => ({ role: m.role, content: m.content })),
-        ],
+        messages: streamMessages,
         stream: true,
         max_completion_tokens: 8192,
       });

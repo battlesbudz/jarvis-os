@@ -43,6 +43,7 @@ import {
   type LifeContext,
   type Commitment,
   type CoachingMode,
+  type ExecutedAction,
 } from '@/lib/storage';
 import {
   scheduleEveningAccountability,
@@ -51,7 +52,7 @@ import {
   scheduleCommitmentDueDateReminder,
   scheduleWeeklyReview,
 } from '@/lib/notifications';
-import { getApiUrl } from '@/lib/query-client';
+import { getApiUrl, queryClient } from '@/lib/query-client';
 import { authFetch, getAuthToken } from '@/lib/auth-context';
 import { Linking } from 'react-native';
 
@@ -214,6 +215,23 @@ function MessageBubble({ message, isFirst, isLastAssistant, goals, onFollowup, o
           isUser={isUser}
         />
       </View>
+
+      {!isUser && message.executedActions && message.executedActions.length > 0 && (
+        <View style={styles.executedActionsRow}>
+          {message.executedActions.map((ea, idx) => (
+            <View key={idx} style={[styles.executedActionBadge, ea.result === 'error' && styles.executedActionBadgeError]}>
+              <Ionicons
+                name={ea.result === 'success' ? 'checkmark-circle' : 'alert-circle'}
+                size={12}
+                color={ea.result === 'success' ? Colors.success : '#EF4444'}
+              />
+              <Text style={[styles.executedActionText, ea.result === 'error' && styles.executedActionTextError]}>
+                {ea.label}
+              </Text>
+            </View>
+          ))}
+        </View>
+      )}
 
       {!isUser && isLastAssistant && !isStreaming && message.content.length > 0 && onSpeak && (
         <Pressable
@@ -934,6 +952,7 @@ export default function InsightsScreen() {
       const decoder = new TextDecoder();
       let fullContent = '';
       let buffer = '';
+      let executedActions: ExecutedAction[] = [];
 
       while (true) {
         const { done, value } = await reader.read();
@@ -948,7 +967,19 @@ export default function InsightsScreen() {
             if (data === '[DONE]') continue;
             try {
               const parsed = JSON.parse(data);
-              if (parsed.content) {
+              if (parsed.type === 'actions' && Array.isArray(parsed.actions)) {
+                executedActions = parsed.actions;
+                setMessages(prev => {
+                  const updated = [...prev];
+                  const idx = updated.findIndex(m => m.id === assistantId);
+                  if (idx !== -1) updated[idx] = { ...updated[idx], executedActions };
+                  return updated;
+                });
+                queryClient.invalidateQueries({ queryKey: ['/api/data/plans'] });
+                queryClient.invalidateQueries({ queryKey: ['/api/data/goals'] });
+                queryClient.invalidateQueries({ queryKey: ['/api/data/brain-dump-inbox'] });
+                queryClient.invalidateQueries({ queryKey: ['/api/data/life-context'] });
+              } else if (parsed.content) {
                 fullContent += parsed.content;
                 const captured = fullContent;
                 setMessages(prev => {
@@ -966,10 +997,11 @@ export default function InsightsScreen() {
       setIsStreaming(false);
 
       const finalContent = fullContent;
+      const finalActions = executedActions;
       setMessages(prev => {
         const updated = [...prev];
         const idx = updated.findIndex(m => m.id === assistantId);
-        if (idx !== -1) updated[idx] = { ...updated[idx], content: finalContent };
+        if (idx !== -1) updated[idx] = { ...updated[idx], content: finalContent, executedActions: finalActions.length > 0 ? finalActions : undefined };
         saveChatHistory(updated);
         return updated;
       });
@@ -1486,6 +1518,32 @@ const styles = StyleSheet.create({
     borderBottomLeftRadius: 4,
     borderWidth: 1,
     borderColor: Colors.border,
+  },
+  executedActionsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 6,
+  },
+  executedActionBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 12,
+  },
+  executedActionBadgeError: {
+    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+  },
+  executedActionText: {
+    fontSize: 12,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.success,
+  },
+  executedActionTextError: {
+    color: '#EF4444',
   },
   actionRow: {
     flexDirection: 'row',

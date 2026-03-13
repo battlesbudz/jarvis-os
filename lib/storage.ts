@@ -279,12 +279,19 @@ export interface CoachAction {
   description?: string;
 }
 
+export interface ExecutedAction {
+  tool: string;
+  result: 'success' | 'error';
+  label: string;
+}
+
 export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
   content: string;
   actions?: CoachAction[];
   followups?: string[];
+  executedActions?: ExecutedAction[];
 }
 
 export interface Commitment {
