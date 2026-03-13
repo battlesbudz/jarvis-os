@@ -1,7 +1,7 @@
 # GamePlan - Daily Game Plan App
 
 ## Overview
-A mobile app that generates personalized daily task checklists with AI-powered adaptive task sizing. Users can break tasks into smaller steps or combine them using a "detail level" slider (1-5), helping with executive dysfunction. The AI learns from 7-day completion history, life context, and Gmail signals to suggest appropriately-sized tasks.
+GamePlan is a mobile application designed to help users manage daily tasks through AI-powered adaptive task sizing and personalized plan generation. It aims to address executive dysfunction by allowing users to adjust task granularity and integrates with various user contexts like completion history, life context, and email signals to create relevant task suggestions. The project's vision is to enhance daily productivity and well-being through intelligent, personalized task management.
 
 ## Tech Stack
 - **Frontend**: Expo Router (React Native) with file-based routing
@@ -40,13 +40,28 @@ A mobile app that generates personalized daily task checklists with AI-powered a
 - `server/telegramRoutes.ts` - Telegram webhook, link-code, status, disconnect, messages, notify routes + proactive scheduler
 - `server/scheduler.ts` - Daily auto-plan scheduler: startScheduler() runs at 7am, builds plans for users with empty plans via buildPlanForUser()
 
-## Color Palette
-- Primary: #6366F1 (indigo)
-- Secondary: #8B5CF6 (purple)
-- Accent: #EC4899 (pink)
-- Success: #10B981 (green)
-- Warning: #F59E0B (amber)
-- Background: #FFFFFF, Surface: #F9FAFB
+## User Preferences
+I prefer iterative development with a focus on clear, concise communication. Please ask before making major architectural changes or introducing new dependencies. I value well-documented code and a consistent coding style. Do not make changes to files in the `server/integrations` directory unless explicitly requested.
+
+## System Architecture
+GamePlan is built with a mobile-first approach using **Expo Router (React Native)** for the frontend, providing a native look and feel with file-based routing. The backend is an **Express.js** server handling API requests and serving static content. **OpenAI's GPT-5-mini** is central to the AI functionalities, including task resizing, smart plan generation, and an interactive AI coach. Data persistence is managed by **PostgreSQL** with **Drizzle ORM**. Authentication relies on **JWT** for session management and **Google OAuth** for user sign-in.
+
+
+Key architectural patterns and features include:
+-   **Adaptive Task Sizing:** AI dynamically adjusts task difficulty and granularity based on a detail level slider and user history.
+-   **Smart Plan Generation:** AI constructs daily plans considering user goals, 7-day completion history, "Life Context" (onboarding questionnaire), and Gmail signals.
+-   **Intuitive UI/UX:** Features a tab-based navigation (`Today`, `Goals`, `Insights`, `Profile`), a consistent indigo/purple color scheme, and accessible components like `TaskCard`, `GoalCard`, and various modals.
+-   **State Management:** Primarily server-side data persistence with PostgreSQL, minimizing client-side state beyond authentication tokens.
+-   **Accountability Engine:** AI extracts commitments from user interactions, tracks due dates, and provides proactive check-ins and push notifications for task completion and commitment reminders.
+-   **ADHD/Executive Dysfunction Support:**
+    -   **Energy Check-in:** Modifies task difficulty based on reported daily energy levels.
+    -   **Quick Capture / Brain Dump:** Allows rapid task entry for later organization.
+    -   **"Just One Thing" Mode:** Focuses user on a single prioritized task when overwhelmed.
+    -   **Focus Timer:** Pomodoro-style timer integrated with tasks.
+    -   **Visual Time Blocks:** Alternative task view to visualize scheduled tasks on a timeline.
+    -   **Voice Interface:** Speech-to-text and text-to-speech for AI coach interaction.
+    -   **Jarvis Autonomous Daily Planning:** AI generates a full, prioritized daily plan based on multiple data inputs.
+-   **Gamification:** Includes an XP system, levels, badges, and real-world rewards to motivate users.
 
 ## Features
 1. **Today Tab** - Daily checklist with progress ring, task categories, completion tracking; AI coaching check-in note shown daily
@@ -160,3 +175,13 @@ For web Google Sign-In to work, the Replit dev domain must be added to **Authori
 ## Workflows
 - `Start Backend` (port 5000) - Express server
 - `Start Frontend` (port 8081) - Expo dev server
+
+## External Dependencies
+-   **AI Services:** OpenAI (gpt-5-mini for various AI functionalities, Whisper for speech-to-text, TTS "alloy" for text-to-speech)
+-   **Database:** PostgreSQL
+-   **ORM:** Drizzle ORM
+-   **Authentication:** JWT (jsonwebtoken), Google OAuth (expo-auth-session), Google Identity Services (GIS)
+-   **Calendar Integrations:** Google Calendar, Outlook Calendar (via Replit OAuth connectors)
+-   **Communication Integrations:** Gmail, Slack (via Replit OAuth connectors)
+-   **UI Icons:** @expo/vector-icons (Ionicons)
+
