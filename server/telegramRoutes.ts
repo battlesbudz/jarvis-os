@@ -2,7 +2,7 @@ import type { Express, Request, Response } from "express";
 import { db } from "./db";
 import { eq, and, desc, sql, gte } from "drizzle-orm";
 import * as schema from "@shared/schema";
-import { sendMessage, isTelegramConfigured, getUpdates, deleteWebhook, downloadTelegramFile, downloadTelegramFileBuffer } from "./integrations/telegram";
+import { sendMessage, isTelegramConfigured, getUpdates, downloadTelegramFile, downloadTelegramFileBuffer } from "./integrations/telegram";
 import { getRecentEmailCommitments, getEmailsSince } from "./integrations/gmail";
 import { getGoogleCalendarEvents } from "./integrations/googleCalendar";
 import { getValidGoogleTokens } from "./userTokenStore";
@@ -380,8 +380,7 @@ export async function startTelegramPolling(): Promise<void> {
   if (!isTelegramConfigured()) return;
   if (pollingActive) return;
   pollingActive = true;
-  await deleteWebhook();
-  console.log('[Telegram] Polling started');
+  console.log('[Telegram] Polling started (dev mode — webhook not modified)');
 
   const poll = async () => {
     if (!pollingActive) return;
