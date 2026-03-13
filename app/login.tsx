@@ -9,8 +9,9 @@ import {
   Image,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import * as AuthSession from "expo-auth-session";
+import * as WebBrowser from "expo-web-browser";
 import { useAuth } from "@/lib/auth-context";
+import { getApiUrl } from "@/lib/query-client";
 import { Ionicons } from "@expo/vector-icons";
 
 declare global {
@@ -30,11 +31,6 @@ declare global {
     };
   }
 }
-
-const GOOGLE_DISCOVERY = {
-  authorizationEndpoint: "https://accounts.google.com/o/oauth2/v2/auth",
-  tokenEndpoint: "https://oauth2.googleapis.com/token",
-};
 
 function loadGisScript(): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -59,7 +55,7 @@ function loadGisScript(): Promise<void> {
 
 export default function LoginScreen() {
   const insets = useSafeAreaInsets();
-  const { loginWithGoogle, sessionExpired, clearSessionExpired } = useAuth();
+  const { loginWithGoogle, loginWithToken, sessionExpired, clearSessionExpired } = useAuth();
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [gisReady, setGisReady] = useState(false);
@@ -105,64 +101,52 @@ export default function LoginScreen() {
   }, [handleGisCredential]);
 
   async function handleNativeGoogleSignIn() {
-    const clientId = process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID;
-    if (!clientId) {
-      setError("Google client ID not configured");
-      setLoading(false);
-      return;
-    }
+    const sessionId = Date.now().toString(36) + Math.random().toString(36).slice(2, 9);
+    const baseUrl = getApiUrl();
+    const startUrl = new URL(`/api/auth/mobile/start?session_id=${sessionId}`, baseUrl).toString();
 
-    const redirectUri = AuthSession.makeRedirectUri({ useProxy: true });
+    let pollInterval: ReturnType<typeof setInterval> | null = null;
+    let succeeded = false;
 
-    const request = new AuthSession.AuthRequest({
-      clientId,
-      redirectUri,
-      scopes: ["openid", "profile", "email"],
-      responseType: AuthSession.ResponseType.Code,
-      usePKCE: true,
-    });
+    const cleanup = () => {
+      if (pollInterval) clearInterval(pollInterval);
+    };
 
-    const result = await request.promptAsync(GOOGLE_DISCOVERY);
+    try {
+      pollInterval = setInterval(async () => {
+        try {
+          const pollUrl = new URL(`/api/auth/mobile/poll?session_id=${sessionId}`, baseUrl).toString();
+          const res = await fetch(pollUrl);
+          if (res.ok) {
+            const data = await res.json();
+            if (data.ready && data.token) {
+              succeeded = true;
+              cleanup();
+              WebBrowser.dismissBrowser();
+              await loginWithToken(data.token);
+              setLoading(false);
+            }
+          }
+        } catch {}
+      }, 2000);
 
-    if (result.type === "success" && result.params?.code) {
-      try {
-        if (!request.codeVerifier) {
-          throw new Error("PKCE code verifier is missing — cannot exchange authorization code");
-        }
+      await WebBrowser.openBrowserAsync(startUrl, {
+        showTitle: false,
+        toolbarColor: "#0F0F0F",
+        secondaryToolbarColor: "#0F0F0F",
+      });
 
-        const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
-          method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          body: new URLSearchParams({
-            code: result.params.code,
-            client_id: clientId,
-            redirect_uri: redirectUri,
-            grant_type: "authorization_code",
-            code_verifier: request.codeVerifier,
-          }).toString(),
-        });
+      cleanup();
 
-        if (!tokenRes.ok) {
-          const errData = await tokenRes.json();
-          throw new Error(errData.error_description || "Token exchange failed");
-        }
-
-        const tokenData = await tokenRes.json();
-
-        if (!tokenData.id_token) {
-          throw new Error("Google did not return an ID token");
-        }
-
-        await loginWithGoogle(tokenData.id_token, null);
-      } catch (e: any) {
-        setError(e.message || "Google sign-in failed");
+      if (!succeeded) {
+        setError("Sign-in was cancelled or timed out. Please try again.");
+        setLoading(false);
       }
-    } else if (result.type === "cancel" || result.type === "dismiss") {
-      setError("Sign-in was cancelled");
-    } else {
-      setError("Sign-in failed. Please try again.");
+    } catch (e: any) {
+      cleanup();
+      setError(e.message || "Could not open sign-in browser");
+      setLoading(false);
     }
-    setLoading(false);
   }
 
   async function handleGooglePress() {
