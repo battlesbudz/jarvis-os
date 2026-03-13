@@ -25,8 +25,9 @@ import { isIntegrationOwner, claimIntegrationOwnership } from "./integrationOwne
 import { oauthRouter, oauthCallbackRouter } from "./oauthRoutes";
 import { getValidGoogleTokens, getValidMicrosoftToken, getUserTokens, getUserToken } from "./userTokenStore";
 import { db } from "./db";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, sql } from "drizzle-orm";
 import * as schema from "@shared/schema";
+import { userMemories } from "@shared/schema";
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
@@ -60,7 +61,7 @@ function getPersonaBlock(coachingMode?: string): string {
   return PERSONA_BLOCKS[coachingMode || 'sharp'] || PERSONA_BLOCKS.sharp;
 }
 
-function buildCoachSystemPrompt(goals: any[], stats: any, history: any[], calendarEvents: any[] = [], lifeContext?: any, gmailItems?: any[], gmailConnected?: boolean, slackMessages?: any[], slackConnected?: boolean, commitmentsList?: any[], coachingMode?: string): string {
+function buildCoachSystemPrompt(goals: any[], stats: any, history: any[], calendarEvents: any[] = [], lifeContext?: any, gmailItems?: any[], gmailConnected?: boolean, slackMessages?: any[], slackConnected?: boolean, commitmentsList?: any[], coachingMode?: string, memories?: { content: string; category: string }[]): string {
   const completedHistory = history.filter((h: any) => h.completed);
   const skippedHistory = history.filter((h: any) => !h.completed);
   const completionRate = history.length > 0
@@ -129,6 +130,11 @@ function buildCoachSystemPrompt(goals: any[], stats: any, history: any[], calend
         : `\n## Recent Slack Messages\nSlack is connected but no messages were found in the last 7 days.`)
     : '';
 
+  const memoriesSection = memories && memories.length > 0
+    ? `\n## What I Know About You (from past conversations)\n` +
+      memories.slice(0, 20).map(m => `- [${m.category}] ${m.content}`).join('\n')
+    : '';
+
   const now = new Date();
   const dayOfWeek = now.toLocaleDateString('en-US', { weekday: 'long' });
   const dateStr = now.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
@@ -142,6 +148,7 @@ Today is ${dayOfWeek}, ${dateStr}.
 ${COACHING_FRAMEWORKS}
 
 ${personaBlock}
+${memoriesSection}
 
 ## User Profile
 - Current streak: ${stats.streak || 0} days
@@ -625,7 +632,19 @@ Return ONLY the JSON object.`;
         } catch {}
       }
 
-      const systemPrompt = buildCoachSystemPrompt(goals || [], stats || {}, history || [], calendarEvents || [], lifeContext || null, gmailItems || [], gmailConnected ?? false, slackMessages || [], slackConnected ?? false, userCommitments, coachingMode);
+      let memories: { content: string; category: string }[] = [];
+      if (userId) {
+        try {
+          const rows = await db.select({ content: userMemories.content, category: userMemories.category })
+            .from(userMemories)
+            .where(eq(userMemories.userId, userId))
+            .orderBy(desc(userMemories.extractedAt))
+            .limit(20);
+          memories = rows;
+        } catch {}
+      }
+
+      const systemPrompt = buildCoachSystemPrompt(goals || [], stats || {}, history || [], calendarEvents || [], lifeContext || null, gmailItems || [], gmailConnected ?? false, slackMessages || [], slackConnected ?? false, userCommitments, coachingMode, memories);
 
       const chatMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
         { role: "system", content: systemPrompt + "\n\nYou can take actions on the user's behalf using the available tools. When a user asks you to add a task, log progress, update their context, etc., use the appropriate tool. Respond naturally — do not mention 'tool calls' or 'functions' to the user. Just confirm what you did conversationally." },
@@ -1327,7 +1346,6 @@ Return ONLY the JSON object.`;
     }
   });
 
-  // --- Commitment CRUD routes ---
   app.get("/api/commitments", async (req: Request, res: Response) => {
     try {
       const userId = req.userId;
@@ -1379,7 +1397,6 @@ Return ONLY the JSON object.`;
     }
   });
 
-  // --- Commitment extraction from user messages ---
   app.post("/api/commitments/extract", async (req: Request, res: Response) => {
     try {
       const userId = req.userId;
@@ -1422,7 +1439,6 @@ Return ONLY JSON: { "hasCommitment": boolean, "commitment": "the thing they comm
     }
   });
 
-  // --- Proactive coach message (Jarvis speaks first) ---
   app.post("/api/coach/proactive", async (req: Request, res: Response) => {
     try {
       const userId = req.userId;
@@ -1477,7 +1493,6 @@ Return ONLY JSON: { "hasCommitment": boolean, "commitment": "the thing they comm
     }
   });
 
-  // --- Weekly review ---
   app.post("/api/coach/weekly-review", async (req: Request, res: Response) => {
     try {
       const userId = req.userId;
@@ -1549,6 +1564,100 @@ Return ONLY the JSON object.`;
     } catch (error) {
       console.error("Error generating weekly review:", error);
       res.status(500).json({ error: "Failed to generate weekly review" });
+    }
+  });
+
+  app.get("/api/memories", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const rows = await db.select()
+        .from(userMemories)
+        .where(eq(userMemories.userId, userId))
+        .orderBy(desc(userMemories.extractedAt));
+      res.json({ memories: rows });
+    } catch (error) {
+      console.error("Error fetching memories:", error);
+      res.status(500).json({ error: "Failed to fetch memories" });
+    }
+  });
+
+  app.delete("/api/memories/:id", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const { id } = req.params;
+      await db.delete(userMemories)
+        .where(sql`${userMemories.id} = ${id} AND ${userMemories.userId} = ${userId}`);
+      res.json({ ok: true });
+    } catch (error) {
+      console.error("Error deleting memory:", error);
+      res.status(500).json({ error: "Failed to delete memory" });
+    }
+  });
+
+  app.post("/api/memories/extract", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+
+      const { messages } = req.body;
+      if (!messages || !Array.isArray(messages) || messages.length === 0) {
+        return res.json({ added: 0 });
+      }
+
+      const existingRows = await db.select({ content: userMemories.content })
+        .from(userMemories)
+        .where(eq(userMemories.userId, userId))
+        .orderBy(desc(userMemories.extractedAt));
+      const existingMemories = existingRows.map(r => r.content);
+
+      const conversationText = messages
+        .map((m: any) => `${m.role}: ${m.content}`)
+        .join('\n');
+
+      const existingList = existingMemories.length > 0
+        ? `\nExisting memories (DO NOT duplicate these):\n${existingMemories.map(m => `- ${m}`).join('\n')}`
+        : '';
+
+      const prompt = `You are a memory extractor. Given this conversation snippet, extract 0-3 key facts about the user worth remembering long-term. Only extract facts that would be useful in future coaching sessions. Skip generic statements, greetings, and things already known.
+${existingList}
+
+Conversation:
+${conversationText}
+
+Return JSON: { "memories": [{"content": "string describing the fact", "category": "fact"|"pattern"|"preference"|"goal"|"achievement"}] }
+Return an empty array if nothing notable was said. Do NOT repeat or rephrase existing memories.`;
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-5-mini",
+        messages: [{ role: "user", content: prompt }],
+        response_format: { type: "json_object" },
+        max_completion_tokens: 400,
+      });
+
+      const content = response.choices[0]?.message?.content || '{"memories":[]}';
+      let added = 0;
+      try {
+        const parsed = JSON.parse(content);
+        const newMemories = Array.isArray(parsed.memories) ? parsed.memories.slice(0, 3) : [];
+        for (const mem of newMemories) {
+          if (!mem.content || typeof mem.content !== 'string' || mem.content.trim().length === 0) continue;
+          const validCategories = ['fact', 'pattern', 'preference', 'goal', 'achievement'];
+          const category = validCategories.includes(mem.category) ? mem.category : 'fact';
+          await db.insert(userMemories).values({
+            userId,
+            content: mem.content.trim(),
+            category,
+          });
+          added++;
+        }
+      } catch {}
+
+      res.json({ added });
+    } catch (error) {
+      console.error("Error extracting memories:", error);
+      res.json({ added: 0 });
     }
   });
 

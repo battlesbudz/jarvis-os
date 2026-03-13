@@ -119,3 +119,11 @@ export const commitments = pgTable("commitments", {
   resolvedAt: timestamp("resolved_at"),
   sourceMessage: text("source_message"),
 });
+
+export const userMemories = pgTable("user_memories", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  content: text("content").notNull(),
+  category: varchar("category").notNull().default("fact"),
+  extractedAt: timestamp("extracted_at").defaultNow().notNull(),
+});

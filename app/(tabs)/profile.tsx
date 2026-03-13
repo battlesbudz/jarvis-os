@@ -37,10 +37,17 @@ import {
 } from '@/lib/storage';
 import { areNotificationsEnabled, setNotificationsEnabled } from '@/lib/notifications';
 import { getApiUrl, apiRequest } from '@/lib/query-client';
-import { useAuth } from '@/lib/auth-context';
+import { useAuth, authFetch } from '@/lib/auth-context';
 import * as WebBrowser from 'expo-web-browser';
 import RewardClaimModal from '@/components/RewardClaimModal';
 import LifeContextSheet from '@/components/LifeContextSheet';
+
+interface Memory {
+  id: string;
+  content: string;
+  category: string;
+  extractedAt: string;
+}
 
 interface OAuthProviderStatus {
   connected: boolean;
@@ -106,6 +113,8 @@ export default function ProfileScreen() {
   const [sheetVisible, setSheetVisible] = useState(false);
   const [notificationsEnabled, setNotificationsEnabledState] = useState(true);
   const [userName, setUserName] = useState('');
+  const [memories, setMemories] = useState<Memory[]>([]);
+  const [memoriesLoading, setMemoriesLoading] = useState(true);
 
   const loadOAuthStatus = useCallback(async () => {
     try {
@@ -123,6 +132,30 @@ export default function ProfileScreen() {
     }
   }, []);
 
+  const loadMemories = useCallback(async () => {
+    setMemoriesLoading(true);
+    try {
+      const url = new URL('/api/memories', getApiUrl());
+      const res = await authFetch(url.toString());
+      const data = await res.json();
+      if (data.memories && Array.isArray(data.memories)) {
+        setMemories(data.memories);
+      }
+    } catch {}
+    setMemoriesLoading(false);
+  }, []);
+
+  const handleDeleteMemory = useCallback(async (id: string) => {
+    setMemories(prev => prev.filter(m => m.id !== id));
+    try {
+      const url = new URL(`/api/memories/${id}`, getApiUrl());
+      await authFetch(url.toString(), { method: 'DELETE' });
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch {
+      loadMemories();
+    }
+  }, [loadMemories]);
+
   const loadAll = useCallback(async () => {
     const [s, lc, notifications, name] = await Promise.all([
       getStats(),
@@ -134,8 +167,8 @@ export default function ProfileScreen() {
     setLifeContext(lc);
     setNotificationsEnabledState(notifications);
     setUserName(name);
-    await loadOAuthStatus();
-  }, [loadOAuthStatus]);
+    await Promise.all([loadOAuthStatus(), loadMemories()]);
+  }, [loadOAuthStatus, loadMemories]);
 
   const handleConnect = useCallback(async (provider: 'google' | 'microsoft' | 'slack') => {
     setConnectingId(provider);
@@ -470,6 +503,55 @@ export default function ProfileScreen() {
                   <Text style={styles.aboutUpdateBtn}>Update</Text>
                 </Pressable>
               </View>
+            </View>
+          )}
+        </Animated.View>
+
+        {/* Coach Memory */}
+        <Animated.View entering={FadeInDown.duration(400).delay(420)}>
+          <Text style={[styles.sectionTitle, { marginTop: 28 }]}>Coach Memory</Text>
+          <Text style={styles.sectionSubtitle}>
+            Facts your coach has learned from conversations
+          </Text>
+          {memoriesLoading ? (
+            <View style={styles.memoryEmptyCard}>
+              <ActivityIndicator size="small" color={Colors.textTertiary} />
+            </View>
+          ) : memories.length === 0 ? (
+            <View style={styles.memoryEmptyCard}>
+              <View style={styles.memoryEmptyIcon}>
+                <Ionicons name="bulb-outline" size={22} color={Colors.textTertiary} />
+              </View>
+              <Text style={styles.memoryEmptyText}>
+                No memories yet — the coach learns from your conversations
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.memoryList}>
+              {memories.map((memory, idx) => (
+                <View
+                  key={memory.id}
+                  style={[styles.memoryRow, idx < memories.length - 1 && styles.memoryRowBorder]}
+                >
+                  <View style={styles.memoryContent}>
+                    <View style={styles.memoryCategoryRow}>
+                      <View style={styles.memoryCategoryPill}>
+                        <Text style={styles.memoryCategoryText}>
+                          {memory.category.toUpperCase()}
+                        </Text>
+                      </View>
+                    </View>
+                    <Text style={styles.memoryText}>{memory.content}</Text>
+                  </View>
+                  <Pressable
+                    style={styles.memoryDeleteBtn}
+                    onPress={() => handleDeleteMemory(memory.id)}
+                    hitSlop={8}
+                  >
+                    <Ionicons name="trash-outline" size={16} color={Colors.textTertiary} />
+                  </Pressable>
+                </View>
+              ))}
             </View>
           )}
         </Animated.View>
@@ -1113,6 +1195,77 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontFamily: 'Inter_600SemiBold',
     color: Colors.primary,
+  },
+  memoryEmptyCard: {
+    backgroundColor: Colors.white,
+    borderRadius: 16,
+    padding: 24,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+  },
+  memoryEmptyIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 12,
+    backgroundColor: Colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  memoryEmptyText: {
+    fontSize: 13,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textTertiary,
+    textAlign: 'center',
+  },
+  memoryList: {
+    backgroundColor: Colors.white,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    overflow: 'hidden',
+  },
+  memoryRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  memoryRowBorder: {
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.borderLight,
+  },
+  memoryContent: {
+    flex: 1,
+  },
+  memoryCategoryRow: {
+    flexDirection: 'row',
+    marginBottom: 4,
+  },
+  memoryCategoryPill: {
+    backgroundColor: Colors.primary + '15',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  memoryCategoryText: {
+    fontSize: 9,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.primary,
+    letterSpacing: 0.5,
+  },
+  memoryText: {
+    fontSize: 14,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.text,
+    lineHeight: 20,
+  },
+  memoryDeleteBtn: {
+    padding: 4,
+    marginLeft: 8,
+    marginTop: 2,
   },
   versionRow: {
     alignItems: 'center',

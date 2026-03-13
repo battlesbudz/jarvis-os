@@ -1026,7 +1026,6 @@ export default function InsightsScreen() {
         });
       } catch {}
 
-      // Fire-and-forget: extract commitments from user message
       try {
         const extractUrl = new URL('/api/commitments/extract', getApiUrl());
         authFetch(extractUrl.toString(), {
@@ -1040,6 +1039,15 @@ export default function InsightsScreen() {
           }
         }).catch(() => {});
       } catch {}
+
+
+      const recentMessages = [userMsg, ...messagesRef.current].slice(0, 6);
+      const extractMessages = recentMessages.map(m => ({ role: m.role, content: m.content })).reverse();
+      authFetch(new URL('/api/memories/extract', getApiUrl()).toString(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages: extractMessages }),
+      }).catch(() => {});
 
     } catch (error) {
       setShowTyping(false);
