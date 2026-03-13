@@ -2,8 +2,8 @@ import express from "express";
 import type { Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { ensureTablesExist } from "./db";
-import { registerTelegramWebhook, startProactiveScheduler } from "./telegramRoutes";
-import { setWebhook, isTelegramConfigured, logTelegramStatus } from "./integrations/telegram";
+import { registerTelegramWebhook, startProactiveScheduler, startTelegramPolling } from "./telegramRoutes";
+import { isTelegramConfigured, logTelegramStatus } from "./integrations/telegram";
 import { startScheduler } from "./scheduler";
 import * as fs from "fs";
 import * as path from "path";
@@ -259,12 +259,9 @@ function setupErrorHandler(app: express.Application) {
       log(`express server serving on port ${port}`);
 
       if (isTelegramConfigured()) {
-        const domain = process.env.REPLIT_DOMAINS?.split(',')[0];
-        if (domain) {
-          setWebhook(`https://${domain}/api/telegram/webhook`).catch(err => {
-            console.error("Failed to set Telegram webhook:", err);
-          });
-        }
+        startTelegramPolling().catch(err => {
+          console.error("Failed to start Telegram polling:", err);
+        });
         startProactiveScheduler().catch(err => {
           console.error("Failed to start proactive scheduler:", err);
         });
