@@ -59,6 +59,18 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
       if (prefs.timezone) userTimezone = prefs.timezone;
     }
 
+    const nowForDateKey = new Date();
+    const localForDateKey = new Date(nowForDateKey.toLocaleString('en-US', { timeZone: userTimezone }));
+    const dateKey = `${localForDateKey.getFullYear()}-${String(localForDateKey.getMonth() + 1).padStart(2, '0')}-${String(localForDateKey.getDate()).padStart(2, '0')}`;
+
+    let todayPlan: any = null;
+    try {
+      const planRows = await db.select().from(schema.plans)
+        .where(and(eq(schema.plans.userId, userId), eq(schema.plans.date, dateKey))).limit(1);
+      todayPlan = planRows[0]?.data as any || null;
+    } catch {}
+
+
     if (googleTokens.status === 'fulfilled' && googleTokens.value.length > 0) {
       gmailConnected = true;
       const token = googleTokens.value[0];
@@ -99,7 +111,7 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
       : 'No goals set';
 
     const commitmentsText = userCommitments.length > 0
-      ? userCommitments.map((c: any) => `- "${c.content}"${c.dueDate ? ` (due ${c.dueDate})` : ''}`).join('\n')
+      ? userCommitments.map((c: any) => `- [id:${c.id}] "${c.content}"${c.dueDate ? ` (due ${c.dueDate})` : ''}`).join('\n')
       : '';
 
     const calendarText = calendarEvents.length > 0
@@ -164,6 +176,14 @@ ${calendarText ? `\n## Today's Calendar\n${calendarText}` : ''}
 ${gmailSection}
 ${userLifeContext?.priorityGoal ? `\n## Context\n- Priority: ${userLifeContext.priorityGoal}` : ''}
 
+## Task Management
+You can manage the user's tasks and commitments using the manage_tasks tool:
+- Add tasks to today's plan (add_plan_task)
+- Add commitments with optional due dates (add_commitment)
+- Mark commitments as done using their [id:...] (complete_commitment)
+- List today's tasks and open commitments (list_tasks)
+When the user asks to add, complete, or list tasks/commitments, use the manage_tasks tool.
+
 Be direct, specific, actionable. No fluff. You have full access to the user's email and calendar data above — use it. Respond in the same language the user writes in.`;
 
     let reply = "Sorry, I couldn't generate a response right now.";
@@ -206,6 +226,41 @@ Be direct, specific, actionable. No fluff. You have full access to the user's em
         },
       };
 
+      const manageTasksTool = {
+        type: "function" as const,
+        function: {
+          name: "manage_tasks",
+          description: "Manage the user's daily plan tasks and commitments. Use this to add tasks to today's plan, add commitments, complete/resolve commitments, or list current tasks and commitments.",
+          parameters: {
+            type: "object",
+            properties: {
+              action: {
+                type: "string",
+                enum: ["add_plan_task", "add_commitment", "complete_commitment", "list_tasks"],
+                description: "The action to perform",
+              },
+              title: {
+                type: "string",
+                description: "Title of the task (required for add_plan_task)",
+              },
+              content: {
+                type: "string",
+                description: "Content of the commitment (required for add_commitment)",
+              },
+              due_date: {
+                type: "string",
+                description: "Due date in YYYY-MM-DD format (optional, for add_commitment)",
+              },
+              commitment_id: {
+                type: "string",
+                description: "The commitment ID from [id:...] (required for complete_commitment)",
+              },
+            },
+            required: ["action"],
+          },
+        },
+      };
+
       const baseMessages: any[] = [
         { role: "system", content: systemPrompt },
         ...recentMessages.map((m: any) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
@@ -215,7 +270,7 @@ Be direct, specific, actionable. No fluff. You have full access to the user's em
       const response = await openai.chat.completions.create({
         model: "gpt-5-mini",
         messages: baseMessages,
-        tools: [searchTool, gmailActionTool],
+        tools: [searchTool, gmailActionTool, manageTasksTool],
         tool_choice: "auto",
         max_completion_tokens: 2000,
       });
@@ -289,6 +344,107 @@ Be direct, specific, actionable. No fluff. You have full access to the user's em
               ...baseMessages,
               response.choices[0].message,
               { role: "tool" as const, tool_call_id: toolCall.id, content: actionResult },
+            ],
+            max_completion_tokens: 2000,
+          });
+          console.log(`[Telegram] Follow-up finish_reason: ${followUp.choices?.[0]?.finish_reason}`);
+          reply = followUp.choices[0]?.message?.content || reply;
+        } else if (toolCall?.function?.name === 'manage_tasks') {
+          let taskResult = 'Task management action failed.';
+          try {
+            const args = JSON.parse(toolCall.function.arguments);
+            console.log(`[Telegram] manage_tasks action: ${args.action}`);
+
+            if (args.action === 'add_plan_task') {
+              if (!args.title) {
+                taskResult = 'Error: title is required for add_plan_task';
+              } else {
+                const tasks = (todayPlan?.tasks as any[]) || [];
+                const newTask = {
+                  id: crypto.randomUUID(),
+                  title: args.title,
+                  completed: false,
+                };
+                tasks.push(newTask);
+                const planData = todayPlan ? { ...todayPlan, tasks } : { tasks };
+                await db.insert(schema.plans)
+                  .values({ userId, date: dateKey, data: planData })
+                  .onConflictDoUpdate({
+                    target: [schema.plans.userId, schema.plans.date],
+                    set: { data: planData, updatedAt: new Date() },
+                  });
+                todayPlan = planData;
+                taskResult = `Added "${args.title}" to today's plan. Today's plan now has ${tasks.length} task(s).`;
+                console.log(`[Telegram] Added plan task: "${args.title}"`);
+              }
+            } else if (args.action === 'add_commitment') {
+              if (!args.content) {
+                taskResult = 'Error: content is required for add_commitment';
+              } else {
+                await db.insert(schema.commitments).values({
+                  userId,
+                  content: args.content,
+                  dueDate: args.due_date || null,
+                  sourceMessage: `Added via Telegram`,
+                });
+                taskResult = `Added commitment: "${args.content}"${args.due_date ? ` (due ${args.due_date})` : ''}`;
+                console.log(`[Telegram] Added commitment: "${args.content}"`);
+              }
+            } else if (args.action === 'complete_commitment') {
+              if (!args.commitment_id) {
+                taskResult = 'Error: commitment_id is required for complete_commitment';
+              } else {
+                const updated = await db
+                  .update(schema.commitments)
+                  .set({ status: 'done', resolvedAt: new Date() })
+                  .where(and(eq(schema.commitments.id, args.commitment_id), eq(schema.commitments.userId, userId), eq(schema.commitments.status, 'pending')))
+                  .returning({ id: schema.commitments.id });
+                if (updated.length > 0) {
+                  taskResult = `Marked commitment as done (id: ${args.commitment_id}).`;
+                  console.log(`[Telegram] Completed commitment: ${args.commitment_id}`);
+                } else {
+                  taskResult = `Error: No pending commitment found with id "${args.commitment_id}". Check the commitment ID and try again.`;
+                  console.log(`[Telegram] Commitment not found: ${args.commitment_id}`);
+                }
+              }
+            } else if (args.action === 'list_tasks') {
+              const planTasks = (todayPlan?.tasks as any[]) || [];
+              const pendingCommitments = await db.select().from(schema.commitments)
+                .where(and(eq(schema.commitments.userId, userId), eq(schema.commitments.status, 'pending')))
+                .orderBy(desc(schema.commitments.extractedAt)).limit(10);
+
+              let listing = '';
+              if (planTasks.length > 0) {
+                listing += "Today's Plan:\n" + planTasks.map((t: any) =>
+                  `- ${t.completed ? '✅' : '⬜'} ${t.title}`
+                ).join('\n');
+              } else {
+                listing += "Today's Plan: No tasks yet.";
+              }
+              listing += '\n\n';
+              if (pendingCommitments.length > 0) {
+                listing += "Open Commitments:\n" + pendingCommitments.map((c: any) =>
+                  `- [id:${c.id}] "${c.content}"${c.dueDate ? ` (due ${c.dueDate})` : ''}`
+                ).join('\n');
+              } else {
+                listing += "Open Commitments: None.";
+              }
+              taskResult = listing;
+              console.log(`[Telegram] Listed tasks: ${planTasks.length} plan tasks, ${pendingCommitments.length} commitments`);
+            } else {
+              taskResult = `Unknown action: ${args.action}`;
+            }
+          } catch (taskErr: any) {
+            console.error('[Telegram] manage_tasks failed:', taskErr.message);
+            taskResult = `Task management failed: ${taskErr.message}`;
+          }
+
+          const followUp = await openai.chat.completions.create({
+            model: "gpt-5-mini",
+            messages: [
+              ...baseMessages,
+              response.choices[0].message,
+              { role: "tool" as const, tool_call_id: toolCall.id, content: taskResult },
             ],
             max_completion_tokens: 2000,
           });
