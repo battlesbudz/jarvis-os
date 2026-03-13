@@ -54,14 +54,28 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
       gmailConnected = true;
       const token = googleTokens.value[0];
       const today = new Date().toISOString().split('T')[0];
+      console.log(`[Telegram] Fetching Gmail+Calendar for user ${userId}, token length: ${token?.length}`);
 
       const [emailResult, calResult] = await Promise.allSettled([
         getRecentEmailCommitments(7, token),
         getGoogleCalendarEvents(today, undefined, undefined, token),
       ]);
 
-      if (emailResult.status === 'fulfilled') gmailItems = emailResult.value;
-      if (calResult.status === 'fulfilled') calendarEvents = calResult.value;
+      if (emailResult.status === 'fulfilled') {
+        gmailItems = emailResult.value;
+        console.log(`[Telegram] Gmail: ${gmailItems.length} emails`);
+      } else {
+        console.error(`[Telegram] Gmail fetch failed:`, emailResult.reason);
+      }
+      if (calResult.status === 'fulfilled') {
+        calendarEvents = calResult.value;
+        console.log(`[Telegram] Calendar: ${calendarEvents.length} events`);
+      } else {
+        console.error(`[Telegram] Calendar fetch failed:`, calResult.reason);
+      }
+    } else {
+      console.log(`[Telegram] No Google tokens for user ${userId} — status: ${googleTokens.status}`);
+      if (googleTokens.status === 'rejected') console.error(`[Telegram] Token fetch error:`, googleTokens.reason);
     }
 
     const recentMessages = chatMessages.slice(0, 10).reverse();
@@ -83,11 +97,13 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
       ? calendarEvents.slice(0, 8).map((e: any) => `- ${e.time ? e.time + ': ' : ''}${e.title}`).join('\n')
       : '';
 
-    const gmailText = gmailItems.length > 0
-      ? gmailItems.slice(0, 15).map((i: any) => `- From: ${i.from || 'unknown'} | "${i.subject}" — ${i.snippet}`).join('\n')
+    const gmailSection = gmailItems.length > 0
+      ? `## Recent Emails (last 7 days from Gmail)\n` +
+        gmailItems.slice(0, 15).map((i: any) => `- From: ${i.from || 'unknown'} | "${i.subject}" — ${i.snippet}`).join('\n') +
+        `\n(Refer to these directly when asked. Do not say you cannot access email — you have the data above.)`
       : gmailConnected
-        ? 'Gmail connected but no recent emails found.'
-        : 'Gmail not connected.';
+        ? `## Recent Emails\nGmail is connected but no emails found in the last 7 days.`
+        : `## Recent Emails\nGmail not connected — if asked about emails, let the user know.`;
 
     const systemPrompt = `You are GamePlan Coach — a sharp, supportive personal productivity coach. You're responding via Telegram, so keep messages SHORT (2-4 sentences max). Use plain text, no markdown headers.
 
@@ -103,11 +119,10 @@ ${goalsText}
 ${commitmentsText ? `\n## Open Commitments\n${commitmentsText}` : ''}
 ${calendarText ? `\n## Today's Calendar\n${calendarText}` : ''}
 
-## Recent Emails
-${gmailText}
+${gmailSection}
 ${userLifeContext?.priorityGoal ? `\n## Context\n- Priority: ${userLifeContext.priorityGoal}` : ''}
 
-Be direct, specific, actionable. No fluff. Respond in the same language the user writes in.`;
+Be direct, specific, actionable. No fluff. You have full access to the user's email and calendar data above — use it. Respond in the same language the user writes in.`;
 
     const response = await openai.chat.completions.create({
       model: "gpt-5-mini",
