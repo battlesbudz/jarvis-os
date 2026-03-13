@@ -83,33 +83,40 @@ export async function getRecentEmailCommitments(
     const listRes = await gmail.users.messages.list({
       userId: 'me',
       q: `after:${afterDateStr}`,
-      maxResults: 50,
+      maxResults: 100,
     });
 
-    const messages = listRes.data.messages || [];
+    const messages = (listRes.data.messages || []).slice(0, 100);
     const results: EmailCommitment[] = [];
 
-    for (const msg of messages.slice(0, 40)) {
-      if (!msg.id) continue;
-      try {
-        const detail = await gmail.users.messages.get({
-          userId: 'me',
-          id: msg.id,
-          format: 'metadata',
-          metadataHeaders: ['Subject', 'Date', 'From'],
-        });
-        const headers = detail.data.payload?.headers || [];
-        const subject = headers.find((h: any) => h.name === 'Subject')?.value || '(no subject)';
-        const date = headers.find((h: any) => h.name === 'Date')?.value || '';
-        const from = headers.find((h: any) => h.name === 'From')?.value || '';
-        const snippet = (detail.data.snippet || '').slice(0, 150);
-
-        const labelIds: string[] = (detail.data.labelIds as string[]) || [];
-        const labels = labelIds.map((id) => LABEL_NAMES[id] || id);
-
-        results.push({ subject, snippet, date, from, labels });
-      } catch {
-        continue;
+    const BATCH_SIZE = 10;
+    for (let i = 0; i < messages.length; i += BATCH_SIZE) {
+      const batch = messages.slice(i, i + BATCH_SIZE);
+      const batchResults = await Promise.all(
+        batch.map(async (msg) => {
+          if (!msg.id) return null;
+          try {
+            const detail = await gmail.users.messages.get({
+              userId: 'me',
+              id: msg.id,
+              format: 'metadata',
+              metadataHeaders: ['Subject', 'Date', 'From'],
+            });
+            const headers = detail.data.payload?.headers || [];
+            const subject = headers.find((h: any) => h.name === 'Subject')?.value || '(no subject)';
+            const date = headers.find((h: any) => h.name === 'Date')?.value || '';
+            const from = headers.find((h: any) => h.name === 'From')?.value || '';
+            const snippet = (detail.data.snippet || '').slice(0, 150);
+            const labelIds: string[] = (detail.data.labelIds as string[]) || [];
+            const labels = labelIds.map((id) => LABEL_NAMES[id] || id);
+            return { subject, snippet, date, from, labels } as EmailCommitment;
+          } catch {
+            return null;
+          }
+        })
+      );
+      for (const r of batchResults) {
+        if (r) results.push(r);
       }
     }
 
