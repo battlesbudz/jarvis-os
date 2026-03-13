@@ -63,6 +63,7 @@ import {
   restorePlanSnapshot,
   getBlockedTasks,
   saveBlockerAnswer,
+  getCoachingMode,
   type DayPlan,
   type Goal,
   type Task,
@@ -228,12 +229,12 @@ export default function TodayScreen() {
         setCoachNote(cached.note);
         return;
       }
-      const [stats, history, lc] = await Promise.all([getStats(), getCompletionHistory(), getLifeContext()]);
+      const [stats, history, lc, savedMode] = await Promise.all([getStats(), getCompletionHistory(), getLifeContext(), getCoachingMode()]);
       const url = new URL('/api/coach/checkin', getApiUrl());
       const res = await authFetch(url.toString(), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ goals: loadedGoals, stats, history, lifeContext: lc }),
+        body: JSON.stringify({ goals: loadedGoals, stats, history, lifeContext: lc, coachingMode: savedMode }),
       });
       const data = await res.json();
       if (data.note) {

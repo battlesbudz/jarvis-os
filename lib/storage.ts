@@ -334,6 +334,7 @@ interface UserPreferencesData {
   dailyCoachNote?: { note: string; date: string } | null;
   platforms?: ConnectedPlatform[];
   migrationVersion?: number;
+  coachingMode?: string;
   [key: string]: unknown;
 }
 
@@ -623,6 +624,27 @@ export async function getEnergyCheckin(date?: string): Promise<EnergyCheckin | n
 export async function saveEnergyCheckin(checkin: EnergyCheckin): Promise<void> {
   try {
     await apiPut(`/api/data/energy-checkins/${checkin.date}`, checkin);
+  } catch {}
+}
+
+export type CoachingMode = 'sharp' | 'drill' | 'mentor' | 'strategist' | 'flow';
+
+export async function getCoachingMode(): Promise<CoachingMode> {
+  try {
+    const result = await apiGet('/api/data/user-preferences');
+    const prefs = (result.data || {}) as UserPreferencesData;
+    return (prefs.coachingMode as CoachingMode) || 'sharp';
+  } catch {
+    return 'sharp';
+  }
+}
+
+export async function saveCoachingMode(mode: CoachingMode): Promise<void> {
+  try {
+    const result = await apiGet('/api/data/user-preferences');
+    const prefs = (result.data || {}) as UserPreferencesData;
+    prefs.coachingMode = mode;
+    await apiPut('/api/data/user-preferences', prefs);
   } catch {}
 }
 
