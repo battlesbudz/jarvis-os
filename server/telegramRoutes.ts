@@ -114,19 +114,21 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
 
     const localNow = new Date(now.toLocaleString('en-US', { timeZone: userTimezone }));
     const localHour = localNow.getHours();
+    const localMinute = localNow.getMinutes();
     const localDay = localNow.getDay();
-    const scheduleSlots = [
-      { hour: 8, label: '8:00 AM morning check-in' },
-      { hour: 10, label: '10:00 AM commitment check (only if items due/overdue)' },
-      { hour: 20, label: '8:00 PM evening recap' },
+    const scheduleSlots: { hour: number; minute: number; label: string }[] = [
+      { hour: 8, minute: 0, label: '8:00 AM morning check-in' },
+      { hour: 10, minute: 0, label: '10:00 AM commitment check (only if items due/overdue)' },
+      { hour: 20, minute: 0, label: '8:00 PM evening recap' },
     ];
-    const nextSlot = scheduleSlots.find(s => s.hour > localHour);
-    let nextScheduledText = nextSlot
+    if (localDay === 0) {
+      scheduleSlots.push({ hour: 19, minute: 0, label: '7:00 PM weekly review (Sunday)' });
+      scheduleSlots.sort((a, b) => a.hour - b.hour || a.minute - b.minute);
+    }
+    const nextSlot = scheduleSlots.find(s => s.hour > localHour || (s.hour === localHour && s.minute > localMinute));
+    const nextScheduledText = nextSlot
       ? `Next scheduled notification: ${nextSlot.label} (${userTimezone})`
       : 'All scheduled notifications for today have already passed. Next: 8:00 AM tomorrow morning check-in';
-    if (localDay === 0 && localHour < 19) {
-      nextScheduledText += '\nAlso today: 7:00 PM weekly review (Sunday)';
-    }
 
     const systemPrompt = `You are GamePlan Coach Jarvis — a sharp, supportive personal productivity coach. You're responding via Telegram, so keep messages SHORT (2-4 sentences max). Use plain text, no markdown headers.
 
