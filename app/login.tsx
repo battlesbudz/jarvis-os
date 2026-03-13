@@ -126,6 +126,10 @@ export default function LoginScreen() {
 
     if (result.type === "success" && result.params?.code) {
       try {
+        if (!request.codeVerifier) {
+          throw new Error("PKCE code verifier is missing — cannot exchange authorization code");
+        }
+
         const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
           method: "POST",
           headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -134,7 +138,7 @@ export default function LoginScreen() {
             client_id: clientId,
             redirect_uri: redirectUri,
             grant_type: "authorization_code",
-            code_verifier: request.codeVerifier || "",
+            code_verifier: request.codeVerifier,
           }).toString(),
         });
 
@@ -145,13 +149,11 @@ export default function LoginScreen() {
 
         const tokenData = await tokenRes.json();
 
-        if (tokenData.id_token) {
-          await loginWithGoogle(tokenData.id_token, null);
-        } else if (tokenData.access_token) {
-          await loginWithGoogle(null, tokenData.access_token);
-        } else {
-          throw new Error("No token received from Google");
+        if (!tokenData.id_token) {
+          throw new Error("Google did not return an ID token");
         }
+
+        await loginWithGoogle(tokenData.id_token, null);
       } catch (e: any) {
         setError(e.message || "Google sign-in failed");
       }
