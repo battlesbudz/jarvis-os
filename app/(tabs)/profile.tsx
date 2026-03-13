@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   StyleSheet,
   View,
@@ -61,6 +61,12 @@ interface OAuthStatus {
   slack: OAuthProviderStatus;
 }
 
+interface TelegramStatus {
+  connected: boolean;
+  username: string | null;
+  configured: boolean;
+}
+
 interface PlatformInfo {
   id: 'google' | 'microsoft' | 'slack';
   name: string;
@@ -105,6 +111,12 @@ export default function ProfileScreen() {
     microsoft: { connected: false },
     slack: { connected: false },
   });
+  const [telegramStatus, setTelegramStatus] = useState<TelegramStatus>({
+    connected: false, username: null, configured: false,
+  });
+  const [telegramLinkCode, setTelegramLinkCode] = useState<string | null>(null);
+  const [telegramPolling, setTelegramPolling] = useState(false);
+  const telegramPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [loadingStatus, setLoadingStatus] = useState(true);
   const [connectingId, setConnectingId] = useState<string | null>(null);
   const [selectedReward, setSelectedReward] = useState<Reward | null>(null);
@@ -115,6 +127,20 @@ export default function ProfileScreen() {
   const [userName, setUserName] = useState('');
   const [memories, setMemories] = useState<Memory[]>([]);
   const [memoriesLoading, setMemoriesLoading] = useState(true);
+
+  const loadTelegramStatus = useCallback(async () => {
+    try {
+      const res = await apiRequest('GET', '/api/telegram/status');
+      const data = await res.json();
+      setTelegramStatus({
+        connected: data.connected ?? false,
+        username: data.username ?? null,
+        configured: data.configured ?? false,
+      });
+    } catch {
+      setTelegramStatus({ connected: false, username: null, configured: false });
+    }
+  }, []);
 
   const loadOAuthStatus = useCallback(async () => {
     try {
@@ -167,8 +193,84 @@ export default function ProfileScreen() {
     setLifeContext(lc);
     setNotificationsEnabledState(notifications);
     setUserName(name);
-    await Promise.all([loadOAuthStatus(), loadMemories()]);
-  }, [loadOAuthStatus, loadMemories]);
+    await Promise.all([loadOAuthStatus(), loadMemories(), loadTelegramStatus()]);
+  }, [loadOAuthStatus, loadMemories, loadTelegramStatus]);
+
+  const stopTelegramPolling = useCallback(() => {
+    if (telegramPollRef.current) {
+      clearInterval(telegramPollRef.current);
+      telegramPollRef.current = null;
+    }
+    setTelegramPolling(false);
+    setTelegramLinkCode(null);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (telegramPollRef.current) {
+        clearInterval(telegramPollRef.current);
+        telegramPollRef.current = null;
+      }
+    };
+  }, []);
+
+  const handleConnectTelegram = useCallback(async () => {
+    setConnectingId('telegram');
+    try {
+      const res = await apiRequest('POST', '/api/telegram/link-code');
+      const data = await res.json();
+      if (data.error) {
+        alert(data.error);
+        setConnectingId(null);
+        return;
+      }
+      if (telegramPollRef.current) {
+        clearInterval(telegramPollRef.current);
+        telegramPollRef.current = null;
+      }
+
+      setTelegramLinkCode(data.code);
+      setTelegramPolling(true);
+      setConnectingId(null);
+
+      let attempts = 0;
+      const maxAttempts = 40;
+      const pollInterval = setInterval(async () => {
+        attempts++;
+        if (attempts >= maxAttempts) {
+          stopTelegramPolling();
+          return;
+        }
+        try {
+          const statusRes = await apiRequest('GET', '/api/telegram/status');
+          const statusData = await statusRes.json();
+          if (statusData.connected) {
+            stopTelegramPolling();
+            setTelegramStatus(statusData);
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          }
+        } catch {}
+      }, 3000);
+      telegramPollRef.current = pollInterval;
+    } catch (e: any) {
+      console.error('Telegram connect error:', e);
+      alert('Could not generate link code. Please try again.');
+      setConnectingId(null);
+    }
+  }, [stopTelegramPolling]);
+
+  const handleDisconnectTelegram = useCallback(async () => {
+    setConnectingId('telegram');
+    try {
+      await apiRequest('DELETE', '/api/telegram/disconnect');
+      setTelegramStatus({ connected: false, username: null, configured: true });
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (e) {
+      console.error('Telegram disconnect error:', e);
+    } finally {
+      setConnectingId(null);
+    }
+  }, []);
 
   const handleConnect = useCallback(async (provider: 'google' | 'microsoft' | 'slack') => {
     setConnectingId(provider);
@@ -687,6 +789,66 @@ export default function ProfileScreen() {
               );
             })}
           </View>
+
+          <View style={[styles.platformsList, { marginTop: 12 }]}>
+            <View style={styles.platformRow}>
+              <View style={[styles.platformIcon, { backgroundColor: '#229ED918' }]}>
+                <Ionicons name="paper-plane-outline" size={20} color="#229ED9" />
+              </View>
+              <View style={styles.platformInfo}>
+                <Text style={styles.platformName}>Telegram</Text>
+                <Text style={styles.platformSubtitle}>Chat + Group Messages</Text>
+                {telegramStatus.connected && telegramStatus.username && (
+                  <Text style={styles.platformEmail}>@{telegramStatus.username}</Text>
+                )}
+              </View>
+              {loadingStatus ? (
+                <ActivityIndicator size="small" color={Colors.textTertiary} />
+              ) : connectingId === 'telegram' ? (
+                <ActivityIndicator size="small" color="#229ED9" />
+              ) : telegramStatus.connected ? (
+                <Pressable
+                  style={styles.disconnectBtn}
+                  onPress={handleDisconnectTelegram}
+                >
+                  <Ionicons name="checkmark-circle" size={18} color={Colors.success} />
+                  <Text style={styles.disconnectBtnText}>Disconnect</Text>
+                </Pressable>
+              ) : (
+                <Pressable
+                  style={[styles.connectBtn, { borderColor: '#229ED9' }]}
+                  onPress={handleConnectTelegram}
+                >
+                  <Text style={[styles.connectBtnText, { color: '#229ED9' }]}>Connect</Text>
+                </Pressable>
+              )}
+            </View>
+          </View>
+
+          {telegramLinkCode && (
+            <View style={styles.telegramCodeCard}>
+              <Text style={styles.telegramCodeTitle}>Link your Telegram</Text>
+              <Text style={styles.telegramCodeInstructions}>
+                Open Telegram, search for @GamePlanCoachBot, and send this code:
+              </Text>
+              <View style={styles.telegramCodeBox}>
+                <Text style={styles.telegramCodeText}>{telegramLinkCode}</Text>
+              </View>
+              {telegramPolling && (
+                <View style={styles.telegramPollingRow}>
+                  <ActivityIndicator size="small" color="#229ED9" />
+                  <Text style={styles.telegramPollingText}>Waiting for connection...</Text>
+                </View>
+              )}
+              <Pressable
+                style={styles.telegramCancelBtn}
+                onPress={stopTelegramPolling}
+              >
+                <Text style={styles.telegramCancelText}>Cancel</Text>
+              </Pressable>
+            </View>
+          )}
+
           <Text style={styles.connectionHint}>
             Your data stays private — each account connects independently.
           </Text>
@@ -1390,5 +1552,65 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontFamily: 'Inter_600SemiBold',
     letterSpacing: 0.5,
+  },
+  telegramCodeCard: {
+    backgroundColor: Colors.white,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#229ED940',
+    padding: 20,
+    marginTop: 12,
+    alignItems: 'center' as const,
+  },
+  telegramCodeTitle: {
+    fontSize: 16,
+    fontFamily: 'Inter_700Bold',
+    color: Colors.text,
+    marginBottom: 8,
+  },
+  telegramCodeInstructions: {
+    fontSize: 13,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+    textAlign: 'center' as const,
+    marginBottom: 16,
+    lineHeight: 18,
+  },
+  telegramCodeBox: {
+    backgroundColor: '#229ED910',
+    borderRadius: 12,
+    paddingHorizontal: 28,
+    paddingVertical: 14,
+    borderWidth: 2,
+    borderColor: '#229ED940',
+    borderStyle: 'dashed' as const,
+    marginBottom: 12,
+  },
+  telegramCodeText: {
+    fontSize: 28,
+    fontFamily: 'Inter_700Bold',
+    color: '#229ED9',
+    letterSpacing: 4,
+    textAlign: 'center' as const,
+  },
+  telegramPollingRow: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: 8,
+    marginBottom: 8,
+  },
+  telegramPollingText: {
+    fontSize: 13,
+    fontFamily: 'Inter_500Medium',
+    color: '#229ED9',
+  },
+  telegramCancelBtn: {
+    paddingVertical: 6,
+    paddingHorizontal: 16,
+  },
+  telegramCancelText: {
+    fontSize: 13,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.textTertiary,
   },
 });

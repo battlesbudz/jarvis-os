@@ -21,6 +21,7 @@ import {
 import { getSlackMessages } from "./integrations/slack";
 import { authRouter, authMiddleware } from "./auth";
 import { registerDataRoutes } from "./dataRoutes";
+import { registerTelegramRoutes } from "./telegramRoutes";
 import { isIntegrationOwner, claimIntegrationOwnership } from "./integrationOwner";
 import { oauthRouter, oauthCallbackRouter } from "./oauthRoutes";
 import { getValidGoogleTokens, getValidMicrosoftToken, getUserTokens, getUserToken } from "./userTokenStore";
@@ -61,7 +62,7 @@ function getPersonaBlock(coachingMode?: string): string {
   return PERSONA_BLOCKS[coachingMode || 'sharp'] || PERSONA_BLOCKS.sharp;
 }
 
-function buildCoachSystemPrompt(goals: any[], stats: any, history: any[], calendarEvents: any[] = [], lifeContext?: any, gmailItems?: any[], gmailConnected?: boolean, slackMessages?: any[], slackConnected?: boolean, commitmentsList?: any[], coachingMode?: string, memories?: { content: string; category: string }[]): string {
+function buildCoachSystemPrompt(goals: any[], stats: any, history: any[], calendarEvents: any[] = [], lifeContext?: any, gmailItems?: any[], gmailConnected?: boolean, slackMessages?: any[], slackConnected?: boolean, commitmentsList?: any[], coachingMode?: string, memories?: { content: string; category: string }[], telegramMessages?: any[], telegramConnected?: boolean): string {
   const completedHistory = history.filter((h: any) => h.completed);
   const skippedHistory = history.filter((h: any) => !h.completed);
   const completionRate = history.length > 0
@@ -135,6 +136,17 @@ function buildCoachSystemPrompt(goals: any[], stats: any, history: any[], calend
       memories.slice(0, 20).map(m => `- [${m.category}] ${m.content}`).join('\n')
     : '';
 
+  const telegramSection = telegramConnected
+    ? (telegramMessages && telegramMessages.length > 0
+        ? `\n## Recent Telegram Group Messages (last 7 days)\n` +
+          telegramMessages.slice(0, 50).map((m: any) => {
+            const dateStr = m.timestamp ? new Date(m.timestamp).toLocaleDateString('en-US', {month:'short',day:'numeric'}) : '';
+            return `- [${dateStr}] [${m.chatTitle || 'Group'}] ${m.fromUser}: ${m.text}`;
+          }).join('\n') +
+          `\n(Use these to identify commitments, follow-ups, and context. Treat like Slack messages.)`
+        : `\n## Recent Telegram Group Messages\nTelegram is connected but no group messages were found in the last 7 days.`)
+    : '';
+
   const now = new Date();
   const dayOfWeek = now.toLocaleDateString('en-US', { weekday: 'long' });
   const dateStr = now.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
@@ -162,7 +174,7 @@ ${strugglingCategories.length > 0 ? `- Struggling most with: ${strugglingCategor
 ${goalsText}
 
 ## Today's Calendar
-${calendarText}${gmailSection}${slackSection}
+${calendarText}${gmailSection}${slackSection}${telegramSection}
 
 ## Recent Activity (last 7 days)
 - Completed: ${recentCompleted}
@@ -203,6 +215,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use("/api/oauth", oauthRouter);
 
   registerDataRoutes(app);
+  registerTelegramRoutes(app);
 
   app.post("/api/ai/resize-task", async (req: Request, res: Response) => {
     try {
@@ -613,7 +626,7 @@ Return ONLY the JSON object.`;
 
   app.post("/api/coach/chat", async (req: Request, res: Response) => {
     try {
-      const { messages, goals, stats, history, calendarEvents, lifeContext, gmailItems, gmailConnected, slackMessages, slackConnected, coachingMode } = req.body;
+      const { messages, goals, stats, history, calendarEvents, lifeContext, gmailItems, gmailConnected, slackMessages, slackConnected, coachingMode, telegramMessages, telegramConnected } = req.body;
       const userId = req.userId;
 
       if (!messages || !Array.isArray(messages)) {
@@ -644,7 +657,7 @@ Return ONLY the JSON object.`;
         } catch {}
       }
 
-      const systemPrompt = buildCoachSystemPrompt(goals || [], stats || {}, history || [], calendarEvents || [], lifeContext || null, gmailItems || [], gmailConnected ?? false, slackMessages || [], slackConnected ?? false, userCommitments, coachingMode, memories);
+      const systemPrompt = buildCoachSystemPrompt(goals || [], stats || {}, history || [], calendarEvents || [], lifeContext || null, gmailItems || [], gmailConnected ?? false, slackMessages || [], slackConnected ?? false, userCommitments, coachingMode, memories, telegramMessages || [], telegramConnected ?? false);
 
       const chatMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
         { role: "system", content: systemPrompt + "\n\nYou can take actions on the user's behalf using the available tools. When a user asks you to add a task, log progress, update their context, etc., use the appropriate tool. Respond naturally — do not mention 'tool calls' or 'functions' to the user. Just confirm what you did conversationally." },
@@ -1456,7 +1469,7 @@ Return ONLY JSON: { "hasCommitment": boolean, "commitment": "the thing they comm
           .limit(10);
       } catch {}
 
-      const systemPrompt = buildCoachSystemPrompt(goals || [], stats || {}, history || [], [], lifeContext || null, [], false, [], false, userCommitments);
+      const systemPrompt = buildCoachSystemPrompt(goals || [], stats || {}, history || [], [], lifeContext || null, [], false, [], false, userCommitments, undefined, [], [], false);
 
       res.setHeader('Content-Type', 'text/event-stream');
       res.setHeader('Cache-Control', 'no-cache, no-transform');

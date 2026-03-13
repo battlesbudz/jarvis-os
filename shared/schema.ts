@@ -109,6 +109,30 @@ export const planSnapshots = pgTable("plan_snapshots", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+export const telegramLinks = pgTable("telegram_links", {
+  userId: varchar("user_id").notNull().primaryKey().references(() => users.id),
+  chatId: varchar("chat_id").notNull(),
+  username: varchar("username"),
+  linkedAt: timestamp("linked_at").defaultNow().notNull(),
+  groupChatIds: jsonb("group_chat_ids").default(sql`'[]'::jsonb`),
+});
+
+export const telegramLinkCodes = pgTable("telegram_link_codes", {
+  code: varchar("code").primaryKey(),
+  userId: varchar("user_id").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const telegramGroupMessages = pgTable("telegram_group_messages", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  chatId: varchar("chat_id").notNull(),
+  chatTitle: varchar("chat_title"),
+  fromUser: varchar("from_user"),
+  text: text("text").notNull(),
+  messageDate: timestamp("message_date").defaultNow().notNull(),
+});
+
 export const commitments = pgTable("commitments", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id").notNull().references(() => users.id),

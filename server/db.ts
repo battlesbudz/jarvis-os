@@ -203,6 +203,36 @@ export async function ensureTablesExist() {
       ALTER TABLE user_oauth_tokens ADD CONSTRAINT user_oauth_tokens_pkey PRIMARY KEY (user_id, provider, account_email)
     `).catch(() => {});
 
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS telegram_links (
+        user_id VARCHAR NOT NULL PRIMARY KEY REFERENCES users(id),
+        chat_id VARCHAR NOT NULL,
+        username VARCHAR,
+        linked_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        group_chat_ids JSONB DEFAULT '[]'::jsonb
+      )
+    `);
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS telegram_link_codes (
+        code VARCHAR PRIMARY KEY,
+        user_id VARCHAR NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS telegram_group_messages (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id VARCHAR NOT NULL REFERENCES users(id),
+        chat_id VARCHAR NOT NULL,
+        chat_title VARCHAR,
+        from_user VARCHAR,
+        text TEXT NOT NULL,
+        message_date TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+
     console.log("Database tables verified");
   } catch (error) {
     console.error("Failed to ensure database tables exist:", error);
