@@ -3,7 +3,7 @@ import type { Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { ensureTablesExist } from "./db";
 import { registerTelegramWebhook, startProactiveScheduler, startTelegramPolling, startEmailAlertScanner } from "./telegramRoutes";
-import { isTelegramConfigured, logTelegramStatus } from "./integrations/telegram";
+import { isTelegramConfigured, logTelegramStatus, setWebhook } from "./integrations/telegram";
 import { startScheduler } from "./scheduler";
 import * as fs from "fs";
 import * as path from "path";
@@ -259,9 +259,26 @@ function setupErrorHandler(app: express.Application) {
       log(`express server serving on port ${port}`);
 
       if (isTelegramConfigured()) {
-        startTelegramPolling().catch(err => {
-          console.error("Failed to start Telegram polling:", err);
-        });
+        const isProduction = process.env.NODE_ENV === 'production';
+
+        if (isProduction) {
+          const domain = (process.env.REPLIT_DOMAINS || '').split(',')[0]?.trim();
+          if (domain) {
+            const webhookUrl = `https://${domain}/api/telegram/webhook`;
+            setWebhook(webhookUrl).then(() => {
+              console.log(`[Telegram] Production mode — webhook active at ${webhookUrl}`);
+            }).catch(err => {
+              console.error("[Telegram] Failed to set webhook:", err);
+            });
+          } else {
+            console.error("[Telegram] Production mode but REPLIT_DOMAINS is not set — cannot register webhook");
+          }
+        } else {
+          startTelegramPolling().catch(err => {
+            console.error("Failed to start Telegram polling:", err);
+          });
+        }
+
         startProactiveScheduler().catch(err => {
           console.error("Failed to start proactive scheduler:", err);
         });

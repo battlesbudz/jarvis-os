@@ -79,9 +79,9 @@ export async function setWebhook(webhookUrl: string): Promise<void> {
   });
   const data = await res.json();
   if (data.ok) {
-    console.log('Telegram webhook set:', webhookUrl);
+    console.log('[Telegram] Webhook set successfully:', webhookUrl);
   } else {
-    console.error('Failed to set Telegram webhook:', data);
+    throw new Error(`Failed to set Telegram webhook: ${JSON.stringify(data)}`);
   }
 }
 
