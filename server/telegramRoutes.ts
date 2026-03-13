@@ -6,6 +6,7 @@ import { sendMessage, isTelegramConfigured, getUpdates, deleteWebhook, downloadT
 import { getRecentEmailCommitments } from "./integrations/gmail";
 import { getGoogleCalendarEvents } from "./integrations/googleCalendar";
 import { getValidGoogleTokens } from "./userTokenStore";
+import { tavilySearch, formatSearchResults } from "./integrations/search";
 import OpenAI from "openai";
 
 const openai = new OpenAI({
@@ -132,17 +133,67 @@ Be direct, specific, actionable. No fluff. You have full access to the user's em
           ]
         : userText;
 
+      const searchTool = {
+        type: "function" as const,
+        function: {
+          name: "search_web",
+          description: "Search the web for current information, news, weather, prices, recent events, or anything requiring up-to-date data.",
+          parameters: {
+            type: "object",
+            properties: {
+              query: { type: "string", description: "The search query" },
+            },
+            required: ["query"],
+          },
+        },
+      };
+
+      const baseMessages: any[] = [
+        { role: "system", content: systemPrompt },
+        ...recentMessages.map((m: any) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
+        { role: "user", content: userMessageContent },
+      ];
+
       const response = await openai.chat.completions.create({
         model: "gpt-5-mini",
-        messages: [
-          { role: "system", content: systemPrompt },
-          ...recentMessages.map((m: any) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
-          { role: "user", content: userMessageContent },
-        ],
+        messages: baseMessages,
+        tools: [searchTool],
+        tool_choice: "auto",
         max_completion_tokens: 2000,
       });
-      console.log(`[Telegram] OpenAI finish_reason: ${response.choices?.[0]?.finish_reason}, content length: ${response.choices?.[0]?.message?.content?.length}`);
-      reply = response.choices[0]?.message?.content || reply;
+
+      const finishReason = response.choices?.[0]?.finish_reason;
+      console.log(`[Telegram] OpenAI finish_reason: ${finishReason}`);
+
+      if (finishReason === 'tool_calls') {
+        const toolCall = response.choices[0].message.tool_calls?.[0];
+        if (toolCall?.function?.name === 'search_web') {
+          let searchResult = 'Search unavailable right now.';
+          try {
+            const args = JSON.parse(toolCall.function.arguments);
+            console.log(`[Telegram] Web search: "${args.query}"`);
+            const results = await tavilySearch(args.query);
+            searchResult = formatSearchResults(results);
+            console.log(`[Telegram] Search returned ${results.results.length} results`);
+          } catch (searchErr: any) {
+            console.error('[Telegram] Search failed:', searchErr.message);
+          }
+
+          const followUp = await openai.chat.completions.create({
+            model: "gpt-5-mini",
+            messages: [
+              ...baseMessages,
+              response.choices[0].message,
+              { role: "tool" as const, tool_call_id: toolCall.id, content: searchResult },
+            ],
+            max_completion_tokens: 2000,
+          });
+          console.log(`[Telegram] Follow-up finish_reason: ${followUp.choices?.[0]?.finish_reason}`);
+          reply = followUp.choices[0]?.message?.content || reply;
+        }
+      } else {
+        reply = response.choices[0]?.message?.content || reply;
+      }
     } catch (aiErr: any) {
       console.error("[Telegram] OpenAI error:", aiErr?.status, aiErr?.message, aiErr?.error);
       throw aiErr;
