@@ -73,14 +73,14 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
 
     if (googleTokens.status === 'fulfilled' && googleTokens.value.length > 0) {
       gmailConnected = true;
-      const token = googleTokens.value[0];
+      const tokens = googleTokens.value;
+      const token = tokens[0];
       googleAccessToken = token;
-      const today = new Date().toISOString().split('T')[0];
-      console.log(`[Telegram] Fetching Gmail+Calendar for user ${userId}, token length: ${token?.length}`);
+      console.log(`[Telegram] Fetching Gmail+Calendar for user ${userId} — ${tokens.length} Google account(s), date: ${dateKey}`);
 
-      const [emailResult, calResult] = await Promise.allSettled([
+      const [emailResult, ...calResults] = await Promise.allSettled([
         getRecentEmailCommitments(14, token),
-        getGoogleCalendarEvents(today, undefined, undefined, token),
+        ...tokens.map(t => getGoogleCalendarEvents(dateKey, undefined, undefined, t)),
       ]);
 
       if (emailResult.status === 'fulfilled') {
@@ -89,12 +89,21 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
       } else {
         console.error(`[Telegram] Gmail fetch failed:`, emailResult.reason);
       }
-      if (calResult.status === 'fulfilled') {
-        calendarEvents = calResult.value;
-        console.log(`[Telegram] Calendar: ${calendarEvents.length} events`);
-      } else {
-        console.error(`[Telegram] Calendar fetch failed:`, calResult.reason);
+
+      const seenEventIds = new Set<string>();
+      for (const calResult of calResults) {
+        if (calResult.status === 'fulfilled') {
+          for (const ev of calResult.value) {
+            if (!seenEventIds.has(ev.id)) {
+              seenEventIds.add(ev.id);
+              calendarEvents.push(ev);
+            }
+          }
+        } else {
+          console.error(`[Telegram] Calendar fetch failed:`, calResult.reason);
+        }
       }
+      console.log(`[Telegram] Calendar: ${calendarEvents.length} events total across ${tokens.length} account(s)`);
     } else {
       console.log(`[Telegram] No Google tokens for user ${userId} — status: ${googleTokens.status}`);
       if (googleTokens.status === 'rejected') console.error(`[Telegram] Token fetch error:`, googleTokens.reason);
