@@ -21,6 +21,7 @@ import {
 } from "./integrations/gmail";
 import { getSlackMessages } from "./integrations/slack";
 import { authRouter, authMiddleware } from "./auth";
+import { mobileAuthRouter } from "./mobileAuthRoutes";
 import { registerDataRoutes } from "./dataRoutes";
 import { registerTelegramRoutes } from "./telegramRoutes";
 import { isIntegrationOwner, claimIntegrationOwnership } from "./integrationOwner";
@@ -479,6 +480,7 @@ export async function buildPlanForUser(userId: string): Promise<{
 
 export async function registerRoutes(app: Express): Promise<Server> {
   app.use("/api/auth", authRouter);
+  app.use("/api/auth/mobile", mobileAuthRouter);
   app.use("/api/oauth", oauthCallbackRouter);
   app.use(authMiddleware);
   app.use("/api/oauth", oauthRouter);

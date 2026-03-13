@@ -29,7 +29,7 @@ declare global {
   }
 }
 
-function generateToken(userId: string): string {
+export function generateToken(userId: string): string {
   return jwt.sign({ userId }, JWT_SECRET, { expiresIn: TOKEN_EXPIRY });
 }
 
