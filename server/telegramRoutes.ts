@@ -2,7 +2,7 @@ import type { Express, Request, Response } from "express";
 import { db } from "./db";
 import { eq, and, desc, sql, gte } from "drizzle-orm";
 import * as schema from "@shared/schema";
-import { sendMessage, isTelegramConfigured, getUpdates, deleteWebhook } from "./integrations/telegram";
+import { sendMessage, isTelegramConfigured, getUpdates, deleteWebhook, downloadTelegramFile } from "./integrations/telegram";
 import { getRecentEmailCommitments } from "./integrations/gmail";
 import { getGoogleCalendarEvents } from "./integrations/googleCalendar";
 import { getValidGoogleTokens } from "./userTokenStore";
@@ -22,7 +22,7 @@ function generateLinkCode(): string {
   return code;
 }
 
-async function handleCoachReply(userId: string, chatId: string, userText: string): Promise<void> {
+async function handleCoachReply(userId: string, chatId: string, userText: string, imageUrl?: string): Promise<void> {
   try {
     let userGoals: any[] = [];
     let userStats: any = {};
@@ -79,7 +79,6 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
     }
 
     const recentMessages = chatMessages.slice(0, 10).reverse();
-    recentMessages.push({ role: 'user', content: userText });
 
     const now = new Date();
     const dayOfWeek = now.toLocaleDateString('en-US', { weekday: 'long' });
@@ -126,11 +125,19 @@ Be direct, specific, actionable. No fluff. You have full access to the user's em
 
     let reply = "Sorry, I couldn't generate a response right now.";
     try {
+      const userMessageContent = imageUrl
+        ? [
+            { type: "text" as const, text: userText || "What do you see in this image? Give me your thoughts and any relevant actions." },
+            { type: "image_url" as const, image_url: { url: imageUrl } },
+          ]
+        : userText;
+
       const response = await openai.chat.completions.create({
         model: "gpt-5-mini",
         messages: [
           { role: "system", content: systemPrompt },
           ...recentMessages.map((m: any) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
+          { role: "user", content: userMessageContent },
         ],
         max_completion_tokens: 2000,
       });
@@ -193,13 +200,28 @@ async function processUpdate(update: any): Promise<void> {
     }
 
     const message = update.message;
-    if (!message || !message.text) return;
+    if (!message) return;
+    if (!message.text && !message.photo && !message.document) return;
 
     const chatId = message.chat.id.toString();
     const chatType = message.chat.type;
-    const text = message.text.trim();
+
+    let imageUrl: string | undefined;
+    let text = message.text?.trim() || message.caption?.trim() || '';
+
+    if (message.photo) {
+      const largest = message.photo[message.photo.length - 1];
+      const downloaded = await downloadTelegramFile(largest.file_id).catch(() => null);
+      if (downloaded) imageUrl = downloaded;
+    } else if (message.document && message.document.mime_type?.startsWith('image/')) {
+      const downloaded = await downloadTelegramFile(message.document.file_id).catch(() => null);
+      if (downloaded) imageUrl = downloaded;
+    }
+
+    if (!text && !imageUrl) return;
 
     if (chatType === 'group' || chatType === 'supergroup') {
+      if (!text) return;
       try {
         const links = await db.select().from(schema.telegramLinks).where(
           sql`${schema.telegramLinks.groupChatIds}::jsonb @> ${JSON.stringify([chatId])}::jsonb`
@@ -262,7 +284,7 @@ async function processUpdate(update: any): Promise<void> {
         await sendMessage(chatId, "Your Telegram isn't linked to a GamePlan account yet. Open the app, go to Profile > Connected Apps > Telegram, and send the link code here.");
         return;
       }
-      await handleCoachReply(link[0].userId, chatId, text);
+      await handleCoachReply(link[0].userId, chatId, text, imageUrl);
     } catch (err) {
       console.error("Error handling Telegram message:", err);
       await sendMessage(chatId, "Sorry, something went wrong. Please try again.");
