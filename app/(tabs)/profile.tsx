@@ -154,8 +154,9 @@ export default function ProfileScreen() {
         presentationStyle: WebBrowser.WebBrowserPresentationStyle.FORM_SHEET,
       });
       await loadOAuthStatus();
-    } catch (e) {
+    } catch (e: any) {
       console.error('Connect error:', e);
+      alert('Could not connect. Please try again.');
     } finally {
       setConnectingId(null);
     }

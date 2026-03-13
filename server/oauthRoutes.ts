@@ -180,7 +180,7 @@ oauthRouter.get('/microsoft/authorize', (req: Request, res: Response) => {
 
   const clientId = process.env.MICROSOFT_CLIENT_ID;
   if (!clientId) {
-    return res.status(503).json({ error: 'Microsoft OAuth not configured' });
+    return res.json({ error: 'Microsoft OAuth not configured' });
   }
 
   const baseUrl = getBaseUrl(req);
@@ -272,7 +272,7 @@ oauthRouter.get('/slack/authorize', (req: Request, res: Response) => {
   if (!userId) return res.status(401).json({ error: 'Not authenticated' });
 
   const clientId = process.env.SLACK_CLIENT_ID;
-  if (!clientId) return res.status(503).json({ error: 'Slack OAuth not configured' });
+  if (!clientId) return res.json({ error: 'Slack OAuth not configured' });
 
   const baseUrl = getBaseUrl(req);
   const redirectUri = `${baseUrl}/api/oauth/slack/callback`;
