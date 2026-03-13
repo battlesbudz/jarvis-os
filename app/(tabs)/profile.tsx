@@ -147,6 +147,7 @@ export default function ProfileScreen() {
   const [memoriesLoading, setMemoriesLoading] = useState(true);
   const [timezone, setTimezone] = useState('America/New_York');
   const [showTimezoneModal, setShowTimezoneModal] = useState(false);
+  const [emailAlertsEnabled, setEmailAlertsEnabled] = useState(true);
 
   const loadTelegramStatus = useCallback(async () => {
     try {
@@ -218,8 +219,18 @@ export default function ProfileScreen() {
       const res = await apiRequest('GET', '/api/preferences');
       const prefs = await res.json();
       if (prefs.timezone) setTimezone(prefs.timezone);
+      if (typeof prefs.emailAlertsEnabled === 'boolean') setEmailAlertsEnabled(prefs.emailAlertsEnabled);
     } catch {}
   }, [loadOAuthStatus, loadMemories, loadTelegramStatus]);
+
+  const handleToggleEmailAlerts = useCallback(async () => {
+    const newValue = !emailAlertsEnabled;
+    setEmailAlertsEnabled(newValue);
+    try {
+      await apiRequest('PATCH', '/api/preferences', { emailAlertsEnabled: newValue });
+    } catch {}
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  }, [emailAlertsEnabled]);
 
   const handleTimezoneChange = useCallback(async (tz: string) => {
     setTimezone(tz);
@@ -917,6 +928,25 @@ export default function ProfileScreen() {
                 name={notificationsEnabled ? "toggle" : "toggle-outline"} 
                 size={32} 
                 color={notificationsEnabled ? Colors.primary : Colors.border} 
+              />
+            </Pressable>
+            <Pressable
+              style={[styles.platformRow, styles.platformRowBorder]}
+              onPress={handleToggleEmailAlerts}
+            >
+              <View style={[styles.platformIcon, { backgroundColor: '#EA433515' }]}>
+                <Ionicons name="mail-outline" size={20} color="#EA4335" />
+              </View>
+              <View style={styles.platformInfo}>
+                <Text style={styles.platformName}>Email Alerts</Text>
+                <Text style={styles.platformStatus}>
+                  {emailAlertsEnabled ? 'Jarvis pings you for urgent emails' : 'Disabled'}
+                </Text>
+              </View>
+              <Ionicons
+                name={emailAlertsEnabled ? 'toggle' : 'toggle-outline'}
+                size={32}
+                color={emailAlertsEnabled ? Colors.primary : Colors.border}
               />
             </Pressable>
             <Pressable

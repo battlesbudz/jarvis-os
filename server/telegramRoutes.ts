@@ -3,7 +3,7 @@ import { db } from "./db";
 import { eq, and, desc, sql, gte } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { sendMessage, isTelegramConfigured, getUpdates, deleteWebhook, downloadTelegramFile } from "./integrations/telegram";
-import { getRecentEmailCommitments } from "./integrations/gmail";
+import { getRecentEmailCommitments, getEmailsSince } from "./integrations/gmail";
 import { getGoogleCalendarEvents } from "./integrations/googleCalendar";
 import { getValidGoogleTokens } from "./userTokenStore";
 import { tavilySearch, formatSearchResults } from "./integrations/search";
@@ -687,4 +687,108 @@ export async function startProactiveScheduler(): Promise<void> {
   }, 60 * 1000);
 
   console.log('Telegram proactive scheduler started');
+}
+
+export async function startEmailAlertScanner(): Promise<void> {
+  if (!isTelegramConfigured()) return;
+
+  const SCAN_INTERVAL_MS = 30 * 60 * 1000;
+
+  const runScan = async () => {
+    try {
+      const links = await db.select().from(schema.telegramLinks);
+      if (links.length === 0) return;
+
+      const allPrefs = await db.select().from(schema.userPreferences);
+      const prefsMap: Record<string, any> = {};
+      for (const p of allPrefs) prefsMap[p.userId] = (p.data as any) || {};
+
+      for (const link of links) {
+        const prefs = prefsMap[link.userId] || {};
+        if (prefs.emailAlertsEnabled === false) continue;
+
+        const tokens = await getValidGoogleTokens(link.userId).catch(() => []);
+        if (!tokens || tokens.length === 0) continue;
+        const token = tokens[0];
+
+        const sinceMs = prefs.lastEmailScanAt
+          ? Number(prefs.lastEmailScanAt)
+          : Date.now() - SCAN_INTERVAL_MS;
+
+        const nowMs = Date.now();
+
+        const newPrefs = { ...prefs, lastEmailScanAt: nowMs };
+        await db.insert(schema.userPreferences)
+          .values({ userId: link.userId, data: newPrefs })
+          .onConflictDoUpdate({
+            target: schema.userPreferences.userId,
+            set: { data: newPrefs, updatedAt: new Date() },
+          });
+
+        const emails = await getEmailsSince(sinceMs, token);
+        if (emails.length === 0) continue;
+
+        console.log(`[EmailAlert] ${emails.length} new email(s) for user ${link.userId}, classifying...`);
+
+        const emailList = emails.map((e, i) =>
+          `${i}. From: ${e.from}\n   Subject: "${e.subject}"\n   Preview: ${e.snippet}`
+        ).join('\n\n');
+
+        let flagged: { index: number; reason: string }[] = [];
+        try {
+          const classification = await openai.chat.completions.create({
+            model: 'gpt-5-mini',
+            messages: [
+              {
+                role: 'system',
+                content: `You review emails and decide which need IMMEDIATE user attention. Alert = true ONLY for:
+- Urgent reply needed from a real person they know
+- Deadline TODAY or TOMORROW explicitly mentioned
+- Meeting cancelled, moved, or significantly changed
+- Time-sensitive action required today
+- Important client/boss/colleague needing a response soon
+
+Alert = false for:
+- Newsletters, marketing, promotions, sales
+- Automated notifications, receipts, shipping updates
+- Social media notifications
+- No-reply or automated senders
+- General FYI or informational emails
+
+Return ONLY a JSON array of flagged emails (only include alert=true ones):
+[{"index": 0, "reason": "brief reason why this is urgent"}]
+Return [] if nothing is urgent.`,
+              },
+              {
+                role: 'user',
+                content: `Emails received in the last 30 minutes:\n\n${emailList}`,
+              },
+            ],
+            max_completion_tokens: 2000,
+          });
+
+          const raw = classification.choices[0]?.message?.content || '[]';
+          const jsonMatch = raw.match(/\[[\s\S]*\]/);
+          if (jsonMatch) flagged = JSON.parse(jsonMatch[0]);
+        } catch (err) {
+          console.error('[EmailAlert] Classification failed:', err);
+          continue;
+        }
+
+        for (const flag of flagged) {
+          const email = emails[flag.index];
+          if (!email) continue;
+          const senderName = email.from.replace(/<.*>/, '').trim() || email.from;
+          const msg = `📧 Email needs your attention:\nFrom: ${senderName}\n"${email.subject}"\n\n${email.snippet.slice(0, 150)}${email.snippet.length > 150 ? '...' : ''}\n\nJarvis: ${flag.reason}`;
+          await sendMessage(link.chatId, msg);
+          console.log(`[EmailAlert] Alerted user ${link.userId}: "${email.subject}"`);
+        }
+      }
+    } catch (err) {
+      console.error('[EmailAlert] Scanner error:', err);
+    }
+  };
+
+  setInterval(runScan, SCAN_INTERVAL_MS);
+  console.log('Email alert scanner started (30-min interval)');
 }

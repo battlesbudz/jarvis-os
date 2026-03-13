@@ -60,6 +60,71 @@ export async function createGmailDraft(
   return { draftId, gmailUrl };
 }
 
+export interface EmailAlert {
+  messageId: string;
+  subject: string;
+  from: string;
+  snippet: string;
+  receivedAt: number;
+}
+
+export async function getEmailsSince(
+  sinceMs: number,
+  userAccessToken?: string | null
+): Promise<EmailAlert[]> {
+  try {
+    const gmail = await getGmailClient(userAccessToken);
+    const sinceSeconds = Math.floor(sinceMs / 1000);
+
+    const listRes = await gmail.users.messages.list({
+      userId: 'me',
+      q: `in:inbox -from:me after:${sinceSeconds}`,
+      maxResults: 20,
+    });
+
+    const messages = listRes.data.messages || [];
+    if (messages.length === 0) return [];
+
+    const results: EmailAlert[] = [];
+    const BATCH_SIZE = 10;
+
+    for (let i = 0; i < messages.length; i += BATCH_SIZE) {
+      const batch = messages.slice(i, i + BATCH_SIZE);
+      const batchResults = await Promise.all(
+        batch.map(async (msg) => {
+          if (!msg.id) return null;
+          try {
+            const detail = await gmail.users.messages.get({
+              userId: 'me',
+              id: msg.id,
+              format: 'metadata',
+              metadataHeaders: ['Subject', 'From', 'Date'],
+            });
+            const headers = detail.data.payload?.headers || [];
+            const subject = headers.find((h: any) => h.name === 'Subject')?.value || '(no subject)';
+            const from = headers.find((h: any) => h.name === 'From')?.value || 'unknown';
+            const snippet = (detail.data.snippet || '').slice(0, 200);
+            const receivedAt = parseInt(detail.data.internalDate || '0', 10);
+            const labelIds: string[] = (detail.data.labelIds as string[]) || [];
+            if (labelIds.includes('SENT') || labelIds.includes('DRAFT')) return null;
+            return { messageId: msg.id, subject, from, snippet, receivedAt } as EmailAlert;
+          } catch {
+            return null;
+          }
+        })
+      );
+      for (const r of batchResults) {
+        if (r) results.push(r);
+      }
+    }
+
+    return results;
+  } catch (err) {
+    console.error('[Gmail] getEmailsSince error:', err);
+    return [];
+  }
+}
+
 export async function checkGmailConnection(userAccessToken?: string | null): Promise<boolean> {
   try {
     await getGmailClient(userAccessToken);
