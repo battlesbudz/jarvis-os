@@ -124,16 +124,22 @@ ${userLifeContext?.priorityGoal ? `\n## Context\n- Priority: ${userLifeContext.p
 
 Be direct, specific, actionable. No fluff. You have full access to the user's email and calendar data above — use it. Respond in the same language the user writes in.`;
 
-    const response = await openai.chat.completions.create({
-      model: "gpt-5-mini",
-      messages: [
-        { role: "system", content: systemPrompt },
-        ...recentMessages.map((m: any) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
-      ],
-      max_completion_tokens: 500,
-    });
-
-    const reply = response.choices[0]?.message?.content || "Sorry, I couldn't generate a response right now.";
+    let reply = "Sorry, I couldn't generate a response right now.";
+    try {
+      const response = await openai.chat.completions.create({
+        model: "gpt-5-mini",
+        messages: [
+          { role: "system", content: systemPrompt },
+          ...recentMessages.map((m: any) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
+        ],
+        max_completion_tokens: 500,
+      });
+      console.log(`[Telegram] OpenAI finish_reason: ${response.choices?.[0]?.finish_reason}, content length: ${response.choices?.[0]?.message?.content?.length}`);
+      reply = response.choices[0]?.message?.content || reply;
+    } catch (aiErr: any) {
+      console.error("[Telegram] OpenAI error:", aiErr?.status, aiErr?.message, aiErr?.error);
+      throw aiErr;
+    }
 
     const userMsg = { id: Date.now().toString(), role: 'user', content: userText };
     const assistantMsg = { id: (Date.now() + 1).toString(), role: 'assistant', content: reply };
