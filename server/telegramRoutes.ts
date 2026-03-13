@@ -523,6 +523,86 @@ function formatCommitmentsForMessage(commitments: any[], dateKey: string): strin
   return parts.join('');
 }
 
+async function generateProactiveMessage(
+  type: string,
+  context: {
+    tasks?: any[];
+    goals?: any[];
+    commitments?: any[];
+    stats?: any;
+    dateKey?: string;
+  }
+): Promise<string | null> {
+  const now = new Date();
+  const dayName = now.toLocaleDateString('en-US', { weekday: 'long' });
+  const dateFull = now.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+
+  const allTasks = context.tasks || [];
+  const incompleteTasks = allTasks.filter((t: any) => !t.completed);
+  const completedTasks = allTasks.filter((t: any) => t.completed);
+  const goalsText = (context.goals || []).slice(0, 3).map((g: any) => `${g.title} (${g.current || 0}/${g.target} ${g.unit})`).join(', ') || 'none set';
+  const commitmentList = (context.commitments || []).slice(0, 5).map((c: any) => `"${c.content}"${c.dueDate ? ` due ${c.dueDate}` : ''}`).join(', ') || 'none';
+
+  let prompt = '';
+
+  if (type === 'morning') {
+    const dueToday = (context.commitments || []).filter((c: any) => c.dueDate === context.dateKey);
+    const overdue = (context.commitments || []).filter((c: any) => c.dueDate && c.dueDate < context.dateKey!);
+    prompt = `Today is ${dayName}, ${dateFull}. User has ${incompleteTasks.length} task(s) planned.
+Tasks: ${incompleteTasks.map((t: any) => t.title).join(', ') || 'none planned'}
+Goals: ${goalsText}
+Due today: ${dueToday.map((c: any) => `"${c.content}"`).join(', ') || 'none'}
+Overdue: ${overdue.map((c: any) => `"${c.content}"`).join(', ') || 'none'}
+Streak: ${context.stats?.streak || 0} days
+
+Write a sharp, energizing morning check-in (3-4 sentences). Be specific to their actual tasks/goals. No generic phrases like "Good morning!" Start with something direct.`;
+  } else if (type === 'commitment_check') {
+    const dueToday = (context.commitments || []).filter((c: any) => c.dueDate === context.dateKey);
+    const overdue = (context.commitments || []).filter((c: any) => c.dueDate && c.dueDate < context.dateKey!);
+    if (dueToday.length === 0 && overdue.length === 0) return null;
+    prompt = `Today is ${dayName}, ${dateFull}.
+Due today: ${dueToday.map((c: any) => `"${c.content}"`).join(', ') || 'none'}
+Overdue: ${overdue.map((c: any) => `"${c.content}" (${c.dueDate})`).join(', ') || 'none'}
+
+Write a brief mid-day accountability check-in (2-3 sentences). Direct, no lecture. Ask what progress has been made on the specific items.`;
+  } else if (type === 'evening') {
+    prompt = `Today is ${dayName}, ${dateFull}.
+Completed: ${completedTasks.length}/${allTasks.length} tasks
+Remaining: ${incompleteTasks.slice(0, 3).map((t: any) => t.title).join(', ') || 'none'}
+Open commitments: ${commitmentList}
+Streak: ${context.stats?.streak || 0} days
+
+Write a concise evening recap (3-4 sentences). Acknowledge what was done, note what's still open, end with something forward-looking. No platitudes.`;
+  } else if (type === 'weekly') {
+    prompt = `Weekly review.
+Streak: ${context.stats?.streak || 0} days | XP: ${context.stats?.xp || 0}
+Goals: ${goalsText}
+Open commitments: ${commitmentList}
+
+Write a sharp weekly summary (3-4 sentences). What's the trend? What needs focus next week? Be honest and direct.`;
+  }
+
+  if (!prompt) return null;
+
+  try {
+    const resp = await openai.chat.completions.create({
+      model: 'gpt-5-mini',
+      messages: [
+        {
+          role: 'system',
+          content: 'You are GamePlan Coach Jarvis — a direct, sharp, ADHD-friendly productivity coach. Messages go via Telegram. Keep it SHORT (3-4 sentences max). Plain text only, no markdown, no bullet points.',
+        },
+        { role: 'user', content: prompt },
+      ],
+      max_completion_tokens: 2000,
+    });
+    return resp.choices[0]?.message?.content || null;
+  } catch (err) {
+    console.error('[Proactive] AI generation failed:', err);
+    return null;
+  }
+}
+
 export async function startProactiveScheduler(): Promise<void> {
   if (!isTelegramConfigured()) return;
 
@@ -537,144 +617,74 @@ export async function startProactiveScheduler(): Promise<void> {
 
   setInterval(async () => {
     const now = new Date();
-    const currentHour = now.getHours();
-    const currentMinute = now.getMinutes();
-    const currentDay = now.getDay();
-    const dateKey = now.toISOString().slice(0, 10);
 
-    for (const schedule of SCHEDULE) {
-      if (currentHour !== schedule.hour || currentMinute !== schedule.minute) continue;
-      if (schedule.type === 'weekly' && currentDay !== schedule.dayOfWeek) continue;
+    try {
+      const links = await db.select().from(schema.telegramLinks);
+      if (links.length === 0) return;
 
-      const sentKey = `${schedule.type}-${dateKey}`;
-      if (lastSent[sentKey]) continue;
-      lastSent[sentKey] = dateKey;
+      const allPrefs = await db.select().from(schema.userPreferences);
+      const prefsMap: Record<string, any> = {};
+      for (const p of allPrefs) prefsMap[p.userId] = (p.data as any) || {};
 
-      try {
-        const links = await db.select().from(schema.telegramLinks);
-        for (const link of links) {
+      for (const link of links) {
+        const timezone = prefsMap[link.userId]?.timezone || 'America/New_York';
+
+        const localDate = new Date(now.toLocaleString('en-US', { timeZone: timezone }));
+        const localHour = localDate.getHours();
+        const localMinute = localDate.getMinutes();
+        const localDay = localDate.getDay();
+        const yr = localDate.getFullYear();
+        const mo = String(localDate.getMonth() + 1).padStart(2, '0');
+        const dy = String(localDate.getDate()).padStart(2, '0');
+        const dateKey = `${yr}-${mo}-${dy}`;
+
+        for (const schedule of SCHEDULE) {
+          if (localHour !== schedule.hour || localMinute !== schedule.minute) continue;
+          if (schedule.type === 'weekly' && localDay !== schedule.dayOfWeek) continue;
+
+          const sentKey = `${link.userId}-${schedule.type}-${dateKey}`;
+          if (lastSent[sentKey]) continue;
+          lastSent[sentKey] = dateKey;
+
           try {
-            let message = '';
+            let userGoals: any[] = [];
+            let todayPlan: any = null;
+            let userStats: any = {};
+            let commitments: any[] = [];
 
-            if (schedule.type === 'morning') {
-              let userGoals: any[] = [];
-              let todayPlan: any = null;
-              try {
-                const goalsRow = await db.select().from(schema.goals).where(eq(schema.goals.userId, link.userId)).limit(1);
-                userGoals = goalsRow[0]?.data as any[] || [];
-              } catch {}
-              try {
-                const planRow = await db.select().from(schema.plans).where(
-                  and(eq(schema.plans.userId, link.userId), eq(schema.plans.date, dateKey))
-                ).limit(1);
-                todayPlan = planRow[0]?.data as any;
-              } catch {}
+            const [goalsRow, planRow, statsRow] = await Promise.allSettled([
+              db.select().from(schema.goals).where(eq(schema.goals.userId, link.userId)).limit(1),
+              db.select().from(schema.plans).where(and(eq(schema.plans.userId, link.userId), eq(schema.plans.date, dateKey))).limit(1),
+              db.select().from(schema.stats).where(eq(schema.stats.userId, link.userId)).limit(1),
+            ]);
+            if (goalsRow.status === 'fulfilled') userGoals = (goalsRow.value[0]?.data as any[]) || [];
+            if (planRow.status === 'fulfilled') todayPlan = planRow.value[0]?.data as any;
+            if (statsRow.status === 'fulfilled') userStats = statsRow.value[0]?.data || {};
+            commitments = await getCommitmentsForUser(link.userId);
 
-              const tasks = todayPlan?.tasks || [];
-              const taskCount = tasks.filter((t: any) => !t.completed).length;
-              const goalsList = userGoals.slice(0, 3).map((g: any) => g.title).join(', ');
+            const tasks = todayPlan?.tasks || [];
 
-              message = `Good morning! You have ${taskCount} task${taskCount !== 1 ? 's' : ''} planned today.`;
-              if (goalsList) message += ` Active goals: ${goalsList}.`;
-
-              const commitments = await getCommitmentsForUser(link.userId);
-              const dueToday = commitments.filter((c: any) => c.dueDate === dateKey);
-              const overdue = commitments.filter((c: any) => c.dueDate && c.dueDate < dateKey);
-              if (dueToday.length > 0) {
-                message += `\n\nCommitments due today: ${dueToday.map((c: any) => `"${c.content}"`).join(', ')}.`;
-              }
-              if (overdue.length > 0) {
-                message += `\n\nOverdue: ${overdue.slice(0, 3).map((c: any) => `"${c.content}" (${c.dueDate})`).join(', ')}.`;
-              }
-
-              message += ` Open the app to review your plan or chat with me here.`;
-            }
-
-            if (schedule.type === 'commitment_check') {
-              const commitments = await getCommitmentsForUser(link.userId);
-              const overdue = commitments.filter((c: any) => c.dueDate && c.dueDate < dateKey);
-              const dueToday = commitments.filter((c: any) => c.dueDate === dateKey);
-
-              if (overdue.length > 0 || dueToday.length > 0) {
-                message = `Accountability check-in:`;
-                message += formatCommitmentsForMessage(commitments, dateKey);
-                message += `\n\nReply here to update me on progress or chat about blockers.`;
-              }
-            }
-
-            if (schedule.type === 'evening') {
-              let todayPlan: any = null;
-              try {
-                const planRow = await db.select().from(schema.plans).where(
-                  and(eq(schema.plans.userId, link.userId), eq(schema.plans.date, dateKey))
-                ).limit(1);
-                todayPlan = planRow[0]?.data as any;
-              } catch {}
-
-              const tasks = todayPlan?.tasks || [];
-              const completed = tasks.filter((t: any) => t.completed).length;
-              const total = tasks.length;
-
-              if (total > 0) {
-                message = `Evening check-in: You completed ${completed}/${total} tasks today (${total > 0 ? Math.round(completed / total * 100) : 0}%).`;
-                if (completed < total) {
-                  const remaining = tasks.filter((t: any) => !t.completed).slice(0, 3).map((t: any) => t.title).join(', ');
-                  message += ` Still open: ${remaining}.`;
-                } else {
-                  message += ` Great job finishing everything!`;
-                }
-              } else {
-                message = `Evening check-in: No tasks were planned today. Want to set up tomorrow's plan?`;
-              }
-
-              const commitments = await getCommitmentsForUser(link.userId);
-              const commitmentInfo = formatCommitmentsForMessage(commitments, dateKey);
-              if (commitmentInfo) {
-                message += `\n${commitmentInfo}`;
-              }
-            }
-
-            if (schedule.type === 'weekly') {
-              let userStats: any = {};
-              let userHistory: any[] = [];
-              try {
-                const statsRow = await db.select().from(schema.stats).where(eq(schema.stats.userId, link.userId)).limit(1);
-                userStats = statsRow[0]?.data || {};
-              } catch {}
-              try {
-                const historyRow = await db.select().from(schema.completionHistory).where(eq(schema.completionHistory.userId, link.userId)).limit(1);
-                userHistory = historyRow[0]?.data as any[] || [];
-              } catch {}
-
-              const recentCompleted = userHistory.filter((h: any) => h.completed).length;
-              const recentTotal = userHistory.length;
-              const rate = recentTotal > 0 ? Math.round(recentCompleted / recentTotal * 100) : 0;
-
-              message = `Weekly review: ${recentCompleted}/${recentTotal} tasks completed (${rate}%). Streak: ${userStats.streak || 0} days.`;
-
-              const commitments = await getCommitmentsForUser(link.userId);
-              if (commitments.length > 0) {
-                message += `\n\nYou have ${commitments.length} open commitment${commitments.length !== 1 ? 's' : ''}:`;
-                commitments.slice(0, 5).forEach((c: any) => {
-                  message += `\n  - "${c.content}"${c.dueDate ? ` (due ${c.dueDate})` : ''}`;
-                });
-              }
-
-              message += `\n\nOpen the app for your full weekly review.`;
-            }
+            const message = await generateProactiveMessage(schedule.type, {
+              tasks,
+              goals: userGoals,
+              commitments,
+              stats: userStats,
+              dateKey,
+            });
 
             if (message) {
+              console.log(`[Proactive] Sending ${schedule.type} to user ${link.userId} (${timezone})`);
               await sendMessage(link.chatId, message);
             }
           } catch (err) {
-            console.error(`Error sending proactive message to user ${link.userId}:`, err);
+            console.error(`[Proactive] Error for user ${link.userId}:`, err);
           }
         }
-      } catch (err) {
-        console.error("Error in proactive scheduler:", err);
       }
+    } catch (err) {
+      console.error('[Proactive] Scheduler error:', err);
     }
   }, 60 * 1000);
 
-  console.log("Telegram proactive scheduler started");
+  console.log('Telegram proactive scheduler started');
 }

@@ -7,6 +7,8 @@ import {
   Pressable,
   Platform,
   ActivityIndicator,
+  Modal,
+  FlatList,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -75,6 +77,22 @@ interface PlatformInfo {
   color: string;
 }
 
+const TIMEZONES = [
+  { label: 'Eastern (ET)', value: 'America/New_York' },
+  { label: 'Central (CT)', value: 'America/Chicago' },
+  { label: 'Mountain (MT)', value: 'America/Denver' },
+  { label: 'Pacific (PT)', value: 'America/Los_Angeles' },
+  { label: 'Alaska (AKT)', value: 'America/Anchorage' },
+  { label: 'Hawaii (HT)', value: 'Pacific/Honolulu' },
+  { label: 'London (GMT/BST)', value: 'Europe/London' },
+  { label: 'Paris/Berlin (CET)', value: 'Europe/Paris' },
+  { label: 'Dubai (GST)', value: 'Asia/Dubai' },
+  { label: 'India (IST)', value: 'Asia/Kolkata' },
+  { label: 'Singapore (SGT)', value: 'Asia/Singapore' },
+  { label: 'Tokyo (JST)', value: 'Asia/Tokyo' },
+  { label: 'Sydney (AEST)', value: 'Australia/Sydney' },
+];
+
 const PLATFORMS: PlatformInfo[] = [
   {
     id: 'google',
@@ -127,6 +145,8 @@ export default function ProfileScreen() {
   const [userName, setUserName] = useState('');
   const [memories, setMemories] = useState<Memory[]>([]);
   const [memoriesLoading, setMemoriesLoading] = useState(true);
+  const [timezone, setTimezone] = useState('America/New_York');
+  const [showTimezoneModal, setShowTimezoneModal] = useState(false);
 
   const loadTelegramStatus = useCallback(async () => {
     try {
@@ -194,7 +214,20 @@ export default function ProfileScreen() {
     setNotificationsEnabledState(notifications);
     setUserName(name);
     await Promise.all([loadOAuthStatus(), loadMemories(), loadTelegramStatus()]);
+    try {
+      const res = await apiRequest('GET', '/api/preferences');
+      const prefs = await res.json();
+      if (prefs.timezone) setTimezone(prefs.timezone);
+    } catch {}
   }, [loadOAuthStatus, loadMemories, loadTelegramStatus]);
+
+  const handleTimezoneChange = useCallback(async (tz: string) => {
+    setTimezone(tz);
+    setShowTimezoneModal(false);
+    try {
+      await apiRequest('PATCH', '/api/preferences', { timezone: tz });
+    } catch {}
+  }, []);
 
   const stopTelegramPolling = useCallback(() => {
     if (telegramPollRef.current) {
@@ -886,6 +919,21 @@ export default function ProfileScreen() {
                 color={notificationsEnabled ? Colors.primary : Colors.border} 
               />
             </Pressable>
+            <Pressable
+              style={[styles.platformRow, styles.platformRowBorder]}
+              onPress={() => setShowTimezoneModal(true)}
+            >
+              <View style={[styles.platformIcon, { backgroundColor: Colors.primary + '15' }]}>
+                <Ionicons name="time-outline" size={20} color={Colors.primary} />
+              </View>
+              <View style={styles.platformInfo}>
+                <Text style={styles.platformName}>Notification Timezone</Text>
+                <Text style={styles.platformStatus}>
+                  {TIMEZONES.find(t => t.value === timezone)?.label || timezone}
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={Colors.textTertiary} />
+            </Pressable>
             <Pressable 
               style={styles.platformRow}
               onPress={logout}
@@ -934,6 +982,38 @@ export default function ProfileScreen() {
         }}
         onClose={() => setSheetVisible(false)}
       />
+
+      <Modal
+        visible={showTimezoneModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowTimezoneModal(false)}
+      >
+        <Pressable style={styles.tzOverlay} onPress={() => setShowTimezoneModal(false)}>
+          <Pressable style={styles.tzSheet} onPress={() => {}}>
+            <View style={styles.tzHandle} />
+            <Text style={styles.tzTitle}>Notification Timezone</Text>
+            <Text style={styles.tzSubtitle}>Morning, evening & weekly messages fire at these times</Text>
+            <FlatList
+              data={TIMEZONES}
+              keyExtractor={item => item.value}
+              renderItem={({ item }) => (
+                <Pressable
+                  style={[styles.tzRow, item.value === timezone && styles.tzRowSelected]}
+                  onPress={() => handleTimezoneChange(item.value)}
+                >
+                  <Text style={[styles.tzRowLabel, item.value === timezone && styles.tzRowLabelSelected]}>
+                    {item.label}
+                  </Text>
+                  {item.value === timezone && (
+                    <Ionicons name="checkmark" size={18} color={Colors.primary} />
+                  )}
+                </Pressable>
+              )}
+            />
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -1621,5 +1701,59 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontFamily: 'Inter_500Medium',
     color: Colors.textTertiary,
+  },
+  tzOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    justifyContent: 'flex-end',
+  },
+  tzSheet: {
+    backgroundColor: Colors.white,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingHorizontal: 20,
+    paddingBottom: 40,
+    maxHeight: '70%',
+  },
+  tzHandle: {
+    width: 36,
+    height: 4,
+    backgroundColor: Colors.border,
+    borderRadius: 2,
+    alignSelf: 'center',
+    marginTop: 12,
+    marginBottom: 20,
+  },
+  tzTitle: {
+    fontSize: 17,
+    fontFamily: 'Inter_700Bold',
+    color: Colors.text,
+    marginBottom: 4,
+  },
+  tzSubtitle: {
+    fontSize: 13,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+    marginBottom: 16,
+  },
+  tzRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  tzRowSelected: {
+    backgroundColor: Colors.primary + '08',
+  },
+  tzRowLabel: {
+    fontSize: 15,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.text,
+  },
+  tzRowLabelSelected: {
+    color: Colors.primary,
+    fontFamily: 'Inter_600SemiBold',
   },
 });
