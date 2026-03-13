@@ -57,7 +57,7 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
       console.log(`[Telegram] Fetching Gmail+Calendar for user ${userId}, token length: ${token?.length}`);
 
       const [emailResult, calResult] = await Promise.allSettled([
-        getRecentEmailCommitments(7, token),
+        getRecentEmailCommitments(14, token),
         getGoogleCalendarEvents(today, undefined, undefined, token),
       ]);
 
@@ -97,8 +97,8 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
       : '';
 
     const gmailSection = gmailItems.length > 0
-      ? `## Recent Emails (last 7 days from Gmail)\n` +
-        gmailItems.slice(0, 15).map((i: any) => `- From: ${i.from || 'unknown'} | "${i.subject}" — ${i.snippet}`).join('\n') +
+      ? `## Recent Emails (last 14 days from Gmail)\n` +
+        gmailItems.slice(0, 40).map((i: any) => `- From: ${i.from || 'unknown'} | "${i.subject}" — ${i.snippet}`).join('\n') +
         `\n(Refer to these directly when asked. Do not say you cannot access email — you have the data above.)`
       : gmailConnected
         ? `## Recent Emails\nGmail is connected but no emails found in the last 7 days.`
