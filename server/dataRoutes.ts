@@ -138,6 +138,32 @@ export function registerDataRoutes(app: Express): void {
   registerSimpleJsonCrud(app, "life-context", schema.lifeContext);
   registerSimpleJsonCrud(app, "timer-settings", schema.timerSettings);
   registerSimpleJsonCrud(app, "user-preferences", schema.userPreferences);
+
+  app.post("/api/data/auto-built-plan/dismiss", async (req: Request, res: Response) => {
+    try {
+      const userId = requireUserId(req, res);
+      if (!userId) return;
+      const result = await db
+        .select({ data: schema.userPreferences.data })
+        .from(schema.userPreferences)
+        .where(eq(schema.userPreferences.userId, userId));
+      const currentPrefs = (result[0]?.data as any) || {};
+      if (currentPrefs.autoBuiltPlan) {
+        currentPrefs.autoBuiltPlan.dismissed = true;
+      }
+      await db
+        .insert(schema.userPreferences)
+        .values({ userId, data: currentPrefs, updatedAt: new Date() })
+        .onConflictDoUpdate({
+          target: [schema.userPreferences.userId],
+          set: { data: currentPrefs, updatedAt: new Date() },
+        });
+      res.json({ ok: true });
+    } catch (e) {
+      console.error("Error dismissing auto-built plan:", e);
+      res.status(500).json({ error: "Failed to dismiss auto-built plan" });
+    }
+  });
   registerSimpleJsonCrud(app, "completion-history", schema.completionHistory);
   registerSimpleJsonCrud(app, "blocked-tasks", schema.blockedTasks);
   registerSimpleJsonCrud(app, "plan-snapshots", schema.planSnapshots);

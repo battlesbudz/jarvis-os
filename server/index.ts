@@ -4,6 +4,7 @@ import { registerRoutes } from "./routes";
 import { ensureTablesExist } from "./db";
 import { registerTelegramWebhook, startProactiveScheduler } from "./telegramRoutes";
 import { setWebhook, isTelegramConfigured } from "./integrations/telegram";
+import { startScheduler } from "./scheduler";
 import * as fs from "fs";
 import * as path from "path";
 
@@ -241,6 +242,8 @@ function setupErrorHandler(app: express.Application) {
   registerTelegramWebhook(app);
 
   const server = await registerRoutes(app);
+
+  startScheduler();
 
   setupErrorHandler(app);
 

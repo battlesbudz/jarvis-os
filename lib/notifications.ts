@@ -122,7 +122,7 @@ export async function scheduleTimerNotification(title: string, body: string) {
   });
 }
 
-export async function scheduleMorningBriefing() {
+export async function scheduleMorningBriefing(customTitle?: string, customBody?: string) {
   if (Platform.OS === 'web') return;
 
   const enabled = await areNotificationsEnabled();
@@ -140,8 +140,8 @@ export async function scheduleMorningBriefing() {
   await Notifications.scheduleNotificationAsync({
     identifier: 'morning-briefing',
     content: {
-      title: 'Good morning! \uD83C\uDFAF',
-      body: 'Set your energy level and plan your day.',
+      title: customTitle || 'Good morning! \uD83C\uDFAF',
+      body: customBody || 'Set your energy level and plan your day.',
       data: { screen: 'today' },
     },
     trigger: {

@@ -276,7 +276,23 @@ export default function TodayScreen() {
         scheduleAllTaskReminders(todayPlan.tasks);
       }
       if (granted) {
-        scheduleMorningBriefing();
+        try {
+          const prefsUrl = new URL('/api/data/user-preferences', getApiUrl());
+          const prefsRes = await authFetch(prefsUrl.toString(), { cache: 'no-store' });
+          const prefsData = await prefsRes.json();
+          const autoBuilt = prefsData?.data?.autoBuiltPlan;
+          const todayKey = getTodayKey();
+          if (autoBuilt && autoBuilt.date === todayKey && autoBuilt.topTask) {
+            scheduleMorningBriefing(
+              '\u2600\uFE0F Your day is planned',
+              `Top task: ${autoBuilt.topTask}`
+            );
+          } else {
+            scheduleMorningBriefing();
+          }
+        } catch {
+          scheduleMorningBriefing();
+        }
         const [stats, calEvts] = await Promise.all([getStats(), calEventsLoaded]);
         orchestrateProactiveNotifications(todayPlan.tasks, loadedGoals, calEvts, stats);
       }
