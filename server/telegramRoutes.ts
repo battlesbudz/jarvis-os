@@ -2,7 +2,7 @@ import type { Express, Request, Response } from "express";
 import { db } from "./db";
 import { eq, and, desc, sql, gte } from "drizzle-orm";
 import * as schema from "@shared/schema";
-import { sendMessage, isTelegramConfigured, getUpdates, deleteWebhook, downloadTelegramFile } from "./integrations/telegram";
+import { sendMessage, isTelegramConfigured, getUpdates, deleteWebhook, downloadTelegramFile, downloadTelegramFileBuffer } from "./integrations/telegram";
 import { getRecentEmailCommitments, getEmailsSince } from "./integrations/gmail";
 import { getGoogleCalendarEvents } from "./integrations/googleCalendar";
 import { getValidGoogleTokens } from "./userTokenStore";
@@ -252,7 +252,7 @@ async function processUpdate(update: any): Promise<void> {
 
     const message = update.message;
     if (!message) return;
-    if (!message.text && !message.photo && !message.document) return;
+    if (!message.text && !message.photo && !message.document && !message.voice && !message.audio && !message.video_note) return;
 
     const chatId = message.chat.id.toString();
     const chatType = message.chat.type;
@@ -267,6 +267,26 @@ async function processUpdate(update: any): Promise<void> {
     } else if (message.document && message.document.mime_type?.startsWith('image/')) {
       const downloaded = await downloadTelegramFile(message.document.file_id).catch(() => null);
       if (downloaded) imageUrl = downloaded;
+    }
+
+    const voiceFileId = message.voice?.file_id || message.audio?.file_id || message.video_note?.file_id;
+    if (voiceFileId && !text) {
+      try {
+        const file = await downloadTelegramFileBuffer(voiceFileId);
+        if (file) {
+          const { speechToText, ensureCompatibleFormat } = await import('./replit_integrations/audio/client');
+          const { buffer, format } = await ensureCompatibleFormat(file.buffer);
+          const transcript = await speechToText(buffer, format);
+          if (transcript && transcript.trim()) {
+            text = transcript.trim();
+            await sendMessage(chatId, `🎤 Heard: "${text.length > 120 ? text.slice(0, 120) + '...' : text}"`);
+          }
+        }
+      } catch (err) {
+        console.error('[Telegram] Voice transcription failed:', err);
+        await sendMessage(chatId, "Sorry, I couldn't understand that voice message. Could you try again or type it out?");
+        return;
+      }
     }
 
     if (!text && !imageUrl) return;
