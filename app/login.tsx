@@ -118,16 +118,40 @@ export default function LoginScreen() {
       clientId,
       redirectUri,
       scopes: ["openid", "profile", "email"],
-      responseType: AuthSession.ResponseType.Token,
-      usePKCE: false,
-      extraParams: { nonce: Date.now().toString() },
+      responseType: AuthSession.ResponseType.Code,
+      usePKCE: true,
     });
 
     const result = await request.promptAsync(GOOGLE_DISCOVERY);
 
-    if (result.type === "success" && result.authentication?.accessToken) {
+    if (result.type === "success" && result.params?.code) {
       try {
-        await loginWithGoogle(null, result.authentication.accessToken);
+        const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            code: result.params.code,
+            client_id: clientId,
+            redirect_uri: redirectUri,
+            grant_type: "authorization_code",
+            code_verifier: request.codeVerifier || "",
+          }).toString(),
+        });
+
+        if (!tokenRes.ok) {
+          const errData = await tokenRes.json();
+          throw new Error(errData.error_description || "Token exchange failed");
+        }
+
+        const tokenData = await tokenRes.json();
+
+        if (tokenData.id_token) {
+          await loginWithGoogle(tokenData.id_token, null);
+        } else if (tokenData.access_token) {
+          await loginWithGoogle(null, tokenData.access_token);
+        } else {
+          throw new Error("No token received from Google");
+        }
       } catch (e: any) {
         setError(e.message || "Google sign-in failed");
       }
