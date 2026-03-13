@@ -193,6 +193,82 @@ export async function getRecentEmailCommitments(
   }
 }
 
+export interface StarredEmail {
+  messageId: string;
+  subject: string;
+  from: string;
+  snippet: string;
+  receivedAt: number;
+  ageDays: number;
+}
+
+export async function getStarredFollowUpEmails(
+  userAccessToken: string,
+  minAgeDays: number = 3
+): Promise<StarredEmail[]> {
+  try {
+    const gmail = await getGmailClient(userAccessToken);
+    const fourteenDaysAgo = Math.floor((Date.now() - 14 * 24 * 60 * 60 * 1000) / 1000);
+
+    const listRes = await gmail.users.messages.list({
+      userId: 'me',
+      q: `in:inbox (is:starred OR is:important) -from:me after:${fourteenDaysAgo}`,
+      maxResults: 20,
+    });
+
+    const messages = listRes.data.messages || [];
+    if (messages.length === 0) return [];
+
+    const results: StarredEmail[] = [];
+    const nowMs = Date.now();
+    const minAgeMs = minAgeDays * 24 * 60 * 60 * 1000;
+    const BATCH_SIZE = 10;
+
+    for (let i = 0; i < messages.length; i += BATCH_SIZE) {
+      const batch = messages.slice(i, i + BATCH_SIZE);
+      const batchResults = await Promise.all(
+        batch.map(async (msg) => {
+          if (!msg.id) return null;
+          try {
+            const detail = await gmail.users.messages.get({
+              userId: 'me',
+              id: msg.id,
+              format: 'metadata',
+              metadataHeaders: ['Subject', 'From', 'Date'],
+            });
+            const headers = detail.data.payload?.headers || [];
+            const subject = headers.find((h: any) => h.name === 'Subject')?.value || '(no subject)';
+            const from = headers.find((h: any) => h.name === 'From')?.value || 'unknown';
+            const snippet = (detail.data.snippet || '').slice(0, 200);
+            const receivedAt = parseInt(detail.data.internalDate || '0', 10);
+            const labelIds: string[] = (detail.data.labelIds as string[]) || [];
+
+            if (!labelIds.includes('INBOX')) return null;
+            if (labelIds.includes('SENT') || labelIds.includes('DRAFT')) return null;
+
+            const ageMs = nowMs - receivedAt;
+            if (ageMs < minAgeMs) return null;
+
+            const ageDays = Math.floor(ageMs / (24 * 60 * 60 * 1000));
+            return { messageId: msg.id, subject, from, snippet, receivedAt, ageDays } as StarredEmail;
+          } catch {
+            return null;
+          }
+        })
+      );
+      for (const r of batchResults) {
+        if (r) results.push(r);
+      }
+    }
+
+    results.sort((a, b) => a.receivedAt - b.receivedAt);
+    return results;
+  } catch (err) {
+    console.error('[Gmail] getStarredFollowUpEmails error:', err);
+    return [];
+  }
+}
+
 export async function gmailModifyMessage(
   messageId: string,
   addLabelIds: string[],
