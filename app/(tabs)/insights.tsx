@@ -485,10 +485,9 @@ export default function InsightsScreen() {
           soundRef.current = null;
         }
         await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
-        const preset = Platform.OS === 'android'
-          ? Audio.RecordingOptionsPresets.LOW_QUALITY
-          : Audio.RecordingOptionsPresets.HIGH_QUALITY;
-        const { recording } = await Audio.Recording.createAsync(preset);
+        const { recording } = await Audio.Recording.createAsync(
+          Audio.RecordingOptionsPresets.HIGH_QUALITY
+        );
         recordingRef.current = recording;
         setIsRecording(true);
       }
