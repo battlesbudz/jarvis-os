@@ -234,6 +234,23 @@ export async function ensureTablesExist() {
     `);
 
     await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS proactive_questions_sent (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id VARCHAR NOT NULL REFERENCES users(id),
+        source_type VARCHAR NOT NULL,
+        source_id VARCHAR NOT NULL,
+        question TEXT NOT NULL,
+        sent_at TIMESTAMP DEFAULT NOW(),
+        answered_at TIMESTAMP
+      )
+    `);
+
+    await db.execute(sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS proactive_questions_user_source_idx
+        ON proactive_questions_sent (user_id, source_type, source_id)
+    `).catch(() => {});
+
+    await db.execute(sql`
       CREATE TABLE IF NOT EXISTS mobile_auth_sessions (
         session_id TEXT PRIMARY KEY,
         token TEXT NOT NULL,

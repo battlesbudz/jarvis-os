@@ -152,6 +152,16 @@ export const userMemories = pgTable("user_memories", {
   extractedAt: timestamp("extracted_at").defaultNow().notNull(),
 });
 
+export const proactiveQuestionsSent = pgTable("proactive_questions_sent", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  sourceType: varchar("source_type").notNull(),
+  sourceId: varchar("source_id").notNull(),
+  question: text("question").notNull(),
+  sentAt: timestamp("sent_at").defaultNow(),
+  answeredAt: timestamp("answered_at"),
+});
+
 export const mobileAuthSessions = pgTable("mobile_auth_sessions", {
   sessionId: text("session_id").primaryKey(),
   token: text("token").notNull(),
