@@ -781,6 +781,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "messages array is required" });
       }
 
+      let resolvedGmailConnected = gmailConnected ?? false;
+      let resolvedGmailItems = gmailItems || [];
+
+      if (!resolvedGmailConnected && userId) {
+        try {
+          const userTokens = await getUserTokens(userId, 'google');
+          if (userTokens.length > 0) {
+            resolvedGmailConnected = true;
+            const perAccountItems = await Promise.all(
+              userTokens.map(async (t) => {
+                const emails = await getRecentEmailCommitments(7, t.accessToken).catch(() => []);
+                return emails.map((e: any) => ({ ...e, accountEmail: t.accountEmail }));
+              })
+            );
+            resolvedGmailItems = perAccountItems.flat();
+          }
+        } catch {}
+      }
+
       let userCommitments: any[] = [];
       if (userId) {
         try {
@@ -810,7 +829,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         } catch {}
       }
 
-      const systemPrompt = buildCoachSystemPrompt(goals || [], stats || {}, history || [], calendarEvents || [], lifeContext || null, gmailItems || [], gmailConnected ?? false, slackMessages || [], slackConnected ?? false, userCommitments, coachingMode, memories, telegramMessages || [], telegramConnected ?? false, morningNoteSummary);
+      const systemPrompt = buildCoachSystemPrompt(goals || [], stats || {}, history || [], calendarEvents || [], lifeContext || null, resolvedGmailItems, resolvedGmailConnected, slackMessages || [], slackConnected ?? false, userCommitments, coachingMode, memories, telegramMessages || [], telegramConnected ?? false, morningNoteSummary);
 
       const chatMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
         { role: "system", content: systemPrompt + "\n\nYou can take actions on the user's behalf using the available tools. When a user asks you to add a task, log progress, update their context, etc., use the appropriate tool. Respond naturally — do not mention 'tool calls' or 'functions' to the user. Just confirm what you did conversationally." },
