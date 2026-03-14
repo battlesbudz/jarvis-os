@@ -573,9 +573,9 @@ async function processUpdate(update: any): Promise<void> {
           await sendMessage(chatId, "Sorry, I couldn't download that voice message. Could you try again or type it out?");
           return;
         }
-        const { speechToText, ensureCompatibleFormat } = await import('./replit_integrations/audio/client');
-        const { buffer, format } = await ensureCompatibleFormat(file.buffer);
-        const transcript = await speechToText(buffer, format);
+        const { speechToText, detectAudioFormat } = await import('./replit_integrations/audio/client');
+        const format = detectAudioFormat(file.buffer);
+        const transcript = await speechToText(file.buffer, format);
         if (!transcript || !transcript.trim()) {
           await sendMessage(chatId, "Sorry, I couldn't make out what you said. Could you try again or type it out?");
           return;
