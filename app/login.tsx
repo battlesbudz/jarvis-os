@@ -116,7 +116,7 @@ export default function LoginScreen() {
       const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
       let token: string | null = null;
 
-      for (let i = 0; i < 15; i++) {
+      for (let i = 0; i < 10; i++) {
         try {
           const res = await fetch(pollUrl);
           if (res.ok) {
@@ -137,7 +137,7 @@ export default function LoginScreen() {
           setError(tokenErr.message || "Failed to complete sign-in");
         }
       } else {
-        setError("Sign-in timed out. Please try again.");
+        setError("Sign-in timed out, please try again.");
       }
     } catch (e: any) {
       setError(e.message || "Could not open sign-in browser");
