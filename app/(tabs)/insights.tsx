@@ -441,6 +441,10 @@ export default function InsightsScreen() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ audio: base64 }),
       });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || `Server error ${res.status}`);
+      }
       const data = await res.json();
       if (data.text && data.text.trim()) {
         setIsTranscribing(false);
@@ -448,10 +452,12 @@ export default function InsightsScreen() {
         sendMessageRef.current(data.text);
       } else {
         setIsTranscribing(false);
+        Alert.alert('Could not understand', 'No speech was detected. Please try again and speak clearly.');
       }
     } catch (error) {
       console.error('Failed to transcribe:', error);
       setIsTranscribing(false);
+      Alert.alert('Transcription failed', 'Could not process your voice message. Please try again.');
     }
   }, []);
 
@@ -473,18 +479,22 @@ export default function InsightsScreen() {
           Alert.alert('Permission Required', 'Microphone access is needed to use voice input.');
           return;
         }
+        if (soundRef.current) {
+          await soundRef.current.stopAsync().catch(() => {});
+          await soundRef.current.unloadAsync().catch(() => {});
+          soundRef.current = null;
+        }
         await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
-        const { recording } = await Audio.Recording.createAsync(
-          Audio.RecordingOptionsPresets.HIGH_QUALITY
-        );
+        const preset = Platform.OS === 'android'
+          ? Audio.RecordingOptionsPresets.LOW_QUALITY
+          : Audio.RecordingOptionsPresets.HIGH_QUALITY;
+        const { recording } = await Audio.Recording.createAsync(preset);
         recordingRef.current = recording;
         setIsRecording(true);
       }
     } catch (error) {
       console.error('Failed to start recording:', error);
-      if (Platform.OS === 'web') {
-        Alert.alert('Permission Required', 'Microphone access is needed to use voice input.');
-      }
+      Alert.alert('Recording Failed', 'Could not start recording. Please check microphone permissions and try again.');
     }
   }, []);
 
@@ -513,19 +523,31 @@ export default function InsightsScreen() {
       transcribeAndSend(base64);
     } else {
       const recording = recordingRef.current;
-      if (!recording) return;
+      if (!recording) {
+        Alert.alert('Recording Error', 'No active recording found. Please try again.');
+        return;
+      }
       recordingRef.current = null;
+      setIsTranscribing(true);
 
       try {
         await recording.stopAndUnloadAsync();
         await Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true });
         const uri = recording.getURI();
-        if (!uri) throw new Error('No recording URI');
+        if (!uri) {
+          throw new Error('Recording produced no audio file');
+        }
         const base64 = await FileSystem.readAsStringAsync(uri, { encoding: 'base64' });
+        if (!base64 || base64.length < 100) {
+          throw new Error('Recording was too short or empty');
+        }
+        setIsTranscribing(false);
         transcribeAndSend(base64);
       } catch (error) {
-        console.error('Failed to process recording:', error);
+        const msg = error instanceof Error ? error.message : 'Unknown error';
+        console.error('Failed to process recording:', msg);
         setIsTranscribing(false);
+        Alert.alert('Recording Error', `Could not process your recording: ${msg}. Please try again.`);
       }
     }
   }, [transcribeAndSend]);
