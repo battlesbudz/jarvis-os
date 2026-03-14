@@ -123,8 +123,13 @@ export default function LoginScreen() {
               succeeded = true;
               cleanup();
               WebBrowser.dismissBrowser();
-              await loginWithToken(data.token);
-              setLoading(false);
+              try {
+                await loginWithToken(data.token);
+              } catch (tokenErr: any) {
+                setError(tokenErr.message || "Failed to complete sign-in");
+              } finally {
+                setLoading(false);
+              }
             }
           }
         } catch {}

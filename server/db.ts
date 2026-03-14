@@ -234,6 +234,14 @@ export async function ensureTablesExist() {
     `);
 
     await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS mobile_auth_sessions (
+        session_id TEXT PRIMARY KEY,
+        token TEXT NOT NULL,
+        expires_at TIMESTAMP NOT NULL
+      )
+    `);
+
+    await db.execute(sql`
       CREATE TABLE IF NOT EXISTS morning_voice_notes (
         id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
         user_id VARCHAR NOT NULL REFERENCES users(id),
