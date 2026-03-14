@@ -235,7 +235,7 @@ export async function textToSpeechStream(
 
 /**
  * Speech-to-Text: Transcribes audio using dedicated transcription model.
- * Uses whisper-1 for fast, reliable transcription.
+ * Uses gpt-4o-mini-transcribe for accurate transcription.
  */
 export async function speechToText(
   audioBuffer: Buffer,
@@ -245,14 +245,14 @@ export async function speechToText(
   const file = await toFile(audioBuffer, `audio.${ext}`);
   const response = await openai.audio.transcriptions.create({
     file,
-    model: "whisper-1",
+    model: "gpt-4o-mini-transcribe",
   });
   return response.text;
 }
 
 /**
  * Streaming Speech-to-Text: Transcribes audio with real-time streaming.
- * Uses whisper-1 for fast, reliable transcription.
+ * Uses gpt-4o-mini-transcribe for accurate transcription.
  */
 export async function speechToTextStream(
   audioBuffer: Buffer,
@@ -262,7 +262,7 @@ export async function speechToTextStream(
   const file = await toFile(audioBuffer, `audio.${ext}`);
   const stream = await openai.audio.transcriptions.create({
     file,
-    model: "whisper-1",
+    model: "gpt-4o-mini-transcribe",
     stream: true,
   });
 
