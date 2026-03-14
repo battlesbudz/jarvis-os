@@ -108,57 +108,85 @@ export default function LoginScreen() {
     const startUrl = new URL(`/api/auth/mobile/start?session_id=${sessionId}`, baseUrl).toString();
     const pollUrl = new URL(`/api/auth/mobile/poll?session_id=${sessionId}`, baseUrl).toString();
 
+    let pollInterval: ReturnType<typeof setInterval> | null = null;
+    let succeeded = false;
+    let attemptNum = 0;
+
+    const cleanup = () => {
+      if (pollInterval) {
+        clearInterval(pollInterval);
+        pollInterval = null;
+      }
+    };
+
+    const doPoll = async (): Promise<boolean> => {
+      attemptNum++;
+      try {
+        console.log(`[GoogleAuth] Poll #${attemptNum} → ${pollUrl}`);
+        const res = await fetch(pollUrl);
+        console.log(`[GoogleAuth] Poll #${attemptNum} status: ${res.status}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.ready && data.token) {
+            console.log(`[GoogleAuth] Poll #${attemptNum}: token received!`);
+            succeeded = true;
+            cleanup();
+            try {
+              await loginWithToken(data.token);
+            } catch (tokenErr: any) {
+              setError(tokenErr.message || "Failed to complete sign-in");
+            }
+            WebBrowser.dismissBrowser();
+            setLoading(false);
+            return true;
+          }
+        }
+        console.log(`[GoogleAuth] Poll #${attemptNum}: not ready yet`);
+      } catch (err) {
+        console.log(`[GoogleAuth] Poll #${attemptNum} error:`, err);
+      }
+      return false;
+    };
+
     try {
+      console.log(`[GoogleAuth] Starting sign-in flow, session: ${sessionId}`);
+      console.log(`[GoogleAuth] API base: ${baseUrl}`);
+
+      pollInterval = setInterval(() => { doPoll(); }, 2000);
+
       await WebBrowser.openBrowserAsync(startUrl, {
         showTitle: false,
         toolbarColor: "#0F0F0F",
         secondaryToolbarColor: "#0F0F0F",
       });
 
-      const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
+      console.log(`[GoogleAuth] Browser closed. succeeded=${succeeded}, isAuth=${isAuthenticatedRef.current}`);
+      cleanup();
 
-      await delay(300);
-      if (isAuthenticatedRef.current) {
+      if (succeeded || isAuthenticatedRef.current) {
         setLoading(false);
         return;
       }
 
-      let token: string | null = null;
-
-      for (let i = 0; i < 10; i++) {
+      const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
+      for (let i = 0; i < 5; i++) {
         if (isAuthenticatedRef.current) {
           setLoading(false);
           return;
         }
-        try {
-          const res = await fetch(pollUrl);
-          if (res.ok) {
-            const data = await res.json();
-            if (data.ready && data.token) {
-              token = data.token;
-              break;
-            }
-          }
-        } catch {}
+        const found = await doPoll();
+        if (found) return;
         await delay(500);
       }
 
-      if (isAuthenticatedRef.current) {
-        return;
-      }
-
-      if (token) {
-        try {
-          await loginWithToken(token);
-        } catch (tokenErr: any) {
-          setError(tokenErr.message || "Failed to complete sign-in");
-        }
-      } else {
+      if (!isAuthenticatedRef.current) {
         setError("Sign-in timed out, please try again.");
       }
     } catch (e: any) {
+      cleanup();
       setError(e.message || "Could not open sign-in browser");
     } finally {
+      cleanup();
       setLoading(false);
     }
   }

@@ -33,17 +33,24 @@ function successHtml(token: string): string {
     .icon { font-size: 56px; margin-bottom: 20px; }
     h2 { font-size: 22px; font-weight: 700; margin-bottom: 10px; }
     p { color: #888; font-size: 15px; line-height: 1.5; }
-    .close-hint { color: #6366f1; font-size: 16px; font-weight: 600; margin-top: 24px; }
-    .arrow { font-size: 28px; margin-bottom: 8px; color: #6366f1; }
+    .dots { display: inline-flex; gap: 6px; margin-top: 24px; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: #6366f1;
+           animation: pulse 1.2s ease-in-out infinite; }
+    .dot:nth-child(2) { animation-delay: 0.2s; }
+    .dot:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes pulse { 0%,80%,100% { opacity: 0.3; } 40% { opacity: 1; } }
   </style>
 </head>
 <body>
   <div class="card">
     <div class="icon">✅</div>
     <h2>Signed in successfully</h2>
-    <p>You're all set!</p>
-    <div class="arrow">⬆</div>
-    <p class="close-hint">Tap the X above to return to GamePlan</p>
+    <p>Taking you back to GamePlan...</p>
+    <div class="dots">
+      <div class="dot"></div>
+      <div class="dot"></div>
+      <div class="dot"></div>
+    </div>
   </div>
   <script>
     try {
