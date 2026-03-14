@@ -2104,41 +2104,43 @@ function registerDataRoutes(app2) {
         return res.status(400).json({ error: "Missing data object in request body" });
       }
       const now = /* @__PURE__ */ new Date();
-      const replaceSimple = async (table, value) => {
-        if (value === null || value === void 0) {
-          await db.delete(table).where(eq3(table.userId, userId));
-          return;
+      await db.transaction(async (tx) => {
+        const replaceSimple = async (table, value) => {
+          if (value === null || value === void 0) {
+            await tx.delete(table).where(eq3(table.userId, userId));
+            return;
+          }
+          await tx.insert(table).values({ userId, data: value, updatedAt: now }).onConflictDoUpdate({ target: [table.userId], set: { data: value, updatedAt: now } });
+        };
+        await replaceSimple(goals, data.goals);
+        await replaceSimple(stats, data.stats);
+        await replaceSimple(lifeContext, data.lifeContext);
+        await replaceSimple(chatHistory, data.chatHistory);
+        await replaceSimple(timerSettings, data.timerSettings);
+        await replaceSimple(brainDumpInbox, data.brainDumpInbox);
+        await replaceSimple(completionHistory, data.completionHistory);
+        await replaceSimple(blockedTasks, data.blockedTasks);
+        await replaceSimple(planSnapshots, data.planSnapshots);
+        await replaceSimple(userPreferences, data.userPreferences);
+        if (data.plans && typeof data.plans === "object") {
+          await tx.delete(plans).where(eq3(plans.userId, userId));
+          for (const [date2, planData] of Object.entries(data.plans)) {
+            await tx.insert(plans).values({ userId, date: date2, data: planData, updatedAt: now });
+          }
         }
-        await db.insert(table).values({ userId, data: value, updatedAt: now }).onConflictDoUpdate({ target: [table.userId], set: { data: value, updatedAt: now } });
-      };
-      await replaceSimple(goals, data.goals);
-      await replaceSimple(stats, data.stats);
-      await replaceSimple(lifeContext, data.lifeContext);
-      await replaceSimple(chatHistory, data.chatHistory);
-      await replaceSimple(timerSettings, data.timerSettings);
-      await replaceSimple(brainDumpInbox, data.brainDumpInbox);
-      await replaceSimple(completionHistory, data.completionHistory);
-      await replaceSimple(blockedTasks, data.blockedTasks);
-      await replaceSimple(planSnapshots, data.planSnapshots);
-      await replaceSimple(userPreferences, data.userPreferences);
-      if (data.plans && typeof data.plans === "object") {
-        await db.delete(plans).where(eq3(plans.userId, userId));
-        for (const [date2, planData] of Object.entries(data.plans)) {
-          await db.insert(plans).values({ userId, date: date2, data: planData, updatedAt: now });
+        if (data.energyCheckins && typeof data.energyCheckins === "object") {
+          await tx.delete(energyCheckins).where(eq3(energyCheckins.userId, userId));
+          for (const [date2, checkinData] of Object.entries(data.energyCheckins)) {
+            await tx.insert(energyCheckins).values({ userId, date: date2, data: checkinData, updatedAt: now });
+          }
         }
-      }
-      if (data.energyCheckins && typeof data.energyCheckins === "object") {
-        await db.delete(energyCheckins).where(eq3(energyCheckins.userId, userId));
-        for (const [date2, checkinData] of Object.entries(data.energyCheckins)) {
-          await db.insert(energyCheckins).values({ userId, date: date2, data: checkinData, updatedAt: now });
+        if (data.completedCalendarIds && typeof data.completedCalendarIds === "object") {
+          await tx.delete(completedCalendarIds).where(eq3(completedCalendarIds.userId, userId));
+          for (const [date2, idsData] of Object.entries(data.completedCalendarIds)) {
+            await tx.insert(completedCalendarIds).values({ userId, date: date2, data: idsData, updatedAt: now });
+          }
         }
-      }
-      if (data.completedCalendarIds && typeof data.completedCalendarIds === "object") {
-        await db.delete(completedCalendarIds).where(eq3(completedCalendarIds.userId, userId));
-        for (const [date2, idsData] of Object.entries(data.completedCalendarIds)) {
-          await db.insert(completedCalendarIds).values({ userId, date: date2, data: idsData, updatedAt: now });
-        }
-      }
+      });
       res.json({ ok: true });
     } catch (e) {
       console.error("Error importing data:", e);
