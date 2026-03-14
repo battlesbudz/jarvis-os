@@ -1493,10 +1493,10 @@ Return ONLY the JSON object.`;
         return res.status(400).json({ error: "audio (base64) is required" });
       }
 
-      const { speechToText, ensureCompatibleFormat } = await import('./replit_integrations/audio/client');
+      const { speechToText, detectAudioFormat } = await import('./replit_integrations/audio/client');
       const rawBuffer = Buffer.from(audio, 'base64');
-      const { buffer, format } = await ensureCompatibleFormat(rawBuffer);
-      const text = await speechToText(buffer, format);
+      const format = detectAudioFormat(rawBuffer);
+      const text = await speechToText(rawBuffer, format);
       res.json({ text });
     } catch (error) {
       console.error("Error transcribing audio:", error);

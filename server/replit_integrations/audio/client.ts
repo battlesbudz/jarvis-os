@@ -189,13 +189,17 @@ export async function textToSpeech(
   voice: "alloy" | "echo" | "fable" | "onyx" | "nova" | "shimmer" = "alloy",
   format: "wav" | "mp3" | "flac" | "opus" | "pcm16" = "mp3"
 ): Promise<Buffer> {
-  const response = await openai.audio.speech.create({
-    model: "tts-1",
-    voice,
-    input: text,
-    response_format: format === "pcm16" ? "pcm" : format === "wav" ? "wav" : format === "flac" ? "flac" : format === "opus" ? "opus" : "mp3",
+  const response = await openai.chat.completions.create({
+    model: "gpt-audio",
+    modalities: ["text", "audio"],
+    audio: { voice, format },
+    messages: [
+      { role: "system", content: "You are an assistant that performs text-to-speech. Repeat the user's text exactly as written, with no additions, commentary, or modifications." },
+      { role: "user", content: text },
+    ],
   });
-  return Buffer.from(await response.arrayBuffer());
+  const audioData = (response.choices[0]?.message as any)?.audio?.data ?? "";
+  return Buffer.from(audioData, "base64");
 }
 
 /**
@@ -235,9 +239,10 @@ export async function textToSpeechStream(
  */
 export async function speechToText(
   audioBuffer: Buffer,
-  format: "wav" | "mp3" | "webm" = "wav"
+  format: AudioFormat = "wav"
 ): Promise<string> {
-  const file = await toFile(audioBuffer, `audio.${format}`);
+  const ext = format === "unknown" ? "wav" : format;
+  const file = await toFile(audioBuffer, `audio.${ext}`);
   const response = await openai.audio.transcriptions.create({
     file,
     model: "whisper-1",
@@ -251,9 +256,10 @@ export async function speechToText(
  */
 export async function speechToTextStream(
   audioBuffer: Buffer,
-  format: "wav" | "mp3" | "webm" = "wav"
+  format: AudioFormat = "wav"
 ): Promise<AsyncIterable<string>> {
-  const file = await toFile(audioBuffer, `audio.${format}`);
+  const ext = format === "unknown" ? "wav" : format;
+  const file = await toFile(audioBuffer, `audio.${ext}`);
   const stream = await openai.audio.transcriptions.create({
     file,
     model: "whisper-1",

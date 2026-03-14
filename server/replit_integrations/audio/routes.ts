@@ -1,6 +1,6 @@
 import express, { type Express, type Request, type Response } from "express";
 import { chatStorage } from "../chat/storage";
-import { openai, speechToText, ensureCompatibleFormat } from "./client";
+import { openai, speechToText, detectAudioFormat } from "./client";
 
 // Body parser with 50MB limit for audio payloads
 const audioBodyParser = express.json({ limit: "50mb" });
@@ -69,12 +69,10 @@ export function registerAudioRoutes(app: Express): void {
         return res.status(400).json({ error: "Audio data (base64) is required" });
       }
 
-      // 1. Auto-detect format and convert to OpenAI-compatible format
       const rawBuffer = Buffer.from(audio, "base64");
-      const { buffer: audioBuffer, format: inputFormat } = await ensureCompatibleFormat(rawBuffer);
+      const inputFormat = detectAudioFormat(rawBuffer);
 
-      // 2. Transcribe user audio
-      const userTranscript = await speechToText(audioBuffer, inputFormat);
+      const userTranscript = await speechToText(rawBuffer, inputFormat);
 
       // 3. Save user message
       await chatStorage.createMessage(conversationId, "user", userTranscript);
