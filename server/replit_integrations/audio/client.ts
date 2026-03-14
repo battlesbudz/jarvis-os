@@ -11,7 +11,7 @@ export const openai = new OpenAI({
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
 });
 
-export type AudioFormat = "wav" | "mp3" | "webm" | "mp4" | "ogg" | "unknown";
+export type AudioFormat = "wav" | "mp3" | "webm" | "mp4" | "m4a" | "ogg" | "unknown";
 
 /**
  * Detect audio format from buffer magic bytes.
