@@ -156,6 +156,7 @@ export async function learnFromDismissal(
     .from(schema.inboxItems)
     .where(and(eq(schema.inboxItems.id, itemId), eq(schema.inboxItems.userId, userId)));
   if (!item) return { learned: false };
+  if (item.sourceType !== "email") return { learned: false };
 
   const newCount = String(parseInt((item.dismissCount as string) || "0") + 1);
   await db

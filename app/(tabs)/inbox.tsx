@@ -47,7 +47,8 @@ export default function InboxScreen() {
 
   const actionMutation = useMutation({
     mutationFn: async ({ itemId, actionType }: { itemId: string; actionType: string }) => {
-      return apiRequest('POST', `/api/inbox/items/${itemId}/action`, { actionType });
+      const res = await apiRequest('POST', `/api/inbox/items/${itemId}/action`, { actionType });
+      return res.json();
     },
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ['/api/inbox/items'] });

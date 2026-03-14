@@ -37,14 +37,21 @@ export async function executeInboxAction(
 
   switch (actionType) {
     case "dismiss": {
-      const result = await learnFromDismissal(userId, itemId, telegramChatId);
-      return {
-        success: true,
-        message: result.learned
-          ? `Dismissed. Jarvis learned to suppress ${result.ruleName}`
-          : "Dismissed",
-        learned: result.learned,
-      };
+      if (item.sourceType === "email") {
+        const result = await learnFromDismissal(userId, itemId, telegramChatId);
+        return {
+          success: true,
+          message: result.learned
+            ? `Dismissed. Jarvis learned to suppress ${result.ruleName}`
+            : "Dismissed",
+          learned: result.learned,
+        };
+      }
+      await db
+        .update(schema.inboxItems)
+        .set({ status: "dismissed", actedAt: new Date() })
+        .where(eq(schema.inboxItems.id, itemId));
+      return { success: true, message: "Dismissed" };
     }
 
     case "never_again": {
