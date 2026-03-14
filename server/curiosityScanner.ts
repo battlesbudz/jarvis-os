@@ -166,6 +166,28 @@ export async function runCuriosityScan(): Promise<void> {
           );
           if (ruleResult.verdict === "suppress") continue;
 
+          if (ruleResult.verdict === "surface") {
+            try {
+              await db.insert(schema.inboxItems).values({
+                userId: link.userId,
+                sourceType: "calendar",
+                sourceId: eventId,
+                subject: ev.title,
+                sender: ev.organizer || null,
+                snippet: `${ev.start ? new Date(ev.start).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : ''}${ev.location ? ' at ' + ev.location : ''}${ev.description ? ' — ' + ev.description : ''}`,
+                jarvisReason: "Matched your surface rule",
+                suggestedActions: [
+                  { label: "Add Prep", actionType: "add_prep_time" },
+                  { label: "Save Context", actionType: "save_to_focus" },
+                  { label: "Dismiss", actionType: "dismiss" },
+                ],
+                matchedRuleId: ruleResult.matchedRuleId || null,
+              });
+              console.log(`[Curiosity] Surfaced calendar event for user ${link.userId}: ${ev.title}`);
+            } catch {}
+            continue;
+          }
+
           const startTime = ev.start ? new Date(ev.start).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : '';
           items.push({
             sourceType: "calendar",
