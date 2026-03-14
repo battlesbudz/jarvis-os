@@ -152,6 +152,46 @@ export async function executeInboxAction(
       return { success: true, message: `Task added: "${taskTitle}"` };
     }
 
+    case "add_prep_time": {
+      if (item.sourceType !== "calendar") {
+        return { success: false, message: "Only works for calendar events" };
+      }
+      const prepTitle = `Prep: ${item.subject || "upcoming meeting"}`;
+      const today = new Date().toISOString().slice(0, 10);
+      const plans = await db
+        .select()
+        .from(schema.plans)
+        .where(eq(schema.plans.userId, userId));
+      const existingPlan = plans.find((p: any) => p.date === today);
+      const planData: any = existingPlan?.data || { tasks: [] };
+      const tasks = Array.isArray(planData.tasks) ? planData.tasks : [];
+      const prepTask = {
+        id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+        title: prepTitle,
+        completed: false,
+        duration: 15,
+        priority: "high",
+        source: "calendar",
+      };
+      tasks.push(prepTask);
+      planData.tasks = tasks;
+
+      await db
+        .insert(schema.plans)
+        .values({ userId, date: today, data: planData })
+        .onConflictDoUpdate({
+          target: [schema.plans.userId, schema.plans.date],
+          set: { data: planData, updatedAt: new Date() },
+        });
+
+      await db
+        .update(schema.inboxItems)
+        .set({ status: "approved", actedAt: new Date() })
+        .where(eq(schema.inboxItems.id, itemId));
+
+      return { success: true, message: `Prep task added: "${prepTitle}"` };
+    }
+
     case "save_to_focus": {
       const contextText = `${item.subject || ""} — ${item.snippet || ""}`.trim();
       const [existing] = await db

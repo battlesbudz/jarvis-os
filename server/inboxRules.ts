@@ -47,6 +47,63 @@ function extractDomain(email: string): string {
   return match ? match[1].toLowerCase() : "";
 }
 
+function doesRuleMatch(
+  rule: InboxRule,
+  senderNorm: string,
+  senderDomain: string,
+  subjectNorm: string,
+  snippetNorm: string,
+  locationNorm: string,
+  allText: string
+): boolean {
+  const hints = (rule.matchHints || {}) as MatchHints;
+
+  if (hints.domains && hints.domains.length > 0) {
+    for (const d of hints.domains) {
+      if (senderDomain.includes(d.toLowerCase())) return true;
+    }
+  }
+
+  if (hints.senders && hints.senders.length > 0) {
+    for (const s of hints.senders) {
+      if (senderNorm.includes(s.toLowerCase())) return true;
+    }
+  }
+
+  if (hints.subjectKeywords && hints.subjectKeywords.length > 0) {
+    for (const kw of hints.subjectKeywords) {
+      if (subjectNorm.includes(kw.toLowerCase()) || snippetNorm.includes(kw.toLowerCase())) return true;
+    }
+  }
+
+  if (hints.locationKeywords && hints.locationKeywords.length > 0) {
+    for (const lk of hints.locationKeywords) {
+      if (locationNorm.includes(lk.toLowerCase()) || allText.includes(lk.toLowerCase())) return true;
+    }
+  }
+
+  const patternWords = rule.pattern
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((w) => w.length > 2 && !["from", "any", "all", "the", "about", "with", "that", "this"].includes(w));
+  if (patternWords.length > 0) {
+    const matchedWords = patternWords.filter((w) => allText.includes(w));
+    if (matchedWords.length >= Math.ceil(patternWords.length * 0.6)) return true;
+  }
+
+  return false;
+}
+
+function incrementMatchCount(rule: InboxRule): void {
+  db.update(schema.inboxRules)
+    .set({
+      matchCount: String(parseInt(rule.matchCount || "0") + 1),
+      updatedAt: new Date(),
+    })
+    .where(eq(schema.inboxRules.id, rule.id))
+    .catch(() => {});
+}
+
 export function matchItemAgainstRules(
   item: ScanItem,
   rules: InboxRule[]
@@ -62,78 +119,24 @@ export function matchItemAgainstRules(
     (r) => r.active !== "false" && (r.scope === "both" || r.scope === item.sourceType)
   );
 
-  for (const rule of activeRules) {
-    const hints = (rule.matchHints || {}) as MatchHints;
-    let matched = false;
+  const suppressRules = activeRules.filter((r) => r.type === "suppress");
+  const surfaceRules = activeRules.filter((r) => r.type === "surface");
 
-    if (hints.domains && hints.domains.length > 0) {
-      for (const d of hints.domains) {
-        if (senderDomain.includes(d.toLowerCase())) {
-          matched = true;
-          break;
-        }
-      }
-    }
-
-    if (!matched && hints.senders && hints.senders.length > 0) {
-      for (const s of hints.senders) {
-        if (senderNorm.includes(s.toLowerCase())) {
-          matched = true;
-          break;
-        }
-      }
-    }
-
-    if (!matched && hints.subjectKeywords && hints.subjectKeywords.length > 0) {
-      for (const kw of hints.subjectKeywords) {
-        if (subjectNorm.includes(kw.toLowerCase()) || snippetNorm.includes(kw.toLowerCase())) {
-          matched = true;
-          break;
-        }
-      }
-    }
-
-    if (!matched && hints.locationKeywords && hints.locationKeywords.length > 0) {
-      for (const lk of hints.locationKeywords) {
-        if (locationNorm.includes(lk.toLowerCase()) || allText.includes(lk.toLowerCase())) {
-          matched = true;
-          break;
-        }
-      }
-    }
-
-    if (!matched) {
-      const patternWords = rule.pattern
-        .toLowerCase()
-        .split(/\s+/)
-        .filter((w) => w.length > 2 && !["from", "any", "all", "the", "about", "with", "that", "this"].includes(w));
-      if (patternWords.length > 0) {
-        const matchedWords = patternWords.filter((w) => allText.includes(w));
-        if (matchedWords.length >= Math.ceil(patternWords.length * 0.6)) {
-          matched = true;
-        }
-      }
-    }
-
-    if (matched) {
-      db.update(schema.inboxRules)
-        .set({
-          matchCount: String(parseInt(rule.matchCount || "0") + 1),
-          updatedAt: new Date(),
-        })
-        .where(eq(schema.inboxRules.id, rule.id))
-        .catch(() => {});
-
-      if (rule.type === "suppress") {
-        return { verdict: "suppress", matchedRuleId: rule.id };
-      }
-      if (rule.type === "surface") {
-        return { verdict: "surface", matchedRuleId: rule.id };
-      }
+  for (const rule of suppressRules) {
+    if (doesRuleMatch(rule, senderNorm, senderDomain, subjectNorm, snippetNorm, locationNorm, allText)) {
+      incrementMatchCount(rule);
+      return { verdict: "suppress" as const, matchedRuleId: rule.id };
     }
   }
 
-  return { verdict: "default" };
+  for (const rule of surfaceRules) {
+    if (doesRuleMatch(rule, senderNorm, senderDomain, subjectNorm, snippetNorm, locationNorm, allText)) {
+      incrementMatchCount(rule);
+      return { verdict: "surface" as const, matchedRuleId: rule.id };
+    }
+  }
+
+  return { verdict: "default" as const };
 }
 
 export async function getUserInboxRules(userId: string): Promise<InboxRule[]> {
