@@ -71,7 +71,8 @@ function useDeepLinkAuth() {
     if (handledRef.current) return;
     try {
       const parsed = Linking.parse(url);
-      if (parsed.path === 'auth/complete' && parsed.queryParams?.token) {
+      const fullPath = [parsed.hostname, parsed.path].filter(Boolean).join('/');
+      if (fullPath === 'auth/complete' && parsed.queryParams?.token) {
         handledRef.current = true;
         await loginWithToken(parsed.queryParams.token as string);
       }
