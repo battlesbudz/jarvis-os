@@ -310,46 +310,48 @@ export function registerDataRoutes(app: Express): void {
 
       const now = new Date();
 
-      const replaceSimple = async (table: PgTable & SimpleJsonTable, value: unknown) => {
-        if (value === null || value === undefined) {
-          await db.delete(table).where(eq(table.userId, userId));
-          return;
-        }
-        await db.insert(table).values({ userId, data: value, updatedAt: now })
-          .onConflictDoUpdate({ target: [table.userId], set: { data: value, updatedAt: now } });
-      };
+      await db.transaction(async (tx) => {
+        const replaceSimple = async (table: PgTable & SimpleJsonTable, value: unknown) => {
+          if (value === null || value === undefined) {
+            await tx.delete(table).where(eq(table.userId, userId));
+            return;
+          }
+          await tx.insert(table).values({ userId, data: value, updatedAt: now })
+            .onConflictDoUpdate({ target: [table.userId], set: { data: value, updatedAt: now } });
+        };
 
-      await replaceSimple(schema.goals, data.goals);
-      await replaceSimple(schema.stats, data.stats);
-      await replaceSimple(schema.lifeContext, data.lifeContext);
-      await replaceSimple(schema.chatHistory, data.chatHistory);
-      await replaceSimple(schema.timerSettings, data.timerSettings);
-      await replaceSimple(schema.brainDumpInbox, data.brainDumpInbox);
-      await replaceSimple(schema.completionHistory, data.completionHistory);
-      await replaceSimple(schema.blockedTasks, data.blockedTasks);
-      await replaceSimple(schema.planSnapshots, data.planSnapshots);
-      await replaceSimple(schema.userPreferences, data.userPreferences);
+        await replaceSimple(schema.goals, data.goals);
+        await replaceSimple(schema.stats, data.stats);
+        await replaceSimple(schema.lifeContext, data.lifeContext);
+        await replaceSimple(schema.chatHistory, data.chatHistory);
+        await replaceSimple(schema.timerSettings, data.timerSettings);
+        await replaceSimple(schema.brainDumpInbox, data.brainDumpInbox);
+        await replaceSimple(schema.completionHistory, data.completionHistory);
+        await replaceSimple(schema.blockedTasks, data.blockedTasks);
+        await replaceSimple(schema.planSnapshots, data.planSnapshots);
+        await replaceSimple(schema.userPreferences, data.userPreferences);
 
-      if (data.plans && typeof data.plans === "object") {
-        await db.delete(schema.plans).where(eq(schema.plans.userId, userId));
-        for (const [date, planData] of Object.entries(data.plans)) {
-          await db.insert(schema.plans).values({ userId, date, data: planData, updatedAt: now });
+        if (data.plans && typeof data.plans === "object") {
+          await tx.delete(schema.plans).where(eq(schema.plans.userId, userId));
+          for (const [date, planData] of Object.entries(data.plans)) {
+            await tx.insert(schema.plans).values({ userId, date, data: planData, updatedAt: now });
+          }
         }
-      }
 
-      if (data.energyCheckins && typeof data.energyCheckins === "object") {
-        await db.delete(schema.energyCheckins).where(eq(schema.energyCheckins.userId, userId));
-        for (const [date, checkinData] of Object.entries(data.energyCheckins)) {
-          await db.insert(schema.energyCheckins).values({ userId, date, data: checkinData, updatedAt: now });
+        if (data.energyCheckins && typeof data.energyCheckins === "object") {
+          await tx.delete(schema.energyCheckins).where(eq(schema.energyCheckins.userId, userId));
+          for (const [date, checkinData] of Object.entries(data.energyCheckins)) {
+            await tx.insert(schema.energyCheckins).values({ userId, date, data: checkinData, updatedAt: now });
+          }
         }
-      }
 
-      if (data.completedCalendarIds && typeof data.completedCalendarIds === "object") {
-        await db.delete(schema.completedCalendarIds).where(eq(schema.completedCalendarIds.userId, userId));
-        for (const [date, idsData] of Object.entries(data.completedCalendarIds)) {
-          await db.insert(schema.completedCalendarIds).values({ userId, date, data: idsData, updatedAt: now });
+        if (data.completedCalendarIds && typeof data.completedCalendarIds === "object") {
+          await tx.delete(schema.completedCalendarIds).where(eq(schema.completedCalendarIds.userId, userId));
+          for (const [date, idsData] of Object.entries(data.completedCalendarIds)) {
+            await tx.insert(schema.completedCalendarIds).values({ userId, date, data: idsData, updatedAt: now });
+          }
         }
-      }
+      });
 
       res.json({ ok: true });
     } catch (e) {
