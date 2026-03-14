@@ -116,7 +116,7 @@ export default function LoginScreen() {
       const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
       let token: string | null = null;
 
-      for (let i = 0; i < 10; i++) {
+      for (let i = 0; i < 15; i++) {
         try {
           const res = await fetch(pollUrl);
           if (res.ok) {
@@ -127,7 +127,7 @@ export default function LoginScreen() {
             }
           }
         } catch {}
-        await delay(500);
+        await delay(600);
       }
 
       if (token) {

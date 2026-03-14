@@ -9,7 +9,8 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { Stack, router, useSegments } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import * as Notifications from "expo-notifications";
-import React, { useEffect, useRef } from "react";
+import * as Linking from "expo-linking";
+import React, { useCallback, useEffect, useRef } from "react";
 import { ActivityIndicator, Platform, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
@@ -62,8 +63,38 @@ function useProtectedRoute() {
   return { isLoading };
 }
 
+function useDeepLinkAuth() {
+  const { loginWithToken } = useAuth();
+  const handledRef = useRef(false);
+
+  const handleAuthUrl = useCallback(async (url: string) => {
+    if (handledRef.current) return;
+    try {
+      const parsed = Linking.parse(url);
+      if (parsed.path === 'auth/complete' && parsed.queryParams?.token) {
+        handledRef.current = true;
+        await loginWithToken(parsed.queryParams.token as string);
+      }
+    } catch {}
+  }, [loginWithToken]);
+
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+
+    Linking.getInitialURL().then((url) => {
+      if (url) handleAuthUrl(url);
+    });
+
+    const sub = Linking.addEventListener('url', (event) => {
+      handleAuthUrl(event.url);
+    });
+    return () => sub.remove();
+  }, [handleAuthUrl]);
+}
+
 function AppNavigator() {
   const { isLoading } = useProtectedRoute();
+  useDeepLinkAuth();
 
   useEffect(() => {
     if (Platform.OS === 'web') return;
