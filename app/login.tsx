@@ -169,14 +169,14 @@ export default function LoginScreen() {
       }
 
       const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
-      for (let i = 0; i < 5; i++) {
+      for (let i = 0; i < 3; i++) {
         if (isAuthenticatedRef.current) {
           setLoading(false);
           return;
         }
         const found = await doPoll();
         if (found) return;
-        await delay(500);
+        await delay(300);
       }
 
       if (!isAuthenticatedRef.current) {
