@@ -7,7 +7,10 @@ export const oauthCallbackRouter = Router();
 
 function getBaseUrl(req: Request): string {
   const domain = process.env.REPLIT_DOMAINS?.split(',')[0];
-  if (domain) return `https://${domain}:5000`;
+  if (domain) {
+    const isDev = process.env.REPLIT_DEV_DOMAIN === domain;
+    return isDev ? `https://${domain}:5000` : `https://${domain}`;
+  }
   return `${req.protocol}://${req.get('host')}`;
 }
 
