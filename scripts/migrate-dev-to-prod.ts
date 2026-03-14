@@ -1,5 +1,4 @@
 import jwt from "jsonwebtoken";
-import fs from "fs";
 import pg from "pg";
 
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -20,79 +19,71 @@ if (!DEV_USER_ID || !PROD_USER_ID) {
 
 const pool = new pg.Pool({ connectionString: DATABASE_URL });
 
-async function queryDev(sql: string, params: string[] = []) {
-  const result = await pool.query(sql, params);
-  return result.rows;
+async function queryOne(table: string): Promise<unknown> {
+  const result = await pool.query(`SELECT data FROM ${table} WHERE user_id = $1`, [DEV_USER_ID]);
+  return result.rows.length > 0 ? result.rows[0].data : null;
 }
 
-async function putProd(path: string, data: unknown, token: string) {
-  const res = await fetch(`${PROD_URL}${path}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ data }),
-  });
-  const json = await res.json();
-  console.log(`  PUT ${path} → ${res.status}`, JSON.stringify(json));
-  return json;
-}
-
-async function postProd(path: string, body: unknown, token: string) {
-  const res = await fetch(`${PROD_URL}${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-    body: JSON.stringify(body),
-  });
-  const json = await res.json();
-  console.log(`  POST ${path} → ${res.status}`, JSON.stringify(json));
-  return json;
+async function queryDateKeyed(table: string): Promise<Record<string, unknown>> {
+  const result = await pool.query(`SELECT date, data FROM ${table} WHERE user_id = $1`, [DEV_USER_ID]);
+  const map: Record<string, unknown> = {};
+  for (const row of result.rows) {
+    map[row.date] = row.data;
+  }
+  return map;
 }
 
 async function main() {
   console.log(`Migrating data from dev user ${DEV_USER_ID} to prod user ${PROD_USER_ID}`);
-  console.log(`Production URL: ${PROD_URL}`);
+  console.log(`Production URL: ${PROD_URL}\n`);
 
   const prodToken = jwt.sign({ userId: PROD_USER_ID }, JWT_SECRET!, { expiresIn: "1h" });
-  console.log("Generated production JWT token");
+  console.log("Generated production JWT token\n");
 
-  const simpleTables = ["goals", "stats", "life_context", "chat_history", "timer_settings",
-    "brain_dump_inbox", "completion_history", "blocked_tasks", "plan_snapshots", "user_preferences"];
-
-  const apiPaths: Record<string, string> = {
-    goals: "goals", stats: "stats", life_context: "life-context",
-    chat_history: "chat-history", timer_settings: "timer-settings",
-    brain_dump_inbox: "brain-dump-inbox", completion_history: "completion-history",
-    blocked_tasks: "blocked-tasks", plan_snapshots: "plan-snapshots",
-    user_preferences: "user-preferences",
+  console.log("Reading dev database...");
+  const bundle = {
+    goals: await queryOne("goals"),
+    stats: await queryOne("stats"),
+    lifeContext: await queryOne("life_context"),
+    userPreferences: await queryOne("user_preferences"),
+    chatHistory: await queryOne("chat_history"),
+    timerSettings: await queryOne("timer_settings"),
+    brainDumpInbox: await queryOne("brain_dump_inbox"),
+    completionHistory: await queryOne("completion_history"),
+    blockedTasks: await queryOne("blocked_tasks"),
+    planSnapshots: await queryOne("plan_snapshots"),
+    plans: await queryDateKeyed("plans"),
+    energyCheckins: await queryDateKeyed("energy_checkins"),
+    completedCalendarIds: await queryDateKeyed("completed_calendar_ids"),
   };
 
-  for (const table of simpleTables) {
-    const rows = await queryDev(`SELECT data FROM ${table} WHERE user_id = $1`, [DEV_USER_ID]);
-    if (rows.length > 0 && rows[0].data !== null) {
-      console.log(`\nMigrating ${table}...`);
-      await putProd(`/api/data/${apiPaths[table]}`, rows[0].data, prodToken);
-    } else {
-      console.log(`\nSkipping ${table} (no data)`);
-    }
+  console.log("  goals:", bundle.goals ? "present" : "null");
+  console.log("  stats:", bundle.stats ? "present" : "null");
+  console.log("  lifeContext:", bundle.lifeContext ? "present" : "null");
+  console.log("  userPreferences:", bundle.userPreferences ? "present" : "null");
+  console.log("  chatHistory:", bundle.chatHistory ? "present" : "null");
+  console.log("  plans:", Object.keys(bundle.plans).length, "entries");
+  console.log("  energyCheckins:", Object.keys(bundle.energyCheckins).length, "entries");
+  console.log("  completedCalendarIds:", Object.keys(bundle.completedCalendarIds).length, "entries");
+
+  console.log("\nPushing to production via POST /api/data/import...");
+  const res = await fetch(`${PROD_URL}/api/data/import`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${prodToken}`,
+    },
+    body: JSON.stringify({ data: bundle }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    console.error(`Import failed with status ${res.status}:`, text);
+    process.exit(1);
   }
 
-  const plans = await queryDev("SELECT date, data FROM plans WHERE user_id = $1", [DEV_USER_ID]);
-  console.log(`\nMigrating ${plans.length} plans...`);
-  for (const plan of plans) {
-    await putProd(`/api/data/plans/${plan.date}`, plan.data, prodToken);
-  }
-
-  const energyCheckins = await queryDev("SELECT date, data FROM energy_checkins WHERE user_id = $1", [DEV_USER_ID]);
-  console.log(`\nMigrating ${energyCheckins.length} energy checkins...`);
-  for (const row of energyCheckins) {
-    await putProd(`/api/data/energy-checkins/${row.date}`, row.data, prodToken);
-  }
-
-  const calendarIds = await queryDev("SELECT date, data FROM completed_calendar_ids WHERE user_id = $1", [DEV_USER_ID]);
-  console.log(`\nMigrating ${calendarIds.length} completed calendar IDs...`);
-  for (const row of calendarIds) {
-    await putProd(`/api/data/completed-calendar-ids/${row.date}`, row.data, prodToken);
-  }
-
+  const result = await res.json();
+  console.log("Import result:", JSON.stringify(result));
   console.log("\nMigration complete!");
   await pool.end();
 }
