@@ -55,11 +55,13 @@ function loadGisScript(): Promise<void> {
 
 export default function LoginScreen() {
   const insets = useSafeAreaInsets();
-  const { loginWithGoogle, loginWithToken, sessionExpired, clearSessionExpired } = useAuth();
+  const { loginWithGoogle, loginWithToken, isAuthenticated, sessionExpired, clearSessionExpired } = useAuth();
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [gisReady, setGisReady] = useState(false);
   const gisInitialized = useRef(false);
+  const isAuthenticatedRef = useRef(isAuthenticated);
+  useEffect(() => { isAuthenticatedRef.current = isAuthenticated; }, [isAuthenticated]);
 
   const topPadding = Platform.OS === "web" ? 67 : insets.top;
 
@@ -114,9 +116,20 @@ export default function LoginScreen() {
       });
 
       const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
+
+      await delay(300);
+      if (isAuthenticatedRef.current) {
+        setLoading(false);
+        return;
+      }
+
       let token: string | null = null;
 
-      for (let i = 0; i < 15; i++) {
+      for (let i = 0; i < 10; i++) {
+        if (isAuthenticatedRef.current) {
+          setLoading(false);
+          return;
+        }
         try {
           const res = await fetch(pollUrl);
           if (res.ok) {
@@ -127,7 +140,11 @@ export default function LoginScreen() {
             }
           }
         } catch {}
-        await delay(600);
+        await delay(500);
+      }
+
+      if (isAuthenticatedRef.current) {
+        return;
       }
 
       if (token) {
