@@ -2104,37 +2104,39 @@ function registerDataRoutes(app2) {
         return res.status(400).json({ error: "Missing data object in request body" });
       }
       const now = /* @__PURE__ */ new Date();
-      const upsertSimple = async (table, value) => {
-        if (value === null || value === void 0) return;
+      const replaceSimple = async (table, value) => {
+        if (value === null || value === void 0) {
+          await db.delete(table).where(eq3(table.userId, userId));
+          return;
+        }
         await db.insert(table).values({ userId, data: value, updatedAt: now }).onConflictDoUpdate({ target: [table.userId], set: { data: value, updatedAt: now } });
       };
-      await upsertSimple(goals, data.goals);
-      await upsertSimple(stats, data.stats);
-      await upsertSimple(lifeContext, data.lifeContext);
-      await upsertSimple(chatHistory, data.chatHistory);
-      await upsertSimple(timerSettings, data.timerSettings);
-      await upsertSimple(brainDumpInbox, data.brainDumpInbox);
-      await upsertSimple(completionHistory, data.completionHistory);
-      await upsertSimple(blockedTasks, data.blockedTasks);
-      await upsertSimple(planSnapshots, data.planSnapshots);
-      if (data.userPreferences) {
-        const [existing] = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq3(userPreferences.userId, userId));
-        const merged = { ...existing?.data || {}, ...data.userPreferences };
-        await db.insert(userPreferences).values({ userId, data: merged, updatedAt: now }).onConflictDoUpdate({ target: [userPreferences.userId], set: { data: merged, updatedAt: now } });
-      }
+      await replaceSimple(goals, data.goals);
+      await replaceSimple(stats, data.stats);
+      await replaceSimple(lifeContext, data.lifeContext);
+      await replaceSimple(chatHistory, data.chatHistory);
+      await replaceSimple(timerSettings, data.timerSettings);
+      await replaceSimple(brainDumpInbox, data.brainDumpInbox);
+      await replaceSimple(completionHistory, data.completionHistory);
+      await replaceSimple(blockedTasks, data.blockedTasks);
+      await replaceSimple(planSnapshots, data.planSnapshots);
+      await replaceSimple(userPreferences, data.userPreferences);
       if (data.plans && typeof data.plans === "object") {
+        await db.delete(plans).where(eq3(plans.userId, userId));
         for (const [date2, planData] of Object.entries(data.plans)) {
-          await db.insert(plans).values({ userId, date: date2, data: planData, updatedAt: now }).onConflictDoUpdate({ target: [plans.userId, plans.date], set: { data: planData, updatedAt: now } });
+          await db.insert(plans).values({ userId, date: date2, data: planData, updatedAt: now });
         }
       }
       if (data.energyCheckins && typeof data.energyCheckins === "object") {
+        await db.delete(energyCheckins).where(eq3(energyCheckins.userId, userId));
         for (const [date2, checkinData] of Object.entries(data.energyCheckins)) {
-          await db.insert(energyCheckins).values({ userId, date: date2, data: checkinData, updatedAt: now }).onConflictDoUpdate({ target: [energyCheckins.userId, energyCheckins.date], set: { data: checkinData, updatedAt: now } });
+          await db.insert(energyCheckins).values({ userId, date: date2, data: checkinData, updatedAt: now });
         }
       }
       if (data.completedCalendarIds && typeof data.completedCalendarIds === "object") {
+        await db.delete(completedCalendarIds).where(eq3(completedCalendarIds.userId, userId));
         for (const [date2, idsData] of Object.entries(data.completedCalendarIds)) {
-          await db.insert(completedCalendarIds).values({ userId, date: date2, data: idsData, updatedAt: now }).onConflictDoUpdate({ target: [completedCalendarIds.userId, completedCalendarIds.date], set: { data: idsData, updatedAt: now } });
+          await db.insert(completedCalendarIds).values({ userId, date: date2, data: idsData, updatedAt: now });
         }
       }
       res.json({ ok: true });
