@@ -1636,7 +1636,67 @@ export async function startEmailAlertScanner(): Promise<void> {
 
         console.log(`[EmailAlert] ${emails.length} new email(s) for user ${link.userId}, classifying...`);
 
-        const emailList = emails.map((e, i) =>
+        const { getUserInboxRules, matchItemAgainstRules } = await import("./inboxRules");
+        const userRules = await getUserInboxRules(link.userId);
+
+        const filteredEmails: typeof emails = [];
+        const autoSurfaced: { email: typeof emails[0]; ruleId?: string; reason: string }[] = [];
+
+        for (const email of emails) {
+          const result = matchItemAgainstRules(
+            {
+              sourceType: "email",
+              sourceId: email.messageId || "",
+              sender: email.from,
+              subject: email.subject,
+              snippet: email.snippet,
+            },
+            userRules
+          );
+          if (result.verdict === "suppress") {
+            console.log(`[EmailAlert] Suppressed "${email.subject}" by rule ${result.matchedRuleId}`);
+            continue;
+          }
+          if (result.verdict === "surface") {
+            autoSurfaced.push({ email, ruleId: result.matchedRuleId, reason: "Matched your surface rule" });
+            continue;
+          }
+          filteredEmails.push(email);
+        }
+
+        for (const { email, ruleId, reason } of autoSurfaced) {
+          const suggestedActions = email.messageId
+            ? [
+                { label: "Archive", actionType: "archive" },
+                { label: "Star", actionType: "mark_important" },
+                { label: "Save as Task", actionType: "save_as_task" },
+                { label: "Dismiss", actionType: "dismiss" },
+              ]
+            : [
+                { label: "Save as Task", actionType: "save_as_task" },
+                { label: "Dismiss", actionType: "dismiss" },
+              ];
+          try {
+            await db.insert(schema.inboxItems).values({
+              userId: link.userId,
+              sourceType: "email",
+              sourceId: email.messageId ? `gmail:${email.messageId}` : `gmail:${email.subject}`,
+              subject: email.subject,
+              sender: email.from,
+              snippet: email.snippet,
+              jarvisReason: reason,
+              suggestedActions,
+              matchedRuleId: ruleId || null,
+            });
+          } catch {}
+          const senderName = email.from.replace(/<.*>/, '').trim() || email.from;
+          const msg = `📧 Surfaced for you:\nFrom: ${senderName}\n"${email.subject}"\n\n${email.snippet.slice(0, 150)}${email.snippet.length > 150 ? '...' : ''}\n\nJarvis: ${reason}`;
+          await sendMessage(link.chatId, msg);
+        }
+
+        if (filteredEmails.length === 0) continue;
+
+        const emailList = filteredEmails.map((e, i) =>
           `${i}. From: ${e.from}\n   Subject: "${e.subject}"\n   Preview: ${e.snippet}`
         ).join('\n\n');
 
@@ -1682,9 +1742,33 @@ Return [] if nothing is urgent.`,
         }
 
         for (const flag of flagged) {
-          const email = emails[flag.index];
+          const email = filteredEmails[flag.index];
           if (!email) continue;
           const senderName = email.from.replace(/<.*>/, '').trim() || email.from;
+
+          const suggestedActions = email.messageId
+            ? [
+                { label: "Archive", actionType: "archive" },
+                { label: "Save as Task", actionType: "save_as_task" },
+                { label: "Dismiss", actionType: "dismiss" },
+              ]
+            : [
+                { label: "Save as Task", actionType: "save_as_task" },
+                { label: "Dismiss", actionType: "dismiss" },
+              ];
+          try {
+            await db.insert(schema.inboxItems).values({
+              userId: link.userId,
+              sourceType: "email",
+              sourceId: email.messageId ? `gmail:${email.messageId}` : `gmail:${email.subject}`,
+              subject: email.subject,
+              sender: email.from,
+              snippet: email.snippet,
+              jarvisReason: flag.reason,
+              suggestedActions,
+            });
+          } catch {}
+
           const msg = `📧 Email needs your attention:\nFrom: ${senderName}\n"${email.subject}"\n\n${email.snippet.slice(0, 150)}${email.snippet.length > 150 ? '...' : ''}\n\nJarvis: ${flag.reason}`;
           await sendMessage(link.chatId, msg);
           console.log(`[EmailAlert] Alerted user ${link.userId}: "${email.subject}"`);

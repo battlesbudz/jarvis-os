@@ -13,7 +13,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, { FadeInDown } from 'react-native-reanimated';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import Colors from '@/constants/colors';
 import * as Haptics from 'expo-haptics';
 import {
@@ -151,6 +151,7 @@ const PLATFORMS: PlatformInfo[] = [
 
 export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
+  const router = useRouter();
   const { logout, username: authUsername } = useAuth();
   const [stats, setStats] = useState<UserStats>({
     streak: 0, totalCompleted: 0, bestStreak: 0, xp: 0, badges: [], claimedRewards: [],
@@ -1069,6 +1070,21 @@ export default function ProfileScreen() {
                 size={32}
                 color={emailAlertsEnabled ? Colors.primary : Colors.border}
               />
+            </Pressable>
+            <Pressable
+              style={[styles.platformRow, styles.platformRowBorder]}
+              onPress={() => router.push('/inbox-rules')}
+            >
+              <View style={[styles.platformIcon, { backgroundColor: Colors.secondary + '15' }]}>
+                <Ionicons name="funnel-outline" size={20} color={Colors.secondary} />
+              </View>
+              <View style={styles.platformInfo}>
+                <Text style={styles.platformName}>Inbox Rules</Text>
+                <Text style={styles.platformStatus}>
+                  Configure what Jarvis surfaces or suppresses
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={Colors.textTertiary} />
             </Pressable>
             <Pressable
               style={[styles.platformRow, styles.platformRowBorder]}

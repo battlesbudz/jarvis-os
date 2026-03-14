@@ -162,6 +162,37 @@ export const proactiveQuestionsSent = pgTable("proactive_questions_sent", {
   answeredAt: timestamp("answered_at"),
 });
 
+export const inboxRules = pgTable("inbox_rules", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  type: varchar("type").notNull(),
+  scope: varchar("scope").notNull(),
+  pattern: text("pattern").notNull(),
+  matchHints: jsonb("match_hints"),
+  source: varchar("source").notNull(),
+  matchCount: varchar("match_count").default("0"),
+  active: varchar("active").default("true"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const inboxItems = pgTable("inbox_items", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  sourceType: varchar("source_type").notNull(),
+  sourceId: varchar("source_id").notNull(),
+  subject: text("subject"),
+  sender: text("sender"),
+  snippet: text("snippet"),
+  jarvisReason: text("jarvis_reason"),
+  suggestedActions: jsonb("suggested_actions"),
+  status: varchar("status").default("pending"),
+  dismissCount: varchar("dismiss_count").default("0"),
+  matchedRuleId: varchar("matched_rule_id"),
+  surfacedAt: timestamp("surfaced_at").defaultNow(),
+  actedAt: timestamp("acted_at"),
+});
+
 export const mobileAuthSessions = pgTable("mobile_auth_sessions", {
   sessionId: text("session_id").primaryKey(),
   token: text("token").notNull(),

@@ -151,11 +151,21 @@ export async function runCuriosityScan(): Promise<void> {
           );
         }
 
+        const { getUserInboxRules, matchItemAgainstRules } = await import("./inboxRules");
+        const userRules = await getUserInboxRules(link.userId);
+
         const items: CuriosityItem[] = [];
 
         for (const ev of calendarEvents) {
           const eventId = ev.id ? `cal:${ev.id}` : `cal:${ev.title}:${ev.start || ''}`;
           if (alreadyAsked.has(eventId)) continue;
+
+          const ruleResult = matchItemAgainstRules(
+            { sourceType: "calendar", sourceId: eventId, subject: ev.title, location: ev.location },
+            userRules
+          );
+          if (ruleResult.verdict === "suppress") continue;
+
           const startTime = ev.start ? new Date(ev.start).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : '';
           items.push({
             sourceType: "calendar",
@@ -169,6 +179,13 @@ export async function runCuriosityScan(): Promise<void> {
         for (const email of recentEmails) {
           const emailId = email.messageId ? `gmail:${email.messageId}` : `gmail:${email.subject}:${email.from || ''}`;
           if (alreadyAsked.has(emailId)) continue;
+
+          const ruleResult = matchItemAgainstRules(
+            { sourceType: "email", sourceId: emailId, sender: email.from, subject: email.subject, snippet: email.snippet },
+            userRules
+          );
+          if (ruleResult.verdict === "suppress") continue;
+
           items.push({
             sourceType: "gmail",
             sourceId: emailId,
