@@ -241,4 +241,123 @@ export function registerDataRoutes(app: Express): void {
       res.status(500).json({ error: "Failed to save completed calendar ids" });
     }
   });
+
+  app.get("/api/data/export", async (req: Request, res: Response) => {
+    try {
+      const userId = requireUserId(req, res);
+      if (!userId) return;
+
+      const [goalsRow] = await db.select({ data: schema.goals.data }).from(schema.goals).where(eq(schema.goals.userId, userId));
+      const [statsRow] = await db.select({ data: schema.stats.data }).from(schema.stats).where(eq(schema.stats.userId, userId));
+      const [lifeContextRow] = await db.select({ data: schema.lifeContext.data }).from(schema.lifeContext).where(eq(schema.lifeContext.userId, userId));
+      const [userPrefsRow] = await db.select({ data: schema.userPreferences.data }).from(schema.userPreferences).where(eq(schema.userPreferences.userId, userId));
+      const [chatHistoryRow] = await db.select({ data: schema.chatHistory.data }).from(schema.chatHistory).where(eq(schema.chatHistory.userId, userId));
+      const [timerSettingsRow] = await db.select({ data: schema.timerSettings.data }).from(schema.timerSettings).where(eq(schema.timerSettings.userId, userId));
+      const [brainDumpRow] = await db.select({ data: schema.brainDumpInbox.data }).from(schema.brainDumpInbox).where(eq(schema.brainDumpInbox.userId, userId));
+      const [completionHistoryRow] = await db.select({ data: schema.completionHistory.data }).from(schema.completionHistory).where(eq(schema.completionHistory.userId, userId));
+      const [blockedTasksRow] = await db.select({ data: schema.blockedTasks.data }).from(schema.blockedTasks).where(eq(schema.blockedTasks.userId, userId));
+      const [planSnapshotsRow] = await db.select({ data: schema.planSnapshots.data }).from(schema.planSnapshots).where(eq(schema.planSnapshots.userId, userId));
+
+      const plansRows = await db.select().from(schema.plans).where(eq(schema.plans.userId, userId));
+      const plans: Record<string, unknown> = {};
+      for (const row of plansRows) {
+        plans[row.date] = row.data;
+      }
+
+      const energyRows = await db.select().from(schema.energyCheckins).where(eq(schema.energyCheckins.userId, userId));
+      const energyCheckins: Record<string, unknown> = {};
+      for (const row of energyRows) {
+        energyCheckins[row.date] = row.data;
+      }
+
+      const calendarIdRows = await db.select().from(schema.completedCalendarIds).where(eq(schema.completedCalendarIds.userId, userId));
+      const completedCalendarIds: Record<string, unknown> = {};
+      for (const row of calendarIdRows) {
+        completedCalendarIds[row.date] = row.data;
+      }
+
+      res.json({
+        data: {
+          goals: goalsRow?.data ?? null,
+          stats: statsRow?.data ?? null,
+          lifeContext: lifeContextRow?.data ?? null,
+          userPreferences: userPrefsRow?.data ?? null,
+          chatHistory: chatHistoryRow?.data ?? null,
+          timerSettings: timerSettingsRow?.data ?? null,
+          brainDumpInbox: brainDumpRow?.data ?? null,
+          completionHistory: completionHistoryRow?.data ?? null,
+          blockedTasks: blockedTasksRow?.data ?? null,
+          planSnapshots: planSnapshotsRow?.data ?? null,
+          plans,
+          energyCheckins,
+          completedCalendarIds,
+        },
+      });
+    } catch (e) {
+      console.error("Error exporting data:", e);
+      res.status(500).json({ error: "Failed to export data" });
+    }
+  });
+
+  app.post("/api/data/import", async (req: Request, res: Response) => {
+    try {
+      const userId = requireUserId(req, res);
+      if (!userId) return;
+      const { data } = req.body;
+      if (!data || typeof data !== "object") {
+        return res.status(400).json({ error: "Missing data object in request body" });
+      }
+
+      const now = new Date();
+
+      const upsertSimple = async (table: PgTable & SimpleJsonTable, value: unknown) => {
+        if (value === null || value === undefined) return;
+        await db.insert(table).values({ userId, data: value, updatedAt: now })
+          .onConflictDoUpdate({ target: [table.userId], set: { data: value, updatedAt: now } });
+      };
+
+      await upsertSimple(schema.goals, data.goals);
+      await upsertSimple(schema.stats, data.stats);
+      await upsertSimple(schema.lifeContext, data.lifeContext);
+      await upsertSimple(schema.chatHistory, data.chatHistory);
+      await upsertSimple(schema.timerSettings, data.timerSettings);
+      await upsertSimple(schema.brainDumpInbox, data.brainDumpInbox);
+      await upsertSimple(schema.completionHistory, data.completionHistory);
+      await upsertSimple(schema.blockedTasks, data.blockedTasks);
+      await upsertSimple(schema.planSnapshots, data.planSnapshots);
+
+      if (data.userPreferences) {
+        const [existing] = await db.select({ data: schema.userPreferences.data }).from(schema.userPreferences).where(eq(schema.userPreferences.userId, userId));
+        const merged = { ...((existing?.data as Record<string, unknown>) || {}), ...(data.userPreferences as Record<string, unknown>) };
+        await db.insert(schema.userPreferences).values({ userId, data: merged, updatedAt: now })
+          .onConflictDoUpdate({ target: [schema.userPreferences.userId], set: { data: merged, updatedAt: now } });
+      }
+
+      if (data.plans && typeof data.plans === "object") {
+        for (const [date, planData] of Object.entries(data.plans)) {
+          await db.insert(schema.plans).values({ userId, date, data: planData, updatedAt: now })
+            .onConflictDoUpdate({ target: [schema.plans.userId, schema.plans.date], set: { data: planData, updatedAt: now } });
+        }
+      }
+
+      if (data.energyCheckins && typeof data.energyCheckins === "object") {
+        for (const [date, checkinData] of Object.entries(data.energyCheckins)) {
+          await db.insert(schema.energyCheckins).values({ userId, date, data: checkinData, updatedAt: now })
+            .onConflictDoUpdate({ target: [schema.energyCheckins.userId, schema.energyCheckins.date], set: { data: checkinData, updatedAt: now } });
+        }
+      }
+
+      if (data.completedCalendarIds && typeof data.completedCalendarIds === "object") {
+        for (const [date, idsData] of Object.entries(data.completedCalendarIds)) {
+          await db.insert(schema.completedCalendarIds).values({ userId, date, data: idsData, updatedAt: now })
+            .onConflictDoUpdate({ target: [schema.completedCalendarIds.userId, schema.completedCalendarIds.date], set: { data: idsData, updatedAt: now } });
+        }
+      }
+
+      res.json({ ok: true });
+    } catch (e) {
+      console.error("Error importing data:", e);
+      res.status(500).json({ error: "Failed to import data" });
+    }
+  });
 }
