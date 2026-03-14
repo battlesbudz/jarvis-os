@@ -74,9 +74,15 @@ function useDeepLinkAuth() {
       const fullPath = [parsed.hostname, parsed.path].filter(Boolean).join('/');
       if (fullPath === 'auth/complete' && parsed.queryParams?.token) {
         handledRef.current = true;
-        await loginWithToken(parsed.queryParams.token as string);
+        try {
+          await loginWithToken(parsed.queryParams.token as string);
+        } finally {
+          handledRef.current = false;
+        }
       }
-    } catch {}
+    } catch {
+      handledRef.current = false;
+    }
   }, [loginWithToken]);
 
   useEffect(() => {
