@@ -4,7 +4,7 @@ import OpenAI from "openai";
 import { db } from "./db";
 import { eq, and, desc, sql, gte } from "drizzle-orm";
 import * as schema from "@shared/schema";
-import { userMemories, morningVoiceNotes, userPreferences } from "@shared/schema";
+import { userMemories, morningVoiceNotes, userPreferences, proactiveQuestionsSent } from "@shared/schema";
 import { resizeTask, generateSmartPlan, unblockTask } from "./ai";
 import {
   getGoogleCalendarEvents,
@@ -197,10 +197,34 @@ function buildCoachSystemPrompt(goals: any[], stats: any, history: any[], calend
         : `\n## Recent Slack Messages\nSlack is connected but no messages were found in the last 7 days.`)
     : '';
 
-  const memoriesSection = memories && memories.length > 0
-    ? `\n## What I Know About You (from past conversations)\n` +
-      memories.slice(0, 20).map(m => `- [${m.category}] ${m.content}`).join('\n')
-    : '';
+  const memoriesSection = (() => {
+    if (!memories || memories.length === 0) return '';
+    const categoryLabels: Record<string, string> = {
+      personality: 'Personality & Communication',
+      values: 'Values & Motivations',
+      work_style: 'Work Style & Patterns',
+      accomplishment: 'Accomplishments & Wins',
+      goal_discovered: 'Discovered Goals',
+      relationship: 'Key People & Relationships',
+      pattern: 'Recurring Patterns',
+      preference: 'Preferences',
+      fact: 'General Facts',
+      goal: 'Goals',
+      achievement: 'Achievements',
+    };
+    const grouped: Record<string, string[]> = {};
+    for (const m of memories) {
+      const cat = m.category || 'fact';
+      if (!grouped[cat]) grouped[cat] = [];
+      grouped[cat].push(m.content);
+    }
+    let section = '\n## What I Know About You (from past conversations)';
+    for (const [cat, items] of Object.entries(grouped)) {
+      const label = categoryLabels[cat] || cat;
+      section += `\n### ${label}\n${items.map(i => `- ${i}`).join('\n')}`;
+    }
+    return section;
+  })();
 
   const telegramSection = telegramConnected
     ? (telegramMessages && telegramMessages.length > 0
@@ -772,6 +796,124 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   }
 
+  function normalizeMemoryContent(content: string): string {
+    return content.trim().toLowerCase().replace(/[^\w\s]/g, '').replace(/\s+/g, ' ');
+  }
+
+  async function extractProfileInBackground(userId: string, messages: any[]) {
+    try {
+      const recentMessages = messages.slice(-6);
+      if (recentMessages.length === 0) return;
+
+      const existingRows = await db.select({ content: userMemories.content })
+        .from(userMemories)
+        .where(eq(userMemories.userId, userId));
+      const existingMemories = existingRows.map(r => r.content);
+      const normalizedExisting = new Set(existingMemories.map(normalizeMemoryContent));
+
+      const conversationText = recentMessages
+        .map((m: any) => `${m.role}: ${m.content}`)
+        .join('\n');
+
+      const existingList = existingMemories.length > 0
+        ? `\nExisting memories (DO NOT duplicate these):\n${existingMemories.map(m => `- ${m}`).join('\n')}`
+        : '';
+
+      const prompt = `You are extracting profile facts about the user from this conversation.
+Output a JSON array of { category, content } objects. Only extract facts that are specific, meaningful, and not already captured.
+
+Categories:
+- personality — how they communicate, humor, energy, decision style
+- values — what they care about deeply, what motivates them
+- work_style — when/how they focus, work patterns, tools they use
+- accomplishment — wins, achievements, proud moments mentioned
+- goal_discovered — goals inferred from behavior (not just stated)
+- relationship — key people in their life (family, teammates, boss)
+- pattern — recurring behaviors, habits, tendencies
+- preference — explicit preferences (meeting times, communication style, etc.)
+${existingList}
+
+Conversation:
+${conversationText}
+
+Return JSON: { "memories": [{"content": "string describing the fact", "category": "one of the categories above"}] }
+Return { "memories": [] } if nothing new was learned. Do NOT repeat or rephrase existing memories.`;
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-5-mini",
+        messages: [{ role: "user", content: prompt }],
+        response_format: { type: "json_object" },
+        max_completion_tokens: 400,
+      });
+
+      const content = response.choices[0]?.message?.content || '{"memories":[]}';
+      const parsed = JSON.parse(content);
+      const rawMemories = Array.isArray(parsed.memories) ? parsed.memories : (Array.isArray(parsed) ? parsed : []);
+      const newMemories = rawMemories.slice(0, 3);
+      const validCategories = ['personality', 'values', 'work_style', 'accomplishment', 'goal_discovered', 'relationship', 'pattern', 'preference', 'fact', 'goal', 'achievement'];
+
+      for (const mem of newMemories) {
+        if (!mem.content || typeof mem.content !== 'string' || mem.content.trim().length === 0) continue;
+        const normalized = normalizeMemoryContent(mem.content);
+        if (normalizedExisting.has(normalized)) continue;
+        const category = validCategories.includes(mem.category) ? mem.category : 'fact';
+        await db.insert(userMemories).values({
+          userId,
+          content: mem.content.trim(),
+          category,
+        });
+        normalizedExisting.add(normalized);
+        console.log(`[Profile] Extracted: [${category}] ${mem.content.trim().slice(0, 60)}...`);
+      }
+    } catch (err) {
+      console.error("[Profile] Background extraction error:", err);
+    }
+  }
+
+  async function markProactiveQuestionsAnswered(userId: string, messages: any[]) {
+    try {
+      const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      const unanswered = await db.select()
+        .from(proactiveQuestionsSent)
+        .where(
+          and(
+            eq(proactiveQuestionsSent.userId, userId),
+            sql`${proactiveQuestionsSent.answeredAt} IS NULL`,
+            sql`${proactiveQuestionsSent.sentAt} > ${twentyFourHoursAgo}`
+          )
+        )
+        .orderBy(desc(proactiveQuestionsSent.sentAt))
+        .limit(1);
+      if (unanswered.length > 0) {
+        const lastUserMessage = messages.filter((m: any) => m.role === 'user').pop();
+        if (!lastUserMessage?.content) return;
+
+        const checkResponse = await openai.chat.completions.create({
+          model: "gpt-5-mini",
+          messages: [{
+            role: "user",
+            content: `Is the following user message a reply to (or related to) this question? Only answer "yes" or "no".
+
+Question that was asked: "${unanswered[0].question}"
+User's message: "${lastUserMessage.content}"
+
+Answer (yes/no):`,
+          }],
+          max_completion_tokens: 10,
+        });
+        const answer = (checkResponse.choices[0]?.message?.content || '').trim().toLowerCase();
+        if (answer.startsWith('yes')) {
+          await db.update(proactiveQuestionsSent)
+            .set({ answeredAt: new Date() })
+            .where(eq(proactiveQuestionsSent.id, unanswered[0].id));
+          console.log(`[Profile] Marked proactive question as answered via coach chat: ${unanswered[0].id}`);
+        }
+      }
+    } catch (err) {
+      console.error("[Profile] Error marking proactive question answered:", err);
+    }
+  }
+
   app.post("/api/coach/chat", async (req: Request, res: Response) => {
     try {
       const { messages, goals, stats, history, calendarEvents, lifeContext, gmailItems, gmailConnected, slackMessages, slackConnected, coachingMode, telegramMessages, telegramConnected } = req.body;
@@ -821,7 +963,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               .from(userMemories)
               .where(eq(userMemories.userId, userId))
               .orderBy(desc(userMemories.extractedAt))
-              .limit(20),
+              .limit(50),
             getMorningNoteSummary(userId),
           ]);
           memories = rows;
@@ -829,10 +971,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
         } catch {}
       }
 
+      let proactiveQuestionContext = '';
+      if (userId) {
+        try {
+          const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+          const recentUnanswered = await db.select()
+            .from(proactiveQuestionsSent)
+            .where(
+              and(
+                eq(proactiveQuestionsSent.userId, userId),
+                sql`${proactiveQuestionsSent.answeredAt} IS NULL`,
+                sql`${proactiveQuestionsSent.sentAt} > ${twentyFourHoursAgo}`
+              )
+            )
+            .orderBy(desc(proactiveQuestionsSent.sentAt))
+            .limit(3);
+          if (recentUnanswered.length > 0) {
+            proactiveQuestionContext = `\n## Recent Proactive Questions You Asked (unanswered)\nYou recently sent these curiosity-driven questions via Telegram. If the user's message seems to be answering one of them, acknowledge it warmly and ask a brief follow-up to learn more about them.\n` +
+              recentUnanswered.map(q => `- "${q.question}"`).join('\n');
+          }
+        } catch {}
+      }
+
       const systemPrompt = buildCoachSystemPrompt(goals || [], stats || {}, history || [], calendarEvents || [], lifeContext || null, resolvedGmailItems, resolvedGmailConnected, slackMessages || [], slackConnected ?? false, userCommitments, coachingMode, memories, telegramMessages || [], telegramConnected ?? false, morningNoteSummary);
 
       const chatMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-        { role: "system", content: systemPrompt + "\n\nYou can take actions on the user's behalf using the available tools. When a user asks you to add a task, log progress, update their context, etc., use the appropriate tool. Respond naturally — do not mention 'tool calls' or 'functions' to the user. Just confirm what you did conversationally." },
+        { role: "system", content: systemPrompt + proactiveQuestionContext + "\n\nYou can take actions on the user's behalf using the available tools. When a user asks you to add a task, log progress, update their context, etc., use the appropriate tool. Respond naturally — do not mention 'tool calls' or 'functions' to the user. Just confirm what you did conversationally." },
         ...messages.map((m: any) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
       ];
 
@@ -873,6 +1037,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           res.write(`data: ${JSON.stringify({ content: words })}\n\n`);
           res.write('data: [DONE]\n\n');
           res.end();
+          if (userId) {
+            extractProfileInBackground(userId, messages);
+            markProactiveQuestionsAnswered(userId, messages).catch(() => {});
+          }
           return;
         }
       }
@@ -907,6 +1075,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.write('data: [DONE]\n\n');
       res.end();
+      if (userId) {
+        extractProfileInBackground(userId, messages);
+        markProactiveQuestionsAnswered(userId, messages).catch(() => {});
+      }
     } catch (error) {
       console.error("Error in coach chat:", error);
       if (!res.headersSent) {
@@ -1805,14 +1977,28 @@ Return ONLY the JSON object.`;
         ? `\nExisting memories (DO NOT duplicate these):\n${existingMemories.map(m => `- ${m}`).join('\n')}`
         : '';
 
-      const prompt = `You are a memory extractor. Given this conversation snippet, extract 0-3 key facts about the user worth remembering long-term. Only extract facts that would be useful in future coaching sessions. Skip generic statements, greetings, and things already known.
+      const prompt = `You are extracting profile facts about the user from this conversation.
+Output a JSON array of { category, content } objects. Only extract facts that are specific, meaningful, and not already captured.
+
+Categories:
+- personality — how they communicate, humor, energy, decision style
+- values — what they care about deeply, what motivates them
+- work_style — when/how they focus, work patterns, tools they use
+- accomplishment — wins, achievements, proud moments mentioned
+- goal_discovered — goals inferred from behavior (not just stated)
+- relationship — key people in their life (family, teammates, boss)
+- pattern — recurring behaviors, habits, tendencies
+- preference — explicit preferences (meeting times, communication style, etc.)
+- fact — general facts about the user
+- goal — explicitly stated goals
+- achievement — specific achievements mentioned
 ${existingList}
 
 Conversation:
 ${conversationText}
 
-Return JSON: { "memories": [{"content": "string describing the fact", "category": "fact"|"pattern"|"preference"|"goal"|"achievement"}] }
-Return an empty array if nothing notable was said. Do NOT repeat or rephrase existing memories.`;
+Return JSON: { "memories": [{"content": "string describing the fact", "category": "one of the categories above"}] }
+Return { "memories": [] } if nothing new was learned. Do NOT repeat or rephrase existing memories.`;
 
       const response = await openai.chat.completions.create({
         model: "gpt-5-mini",
@@ -1825,10 +2011,11 @@ Return an empty array if nothing notable was said. Do NOT repeat or rephrase exi
       let added = 0;
       try {
         const parsed = JSON.parse(content);
-        const newMemories = Array.isArray(parsed.memories) ? parsed.memories.slice(0, 3) : [];
+        const rawMemories = Array.isArray(parsed.memories) ? parsed.memories : (Array.isArray(parsed) ? parsed : []);
+        const newMemories = rawMemories.slice(0, 3);
         for (const mem of newMemories) {
           if (!mem.content || typeof mem.content !== 'string' || mem.content.trim().length === 0) continue;
-          const validCategories = ['fact', 'pattern', 'preference', 'goal', 'achievement'];
+          const validCategories = ['fact', 'pattern', 'preference', 'goal', 'achievement', 'personality', 'values', 'work_style', 'accomplishment', 'goal_discovered', 'relationship'];
           const category = validCategories.includes(mem.category) ? mem.category : 'fact';
           await db.insert(userMemories).values({
             userId,

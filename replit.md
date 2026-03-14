@@ -28,3 +28,18 @@ Key architectural patterns and features include:
 -   **Calendar Integrations:** Google Calendar, Outlook Calendar (via Replit OAuth connectors)
 -   **Communication Integrations:** Gmail, Slack (via Replit OAuth connectors), Telegram (Bot API)
 -   **UI Icons:** @expo/vector-icons (Ionicons)
+
+## Rich User Profile System
+The coach builds an ever-growing user profile through structured memory categories stored in the `user_memories` table:
+- **Categories**: personality, values, work_style, accomplishment, goal_discovered, relationship, pattern, preference, fact, goal, achievement
+- **Automatic Extraction**: After every coach chat (both app and Telegram), a background LLM call extracts profile facts from the conversation
+- **Structured Injection**: Memories are grouped by category and injected as a structured "What I Know About You" section into the coach system prompt
+- **Deduplication**: Existing memories are passed to the extraction prompt to prevent duplicates
+
+## Curiosity Scanner (Proactive Questions)
+A background service (`server/curiosityScanner.ts`) runs every 30 minutes to proactively learn about the user:
+- Fetches upcoming calendar events (today + tomorrow) and recent emails (last 24h)
+- Uses AI to filter out noise (standups, newsletters) and generate curious questions about meaningful items
+- Sends questions via Telegram (max 2 per scan to avoid spam)
+- Tracks sent questions in `proactive_questions_sent` table to prevent repeats
+- When user replies to a proactive question, the system marks it as answered and extracts profile facts from the response

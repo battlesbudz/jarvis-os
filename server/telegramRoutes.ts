@@ -35,7 +35,7 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
     let gmailConnected = false;
     let googleAccessToken: string | null = null;
 
-    const [goalsRow, statsRow, lcRow, chatRow, commitmentsRows, googleTokens, prefsRow] = await Promise.allSettled([
+    const [goalsRow, statsRow, lcRow, chatRow, commitmentsRows, googleTokens, prefsRow, memoriesRow] = await Promise.allSettled([
       db.select().from(schema.goals).where(eq(schema.goals.userId, userId)).limit(1),
       db.select().from(schema.stats).where(eq(schema.stats.userId, userId)).limit(1),
       db.select().from(schema.lifeContext).where(eq(schema.lifeContext.userId, userId)).limit(1),
@@ -45,6 +45,11 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
         .orderBy(desc(schema.commitments.extractedAt)).limit(10),
       getValidGoogleTokens(userId),
       db.select().from(schema.userPreferences).where(eq(schema.userPreferences.userId, userId)).limit(1),
+      db.select({ content: schema.userMemories.content, category: schema.userMemories.category })
+        .from(schema.userMemories)
+        .where(eq(schema.userMemories.userId, userId))
+        .orderBy(desc(schema.userMemories.extractedAt))
+        .limit(50),
     ]);
 
     let userTimezone = 'America/New_York';
@@ -153,6 +158,58 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
       ? `Next scheduled notification: ${nextSlot.label} (${userTimezone})`
       : 'All scheduled notifications for today have already passed. Next: 8:00 AM tomorrow morning check-in';
 
+    let userMemoriesData: { content: string; category: string }[] = [];
+    if (memoriesRow.status === 'fulfilled') userMemoriesData = memoriesRow.value;
+
+    let proactiveQuestionContext = '';
+    try {
+      const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      const recentUnanswered = await db.select()
+        .from(schema.proactiveQuestionsSent)
+        .where(
+          and(
+            eq(schema.proactiveQuestionsSent.userId, userId),
+            sql`${schema.proactiveQuestionsSent.answeredAt} IS NULL`,
+            sql`${schema.proactiveQuestionsSent.sentAt} > ${twentyFourHoursAgo}`
+          )
+        )
+        .orderBy(desc(schema.proactiveQuestionsSent.sentAt))
+        .limit(3);
+      if (recentUnanswered.length > 0) {
+        proactiveQuestionContext = `\n## Recent Proactive Questions You Asked (unanswered)\nYou recently sent these curiosity-driven questions. If the user's message seems to be answering one of them, acknowledge it warmly and ask a brief follow-up to learn more about them.\n` +
+          recentUnanswered.map(q => `- "${q.question}" (about ${q.sourceType}: ${q.sourceId.replace(/^(cal|gmail):/, '')})`).join('\n');
+      }
+    } catch {}
+
+    const memoriesSection = (() => {
+      if (userMemoriesData.length === 0) return '';
+      const categoryLabels: Record<string, string> = {
+        personality: 'Personality & Communication',
+        values: 'Values & Motivations',
+        work_style: 'Work Style & Patterns',
+        accomplishment: 'Accomplishments & Wins',
+        goal_discovered: 'Discovered Goals',
+        relationship: 'Key People & Relationships',
+        pattern: 'Recurring Patterns',
+        preference: 'Preferences',
+        fact: 'General Facts',
+        goal: 'Goals',
+        achievement: 'Achievements',
+      };
+      const grouped: Record<string, string[]> = {};
+      for (const m of userMemoriesData) {
+        const cat = m.category || 'fact';
+        if (!grouped[cat]) grouped[cat] = [];
+        grouped[cat].push(m.content);
+      }
+      let section = '\n## What I Know About You (from past conversations)';
+      for (const [cat, items] of Object.entries(grouped)) {
+        const label = categoryLabels[cat] || cat;
+        section += `\n### ${label}\n${items.map(i => `- ${i}`).join('\n')}`;
+      }
+      return section;
+    })();
+
     const systemPrompt = `You are GamePlan Coach Jarvis — a sharp, supportive personal productivity coach. You're responding via Telegram, so keep messages SHORT (2-4 sentences max). Use plain text, no markdown headers.
 
 Today is ${dayOfWeek}, ${dateStr}. User's timezone: ${userTimezone}.
@@ -163,6 +220,7 @@ Today is ${dayOfWeek}, ${dateStr}. User's timezone: ${userTimezone}.
 - 8:00 PM: Evening recap of what was completed and what's still open
 - 7:00 PM Sundays: Weekly planning session (comprehensive week review + pattern insights + next week intentions)
 - Every 30 minutes: Email scanner checks Gmail and sends a Telegram alert ONLY for genuinely urgent emails
+- Every 30 minutes: Curiosity scanner sends proactive questions about upcoming meetings and important emails to help learn about you
 All times are in the user's timezone (${userTimezone}). These fire automatically — you cannot pause, delay, reschedule, or skip them. You have no log of whether a specific notification was actually sent.
 ${nextScheduledText}
 
@@ -171,6 +229,7 @@ ${nextScheduledText}
 - NEVER invent a narrative about your own past behavior or past conversations you don't have in your message history below.
 - If asked whether a notification went out, be honest: "I don't have a record of which notifications fired. The morning check-in is scheduled for 8 AM — I can tell you what's in your data right now."
 - If asked about past conversations not in your message history, say so. Don't fabricate.
+${memoriesSection}${proactiveQuestionContext}
 
 ## User Profile
 - Streak: ${userStats.streak || 0} days
@@ -506,9 +565,129 @@ Be direct, specific, actionable. No fluff. You have full access to the user's em
     } catch {}
 
     await sendMessage(chatId, reply);
+
+    extractProfileFromTelegram(userId, userText).catch(err => {
+      console.error("[Profile] Telegram extraction error:", err);
+    });
   } catch (error) {
     console.error("Error handling Telegram coach reply:", error);
     await sendMessage(chatId, "Sorry, I encountered an error. Please try again.");
+  }
+}
+
+async function isReplyToProactiveQuestion(userText: string, question: string): Promise<boolean> {
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-5-mini",
+      messages: [{
+        role: "user",
+        content: `Is the following user message a reply to (or related to) this question? Only answer "yes" or "no".
+
+Question that was asked: "${question}"
+User's message: "${userText}"
+
+Answer (yes/no):`,
+      }],
+      max_completion_tokens: 10,
+    });
+    const answer = (response.choices[0]?.message?.content || '').trim().toLowerCase();
+    return answer.startsWith('yes');
+  } catch {
+    return false;
+  }
+}
+
+async function extractProfileFromTelegram(userId: string, userText: string): Promise<void> {
+  try {
+    const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const unanswered = await db.select()
+      .from(schema.proactiveQuestionsSent)
+      .where(
+        and(
+          eq(schema.proactiveQuestionsSent.userId, userId),
+          sql`${schema.proactiveQuestionsSent.answeredAt} IS NULL`,
+          sql`${schema.proactiveQuestionsSent.sentAt} > ${twentyFourHoursAgo}`
+        )
+      )
+      .orderBy(desc(schema.proactiveQuestionsSent.sentAt))
+      .limit(1);
+
+    let answeredQuestion: typeof unanswered[0] | null = null;
+    if (unanswered.length > 0) {
+      const mostRecent = unanswered[0];
+      const isReply = await isReplyToProactiveQuestion(userText, mostRecent.question);
+      if (isReply) {
+        await db.update(schema.proactiveQuestionsSent)
+          .set({ answeredAt: new Date() })
+          .where(eq(schema.proactiveQuestionsSent.id, mostRecent.id));
+        answeredQuestion = mostRecent;
+        console.log(`[Profile] Marked proactive question as answered: ${mostRecent.id}`);
+      }
+    }
+
+    const existingRows = await db.select({ content: schema.userMemories.content })
+      .from(schema.userMemories)
+      .where(eq(schema.userMemories.userId, userId));
+    const existingMemories = existingRows.map(r => r.content);
+    const normalizedExisting = new Set(existingMemories.map(c => c.trim().toLowerCase().replace(/[^\w\s]/g, '').replace(/\s+/g, ' ')));
+
+    const existingList = existingMemories.length > 0
+      ? `\nExisting memories (DO NOT duplicate these):\n${existingMemories.map(m => `- ${m}`).join('\n')}`
+      : '';
+
+    const contextNote = answeredQuestion
+      ? `\nThe user was recently asked this proactive question: "${answeredQuestion.question}"\nTheir reply is answering this question — extract insights from their answer.`
+      : '';
+
+    const prompt = `You are extracting profile facts about the user from their Telegram message.
+Output a JSON array of { category, content } objects. Only extract facts that are specific, meaningful, and not already captured.
+${contextNote}
+
+Categories:
+- personality — how they communicate, humor, energy, decision style
+- values — what they care about deeply, what motivates them
+- work_style — when/how they focus, work patterns, tools they use
+- accomplishment — wins, achievements, proud moments mentioned
+- goal_discovered — goals inferred from behavior (not just stated)
+- relationship — key people in their life (family, teammates, boss)
+- pattern — recurring behaviors, habits, tendencies
+- preference — explicit preferences (meeting times, communication style, etc.)
+${existingList}
+
+User message:
+${userText}
+
+Return JSON: { "memories": [{"content": "string describing the fact", "category": "one of the categories above"}] }
+Return { "memories": [] } if nothing new was learned. Do NOT repeat or rephrase existing memories.`;
+
+    const response = await openai.chat.completions.create({
+      model: "gpt-5-mini",
+      messages: [{ role: "user", content: prompt }],
+      response_format: { type: "json_object" },
+      max_completion_tokens: 400,
+    });
+
+    const content = response.choices[0]?.message?.content || '{"memories":[]}';
+    const parsed = JSON.parse(content);
+    const rawMemories = Array.isArray(parsed.memories) ? parsed.memories : (Array.isArray(parsed) ? parsed : []);
+    const newMemories = rawMemories.slice(0, 3);
+    const validCategories = ['personality', 'values', 'work_style', 'accomplishment', 'goal_discovered', 'relationship', 'pattern', 'preference', 'fact', 'goal', 'achievement'];
+
+    for (const mem of newMemories) {
+      if (!mem.content || typeof mem.content !== 'string' || mem.content.trim().length === 0) continue;
+      const normalized = mem.content.trim().toLowerCase().replace(/[^\w\s]/g, '').replace(/\s+/g, ' ');
+      if (normalizedExisting.has(normalized)) continue;
+      const category = validCategories.includes(mem.category) ? mem.category : 'fact';
+      await db.insert(schema.userMemories).values({
+        userId,
+        content: mem.content.trim(),
+        category,
+      });
+      normalizedExisting.add(normalized);
+      console.log(`[Profile/Telegram] Extracted: [${category}] ${mem.content.trim().slice(0, 60)}...`);
+    }
+  } catch (err) {
+    console.error("[Profile/Telegram] Extraction error:", err);
   }
 }
 
