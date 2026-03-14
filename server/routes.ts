@@ -4,7 +4,7 @@ import OpenAI from "openai";
 import { db } from "./db";
 import { eq, and, desc, sql, gte } from "drizzle-orm";
 import * as schema from "@shared/schema";
-import { userMemories, morningVoiceNotes, userPreferences, proactiveQuestionsSent } from "@shared/schema";
+import { userMemories, morningVoiceNotes, userPreferences, proactiveQuestionsSent, inboxItems, inboxRules } from "@shared/schema";
 import { resizeTask, generateSmartPlan, unblockTask } from "./ai";
 import {
   getGoogleCalendarEvents,
@@ -2243,6 +2243,108 @@ Return ONLY the JSON object.`;
     } catch (error) {
       console.error("Error transcribing audio:", error);
       res.status(500).json({ error: "Failed to transcribe audio" });
+    }
+  });
+
+  app.get("/api/inbox/items", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const items = await db
+        .select()
+        .from(schema.inboxItems)
+        .where(and(eq(schema.inboxItems.userId, userId), eq(schema.inboxItems.status, "pending")));
+      res.json(items);
+    } catch (error) {
+      console.error("Error fetching inbox items:", error);
+      res.status(500).json({ error: "Failed to fetch inbox items" });
+    }
+  });
+
+  app.post("/api/inbox/items/:id/action", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const { id } = req.params;
+      const { actionType } = req.body;
+      if (!actionType) return res.status(400).json({ error: "actionType is required" });
+
+      let telegramChatId: string | undefined;
+      try {
+        const [link] = await db.select().from(schema.telegramLinks).where(eq(schema.telegramLinks.userId, userId));
+        telegramChatId = link?.chatId;
+      } catch {}
+
+      const { executeInboxAction } = await import("./inboxActions");
+      const result = await executeInboxAction(userId, id, actionType, telegramChatId);
+      res.json(result);
+    } catch (error) {
+      console.error("Error executing inbox action:", error);
+      res.status(500).json({ error: "Failed to execute action" });
+    }
+  });
+
+  app.get("/api/inbox/rules", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const rules = await db
+        .select()
+        .from(schema.inboxRules)
+        .where(eq(schema.inboxRules.userId, userId));
+      res.json(rules);
+    } catch (error) {
+      console.error("Error fetching inbox rules:", error);
+      res.status(500).json({ error: "Failed to fetch rules" });
+    }
+  });
+
+  app.post("/api/inbox/rules", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const { pattern, type, scope } = req.body;
+      if (!pattern || !type || !scope) {
+        return res.status(400).json({ error: "pattern, type, and scope are required" });
+      }
+      const { createRuleFromText } = await import("./inboxRules");
+      const rule = await createRuleFromText(userId, pattern, type, scope);
+      res.json(rule);
+    } catch (error) {
+      console.error("Error creating inbox rule:", error);
+      res.status(500).json({ error: "Failed to create rule" });
+    }
+  });
+
+  app.delete("/api/inbox/rules/:id", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const { id } = req.params;
+      await db
+        .delete(schema.inboxRules)
+        .where(and(eq(schema.inboxRules.id, id), eq(schema.inboxRules.userId, userId)));
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error deleting inbox rule:", error);
+      res.status(500).json({ error: "Failed to delete rule" });
+    }
+  });
+
+  app.patch("/api/inbox/rules/:id", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const { id } = req.params;
+      const { active } = req.body;
+      await db
+        .update(schema.inboxRules)
+        .set({ active: active ? "true" : "false", updatedAt: new Date() })
+        .where(and(eq(schema.inboxRules.id, id), eq(schema.inboxRules.userId, userId)));
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error updating inbox rule:", error);
+      res.status(500).json({ error: "Failed to update rule" });
     }
   });
 

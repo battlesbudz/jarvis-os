@@ -12,7 +12,7 @@ GamePlan is built with a mobile-first approach using **Expo Router (React Native
 Key architectural patterns and features include:
 -   **Adaptive Task Sizing:** AI dynamically adjusts task difficulty and granularity based on user input and history.
 -   **Smart Plan Generation:** AI constructs daily plans considering user goals, completion history, "Life Context" (onboarding questionnaire), and external signals like Gmail.
--   **Intuitive UI/UX:** Features a tab-based navigation (`Today`, `Goals`, `Insights`, `Profile`) with a consistent indigo/purple color scheme.
+-   **Intuitive UI/UX:** Features a tab-based navigation (`Today`, `Inbox`, `Goals`, `Insights`, `Profile`) with a consistent indigo/purple color scheme.
 -   **State Management:** Primarily server-side data persistence with PostgreSQL.
 -   **Accountability Engine:** AI extracts commitments from user interactions, tracks due dates, and provides proactive check-ins and notifications.
 -   **ADHD/Executive Dysfunction Support:** Includes features like Energy Check-in, Quick Capture, "Just One Thing" Mode, Focus Timer, Visual Time Blocks, Voice Interface, and Jarvis Autonomous Daily Planning.
@@ -35,6 +35,18 @@ The coach builds an ever-growing user profile through structured memory categori
 - **Automatic Extraction**: After every coach chat (both app and Telegram), a background LLM call extracts profile facts from the conversation
 - **Structured Injection**: Memories are grouped by category and injected as a structured "What I Know About You" section into the coach system prompt
 - **Deduplication**: Existing memories are passed to the extraction prompt to prevent duplicates
+
+## Inbox Rules Engine
+A learnable, user-configurable rules engine for filtering emails and calendar events:
+- **Tables**: `inbox_rules` (user/learned rules with pattern + matchHints), `inbox_items` (surfaced items awaiting action)
+- **Rule types**: `surface` (always show) and `suppress` (hide), scoped to email/calendar/both
+- **Matching**: Keyword-based matching on sender, domain, subject, snippet, location via `matchHints` JSON
+- **Learning**: Auto-creates suppress rules after 3 dismissals from same sender domain; notifies via Telegram
+- **Rule creation**: Plain-English descriptions parsed by LLM into structured matchHints
+- **One-tap actions**: Archive, Star, Save as Task, Dismiss, Never Again (creates suppress rule)
+- **Integration**: Rules applied in email scanner (telegramRoutes.ts) and curiosity scanner before surfacing/questioning
+- **Frontend**: Inbox tab with badge count, Rules editor accessible from Profile settings
+- **Key files**: `server/inboxRules.ts`, `server/inboxActions.ts`, `app/(tabs)/inbox.tsx`, `app/inbox-rules.tsx`
 
 ## Curiosity Scanner (Proactive Questions)
 A background service (`server/curiosityScanner.ts`) runs every 30 minutes to proactively learn about the user:
