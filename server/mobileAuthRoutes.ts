@@ -1,25 +1,11 @@
 import { Router } from "express";
 import type { Request, Response } from "express";
 import { db } from "./db";
-import { users } from "@shared/schema";
-import { eq } from "drizzle-orm";
+import { users, mobileAuthSessions } from "@shared/schema";
+import { eq, lt } from "drizzle-orm";
 import { generateToken } from "./auth";
 
 export const mobileAuthRouter = Router();
-
-interface MobileSession {
-  token: string;
-  expiresAt: number;
-}
-
-const sessions = new Map<string, MobileSession>();
-
-setInterval(() => {
-  const now = Date.now();
-  for (const [id, s] of sessions) {
-    if (s.expiresAt < now) sessions.delete(id);
-  }
-}, 5 * 60 * 1000);
 
 function getCallbackUrl(req: Request): string {
   const proto = (req.headers["x-forwarded-proto"] as string) || req.protocol;
@@ -189,7 +175,16 @@ mobileAuthRouter.get("/callback", async (req: Request, res: Response) => {
     }
 
     const token = generateToken(user.id);
-    sessions.set(session_id, { token, expiresAt: Date.now() + 10 * 60 * 1000 });
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
+    await db.insert(mobileAuthSessions).values({
+      sessionId: session_id,
+      token,
+      expiresAt,
+    }).onConflictDoUpdate({
+      target: mobileAuthSessions.sessionId,
+      set: { token, expiresAt },
+    });
 
     return res.send(successHtml());
   } catch (err) {
@@ -198,15 +193,27 @@ mobileAuthRouter.get("/callback", async (req: Request, res: Response) => {
   }
 });
 
-mobileAuthRouter.get("/poll", (req: Request, res: Response) => {
+mobileAuthRouter.get("/poll", async (req: Request, res: Response) => {
   const { session_id } = req.query as Record<string, string>;
   if (!session_id) return res.status(400).json({ error: "session_id required" });
 
-  const session = sessions.get(session_id);
-  if (!session || session.expiresAt < Date.now()) {
-    return res.status(404).json({ ready: false });
-  }
+  try {
+    await db.delete(mobileAuthSessions).where(lt(mobileAuthSessions.expiresAt, new Date()));
 
-  sessions.delete(session_id);
-  return res.json({ ready: true, token: session.token });
+    const rows = await db.select().from(mobileAuthSessions)
+      .where(eq(mobileAuthSessions.sessionId, session_id)).limit(1);
+
+    if (rows.length === 0) {
+      return res.status(404).json({ ready: false });
+    }
+
+    const session = rows[0];
+
+    await db.delete(mobileAuthSessions).where(eq(mobileAuthSessions.sessionId, session_id));
+
+    return res.json({ ready: true, token: session.token });
+  } catch (err) {
+    console.error("Mobile auth poll error:", err);
+    return res.status(500).json({ ready: false, error: "Internal error" });
+  }
 });

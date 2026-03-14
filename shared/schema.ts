@@ -152,6 +152,12 @@ export const userMemories = pgTable("user_memories", {
   extractedAt: timestamp("extracted_at").defaultNow().notNull(),
 });
 
+export const mobileAuthSessions = pgTable("mobile_auth_sessions", {
+  sessionId: text("session_id").primaryKey(),
+  token: text("token").notNull(),
+  expiresAt: timestamp("expires_at").notNull(),
+});
+
 export const morningVoiceNotes = pgTable("morning_voice_notes", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id").notNull().references(() => users.id),
