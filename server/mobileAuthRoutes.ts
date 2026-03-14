@@ -13,7 +13,8 @@ function getCallbackUrl(req: Request): string {
   return `${proto}://${host}/api/auth/mobile/callback`;
 }
 
-function successHtml(): string {
+function successHtml(token: string): string {
+  const encodedToken = encodeURIComponent(token);
   return `<!DOCTYPE html>
 <html>
 <head>
@@ -44,6 +45,11 @@ function successHtml(): string {
     <div class="arrow">⬆</div>
     <p class="close-hint">Tap the X above to return to GamePlan</p>
   </div>
+  <script>
+    try {
+      window.location.href = 'gameplan://auth/complete?token=${encodedToken}';
+    } catch(e) {}
+  </script>
 </body>
 </html>`;
 }
@@ -179,7 +185,7 @@ mobileAuthRouter.get("/callback", async (req: Request, res: Response) => {
       set: { token, expiresAt },
     });
 
-    return res.send(successHtml());
+    return res.send(successHtml(token));
   } catch (err) {
     console.error("Mobile auth callback error:", err);
     return res.send(errorHtml("An unexpected error occurred. Please try again."));
