@@ -104,52 +104,44 @@ export default function LoginScreen() {
     const sessionId = Date.now().toString(36) + Math.random().toString(36).slice(2, 9);
     const baseUrl = getApiUrl();
     const startUrl = new URL(`/api/auth/mobile/start?session_id=${sessionId}`, baseUrl).toString();
-
-    let pollInterval: ReturnType<typeof setInterval> | null = null;
-    let succeeded = false;
-
-    const cleanup = () => {
-      if (pollInterval) clearInterval(pollInterval);
-    };
+    const pollUrl = new URL(`/api/auth/mobile/poll?session_id=${sessionId}`, baseUrl).toString();
 
     try {
-      pollInterval = setInterval(async () => {
-        try {
-          const pollUrl = new URL(`/api/auth/mobile/poll?session_id=${sessionId}`, baseUrl).toString();
-          const res = await fetch(pollUrl);
-          if (res.ok) {
-            const data = await res.json();
-            if (data.ready && data.token) {
-              succeeded = true;
-              cleanup();
-              WebBrowser.dismissBrowser();
-              try {
-                await loginWithToken(data.token);
-              } catch (tokenErr: any) {
-                setError(tokenErr.message || "Failed to complete sign-in");
-              } finally {
-                setLoading(false);
-              }
-            }
-          }
-        } catch {}
-      }, 2000);
-
       await WebBrowser.openBrowserAsync(startUrl, {
         showTitle: false,
         toolbarColor: "#0F0F0F",
         secondaryToolbarColor: "#0F0F0F",
       });
 
-      cleanup();
+      const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
+      let token: string | null = null;
 
-      if (!succeeded) {
-        setError("Sign-in was cancelled or timed out. Please try again.");
-        setLoading(false);
+      for (let i = 0; i < 15; i++) {
+        try {
+          const res = await fetch(pollUrl);
+          if (res.ok) {
+            const data = await res.json();
+            if (data.ready && data.token) {
+              token = data.token;
+              break;
+            }
+          }
+        } catch {}
+        await delay(500);
+      }
+
+      if (token) {
+        try {
+          await loginWithToken(token);
+        } catch (tokenErr: any) {
+          setError(tokenErr.message || "Failed to complete sign-in");
+        }
+      } else {
+        setError("Sign-in timed out. Please try again.");
       }
     } catch (e: any) {
-      cleanup();
       setError(e.message || "Could not open sign-in browser");
+    } finally {
       setLoading(false);
     }
   }
