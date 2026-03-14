@@ -1522,34 +1522,9 @@ Return ONLY the JSON object.`;
         }
       }
 
-      const { textToSpeechStream } = await import('./replit_integrations/audio/client');
-      const stream = await textToSpeechStream(trimmedText, voice || 'alloy');
-      const chunks: Buffer[] = [];
-      for await (const chunk of stream) {
-        chunks.push(Buffer.from(chunk, 'base64'));
-      }
-      const pcmData = Buffer.concat(chunks);
-      const wavHeader = Buffer.alloc(44);
-      const sampleRate = 24000;
-      const numChannels = 1;
-      const bitsPerSample = 16;
-      const dataSize = pcmData.length;
-      const fileSize = 36 + dataSize;
-      wavHeader.write('RIFF', 0);
-      wavHeader.writeUInt32LE(fileSize, 4);
-      wavHeader.write('WAVE', 8);
-      wavHeader.write('fmt ', 12);
-      wavHeader.writeUInt32LE(16, 16);
-      wavHeader.writeUInt16LE(1, 20);
-      wavHeader.writeUInt16LE(numChannels, 22);
-      wavHeader.writeUInt32LE(sampleRate, 24);
-      wavHeader.writeUInt32LE(sampleRate * numChannels * bitsPerSample / 8, 28);
-      wavHeader.writeUInt16LE(numChannels * bitsPerSample / 8, 32);
-      wavHeader.writeUInt16LE(bitsPerSample, 34);
-      wavHeader.write('data', 36);
-      wavHeader.writeUInt32LE(dataSize, 40);
-      const wavBuffer = Buffer.concat([wavHeader, pcmData]);
-      res.json({ audio: wavBuffer.toString('base64') });
+      const { textToSpeech } = await import('./replit_integrations/audio/client');
+      const audioBuffer = await textToSpeech(trimmedText, voice || 'alloy', 'mp3');
+      res.json({ audio: audioBuffer.toString('base64') });
     } catch (error) {
       console.error("Error generating speech:", error);
       res.status(500).json({ error: "Failed to generate speech" });

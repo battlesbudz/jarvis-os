@@ -578,7 +578,7 @@ export default function InsightsScreen() {
       }
 
       if (Platform.OS === 'web') {
-        const audioEl = new window.Audio(`data:audio/wav;base64,${data.audio}`);
+        const audioEl = new window.Audio(`data:audio/mp3;base64,${data.audio}`);
         webAudioRef.current = audioEl;
         audioEl.onended = () => {
           isSpeakingRef.current = false;
@@ -593,7 +593,7 @@ export default function InsightsScreen() {
         await audioEl.play();
       } else {
         await Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true });
-        const tmpUri = FileSystem.cacheDirectory + 'coach_speech.wav';
+        const tmpUri = FileSystem.cacheDirectory + 'coach_speech.mp3';
         await FileSystem.writeAsStringAsync(tmpUri, data.audio, { encoding: FileSystem.EncodingType.Base64 });
         const { sound } = await Audio.Sound.createAsync(
           { uri: tmpUri },
