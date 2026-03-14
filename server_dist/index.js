@@ -21,6 +21,8 @@ __export(schema_exports, {
   goals: () => goals,
   insertUserSchema: () => insertUserSchema,
   lifeContext: () => lifeContext,
+  mobileAuthSessions: () => mobileAuthSessions,
+  morningVoiceNotes: () => morningVoiceNotes,
   planSnapshots: () => planSnapshots,
   plans: () => plans,
   stats: () => stats,
@@ -33,9 +35,9 @@ __export(schema_exports, {
   users: () => users
 });
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, jsonb, timestamp, primaryKey } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, jsonb, timestamp, date, primaryKey } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
-var users, insertUserSchema, plans, goals, stats, brainDumpInbox, energyCheckins, chatHistory, lifeContext, timerSettings, userPreferences, completionHistory, blockedTasks, completedCalendarIds, planSnapshots, telegramLinks, telegramLinkCodes, telegramGroupMessages, commitments, userMemories;
+var users, insertUserSchema, plans, goals, stats, brainDumpInbox, energyCheckins, chatHistory, lifeContext, timerSettings, userPreferences, completionHistory, blockedTasks, completedCalendarIds, planSnapshots, telegramLinks, telegramLinkCodes, telegramGroupMessages, commitments, userMemories, mobileAuthSessions, morningVoiceNotes;
 var init_schema = __esm({
   "shared/schema.ts"() {
     "use strict";
@@ -162,6 +164,23 @@ var init_schema = __esm({
       content: text("content").notNull(),
       category: varchar("category").notNull().default("fact"),
       extractedAt: timestamp("extracted_at").defaultNow().notNull()
+    });
+    mobileAuthSessions = pgTable("mobile_auth_sessions", {
+      sessionId: text("session_id").primaryKey(),
+      token: text("token").notNull(),
+      expiresAt: timestamp("expires_at").notNull()
+    });
+    morningVoiceNotes = pgTable("morning_voice_notes", {
+      id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+      userId: varchar("user_id").notNull().references(() => users.id),
+      recordedAt: date("recorded_at").notNull(),
+      transcript: text("transcript").notNull(),
+      moodSignal: varchar("mood_signal").notNull().default("calm"),
+      themes: jsonb("themes").notNull().default(sql`'[]'::jsonb`),
+      blockers: jsonb("blockers").notNull().default(sql`'[]'::jsonb`),
+      wins: jsonb("wins").notNull().default(sql`'[]'::jsonb`),
+      intention: text("intention"),
+      createdAt: timestamp("created_at").defaultNow().notNull()
     });
   }
 });
@@ -372,6 +391,35 @@ async function ensureTablesExist() {
         message_date TIMESTAMP NOT NULL DEFAULT NOW()
       )
     `);
+    await db.execute(sql2`
+      CREATE TABLE IF NOT EXISTS mobile_auth_sessions (
+        session_id TEXT PRIMARY KEY,
+        token TEXT NOT NULL,
+        expires_at TIMESTAMP NOT NULL
+      )
+    `);
+    await db.execute(sql2`
+      CREATE TABLE IF NOT EXISTS morning_voice_notes (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id VARCHAR NOT NULL REFERENCES users(id),
+        recorded_at DATE NOT NULL,
+        transcript TEXT NOT NULL,
+        mood_signal VARCHAR NOT NULL DEFAULT 'calm'
+          CHECK (mood_signal IN ('calm', 'energized', 'stressed', 'overwhelmed', 'uncertain')),
+        themes JSONB NOT NULL DEFAULT '[]'::jsonb,
+        blockers JSONB NOT NULL DEFAULT '[]'::jsonb,
+        wins JSONB NOT NULL DEFAULT '[]'::jsonb,
+        intention TEXT,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        UNIQUE (user_id, recorded_at)
+      )
+    `);
+    await db.execute(sql2`ALTER TABLE morning_voice_notes ALTER COLUMN recorded_at TYPE DATE USING recorded_at::DATE`).catch(() => {
+    });
+    await db.execute(sql2`ALTER TABLE morning_voice_notes ADD CONSTRAINT morning_voice_notes_mood_check CHECK (mood_signal IN ('calm', 'energized', 'stressed', 'overwhelmed', 'uncertain'))`).catch(() => {
+    });
+    await db.execute(sql2`ALTER TABLE morning_voice_notes ADD CONSTRAINT morning_voice_notes_user_date_unique UNIQUE (user_id, recorded_at)`).catch(() => {
+    });
     console.log("Database tables verified");
   } catch (error) {
     console.error("Failed to ensure database tables exist:", error);
@@ -407,9 +455,9 @@ __export(userTokenStore_exports, {
   refreshMicrosoftToken: () => refreshMicrosoftToken,
   saveUserToken: () => saveUserToken
 });
-import { sql as sql5 } from "drizzle-orm";
+import { sql as sql3 } from "drizzle-orm";
 async function saveUserToken(token) {
-  await db.execute(sql5`
+  await db.execute(sql3`
     INSERT INTO user_oauth_tokens
       (user_id, provider, access_token, refresh_token, expires_at, scopes, account_email, updated_at)
     VALUES
@@ -425,7 +473,7 @@ async function saveUserToken(token) {
   `);
 }
 async function getUserToken(userId, provider) {
-  const rows = await db.execute(sql5`
+  const rows = await db.execute(sql3`
     SELECT user_id, provider, access_token, refresh_token, expires_at, scopes, account_email
     FROM user_oauth_tokens
     WHERE user_id = ${userId} AND provider = ${provider}
@@ -444,7 +492,7 @@ async function getUserToken(userId, provider) {
   };
 }
 async function getUserTokens(userId, provider) {
-  const rows = await db.execute(sql5`
+  const rows = await db.execute(sql3`
     SELECT user_id, provider, access_token, refresh_token, expires_at, scopes, account_email
     FROM user_oauth_tokens
     WHERE user_id = ${userId} AND provider = ${provider}
@@ -462,17 +510,17 @@ async function getUserTokens(userId, provider) {
 }
 async function deleteUserToken(userId, provider, accountEmail) {
   if (accountEmail) {
-    await db.execute(sql5`
+    await db.execute(sql3`
       DELETE FROM user_oauth_tokens WHERE user_id = ${userId} AND provider = ${provider} AND account_email = ${accountEmail}
     `);
   } else {
-    await db.execute(sql5`
+    await db.execute(sql3`
       DELETE FROM user_oauth_tokens WHERE user_id = ${userId} AND provider = ${provider}
     `);
   }
 }
 async function getUserOAuthStatus(userId) {
-  const rows = await db.execute(sql5`
+  const rows = await db.execute(sql3`
     SELECT provider, account_email, expires_at, scopes FROM user_oauth_tokens WHERE user_id = ${userId}
   `);
   const result = {
@@ -597,7 +645,7 @@ __export(client_exports, {
   convertToWav: () => convertToWav,
   detectAudioFormat: () => detectAudioFormat,
   ensureCompatibleFormat: () => ensureCompatibleFormat,
-  openai: () => openai3,
+  openai: () => openai2,
   speechToText: () => speechToText,
   speechToTextStream: () => speechToTextStream,
   textToSpeech: () => textToSpeech,
@@ -605,7 +653,7 @@ __export(client_exports, {
   voiceChat: () => voiceChat,
   voiceChatStream: () => voiceChatStream
 });
-import OpenAI3, { toFile } from "openai";
+import OpenAI2, { toFile } from "openai";
 import { Buffer as Buffer3 } from "node:buffer";
 import { spawn } from "child_process";
 import { writeFile, unlink, readFile } from "fs/promises";
@@ -681,7 +729,7 @@ async function ensureCompatibleFormat(audioBuffer) {
 }
 async function voiceChat(audioBuffer, voice = "alloy", inputFormat = "wav", outputFormat = "mp3") {
   const audioBase64 = audioBuffer.toString("base64");
-  const response = await openai3.chat.completions.create({
+  const response = await openai2.chat.completions.create({
     model: "gpt-audio",
     modalities: ["text", "audio"],
     audio: { voice, format: outputFormat },
@@ -702,7 +750,7 @@ async function voiceChat(audioBuffer, voice = "alloy", inputFormat = "wav", outp
 }
 async function voiceChatStream(audioBuffer, voice = "alloy", inputFormat = "wav") {
   const audioBase64 = audioBuffer.toString("base64");
-  const stream = await openai3.chat.completions.create({
+  const stream = await openai2.chat.completions.create({
     model: "gpt-audio",
     modalities: ["text", "audio"],
     audio: { voice, format: "pcm16" },
@@ -728,7 +776,7 @@ async function voiceChatStream(audioBuffer, voice = "alloy", inputFormat = "wav"
   })();
 }
 async function textToSpeech(text2, voice = "alloy", format = "wav") {
-  const response = await openai3.chat.completions.create({
+  const response = await openai2.chat.completions.create({
     model: "gpt-audio",
     modalities: ["text", "audio"],
     audio: { voice, format },
@@ -741,7 +789,7 @@ async function textToSpeech(text2, voice = "alloy", format = "wav") {
   return Buffer3.from(audioData, "base64");
 }
 async function textToSpeechStream(text2, voice = "alloy") {
-  const stream = await openai3.chat.completions.create({
+  const stream = await openai2.chat.completions.create({
     model: "gpt-audio",
     modalities: ["text", "audio"],
     audio: { voice, format: "pcm16" },
@@ -763,7 +811,7 @@ async function textToSpeechStream(text2, voice = "alloy") {
 }
 async function speechToText(audioBuffer, format = "wav") {
   const file = await toFile(audioBuffer, `audio.${format}`);
-  const response = await openai3.audio.transcriptions.create({
+  const response = await openai2.audio.transcriptions.create({
     file,
     model: "gpt-4o-mini-transcribe"
   });
@@ -771,7 +819,7 @@ async function speechToText(audioBuffer, format = "wav") {
 }
 async function speechToTextStream(audioBuffer, format = "wav") {
   const file = await toFile(audioBuffer, `audio.${format}`);
-  const stream = await openai3.audio.transcriptions.create({
+  const stream = await openai2.audio.transcriptions.create({
     file,
     model: "gpt-4o-mini-transcribe",
     stream: true
@@ -784,11 +832,11 @@ async function speechToTextStream(audioBuffer, format = "wav") {
     }
   })();
 }
-var openai3;
+var openai2;
 var init_client = __esm({
   "server/replit_integrations/audio/client.ts"() {
     "use strict";
-    openai3 = new OpenAI3({
+    openai2 = new OpenAI2({
       apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
       baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL
     });
@@ -804,7 +852,7 @@ init_schema();
 init_schema();
 import { createServer } from "node:http";
 import OpenAI4 from "openai";
-import { eq as eq4, and as and3, desc as desc2, sql as sql6 } from "drizzle-orm";
+import { eq as eq5, and as and3, desc as desc2, sql as sql6, gte as gte2 } from "drizzle-orm";
 
 // server/ai.ts
 import OpenAI from "openai";
@@ -998,13 +1046,14 @@ function buildCalendarClient(accessToken) {
   oauth2Client.setCredentials({ access_token: accessToken });
   return google.calendar({ version: "v3", auth: oauth2Client });
 }
-async function getGoogleCalendarEvents(date, startTime, endTime, userAccessToken) {
+async function getGoogleCalendarEvents(date2, startTime, endTime, userAccessToken) {
   const accessToken = userAccessToken ?? await getProjectAccessToken();
   const calendar = buildCalendarClient(accessToken);
-  const startOfDay = startTime ? new Date(startTime) : /* @__PURE__ */ new Date(date + "T00:00:00Z");
-  const endOfDay = endTime ? new Date(endTime) : /* @__PURE__ */ new Date(date + "T23:59:59Z");
+  const startOfDay = startTime ? new Date(startTime) : /* @__PURE__ */ new Date(date2 + "T00:00:00Z");
+  const endOfDay = endTime ? new Date(endTime) : /* @__PURE__ */ new Date(date2 + "T23:59:59Z");
   const calList = await calendar.calendarList.list({ minAccessRole: "reader" });
   const calendarIds = (calList.data.items || []).filter((c) => !c.deleted).map((c) => c.id).filter(Boolean);
+  console.log(`[Calendar] Found ${calendarIds.length} calendar(s) for token. Querying ${startOfDay.toISOString()} \u2192 ${endOfDay.toISOString()}`);
   const allEvents = [];
   const seenIds = /* @__PURE__ */ new Set();
   await Promise.all(
@@ -1019,18 +1068,20 @@ async function getGoogleCalendarEvents(date, startTime, endTime, userAccessToken
           maxResults: 20
         });
         const items = res.data.items || [];
+        console.log(`[Calendar] Cal "${calId}": ${items.length} event(s)`);
         items.filter((e) => e.summary && !seenIds.has(e.id || "")).forEach((e) => {
           seenIds.add(e.id || "");
           allEvents.push({
             id: e.id || String(Math.random()),
             title: e.summary || "Event",
-            start: e.start?.dateTime || e.start?.date || date,
-            end: e.end?.dateTime || e.end?.date || date,
+            start: e.start?.dateTime || e.start?.date || date2,
+            end: e.end?.dateTime || e.end?.date || date2,
             description: e.description || void 0,
             location: e.location || void 0
           });
         });
-      } catch {
+      } catch (err) {
+        console.error(`[Calendar] Error fetching events for cal "${calId}":`, err?.message || err);
       }
     })
   );
@@ -1066,18 +1117,18 @@ function buildOutlookClient(accessToken) {
     authProvider: { getAccessToken: async () => accessToken }
   });
 }
-async function getOutlookCalendarEvents(date, startTime, endTime, userAccessToken) {
+async function getOutlookCalendarEvents(date2, startTime, endTime, userAccessToken) {
   const accessToken = userAccessToken ?? await getProjectAccessToken2();
   const client = buildOutlookClient(accessToken);
-  const startOfDay = startTime ? new Date(startTime).toISOString() : (/* @__PURE__ */ new Date(date + "T00:00:00")).toISOString();
-  const endOfDay = endTime ? new Date(endTime).toISOString() : (/* @__PURE__ */ new Date(date + "T23:59:59")).toISOString();
+  const startOfDay = startTime ? new Date(startTime).toISOString() : (/* @__PURE__ */ new Date(date2 + "T00:00:00")).toISOString();
+  const endOfDay = endTime ? new Date(endTime).toISOString() : (/* @__PURE__ */ new Date(date2 + "T23:59:59")).toISOString();
   const res = await client.api("/me/calendarView").query({ startDateTime: startOfDay, endDateTime: endOfDay }).select("id,subject,start,end,body,location").orderby("start/dateTime").top(20).get();
   const items = res.value || [];
   return items.map((e) => ({
     id: e.id || String(Math.random()),
     title: e.subject || "Event",
-    start: e.start?.dateTime || date,
-    end: e.end?.dateTime || date,
+    start: e.start?.dateTime || date2,
+    end: e.end?.dateTime || date2,
     description: e.body?.content ? e.body.content.replace(/<[^>]+>/g, "").trim().slice(0, 120) : void 0,
     location: e.location?.displayName || void 0
   }));
@@ -1150,6 +1201,54 @@ async function createGmailDraft(userAccessToken, to, subject, body) {
   const gmailUrl = `https://mail.google.com/mail/#drafts/${messageId}`;
   return { draftId, gmailUrl };
 }
+async function getEmailsSince(sinceMs, userAccessToken) {
+  try {
+    const gmail = await getGmailClient(userAccessToken);
+    const sinceSeconds = Math.floor(sinceMs / 1e3);
+    const listRes = await gmail.users.messages.list({
+      userId: "me",
+      q: `in:inbox -from:me after:${sinceSeconds}`,
+      maxResults: 20
+    });
+    const messages = listRes.data.messages || [];
+    if (messages.length === 0) return [];
+    const results = [];
+    const BATCH_SIZE = 10;
+    for (let i = 0; i < messages.length; i += BATCH_SIZE) {
+      const batch = messages.slice(i, i + BATCH_SIZE);
+      const batchResults = await Promise.all(
+        batch.map(async (msg) => {
+          if (!msg.id) return null;
+          try {
+            const detail = await gmail.users.messages.get({
+              userId: "me",
+              id: msg.id,
+              format: "metadata",
+              metadataHeaders: ["Subject", "From", "Date"]
+            });
+            const headers = detail.data.payload?.headers || [];
+            const subject = headers.find((h) => h.name === "Subject")?.value || "(no subject)";
+            const from = headers.find((h) => h.name === "From")?.value || "unknown";
+            const snippet = (detail.data.snippet || "").slice(0, 200);
+            const receivedAt = parseInt(detail.data.internalDate || "0", 10);
+            const labelIds = detail.data.labelIds || [];
+            if (labelIds.includes("SENT") || labelIds.includes("DRAFT")) return null;
+            return { messageId: msg.id, subject, from, snippet, receivedAt };
+          } catch {
+            return null;
+          }
+        })
+      );
+      for (const r of batchResults) {
+        if (r) results.push(r);
+      }
+    }
+    return results;
+  } catch (err) {
+    console.error("[Gmail] getEmailsSince error:", err);
+    return [];
+  }
+}
 async function checkGmailConnection(userAccessToken) {
   try {
     await getGmailClient(userAccessToken);
@@ -1167,29 +1266,38 @@ async function getRecentEmailCommitments(days = 7, userAccessToken) {
     const listRes = await gmail.users.messages.list({
       userId: "me",
       q: `after:${afterDateStr}`,
-      maxResults: 50
+      maxResults: 100
     });
-    const messages = listRes.data.messages || [];
+    const messages = (listRes.data.messages || []).slice(0, 100);
     const results = [];
-    for (const msg of messages.slice(0, 40)) {
-      if (!msg.id) continue;
-      try {
-        const detail = await gmail.users.messages.get({
-          userId: "me",
-          id: msg.id,
-          format: "metadata",
-          metadataHeaders: ["Subject", "Date", "From"]
-        });
-        const headers = detail.data.payload?.headers || [];
-        const subject = headers.find((h) => h.name === "Subject")?.value || "(no subject)";
-        const date = headers.find((h) => h.name === "Date")?.value || "";
-        const from = headers.find((h) => h.name === "From")?.value || "";
-        const snippet = (detail.data.snippet || "").slice(0, 150);
-        const labelIds = detail.data.labelIds || [];
-        const labels = labelIds.map((id) => LABEL_NAMES[id] || id);
-        results.push({ subject, snippet, date, from, labels });
-      } catch {
-        continue;
+    const BATCH_SIZE = 10;
+    for (let i = 0; i < messages.length; i += BATCH_SIZE) {
+      const batch = messages.slice(i, i + BATCH_SIZE);
+      const batchResults = await Promise.all(
+        batch.map(async (msg) => {
+          if (!msg.id) return null;
+          try {
+            const detail = await gmail.users.messages.get({
+              userId: "me",
+              id: msg.id,
+              format: "metadata",
+              metadataHeaders: ["Subject", "Date", "From"]
+            });
+            const headers = detail.data.payload?.headers || [];
+            const subject = headers.find((h) => h.name === "Subject")?.value || "(no subject)";
+            const date2 = headers.find((h) => h.name === "Date")?.value || "";
+            const from = headers.find((h) => h.name === "From")?.value || "";
+            const snippet = (detail.data.snippet || "").slice(0, 150);
+            const labelIds = detail.data.labelIds || [];
+            const labels = labelIds.map((id) => LABEL_NAMES[id] || id);
+            return { id: msg.id, subject, snippet, date: date2, from, labels };
+          } catch {
+            return null;
+          }
+        })
+      );
+      for (const r of batchResults) {
+        if (r) results.push(r);
       }
     }
     return results;
@@ -1197,6 +1305,72 @@ async function getRecentEmailCommitments(days = 7, userAccessToken) {
     console.error("[Gmail] getRecentEmailCommitments error:", err);
     return [];
   }
+}
+async function getStarredFollowUpEmails(userAccessToken, minAgeDays = 3) {
+  try {
+    const gmail = await getGmailClient(userAccessToken);
+    const fourteenDaysAgo = Math.floor((Date.now() - 14 * 24 * 60 * 60 * 1e3) / 1e3);
+    const listRes = await gmail.users.messages.list({
+      userId: "me",
+      q: `in:inbox (is:starred OR is:important) -from:me after:${fourteenDaysAgo}`,
+      maxResults: 20
+    });
+    const messages = listRes.data.messages || [];
+    if (messages.length === 0) return [];
+    const results = [];
+    const nowMs = Date.now();
+    const minAgeMs = minAgeDays * 24 * 60 * 60 * 1e3;
+    const BATCH_SIZE = 10;
+    for (let i = 0; i < messages.length; i += BATCH_SIZE) {
+      const batch = messages.slice(i, i + BATCH_SIZE);
+      const batchResults = await Promise.all(
+        batch.map(async (msg) => {
+          if (!msg.id) return null;
+          try {
+            const detail = await gmail.users.messages.get({
+              userId: "me",
+              id: msg.id,
+              format: "metadata",
+              metadataHeaders: ["Subject", "From", "Date"]
+            });
+            const headers = detail.data.payload?.headers || [];
+            const subject = headers.find((h) => h.name === "Subject")?.value || "(no subject)";
+            const from = headers.find((h) => h.name === "From")?.value || "unknown";
+            const snippet = (detail.data.snippet || "").slice(0, 200);
+            const receivedAt = parseInt(detail.data.internalDate || "0", 10);
+            const labelIds = detail.data.labelIds || [];
+            if (!labelIds.includes("INBOX")) return null;
+            if (labelIds.includes("SENT") || labelIds.includes("DRAFT")) return null;
+            const ageMs = nowMs - receivedAt;
+            if (ageMs < minAgeMs) return null;
+            const ageDays = Math.floor(ageMs / (24 * 60 * 60 * 1e3));
+            return { messageId: msg.id, subject, from, snippet, receivedAt, ageDays };
+          } catch {
+            return null;
+          }
+        })
+      );
+      for (const r of batchResults) {
+        if (r) results.push(r);
+      }
+    }
+    results.sort((a, b) => a.receivedAt - b.receivedAt);
+    return results;
+  } catch (err) {
+    console.error("[Gmail] getStarredFollowUpEmails error:", err);
+    return [];
+  }
+}
+async function gmailModifyMessage(messageId, addLabelIds, removeLabelIds, userAccessToken) {
+  const gmail = await getGmailClient(userAccessToken);
+  await gmail.users.messages.modify({
+    userId: "me",
+    id: messageId,
+    requestBody: {
+      addLabelIds: addLabelIds.length > 0 ? addLabelIds : void 0,
+      removeLabelIds: removeLabelIds.length > 0 ? removeLabelIds : void 0
+    }
+  });
 }
 
 // server/integrations/slack.ts
@@ -1290,12 +1464,12 @@ import { Router } from "express";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { eq } from "drizzle-orm";
-import crypto from "crypto";
+import crypto2 from "crypto";
 function getJwtSecret() {
   if (process.env.JWT_SECRET) {
     return process.env.JWT_SECRET;
   }
-  const generated = crypto.randomBytes(32).toString("hex");
+  const generated = crypto2.randomBytes(32).toString("hex");
   process.env.JWT_SECRET = generated;
   console.log("Generated JWT_SECRET (set JWT_SECRET env var for persistent tokens across restarts)");
   return generated;
@@ -1495,10 +1669,201 @@ function authMiddleware(req, res, next) {
   }
 }
 
+// server/mobileAuthRoutes.ts
+init_db();
+init_schema();
+import { Router as Router2 } from "express";
+import { eq as eq2, lt } from "drizzle-orm";
+var mobileAuthRouter = Router2();
+function getCallbackUrl(req) {
+  const proto = req.headers["x-forwarded-proto"] || req.protocol;
+  const host = req.headers["x-forwarded-host"] || req.get("host") || "";
+  return `${proto}://${host}/api/auth/mobile/callback`;
+}
+function successHtml(token) {
+  const encodedToken = encodeURIComponent(token);
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Signed In \u2014 GamePlan</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #0f0f0f; color: #fff;
+      display: flex; align-items: center; justify-content: center;
+      min-height: 100vh; padding: 20px;
+    }
+    .card { text-align: center; max-width: 340px; }
+    .icon { font-size: 56px; margin-bottom: 20px; }
+    h2 { font-size: 22px; font-weight: 700; margin-bottom: 10px; }
+    p { color: #888; font-size: 15px; line-height: 1.5; }
+    .dots { display: inline-flex; gap: 6px; margin-top: 24px; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: #6366f1;
+           animation: pulse 1.2s ease-in-out infinite; }
+    .dot:nth-child(2) { animation-delay: 0.2s; }
+    .dot:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes pulse { 0%,80%,100% { opacity: 0.3; } 40% { opacity: 1; } }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">\u2705</div>
+    <h2>Signed in successfully</h2>
+    <p>Taking you back to GamePlan...</p>
+    <div class="dots">
+      <div class="dot"></div>
+      <div class="dot"></div>
+      <div class="dot"></div>
+    </div>
+  </div>
+  <script>
+    try {
+      window.location.href = 'gameplan://auth/complete?token=${encodedToken}';
+    } catch(e) {}
+  </script>
+</body>
+</html>`;
+}
+function errorHtml(message) {
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Error \u2014 GamePlan</title>
+  <style>
+    body { font-family: sans-serif; background: #0f0f0f; color: #fff;
+           display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+    .card { text-align: center; padding: 40px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div style="font-size:48px;margin-bottom:16px">\u274C</div>
+    <h2>Sign-in Failed</h2>
+    <p style="color:#888;margin-top:8px">${message}</p>
+    <p style="color:#555;margin-top:20px;font-size:13px">You can close this tab and try again.</p>
+  </div>
+</body>
+</html>`;
+}
+mobileAuthRouter.get("/start", (req, res) => {
+  const { session_id } = req.query;
+  if (!session_id) return res.status(400).json({ error: "session_id required" });
+  const clientId = process.env.GOOGLE_WEB_CLIENT_ID;
+  if (!clientId) return res.status(500).json({ error: "Google OAuth not configured" });
+  const callbackUrl = getCallbackUrl(req);
+  const params = new URLSearchParams({
+    client_id: clientId,
+    redirect_uri: callbackUrl,
+    response_type: "code",
+    scope: "openid email profile",
+    state: session_id,
+    access_type: "offline",
+    prompt: "select_account"
+  });
+  res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`);
+});
+mobileAuthRouter.get("/callback", async (req, res) => {
+  const { code, state: session_id, error } = req.query;
+  if (error || !code || !session_id) {
+    return res.send(errorHtml(error || "Sign-in was cancelled."));
+  }
+  const clientId = process.env.GOOGLE_WEB_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+  if (!clientId || !clientSecret) {
+    return res.send(errorHtml("OAuth credentials not configured on the server."));
+  }
+  const callbackUrl = getCallbackUrl(req);
+  try {
+    const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        code,
+        client_id: clientId,
+        client_secret: clientSecret,
+        redirect_uri: callbackUrl,
+        grant_type: "authorization_code"
+      })
+    });
+    const tokenData = await tokenRes.json();
+    if (!tokenData.id_token && !tokenData.access_token) {
+      console.error("Mobile auth token exchange failed:", tokenData);
+      return res.send(errorHtml("Failed to exchange authorization code. Please try again."));
+    }
+    let googleUser;
+    if (tokenData.id_token) {
+      const infoRes = await fetch(
+        `https://oauth2.googleapis.com/tokeninfo?id_token=${tokenData.id_token}`
+      );
+      const info = await infoRes.json();
+      if (!info.sub) return res.send(errorHtml("Could not retrieve Google user info."));
+      googleUser = { id: info.sub, name: info.name, email: info.email };
+    } else {
+      const infoRes = await fetch("https://www.googleapis.com/userinfo/v2/me", {
+        headers: { Authorization: `Bearer ${tokenData.access_token}` }
+      });
+      const info = await infoRes.json();
+      if (!info.id) return res.send(errorHtml("Could not retrieve Google user info."));
+      googleUser = { id: info.id, name: info.name, email: info.email };
+    }
+    const existing = await db.select().from(users).where(eq2(users.googleId, googleUser.id)).limit(1);
+    let user;
+    if (existing.length > 0) {
+      user = existing[0];
+    } else {
+      const base = googleUser.email ? googleUser.email.split("@")[0] : `google_${googleUser.id.slice(0, 8)}`;
+      let uniqueUsername = base;
+      const existingUsername = await db.select().from(users).where(eq2(users.username, base)).limit(1);
+      if (existingUsername.length > 0) uniqueUsername = `${base}_${Date.now().toString(36)}`;
+      const [newUser] = await db.insert(users).values({
+        username: uniqueUsername,
+        googleId: googleUser.id,
+        displayName: googleUser.name || uniqueUsername
+      }).returning();
+      user = newUser;
+    }
+    const token = generateToken(user.id);
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1e3);
+    await db.insert(mobileAuthSessions).values({
+      sessionId: session_id,
+      token,
+      expiresAt
+    }).onConflictDoUpdate({
+      target: mobileAuthSessions.sessionId,
+      set: { token, expiresAt }
+    });
+    return res.send(successHtml(token));
+  } catch (err) {
+    console.error("Mobile auth callback error:", err);
+    return res.send(errorHtml("An unexpected error occurred. Please try again."));
+  }
+});
+mobileAuthRouter.get("/poll", async (req, res) => {
+  const { session_id } = req.query;
+  if (!session_id) return res.status(400).json({ error: "session_id required" });
+  try {
+    await db.delete(mobileAuthSessions).where(lt(mobileAuthSessions.expiresAt, /* @__PURE__ */ new Date()));
+    const rows = await db.select().from(mobileAuthSessions).where(eq2(mobileAuthSessions.sessionId, session_id)).limit(1);
+    if (rows.length === 0) {
+      return res.status(404).json({ ready: false });
+    }
+    const session = rows[0];
+    await db.delete(mobileAuthSessions).where(eq2(mobileAuthSessions.sessionId, session_id));
+    return res.json({ ready: true, token: session.token });
+  } catch (err) {
+    console.error("Mobile auth poll error:", err);
+    return res.status(500).json({ ready: false, error: "Internal error" });
+  }
+});
+
 // server/dataRoutes.ts
 init_db();
 init_schema();
-import { eq as eq2, and } from "drizzle-orm";
+import { eq as eq3, and } from "drizzle-orm";
 function requireUserId(req, res) {
   const userId = req.userId;
   if (!userId) {
@@ -1512,7 +1877,7 @@ function registerSimpleJsonCrud(app2, path2, table) {
     try {
       const userId = requireUserId(req, res);
       if (!userId) return;
-      const result = await db.select({ data: table.data }).from(table).where(eq2(table.userId, userId));
+      const result = await db.select({ data: table.data }).from(table).where(eq3(table.userId, userId));
       if (result.length === 0) return res.json({ data: null });
       res.json({ data: result[0].data });
     } catch (e) {
@@ -1539,7 +1904,7 @@ function registerSimpleJsonCrud(app2, path2, table) {
     try {
       const userId = requireUserId(req, res);
       if (!userId) return;
-      await db.delete(table).where(eq2(table.userId, userId));
+      await db.delete(table).where(eq3(table.userId, userId));
       res.json({ ok: true });
     } catch (e) {
       console.error(`Error deleting ${path2}:`, e);
@@ -1552,8 +1917,8 @@ function registerDataRoutes(app2) {
     try {
       const userId = requireUserId(req, res);
       if (!userId) return;
-      const { date } = req.params;
-      const result = await db.select().from(plans).where(and(eq2(plans.userId, userId), eq2(plans.date, date)));
+      const { date: date2 } = req.params;
+      const result = await db.select().from(plans).where(and(eq3(plans.userId, userId), eq3(plans.date, date2)));
       if (result.length === 0) return res.json({ data: null });
       res.json({ data: result[0].data });
     } catch (e) {
@@ -1565,7 +1930,7 @@ function registerDataRoutes(app2) {
     try {
       const userId = requireUserId(req, res);
       if (!userId) return;
-      const result = await db.select().from(plans).where(eq2(plans.userId, userId));
+      const result = await db.select().from(plans).where(eq3(plans.userId, userId));
       const plansMap = {};
       for (const row of result) {
         plansMap[row.date] = row.data;
@@ -1580,9 +1945,9 @@ function registerDataRoutes(app2) {
     try {
       const userId = requireUserId(req, res);
       if (!userId) return;
-      const { date } = req.params;
+      const { date: date2 } = req.params;
       const { data } = req.body;
-      await db.insert(plans).values({ userId, date, data, updatedAt: /* @__PURE__ */ new Date() }).onConflictDoUpdate({
+      await db.insert(plans).values({ userId, date: date2, data, updatedAt: /* @__PURE__ */ new Date() }).onConflictDoUpdate({
         target: [plans.userId, plans.date],
         set: { data, updatedAt: /* @__PURE__ */ new Date() }
       });
@@ -1603,7 +1968,7 @@ function registerDataRoutes(app2) {
     try {
       const userId = requireUserId(req, res);
       if (!userId) return;
-      const result = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq2(userPreferences.userId, userId));
+      const result = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq3(userPreferences.userId, userId));
       const currentPrefs = result[0]?.data || {};
       if (currentPrefs.autoBuiltPlan) {
         currentPrefs.autoBuiltPlan.dismissed = true;
@@ -1625,8 +1990,8 @@ function registerDataRoutes(app2) {
     try {
       const userId = requireUserId(req, res);
       if (!userId) return;
-      const { date } = req.params;
-      const result = await db.select().from(energyCheckins).where(and(eq2(energyCheckins.userId, userId), eq2(energyCheckins.date, date)));
+      const { date: date2 } = req.params;
+      const result = await db.select().from(energyCheckins).where(and(eq3(energyCheckins.userId, userId), eq3(energyCheckins.date, date2)));
       if (result.length === 0) return res.json({ data: null });
       res.json({ data: result[0].data });
     } catch (e) {
@@ -1638,9 +2003,9 @@ function registerDataRoutes(app2) {
     try {
       const userId = requireUserId(req, res);
       if (!userId) return;
-      const { date } = req.params;
+      const { date: date2 } = req.params;
       const { data } = req.body;
-      await db.insert(energyCheckins).values({ userId, date, data, updatedAt: /* @__PURE__ */ new Date() }).onConflictDoUpdate({
+      await db.insert(energyCheckins).values({ userId, date: date2, data, updatedAt: /* @__PURE__ */ new Date() }).onConflictDoUpdate({
         target: [energyCheckins.userId, energyCheckins.date],
         set: { data, updatedAt: /* @__PURE__ */ new Date() }
       });
@@ -1654,8 +2019,8 @@ function registerDataRoutes(app2) {
     try {
       const userId = requireUserId(req, res);
       if (!userId) return;
-      const { date } = req.params;
-      const result = await db.select().from(completedCalendarIds).where(and(eq2(completedCalendarIds.userId, userId), eq2(completedCalendarIds.date, date)));
+      const { date: date2 } = req.params;
+      const result = await db.select().from(completedCalendarIds).where(and(eq3(completedCalendarIds.userId, userId), eq3(completedCalendarIds.date, date2)));
       if (result.length === 0) return res.json({ data: [] });
       res.json({ data: result[0].data });
     } catch (e) {
@@ -1667,9 +2032,9 @@ function registerDataRoutes(app2) {
     try {
       const userId = requireUserId(req, res);
       if (!userId) return;
-      const { date } = req.params;
+      const { date: date2 } = req.params;
       const { data } = req.body;
-      await db.insert(completedCalendarIds).values({ userId, date, data, updatedAt: /* @__PURE__ */ new Date() }).onConflictDoUpdate({
+      await db.insert(completedCalendarIds).values({ userId, date: date2, data, updatedAt: /* @__PURE__ */ new Date() }).onConflictDoUpdate({
         target: [completedCalendarIds.userId, completedCalendarIds.date],
         set: { data, updatedAt: /* @__PURE__ */ new Date() }
       });
@@ -1679,34 +2044,115 @@ function registerDataRoutes(app2) {
       res.status(500).json({ error: "Failed to save completed calendar ids" });
     }
   });
+  app2.get("/api/data/export", async (req, res) => {
+    try {
+      const userId = requireUserId(req, res);
+      if (!userId) return;
+      const [goalsRow] = await db.select({ data: goals.data }).from(goals).where(eq3(goals.userId, userId));
+      const [statsRow] = await db.select({ data: stats.data }).from(stats).where(eq3(stats.userId, userId));
+      const [lifeContextRow] = await db.select({ data: lifeContext.data }).from(lifeContext).where(eq3(lifeContext.userId, userId));
+      const [userPrefsRow] = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq3(userPreferences.userId, userId));
+      const [chatHistoryRow] = await db.select({ data: chatHistory.data }).from(chatHistory).where(eq3(chatHistory.userId, userId));
+      const [timerSettingsRow] = await db.select({ data: timerSettings.data }).from(timerSettings).where(eq3(timerSettings.userId, userId));
+      const [brainDumpRow] = await db.select({ data: brainDumpInbox.data }).from(brainDumpInbox).where(eq3(brainDumpInbox.userId, userId));
+      const [completionHistoryRow] = await db.select({ data: completionHistory.data }).from(completionHistory).where(eq3(completionHistory.userId, userId));
+      const [blockedTasksRow] = await db.select({ data: blockedTasks.data }).from(blockedTasks).where(eq3(blockedTasks.userId, userId));
+      const [planSnapshotsRow] = await db.select({ data: planSnapshots.data }).from(planSnapshots).where(eq3(planSnapshots.userId, userId));
+      const plansRows = await db.select().from(plans).where(eq3(plans.userId, userId));
+      const plans2 = {};
+      for (const row of plansRows) {
+        plans2[row.date] = row.data;
+      }
+      const energyRows = await db.select().from(energyCheckins).where(eq3(energyCheckins.userId, userId));
+      const energyCheckins2 = {};
+      for (const row of energyRows) {
+        energyCheckins2[row.date] = row.data;
+      }
+      const calendarIdRows = await db.select().from(completedCalendarIds).where(eq3(completedCalendarIds.userId, userId));
+      const completedCalendarIds2 = {};
+      for (const row of calendarIdRows) {
+        completedCalendarIds2[row.date] = row.data;
+      }
+      res.json({
+        data: {
+          goals: goalsRow?.data ?? null,
+          stats: statsRow?.data ?? null,
+          lifeContext: lifeContextRow?.data ?? null,
+          userPreferences: userPrefsRow?.data ?? null,
+          chatHistory: chatHistoryRow?.data ?? null,
+          timerSettings: timerSettingsRow?.data ?? null,
+          brainDumpInbox: brainDumpRow?.data ?? null,
+          completionHistory: completionHistoryRow?.data ?? null,
+          blockedTasks: blockedTasksRow?.data ?? null,
+          planSnapshots: planSnapshotsRow?.data ?? null,
+          plans: plans2,
+          energyCheckins: energyCheckins2,
+          completedCalendarIds: completedCalendarIds2
+        }
+      });
+    } catch (e) {
+      console.error("Error exporting data:", e);
+      res.status(500).json({ error: "Failed to export data" });
+    }
+  });
+  app2.post("/api/data/import", async (req, res) => {
+    try {
+      const userId = requireUserId(req, res);
+      if (!userId) return;
+      const { data } = req.body;
+      if (!data || typeof data !== "object") {
+        return res.status(400).json({ error: "Missing data object in request body" });
+      }
+      const now = /* @__PURE__ */ new Date();
+      const upsertSimple = async (table, value) => {
+        if (value === null || value === void 0) return;
+        await db.insert(table).values({ userId, data: value, updatedAt: now }).onConflictDoUpdate({ target: [table.userId], set: { data: value, updatedAt: now } });
+      };
+      await upsertSimple(goals, data.goals);
+      await upsertSimple(stats, data.stats);
+      await upsertSimple(lifeContext, data.lifeContext);
+      await upsertSimple(chatHistory, data.chatHistory);
+      await upsertSimple(timerSettings, data.timerSettings);
+      await upsertSimple(brainDumpInbox, data.brainDumpInbox);
+      await upsertSimple(completionHistory, data.completionHistory);
+      await upsertSimple(blockedTasks, data.blockedTasks);
+      await upsertSimple(planSnapshots, data.planSnapshots);
+      if (data.userPreferences) {
+        const [existing] = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq3(userPreferences.userId, userId));
+        const merged = { ...existing?.data || {}, ...data.userPreferences };
+        await db.insert(userPreferences).values({ userId, data: merged, updatedAt: now }).onConflictDoUpdate({ target: [userPreferences.userId], set: { data: merged, updatedAt: now } });
+      }
+      if (data.plans && typeof data.plans === "object") {
+        for (const [date2, planData] of Object.entries(data.plans)) {
+          await db.insert(plans).values({ userId, date: date2, data: planData, updatedAt: now }).onConflictDoUpdate({ target: [plans.userId, plans.date], set: { data: planData, updatedAt: now } });
+        }
+      }
+      if (data.energyCheckins && typeof data.energyCheckins === "object") {
+        for (const [date2, checkinData] of Object.entries(data.energyCheckins)) {
+          await db.insert(energyCheckins).values({ userId, date: date2, data: checkinData, updatedAt: now }).onConflictDoUpdate({ target: [energyCheckins.userId, energyCheckins.date], set: { data: checkinData, updatedAt: now } });
+        }
+      }
+      if (data.completedCalendarIds && typeof data.completedCalendarIds === "object") {
+        for (const [date2, idsData] of Object.entries(data.completedCalendarIds)) {
+          await db.insert(completedCalendarIds).values({ userId, date: date2, data: idsData, updatedAt: now }).onConflictDoUpdate({ target: [completedCalendarIds.userId, completedCalendarIds.date], set: { data: idsData, updatedAt: now } });
+        }
+      }
+      res.json({ ok: true });
+    } catch (e) {
+      console.error("Error importing data:", e);
+      res.status(500).json({ error: "Failed to import data" });
+    }
+  });
 }
 
 // server/telegramRoutes.ts
 init_db();
 init_schema();
-import { eq as eq3, and as and2, desc, sql as sql3, gte } from "drizzle-orm";
+import { eq as eq4, and as and2, desc, sql as sql4, gte, lte } from "drizzle-orm";
 
 // server/integrations/telegram.ts
-import crypto2 from "crypto";
 var BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 var BASE = `https://api.telegram.org/bot${BOT_TOKEN}`;
-function generateWebhookSecret() {
-  if (process.env.TELEGRAM_WEBHOOK_SECRET) return process.env.TELEGRAM_WEBHOOK_SECRET;
-  const secret = crypto2.randomBytes(32).toString("hex");
-  process.env.TELEGRAM_WEBHOOK_SECRET = secret;
-  return secret;
-}
-var webhookSecret = null;
-function getWebhookSecret() {
-  if (!webhookSecret) {
-    webhookSecret = generateWebhookSecret();
-  }
-  return webhookSecret;
-}
-function verifyWebhookSecret(headerValue) {
-  if (!webhookSecret) return false;
-  return headerValue === webhookSecret;
-}
 async function sendMessage(chatId, text2) {
   if (!BOT_TOKEN) return;
   const res = await fetch(`${BASE}/sendMessage`, {
@@ -1714,8 +2160,7 @@ async function sendMessage(chatId, text2) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       chat_id: chatId,
-      text: text2,
-      parse_mode: "Markdown"
+      text: text2
     })
   });
   if (!res.ok) {
@@ -1725,30 +2170,116 @@ async function sendMessage(chatId, text2) {
 }
 async function setWebhook(webhookUrl) {
   if (!BOT_TOKEN) return;
-  const secret = getWebhookSecret();
   const res = await fetch(`${BASE}/setWebhook`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       url: webhookUrl,
-      allowed_updates: ["message", "my_chat_member"],
-      secret_token: secret
+      allowed_updates: ["message", "my_chat_member"]
     })
   });
   const data = await res.json();
   if (data.ok) {
-    console.log("Telegram webhook set:", webhookUrl);
+    console.log("[Telegram] Webhook set successfully:", webhookUrl);
   } else {
-    console.error("Failed to set Telegram webhook:", data);
+    throw new Error(`Failed to set Telegram webhook: ${JSON.stringify(data)}`);
   }
 }
 function isTelegramConfigured() {
   return !!BOT_TOKEN;
 }
+async function downloadTelegramFile(fileId) {
+  if (!BOT_TOKEN) return null;
+  try {
+    const infoRes = await fetch(`${BASE}/getFile?file_id=${fileId}`);
+    if (!infoRes.ok) return null;
+    const info = await infoRes.json();
+    if (!info.ok || !info.result?.file_path) return null;
+    const fileUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${info.result.file_path}`;
+    const fileRes = await fetch(fileUrl);
+    if (!fileRes.ok) return null;
+    const buffer = await fileRes.arrayBuffer();
+    const base64 = Buffer.from(buffer).toString("base64");
+    const ext = info.result.file_path.split(".").pop()?.toLowerCase() || "jpg";
+    const mime = ext === "png" ? "image/png" : ext === "webp" ? "image/webp" : "image/jpeg";
+    return `data:${mime};base64,${base64}`;
+  } catch {
+    return null;
+  }
+}
+async function downloadTelegramFileBuffer(fileId) {
+  if (!BOT_TOKEN) return null;
+  try {
+    const infoRes = await fetch(`${BASE}/getFile?file_id=${fileId}`);
+    if (!infoRes.ok) return null;
+    const info = await infoRes.json();
+    if (!info.ok || !info.result?.file_path) return null;
+    const fileUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${info.result.file_path}`;
+    const fileRes = await fetch(fileUrl);
+    if (!fileRes.ok) return null;
+    const arrayBuf = await fileRes.arrayBuffer();
+    const ext = info.result.file_path.split(".").pop()?.toLowerCase() || "ogg";
+    return { buffer: Buffer.from(arrayBuf), ext };
+  } catch {
+    return null;
+  }
+}
+async function getUpdates(offset) {
+  if (!BOT_TOKEN) return [];
+  try {
+    const res = await fetch(`${BASE}/getUpdates?offset=${offset}&timeout=5&limit=100`);
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.ok ? data.result || [] : [];
+  } catch {
+    return [];
+  }
+}
+function logTelegramStatus() {
+  if (BOT_TOKEN) {
+    console.log("Telegram: configured \u2713");
+  } else {
+    console.log("Telegram: not configured (set TELEGRAM_BOT_TOKEN in Replit Secrets)");
+  }
+}
 
 // server/telegramRoutes.ts
-import OpenAI2 from "openai";
-var openai2 = new OpenAI2({
+init_userTokenStore();
+
+// server/integrations/search.ts
+async function tavilySearch(query, maxResults = 5) {
+  const apiKey = process.env.TAVILY_API_KEY;
+  if (!apiKey) throw new Error("TAVILY_API_KEY not set");
+  const res = await fetch("https://api.tavily.com/search", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      api_key: apiKey,
+      query,
+      search_depth: "basic",
+      max_results: maxResults,
+      include_answer: true
+    })
+  });
+  if (!res.ok) {
+    const text2 = await res.text();
+    throw new Error(`Tavily error ${res.status}: ${text2}`);
+  }
+  return res.json();
+}
+function formatSearchResults(result) {
+  const parts = [];
+  if (result.answer) parts.push(`Summary: ${result.answer}`);
+  for (const r of result.results) {
+    parts.push(`- ${r.title} (${r.url})
+  ${r.content.slice(0, 300)}`);
+  }
+  return parts.join("\n\n");
+}
+
+// server/telegramRoutes.ts
+import OpenAI3 from "openai";
+var openai3 = new OpenAI3({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL
 });
@@ -1760,53 +2291,124 @@ function generateLinkCode() {
   }
   return code;
 }
-async function handleCoachReply(userId, chatId, userText) {
+async function handleCoachReply(userId, chatId, userText, imageUrl) {
   try {
     let userGoals = [];
     let userStats = {};
-    let userHistory = [];
     let userLifeContext = null;
     let userCommitments = [];
     let chatMessages = [];
+    let gmailItems = [];
+    let calendarEvents = [];
+    let gmailConnected = false;
+    let googleAccessToken = null;
+    const [goalsRow, statsRow, lcRow, chatRow, commitmentsRows, googleTokens, prefsRow] = await Promise.allSettled([
+      db.select().from(goals).where(eq4(goals.userId, userId)).limit(1),
+      db.select().from(stats).where(eq4(stats.userId, userId)).limit(1),
+      db.select().from(lifeContext).where(eq4(lifeContext.userId, userId)).limit(1),
+      db.select().from(chatHistory).where(eq4(chatHistory.userId, userId)).limit(1),
+      db.select().from(commitments).where(and2(eq4(commitments.userId, userId), eq4(commitments.status, "pending"))).orderBy(desc(commitments.extractedAt)).limit(10),
+      getValidGoogleTokens(userId),
+      db.select().from(userPreferences).where(eq4(userPreferences.userId, userId)).limit(1)
+    ]);
+    let userTimezone = "America/New_York";
+    if (goalsRow.status === "fulfilled") userGoals = goalsRow.value[0]?.data || [];
+    if (statsRow.status === "fulfilled") userStats = statsRow.value[0]?.data || {};
+    if (lcRow.status === "fulfilled") userLifeContext = lcRow.value[0]?.data || null;
+    if (chatRow.status === "fulfilled") chatMessages = chatRow.value[0]?.data || [];
+    if (commitmentsRows.status === "fulfilled") userCommitments = commitmentsRows.value;
+    if (prefsRow.status === "fulfilled") {
+      const prefs = prefsRow.value[0]?.data || {};
+      if (prefs.timezone) userTimezone = prefs.timezone;
+    }
+    const nowForDateKey = /* @__PURE__ */ new Date();
+    const localForDateKey = new Date(nowForDateKey.toLocaleString("en-US", { timeZone: userTimezone }));
+    const dateKey = `${localForDateKey.getFullYear()}-${String(localForDateKey.getMonth() + 1).padStart(2, "0")}-${String(localForDateKey.getDate()).padStart(2, "0")}`;
+    let todayPlan = null;
     try {
-      const goalsRow = await db.select().from(goals).where(eq3(goals.userId, userId)).limit(1);
-      userGoals = goalsRow[0]?.data || [];
+      const planRows = await db.select().from(plans).where(and2(eq4(plans.userId, userId), eq4(plans.date, dateKey))).limit(1);
+      todayPlan = planRows[0]?.data || null;
     } catch {
     }
-    try {
-      const statsRow = await db.select().from(stats).where(eq3(stats.userId, userId)).limit(1);
-      userStats = statsRow[0]?.data || {};
-    } catch {
-    }
-    try {
-      const historyRow = await db.select().from(completionHistory).where(eq3(completionHistory.userId, userId)).limit(1);
-      userHistory = historyRow[0]?.data || [];
-    } catch {
-    }
-    try {
-      const lcRow = await db.select().from(lifeContext).where(eq3(lifeContext.userId, userId)).limit(1);
-      userLifeContext = lcRow[0]?.data || null;
-    } catch {
-    }
-    try {
-      userCommitments = await db.select().from(commitments).where(and2(eq3(commitments.userId, userId), eq3(commitments.status, "pending"))).orderBy(desc(commitments.extractedAt)).limit(10);
-    } catch {
-    }
-    try {
-      const chatRow = await db.select().from(chatHistory).where(eq3(chatHistory.userId, userId)).limit(1);
-      chatMessages = chatRow[0]?.data || [];
-    } catch {
+    if (googleTokens.status === "fulfilled" && googleTokens.value.length > 0) {
+      gmailConnected = true;
+      const tokens = googleTokens.value;
+      const token = tokens[0];
+      googleAccessToken = token;
+      console.log(`[Telegram] Fetching Gmail+Calendar for user ${userId} \u2014 ${tokens.length} Google account(s), date: ${dateKey}`);
+      const [emailResult, ...calResults] = await Promise.allSettled([
+        getRecentEmailCommitments(14, token),
+        ...tokens.map((t) => getGoogleCalendarEvents(dateKey, void 0, void 0, t))
+      ]);
+      if (emailResult.status === "fulfilled") {
+        gmailItems = emailResult.value;
+        console.log(`[Telegram] Gmail: ${gmailItems.length} emails`);
+      } else {
+        console.error(`[Telegram] Gmail fetch failed:`, emailResult.reason);
+      }
+      const seenEventIds = /* @__PURE__ */ new Set();
+      for (const calResult of calResults) {
+        if (calResult.status === "fulfilled") {
+          for (const ev of calResult.value) {
+            if (!seenEventIds.has(ev.id)) {
+              seenEventIds.add(ev.id);
+              calendarEvents.push(ev);
+            }
+          }
+        } else {
+          console.error(`[Telegram] Calendar fetch failed:`, calResult.reason);
+        }
+      }
+      console.log(`[Telegram] Calendar: ${calendarEvents.length} events total across ${tokens.length} account(s)`);
+    } else {
+      console.log(`[Telegram] No Google tokens for user ${userId} \u2014 status: ${googleTokens.status}`);
+      if (googleTokens.status === "rejected") console.error(`[Telegram] Token fetch error:`, googleTokens.reason);
     }
     const recentMessages = chatMessages.slice(0, 10).reverse();
-    recentMessages.push({ role: "user", content: userText });
     const now = /* @__PURE__ */ new Date();
     const dayOfWeek = now.toLocaleDateString("en-US", { weekday: "long" });
     const dateStr = now.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
     const goalsText = userGoals.length > 0 ? userGoals.map((g) => `- ${g.title} (${g.category}): ${g.current}/${g.target} ${g.unit}`).join("\n") : "No goals set";
-    const commitmentsText = userCommitments.length > 0 ? userCommitments.map((c) => `- "${c.content}"${c.dueDate ? ` (due ${c.dueDate})` : ""}`).join("\n") : "";
-    const systemPrompt = `You are GamePlan Coach \u2014 a sharp, supportive personal productivity coach. You're responding via Telegram, so keep messages SHORT (2-4 sentences max). Use plain text, no markdown headers.
+    const commitmentsText = userCommitments.length > 0 ? userCommitments.map((c) => `- [id:${c.id}] "${c.content}"${c.dueDate ? ` (due ${c.dueDate})` : ""}`).join("\n") : "";
+    const calendarText = calendarEvents.length > 0 ? calendarEvents.slice(0, 8).map((e) => `- ${e.time ? e.time + ": " : ""}${e.title}`).join("\n") : "";
+    const gmailSection = gmailItems.length > 0 ? `## Recent Emails (last 14 days from Gmail)
+` + gmailItems.slice(0, 100).map((i) => `- [id:${i.id}] From: ${i.from || "unknown"} | "${i.subject}" \u2014 ${i.snippet}`).join("\n") + `
+(Refer to these directly when asked. Do not say you cannot access email \u2014 you have the data above. Use the gmail_action tool with the message id to act on emails when asked.)` : gmailConnected ? `## Recent Emails
+Gmail is connected but no emails found in the last 7 days.` : `## Recent Emails
+Gmail not connected \u2014 if asked about emails, let the user know.`;
+    const localNow = new Date(now.toLocaleString("en-US", { timeZone: userTimezone }));
+    const localHour = localNow.getHours();
+    const localMinute = localNow.getMinutes();
+    const localDay = localNow.getDay();
+    const scheduleSlots = [
+      { hour: 8, minute: 0, label: "8:00 AM morning check-in" },
+      { hour: 10, minute: 0, label: "10:00 AM commitment check (only if items due/overdue)" },
+      { hour: 20, minute: 0, label: "8:00 PM evening recap" }
+    ];
+    if (localDay === 0) {
+      scheduleSlots.push({ hour: 19, minute: 0, label: "7:00 PM weekly planning session (Sunday)" });
+      scheduleSlots.sort((a, b) => a.hour - b.hour || a.minute - b.minute);
+    }
+    const nextSlot = scheduleSlots.find((s) => s.hour > localHour || s.hour === localHour && s.minute > localMinute);
+    const nextScheduledText = nextSlot ? `Next scheduled notification: ${nextSlot.label} (${userTimezone})` : "All scheduled notifications for today have already passed. Next: 8:00 AM tomorrow morning check-in";
+    const systemPrompt = `You are GamePlan Coach Jarvis \u2014 a sharp, supportive personal productivity coach. You're responding via Telegram, so keep messages SHORT (2-4 sentences max). Use plain text, no markdown headers.
 
-Today is ${dayOfWeek}, ${dateStr}.
+Today is ${dayOfWeek}, ${dateStr}. User's timezone: ${userTimezone}.
+
+## What You Do Automatically (you do NOT control these \u2014 the system runs them)
+- 8:00 AM: Morning check-in with today's plan and inbox highlights
+- 10:00 AM: Commitment accountability check (ONLY fires if there are items due today or overdue \u2014 otherwise skipped)
+- 8:00 PM: Evening recap of what was completed and what's still open
+- 7:00 PM Sundays: Weekly planning session (comprehensive week review + pattern insights + next week intentions)
+- Every 30 minutes: Email scanner checks Gmail and sends a Telegram alert ONLY for genuinely urgent emails
+All times are in the user's timezone (${userTimezone}). These fire automatically \u2014 you cannot pause, delay, reschedule, or skip them. You have no log of whether a specific notification was actually sent.
+${nextScheduledText}
+
+## What You Must NEVER Do
+- NEVER claim you "paused", "held", "scheduled", "decided to wait", or took any autonomous action regarding notifications. You don't have that ability.
+- NEVER invent a narrative about your own past behavior or past conversations you don't have in your message history below.
+- If asked whether a notification went out, be honest: "I don't have a record of which notifications fired. The morning check-in is scheduled for 8 AM \u2014 I can tell you what's in your data right now."
+- If asked about past conversations not in your message history, say so. Don't fabricate.
 
 ## User Profile
 - Streak: ${userStats.streak || 0} days
@@ -1818,20 +2420,294 @@ ${goalsText}
 ${commitmentsText ? `
 ## Open Commitments
 ${commitmentsText}` : ""}
+${calendarText ? `
+## Today's Calendar
+${calendarText}` : ""}
+
+${gmailSection}
 ${userLifeContext?.priorityGoal ? `
 ## Context
 - Priority: ${userLifeContext.priorityGoal}` : ""}
 
-Be direct, specific, actionable. No fluff. Respond in the same language the user writes in.`;
-    const response = await openai2.chat.completions.create({
-      model: "gpt-5-mini",
-      messages: [
+## Task Management
+You can manage the user's tasks and commitments using the manage_tasks tool:
+- Add tasks to today's plan (add_plan_task)
+- Add commitments with optional due dates (add_commitment)
+- Mark commitments as done using their [id:...] (complete_commitment)
+- List today's tasks and open commitments (list_tasks)
+- Analyze behavioral patterns from 30 days of data (analyze_patterns)
+When the user asks to add, complete, or list tasks/commitments, use the manage_tasks tool.
+If the user asks about their patterns, habits, trends, what you notice about them, their best/worst days, or anything about how they work over time, use manage_tasks with action analyze_patterns.
+
+Be direct, specific, actionable. No fluff. You have full access to the user's email and calendar data above \u2014 use it. Respond in the same language the user writes in.`;
+    let reply = "Sorry, I couldn't generate a response right now.";
+    try {
+      const userMessageContent = imageUrl ? [
+        { type: "text", text: userText || "What do you see in this image? Give me your thoughts and any relevant actions." },
+        { type: "image_url", image_url: { url: imageUrl } }
+      ] : userText;
+      const searchTool = {
+        type: "function",
+        function: {
+          name: "search_web",
+          description: "Search the web for current information, news, weather, prices, recent events, or anything requiring up-to-date data.",
+          parameters: {
+            type: "object",
+            properties: {
+              query: { type: "string", description: "The search query" }
+            },
+            required: ["query"]
+          }
+        }
+      };
+      const gmailActionTool = {
+        type: "function",
+        function: {
+          name: "gmail_action",
+          description: "Perform an action on a Gmail email. Use the message id from the email list provided in the system prompt.",
+          parameters: {
+            type: "object",
+            properties: {
+              message_id: { type: "string", description: "The Gmail message ID (from [id:...] in the email list)" },
+              action: { type: "string", enum: ["star", "unstar", "archive", "mark_read", "mark_unread", "spam", "trash"], description: "The action to perform on the email" }
+            },
+            required: ["message_id", "action"]
+          }
+        }
+      };
+      const manageTasksTool = {
+        type: "function",
+        function: {
+          name: "manage_tasks",
+          description: "Manage the user's daily plan tasks and commitments. Use this to add tasks to today's plan, add commitments, complete/resolve commitments, list current tasks, or analyze behavioral patterns from historical data.",
+          parameters: {
+            type: "object",
+            properties: {
+              action: {
+                type: "string",
+                enum: ["add_plan_task", "add_commitment", "complete_commitment", "list_tasks", "analyze_patterns"],
+                description: "The action to perform"
+              },
+              title: {
+                type: "string",
+                description: "Title of the task (required for add_plan_task)"
+              },
+              content: {
+                type: "string",
+                description: "Content of the commitment (required for add_commitment)"
+              },
+              due_date: {
+                type: "string",
+                description: "Due date in YYYY-MM-DD format (optional, for add_commitment)"
+              },
+              commitment_id: {
+                type: "string",
+                description: "The commitment ID from [id:...] (required for complete_commitment)"
+              }
+            },
+            required: ["action"]
+          }
+        }
+      };
+      const baseMessages = [
         { role: "system", content: systemPrompt },
-        ...recentMessages.map((m) => ({ role: m.role, content: m.content }))
-      ],
-      max_completion_tokens: 500
-    });
-    const reply = response.choices[0]?.message?.content || "Sorry, I couldn't generate a response right now.";
+        ...recentMessages.map((m) => ({ role: m.role, content: m.content })),
+        { role: "user", content: userMessageContent }
+      ];
+      const response = await openai3.chat.completions.create({
+        model: "gpt-5-mini",
+        messages: baseMessages,
+        tools: [searchTool, gmailActionTool, manageTasksTool],
+        tool_choice: "auto",
+        max_completion_tokens: 2e3
+      });
+      const finishReason = response.choices?.[0]?.finish_reason;
+      console.log(`[Telegram] OpenAI finish_reason: ${finishReason}`);
+      if (finishReason === "tool_calls") {
+        const toolCall = response.choices[0].message.tool_calls?.[0];
+        if (toolCall?.function?.name === "search_web") {
+          let searchResult = "Search unavailable right now.";
+          try {
+            const args = JSON.parse(toolCall.function.arguments);
+            console.log(`[Telegram] Web search: "${args.query}"`);
+            const results = await tavilySearch(args.query);
+            searchResult = formatSearchResults(results);
+            console.log(`[Telegram] Search returned ${results.results.length} results`);
+          } catch (searchErr) {
+            console.error("[Telegram] Search failed:", searchErr.message);
+          }
+          const followUp = await openai3.chat.completions.create({
+            model: "gpt-5-mini",
+            messages: [
+              ...baseMessages,
+              response.choices[0].message,
+              { role: "tool", tool_call_id: toolCall.id, content: searchResult }
+            ],
+            max_completion_tokens: 2e3
+          });
+          console.log(`[Telegram] Follow-up finish_reason: ${followUp.choices?.[0]?.finish_reason}`);
+          reply = followUp.choices[0]?.message?.content || reply;
+        } else if (toolCall?.function?.name === "gmail_action") {
+          let actionResult = "Gmail action failed.";
+          try {
+            const args = JSON.parse(toolCall.function.arguments);
+            console.log(`[Telegram] Gmail action: ${args.action} on message ${args.message_id}`);
+            if (!googleAccessToken) {
+              actionResult = "Gmail is not connected. Ask the user to connect their Google account first.";
+            } else if (gmailItems.length > 0 && !gmailItems.some((e) => e.id === args.message_id)) {
+              actionResult = `Message ID "${args.message_id}" not found in the current email list. Please use a valid message ID from the emails shown.`;
+            } else {
+              const actionMap = {
+                star: { add: ["STARRED"], remove: [] },
+                unstar: { add: [], remove: ["STARRED"] },
+                archive: { add: [], remove: ["INBOX"] },
+                mark_read: { add: [], remove: ["UNREAD"] },
+                mark_unread: { add: ["UNREAD"], remove: [] },
+                spam: { add: ["SPAM"], remove: ["INBOX"] },
+                trash: { add: ["TRASH"], remove: ["INBOX"] }
+              };
+              const mapping = actionMap[args.action];
+              if (!mapping) {
+                actionResult = `Unknown action: ${args.action}`;
+              } else {
+                await gmailModifyMessage(args.message_id, mapping.add, mapping.remove, googleAccessToken);
+                actionResult = `Successfully performed "${args.action}" on the email.`;
+                console.log(`[Telegram] Gmail action succeeded: ${args.action} on ${args.message_id}`);
+              }
+            }
+          } catch (gmailErr) {
+            console.error("[Telegram] Gmail action failed:", gmailErr.message);
+            actionResult = `Gmail action failed: ${gmailErr.message}`;
+          }
+          const followUp = await openai3.chat.completions.create({
+            model: "gpt-5-mini",
+            messages: [
+              ...baseMessages,
+              response.choices[0].message,
+              { role: "tool", tool_call_id: toolCall.id, content: actionResult }
+            ],
+            max_completion_tokens: 2e3
+          });
+          console.log(`[Telegram] Follow-up finish_reason: ${followUp.choices?.[0]?.finish_reason}`);
+          reply = followUp.choices[0]?.message?.content || reply;
+        } else if (toolCall?.function?.name === "manage_tasks") {
+          let taskResult = "Task management action failed.";
+          try {
+            const args = JSON.parse(toolCall.function.arguments);
+            console.log(`[Telegram] manage_tasks action: ${args.action}`);
+            if (args.action === "add_plan_task") {
+              if (!args.title) {
+                taskResult = "Error: title is required for add_plan_task";
+              } else {
+                const tasks = todayPlan?.tasks || [];
+                const newTask = {
+                  id: crypto.randomUUID(),
+                  title: args.title,
+                  completed: false
+                };
+                tasks.push(newTask);
+                const planData = todayPlan ? { ...todayPlan, tasks } : { tasks };
+                await db.insert(plans).values({ userId, date: dateKey, data: planData }).onConflictDoUpdate({
+                  target: [plans.userId, plans.date],
+                  set: { data: planData, updatedAt: /* @__PURE__ */ new Date() }
+                });
+                todayPlan = planData;
+                taskResult = `Added "${args.title}" to today's plan. Today's plan now has ${tasks.length} task(s).`;
+                console.log(`[Telegram] Added plan task: "${args.title}"`);
+              }
+            } else if (args.action === "add_commitment") {
+              if (!args.content) {
+                taskResult = "Error: content is required for add_commitment";
+              } else {
+                await db.insert(commitments).values({
+                  userId,
+                  content: args.content,
+                  dueDate: args.due_date || null,
+                  sourceMessage: `Added via Telegram`
+                });
+                taskResult = `Added commitment: "${args.content}"${args.due_date ? ` (due ${args.due_date})` : ""}`;
+                console.log(`[Telegram] Added commitment: "${args.content}"`);
+              }
+            } else if (args.action === "complete_commitment") {
+              if (!args.commitment_id) {
+                taskResult = "Error: commitment_id is required for complete_commitment";
+              } else {
+                const updated = await db.update(commitments).set({ status: "done", resolvedAt: /* @__PURE__ */ new Date() }).where(and2(eq4(commitments.id, args.commitment_id), eq4(commitments.userId, userId), eq4(commitments.status, "pending"))).returning({ id: commitments.id });
+                if (updated.length > 0) {
+                  taskResult = `Marked commitment as done (id: ${args.commitment_id}).`;
+                  console.log(`[Telegram] Completed commitment: ${args.commitment_id}`);
+                } else {
+                  taskResult = `Error: No pending commitment found with id "${args.commitment_id}". Check the commitment ID and try again.`;
+                  console.log(`[Telegram] Commitment not found: ${args.commitment_id}`);
+                }
+              }
+            } else if (args.action === "list_tasks") {
+              const planTasks = todayPlan?.tasks || [];
+              const pendingCommitments = await db.select().from(commitments).where(and2(eq4(commitments.userId, userId), eq4(commitments.status, "pending"))).orderBy(desc(commitments.extractedAt)).limit(10);
+              let listing = "";
+              if (planTasks.length > 0) {
+                listing += "Today's Plan:\n" + planTasks.map(
+                  (t) => `- ${t.completed ? "\u2705" : "\u2B1C"} ${t.title}`
+                ).join("\n");
+              } else {
+                listing += "Today's Plan: No tasks yet.";
+              }
+              listing += "\n\n";
+              if (pendingCommitments.length > 0) {
+                listing += "Open Commitments:\n" + pendingCommitments.map(
+                  (c) => `- [id:${c.id}] "${c.content}"${c.dueDate ? ` (due ${c.dueDate})` : ""}`
+                ).join("\n");
+              } else {
+                listing += "Open Commitments: None.";
+              }
+              taskResult = listing;
+              console.log(`[Telegram] Listed tasks: ${planTasks.length} plan tasks, ${pendingCommitments.length} commitments`);
+            } else if (args.action === "analyze_patterns") {
+              const today = /* @__PURE__ */ new Date();
+              const thirtyDaysAgo = new Date(today);
+              thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+              const startDate = thirtyDaysAgo.toISOString().slice(0, 10);
+              const endDate = today.toISOString().slice(0, 10);
+              const plans2 = await getPlansForDateRange(userId, startDate, endDate);
+              if (plans2.length < 3) {
+                taskResult = "Not enough data yet for pattern analysis. Need at least a few days of plan data to identify meaningful patterns.";
+              } else {
+                const allCommitments = await db.select().from(commitments).where(eq4(commitments.userId, userId)).limit(200);
+                const scopedCommitments = allCommitments.filter(
+                  (c) => c.dueDate && c.dueDate >= startDate && c.dueDate <= endDate || c.extractedAt && c.extractedAt >= new Date(startDate) && c.extractedAt <= /* @__PURE__ */ new Date(endDate + "T23:59:59") || c.resolvedAt && c.resolvedAt >= new Date(startDate) && c.resolvedAt <= /* @__PURE__ */ new Date(endDate + "T23:59:59")
+                );
+                const patternData = computePatternInsights(plans2, scopedCommitments);
+                taskResult = `Here is the user's behavioral pattern data from the last 30 days. Analyze this and provide 3-5 sharp, specific behavioral observations. Name each pattern (e.g. "Friday drop-off", "Health task avoidance", "Overplanning on Mondays"). Use specific numbers from the data. Be direct and insightful, not generic.
+
+${patternData}`;
+              }
+              console.log(`[Telegram] Pattern analysis: ${plans2.length} days of data`);
+            } else {
+              taskResult = `Unknown action: ${args.action}`;
+            }
+          } catch (taskErr) {
+            console.error("[Telegram] manage_tasks failed:", taskErr.message);
+            taskResult = `Task management failed: ${taskErr.message}`;
+          }
+          const followUp = await openai3.chat.completions.create({
+            model: "gpt-5-mini",
+            messages: [
+              ...baseMessages,
+              response.choices[0].message,
+              { role: "tool", tool_call_id: toolCall.id, content: taskResult }
+            ],
+            max_completion_tokens: 2e3
+          });
+          console.log(`[Telegram] Follow-up finish_reason: ${followUp.choices?.[0]?.finish_reason}`);
+          reply = followUp.choices[0]?.message?.content || reply;
+        }
+      } else {
+        reply = response.choices[0]?.message?.content || reply;
+      }
+    } catch (aiErr) {
+      console.error("[Telegram] OpenAI error:", aiErr?.status, aiErr?.message, aiErr?.error);
+      throw aiErr;
+    }
     const userMsg = { id: Date.now().toString(), role: "user", content: userText };
     const assistantMsg = { id: (Date.now() + 1).toString(), role: "assistant", content: reply };
     const updatedChat = [assistantMsg, userMsg, ...chatMessages].slice(0, 100);
@@ -1848,119 +2724,171 @@ Be direct, specific, actionable. No fluff. Respond in the same language the user
     await sendMessage(chatId, "Sorry, I encountered an error. Please try again.");
   }
 }
-function registerTelegramWebhook(app2) {
-  app2.post("/api/telegram/webhook", async (req, res) => {
-    const secretHeader = req.header("X-Telegram-Bot-Api-Secret-Token");
-    if (!verifyWebhookSecret(secretHeader)) {
-      return res.sendStatus(403);
-    }
-    res.sendStatus(200);
-    try {
-      const update = req.body;
-      if (update.my_chat_member) {
-        const chatMember = update.my_chat_member;
-        const chat = chatMember.chat;
-        const status = chatMember.new_chat_member?.status;
-        if ((chat.type === "group" || chat.type === "supergroup") && (status === "member" || status === "administrator")) {
-          const fromUserId = chatMember.from?.id?.toString();
-          if (fromUserId) {
-            try {
-              const link = await db.select().from(telegramLinks).where(
-                sql3`${telegramLinks.chatId} = ${fromUserId}`
-              ).limit(1);
-              if (link[0]) {
-                const currentGroups = link[0].groupChatIds || [];
-                const chatIdStr = chat.id.toString();
-                if (!currentGroups.includes(chatIdStr)) {
-                  currentGroups.push(chatIdStr);
-                  await db.update(telegramLinks).set({ groupChatIds: currentGroups }).where(eq3(telegramLinks.userId, link[0].userId));
-                }
+async function processUpdate(update) {
+  try {
+    if (update.my_chat_member) {
+      const chatMember = update.my_chat_member;
+      const chat = chatMember.chat;
+      const status = chatMember.new_chat_member?.status;
+      if ((chat.type === "group" || chat.type === "supergroup") && (status === "member" || status === "administrator")) {
+        const fromUserId = chatMember.from?.id?.toString();
+        if (fromUserId) {
+          try {
+            const link = await db.select().from(telegramLinks).where(
+              sql4`${telegramLinks.chatId} = ${fromUserId}`
+            ).limit(1);
+            if (link[0]) {
+              const currentGroups = link[0].groupChatIds || [];
+              const chatIdStr = chat.id.toString();
+              if (!currentGroups.includes(chatIdStr)) {
+                currentGroups.push(chatIdStr);
+                await db.update(telegramLinks).set({ groupChatIds: currentGroups }).where(eq4(telegramLinks.userId, link[0].userId));
               }
-            } catch (err) {
-              console.error("Error handling group join:", err);
             }
+          } catch (err) {
+            console.error("Error handling group join:", err);
           }
         }
-        return;
       }
-      const message = update.message;
-      if (!message || !message.text) return;
-      const chatId = message.chat.id.toString();
-      const chatType = message.chat.type;
-      const text2 = message.text.trim();
-      if (chatType === "group" || chatType === "supergroup") {
-        try {
-          const links = await db.select().from(telegramLinks).where(
-            sql3`${telegramLinks.groupChatIds}::jsonb @> ${JSON.stringify([chatId])}::jsonb`
-          );
-          for (const link of links) {
-            await db.insert(telegramGroupMessages).values({
-              userId: link.userId,
-              chatId,
-              chatTitle: message.chat.title || "",
-              fromUser: message.from?.first_name || message.from?.username || "Unknown",
-              text: text2.slice(0, 500),
-              messageDate: new Date(message.date * 1e3)
-            });
-          }
-        } catch (err) {
-          console.error("Error storing group message:", err);
-        }
-        return;
-      }
-      if (text2.startsWith("/start ") || text2.length === 6 && /^[A-Z0-9]+$/.test(text2)) {
-        const code = text2.startsWith("/start ") ? text2.slice(7).trim() : text2;
-        try {
-          const codeRows = await db.select().from(telegramLinkCodes).where(eq3(telegramLinkCodes.code, code));
-          if (codeRows.length === 0) {
-            await sendMessage(chatId, "Invalid or expired link code. Please generate a new one from the app.");
-            return;
-          }
-          const { userId } = codeRows[0];
-          const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1e3);
-          if (codeRows[0].createdAt < fiveMinAgo) {
-            await db.delete(telegramLinkCodes).where(eq3(telegramLinkCodes.code, code));
-            await sendMessage(chatId, "This link code has expired. Please generate a new one from the app.");
-            return;
-          }
-          await db.insert(telegramLinks).values({
-            userId,
-            chatId,
-            username: message.from?.username || message.from?.first_name || null
-          }).onConflictDoUpdate({
-            target: telegramLinks.userId,
-            set: {
-              chatId,
-              username: message.from?.username || message.from?.first_name || null,
-              linkedAt: /* @__PURE__ */ new Date()
-            }
-          });
-          await db.delete(telegramLinkCodes).where(eq3(telegramLinkCodes.code, code));
-          await sendMessage(chatId, "You're connected to GamePlan Coach! I'll send you proactive check-ins and you can chat with me anytime right here.");
-        } catch (err) {
-          console.error("Error linking Telegram:", err);
-          await sendMessage(chatId, "Something went wrong linking your account. Please try again.");
-        }
-        return;
-      }
-      if (text2 === "/start") {
-        await sendMessage(chatId, "Welcome to GamePlan Coach! To connect your account, generate a link code from the GamePlan app Profile > Connected Apps > Telegram, then send it here.");
-        return;
-      }
+      return;
+    }
+    const message = update.message;
+    if (!message) return;
+    if (!message.text && !message.photo && !message.document && !message.voice && !message.audio && !message.video_note) return;
+    const chatId = message.chat.id.toString();
+    const chatType = message.chat.type;
+    let imageUrl;
+    let text2 = message.text?.trim() || message.caption?.trim() || "";
+    if (message.photo) {
+      const largest = message.photo[message.photo.length - 1];
+      const downloaded = await downloadTelegramFile(largest.file_id).catch(() => null);
+      if (downloaded) imageUrl = downloaded;
+    } else if (message.document && message.document.mime_type?.startsWith("image/")) {
+      const downloaded = await downloadTelegramFile(message.document.file_id).catch(() => null);
+      if (downloaded) imageUrl = downloaded;
+    }
+    let audioFileId = message.voice?.file_id || message.audio?.file_id || message.video_note?.file_id;
+    if (!audioFileId && message.document && message.document.mime_type?.startsWith("audio/")) {
+      audioFileId = message.document.file_id;
+    }
+    if (audioFileId && !text2) {
       try {
-        const link = await db.select().from(telegramLinks).where(eq3(telegramLinks.chatId, chatId)).limit(1);
-        if (link.length === 0) {
-          await sendMessage(chatId, "Your Telegram isn't linked to a GamePlan account yet. Open the app, go to Profile > Connected Apps > Telegram, and send the link code here.");
+        const file = await downloadTelegramFileBuffer(audioFileId);
+        if (!file) {
+          await sendMessage(chatId, "Sorry, I couldn't download that voice message. Could you try again or type it out?");
           return;
         }
-        await handleCoachReply(link[0].userId, chatId, text2);
+        const { speechToText: speechToText2, ensureCompatibleFormat: ensureCompatibleFormat2 } = await Promise.resolve().then(() => (init_client(), client_exports));
+        const { buffer, format } = await ensureCompatibleFormat2(file.buffer);
+        const transcript = await speechToText2(buffer, format);
+        if (!transcript || !transcript.trim()) {
+          await sendMessage(chatId, "Sorry, I couldn't make out what you said. Could you try again or type it out?");
+          return;
+        }
+        text2 = transcript.trim();
+        const preview = text2.length > 100 ? text2.slice(0, 100) + "..." : text2;
+        await sendMessage(chatId, `(\u{1F3A4} Voice: "${preview}")`);
       } catch (err) {
-        console.error("Error handling Telegram message:", err);
-        await sendMessage(chatId, "Sorry, something went wrong. Please try again.");
+        console.error("[Telegram] Voice transcription failed:", err);
+        await sendMessage(chatId, "Sorry, I couldn't understand that voice message. Could you try again or type it out?");
+        return;
       }
-    } catch (error) {
-      console.error("Telegram webhook error:", error);
     }
+    if (!text2 && !imageUrl) return;
+    if (chatType === "group" || chatType === "supergroup") {
+      if (!text2) return;
+      try {
+        const links = await db.select().from(telegramLinks).where(
+          sql4`${telegramLinks.groupChatIds}::jsonb @> ${JSON.stringify([chatId])}::jsonb`
+        );
+        for (const link of links) {
+          await db.insert(telegramGroupMessages).values({
+            userId: link.userId,
+            chatId,
+            chatTitle: message.chat.title || "",
+            fromUser: message.from?.first_name || message.from?.username || "Unknown",
+            text: text2.slice(0, 500),
+            messageDate: new Date(message.date * 1e3)
+          });
+        }
+      } catch (err) {
+        console.error("Error storing group message:", err);
+      }
+      return;
+    }
+    if (text2.startsWith("/start ") || text2.length === 6 && /^[A-Z0-9]+$/.test(text2)) {
+      const code = text2.startsWith("/start ") ? text2.slice(7).trim() : text2;
+      try {
+        const codeRows = await db.select().from(telegramLinkCodes).where(eq4(telegramLinkCodes.code, code));
+        if (codeRows.length === 0) {
+          await sendMessage(chatId, "Invalid or expired link code. Please generate a new one from the app.");
+          return;
+        }
+        const { userId } = codeRows[0];
+        const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1e3);
+        if (codeRows[0].createdAt < fiveMinAgo) {
+          await db.delete(telegramLinkCodes).where(eq4(telegramLinkCodes.code, code));
+          await sendMessage(chatId, "This link code has expired. Please generate a new one from the app.");
+          return;
+        }
+        await db.insert(telegramLinks).values({ userId, chatId, username: message.from?.username || message.from?.first_name || null }).onConflictDoUpdate({
+          target: telegramLinks.userId,
+          set: { chatId, username: message.from?.username || message.from?.first_name || null, linkedAt: /* @__PURE__ */ new Date() }
+        });
+        await db.delete(telegramLinkCodes).where(eq4(telegramLinkCodes.code, code));
+        await sendMessage(chatId, "\u2705 You're connected to GamePlan! Jarvis will send you morning check-ins and you can chat anytime right here.");
+        console.log(`[Telegram] Linked user ${userId} to chat ${chatId}`);
+      } catch (err) {
+        console.error("Error linking Telegram:", err);
+        await sendMessage(chatId, "Something went wrong linking your account. Please try again.");
+      }
+      return;
+    }
+    if (text2 === "/start") {
+      await sendMessage(chatId, "Welcome to GamePlan Coach! To connect your account, generate a link code from the GamePlan app (Profile \u2192 Connected Apps \u2192 Telegram), then send it here.");
+      return;
+    }
+    try {
+      const link = await db.select().from(telegramLinks).where(eq4(telegramLinks.chatId, chatId)).limit(1);
+      if (link.length === 0) {
+        await sendMessage(chatId, "Your Telegram isn't linked to a GamePlan account yet. Open the app, go to Profile > Connected Apps > Telegram, and send the link code here.");
+        return;
+      }
+      await handleCoachReply(link[0].userId, chatId, text2, imageUrl);
+    } catch (err) {
+      console.error("Error handling Telegram message:", err);
+      await sendMessage(chatId, "Sorry, something went wrong. Please try again.");
+    }
+  } catch (error) {
+    console.error("Telegram processUpdate error:", error);
+  }
+}
+var pollingOffset = 0;
+var pollingActive = false;
+async function startTelegramPolling() {
+  if (!isTelegramConfigured()) return;
+  if (pollingActive) return;
+  pollingActive = true;
+  console.log("[Telegram] Polling started (dev mode \u2014 webhook not modified)");
+  const poll = async () => {
+    if (!pollingActive) return;
+    try {
+      const updates = await getUpdates(pollingOffset);
+      for (const update of updates) {
+        await processUpdate(update);
+        pollingOffset = update.update_id + 1;
+      }
+    } catch (err) {
+      console.error("[Telegram] Polling error:", err);
+    }
+    setTimeout(poll, 2e3);
+  };
+  poll();
+}
+function registerTelegramWebhook(app2) {
+  app2.post("/api/telegram/webhook", async (req, res) => {
+    res.sendStatus(200);
+    await processUpdate(req.body);
   });
 }
 function registerTelegramRoutes(app2) {
@@ -1971,7 +2899,7 @@ function registerTelegramRoutes(app2) {
       if (!isTelegramConfigured()) {
         return res.status(400).json({ error: "Telegram bot not configured. Add TELEGRAM_BOT_TOKEN to secrets." });
       }
-      await db.delete(telegramLinkCodes).where(eq3(telegramLinkCodes.userId, userId));
+      await db.delete(telegramLinkCodes).where(eq4(telegramLinkCodes.userId, userId));
       const code = generateLinkCode();
       await db.insert(telegramLinkCodes).values({ code, userId });
       res.json({ code });
@@ -1984,7 +2912,7 @@ function registerTelegramRoutes(app2) {
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const link = await db.select().from(telegramLinks).where(eq3(telegramLinks.userId, userId)).limit(1);
+      const link = await db.select().from(telegramLinks).where(eq4(telegramLinks.userId, userId)).limit(1);
       if (link.length === 0) {
         return res.json({ connected: false, username: null, configured: isTelegramConfigured() });
       }
@@ -2002,7 +2930,7 @@ function registerTelegramRoutes(app2) {
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      await db.delete(telegramLinks).where(eq3(telegramLinks.userId, userId));
+      await db.delete(telegramLinks).where(eq4(telegramLinks.userId, userId));
       res.json({ success: true });
     } catch (error) {
       console.error("Error disconnecting Telegram:", error);
@@ -2013,13 +2941,13 @@ function registerTelegramRoutes(app2) {
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const link = await db.select().from(telegramLinks).where(eq3(telegramLinks.userId, userId)).limit(1);
+      const link = await db.select().from(telegramLinks).where(eq4(telegramLinks.userId, userId)).limit(1);
       if (link.length === 0) {
         return res.json({ connected: false, messages: [] });
       }
       const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1e3);
       const messages = await db.select().from(telegramGroupMessages).where(and2(
-        eq3(telegramGroupMessages.userId, userId),
+        eq4(telegramGroupMessages.userId, userId),
         gte(telegramGroupMessages.messageDate, sevenDaysAgo)
       )).orderBy(desc(telegramGroupMessages.messageDate)).limit(50);
       res.json({
@@ -2042,7 +2970,7 @@ function registerTelegramRoutes(app2) {
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const { type, message: msgText } = req.body;
       if (!msgText) return res.status(400).json({ error: "message is required" });
-      const link = await db.select().from(telegramLinks).where(eq3(telegramLinks.userId, userId)).limit(1);
+      const link = await db.select().from(telegramLinks).where(eq4(telegramLinks.userId, userId)).limit(1);
       if (link.length === 0) {
         return res.json({ sent: false, reason: "Not linked" });
       }
@@ -2056,190 +2984,620 @@ function registerTelegramRoutes(app2) {
 }
 async function getCommitmentsForUser(userId) {
   try {
-    return await db.select().from(commitments).where(and2(eq3(commitments.userId, userId), eq3(commitments.status, "pending"))).orderBy(desc(commitments.extractedAt)).limit(20);
+    return await db.select().from(commitments).where(and2(eq4(commitments.userId, userId), eq4(commitments.status, "pending"))).orderBy(desc(commitments.extractedAt)).limit(20);
   } catch {
     return [];
   }
 }
-function formatCommitmentsForMessage(commitments2, dateKey) {
-  const overdue = commitments2.filter((c) => c.dueDate && c.dueDate < dateKey);
-  const dueToday = commitments2.filter((c) => c.dueDate === dateKey);
-  const upcoming = commitments2.filter((c) => c.dueDate && c.dueDate > dateKey).slice(0, 3);
-  const parts = [];
-  if (overdue.length > 0) {
-    parts.push(`
-Overdue commitments (${overdue.length}):
-${overdue.slice(0, 5).map((c) => `  - "${c.content}" (was due ${c.dueDate})`).join("\n")}`);
+async function getPlansForDateRange(userId, startDate, endDate) {
+  try {
+    const rows = await db.select().from(plans).where(and2(
+      eq4(plans.userId, userId),
+      gte(plans.date, startDate),
+      lte(plans.date, endDate)
+    ));
+    return rows.map((r) => ({
+      date: r.date,
+      tasks: r.data?.tasks || []
+    }));
+  } catch {
+    return [];
   }
-  if (dueToday.length > 0) {
-    parts.push(`
-Due today (${dueToday.length}):
-${dueToday.map((c) => `  - "${c.content}"`).join("\n")}`);
+}
+function computePatternInsights(plans2, commitments2) {
+  const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  const dayStats = {};
+  for (const d of dayNames) dayStats[d] = { planned: 0, completed: 0, days: 0 };
+  const categoryStats = {};
+  let totalPlanned = 0;
+  let totalCompleted = 0;
+  const dailyCounts = [];
+  const streakBreakDays = {};
+  for (const d of dayNames) streakBreakDays[d] = 0;
+  for (const plan of plans2) {
+    const dayOfWeek = dayNames[(/* @__PURE__ */ new Date(plan.date + "T12:00:00")).getDay()];
+    const planned = plan.tasks.length;
+    const completed = plan.tasks.filter((t) => t.completed).length;
+    dayStats[dayOfWeek].planned += planned;
+    dayStats[dayOfWeek].completed += completed;
+    dayStats[dayOfWeek].days += 1;
+    totalPlanned += planned;
+    totalCompleted += completed;
+    dailyCounts.push({ date: plan.date, planned, completed });
+    for (const task of plan.tasks) {
+      const cat = task.category || "uncategorized";
+      if (!categoryStats[cat]) categoryStats[cat] = { planned: 0, completed: 0 };
+      categoryStats[cat].planned += 1;
+      if (task.completed) categoryStats[cat].completed += 1;
+    }
   }
-  if (upcoming.length > 0) {
-    parts.push(`
-Coming up:
-${upcoming.map((c) => `  - "${c.content}" (due ${c.dueDate})`).join("\n")}`);
+  const sortedDays = dailyCounts.sort((a, b) => a.date.localeCompare(b.date));
+  const planDates = new Set(sortedDays.map((d) => d.date));
+  if (sortedDays.length >= 2) {
+    const firstDate = /* @__PURE__ */ new Date(sortedDays[0].date + "T12:00:00");
+    const lastDate = /* @__PURE__ */ new Date(sortedDays[sortedDays.length - 1].date + "T12:00:00");
+    const allDatesInRange = [];
+    for (let d = new Date(firstDate); d <= lastDate; d.setDate(d.getDate() + 1)) {
+      const dk = d.toISOString().slice(0, 10);
+      const existing = sortedDays.find((s) => s.date === dk);
+      allDatesInRange.push(existing || { date: dk, planned: 0, completed: 0 });
+    }
+    let prevActive = false;
+    for (const day of allDatesInRange) {
+      const rate = day.planned > 0 ? day.completed / day.planned : 0;
+      const isActiveDay = rate >= 0.5 && day.planned > 0;
+      if (prevActive && !isActiveDay) {
+        const dayOfWeek = dayNames[(/* @__PURE__ */ new Date(day.date + "T12:00:00")).getDay()];
+        streakBreakDays[dayOfWeek] += 1;
+      }
+      prevActive = isActiveDay;
+    }
   }
-  return parts.join("");
+  let stats2 = `BEHAVIORAL DATA (${plans2.length} days analyzed):
+
+`;
+  stats2 += `Overall: ${totalCompleted}/${totalPlanned} tasks completed (${totalPlanned > 0 ? Math.round(totalCompleted / totalPlanned * 100) : 0}%)
+`;
+  stats2 += `Avg tasks planned per day: ${plans2.length > 0 ? (totalPlanned / plans2.length).toFixed(1) : "0"}
+
+`;
+  stats2 += `Day-of-week completion rates:
+`;
+  for (const day of dayNames) {
+    const s = dayStats[day];
+    if (s.days === 0) continue;
+    const rate = s.planned > 0 ? Math.round(s.completed / s.planned * 100) : 0;
+    stats2 += `  ${day}: ${rate}% (${s.completed}/${s.planned} across ${s.days} day${s.days > 1 ? "s" : ""})
+`;
+  }
+  const catEntries = Object.entries(categoryStats).filter(([_, v]) => v.planned >= 2);
+  if (catEntries.length > 0) {
+    stats2 += `
+Category completion rates:
+`;
+    for (const [cat, v] of catEntries) {
+      stats2 += `  ${cat}: ${Math.round(v.completed / v.planned * 100)}% (${v.completed}/${v.planned})
+`;
+    }
+  }
+  const breakEntries = Object.entries(streakBreakDays).filter(([_, v]) => v > 0).sort((a, b) => b[1] - a[1]);
+  if (breakEntries.length > 0) {
+    stats2 += `
+Streak break days (days where momentum dropped):
+`;
+    for (const [day, count] of breakEntries) {
+      stats2 += `  ${day}: ${count} break${count > 1 ? "s" : ""}
+`;
+    }
+  }
+  if (commitments2 && commitments2.length > 0) {
+    const resolved = commitments2.filter((c) => c.status === "done").length;
+    const expired = commitments2.filter((c) => c.status === "expired").length;
+    const pending = commitments2.filter((c) => c.status === "pending").length;
+    const total = commitments2.length;
+    stats2 += `
+Commitment follow-through:
+`;
+    stats2 += `  Resolved: ${resolved}/${total} (${Math.round(resolved / total * 100)}%)
+`;
+    if (expired > 0) stats2 += `  Expired: ${expired}/${total}
+`;
+    if (pending > 0) stats2 += `  Still pending: ${pending}
+`;
+  }
+  return stats2;
+}
+async function generateProactiveMessage(type, context) {
+  const now = /* @__PURE__ */ new Date();
+  const dayName = now.toLocaleDateString("en-US", { weekday: "long" });
+  const dateFull = now.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
+  const allTasks = context.tasks || [];
+  const incompleteTasks = allTasks.filter((t) => !t.completed);
+  const completedTasks = allTasks.filter((t) => t.completed);
+  const goalsText = (context.goals || []).slice(0, 3).map((g) => `${g.title} (${g.current || 0}/${g.target} ${g.unit})`).join(", ") || "none set";
+  const commitmentList = (context.commitments || []).slice(0, 5).map((c) => `"${c.content}"${c.dueDate ? ` due ${c.dueDate}` : ""}`).join(", ") || "none";
+  let prompt = "";
+  if (type === "morning") {
+    const dueToday = (context.commitments || []).filter((c) => c.dueDate === context.dateKey);
+    const overdue = (context.commitments || []).filter((c) => c.dueDate && c.dueDate < context.dateKey);
+    const tomorrow = /* @__PURE__ */ new Date(context.dateKey + "T12:00:00");
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const tomorrowKey = tomorrow.toISOString().slice(0, 10);
+    const dueTomorrow = (context.commitments || []).filter((c) => c.dueDate === tomorrowKey);
+    prompt = `Today is ${dayName}, ${dateFull}. User has ${incompleteTasks.length} task(s) planned.
+Tasks: ${incompleteTasks.map((t) => t.title).join(", ") || "none planned"}
+Goals: ${goalsText}
+Due today: ${dueToday.map((c) => `"${c.content}"`).join(", ") || "none"}
+Overdue: ${overdue.map((c) => `"${c.content}"`).join(", ") || "none"}
+Due TOMORROW: ${dueTomorrow.map((c) => `"${c.content}"`).join(", ") || "none"}
+Streak: ${context.stats?.streak || 0} days
+
+Write a sharp, energizing morning check-in (3-4 sentences). Be specific to their actual tasks/goals. No generic phrases like "Good morning!" Start with something direct. If there are items due tomorrow, give a heads-up so they can plan ahead.`;
+  } else if (type === "commitment_check") {
+    const dueToday = (context.commitments || []).filter((c) => c.dueDate === context.dateKey);
+    const overdue = (context.commitments || []).filter((c) => c.dueDate && c.dueDate < context.dateKey);
+    if (dueToday.length === 0 && overdue.length === 0) return null;
+    prompt = `Today is ${dayName}, ${dateFull}.
+Due today: ${dueToday.map((c) => `"${c.content}"`).join(", ") || "none"}
+Overdue: ${overdue.map((c) => `"${c.content}" (${c.dueDate})`).join(", ") || "none"}
+
+Write a brief mid-day accountability check-in (2-3 sentences). Direct, no lecture. Ask what progress has been made on the specific items.`;
+  } else if (type === "evening") {
+    const tomorrow = /* @__PURE__ */ new Date(context.dateKey + "T12:00:00");
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const tomorrowKey = tomorrow.toISOString().slice(0, 10);
+    const dueTomorrow = (context.commitments || []).filter((c) => c.dueDate === tomorrowKey);
+    prompt = `Today is ${dayName}, ${dateFull}.
+Completed: ${completedTasks.length}/${allTasks.length} tasks
+Remaining: ${incompleteTasks.slice(0, 3).map((t) => t.title).join(", ") || "none"}
+Open commitments: ${commitmentList}
+Due TOMORROW: ${dueTomorrow.map((c) => `"${c.content}"`).join(", ") || "none"}
+Streak: ${context.stats?.streak || 0} days
+
+Write a concise evening recap (3-4 sentences). Acknowledge what was done, note what's still open. If there are items due tomorrow, specifically call them out so the user can plan tonight. End with something forward-looking. No platitudes.`;
+  } else if (type === "weekly" || type === "weekly_planning") {
+    const userId = context.userId;
+    if (userId) {
+      const endDate = context.dateKey || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+      const anchorDate = /* @__PURE__ */ new Date(endDate + "T12:00:00");
+      const startOfWeekDate = new Date(anchorDate);
+      startOfWeekDate.setDate(startOfWeekDate.getDate() - 6);
+      const startDate = startOfWeekDate.toISOString().slice(0, 10);
+      const weekPlans = await getPlansForDateRange(userId, startDate, endDate);
+      const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+      let dayByDay = "";
+      let weekCompleted = 0;
+      let weekPlanned = 0;
+      const categoryBreakdown = {};
+      const droppedCategories = {};
+      for (let i = 0; i < 7; i++) {
+        const d = new Date(startOfWeekDate);
+        d.setDate(d.getDate() + i);
+        const dk = d.toISOString().slice(0, 10);
+        const dayName2 = dayNames[d.getDay()];
+        const plan = weekPlans.find((p) => p.date === dk);
+        if (plan && plan.tasks.length > 0) {
+          const done = plan.tasks.filter((t) => t.completed).length;
+          const total = plan.tasks.length;
+          weekCompleted += done;
+          weekPlanned += total;
+          dayByDay += `  ${dayName2}: ${done}/${total} completed
+`;
+          for (const task of plan.tasks) {
+            const cat = task.category || "general";
+            if (!categoryBreakdown[cat]) categoryBreakdown[cat] = { done: 0, total: 0 };
+            categoryBreakdown[cat].total += 1;
+            if (task.completed) {
+              categoryBreakdown[cat].done += 1;
+            } else {
+              droppedCategories[cat] = (droppedCategories[cat] || 0) + 1;
+            }
+          }
+        } else {
+          dayByDay += `  ${dayName2}: no plan
+`;
+        }
+      }
+      const weekRate = weekPlanned > 0 ? Math.round(weekCompleted / weekPlanned * 100) : 0;
+      const catSummary = Object.entries(categoryBreakdown).map(([cat, v]) => `  ${cat}: ${v.done}/${v.total} (${Math.round(v.done / v.total * 100)}%)`).join("\n");
+      const droppedTypeEntries = Object.entries(droppedCategories).sort((a, b) => b[1] - a[1]);
+      const droppedSummary = droppedTypeEntries.length > 0 ? `Top dropped task types: ${droppedTypeEntries.slice(0, 5).map(([cat, count]) => `${cat} (${count})`).join(", ")}` : "No incomplete tasks this week";
+      const allWeekCommitments = await db.select().from(commitments).where(eq4(commitments.userId, userId)).limit(200);
+      const weekDueCommitments = allWeekCommitments.filter(
+        (c) => c.dueDate && c.dueDate >= startDate && c.dueDate <= endDate
+      );
+      const weekDueDone = weekDueCommitments.filter((c) => c.status === "done").length;
+      const weekDueExpired = weekDueCommitments.filter((c) => c.status === "expired").length;
+      const weekDueUnresolved = weekDueCommitments.filter((c) => c.status === "pending").length;
+      const weekDueTotal = weekDueCommitments.length;
+      const commitmentRate = weekDueTotal > 0 ? Math.round(weekDueDone / weekDueTotal * 100) : 0;
+      let goalDeltaText = "";
+      try {
+        const goalsData = context.goals || [];
+        if (goalsData.length > 0) {
+          const statsHistory = context.stats?.goalHistory;
+          const goalDeltas = goalsData.map((g) => {
+            const current = g.current || 0;
+            let baseline = current;
+            if (statsHistory) {
+              const priorEntries = statsHistory.filter((h) => h.goalId === g.id && h.date && h.date <= startDate).sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+              if (priorEntries.length > 0) baseline = priorEntries[0].value || 0;
+            }
+            if (baseline === current && g.previousValue !== void 0) baseline = g.previousValue;
+            const delta = current - baseline;
+            const deltaStr = delta > 0 ? `+${delta}` : delta === 0 ? "no change" : `${delta}`;
+            return `  ${g.title}: ${current}/${g.target} ${g.unit} (${deltaStr} this week)`;
+          });
+          goalDeltaText = goalDeltas.join("\n");
+        }
+      } catch {
+      }
+      if (!goalDeltaText) goalDeltaText = goalsText;
+      let patternSection = "";
+      try {
+        const thirtyDaysAgoDate = new Date(anchorDate);
+        thirtyDaysAgoDate.setDate(thirtyDaysAgoDate.getDate() - 30);
+        const thirtyDayStart = thirtyDaysAgoDate.toISOString().slice(0, 10);
+        const allPlans = await getPlansForDateRange(userId, thirtyDayStart, endDate);
+        const allCommitmentsRaw = await db.select().from(commitments).where(eq4(commitments.userId, userId)).limit(200);
+        const scopedCommitments30d = allCommitmentsRaw.filter(
+          (c) => c.dueDate && c.dueDate >= thirtyDayStart && c.dueDate <= endDate || c.extractedAt && c.extractedAt >= new Date(thirtyDayStart) && c.extractedAt <= /* @__PURE__ */ new Date(endDate + "T23:59:59") || c.resolvedAt && c.resolvedAt >= new Date(thirtyDayStart) && c.resolvedAt <= /* @__PURE__ */ new Date(endDate + "T23:59:59")
+        );
+        if (allPlans.length >= 7) {
+          patternSection = computePatternInsights(allPlans, scopedCommitments30d);
+        }
+      } catch {
+      }
+      prompt = `WEEKLY PLANNING SESSION \u2014 Sunday Review
+
+Day-by-day this week:
+${dayByDay}
+Week completion rate: ${weekRate}% (${weekCompleted}/${weekPlanned})
+${catSummary ? `Category breakdown:
+${catSummary}` : ""}
+${droppedSummary}
+Commitments due this week: ${weekDueTotal > 0 ? `${commitmentRate}% follow-through (${weekDueDone} resolved / ${weekDueTotal} due)${weekDueExpired > 0 ? ` | ${weekDueExpired} expired` : ""}${weekDueUnresolved > 0 ? ` | ${weekDueUnresolved} still unresolved` : ""}` : "none due this week"}
+
+Streak: ${context.stats?.streak || 0} days | XP: ${context.stats?.xp || 0}
+Goal progress (this week):
+${goalDeltaText}
+Open commitments: ${commitmentList}
+
+${patternSection ? `PATTERN DATA (30 days):
+${patternSection}` : ""}
+
+Write a comprehensive weekly planning session. Structure it as:
+1. WEEK RECAP \u2014 what happened day-by-day, what the overall trend was, honest assessment
+2. GOAL CHECK \u2014 how goals moved (or didn't)
+3. CARRY FORWARD \u2014 what dropped tasks or commitments should carry into next week
+4. INTENTIONS \u2014 3 specific, actionable intentions for next week based on what you see in the data
+${patternSection ? '5. PATTERNS \u2014 include the top 2-3 behavioral observations from the 30-day pattern data. Name each pattern (e.g. "Friday drop-off", "Health task avoidance"). Be specific with numbers.' : ""}
+
+Use line breaks between sections for readability. Plain text, no markdown. Be direct and honest. This is allowed to be thorough (8-15 sentences total).`;
+    } else {
+      prompt = `Weekly review.
+Streak: ${context.stats?.streak || 0} days | XP: ${context.stats?.xp || 0}
+Goals: ${goalsText}
+Open commitments: ${commitmentList}
+
+Write a sharp weekly summary (3-4 sentences). What's the trend? What needs focus next week? Be honest and direct.`;
+    }
+  }
+  if (!prompt) return null;
+  const isWeeklyPlanning = type === "weekly" || type === "weekly_planning";
+  try {
+    const resp = await openai3.chat.completions.create({
+      model: "gpt-5-mini",
+      messages: [
+        {
+          role: "system",
+          content: isWeeklyPlanning ? "You are GamePlan Coach Jarvis \u2014 a direct, sharp, ADHD-friendly productivity coach. Messages go via Telegram. This is the weekly planning session \u2014 you are allowed to be comprehensive (8-15 sentences). Use line breaks between sections for readability. Plain text only, no markdown, no bullet points, no asterisks." : "You are GamePlan Coach Jarvis \u2014 a direct, sharp, ADHD-friendly productivity coach. Messages go via Telegram. Keep it SHORT (3-4 sentences max). Plain text only, no markdown, no bullet points."
+        },
+        { role: "user", content: prompt }
+      ],
+      max_completion_tokens: isWeeklyPlanning ? 4e3 : 2e3
+    });
+    return resp.choices[0]?.message?.content || null;
+  } catch (err) {
+    console.error("[Proactive] AI generation failed:", err);
+    return null;
+  }
 }
 async function startProactiveScheduler() {
   if (!isTelegramConfigured()) return;
   const SCHEDULE = [
     { type: "morning", hour: 8, minute: 0 },
     { type: "commitment_check", hour: 10, minute: 0 },
+    { type: "followup_check", hour: 12, minute: 0 },
     { type: "evening", hour: 20, minute: 0 },
-    { type: "weekly", dayOfWeek: 0, hour: 19, minute: 0 }
+    { type: "weekly_planning", dayOfWeek: 0, hour: 19, minute: 0 }
   ];
   const lastSent = {};
   setInterval(async () => {
     const now = /* @__PURE__ */ new Date();
-    const currentHour = now.getHours();
-    const currentMinute = now.getMinutes();
-    const currentDay = now.getDay();
-    const dateKey = now.toISOString().slice(0, 10);
-    for (const schedule of SCHEDULE) {
-      if (currentHour !== schedule.hour || currentMinute !== schedule.minute) continue;
-      if (schedule.type === "weekly" && currentDay !== schedule.dayOfWeek) continue;
-      const sentKey = `${schedule.type}-${dateKey}`;
-      if (lastSent[sentKey]) continue;
-      lastSent[sentKey] = dateKey;
-      try {
-        const links = await db.select().from(telegramLinks);
-        for (const link of links) {
+    try {
+      const links = await db.select().from(telegramLinks);
+      if (links.length === 0) return;
+      const allPrefs = await db.select().from(userPreferences);
+      const prefsMap = {};
+      for (const p of allPrefs) prefsMap[p.userId] = p.data || {};
+      for (const link of links) {
+        const timezone = prefsMap[link.userId]?.timezone || "America/New_York";
+        const localDate = new Date(now.toLocaleString("en-US", { timeZone: timezone }));
+        const localHour = localDate.getHours();
+        const localMinute = localDate.getMinutes();
+        const localDay = localDate.getDay();
+        const yr = localDate.getFullYear();
+        const mo = String(localDate.getMonth() + 1).padStart(2, "0");
+        const dy = String(localDate.getDate()).padStart(2, "0");
+        const dateKey = `${yr}-${mo}-${dy}`;
+        for (const schedule of SCHEDULE) {
+          if (localHour !== schedule.hour || localMinute !== schedule.minute) continue;
+          if (schedule.type === "weekly_planning" && localDay !== schedule.dayOfWeek) continue;
+          const sentKey = `${link.userId}-${schedule.type}-${dateKey}`;
+          if (lastSent[sentKey]) continue;
+          lastSent[sentKey] = dateKey;
           try {
-            let message = "";
-            if (schedule.type === "morning") {
-              let userGoals = [];
-              let todayPlan = null;
-              try {
-                const goalsRow = await db.select().from(goals).where(eq3(goals.userId, link.userId)).limit(1);
-                userGoals = goalsRow[0]?.data || [];
-              } catch {
-              }
-              try {
-                const planRow = await db.select().from(plans).where(
-                  and2(eq3(plans.userId, link.userId), eq3(plans.date, dateKey))
-                ).limit(1);
-                todayPlan = planRow[0]?.data;
-              } catch {
-              }
-              const tasks = todayPlan?.tasks || [];
-              const taskCount = tasks.filter((t) => !t.completed).length;
-              const goalsList = userGoals.slice(0, 3).map((g) => g.title).join(", ");
-              message = `Good morning! You have ${taskCount} task${taskCount !== 1 ? "s" : ""} planned today.`;
-              if (goalsList) message += ` Active goals: ${goalsList}.`;
-              const commitments2 = await getCommitmentsForUser(link.userId);
-              const dueToday = commitments2.filter((c) => c.dueDate === dateKey);
-              const overdue = commitments2.filter((c) => c.dueDate && c.dueDate < dateKey);
-              if (dueToday.length > 0) {
-                message += `
+            if (schedule.type === "followup_check") {
+              const tokens = await getValidGoogleTokens(link.userId).catch(() => []);
+              if (!tokens || tokens.length === 0) continue;
+              const token = tokens[0];
+              const starredEmails = await getStarredFollowUpEmails(token, 3);
+              if (starredEmails.length === 0) continue;
+              const emailList = starredEmails.slice(0, 10).map((e) => {
+                const senderName = e.from.replace(/<.*>/, "").trim() || e.from;
+                return `${senderName} (${e.ageDays}d) \u2014 "${e.subject}"`;
+              }).join("\n");
+              const msg = `\u{1F4EC} ${starredEmails.length} starred/important email${starredEmails.length === 1 ? "" : "s"} sitting >3 days:
 
-Commitments due today: ${dueToday.map((c) => `"${c.content}"`).join(", ")}.`;
-              }
-              if (overdue.length > 0) {
-                message += `
+${emailList}
 
-Overdue: ${overdue.slice(0, 3).map((c) => `"${c.content}" (${c.dueDate})`).join(", ")}.`;
-              }
-              message += ` Open the app to review your plan or chat with me here.`;
+Still relevant? Reply, archive, or unstar anything you've handled.`;
+              console.log(`[Proactive] Sending followup_check to user ${link.userId} (${timezone})`);
+              await sendMessage(link.chatId, msg);
+              continue;
             }
-            if (schedule.type === "commitment_check") {
-              const commitments2 = await getCommitmentsForUser(link.userId);
-              const overdue = commitments2.filter((c) => c.dueDate && c.dueDate < dateKey);
-              const dueToday = commitments2.filter((c) => c.dueDate === dateKey);
-              if (overdue.length > 0 || dueToday.length > 0) {
-                message = `Accountability check-in:`;
-                message += formatCommitmentsForMessage(commitments2, dateKey);
-                message += `
-
-Reply here to update me on progress or chat about blockers.`;
-              }
-            }
-            if (schedule.type === "evening") {
-              let todayPlan = null;
-              try {
-                const planRow = await db.select().from(plans).where(
-                  and2(eq3(plans.userId, link.userId), eq3(plans.date, dateKey))
-                ).limit(1);
-                todayPlan = planRow[0]?.data;
-              } catch {
-              }
-              const tasks = todayPlan?.tasks || [];
-              const completed = tasks.filter((t) => t.completed).length;
-              const total = tasks.length;
-              if (total > 0) {
-                message = `Evening check-in: You completed ${completed}/${total} tasks today (${total > 0 ? Math.round(completed / total * 100) : 0}%).`;
-                if (completed < total) {
-                  const remaining = tasks.filter((t) => !t.completed).slice(0, 3).map((t) => t.title).join(", ");
-                  message += ` Still open: ${remaining}.`;
-                } else {
-                  message += ` Great job finishing everything!`;
-                }
-              } else {
-                message = `Evening check-in: No tasks were planned today. Want to set up tomorrow's plan?`;
-              }
-              const commitments2 = await getCommitmentsForUser(link.userId);
-              const commitmentInfo = formatCommitmentsForMessage(commitments2, dateKey);
-              if (commitmentInfo) {
-                message += `
-${commitmentInfo}`;
-              }
-            }
-            if (schedule.type === "weekly") {
-              let userStats = {};
-              let userHistory = [];
-              try {
-                const statsRow = await db.select().from(stats).where(eq3(stats.userId, link.userId)).limit(1);
-                userStats = statsRow[0]?.data || {};
-              } catch {
-              }
-              try {
-                const historyRow = await db.select().from(completionHistory).where(eq3(completionHistory.userId, link.userId)).limit(1);
-                userHistory = historyRow[0]?.data || [];
-              } catch {
-              }
-              const recentCompleted = userHistory.filter((h) => h.completed).length;
-              const recentTotal = userHistory.length;
-              const rate = recentTotal > 0 ? Math.round(recentCompleted / recentTotal * 100) : 0;
-              message = `Weekly review: ${recentCompleted}/${recentTotal} tasks completed (${rate}%). Streak: ${userStats.streak || 0} days.`;
-              const commitments2 = await getCommitmentsForUser(link.userId);
-              if (commitments2.length > 0) {
-                message += `
-
-You have ${commitments2.length} open commitment${commitments2.length !== 1 ? "s" : ""}:`;
-                commitments2.slice(0, 5).forEach((c) => {
-                  message += `
-  - "${c.content}"${c.dueDate ? ` (due ${c.dueDate})` : ""}`;
-                });
-              }
-              message += `
-
-Open the app for your full weekly review.`;
-            }
+            let userGoals = [];
+            let todayPlan = null;
+            let userStats = {};
+            let commitments2 = [];
+            const [goalsRow, planRow, statsRow] = await Promise.allSettled([
+              db.select().from(goals).where(eq4(goals.userId, link.userId)).limit(1),
+              db.select().from(plans).where(and2(eq4(plans.userId, link.userId), eq4(plans.date, dateKey))).limit(1),
+              db.select().from(stats).where(eq4(stats.userId, link.userId)).limit(1)
+            ]);
+            if (goalsRow.status === "fulfilled") userGoals = goalsRow.value[0]?.data || [];
+            if (planRow.status === "fulfilled") todayPlan = planRow.value[0]?.data;
+            if (statsRow.status === "fulfilled") userStats = statsRow.value[0]?.data || {};
+            commitments2 = await getCommitmentsForUser(link.userId);
+            const tasks = todayPlan?.tasks || [];
+            const message = await generateProactiveMessage(schedule.type, {
+              tasks,
+              goals: userGoals,
+              commitments: commitments2,
+              stats: userStats,
+              dateKey,
+              userId: link.userId
+            });
             if (message) {
+              console.log(`[Proactive] Sending ${schedule.type} to user ${link.userId} (${timezone})`);
               await sendMessage(link.chatId, message);
             }
           } catch (err) {
-            console.error(`Error sending proactive message to user ${link.userId}:`, err);
+            console.error(`[Proactive] Error for user ${link.userId}:`, err);
           }
         }
-      } catch (err) {
-        console.error("Error in proactive scheduler:", err);
       }
+    } catch (err) {
+      console.error("[Proactive] Scheduler error:", err);
     }
   }, 60 * 1e3);
   console.log("Telegram proactive scheduler started");
 }
+async function startMeetingBriefScanner() {
+  if (!isTelegramConfigured()) return;
+  const SCAN_INTERVAL_MS = 5 * 60 * 1e3;
+  const sentBriefs = /* @__PURE__ */ new Set();
+  const runScan = async () => {
+    try {
+      const links = await db.select().from(telegramLinks);
+      if (links.length === 0) return;
+      const allPrefs = await db.select().from(userPreferences);
+      const prefsMap = {};
+      for (const p of allPrefs) prefsMap[p.userId] = p.data || {};
+      const now = /* @__PURE__ */ new Date();
+      const utcDateKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+      const oldKeys = Array.from(sentBriefs).filter((k) => !k.includes(utcDateKey));
+      for (const k of oldKeys) sentBriefs.delete(k);
+      for (const link of links) {
+        try {
+          const tokens = await getValidGoogleTokens(link.userId).catch(() => []);
+          if (!tokens || tokens.length === 0) continue;
+          const token = tokens[0];
+          const timezone = prefsMap[link.userId]?.timezone || "America/New_York";
+          const localDate = new Date(now.toLocaleString("en-US", { timeZone: timezone }));
+          const localDateStr = `${localDate.getFullYear()}-${String(localDate.getMonth() + 1).padStart(2, "0")}-${String(localDate.getDate()).padStart(2, "0")}`;
+          const events = await getGoogleCalendarEvents(localDateStr, void 0, void 0, token);
+          if (events.length === 0) continue;
+          const nowMs = now.getTime();
+          for (const event of events) {
+            const eventStart = new Date(event.start).getTime();
+            const minutesUntil = (eventStart - nowMs) / (60 * 1e3);
+            if (minutesUntil < 10 || minutesUntil > 20) continue;
+            const briefKey = `${link.userId}-${event.id}-${localDateStr}`;
+            if (sentBriefs.has(briefKey)) continue;
+            sentBriefs.add(briefKey);
+            let relevantEmails = [];
+            try {
+              const titleWords = event.title.split(/[\s,\-—]+/).filter((w) => w.length > 3).map((w) => w.toLowerCase());
+              if (titleWords.length > 0) {
+                const recentEmails = await getEmailsSince(Date.now() - 7 * 24 * 60 * 60 * 1e3, token);
+                relevantEmails = recentEmails.filter((e) => {
+                  const subjectLower = e.subject.toLowerCase();
+                  return titleWords.some((w) => subjectLower.includes(w));
+                }).slice(0, 3).map((e) => {
+                  const senderName = e.from.replace(/<.*>/, "").trim() || e.from;
+                  return `"${e.subject}" from ${senderName}`;
+                });
+              }
+            } catch {
+            }
+            const eventTime = new Date(event.start).toLocaleTimeString("en-US", {
+              hour: "numeric",
+              minute: "2-digit",
+              hour12: true
+            });
+            let briefPrompt = `Upcoming meeting in ~15 minutes:
+Event: "${event.title}"
+Time: ${eventTime}
+${event.location ? `Location: ${event.location}` : ""}
+${event.description ? `Description: ${event.description.slice(0, 300)}` : ""}
+${relevantEmails.length > 0 ? `
+Related recent emails:
+${relevantEmails.map((e) => `- ${e}`).join("\n")}` : ""}
+
+Write a sharp 2-3 sentence meeting prep brief. Include what the meeting is about, highlight any relevant email context if provided, and end with one clear action item or thing to focus on. Be direct, no fluff.`;
+            try {
+              const resp = await openai3.chat.completions.create({
+                model: "gpt-5-mini",
+                messages: [
+                  {
+                    role: "system",
+                    content: "You are GamePlan Coach Jarvis \u2014 a direct, sharp productivity coach. You send pre-meeting prep briefs via Telegram. Keep it SHORT (2-3 sentences). Plain text only, no markdown, no bullet points."
+                  },
+                  { role: "user", content: briefPrompt }
+                ],
+                max_completion_tokens: 1500
+              });
+              const briefMessage = resp.choices[0]?.message?.content;
+              if (briefMessage) {
+                const header = `\u{1F4C5} Meeting in ~15 min: ${event.title} (${eventTime})${event.location ? `
+\u{1F4CD} ${event.location}` : ""}`;
+                const fullMsg = `${header}
+
+${briefMessage}`;
+                console.log(`[MeetingBrief] Sending brief for "${event.title}" to user ${link.userId}`);
+                await sendMessage(link.chatId, fullMsg);
+              }
+            } catch (err) {
+              console.error(`[MeetingBrief] AI generation failed for "${event.title}":`, err);
+            }
+          }
+        } catch (err) {
+          console.error(`[MeetingBrief] Error for user ${link.userId}:`, err);
+        }
+      }
+    } catch (err) {
+      console.error("[MeetingBrief] Scanner error:", err);
+    }
+  };
+  setTimeout(runScan, 10 * 1e3);
+  setInterval(runScan, SCAN_INTERVAL_MS);
+  console.log("Meeting brief scanner started (5-min interval)");
+}
+async function startEmailAlertScanner() {
+  if (!isTelegramConfigured()) return;
+  const SCAN_INTERVAL_MS = 30 * 60 * 1e3;
+  const runScan = async () => {
+    try {
+      const links = await db.select().from(telegramLinks);
+      if (links.length === 0) return;
+      const allPrefs = await db.select().from(userPreferences);
+      const prefsMap = {};
+      for (const p of allPrefs) prefsMap[p.userId] = p.data || {};
+      for (const link of links) {
+        const prefs = prefsMap[link.userId] || {};
+        if (prefs.emailAlertsEnabled === false) continue;
+        const tokens = await getValidGoogleTokens(link.userId).catch(() => []);
+        if (!tokens || tokens.length === 0) continue;
+        const token = tokens[0];
+        const sinceMs = prefs.lastEmailScanAt ? Number(prefs.lastEmailScanAt) : Date.now() - SCAN_INTERVAL_MS;
+        const nowMs = Date.now();
+        const newPrefs = { ...prefs, lastEmailScanAt: nowMs };
+        await db.insert(userPreferences).values({ userId: link.userId, data: newPrefs }).onConflictDoUpdate({
+          target: userPreferences.userId,
+          set: { data: newPrefs, updatedAt: /* @__PURE__ */ new Date() }
+        });
+        const emails = await getEmailsSince(sinceMs, token);
+        if (emails.length === 0) continue;
+        console.log(`[EmailAlert] ${emails.length} new email(s) for user ${link.userId}, classifying...`);
+        const emailList = emails.map(
+          (e, i) => `${i}. From: ${e.from}
+   Subject: "${e.subject}"
+   Preview: ${e.snippet}`
+        ).join("\n\n");
+        let flagged = [];
+        try {
+          const classification = await openai3.chat.completions.create({
+            model: "gpt-5-mini",
+            messages: [
+              {
+                role: "system",
+                content: `You review emails and decide which need IMMEDIATE user attention. Alert = true ONLY for:
+- Urgent reply needed from a real person they know
+- Deadline TODAY or TOMORROW explicitly mentioned
+- Meeting cancelled, moved, or significantly changed
+- Time-sensitive action required today
+- Important client/boss/colleague needing a response soon
+
+Alert = false for:
+- Newsletters, marketing, promotions, sales
+- Automated notifications, receipts, shipping updates
+- Social media notifications
+- No-reply or automated senders
+- General FYI or informational emails
+
+Return ONLY a JSON array of flagged emails (only include alert=true ones):
+[{"index": 0, "reason": "brief reason why this is urgent"}]
+Return [] if nothing is urgent.`
+              },
+              {
+                role: "user",
+                content: `Emails received in the last 30 minutes:
+
+${emailList}`
+              }
+            ],
+            max_completion_tokens: 2e3
+          });
+          const raw = classification.choices[0]?.message?.content || "[]";
+          const jsonMatch = raw.match(/\[[\s\S]*\]/);
+          if (jsonMatch) flagged = JSON.parse(jsonMatch[0]);
+        } catch (err) {
+          console.error("[EmailAlert] Classification failed:", err);
+          continue;
+        }
+        for (const flag of flagged) {
+          const email = emails[flag.index];
+          if (!email) continue;
+          const senderName = email.from.replace(/<.*>/, "").trim() || email.from;
+          const msg = `\u{1F4E7} Email needs your attention:
+From: ${senderName}
+"${email.subject}"
+
+${email.snippet.slice(0, 150)}${email.snippet.length > 150 ? "..." : ""}
+
+Jarvis: ${flag.reason}`;
+          await sendMessage(link.chatId, msg);
+          console.log(`[EmailAlert] Alerted user ${link.userId}: "${email.subject}"`);
+        }
+      }
+    } catch (err) {
+      console.error("[EmailAlert] Scanner error:", err);
+    }
+  };
+  setInterval(runScan, SCAN_INTERVAL_MS);
+  console.log("Email alert scanner started (30-min interval)");
+}
 
 // server/integrationOwner.ts
 init_db();
-import { sql as sql4 } from "drizzle-orm";
+import { sql as sql5 } from "drizzle-orm";
 var cachedOwnerId = null;
 async function getIntegrationOwnerId() {
   if (cachedOwnerId) return cachedOwnerId;
   try {
-    const result = await db.execute(sql4`SELECT owner_user_id FROM integration_owner LIMIT 1`);
+    const result = await db.execute(sql5`SELECT owner_user_id FROM integration_owner LIMIT 1`);
     const row = result.rows?.[0];
     if (row?.owner_user_id) {
       cachedOwnerId = row.owner_user_id;
@@ -2254,7 +3612,7 @@ async function claimIntegrationOwnership(userId) {
   try {
     const existing = await getIntegrationOwnerId();
     if (existing) return existing === userId;
-    await db.execute(sql4`INSERT INTO integration_owner (owner_user_id) VALUES (${userId})`);
+    await db.execute(sql5`INSERT INTO integration_owner (owner_user_id) VALUES (${userId})`);
     cachedOwnerId = userId;
     return true;
   } catch {
@@ -2269,15 +3627,15 @@ async function isIntegrationOwner(userId) {
 
 // server/oauthRoutes.ts
 init_userTokenStore();
-import { Router as Router2 } from "express";
-var oauthRouter = Router2();
-var oauthCallbackRouter = Router2();
+import { Router as Router3 } from "express";
+var oauthRouter = Router3();
+var oauthCallbackRouter = Router3();
 function getBaseUrl(req) {
   const domain = process.env.REPLIT_DOMAINS?.split(",")[0];
   if (domain) return `https://${domain}:5000`;
   return `${req.protocol}://${req.get("host")}`;
 }
-function successHtml(provider, email) {
+function successHtml2(provider, email) {
   const displayName = provider === "google" ? "Google (Calendar & Gmail)" : provider === "slack" ? "Slack" : "Microsoft Outlook";
   return `<!DOCTYPE html>
 <html>
@@ -2317,7 +3675,7 @@ function successHtml(provider, email) {
 </body>
 </html>`;
 }
-function errorHtml(message) {
+function errorHtml2(message) {
   return `<!DOCTYPE html>
 <html>
 <head>
@@ -2367,12 +3725,12 @@ oauthRouter.get("/google/authorize", (req, res) => {
 oauthCallbackRouter.get("/google/callback", async (req, res) => {
   const { code, state: userId, error } = req.query;
   if (error || !code || !userId) {
-    return res.send(errorHtml(error || "Authorization was cancelled."));
+    return res.send(errorHtml2(error || "Authorization was cancelled."));
   }
   const clientId = process.env.GOOGLE_WEB_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
   if (!clientId || !clientSecret) {
-    return res.send(errorHtml("Google OAuth credentials not configured on the server."));
+    return res.send(errorHtml2("Google OAuth credentials not configured on the server."));
   }
   const baseUrl = getBaseUrl(req);
   const redirectUri = `${baseUrl}/api/oauth/google/callback`;
@@ -2391,7 +3749,7 @@ oauthCallbackRouter.get("/google/callback", async (req, res) => {
     const tokenData = await tokenRes.json();
     if (!tokenData.access_token) {
       console.error("Google token exchange failed:", tokenData);
-      return res.send(errorHtml("Failed to exchange authorization code. Please try again."));
+      return res.send(errorHtml2("Failed to exchange authorization code. Please try again."));
     }
     let accountEmail;
     try {
@@ -2412,10 +3770,10 @@ oauthCallbackRouter.get("/google/callback", async (req, res) => {
       scopes: tokenData.scope,
       accountEmail: accountEmail || ""
     });
-    return res.send(successHtml("google", accountEmail));
+    return res.send(successHtml2("google", accountEmail));
   } catch (err) {
     console.error("Google OAuth callback error:", err);
-    return res.send(errorHtml("An unexpected error occurred. Please try again."));
+    return res.send(errorHtml2("An unexpected error occurred. Please try again."));
   }
 });
 oauthRouter.get("/microsoft/authorize", (req, res) => {
@@ -2441,12 +3799,12 @@ oauthRouter.get("/microsoft/authorize", (req, res) => {
 oauthCallbackRouter.get("/microsoft/callback", async (req, res) => {
   const { code, state: userId, error, error_description } = req.query;
   if (error || !code || !userId) {
-    return res.send(errorHtml(error_description || error || "Authorization was cancelled."));
+    return res.send(errorHtml2(error_description || error || "Authorization was cancelled."));
   }
   const clientId = process.env.MICROSOFT_CLIENT_ID;
   const clientSecret = process.env.MICROSOFT_CLIENT_SECRET;
   if (!clientId || !clientSecret) {
-    return res.send(errorHtml("Microsoft OAuth credentials not configured on the server."));
+    return res.send(errorHtml2("Microsoft OAuth credentials not configured on the server."));
   }
   const baseUrl = getBaseUrl(req);
   const redirectUri = `${baseUrl}/api/oauth/microsoft/callback`;
@@ -2466,7 +3824,7 @@ oauthCallbackRouter.get("/microsoft/callback", async (req, res) => {
     const tokenData = await tokenRes.json();
     if (!tokenData.access_token) {
       console.error("Microsoft token exchange failed:", tokenData);
-      return res.send(errorHtml("Failed to exchange authorization code. Please try again."));
+      return res.send(errorHtml2("Failed to exchange authorization code. Please try again."));
     }
     let accountEmail;
     try {
@@ -2487,10 +3845,10 @@ oauthCallbackRouter.get("/microsoft/callback", async (req, res) => {
       scopes: tokenData.scope,
       accountEmail: accountEmail || ""
     });
-    return res.send(successHtml("microsoft", accountEmail));
+    return res.send(successHtml2("microsoft", accountEmail));
   } catch (err) {
     console.error("Microsoft OAuth callback error:", err);
-    return res.send(errorHtml("An unexpected error occurred. Please try again."));
+    return res.send(errorHtml2("An unexpected error occurred. Please try again."));
   }
 });
 oauthRouter.get("/slack/authorize", (req, res) => {
@@ -2512,12 +3870,12 @@ oauthRouter.get("/slack/authorize", (req, res) => {
 oauthCallbackRouter.get("/slack/callback", async (req, res) => {
   const { code, state: userId, error: oauthError } = req.query;
   if (oauthError || !code || !userId) {
-    return res.send(errorHtml(oauthError || "Authorization was cancelled."));
+    return res.send(errorHtml2(oauthError || "Authorization was cancelled."));
   }
   const clientId = process.env.SLACK_CLIENT_ID;
   const clientSecret = process.env.SLACK_CLIENT_SECRET;
   if (!clientId || !clientSecret) {
-    return res.send(errorHtml("Slack OAuth credentials not configured on the server."));
+    return res.send(errorHtml2("Slack OAuth credentials not configured on the server."));
   }
   const baseUrl = getBaseUrl(req);
   const redirectUri = `${baseUrl}/api/oauth/slack/callback`;
@@ -2536,7 +3894,7 @@ oauthCallbackRouter.get("/slack/callback", async (req, res) => {
     const userToken = tokenData.authed_user?.access_token;
     if (!userToken) {
       console.error("Slack token exchange failed:", tokenData);
-      return res.send(errorHtml("Failed to exchange authorization code. Please try again."));
+      return res.send(errorHtml2("Failed to exchange authorization code. Please try again."));
     }
     const authedUserId = tokenData.authed_user?.id || "";
     let accountEmail = "";
@@ -2561,10 +3919,10 @@ oauthCallbackRouter.get("/slack/callback", async (req, res) => {
       scopes: "channels:history,channels:read,im:history,im:read,groups:history,groups:read,users:read",
       accountEmail
     });
-    return res.send(successHtml("slack", accountEmail));
+    return res.send(successHtml2("slack", accountEmail));
   } catch (err) {
     console.error("Slack OAuth callback error:", err);
-    return res.send(errorHtml("An unexpected error occurred. Please try again."));
+    return res.send(errorHtml2("An unexpected error occurred. Please try again."));
   }
 });
 oauthRouter.get("/status", async (req, res) => {
@@ -2630,7 +3988,63 @@ You are a gentle, ADHD-aware coach. You reduce friction. You chunk tasks into ti
 function getPersonaBlock(coachingMode) {
   return PERSONA_BLOCKS[coachingMode || "sharp"] || PERSONA_BLOCKS.sharp;
 }
-function buildCoachSystemPrompt(goals2, stats2, history, calendarEvents = [], lifeContext2, gmailItems, gmailConnected, slackMessages, slackConnected, commitmentsList, coachingMode, memories, telegramMessages, telegramConnected) {
+var morningNoteSummaryCache = /* @__PURE__ */ new Map();
+async function getUserLocalDate(userId) {
+  try {
+    const prefs = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq5(userPreferences.userId, userId)).limit(1);
+    const tz = prefs[0]?.data?.timezone || "America/New_York";
+    return (/* @__PURE__ */ new Date()).toLocaleDateString("en-CA", { timeZone: tz });
+  } catch {
+    return (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+  }
+}
+async function getMorningNoteSummary(userId) {
+  const today = await getUserLocalDate(userId);
+  const cached = morningNoteSummaryCache.get(userId);
+  if (cached && cached.date === today) return cached.summary;
+  try {
+    const thirtyDaysAgo = /* @__PURE__ */ new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const cutoffDate = thirtyDaysAgo.toISOString().slice(0, 10);
+    const notes = await db.select().from(morningVoiceNotes).where(and3(
+      eq5(morningVoiceNotes.userId, userId),
+      gte2(morningVoiceNotes.recordedAt, cutoffDate)
+    )).orderBy(desc2(morningVoiceNotes.recordedAt)).limit(30);
+    if (notes.length === 0) return "";
+    const moodCounts = {};
+    const allThemes = {};
+    const allBlockers = {};
+    const recentIntentions = [];
+    for (const note of notes) {
+      moodCounts[note.moodSignal] = (moodCounts[note.moodSignal] || 0) + 1;
+      const themes = note.themes || [];
+      for (const t of themes) allThemes[t] = (allThemes[t] || 0) + 1;
+      const blockers = note.blockers || [];
+      for (const b of blockers) allBlockers[b] = (allBlockers[b] || 0) + 1;
+      if (note.intention) recentIntentions.push(note.intention);
+    }
+    const topMoods = Object.entries(moodCounts).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([m, c]) => `${m} (${c}x)`).join(", ");
+    const topThemes = Object.entries(allThemes).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([t, c]) => `${t} (${c}x)`).join(", ");
+    const topBlockers = Object.entries(allBlockers).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([b, c]) => `${b} (${c}x)`).join(", ");
+    let summary = `
+## Morning Voice Note Patterns (last ${notes.length} days)
+`;
+    summary += `- Mood trend: ${topMoods}
+`;
+    if (topThemes) summary += `- Recurring themes: ${topThemes}
+`;
+    if (topBlockers) summary += `- Common blockers: ${topBlockers}
+`;
+    if (recentIntentions.length > 0) summary += `- Recent intentions: ${recentIntentions.slice(0, 3).map((i) => `"${i}"`).join(", ")}
+`;
+    summary += `Use these patterns to provide personalized coaching. Reference specific trends when relevant.`;
+    morningNoteSummaryCache.set(userId, { summary, date: today });
+    return summary;
+  } catch {
+    return "";
+  }
+}
+function buildCoachSystemPrompt(goals2, stats2, history, calendarEvents = [], lifeContext2, gmailItems, gmailConnected, slackMessages, slackConnected, commitmentsList, coachingMode, memories, telegramMessages, telegramConnected, morningNoteSummary) {
   const completedHistory = history.filter((h) => h.completed);
   const skippedHistory = history.filter((h) => !h.completed);
   const completionRate = history.length > 0 ? Math.round(completedHistory.length / history.length * 100) : 0;
@@ -2719,7 +4133,7 @@ ${calendarText}${gmailSection}${slackSection}${telegramSection}
 ## Recent Activity (last 7 days)
 - Completed: ${recentCompleted}
 - Left undone: ${recentSkipped}
-${commitmentsSection}
+${commitmentsSection}${morningNoteSummary || ""}
 ## How you coach
 
 **Response length**: Keep replies short. 2\u20134 sentences is the default. Use a bullet list only when you have 3+ specific items to name. Never write multi-paragraph essays \u2014 the user is on their phone.
@@ -2849,12 +4263,12 @@ async function buildPlanForUser(userId) {
   try {
     const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
     const [goalsRow, historyRow, brainDumpRow, lifeContextRow, prefsRow, energyRow] = await Promise.all([
-      db.select({ data: goals.data }).from(goals).where(eq4(goals.userId, userId)),
-      db.select({ data: completionHistory.data }).from(completionHistory).where(eq4(completionHistory.userId, userId)),
-      db.select({ data: brainDumpInbox.data }).from(brainDumpInbox).where(eq4(brainDumpInbox.userId, userId)),
-      db.select({ data: lifeContext.data }).from(lifeContext).where(eq4(lifeContext.userId, userId)),
-      db.select({ data: userPreferences.data }).from(userPreferences).where(eq4(userPreferences.userId, userId)),
-      db.select({ data: energyCheckins.data }).from(energyCheckins).where(and3(eq4(energyCheckins.userId, userId), eq4(energyCheckins.date, today)))
+      db.select({ data: goals.data }).from(goals).where(eq5(goals.userId, userId)),
+      db.select({ data: completionHistory.data }).from(completionHistory).where(eq5(completionHistory.userId, userId)),
+      db.select({ data: brainDumpInbox.data }).from(brainDumpInbox).where(eq5(brainDumpInbox.userId, userId)),
+      db.select({ data: lifeContext.data }).from(lifeContext).where(eq5(lifeContext.userId, userId)),
+      db.select({ data: userPreferences.data }).from(userPreferences).where(eq5(userPreferences.userId, userId)),
+      db.select({ data: energyCheckins.data }).from(energyCheckins).where(and3(eq5(energyCheckins.userId, userId), eq5(energyCheckins.date, today)))
     ]);
     const goals2 = goalsRow[0]?.data || [];
     const completionHistory2 = historyRow[0]?.data || [];
@@ -2911,6 +4325,7 @@ async function buildPlanForUser(userId) {
 }
 async function registerRoutes(app2) {
   app2.use("/api/auth", authRouter);
+  app2.use("/api/auth/mobile", mobileAuthRouter);
   app2.use("/api/oauth", oauthCallbackRouter);
   app2.use(authMiddleware);
   app2.use("/api/oauth", oauthRouter);
@@ -3069,7 +4484,7 @@ async function registerRoutes(app2) {
     try {
       switch (toolName) {
         case "add_task": {
-          const planResult = await db.select({ data: plans.data }).from(plans).where(and3(eq4(plans.userId, userId), eq4(plans.date, todayKey)));
+          const planResult = await db.select({ data: plans.data }).from(plans).where(and3(eq5(plans.userId, userId), eq5(plans.date, todayKey)));
           const plan = planResult.length > 0 ? planResult[0].data : { date: todayKey, tasks: [], greeting: "", insight: "" };
           const tasks = Array.isArray(plan.tasks) ? plan.tasks : [];
           const catMap = { health: "fitness", work: "career", learning: "personal" };
@@ -3090,7 +4505,7 @@ async function registerRoutes(app2) {
           return { result: "success", label: `Task added to today`, detail: `Added "${args.title}"` };
         }
         case "add_to_brain_dump": {
-          const bdResult = await db.select({ data: brainDumpInbox.data }).from(brainDumpInbox).where(eq4(brainDumpInbox.userId, userId));
+          const bdResult = await db.select({ data: brainDumpInbox.data }).from(brainDumpInbox).where(eq5(brainDumpInbox.userId, userId));
           const items = bdResult.length > 0 ? Array.isArray(bdResult[0].data) ? bdResult[0].data : [] : [];
           items.unshift({
             id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
@@ -3104,7 +4519,7 @@ async function registerRoutes(app2) {
           return { result: "success", label: `Added to brain dump`, detail: `Added "${args.text}"` };
         }
         case "log_goal_progress": {
-          const goalsResult = await db.select({ data: goals.data }).from(goals).where(eq4(goals.userId, userId));
+          const goalsResult = await db.select({ data: goals.data }).from(goals).where(eq5(goals.userId, userId));
           if (goalsResult.length === 0) return { result: "error", label: "No goals found", detail: "User has no goals set" };
           const goalsList = Array.isArray(goalsResult[0].data) ? goalsResult[0].data : [];
           const matched = goalsList.find((g) => fuzzyMatch(args.goalTitle, g.title));
@@ -3118,7 +4533,7 @@ async function registerRoutes(app2) {
           return { result: "success", label: `Progress logged`, detail: `Added ${args.amount} to "${matched.title}"` };
         }
         case "update_life_context": {
-          const lcResult = await db.select({ data: lifeContext.data }).from(lifeContext).where(eq4(lifeContext.userId, userId));
+          const lcResult = await db.select({ data: lifeContext.data }).from(lifeContext).where(eq5(lifeContext.userId, userId));
           const existing = lcResult.length > 0 ? lcResult[0].data : {};
           const merged = { ...existing };
           if (args.priorityGoal) merged.priorityGoal = args.priorityGoal;
@@ -3135,7 +4550,7 @@ async function registerRoutes(app2) {
           return { result: "success", label: `Context updated`, detail: `Updated: ${updatedFields}` };
         }
         case "complete_task": {
-          const planResult = await db.select({ data: plans.data }).from(plans).where(and3(eq4(plans.userId, userId), eq4(plans.date, todayKey)));
+          const planResult = await db.select({ data: plans.data }).from(plans).where(and3(eq5(plans.userId, userId), eq5(plans.date, todayKey)));
           if (planResult.length === 0) return { result: "error", label: "No plan today", detail: "No plan found for today" };
           const plan = planResult[0].data;
           const tasks = Array.isArray(plan.tasks) ? plan.tasks : [];
@@ -3167,19 +4582,24 @@ async function registerRoutes(app2) {
       let userCommitments = [];
       if (userId) {
         try {
-          userCommitments = await db.select().from(commitments).where(and3(eq4(commitments.userId, userId), eq4(commitments.status, "pending"))).orderBy(desc2(commitments.extractedAt)).limit(20);
+          userCommitments = await db.select().from(commitments).where(and3(eq5(commitments.userId, userId), eq5(commitments.status, "pending"))).orderBy(desc2(commitments.extractedAt)).limit(20);
         } catch {
         }
       }
       let memories = [];
+      let morningNoteSummary = "";
       if (userId) {
         try {
-          const rows = await db.select({ content: userMemories.content, category: userMemories.category }).from(userMemories).where(eq4(userMemories.userId, userId)).orderBy(desc2(userMemories.extractedAt)).limit(20);
+          const [rows, noteSummary] = await Promise.all([
+            db.select({ content: userMemories.content, category: userMemories.category }).from(userMemories).where(eq5(userMemories.userId, userId)).orderBy(desc2(userMemories.extractedAt)).limit(20),
+            getMorningNoteSummary(userId)
+          ]);
           memories = rows;
+          morningNoteSummary = noteSummary;
         } catch {
         }
       }
-      const systemPrompt = buildCoachSystemPrompt(goals2 || [], stats2 || {}, history || [], calendarEvents || [], lifeContext2 || null, gmailItems || [], gmailConnected ?? false, slackMessages || [], slackConnected ?? false, userCommitments, coachingMode, memories, telegramMessages || [], telegramConnected ?? false);
+      const systemPrompt = buildCoachSystemPrompt(goals2 || [], stats2 || {}, history || [], calendarEvents || [], lifeContext2 || null, gmailItems || [], gmailConnected ?? false, slackMessages || [], slackConnected ?? false, userCommitments, coachingMode, memories, telegramMessages || [], telegramConnected ?? false, morningNoteSummary);
       const chatMessages = [
         { role: "system", content: systemPrompt + "\n\nYou can take actions on the user's behalf using the available tools. When a user asks you to add a task, log progress, update their context, etc., use the appropriate tool. Respond naturally \u2014 do not mention 'tool calls' or 'functions' to the user. Just confirm what you did conversationally." },
         ...messages.map((m) => ({ role: m.role, content: m.content }))
@@ -3358,7 +4778,7 @@ Return ONLY a JSON object with a "tasks" array. No other text.`;
       let commitmentText = "";
       if (userId) {
         try {
-          const pendingCommitments = await db.select().from(commitments).where(and3(eq4(commitments.userId, userId), eq4(commitments.status, "pending"))).limit(5);
+          const pendingCommitments = await db.select().from(commitments).where(and3(eq5(commitments.userId, userId), eq5(commitments.status, "pending"))).limit(5);
           if (pendingCommitments.length > 0) {
             commitmentText = `
 - Open commitments: ${pendingCommitments.map((c) => `"${c.content}"${c.dueDate ? ` (due ${c.dueDate})` : ""}`).join(", ")}`;
@@ -3436,13 +4856,13 @@ Return JSON: { "note": "your 1-2 sentence note here" }`;
         if (!await isIntegrationOwner(userId)) return res.json({ connected: false, events: [] });
         hasIntegration = true;
       }
-      const date = req.query.date || (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+      const date2 = req.query.date || (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
       const startTime = req.query.startTime;
       const endTime = req.query.endTime;
       const tokensToFetch = accessTokens.length > 0 ? accessTokens : [void 0];
       const allEvents = await Promise.all(
         tokensToFetch.map(
-          (token) => getGoogleCalendarEvents(date, startTime, endTime, token).catch(() => [])
+          (token) => getGoogleCalendarEvents(date2, startTime, endTime, token).catch(() => [])
         )
       );
       const events = allEvents.flat();
@@ -3461,10 +4881,10 @@ Return JSON: { "note": "your 1-2 sentence note here" }`;
       if (!accessToken) {
         if (!await isIntegrationOwner(userId)) return res.json({ connected: false, events: [] });
       }
-      const date = req.query.date || (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+      const date2 = req.query.date || (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
       const startTime = req.query.startTime;
       const endTime = req.query.endTime;
-      const events = await getOutlookCalendarEvents(date, startTime, endTime, accessToken);
+      const events = await getOutlookCalendarEvents(date2, startTime, endTime, accessToken);
       res.json({ connected: true, events });
     } catch (error) {
       console.error("Error fetching Outlook events:", error);
@@ -3784,7 +5204,7 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const rows = await db.select().from(commitments).where(and3(eq4(commitments.userId, userId), eq4(commitments.status, "pending"))).orderBy(desc2(commitments.extractedAt));
+      const rows = await db.select().from(commitments).where(and3(eq5(commitments.userId, userId), eq5(commitments.status, "pending"))).orderBy(desc2(commitments.extractedAt));
       res.json({ commitments: rows });
     } catch (error) {
       console.error("Error fetching commitments:", error);
@@ -3800,7 +5220,7 @@ Return ONLY the JSON object.`;
       if (!status || !["done", "skipped", "pending"].includes(status)) {
         return res.status(400).json({ error: "status must be 'done', 'skipped', or 'pending'" });
       }
-      await db.update(commitments).set({ status, resolvedAt: status !== "pending" ? /* @__PURE__ */ new Date() : null }).where(and3(eq4(commitments.id, id), eq4(commitments.userId, userId)));
+      await db.update(commitments).set({ status, resolvedAt: status !== "pending" ? /* @__PURE__ */ new Date() : null }).where(and3(eq5(commitments.id, id), eq5(commitments.userId, userId)));
       res.json({ ok: true });
     } catch (error) {
       console.error("Error updating commitment:", error);
@@ -3812,7 +5232,7 @@ Return ONLY the JSON object.`;
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
-      await db.delete(commitments).where(and3(eq4(commitments.id, id), eq4(commitments.userId, userId)));
+      await db.delete(commitments).where(and3(eq5(commitments.id, id), eq5(commitments.userId, userId)));
       res.json({ ok: true });
     } catch (error) {
       console.error("Error deleting commitment:", error);
@@ -3864,7 +5284,7 @@ Return ONLY JSON: { "hasCommitment": boolean, "commitment": "the thing they comm
       if (!context) return res.status(400).json({ error: "context is required" });
       let userCommitments = [];
       try {
-        userCommitments = await db.select().from(commitments).where(and3(eq4(commitments.userId, userId), eq4(commitments.status, "pending"))).orderBy(desc2(commitments.extractedAt)).limit(10);
+        userCommitments = await db.select().from(commitments).where(and3(eq5(commitments.userId, userId), eq5(commitments.status, "pending"))).orderBy(desc2(commitments.extractedAt)).limit(10);
       } catch {
       }
       const systemPrompt = buildCoachSystemPrompt(goals2 || [], stats2 || {}, history || [], [], lifeContext2 || null, [], false, [], false, userCommitments, void 0, [], [], false);
@@ -3915,7 +5335,7 @@ ${context}` },
       try {
         const sevenDaysAgo = /* @__PURE__ */ new Date();
         sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-        weekCommitments = await db.select().from(commitments).where(eq4(commitments.userId, userId)).orderBy(desc2(commitments.extractedAt)).limit(30);
+        weekCommitments = await db.select().from(commitments).where(eq5(commitments.userId, userId)).orderBy(desc2(commitments.extractedAt)).limit(30);
         weekCommitments = weekCommitments.filter(
           (c) => new Date(c.extractedAt).getTime() >= sevenDaysAgo.getTime()
         );
@@ -3974,7 +5394,7 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const rows = await db.select().from(userMemories).where(eq4(userMemories.userId, userId)).orderBy(desc2(userMemories.extractedAt));
+      const rows = await db.select().from(userMemories).where(eq5(userMemories.userId, userId)).orderBy(desc2(userMemories.extractedAt));
       res.json({ memories: rows });
     } catch (error) {
       console.error("Error fetching memories:", error);
@@ -4001,7 +5421,7 @@ Return ONLY the JSON object.`;
       if (!messages || !Array.isArray(messages) || messages.length === 0) {
         return res.json({ added: 0 });
       }
-      const existingRows = await db.select({ content: userMemories.content }).from(userMemories).where(eq4(userMemories.userId, userId)).orderBy(desc2(userMemories.extractedAt));
+      const existingRows = await db.select({ content: userMemories.content }).from(userMemories).where(eq5(userMemories.userId, userId)).orderBy(desc2(userMemories.extractedAt));
       const existingMemories = existingRows.map((r) => r.content);
       const conversationText = messages.map((m) => `${m.role}: ${m.content}`).join("\n");
       const existingList = existingMemories.length > 0 ? `
@@ -4045,6 +5465,178 @@ Return an empty array if nothing notable was said. Do NOT repeat or rephrase exi
       res.json({ added: 0 });
     }
   });
+  app2.get("/api/preferences", async (req, res) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const row = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq5(userPreferences.userId, userId)).limit(1);
+      return res.json(row[0]?.data || {});
+    } catch (error) {
+      console.error("Error getting preferences:", error);
+      return res.status(500).json({ error: "Failed to get preferences" });
+    }
+  });
+  app2.patch("/api/preferences", async (req, res) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const updates = req.body;
+      const existing = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq5(userPreferences.userId, userId)).limit(1);
+      const current = existing[0]?.data || {};
+      const merged = { ...current, ...updates };
+      await db.insert(userPreferences).values({ userId, data: merged }).onConflictDoUpdate({
+        target: userPreferences.userId,
+        set: { data: merged, updatedAt: /* @__PURE__ */ new Date() }
+      });
+      return res.json(merged);
+    } catch (error) {
+      console.error("Error saving preferences:", error);
+      return res.status(500).json({ error: "Failed to save preferences" });
+    }
+  });
+  app2.get("/api/morning-voice-notes", async (req, res) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const limit = parseInt(req.query.limit) || 30;
+      const notes = await db.select().from(morningVoiceNotes).where(eq5(morningVoiceNotes.userId, userId)).orderBy(desc2(morningVoiceNotes.recordedAt)).limit(limit);
+      res.json({ notes });
+    } catch (error) {
+      console.error("Error fetching morning voice notes:", error);
+      res.status(500).json({ error: "Failed to fetch morning voice notes" });
+    }
+  });
+  app2.get("/api/morning-voice-notes/today", async (req, res) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const today = await getUserLocalDate(userId);
+      const notes = await db.select().from(morningVoiceNotes).where(and3(eq5(morningVoiceNotes.userId, userId), eq5(morningVoiceNotes.recordedAt, today))).limit(1);
+      res.json({ note: notes[0] || null });
+    } catch (error) {
+      console.error("Error fetching today's morning voice note:", error);
+      res.status(500).json({ error: "Failed to fetch today's morning voice note" });
+    }
+  });
+  async function extractMorningNoteSignals(transcript) {
+    const extractionPrompt = `Analyze this morning voice note transcript and extract structured data.
+
+Transcript: "${transcript}"
+
+Extract:
+1. moodSignal: one of "calm", "energized", "stressed", "overwhelmed", "uncertain" \u2014 infer from tone and content
+2. themes: up to 5 short topic phrases mentioned (e.g. "client presentation", "exercise", "sleep quality")
+3. blockers: up to 3 things preventing progress (e.g. "waiting on feedback", "too many meetings")
+4. wins: up to 3 positive things mentioned (e.g. "finished report", "good workout")
+5. intention: one sentence capturing what they want to accomplish or focus on today
+
+Return JSON: { "moodSignal": "...", "themes": [...], "blockers": [...], "wins": [...], "intention": "..." }
+Return ONLY the JSON object.`;
+    const extraction = await openai4.chat.completions.create({
+      model: "gpt-5-mini",
+      messages: [{ role: "user", content: extractionPrompt }],
+      response_format: { type: "json_object" },
+      max_completion_tokens: 400
+    });
+    const extractionContent = extraction.choices[0]?.message?.content || "{}";
+    let parsed = {};
+    try {
+      parsed = JSON.parse(extractionContent);
+    } catch {
+    }
+    const validMoods = ["calm", "energized", "stressed", "overwhelmed", "uncertain"];
+    const moodSignal = validMoods.includes(parsed.moodSignal) ? parsed.moodSignal : "calm";
+    const themes = Array.isArray(parsed.themes) ? parsed.themes.slice(0, 5).map(String) : [];
+    const blockers = Array.isArray(parsed.blockers) ? parsed.blockers.slice(0, 3).map(String) : [];
+    const wins = Array.isArray(parsed.wins) ? parsed.wins.slice(0, 3).map(String) : [];
+    const intention = typeof parsed.intention === "string" ? parsed.intention : null;
+    return { moodSignal, themes, blockers, wins, intention };
+  }
+  app2.post("/api/morning-voice-notes/extract", async (req, res) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const { transcript } = req.body;
+      if (!transcript || typeof transcript !== "string" || !transcript.trim()) {
+        return res.status(400).json({ error: "transcript is required" });
+      }
+      const extracted = await extractMorningNoteSignals(transcript.trim());
+      res.json({ extracted });
+    } catch (error) {
+      console.error("Error extracting morning note signals:", error);
+      res.status(500).json({ error: "Failed to extract signals" });
+    }
+  });
+  app2.post("/api/morning-voice-notes", async (req, res) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const { transcript, extracted: preExtracted } = req.body;
+      if (!transcript || typeof transcript !== "string" || !transcript.trim()) {
+        return res.status(400).json({ error: "transcript is required" });
+      }
+      const today = await getUserLocalDate(userId);
+      const existing = await db.select({ id: morningVoiceNotes.id }).from(morningVoiceNotes).where(and3(eq5(morningVoiceNotes.userId, userId), eq5(morningVoiceNotes.recordedAt, today))).limit(1);
+      if (existing.length > 0) {
+        return res.status(409).json({ error: "Morning note already recorded today" });
+      }
+      const extracted = preExtracted && preExtracted.moodSignal ? preExtracted : await extractMorningNoteSignals(transcript.trim());
+      const validMoods = ["calm", "energized", "stressed", "overwhelmed", "uncertain"];
+      const moodSignal = validMoods.includes(extracted.moodSignal) ? extracted.moodSignal : "calm";
+      const themes = Array.isArray(extracted.themes) ? extracted.themes.slice(0, 5).map(String) : [];
+      const blockers = Array.isArray(extracted.blockers) ? extracted.blockers.slice(0, 3).map(String) : [];
+      const wins = Array.isArray(extracted.wins) ? extracted.wins.slice(0, 3).map(String) : [];
+      const intention = typeof extracted.intention === "string" ? extracted.intention : null;
+      const [inserted] = await db.insert(morningVoiceNotes).values({
+        userId,
+        recordedAt: today,
+        transcript: transcript.trim(),
+        moodSignal,
+        themes,
+        blockers,
+        wins,
+        intention
+      }).returning();
+      const memorySummary = `Morning note (${today}): Mood=${moodSignal}. Themes: ${themes.join(", ") || "none"}. ${intention ? `Intention: ${intention}` : ""}`;
+      try {
+        await db.insert(userMemories).values({
+          userId,
+          content: memorySummary,
+          category: "pattern"
+        });
+      } catch {
+      }
+      morningNoteSummaryCache.delete(userId);
+      res.json({
+        note: inserted,
+        extracted: { moodSignal, themes, blockers, wins, intention }
+      });
+    } catch (error) {
+      console.error("Error creating morning voice note:", error);
+      res.status(500).json({ error: "Failed to create morning voice note" });
+    }
+  });
+  app2.post("/api/morning-voice-notes/transcribe", async (req, res) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const { audioBase64, mimeType } = req.body;
+      if (!audioBase64) {
+        return res.status(400).json({ error: "audioBase64 is required" });
+      }
+      const buffer = Buffer.from(audioBase64, "base64");
+      const ext = (mimeType || "audio/webm").includes("mp4") ? "mp4" : "webm";
+      const file = new File([buffer], `recording.${ext}`, { type: mimeType || "audio/webm" });
+      const transcription = await openai4.audio.transcriptions.create({
+        model: "whisper-1",
+        file
+      });
+      res.json({ transcript: transcription.text || "" });
+    } catch (error) {
+      console.error("Error transcribing audio:", error);
+      res.status(500).json({ error: "Failed to transcribe audio" });
+    }
+  });
   const httpServer = createServer(app2);
   return httpServer;
 }
@@ -4055,7 +5647,7 @@ init_db();
 // server/scheduler.ts
 init_db();
 init_schema();
-import { eq as eq5, and as and4 } from "drizzle-orm";
+import { eq as eq6, and as and4 } from "drizzle-orm";
 var schedulerRunning = false;
 function startScheduler() {
   if (schedulerRunning) return;
@@ -4077,7 +5669,7 @@ async function runMorningPlanBuild() {
   console.log(`[Scheduler] Processing ${allUsers.length} user(s) for auto-plan build`);
   for (const user of allUsers) {
     try {
-      const existingPlan = await db.select({ data: plans.data }).from(plans).where(and4(eq5(plans.userId, user.id), eq5(plans.date, today)));
+      const existingPlan = await db.select({ data: plans.data }).from(plans).where(and4(eq6(plans.userId, user.id), eq6(plans.date, today)));
       const existingTasks = existingPlan[0]?.data?.tasks || [];
       if (existingTasks.length > 0) {
         console.log(`[Scheduler] User ${user.id} already has ${existingTasks.length} tasks, skipping`);
@@ -4109,7 +5701,7 @@ async function runMorningPlanBuild() {
         set: { data: { date: today, tasks: newTasks }, updatedAt: /* @__PURE__ */ new Date() }
       });
       const topTask = result.tasks[0];
-      const existingPrefs = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq5(userPreferences.userId, user.id));
+      const existingPrefs = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq6(userPreferences.userId, user.id));
       const currentPrefs = existingPrefs[0]?.data || {};
       const updatedPrefs = {
         ...currentPrefs,
@@ -4300,6 +5892,7 @@ function setupErrorHandler(app2) {
 }
 (async () => {
   await ensureTablesExist();
+  logTelegramStatus();
   setupCors(app);
   setupBodyParsing(app);
   setupRequestLogging(app);
@@ -4318,14 +5911,32 @@ function setupErrorHandler(app2) {
     () => {
       log(`express server serving on port ${port}`);
       if (isTelegramConfigured()) {
-        const domain = process.env.REPLIT_DOMAINS?.split(",")[0];
-        if (domain) {
-          setWebhook(`https://${domain}/api/telegram/webhook`).catch((err) => {
-            console.error("Failed to set Telegram webhook:", err);
+        const isProduction = process.env.NODE_ENV === "production";
+        if (isProduction) {
+          const domain = (process.env.REPLIT_DOMAINS || "").split(",")[0]?.trim();
+          if (domain) {
+            const webhookUrl = `https://${domain}/api/telegram/webhook`;
+            setWebhook(webhookUrl).then(() => {
+              console.log(`[Telegram] Production mode \u2014 webhook active at ${webhookUrl}`);
+            }).catch((err) => {
+              console.error("[Telegram] Failed to set webhook:", err);
+            });
+          } else {
+            console.error("[Telegram] Production mode but REPLIT_DOMAINS is not set \u2014 cannot register webhook");
+          }
+        } else {
+          startTelegramPolling().catch((err) => {
+            console.error("Failed to start Telegram polling:", err);
           });
         }
         startProactiveScheduler().catch((err) => {
           console.error("Failed to start proactive scheduler:", err);
+        });
+        startEmailAlertScanner().catch((err) => {
+          console.error("Failed to start email alert scanner:", err);
+        });
+        startMeetingBriefScanner().catch((err) => {
+          console.error("Failed to start meeting brief scanner:", err);
         });
       }
     }
