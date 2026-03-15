@@ -208,6 +208,12 @@ export const websiteCrawls = pgTable("website_crawls", {
   crawledAt: timestamp("crawled_at"),
 });
 
+export const chatgptImports = pgTable("chatgpt_imports", {
+  userId: varchar("user_id").notNull().primaryKey().references(() => users.id),
+  importedAt: timestamp("imported_at").defaultNow().notNull(),
+  memoriesAdded: integer("memories_added").notNull().default(0),
+});
+
 export const morningVoiceNotes = pgTable("morning_voice_notes", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id").notNull().references(() => users.id),
