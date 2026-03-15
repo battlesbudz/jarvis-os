@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, jsonb, timestamp, date, primaryKey } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, jsonb, timestamp, date, primaryKey, integer } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -197,6 +197,15 @@ export const mobileAuthSessions = pgTable("mobile_auth_sessions", {
   sessionId: text("session_id").primaryKey(),
   token: text("token").notNull(),
   expiresAt: timestamp("expires_at").notNull(),
+});
+
+export const websiteCrawls = pgTable("website_crawls", {
+  userId: varchar("user_id").notNull().primaryKey().references(() => users.id),
+  url: text("url").notNull(),
+  status: varchar("status").notNull().default("idle"),
+  pageCount: integer("page_count").default(0),
+  summary: text("summary"),
+  crawledAt: timestamp("crawled_at"),
 });
 
 export const morningVoiceNotes = pgTable("morning_voice_notes", {
