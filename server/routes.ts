@@ -2405,6 +2405,167 @@ Return ONLY the JSON object.`;
     }
   });
 
+  app.get("/api/chatgpt-import/status", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const rows = await db.select().from(schema.chatgptImports).where(eq(schema.chatgptImports.userId, userId));
+      if (rows.length === 0) {
+        return res.json({ imported: false });
+      }
+      const row = rows[0];
+      res.json({ imported: true, importedAt: row.importedAt, memoriesAdded: row.memoriesAdded });
+    } catch (error) {
+      console.error("Error getting ChatGPT import status:", error);
+      res.status(500).json({ error: "Failed to get import status" });
+    }
+  });
+
+  app.post("/api/chatgpt-import", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+
+      const { conversations } = req.body;
+      if (!conversations || !Array.isArray(conversations) || conversations.length === 0) {
+        return res.status(400).json({ error: "No conversations found. Please upload a valid ChatGPT export file." });
+      }
+
+      const recentConversations = conversations.slice(-150);
+
+      const allTexts: string[] = [];
+      for (const convo of recentConversations) {
+        const lines: string[] = [];
+        if (convo.title) lines.push(`[Conversation: ${convo.title}]`);
+
+        if (convo.messages && Array.isArray(convo.messages)) {
+          for (const msg of convo.messages) {
+            if (msg.role && msg.text && typeof msg.text === 'string') {
+              lines.push(`${msg.role}: ${msg.text.slice(0, 500)}`);
+            }
+          }
+        } else if (convo.mapping && typeof convo.mapping === 'object') {
+          const nodes = (Object.values(convo.mapping) as any[])
+            .filter((n: any) => n?.message?.create_time)
+            .sort((a: any, b: any) => (a.message.create_time || 0) - (b.message.create_time || 0));
+          const unsortedNodes = (Object.values(convo.mapping) as any[])
+            .filter((n: any) => !n?.message?.create_time);
+          for (const node of [...nodes, ...unsortedNodes]) {
+            const msg = node?.message;
+            if (!msg || !msg.content?.parts) continue;
+            const role = msg.author?.role;
+            if (role !== 'user' && role !== 'assistant') continue;
+            const text = msg.content.parts
+              .filter((p: any) => typeof p === 'string')
+              .join(' ')
+              .trim();
+            if (text.length > 0) {
+              lines.push(`${role}: ${text.slice(0, 500)}`);
+            }
+          }
+        }
+
+        if (lines.length > 1) {
+          allTexts.push(lines.join('\n'));
+        }
+      }
+
+      if (allTexts.length === 0) {
+        return res.status(400).json({ error: "No readable conversations found in the file." });
+      }
+
+      const existingRows = await db.select({ content: userMemories.content })
+        .from(userMemories)
+        .where(eq(userMemories.userId, userId));
+      const existingMemories = existingRows.map(r => r.content);
+      const normalizedExisting = new Set(existingMemories.map(normalizeMemoryContent));
+
+      const batchSize = 10;
+      let totalAdded = 0;
+      const validCategories = ['personality', 'values', 'work_style', 'accomplishment', 'goal_discovered', 'relationship', 'pattern', 'preference', 'fact', 'goal', 'achievement'];
+
+      for (let i = 0; i < allTexts.length; i += batchSize) {
+        const batch = allTexts.slice(i, i + batchSize);
+        const batchText = batch.join('\n\n---\n\n').slice(0, 12000);
+
+        const currentMemories = [...existingMemories];
+        const existingList = currentMemories.length > 0
+          ? `\nExisting memories (DO NOT duplicate these):\n${currentMemories.map(m => `- ${m}`).join('\n')}`
+          : '';
+
+        const prompt = `You are extracting profile facts about a user from their ChatGPT conversation history.
+Output a JSON array of { category, content } objects. Only extract facts that are specific, meaningful, and not already captured.
+Focus on discovering: personality traits, values, work patterns, goals, relationships, preferences, and recurring behaviors.
+
+Categories:
+- personality — how they communicate, humor, energy, decision style
+- values — what they care about deeply, what motivates them
+- work_style — when/how they focus, work patterns, tools they use
+- accomplishment — wins, achievements, proud moments mentioned
+- goal_discovered — goals inferred from behavior (not just stated)
+- relationship — key people in their life (family, teammates, boss)
+- pattern — recurring behaviors, habits, tendencies
+- preference — explicit preferences (meeting times, communication style, etc.)
+- fact — general facts about the user
+- goal — explicitly stated goals
+- achievement — specific achievements mentioned
+${existingList}
+
+Conversations:
+${batchText}
+
+Return JSON: { "memories": [{"content": "string describing the fact", "category": "one of the categories above"}] }
+Return { "memories": [] } if nothing new was learned. Do NOT repeat or rephrase existing memories.
+Extract up to 8 memories per batch.`;
+
+        try {
+          const response = await openai.chat.completions.create({
+            model: "gpt-5-mini",
+            messages: [{ role: "user", content: prompt }],
+            response_format: { type: "json_object" },
+            max_completion_tokens: 800,
+          });
+
+          const content = response.choices[0]?.message?.content || '{"memories":[]}';
+          const parsed = JSON.parse(content);
+          const rawMemories = Array.isArray(parsed.memories) ? parsed.memories : (Array.isArray(parsed) ? parsed : []);
+          const newMemories = rawMemories.slice(0, 8);
+
+          for (const mem of newMemories) {
+            if (!mem.content || typeof mem.content !== 'string' || mem.content.trim().length === 0) continue;
+            const normalized = normalizeMemoryContent(mem.content);
+            if (normalizedExisting.has(normalized)) continue;
+            const category = validCategories.includes(mem.category) ? mem.category : 'fact';
+            await db.insert(userMemories).values({
+              userId,
+              content: mem.content.trim(),
+              category,
+            });
+            normalizedExisting.add(normalized);
+            existingMemories.push(mem.content.trim());
+            totalAdded++;
+            console.log(`[ChatGPT Import] Extracted: [${category}] ${mem.content.trim().slice(0, 60)}...`);
+          }
+        } catch (err) {
+          console.error("[ChatGPT Import] Batch extraction error:", err);
+        }
+      }
+
+      await db.insert(schema.chatgptImports)
+        .values({ userId, importedAt: new Date(), memoriesAdded: totalAdded })
+        .onConflictDoUpdate({
+          target: [schema.chatgptImports.userId],
+          set: { importedAt: new Date(), memoriesAdded: totalAdded },
+        });
+
+      console.log(`[ChatGPT Import] User ${userId}: imported ${totalAdded} memories from ${allTexts.length} conversations`);
+      res.json({ imported: totalAdded, importedAt: new Date().toISOString() });
+    } catch (error) {
+      console.error("Error importing ChatGPT history:", error);
+      res.status(500).json({ error: "Failed to import ChatGPT history" });
+    }
+  });
+
   const httpServer = createServer(app);
   return httpServer;
 }

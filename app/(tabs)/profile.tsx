@@ -198,6 +198,13 @@ export default function ProfileScreen() {
   const [websiteUrl, setWebsiteUrl] = useState('');
   const [websiteCrawling, setWebsiteCrawling] = useState(false);
   const websitePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [chatgptImportStatus, setChatgptImportStatus] = useState<{
+    imported: boolean;
+    importedAt?: string;
+    memoriesAdded?: number;
+  }>({ imported: false });
+  const [chatgptImporting, setChatgptImporting] = useState(false);
+  const [chatgptImportResult, setChatgptImportResult] = useState<number | null>(null);
 
   const loadTelegramStatus = useCallback(async () => {
     try {
@@ -323,6 +330,11 @@ export default function ProfileScreen() {
     setUserName(name);
     await Promise.all([loadOAuthStatus(), loadMemories(), loadTelegramStatus(), loadMorningNotes(), loadWebsiteCrawl()]);
     try {
+      const importRes = await apiRequest('GET', '/api/chatgpt-import/status');
+      const importData = await importRes.json();
+      setChatgptImportStatus(importData);
+    } catch {}
+    try {
       const res = await apiRequest('GET', '/api/preferences');
       const prefs = await res.json();
       if (prefs.timezone) setTimezone(prefs.timezone);
@@ -346,6 +358,102 @@ export default function ProfileScreen() {
       await apiRequest('PATCH', '/api/preferences', { timezone: tz });
     } catch {}
   }, []);
+
+  const handleChatGPTImport = useCallback(async () => {
+    try {
+      const DocumentPicker = await import('expo-document-picker');
+      const FileSystem = await import('expo-file-system/legacy');
+      const result = await DocumentPicker.getDocumentAsync({
+        type: 'application/json',
+        copyToCacheDirectory: true,
+      });
+
+      if (result.canceled || !result.assets || result.assets.length === 0) return;
+
+      const file = result.assets[0];
+      setChatgptImporting(true);
+      setChatgptImportResult(null);
+
+      const fileContent = await FileSystem.readAsStringAsync(file.uri);
+      let parsed: any;
+      try {
+        parsed = JSON.parse(fileContent);
+      } catch {
+        alert('Invalid JSON file. Please select a valid ChatGPT export file.');
+        setChatgptImporting(false);
+        return;
+      }
+
+      let convos: any[];
+      if (Array.isArray(parsed)) {
+        convos = parsed;
+      } else if (parsed && Array.isArray(parsed.conversations)) {
+        convos = parsed.conversations;
+      } else {
+        alert('This doesn\'t appear to be a ChatGPT conversations export. The file should contain an array of conversations.');
+        setChatgptImporting(false);
+        return;
+      }
+
+      const hasMapping = convos.some((c: any) => c.mapping && typeof c.mapping === 'object');
+      if (!hasMapping) {
+        alert('This doesn\'t appear to be a ChatGPT conversations export. Expected conversations with message mappings.');
+        setChatgptImporting(false);
+        return;
+      }
+
+      const conversations = convos.slice(-150).map((convo: any) => {
+        const messages: { role: string; text: string }[] = [];
+        const mapping = convo.mapping;
+        if (mapping && typeof mapping === 'object') {
+          const nodes = Object.values(mapping) as any[];
+          for (const node of nodes) {
+            const msg = (node as any)?.message;
+            if (!msg || !msg.content?.parts) continue;
+            const role = msg.author?.role;
+            if (role !== 'user' && role !== 'assistant') continue;
+            const text = msg.content.parts
+              .filter((p: any) => typeof p === 'string')
+              .join(' ')
+              .trim();
+            if (text.length > 0) {
+              messages.push({ role, text: text.slice(0, 500) });
+            }
+          }
+        }
+        return { title: convo.title, messages };
+      }).filter((c: any) => c.messages.length > 0);
+
+      if (conversations.length === 0) {
+        alert('No readable conversations found in this file.');
+        setChatgptImporting(false);
+        return;
+      }
+
+      const res = await apiRequest('POST', '/api/chatgpt-import', { conversations });
+      const data = await res.json();
+
+      if (!res.ok) {
+        alert(data.error || 'Import failed. Please try again.');
+        setChatgptImporting(false);
+        return;
+      }
+
+      setChatgptImportResult(data.imported);
+      setChatgptImportStatus({
+        imported: true,
+        importedAt: data.importedAt || new Date().toISOString(),
+        memoriesAdded: data.imported,
+      });
+      setChatgptImporting(false);
+      loadMemories();
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (e: any) {
+      console.error('ChatGPT import error:', e);
+      alert('Failed to import. Please try again.');
+      setChatgptImporting(false);
+    }
+  }, [loadMemories]);
 
   const stopTelegramPolling = useCallback(() => {
     if (telegramPollRef.current) {
@@ -1095,6 +1203,47 @@ export default function ProfileScreen() {
                   onPress={handleConnectTelegram}
                 >
                   <Text style={[styles.connectBtnText, { color: '#229ED9' }]}>Connect</Text>
+                </Pressable>
+              )}
+            </View>
+          </View>
+
+          <View style={[styles.platformsList, { marginTop: 12 }]}>
+            <View style={styles.platformRow}>
+              <View style={[styles.platformIcon, { backgroundColor: '#10A37F18' }]}>
+                <Ionicons name="chatbubble-ellipses-outline" size={20} color="#10A37F" />
+              </View>
+              <View style={styles.platformInfo}>
+                <Text style={styles.platformName}>ChatGPT History</Text>
+                {chatgptImporting ? (
+                  <Text style={styles.platformSubtitle}>Jarvis is reading your history...</Text>
+                ) : chatgptImportResult !== null ? (
+                  <Text style={[styles.platformSubtitle, { color: Colors.success }]}>
+                    {chatgptImportResult} insights learned from your ChatGPT history
+                  </Text>
+                ) : chatgptImportStatus.imported ? (
+                  <Text style={styles.platformSubtitle}>
+                    Last imported: {new Date(chatgptImportStatus.importedAt!).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} · {chatgptImportStatus.memoriesAdded} insights
+                  </Text>
+                ) : (
+                  <Text style={styles.platformSubtitle}>Import your conversations</Text>
+                )}
+              </View>
+              {chatgptImporting ? (
+                <ActivityIndicator size="small" color="#10A37F" />
+              ) : chatgptImportStatus.imported ? (
+                <Pressable
+                  style={[styles.connectBtn, { borderColor: '#10A37F' }]}
+                  onPress={handleChatGPTImport}
+                >
+                  <Text style={[styles.connectBtnText, { color: '#10A37F' }]}>Re-import</Text>
+                </Pressable>
+              ) : (
+                <Pressable
+                  style={[styles.connectBtn, { borderColor: '#10A37F' }]}
+                  onPress={handleChatGPTImport}
+                >
+                  <Text style={[styles.connectBtnText, { color: '#10A37F' }]}>Import</Text>
                 </Pressable>
               )}
             </View>
