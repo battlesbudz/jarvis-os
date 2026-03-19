@@ -4,7 +4,8 @@ import OpenAI from "openai";
 import { db } from "./db";
 import { eq, and, desc, sql, gte } from "drizzle-orm";
 import * as schema from "@shared/schema";
-import { userMemories, morningVoiceNotes, userPreferences, proactiveQuestionsSent, inboxItems, inboxRules, websiteCrawls } from "@shared/schema";
+import { userMemories, morningVoiceNotes, userPreferences, proactiveQuestionsSent, inboxItems, inboxRules, websiteCrawls, userDocuments } from "@shared/schema";
+import { processDocument, getUserDocumentContext, SUPPORTED_MIME_TYPES, SUPPORTED_EXTENSIONS, MAX_DOCS_PER_USER } from "./documentProcessor";
 import { resizeTask, generateSmartPlan, unblockTask } from "./ai";
 import {
   getGoogleCalendarEvents,
@@ -129,7 +130,7 @@ async function getMorningNoteSummary(userId: string): Promise<string> {
   }
 }
 
-function buildCoachSystemPrompt(goals: any[], stats: any, history: any[], calendarEvents: any[] = [], lifeContext?: any, gmailItems?: any[], gmailConnected?: boolean, slackMessages?: any[], slackConnected?: boolean, commitmentsList?: any[], coachingMode?: string, memories?: { content: string; category: string }[], telegramMessages?: any[], telegramConnected?: boolean, morningNoteSummary?: string, websiteSummary?: string): string {
+function buildCoachSystemPrompt(goals: any[], stats: any, history: any[], calendarEvents: any[] = [], lifeContext?: any, gmailItems?: any[], gmailConnected?: boolean, slackMessages?: any[], slackConnected?: boolean, commitmentsList?: any[], coachingMode?: string, memories?: { content: string; category: string }[], telegramMessages?: any[], telegramConnected?: boolean, morningNoteSummary?: string, websiteSummary?: string, documentsContext?: string): string {
   const completedHistory = history.filter((h: any) => h.completed);
   const skippedHistory = history.filter((h: any) => !h.completed);
   const completionRate = history.length > 0
@@ -168,6 +169,8 @@ function buildCoachSystemPrompt(goals: any[], stats: any, history: any[], calend
   const websiteSection = websiteSummary
     ? `\n## My Business / Background\n${websiteSummary}`
     : '';
+
+  const documentsSection = documentsContext || '';
 
   const commitmentsSection = commitmentsList && commitmentsList.length > 0
     ? `\n## Open Commitments (user said they would do these)\n` +
@@ -263,7 +266,7 @@ ${memoriesSection}
 - Total tasks completed: ${stats.totalCompleted || 0}
 - Total XP earned: ${stats.xp || 0}
 - Task completion rate (last 7 days): ${completionRate}% (${completedHistory.length} completed, ${skippedHistory.length} skipped)
-${strugglingCategories.length > 0 ? `- Struggling most with: ${strugglingCategories.join(', ')}` : ''}${lifeContextSection}${websiteSection}
+${strugglingCategories.length > 0 ? `- Struggling most with: ${strugglingCategories.join(', ')}` : ''}${lifeContextSection}${websiteSection}${documentsSection}
 
 ## Active Goals
 ${goalsText}
@@ -962,9 +965,10 @@ Answer (yes/no):`,
       let memories: { content: string; category: string }[] = [];
       let morningNoteSummary = '';
       let websiteSummary = '';
+      let documentsContext = '';
       if (userId) {
         try {
-          const [rows, noteSummary, crawlRows] = await Promise.all([
+          const [rows, noteSummary, crawlRows, docsCtx] = await Promise.all([
             db.select({ content: userMemories.content, category: userMemories.category })
               .from(userMemories)
               .where(eq(userMemories.userId, userId))
@@ -975,12 +979,14 @@ Answer (yes/no):`,
               .from(websiteCrawls)
               .where(eq(websiteCrawls.userId, userId))
               .limit(1),
+            getUserDocumentContext(userId),
           ]);
           memories = rows;
           morningNoteSummary = noteSummary;
           if (crawlRows[0]?.status === 'done' && crawlRows[0]?.summary) {
             websiteSummary = crawlRows[0].summary;
           }
+          documentsContext = docsCtx;
         } catch {}
       }
 
@@ -1006,7 +1012,7 @@ Answer (yes/no):`,
         } catch {}
       }
 
-      const systemPrompt = buildCoachSystemPrompt(goals || [], stats || {}, history || [], calendarEvents || [], lifeContext || null, resolvedGmailItems, resolvedGmailConnected, slackMessages || [], slackConnected ?? false, userCommitments, coachingMode, memories, telegramMessages || [], telegramConnected ?? false, morningNoteSummary, websiteSummary);
+      const systemPrompt = buildCoachSystemPrompt(goals || [], stats || {}, history || [], calendarEvents || [], lifeContext || null, resolvedGmailItems, resolvedGmailConnected, slackMessages || [], slackConnected ?? false, userCommitments, coachingMode, memories, telegramMessages || [], telegramConnected ?? false, morningNoteSummary, websiteSummary, documentsContext);
 
       const chatMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
         { role: "system", content: systemPrompt + proactiveQuestionContext + "\n\nYou can take actions on the user's behalf using the available tools. When a user asks you to add a task, log progress, update their context, etc., use the appropriate tool. Respond naturally — do not mention 'tool calls' or 'functions' to the user. Just confirm what you did conversationally." },
@@ -2402,6 +2408,91 @@ Return ONLY the JSON object.`;
     } catch (error) {
       console.error("Error deleting website crawl:", error);
       res.status(500).json({ error: "Failed to delete crawl" });
+    }
+  });
+
+  app.get("/api/documents", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const docs = await db
+        .select({
+          id: userDocuments.id,
+          name: userDocuments.name,
+          mimeType: userDocuments.mimeType,
+          sizeBytes: userDocuments.sizeBytes,
+          status: userDocuments.status,
+          summary: userDocuments.summary,
+          uploadedAt: userDocuments.uploadedAt,
+        })
+        .from(userDocuments)
+        .where(eq(userDocuments.userId, userId))
+        .orderBy(desc(userDocuments.uploadedAt))
+        .limit(MAX_DOCS_PER_USER);
+      res.json({ documents: docs });
+    } catch (error) {
+      console.error("Error fetching documents:", error);
+      res.status(500).json({ error: "Failed to fetch documents" });
+    }
+  });
+
+  app.post("/api/documents", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+
+      const { name, mimeType, data } = req.body;
+      if (!name || !mimeType || !data) {
+        return res.status(400).json({ error: "name, mimeType, and data are required" });
+      }
+
+      if (!SUPPORTED_MIME_TYPES.includes(mimeType)) {
+        return res.status(400).json({ error: `Unsupported file type. Supported: ${SUPPORTED_EXTENSIONS.join(", ")}` });
+      }
+
+      const existing = await db
+        .select({ id: userDocuments.id })
+        .from(userDocuments)
+        .where(eq(userDocuments.userId, userId));
+      if (existing.length >= MAX_DOCS_PER_USER) {
+        return res.status(400).json({ error: `Maximum ${MAX_DOCS_PER_USER} documents allowed. Delete some to upload more.` });
+      }
+
+      const buffer = Buffer.from(data, "base64");
+      const sizeBytes = buffer.length;
+
+      if (sizeBytes > 20 * 1024 * 1024) {
+        return res.status(400).json({ error: "File too large. Maximum size is 20MB." });
+      }
+
+      const [inserted] = await db
+        .insert(userDocuments)
+        .values({ userId, name, mimeType, sizeBytes, status: "processing" })
+        .returning();
+
+      res.json({ document: inserted });
+
+      processDocument(userId, inserted.id, name, mimeType, buffer).catch((err) => {
+        console.error("[Docs] Background processing error:", err);
+      });
+    } catch (error) {
+      console.error("Error uploading document:", error);
+      res.status(500).json({ error: "Failed to upload document" });
+    }
+  });
+
+  app.delete("/api/documents/:id", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const { id } = req.params;
+      await db
+        .delete(userDocuments)
+        .where(and(eq(userDocuments.id, id), eq(userDocuments.userId, userId)));
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error deleting document:", error);
+      res.status(500).json({ error: "Failed to delete document" });
     }
   });
 

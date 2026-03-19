@@ -10,6 +10,7 @@ import {
   Modal,
   FlatList,
   TextInput,
+  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -17,6 +18,8 @@ import Animated, { FadeInDown } from 'react-native-reanimated';
 import { useFocusEffect, useRouter } from 'expo-router';
 import Colors from '@/constants/colors';
 import * as Haptics from 'expo-haptics';
+import * as DocumentPicker from 'expo-document-picker';
+import * as FileSystem from 'expo-file-system';
 import {
   getStats,
   claimReward,
@@ -52,6 +55,34 @@ interface WebsiteCrawl {
   pageCount?: number;
   summary?: string | null;
   crawledAt?: string | null;
+}
+
+interface UserDocument {
+  id: string;
+  name: string;
+  mimeType: string;
+  sizeBytes: number;
+  status: 'processing' | 'ready' | 'error';
+  summary?: string | null;
+  uploadedAt: string;
+}
+
+const SUPPORTED_DOC_TYPES = [
+  'application/pdf',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/msword',
+  'text/plain',
+  'text/markdown',
+  'text/csv',
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+];
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 interface Memory {
@@ -205,6 +236,10 @@ export default function ProfileScreen() {
   }>({ imported: false });
   const [chatgptImporting, setChatgptImporting] = useState(false);
   const [chatgptImportResult, setChatgptImportResult] = useState<number | null>(null);
+  const [documents, setDocuments] = useState<UserDocument[]>([]);
+  const [documentsLoading, setDocumentsLoading] = useState(false);
+  const [documentUploading, setDocumentUploading] = useState(false);
+  const documentPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const loadTelegramStatus = useCallback(async () => {
     try {
@@ -328,7 +363,7 @@ export default function ProfileScreen() {
     setLifeContext(lc);
     setNotificationsEnabledState(notifications);
     setUserName(name);
-    await Promise.all([loadOAuthStatus(), loadMemories(), loadTelegramStatus(), loadMorningNotes(), loadWebsiteCrawl()]);
+    await Promise.all([loadOAuthStatus(), loadMemories(), loadTelegramStatus(), loadMorningNotes(), loadWebsiteCrawl(), loadDocuments()]);
     try {
       const importRes = await apiRequest('GET', '/api/chatgpt-import/status');
       const importData = await importRes.json();
@@ -340,7 +375,7 @@ export default function ProfileScreen() {
       if (prefs.timezone) setTimezone(prefs.timezone);
       if (typeof prefs.emailAlertsEnabled === 'boolean') setEmailAlertsEnabled(prefs.emailAlertsEnabled);
     } catch {}
-  }, [loadOAuthStatus, loadMemories, loadTelegramStatus, loadMorningNotes, loadWebsiteCrawl]);
+  }, [loadOAuthStatus, loadMemories, loadTelegramStatus, loadMorningNotes, loadWebsiteCrawl, loadDocuments]);
 
   const handleToggleEmailAlerts = useCallback(async () => {
     const newValue = !emailAlertsEnabled;
@@ -579,6 +614,120 @@ export default function ProfileScreen() {
         websitePollRef.current = null;
       }
     };
+  }, []);
+
+  const loadDocuments = useCallback(async () => {
+    setDocumentsLoading(true);
+    try {
+      const res = await apiRequest('GET', '/api/documents');
+      const data = await res.json();
+      setDocuments(data.documents || []);
+    } catch {
+      setDocuments([]);
+    } finally {
+      setDocumentsLoading(false);
+    }
+  }, []);
+
+  const startDocumentPoll = useCallback(() => {
+    if (documentPollRef.current) clearInterval(documentPollRef.current);
+    const poll = setInterval(async () => {
+      try {
+        const res = await apiRequest('GET', '/api/documents');
+        const data = await res.json();
+        const docs: UserDocument[] = data.documents || [];
+        setDocuments(docs);
+        const stillProcessing = docs.some((d) => d.status === 'processing');
+        if (!stillProcessing) {
+          clearInterval(documentPollRef.current!);
+          documentPollRef.current = null;
+        }
+      } catch {}
+    }, 3000);
+    documentPollRef.current = poll;
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (documentPollRef.current) {
+        clearInterval(documentPollRef.current);
+        documentPollRef.current = null;
+      }
+    };
+  }, []);
+
+  const handleUploadDocument = useCallback(async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: SUPPORTED_DOC_TYPES,
+        copyToCacheDirectory: true,
+      });
+      if (result.canceled || !result.assets?.length) return;
+      const asset = result.assets[0];
+      if (!asset.uri) return;
+
+      setDocumentUploading(true);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+
+      let base64: string;
+      if (Platform.OS === 'web') {
+        const response = await fetch(asset.uri);
+        const blob = await response.blob();
+        base64 = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => {
+            const result = reader.result as string;
+            resolve(result.split(',')[1]);
+          };
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        });
+      } else {
+        base64 = await FileSystem.readAsStringAsync(asset.uri, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+      }
+
+      const mimeType = asset.mimeType || 'application/octet-stream';
+      const res = await apiRequest('POST', '/api/documents', {
+        name: asset.name,
+        mimeType,
+        data: base64,
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        Alert.alert('Upload failed', err.error || 'Could not upload document.');
+        return;
+      }
+
+      await loadDocuments();
+      startDocumentPoll();
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (e: any) {
+      Alert.alert('Upload failed', 'Could not read or upload the file. Please try again.');
+    } finally {
+      setDocumentUploading(false);
+    }
+  }, [loadDocuments, startDocumentPoll]);
+
+  const handleDeleteDocument = useCallback(async (id: string, name: string) => {
+    Alert.alert('Remove document', `Remove "${name}" from Jarvis's knowledge base?`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Remove',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await apiRequest('DELETE', `/api/documents/${id}`);
+            setDocuments((prev) => prev.filter((d) => d.id !== id));
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          } catch {
+            Alert.alert('Error', 'Could not delete document.');
+          }
+        },
+      },
+    ]);
   }, []);
 
   const handleConnect = useCallback(async (provider: 'google' | 'microsoft' | 'slack') => {
@@ -1407,6 +1556,113 @@ export default function ProfileScreen() {
           <Text style={styles.connectionHint}>
             Your data stays private — each account connects independently.
           </Text>
+        </Animated.View>
+
+        {/* My Documents */}
+        <Animated.View entering={FadeInDown.duration(400).delay(460)}>
+          <Text style={[styles.sectionTitle, { marginTop: 28 }]}>My Documents</Text>
+          <View style={styles.platformsList}>
+            <View style={{ paddingHorizontal: 16, paddingTop: 14, paddingBottom: 6 }}>
+              <Text style={{ fontSize: 13, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, lineHeight: 18, marginBottom: 12 }}>
+                Upload documents so Jarvis can read them and refer back to them in every conversation. Supports PDF, Word, text files, and images.
+              </Text>
+              <Pressable
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 8,
+                  paddingVertical: 11,
+                  borderRadius: 12,
+                  backgroundColor: documentUploading ? '#E2E8F0' : '#6366F1',
+                  opacity: documentUploading || documents.length >= 10 ? 0.6 : 1,
+                }}
+                onPress={handleUploadDocument}
+                disabled={documentUploading || documents.length >= 10}
+              >
+                {documentUploading ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Ionicons name="cloud-upload-outline" size={18} color="#fff" />
+                )}
+                <Text style={{ fontSize: 14, fontFamily: 'Inter_600SemiBold', color: '#fff' }}>
+                  {documentUploading ? 'Uploading...' : documents.length >= 10 ? 'Limit reached (10)' : 'Upload Document'}
+                </Text>
+              </Pressable>
+            </View>
+
+            {documentsLoading && documents.length === 0 ? (
+              <View style={{ paddingHorizontal: 16, paddingBottom: 14, alignItems: 'center' }}>
+                <ActivityIndicator size="small" color={Colors.textTertiary} />
+              </View>
+            ) : documents.length === 0 ? (
+              <View style={{ paddingHorizontal: 16, paddingBottom: 16 }}>
+                <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: Colors.textTertiary, textAlign: 'center' }}>
+                  No documents uploaded yet
+                </Text>
+              </View>
+            ) : (
+              <View style={{ paddingBottom: 8 }}>
+                {documents.map((doc, idx) => (
+                  <View
+                    key={doc.id}
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      paddingHorizontal: 16,
+                      paddingVertical: 10,
+                      borderTopWidth: idx === 0 ? 1 : 0,
+                      borderTopColor: Colors.border,
+                      borderBottomWidth: 1,
+                      borderBottomColor: Colors.border,
+                      gap: 10,
+                    }}
+                  >
+                    <View style={{ width: 34, height: 34, borderRadius: 8, backgroundColor: '#6366F115', alignItems: 'center', justifyContent: 'center' }}>
+                      <Ionicons
+                        name={
+                          doc.mimeType === 'application/pdf' ? 'document-text-outline' :
+                          doc.mimeType.startsWith('image/') ? 'image-outline' :
+                          'document-outline'
+                        }
+                        size={18}
+                        color="#6366F1"
+                      />
+                    </View>
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <Text style={{ fontSize: 13, fontFamily: 'Inter_500Medium', color: Colors.text }} numberOfLines={1}>
+                        {doc.name}
+                      </Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                        {doc.status === 'processing' ? (
+                          <>
+                            <ActivityIndicator size="small" color="#6366F1" style={{ transform: [{ scale: 0.7 }] }} />
+                            <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: '#6366F1' }}>Reading...</Text>
+                          </>
+                        ) : doc.status === 'error' ? (
+                          <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: '#EF4444' }}>Failed to read</Text>
+                        ) : (
+                          <>
+                            <Ionicons name="checkmark-circle" size={12} color={Colors.success} />
+                            <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: Colors.textTertiary }}>
+                              {formatFileSize(doc.sizeBytes)} · Ready
+                            </Text>
+                          </>
+                        )}
+                      </View>
+                    </View>
+                    <Pressable
+                      onPress={() => handleDeleteDocument(doc.id, doc.name)}
+                      hitSlop={10}
+                      style={{ padding: 4 }}
+                    >
+                      <Ionicons name="trash-outline" size={18} color="#EF4444" />
+                    </Pressable>
+                  </View>
+                ))}
+              </View>
+            )}
+          </View>
         </Animated.View>
 
         {/* Settings */}

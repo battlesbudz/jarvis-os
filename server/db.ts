@@ -437,6 +437,20 @@ export async function ensureTablesExist() {
       END$$
     `);
 
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS user_documents (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        mime_type VARCHAR NOT NULL,
+        size_bytes INTEGER NOT NULL DEFAULT 0,
+        status VARCHAR NOT NULL DEFAULT 'processing',
+        extracted_text TEXT,
+        summary TEXT,
+        uploaded_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+
     console.log("Database tables verified");
   } catch (error) {
     console.error("Failed to ensure database tables exist:", error);
