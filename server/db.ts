@@ -360,6 +360,11 @@ export async function ensureTablesExist() {
         ADD COLUMN IF NOT EXISTS status VARCHAR NOT NULL DEFAULT 'active'
     `);
 
+    await db.execute(sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS proactive_schedule_log_uniq
+        ON proactive_schedule_log (user_id, message_type, sent_date)
+    `);
+
     console.log("Database tables verified");
   } catch (error) {
     console.error("Failed to ensure database tables exist:", error);

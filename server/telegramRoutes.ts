@@ -1545,8 +1545,8 @@ export async function runProactiveStartupCatchup(): Promise<void> {
 
         console.log(`[Proactive] Catchup: sending missed ${schedule.type} to user ${link.userId}`);
         try {
-          await markAsSent(link.userId, schedule.type, dateKey);
           await sendScheduledMessage(link, schedule, dateKey, timezone);
+          await markAsSent(link.userId, schedule.type, dateKey);
         } catch (err) {
           console.error(`[Proactive] Catchup error for ${link.userId}:`, err);
         }
@@ -1589,8 +1589,8 @@ export async function startProactiveScheduler(): Promise<void> {
           if (alreadySent) continue;
 
           try {
-            await markAsSent(link.userId, schedule.type, dateKey);
             await sendScheduledMessage(link, schedule, dateKey, timezone);
+            await markAsSent(link.userId, schedule.type, dateKey);
           } catch (err) {
             console.error(`[Proactive] Error for user ${link.userId}:`, err);
           }
