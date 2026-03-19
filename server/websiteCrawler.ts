@@ -12,7 +12,8 @@ const openai = new OpenAI({
 });
 
 const MAX_PAGES = 60;
-const FETCH_TIMEOUT = 10000;
+const FETCH_TIMEOUT = 15000;
+const DNS_TIMEOUT = 5000;
 
 function isPrivateIp(ip: string): boolean {
   if (net.isIPv4(ip)) {
@@ -31,20 +32,59 @@ function isPrivateIp(ip: string): boolean {
   return false;
 }
 
-async function isSafeUrl(url: string): Promise<boolean> {
+function isPrivateHostname(hostname: string): boolean {
+  const lower = hostname.toLowerCase();
+  return (
+    lower === 'localhost' ||
+    lower === '0.0.0.0' ||
+    lower.endsWith('.local') ||
+    lower.endsWith('.internal') ||
+    lower.endsWith('.localhost') ||
+    lower.endsWith('.home.arpa')
+  );
+}
+
+async function lookupWithTimeout(hostname: string): Promise<string | null> {
+  try {
+    const result = await Promise.race([
+      dns.lookup(hostname, { family: 4 }).catch(() =>
+        dns.lookup(hostname, { family: 6 }).catch(() => null)
+      ),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), DNS_TIMEOUT)),
+    ]);
+    if (!result) return null;
+    return (result as dns.LookupAddress).address;
+  } catch {
+    return null;
+  }
+}
+
+async function isSafeUrl(url: string): Promise<{ safe: boolean; reason?: string }> {
   try {
     const parsed = new URL(url);
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return { safe: false, reason: 'Invalid protocol' };
+    }
     const hostname = parsed.hostname;
-    if (hostname === 'localhost' || hostname === '0.0.0.0') return false;
-    if (net.isIP(hostname)) return !isPrivateIp(hostname);
-    const addresses = await dns.resolve4(hostname).catch(() => []);
-    const addresses6 = await dns.resolve6(hostname).catch(() => []);
-    const allAddrs = [...addresses, ...addresses6];
-    if (allAddrs.length === 0) return false;
-    return !allAddrs.some(isPrivateIp);
-  } catch {
-    return false;
+    if (isPrivateHostname(hostname)) {
+      return { safe: false, reason: 'Private hostname' };
+    }
+    if (net.isIP(hostname)) {
+      const safe = !isPrivateIp(hostname);
+      return { safe, reason: safe ? undefined : 'Private IP address' };
+    }
+    const ip = await lookupWithTimeout(hostname);
+    if (ip === null) {
+      console.log(`[Crawler] DNS lookup timed out or failed for ${hostname}, allowing anyway`);
+      return { safe: true };
+    }
+    if (isPrivateIp(ip)) {
+      return { safe: false, reason: `Resolved to private IP: ${ip}` };
+    }
+    return { safe: true };
+  } catch (err) {
+    console.error(`[Crawler] isSafeUrl error for ${url}:`, err);
+    return { safe: false, reason: 'URL parse error' };
   }
 }
 
@@ -82,23 +122,34 @@ function isPageUrl(url: string): boolean {
 
 const MAX_REDIRECTS = 5;
 
-async function fetchPage(url: string): Promise<string | null> {
+async function fetchPage(url: string, originalHostname: string): Promise<string | null> {
   try {
     let currentUrl = url;
     for (let i = 0; i <= MAX_REDIRECTS; i++) {
-      const safe = await isSafeUrl(currentUrl);
-      if (!safe) return null;
+      const parsed = new URL(currentUrl);
+      if (parsed.hostname !== originalHostname) {
+        const check = await isSafeUrl(currentUrl);
+        if (!check.safe) {
+          console.log(`[Crawler] Redirect to unsafe URL blocked: ${currentUrl} — ${check.reason}`);
+          return null;
+        }
+      }
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT);
-      const res = await fetch(currentUrl, {
-        signal: controller.signal,
-        headers: {
-          "User-Agent": "GamePlanBot/1.0 (website context crawler)",
-          "Accept": "text/html",
-        },
-        redirect: "manual",
-      });
-      clearTimeout(timer);
+      let res: Response;
+      try {
+        res = await fetch(currentUrl, {
+          signal: controller.signal,
+          headers: {
+            "User-Agent": "Mozilla/5.0 (compatible; GamePlanBot/1.0; +https://gameplanapp.com/bot)",
+            "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+          },
+          redirect: "manual",
+        });
+      } finally {
+        clearTimeout(timer);
+      }
 
       if (res.status >= 300 && res.status < 400) {
         const location = res.headers.get("location");
@@ -107,13 +158,20 @@ async function fetchPage(url: string): Promise<string | null> {
         continue;
       }
 
-      if (!res.ok) return null;
+      if (!res.ok) {
+        console.log(`[Crawler] Non-OK response for ${currentUrl}: ${res.status}`);
+        return null;
+      }
       const contentType = res.headers.get("content-type") || "";
-      if (!contentType.includes("text/html")) return null;
+      if (!contentType.includes("text/html")) {
+        console.log(`[Crawler] Non-HTML content type for ${currentUrl}: ${contentType}`);
+        return null;
+      }
       return await res.text();
     }
     return null;
-  } catch {
+  } catch (err) {
+    console.log(`[Crawler] fetchPage error for ${url}:`, err instanceof Error ? err.message : err);
     return null;
   }
 }
@@ -144,6 +202,7 @@ function extractLinks(html: string, baseUrl: string): string[] {
 }
 
 async function crawlWebsite(rootUrl: string): Promise<{ pages: { url: string; text: string }[]; error?: string }> {
+  const originalHostname = new URL(rootUrl).hostname;
   const visited = new Set<string>();
   const queue: string[] = [rootUrl];
   const pages: { url: string; text: string }[] = [];
@@ -153,7 +212,8 @@ async function crawlWebsite(rootUrl: string): Promise<{ pages: { url: string; te
     if (visited.has(url)) continue;
     visited.add(url);
 
-    const html = await fetchPage(url);
+    console.log(`[Crawler] Fetching (${pages.length + 1}/${MAX_PAGES}): ${url}`);
+    const html = await fetchPage(url, originalHostname);
     if (!html) continue;
 
     const text = extractText(html);
@@ -169,6 +229,7 @@ async function crawlWebsite(rootUrl: string): Promise<{ pages: { url: string; te
     }
   }
 
+  console.log(`[Crawler] Crawl complete: ${pages.length} pages from ${rootUrl}`);
   return { pages };
 }
 
@@ -223,8 +284,11 @@ export async function startWebsiteCrawl(userId: string, url: string): Promise<vo
     normalizedUrl = "https://" + normalizedUrl;
   }
 
-  const safe = await isSafeUrl(normalizedUrl);
-  if (!safe) {
+  console.log(`[Crawler] Starting crawl for user ${userId}: ${normalizedUrl}`);
+
+  const safeCheck = await isSafeUrl(normalizedUrl);
+  if (!safeCheck.safe) {
+    console.log(`[Crawler] URL blocked: ${normalizedUrl} — ${safeCheck.reason}`);
     await db
       .insert(websiteCrawls)
       .values({ userId, url: normalizedUrl, status: "error", pageCount: 0, summary: "URL is not allowed. Please use a public website URL." })
@@ -250,7 +314,7 @@ export async function startWebsiteCrawl(userId: string, url: string): Promise<vo
       if (pages.length === 0) {
         await db
           .update(websiteCrawls)
-          .set({ status: "error", summary: "Could not fetch any pages from this URL.", crawledAt: new Date() })
+          .set({ status: "error", summary: "Could not fetch any pages from this website. The site may block automated access or require JavaScript to load content.", crawledAt: new Date() })
           .where(eq(websiteCrawls.userId, userId));
         return;
       }
@@ -267,7 +331,7 @@ export async function startWebsiteCrawl(userId: string, url: string): Promise<vo
         })
         .where(eq(websiteCrawls.userId, userId));
     } catch (err) {
-      console.error("Website crawl error:", err);
+      console.error("[Crawler] Crawl error:", err);
       await db
         .update(websiteCrawls)
         .set({
