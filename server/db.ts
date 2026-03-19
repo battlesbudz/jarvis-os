@@ -278,6 +278,61 @@ export async function ensureTablesExist() {
     await db.execute(sql`ALTER TABLE morning_voice_notes ADD CONSTRAINT morning_voice_notes_mood_check CHECK (mood_signal IN ('calm', 'energized', 'stressed', 'overwhelmed', 'uncertain'))`).catch(() => {});
     await db.execute(sql`ALTER TABLE morning_voice_notes ADD CONSTRAINT morning_voice_notes_user_date_unique UNIQUE (user_id, recorded_at)`).catch(() => {});
 
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS website_crawls (
+        "userId" VARCHAR PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        url TEXT NOT NULL,
+        status VARCHAR NOT NULL DEFAULT 'idle',
+        "pageCount" INTEGER DEFAULT 0,
+        summary TEXT,
+        "crawledAt" TIMESTAMP DEFAULT NOW()
+      )
+    `);
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS chatgpt_imports (
+        "userId" VARCHAR PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        "importedAt" TIMESTAMP DEFAULT NOW(),
+        "memoriesAdded" INTEGER DEFAULT 0
+      )
+    `);
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS inbox_rules (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        "userId" VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        type VARCHAR NOT NULL DEFAULT 'suppress',
+        scope VARCHAR NOT NULL DEFAULT 'all',
+        pattern TEXT NOT NULL,
+        "matchHints" JSONB NOT NULL DEFAULT '{}'::jsonb,
+        active VARCHAR NOT NULL DEFAULT 'true',
+        "matchCount" VARCHAR NOT NULL DEFAULT '0',
+        "dismissCount" VARCHAR NOT NULL DEFAULT '0',
+        source VARCHAR NOT NULL DEFAULT 'user',
+        "createdAt" TIMESTAMP DEFAULT NOW(),
+        "updatedAt" TIMESTAMP DEFAULT NOW()
+      )
+    `);
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS inbox_items (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        "userId" VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        "sourceType" VARCHAR NOT NULL,
+        "sourceId" VARCHAR NOT NULL,
+        subject TEXT,
+        sender TEXT,
+        snippet TEXT,
+        "jarvisReason" TEXT,
+        "suggestedActions" JSONB NOT NULL DEFAULT '[]'::jsonb,
+        "matchedRuleId" VARCHAR,
+        status VARCHAR NOT NULL DEFAULT 'pending',
+        "actedAt" TIMESTAMP,
+        "dismissCount" VARCHAR NOT NULL DEFAULT '0',
+        "createdAt" TIMESTAMP DEFAULT NOW()
+      )
+    `);
+
     console.log("Database tables verified");
   } catch (error) {
     console.error("Failed to ensure database tables exist:", error);
