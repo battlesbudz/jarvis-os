@@ -2,7 +2,8 @@ import type { Express, Request, Response } from "express";
 import { db } from "./db";
 import { eq, and, desc, sql, gte, lte } from "drizzle-orm";
 import * as schema from "@shared/schema";
-import { sendMessage, isTelegramConfigured, getUpdates, downloadTelegramFile, downloadTelegramFileBuffer } from "./integrations/telegram";
+import { sendMessage, sendMessageWithButtons, answerCallbackQuery, isTelegramConfigured, getUpdates, downloadTelegramFile, downloadTelegramFileBuffer } from "./integrations/telegram";
+import { startMomentumSession, handleMomentumDone, hasMomentumSessionToday } from "./momentumCoach";
 import { getRecentEmailCommitments, getEmailsSince, getStarredFollowUpEmails, gmailModifyMessage } from "./integrations/gmail";
 import { getGoogleCalendarEvents } from "./integrations/googleCalendar";
 import { getValidGoogleTokens } from "./userTokenStore";
@@ -691,8 +692,36 @@ Return { "memories": [] } if nothing new was learned. Do NOT repeat or rephrase 
   }
 }
 
+async function handleCallbackQuery(callbackQuery: any): Promise<void> {
+  const queryId = callbackQuery.id;
+  const data: string = callbackQuery.data || "";
+  const chatId = callbackQuery.message?.chat?.id?.toString();
+  if (!chatId) {
+    await answerCallbackQuery(queryId);
+    return;
+  }
+
+  if (data.startsWith("momentum_done:")) {
+    const parts = data.split(":");
+    const userId = parts[1];
+    const stepIndex = parseInt(parts[2] || "0", 10);
+    await answerCallbackQuery(queryId, "Got it! +XP incoming...");
+    await handleMomentumDone(userId, chatId, stepIndex);
+    return;
+  }
+
+  await answerCallbackQuery(queryId);
+}
+
 async function processUpdate(update: any): Promise<void> {
   try {
+    if (update.callback_query) {
+      await handleCallbackQuery(update.callback_query).catch(err =>
+        console.error("[Telegram] callback_query error:", err)
+      );
+      return;
+    }
+
     if (update.my_chat_member) {
       const chatMember = update.my_chat_member;
       const chat = chatMember.chat;
@@ -1367,22 +1396,161 @@ Write a sharp weekly summary (3-4 sentences). What's the trend? What needs focus
   }
 }
 
+interface ScheduleEntry {
+  type: string;
+  hour: number;
+  minute: number;
+  dayOfWeek?: number;
+}
+
+const PROACTIVE_SCHEDULE: ScheduleEntry[] = [
+  { type: 'morning', hour: 8, minute: 0 },
+  { type: 'commitment_check', hour: 10, minute: 0 },
+  { type: 'followup_check', hour: 12, minute: 0 },
+  { type: 'momentum_nudge', hour: 14, minute: 0 },
+  { type: 'evening', hour: 20, minute: 0 },
+  { type: 'weekly_planning', dayOfWeek: 0, hour: 19, minute: 0 },
+];
+
+async function hasAlreadySent(userId: string, messageType: string, dateKey: string): Promise<boolean> {
+  try {
+    const rows = await db.select({ id: schema.proactiveScheduleLog.id })
+      .from(schema.proactiveScheduleLog)
+      .where(
+        and(
+          eq(schema.proactiveScheduleLog.userId, userId),
+          eq(schema.proactiveScheduleLog.messageType, messageType),
+          eq(schema.proactiveScheduleLog.sentDate, dateKey)
+        )
+      )
+      .limit(1);
+    return rows.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+async function markAsSent(userId: string, messageType: string, dateKey: string): Promise<void> {
+  try {
+    await db.insert(schema.proactiveScheduleLog).values({ userId, messageType, sentDate: dateKey }).catch(() => {});
+  } catch {}
+}
+
+async function sendScheduledMessage(
+  link: { userId: string; chatId: string },
+  schedule: ScheduleEntry,
+  dateKey: string,
+  timezone: string
+): Promise<void> {
+  if (schedule.type === 'followup_check') {
+    const tokens = await getValidGoogleTokens(link.userId).catch(() => []);
+    if (!tokens || tokens.length === 0) return;
+    const token = tokens[0];
+    const starredEmails = await getStarredFollowUpEmails(token, 3);
+    if (starredEmails.length === 0) return;
+    const emailList = starredEmails.slice(0, 10).map((e) => {
+      const senderName = e.from.replace(/<.*>/, '').trim() || e.from;
+      return `${senderName} (${e.ageDays}d) — "${e.subject}"`;
+    }).join('\n');
+    const msg = `📬 ${starredEmails.length} starred/important email${starredEmails.length === 1 ? '' : 's'} sitting >3 days:\n\n${emailList}\n\nStill relevant? Reply, archive, or unstar anything you've handled.`;
+    console.log(`[Proactive] Sending followup_check to user ${link.userId} (${timezone})`);
+    await sendMessage(link.chatId, msg);
+    return;
+  }
+
+  const [goalsRow, planRow, statsRow] = await Promise.allSettled([
+    db.select().from(schema.goals).where(eq(schema.goals.userId, link.userId)).limit(1),
+    db.select().from(schema.plans).where(and(eq(schema.plans.userId, link.userId), eq(schema.plans.date, dateKey))).limit(1),
+    db.select().from(schema.stats).where(eq(schema.stats.userId, link.userId)).limit(1),
+  ]);
+  const userGoals: any[] = goalsRow.status === 'fulfilled' ? ((goalsRow.value[0]?.data as any[]) || []) : [];
+  const todayPlan: any = planRow.status === 'fulfilled' ? (planRow.value[0]?.data as any) : null;
+  const userStats: any = statsRow.status === 'fulfilled' ? (statsRow.value[0]?.data || {}) : {};
+  const tasks = todayPlan?.tasks || [];
+
+  if (schedule.type === 'momentum_nudge') {
+    const alreadyHasSession = await hasMomentumSessionToday(link.userId, dateKey);
+    if (alreadyHasSession) return;
+    console.log(`[Proactive] Sending momentum_nudge to user ${link.userId} (${timezone})`);
+    await startMomentumSession(link.userId, link.chatId, {
+      tasks,
+      goals: userGoals,
+      stats: userStats,
+      dateKey,
+    });
+    return;
+  }
+
+  const commitments = await getCommitmentsForUser(link.userId);
+  const message = await generateProactiveMessage(schedule.type, {
+    tasks,
+    goals: userGoals,
+    commitments,
+    stats: userStats,
+    dateKey,
+    userId: link.userId,
+  });
+
+  if (message) {
+    console.log(`[Proactive] Sending ${schedule.type} to user ${link.userId} (${timezone})`);
+    await sendMessage(link.chatId, message);
+  }
+}
+
+export async function runProactiveStartupCatchup(): Promise<void> {
+  if (!isTelegramConfigured()) return;
+  try {
+    const links = await db.select().from(schema.telegramLinks);
+    if (links.length === 0) return;
+
+    const allPrefs = await db.select().from(schema.userPreferences);
+    const prefsMap: Record<string, any> = {};
+    for (const p of allPrefs) prefsMap[p.userId] = (p.data as any) || {};
+
+    const now = new Date();
+
+    for (const link of links) {
+      const timezone = prefsMap[link.userId]?.timezone || 'America/New_York';
+      const localDate = new Date(now.toLocaleString('en-US', { timeZone: timezone }));
+      const localHour = localDate.getHours();
+      const localDay = localDate.getDay();
+      const yr = localDate.getFullYear();
+      const mo = String(localDate.getMonth() + 1).padStart(2, '0');
+      const dy = String(localDate.getDate()).padStart(2, '0');
+      const dateKey = `${yr}-${mo}-${dy}`;
+
+      for (const schedule of PROACTIVE_SCHEDULE) {
+        if (schedule.type === 'weekly_planning' && localDay !== (schedule.dayOfWeek ?? -1)) continue;
+        if (schedule.type === 'momentum_nudge') continue;
+
+        const scheduleMinutesFromMidnight = schedule.hour * 60 + schedule.minute;
+        const currentMinutesFromMidnight = localHour * 60 + localDate.getMinutes();
+        const minutesSinceScheduled = currentMinutesFromMidnight - scheduleMinutesFromMidnight;
+
+        if (minutesSinceScheduled < 0 || minutesSinceScheduled > 120) continue;
+
+        const alreadySent = await hasAlreadySent(link.userId, schedule.type, dateKey);
+        if (alreadySent) continue;
+
+        console.log(`[Proactive] Catchup: sending missed ${schedule.type} to user ${link.userId}`);
+        try {
+          await markAsSent(link.userId, schedule.type, dateKey);
+          await sendScheduledMessage(link, schedule, dateKey, timezone);
+        } catch (err) {
+          console.error(`[Proactive] Catchup error for ${link.userId}:`, err);
+        }
+      }
+    }
+  } catch (err) {
+    console.error('[Proactive] Startup catchup error:', err);
+  }
+}
+
 export async function startProactiveScheduler(): Promise<void> {
   if (!isTelegramConfigured()) return;
 
-  const SCHEDULE = [
-    { type: 'morning', hour: 8, minute: 0 },
-    { type: 'commitment_check', hour: 10, minute: 0 },
-    { type: 'followup_check', hour: 12, minute: 0 },
-    { type: 'evening', hour: 20, minute: 0 },
-    { type: 'weekly_planning', dayOfWeek: 0, hour: 19, minute: 0 },
-  ];
-
-  const lastSent: Record<string, string> = {};
-
   setInterval(async () => {
     const now = new Date();
-
     try {
       const links = await db.select().from(schema.telegramLinks);
       if (links.length === 0) return;
@@ -1393,7 +1561,6 @@ export async function startProactiveScheduler(): Promise<void> {
 
       for (const link of links) {
         const timezone = prefsMap[link.userId]?.timezone || 'America/New_York';
-
         const localDate = new Date(now.toLocaleString('en-US', { timeZone: timezone }));
         const localHour = localDate.getHours();
         const localMinute = localDate.getMinutes();
@@ -1403,64 +1570,16 @@ export async function startProactiveScheduler(): Promise<void> {
         const dy = String(localDate.getDate()).padStart(2, '0');
         const dateKey = `${yr}-${mo}-${dy}`;
 
-        for (const schedule of SCHEDULE) {
+        for (const schedule of PROACTIVE_SCHEDULE) {
           if (localHour !== schedule.hour || localMinute !== schedule.minute) continue;
-          if (schedule.type === 'weekly_planning' && localDay !== schedule.dayOfWeek) continue;
+          if (schedule.type === 'weekly_planning' && localDay !== (schedule.dayOfWeek ?? -1)) continue;
 
-          const sentKey = `${link.userId}-${schedule.type}-${dateKey}`;
-          if (lastSent[sentKey]) continue;
-          lastSent[sentKey] = dateKey;
+          const alreadySent = await hasAlreadySent(link.userId, schedule.type, dateKey);
+          if (alreadySent) continue;
 
           try {
-            if (schedule.type === 'followup_check') {
-              const tokens = await getValidGoogleTokens(link.userId).catch(() => []);
-              if (!tokens || tokens.length === 0) continue;
-              const token = tokens[0];
-
-              const starredEmails = await getStarredFollowUpEmails(token, 3);
-              if (starredEmails.length === 0) continue;
-
-              const emailList = starredEmails.slice(0, 10).map((e) => {
-                const senderName = e.from.replace(/<.*>/, '').trim() || e.from;
-                return `${senderName} (${e.ageDays}d) — "${e.subject}"`;
-              }).join('\n');
-
-              const msg = `📬 ${starredEmails.length} starred/important email${starredEmails.length === 1 ? '' : 's'} sitting >3 days:\n\n${emailList}\n\nStill relevant? Reply, archive, or unstar anything you've handled.`;
-              console.log(`[Proactive] Sending followup_check to user ${link.userId} (${timezone})`);
-              await sendMessage(link.chatId, msg);
-              continue;
-            }
-
-            let userGoals: any[] = [];
-            let todayPlan: any = null;
-            let userStats: any = {};
-            let commitments: any[] = [];
-
-            const [goalsRow, planRow, statsRow] = await Promise.allSettled([
-              db.select().from(schema.goals).where(eq(schema.goals.userId, link.userId)).limit(1),
-              db.select().from(schema.plans).where(and(eq(schema.plans.userId, link.userId), eq(schema.plans.date, dateKey))).limit(1),
-              db.select().from(schema.stats).where(eq(schema.stats.userId, link.userId)).limit(1),
-            ]);
-            if (goalsRow.status === 'fulfilled') userGoals = (goalsRow.value[0]?.data as any[]) || [];
-            if (planRow.status === 'fulfilled') todayPlan = planRow.value[0]?.data as any;
-            if (statsRow.status === 'fulfilled') userStats = statsRow.value[0]?.data || {};
-            commitments = await getCommitmentsForUser(link.userId);
-
-            const tasks = todayPlan?.tasks || [];
-
-            const message = await generateProactiveMessage(schedule.type, {
-              tasks,
-              goals: userGoals,
-              commitments,
-              stats: userStats,
-              dateKey,
-              userId: link.userId,
-            });
-
-            if (message) {
-              console.log(`[Proactive] Sending ${schedule.type} to user ${link.userId} (${timezone})`);
-              await sendMessage(link.chatId, message);
-            }
+            await markAsSent(link.userId, schedule.type, dateKey);
+            await sendScheduledMessage(link, schedule, dateKey, timezone);
           } catch (err) {
             console.error(`[Proactive] Error for user ${link.userId}:`, err);
           }

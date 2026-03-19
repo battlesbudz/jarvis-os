@@ -2,7 +2,7 @@ import express from "express";
 import type { Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { ensureTablesExist } from "./db";
-import { registerTelegramWebhook, startProactiveScheduler, startTelegramPolling, startEmailAlertScanner, startMeetingBriefScanner } from "./telegramRoutes";
+import { registerTelegramWebhook, startProactiveScheduler, startTelegramPolling, startEmailAlertScanner, startMeetingBriefScanner, runProactiveStartupCatchup } from "./telegramRoutes";
 import { startCuriosityScanner } from "./curiosityScanner";
 import { isTelegramConfigured, logTelegramStatus, setWebhook } from "./integrations/telegram";
 import { startScheduler } from "./scheduler";
@@ -282,6 +282,9 @@ function setupErrorHandler(app: express.Application) {
 
         startProactiveScheduler().catch(err => {
           console.error("Failed to start proactive scheduler:", err);
+        });
+        runProactiveStartupCatchup().catch(err => {
+          console.error("Failed to run proactive startup catchup:", err);
         });
         startEmailAlertScanner().catch(err => {
           console.error("Failed to start email alert scanner:", err);

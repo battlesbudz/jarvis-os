@@ -333,6 +333,27 @@ export async function ensureTablesExist() {
       )
     `);
 
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS proactive_schedule_log (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        message_type VARCHAR NOT NULL,
+        sent_date VARCHAR NOT NULL,
+        sent_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS momentum_sessions (
+        user_id VARCHAR PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        current_step INTEGER NOT NULL DEFAULT 0,
+        session_date VARCHAR NOT NULL DEFAULT '',
+        completed_steps INTEGER NOT NULL DEFAULT 0,
+        steps JSONB NOT NULL DEFAULT '[]'::jsonb,
+        last_step_at TIMESTAMP
+      )
+    `);
+
     console.log("Database tables verified");
   } catch (error) {
     console.error("Failed to ensure database tables exist:", error);
