@@ -389,6 +389,54 @@ export async function ensureTablesExist() {
       END$$
     `);
 
+    await db.execute(sql`
+      DO $$
+      BEGIN
+        IF EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_name = 'website_crawls' AND column_name = 'pageCount'
+        ) THEN
+          ALTER TABLE website_crawls RENAME COLUMN "pageCount" TO page_count;
+        END IF;
+      END$$
+    `);
+
+    await db.execute(sql`
+      DO $$
+      BEGIN
+        IF EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_name = 'website_crawls' AND column_name = 'crawledAt'
+        ) THEN
+          ALTER TABLE website_crawls RENAME COLUMN "crawledAt" TO crawled_at;
+        END IF;
+      END$$
+    `);
+
+    await db.execute(sql`
+      DO $$
+      BEGIN
+        IF EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_name = 'chatgpt_imports' AND column_name = 'importedAt'
+        ) THEN
+          ALTER TABLE chatgpt_imports RENAME COLUMN "importedAt" TO imported_at;
+        END IF;
+      END$$
+    `);
+
+    await db.execute(sql`
+      DO $$
+      BEGIN
+        IF EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_name = 'chatgpt_imports' AND column_name = 'memoriesAdded'
+        ) THEN
+          ALTER TABLE chatgpt_imports RENAME COLUMN "memoriesAdded" TO memories_added;
+        END IF;
+      END$$
+    `);
+
     console.log("Database tables verified");
   } catch (error) {
     console.error("Failed to ensure database tables exist:", error);
