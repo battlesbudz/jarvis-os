@@ -214,6 +214,23 @@ export const chatgptImports = pgTable("chatgpt_imports", {
   memoriesAdded: integer("memories_added").notNull().default(0),
 });
 
+export const proactiveScheduleLog = pgTable("proactive_schedule_log", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  messageType: varchar("message_type").notNull(),
+  sentDate: varchar("sent_date").notNull(),
+  sentAt: timestamp("sent_at").defaultNow(),
+});
+
+export const momentumSessions = pgTable("momentum_sessions", {
+  userId: varchar("user_id").notNull().primaryKey().references(() => users.id),
+  currentStep: integer("current_step").notNull().default(0),
+  sessionDate: varchar("session_date").notNull().default(""),
+  completedSteps: integer("completed_steps").notNull().default(0),
+  steps: jsonb("steps").notNull().default(sql`'[]'::jsonb`),
+  lastStepAt: timestamp("last_step_at"),
+});
+
 export const morningVoiceNotes = pgTable("morning_voice_notes", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id").notNull().references(() => users.id),

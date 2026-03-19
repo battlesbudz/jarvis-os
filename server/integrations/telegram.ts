@@ -42,28 +42,75 @@ export interface TelegramMessage {
   text?: string;
 }
 
+export interface TelegramCallbackQuery {
+  id: string;
+  from: {
+    id: number;
+    first_name: string;
+    username?: string;
+  };
+  message?: TelegramMessage;
+  data?: string;
+}
+
 export interface TelegramUpdate {
   update_id: number;
   message?: TelegramMessage;
+  callback_query?: TelegramCallbackQuery;
   my_chat_member?: {
     chat: { id: number; type: string; title?: string };
     new_chat_member: { status: string };
   };
 }
 
-export async function sendMessage(chatId: string, text: string): Promise<void> {
+export interface InlineKeyboardButton {
+  text: string;
+  callback_data: string;
+}
+
+export interface InlineKeyboardMarkup {
+  inline_keyboard: InlineKeyboardButton[][];
+}
+
+export async function sendMessage(
+  chatId: string,
+  text: string,
+  replyMarkup?: InlineKeyboardMarkup
+): Promise<void> {
   if (!BOT_TOKEN) return;
+  const body: Record<string, unknown> = { chat_id: chatId, text };
+  if (replyMarkup) body.reply_markup = replyMarkup;
   const res = await fetch(`${BASE}/sendMessage`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      chat_id: chatId,
-      text,
-    }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) {
-    const body = await res.text();
-    console.error('Telegram sendMessage error:', body);
+    const errBody = await res.text();
+    console.error('Telegram sendMessage error:', errBody);
+  }
+}
+
+export async function sendMessageWithButtons(
+  chatId: string,
+  text: string,
+  buttons: InlineKeyboardButton[]
+): Promise<void> {
+  return sendMessage(chatId, text, {
+    inline_keyboard: [buttons],
+  });
+}
+
+export async function answerCallbackQuery(callbackQueryId: string, text?: string): Promise<void> {
+  if (!BOT_TOKEN) return;
+  try {
+    await fetch(`${BASE}/answerCallbackQuery`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ callback_query_id: callbackQueryId, text: text || '' }),
+    });
+  } catch {
+    // best-effort
   }
 }
 
@@ -74,7 +121,7 @@ export async function setWebhook(webhookUrl: string): Promise<void> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       url: webhookUrl,
-      allowed_updates: ['message', 'my_chat_member'],
+      allowed_updates: ['message', 'my_chat_member', 'callback_query'],
     }),
   });
   const data = await res.json();
@@ -143,7 +190,9 @@ export async function downloadTelegramFileBuffer(fileId: string): Promise<{ buff
 export async function getUpdates(offset: number): Promise<TelegramUpdate[]> {
   if (!BOT_TOKEN) return [];
   try {
-    const res = await fetch(`${BASE}/getUpdates?offset=${offset}&timeout=5&limit=100`);
+    const res = await fetch(
+      `${BASE}/getUpdates?offset=${offset}&timeout=5&limit=100&allowed_updates=["message","my_chat_member","callback_query"]`
+    );
     if (!res.ok) return [];
     const data = await res.json() as { ok: boolean; result: TelegramUpdate[] };
     return data.ok ? (data.result || []) : [];
