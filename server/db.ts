@@ -279,17 +279,6 @@ export async function ensureTablesExist() {
     await db.execute(sql`ALTER TABLE morning_voice_notes ADD CONSTRAINT morning_voice_notes_user_date_unique UNIQUE (user_id, recorded_at)`).catch(() => {});
 
     await db.execute(sql`
-      CREATE TABLE IF NOT EXISTS website_crawls (
-        "userId" VARCHAR PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-        url TEXT NOT NULL,
-        status VARCHAR NOT NULL DEFAULT 'idle',
-        "pageCount" INTEGER DEFAULT 0,
-        summary TEXT,
-        "crawledAt" TIMESTAMP DEFAULT NOW()
-      )
-    `);
-
-    await db.execute(sql`
       CREATE TABLE IF NOT EXISTS chatgpt_imports (
         "userId" VARCHAR PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
         "importedAt" TIMESTAMP DEFAULT NOW(),
@@ -370,45 +359,9 @@ export async function ensureTablesExist() {
       BEGIN
         IF EXISTS (
           SELECT 1 FROM information_schema.columns
-          WHERE table_name = 'website_crawls' AND column_name = 'userId'
-        ) THEN
-          ALTER TABLE website_crawls RENAME COLUMN "userId" TO user_id;
-        END IF;
-      END$$
-    `);
-
-    await db.execute(sql`
-      DO $$
-      BEGIN
-        IF EXISTS (
-          SELECT 1 FROM information_schema.columns
           WHERE table_name = 'chatgpt_imports' AND column_name = 'userId'
         ) THEN
           ALTER TABLE chatgpt_imports RENAME COLUMN "userId" TO user_id;
-        END IF;
-      END$$
-    `);
-
-    await db.execute(sql`
-      DO $$
-      BEGIN
-        IF EXISTS (
-          SELECT 1 FROM information_schema.columns
-          WHERE table_name = 'website_crawls' AND column_name = 'pageCount'
-        ) THEN
-          ALTER TABLE website_crawls RENAME COLUMN "pageCount" TO page_count;
-        END IF;
-      END$$
-    `);
-
-    await db.execute(sql`
-      DO $$
-      BEGIN
-        IF EXISTS (
-          SELECT 1 FROM information_schema.columns
-          WHERE table_name = 'website_crawls' AND column_name = 'crawledAt'
-        ) THEN
-          ALTER TABLE website_crawls RENAME COLUMN "crawledAt" TO crawled_at;
         END IF;
       END$$
     `);

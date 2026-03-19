@@ -4,7 +4,7 @@ import OpenAI from "openai";
 import { db } from "./db";
 import { eq, and, desc, sql, gte } from "drizzle-orm";
 import * as schema from "@shared/schema";
-import { userMemories, morningVoiceNotes, userPreferences, proactiveQuestionsSent, inboxItems, inboxRules, websiteCrawls, userDocuments } from "@shared/schema";
+import { userMemories, morningVoiceNotes, userPreferences, proactiveQuestionsSent, inboxItems, inboxRules, userDocuments } from "@shared/schema";
 import { processDocument, getUserDocumentContext, SUPPORTED_MIME_TYPES, SUPPORTED_EXTENSIONS, MAX_DOCS_PER_USER } from "./documentProcessor";
 import { resizeTask, generateSmartPlan, unblockTask } from "./ai";
 import {
@@ -28,7 +28,6 @@ import { registerTelegramRoutes } from "./telegramRoutes";
 import { isIntegrationOwner, claimIntegrationOwnership } from "./integrationOwner";
 import { oauthRouter, oauthCallbackRouter } from "./oauthRoutes";
 import { getValidGoogleTokens, getValidMicrosoftToken, getUserTokens, getUserToken } from "./userTokenStore";
-import { startWebsiteCrawl } from "./websiteCrawler";
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
@@ -130,7 +129,7 @@ async function getMorningNoteSummary(userId: string): Promise<string> {
   }
 }
 
-function buildCoachSystemPrompt(goals: any[], stats: any, history: any[], calendarEvents: any[] = [], lifeContext?: any, gmailItems?: any[], gmailConnected?: boolean, slackMessages?: any[], slackConnected?: boolean, commitmentsList?: any[], coachingMode?: string, memories?: { content: string; category: string }[], telegramMessages?: any[], telegramConnected?: boolean, morningNoteSummary?: string, websiteSummary?: string, documentsContext?: string): string {
+function buildCoachSystemPrompt(goals: any[], stats: any, history: any[], calendarEvents: any[] = [], lifeContext?: any, gmailItems?: any[], gmailConnected?: boolean, slackMessages?: any[], slackConnected?: boolean, commitmentsList?: any[], coachingMode?: string, memories?: { content: string; category: string }[], telegramMessages?: any[], telegramConnected?: boolean, morningNoteSummary?: string, documentsContext?: string): string {
   const completedHistory = history.filter((h: any) => h.completed);
   const skippedHistory = history.filter((h: any) => !h.completed);
   const completionRate = history.length > 0
@@ -164,10 +163,6 @@ function buildCoachSystemPrompt(goals: any[], stats: any, history: any[], calend
       (lifeContext.improvementArea ? `- Wants to improve: ${lifeContext.improvementArea}\n` : '') +
       (lifeContext.currentBlocker ? `- Current blocker: ${lifeContext.currentBlocker}\n` : '') +
       (lifeContext.freeText ? `- Additional context: ${lifeContext.freeText}` : '')
-    : '';
-
-  const websiteSection = websiteSummary
-    ? `\n## My Business / Background\n${websiteSummary}`
     : '';
 
   const documentsSection = documentsContext || '';
@@ -266,7 +261,7 @@ ${memoriesSection}
 - Total tasks completed: ${stats.totalCompleted || 0}
 - Total XP earned: ${stats.xp || 0}
 - Task completion rate (last 7 days): ${completionRate}% (${completedHistory.length} completed, ${skippedHistory.length} skipped)
-${strugglingCategories.length > 0 ? `- Struggling most with: ${strugglingCategories.join(', ')}` : ''}${lifeContextSection}${websiteSection}${documentsSection}
+${strugglingCategories.length > 0 ? `- Struggling most with: ${strugglingCategories.join(', ')}` : ''}${lifeContextSection}${documentsSection}
 
 ## Active Goals
 ${goalsText}
@@ -964,28 +959,20 @@ Answer (yes/no):`,
 
       let memories: { content: string; category: string }[] = [];
       let morningNoteSummary = '';
-      let websiteSummary = '';
       let documentsContext = '';
       if (userId) {
         try {
-          const [rows, noteSummary, crawlRows, docsCtx] = await Promise.all([
+          const [rows, noteSummary, docsCtx] = await Promise.all([
             db.select({ content: userMemories.content, category: userMemories.category })
               .from(userMemories)
               .where(eq(userMemories.userId, userId))
               .orderBy(desc(userMemories.extractedAt))
               .limit(50),
             getMorningNoteSummary(userId),
-            db.select({ summary: websiteCrawls.summary, status: websiteCrawls.status })
-              .from(websiteCrawls)
-              .where(eq(websiteCrawls.userId, userId))
-              .limit(1),
             getUserDocumentContext(userId),
           ]);
           memories = rows;
           morningNoteSummary = noteSummary;
-          if (crawlRows[0]?.status === 'done' && crawlRows[0]?.summary) {
-            websiteSummary = crawlRows[0].summary;
-          }
           documentsContext = docsCtx;
         } catch {}
       }
@@ -1012,7 +999,7 @@ Answer (yes/no):`,
         } catch {}
       }
 
-      const systemPrompt = buildCoachSystemPrompt(goals || [], stats || {}, history || [], calendarEvents || [], lifeContext || null, resolvedGmailItems, resolvedGmailConnected, slackMessages || [], slackConnected ?? false, userCommitments, coachingMode, memories, telegramMessages || [], telegramConnected ?? false, morningNoteSummary, websiteSummary, documentsContext);
+      const systemPrompt = buildCoachSystemPrompt(goals || [], stats || {}, history || [], calendarEvents || [], lifeContext || null, resolvedGmailItems, resolvedGmailConnected, slackMessages || [], slackConnected ?? false, userCommitments, coachingMode, memories, telegramMessages || [], telegramConnected ?? false, morningNoteSummary, documentsContext);
 
       const chatMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
         { role: "system", content: systemPrompt + proactiveQuestionContext + "\n\nYou can take actions on the user's behalf using the available tools. When a user asks you to add a task, log progress, update their context, etc., use the appropriate tool. Respond naturally — do not mention 'tool calls' or 'functions' to the user. Just confirm what you did conversationally." },
@@ -2364,50 +2351,6 @@ Return ONLY the JSON object.`;
     } catch (error) {
       console.error("Error updating inbox rule:", error);
       res.status(500).json({ error: "Failed to update rule" });
-    }
-  });
-
-  app.post("/api/website-crawl", async (req: Request, res: Response) => {
-    try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const { url } = req.body;
-      if (!url || typeof url !== "string" || url.trim().length === 0) {
-        return res.status(400).json({ error: "url is required" });
-      }
-      await startWebsiteCrawl(userId, url);
-      const rows = await db.select().from(websiteCrawls).where(eq(websiteCrawls.userId, userId)).limit(1);
-      res.json(rows[0] || { status: "crawling" });
-    } catch (error) {
-      console.error("Error starting website crawl:", error);
-      res.status(500).json({ error: "Failed to start crawl" });
-    }
-  });
-
-  app.get("/api/website-crawl", async (req: Request, res: Response) => {
-    try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const rows = await db.select().from(websiteCrawls).where(eq(websiteCrawls.userId, userId)).limit(1);
-      if (rows.length === 0) {
-        return res.json({ status: "none" });
-      }
-      res.json(rows[0]);
-    } catch (error) {
-      console.error("Error fetching website crawl:", error);
-      res.status(500).json({ error: "Failed to fetch crawl status" });
-    }
-  });
-
-  app.delete("/api/website-crawl", async (req: Request, res: Response) => {
-    try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      await db.delete(websiteCrawls).where(eq(websiteCrawls.userId, userId));
-      res.json({ success: true });
-    } catch (error) {
-      console.error("Error deleting website crawl:", error);
-      res.status(500).json({ error: "Failed to delete crawl" });
     }
   });
 

@@ -199,15 +199,6 @@ export const mobileAuthSessions = pgTable("mobile_auth_sessions", {
   expiresAt: timestamp("expires_at").notNull(),
 });
 
-export const websiteCrawls = pgTable("website_crawls", {
-  userId: varchar("user_id").notNull().primaryKey().references(() => users.id),
-  url: text("url").notNull(),
-  status: varchar("status").notNull().default("idle"),
-  pageCount: integer("page_count").default(0),
-  summary: text("summary"),
-  crawledAt: timestamp("crawled_at"),
-});
-
 export const userDocuments = pgTable("user_documents", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id").notNull().references(() => users.id),
@@ -219,6 +210,7 @@ export const userDocuments = pgTable("user_documents", {
   summary: text("summary"),
   uploadedAt: timestamp("uploaded_at").defaultNow().notNull(),
 });
+
 
 export const chatgptImports = pgTable("chatgpt_imports", {
   userId: varchar("user_id").notNull().primaryKey().references(() => users.id),
