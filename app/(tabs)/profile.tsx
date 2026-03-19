@@ -17,8 +17,6 @@ import Animated, { FadeInDown } from 'react-native-reanimated';
 import { useFocusEffect, useRouter } from 'expo-router';
 import Colors from '@/constants/colors';
 import * as Haptics from 'expo-haptics';
-import * as DocumentPicker from 'expo-document-picker';
-import * as FileSystem from 'expo-file-system';
 import {
   getStats,
   claimReward,
@@ -558,6 +556,7 @@ export default function ProfileScreen() {
 
   const handleUploadDocument = useCallback(async () => {
     try {
+      const DocumentPicker = await import('expo-document-picker');
       const result = await DocumentPicker.getDocumentAsync({
         type: SUPPORTED_DOC_TYPES,
         copyToCacheDirectory: true,
@@ -583,6 +582,7 @@ export default function ProfileScreen() {
           reader.readAsDataURL(blob);
         });
       } else {
+        const FileSystem = await import('expo-file-system/legacy');
         base64 = await FileSystem.readAsStringAsync(asset.uri, {
           encoding: FileSystem.EncodingType.Base64,
         });
