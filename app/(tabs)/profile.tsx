@@ -9,7 +9,6 @@ import {
   ActivityIndicator,
   Modal,
   FlatList,
-  TextInput,
   Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -47,15 +46,6 @@ import { useAuth, authFetch } from '@/lib/auth-context';
 import * as WebBrowser from 'expo-web-browser';
 import RewardClaimModal from '@/components/RewardClaimModal';
 import LifeContextSheet from '@/components/LifeContextSheet';
-
-interface WebsiteCrawl {
-  userId?: string;
-  url: string;
-  status: string;
-  pageCount?: number;
-  summary?: string | null;
-  crawledAt?: string | null;
-}
 
 interface UserDocument {
   id: string;
@@ -225,10 +215,6 @@ export default function ProfileScreen() {
   const [timezone, setTimezone] = useState('America/New_York');
   const [showTimezoneModal, setShowTimezoneModal] = useState(false);
   const [emailAlertsEnabled, setEmailAlertsEnabled] = useState(true);
-  const [websiteCrawl, setWebsiteCrawl] = useState<WebsiteCrawl | null>(null);
-  const [websiteUrl, setWebsiteUrl] = useState('');
-  const [websiteCrawling, setWebsiteCrawling] = useState(false);
-  const websitePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [chatgptImportStatus, setChatgptImportStatus] = useState<{
     imported: boolean;
     importedAt?: string;
@@ -307,51 +293,6 @@ export default function ProfileScreen() {
     setMorningNotesLoading(false);
   }, []);
 
-  const startWebsitePollFn = useCallback(() => {
-    if (websitePollRef.current) clearInterval(websitePollRef.current);
-    const poll = setInterval(async () => {
-      try {
-        const res = await apiRequest('GET', '/api/website-crawl');
-        const data = await res.json();
-        if (data.status !== 'crawling') {
-          setWebsiteCrawl(data);
-          setWebsiteCrawling(false);
-          if (websitePollRef.current) {
-            clearInterval(websitePollRef.current);
-            websitePollRef.current = null;
-          }
-          if (data.status === 'done') {
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-          }
-        }
-      } catch {}
-    }, 3000);
-    websitePollRef.current = poll;
-  }, []);
-
-  const loadWebsiteCrawl = useCallback(async () => {
-    try {
-      const res = await apiRequest('GET', '/api/website-crawl');
-      const data = await res.json();
-      if (data.status === 'none') {
-        setWebsiteCrawl(null);
-        setWebsiteUrl('');
-        setWebsiteCrawling(false);
-      } else {
-        setWebsiteCrawl(data);
-        setWebsiteUrl(data.url || '');
-        if (data.status === 'crawling') {
-          setWebsiteCrawling(true);
-          startWebsitePollFn();
-        } else {
-          setWebsiteCrawling(false);
-        }
-      }
-    } catch {
-      setWebsiteCrawl(null);
-    }
-  }, [startWebsitePollFn]);
-
   const loadAll = useCallback(async () => {
     const [s, lc, notifications, name] = await Promise.all([
       getStats(),
@@ -363,7 +304,7 @@ export default function ProfileScreen() {
     setLifeContext(lc);
     setNotificationsEnabledState(notifications);
     setUserName(name);
-    await Promise.all([loadOAuthStatus(), loadMemories(), loadTelegramStatus(), loadMorningNotes(), loadWebsiteCrawl(), loadDocuments()]);
+    await Promise.all([loadOAuthStatus(), loadMemories(), loadTelegramStatus(), loadMorningNotes(), loadDocuments()]);
     try {
       const importRes = await apiRequest('GET', '/api/chatgpt-import/status');
       const importData = await importRes.json();
@@ -375,7 +316,7 @@ export default function ProfileScreen() {
       if (prefs.timezone) setTimezone(prefs.timezone);
       if (typeof prefs.emailAlertsEnabled === 'boolean') setEmailAlertsEnabled(prefs.emailAlertsEnabled);
     } catch {}
-  }, [loadOAuthStatus, loadMemories, loadTelegramStatus, loadMorningNotes, loadWebsiteCrawl, loadDocuments]);
+  }, [loadOAuthStatus, loadMemories, loadTelegramStatus, loadMorningNotes, loadDocuments]);
 
   const handleToggleEmailAlerts = useCallback(async () => {
     const newValue = !emailAlertsEnabled;
@@ -573,47 +514,6 @@ export default function ProfileScreen() {
     } finally {
       setConnectingId(null);
     }
-  }, []);
-
-  const handleStartCrawl = useCallback(async () => {
-    const url = websiteUrl.trim();
-    if (!url) return;
-    setWebsiteCrawling(true);
-    try {
-      const res = await apiRequest('POST', '/api/website-crawl', { url });
-      const data = await res.json();
-      setWebsiteCrawl(data);
-      if (data.status === 'crawling') {
-        startWebsitePollFn();
-      } else {
-        setWebsiteCrawling(false);
-      }
-    } catch {
-      setWebsiteCrawling(false);
-    }
-  }, [websiteUrl, startWebsitePollFn]);
-
-  const handleRemoveCrawl = useCallback(async () => {
-    try {
-      await apiRequest('DELETE', '/api/website-crawl');
-      setWebsiteCrawl(null);
-      setWebsiteUrl('');
-      setWebsiteCrawling(false);
-      if (websitePollRef.current) {
-        clearInterval(websitePollRef.current);
-        websitePollRef.current = null;
-      }
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    } catch {}
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      if (websitePollRef.current) {
-        clearInterval(websitePollRef.current);
-        websitePollRef.current = null;
-      }
-    };
   }, []);
 
   const loadDocuments = useCallback(async () => {
@@ -1421,137 +1321,6 @@ export default function ProfileScreen() {
               </Pressable>
             </View>
           )}
-
-          <View style={[styles.platformsList, { marginTop: 12 }]}>
-            <View style={styles.platformRow}>
-              <View style={[styles.platformIcon, { backgroundColor: '#6366F118' }]}>
-                <Ionicons name="globe-outline" size={20} color="#6366F1" />
-              </View>
-              <View style={styles.platformInfo}>
-                <Text style={styles.platformName}>My Website</Text>
-                <Text style={styles.platformSubtitle}>Teach Jarvis about your business</Text>
-              </View>
-              {websiteCrawl?.status === 'done' ? (
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                  <Ionicons name="checkmark-circle" size={18} color={Colors.success} />
-                  <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: Colors.success }}>
-                    {websiteCrawl.pageCount} pages
-                  </Text>
-                </View>
-              ) : websiteCrawl?.status === 'crawling' || websiteCrawling ? (
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                  <ActivityIndicator size="small" color="#6366F1" />
-                  <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: '#6366F1' }}>Crawling</Text>
-                </View>
-              ) : websiteCrawl?.status === 'error' ? (
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                  <Ionicons name="alert-circle" size={18} color="#EF4444" />
-                  <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: '#EF4444' }}>Error</Text>
-                </View>
-              ) : (
-                <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: Colors.textTertiary }}>Not connected</Text>
-              )}
-            </View>
-
-            <View style={{ paddingHorizontal: 16, paddingBottom: 14 }}>
-              {websiteCrawl?.status === 'done' ? (
-                <View>
-                  <Text style={{ fontSize: 12, fontFamily: 'Inter_500Medium', color: Colors.textSecondary, marginBottom: 4 }}>
-                    {websiteCrawl.url}
-                  </Text>
-                  {websiteCrawl.summary ? (
-                    <Text
-                      style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: Colors.textTertiary, lineHeight: 17, marginBottom: 10 }}
-                      numberOfLines={4}
-                    >
-                      {websiteCrawl.summary}
-                    </Text>
-                  ) : null}
-                  <View style={{ flexDirection: 'row', gap: 10 }}>
-                    <Pressable
-                      style={{ paddingVertical: 6, paddingHorizontal: 14, backgroundColor: '#6366F110', borderRadius: 8 }}
-                      onPress={handleStartCrawl}
-                      disabled={websiteCrawling}
-                    >
-                      <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: '#6366F1' }}>Re-crawl</Text>
-                    </Pressable>
-                    <Pressable
-                      style={{ paddingVertical: 6, paddingHorizontal: 14, backgroundColor: '#FEE2E2', borderRadius: 8 }}
-                      onPress={handleRemoveCrawl}
-                    >
-                      <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: '#DC2626' }}>Remove</Text>
-                    </Pressable>
-                  </View>
-                </View>
-              ) : websiteCrawl?.status === 'error' ? (
-                <View>
-                  <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: '#EF4444', marginBottom: 8 }}>
-                    {websiteCrawl.summary || 'Crawl failed. Please check the URL and try again.'}
-                  </Text>
-                  <View style={{ flexDirection: 'row', gap: 10 }}>
-                    <Pressable
-                      style={{ paddingVertical: 6, paddingHorizontal: 14, backgroundColor: '#6366F110', borderRadius: 8 }}
-                      onPress={handleStartCrawl}
-                      disabled={websiteCrawling || !websiteUrl.trim()}
-                    >
-                      <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: '#6366F1' }}>Retry</Text>
-                    </Pressable>
-                    <Pressable
-                      style={{ paddingVertical: 6, paddingHorizontal: 14, backgroundColor: '#FEE2E2', borderRadius: 8 }}
-                      onPress={handleRemoveCrawl}
-                    >
-                      <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: '#DC2626' }}>Remove</Text>
-                    </Pressable>
-                  </View>
-                </View>
-              ) : (
-                <View>
-                  <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
-                    <TextInput
-                      style={{
-                        flex: 1,
-                        height: 38,
-                        borderWidth: 1,
-                        borderColor: Colors.border,
-                        borderRadius: 10,
-                        paddingHorizontal: 12,
-                        fontSize: 13,
-                        fontFamily: 'Inter_400Regular',
-                        color: Colors.text,
-                        backgroundColor: '#F8FAFC',
-                      }}
-                      placeholder="yourwebsite.com"
-                      placeholderTextColor={Colors.textTertiary}
-                      value={websiteUrl}
-                      onChangeText={setWebsiteUrl}
-                      autoCapitalize="none"
-                      autoCorrect={false}
-                      keyboardType="url"
-                      editable={!websiteCrawling}
-                    />
-                    <Pressable
-                      style={{
-                        height: 38,
-                        paddingHorizontal: 16,
-                        backgroundColor: websiteCrawling || !websiteUrl.trim() ? '#E2E8F0' : '#6366F1',
-                        borderRadius: 10,
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                      }}
-                      onPress={handleStartCrawl}
-                      disabled={websiteCrawling || !websiteUrl.trim()}
-                    >
-                      {websiteCrawling ? (
-                        <ActivityIndicator size="small" color="#fff" />
-                      ) : (
-                        <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: '#fff' }}>Crawl</Text>
-                      )}
-                    </Pressable>
-                  </View>
-                </View>
-              )}
-            </View>
-          </View>
 
           <Text style={styles.connectionHint}>
             Your data stays private — each account connects independently.
