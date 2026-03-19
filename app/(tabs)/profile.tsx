@@ -291,6 +291,122 @@ export default function ProfileScreen() {
     setMorningNotesLoading(false);
   }, []);
 
+  const loadDocuments = useCallback(async () => {
+    setDocumentsLoading(true);
+    try {
+      const res = await apiRequest('GET', '/api/documents');
+      const data = await res.json();
+      setDocuments(data.documents || []);
+    } catch {
+      setDocuments([]);
+    } finally {
+      setDocumentsLoading(false);
+    }
+  }, []);
+
+  const startDocumentPoll = useCallback(() => {
+    if (documentPollRef.current) clearInterval(documentPollRef.current);
+    const poll = setInterval(async () => {
+      try {
+        const res = await apiRequest('GET', '/api/documents');
+        const data = await res.json();
+        const docs: UserDocument[] = data.documents || [];
+        setDocuments(docs);
+        const stillProcessing = docs.some((d) => d.status === 'processing');
+        if (!stillProcessing) {
+          clearInterval(documentPollRef.current!);
+          documentPollRef.current = null;
+        }
+      } catch {}
+    }, 3000);
+    documentPollRef.current = poll;
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (documentPollRef.current) {
+        clearInterval(documentPollRef.current);
+        documentPollRef.current = null;
+      }
+    };
+  }, []);
+
+  const handleUploadDocument = useCallback(async () => {
+    try {
+      const DocumentPicker = await import('expo-document-picker');
+      const result = await DocumentPicker.getDocumentAsync({
+        type: SUPPORTED_DOC_TYPES,
+        copyToCacheDirectory: true,
+      });
+      if (result.canceled || !result.assets?.length) return;
+      const asset = result.assets[0];
+      if (!asset.uri) return;
+
+      setDocumentUploading(true);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+
+      let base64: string;
+      if (Platform.OS === 'web') {
+        const response = await fetch(asset.uri);
+        const blob = await response.blob();
+        base64 = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => {
+            const result = reader.result as string;
+            resolve(result.split(',')[1]);
+          };
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        });
+      } else {
+        const FileSystem = await import('expo-file-system/legacy');
+        base64 = await FileSystem.readAsStringAsync(asset.uri, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+      }
+
+      const mimeType = asset.mimeType || 'application/octet-stream';
+      const res = await apiRequest('POST', '/api/documents', {
+        name: asset.name,
+        mimeType,
+        data: base64,
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        Alert.alert('Upload failed', err.error || 'Could not upload document.');
+        return;
+      }
+
+      await loadDocuments();
+      startDocumentPoll();
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (e: any) {
+      Alert.alert('Upload failed', 'Could not read or upload the file. Please try again.');
+    } finally {
+      setDocumentUploading(false);
+    }
+  }, [loadDocuments, startDocumentPoll]);
+
+  const handleDeleteDocument = useCallback(async (id: string, name: string) => {
+    Alert.alert('Remove document', `Remove "${name}" from Jarvis's knowledge base?`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Remove',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await apiRequest('DELETE', `/api/documents/${id}`);
+            setDocuments((prev) => prev.filter((d) => d.id !== id));
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          } catch {
+            Alert.alert('Error', 'Could not delete document.');
+          }
+        },
+      },
+    ]);
+  }, []);
+
   const loadAll = useCallback(async () => {
     const [s, lc, notifications, name] = await Promise.all([
       getStats(),
@@ -512,122 +628,6 @@ export default function ProfileScreen() {
     } finally {
       setConnectingId(null);
     }
-  }, []);
-
-  const loadDocuments = useCallback(async () => {
-    setDocumentsLoading(true);
-    try {
-      const res = await apiRequest('GET', '/api/documents');
-      const data = await res.json();
-      setDocuments(data.documents || []);
-    } catch {
-      setDocuments([]);
-    } finally {
-      setDocumentsLoading(false);
-    }
-  }, []);
-
-  const startDocumentPoll = useCallback(() => {
-    if (documentPollRef.current) clearInterval(documentPollRef.current);
-    const poll = setInterval(async () => {
-      try {
-        const res = await apiRequest('GET', '/api/documents');
-        const data = await res.json();
-        const docs: UserDocument[] = data.documents || [];
-        setDocuments(docs);
-        const stillProcessing = docs.some((d) => d.status === 'processing');
-        if (!stillProcessing) {
-          clearInterval(documentPollRef.current!);
-          documentPollRef.current = null;
-        }
-      } catch {}
-    }, 3000);
-    documentPollRef.current = poll;
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      if (documentPollRef.current) {
-        clearInterval(documentPollRef.current);
-        documentPollRef.current = null;
-      }
-    };
-  }, []);
-
-  const handleUploadDocument = useCallback(async () => {
-    try {
-      const DocumentPicker = await import('expo-document-picker');
-      const result = await DocumentPicker.getDocumentAsync({
-        type: SUPPORTED_DOC_TYPES,
-        copyToCacheDirectory: true,
-      });
-      if (result.canceled || !result.assets?.length) return;
-      const asset = result.assets[0];
-      if (!asset.uri) return;
-
-      setDocumentUploading(true);
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-
-      let base64: string;
-      if (Platform.OS === 'web') {
-        const response = await fetch(asset.uri);
-        const blob = await response.blob();
-        base64 = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => {
-            const result = reader.result as string;
-            resolve(result.split(',')[1]);
-          };
-          reader.onerror = reject;
-          reader.readAsDataURL(blob);
-        });
-      } else {
-        const FileSystem = await import('expo-file-system/legacy');
-        base64 = await FileSystem.readAsStringAsync(asset.uri, {
-          encoding: FileSystem.EncodingType.Base64,
-        });
-      }
-
-      const mimeType = asset.mimeType || 'application/octet-stream';
-      const res = await apiRequest('POST', '/api/documents', {
-        name: asset.name,
-        mimeType,
-        data: base64,
-      });
-
-      if (!res.ok) {
-        const err = await res.json();
-        Alert.alert('Upload failed', err.error || 'Could not upload document.');
-        return;
-      }
-
-      await loadDocuments();
-      startDocumentPoll();
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    } catch (e: any) {
-      Alert.alert('Upload failed', 'Could not read or upload the file. Please try again.');
-    } finally {
-      setDocumentUploading(false);
-    }
-  }, [loadDocuments, startDocumentPoll]);
-
-  const handleDeleteDocument = useCallback(async (id: string, name: string) => {
-    Alert.alert('Remove document', `Remove "${name}" from Jarvis's knowledge base?`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Remove',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            await apiRequest('DELETE', `/api/documents/${id}`);
-            setDocuments((prev) => prev.filter((d) => d.id !== id));
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-          } catch {
-            Alert.alert('Error', 'Could not delete document.');
-          }
-        },
-      },
-    ]);
   }, []);
 
   const handleConnect = useCallback(async (provider: 'google' | 'microsoft' | 'slack') => {
