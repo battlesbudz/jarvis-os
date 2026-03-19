@@ -208,6 +208,18 @@ export const websiteCrawls = pgTable("website_crawls", {
   crawledAt: timestamp("crawled_at"),
 });
 
+export const userDocuments = pgTable("user_documents", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  name: text("name").notNull(),
+  mimeType: varchar("mime_type").notNull(),
+  sizeBytes: integer("size_bytes").notNull().default(0),
+  status: varchar("status").notNull().default("processing"),
+  extractedText: text("extracted_text"),
+  summary: text("summary"),
+  uploadedAt: timestamp("uploaded_at").defaultNow().notNull(),
+});
+
 export const chatgptImports = pgTable("chatgpt_imports", {
   userId: varchar("user_id").notNull().primaryKey().references(() => users.id),
   importedAt: timestamp("imported_at").defaultNow().notNull(),
