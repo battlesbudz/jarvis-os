@@ -1,6 +1,11 @@
 // Outlook integration — uses per-user OAuth token when available, falls back to Replit connector
 import { Client } from '@microsoft/microsoft-graph-client';
 
+function ensureUtc(dateTime: string): string {
+  if (/Z$|[+-]\d{2}:\d{2}$/.test(dateTime)) return dateTime;
+  return dateTime + 'Z';
+}
+
 async function getProjectAccessToken(): Promise<string> {
   const hostname = process.env.REPLIT_CONNECTORS_HOSTNAME;
   const xReplitToken = process.env.REPL_IDENTITY
@@ -69,8 +74,8 @@ export async function getOutlookCalendarEvents(
   return items.map((e) => ({
     id: e.id || String(Math.random()),
     title: e.subject || 'Event',
-    start: e.start?.dateTime || date,
-    end: e.end?.dateTime || date,
+    start: e.start?.dateTime ? ensureUtc(e.start.dateTime) : date,
+    end: e.end?.dateTime ? ensureUtc(e.end.dateTime) : date,
     description: e.body?.content
       ? e.body.content.replace(/<[^>]+>/g, '').trim().slice(0, 120)
       : undefined,
