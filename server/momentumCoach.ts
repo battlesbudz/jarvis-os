@@ -1,6 +1,7 @@
 import { db } from "./db";
 import * as schema from "@shared/schema";
-import { eq, and } from "drizzle-orm";
+import type { MomentumStepData } from "@shared/schema";
+import { eq, and, lt } from "drizzle-orm";
 import OpenAI from "openai";
 import { sendMessageWithButtons, sendMessage } from "./integrations/telegram";
 
@@ -9,24 +10,29 @@ const openai = new OpenAI({
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
 });
 
-export interface MomentumStep {
-  text: string;
-  tactic: string;
-  xp: number;
-}
+const SESSION_TIMEOUT_MS = 30 * 60 * 1000;
+const STEP_DELAY_MS = 3 * 60 * 1000;
 
 export async function generateMomentumSteps(
-  userId: string,
+  _userId: string,
   context: {
     tasks: any[];
     goals: any[];
     stats: any;
     dateKey: string;
   }
-): Promise<MomentumStep[]> {
+): Promise<MomentumStepData[]> {
   const incompleteTasks = (context.tasks || []).filter((t: any) => !t.completed);
-  const taskList = incompleteTasks.slice(0, 5).map((t: any) => t.title).join(", ") || "no specific tasks planned";
-  const goalsText = (context.goals || []).slice(0, 3).map((g: any) => `${g.title} (${g.current || 0}/${g.target})`).join(", ") || "none set";
+  const taskList =
+    incompleteTasks
+      .slice(0, 5)
+      .map((t: any) => t.title)
+      .join(", ") || "no specific tasks planned";
+  const goalsText =
+    (context.goals || [])
+      .slice(0, 3)
+      .map((g: any) => `${g.title} (${g.current || 0}/${g.target})`)
+      .join(", ") || "none set";
   const streak = context.stats?.streak || 0;
   const completedToday = (context.tasks || []).filter((t: any) => t.completed).length;
 
@@ -62,11 +68,11 @@ Keep each text under 2 sentences. Plain text only — no markdown, no asterisks.
 
     const raw = resp.choices[0]?.message?.content || "[]";
     const cleaned = raw.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
-    const parsed = JSON.parse(cleaned);
+    const parsed: unknown = JSON.parse(cleaned);
     if (!Array.isArray(parsed) || parsed.length < 4) throw new Error("bad shape");
 
     const xpPerStep = [5, 10, 15, 20];
-    return parsed.slice(0, 4).map((s: any, i: number) => ({
+    return parsed.slice(0, 4).map((s: any, i: number): MomentumStepData => ({
       text: typeof s.text === "string" ? s.text : String(s.text),
       tactic: typeof s.tactic === "string" ? s.tactic : "momentum",
       xp: xpPerStep[i],
@@ -89,13 +95,15 @@ export async function startMomentumSession(
 ): Promise<void> {
   const steps = await generateMomentumSteps(userId, context);
 
-  await db.insert(schema.momentumSessions)
+  await db
+    .insert(schema.momentumSessions)
     .values({
       userId,
       currentStep: 0,
       sessionDate: context.dateKey,
       completedSteps: 0,
-      steps: steps as any,
+      steps,
+      status: "active",
       lastStepAt: new Date(),
     })
     .onConflictDoUpdate({
@@ -104,17 +112,16 @@ export async function startMomentumSession(
         currentStep: 0,
         sessionDate: context.dateKey,
         completedSteps: 0,
-        steps: steps as any,
+        steps,
+        status: "active",
         lastStepAt: new Date(),
       },
     });
 
   const step = steps[0];
-  await sendMessageWithButtons(
-    chatId,
-    `Jarvis here. ${step.text}`,
-    [{ text: "✅ Done", callback_data: `momentum_done:${userId}:0` }]
-  );
+  await sendMessageWithButtons(chatId, `Jarvis here. ${step.text}`, [
+    { text: "✅ Done", callback_data: `momentum_done:${userId}:0` },
+  ]);
   console.log(`[Momentum] Session started for user ${userId}, step 0`);
 }
 
@@ -123,11 +130,20 @@ export async function handleMomentumDone(
   chatId: string,
   stepIndex: number
 ): Promise<void> {
-  const rows = await db.select().from(schema.momentumSessions).where(eq(schema.momentumSessions.userId, userId)).limit(1);
+  const rows = await db
+    .select()
+    .from(schema.momentumSessions)
+    .where(eq(schema.momentumSessions.userId, userId))
+    .limit(1);
   if (rows.length === 0) return;
 
   const session = rows[0];
-  const steps = (session.steps as MomentumStep[]) || [];
+  if (session.status === "expired") {
+    await sendMessage(chatId, "That session already expired — start fresh tomorrow.");
+    return;
+  }
+
+  const steps = session.steps as MomentumStepData[];
   if (stepIndex >= steps.length) return;
   if (session.currentStep !== stepIndex) return;
 
@@ -138,9 +154,16 @@ export async function handleMomentumDone(
 
   const nextStep = stepIndex + 1;
   const newCompletedSteps = (session.completedSteps || 0) + 1;
+  const isFinished = nextStep >= steps.length;
 
-  await db.update(schema.momentumSessions)
-    .set({ currentStep: nextStep, completedSteps: newCompletedSteps, lastStepAt: new Date() })
+  await db
+    .update(schema.momentumSessions)
+    .set({
+      currentStep: nextStep,
+      completedSteps: newCompletedSteps,
+      status: isFinished ? "completed" : "active",
+      lastStepAt: new Date(),
+    })
     .where(eq(schema.momentumSessions.userId, userId));
 
   const ackMessages: Record<string, string> = {
@@ -149,10 +172,10 @@ export async function handleMomentumDone(
     social_contrast: `Nice — +${xpEarned} XP. Momentum is real now.`,
     momentum: `That's it — +${xpEarned} XP. Today counts.`,
   };
-  const ack = ackMessages[completedStep.tactic] || `+${xpEarned} XP. Keep going.`;
+  const ack = ackMessages[completedStep.tactic] ?? `+${xpEarned} XP. Keep going.`;
   await sendMessage(chatId, ack);
 
-  if (nextStep >= steps.length) {
+  if (isFinished) {
     const totalXp = steps.reduce((sum, s) => sum + s.xp, 0);
     await sendMessage(chatId, `Full sequence complete — ${totalXp} XP earned today. That's a win.`);
     return;
@@ -160,37 +183,54 @@ export async function handleMomentumDone(
 
   setTimeout(async () => {
     try {
-      const freshRows = await db.select().from(schema.momentumSessions).where(eq(schema.momentumSessions.userId, userId)).limit(1);
+      const freshRows = await db
+        .select()
+        .from(schema.momentumSessions)
+        .where(eq(schema.momentumSessions.userId, userId))
+        .limit(1);
       if (freshRows.length === 0 || freshRows[0].currentStep !== nextStep) return;
 
-      const now = new Date();
-      const lastStepTime = freshRows[0].lastStepAt ? new Date(freshRows[0].lastStepAt) : now;
-      const timeSinceDone = now.getTime() - lastStepTime.getTime();
-      if (timeSinceDone > 35 * 60 * 1000) {
-        console.log(`[Momentum] Session for user ${userId} timed out after step ${stepIndex}`);
+      const freshSession = freshRows[0];
+      if (freshSession.status !== "active") return;
+
+      const lastStepTime = freshSession.lastStepAt ? new Date(freshSession.lastStepAt) : new Date();
+      if (Date.now() - lastStepTime.getTime() > SESSION_TIMEOUT_MS) {
+        await expireSession(userId, chatId);
         return;
       }
 
-      const nextStepData = steps[nextStep];
-      await sendMessageWithButtons(
-        chatId,
-        nextStepData.text,
-        [{ text: "✅ Done", callback_data: `momentum_done:${userId}:${nextStep}` }]
-      );
+      const nextStepData = (freshSession.steps as MomentumStepData[])[nextStep];
+      await sendMessageWithButtons(chatId, nextStepData.text, [
+        { text: "✅ Done", callback_data: `momentum_done:${userId}:${nextStep}` },
+      ]);
       console.log(`[Momentum] Sent step ${nextStep} to user ${userId}`);
     } catch (err) {
       console.error("[Momentum] Error sending next step:", err);
     }
-  }, 3 * 60 * 1000);
+  }, STEP_DELAY_MS);
+}
+
+async function expireSession(userId: string, chatId: string): Promise<void> {
+  await db
+    .update(schema.momentumSessions)
+    .set({ status: "expired" })
+    .where(eq(schema.momentumSessions.userId, userId));
+  await sendMessage(chatId, "No worries — we'll pick it back up tomorrow.");
+  console.log(`[Momentum] Session expired for user ${userId}`);
 }
 
 async function awardXp(userId: string, amount: number): Promise<void> {
   try {
-    const rows = await db.select().from(schema.stats).where(eq(schema.stats.userId, userId)).limit(1);
+    const rows = await db
+      .select()
+      .from(schema.stats)
+      .where(eq(schema.stats.userId, userId))
+      .limit(1);
     if (rows.length === 0) return;
-    const data = (rows[0].data as any) || {};
-    const currentXp = Number(data.xp || 0);
-    await db.update(schema.stats)
+    const data = (rows[0].data as Record<string, unknown>) ?? {};
+    const currentXp = Number(data.xp ?? 0);
+    await db
+      .update(schema.stats)
       .set({ data: { ...data, xp: currentXp + amount }, updatedAt: new Date() })
       .where(eq(schema.stats.userId, userId));
   } catch (err) {
@@ -199,9 +239,54 @@ async function awardXp(userId: string, amount: number): Promise<void> {
 }
 
 export async function hasMomentumSessionToday(userId: string, dateKey: string): Promise<boolean> {
-  const rows = await db.select({ sessionDate: schema.momentumSessions.sessionDate })
+  const rows = await db
+    .select({ sessionDate: schema.momentumSessions.sessionDate })
     .from(schema.momentumSessions)
-    .where(and(eq(schema.momentumSessions.userId, userId)))
+    .where(eq(schema.momentumSessions.userId, userId))
     .limit(1);
   return rows.length > 0 && rows[0].sessionDate === dateKey;
+}
+
+export async function expireStaleMomentumSessions(): Promise<void> {
+  try {
+    const cutoff = new Date(Date.now() - SESSION_TIMEOUT_MS);
+    const staleSessions = await db
+      .select()
+      .from(schema.momentumSessions)
+      .where(
+        and(
+          eq(schema.momentumSessions.status, "active"),
+          lt(schema.momentumSessions.lastStepAt, cutoff)
+        )
+      );
+
+    for (const session of staleSessions) {
+      const links = await db
+        .select({ chatId: schema.telegramLinks.chatId })
+        .from(schema.telegramLinks)
+        .where(eq(schema.telegramLinks.userId, session.userId))
+        .limit(1);
+
+      await db
+        .update(schema.momentumSessions)
+        .set({ status: "expired" })
+        .where(eq(schema.momentumSessions.userId, session.userId));
+
+      if (links.length > 0) {
+        await sendMessage(links[0].chatId, "No worries — we'll pick it back up tomorrow.").catch(() => {});
+      }
+      console.log(`[Momentum] Sweep expired session for user ${session.userId}`);
+    }
+  } catch (err) {
+    console.error("[Momentum] Error in expiry sweep:", err);
+  }
+}
+
+export function startMomentumExpiryScheduler(): void {
+  setInterval(() => {
+    expireStaleMomentumSessions().catch(err =>
+      console.error("[Momentum] Expiry scheduler error:", err)
+    );
+  }, 5 * 60 * 1000);
+  console.log("[Momentum] Expiry scheduler started (5-min interval)");
 }

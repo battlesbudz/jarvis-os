@@ -350,8 +350,14 @@ export async function ensureTablesExist() {
         session_date VARCHAR NOT NULL DEFAULT '',
         completed_steps INTEGER NOT NULL DEFAULT 0,
         steps JSONB NOT NULL DEFAULT '[]'::jsonb,
+        status VARCHAR NOT NULL DEFAULT 'active',
         last_step_at TIMESTAMP
       )
+    `);
+
+    await db.execute(sql`
+      ALTER TABLE momentum_sessions
+        ADD COLUMN IF NOT EXISTS status VARCHAR NOT NULL DEFAULT 'active'
     `);
 
     console.log("Database tables verified");
