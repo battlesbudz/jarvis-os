@@ -65,6 +65,7 @@ export async function getOutlookCalendarEvents(
   const res = await client
     .api('/me/calendarView')
     .query({ startDateTime: startOfDay, endDateTime: endOfDay })
+    .header('Prefer', 'outlook.timezone="UTC"')
     .select('id,subject,start,end,body,location')
     .orderby('start/dateTime')
     .top(20)

@@ -365,6 +365,30 @@ export async function ensureTablesExist() {
         ON proactive_schedule_log (user_id, message_type, sent_date)
     `);
 
+    await db.execute(sql`
+      DO $$
+      BEGIN
+        IF EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_name = 'website_crawls' AND column_name = 'userId'
+        ) THEN
+          ALTER TABLE website_crawls RENAME COLUMN "userId" TO user_id;
+        END IF;
+      END$$
+    `);
+
+    await db.execute(sql`
+      DO $$
+      BEGIN
+        IF EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_name = 'chatgpt_imports' AND column_name = 'userId'
+        ) THEN
+          ALTER TABLE chatgpt_imports RENAME COLUMN "userId" TO user_id;
+        END IF;
+      END$$
+    `);
+
     console.log("Database tables verified");
   } catch (error) {
     console.error("Failed to ensure database tables exist:", error);

@@ -366,6 +366,13 @@ oauthRouter.get('/status', async (req: Request, res: Response) => {
   if (!userId) return res.status(401).json({ error: 'Not authenticated' });
   try {
     const status = await getUserOAuthStatus(userId);
+    if (!status.microsoft?.connected) {
+      const { checkOutlookConnection } = await import('./integrations/outlook');
+      const projConnected = await checkOutlookConnection().catch(() => false);
+      if (projConnected) {
+        status.microsoft = { connected: true, accounts: [] };
+      }
+    }
     res.json(status);
   } catch (err) {
     console.error('OAuth status error:', err);
