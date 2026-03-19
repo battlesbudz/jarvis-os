@@ -3,7 +3,7 @@ import { db } from "./db";
 import { eq, and, desc, sql, gte, lte } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { sendMessage, sendMessageWithButtons, answerCallbackQuery, isTelegramConfigured, getUpdates, downloadTelegramFile, downloadTelegramFileBuffer } from "./integrations/telegram";
-import { startMomentumSession, handleMomentumDone, hasMomentumSessionToday } from "./momentumCoach";
+import { startMomentumSession, handleMomentumDone, hasMomentumSessionToday, startMomentumExpiryScheduler } from "./momentumCoach";
 import { getRecentEmailCommitments, getEmailsSince, getStarredFollowUpEmails, gmailModifyMessage } from "./integrations/gmail";
 import { getGoogleCalendarEvents } from "./integrations/googleCalendar";
 import { getValidGoogleTokens } from "./userTokenStore";
@@ -693,9 +693,9 @@ Return { "memories": [] } if nothing new was learned. Do NOT repeat or rephrase 
 }
 
 async function handleCallbackQuery(callbackQuery: any): Promise<void> {
-  const queryId = callbackQuery.id;
+  const queryId: string = callbackQuery.id;
   const data: string = callbackQuery.data || "";
-  const chatId = callbackQuery.message?.chat?.id?.toString();
+  const chatId: string | undefined = callbackQuery.message?.chat?.id?.toString();
   if (!chatId) {
     await answerCallbackQuery(queryId);
     return;
@@ -703,10 +703,23 @@ async function handleCallbackQuery(callbackQuery: any): Promise<void> {
 
   if (data.startsWith("momentum_done:")) {
     const parts = data.split(":");
-    const userId = parts[1];
-    const stepIndex = parseInt(parts[2] || "0", 10);
+    const claimedUserId: string = parts[1] ?? "";
+    const stepIndex = parseInt(parts[2] ?? "0", 10);
+
+    const links = await db
+      .select({ userId: schema.telegramLinks.userId })
+      .from(schema.telegramLinks)
+      .where(eq(schema.telegramLinks.chatId, chatId))
+      .limit(1);
+
+    if (links.length === 0 || links[0].userId !== claimedUserId) {
+      await answerCallbackQuery(queryId, "Session not found — please re-link your account.");
+      console.warn(`[Momentum] Ownership mismatch: claimed=${claimedUserId}, actual=${links[0]?.userId ?? "none"}, chatId=${chatId}`);
+      return;
+    }
+
     await answerCallbackQuery(queryId, "Got it! +XP incoming...");
-    await handleMomentumDone(userId, chatId, stepIndex);
+    await handleMomentumDone(claimedUserId, chatId, stepIndex);
     return;
   }
 
@@ -1521,8 +1534,6 @@ export async function runProactiveStartupCatchup(): Promise<void> {
 
       for (const schedule of PROACTIVE_SCHEDULE) {
         if (schedule.type === 'weekly_planning' && localDay !== (schedule.dayOfWeek ?? -1)) continue;
-        if (schedule.type === 'momentum_nudge') continue;
-
         const scheduleMinutesFromMidnight = schedule.hour * 60 + schedule.minute;
         const currentMinutesFromMidnight = localHour * 60 + localDate.getMinutes();
         const minutesSinceScheduled = currentMinutesFromMidnight - scheduleMinutesFromMidnight;

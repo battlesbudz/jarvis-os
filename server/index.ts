@@ -3,6 +3,7 @@ import type { Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { ensureTablesExist } from "./db";
 import { registerTelegramWebhook, startProactiveScheduler, startTelegramPolling, startEmailAlertScanner, startMeetingBriefScanner, runProactiveStartupCatchup } from "./telegramRoutes";
+import { startMomentumExpiryScheduler } from "./momentumCoach";
 import { startCuriosityScanner } from "./curiosityScanner";
 import { isTelegramConfigured, logTelegramStatus, setWebhook } from "./integrations/telegram";
 import { startScheduler } from "./scheduler";
@@ -286,6 +287,7 @@ function setupErrorHandler(app: express.Application) {
         runProactiveStartupCatchup().catch(err => {
           console.error("Failed to run proactive startup catchup:", err);
         });
+        startMomentumExpiryScheduler();
         startEmailAlertScanner().catch(err => {
           console.error("Failed to start email alert scanner:", err);
         });

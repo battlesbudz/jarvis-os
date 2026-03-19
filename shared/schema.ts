@@ -222,12 +222,19 @@ export const proactiveScheduleLog = pgTable("proactive_schedule_log", {
   sentAt: timestamp("sent_at").defaultNow(),
 });
 
+export interface MomentumStepData {
+  text: string;
+  tactic: string;
+  xp: number;
+}
+
 export const momentumSessions = pgTable("momentum_sessions", {
   userId: varchar("user_id").notNull().primaryKey().references(() => users.id),
   currentStep: integer("current_step").notNull().default(0),
   sessionDate: varchar("session_date").notNull().default(""),
   completedSteps: integer("completed_steps").notNull().default(0),
-  steps: jsonb("steps").notNull().default(sql`'[]'::jsonb`),
+  steps: jsonb("steps").$type<MomentumStepData[]>().notNull().default(sql`'[]'::jsonb`),
+  status: varchar("status").notNull().default("active"),
   lastStepAt: timestamp("last_step_at"),
 });
 
