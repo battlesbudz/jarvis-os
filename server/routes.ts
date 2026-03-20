@@ -28,6 +28,7 @@ import { registerTelegramRoutes } from "./telegramRoutes";
 import { isIntegrationOwner, claimIntegrationOwnership } from "./integrationOwner";
 import { oauthRouter, oauthCallbackRouter } from "./oauthRoutes";
 import { getValidGoogleTokens, getValidMicrosoftToken, getUserTokens, getUserToken } from "./userTokenStore";
+import { tavilySearch, formatSearchResults } from "./integrations/search";
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
@@ -668,6 +669,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
         },
       },
     },
+    ...(process.env.TAVILY_API_KEY ? [{
+      type: "function" as const,
+      function: {
+        name: "web_search",
+        description: "Search the internet for real-time information such as current events, weather, stock prices, news, product reviews, or anything else that requires up-to-date data. Use this when the user asks about something you don't know or when current information is needed.",
+        parameters: {
+          type: "object",
+          properties: {
+            query: { type: "string", description: "The search query to look up" },
+          },
+          required: ["query"],
+        },
+      },
+    }] : []),
   ];
 
   function fuzzyMatch(needle: string, haystack: string): boolean {
@@ -789,6 +804,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
               set: { data: updatedPlan, updatedAt: new Date() },
             });
           return { result: 'success', label: `Task completed`, detail: `Marked "${matched.title}" as done` };
+        }
+        case 'web_search': {
+          try {
+            const results = await tavilySearch(args.query);
+            const formatted = formatSearchResults(results);
+            return { result: 'success', label: `Web search: ${args.query}`, detail: formatted };
+          } catch (searchErr: any) {
+            const msg = String(searchErr?.message || searchErr);
+            if (msg.includes('401') || msg.includes('403') || msg.includes('api_key')) {
+              return { result: 'error', label: 'Search unavailable', detail: 'Web search API key is invalid or expired. Tell the user web search is currently unavailable.' };
+            }
+            if (msg.includes('429') || msg.includes('rate limit')) {
+              return { result: 'error', label: 'Search rate limited', detail: 'Web search rate limit reached. Tell the user to try again in a moment.' };
+            }
+            if (msg.includes('timeout') || msg.includes('ECONNRESET') || msg.includes('ETIMEDOUT')) {
+              return { result: 'error', label: 'Search timed out', detail: 'Web search timed out. Tell the user the search could not complete and suggest trying again.' };
+            }
+            return { result: 'error', label: 'Search failed', detail: `Web search failed: ${msg}. Tell the user you were unable to retrieve results.` };
+          }
         }
         default:
           return { result: 'error', label: 'Unknown action', detail: `Unknown tool: ${toolName}` };
@@ -1002,7 +1036,7 @@ Answer (yes/no):`,
       const systemPrompt = buildCoachSystemPrompt(goals || [], stats || {}, history || [], calendarEvents || [], lifeContext || null, resolvedGmailItems, resolvedGmailConnected, slackMessages || [], slackConnected ?? false, userCommitments, coachingMode, memories, telegramMessages || [], telegramConnected ?? false, morningNoteSummary, documentsContext);
 
       const chatMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-        { role: "system", content: systemPrompt + proactiveQuestionContext + "\n\nYou can take actions on the user's behalf using the available tools. When a user asks you to add a task, log progress, update their context, etc., use the appropriate tool. Respond naturally — do not mention 'tool calls' or 'functions' to the user. Just confirm what you did conversationally." },
+        { role: "system", content: systemPrompt + proactiveQuestionContext + "\n\nYou can take actions on the user's behalf using the available tools. When a user asks you to add a task, log progress, update their context, etc., use the appropriate tool. Respond naturally — do not mention 'tool calls' or 'functions' to the user. Just confirm what you did conversationally." + (process.env.TAVILY_API_KEY ? "\n\nYou also have a web_search tool. Use it whenever the user asks about current events, live data (weather, stock prices, sports scores, news), or anything requiring real-time information you wouldn't know. Cite your sources naturally in your response." : "") },
         ...messages.map((m: any) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
       ];
 
@@ -1020,6 +1054,16 @@ Answer (yes/no):`,
         const choice = phase1.choices[0];
         if (choice.finish_reason === 'tool_calls' && choice.message.tool_calls?.length) {
           toolMessages.push(choice.message);
+
+          const hasWebSearch = choice.message.tool_calls.some(tc => tc.function.name === 'web_search');
+          if (hasWebSearch && !res.headersSent) {
+            res.setHeader('Content-Type', 'text/event-stream');
+            res.setHeader('Cache-Control', 'no-cache, no-transform');
+            res.setHeader('X-Accel-Buffering', 'no');
+            res.setHeader('Access-Control-Allow-Origin', '*');
+            res.flushHeaders();
+            res.write(`data: ${JSON.stringify({ type: 'searching' })}\n\n`);
+          }
 
           for (const tc of choice.message.tool_calls) {
             let args: any = {};
@@ -1051,14 +1095,19 @@ Answer (yes/no):`,
         }
       }
 
-      res.setHeader('Content-Type', 'text/event-stream');
-      res.setHeader('Cache-Control', 'no-cache, no-transform');
-      res.setHeader('X-Accel-Buffering', 'no');
-      res.setHeader('Access-Control-Allow-Origin', '*');
-      res.flushHeaders();
+      if (!res.headersSent) {
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.setHeader('Cache-Control', 'no-cache, no-transform');
+        res.setHeader('X-Accel-Buffering', 'no');
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.flushHeaders();
+      }
 
       if (actionResults.length > 0) {
-        res.write(`data: ${JSON.stringify({ type: 'actions', actions: actionResults })}\n\n`);
+        const nonSearchActions = actionResults.filter(a => a.tool !== 'web_search');
+        if (nonSearchActions.length > 0) {
+          res.write(`data: ${JSON.stringify({ type: 'actions', actions: nonSearchActions })}\n\n`);
+        }
       }
 
       const streamMessages = toolMessages.length > 0

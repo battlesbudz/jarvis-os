@@ -119,6 +119,15 @@ function TypingDots() {
   );
 }
 
+function SearchingIndicator() {
+  return (
+    <Animated.View entering={FadeIn.duration(300)} style={styles.searchingBubble}>
+      <Ionicons name="search" size={13} color={Colors.textSecondary} />
+      <Text style={styles.searchingText}>Searching the web...</Text>
+    </Animated.View>
+  );
+}
+
 interface MessageBubbleProps {
   message: ChatMessage;
   isFirst: boolean;
@@ -332,6 +341,7 @@ export default function InsightsScreen() {
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [showTyping, setShowTyping] = useState(false);
+  const [isSearchingWeb, setIsSearchingWeb] = useState(false);
   const [goals, setGoals] = useState<Goal[]>([]);
   const [stats, setStats] = useState<UserStats>({ streak: 0, totalCompleted: 0, bestStreak: 0 });
   const [history, setHistory] = useState<any[]>([]);
@@ -1004,7 +1014,9 @@ export default function InsightsScreen() {
             if (data === '[DONE]') continue;
             try {
               const parsed = JSON.parse(data);
-              if (parsed.type === 'actions' && Array.isArray(parsed.actions)) {
+              if (parsed.type === 'searching') {
+                setIsSearchingWeb(true);
+              } else if (parsed.type === 'actions' && Array.isArray(parsed.actions)) {
                 executedActions = parsed.actions;
                 setMessages(prev => {
                   const updated = [...prev];
@@ -1017,6 +1029,7 @@ export default function InsightsScreen() {
                 queryClient.invalidateQueries({ queryKey: ['/api/data/brain-dump-inbox'] });
                 queryClient.invalidateQueries({ queryKey: ['/api/data/life-context'] });
               } else if (parsed.content) {
+                setIsSearchingWeb(false);
                 fullContent += parsed.content;
                 const captured = fullContent;
                 setMessages(prev => {
@@ -1032,6 +1045,7 @@ export default function InsightsScreen() {
       }
 
       setIsStreaming(false);
+      setIsSearchingWeb(false);
 
       const finalContent = fullContent;
       const finalActions = executedActions;
@@ -1089,6 +1103,7 @@ export default function InsightsScreen() {
     } catch (error) {
       setShowTyping(false);
       setIsStreaming(false);
+      setIsSearchingWeb(false);
       const errMsg: ChatMessage = {
         id: assistantId,
         role: 'assistant',
@@ -1371,7 +1386,7 @@ export default function InsightsScreen() {
                 setInboxCollapsed(true);
               }
             }}
-            ListHeaderComponent={showTyping ? <TypingDots /> : null}
+            ListHeaderComponent={isSearchingWeb ? <SearchingIndicator /> : showTyping ? <TypingDots /> : null}
             ListFooterComponent={gmailConnected ? renderInboxSection() : null}
           />
         )}
@@ -1677,6 +1692,25 @@ const styles = StyleSheet.create({
     height: 7,
     borderRadius: 3.5,
     backgroundColor: Colors.textSecondary,
+  },
+  searchingBubble: {
+    alignSelf: 'flex-start',
+    backgroundColor: Colors.card,
+    borderRadius: 18,
+    borderBottomLeftRadius: 4,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  searchingText: {
+    fontSize: 13,
+    color: Colors.textSecondary,
+    fontStyle: 'italic',
   },
   emptyContainer: {
     flex: 1,
