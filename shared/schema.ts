@@ -254,3 +254,13 @@ export const morningVoiceNotes = pgTable("morning_voice_notes", {
   intention: text("intention"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
+
+export const interactionLog = pgTable("interaction_log", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  channel: varchar("channel").notNull(),
+  direction: varchar("direction").notNull(),
+  content: text("content").notNull(),
+  label: varchar("label"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});

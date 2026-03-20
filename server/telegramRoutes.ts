@@ -8,6 +8,7 @@ import { getRecentEmailCommitments, getEmailsSince, getStarredFollowUpEmails, gm
 import { getGoogleCalendarEvents } from "./integrations/googleCalendar";
 import { getValidGoogleTokens } from "./userTokenStore";
 import { tavilySearch, formatSearchResults } from "./integrations/search";
+import { logInteraction, getRecentInteractions, formatInteractionTimeline } from "./interactionLog";
 import OpenAI from "openai";
 
 const openai = new OpenAI({
@@ -36,7 +37,7 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
     let gmailConnected = false;
     let googleAccessToken: string | null = null;
 
-    const [goalsRow, statsRow, lcRow, chatRow, commitmentsRows, googleTokens, prefsRow, memoriesRow] = await Promise.allSettled([
+    const [goalsRow, statsRow, lcRow, chatRow, commitmentsRows, googleTokens, prefsRow, memoriesRow, recentInteractionsResult] = await Promise.allSettled([
       db.select().from(schema.goals).where(eq(schema.goals.userId, userId)).limit(1),
       db.select().from(schema.stats).where(eq(schema.stats.userId, userId)).limit(1),
       db.select().from(schema.lifeContext).where(eq(schema.lifeContext.userId, userId)).limit(1),
@@ -51,7 +52,10 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
         .where(eq(schema.userMemories.userId, userId))
         .orderBy(desc(schema.userMemories.extractedAt))
         .limit(50),
+      getRecentInteractions(userId, 20),
     ]);
+
+    logInteraction(userId, "telegram", "inbound", userText || "[image]").catch(() => {});
 
     let userTimezone = 'America/New_York';
 
@@ -162,6 +166,9 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
     let userMemoriesData: { content: string; category: string }[] = [];
     if (memoriesRow.status === 'fulfilled') userMemoriesData = memoriesRow.value;
 
+    const recentInteractions = recentInteractionsResult.status === 'fulfilled' ? recentInteractionsResult.value : [];
+    const crossChannelSection = formatInteractionTimeline(recentInteractions);
+
     let proactiveQuestionContext = '';
     try {
       const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
@@ -214,6 +221,7 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
     const systemPrompt = `You are GamePlan Coach Jarvis — a sharp, supportive personal productivity coach. You're responding via Telegram, so keep messages SHORT (2-4 sentences max). Use plain text, no markdown headers.
 
 Today is ${dayOfWeek}, ${dateStr}. User's timezone: ${userTimezone}.
+${crossChannelSection}
 
 ## What You Do Automatically (you do NOT control these — the system runs them)
 - 8:00 AM: Morning check-in with today's plan and inbox highlights
@@ -566,6 +574,8 @@ Be direct, specific, actionable. No fluff. You have full access to the user's em
     } catch {}
 
     await sendMessage(chatId, reply);
+
+    logInteraction(userId, "telegram", "outbound", reply).catch(() => {});
 
     extractProfileFromTelegram(userId, userText).catch(err => {
       console.error("[Profile] Telegram extraction error:", err);
@@ -1468,6 +1478,7 @@ async function sendScheduledMessage(
     const msg = `📬 ${starredEmails.length} starred/important email${starredEmails.length === 1 ? '' : 's'} sitting >3 days:\n\n${emailList}\n\nStill relevant? Reply, archive, or unstar anything you've handled.`;
     console.log(`[Proactive] Sending followup_check to user ${link.userId} (${timezone})`);
     await sendMessage(link.chatId, msg);
+    logInteraction(link.userId, "telegram_scheduled", "outbound", msg, "followup_check").catch(() => {});
     return;
   }
 
@@ -1491,6 +1502,7 @@ async function sendScheduledMessage(
       stats: userStats,
       dateKey,
     });
+    logInteraction(link.userId, "telegram_scheduled", "outbound", "[Momentum coaching session started]", "momentum_nudge").catch(() => {});
     return;
   }
 
@@ -1507,6 +1519,7 @@ async function sendScheduledMessage(
   if (message) {
     console.log(`[Proactive] Sending ${schedule.type} to user ${link.userId} (${timezone})`);
     await sendMessage(link.chatId, message);
+    logInteraction(link.userId, "telegram_scheduled", "outbound", message, schedule.type).catch(() => {});
   }
 }
 
@@ -1706,6 +1719,7 @@ Write a sharp 2-3 sentence meeting prep brief. Include what the meeting is about
                 const fullMsg = `${header}\n\n${briefMessage}`;
                 console.log(`[MeetingBrief] Sending brief for "${event.title}" to user ${link.userId}`);
                 await sendMessage(link.chatId, fullMsg);
+                logInteraction(link.userId, "telegram_meeting_brief", "outbound", fullMsg, "meeting_brief").catch(() => {});
               }
             } catch (err) {
               console.error(`[MeetingBrief] AI generation failed for "${event.title}":`, err);
@@ -1822,6 +1836,7 @@ export async function startEmailAlertScanner(): Promise<void> {
           const senderName = email.from.replace(/<.*>/, '').trim() || email.from;
           const msg = `📧 Surfaced for you:\nFrom: ${senderName}\n"${email.subject}"\n\n${email.snippet.slice(0, 150)}${email.snippet.length > 150 ? '...' : ''}\n\nJarvis: ${reason}`;
           await sendMessage(link.chatId, msg);
+          logInteraction(link.userId, "telegram_email_alert", "outbound", msg, "email_surfaced").catch(() => {});
         }
 
         if (filteredEmails.length === 0) continue;
@@ -1901,6 +1916,7 @@ Return [] if nothing is urgent.`,
 
           const msg = `📧 Email needs your attention:\nFrom: ${senderName}\n"${email.subject}"\n\n${email.snippet.slice(0, 150)}${email.snippet.length > 150 ? '...' : ''}\n\nJarvis: ${flag.reason}`;
           await sendMessage(link.chatId, msg);
+          logInteraction(link.userId, "telegram_email_alert", "outbound", msg, "email_alert").catch(() => {});
           console.log(`[EmailAlert] Alerted user ${link.userId}: "${email.subject}"`);
         }
       }

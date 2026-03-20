@@ -29,6 +29,7 @@ import { isIntegrationOwner, claimIntegrationOwnership } from "./integrationOwne
 import { oauthRouter, oauthCallbackRouter } from "./oauthRoutes";
 import { getValidGoogleTokens, getValidMicrosoftToken, getUserTokens, getUserToken } from "./userTokenStore";
 import { tavilySearch, formatSearchResults } from "./integrations/search";
+import { logInteraction, getRecentInteractions, formatInteractionTimeline } from "./interactionLog";
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
@@ -130,7 +131,7 @@ async function getMorningNoteSummary(userId: string): Promise<string> {
   }
 }
 
-function buildCoachSystemPrompt(goals: any[], stats: any, history: any[], calendarEvents: any[] = [], lifeContext?: any, gmailItems?: any[], gmailConnected?: boolean, slackMessages?: any[], slackConnected?: boolean, commitmentsList?: any[], coachingMode?: string, memories?: { content: string; category: string }[], telegramMessages?: any[], telegramConnected?: boolean, morningNoteSummary?: string, documentsContext?: string): string {
+function buildCoachSystemPrompt(goals: any[], stats: any, history: any[], calendarEvents: any[] = [], lifeContext?: any, gmailItems?: any[], gmailConnected?: boolean, slackMessages?: any[], slackConnected?: boolean, commitmentsList?: any[], coachingMode?: string, memories?: { content: string; category: string }[], telegramMessages?: any[], telegramConnected?: boolean, morningNoteSummary?: string, documentsContext?: string, crossChannelContext?: string): string {
   const completedHistory = history.filter((h: any) => h.completed);
   const skippedHistory = history.filter((h: any) => !h.completed);
   const completionRate = history.length > 0
@@ -250,6 +251,7 @@ function buildCoachSystemPrompt(goals: any[], stats: any, history: any[], calend
   return `You are GamePlan Coach — a sharp, supportive personal productivity coach embedded in the GamePlan app. You know this user's goals, habits, and patterns intimately. You give specific, actionable advice — not generic motivational fluff.
 
 Today is ${dayOfWeek}, ${dateStr}.
+${crossChannelContext || ''}
 
 ${COACHING_FRAMEWORKS}
 
@@ -1033,7 +1035,15 @@ Answer (yes/no):`,
         } catch {}
       }
 
-      const systemPrompt = buildCoachSystemPrompt(goals || [], stats || {}, history || [], calendarEvents || [], lifeContext || null, resolvedGmailItems, resolvedGmailConnected, slackMessages || [], slackConnected ?? false, userCommitments, coachingMode, memories, telegramMessages || [], telegramConnected ?? false, morningNoteSummary, documentsContext);
+      let crossChannelContext = '';
+      if (userId) {
+        try {
+          const recentInteractions = await getRecentInteractions(userId, 20);
+          crossChannelContext = formatInteractionTimeline(recentInteractions);
+        } catch {}
+      }
+
+      const systemPrompt = buildCoachSystemPrompt(goals || [], stats || {}, history || [], calendarEvents || [], lifeContext || null, resolvedGmailItems, resolvedGmailConnected, slackMessages || [], slackConnected ?? false, userCommitments, coachingMode, memories, telegramMessages || [], telegramConnected ?? false, morningNoteSummary, documentsContext, crossChannelContext);
 
       const chatMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
         { role: "system", content: systemPrompt + proactiveQuestionContext + "\n\nYou can take actions on the user's behalf using the available tools. When a user asks you to add a task, log progress, update their context, etc., use the appropriate tool. Respond naturally — do not mention 'tool calls' or 'functions' to the user. Just confirm what you did conversationally." + (process.env.TAVILY_API_KEY ? "\n\nYou also have a web_search tool. Use it whenever the user asks about current events, live data (weather, stock prices, sports scores, news), or anything requiring real-time information you wouldn't know. Cite your sources naturally in your response." : "") },
@@ -1090,6 +1100,9 @@ Answer (yes/no):`,
           if (userId) {
             extractProfileInBackground(userId, messages);
             markProactiveQuestionsAnswered(userId, messages).catch(() => {});
+            const lastUserMsg = [...messages].reverse().find((m: any) => m.role === 'user');
+            if (lastUserMsg?.content) logInteraction(userId, "app_chat", "inbound", typeof lastUserMsg.content === 'string' ? lastUserMsg.content : JSON.stringify(lastUserMsg.content)).catch(() => {});
+            logInteraction(userId, "app_chat", "outbound", words).catch(() => {});
           }
           return;
         }
@@ -1121,9 +1134,11 @@ Answer (yes/no):`,
         max_completion_tokens: 8192,
       });
 
+      let fullStreamedReply = '';
       for await (const chunk of stream) {
         const content = chunk.choices[0]?.delta?.content || '';
         if (content) {
+          fullStreamedReply += content;
           res.write(`data: ${JSON.stringify({ content })}\n\n`);
         }
       }
@@ -1133,6 +1148,9 @@ Answer (yes/no):`,
       if (userId) {
         extractProfileInBackground(userId, messages);
         markProactiveQuestionsAnswered(userId, messages).catch(() => {});
+        const lastUserMsg = [...messages].reverse().find((m: any) => m.role === 'user');
+        if (lastUserMsg?.content) logInteraction(userId, "app_chat", "inbound", typeof lastUserMsg.content === 'string' ? lastUserMsg.content : JSON.stringify(lastUserMsg.content)).catch(() => {});
+        if (fullStreamedReply) logInteraction(userId, "app_chat", "outbound", fullStreamedReply).catch(() => {});
       }
     } catch (error) {
       console.error("Error in coach chat:", error);
