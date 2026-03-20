@@ -2,17 +2,11 @@ import { db } from "./db";
 import { eq, desc, gte, and } from "drizzle-orm";
 import * as schema from "@shared/schema";
 
-export type InteractionChannel =
-  | "app_chat"
-  | "telegram"
-  | "telegram_email_alert"
-  | "telegram_curiosity"
-  | "telegram_scheduled"
-  | "telegram_meeting_brief";
+export type InteractionChannel = "app_chat" | "telegram" | "notification";
 
 export type InteractionDirection = "inbound" | "outbound";
 
-const MAX_CONTENT_LENGTH = 800;
+const DISPLAY_TRUNCATE_LENGTH = 1200;
 
 export async function logInteraction(
   userId: string,
@@ -22,14 +16,11 @@ export async function logInteraction(
   label?: string
 ): Promise<void> {
   try {
-    const truncated = content.length > MAX_CONTENT_LENGTH
-      ? content.slice(0, MAX_CONTENT_LENGTH) + "…"
-      : content;
     await db.insert(schema.interactionLog).values({
       userId,
       channel,
       direction,
-      content: truncated,
+      content,
       label: label || null,
     });
   } catch (err) {
@@ -66,15 +57,6 @@ export function formatInteractionTimeline(
 ): string {
   if (interactions.length === 0) return "";
 
-  const channelLabels: Record<string, string> = {
-    app_chat: "App Chat",
-    telegram: "Telegram Chat",
-    telegram_email_alert: "Telegram – Email Alert",
-    telegram_curiosity: "Telegram – Proactive Question",
-    telegram_scheduled: "Telegram – Scheduled Message",
-    telegram_meeting_brief: "Telegram – Meeting Brief",
-  };
-
   const sorted = [...interactions].sort(
     (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
   );
@@ -89,10 +71,24 @@ export function formatInteractionTimeline(
       month: "short",
       day: "numeric",
     });
-    const channelLabel = channelLabels[row.channel] || row.channel;
+
+    let channelLabel: string;
+    if (row.channel === "app_chat") {
+      channelLabel = "App";
+    } else if (row.channel === "telegram") {
+      channelLabel = "Telegram";
+    } else {
+      channelLabel = row.label ? `Notification – ${row.label}` : "Notification";
+    }
+
     const who = row.direction === "inbound" ? "User" : `Jarvis (${channelLabel})`;
-    const labelTag = row.label ? ` [${row.label}]` : "";
-    return `[${date} ${ts}] ${who}${labelTag}: ${row.content}`;
+    const labelTag = row.channel !== "notification" && row.label ? ` [${row.label}]` : "";
+
+    const displayContent = row.content.length > DISPLAY_TRUNCATE_LENGTH
+      ? row.content.slice(0, DISPLAY_TRUNCATE_LENGTH) + "…"
+      : row.content;
+
+    return `[${date} ${ts}] ${who}${labelTag}: ${displayContent}`;
   });
 
   return `\n## Recent Cross-Channel Activity (last 48 hours)\nThis shows everything that happened between you and the user across all channels — app conversations, Telegram messages, and any notifications you sent. Use this to understand the full context before responding.\n${lines.join("\n")}`;

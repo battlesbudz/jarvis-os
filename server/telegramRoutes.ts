@@ -1478,7 +1478,7 @@ async function sendScheduledMessage(
     const msg = `📬 ${starredEmails.length} starred/important email${starredEmails.length === 1 ? '' : 's'} sitting >3 days:\n\n${emailList}\n\nStill relevant? Reply, archive, or unstar anything you've handled.`;
     console.log(`[Proactive] Sending followup_check to user ${link.userId} (${timezone})`);
     await sendMessage(link.chatId, msg);
-    logInteraction(link.userId, "telegram_scheduled", "outbound", msg, "followup_check").catch(() => {});
+    logInteraction(link.userId, "notification", "outbound", msg, "followup_check").catch(() => {});
     return;
   }
 
@@ -1502,7 +1502,7 @@ async function sendScheduledMessage(
       stats: userStats,
       dateKey,
     });
-    logInteraction(link.userId, "telegram_scheduled", "outbound", "[Momentum coaching session started]", "momentum_nudge").catch(() => {});
+    logInteraction(link.userId, "notification", "outbound", "[Momentum coaching session started]", "momentum_nudge").catch(() => {});
     return;
   }
 
@@ -1519,7 +1519,7 @@ async function sendScheduledMessage(
   if (message) {
     console.log(`[Proactive] Sending ${schedule.type} to user ${link.userId} (${timezone})`);
     await sendMessage(link.chatId, message);
-    logInteraction(link.userId, "telegram_scheduled", "outbound", message, schedule.type).catch(() => {});
+    logInteraction(link.userId, "notification", "outbound", message, schedule.type).catch(() => {});
   }
 }
 
@@ -1719,7 +1719,7 @@ Write a sharp 2-3 sentence meeting prep brief. Include what the meeting is about
                 const fullMsg = `${header}\n\n${briefMessage}`;
                 console.log(`[MeetingBrief] Sending brief for "${event.title}" to user ${link.userId}`);
                 await sendMessage(link.chatId, fullMsg);
-                logInteraction(link.userId, "telegram_meeting_brief", "outbound", fullMsg, "meeting_brief").catch(() => {});
+                logInteraction(link.userId, "notification", "outbound", fullMsg, "meeting_brief").catch(() => {});
               }
             } catch (err) {
               console.error(`[MeetingBrief] AI generation failed for "${event.title}":`, err);
@@ -1836,7 +1836,7 @@ export async function startEmailAlertScanner(): Promise<void> {
           const senderName = email.from.replace(/<.*>/, '').trim() || email.from;
           const msg = `📧 Surfaced for you:\nFrom: ${senderName}\n"${email.subject}"\n\n${email.snippet.slice(0, 150)}${email.snippet.length > 150 ? '...' : ''}\n\nJarvis: ${reason}`;
           await sendMessage(link.chatId, msg);
-          logInteraction(link.userId, "telegram_email_alert", "outbound", msg, "email_surfaced").catch(() => {});
+          logInteraction(link.userId, "notification", "outbound", msg, "email_surfaced").catch(() => {});
         }
 
         if (filteredEmails.length === 0) continue;
@@ -1916,7 +1916,7 @@ Return [] if nothing is urgent.`,
 
           const msg = `📧 Email needs your attention:\nFrom: ${senderName}\n"${email.subject}"\n\n${email.snippet.slice(0, 150)}${email.snippet.length > 150 ? '...' : ''}\n\nJarvis: ${flag.reason}`;
           await sendMessage(link.chatId, msg);
-          logInteraction(link.userId, "telegram_email_alert", "outbound", msg, "email_alert").catch(() => {});
+          logInteraction(link.userId, "notification", "outbound", msg, "email_alert").catch(() => {});
           console.log(`[EmailAlert] Alerted user ${link.userId}: "${email.subject}"`);
         }
       }
