@@ -5,6 +5,7 @@ import { sendMessage, isTelegramConfigured } from "./integrations/telegram";
 import { getGoogleCalendarEvents } from "./integrations/googleCalendar";
 import { getEmailsSince } from "./integrations/gmail";
 import { getValidGoogleTokens } from "./userTokenStore";
+import { logInteraction } from "./interactionLog";
 import OpenAI from "openai";
 
 const openai = new OpenAI({
@@ -247,6 +248,7 @@ export async function runCuriosityScan(): Promise<void> {
             try {
               await sendMessage(link.chatId, q.question);
               sentCount++;
+              logInteraction(link.userId, "telegram_curiosity", "outbound", q.question, "curiosity_question").catch(() => {});
               console.log(
                 `[Curiosity] Sent question to user ${link.userId}: ${q.question.slice(0, 60)}...`
               );
