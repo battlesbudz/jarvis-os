@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import type { TextItem, TextMarkedContent } from "pdfjs-dist";
+import type { TextItem } from "pdfjs-dist";
 import { db } from "./db";
 import { eq, desc } from "drizzle-orm";
 import { userDocuments } from "@shared/schema";
