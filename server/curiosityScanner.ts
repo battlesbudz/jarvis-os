@@ -248,7 +248,7 @@ export async function runCuriosityScan(): Promise<void> {
             try {
               await sendMessage(link.chatId, q.question);
               sentCount++;
-              logInteraction(link.userId, "telegram_curiosity", "outbound", q.question, "curiosity_question").catch(() => {});
+              logInteraction(link.userId, "notification", "outbound", q.question, "curiosity_question").catch(() => {});
               console.log(
                 `[Curiosity] Sent question to user ${link.userId}: ${q.question.slice(0, 60)}...`
               );
