@@ -39,10 +39,49 @@ export const SUPPORTED_MIME_TYPES: SupportedMime[] = [
 
 export const SUPPORTED_EXTENSIONS = [".pdf", ".docx", ".doc", ".txt", ".md", ".csv", ".jpg", ".jpeg", ".png", ".webp", ".gif"];
 
-async function extractFromPdf(buffer: Buffer): Promise<string> {
+async function extractFromPdfWithPdfjs(buffer: Buffer): Promise<string> {
+  const { pathToFileURL } = await import("url");
+  const { resolve } = await import("path");
+  const { getDocument, GlobalWorkerOptions } = await import("pdfjs-dist/legacy/build/pdf.mjs" as any);
+
+  const workerPath = resolve("./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs");
+  GlobalWorkerOptions.workerSrc = pathToFileURL(workerPath).href;
+
+  const uint8 = new Uint8Array(buffer);
+  const loadingTask = getDocument({ data: uint8, useSystemFonts: true });
+  const pdf = await loadingTask.promise;
+
+  let fullText = "";
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    const pageText = content.items
+      .map((item: any) => ("str" in item ? item.str : ""))
+      .join(" ");
+    fullText += pageText + "\n";
+  }
+
+  return fullText.trim();
+}
+
+async function extractFromPdfWithPdfParse(buffer: Buffer): Promise<string> {
   const pdfParse = (await import("pdf-parse")).default;
   const data = await pdfParse(buffer);
   return data.text || "";
+}
+
+async function extractFromPdf(buffer: Buffer): Promise<string> {
+  try {
+    const text = await extractFromPdfWithPdfjs(buffer);
+    if (text.length > 0) {
+      return text;
+    }
+    console.log("[Docs] pdfjs-dist returned empty text, falling back to pdf-parse");
+  } catch (err) {
+    console.warn("[Docs] pdfjs-dist failed, falling back to pdf-parse:", err instanceof Error ? err.message : err);
+  }
+
+  return extractFromPdfWithPdfParse(buffer);
 }
 
 async function extractFromDocx(buffer: Buffer): Promise<string> {
