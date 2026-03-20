@@ -404,6 +404,23 @@ export async function ensureTablesExist() {
       )
     `);
 
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS interaction_log (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        channel VARCHAR NOT NULL,
+        direction VARCHAR NOT NULL,
+        content TEXT NOT NULL,
+        label VARCHAR,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS interaction_log_user_created_idx
+        ON interaction_log (user_id, created_at DESC)
+    `).catch(() => {});
+
     console.log("Database tables verified");
   } catch (error) {
     console.error("Failed to ensure database tables exist:", error);

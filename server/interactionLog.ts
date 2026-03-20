@@ -1,5 +1,5 @@
 import { db } from "./db";
-import { eq, desc, gte } from "drizzle-orm";
+import { eq, desc, gte, and } from "drizzle-orm";
 import * as schema from "@shared/schema";
 
 export type InteractionChannel =
@@ -48,7 +48,10 @@ export async function getRecentInteractions(
       .select()
       .from(schema.interactionLog)
       .where(
-        eq(schema.interactionLog.userId, userId)
+        and(
+          eq(schema.interactionLog.userId, userId),
+          gte(schema.interactionLog.createdAt, since)
+        )
       )
       .orderBy(desc(schema.interactionLog.createdAt))
       .limit(limit);
