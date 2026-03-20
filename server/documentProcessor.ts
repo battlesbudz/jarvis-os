@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import type { TextItem, TextMarkedContent } from "pdfjs-dist";
 import { db } from "./db";
 import { eq, desc } from "drizzle-orm";
 import { userDocuments } from "@shared/schema";
@@ -42,13 +43,13 @@ export const SUPPORTED_EXTENSIONS = [".pdf", ".docx", ".doc", ".txt", ".md", ".c
 async function extractFromPdfWithPdfjs(buffer: Buffer): Promise<string> {
   const { pathToFileURL } = await import("url");
   const { resolve } = await import("path");
-  const { getDocument, GlobalWorkerOptions } = await import("pdfjs-dist/legacy/build/pdf.mjs" as any);
+  const pdfjs = (await import("pdfjs-dist/legacy/build/pdf.mjs")) as typeof import("pdfjs-dist");
 
   const workerPath = resolve("./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs");
-  GlobalWorkerOptions.workerSrc = pathToFileURL(workerPath).href;
+  pdfjs.GlobalWorkerOptions.workerSrc = pathToFileURL(workerPath).href;
 
   const uint8 = new Uint8Array(buffer);
-  const loadingTask = getDocument({ data: uint8, useSystemFonts: true });
+  const loadingTask = pdfjs.getDocument({ data: uint8, useSystemFonts: true });
   const pdf = await loadingTask.promise;
 
   let fullText = "";
@@ -56,7 +57,8 @@ async function extractFromPdfWithPdfjs(buffer: Buffer): Promise<string> {
     const page = await pdf.getPage(i);
     const content = await page.getTextContent();
     const pageText = content.items
-      .map((item: any) => ("str" in item ? item.str : ""))
+      .filter((item): item is TextItem => "str" in item)
+      .map((item) => item.str)
       .join(" ");
     fullText += pageText + "\n";
   }
@@ -71,17 +73,28 @@ async function extractFromPdfWithPdfParse(buffer: Buffer): Promise<string> {
 }
 
 async function extractFromPdf(buffer: Buffer): Promise<string> {
+  let text = "";
+
   try {
-    const text = await extractFromPdfWithPdfjs(buffer);
-    if (text.length > 0) {
-      return text;
-    }
-    console.log("[Docs] pdfjs-dist returned empty text, falling back to pdf-parse");
+    text = await extractFromPdfWithPdfjs(buffer);
   } catch (err) {
     console.warn("[Docs] pdfjs-dist failed, falling back to pdf-parse:", err instanceof Error ? err.message : err);
   }
 
-  return extractFromPdfWithPdfParse(buffer);
+  if (!text) {
+    console.log("[Docs] pdfjs-dist returned empty text, falling back to pdf-parse");
+    try {
+      text = await extractFromPdfWithPdfParse(buffer);
+    } catch (err) {
+      console.warn("[Docs] pdf-parse also failed:", err instanceof Error ? err.message : err);
+    }
+  }
+
+  if (!text.trim()) {
+    throw new Error("Could not extract text from PDF. The file may be encrypted, image-only, or in an unsupported format.");
+  }
+
+  return text;
 }
 
 async function extractFromDocx(buffer: Buffer): Promise<string> {
