@@ -154,7 +154,7 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
     const scheduleSlots: { hour: number; minute: number; label: string }[] = [
       { hour: 8, minute: 0, label: '8:00 AM morning check-in' },
       { hour: 10, minute: 0, label: '10:00 AM commitment check (only if items due/overdue)' },
-      { hour: 20, minute: 0, label: '8:00 PM evening recap' },
+      { hour: 21, minute: 0, label: '9:00 PM evening wrap-up (heartbeat — updates XP/streaks, saves reflection to Drive)' },
     ];
     if (localDay === 0) {
       scheduleSlots.push({ hour: 19, minute: 0, label: '7:00 PM weekly planning session (Sunday)' });
@@ -228,10 +228,10 @@ ${crossChannelSection}
 ## What You Do Automatically (you do NOT control these — the system runs them)
 - 8:00 AM: Morning check-in with today's plan and inbox highlights
 - 10:00 AM: Commitment accountability check (ONLY fires if there are items due today or overdue — otherwise skipped)
-- 8:00 PM: Evening recap of what was completed and what's still open
+- 9:00 PM: Evening wrap-up (via heartbeat) — XP/streak update, reflection saved to Drive, carry-over tasks queued for tomorrow
 - 7:00 PM Sundays: Weekly planning session (comprehensive week review + pattern insights + next week intentions)
 - Every 30 minutes: Email scanner checks Gmail and sends a Telegram alert ONLY for genuinely urgent emails
-- Every 30 minutes: Curiosity scanner sends proactive questions about upcoming meetings and important emails to help learn about you
+- Heartbeat daemon (every ~5 min): autonomous meeting briefs 30–60 min before external meetings, email draft queue for urgent reply-needed messages, evening wrap-up (XP/streak update + Drive reflection)
 All times are in the user's timezone (${userTimezone}). These fire automatically — you cannot pause, delay, reschedule, or skip them.
 ${nextScheduledText}
 
@@ -1204,12 +1204,15 @@ interface ScheduleEntry {
   dayOfWeek?: number;
 }
 
+// Note: the 'evening' recap type is intentionally excluded here — the
+// Jarvis heartbeat daemon owns the evening wrap-up (default 21:00 local).
+// It updates XP/streaks, writes a Drive reflection, and pre-loads a
+// tomorrow seed. Adding it here would duplicate the notification.
 const PROACTIVE_SCHEDULE: ScheduleEntry[] = [
   { type: 'morning', hour: 8, minute: 0 },
   { type: 'commitment_check', hour: 10, minute: 0 },
   { type: 'followup_check', hour: 12, minute: 0 },
   { type: 'momentum_nudge', hour: 14, minute: 0 },
-  { type: 'evening', hour: 20, minute: 0 },
   { type: 'weekly_planning', dayOfWeek: 0, hour: 19, minute: 0 },
 ];
 
