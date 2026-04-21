@@ -16,6 +16,7 @@ import { getSoulPromptBlock } from "./memory/soul";
 import { runAgent } from "./agent/harness";
 import { telegramCoachTools } from "./agent/tools";
 import { runCoachAgent } from "./channels/coachAgent";
+import { completePairing as completeDiscordPairing } from "./discord/manager";
 import OpenAI from "openai";
 
 const openai = new OpenAI({
@@ -319,6 +320,21 @@ async function processUpdate(update: any): Promise<void> {
         await sendMessage(chatId, "Your Telegram isn't linked to a GamePlan account yet. Open the app, go to Profile > Connected Apps > Telegram, and send the link code here.");
         return;
       }
+
+      // ── Discord pairing via Telegram ──────────────────────────────────
+      // Allow "pair discord XXXXXX" as an alternative to entering the code in the app.
+      const discordPairMatch = text?.match(/^(?:pair\s+discord\s+)?([A-Z0-9]{6})$/i);
+      if (discordPairMatch && text?.toLowerCase().startsWith("pair discord")) {
+        const pairCode = discordPairMatch[1].toUpperCase();
+        const pairResult = await completeDiscordPairing(link[0].userId, pairCode).catch((e) => ({ ok: false as const, error: String(e) }));
+        if (pairResult.ok) {
+          await sendMessage(chatId, `✅ Discord account linked${pairResult.discordUsername ? ` as **${pairResult.discordUsername}**` : ""}! You can now chat with Jarvis directly from Discord.`);
+        } else {
+          await sendMessage(chatId, `❌ Discord pairing failed: ${pairResult.error || "Invalid or expired code — please DM your Discord bot to get a fresh code."}`);
+        }
+        return;
+      }
+
       await handleCoachReply(link[0].userId, chatId, text, imageUrl);
     } catch (err) {
       console.error("Error handling Telegram message:", err);

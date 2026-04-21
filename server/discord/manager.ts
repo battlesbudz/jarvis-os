@@ -190,7 +190,7 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
 
     if (!userText) return;
 
-    // ── Route through coach pipeline ───────────────────────────────────
+    // ── Route through coach pipeline with streaming edits ──────────────
     let placeholder: Message | null = null;
     try {
       placeholder = await message.channel.send("_Thinking…_");
@@ -198,11 +198,26 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
       // ignore send failure for placeholder
     }
 
+    // Streaming: accumulate chunks and edit the placeholder at most once
+    // per ~900 ms to stay well within Discord's edit rate limits.
+    let streamBuf = "";
+    let lastEditAt = 0;
+    const STREAM_INTERVAL = 900;
+    const onToken = (chunk: string) => {
+      streamBuf += chunk;
+      const now = Date.now();
+      if (placeholder && now - lastEditAt >= STREAM_INTERVAL && streamBuf.length > 0) {
+        placeholder.edit(streamBuf + " ▌").catch(() => {});
+        lastEditAt = now;
+      }
+    };
+
     try {
       const result = await runCoachAgent({
         userId,
         userText,
         channelName: "Discord",
+        onToken,
       });
 
       const reply = result.reply || "Sorry, I couldn't generate a response right now.";
@@ -350,26 +365,29 @@ export async function completePairing(userId: string, code: string): Promise<{ o
     return { ok: false, error: "This pairing code belongs to a different account." };
   }
 
-  // Upsert channel_links
+  // Replace any existing Discord link for this user (prevents stale rows that
+  // could cause outbound messages to reach a prior Discord identity).
   try {
     const meta: DiscordLinkMeta = {
       discordUsername: rec.discordUsername,
       dmChannelId: rec.discordDmChannelId,
       allowlistedGuilds: [],
     };
-    await db
-      .insert(channelLinks)
-      .values({
-        userId,
-        channel: "discord",
-        address: rec.discordUserId,
-        metadata: meta as any,
-        linkedAt: new Date(),
-      })
-      .onConflictDoUpdate({
-        target: [channelLinks.channel, channelLinks.address],
-        set: { userId, metadata: meta as any, linkedAt: new Date() },
-      });
+    // Delete old link for this user (any address) then insert fresh row.
+    // Also delete any link where another user had the same Discord ID (re-linking).
+    await db.delete(channelLinks).where(
+      and(eq(channelLinks.userId, userId), eq(channelLinks.channel, "discord"))
+    );
+    await db.delete(channelLinks).where(
+      and(eq(channelLinks.channel, "discord"), eq(channelLinks.address, rec.discordUserId))
+    );
+    await db.insert(channelLinks).values({
+      userId,
+      channel: "discord",
+      address: rec.discordUserId,
+      metadata: meta as any,
+      linkedAt: new Date(),
+    });
   } catch (err) {
     console.error("[DiscordManager] completePairing DB write failed:", err);
     return { ok: false, error: "Database error — please try again." };
