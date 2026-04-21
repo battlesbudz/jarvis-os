@@ -2421,6 +2421,87 @@ Return ONLY the JSON object.`;
     }
   });
 
+  app.get("/api/email-drafts", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const drafts = await db
+        .select()
+        .from(schema.emailDrafts)
+        .where(and(eq(schema.emailDrafts.userId, userId), eq(schema.emailDrafts.status, "pending_approval")))
+        .orderBy(desc(schema.emailDrafts.createdAt));
+      res.json(drafts);
+    } catch (error) {
+      console.error("Error fetching email drafts:", error);
+      res.status(500).json({ error: "Failed to fetch drafts" });
+    }
+  });
+
+  app.post("/api/email-drafts/:id/approve", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const { id } = req.params;
+      const { editedSubject, editedBody } = req.body as { editedSubject?: string; editedBody?: string };
+
+      const [draft] = await db
+        .select()
+        .from(schema.emailDrafts)
+        .where(and(eq(schema.emailDrafts.id, id), eq(schema.emailDrafts.userId, userId)))
+        .limit(1);
+      if (!draft) return res.status(404).json({ error: "Draft not found" });
+      if (draft.status !== "pending_approval") return res.status(400).json({ error: "Draft already actioned" });
+
+      const subject = editedSubject?.trim() || draft.draftSubject;
+      const body = editedBody?.trim() || draft.draftBody;
+      const recipientMatch = (draft.fromSender || "").match(/<([^>]+)>/);
+      const recipient = recipientMatch ? recipientMatch[1] : (draft.fromSender || "").trim();
+      if (!recipient || !recipient.includes("@")) {
+        return res.status(400).json({ error: "Could not determine recipient address" });
+      }
+
+      const tokens = await getValidGoogleTokens(userId);
+      const token = tokens?.[0];
+      if (!token) return res.status(400).json({ error: "Gmail not connected" });
+
+      const { createGmailDraft } = await import("./integrations/gmail");
+      const result = await createGmailDraft(token, recipient, subject, body);
+
+      await db
+        .update(schema.emailDrafts)
+        .set({
+          status: "approved",
+          gmailDraftId: result.draftId,
+          gmailDraftUrl: result.gmailUrl,
+          actedAt: new Date(),
+          draftSubject: subject,
+          draftBody: body,
+        })
+        .where(eq(schema.emailDrafts.id, id));
+
+      res.json({ success: true, gmailDraftUrl: result.webUrl });
+    } catch (error) {
+      console.error("Error approving email draft:", error);
+      res.status(500).json({ error: "Failed to approve draft" });
+    }
+  });
+
+  app.post("/api/email-drafts/:id/discard", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const { id } = req.params;
+      await db
+        .update(schema.emailDrafts)
+        .set({ status: "discarded", actedAt: new Date() })
+        .where(and(eq(schema.emailDrafts.id, id), eq(schema.emailDrafts.userId, userId)));
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error discarding email draft:", error);
+      res.status(500).json({ error: "Failed to discard draft" });
+    }
+  });
+
   app.get("/api/documents", async (req: Request, res: Response) => {
     try {
       const userId = req.userId;

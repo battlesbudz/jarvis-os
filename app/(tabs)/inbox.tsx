@@ -31,6 +31,17 @@ interface InboxItem {
   surfacedAt: string;
 }
 
+interface EmailDraft {
+  id: string;
+  fromSender: string | null;
+  originalSubject: string | null;
+  draftSubject: string;
+  draftBody: string;
+  jarvisReason: string | null;
+  status: string;
+  createdAt: string;
+}
+
 function getSenderName(sender: string | null): string {
   if (!sender) return 'Unknown';
   return sender.replace(/<.*>/, '').trim() || sender;
@@ -45,12 +56,16 @@ export default function InboxScreen() {
     queryKey: ['/api/inbox/items'],
   });
 
+  const { data: drafts = [], refetch: refetchDrafts } = useQuery<EmailDraft[]>({
+    queryKey: ['/api/email-drafts'],
+  });
+
   const actionMutation = useMutation({
     mutationFn: async ({ itemId, actionType }: { itemId: string; actionType: string }) => {
       const res = await apiRequest('POST', `/api/inbox/items/${itemId}/action`, { actionType });
       return res.json();
     },
-    onSuccess: (data: any) => {
+    onSuccess: (data: { message?: string }) => {
       queryClient.invalidateQueries({ queryKey: ['/api/inbox/items'] });
       if (data?.message) {
         Alert.alert('Done', data.message);
@@ -61,10 +76,40 @@ export default function InboxScreen() {
     },
   });
 
+  const approveDraftMutation = useMutation({
+    mutationFn: async (draftId: string) => {
+      const res = await apiRequest('POST', `/api/email-drafts/${draftId}/approve`, {});
+      return res.json() as Promise<{ success: boolean; gmailDraftUrl?: string }>;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/email-drafts'] });
+      Alert.alert(
+        'Draft saved to Gmail',
+        data?.gmailDraftUrl
+          ? 'Open Gmail to review and send.'
+          : 'The reply is now in your Gmail drafts.',
+      );
+    },
+    onError: () => {
+      Alert.alert('Error', 'Could not save the draft to Gmail.');
+    },
+  });
+
+  const discardDraftMutation = useMutation({
+    mutationFn: async (draftId: string) => {
+      const res = await apiRequest('POST', `/api/email-drafts/${draftId}/discard`, {});
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/email-drafts'] });
+    },
+  });
+
   useFocusEffect(
     useCallback(() => {
       refetch();
-    }, [])
+      refetchDrafts();
+    }, [refetch, refetchDrafts])
   );
 
   const handleAction = (itemId: string, actionType: string) => {
@@ -148,8 +193,76 @@ export default function InboxScreen() {
     );
   };
 
+  const renderDraftQueue = () => {
+    if (drafts.length === 0) return null;
+    return (
+      <View style={styles.draftSection}>
+        <View style={styles.draftHeader}>
+          <Ionicons name="create-outline" size={16} color={Colors.primary} />
+          <Text style={styles.draftHeaderText}>
+            Draft Queue · {drafts.length} reply{drafts.length === 1 ? '' : 'ies'} ready
+          </Text>
+        </View>
+        {drafts.map((draft, index) => {
+          const sender = getSenderName(draft.fromSender);
+          const busy =
+            (approveDraftMutation.isPending && approveDraftMutation.variables === draft.id) ||
+            (discardDraftMutation.isPending && discardDraftMutation.variables === draft.id);
+          return (
+            <Animated.View key={draft.id} entering={FadeInDown.duration(300).delay(index * 60)}>
+              <View style={styles.draftCard}>
+                <View style={styles.cardHeader}>
+                  <View style={[styles.sourceIcon, { backgroundColor: Colors.primary + '15' }]}>
+                    <Ionicons name="sparkles" size={18} color={Colors.primary} />
+                  </View>
+                  <View style={styles.cardHeaderText}>
+                    <Text style={styles.senderName} numberOfLines={1}>To: {sender}</Text>
+                    <Text style={styles.timestamp}>
+                      {new Date(draft.createdAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+                    </Text>
+                  </View>
+                </View>
+
+                <Text style={styles.subject} numberOfLines={2}>{draft.draftSubject}</Text>
+
+                {draft.jarvisReason && (
+                  <View style={styles.reasonContainer}>
+                    <Ionicons name="alert-circle-outline" size={12} color={Colors.primary} />
+                    <Text style={styles.reasonText} numberOfLines={2}>{draft.jarvisReason}</Text>
+                  </View>
+                )}
+
+                <View style={styles.draftBodyBox}>
+                  <Text style={styles.draftBodyText} numberOfLines={6}>{draft.draftBody}</Text>
+                </View>
+
+                <View style={styles.actionsRow}>
+                  <Pressable
+                    style={styles.actionButton}
+                    onPress={() => approveDraftMutation.mutate(draft.id)}
+                    disabled={busy}
+                  >
+                    <Text style={styles.actionText}>Save to Gmail</Text>
+                  </Pressable>
+                  <Pressable
+                    style={[styles.actionButton, styles.actionButtonDismiss]}
+                    onPress={() => discardDraftMutation.mutate(draft.id)}
+                    disabled={busy}
+                  >
+                    <Text style={[styles.actionText, styles.actionTextDismiss]}>Discard</Text>
+                  </Pressable>
+                </View>
+              </View>
+            </Animated.View>
+          );
+        })}
+      </View>
+    );
+  };
+
   const renderEmpty = () => {
     if (isLoading) return null;
+    if (drafts.length > 0) return null;
     return (
       <View style={styles.emptyContainer}>
         <View style={styles.emptyIcon}>
@@ -184,6 +297,7 @@ export default function InboxScreen() {
           renderItem={renderItem}
           keyExtractor={(item) => item.id}
           contentContainerStyle={[styles.list, { paddingBottom: isWeb ? 34 : insets.bottom + 90 }]}
+          ListHeaderComponent={renderDraftQueue}
           ListEmptyComponent={renderEmpty}
           refreshControl={
             <RefreshControl refreshing={false} onRefresh={refetch} tintColor={Colors.primary} />
@@ -320,6 +434,43 @@ const styles = StyleSheet.create({
   neverButton: {
     marginLeft: 'auto' as const,
     padding: 8,
+  },
+  draftSection: {
+    marginBottom: 8,
+  },
+  draftHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 4,
+    paddingBottom: 8,
+  },
+  draftHeaderText: {
+    fontSize: 12,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.primary,
+    textTransform: 'uppercase' as const,
+    letterSpacing: 0.5,
+  },
+  draftCard: {
+    backgroundColor: '#fff',
+    borderRadius: 14,
+    padding: 16,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: Colors.primary + '40',
+  },
+  draftBodyBox: {
+    backgroundColor: Colors.surfaceAlt,
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 10,
+  },
+  draftBodyText: {
+    fontSize: 13,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.text,
+    lineHeight: 18,
   },
   emptyContainer: {
     alignItems: 'center',
