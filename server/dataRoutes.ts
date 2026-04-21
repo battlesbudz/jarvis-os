@@ -164,21 +164,38 @@ export function registerDataRoutes(app: Express): void {
     }
   });
 
-  // Goals: register the GET/DELETE generic handlers, then a custom PUT
-  // that auto-enqueues a decomposition job whenever a brand-new goal id
-  // appears in the saved list.
-  registerSimpleJsonCrud(app, "goals", schema.goals);
-  // The generic helper already registered PUT /api/data/goals. We can
-  // safely register a SECOND PUT for the same path: Express runs handlers
-  // in registration order, so we mount our hook in front by removing the
-  // generic one and replacing it.
-  const stack = (app as unknown as { _router?: { stack: Array<{ route?: { path?: string; methods?: { put?: boolean } } }> } })._router;
-  if (stack && Array.isArray(stack.stack)) {
-    stack.stack = stack.stack.filter((layer) => {
-      const r = layer.route;
-      return !(r && r.path === "/api/data/goals" && r.methods && r.methods.put);
-    });
-  }
+  // Goals: fully custom route set so we can hook into PUT and
+  // auto-enqueue a decomposition job whenever a brand-new goal id
+  // appears. We don't call registerSimpleJsonCrud here to avoid double
+  // registration of PUT.
+  app.get("/api/data/goals", async (req: Request, res: Response) => {
+    try {
+      const userId = requireUserId(req, res);
+      if (!userId) return;
+      const result = await db
+        .select({ data: schema.goals.data })
+        .from(schema.goals)
+        .where(eq(schema.goals.userId, userId));
+      if (result.length === 0) return res.json({ data: null });
+      res.json({ data: result[0].data });
+    } catch (e) {
+      console.error("Error fetching goals:", e);
+      res.status(500).json({ error: "Failed to fetch goals" });
+    }
+  });
+
+  app.delete("/api/data/goals", async (req: Request, res: Response) => {
+    try {
+      const userId = requireUserId(req, res);
+      if (!userId) return;
+      await db.delete(schema.goals).where(eq(schema.goals.userId, userId));
+      res.json({ ok: true });
+    } catch (e) {
+      console.error("Error deleting goals:", e);
+      res.status(500).json({ error: "Failed to delete goals" });
+    }
+  });
+
   app.put("/api/data/goals", async (req: Request, res: Response) => {
     try {
       const userId = requireUserId(req, res);
@@ -204,8 +221,8 @@ export function registerDataRoutes(app: Express): void {
         });
 
       // Fire-and-forget: enqueue a decomposition for each net-new goal.
-      // Worker is throttled per-user, so a burst of new goals queues
-      // sequentially without overwhelming the LLM.
+      // The worker is throttled per-user, so a burst of new goals
+      // queues sequentially without overwhelming the LLM.
       if (newGoals.length > 0) {
         try {
           const { enqueueGoalDecomposition } = await import("./agent/goalDecomposer");
