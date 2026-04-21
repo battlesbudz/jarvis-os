@@ -117,9 +117,9 @@ export async function runWeeklyPatternJob(userId: string): Promise<WeeklyJobResu
     db
       .select()
       .from(schema.energyCheckins)
-      .where(eq(schema.energyCheckins.userId, userId))
+      .where(and(eq(schema.energyCheckins.userId, userId), gte(schema.energyCheckins.date, sevenDaysAgo.toISOString().slice(0, 10))))
       .orderBy(desc(schema.energyCheckins.date))
-      .limit(7),
+      .limit(60),
   ]);
 
   const completionData =
@@ -131,11 +131,35 @@ export async function runWeeklyPatternJob(userId: string): Promise<WeeklyJobResu
   const telegramData = telegramRows.status === "fulfilled" ? telegramRows.value : [];
   const energyData = energyRows.status === "fulfilled" ? energyRows.value : [];
 
-  const completionsText = completionData
-    .filter((c) => c.date && new Date(c.date) >= sevenDaysAgo)
+  const recentCompletions = completionData.filter((c) => c.date && new Date(c.date) >= sevenDaysAgo);
+  const completionsText = recentCompletions
     .slice(0, 50)
     .map((c) => `- ${c.date}: ${c.completed ?? 0} completions${c.title ? ` (${c.title})` : ""}`)
     .join("\n");
+
+  // Explicit task-timing aggregates: weekday distribution + completion
+  // intensity over the 30-day window. Surfaces "Mondays are dead, Thursdays
+  // peak"-style patterns to the model without requiring it to count.
+  const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const perDow = [0, 0, 0, 0, 0, 0, 0];
+  const perDowDays = [new Set<string>(), new Set<string>(), new Set<string>(), new Set<string>(), new Set<string>(), new Set<string>(), new Set<string>()];
+  let totalCompleted = 0;
+  for (const c of recentCompletions) {
+    if (!c.date) continue;
+    const d = new Date(c.date);
+    if (isNaN(d.getTime())) continue;
+    const dow = d.getDay();
+    const n = c.completed ?? 0;
+    perDow[dow] += n;
+    perDowDays[dow].add(c.date);
+    totalCompleted += n;
+  }
+  const timingLines = perDow.map((total, i) => {
+    const days = perDowDays[i].size || 1;
+    const avg = (total / days).toFixed(1);
+    return `- ${dayNames[i]}: ${total} total across ${perDowDays[i].size} day(s) (avg ${avg}/day)`;
+  });
+  const taskTimingText = `Total completions in window: ${totalCompleted}\nBy weekday:\n${timingLines.join("\n")}`;
   const brainText = brainData
     .slice(0, 25)
     .map((b) => `- ${b.text ?? ""}`)
@@ -177,6 +201,9 @@ Rules:
 
 ## Completion history
 ${completionsText || "(none)"}
+
+## Task timing (30-day aggregates)
+${taskTimingText}
 
 ## Brain dump items
 ${brainText || "(none)"}

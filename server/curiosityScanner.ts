@@ -41,7 +41,8 @@ interface CuriosityItem {
 
 async function generateCuriosityQuestions(
   items: CuriosityItem[],
-  memories: { content: string; category: string }[]
+  memories: { content: string; category: string }[],
+  userId?: string,
 ): Promise<{ sourceId: string; sourceType: string; question: string }[]> {
   if (items.length === 0) return [];
 
@@ -51,6 +52,10 @@ async function generateCuriosityQuestions(
           .map((m) => `- [${m.category}] ${m.content}`)
           .join("\n")}`
       : "";
+
+  const { buildAiContextSections } = await import("./memory/promptContext");
+  const seed = items.slice(0, 3).map((i) => i.summary).join(" • ");
+  const { soulSection, patternSection } = await buildAiContextSections(userId, seed);
 
   const itemsList = items
     .map(
@@ -224,7 +229,8 @@ export async function runCuriosityScan(): Promise<void> {
 
         const questions = await generateCuriosityQuestions(
           items.slice(0, 15),
-          memories
+          memories,
+          link.userId,
         );
 
         const validQuestions = questions.filter(q =>
