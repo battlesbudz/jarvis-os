@@ -182,12 +182,16 @@ function parseEmailDraft(body: string): { to: string; subject: string; emailBody
   const inner = block[1];
   const toMatch = inner.match(/^To:\s*(.+)$/m);
   const subjMatch = inner.match(/^Subject:\s*(.+)$/m);
-  const bodyMatch = inner.match(/^Body:\s*([\s\S]*?)$/m);
+  // Body runs from the "Body:" line all the way to the end of the
+  // ---EMAIL DRAFT---/---END DRAFT--- block (we already stripped the
+  // closing marker via the outer block match). Capture everything after
+  // "Body:" so multi-paragraph bodies survive intact.
+  const bodyMatch = inner.match(/(^|\n)Body:\s*([\s\S]*)$/);
   if (!toMatch || !subjMatch || !bodyMatch) return null;
   return {
     to: toMatch[1].trim(),
     subject: subjMatch[1].trim(),
-    emailBody: bodyMatch[1].trim(),
+    emailBody: bodyMatch[2].trim(),
   };
 }
 
