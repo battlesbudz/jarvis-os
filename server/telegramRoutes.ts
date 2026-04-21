@@ -322,13 +322,14 @@ async function processUpdate(update: any): Promise<void> {
       }
 
       // ── Discord pairing via Telegram ──────────────────────────────────
-      // Allow "pair discord XXXXXX" as an alternative to entering the code in the app.
-      const discordPairMatch = text?.match(/^(?:pair\s+discord\s+)?([A-Z0-9]{6})$/i);
-      if (discordPairMatch && text?.toLowerCase().startsWith("pair discord")) {
-        const pairCode = discordPairMatch[1].toUpperCase();
+      // Reuses the same approval UX: user DMs Discord bot → gets 6-char code →
+      // sends "approve XXXXXX" (or "pair discord XXXXXX") here to confirm.
+      const approveMatch = text?.match(/^(?:approve|pair\s+discord)\s+([A-Z0-9]{6})$/i);
+      if (approveMatch) {
+        const pairCode = approveMatch[1].toUpperCase();
         const pairResult = await completeDiscordPairing(link[0].userId, pairCode).catch((e) => ({ ok: false as const, error: String(e) }));
         if (pairResult.ok) {
-          await sendMessage(chatId, `✅ Discord account linked${pairResult.discordUsername ? ` as **${pairResult.discordUsername}**` : ""}! You can now chat with Jarvis directly from Discord.`);
+          await sendMessage(chatId, `✅ Discord account linked${pairResult.discordUsername ? ` as ${pairResult.discordUsername}` : ""}! You can now chat with Jarvis directly from Discord.`);
         } else {
           await sendMessage(chatId, `❌ Discord pairing failed: ${pairResult.error || "Invalid or expired code — please DM your Discord bot to get a fresh code."}`);
         }
