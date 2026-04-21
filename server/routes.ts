@@ -983,9 +983,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const daemonOnline = isUserPaired(userId);
           const googleEmail = oauthStatus?.google?.email || (oauthStatus?.google?.accounts?.[0]?.email) || 'unknown';
           const msEmail = oauthStatus?.microsoft?.email || (oauthStatus?.microsoft?.accounts?.[0]?.email) || 'unknown';
+          const slackConnectedCheck = (oauthStatus as any)?.slack?.connected ?? false;
           const lines = [
             `Google (Gmail + Calendar): ${googleToken ? `✓ token valid — ${googleEmail}` : '✗ not connected or token expired (reconnect needed)'}`,
             `Microsoft (Outlook + Calendar): ${msToken ? `✓ token valid — ${msEmail}` : '✗ not connected or token expired (reconnect needed)'}`,
+            `Slack: ${slackConnectedCheck ? '✓ connected' : '✗ not connected'}`,
             `Telegram: ${tgRows.length > 0 ? '✓ linked' : '✗ not linked'}`,
             `WhatsApp: ${chRows.some((r: any) => r.channel === 'whatsapp') ? '✓ linked' : '✗ not linked'}`,
             `Discord: ${chRows.some((r: any) => r.channel === 'discord') ? '✓ linked' : '✗ not linked'}`,
