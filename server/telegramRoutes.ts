@@ -13,6 +13,7 @@ import { extractAndStore } from "./memory/extractor";
 import { getSoulPromptBlock } from "./memory/soul";
 import { runAgent } from "./agent/harness";
 import { telegramCoachTools } from "./agent/tools";
+import { runCoachAgent } from "./channels/coachAgent";
 import OpenAI from "openai";
 
 const openai = new OpenAI({
@@ -31,326 +32,42 @@ function generateLinkCode(): string {
 
 async function handleCoachReply(userId: string, chatId: string, userText: string, imageUrl?: string): Promise<void> {
   try {
-    let userGoals: any[] = [];
-    let userStats: any = {};
-    let userLifeContext: any = null;
-    let userCommitments: any[] = [];
-    let chatMessages: any[] = [];
-    let gmailItems: any[] = [];
-    let calendarEvents: any[] = [];
-    let gmailConnected = false;
-    let googleAccessToken: string | null = null;
+    const { reply, attachments } = await runCoachAgent({
+      userId,
+      userText,
+      channelName: "Telegram",
+      imageUrl,
+    });
 
-    const [goalsRow, statsRow, lcRow, chatRow, commitmentsRows, googleTokens, prefsRow, memoriesRow, recentInteractionsResult] = await Promise.allSettled([
-      db.select().from(schema.goals).where(eq(schema.goals.userId, userId)).limit(1),
-      db.select().from(schema.stats).where(eq(schema.stats.userId, userId)).limit(1),
-      db.select().from(schema.lifeContext).where(eq(schema.lifeContext.userId, userId)).limit(1),
-      db.select().from(schema.chatHistory).where(eq(schema.chatHistory.userId, userId)).limit(1),
-      db.select().from(schema.commitments)
-        .where(and(eq(schema.commitments.userId, userId), eq(schema.commitments.status, 'pending')))
-        .orderBy(desc(schema.commitments.extractedAt)).limit(10),
-      getValidGoogleTokens(userId),
-      db.select().from(schema.userPreferences).where(eq(schema.userPreferences.userId, userId)).limit(1),
-      db.select({ content: schema.userMemories.content, category: schema.userMemories.category })
-        .from(schema.userMemories)
-        .where(eq(schema.userMemories.userId, userId))
-        .orderBy(desc(schema.userMemories.extractedAt))
-        .limit(50),
-      getRecentInteractions(userId, 20),
-    ]);
-
-    logInteraction(userId, "telegram", "inbound", userText || "[image]").catch(() => {});
-
-    let userTimezone = 'America/New_York';
-
-    if (goalsRow.status === 'fulfilled') userGoals = (goalsRow.value[0]?.data as any[]) || [];
-    if (statsRow.status === 'fulfilled') userStats = statsRow.value[0]?.data || {};
-    if (lcRow.status === 'fulfilled') userLifeContext = lcRow.value[0]?.data || null;
-    if (chatRow.status === 'fulfilled') chatMessages = (chatRow.value[0]?.data as any[]) || [];
-    if (commitmentsRows.status === 'fulfilled') userCommitments = commitmentsRows.value;
-    if (prefsRow.status === 'fulfilled') {
-      const prefs = (prefsRow.value[0]?.data as any) || {};
-      if (prefs.timezone) userTimezone = prefs.timezone;
+    let textReply = reply;
+    if (attachments.length > 0 && textReply && textReply.trim()) {
+      try { await sendMessage(chatId, textReply); } catch (sendErr) {
+        console.error("[Telegram] failed to send text before attachment:", sendErr);
+      }
+      logInteraction(userId, "telegram", "outbound", textReply).catch(() => {});
+      textReply = "";
     }
 
-    const nowForDateKey = new Date();
-    const localForDateKey = new Date(nowForDateKey.toLocaleString('en-US', { timeZone: userTimezone }));
-    const dateKey = `${localForDateKey.getFullYear()}-${String(localForDateKey.getMonth() + 1).padStart(2, '0')}-${String(localForDateKey.getDate()).padStart(2, '0')}`;
-
-    let todayPlan: any = null;
-    try {
-      const planRows = await db.select().from(schema.plans)
-        .where(and(eq(schema.plans.userId, userId), eq(schema.plans.date, dateKey))).limit(1);
-      todayPlan = planRows[0]?.data as any || null;
-    } catch {}
-
-
-    if (googleTokens.status === 'fulfilled' && googleTokens.value.length > 0) {
-      gmailConnected = true;
-      const tokens = googleTokens.value;
-      const token = tokens[0];
-      googleAccessToken = token;
-      console.log(`[Telegram] Fetching Gmail+Calendar for user ${userId} — ${tokens.length} Google account(s), date: ${dateKey}`);
-
-      const [emailResult, ...calResults] = await Promise.allSettled([
-        getRecentEmailCommitments(14, token),
-        ...tokens.map(t => getGoogleCalendarEvents(dateKey, undefined, undefined, t)),
-      ]);
-
-      if (emailResult.status === 'fulfilled') {
-        gmailItems = emailResult.value;
-        console.log(`[Telegram] Gmail: ${gmailItems.length} emails`);
-      } else {
-        console.error(`[Telegram] Gmail fetch failed:`, emailResult.reason);
+    for (const att of attachments) {
+      if (att.kind === "document") {
+        const ok = await sendTelegramDocument(chatId, att.filename, att.content, att.caption, att.mimeType);
+        console.log(`[Telegram] Delivered attachment ${att.filename} ok=${ok}`);
       }
-
-      const seenEventIds = new Set<string>();
-      for (const calResult of calResults) {
-        if (calResult.status === 'fulfilled') {
-          for (const ev of calResult.value) {
-            if (!seenEventIds.has(ev.id)) {
-              seenEventIds.add(ev.id);
-              calendarEvents.push(ev);
-            }
-          }
-        } else {
-          console.error(`[Telegram] Calendar fetch failed:`, calResult.reason);
-        }
-      }
-      console.log(`[Telegram] Calendar: ${calendarEvents.length} events total across ${tokens.length} account(s)`);
-    } else {
-      console.log(`[Telegram] No Google tokens for user ${userId} — status: ${googleTokens.status}`);
-      if (googleTokens.status === 'rejected') console.error(`[Telegram] Token fetch error:`, googleTokens.reason);
     }
 
-    const recentMessages = chatMessages.slice(0, 10).reverse();
-
-    const now = new Date();
-    const dayOfWeek = now.toLocaleDateString('en-US', { weekday: 'long' });
-    const dateStr = now.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
-
-    const goalsText = userGoals.length > 0
-      ? userGoals.map((g: any) => `- ${g.title} (${g.category}): ${g.current}/${g.target} ${g.unit}`).join('\n')
-      : 'No goals set';
-
-    const commitmentsText = userCommitments.length > 0
-      ? userCommitments.map((c: any) => `- [id:${c.id}] "${c.content}"${c.dueDate ? ` (due ${c.dueDate})` : ''}`).join('\n')
-      : '';
-
-    const calendarText = calendarEvents.length > 0
-      ? calendarEvents.slice(0, 8).map((e: any) => `- ${e.time ? e.time + ': ' : ''}${e.title}`).join('\n')
-      : '';
-
-    const gmailSection = gmailItems.length > 0
-      ? `## Recent Emails (last 14 days from Gmail)\n` +
-        gmailItems.slice(0, 100).map((i: any) => `- [id:${i.id}] From: ${i.from || 'unknown'} | "${i.subject}" — ${i.snippet}`).join('\n') +
-        `\n(Refer to these directly when asked. Do not say you cannot access email — you have the data above. Use the gmail_action tool with the message id to act on emails when asked.)`
-      : gmailConnected
-        ? `## Recent Emails\nGmail is connected but no emails found in the last 7 days.`
-        : `## Recent Emails\nGmail not connected — if asked about emails, let the user know.`;
-
-    const localNow = new Date(now.toLocaleString('en-US', { timeZone: userTimezone }));
-    const localHour = localNow.getHours();
-    const localMinute = localNow.getMinutes();
-    const localDay = localNow.getDay();
-    const scheduleSlots: { hour: number; minute: number; label: string }[] = [
-      { hour: 8, minute: 0, label: '8:00 AM morning check-in' },
-      { hour: 10, minute: 0, label: '10:00 AM commitment check (only if items due/overdue)' },
-      { hour: 21, minute: 0, label: '9:00 PM evening wrap-up (heartbeat — updates XP/streaks, saves reflection to Drive)' },
-    ];
-    if (localDay === 0) {
-      scheduleSlots.push({ hour: 19, minute: 0, label: '7:00 PM weekly planning session (Sunday)' });
-      scheduleSlots.sort((a, b) => a.hour - b.hour || a.minute - b.minute);
-    }
-    const nextSlot = scheduleSlots.find(s => s.hour > localHour || (s.hour === localHour && s.minute > localMinute));
-    const nextScheduledText = nextSlot
-      ? `Next scheduled notification: ${nextSlot.label} (${userTimezone})`
-      : 'All scheduled notifications for today have already passed. Next: 8:00 AM tomorrow morning check-in';
-
-    let userMemoriesData: { content: string; category: string }[] = [];
-    if (memoriesRow.status === 'fulfilled') userMemoriesData = memoriesRow.value;
-
-    const recentInteractions = recentInteractionsResult.status === 'fulfilled' ? recentInteractionsResult.value : [];
-    const crossChannelSection = formatInteractionTimeline(recentInteractions);
-
-    let proactiveQuestionContext = '';
-    try {
-      const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-      const recentUnanswered = await db.select()
-        .from(schema.proactiveQuestionsSent)
-        .where(
-          and(
-            eq(schema.proactiveQuestionsSent.userId, userId),
-            sql`${schema.proactiveQuestionsSent.answeredAt} IS NULL`,
-            sql`${schema.proactiveQuestionsSent.sentAt} > ${twentyFourHoursAgo}`
-          )
-        )
-        .orderBy(desc(schema.proactiveQuestionsSent.sentAt))
-        .limit(3);
-      if (recentUnanswered.length > 0) {
-        proactiveQuestionContext = `\n## Recent Proactive Questions You Asked (unanswered)\nYou recently sent these curiosity-driven questions. If the user's message seems to be answering one of them, acknowledge it warmly and ask a brief follow-up to learn more about them.\n` +
-          recentUnanswered.map(q => `- "${q.question}" (about ${q.sourceType}: ${q.sourceId.replace(/^(cal|gmail):/, '')})`).join('\n');
-      }
-    } catch {}
-
-    // Phase 4: replace per-message memory dump with the unified SOUL block.
-    const soulBlock = await getSoulPromptBlock(userId);
-    const memoriesSection = soulBlock || (() => {
-      if (userMemoriesData.length === 0) return '';
-      const grouped: Record<string, string[]> = {};
-      for (const m of userMemoriesData) {
-        const cat = m.category || 'fact';
-        if (!grouped[cat]) grouped[cat] = [];
-        grouped[cat].push(m.content);
-      }
-      let section = '\n## What I Know About You (from past conversations)';
-      for (const [cat, items] of Object.entries(grouped)) {
-        section += `\n### ${cat}\n${items.map(i => `- ${i}`).join('\n')}`;
-      }
-      return section;
-    })();
-
-    const systemPrompt = `You are GamePlan Coach Jarvis — a sharp, supportive personal productivity coach. You're responding via Telegram, so keep messages SHORT (2-4 sentences max). Use plain text, no markdown headers.
-
-Today is ${dayOfWeek}, ${dateStr}. User's timezone: ${userTimezone}.
-${crossChannelSection}
-
-## What You Do Automatically (you do NOT control these — the system runs them)
-- 8:00 AM: Morning check-in with today's plan and inbox highlights
-- 10:00 AM: Commitment accountability check (ONLY fires if there are items due today or overdue — otherwise skipped)
-- 9:00 PM: Evening wrap-up (via heartbeat) — XP/streak update, reflection saved to Drive, carry-over tasks queued for tomorrow
-- 7:00 PM Sundays: Weekly planning session (comprehensive week review + pattern insights + next week intentions)
-- Every 30 minutes: Email scanner checks Gmail and sends a Telegram alert ONLY for genuinely urgent emails
-- Heartbeat daemon (every ~5 min): autonomous meeting briefs 30–60 min before external meetings, email draft queue for urgent reply-needed messages, evening wrap-up (XP/streak update + Drive reflection)
-All times are in the user's timezone (${userTimezone}). These fire automatically — you cannot pause, delay, reschedule, or skip them.
-${nextScheduledText}
-
-## What You Must NEVER Do
-- NEVER claim you "paused", "held", "scheduled", "decided to wait", or took any autonomous action regarding notifications. You don't have that ability.
-- NEVER invent a narrative about your own past behavior or past conversations you don't have in your message history or cross-channel activity log below.
-- If asked whether a notification went out, check the "Recent Cross-Channel Activity" section above — it records every message you've sent and received across all channels in the last 48 hours.
-- If asked about past conversations not in your message history or the cross-channel log, say so. Don't fabricate.
-${memoriesSection}${proactiveQuestionContext}
-
-## User Profile
-- Streak: ${userStats.streak || 0} days
-- Total completed: ${userStats.totalCompleted || 0}
-- XP: ${userStats.xp || 0}
-
-## Active Goals
-${goalsText}
-${commitmentsText ? `\n## Open Commitments\n${commitmentsText}` : ''}
-${calendarText ? `\n## Today's Calendar\n${calendarText}` : ''}
-
-${gmailSection}
-${userLifeContext?.priorityGoal ? `\n## Context\n- Priority: ${userLifeContext.priorityGoal}` : ''}
-
-## Task Management
-You can manage the user's tasks and commitments using the manage_tasks tool:
-- Add tasks to today's plan (add_plan_task)
-- Add commitments with optional due dates (add_commitment)
-- Mark commitments as done using their [id:...] (complete_commitment)
-- List today's tasks and open commitments (list_tasks)
-- Analyze behavioral patterns from 30 days of data (analyze_patterns)
-When the user asks to add, complete, or list tasks/commitments, use the manage_tasks tool.
-If the user asks about their patterns, habits, trends, what you notice about them, their best/worst days, or anything about how they work over time, use manage_tasks with action analyze_patterns.
-
-Be direct, specific, actionable. No fluff. You have full access to the user's email and calendar data above — use it. Respond in the same language the user writes in.`;
-
-    let reply = "Sorry, I couldn't generate a response right now.";
-    try {
-      const userMessageContent = imageUrl
-        ? [
-            { type: "text" as const, text: userText || "What do you see in this image? Give me your thoughts and any relevant actions." },
-            { type: "image_url" as const, image_url: { url: imageUrl } },
-          ]
-        : userText;
-
-
-      const baseMessages: import("openai").default.Chat.Completions.ChatCompletionMessageParam[] = [
-        { role: "system", content: systemPrompt },
-        ...recentMessages.map((m: { role: string; content: string }) => ({
-          role: m.role === "assistant" ? ("assistant" as const) : ("user" as const),
-          content: m.content,
-        })),
-        { role: "user", content: userMessageContent },
-      ];
-
-      // Build a context that we keep a reference to — tools mutate ctx.state
-      // in place, so we can read updates after runAgent returns.
-      const agentCtx: import("./agent/types").ToolContext = {
-        userId,
-        channel: "Telegram",
-        googleAccessToken: googleAccessToken || undefined,
-        state: {
-          dateKey,
-          todayPlan,
-          gmailMessageIds: gmailItems.map((i: { id?: string }) => i.id).filter((id): id is string => !!id),
-          pendingAttachments: [],
-        },
-      };
-
-      const agentResult = await runAgent({
-        model: "gpt-5-mini",
-        messages: baseMessages,
-        tools: telegramCoachTools({ hasGoogle: !!googleAccessToken }),
-        context: agentCtx,
-        maxTurns: 6,
-        maxCompletionTokens: 2000,
-      });
-
-      // Pick up any plan mutations from tools (manage_tasks updates this in place)
-      if (agentCtx.state.todayPlan) {
-        todayPlan = agentCtx.state.todayPlan;
-      }
-
-      reply = agentResult.reply || reply;
-      console.log(`[Telegram] Agent done — turns=${agentResult.turns}, tool calls=${agentResult.toolCalls.length}, finish=${agentResult.finishReason}`);
-
-      // Deliver any attachments queued by tools (e.g. create_document) to this chat
-      const attachments = agentCtx.state.pendingAttachments || [];
-      if (attachments.length > 0) {
-        // Send the text reply first so the document arrives after it
-        if (reply && reply.trim()) {
-          try { await sendMessage(chatId, reply); } catch {}
-          reply = "";
-        }
-        for (const att of attachments) {
-          if (att.kind === "document") {
-            const ok = await sendTelegramDocument(chatId, att.filename, att.content, att.caption, att.mimeType);
-            console.log(`[Telegram] Delivered attachment ${att.filename} ok=${ok}`);
-          }
-        }
-      }
-    } catch (aiErr: any) {
-      console.error("[Telegram] OpenAI error:", aiErr?.status, aiErr?.message, aiErr?.error);
-      throw aiErr;
-    }
-
-    const userMsg = { id: Date.now().toString(), role: 'user', content: userText };
-    const assistantMsg = { id: (Date.now() + 1).toString(), role: 'assistant', content: reply };
-    const updatedChat = [assistantMsg, userMsg, ...chatMessages].slice(0, 100);
-
-    try {
-      await db.insert(schema.chatHistory)
-        .values({ userId, data: updatedChat })
-        .onConflictDoUpdate({
-          target: schema.chatHistory.userId,
-          set: { data: updatedChat, updatedAt: new Date() },
-        });
-    } catch {}
-
-    if (reply && reply.trim()) {
-      await sendMessage(chatId, reply);
-      logInteraction(userId, "telegram", "outbound", reply).catch(() => {});
+    if (textReply && textReply.trim()) {
+      await sendMessage(chatId, textReply);
+      logInteraction(userId, "telegram", "outbound", textReply).catch(() => {});
     }
 
     extractProfileFromTelegram(userId, userText).catch(err => {
       console.error("[Profile] Telegram extraction error:", err);
     });
+    return;
   } catch (error) {
     console.error("Error handling Telegram coach reply:", error);
     await sendMessage(chatId, "Sorry, I encountered an error. Please try again.");
+    return;
   }
 }
 
