@@ -388,27 +388,98 @@ async function runEveningWrapUp(
   const messageType = "evening_wrapup";
   if (await alreadyLogged(userId, messageType, localKey)) return false;
 
-  // Today's plan
-  let tasks: Array<{ title: string; completed?: boolean; category?: string }> = [];
+  // ── Today's plan ──────────────────────────────────────────
+  type PlanTask = { title: string; completed?: boolean; category?: string };
+  let tasks: PlanTask[] = [];
   try {
     const planRows = await db
       .select()
       .from(schema.plans)
       .where(and(eq(schema.plans.userId, userId), eq(schema.plans.date, localKey)))
       .limit(1);
-    const data = (planRows[0]?.data as { tasks?: typeof tasks }) || {};
+    const data = (planRows[0]?.data as { tasks?: PlanTask[] }) || {};
     tasks = Array.isArray(data.tasks) ? data.tasks : [];
   } catch {}
 
-  // Stats
-  let stats: { streak?: number; xp?: number; totalCompleted?: number } = {};
+  // ── Current stats ─────────────────────────────────────────
+  type StatsData = {
+    streak?: number;
+    bestStreak?: number;
+    xp?: number;
+    totalCompleted?: number;
+    lastStreakDate?: string;
+  };
+  let statsData: StatsData = {};
+  let statsRowExists = false;
   try {
     const statsRows = await db.select().from(schema.stats).where(eq(schema.stats.userId, userId)).limit(1);
-    stats = ((statsRows[0]?.data as typeof stats) || {});
+    if (statsRows.length > 0) {
+      statsData = (statsRows[0].data as StatsData) || {};
+      statsRowExists = true;
+    }
   } catch {}
 
   const completed = tasks.filter((t) => t.completed);
   const open = tasks.filter((t) => !t.completed);
+  const completedCount = completed.length;
+
+  // ── Update XP, streak, totalCompleted (idempotent via lastStreakDate) ──
+  if (completedCount > 0 && statsRowExists) {
+    try {
+      const yesterday = (() => {
+        const d = new Date(now);
+        d.setDate(d.getDate() - 1);
+        return localDateKey(d, tz);
+      })();
+
+      const lastDate = statsData.lastStreakDate || "";
+      let newStreak = statsData.streak || 0;
+
+      if (lastDate === localKey) {
+        // Already updated tonight (shouldn't happen due to alreadyLogged, but guard anyway)
+      } else if (lastDate === yesterday) {
+        // Consecutive — extend streak
+        newStreak += 1;
+      } else if (lastDate < localKey) {
+        // Gap or first ever — reset to 1
+        newStreak = 1;
+      }
+
+      const xpEarned = completedCount * 10;
+      const newXp = (statsData.xp || 0) + xpEarned;
+      const newTotalCompleted = (statsData.totalCompleted || 0) + completedCount;
+      const newBestStreak = Math.max(statsData.bestStreak || 0, newStreak);
+
+      await db
+        .update(schema.stats)
+        .set({
+          data: {
+            ...statsData,
+            streak: newStreak,
+            bestStreak: newBestStreak,
+            xp: newXp,
+            totalCompleted: newTotalCompleted,
+            lastStreakDate: localKey,
+          },
+          updatedAt: new Date(),
+        })
+        .where(eq(schema.stats.userId, userId));
+
+      // Refresh for LLM prompt
+      statsData = {
+        ...statsData,
+        streak: newStreak,
+        bestStreak: newBestStreak,
+        xp: newXp,
+        totalCompleted: newTotalCompleted,
+        lastStreakDate: localKey,
+      };
+
+      console.log(`[Heartbeat] stats updated for ${userId}: streak=${newStreak}, xp+${xpEarned}`);
+    } catch (err) {
+      console.error(`[Heartbeat] stats update failed (non-fatal):`, err);
+    }
+  }
 
   const completedList = completed.length > 0
     ? completed.slice(0, 8).map((t) => `- ${t.title}`).join("\n")
@@ -417,40 +488,50 @@ async function runEveningWrapUp(
     ? open.slice(0, 6).map((t) => `- ${t.title}`).join("\n")
     : "(no open items)";
 
-  const prompt = `Compose a short evening wrap-up for the user. Warm but direct — no fluff.
+  // ── Generate 4-line summary + tomorrow seed (single LLM call) ────────
+  const llmPrompt = `Compose a short evening wrap-up for the user. Warm but direct — no fluff.
 
 Today (${localKey}):
-Streak: ${stats.streak || 0} days | XP: ${stats.xp || 0}
+Streak: ${statsData.streak || 0} days | XP: ${statsData.xp || 0} | Best streak: ${statsData.bestStreak || 0}
 
-Completed today (${completed.length}):
+Completed today (${completedCount}):
 ${completedList}
 
 Still open (${open.length}):
 ${openList}
 
-Output 4 short lines:
-1. One line acknowledging what got done (or honestly noting if nothing did)
-2. One line on what's still open and what to carry into tomorrow
-3. One small observation about the day's pattern
-4. One specific prompt for tomorrow morning
-
-Plain text, no markdown headers or bullet markers. Keep total under 90 words.`;
+Return JSON:
+{
+  "summary": "<4 short sentences: (1) acknowledge what got done, (2) note what's still open, (3) one observation about today's pattern, (4) one specific prompt for tomorrow morning — plain text, no markdown, total ≤90 words>",
+  "tomorrowPrompt": "<single sentence: a concrete morning-focus intention for tomorrow, ≤20 words>",
+  "observation": "<one sentence pattern observation from today, ≤15 words>"
+}`;
 
   let summary = "";
+  let tomorrowPrompt = "";
+  let observation = "";
   try {
     const resp = await openai.chat.completions.create({
       model: "gpt-5-mini",
-      messages: [{ role: "user", content: prompt }],
-      max_completion_tokens: 500,
+      messages: [{ role: "user", content: llmPrompt }],
+      response_format: { type: "json_object" },
+      max_completion_tokens: 600,
     });
-    summary = resp.choices[0]?.message?.content?.trim() || "";
+    const parsed = JSON.parse(resp.choices[0]?.message?.content || "{}") as {
+      summary?: string;
+      tomorrowPrompt?: string;
+      observation?: string;
+    };
+    summary = parsed.summary?.trim() || "";
+    tomorrowPrompt = parsed.tomorrowPrompt?.trim() || "";
+    observation = parsed.observation?.trim() || "";
   } catch (err) {
     console.error(`[Heartbeat] wrap-up generation failed:`, err);
     return false;
   }
   if (!summary) return false;
 
-  // Send to Telegram
+  // ── Send to Telegram ──────────────────────────────────────
   try {
     await sendMessage(chatId, `🌙 Evening wrap-up\n\n${summary}`);
     logInteraction(userId, "notification", "outbound", summary, "evening_wrapup").catch(() => {});
@@ -459,12 +540,47 @@ Plain text, no markdown headers or bullet markers. Keep total under 90 words.`;
     return false;
   }
 
-  // Save reflection to Drive (best-effort)
+  // ── Pre-load tomorrow planning seed into userPreferences ──────────────
+  // The morning plan generator can read prefs.data.tomorrowSeed to start
+  // the day with carry-over context rather than a blank slate.
+  try {
+    const tomorrowKey = (() => {
+      const d = new Date(now);
+      d.setDate(d.getDate() + 1);
+      return localDateKey(d, tz);
+    })();
+
+    const prefRows = await db
+      .select()
+      .from(schema.userPreferences)
+      .where(eq(schema.userPreferences.userId, userId))
+      .limit(1);
+    const prefData = (prefRows[0]?.data as Record<string, unknown>) || {};
+
+    const tomorrowSeed = {
+      date: tomorrowKey,
+      generatedAt: now.toISOString(),
+      carryoverTasks: open.slice(0, 8).map((t) => t.title),
+      observation,
+      tomorrowPrompt,
+    };
+
+    await db
+      .update(schema.userPreferences)
+      .set({ data: { ...prefData, tomorrowSeed }, updatedAt: new Date() })
+      .where(eq(schema.userPreferences.userId, userId));
+
+    console.log(`[Heartbeat] tomorrow seed written for ${userId} (date: ${tomorrowKey})`);
+  } catch (err) {
+    console.error(`[Heartbeat] tomorrow seed write failed (non-fatal):`, err);
+  }
+
+  // ── Save markdown reflection to Drive ────────────────────────────────
   if (token) {
     try {
-      const reflection = `# Evening reflection — ${localKey}\n\n${summary}\n\n---\n\n## Completed (${completed.length})\n${completedList}\n\n## Still open (${open.length})\n${openList}\n`;
+      const reflection = `# Evening reflection — ${localKey}\n\n${summary}\n\n---\n\n## Completed (${completedCount})\n${completedList}\n\n## Carry into tomorrow (${open.length})\n${openList}\n${observation ? `\n## Pattern note\n${observation}\n` : ""}${tomorrowPrompt ? `\n## Tomorrow morning\n${tomorrowPrompt}\n` : ""}`;
       await createDriveTextFile(token, `reflection-${localKey}.md`, reflection, { convertToDoc: false });
-      console.log(`[Heartbeat] wrap-up reflection saved to Drive for ${userId}`);
+      console.log(`[Heartbeat] reflection saved to Drive for ${userId}`);
     } catch (err) {
       console.error(`[Heartbeat] Drive save failed (non-fatal):`, err);
     }
@@ -497,12 +613,22 @@ export async function runHeartbeatTick(): Promise<void> {
   const prefsMap: Record<string, UserPrefs> = {};
   for (const p of allPrefs) prefsMap[p.userId] = (p.data as UserPrefs) || {};
 
+  // Load user emails (username is the Google-authed email address) for
+  // external-attendee domain detection in the meeting brief job.
+  const allUsers = await db
+    .select({ id: schema.users.id, username: schema.users.username })
+    .from(schema.users)
+    .catch(() => []);
+  const userEmailMap: Record<string, string | null> = {};
+  for (const u of allUsers) userEmailMap[u.id] = u.username || null;
+
   const now = new Date();
 
   for (const link of links) {
     const prefs = prefsMap[link.userId] || {};
     if (prefs.heartbeatEnabled === false) continue;
     const tz = prefs.timezone || "America/New_York";
+    const userEmail = userEmailMap[link.userId] || null;
 
     let token: string | null = null;
     try {
@@ -522,7 +648,7 @@ export async function runHeartbeatTick(): Promise<void> {
 
     let actionsFired = 0;
     try {
-      if (token) actionsFired += await runMeetingBriefs(link.userId, link.chatId, token, memories, now, tz);
+      if (token) actionsFired += await runMeetingBriefs(link.userId, link.chatId, token, memories, now, tz, userEmail);
     } catch (err) { console.error(`[Heartbeat] meeting briefs failed for ${link.userId}:`, err); }
 
     try {
