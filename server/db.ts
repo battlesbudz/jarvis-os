@@ -186,6 +186,8 @@ export async function ensureTablesExist() {
       )
     `);
     await db.execute(sql`CREATE INDEX IF NOT EXISTS people_user_idx ON people(user_id)`).catch(() => {});
+    await db.execute(sql`ALTER TABLE people ADD COLUMN IF NOT EXISTS next_interaction_at TIMESTAMP`).catch(() => {});
+    await db.execute(sql`ALTER TABLE people ADD COLUMN IF NOT EXISTS upcoming_count INTEGER NOT NULL DEFAULT 0`).catch(() => {});
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS jarvis_souls (
         user_id VARCHAR PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,

@@ -223,9 +223,8 @@ export async function runSubAgent(opts: RunSubAgentOptions): Promise<SubAgentRes
   if (opts.agentType === "email" && opts.context.userId) {
     const enrich: string[] = [];
     try {
-      const { getSoul } = await import("../memory/soul");
-      const soul = await getSoul(opts.context.userId);
-      const soulText = soul?.manualOverride || soul?.content;
+      const { getSoulPromptBlock } = await import("../memory/soul");
+      const soulText = await getSoulPromptBlock(opts.context.userId);
       if (soulText && soulText.trim()) {
         enrich.push(`What I know about the sender (JARVIS Soul):\n${soulText.trim()}`);
       }

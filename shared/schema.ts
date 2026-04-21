@@ -191,6 +191,10 @@ export const people = pgTable("people", {
   notes: text("notes"),
   interactionCount: integer("interaction_count").notNull().default(0),
   lastInteractionAt: timestamp("last_interaction_at"),
+  // Phase 4 — relationship intelligence: nearest upcoming shared event
+  // and how many shared events sit on the calendar in the near horizon.
+  nextInteractionAt: timestamp("next_interaction_at"),
+  upcomingCount: integer("upcoming_count").notNull().default(0),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });

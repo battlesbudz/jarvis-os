@@ -229,9 +229,8 @@ ${completedTasks.length > skippedTasks.length ? 'This person is on a good streak
   let memorySection = "";
   if (req.userId) {
     try {
-      const { getSoul } = await import("./memory/soul");
-      const soul = await getSoul(req.userId);
-      const soulText = soul?.manualOverride || soul?.content;
+      const { getSoulPromptBlock } = await import("./memory/soul");
+      const soulText = await getSoulPromptBlock(req.userId);
       if (soulText && soulText.trim().length > 0) {
         soulSection = `\n\nWhat I know about this person (JARVIS Soul):\n${soulText.trim()}\n`;
       }
