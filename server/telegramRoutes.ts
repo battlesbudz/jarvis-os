@@ -9,6 +9,8 @@ import { getGoogleCalendarEvents } from "./integrations/googleCalendar";
 import { getValidGoogleTokens } from "./userTokenStore";
 import { tavilySearch, formatSearchResults } from "./integrations/search";
 import { logInteraction, getRecentInteractions, formatInteractionTimeline } from "./interactionLog";
+import { runAgent } from "./agent/harness";
+import { telegramCoachTools } from "./agent/tools";
 import OpenAI from "openai";
 
 const openai = new OpenAI({
@@ -274,71 +276,6 @@ Be direct, specific, actionable. No fluff. You have full access to the user's em
           ]
         : userText;
 
-      const searchTool = {
-        type: "function" as const,
-        function: {
-          name: "search_web",
-          description: "Search the web for current information, news, weather, prices, recent events, or anything requiring up-to-date data.",
-          parameters: {
-            type: "object",
-            properties: {
-              query: { type: "string", description: "The search query" },
-            },
-            required: ["query"],
-          },
-        },
-      };
-
-      const gmailActionTool = {
-        type: "function" as const,
-        function: {
-          name: "gmail_action",
-          description: "Perform an action on a Gmail email. Use the message id from the email list provided in the system prompt.",
-          parameters: {
-            type: "object",
-            properties: {
-              message_id: { type: "string", description: "The Gmail message ID (from [id:...] in the email list)" },
-              action: { type: "string", enum: ["star", "unstar", "archive", "mark_read", "mark_unread", "spam", "trash"], description: "The action to perform on the email" },
-            },
-            required: ["message_id", "action"],
-          },
-        },
-      };
-
-      const manageTasksTool = {
-        type: "function" as const,
-        function: {
-          name: "manage_tasks",
-          description: "Manage the user's daily plan tasks and commitments. Use this to add tasks to today's plan, add commitments, complete/resolve commitments, list current tasks, or analyze behavioral patterns from historical data.",
-          parameters: {
-            type: "object",
-            properties: {
-              action: {
-                type: "string",
-                enum: ["add_plan_task", "add_commitment", "complete_commitment", "list_tasks", "analyze_patterns"],
-                description: "The action to perform",
-              },
-              title: {
-                type: "string",
-                description: "Title of the task (required for add_plan_task)",
-              },
-              content: {
-                type: "string",
-                description: "Content of the commitment (required for add_commitment)",
-              },
-              due_date: {
-                type: "string",
-                description: "Due date in YYYY-MM-DD format (optional, for add_commitment)",
-              },
-              commitment_id: {
-                type: "string",
-                description: "The commitment ID from [id:...] (required for complete_commitment)",
-              },
-            },
-            required: ["action"],
-          },
-        },
-      };
 
       const baseMessages: any[] = [
         { role: "system", content: systemPrompt },
@@ -346,215 +283,31 @@ Be direct, specific, actionable. No fluff. You have full access to the user's em
         { role: "user", content: userMessageContent },
       ];
 
-      const response = await openai.chat.completions.create({
+      const agentResult = await runAgent({
         model: "gpt-5-mini",
         messages: baseMessages,
-        tools: [searchTool, gmailActionTool, manageTasksTool],
-        tool_choice: "auto",
-        max_completion_tokens: 2000,
+        tools: telegramCoachTools({ hasGoogle: !!googleAccessToken }),
+        context: {
+          userId,
+          channel: "Telegram",
+          googleAccessToken: googleAccessToken || undefined,
+          state: {
+            dateKey,
+            todayPlan,
+            gmailMessageIds: gmailItems.map((i: any) => i.id).filter(Boolean),
+          },
+        },
+        maxTurns: 6,
+        maxCompletionTokens: 2000,
       });
 
-      const finishReason = response.choices?.[0]?.finish_reason;
-      console.log(`[Telegram] OpenAI finish_reason: ${finishReason}`);
+      // Pick up any plan changes a tool wrote back to context
+      todayPlan = agentResult.toolCalls.length > 0
+        ? (agentResult as any).context?.state?.todayPlan ?? todayPlan
+        : todayPlan;
 
-      if (finishReason === 'tool_calls') {
-        const toolCall = response.choices[0].message.tool_calls?.[0];
-        if (toolCall?.function?.name === 'search_web') {
-          let searchResult = 'Search unavailable right now.';
-          try {
-            const args = JSON.parse(toolCall.function.arguments);
-            console.log(`[Telegram] Web search: "${args.query}"`);
-            const results = await tavilySearch(args.query);
-            searchResult = formatSearchResults(results);
-            console.log(`[Telegram] Search returned ${results.results.length} results`);
-          } catch (searchErr: any) {
-            console.error('[Telegram] Search failed:', searchErr.message);
-          }
-
-          const followUp = await openai.chat.completions.create({
-            model: "gpt-5-mini",
-            messages: [
-              ...baseMessages,
-              response.choices[0].message,
-              { role: "tool" as const, tool_call_id: toolCall.id, content: searchResult },
-            ],
-            max_completion_tokens: 2000,
-          });
-          console.log(`[Telegram] Follow-up finish_reason: ${followUp.choices?.[0]?.finish_reason}`);
-          reply = followUp.choices[0]?.message?.content || reply;
-        } else if (toolCall?.function?.name === 'gmail_action') {
-          let actionResult = 'Gmail action failed.';
-          try {
-            const args = JSON.parse(toolCall.function.arguments);
-            console.log(`[Telegram] Gmail action: ${args.action} on message ${args.message_id}`);
-
-            if (!googleAccessToken) {
-              actionResult = 'Gmail is not connected. Ask the user to connect their Google account first.';
-            } else if (gmailItems.length > 0 && !gmailItems.some((e: any) => e.id === args.message_id)) {
-              actionResult = `Message ID "${args.message_id}" not found in the current email list. Please use a valid message ID from the emails shown.`;
-            } else {
-              const actionMap: Record<string, { add: string[]; remove: string[] }> = {
-                star: { add: ['STARRED'], remove: [] },
-                unstar: { add: [], remove: ['STARRED'] },
-                archive: { add: [], remove: ['INBOX'] },
-                mark_read: { add: [], remove: ['UNREAD'] },
-                mark_unread: { add: ['UNREAD'], remove: [] },
-                spam: { add: ['SPAM'], remove: ['INBOX'] },
-                trash: { add: ['TRASH'], remove: ['INBOX'] },
-              };
-
-              const mapping = actionMap[args.action];
-              if (!mapping) {
-                actionResult = `Unknown action: ${args.action}`;
-              } else {
-                await gmailModifyMessage(args.message_id, mapping.add, mapping.remove, googleAccessToken);
-                actionResult = `Successfully performed "${args.action}" on the email.`;
-                console.log(`[Telegram] Gmail action succeeded: ${args.action} on ${args.message_id}`);
-              }
-            }
-          } catch (gmailErr: any) {
-            console.error('[Telegram] Gmail action failed:', gmailErr.message);
-            actionResult = `Gmail action failed: ${gmailErr.message}`;
-          }
-
-          const followUp = await openai.chat.completions.create({
-            model: "gpt-5-mini",
-            messages: [
-              ...baseMessages,
-              response.choices[0].message,
-              { role: "tool" as const, tool_call_id: toolCall.id, content: actionResult },
-            ],
-            max_completion_tokens: 2000,
-          });
-          console.log(`[Telegram] Follow-up finish_reason: ${followUp.choices?.[0]?.finish_reason}`);
-          reply = followUp.choices[0]?.message?.content || reply;
-        } else if (toolCall?.function?.name === 'manage_tasks') {
-          let taskResult = 'Task management action failed.';
-          try {
-            const args = JSON.parse(toolCall.function.arguments);
-            console.log(`[Telegram] manage_tasks action: ${args.action}`);
-
-            if (args.action === 'add_plan_task') {
-              if (!args.title) {
-                taskResult = 'Error: title is required for add_plan_task';
-              } else {
-                const tasks = (todayPlan?.tasks as any[]) || [];
-                const newTask = {
-                  id: crypto.randomUUID(),
-                  title: args.title,
-                  completed: false,
-                };
-                tasks.push(newTask);
-                const planData = todayPlan ? { ...todayPlan, tasks } : { tasks };
-                await db.insert(schema.plans)
-                  .values({ userId, date: dateKey, data: planData })
-                  .onConflictDoUpdate({
-                    target: [schema.plans.userId, schema.plans.date],
-                    set: { data: planData, updatedAt: new Date() },
-                  });
-                todayPlan = planData;
-                taskResult = `Added "${args.title}" to today's plan. Today's plan now has ${tasks.length} task(s).`;
-                console.log(`[Telegram] Added plan task: "${args.title}"`);
-              }
-            } else if (args.action === 'add_commitment') {
-              if (!args.content) {
-                taskResult = 'Error: content is required for add_commitment';
-              } else {
-                await db.insert(schema.commitments).values({
-                  userId,
-                  content: args.content,
-                  dueDate: args.due_date || null,
-                  sourceMessage: `Added via Telegram`,
-                });
-                taskResult = `Added commitment: "${args.content}"${args.due_date ? ` (due ${args.due_date})` : ''}`;
-                console.log(`[Telegram] Added commitment: "${args.content}"`);
-              }
-            } else if (args.action === 'complete_commitment') {
-              if (!args.commitment_id) {
-                taskResult = 'Error: commitment_id is required for complete_commitment';
-              } else {
-                const updated = await db
-                  .update(schema.commitments)
-                  .set({ status: 'done', resolvedAt: new Date() })
-                  .where(and(eq(schema.commitments.id, args.commitment_id), eq(schema.commitments.userId, userId), eq(schema.commitments.status, 'pending')))
-                  .returning({ id: schema.commitments.id });
-                if (updated.length > 0) {
-                  taskResult = `Marked commitment as done (id: ${args.commitment_id}).`;
-                  console.log(`[Telegram] Completed commitment: ${args.commitment_id}`);
-                } else {
-                  taskResult = `Error: No pending commitment found with id "${args.commitment_id}". Check the commitment ID and try again.`;
-                  console.log(`[Telegram] Commitment not found: ${args.commitment_id}`);
-                }
-              }
-            } else if (args.action === 'list_tasks') {
-              const planTasks = (todayPlan?.tasks as any[]) || [];
-              const pendingCommitments = await db.select().from(schema.commitments)
-                .where(and(eq(schema.commitments.userId, userId), eq(schema.commitments.status, 'pending')))
-                .orderBy(desc(schema.commitments.extractedAt)).limit(10);
-
-              let listing = '';
-              if (planTasks.length > 0) {
-                listing += "Today's Plan:\n" + planTasks.map((t: any) =>
-                  `- ${t.completed ? '✅' : '⬜'} ${t.title}`
-                ).join('\n');
-              } else {
-                listing += "Today's Plan: No tasks yet.";
-              }
-              listing += '\n\n';
-              if (pendingCommitments.length > 0) {
-                listing += "Open Commitments:\n" + pendingCommitments.map((c: any) =>
-                  `- [id:${c.id}] "${c.content}"${c.dueDate ? ` (due ${c.dueDate})` : ''}`
-                ).join('\n');
-              } else {
-                listing += "Open Commitments: None.";
-              }
-              taskResult = listing;
-              console.log(`[Telegram] Listed tasks: ${planTasks.length} plan tasks, ${pendingCommitments.length} commitments`);
-            } else if (args.action === 'analyze_patterns') {
-              const today = new Date();
-              const thirtyDaysAgo = new Date(today);
-              thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-              const startDate = thirtyDaysAgo.toISOString().slice(0, 10);
-              const endDate = today.toISOString().slice(0, 10);
-
-              const plans = await getPlansForDateRange(userId, startDate, endDate);
-              if (plans.length < 3) {
-                taskResult = 'Not enough data yet for pattern analysis. Need at least a few days of plan data to identify meaningful patterns.';
-              } else {
-                const allCommitments = await db.select().from(schema.commitments)
-                  .where(eq(schema.commitments.userId, userId)).limit(200);
-                const scopedCommitments = allCommitments.filter((c: any) =>
-                  (c.dueDate && c.dueDate >= startDate && c.dueDate <= endDate) ||
-                  (c.extractedAt && c.extractedAt >= new Date(startDate) && c.extractedAt <= new Date(endDate + 'T23:59:59')) ||
-                  (c.resolvedAt && c.resolvedAt >= new Date(startDate) && c.resolvedAt <= new Date(endDate + 'T23:59:59'))
-                );
-                const patternData = computePatternInsights(plans, scopedCommitments);
-                taskResult = `Here is the user's behavioral pattern data from the last 30 days. Analyze this and provide 3-5 sharp, specific behavioral observations. Name each pattern (e.g. "Friday drop-off", "Health task avoidance", "Overplanning on Mondays"). Use specific numbers from the data. Be direct and insightful, not generic.\n\n${patternData}`;
-              }
-              console.log(`[Telegram] Pattern analysis: ${plans.length} days of data`);
-            } else {
-              taskResult = `Unknown action: ${args.action}`;
-            }
-          } catch (taskErr: any) {
-            console.error('[Telegram] manage_tasks failed:', taskErr.message);
-            taskResult = `Task management failed: ${taskErr.message}`;
-          }
-
-          const followUp = await openai.chat.completions.create({
-            model: "gpt-5-mini",
-            messages: [
-              ...baseMessages,
-              response.choices[0].message,
-              { role: "tool" as const, tool_call_id: toolCall.id, content: taskResult },
-            ],
-            max_completion_tokens: 2000,
-          });
-          console.log(`[Telegram] Follow-up finish_reason: ${followUp.choices?.[0]?.finish_reason}`);
-          reply = followUp.choices[0]?.message?.content || reply;
-        }
-      } else {
-        reply = response.choices[0]?.message?.content || reply;
-      }
+      reply = agentResult.reply || reply;
+      console.log(`[Telegram] Agent done — turns=${agentResult.turns}, tool calls=${agentResult.toolCalls.length}, finish=${agentResult.finishReason}`);
     } catch (aiErr: any) {
       console.error("[Telegram] OpenAI error:", aiErr?.status, aiErr?.message, aiErr?.error);
       throw aiErr;
@@ -1074,7 +827,7 @@ function formatCommitmentsForMessage(commitments: any[], dateKey: string): strin
   return parts.join('');
 }
 
-async function getPlansForDateRange(userId: string, startDate: string, endDate: string): Promise<{ date: string; tasks: any[] }[]> {
+export async function getPlansForDateRange(userId: string, startDate: string, endDate: string): Promise<{ date: string; tasks: any[] }[]> {
   try {
     const rows = await db.select().from(schema.plans)
       .where(and(
@@ -1091,7 +844,7 @@ async function getPlansForDateRange(userId: string, startDate: string, endDate: 
   }
 }
 
-function computePatternInsights(plans: { date: string; tasks: any[] }[], commitments?: any[]): string {
+export function computePatternInsights(plans: { date: string; tasks: any[] }[], commitments?: any[]): string {
   const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   const dayStats: Record<string, { planned: number; completed: number; days: number }> = {};
   for (const d of dayNames) dayStats[d] = { planned: 0, completed: 0, days: 0 };
