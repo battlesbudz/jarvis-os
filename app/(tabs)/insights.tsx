@@ -177,6 +177,10 @@ function MessageBubble({ message, isFirst, isLastAssistant, goals, onFollowup, o
 
   const handleAddAction = useCallback(async (action: CoachAction, key: string) => {
     if (addedMap[key]) return;
+    if (action.type === 'link') {
+      if (action.url) Linking.openURL(action.url);
+      return;
+    }
     setAddedMap(prev => ({ ...prev, [key]: true }));
     try {
       if (action.type === 'task') {
@@ -328,12 +332,15 @@ function MessageBubble({ message, isFirst, isLastAssistant, goals, onFollowup, o
                 onPress={() => handleAddAction(action, key)}
               >
                 <Ionicons
-                  name={added ? 'checkmark' : (action.type === 'task' ? 'add-circle-outline' : 'flag-outline')}
+                  name={action.type === 'link' ? 'open-outline' : added ? 'checkmark' : action.type === 'task' ? 'add-circle-outline' : 'flag-outline'}
                   size={13}
-                  color={added ? Colors.success : Colors.primary}
+                  color={action.type === 'link' ? Colors.primary : added ? Colors.success : Colors.primary}
                 />
                 <Text style={[styles.actionPillText, added && styles.actionPillTextAdded]}>
-                  {added ? 'Added!' : (action.type === 'task' ? `Add: ${action.title}` : `Set goal: ${action.title}`)}
+                  {action.type === 'link'
+                    ? (action.buttonLabel || action.title)
+                    : added ? 'Added!'
+                    : action.type === 'task' ? `Add: ${action.title}` : `Set goal: ${action.title}`}
                 </Text>
               </Pressable>
             );

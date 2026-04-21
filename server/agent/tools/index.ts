@@ -13,6 +13,7 @@ import { daemonActionTool } from "./daemon";
 import { checkConnectionsTool, generateReconnectLinkTool } from "./connections";
 import { createCalendarEventTool } from "./calendarCreate";
 import { sendEmailTool } from "./sendEmail";
+import { fetchEmailsTool } from "./fetchEmails";
 
 export const ALL_TOOLS: AgentTool[] = [
   webSearchTool,
@@ -33,6 +34,7 @@ export const ALL_TOOLS: AgentTool[] = [
   checkConnectionsTool,
   generateReconnectLinkTool,
   sendEmailTool,
+  fetchEmailsTool,
 ];
 
 const TOOL_INDEX = new Map(ALL_TOOLS.map((t) => [t.name, t]));
@@ -56,6 +58,7 @@ export function telegramCoachTools(opts: { hasGoogle: boolean }): AgentTool[] {
     generateReconnectLinkTool,
     createCalendarEventTool,
     sendEmailTool,
+    fetchEmailsTool,
   ];
   if (opts.hasGoogle) {
     base.push(gmailActionTool, gmailDraftTool, fetchCalendarTool, driveCreateFileTool, driveListFilesTool, driveReadFileTool);
@@ -82,4 +85,5 @@ export {
   checkConnectionsTool,
   generateReconnectLinkTool,
   sendEmailTool,
+  fetchEmailsTool,
 };
