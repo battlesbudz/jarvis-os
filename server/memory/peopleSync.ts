@@ -96,8 +96,24 @@ export async function syncPeopleFromGoogle(userId: string, accessToken: string, 
     if (!existing || o.when > existing.when) byEmail.set(o.email, o);
   }
 
+  // Compute upcoming-event aggregates per email from the calendar
+  // observations only (future events).
+  const nowMs = now.getTime();
+  const upcoming = new Map<string, { count: number; nearest: Date }>();
+  for (const o of observations) {
+    if (o.source !== "calendar") continue;
+    if (o.when.getTime() < nowMs) continue;
+    const cur = upcoming.get(o.email);
+    if (!cur) upcoming.set(o.email, { count: 1, nearest: o.when });
+    else {
+      cur.count += 1;
+      if (o.when < cur.nearest) cur.nearest = o.when;
+    }
+  }
+
   let upserts = 0;
   for (const obs of byEmail.values()) {
+    const upc = upcoming.get(obs.email);
     try {
       const [existing] = await db
         .select()
@@ -117,6 +133,8 @@ export async function syncPeopleFromGoogle(userId: string, accessToken: string, 
             relationship: existing.relationship || relationshipHint,
             interactionCount: (existing.interactionCount ?? 0) + 1,
             lastInteractionAt: obs.when,
+            nextInteractionAt: upc?.nearest ?? null,
+            upcomingCount: upc?.count ?? 0,
             updatedAt: new Date(),
           })
           .where(eq(schema.people.id, existing.id));
@@ -129,6 +147,8 @@ export async function syncPeopleFromGoogle(userId: string, accessToken: string, 
           notes: null,
           interactionCount: 1,
           lastInteractionAt: obs.when,
+          nextInteractionAt: upc?.nearest ?? null,
+          upcomingCount: upc?.count ?? 0,
         });
       }
       upserts += 1;

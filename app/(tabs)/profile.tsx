@@ -218,7 +218,7 @@ export default function ProfileScreen() {
   const [contentDraft, setContentDraft] = useState('');
   const [savingContent, setSavingContent] = useState(false);
   const [savingOverride, setSavingOverride] = useState(false);
-  const [people, setPeople] = useState<{ id: string; name: string; email: string | null; relationship: string | null; notes: string | null; lastInteractionAt: string | null }[]>([]);
+  const [people, setPeople] = useState<{ id: string; name: string; email: string | null; relationship: string | null; notes: string | null; lastInteractionAt: string | null; nextInteractionAt: string | null; upcomingCount: number; interactionCount: number }[]>([]);
   const [peopleLoading, setPeopleLoading] = useState(true);
   const [morningNotes, setMorningNotes] = useState<MorningVoiceNote[]>([]);
   const [morningNotesLoading, setMorningNotesLoading] = useState(true);
@@ -1258,6 +1258,18 @@ export default function ProfileScreen() {
                     <Text style={[styles.memoryText, { fontWeight: '600' }]}>{p.name}</Text>
                     {p.relationship ? (
                       <Text style={{ color: Colors.textSecondary, fontSize: 13, marginTop: 2 }}>{p.relationship}</Text>
+                    ) : null}
+                    {(p.interactionCount > 0 || p.lastInteractionAt) ? (
+                      <Text style={{ color: Colors.textTertiary, fontSize: 12, marginTop: 4 }}>
+                        {p.interactionCount > 0 ? `${p.interactionCount} interaction${p.interactionCount === 1 ? '' : 's'}` : ''}
+                        {p.lastInteractionAt ? ` · last ${new Date(p.lastInteractionAt).toLocaleDateString()}` : ''}
+                      </Text>
+                    ) : null}
+                    {(p.upcomingCount > 0 || p.nextInteractionAt) ? (
+                      <Text style={{ color: Colors.textSecondary, fontSize: 12, marginTop: 2 }}>
+                        Upcoming: {p.upcomingCount} event{p.upcomingCount === 1 ? '' : 's'}
+                        {p.nextInteractionAt ? ` · next ${new Date(p.nextInteractionAt).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}` : ''}
+                      </Text>
                     ) : null}
                     {p.notes ? (
                       <Text style={{ color: Colors.textTertiary, fontSize: 12, marginTop: 4 }} numberOfLines={2}>
