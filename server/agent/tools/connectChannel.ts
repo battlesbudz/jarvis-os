@@ -3,6 +3,7 @@ import { db } from "../../db";
 import { telegramLinkCodes, channelLinkCodes } from "../../../shared/schema";
 import { eq, and } from "drizzle-orm";
 import { getTelegramBotUsername, isTelegramConfigured } from "../../integrations/telegram";
+import { buildSlackAuthorizeUrl } from "../../oauthRoutes";
 
 type Channel = "telegram" | "whatsapp" | "discord" | "slack";
 
@@ -105,8 +106,7 @@ export const connectChannelTool: AgentTool = {
       }
 
       if (channel === "slack") {
-        const clientId = process.env.SLACK_CLIENT_ID;
-        if (!clientId) {
+        if (!process.env.SLACK_CLIENT_ID) {
           return {
             ok: false,
             content:
@@ -116,13 +116,11 @@ export const connectChannelTool: AgentTool = {
         }
         const domain = process.env.REPLIT_DOMAINS?.split(",")[0];
         const baseUrl = domain ? `https://${domain}` : "http://localhost:5000";
-        const params = new URLSearchParams({
-          client_id: clientId,
-          scope: "chat:write,im:history,im:read,im:write,users:read",
-          redirect_uri: `${baseUrl}/api/oauth/slack/callback`,
-          state: userId,
-        });
-        const url = `https://slack.com/oauth/v2/authorize?${params.toString()}`;
+        const redirectUri = `${baseUrl}/api/oauth/slack/callback`;
+        const url = buildSlackAuthorizeUrl(userId, redirectUri);
+        if (!url) {
+          return { ok: false, content: "Slack OAuth not configured.", label: "Slack not configured" };
+        }
         return {
           ok: true,
           content: JSON.stringify({ url, buttonLabel: "Connect Slack", channel: "slack" }),

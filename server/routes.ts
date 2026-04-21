@@ -43,6 +43,7 @@ import { isUserPaired, sendDaemonOp, isDaemonActionAllowed } from "./daemon/brid
 import type { DaemonAction, DaemonOp } from "./daemon/bridge";
 import { telegramLinks, channelLinks } from "@shared/schema";
 import { getTelegramBotUsername, isTelegramConfigured } from "./integrations/telegram";
+import { buildSlackAuthorizeUrl } from "./oauthRoutes";
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
@@ -1187,17 +1188,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
             return { result: 'success', label: 'Open WhatsApp', detail: JSON.stringify({ url, buttonLabel: 'Open WhatsApp', channel: 'whatsapp' }) };
           }
           if (ch === 'slack') {
-            const clientId = process.env.SLACK_CLIENT_ID;
-            if (!clientId) return { result: 'error', label: 'Slack not configured', detail: 'SLACK_CLIENT_ID is not set on the server.' };
+            if (!process.env.SLACK_CLIENT_ID) return { result: 'error', label: 'Slack not configured', detail: 'SLACK_CLIENT_ID is not set on the server.' };
             const domain = process.env.REPLIT_DOMAINS?.split(',')[0];
             const baseUrl = domain ? `https://${domain}` : 'http://localhost:5000';
-            const params = new URLSearchParams({
-              client_id: clientId,
-              scope: 'chat:write,im:history,im:read,im:write,users:read',
-              redirect_uri: `${baseUrl}/api/oauth/slack/callback`,
-              state: userId,
-            });
-            const url = `https://slack.com/oauth/v2/authorize?${params.toString()}`;
+            const redirectUri = `${baseUrl}/api/oauth/slack/callback`;
+            const url = buildSlackAuthorizeUrl(userId, redirectUri);
+            if (!url) return { result: 'error', label: 'Slack not configured', detail: 'SLACK_CLIENT_ID is not set on the server.' };
             return { result: 'success', label: 'Connect Slack', detail: JSON.stringify({ url, buttonLabel: 'Connect Slack', channel: 'slack' }) };
           }
           if (ch === 'discord') {
