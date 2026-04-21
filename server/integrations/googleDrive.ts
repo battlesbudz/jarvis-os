@@ -13,7 +13,7 @@ function buildDriveClient(accessToken: string) {
   return google.drive({ version: "v3", auth: oauth2Client });
 }
 
-const JARVIS_FOLDER_NAME = "Jarvis";
+const JARVIS_FOLDER_NAME = "Jarvis Workspace";
 
 export async function ensureJarvisFolder(accessToken: string): Promise<string> {
   const drive = buildDriveClient(accessToken);
