@@ -16,6 +16,7 @@ import Colors from '@/constants/colors';
 import GoalCard from '@/components/GoalCard';
 import AddGoalSheet from '@/components/AddGoalSheet';
 import { getGoals, saveGoal, deleteGoal, type Goal } from '@/lib/storage';
+import GoalTreeSection from '@/components/GoalTreeSection';
 
 export default function GoalsScreen() {
   const insets = useSafeAreaInsets();
@@ -152,11 +153,14 @@ export default function GoalsScreen() {
                     </View>
                   </View>
                 ) : (
-                  <GoalCard
-                    goal={goal}
-                    onPress={() => handleEdit(goal)}
-                    onDelete={() => handleDelete(goal)}
-                  />
+                  <View>
+                    <GoalCard
+                      goal={goal}
+                      onPress={() => handleEdit(goal)}
+                      onDelete={() => handleDelete(goal)}
+                    />
+                    <GoalTreeSection goalId={goal.id} goalTitle={goal.title} />
+                  </View>
                 )}
               </Animated.View>
             ))}

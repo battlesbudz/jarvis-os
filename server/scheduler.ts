@@ -2,6 +2,7 @@ import { db } from './db';
 import { eq, and } from 'drizzle-orm';
 import * as schema from '@shared/schema';
 import { buildPlanForUser } from './routes';
+import { getInjectableGoalTasks, markTasksInjected, type InjectableGoalTask } from './goalScheduler';
 
 let schedulerRunning = false;
 
@@ -60,6 +61,42 @@ export async function runMorningPlanBuild() {
         createdAt: Date.now(),
         fromJarvis: true,
       }));
+
+      // Inject next-ready tasks from active goal trees on top of the
+      // base plan. Pacing is enforced inside getInjectableGoalTasks.
+      let injected: InjectableGoalTask[] = [];
+      try {
+        injected = await getInjectableGoalTasks(user.id, today);
+      } catch (e) {
+        console.error(`[Scheduler] goal injection lookup failed for ${user.id}:`, e);
+      }
+      for (const pick of injected) {
+        const minutes = Math.max(15, Math.round((pick.estimateHours || 1) * 60));
+        newTasks.push({
+          id: `goal_${pick.taskId}_${today}`,
+          title: pick.title,
+          category: 'goal',
+          priority: 'high',
+          duration: minutes,
+          time: undefined as unknown as string,
+          description: pick.description
+            ? `${pick.description} (from goal: ${pick.goalTitle})`
+            : `From goal: ${pick.goalTitle}`,
+          completed: false,
+          createdAt: Date.now(),
+          fromJarvis: true,
+          goalTreeId: pick.goalTreeId,
+          goalTaskId: pick.taskId,
+        } as typeof newTasks[number] & { goalTreeId: string; goalTaskId: string });
+      }
+      if (injected.length > 0) {
+        try {
+          await markTasksInjected(user.id, injected, today);
+          console.log(`[Scheduler] injected ${injected.length} goal task(s) for user ${user.id}`);
+        } catch (e) {
+          console.error(`[Scheduler] markTasksInjected failed for ${user.id}:`, e);
+        }
+      }
 
       await db.insert(schema.plans).values({
         userId: user.id,

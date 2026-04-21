@@ -8,6 +8,7 @@ import { manageTasksTool } from "./manageTasks";
 import { createDocumentTool, listDocumentsTool, readDocumentTool } from "./documents";
 import { driveCreateFileTool, driveListFilesTool, driveReadFileTool } from "./googleDriveTools";
 import { fetchCalendarTool } from "./calendar";
+import { spawnSubagentTool } from "./spawnSubagent";
 
 export const ALL_TOOLS: AgentTool[] = [
   webSearchTool,
@@ -22,6 +23,7 @@ export const ALL_TOOLS: AgentTool[] = [
   driveCreateFileTool,
   driveListFilesTool,
   driveReadFileTool,
+  spawnSubagentTool,
 ];
 
 const TOOL_INDEX = new Map(ALL_TOOLS.map((t) => [t.name, t]));
@@ -39,6 +41,7 @@ export function telegramCoachTools(opts: { hasGoogle: boolean }): AgentTool[] {
     createDocumentTool,
     listDocumentsTool,
     readDocumentTool,
+    spawnSubagentTool,
   ];
   if (opts.hasGoogle) {
     base.push(gmailActionTool, gmailDraftTool, fetchCalendarTool, driveCreateFileTool, driveListFilesTool, driveReadFileTool);
@@ -59,4 +62,5 @@ export {
   driveCreateFileTool,
   driveListFilesTool,
   driveReadFileTool,
+  spawnSubagentTool,
 };

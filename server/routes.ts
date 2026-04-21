@@ -2502,6 +2502,191 @@ Return ONLY the JSON object.`;
     }
   });
 
+  // ── Phase 3: Sub-agent goals API ──────────────────────────────
+  app.post("/api/goals/:id/decompose", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const goalId = req.params.id;
+
+      const [goalsRow] = await db
+        .select({ data: schema.goals.data })
+        .from(schema.goals)
+        .where(eq(schema.goals.userId, userId))
+        .limit(1);
+      const goalsList = (goalsRow?.data as Array<{ id: string; title: string }>) || [];
+      const goal = goalsList.find((g) => g.id === goalId);
+      if (!goal) return res.status(404).json({ error: "Goal not found" });
+
+      const { enqueueGoalDecomposition } = await import("./agent/goalDecomposer");
+      const jobId = await enqueueGoalDecomposition(userId, goal as never);
+      res.json({ ok: true, jobId, status: "queued" });
+    } catch (err) {
+      console.error("Error queuing goal decompose:", err);
+      res.status(500).json({ error: "Failed to queue decomposition" });
+    }
+  });
+
+  app.get("/api/goals/:id/tree", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const goalId = req.params.id;
+      const [tree] = await db
+        .select()
+        .from(schema.goalTrees)
+        .where(and(eq(schema.goalTrees.userId, userId), eq(schema.goalTrees.goalId, goalId)))
+        .limit(1);
+      if (!tree) return res.status(404).json({ error: "No tree yet", hasTree: false });
+      res.json(tree);
+    } catch (err) {
+      console.error("Error fetching goal tree:", err);
+      res.status(500).json({ error: "Failed to fetch tree" });
+    }
+  });
+
+  app.post("/api/agent-jobs", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const { agentType, title, prompt, input } = req.body as {
+        agentType?: string;
+        title?: string;
+        prompt?: string;
+        input?: Record<string, unknown>;
+      };
+      const allowed = ["research", "writing", "planning", "email", "goal_decompose"] as const;
+      if (!agentType || !allowed.includes(agentType as (typeof allowed)[number])) {
+        return res.status(400).json({ error: `agentType must be one of ${allowed.join(", ")}` });
+      }
+      if (!title || !prompt) {
+        return res.status(400).json({ error: "title and prompt are required" });
+      }
+      const { submitAgentJob } = await import("./agent/jobQueue");
+      const jobId = await submitAgentJob({
+        userId,
+        agentType: agentType as (typeof allowed)[number],
+        title,
+        prompt,
+        input: input || {},
+      });
+      res.json({ ok: true, jobId, status: "queued" });
+    } catch (err) {
+      console.error("Error submitting agent job:", err);
+      res.status(500).json({ error: "Failed to submit job" });
+    }
+  });
+
+  app.get("/api/agent-jobs", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const limit = Math.min(Math.max(Number(req.query.limit) || 30, 1), 100);
+      const status = typeof req.query.status === "string" ? req.query.status : null;
+      const where = status
+        ? and(eq(schema.agentJobs.userId, userId), eq(schema.agentJobs.status, status))
+        : eq(schema.agentJobs.userId, userId);
+      const jobs = await db
+        .select()
+        .from(schema.agentJobs)
+        .where(where)
+        .orderBy(desc(schema.agentJobs.createdAt))
+        .limit(limit);
+      res.json(jobs);
+    } catch (err) {
+      console.error("Error listing agent jobs:", err);
+      res.status(500).json({ error: "Failed to list jobs" });
+    }
+  });
+
+  app.get("/api/deliverables", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const status = typeof req.query.status === "string" ? req.query.status : "pending_approval";
+      const items = await db
+        .select()
+        .from(schema.deliverables)
+        .where(and(eq(schema.deliverables.userId, userId), eq(schema.deliverables.status, status)))
+        .orderBy(desc(schema.deliverables.createdAt))
+        .limit(50);
+      res.json(items);
+    } catch (err) {
+      console.error("Error listing deliverables:", err);
+      res.status(500).json({ error: "Failed to list deliverables" });
+    }
+  });
+
+  app.post("/api/deliverables/:id/approve", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const id = req.params.id;
+      const [d] = await db
+        .select()
+        .from(schema.deliverables)
+        .where(and(eq(schema.deliverables.id, id), eq(schema.deliverables.userId, userId)))
+        .limit(1);
+      if (!d) return res.status(404).json({ error: "Deliverable not found" });
+      if (d.status !== "pending_approval") {
+        return res.status(400).json({ error: "Already actioned" });
+      }
+
+      let resultExtra: Record<string, unknown> = {};
+
+      if (d.type === "email_draft") {
+        // Push to Gmail Drafts
+        const meta = (d.meta as { to?: string; subject?: string; emailBody?: string }) || {};
+        const to = meta.to?.trim() || "";
+        if (!to || !to.includes("@")) {
+          return res.status(400).json({ error: "Email draft missing valid recipient" });
+        }
+        const tokens = await getValidGoogleTokens(userId);
+        const token = tokens?.[0];
+        if (!token) return res.status(400).json({ error: "Gmail not connected" });
+        const { createGmailDraft } = await import("./integrations/gmail");
+        const result = await createGmailDraft(token, to, meta.subject || d.title, meta.emailBody || d.body);
+        resultExtra = { gmailDraftUrl: result.gmailUrl, gmailDraftId: result.draftId };
+      } else {
+        // research / document / plan → save into the user's Documents library
+        await db.insert(userDocuments).values({
+          userId,
+          name: d.title.slice(0, 200),
+          mimeType: "text/markdown",
+          sizeBytes: Buffer.byteLength(d.body, "utf8"),
+          status: "ready",
+          extractedText: d.body,
+          summary: d.summary || null,
+        });
+      }
+
+      await db
+        .update(schema.deliverables)
+        .set({ status: "approved", actedAt: new Date() })
+        .where(eq(schema.deliverables.id, id));
+      res.json({ ok: true, ...resultExtra });
+    } catch (err) {
+      console.error("Error approving deliverable:", err);
+      res.status(500).json({ error: "Failed to approve deliverable" });
+    }
+  });
+
+  app.post("/api/deliverables/:id/discard", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const id = req.params.id;
+      await db
+        .update(schema.deliverables)
+        .set({ status: "discarded", actedAt: new Date() })
+        .where(and(eq(schema.deliverables.id, id), eq(schema.deliverables.userId, userId)));
+      res.json({ ok: true });
+    } catch (err) {
+      console.error("Error discarding deliverable:", err);
+      res.status(500).json({ error: "Failed to discard deliverable" });
+    }
+  });
+
   app.get("/api/documents", async (req: Request, res: Response) => {
     try {
       const userId = req.userId;
