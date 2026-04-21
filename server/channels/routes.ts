@@ -5,7 +5,7 @@ import { channelLinks, channelLinkCodes, telegramLinks, NOTIFICATION_TYPES, CHAN
 import { authMiddleware } from "../auth";
 import { getAllPreferences, setPreference, getChannel, listChannels } from "./registry";
 import { createDaemonPairingCode, isUserPaired, closeUserDaemon, getDaemonPermissions, setDaemonPermissions, isDaemonActionAllowed, DEFAULT_DAEMON_PERMISSIONS, type DaemonAction, type DaemonPermissions } from "../daemon/bridge";
-import { startUserBot, stopUserBot, getBotStatus, completePairing, getGuildsForUser, getChannelsForGuild, type AllowlistedGuild } from "../discord/manager";
+import { startUserBot, stopUserBot, getBotStatus, completePairing, getGuildsForUser, getChannelsForGuild, type AllowlistedGuild, type DiscordLinkMeta } from "../discord/manager";
 import { saveUserToken, getUserToken, deleteUserToken } from "../userTokenStore";
 
 function generateCode(len = 6): string {
@@ -42,25 +42,38 @@ export function registerChannelRoutes(app: Express): void {
           connected.daemon = isUserPaired(userId);
           meta.daemon = { hostname: (row.metadata as any)?.hostname, lastSeenAt: row.lastSeenAt, connected: connected.daemon };
         } else if (ch === "discord") {
-          connected.discord = getBotStatus(userId) === "running";
+          // A channel_links row exists → account IS paired (connected = true).
+          // Bot runtime state is exposed separately so the UI can distinguish
+          // "paired & bot running" from "paired but bot offline."
+          connected.discord = true;
+          const discordMeta = row.metadata as DiscordLinkMeta;
+          const botStatus = getBotStatus(userId);
           meta.discord = {
-            discordUsername: (row.metadata as any)?.discordUsername,
-            botStatus: getBotStatus(userId),
+            discordUsername: discordMeta?.discordUsername,
+            botStatus,
+            botRunning: botStatus === "running",
+            isPaired: true,
             hasBotToken: !!discordTok,
             lastSeenAt: row.lastSeenAt,
-            allowlistedGuilds: (row.metadata as any)?.allowlistedGuilds ?? [],
+            allowlistedGuilds: discordMeta?.allowlistedGuilds ?? [],
           };
         } else if (CHANNEL_NAMES.includes(ch)) {
           connected[ch] = true;
           if (ch === "whatsapp") meta.whatsapp = { phone: row.address, lastSeenAt: row.lastSeenAt };
-          if (ch === "slack") meta.slack = { teamId: (row.metadata as any)?.teamId, lastSeenAt: row.lastSeenAt };
+          if (ch === "slack") meta.slack = { teamId: (row.metadata as Record<string, unknown>)?.teamId, lastSeenAt: row.lastSeenAt };
         }
       }
 
-      // Discord bot token saved but not yet paired
+      // Discord bot token saved but NOT yet paired (no channel_links row).
+      // connected.discord remains false — the pairing UI stays visible.
       if (discordTok && !connected.discord) {
-        connected.discord = getBotStatus(userId) === "running";
-        meta.discord = { ...(meta.discord as any || {}), hasBotToken: true, botStatus: getBotStatus(userId) };
+        const botStatus = getBotStatus(userId);
+        meta.discord = {
+          hasBotToken: true,
+          botStatus,
+          botRunning: botStatus === "running",
+          isPaired: false,
+        };
       }
 
       const channels = listChannels().map((c) => ({
@@ -267,7 +280,7 @@ export function registerChannelRoutes(app: Express): void {
         .where(and(eq(channelLinks.userId, userId), eq(channelLinks.channel, "discord")))
         .limit(1);
       if (!rows[0]) return res.status(404).json({ error: "Discord account not linked" });
-      const meta = (rows[0].metadata as any) || {};
+      const meta = (rows[0].metadata as DiscordLinkMeta) || ({} as DiscordLinkMeta);
       const guilds: AllowlistedGuild[] = meta.allowlistedGuilds || [];
       const existing = guilds.findIndex((g) => g.guildId === guildId && g.channelId === channelId);
       const entry: AllowlistedGuild = {
@@ -304,9 +317,9 @@ export function registerChannelRoutes(app: Express): void {
         .where(and(eq(channelLinks.userId, userId), eq(channelLinks.channel, "discord")))
         .limit(1);
       if (!rows[0]) return res.status(404).json({ error: "Discord account not linked" });
-      const meta = (rows[0].metadata as any) || {};
+      const meta = (rows[0].metadata as DiscordLinkMeta) || ({} as DiscordLinkMeta);
       const guilds: AllowlistedGuild[] = (meta.allowlistedGuilds || []).filter(
-        (g: AllowlistedGuild) => !(g.guildId === guildId && g.channelId === channelId),
+        (g) => !(g.guildId === guildId && g.channelId === channelId),
       );
       await db
         .update(channelLinks)
