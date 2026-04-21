@@ -46,9 +46,17 @@ export async function runDailyDecay(): Promise<DecayResult> {
     `);
     result.decremented = dec.rows?.length || 0;
 
+    // Only delete rows that are BOTH below the decay floor AND demonstrably
+    // stale by the same predicate as the decrement step. This protects
+    // recently-extracted or recently-referenced rows that happen to have
+    // a low score for unrelated reasons.
     const del = await db.execute<{ id: string }>(sql`
       DELETE FROM user_memories
       WHERE relevance_score < ${DECAY_FLOOR}
+        AND (
+          (last_referenced_at IS NOT NULL AND last_referenced_at < NOW() - INTERVAL '${sql.raw(String(STALE_AFTER_REF_DAYS))} days')
+          OR (last_referenced_at IS NULL AND extracted_at < NOW() - INTERVAL '${sql.raw(String(STALE_AFTER_EXTRACT_DAYS))} days')
+        )
       RETURNING id
     `);
     result.deleted = del.rows?.length || 0;

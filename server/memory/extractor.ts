@@ -137,6 +137,13 @@ Return { "memories": [] } if nothing new and high-confidence was learned.`;
       const confidence = clampInt(r.confidence, 0, 100, 70);
       if (confidence < 50) continue;
 
+      let embedding: number[] | null = null;
+      try {
+        const { embedText } = await import("./retrieve");
+        embedding = await embedText(text);
+      } catch (embedErr) {
+        console.error("[Memory] embed on insert failed:", embedErr);
+      }
       await db.insert(schema.userMemories).values({
         userId,
         content: text,
@@ -145,10 +152,11 @@ Return { "memories": [] } if nothing new and high-confidence was learned.`;
         relevanceScore: 50,
         sourceType,
         sourceRef: sourceRef || null,
+        embedding: embedding ?? undefined,
       });
       seen.add(norm);
       stored.push({ content: text, category, confidence });
-      console.log(`[Memory] +${sourceType} [${category} c=${confidence}] ${text.slice(0, 70)}`);
+      console.log(`[Memory] +${sourceType} [${category} c=${confidence}${embedding ? " e" : ""}] ${text.slice(0, 70)}`);
     }
   } catch (err) {
     console.error("[Memory] extract failed:", err);
