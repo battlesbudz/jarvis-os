@@ -73,7 +73,15 @@ function setupBodyParsing(app: express.Application) {
     }),
   );
 
-  app.use(express.urlencoded({ extended: false }));
+  app.use(
+    express.urlencoded({
+      extended: false,
+      verify: (req, _res, buf) => {
+        // preserve raw body for signature-verifying webhooks (e.g. Slack slash commands)
+        if (!(req as any).rawBody) (req as any).rawBody = buf;
+      },
+    }),
+  );
 }
 
 function setupRequestLogging(app: express.Application) {

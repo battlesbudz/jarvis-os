@@ -39,6 +39,85 @@ export function listPairedUsers(): string[] {
   return [...userSockets.keys()];
 }
 
+// Forcibly disconnect any active daemon socket for this user. Used when the
+// user unlinks the daemon — without this, an already-paired socket would
+// continue to accept ops until its next ping/disconnect.
+export function closeUserDaemon(userId: string): boolean {
+  const sock = userSockets.get(userId);
+  if (!sock) return false;
+  try { sock.close(4004, "unlinked by user"); } catch { /* noop */ }
+  userSockets.delete(userId);
+  const pending = pendingByUser.get(userId);
+  if (pending) {
+    for (const [id, p] of pending) {
+      clearTimeout(p.timer);
+      p.resolve({ ok: false, error: "daemon unlinked" });
+      pending.delete(id);
+    }
+  }
+  return true;
+}
+
+// ───── Per-action permission model ────────────────────────────
+// Stored in channel_links.metadata.permissions for the user's daemon row.
+// Defaults: notify/file_read/file_list ON, shell/file_write OFF.
+export type DaemonAction = "shell" | "notify" | "file_read" | "file_write" | "file_list";
+export type DaemonPermissions = Record<DaemonAction, boolean>;
+
+export const DEFAULT_DAEMON_PERMISSIONS: DaemonPermissions = {
+  shell: false,
+  file_write: false,
+  notify: true,
+  file_read: true,
+  file_list: true,
+};
+
+export async function getDaemonPermissions(userId: string): Promise<DaemonPermissions> {
+  try {
+    const rows = await db.select().from(channelLinks)
+      .where(and(eq(channelLinks.userId, userId), eq(channelLinks.channel, "daemon")))
+      .limit(1);
+    const stored = (rows[0]?.metadata as any)?.permissions;
+    if (stored && typeof stored === "object") {
+      return { ...DEFAULT_DAEMON_PERMISSIONS, ...stored };
+    }
+  } catch (err) {
+    console.error("[daemon] getDaemonPermissions failed:", err);
+  }
+  return { ...DEFAULT_DAEMON_PERMISSIONS };
+}
+
+export async function setDaemonPermissions(
+  userId: string,
+  perms: Partial<DaemonPermissions>,
+): Promise<DaemonPermissions> {
+  const merged = { ...DEFAULT_DAEMON_PERMISSIONS, ...perms };
+  try {
+    const rows = await db.select().from(channelLinks)
+      .where(and(eq(channelLinks.userId, userId), eq(channelLinks.channel, "daemon")))
+      .limit(1);
+    const meta = ((rows[0]?.metadata as any) || {}) as Record<string, unknown>;
+    meta.permissions = merged;
+    if (rows[0]) {
+      await db.update(channelLinks).set({ metadata: meta })
+        .where(and(eq(channelLinks.userId, userId), eq(channelLinks.channel, "daemon")));
+    } else {
+      // Stash a stub row so prefs persist even before pairing completes.
+      await db.insert(channelLinks).values({
+        userId, channel: "daemon", address: `pending_${userId}`, metadata: meta, lastSeenAt: new Date(),
+      }).onConflictDoNothing();
+    }
+  } catch (err) {
+    console.error("[daemon] setDaemonPermissions failed:", err);
+  }
+  return merged;
+}
+
+export async function isDaemonActionAllowed(userId: string, action: DaemonAction): Promise<boolean> {
+  const perms = await getDaemonPermissions(userId);
+  return !!perms[action];
+}
+
 export async function sendDaemonOp(
   userId: string,
   op: DaemonOp,
