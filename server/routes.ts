@@ -42,6 +42,7 @@ import { listPeople, deletePerson } from "./memory/people";
 import { isUserPaired, sendDaemonOp, isDaemonActionAllowed } from "./daemon/bridge";
 import type { DaemonAction, DaemonOp } from "./daemon/bridge";
 import { telegramLinks, channelLinks } from "@shared/schema";
+import { getTelegramBotUsername, isTelegramConfigured } from "./integrations/telegram";
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
@@ -319,13 +320,14 @@ Then add a brief note like "I've formatted this as a draft — tap 'Save to Draf
 You can take real actions on connected services. Use these tools proactively when the user asks:
 
 - **check_connections** — Always call this before claiming a service is (or isn't) connected. Never make assumptions about connection status.
-- **generate_reconnect_link** — When a service is disconnected and the user wants to reconnect, call this to generate a tappable OAuth button. Do not just describe how to reconnect — actually generate the link.
+- **generate_reconnect_link** — When a Google or Microsoft account is disconnected and the user wants to reconnect, call this to generate a tappable OAuth button. Do not just describe how to reconnect — actually generate the link.
+- **connect_channel** — When the user asks to connect Telegram, WhatsApp, Slack, or Discord, call this to generate a one-tap deep link. Do not describe steps — generate the link directly. Supported channels: telegram, whatsapp, slack, discord.
 - **create_calendar_event** — When the user says "block time", "schedule a meeting", "add to my calendar" — call this to actually create the event. Don't describe what you'd do, do it.
 - **fetch_emails** — Fetch inbox emails on demand beyond the ambient context.
 - **send_email** — When the user explicitly confirms they want to send an email (not just draft), call this. Always confirm before sending.
 - **daemon_action** — If the user has paired their desktop daemon, you can run shell commands, send desktop notifications, and read/write files in their workspace. Always confirm before destructive shell/write actions.
 
-**Critical rule**: Never claim you can or cannot access a service without first calling check_connections. Never promise to send an email, create a calendar event, or run a daemon command if you haven't verified the service is connected.`;
+**Critical rule**: Never claim you can or cannot access a service without first calling check_connections. Never promise to send an email, create a calendar event, or run a daemon command if you haven't verified the service is connected. When a user asks to connect any channel, always call connect_channel rather than giving manual instructions.`;
 }
 
 export async function buildPlanFromInputs(body: any): Promise<{
@@ -813,6 +815,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
         },
       },
     },
+    {
+      type: "function" as const,
+      function: {
+        name: "connect_channel",
+        description: "Generate a one-tap deep link so the user can connect a new messaging channel (Telegram, WhatsApp, Slack, or Discord) to Jarvis. Returns a tappable link button. Use proactively when the user asks to connect/link any of these services.",
+        parameters: {
+          type: "object",
+          properties: {
+            channel: {
+              type: "string",
+              enum: ["telegram", "whatsapp", "discord", "slack"],
+              description: "Which channel to generate a connection link for.",
+            },
+          },
+          required: ["channel"],
+        },
+      },
+    },
   ];
 
   function fuzzyMatch(needle: string, haystack: string): boolean {
@@ -1138,6 +1158,53 @@ export async function registerRoutes(app: Express): Promise<Server> {
           if (!daemonResult.ok) return { result: 'error', label: 'Daemon action failed', detail: daemonResult.error || 'Unknown error' };
           return { result: 'success', label: `Daemon: ${action}`, detail: JSON.stringify(daemonResult.data || {}).slice(0, 2000) };
         }
+        case 'connect_channel': {
+          const ch = String(args.channel || '').toLowerCase();
+          if (!['telegram', 'whatsapp', 'discord', 'slack'].includes(ch)) {
+            return { result: 'error', label: 'Unknown channel', detail: `Unknown channel: ${ch}` };
+          }
+          if (ch === 'telegram') {
+            if (!isTelegramConfigured()) {
+              return { result: 'error', label: 'Telegram not configured', detail: 'TELEGRAM_BOT_TOKEN is not set on the server.' };
+            }
+            await db.delete(schema.telegramLinkCodes).where(eq(schema.telegramLinkCodes.userId, userId));
+            const code = Array.from({ length: 6 }, () => 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[Math.floor(Math.random() * 32)]).join('');
+            await db.insert(schema.telegramLinkCodes).values({ code, userId });
+            const botUsername = await getTelegramBotUsername();
+            if (!botUsername) return { result: 'error', label: 'Bot username unavailable', detail: 'Could not retrieve Telegram bot username. Try again in a moment.' };
+            const url = `https://t.me/${botUsername}?start=${code}`;
+            return { result: 'success', label: 'Open Telegram', detail: JSON.stringify({ url, buttonLabel: 'Open Telegram', channel: 'telegram' }) };
+          }
+          if (ch === 'whatsapp') {
+            const twilioRaw = process.env.TWILIO_WHATSAPP_NUMBER;
+            if (!twilioRaw) return { result: 'error', label: 'WhatsApp not configured', detail: 'TWILIO_WHATSAPP_NUMBER is not set on the server.' };
+            const phone = twilioRaw.replace(/^whatsapp:/i, '').replace(/\s+/g, '').replace('+', '');
+            const code = Array.from({ length: 6 }, () => 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[Math.floor(Math.random() * 32)]).join('');
+            const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+            await db.delete(schema.channelLinkCodes).where(and(eq(schema.channelLinkCodes.userId, userId), eq(schema.channelLinkCodes.channel, 'whatsapp')));
+            await db.insert(schema.channelLinkCodes).values({ code, userId, channel: 'whatsapp', expiresAt });
+            const url = `https://wa.me/${phone}?text=${encodeURIComponent('CONNECT ' + code)}`;
+            return { result: 'success', label: 'Open WhatsApp', detail: JSON.stringify({ url, buttonLabel: 'Open WhatsApp', channel: 'whatsapp' }) };
+          }
+          if (ch === 'slack') {
+            const clientId = process.env.SLACK_CLIENT_ID;
+            if (!clientId) return { result: 'error', label: 'Slack not configured', detail: 'SLACK_CLIENT_ID is not set on the server.' };
+            const domain = process.env.REPLIT_DOMAINS?.split(',')[0];
+            const baseUrl = domain ? `https://${domain}` : 'http://localhost:5000';
+            const params = new URLSearchParams({
+              client_id: clientId,
+              scope: 'chat:write,im:history,im:read,im:write,users:read',
+              redirect_uri: `${baseUrl}/api/oauth/slack/callback`,
+              state: userId,
+            });
+            const url = `https://slack.com/oauth/v2/authorize?${params.toString()}`;
+            return { result: 'success', label: 'Connect Slack', detail: JSON.stringify({ url, buttonLabel: 'Connect Slack', channel: 'slack' }) };
+          }
+          if (ch === 'discord') {
+            return { result: 'success', label: 'Open Discord Setup', detail: JSON.stringify({ url: 'profile://connections', buttonLabel: 'Open Discord Setup', channel: 'discord' }) };
+          }
+          return { result: 'error', label: 'Unknown channel', detail: `Unexpected channel: ${ch}` };
+        }
         default:
           return { result: 'error', label: 'Unknown action', detail: `Unknown tool: ${toolName}` };
       }
@@ -1336,7 +1403,7 @@ Answer (yes/no):`,
             try { args = JSON.parse(tc.function.arguments); } catch {}
             const execResult = await executeCoachTool(tc.function.name, args, userId);
             let linkData: { url?: string; buttonLabel?: string } = {};
-            if (tc.function.name === 'generate_reconnect_link' && execResult.result === 'success') {
+            if ((tc.function.name === 'generate_reconnect_link' || tc.function.name === 'connect_channel') && execResult.result === 'success') {
               try { linkData = JSON.parse(execResult.detail); } catch {}
             }
             actionResults.push({ tool: tc.function.name, result: execResult.result, label: execResult.label, ...linkData });

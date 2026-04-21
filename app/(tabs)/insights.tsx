@@ -257,8 +257,15 @@ function MessageBubble({ message, isFirst, isLastAssistant, goals, onFollowup, o
               </>
             );
             if (ea.url) {
+              const handleBadgePress = () => {
+                if (ea.url!.startsWith('profile://')) {
+                  router.push('/(tabs)/profile');
+                } else {
+                  Linking.openURL(ea.url!);
+                }
+              };
               return (
-                <Pressable key={idx} style={badgeStyle} onPress={() => Linking.openURL(ea.url!)}>
+                <Pressable key={idx} style={badgeStyle} onPress={handleBadgePress}>
                   {inner}
                 </Pressable>
               );
