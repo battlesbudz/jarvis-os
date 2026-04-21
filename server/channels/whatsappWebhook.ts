@@ -3,8 +3,34 @@ import { db } from "../db";
 import { eq, and, sql } from "drizzle-orm";
 import { channelLinks, channelLinkCodes } from "@shared/schema";
 import express from "express";
+import * as crypto from "crypto";
 import { runCoachAgent } from "./coachAgent";
 import { sendWhatsAppMessage, isTwilioConfigured } from "./whatsappChannel";
+
+// Twilio signs every webhook request with X-Twilio-Signature, computed as
+// HMAC-SHA1(authToken, fullUrl + concat(sorted(paramKey + paramValue)))
+// then base64-encoded. See https://www.twilio.com/docs/usage/webhooks/webhooks-security
+function verifyTwilioSignature(req: Request): boolean {
+  const authToken = process.env.TWILIO_AUTH_TOKEN;
+  if (!authToken) return false; // refuse rather than trust an unsigned request
+  const sigHeader = req.header("x-twilio-signature");
+  if (!sigHeader) return false;
+  // Reconstruct the URL Twilio used. Honour X-Forwarded-Proto/Host since we
+  // typically run behind Replit's proxy / a reverse proxy in production.
+  const proto = (req.header("x-forwarded-proto") || req.protocol || "https").split(",")[0].trim();
+  const host = req.header("x-forwarded-host") || req.header("host") || "";
+  const fullUrl = `${proto}://${host}${req.originalUrl}`;
+  const params = (req.body || {}) as Record<string, string>;
+  const sortedKeys = Object.keys(params).sort();
+  let data = fullUrl;
+  for (const k of sortedKeys) data += k + String(params[k] ?? "");
+  const expected = crypto.createHmac("sha1", authToken).update(data).digest("base64");
+  try {
+    return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(sigHeader));
+  } catch {
+    return false;
+  }
+}
 
 async function findUserByPhone(phone: string): Promise<string | null> {
   try {
@@ -49,6 +75,13 @@ export function registerWhatsAppWebhook(app: Express): void {
   app.post("/api/channels/whatsapp/webhook", express.urlencoded({ extended: false }), async (req: Request, res: Response) => {
     if (!isTwilioConfigured()) {
       return res.status(503).type("text/xml").send("<Response/>");
+    }
+    // Reject any request that doesn't carry a valid Twilio signature. Without
+    // this an attacker could spoof inbound WhatsApp messages and drive the
+    // coach agent (and its tools) as the linked user.
+    if (!verifyTwilioSignature(req)) {
+      console.warn("[whatsapp] rejected webhook: invalid or missing signature");
+      return res.status(401).type("text/xml").send("<Response/>");
     }
     const from = String(req.body?.From || ""); // e.g. "whatsapp:+1234567890"
     const text = String(req.body?.Body || "").trim();
