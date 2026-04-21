@@ -62,19 +62,34 @@ export default function GoalTreeSection({ goalId, goalTitle }: Props) {
   const qc = useQueryClient();
   const [expanded, setExpanded] = useState(false);
 
-  const treeQuery = useQuery<GoalTreeRow | { hasTree: false }>({
-    queryKey: [`/api/goals/${goalId}/tree`],
-    retry: false,
-  });
-
   const jobsQuery = useQuery<JobRow[]>({
     queryKey: ['/api/agent-jobs'],
-    refetchInterval: 15000,
+    refetchInterval: 10000,
   });
 
   const decomposing = (jobsQuery.data || []).some(
     (j) => j.agentType === 'goal_decompose' && (j.status === 'queued' || j.status === 'running') && j.title.includes(goalTitle),
   );
+
+  const treeQuery = useQuery<GoalTreeRow | { hasTree: false }>({
+    queryKey: [`/api/goals/${goalId}/tree`],
+    retry: false,
+    // While a decompose job for this goal is in flight (queued or
+    // running), poll the tree endpoint so the freshly-generated tree
+    // appears automatically without the user navigating away.
+    refetchInterval: decomposing ? 5000 : false,
+  });
+
+  // When the in-flight job count for this goal drops to zero (i.e. the
+  // decompose finished), force one immediate refetch so the tree shows
+  // up the moment the worker writes it.
+  const previousDecomposingRef = React.useRef(decomposing);
+  React.useEffect(() => {
+    if (previousDecomposingRef.current && !decomposing) {
+      qc.invalidateQueries({ queryKey: [`/api/goals/${goalId}/tree`] });
+    }
+    previousDecomposingRef.current = decomposing;
+  }, [decomposing, goalId, qc]);
 
   const decomposeMutation = useMutation({
     mutationFn: async () => {
