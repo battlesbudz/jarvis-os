@@ -1888,7 +1888,33 @@ export default function ProfileScreen() {
                   { key: 'file_list',  label: 'List files in the workspace' },
                   { key: 'file_write', label: 'Write files in the workspace' },
                   { key: 'shell',      label: 'Run shell commands' },
-                ] as const).map((p) => (
+                ] as const).map((p) => p.key === 'shell' ? (
+                  <View key={p.key}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8 }}>
+                      <Text style={{ flex: 1, fontSize: 13, fontFamily: 'Inter_400Regular', color: Colors.text }}>{p.label}</Text>
+                      {daemonPermsBusy === p.key ? (
+                        <ActivityIndicator size="small" color="#6B72FF" />
+                      ) : (
+                        <Switch
+                          value={!!daemonPerms[p.key]}
+                          onValueChange={() => handleToggleDaemonPerm(p.key)}
+                          trackColor={{ false: Colors.border, true: '#6B72FF88' }}
+                          thumbColor={daemonPerms[p.key] ? '#6B72FF' : '#f4f3f4'}
+                        />
+                      )}
+                    </View>
+                    {/* Risk copy: shell permission grants arbitrary command
+                        execution under the daemon's local user account. */}
+                    <View style={{ marginTop: 4, marginBottom: 4, padding: 10, borderRadius: 8, backgroundColor: '#FFF4E5', borderWidth: 1, borderColor: '#F0B44A' }}>
+                      <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: '#8A5A00', marginBottom: 2 }}>
+                        ⚠ Shell access runs ANY command on your machine
+                      </Text>
+                      <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: '#8A5A00', lineHeight: 16 }}>
+                        Enabling this lets the agent execute arbitrary shell commands as your local user — install packages, delete files, exfiltrate data, anything you could type yourself. Only enable on a machine you trust the agent to operate, and review what it runs. You can disable this any time.
+                      </Text>
+                    </View>
+                  </View>
+                ) : (
                   <View key={p.key} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8 }}>
                     <Text style={{ flex: 1, fontSize: 13, fontFamily: 'Inter_400Regular', color: Colors.text }}>{p.label}</Text>
                     {daemonPermsBusy === p.key ? (
