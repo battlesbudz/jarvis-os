@@ -4,7 +4,7 @@ import { eq, and } from "drizzle-orm";
 import { channelLinks, channelLinkCodes, telegramLinks, NOTIFICATION_TYPES, CHANNEL_NAMES, type ChannelName, type NotificationType } from "@shared/schema";
 import { authMiddleware } from "../auth";
 import { getAllPreferences, setPreference, getChannel, listChannels } from "./registry";
-import { createDaemonPairingCode, isUserPaired, closeUserDaemon, getDaemonPermissions, setDaemonPermissions, isDaemonActionAllowed, DEFAULT_DAEMON_PERMISSIONS, type DaemonAction } from "../daemon/bridge";
+import { createDaemonPairingCode, isUserPaired, closeUserDaemon, getDaemonPermissions, setDaemonPermissions, isDaemonActionAllowed, DEFAULT_DAEMON_PERMISSIONS, type DaemonAction, type DaemonPermissions } from "../daemon/bridge";
 
 function generateCode(len = 6): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -135,12 +135,13 @@ export function registerChannelRoutes(app: Express): void {
   app.put("/api/channels/daemon/permissions", authMiddleware, async (req: Request, res: Response) => {
     const userId = (req as any).user.id;
     const incoming = (req.body?.permissions || {}) as Record<string, unknown>;
-    const sanitized: Record<string, boolean> = {};
-    for (const k of ["shell", "notify", "file_read", "file_write", "file_list"]) {
+    const ACTIONS: readonly DaemonAction[] = ["shell", "notify", "file_read", "file_write", "file_list"] as const;
+    const sanitized: Partial<DaemonPermissions> = {};
+    for (const k of ACTIONS) {
       if (k in incoming) sanitized[k] = !!incoming[k];
     }
     try {
-      const merged = await setDaemonPermissions(userId, sanitized as any);
+      const merged = await setDaemonPermissions(userId, sanitized);
       res.json({ ok: true, permissions: merged });
     } catch (err) {
       console.error("[channels] daemon permissions PUT failed:", err);

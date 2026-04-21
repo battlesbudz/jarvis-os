@@ -72,14 +72,23 @@ export const DEFAULT_DAEMON_PERMISSIONS: DaemonPermissions = {
   file_list: true,
 };
 
+// Prefer the real paired row (any non-pending address) over a pre-pairing
+// stub when both exist, so permission lookups are deterministic.
+async function findUserDaemonRow(userId: string) {
+  const rows = await db.select().from(channelLinks)
+    .where(and(eq(channelLinks.userId, userId), eq(channelLinks.channel, "daemon")));
+  if (rows.length === 0) return null;
+  const real = rows.find((r) => !r.address.startsWith("pending_"));
+  return real || rows[0];
+}
+
 export async function getDaemonPermissions(userId: string): Promise<DaemonPermissions> {
   try {
-    const rows = await db.select().from(channelLinks)
-      .where(and(eq(channelLinks.userId, userId), eq(channelLinks.channel, "daemon")))
-      .limit(1);
-    const stored = (rows[0]?.metadata as any)?.permissions;
+    const row = await findUserDaemonRow(userId);
+    const meta = (row?.metadata as Record<string, unknown> | null) || null;
+    const stored = meta?.permissions;
     if (stored && typeof stored === "object") {
-      return { ...DEFAULT_DAEMON_PERMISSIONS, ...stored };
+      return { ...DEFAULT_DAEMON_PERMISSIONS, ...(stored as Partial<DaemonPermissions>) };
     }
   } catch (err) {
     console.error("[daemon] getDaemonPermissions failed:", err);
@@ -93,16 +102,17 @@ export async function setDaemonPermissions(
 ): Promise<DaemonPermissions> {
   const merged = { ...DEFAULT_DAEMON_PERMISSIONS, ...perms };
   try {
-    const rows = await db.select().from(channelLinks)
-      .where(and(eq(channelLinks.userId, userId), eq(channelLinks.channel, "daemon")))
-      .limit(1);
-    const meta = ((rows[0]?.metadata as any) || {}) as Record<string, unknown>;
+    const row = await findUserDaemonRow(userId);
+    const meta = ((row?.metadata as Record<string, unknown> | null) || {}) as Record<string, unknown>;
     meta.permissions = merged;
-    if (rows[0]) {
+    if (row) {
+      // Update the actual row we read (real paired row preferred) so prefs
+      // are not split between a stub and a real row after pairing.
       await db.update(channelLinks).set({ metadata: meta })
-        .where(and(eq(channelLinks.userId, userId), eq(channelLinks.channel, "daemon")));
+        .where(eq(channelLinks.id, row.id));
     } else {
-      // Stash a stub row so prefs persist even before pairing completes.
+      // No daemon row yet — stash a single stub so prefs survive until pair.
+      // recordDaemonLink() will collapse this into the real row on pairing.
       await db.insert(channelLinks).values({
         userId, channel: "daemon", address: `pending_${userId}`, metadata: meta, lastSeenAt: new Date(),
       }).onConflictDoNothing();
@@ -187,15 +197,31 @@ async function consumePairingCode(code: string): Promise<string | null> {
 
 async function recordDaemonLink(userId: string, daemonId: string, meta: Record<string, unknown>): Promise<void> {
   try {
+    // Normalize to a single daemon row per user. Read any existing rows so we
+    // can preserve previously-stored permissions, then drop them all and
+    // insert one canonical row keyed by (userId, channel="daemon", daemonId).
+    const existing = await db.select().from(channelLinks)
+      .where(and(eq(channelLinks.userId, userId), eq(channelLinks.channel, "daemon")));
+    const mergedMeta: Record<string, unknown> = { ...meta };
+    for (const row of existing) {
+      const prior = (row.metadata as Record<string, unknown> | null) || {};
+      if (prior.permissions && !mergedMeta.permissions) {
+        mergedMeta.permissions = prior.permissions;
+      }
+    }
+    if (existing.length > 0) {
+      await db.delete(channelLinks)
+        .where(and(eq(channelLinks.userId, userId), eq(channelLinks.channel, "daemon")));
+    }
     await db.insert(channelLinks).values({
       userId,
       channel: "daemon",
       address: daemonId,
-      metadata: meta,
+      metadata: mergedMeta,
       lastSeenAt: new Date(),
     }).onConflictDoUpdate({
       target: [channelLinks.channel, channelLinks.address],
-      set: { userId, metadata: meta, lastSeenAt: new Date() },
+      set: { userId, metadata: mergedMeta, lastSeenAt: new Date() },
     });
   } catch (err) {
     console.error("[daemon] recordDaemonLink failed:", err);
