@@ -808,6 +808,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
               target: [schema.plans.userId, schema.plans.date],
               set: { data: updatedPlan, updatedAt: new Date() },
             });
+          // Phase 4 — extract memories opportunistically when a task is
+          // completed. The completion text is a high-signal proxy for what
+          // the user is actually working on; SOUL is marked stale so the
+          // next coach turn rebuilds with the new fact.
+          (async () => {
+            try {
+              const { extractAndStore } = await import("./memory/extractor");
+              const { markSoulStale } = await import("./memory/soul");
+              await extractAndStore({
+                userId,
+                source: "plan_completion",
+                sourceRef: `${todayKey}:${matched.title}`,
+                text: `User just completed task: "${matched.title}". Notes: ${matched.notes || "(none)"}.`,
+              });
+              await markSoulStale(userId);
+            } catch (extractErr) {
+              console.error("[Phase4] plan-completion extract failed:", extractErr);
+            }
+          })();
           return { result: 'success', label: `Task completed`, detail: `Marked "${matched.title}" as done` };
         }
         case 'web_search': {
@@ -2060,6 +2079,26 @@ Return ONLY the JSON object.`;
     } catch (error) {
       console.error("Error deleting person:", error);
       res.status(500).json({ error: "Failed to delete person" });
+    }
+  });
+
+  // Phase 4 — surface the most recent weekly pattern review in the
+  // Insights tab. We return the latest row per user; the frontend
+  // renders the patterns and summary in plain English.
+  app.get("/api/weekly-insights", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const rows = await db
+        .select()
+        .from(schema.weeklyInsights)
+        .where(eq(schema.weeklyInsights.userId, userId))
+        .orderBy(desc(schema.weeklyInsights.createdAt))
+        .limit(4);
+      return res.json({ insights: rows });
+    } catch (error) {
+      console.error("Error getting weekly insights:", error);
+      return res.status(500).json({ error: "Failed to get weekly insights" });
     }
   });
 

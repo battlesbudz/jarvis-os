@@ -97,7 +97,10 @@ interface WeeklyJobResult {
 
 export async function runWeeklyPatternJob(userId: string): Promise<WeeklyJobResult> {
   const now = new Date();
-  const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+  // 30-day rolling window — durable patterns need at least a month of
+  // signal before they're trustworthy enough to influence coaching.
+  const windowStart = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+  const sevenDaysAgo = windowStart;
   const weekOf = weekOfKey(now);
 
   // Gather activity context.

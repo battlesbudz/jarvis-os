@@ -155,6 +155,10 @@ export const userMemories = pgTable("user_memories", {
   sourceType: varchar("source_type").notNull().default("manual"),
   sourceRef: varchar("source_ref"),
   lastReferencedAt: timestamp("last_referenced_at"),
+  // Cached OpenAI text-embedding-3-small vector (1536 floats) used by the
+  // hybrid retrieval helper in server/memory/retrieve.ts. Stored as jsonb
+  // so we don't require the pgvector extension; FTS handles primary recall.
+  embedding: jsonb("embedding"),
   extractedAt: timestamp("extracted_at").defaultNow().notNull(),
 });
 
