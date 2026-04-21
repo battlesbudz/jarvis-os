@@ -894,8 +894,26 @@ async function markAsSent(userId: string, messageType: string, dateKey: string):
   } catch {}
 }
 
+// Returns one entry per user with any linked channel (telegram chatId may be
+// missing for WhatsApp/Slack/daemon-only users). Used by proactive engines so
+// every linked user receives scheduled notifications routed by notifyUser.
+async function getProactiveEligibleUsers(): Promise<{ userId: string; chatId?: string }[]> {
+  const [tgRows, chRows, prefRows] = await Promise.all([
+    db.select({ userId: schema.telegramLinks.userId, chatId: schema.telegramLinks.chatId }).from(schema.telegramLinks),
+    db.select({ userId: schema.channelLinks.userId }).from(schema.channelLinks),
+    db.select({ userId: schema.channelPreferences.userId }).from(schema.channelPreferences),
+  ]);
+  const chatIdByUser = new Map<string, string>();
+  for (const r of tgRows) chatIdByUser.set(r.userId, r.chatId);
+  const userIds = new Set<string>();
+  for (const r of tgRows) userIds.add(r.userId);
+  for (const r of chRows) userIds.add(r.userId);
+  for (const r of prefRows) userIds.add(r.userId);
+  return Array.from(userIds).map((userId) => ({ userId, chatId: chatIdByUser.get(userId) }));
+}
+
 async function sendScheduledMessage(
-  link: { userId: string; chatId: string },
+  link: { userId: string; chatId?: string },
   schedule: ScheduleEntry,
   dateKey: string,
   timezone: string
@@ -928,6 +946,9 @@ async function sendScheduledMessage(
   const tasks = todayPlan?.tasks || [];
 
   if (schedule.type === 'momentum_nudge') {
+    // Momentum coaching is Telegram-specific (interactive multi-turn session
+    // bound to a chat). Skip silently for users without a Telegram chat.
+    if (!link.chatId) return;
     const alreadyHasSession = await hasMomentumSessionToday(link.userId, dateKey);
     if (alreadyHasSession) return;
     console.log(`[Proactive] Sending momentum_nudge to user ${link.userId} (${timezone})`);
@@ -969,9 +990,8 @@ async function sendScheduledMessage(
 }
 
 export async function runProactiveStartupCatchup(): Promise<void> {
-  if (!isTelegramConfigured()) return;
   try {
-    const links = await db.select().from(schema.telegramLinks);
+    const links = await getProactiveEligibleUsers();
     if (links.length === 0) return;
 
     const allPrefs = await db.select().from(schema.userPreferences);
@@ -1016,12 +1036,10 @@ export async function runProactiveStartupCatchup(): Promise<void> {
 }
 
 export async function startProactiveScheduler(): Promise<void> {
-  if (!isTelegramConfigured()) return;
-
   setInterval(async () => {
     const now = new Date();
     try {
-      const links = await db.select().from(schema.telegramLinks);
+      const links = await getProactiveEligibleUsers();
       if (links.length === 0) return;
 
       const allPrefs = await db.select().from(schema.userPreferences);
@@ -1059,7 +1077,7 @@ export async function startProactiveScheduler(): Promise<void> {
     }
   }, 60 * 1000);
 
-  console.log('Telegram proactive scheduler started');
+  console.log('Proactive scheduler started (channel-agnostic)');
 }
 
 export async function startMeetingBriefScanner(): Promise<void> {
@@ -1185,13 +1203,11 @@ Write a sharp 2-3 sentence meeting prep brief. Include what the meeting is about
 }
 
 export async function startEmailAlertScanner(): Promise<void> {
-  if (!isTelegramConfigured()) return;
-
   const SCAN_INTERVAL_MS = 30 * 60 * 1000;
 
   const runScan = async () => {
     try {
-      const links = await db.select().from(schema.telegramLinks);
+      const links = await getProactiveEligibleUsers();
       if (links.length === 0) return;
 
       const allPrefs = await db.select().from(schema.userPreferences);

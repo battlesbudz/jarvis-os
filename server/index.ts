@@ -281,6 +281,9 @@ function setupErrorHandler(app: express.Application) {
     () => {
       log(`express server serving on port ${port}`);
 
+      // Telegram-specific I/O (polling/webhook) only runs when Telegram is
+      // configured — but proactive engines drive notifications across all
+      // channels (telegram/whatsapp/slack/daemon) so they must run regardless.
       if (isTelegramConfigured()) {
         const isProduction = process.env.NODE_ENV === 'production';
 
@@ -301,22 +304,22 @@ function setupErrorHandler(app: express.Application) {
             console.error("Failed to start Telegram polling:", err);
           });
         }
-
-        startProactiveScheduler().catch(err => {
-          console.error("Failed to start proactive scheduler:", err);
-        });
-        runProactiveStartupCatchup().catch(err => {
-          console.error("Failed to run proactive startup catchup:", err);
-        });
-        startMomentumExpiryScheduler();
-        startEmailAlertScanner().catch(err => {
-          console.error("Failed to start email alert scanner:", err);
-        });
-        // Heartbeat replaces the old curiosity & meeting-brief scanners.
-        // It walks JARVIS_HEARTBEAT.md every ~5 minutes and either acts,
-        // queues a draft, or stays silent.
-        startHeartbeat();
       }
+
+      // Channel-agnostic proactive engines — iterate every user with any
+      // linked channel (telegram/whatsapp/slack/daemon) and route through
+      // notifyUser() so WhatsApp/Slack-only users get the full experience.
+      startProactiveScheduler().catch(err => {
+        console.error("Failed to start proactive scheduler:", err);
+      });
+      runProactiveStartupCatchup().catch(err => {
+        console.error("Failed to run proactive startup catchup:", err);
+      });
+      startMomentumExpiryScheduler();
+      startEmailAlertScanner().catch(err => {
+        console.error("Failed to start email alert scanner:", err);
+      });
+      startHeartbeat();
     },
   );
 })();
