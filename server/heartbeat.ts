@@ -594,6 +594,15 @@ Return JSON:
 // Tick — walk the checklist for every linked user
 // ============================================================
 export async function runHeartbeatTick(): Promise<void> {
+  // Phase 4 — once per UTC day, decay stale memories so the SOUL stays fresh.
+  // No-op the rest of the day (cheap idempotency check).
+  try {
+    const { maybeRunDailyDecay } = await import("./memory/decay");
+    await maybeRunDailyDecay();
+  } catch (err) {
+    console.error("[Heartbeat] memory decay failed:", err);
+  }
+
   const checklist = readChecklist();
   if (!checklist) {
     console.warn("[Heartbeat] checklist file missing, skipping tick");

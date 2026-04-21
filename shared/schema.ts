@@ -149,7 +149,79 @@ export const userMemories = pgTable("user_memories", {
   userId: varchar("user_id").notNull().references(() => users.id),
   content: text("content").notNull(),
   category: varchar("category").notNull().default("fact"),
+  // Phase 4: typed memory layer with relevance / decay / source tracking.
+  relevanceScore: integer("relevance_score").notNull().default(50),
+  confidence: integer("confidence").notNull().default(70),
+  sourceType: varchar("source_type").notNull().default("manual"),
+  sourceRef: varchar("source_ref"),
+  lastReferencedAt: timestamp("last_referenced_at"),
   extractedAt: timestamp("extracted_at").defaultNow().notNull(),
+});
+
+// Phase 4 — canonical memory categories. Stored as plain varchar so we can
+// migrate forward without an enum, but the extractor + UI both clamp to this
+// list (legacy categories like "personality" → "communication_style").
+export const MEMORY_CATEGORIES = [
+  "work_patterns",
+  "communication_style",
+  "energy_rhythms",
+  "goals_history",
+  "relationships",
+  "values",
+  "blockers",
+  "accomplishments",
+  "preferences",
+  "fact",
+] as const;
+export type MemoryCategory = typeof MEMORY_CATEGORIES[number];
+
+// Phase 4 — lightweight people directory built from emails / calendars /
+// chat. The agent uses it to remember names, roles, and last-seen dates
+// when drafting replies or proactive nudges.
+export const people = pgTable("people", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  email: varchar("email"),
+  relationship: text("relationship"),
+  notes: text("notes"),
+  interactionCount: integer("interaction_count").notNull().default(0),
+  lastInteractionAt: timestamp("last_interaction_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+// Phase 4 — JARVIS_SOUL.md per user. A single curated markdown document
+// that replaces the old per-message memory dump in the coach prompt.
+// Regenerated on a Sunday cadence (or on demand) from typed memories +
+// life context + people + weekly insights. Optional manualOverride text
+// lets the user pin extra context that survives regeneration.
+export const jarvisSouls = pgTable("jarvis_souls", {
+  userId: varchar("user_id").notNull().primaryKey().references(() => users.id, { onDelete: "cascade" }),
+  content: text("content").notNull().default(""),
+  manualOverride: text("manual_override"),
+  generatedAt: timestamp("generated_at"),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export interface WeeklyPattern {
+  category: MemoryCategory | "fact";
+  observation: string;
+  evidence: string[];
+  confidence: number;
+}
+
+// Phase 4 — Sunday pattern recognition output. The weekly agent job
+// inspects last-7-days activity and writes 3-5 patterns here. High-
+// confidence patterns are also promoted into user_memories so they
+// influence future coaching.
+export const weeklyInsights = pgTable("weekly_insights", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  weekOf: varchar("week_of").notNull(),
+  patterns: jsonb("patterns").$type<WeeklyPattern[]>().notNull().default(sql`'[]'::jsonb`),
+  summary: text("summary"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
 export const proactiveQuestionsSent = pgTable("proactive_questions_sent", {

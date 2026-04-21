@@ -30,6 +30,9 @@ import { oauthRouter, oauthCallbackRouter } from "./oauthRoutes";
 import { getValidGoogleTokens, getValidMicrosoftToken, getUserTokens, getUserToken } from "./userTokenStore";
 import { tavilySearch, formatSearchResults } from "./integrations/search";
 import { logInteraction, getRecentInteractions, formatInteractionTimeline } from "./interactionLog";
+import { extractAndStore } from "./memory/extractor";
+import { getSoul, getSoulPromptBlock, regenerateSoul, setManualOverride } from "./memory/soul";
+import { listPeople, deletePerson } from "./memory/people";
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
@@ -131,7 +134,7 @@ async function getMorningNoteSummary(userId: string): Promise<string> {
   }
 }
 
-function buildCoachSystemPrompt(goals: any[], stats: any, history: any[], calendarEvents: any[] = [], lifeContext?: any, gmailItems?: any[], gmailConnected?: boolean, slackMessages?: any[], slackConnected?: boolean, commitmentsList?: any[], coachingMode?: string, memories?: { content: string; category: string }[], telegramMessages?: any[], telegramConnected?: boolean, morningNoteSummary?: string, documentsContext?: string, crossChannelContext?: string): string {
+function buildCoachSystemPrompt(goals: any[], stats: any, history: any[], calendarEvents: any[] = [], lifeContext?: any, gmailItems?: any[], gmailConnected?: boolean, slackMessages?: any[], slackConnected?: boolean, commitmentsList?: any[], coachingMode?: string, memories?: { content: string; category: string }[], telegramMessages?: any[], telegramConnected?: boolean, morningNoteSummary?: string, documentsContext?: string, crossChannelContext?: string, soulBlock?: string): string {
   const completedHistory = history.filter((h: any) => h.completed);
   const skippedHistory = history.filter((h: any) => !h.completed);
   const completionRate = history.length > 0
@@ -256,7 +259,7 @@ ${crossChannelContext || ''}
 ${COACHING_FRAMEWORKS}
 
 ${personaBlock}
-${memoriesSection}
+${soulBlock && soulBlock.trim() ? soulBlock : memoriesSection}
 
 ## User Profile
 - Current streak: ${stats.streak || 0} days
@@ -264,7 +267,7 @@ ${memoriesSection}
 - Total tasks completed: ${stats.totalCompleted || 0}
 - Total XP earned: ${stats.xp || 0}
 - Task completion rate (last 7 days): ${completionRate}% (${completedHistory.length} completed, ${skippedHistory.length} skipped)
-${strugglingCategories.length > 0 ? `- Struggling most with: ${strugglingCategories.join(', ')}` : ''}${lifeContextSection}${documentsSection}
+${strugglingCategories.length > 0 ? `- Struggling most with: ${strugglingCategories.join(', ')}` : ''}${soulBlock && soulBlock.trim() ? '' : lifeContextSection}${documentsSection}
 
 ## Active Goals
 ${goalsText}
@@ -840,73 +843,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
   }
 
   async function extractProfileInBackground(userId: string, messages: any[]) {
-    try {
-      const recentMessages = messages.slice(-6);
-      if (recentMessages.length === 0) return;
-
-      const existingRows = await db.select({ content: userMemories.content })
-        .from(userMemories)
-        .where(eq(userMemories.userId, userId));
-      const existingMemories = existingRows.map(r => r.content);
-      const normalizedExisting = new Set(existingMemories.map(normalizeMemoryContent));
-
-      const conversationText = recentMessages
-        .map((m: any) => `${m.role}: ${m.content}`)
-        .join('\n');
-
-      const existingList = existingMemories.length > 0
-        ? `\nExisting memories (DO NOT duplicate these):\n${existingMemories.map(m => `- ${m}`).join('\n')}`
-        : '';
-
-      const prompt = `You are extracting profile facts about the user from this conversation.
-Output a JSON array of { category, content } objects. Only extract facts that are specific, meaningful, and not already captured.
-
-Categories:
-- personality — how they communicate, humor, energy, decision style
-- values — what they care about deeply, what motivates them
-- work_style — when/how they focus, work patterns, tools they use
-- accomplishment — wins, achievements, proud moments mentioned
-- goal_discovered — goals inferred from behavior (not just stated)
-- relationship — key people in their life (family, teammates, boss)
-- pattern — recurring behaviors, habits, tendencies
-- preference — explicit preferences (meeting times, communication style, etc.)
-${existingList}
-
-Conversation:
-${conversationText}
-
-Return JSON: { "memories": [{"content": "string describing the fact", "category": "one of the categories above"}] }
-Return { "memories": [] } if nothing new was learned. Do NOT repeat or rephrase existing memories.`;
-
-      const response = await openai.chat.completions.create({
-        model: "gpt-5-mini",
-        messages: [{ role: "user", content: prompt }],
-        response_format: { type: "json_object" },
-        max_completion_tokens: 400,
-      });
-
-      const content = response.choices[0]?.message?.content || '{"memories":[]}';
-      const parsed = JSON.parse(content);
-      const rawMemories = Array.isArray(parsed.memories) ? parsed.memories : (Array.isArray(parsed) ? parsed : []);
-      const newMemories = rawMemories.slice(0, 3);
-      const validCategories = ['personality', 'values', 'work_style', 'accomplishment', 'goal_discovered', 'relationship', 'pattern', 'preference', 'fact', 'goal', 'achievement'];
-
-      for (const mem of newMemories) {
-        if (!mem.content || typeof mem.content !== 'string' || mem.content.trim().length === 0) continue;
-        const normalized = normalizeMemoryContent(mem.content);
-        if (normalizedExisting.has(normalized)) continue;
-        const category = validCategories.includes(mem.category) ? mem.category : 'fact';
-        await db.insert(userMemories).values({
-          userId,
-          content: mem.content.trim(),
-          category,
-        });
-        normalizedExisting.add(normalized);
-        console.log(`[Profile] Extracted: [${category}] ${mem.content.trim().slice(0, 60)}...`);
-      }
-    } catch (err) {
-      console.error("[Profile] Background extraction error:", err);
-    }
+    const recentMessages = messages.slice(-6);
+    if (recentMessages.length === 0) return;
+    const conversationText = recentMessages
+      .map((m: any) => `${m.role}: ${m.content}`)
+      .join('\n');
+    await extractAndStore({
+      userId,
+      source: conversationText,
+      sourceType: "chat",
+    });
   }
 
   async function markProactiveQuestionsAnswered(userId: string, messages: any[]) {
@@ -1043,7 +989,8 @@ Answer (yes/no):`,
         } catch {}
       }
 
-      const systemPrompt = buildCoachSystemPrompt(goals || [], stats || {}, history || [], calendarEvents || [], lifeContext || null, resolvedGmailItems, resolvedGmailConnected, slackMessages || [], slackConnected ?? false, userCommitments, coachingMode, memories, telegramMessages || [], telegramConnected ?? false, morningNoteSummary, documentsContext, crossChannelContext);
+      const soulBlock = await getSoulPromptBlock(userId);
+      const systemPrompt = buildCoachSystemPrompt(goals || [], stats || {}, history || [], calendarEvents || [], lifeContext || null, resolvedGmailItems, resolvedGmailConnected, slackMessages || [], slackConnected ?? false, userCommitments, coachingMode, memories, telegramMessages || [], telegramConnected ?? false, morningNoteSummary, documentsContext, crossChannelContext, soulBlock);
 
       const chatMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
         { role: "system", content: systemPrompt + proactiveQuestionContext + "\n\nYou can take actions on the user's behalf using the available tools. When a user asks you to add a task, log progress, update their context, etc., use the appropriate tool. Respond naturally — do not mention 'tool calls' or 'functions' to the user. Just confirm what you did conversationally." + (process.env.TAVILY_API_KEY ? "\n\nYou also have a web_search tool. Use it whenever the user asks about current events, live data (weather, stock prices, sports scores, news), or anything requiring real-time information you wouldn't know. Cite your sources naturally in your response." : "") },
@@ -1886,7 +1833,8 @@ Return ONLY JSON: { "hasCommitment": boolean, "commitment": "the thing they comm
           .limit(10);
       } catch {}
 
-      const systemPrompt = buildCoachSystemPrompt(goals || [], stats || {}, history || [], [], lifeContext || null, [], false, [], false, userCommitments, undefined, [], [], false);
+      const soulBlock = await getSoulPromptBlock(userId);
+      const systemPrompt = buildCoachSystemPrompt(goals || [], stats || {}, history || [], [], lifeContext || null, [], false, [], false, userCommitments, undefined, [], [], false, undefined, undefined, undefined, soulBlock);
 
       res.setHeader('Content-Type', 'text/event-stream');
       res.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -2036,73 +1984,82 @@ Return ONLY the JSON object.`;
         return res.json({ added: 0 });
       }
 
-      const existingRows = await db.select({ content: userMemories.content })
-        .from(userMemories)
-        .where(eq(userMemories.userId, userId))
-        .orderBy(desc(userMemories.extractedAt));
-      const existingMemories = existingRows.map(r => r.content);
-
       const conversationText = messages
         .map((m: any) => `${m.role}: ${m.content}`)
         .join('\n');
 
-      const existingList = existingMemories.length > 0
-        ? `\nExisting memories (DO NOT duplicate these):\n${existingMemories.map(m => `- ${m}`).join('\n')}`
-        : '';
-
-      const prompt = `You are extracting profile facts about the user from this conversation.
-Output a JSON array of { category, content } objects. Only extract facts that are specific, meaningful, and not already captured.
-
-Categories:
-- personality — how they communicate, humor, energy, decision style
-- values — what they care about deeply, what motivates them
-- work_style — when/how they focus, work patterns, tools they use
-- accomplishment — wins, achievements, proud moments mentioned
-- goal_discovered — goals inferred from behavior (not just stated)
-- relationship — key people in their life (family, teammates, boss)
-- pattern — recurring behaviors, habits, tendencies
-- preference — explicit preferences (meeting times, communication style, etc.)
-- fact — general facts about the user
-- goal — explicitly stated goals
-- achievement — specific achievements mentioned
-${existingList}
-
-Conversation:
-${conversationText}
-
-Return JSON: { "memories": [{"content": "string describing the fact", "category": "one of the categories above"}] }
-Return { "memories": [] } if nothing new was learned. Do NOT repeat or rephrase existing memories.`;
-
-      const response = await openai.chat.completions.create({
-        model: "gpt-5-mini",
-        messages: [{ role: "user", content: prompt }],
-        response_format: { type: "json_object" },
-        max_completion_tokens: 400,
+      const stored = await extractAndStore({
+        userId,
+        source: conversationText,
+        sourceType: "chat",
       });
-
-      const content = response.choices[0]?.message?.content || '{"memories":[]}';
-      let added = 0;
-      try {
-        const parsed = JSON.parse(content);
-        const rawMemories = Array.isArray(parsed.memories) ? parsed.memories : (Array.isArray(parsed) ? parsed : []);
-        const newMemories = rawMemories.slice(0, 3);
-        for (const mem of newMemories) {
-          if (!mem.content || typeof mem.content !== 'string' || mem.content.trim().length === 0) continue;
-          const validCategories = ['fact', 'pattern', 'preference', 'goal', 'achievement', 'personality', 'values', 'work_style', 'accomplishment', 'goal_discovered', 'relationship'];
-          const category = validCategories.includes(mem.category) ? mem.category : 'fact';
-          await db.insert(userMemories).values({
-            userId,
-            content: mem.content.trim(),
-            category,
-          });
-          added++;
-        }
-      } catch {}
-
-      res.json({ added });
+      res.json({ added: stored.length });
     } catch (error) {
       console.error("Error extracting memories:", error);
       res.json({ added: 0 });
+    }
+  });
+
+  app.get("/api/soul", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const soul = await getSoul(userId);
+      res.json(soul);
+    } catch (error) {
+      console.error("Error fetching SOUL:", error);
+      res.status(500).json({ error: "Failed to fetch SOUL" });
+    }
+  });
+
+  app.post("/api/soul/regenerate", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const soul = await regenerateSoul(userId);
+      res.json(soul);
+    } catch (error) {
+      console.error("Error regenerating SOUL:", error);
+      res.status(500).json({ error: "Failed to regenerate SOUL" });
+    }
+  });
+
+  app.put("/api/soul/override", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const body = req.body as { override?: unknown };
+      const override = typeof body.override === "string" ? body.override : null;
+      await setManualOverride(userId, override);
+      const soul = await getSoul(userId);
+      res.json(soul);
+    } catch (error) {
+      console.error("Error setting SOUL override:", error);
+      res.status(500).json({ error: "Failed to set override" });
+    }
+  });
+
+  app.get("/api/people", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const people = await listPeople(userId);
+      res.json({ people });
+    } catch (error) {
+      console.error("Error fetching people:", error);
+      res.status(500).json({ error: "Failed to fetch people" });
+    }
+  });
+
+  app.delete("/api/people/:id", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      await deletePerson(userId, req.params.id);
+      res.json({ ok: true });
+    } catch (error) {
+      console.error("Error deleting person:", error);
+      res.status(500).json({ error: "Failed to delete person" });
     }
   });
 

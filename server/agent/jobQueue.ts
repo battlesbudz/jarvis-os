@@ -13,6 +13,7 @@ import * as schema from "@shared/schema";
 import type { SubAgentType } from "./subagents";
 import { runSubAgent } from "./subagents";
 import { runGoalDecomposition } from "./goalDecomposer";
+import { runWeeklyPatternJob } from "../memory/weeklyJob";
 import { getValidGoogleTokens } from "../userTokenStore";
 import type { ToolContext } from "./types";
 import { sendMessage, isTelegramConfigured } from "../integrations/telegram";
@@ -44,7 +45,7 @@ let workerRunning = false;
 let workerStarted = false;
 let stopRequested = false;
 
-export type AgentJobType = SubAgentType | "goal_decompose";
+export type AgentJobType = SubAgentType | "goal_decompose" | "weekly_pattern";
 
 export interface SubmitJobInput {
   userId: string;
@@ -139,6 +140,23 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
   }, MAX_JOB_DURATION_MS);
 
   try {
+    if (job.agentType === "weekly_pattern") {
+      const result = await runWeeklyPatternJob(job.userId);
+      await completeJob(job.id, {
+        result: { weekOf: result.weekOf, patterns: result.patternCount, promoted: result.promotedMemories },
+        turns: 1,
+        toolCallsCount: 0,
+      });
+      console.log(`[JobQueue] complete weekly_pattern job ${job.id} → ${result.patternCount} patterns`);
+      await notifyJobComplete(
+        job.userId,
+        "weekly_pattern",
+        `Weekly review (${result.weekOf})`,
+        `${result.patternCount} pattern(s) identified, ${result.promotedMemories} promoted to long-term memory.\n${result.summary}`,
+      );
+      return;
+    }
+
     if (job.agentType === "goal_decompose") {
       const result = await runGoalDecomposition(job);
       await completeJob(job.id, {
