@@ -32,13 +32,14 @@ export const driveCreateFileTool: AgentTool = {
   },
   async execute(args, ctx) {
     if (!ctx.googleAccessToken) return noDrive();
+    const a = args as { name?: string; content?: string; as_google_doc?: boolean };
 
-    let name = String(args.name || "").trim().slice(0, 200) || "Untitled";
-    const asDoc = !!args.as_google_doc;
+    let name = String(a.name || "").trim().slice(0, 200) || "Untitled";
+    const asDoc = !!a.as_google_doc;
     if (!asDoc && !/\.[a-zA-Z0-9]{1,8}$/.test(name)) name += ".md";
 
     try {
-      const file = await createDriveTextFile(ctx.googleAccessToken, name, String(args.content || ""), {
+      const file = await createDriveTextFile(ctx.googleAccessToken, name, String(a.content || ""), {
         convertToDoc: asDoc,
       });
       console.log(`[${ctx.channel || "Agent"}] drive_create_file name="${name}" asDoc=${asDoc} id=${file.fileId}`);
@@ -48,8 +49,8 @@ export const driveCreateFileTool: AgentTool = {
         label: `Saved to Drive: ${file.name}`,
         detail: file.webViewLink,
       };
-    } catch (err: any) {
-      const msg = String(err?.message || err);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
       const insufficientScope = /insufficient|scope|permission/i.test(msg);
       return {
         ok: false,
@@ -75,8 +76,9 @@ export const driveListFilesTool: AgentTool = {
   },
   async execute(args, ctx) {
     if (!ctx.googleAccessToken) return noDrive();
+    const limit = Number((args as { limit?: number }).limit) || 20;
     try {
-      const files = await listJarvisDriveFiles(ctx.googleAccessToken, Number(args.limit) || 20);
+      const files = await listJarvisDriveFiles(ctx.googleAccessToken, limit);
       if (files.length === 0) {
         return { ok: true, content: "No files in the Jarvis Drive folder yet.", label: "Drive: 0 files" };
       }
@@ -88,35 +90,78 @@ export const driveListFilesTool: AgentTool = {
         content: `Files in Jarvis Drive folder:\n${formatted}`,
         label: `Drive: ${files.length} files`,
       };
-    } catch (err: any) {
-      return { ok: false, content: `Drive list failed: ${err?.message || err}`, label: "Drive list failed" };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { ok: false, content: `Drive list failed: ${msg}`, label: "Drive list failed" };
     }
   },
 };
 
+/**
+ * Extracts a Drive file id from either a raw id or a Drive URL.
+ * Accepts: bare id, /file/d/<id>/..., open?id=<id>, /document/d/<id>/...
+ */
+export function parseDriveFileId(input: string): string | null {
+  const s = input.trim();
+  if (!s) return null;
+  // Bare id (Drive ids are typically 25+ alphanum/underscore/dash)
+  if (/^[A-Za-z0-9_-]{20,}$/.test(s)) return s;
+  // /d/<id>/ pattern (files, docs, sheets)
+  const dMatch = s.match(/\/d\/([A-Za-z0-9_-]{20,})/);
+  if (dMatch) return dMatch[1];
+  // ?id=<id> pattern
+  try {
+    const url = new URL(s);
+    const idParam = url.searchParams.get("id");
+    if (idParam && /^[A-Za-z0-9_-]{20,}$/.test(idParam)) return idParam;
+  } catch {
+    // not a URL
+  }
+  return null;
+}
+
+interface DriveReadArgs {
+  file_id?: string;
+  url?: string;
+}
+
 export const driveReadFileTool: AgentTool = {
   name: "drive_read_file",
   description:
-    "Read the contents of a file from the Jarvis folder in the user's Google Drive by id. Returns up to ~12k characters.",
+    "Read the contents of a Drive file by id or by full Drive URL (e.g. https://drive.google.com/file/d/<id>/view or a Google Doc URL). Returns up to ~12k characters.",
   parameters: {
     type: "object",
     properties: {
-      file_id: { type: "string", description: "Drive file ID from drive_list_files" },
+      file_id: { type: "string", description: "Drive file ID from drive_list_files (preferred when known)" },
+      url: { type: "string", description: "Full Drive/Docs URL — id will be parsed from it" },
     },
-    required: ["file_id"],
   },
   async execute(args, ctx) {
     if (!ctx.googleAccessToken) return noDrive();
+    const a = args as DriveReadArgs;
+    const raw = (a.file_id && a.file_id.trim()) || (a.url && a.url.trim()) || "";
+    if (!raw) {
+      return { ok: false, content: "Either file_id or url is required.", label: "Missing id" };
+    }
+    const id = parseDriveFileId(raw);
+    if (!id) {
+      return {
+        ok: false,
+        content: `Could not parse a Drive file id from "${raw}". Pass either a bare id or a Drive URL.`,
+        label: "Invalid Drive id/url",
+      };
+    }
     try {
-      const f = await readDriveFile(ctx.googleAccessToken, String(args.file_id));
+      const f = await readDriveFile(ctx.googleAccessToken, id);
       const body = f.content.slice(0, 12000);
       return {
         ok: true,
         content: `File "${f.name}" (${f.mimeType}):\n\n${body}`,
         label: `Read Drive file: ${f.name}`,
       };
-    } catch (err: any) {
-      return { ok: false, content: `Drive read failed: ${err?.message || err}`, label: "Drive read failed" };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { ok: false, content: `Drive read failed: ${msg}`, label: "Drive read failed", detail: msg };
     }
   },
 };

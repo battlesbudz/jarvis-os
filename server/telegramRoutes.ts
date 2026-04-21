@@ -277,23 +277,26 @@ Be direct, specific, actionable. No fluff. You have full access to the user's em
         : userText;
 
 
-      const baseMessages: any[] = [
+      const baseMessages: import("openai").default.Chat.Completions.ChatCompletionMessageParam[] = [
         { role: "system", content: systemPrompt },
-        ...recentMessages.map((m: any) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
+        ...recentMessages.map((m: { role: string; content: string }) => ({
+          role: m.role === "assistant" ? ("assistant" as const) : ("user" as const),
+          content: m.content,
+        })),
         { role: "user", content: userMessageContent },
       ];
 
       // Build a context that we keep a reference to — tools mutate ctx.state
       // in place, so we can read updates after runAgent returns.
-      const agentCtx = {
+      const agentCtx: import("./agent/types").ToolContext = {
         userId,
         channel: "Telegram",
         googleAccessToken: googleAccessToken || undefined,
         state: {
           dateKey,
           todayPlan,
-          gmailMessageIds: gmailItems.map((i: any) => i.id).filter(Boolean),
-          pendingAttachments: [] as any[],
+          gmailMessageIds: gmailItems.map((i: { id?: string }) => i.id).filter((id): id is string => !!id),
+          pendingAttachments: [],
         },
       };
 

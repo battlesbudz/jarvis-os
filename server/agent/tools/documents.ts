@@ -17,9 +17,10 @@ export const createDocumentTool: AgentTool = {
     required: ["name", "content"],
   },
   async execute(args, ctx) {
-    const name = String(args.name || "").trim().slice(0, 200);
-    const content = String(args.content || "");
-    const summary = args.summary ? String(args.summary).slice(0, 500) : null;
+    const a = args as { name?: string; content?: string; summary?: string };
+    const name = String(a.name || "").trim().slice(0, 200);
+    const content = String(a.content || "");
+    const summary = a.summary ? String(a.summary).slice(0, 500) : null;
 
     if (!name) return { ok: false, content: "Document name is required.", label: "Missing name" };
     if (!content.trim()) return { ok: false, content: "Document content cannot be empty.", label: "Empty content" };
@@ -61,13 +62,9 @@ export const createDocumentTool: AgentTool = {
         label: `Created document: ${name}`,
         detail: docId,
       };
-    } catch (err: any) {
-      return {
-        ok: false,
-        content: `Failed to create document: ${err?.message || err}`,
-        label: "Document create failed",
-        detail: String(err?.message || err),
-      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { ok: false, content: `Failed to create document: ${msg}`, label: "Document create failed", detail: msg };
     }
   },
 };
@@ -83,7 +80,7 @@ export const listDocumentsTool: AgentTool = {
     },
   },
   async execute(args, ctx) {
-    const limit = Math.min(Math.max(Number(args.limit) || 20, 1), 50);
+    const limit = Math.min(Math.max(Number((args as { limit?: number }).limit) || 20, 1), 50);
     try {
       const rows = await db
         .select({
@@ -112,8 +109,9 @@ export const listDocumentsTool: AgentTool = {
         content: `User has ${rows.length} document(s):\n${formatted}`,
         label: `Listed ${rows.length} document(s)`,
       };
-    } catch (err: any) {
-      return { ok: false, content: `Failed to list documents: ${err?.message || err}`, label: "List failed" };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { ok: false, content: `Failed to list documents: ${msg}`, label: "List failed" };
     }
   },
 };
@@ -130,14 +128,18 @@ export const readDocumentTool: AgentTool = {
     required: ["document_id"],
   },
   async execute(args, ctx) {
+    const documentId = String((args as { document_id?: string }).document_id || "");
+    if (!documentId) {
+      return { ok: false, content: "document_id is required.", label: "Missing id" };
+    }
     try {
       const rows = await db
         .select()
         .from(userDocuments)
-        .where(and(eq(userDocuments.userId, ctx.userId), eq(userDocuments.id, String(args.document_id))))
+        .where(and(eq(userDocuments.userId, ctx.userId), eq(userDocuments.id, documentId)))
         .limit(1);
       if (rows.length === 0) {
-        return { ok: false, content: `No document found with id "${args.document_id}".`, label: "Document not found" };
+        return { ok: false, content: `No document found with id "${documentId}".`, label: "Document not found" };
       }
       const doc = rows[0];
       const body = (doc.extractedText || "").slice(0, 12000);
@@ -146,8 +148,9 @@ export const readDocumentTool: AgentTool = {
         content: `Document "${doc.name}" (id: ${doc.id}, ${doc.mimeType}):\n\n${body}`,
         label: `Read document: ${doc.name}`,
       };
-    } catch (err: any) {
-      return { ok: false, content: `Failed to read document: ${err?.message || err}`, label: "Read failed" };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { ok: false, content: `Failed to read document: ${msg}`, label: "Read failed" };
     }
   },
 };

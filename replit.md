@@ -24,7 +24,7 @@ Key architectural patterns and features include:
 Inspired by OpenClaw (MIT licensed, © 2025 Peter Steinberger). Located in `server/agent/`:
 - **harness.ts** — OpenClaw-style tool-calling loop: runs up to N turns, executes tool calls in parallel, force-final-answers if maxTurns hit.
 - **types.ts** — typed `AgentTool`, `ToolContext` (mutable shared state for inter-tool comms), `ToolResult`.
-- **tools/** — typed registry: `webSearch`, `gmailActions`, `calendar` (fetch_calendar), `manageTasks`, `documents`, `googleDriveTools`. Bundle `telegramCoachTools()` is consumed by `handleCoachReply` in `server/telegramRoutes.ts`.
+- **tools/** — typed registry: `webSearch` (search_web, research_topic), `gmailActions` (gmail_action, create_gmail_draft), `calendar` (fetch_calendar), `manageTasks`, `documents`, `googleDriveTools` (Drive read accepts ID or full URL). Bundle `telegramCoachTools()` is consumed by `handleCoachReply` in `server/telegramRoutes.ts`.
 - **Artifact delivery** — `create_document` saves to the Documents library AND queues a `pendingAttachments` entry in `ctx.state`; the Telegram caller delivers the file via `sendTelegramDocument` so the user receives it in-channel.
 - Google scopes now include `drive.file` and `gmail.modify`; existing users must reconnect Google to grant them.
 
