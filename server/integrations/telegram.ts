@@ -240,3 +240,27 @@ export function logTelegramStatus(): void {
     console.log('Telegram: not configured (set TELEGRAM_BOT_TOKEN in Replit Secrets)');
   }
 }
+
+let _cachedBotUsername: string | null = null;
+
+/**
+ * Returns the bot's @username (without the leading @) by calling Telegram's
+ * /getMe endpoint. Result is cached in memory so subsequent calls are free.
+ * Returns null if the bot token is not configured or the call fails.
+ */
+export async function getTelegramBotUsername(): Promise<string | null> {
+  if (_cachedBotUsername) return _cachedBotUsername;
+  if (!BOT_TOKEN) return null;
+  try {
+    const res = await fetch(`${BASE}/getMe`);
+    if (!res.ok) return null;
+    const data = await res.json() as { ok: boolean; result?: { username?: string } };
+    if (data.ok && data.result?.username) {
+      _cachedBotUsername = data.result.username;
+      return _cachedBotUsername;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
