@@ -780,7 +780,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       type: "function" as const,
       function: {
         name: "send_email",
-        description: "Send an email immediately via Gmail or Outlook. Only use after the user explicitly confirms they want to send. Requires Google or Microsoft to be connected.",
+        description: "Send an email immediately via Gmail or Outlook. Only use after the user explicitly confirms they want to send. Requires Google or Microsoft to be connected. If the user has multiple Google accounts, pass accountHint with the sender email address to select the correct account.",
         parameters: {
           type: "object",
           properties: {
@@ -788,6 +788,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             subject: { type: "string", description: "Email subject" },
             body: { type: "string", description: "Email body (plain text)" },
             provider: { type: "string", enum: ["google", "microsoft"], description: "Which provider to use, default 'google'" },
+            accountHint: { type: "string", description: "Optional sender account email to disambiguate when multiple accounts are connected (e.g. 'alice@gmail.com')" },
           },
           required: ["to", "subject", "body"],
         },
@@ -1077,11 +1078,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const subject = String(args.subject || '').trim();
           const body = String(args.body || '');
           const provider = (String(args.provider || 'google')).toLowerCase();
+          const accountHint = args.accountHint ? String(args.accountHint).trim().toLowerCase() : null;
           if (!to || !subject || !body.trim()) return { result: 'error', label: 'Missing fields', detail: 'to, subject, and body are all required.' };
           const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
           if (!emailRegex.test(to)) return { result: 'error', label: 'Invalid recipient', detail: `"${to}" is not a valid email address.` };
           if (provider === 'google') {
-            const token = await getValidGoogleToken(userId);
+            let token: string | null = null;
+            if (accountHint) {
+              const allTokens = await getUserTokens(userId, 'google');
+              const match = allTokens.find(t => (t.accountEmail || '').toLowerCase() === accountHint);
+              if (match) {
+                if (match.expiresAt && match.expiresAt.getTime() < Date.now() + 60_000) {
+                  token = (await getValidGoogleToken(userId));
+                } else {
+                  token = match.accessToken;
+                }
+              }
+            }
+            if (!token) token = await getValidGoogleToken(userId);
             if (!token) return { result: 'error', label: 'Gmail not connected', detail: 'Connect Google in Profile to send emails.' };
             const result = await sendGmailEmail(token, to, subject, body);
             return { result: 'success', label: `Email sent to ${to}`, detail: `Gmail message ID: ${result.messageId}` };

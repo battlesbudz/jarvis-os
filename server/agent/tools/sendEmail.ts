@@ -1,18 +1,19 @@
 import type { AgentTool, ToolContext, ToolArgs, ToolResult } from "../types";
 import { sendGmailEmail } from "../../integrations/gmail";
 import { sendOutlookEmail } from "../../integrations/outlook";
-import { getValidGoogleToken, getValidMicrosoftToken } from "../../userTokenStore";
+import { getValidGoogleToken, getValidMicrosoftToken, getUserTokens } from "../../userTokenStore";
 
 interface SendEmailArgs {
   to?: string;
   subject?: string;
   body?: string;
   provider?: string;
+  accountHint?: string;
 }
 
 export const sendEmailTool: AgentTool = {
   name: "send_email",
-  description: "Send an email immediately via Gmail or Outlook. Only use this when the user explicitly confirms they want to send (not just draft). Requires Google or Microsoft to be connected. provider defaults to 'google' if connected, otherwise 'microsoft'. If neither is connected, report the error.",
+  description: "Send an email immediately via Gmail or Outlook. Only use this when the user explicitly confirms they want to send (not just draft). Requires Google or Microsoft to be connected. provider defaults to 'google' if connected, otherwise 'microsoft'. If the user has multiple Google accounts, pass accountHint with the sender email address to use the correct account.",
   parameters: {
     type: "object",
     properties: {
@@ -20,6 +21,7 @@ export const sendEmailTool: AgentTool = {
       subject: { type: "string", description: "Email subject line" },
       body: { type: "string", description: "Email body text (plain text)" },
       provider: { type: "string", enum: ["google", "microsoft"], description: "Which email provider to use: 'google' (Gmail) or 'microsoft' (Outlook). Defaults to 'google'." },
+      accountHint: { type: "string", description: "Optional sender account email to disambiguate when multiple accounts are connected (e.g. 'alice@gmail.com')" },
     },
     required: ["to", "subject", "body"],
   },
@@ -29,6 +31,7 @@ export const sendEmailTool: AgentTool = {
     const subject = String(a.subject || "").trim();
     const body = String(a.body || "");
     const provider = (a.provider || "google").toLowerCase();
+    const accountHint = a.accountHint ? String(a.accountHint).trim().toLowerCase() : null;
 
     if (!to || !subject || !body.trim()) {
       return { ok: false, content: "to, subject, and body are all required.", label: "Missing required fields" };
@@ -41,7 +44,15 @@ export const sendEmailTool: AgentTool = {
 
     try {
       if (provider === "google") {
-        const token = ctx.googleAccessToken || (await getValidGoogleToken(ctx.userId));
+        let token: string | null = ctx.googleAccessToken || null;
+        if (!token && accountHint) {
+          const allTokens = await getUserTokens(ctx.userId, "google");
+          const match = allTokens.find(t => (t.accountEmail || "").toLowerCase() === accountHint);
+          if (match && !(match.expiresAt && match.expiresAt.getTime() < Date.now() + 60_000)) {
+            token = match.accessToken;
+          }
+        }
+        if (!token) token = await getValidGoogleToken(ctx.userId);
         if (!token) {
           return { ok: false, content: "Gmail is not connected. Ask the user to connect Google in Profile.", label: "Gmail not connected" };
         }
