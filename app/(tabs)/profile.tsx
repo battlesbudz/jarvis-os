@@ -2022,7 +2022,10 @@ export default function ProfileScreen() {
                       Step 2 — Pair your Discord account
                     </Text>
                     <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, lineHeight: 17, marginBottom: 10 }}>
-                      Open Discord, find your bot, and send it any message. It will reply with a 6-character pairing code — enter it here.
+                      Open Discord, find your bot, and send it any message. It will reply with a 6-character pairing code.{'\n'}
+                      Enter it here, <Text style={{ fontFamily: 'Inter_600SemiBold' }}>or</Text> send{' '}
+                      <Text style={{ fontFamily: 'Inter_600SemiBold', color: '#5865F2' }}>approve CODE</Text>
+                      {' '}to your Jarvis Telegram bot.
                     </Text>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                       <TextInput
