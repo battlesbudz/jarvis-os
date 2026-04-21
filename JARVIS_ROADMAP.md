@@ -18,8 +18,8 @@ Transform Jarvis from a reactive coaching app into a fully autonomous AI agent t
 | Phase | Name | Status |
 |-------|------|--------|
 | ✅ Foundation | What Jarvis can already do | COMPLETE |
-| 🔵 Phase 1 | Action Engine — Give Jarvis Hands | PENDING |
-| ⬜ Phase 2 | Autonomous Heartbeat — Act Without Being Asked | PENDING |
+| ✅ Phase 1 | Action Engine — Give Jarvis Hands | COMPLETE |
+| ✅ Phase 2 | Autonomous Heartbeat — Act Without Being Asked | COMPLETE |
 | ⬜ Phase 3 | Sub-Agent Goals — Work While You Sleep | PENDING |
 | ⬜ Phase 4 | Memory & Learning — Gets Smarter Every Week | PENDING |
 | ⬜ Phase 5 | Multi-Channel & Computer Control | PENDING |

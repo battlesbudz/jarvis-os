@@ -32,6 +32,13 @@ function buildCalendarClient(accessToken: string) {
   return google.calendar({ version: 'v3', auth: oauth2Client });
 }
 
+export interface CalendarAttendee {
+  email: string;
+  displayName?: string;
+  organizer?: boolean;
+  self?: boolean;
+}
+
 export interface CalendarEvent {
   id: string;
   title: string;
@@ -39,6 +46,7 @@ export interface CalendarEvent {
   end: string;
   description?: string;
   location?: string;
+  attendees?: CalendarAttendee[];
 }
 
 export async function getGoogleCalendarEvents(
@@ -81,6 +89,14 @@ export async function getGoogleCalendarEvents(
           .filter((e) => e.summary && !seenIds.has(e.id || ''))
           .forEach((e) => {
             seenIds.add(e.id || '');
+            const attendees = (e.attendees || [])
+              .filter((a) => a.email)
+              .map((a) => ({
+                email: String(a.email),
+                displayName: a.displayName || undefined,
+                organizer: !!a.organizer,
+                self: !!a.self,
+              }));
             allEvents.push({
               id: e.id || String(Math.random()),
               title: e.summary || 'Event',
@@ -88,6 +104,7 @@ export async function getGoogleCalendarEvents(
               end: e.end?.dateTime || e.end?.date || date,
               description: e.description || undefined,
               location: e.location || undefined,
+              attendees: attendees.length > 0 ? attendees : undefined,
             });
           });
       } catch (err: any) {

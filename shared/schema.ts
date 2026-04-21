@@ -255,6 +255,22 @@ export const morningVoiceNotes = pgTable("morning_voice_notes", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+export const emailDrafts = pgTable("email_drafts", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  sourceMessageId: varchar("source_message_id"),
+  fromSender: text("from_sender"),
+  originalSubject: text("original_subject"),
+  draftSubject: text("draft_subject").notNull(),
+  draftBody: text("draft_body").notNull(),
+  jarvisReason: text("jarvis_reason"),
+  status: varchar("status").notNull().default("pending_approval"),
+  gmailDraftId: varchar("gmail_draft_id"),
+  gmailDraftUrl: text("gmail_draft_url"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  actedAt: timestamp("acted_at"),
+});
+
 export const interactionLog = pgTable("interaction_log", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id").notNull().references(() => users.id),

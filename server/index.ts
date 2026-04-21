@@ -2,9 +2,9 @@ import express from "express";
 import type { Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { ensureTablesExist } from "./db";
-import { registerTelegramWebhook, startProactiveScheduler, startTelegramPolling, startEmailAlertScanner, startMeetingBriefScanner, runProactiveStartupCatchup } from "./telegramRoutes";
+import { registerTelegramWebhook, startProactiveScheduler, startTelegramPolling, startEmailAlertScanner, runProactiveStartupCatchup } from "./telegramRoutes";
 import { startMomentumExpiryScheduler } from "./momentumCoach";
-import { startCuriosityScanner } from "./curiosityScanner";
+import { startHeartbeat } from "./heartbeat";
 import { isTelegramConfigured, logTelegramStatus, setWebhook } from "./integrations/telegram";
 import { startScheduler } from "./scheduler";
 import * as fs from "fs";
@@ -291,12 +291,10 @@ function setupErrorHandler(app: express.Application) {
         startEmailAlertScanner().catch(err => {
           console.error("Failed to start email alert scanner:", err);
         });
-        startMeetingBriefScanner().catch(err => {
-          console.error("Failed to start meeting brief scanner:", err);
-        });
-        startCuriosityScanner().catch(err => {
-          console.error("Failed to start curiosity scanner:", err);
-        });
+        // Heartbeat replaces the old curiosity & meeting-brief scanners.
+        // It walks JARVIS_HEARTBEAT.md every ~5 minutes and either acts,
+        // queues a draft, or stays silent.
+        startHeartbeat();
       }
     },
   );

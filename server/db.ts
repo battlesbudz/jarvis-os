@@ -405,6 +405,33 @@ export async function ensureTablesExist() {
     `);
 
     await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS email_drafts (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        source_message_id VARCHAR,
+        from_sender TEXT,
+        original_subject TEXT,
+        draft_subject TEXT NOT NULL,
+        draft_body TEXT NOT NULL,
+        jarvis_reason TEXT,
+        status VARCHAR NOT NULL DEFAULT 'pending_approval',
+        gmail_draft_id VARCHAR,
+        gmail_draft_url TEXT,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        acted_at TIMESTAMP
+      )
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS email_drafts_user_status_idx
+        ON email_drafts (user_id, status, created_at DESC)
+    `).catch(() => {});
+    await db.execute(sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS email_drafts_user_msg_uniq
+        ON email_drafts (user_id, source_message_id)
+        WHERE source_message_id IS NOT NULL
+    `).catch(() => {});
+
+    await db.execute(sql`
       CREATE TABLE IF NOT EXISTS interaction_log (
         id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
         user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
