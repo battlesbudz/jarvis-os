@@ -2519,7 +2519,7 @@ Return ONLY the JSON object.`;
       if (!goal) return res.status(404).json({ error: "Goal not found" });
 
       const { enqueueGoalDecomposition } = await import("./agent/goalDecomposer");
-      const jobId = await enqueueGoalDecomposition(userId, goal as never);
+      const jobId = await enqueueGoalDecomposition(userId, { id: goal.id, title: goal.title });
       res.json({ ok: true, jobId, status: "queued" });
     } catch (err) {
       console.error("Error queuing goal decompose:", err);
@@ -2664,10 +2664,59 @@ Return ONLY the JSON object.`;
         .update(schema.deliverables)
         .set({ status: "approved", actedAt: new Date() })
         .where(eq(schema.deliverables.id, id));
+      // Lifecycle: complete → delivered (the user has accepted the work)
+      if (d.jobId) {
+        await db
+          .update(schema.agentJobs)
+          .set({ status: "delivered" })
+          .where(and(eq(schema.agentJobs.id, d.jobId), eq(schema.agentJobs.status, "complete")));
+      }
       res.json({ ok: true, ...resultExtra });
     } catch (err) {
       console.error("Error approving deliverable:", err);
       res.status(500).json({ error: "Failed to approve deliverable" });
+    }
+  });
+
+  app.put("/api/deliverables/:id", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const id = req.params.id;
+      const { title, summary, body, meta } = req.body as {
+        title?: unknown;
+        summary?: unknown;
+        body?: unknown;
+        meta?: unknown;
+      };
+      const [existing] = await db
+        .select()
+        .from(schema.deliverables)
+        .where(and(eq(schema.deliverables.id, id), eq(schema.deliverables.userId, userId)))
+        .limit(1);
+      if (!existing) return res.status(404).json({ error: "Deliverable not found" });
+      if (existing.status !== "pending_approval") {
+        return res.status(400).json({ error: "Only pending deliverables can be edited" });
+      }
+      const patch: Partial<typeof schema.deliverables.$inferInsert> = {};
+      if (typeof title === "string" && title.trim().length > 0) patch.title = title.trim().slice(0, 300);
+      if (typeof summary === "string") patch.summary = summary.slice(0, 1000);
+      if (typeof body === "string" && body.trim().length > 0) patch.body = body.slice(0, 100_000);
+      if (meta && typeof meta === "object" && !Array.isArray(meta)) {
+        patch.meta = { ...(existing.meta as Record<string, unknown>), ...(meta as Record<string, unknown>) };
+      }
+      if (Object.keys(patch).length === 0) {
+        return res.status(400).json({ error: "No editable fields provided" });
+      }
+      const [updated] = await db
+        .update(schema.deliverables)
+        .set(patch)
+        .where(eq(schema.deliverables.id, id))
+        .returning();
+      res.json({ ok: true, deliverable: updated });
+    } catch (err) {
+      console.error("Error editing deliverable:", err);
+      res.status(500).json({ error: "Failed to edit deliverable" });
     }
   });
 
@@ -2676,10 +2725,22 @@ Return ONLY the JSON object.`;
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const id = req.params.id;
+      const [d] = await db
+        .select({ jobId: schema.deliverables.jobId })
+        .from(schema.deliverables)
+        .where(and(eq(schema.deliverables.id, id), eq(schema.deliverables.userId, userId)))
+        .limit(1);
       await db
         .update(schema.deliverables)
         .set({ status: "discarded", actedAt: new Date() })
         .where(and(eq(schema.deliverables.id, id), eq(schema.deliverables.userId, userId)));
+      if (d?.jobId) {
+        // User has acted on it (rejected) — close the job lifecycle.
+        await db
+          .update(schema.agentJobs)
+          .set({ status: "delivered" })
+          .where(and(eq(schema.agentJobs.id, d.jobId), eq(schema.agentJobs.status, "complete")));
+      }
       res.json({ ok: true });
     } catch (err) {
       console.error("Error discarding deliverable:", err);

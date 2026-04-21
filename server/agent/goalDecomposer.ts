@@ -223,9 +223,14 @@ export async function runGoalDecomposition(
 }
 
 /**
- * Convenience: enqueue a decomposition job for a goal.
+ * Convenience: enqueue a decomposition job for a goal. The worker
+ * loads the full goal payload at run time, so callers only need the
+ * id + title (used for the human-readable job title).
  */
-export async function enqueueGoalDecomposition(userId: string, goal: UserGoal): Promise<string> {
+export async function enqueueGoalDecomposition(
+  userId: string,
+  goal: { id: string; title: string },
+): Promise<string> {
   const { submitAgentJob } = await import("./jobQueue");
   return submitAgentJob({
     userId,

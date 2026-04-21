@@ -117,6 +117,39 @@ export function registerDataRoutes(app: Express): void {
       if (!userId) return;
       const { date } = req.params;
       const { data } = req.body;
+
+      // Detect goal-tree task completions (was incomplete → now complete)
+      // and propagate them back into goal_trees so phase/milestone status
+      // advances and tomorrow's morning plan picks up the next task.
+      try {
+        const [prev] = await db
+          .select({ data: schema.plans.data })
+          .from(schema.plans)
+          .where(and(eq(schema.plans.userId, userId), eq(schema.plans.date, date)))
+          .limit(1);
+        const prevTasks = ((prev?.data as { tasks?: unknown[] })?.tasks || []) as Array<
+          { id: string; completed?: boolean; goalTreeId?: string; goalTaskId?: string }
+        >;
+        const newTasks = ((data as { tasks?: unknown[] })?.tasks || []) as Array<
+          { id: string; completed?: boolean; goalTreeId?: string; goalTaskId?: string }
+        >;
+        const prevById = new Map(prevTasks.map((t) => [t.id, t]));
+        const justCompleted = newTasks.filter((t) => {
+          if (!t.completed) return false;
+          if (!t.goalTreeId || !t.goalTaskId) return false;
+          const prevTask = prevById.get(t.id);
+          return !prevTask || !prevTask.completed;
+        });
+        if (justCompleted.length > 0) {
+          const { markTreeTaskComplete } = await import("./goalScheduler");
+          for (const t of justCompleted) {
+            await markTreeTaskComplete(userId, t.goalTreeId!, t.goalTaskId!);
+          }
+        }
+      } catch (e) {
+        console.error("[Plans] goal-tree completion propagation failed:", e);
+      }
+
       await db
         .insert(schema.plans)
         .values({ userId, date, data, updatedAt: new Date() })
@@ -131,7 +164,65 @@ export function registerDataRoutes(app: Express): void {
     }
   });
 
+  // Goals: register the GET/DELETE generic handlers, then a custom PUT
+  // that auto-enqueues a decomposition job whenever a brand-new goal id
+  // appears in the saved list.
   registerSimpleJsonCrud(app, "goals", schema.goals);
+  // The generic helper already registered PUT /api/data/goals. We can
+  // safely register a SECOND PUT for the same path: Express runs handlers
+  // in registration order, so we mount our hook in front by removing the
+  // generic one and replacing it.
+  const stack = (app as unknown as { _router?: { stack: Array<{ route?: { path?: string; methods?: { put?: boolean } } }> } })._router;
+  if (stack && Array.isArray(stack.stack)) {
+    stack.stack = stack.stack.filter((layer) => {
+      const r = layer.route;
+      return !(r && r.path === "/api/data/goals" && r.methods && r.methods.put);
+    });
+  }
+  app.put("/api/data/goals", async (req: Request, res: Response) => {
+    try {
+      const userId = requireUserId(req, res);
+      if (!userId) return;
+      const { data } = req.body;
+      const incoming = (Array.isArray(data) ? data : []) as Array<{ id: string; title: string }>;
+
+      const [prev] = await db
+        .select({ data: schema.goals.data })
+        .from(schema.goals)
+        .where(eq(schema.goals.userId, userId))
+        .limit(1);
+      const prevList = ((prev?.data as Array<{ id: string }> | undefined) || []);
+      const prevIds = new Set(prevList.map((g) => g.id));
+      const newGoals = incoming.filter((g) => g && g.id && g.title && !prevIds.has(g.id));
+
+      await db
+        .insert(schema.goals)
+        .values({ userId, data, updatedAt: new Date() })
+        .onConflictDoUpdate({
+          target: [schema.goals.userId],
+          set: { data, updatedAt: new Date() },
+        });
+
+      // Fire-and-forget: enqueue a decomposition for each net-new goal.
+      // Worker is throttled per-user, so a burst of new goals queues
+      // sequentially without overwhelming the LLM.
+      if (newGoals.length > 0) {
+        try {
+          const { enqueueGoalDecomposition } = await import("./agent/goalDecomposer");
+          for (const g of newGoals) {
+            await enqueueGoalDecomposition(userId, { id: g.id, title: g.title });
+          }
+          console.log(`[Goals] auto-queued decomposition for ${newGoals.length} new goal(s) user=${userId}`);
+        } catch (e) {
+          console.error("[Goals] auto-decompose enqueue failed:", e);
+        }
+      }
+      res.json({ ok: true });
+    } catch (e) {
+      console.error("Error saving goals:", e);
+      res.status(500).json({ error: "Failed to save goals" });
+    }
+  });
   registerSimpleJsonCrud(app, "stats", schema.stats);
   registerSimpleJsonCrud(app, "brain-dump-inbox", schema.brainDumpInbox);
   registerSimpleJsonCrud(app, "chat-history", schema.chatHistory);

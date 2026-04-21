@@ -322,6 +322,7 @@ export const agentJobs = pgTable("agent_jobs", {
   title: text("title").notNull(),
   prompt: text("prompt").notNull(),
   input: jsonb("input").notNull().default(sql`'{}'::jsonb`),
+  // Lifecycle: queued → running → complete → delivered  (or → failed)
   status: varchar("status").notNull().default("queued"),
   result: jsonb("result"),
   error: text("error"),
