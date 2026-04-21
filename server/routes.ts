@@ -42,8 +42,7 @@ import { listPeople, deletePerson } from "./memory/people";
 import { isUserPaired, sendDaemonOp, isDaemonActionAllowed } from "./daemon/bridge";
 import type { DaemonAction, DaemonOp } from "./daemon/bridge";
 import { telegramLinks, channelLinks } from "@shared/schema";
-import { getTelegramBotUsername, isTelegramConfigured } from "./integrations/telegram";
-import { buildSlackAuthorizeUrl } from "./oauthRoutes";
+import { connectChannelTool } from "./agent/tools/connectChannel";
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
@@ -1160,46 +1159,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return { result: 'success', label: `Daemon: ${action}`, detail: JSON.stringify(daemonResult.data || {}).slice(0, 2000) };
         }
         case 'connect_channel': {
-          const ch = String(args.channel || '').toLowerCase();
-          if (!['telegram', 'whatsapp', 'discord', 'slack'].includes(ch)) {
-            return { result: 'error', label: 'Unknown channel', detail: `Unknown channel: ${ch}` };
+          const toolResult = await connectChannelTool.execute(args, { userId, state: {} });
+          if (!toolResult.ok) {
+            return { result: 'error', label: toolResult.label || 'Connection failed', detail: toolResult.content };
           }
-          if (ch === 'telegram') {
-            if (!isTelegramConfigured()) {
-              return { result: 'error', label: 'Telegram not configured', detail: 'TELEGRAM_BOT_TOKEN is not set on the server.' };
-            }
-            await db.delete(schema.telegramLinkCodes).where(eq(schema.telegramLinkCodes.userId, userId));
-            const code = Array.from({ length: 6 }, () => 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[Math.floor(Math.random() * 32)]).join('');
-            await db.insert(schema.telegramLinkCodes).values({ code, userId });
-            const botUsername = await getTelegramBotUsername();
-            if (!botUsername) return { result: 'error', label: 'Bot username unavailable', detail: 'Could not retrieve Telegram bot username. Try again in a moment.' };
-            const url = `https://t.me/${botUsername}?start=${code}`;
-            return { result: 'success', label: 'Open Telegram', detail: JSON.stringify({ url, buttonLabel: 'Open Telegram', channel: 'telegram' }) };
-          }
-          if (ch === 'whatsapp') {
-            const twilioRaw = process.env.TWILIO_WHATSAPP_NUMBER;
-            if (!twilioRaw) return { result: 'error', label: 'WhatsApp not configured', detail: 'TWILIO_WHATSAPP_NUMBER is not set on the server.' };
-            const phone = twilioRaw.replace(/^whatsapp:/i, '').replace(/\s+/g, '').replace('+', '');
-            const code = Array.from({ length: 6 }, () => 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[Math.floor(Math.random() * 32)]).join('');
-            const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
-            await db.delete(schema.channelLinkCodes).where(and(eq(schema.channelLinkCodes.userId, userId), eq(schema.channelLinkCodes.channel, 'whatsapp')));
-            await db.insert(schema.channelLinkCodes).values({ code, userId, channel: 'whatsapp', expiresAt });
-            const url = `https://wa.me/${phone}?text=${encodeURIComponent('CONNECT ' + code)}`;
-            return { result: 'success', label: 'Open WhatsApp', detail: JSON.stringify({ url, buttonLabel: 'Open WhatsApp', channel: 'whatsapp' }) };
-          }
-          if (ch === 'slack') {
-            if (!process.env.SLACK_CLIENT_ID) return { result: 'error', label: 'Slack not configured', detail: 'SLACK_CLIENT_ID is not set on the server.' };
-            const domain = process.env.REPLIT_DOMAINS?.split(',')[0];
-            const baseUrl = domain ? `https://${domain}` : 'http://localhost:5000';
-            const redirectUri = `${baseUrl}/api/oauth/slack/callback`;
-            const url = buildSlackAuthorizeUrl(userId, redirectUri);
-            if (!url) return { result: 'error', label: 'Slack not configured', detail: 'SLACK_CLIENT_ID is not set on the server.' };
-            return { result: 'success', label: 'Connect Slack', detail: JSON.stringify({ url, buttonLabel: 'Connect Slack', channel: 'slack' }) };
-          }
-          if (ch === 'discord') {
-            return { result: 'success', label: 'Open Discord Setup', detail: JSON.stringify({ url: 'profile://connections', buttonLabel: 'Open Discord Setup', channel: 'discord' }) };
-          }
-          return { result: 'error', label: 'Unknown channel', detail: `Unexpected channel: ${ch}` };
+          return { result: 'success', label: toolResult.label || 'Connect channel', detail: toolResult.detail || toolResult.content };
         }
         default:
           return { result: 'error', label: 'Unknown action', detail: `Unknown tool: ${toolName}` };
