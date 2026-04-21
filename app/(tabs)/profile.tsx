@@ -214,6 +214,9 @@ export default function ProfileScreen() {
   const [soulRegenerating, setSoulRegenerating] = useState(false);
   const [overrideDraft, setOverrideDraft] = useState('');
   const [overrideEditing, setOverrideEditing] = useState(false);
+  const [contentEditing, setContentEditing] = useState(false);
+  const [contentDraft, setContentDraft] = useState('');
+  const [savingContent, setSavingContent] = useState(false);
   const [savingOverride, setSavingOverride] = useState(false);
   const [people, setPeople] = useState<{ id: string; name: string; email: string | null; relationship: string | null; notes: string | null; lastInteractionAt: string | null }[]>([]);
   const [peopleLoading, setPeopleLoading] = useState(true);
@@ -304,6 +307,22 @@ export default function ProfileScreen() {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch {}
     setSoulRegenerating(false);
+  }, []);
+
+  const handleSaveSoulContent = useCallback(async (newContent: string) => {
+    try {
+      const url = new URL('/api/soul/content', getApiUrl());
+      const res = await authFetch(url.toString(), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: newContent }),
+      });
+      const data = await res.json();
+      if (data && typeof data.content === 'string') {
+        setSoul({ content: data.content, manualOverride: data.manualOverride ?? null, generatedAt: data.generatedAt ?? null });
+      }
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch {}
   }, []);
 
   const handleSaveOverride = useCallback(async () => {
@@ -1100,6 +1119,61 @@ export default function ProfileScreen() {
                   Updated {new Date(soul.generatedAt).toLocaleString()}
                 </Text>
               )}
+            </View>
+          )}
+
+          {/* Edit canonical SOUL document directly (JARVIS_SOUL.md). */}
+          {soul && soul.content && !contentEditing && (
+            <View style={{ marginTop: 12 }}>
+              <Pressable
+                onPress={() => { setContentDraft(soul.content); setContentEditing(true); }}
+                hitSlop={8}
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}
+              >
+                <Ionicons name="document-text-outline" size={15} color={Colors.textSecondary} />
+                <Text style={{ color: Colors.textSecondary, fontSize: 13, fontWeight: '500' }}>
+                  Edit JARVIS_SOUL.md directly
+                </Text>
+              </Pressable>
+            </View>
+          )}
+          {contentEditing && (
+            <View style={{ marginTop: 12 }}>
+              <TextInput
+                value={contentDraft}
+                onChangeText={setContentDraft}
+                multiline
+                placeholder="Edit the canonical SOUL document..."
+                placeholderTextColor={Colors.textTertiary}
+                style={{
+                  backgroundColor: Colors.surface,
+                  borderRadius: 12,
+                  padding: 12,
+                  color: Colors.text,
+                  fontSize: 14,
+                  minHeight: 200,
+                  textAlignVertical: 'top',
+                  borderWidth: 1,
+                  borderColor: Colors.border,
+                }}
+              />
+              <View style={{ flexDirection: 'row', gap: 12, marginTop: 10 }}>
+                <Pressable
+                  onPress={async () => { setSavingContent(true); await handleSaveSoulContent(contentDraft); setSavingContent(false); setContentEditing(false); }}
+                  disabled={savingContent}
+                  style={{ flex: 1, backgroundColor: Colors.text, padding: 12, borderRadius: 10, alignItems: 'center', opacity: savingContent ? 0.6 : 1 }}
+                >
+                  <Text style={{ color: Colors.background, fontWeight: '600', fontSize: 14 }}>
+                    {savingContent ? 'Saving…' : 'Save document'}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => { setContentEditing(false); setContentDraft(''); }}
+                  style={{ flex: 1, backgroundColor: Colors.surface, padding: 12, borderRadius: 10, alignItems: 'center' }}
+                >
+                  <Text style={{ color: Colors.text, fontWeight: '500', fontSize: 14 }}>Cancel</Text>
+                </Pressable>
+              </View>
             </View>
           )}
 

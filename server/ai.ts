@@ -239,15 +239,26 @@ ${completedTasks.length > skippedTasks.length ? 'This person is on a good streak
     try {
       const { db: ddb } = await import("./db");
       const { sql: dsql } = await import("drizzle-orm");
-      const rows = await ddb.execute(dsql`
+      interface PatternRow {
+        patterns: unknown;
+        summary: string | null;
+      }
+      interface PatternEntry {
+        observation?: string;
+        summary?: string;
+      }
+      const rows = await ddb.execute<PatternRow>(dsql`
         SELECT patterns, summary FROM weekly_insights
         WHERE user_id = ${req.userId}
         ORDER BY created_at DESC LIMIT 1
       `);
-      const row: any = (rows as any).rows?.[0];
+      const row = rows.rows?.[0];
       if (row) {
-        const patterns = Array.isArray(row.patterns) ? row.patterns : [];
-        const top = patterns.slice(0, 3).map((p: any) => `- ${p.observation || p.summary || JSON.stringify(p)}`).join("\n");
+        const patterns: PatternEntry[] = Array.isArray(row.patterns) ? (row.patterns as PatternEntry[]) : [];
+        const top = patterns
+          .slice(0, 3)
+          .map((p) => `- ${p.observation || p.summary || JSON.stringify(p)}`)
+          .join("\n");
         if (top || row.summary) {
           patternSection = `\n\nRecent weekly patterns I've noticed:\n${row.summary ? row.summary + "\n" : ""}${top}\n`;
         }
