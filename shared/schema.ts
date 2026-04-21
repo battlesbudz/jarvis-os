@@ -480,7 +480,7 @@ export const NOTIFICATION_TYPES = [
 ] as const;
 export type NotificationType = typeof NOTIFICATION_TYPES[number];
 
-export const CHANNEL_NAMES = ["telegram", "whatsapp", "slack", "daemon"] as const;
+export const CHANNEL_NAMES = ["telegram", "whatsapp", "slack", "daemon", "discord"] as const;
 export type ChannelName = typeof CHANNEL_NAMES[number];
 
 export const interactionLog = pgTable("interaction_log", {
