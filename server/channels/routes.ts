@@ -143,6 +143,11 @@ export function registerChannelRoutes(app: Express): void {
       if (channel === "discord") {
         stopUserBot(userId);
         await deleteUserToken(userId, "discord_bot").catch(() => {});
+        // Invalidate any outstanding pairing codes so a previously-issued
+        // DM code cannot be used to re-pair after unlinking.
+        await db.delete(channelLinkCodes)
+          .where(and(eq(channelLinkCodes.userId, userId), eq(channelLinkCodes.channel, "discord")))
+          .catch(() => {});
       }
       await db.delete(channelLinks)
         .where(and(eq(channelLinks.userId, userId), eq(channelLinks.channel, channel)));
@@ -223,15 +228,21 @@ export function registerChannelRoutes(app: Express): void {
       return res.status(400).json({ error: "Invalid bot token" });
     }
     try {
-      // Persist the token
+      // Persist the token first so startUserBot can retrieve it if needed.
       await saveUserToken({
         userId,
         provider: "discord_bot",
         accessToken: botToken.trim(),
         accountEmail: "",
       });
-      // Start (or restart) the gateway connection
-      await startUserBot(userId, botToken.trim());
+      try {
+        // Start (or restart) the gateway — this validates the token with Discord.
+        await startUserBot(userId, botToken.trim());
+      } catch (loginErr: any) {
+        // Token is invalid or login failed — remove it so it won't be retried on boot.
+        await deleteUserToken(userId, "discord_bot").catch(() => {});
+        throw loginErr;
+      }
       res.json({ ok: true, botStatus: getBotStatus(userId) });
     } catch (err: any) {
       console.error("[channels] discord token save failed:", err);

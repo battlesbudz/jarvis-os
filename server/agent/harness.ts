@@ -46,7 +46,12 @@ function toOpenAITool(t: AgentTool): OpenAI.Chat.Completions.ChatCompletionTool 
 /**
  * Run a single turn using the OpenAI streaming API.
  * Accumulates tool-call deltas across chunks so the caller can execute tools
- * after the stream completes. Calls `onToken` with each text delta as it arrives.
+ * after the stream completes.
+ *
+ * Text deltas are buffered and NOT forwarded to onToken during the stream.
+ * The caller inspects the result: if toolCallList is empty (text-only reply)
+ * it replays the buffer via onToken. This prevents intermediate tool-call
+ * content from leaking into live-edit UIs (e.g. Discord placeholder edits).
  */
 async function runStreamingTurn(params: {
   model: string;
@@ -54,9 +59,9 @@ async function runStreamingTurn(params: {
   openAITools: OpenAI.Chat.Completions.ChatCompletionTool[] | undefined;
   toolChoice: "auto" | "required" | "none";
   maxCompletionTokens: number;
-  onToken: (chunk: string) => void;
 }): Promise<{
   textContent: string;
+  textChunks: string[];
   toolCallList: OpenAI.Chat.Completions.ChatCompletionMessageToolCall[];
   finishReason: string | null;
 }> {
@@ -70,6 +75,7 @@ async function runStreamingTurn(params: {
   });
 
   let textContent = "";
+  const textChunks: string[] = [];
   // Accumulate tool-call arguments across chunks keyed by index
   const toolCallAccum = new Map<
     number,
@@ -84,7 +90,7 @@ async function runStreamingTurn(params: {
 
     if (delta?.content) {
       textContent += delta.content;
-      params.onToken(delta.content);
+      textChunks.push(delta.content); // buffered — caller decides when to emit
     }
 
     if (delta?.tool_calls) {
@@ -111,7 +117,7 @@ async function runStreamingTurn(params: {
         function: { name: acc.name, arguments: acc.args },
       }));
 
-  return { textContent, toolCallList, finishReason };
+  return { textContent, textChunks, toolCallList, finishReason };
 }
 
 /**
@@ -171,17 +177,17 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
       msgToolCalls = msg.tool_calls ?? undefined;
     } else {
       // ── Streaming path ─────────────────────────────────────────────────
-      // First attempt the turn with streaming so text tokens are emitted
-      // to onToken as they arrive. If the model decides to call tools
-      // instead, we reconstruct the tool_calls from the stream deltas and
-      // continue the loop non-streaming from the next turn onward.
+      // All turns run streaming so tool-call deltas can be accumulated.
+      // Text chunks are buffered inside runStreamingTurn and are only
+      // forwarded to onToken AFTER we confirm this is a text-only turn
+      // (no tool calls). This prevents partial tool-orchestration text
+      // from leaking into live-edit UIs such as Discord placeholder edits.
       const streamResult = await runStreamingTurn({
         model,
         messages,
         openAITools,
         toolChoice,
         maxCompletionTokens,
-        onToken,
       });
 
       lastFinish = streamResult.finishReason;
@@ -193,6 +199,15 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
         streamResult.toolCallList.length > 0
           ? streamResult.toolCallList
           : undefined;
+
+      // Replay buffered text tokens only for pure text replies so the
+      // caller's live-edit UI (e.g. Discord) sees progressive updates on
+      // the final turn but stays quiet during tool-call turns.
+      if (!msgToolCalls && streamResult.textChunks.length > 0) {
+        for (const chunk of streamResult.textChunks) {
+          onToken(chunk);
+        }
+      }
     }
 
     // ── Tool-call branch ───────────────────────────────────────────────
