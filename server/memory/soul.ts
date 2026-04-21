@@ -186,6 +186,25 @@ export async function getSoul(userId: string, opts?: { forceFresh?: boolean }): 
   };
 }
 
+/**
+ * Replace the canonical SOUL document content directly. This is what
+ * powers the "edit JARVIS_SOUL.md" experience in Profile — the user is
+ * editing the source of truth, not just a pinned override layered on top.
+ * Calling this also resets generatedAt so the document is treated as
+ * fresh (won't be auto-regenerated on next read).
+ */
+export async function setSoulContent(userId: string, content: string): Promise<void> {
+  const trimmed = content.trim();
+  const now = new Date();
+  await db
+    .insert(schema.jarvisSouls)
+    .values({ userId, content: trimmed, manualOverride: null, generatedAt: now, updatedAt: now })
+    .onConflictDoUpdate({
+      target: schema.jarvisSouls.userId,
+      set: { content: trimmed, generatedAt: now, updatedAt: now },
+    });
+}
+
 export async function setManualOverride(userId: string, override: string | null): Promise<void> {
   const trimmed = override?.trim() || null;
   const now = new Date();

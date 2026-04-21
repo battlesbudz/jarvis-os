@@ -31,7 +31,7 @@ import { getValidGoogleTokens, getValidMicrosoftToken, getUserTokens, getUserTok
 import { tavilySearch, formatSearchResults } from "./integrations/search";
 import { logInteraction, getRecentInteractions, formatInteractionTimeline } from "./interactionLog";
 import { extractAndStore } from "./memory/extractor";
-import { getSoul, getSoulPromptBlock, regenerateSoul, setManualOverride } from "./memory/soul";
+import { getSoul, getSoulPromptBlock, regenerateSoul, setManualOverride, setSoulContent } from "./memory/soul";
 import { listPeople, deletePerson } from "./memory/people";
 
 const openai = new OpenAI({
@@ -2056,6 +2056,23 @@ Return ONLY the JSON object.`;
     } catch (error) {
       console.error("Error setting SOUL override:", error);
       res.status(500).json({ error: "Failed to set override" });
+    }
+  });
+
+  // Edit the canonical SOUL document (JARVIS_SOUL.md content) directly.
+  // Distinct from /override — this rewrites the source of truth.
+  app.put("/api/soul/content", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const body = req.body as { content?: unknown };
+      const content = typeof body.content === "string" ? body.content : "";
+      await setSoulContent(userId, content);
+      const soul = await getSoul(userId);
+      res.json(soul);
+    } catch (error) {
+      console.error("Error saving SOUL content:", error);
+      res.status(500).json({ error: "Failed to save SOUL content" });
     }
   });
 
