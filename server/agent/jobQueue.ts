@@ -74,7 +74,10 @@ export async function submitAgentJob(input: SubmitJobInput): Promise<string> {
 async function claimNextJob(): Promise<typeof schema.agentJobs.$inferSelect | null> {
   // Pick the oldest queued job whose user has no currently-running job.
   // Use a single SQL CTE so the claim is atomic across worker restarts.
-  const claimed = await db.execute<typeof schema.agentJobs.$inferSelect>(sql`
+  // Important: raw SQL returns column names verbatim (snake_case), so we
+  // claim the id here, then do a typed Drizzle select to get a properly
+  // mapped camelCase row.
+  const claimed = await db.execute<{ id: string }>(sql`
     WITH busy_users AS (
       SELECT DISTINCT user_id FROM agent_jobs WHERE status = 'running'
     ),
@@ -88,9 +91,16 @@ async function claimNextJob(): Promise<typeof schema.agentJobs.$inferSelect | nu
     )
     UPDATE agent_jobs SET status = 'running', started_at = NOW()
     WHERE id IN (SELECT id FROM candidate)
-    RETURNING *
+    RETURNING id
   `);
-  const row = (claimed.rows && claimed.rows[0]) as typeof schema.agentJobs.$inferSelect | undefined;
+  const claimedId = claimed.rows?.[0]?.id;
+  if (!claimedId) return null;
+
+  const [row] = await db
+    .select()
+    .from(schema.agentJobs)
+    .where(eq(schema.agentJobs.id, claimedId))
+    .limit(1);
   return row || null;
 }
 
