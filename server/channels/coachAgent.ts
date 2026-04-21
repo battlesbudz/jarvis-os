@@ -13,8 +13,12 @@ import type { ChannelAttachment } from "./types";
 export interface CoachReplyInput {
   userId: string;
   userText: string;
-  channelName: string; // "Telegram" | "WhatsApp" | "Slack" | "Daemon"
+  channelName: string; // "Telegram" | "WhatsApp" | "Slack" | "Daemon" | "Discord"
   imageUrl?: string;
+  /** Optional streaming callback — called with each ~25-char chunk of the final
+   *  reply so callers can progressively update an external message (e.g. Discord
+   *  message edits). Not called for intermediate tool-call turns. */
+  onToken?: (chunk: string) => void;
 }
 
 export interface CoachReplyResult {
@@ -34,7 +38,7 @@ const FORMAT_HINTS: Record<string, string> = {
 // daemon adapters. Returns { reply, attachments } — the caller is
 // responsible for delivery and post-send bookkeeping.
 export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyResult> {
-  const { userId, userText, channelName, imageUrl } = input;
+  const { userId, userText, channelName, imageUrl, onToken } = input;
   const channelLower = channelName.toLowerCase();
 
   let userGoals: any[] = [];
@@ -194,6 +198,7 @@ You can manage tasks, commitments, and analyze patterns via the manage_tasks too
     context: agentCtx,
     maxTurns: 6,
     maxCompletionTokens: 2000,
+    onToken,
   });
 
   console.log(`[${channelName}] coach agent — turns=${agentResult.turns}, tools=${agentResult.toolCalls.length}, finish=${agentResult.finishReason}`);

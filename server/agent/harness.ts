@@ -15,6 +15,11 @@ export interface RunAgentOptions {
   maxTurns?: number;
   maxCompletionTokens?: number;
   toolChoice?: "auto" | "required" | "none";
+  /** Called with each streamed token chunk on the final reply turn. When provided
+   *  the final turn uses the OpenAI streaming API so callers receive incremental
+   *  text updates (e.g. for Discord live-edit replies). Intermediate tool-call
+   *  turns always run non-streaming for clean function-call parsing. */
+  onToken?: (chunk: string) => void;
 }
 
 export interface AgentRunResult {
@@ -49,6 +54,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
     maxTurns = 6,
     maxCompletionTokens = 2000,
     toolChoice = "auto",
+    onToken,
   } = opts;
 
   const channel = context.channel || "Agent";
@@ -144,6 +150,14 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
 
     // No tool calls — model produced final reply (or stopped)
     reply = msg.content || "";
+    // When a streaming callback is registered, emit the reply in small chunks
+    // so callers can progressively update external UIs (e.g. Discord message edits).
+    if (onToken && reply) {
+      const CHUNK = 25;
+      for (let i = 0; i < reply.length; i += CHUNK) {
+        onToken(reply.slice(i, i + CHUNK));
+      }
+    }
     return { reply, turns: turn + 1, toolCalls, finishReason: lastFinish, messages };
   }
 

@@ -48,6 +48,7 @@ export function registerChannelRoutes(app: Express): void {
             botStatus: getBotStatus(userId),
             hasBotToken: !!discordTok,
             lastSeenAt: row.lastSeenAt,
+            allowlistedGuilds: (row.metadata as any)?.allowlistedGuilds ?? [],
           };
         } else if (CHANNEL_NAMES.includes(ch)) {
           connected[ch] = true;

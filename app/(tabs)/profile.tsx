@@ -251,6 +251,13 @@ export default function ProfileScreen() {
   const [discordPairCode, setDiscordPairCode] = useState('');
   const [discordSaving, setDiscordSaving] = useState(false);
   const [discordPairing, setDiscordPairing] = useState(false);
+  const [discordShowManage, setDiscordShowManage] = useState(false);
+  const [discordGuilds, setDiscordGuilds] = useState<{id: string; name: string}[]>([]);
+  const [discordGuildChannels, setDiscordGuildChannels] = useState<{id: string; name: string}[]>([]);
+  const [discordSelGuildId, setDiscordSelGuildId] = useState('');
+  const [discordSelChannelId, setDiscordSelChannelId] = useState('');
+  const [discordRequireMention, setDiscordRequireMention] = useState(true);
+  const [discordAllowlistBusy, setDiscordAllowlistBusy] = useState(false);
   const [documents, setDocuments] = useState<UserDocument[]>([]);
   const [documentsLoading, setDocumentsLoading] = useState(false);
   const [documentUploading, setDocumentUploading] = useState(false);
@@ -838,6 +845,66 @@ export default function ProfileScreen() {
     }
     setDiscordPairing(false);
   }, [discordPairCode, loadChannels]);
+
+  const handleFetchDiscordGuilds = useCallback(async () => {
+    setDiscordAllowlistBusy(true);
+    try {
+      const res = await apiRequest('GET', '/api/channels/discord/guilds');
+      const data = await res.json();
+      setDiscordGuilds(data.guilds || []);
+      setDiscordSelGuildId('');
+      setDiscordGuildChannels([]);
+      setDiscordSelChannelId('');
+    } catch (err) {
+      console.error('[discord] fetch guilds failed:', err);
+    }
+    setDiscordAllowlistBusy(false);
+  }, []);
+
+  const handleFetchDiscordChannels = useCallback(async (guildId: string) => {
+    setDiscordSelGuildId(guildId);
+    setDiscordSelChannelId('');
+    if (!guildId) { setDiscordGuildChannels([]); return; }
+    try {
+      const res = await apiRequest('GET', `/api/channels/discord/channels/${guildId}`);
+      const data = await res.json();
+      setDiscordGuildChannels(data.channels || []);
+    } catch (err) {
+      console.error('[discord] fetch channels failed:', err);
+    }
+  }, []);
+
+  const handleAddDiscordAllowlist = useCallback(async () => {
+    if (!discordSelGuildId || !discordSelChannelId) return;
+    setDiscordAllowlistBusy(true);
+    try {
+      const guild = discordGuilds.find(g => g.id === discordSelGuildId);
+      const chan = discordGuildChannels.find(c => c.id === discordSelChannelId);
+      await apiRequest('PUT', '/api/channels/discord/allowlist', {
+        guildId: discordSelGuildId,
+        guildName: guild?.name || discordSelGuildId,
+        channelId: discordSelChannelId,
+        channelName: chan?.name || discordSelChannelId,
+        requireMention: discordRequireMention,
+      });
+      setDiscordSelGuildId(''); setDiscordSelChannelId(''); setDiscordGuildChannels([]);
+      await loadChannels();
+    } catch (err: any) {
+      alert(err?.message || 'Failed to add channel.');
+    }
+    setDiscordAllowlistBusy(false);
+  }, [discordSelGuildId, discordSelChannelId, discordGuilds, discordGuildChannels, discordRequireMention, loadChannels]);
+
+  const handleRemoveDiscordAllowlist = useCallback(async (guildId: string, channelId: string) => {
+    setDiscordAllowlistBusy(true);
+    try {
+      await apiRequest('DELETE', `/api/channels/discord/allowlist/${guildId}/${channelId}`);
+      await loadChannels();
+    } catch (err: any) {
+      alert(err?.message || 'Failed to remove channel.');
+    }
+    setDiscordAllowlistBusy(false);
+  }, [loadChannels]);
 
   const handleTogglePreference = useCallback(async (notificationType: string, channel: string) => {
     if (!channelData) return;
@@ -1987,6 +2054,142 @@ export default function ProfileScreen() {
                       </Pressable>
                     </View>
                   </>
+                )}
+              </View>
+            )}
+
+            {/* Discord: allowlisted server channels (when connected) */}
+            {channelData?.connected.discord && (
+              <View style={{ borderTopWidth: 1, borderTopColor: Colors.border, paddingHorizontal: 16, paddingVertical: 12, backgroundColor: Colors.background }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                  <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: Colors.textSecondary, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                    Server channels
+                  </Text>
+                  <Pressable
+                    onPress={() => { setDiscordShowManage(v => !v); if (!discordShowManage) handleFetchDiscordGuilds(); }}
+                    style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8, backgroundColor: '#5865F215' }}
+                  >
+                    <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: '#5865F2' }}>
+                      {discordShowManage ? 'Done' : '+ Add'}
+                    </Text>
+                  </Pressable>
+                </View>
+
+                {/* Existing allowlisted channels */}
+                {((channelData.meta?.discord as any)?.allowlistedGuilds || []).length === 0 && !discordShowManage && (
+                  <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: Colors.textTertiary }}>
+                    No server channels yet — Jarvis responds to DMs only.
+                  </Text>
+                )}
+                {((channelData.meta?.discord as any)?.allowlistedGuilds || []).map((g: any) => (
+                  <View key={`${g.guildId}-${g.channelId}`} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 6, gap: 8 }}>
+                    <Ionicons name="hash" size={14} color={Colors.textSecondary} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 12, fontFamily: 'Inter_500Medium', color: Colors.text }}>
+                        {g.channelName} <Text style={{ color: Colors.textSecondary }}>in {g.guildName}</Text>
+                      </Text>
+                      <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: Colors.textTertiary }}>
+                        {g.requireMention ? '@mention required' : 'Always responds'}
+                      </Text>
+                    </View>
+                    <Pressable onPress={() => handleRemoveDiscordAllowlist(g.guildId, g.channelId)} hitSlop={8}>
+                      <Ionicons name="close-circle" size={18} color={Colors.textTertiary} />
+                    </Pressable>
+                  </View>
+                ))}
+
+                {/* Add channel form */}
+                {discordShowManage && (
+                  <View style={{ marginTop: 8, gap: 8 }}>
+                    {discordAllowlistBusy && discordGuilds.length === 0 ? (
+                      <ActivityIndicator size="small" color="#5865F2" />
+                    ) : discordGuilds.length === 0 ? (
+                      <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: Colors.textSecondary }}>
+                        No servers found — invite your bot to a server first.
+                      </Text>
+                    ) : (
+                      <>
+                        {/* Guild picker */}
+                        <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: Colors.textSecondary }}>Select server:</Text>
+                        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 4 }}>
+                          <View style={{ flexDirection: 'row', gap: 6 }}>
+                            {discordGuilds.map(g => (
+                              <Pressable
+                                key={g.id}
+                                onPress={() => handleFetchDiscordChannels(g.id)}
+                                style={{
+                                  paddingHorizontal: 10, paddingVertical: 5, borderRadius: 10,
+                                  borderWidth: 1,
+                                  borderColor: discordSelGuildId === g.id ? '#5865F2' : Colors.border,
+                                  backgroundColor: discordSelGuildId === g.id ? '#5865F215' : Colors.card,
+                                }}
+                              >
+                                <Text style={{ fontSize: 12, fontFamily: 'Inter_500Medium', color: discordSelGuildId === g.id ? '#5865F2' : Colors.text }}>
+                                  {g.name}
+                                </Text>
+                              </Pressable>
+                            ))}
+                          </View>
+                        </ScrollView>
+
+                        {/* Channel picker */}
+                        {discordSelGuildId !== '' && discordGuildChannels.length > 0 && (
+                          <>
+                            <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: Colors.textSecondary }}>Select channel:</Text>
+                            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 4 }}>
+                              <View style={{ flexDirection: 'row', gap: 6 }}>
+                                {discordGuildChannels.map(c => (
+                                  <Pressable
+                                    key={c.id}
+                                    onPress={() => setDiscordSelChannelId(c.id)}
+                                    style={{
+                                      paddingHorizontal: 10, paddingVertical: 5, borderRadius: 10,
+                                      borderWidth: 1,
+                                      borderColor: discordSelChannelId === c.id ? '#5865F2' : Colors.border,
+                                      backgroundColor: discordSelChannelId === c.id ? '#5865F215' : Colors.card,
+                                    }}
+                                  >
+                                    <Text style={{ fontSize: 12, fontFamily: 'Inter_500Medium', color: discordSelChannelId === c.id ? '#5865F2' : Colors.text }}>
+                                      #{c.name}
+                                    </Text>
+                                  </Pressable>
+                                ))}
+                              </View>
+                            </ScrollView>
+                          </>
+                        )}
+
+                        {/* requireMention + Add button */}
+                        {discordSelChannelId !== '' && (
+                          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 4 }}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                              <Switch
+                                value={discordRequireMention}
+                                onValueChange={setDiscordRequireMention}
+                                trackColor={{ true: '#5865F2', false: Colors.border }}
+                                thumbColor="#fff"
+                              />
+                              <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: Colors.textSecondary }}>
+                                Require @mention
+                              </Text>
+                            </View>
+                            <Pressable
+                              onPress={handleAddDiscordAllowlist}
+                              disabled={discordAllowlistBusy}
+                              style={{
+                                paddingHorizontal: 14, paddingVertical: 7, borderRadius: 8,
+                                backgroundColor: '#5865F2', opacity: discordAllowlistBusy ? 0.5 : 1,
+                              }}
+                            >
+                              {discordAllowlistBusy
+                                ? <ActivityIndicator size="small" color="#fff" />
+                                : <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: '#fff' }}>Add channel</Text>}
+                            </Pressable>
+                          </View>
+                        )}
+                      </>
+                    )}
+                  </View>
                 )}
               </View>
             )}
