@@ -7,11 +7,13 @@ import { gmailActionTool } from "./gmailActions";
 import { manageTasksTool } from "./manageTasks";
 import { createDocumentTool, listDocumentsTool, readDocumentTool } from "./documents";
 import { driveCreateFileTool, driveListFilesTool, driveReadFileTool } from "./googleDriveTools";
+import { fetchCalendarTool } from "./calendar";
 
 export const ALL_TOOLS: AgentTool[] = [
   webSearchTool,
   researchTopicTool,
   gmailActionTool,
+  fetchCalendarTool,
   manageTasksTool,
   createDocumentTool,
   listDocumentsTool,
@@ -38,7 +40,7 @@ export function telegramCoachTools(opts: { hasGoogle: boolean }): AgentTool[] {
     readDocumentTool,
   ];
   if (opts.hasGoogle) {
-    base.push(gmailActionTool, driveCreateFileTool, driveListFilesTool, driveReadFileTool);
+    base.push(gmailActionTool, fetchCalendarTool, driveCreateFileTool, driveListFilesTool, driveReadFileTool);
   }
   return base;
 }
@@ -47,6 +49,7 @@ export {
   webSearchTool,
   researchTopicTool,
   gmailActionTool,
+  fetchCalendarTool,
   manageTasksTool,
   createDocumentTool,
   listDocumentsTool,

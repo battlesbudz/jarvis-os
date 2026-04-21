@@ -2,7 +2,7 @@ import type { Express, Request, Response } from "express";
 import { db } from "./db";
 import { eq, and, desc, sql, gte, lte } from "drizzle-orm";
 import * as schema from "@shared/schema";
-import { sendMessage, sendMessageWithButtons, answerCallbackQuery, isTelegramConfigured, getUpdates, downloadTelegramFile, downloadTelegramFileBuffer } from "./integrations/telegram";
+import { sendMessage, sendMessageWithButtons, sendTelegramDocument, answerCallbackQuery, isTelegramConfigured, getUpdates, downloadTelegramFile, downloadTelegramFileBuffer } from "./integrations/telegram";
 import { startMomentumSession, handleMomentumDone, hasMomentumSessionToday, startMomentumExpiryScheduler } from "./momentumCoach";
 import { getRecentEmailCommitments, getEmailsSince, getStarredFollowUpEmails, gmailModifyMessage } from "./integrations/gmail";
 import { getGoogleCalendarEvents } from "./integrations/googleCalendar";
@@ -283,31 +283,52 @@ Be direct, specific, actionable. No fluff. You have full access to the user's em
         { role: "user", content: userMessageContent },
       ];
 
+      // Build a context that we keep a reference to — tools mutate ctx.state
+      // in place, so we can read updates after runAgent returns.
+      const agentCtx = {
+        userId,
+        channel: "Telegram",
+        googleAccessToken: googleAccessToken || undefined,
+        state: {
+          dateKey,
+          todayPlan,
+          gmailMessageIds: gmailItems.map((i: any) => i.id).filter(Boolean),
+          pendingAttachments: [] as any[],
+        },
+      };
+
       const agentResult = await runAgent({
         model: "gpt-5-mini",
         messages: baseMessages,
         tools: telegramCoachTools({ hasGoogle: !!googleAccessToken }),
-        context: {
-          userId,
-          channel: "Telegram",
-          googleAccessToken: googleAccessToken || undefined,
-          state: {
-            dateKey,
-            todayPlan,
-            gmailMessageIds: gmailItems.map((i: any) => i.id).filter(Boolean),
-          },
-        },
+        context: agentCtx,
         maxTurns: 6,
         maxCompletionTokens: 2000,
       });
 
-      // Pick up any plan changes a tool wrote back to context
-      todayPlan = agentResult.toolCalls.length > 0
-        ? (agentResult as any).context?.state?.todayPlan ?? todayPlan
-        : todayPlan;
+      // Pick up any plan mutations from tools (manage_tasks updates this in place)
+      if (agentCtx.state.todayPlan) {
+        todayPlan = agentCtx.state.todayPlan;
+      }
 
       reply = agentResult.reply || reply;
       console.log(`[Telegram] Agent done — turns=${agentResult.turns}, tool calls=${agentResult.toolCalls.length}, finish=${agentResult.finishReason}`);
+
+      // Deliver any attachments queued by tools (e.g. create_document) to this chat
+      const attachments = agentCtx.state.pendingAttachments || [];
+      if (attachments.length > 0) {
+        // Send the text reply first so the document arrives after it
+        if (reply && reply.trim()) {
+          try { await sendMessage(chatId, reply); } catch {}
+          reply = "";
+        }
+        for (const att of attachments) {
+          if (att.kind === "document") {
+            const ok = await sendTelegramDocument(chatId, att.filename, att.content, att.caption, att.mimeType);
+            console.log(`[Telegram] Delivered attachment ${att.filename} ok=${ok}`);
+          }
+        }
+      }
     } catch (aiErr: any) {
       console.error("[Telegram] OpenAI error:", aiErr?.status, aiErr?.message, aiErr?.error);
       throw aiErr;
@@ -326,9 +347,10 @@ Be direct, specific, actionable. No fluff. You have full access to the user's em
         });
     } catch {}
 
-    await sendMessage(chatId, reply);
-
-    logInteraction(userId, "telegram", "outbound", reply).catch(() => {});
+    if (reply && reply.trim()) {
+      await sendMessage(chatId, reply);
+      logInteraction(userId, "telegram", "outbound", reply).catch(() => {});
+    }
 
     extractProfileFromTelegram(userId, userText).catch(err => {
       console.error("[Profile] Telegram extraction error:", err);
