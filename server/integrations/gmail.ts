@@ -285,3 +285,29 @@ export async function gmailModifyMessage(
     },
   });
 }
+
+export async function sendGmailEmail(
+  userAccessToken: string,
+  to: string,
+  subject: string,
+  body: string
+): Promise<{ messageId: string }> {
+  const gmail = await getGmailClient(userAccessToken);
+  const messageParts = [
+    `To: ${to}`,
+    `Subject: ${subject}`,
+    'Content-Type: text/plain; charset="UTF-8"',
+    '',
+    body,
+  ].join('\r\n');
+  const encodedMessage = Buffer.from(messageParts)
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+  const res = await gmail.users.messages.send({
+    userId: 'me',
+    requestBody: { raw: encodedMessage },
+  });
+  return { messageId: res.data.id || '' };
+}
