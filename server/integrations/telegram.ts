@@ -106,18 +106,19 @@ export async function sendTelegramDocument(
   if (!BOT_TOKEN) return false;
   try {
     const buf = typeof content === 'string' ? Buffer.from(content, 'utf8') : content;
-    const form = new FormData();
+    const form: FormData = new FormData();
     form.append('chat_id', chatId);
     if (caption) form.append('caption', caption.slice(0, 1024));
     form.append('document', new Blob([buf], { type: mimeType }), filename);
-    const res = await fetch(`${BASE}/sendDocument`, { method: 'POST', body: form as any });
+    const res = await fetch(`${BASE}/sendDocument`, { method: 'POST', body: form });
     if (!res.ok) {
       console.error('Telegram sendDocument error:', await res.text());
       return false;
     }
     return true;
-  } catch (e: any) {
-    console.error('Telegram sendDocument threw:', e?.message || e);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error('Telegram sendDocument threw:', msg);
     return false;
   }
 }
