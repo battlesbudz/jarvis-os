@@ -1,6 +1,20 @@
 import type { AgentTool } from "../types";
 import { getGoogleCalendarEvents } from "../../integrations/googleCalendar";
 
+interface CalendarFetchArgs {
+  date?: string;
+  days?: number;
+}
+
+interface CalendarTime { dateTime?: string | null; date?: string | null }
+interface CalendarEventLike {
+  summary?: string | null;
+  location?: string | null;
+  start?: CalendarTime | null;
+  end?: CalendarTime | null;
+  attendees?: Array<unknown> | null;
+}
+
 function todayInTZ(tz: string = "Europe/London"): string {
   const fmt = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" });
   return fmt.format(new Date());
@@ -38,27 +52,27 @@ export const fetchCalendarTool: AgentTool = {
       };
     }
 
-    const startDate = String(args.date || todayInTZ()).slice(0, 10);
-    const days = Math.min(Math.max(Number(args.days) || 1, 1), 14);
+    const a = args as CalendarFetchArgs;
+    const startDate = String(a.date || todayInTZ()).slice(0, 10);
+    const days = Math.min(Math.max(Number(a.days) || 1, 1), 14);
 
     try {
       const blocks: string[] = [];
       let totalEvents = 0;
       for (let i = 0; i < days; i++) {
         const d = addDays(startDate, i);
-        const events = await getGoogleCalendarEvents(d, undefined, undefined, ctx.googleAccessToken);
+        const events = (await getGoogleCalendarEvents(d, undefined, undefined, ctx.googleAccessToken)) as CalendarEventLike[];
         totalEvents += events.length;
         if (events.length === 0) {
           blocks.push(`### ${d}\n(no events)`);
           continue;
         }
-        const lines = events.map((e: any) => {
+        const lines = events.map((e) => {
           const t = e.start?.dateTime || e.start?.date || "";
           const end = e.end?.dateTime || e.end?.date || "";
           const loc = e.location ? ` @ ${e.location}` : "";
-          const att = Array.isArray(e.attendees) && e.attendees.length > 0
-            ? ` (${e.attendees.length} attendee${e.attendees.length === 1 ? "" : "s"})`
-            : "";
+          const attCount = Array.isArray(e.attendees) ? e.attendees.length : 0;
+          const att = attCount > 0 ? ` (${attCount} attendee${attCount === 1 ? "" : "s"})` : "";
           return `- ${t}${end ? `–${end}` : ""}: ${e.summary || "(no title)"}${loc}${att}`;
         });
         blocks.push(`### ${d}\n${lines.join("\n")}`);
@@ -72,14 +86,10 @@ export const fetchCalendarTool: AgentTool = {
         content: `Calendar (${days} day${days === 1 ? "" : "s"} from ${startDate}, ${totalEvents} event${totalEvents === 1 ? "" : "s"}):\n\n${blocks.join("\n\n")}`,
         label: `Fetched calendar: ${days}d, ${totalEvents} event${totalEvents === 1 ? "" : "s"}`,
       };
-    } catch (err: any) {
-      console.error(`[${ctx.channel || "Agent"}] fetch_calendar failed:`, err?.message || err);
-      return {
-        ok: false,
-        content: `Calendar fetch failed: ${err?.message || err}`,
-        label: "Calendar fetch failed",
-        detail: String(err?.message || err),
-      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[${ctx.channel || "Agent"}] fetch_calendar failed:`, msg);
+      return { ok: false, content: `Calendar fetch failed: ${msg}`, label: "Calendar fetch failed", detail: msg };
     }
   },
 };

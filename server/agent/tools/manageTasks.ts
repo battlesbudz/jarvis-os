@@ -1,17 +1,21 @@
-import type { AgentTool } from "../types";
+import type { AgentTool, AgentPlan } from "../types";
 import { db } from "../../db";
 import * as schema from "@shared/schema";
 import { and, eq, desc } from "drizzle-orm";
 
-// Pattern-insights util kept inside telegramRoutes for now; we duplicate the
-// minimal calls here. For analyze_patterns we lazily import the helper to
-// avoid a circular dep with telegramRoutes.
+// Pattern-insights util kept inside telegramRoutes for now; we lazily import
+// the helpers to avoid a circular dep with telegramRoutes.
 
-async function loadPatternHelpers() {
-  const mod = await import("../../telegramRoutes");
+interface PatternHelpers {
+  getPlansForDateRange: (userId: string, start: string, end: string) => Promise<Array<{ date: string; tasks: unknown[] }>>;
+  computePatternInsights: (plans: Array<{ date: string; tasks: unknown[] }>, commitments?: unknown[]) => string;
+}
+
+async function loadPatternHelpers(): Promise<PatternHelpers> {
+  const mod: PatternHelpers = await import("../../telegramRoutes");
   return {
-    getPlansForDateRange: (mod as any).getPlansForDateRange as (userId: string, start: string, end: string) => Promise<any[]>,
-    computePatternInsights: (mod as any).computePatternInsights as (plans: any[], commitments: any[]) => string,
+    getPlansForDateRange: mod.getPlansForDateRange,
+    computePatternInsights: mod.computePatternInsights,
   };
 }
 
@@ -43,21 +47,30 @@ export const manageTasksTool: AgentTool = {
     const userId = ctx.userId;
     const dateKey: string = ctx.state?.dateKey || new Date().toISOString().slice(0, 10);
 
+    interface ManageTasksArgs {
+      action: string;
+      title?: string;
+      content?: string;
+      due_date?: string;
+      commitment_id?: string;
+    }
+    const a = args as ManageTasksArgs;
+
     try {
-      switch (args.action) {
+      switch (a.action) {
         case "add_plan_task": {
-          if (!args.title) {
+          if (!a.title) {
             return { ok: false, content: "Error: title is required for add_plan_task", label: "Missing title" };
           }
-          const todayPlan = ctx.state?.todayPlan || null;
-          const tasks = (todayPlan?.tasks as any[]) || [];
+          const todayPlan: AgentPlan | null = ctx.state?.todayPlan ?? null;
+          const tasks: AgentPlan["tasks"] = todayPlan?.tasks ? [...todayPlan.tasks] : [];
           const newTask = {
             id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
-            title: args.title,
+            title: a.title,
             completed: false,
           };
           tasks.push(newTask);
-          const planData = todayPlan ? { ...todayPlan, tasks } : { tasks };
+          const planData: AgentPlan = todayPlan ? { ...todayPlan, tasks } : { tasks };
           await db
             .insert(schema.plans)
             .values({ userId, date: dateKey, data: planData })
@@ -68,32 +81,32 @@ export const manageTasksTool: AgentTool = {
           if (ctx.state) ctx.state.todayPlan = planData;
           return {
             ok: true,
-            content: `Added "${args.title}" to today's plan. Today now has ${tasks.length} task(s).`,
+            content: `Added "${a.title}" to today's plan. Today now has ${tasks.length} task(s).`,
             label: "Task added",
-            detail: args.title,
+            detail: a.title,
           };
         }
 
         case "add_commitment": {
-          if (!args.content) {
+          if (!a.content) {
             return { ok: false, content: "Error: content is required for add_commitment", label: "Missing content" };
           }
           await db.insert(schema.commitments).values({
             userId,
-            content: args.content,
-            dueDate: args.due_date || null,
+            content: a.content,
+            dueDate: a.due_date || null,
             sourceMessage: `Added via ${ctx.channel || "agent"}`,
           });
           return {
             ok: true,
-            content: `Added commitment: "${args.content}"${args.due_date ? ` (due ${args.due_date})` : ""}`,
+            content: `Added commitment: "${a.content}"${a.due_date ? ` (due ${a.due_date})` : ""}`,
             label: "Commitment added",
-            detail: args.content,
+            detail: a.content,
           };
         }
 
         case "complete_commitment": {
-          if (!args.commitment_id) {
+          if (!a.commitment_id) {
             return { ok: false, content: "Error: commitment_id is required for complete_commitment", label: "Missing id" };
           }
           const updated = await db
@@ -101,7 +114,7 @@ export const manageTasksTool: AgentTool = {
             .set({ status: "done", resolvedAt: new Date() })
             .where(
               and(
-                eq(schema.commitments.id, args.commitment_id),
+                eq(schema.commitments.id, a.commitment_id),
                 eq(schema.commitments.userId, userId),
                 eq(schema.commitments.status, "pending")
               )
@@ -110,21 +123,21 @@ export const manageTasksTool: AgentTool = {
           if (updated.length === 0) {
             return {
               ok: false,
-              content: `No pending commitment found with id "${args.commitment_id}".`,
+              content: `No pending commitment found with id "${a.commitment_id}".`,
               label: "Commitment not found",
             };
           }
           return {
             ok: true,
-            content: `Marked commitment as done (id: ${args.commitment_id}).`,
+            content: `Marked commitment as done (id: ${a.commitment_id}).`,
             label: "Commitment completed",
-            detail: args.commitment_id,
+            detail: a.commitment_id,
           };
         }
 
         case "list_tasks": {
-          const todayPlan = ctx.state?.todayPlan || null;
-          const planTasks = (todayPlan?.tasks as any[]) || [];
+          const todayPlan: AgentPlan | null = ctx.state?.todayPlan ?? null;
+          const planTasks: AgentPlan["tasks"] = todayPlan?.tasks ?? [];
           const pendingCommitments = await db
             .select()
             .from(schema.commitments)
@@ -134,12 +147,12 @@ export const manageTasksTool: AgentTool = {
 
           let listing = "";
           listing += planTasks.length > 0
-            ? "Today's Plan:\n" + planTasks.map((t: any) => `- ${t.completed ? "✅" : "⬜"} ${t.title}`).join("\n")
+            ? "Today's Plan:\n" + planTasks.map((t) => `- ${t.completed ? "✅" : "⬜"} ${t.title}`).join("\n")
             : "Today's Plan: No tasks yet.";
           listing += "\n\n";
           listing += pendingCommitments.length > 0
             ? "Open Commitments:\n" +
-              pendingCommitments.map((c: any) => `- [id:${c.id}] "${c.content}"${c.dueDate ? ` (due ${c.dueDate})` : ""}`).join("\n")
+              pendingCommitments.map((c) => `- [id:${c.id}] "${c.content}"${c.dueDate ? ` (due ${c.dueDate})` : ""}`).join("\n")
             : "Open Commitments: None.";
           return { ok: true, content: listing, label: "Listed tasks" };
         }
@@ -160,10 +173,12 @@ export const manageTasksTool: AgentTool = {
             return { ok: true, content: "Not enough data yet for pattern analysis (need at least a few days).", label: "Not enough data" };
           }
           const allCommitments = await db.select().from(schema.commitments).where(eq(schema.commitments.userId, userId)).limit(200);
-          const scopedCommitments = allCommitments.filter((c: any) =>
+          const startDt = new Date(start);
+          const endDt = new Date(end + "T23:59:59");
+          const scopedCommitments = allCommitments.filter((c) =>
             (c.dueDate && c.dueDate >= start && c.dueDate <= end) ||
-            (c.extractedAt && c.extractedAt >= new Date(start) && c.extractedAt <= new Date(end + "T23:59:59")) ||
-            (c.resolvedAt && c.resolvedAt >= new Date(start) && c.resolvedAt <= new Date(end + "T23:59:59"))
+            (c.extractedAt && c.extractedAt >= startDt && c.extractedAt <= endDt) ||
+            (c.resolvedAt && c.resolvedAt >= startDt && c.resolvedAt <= endDt)
           );
           const patternData = helpers.computePatternInsights(plans, scopedCommitments);
           return {
@@ -174,14 +189,15 @@ export const manageTasksTool: AgentTool = {
         }
 
         default:
-          return { ok: false, content: `Unknown action: ${args.action}`, label: "Unknown action" };
+          return { ok: false, content: `Unknown action: ${a.action}`, label: "Unknown action" };
       }
-    } catch (err: any) {
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
       return {
         ok: false,
-        content: `manage_tasks failed: ${err?.message || err}`,
+        content: `manage_tasks failed: ${msg}`,
         label: "manage_tasks failed",
-        detail: String(err?.message || err),
+        detail: msg,
       };
     }
   },

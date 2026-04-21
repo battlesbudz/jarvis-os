@@ -83,17 +83,23 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
 
     if (msg.tool_calls && msg.tool_calls.length > 0) {
       // Push assistant message containing the tool_calls
-      messages.push(msg as any);
+      const assistantMsg: OpenAI.Chat.Completions.ChatCompletionAssistantMessageParam = {
+        role: "assistant",
+        content: msg.content ?? null,
+        tool_calls: msg.tool_calls,
+      };
+      messages.push(assistantMsg);
 
       // Execute every tool call in parallel
       const results = await Promise.all(
         msg.tool_calls.map(async (tc) => {
           const start = Date.now();
           const tool = toolMap.get(tc.function.name);
-          let parsedArgs: any = {};
+          let parsedArgs: Record<string, unknown> = {};
           try {
-            parsedArgs = JSON.parse(tc.function.arguments || "{}");
-          } catch (e) {
+            const raw = JSON.parse(tc.function.arguments || "{}");
+            if (raw && typeof raw === "object") parsedArgs = raw as Record<string, unknown>;
+          } catch {
             parsedArgs = {};
           }
 
@@ -112,12 +118,13 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
             toolCalls.push({ name: tc.function.name, args: parsedArgs, result, durationMs: Date.now() - start });
             console.log(`[${channel}/Agent] tool=${tc.function.name} ok=${result.ok} ${result.label ? `label="${result.label}"` : ""} ${Date.now() - start}ms`);
             return { tc, content: result.content };
-          } catch (err: any) {
+          } catch (err) {
+            const detail = err instanceof Error ? err.message : String(err);
             const result = {
               ok: false,
-              content: `Tool ${tc.function.name} threw: ${err?.message || String(err)}`,
+              content: `Tool ${tc.function.name} threw: ${detail}`,
               label: "Tool error",
-              detail: String(err?.message || err),
+              detail,
             };
             toolCalls.push({ name: tc.function.name, args: parsedArgs, result, durationMs: Date.now() - start });
             console.error(`[${channel}/Agent] tool=${tc.function.name} threw:`, err);

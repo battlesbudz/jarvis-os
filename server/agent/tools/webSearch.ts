@@ -1,6 +1,11 @@
 import type { AgentTool } from "../types";
 import { tavilySearch, formatSearchResults } from "../../integrations/search";
 
+type TavilyLikeResult = Awaited<ReturnType<typeof tavilySearch>>;
+function emptyTavilyResult(answer: string): TavilyLikeResult {
+  return { answer, results: [] } as TavilyLikeResult;
+}
+
 export const webSearchTool: AgentTool = {
   name: "search_web",
   description:
@@ -16,18 +21,19 @@ export const webSearchTool: AgentTool = {
     if (!process.env.TAVILY_API_KEY) {
       return { ok: false, content: "Web search is not configured.", label: "Search unavailable" };
     }
+    const query = String(args.query || "");
     try {
-      const results = await tavilySearch(args.query);
+      const results = await tavilySearch(query);
       const formatted = formatSearchResults(results);
-      console.log(`[${ctx.channel || "Agent"}] search_web "${args.query}" → ${results.results?.length || 0} results`);
+      console.log(`[${ctx.channel || "Agent"}] search_web "${query}" → ${results.results?.length || 0} results`);
       return {
         ok: true,
         content: formatted || "No results found.",
-        label: `Web search: ${args.query}`,
+        label: `Web search: ${query}`,
         detail: formatted,
       };
-    } catch (err: any) {
-      const msg = String(err?.message || err);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
       const label =
         msg.includes("401") || msg.includes("403") ? "Search auth failed" :
         msg.includes("429") ? "Search rate limited" :
@@ -63,40 +69,40 @@ export const researchTopicTool: AgentTool = {
       return { ok: false, content: "Research is not available — web search is not configured.", label: "Research unavailable" };
     }
 
-    const queries: string[] = Array.isArray(args.sub_queries) && args.sub_queries.length > 0
-      ? args.sub_queries.slice(0, 4).map(String)
-      : [String(args.topic)];
+    const topic = String(args.topic || "");
+    const subQueriesRaw = args.sub_queries;
+    const queries: string[] = Array.isArray(subQueriesRaw) && subQueriesRaw.length > 0
+      ? subQueriesRaw.slice(0, 4).map((q) => String(q))
+      : [topic];
 
     try {
-      const results = await Promise.all(
+      const results: TavilyLikeResult[] = await Promise.all(
         queries.map((q) =>
-          tavilySearch(q, 4).catch((err) => ({ answer: `(search failed: ${err?.message || err})`, results: [] }))
+          tavilySearch(q, 4).catch((err: unknown) => {
+            const msg = err instanceof Error ? err.message : String(err);
+            return emptyTavilyResult(`(search failed: ${msg})`);
+          })
         )
       );
 
       const sections = queries.map((q, i) => {
-        const formatted = formatSearchResults(results[i] as any);
+        const formatted = formatSearchResults(results[i]);
         return `### Query: ${q}\n${formatted || "(no results)"}`;
       });
 
-      const aggregated =
-        `Research findings on: ${args.topic}\n\n` + sections.join("\n\n");
+      const aggregated = `Research findings on: ${topic}\n\n` + sections.join("\n\n");
 
-      console.log(`[${ctx.channel || "Agent"}] research_topic "${args.topic}" — ${queries.length} sub-queries`);
+      console.log(`[${ctx.channel || "Agent"}] research_topic "${topic}" — ${queries.length} sub-queries`);
 
       return {
         ok: true,
         content: aggregated,
-        label: `Researched: ${args.topic}`,
+        label: `Researched: ${topic}`,
         detail: `Ran ${queries.length} search${queries.length === 1 ? "" : "es"}`,
       };
-    } catch (err: any) {
-      return {
-        ok: false,
-        content: `Research failed: ${err?.message || err}`,
-        label: "Research failed",
-        detail: String(err?.message || err),
-      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { ok: false, content: `Research failed: ${msg}`, label: "Research failed", detail: msg };
     }
   },
 };
