@@ -189,7 +189,7 @@ export async function setSoulContent(userId: string, content: string): Promise<v
     .values({ userId, content: trimmed, manualOverride: null, generatedAt: now, updatedAt: now })
     .onConflictDoUpdate({
       target: schema.jarvisSouls.userId,
-      set: { content: trimmed, generatedAt: now, updatedAt: now },
+      set: { content: trimmed, manualOverride: null, generatedAt: now, updatedAt: now },
     });
 }
 

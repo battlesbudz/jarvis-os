@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, jsonb, timestamp, date, primaryKey, integer } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, jsonb, timestamp, date, primaryKey, integer, uniqueIndex } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -230,7 +230,9 @@ export const weeklyInsights = pgTable("weekly_insights", {
   patterns: jsonb("patterns").$type<WeeklyPattern[]>().notNull().default(sql`'[]'::jsonb`),
   summary: text("summary"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+}, (table) => [
+  uniqueIndex("weekly_insights_user_week_idx").on(table.userId, table.weekOf),
+]);
 
 export const proactiveQuestionsSent = pgTable("proactive_questions_sent", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),

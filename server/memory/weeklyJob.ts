@@ -225,12 +225,23 @@ ${energyText || "(none)"}`;
     console.error("[WeeklyPattern] LLM call failed:", err);
   }
 
-  await db.insert(schema.weeklyInsights).values({
-    userId,
-    weekOf,
-    patterns,
-    summary: summary || null,
-  });
+  // Min-data threshold: skip persistence when the 30-day window is too
+  // sparse to draw durable patterns from. Avoids surfacing noise to the
+  // user during their first weeks on the app.
+  const signalCount = recentCompletions.length + brainData.length + chatData.length + telegramData.length + energyData.length;
+  if (signalCount < 5) {
+    console.log(`[WeeklyPattern] user=${userId} week=${weekOf} skipped — only ${signalCount} signal(s) in 30-day window`);
+    return { weekOf, patterns: [], summary: "" };
+  }
+
+  // DB-backed dedupe via unique (user_id, week_of); restart-safe.
+  await db
+    .insert(schema.weeklyInsights)
+    .values({ userId, weekOf, patterns, summary: summary || null })
+    .onConflictDoUpdate({
+      target: [schema.weeklyInsights.userId, schema.weeklyInsights.weekOf],
+      set: { patterns, summary: summary || null },
+    });
 
   // Promote high-confidence patterns into user_memories so they show
   // up in the SOUL even after this week's row is rotated out of view.
