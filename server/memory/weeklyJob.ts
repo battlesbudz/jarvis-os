@@ -1,7 +1,7 @@
 /**
  * Phase 4 — Sunday weekly pattern recognition.
  *
- * Pulls the last 7 days of activity (completion history, brain dump,
+ * Pulls the last 30 days of activity (completion history, brain dump,
  * chat, telegram messages, energy check-ins) and asks an LLM to
  * surface 3-5 durable patterns. Patterns are stored in
  * `weekly_insights`; high-confidence ones are also promoted into
@@ -100,7 +100,7 @@ export async function runWeeklyPatternJob(userId: string): Promise<WeeklyJobResu
   // 30-day rolling window — durable patterns need at least a month of
   // signal before they're trustworthy enough to influence coaching.
   const windowStart = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-  const sevenDaysAgo = windowStart;
+  const sevenDaysAgo = windowStart; // legacy var name; window is 30 days
   const weekOf = weekOfKey(now);
 
   // Gather activity context.
@@ -161,7 +161,7 @@ export async function runWeeklyPatternJob(userId: string): Promise<WeeklyJobResu
     .filter((s) => s.length > 0)
     .join("\n");
 
-  const prompt = `You are reviewing the last 7 days of one user's activity to identify 3-5 durable behavioral patterns that should influence how a personal AI coach supports them long-term.
+  const prompt = `You are reviewing the last 30 days of one user's activity to identify 3-5 durable behavioral patterns that should influence how a personal AI coach supports them long-term.
 
 Output JSON: { "patterns": [{ "category": one-of-categories, "observation": "...", "evidence": ["...", "..."], "confidence": 0-100 }], "summary": "1-2 sentence summary of the week" }
 
@@ -275,7 +275,7 @@ export async function enqueueWeeklyPatternJobs(): Promise<number> {
         userId: r.user_id,
         agentType: "weekly_pattern",
         title: "Weekly pattern review",
-        prompt: "Reflect on the last 7 days and identify durable patterns.",
+        prompt: "Reflect on the last 30 days and identify durable patterns.",
       });
       count += 1;
     } catch (err) {

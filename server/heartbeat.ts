@@ -169,7 +169,7 @@ async function runMeetingBriefs(
 
     let memoryContext = "";
     try {
-      const { retrieveMemories } = await import("./memory/retrieve");
+      const { retrieveRelevantMemories: retrieveMemories } = await import("./memory/retrieve");
       const seedQuery = [event.title, attendeeList, event.description?.slice(0, 200) || ""].filter(Boolean).join(" • ");
       const ranked = await retrieveMemories(userId, seedQuery, 8);
       if (ranked.length > 0) {
@@ -179,6 +179,33 @@ async function runMeetingBriefs(
       memoryContext = memories.length > 0
         ? memories.slice(0, 10).map((m) => `- [${m.category}] ${m.content}`).join("\n")
         : "";
+    }
+
+    // Pull matching `people` rows for the external attendees so the brief
+    // can reference relationship history (Phase 4 relationship intelligence).
+    let peopleContext = "";
+    try {
+      const emails = externalAttendees.map((a) => a.email.toLowerCase()).filter(Boolean);
+      if (emails.length > 0) {
+        const peopleRows = await db
+          .select()
+          .from(schema.people)
+          .where(and(eq(schema.people.userId, userId), sql`lower(${schema.people.email}) = ANY(${emails})`));
+        if (peopleRows.length > 0) {
+          peopleContext = peopleRows
+            .map((p) => {
+              const bits = [`${p.name}${p.email ? ` <${p.email}>` : ""}`];
+              if (p.relationship) bits.push(`relationship: ${p.relationship}`);
+              if (p.interactionCount && p.interactionCount > 0) bits.push(`prior interactions: ${p.interactionCount}`);
+              if (p.lastInteractionAt) bits.push(`last seen: ${new Date(p.lastInteractionAt).toISOString().slice(0, 10)}`);
+              if (p.notes) bits.push(`notes: ${p.notes.slice(0, 200)}`);
+              return `- ${bits.join(" — ")}`;
+            })
+            .join("\n");
+        }
+      }
+    } catch (err) {
+      console.error("[Heartbeat] people lookup failed:", err);
     }
 
     const eventTime = new Date(event.start).toLocaleTimeString("en-US", {
@@ -191,7 +218,7 @@ Meeting: "${event.title}"
 Time: ${eventTime} (${tz})
 Attendees: ${attendeeList}
 ${event.location ? `Location: ${event.location}\n` : ""}${event.description ? `Description: ${event.description.slice(0, 400)}\n` : ""}
-${emailContext ? `\nRelated recent emails:\n${emailContext}\n` : ""}${webContext ? `\nWeb context:\n${webContext}\n` : ""}${memoryContext ? `\nWhat we know about the user:\n${memoryContext}\n` : ""}
+${emailContext ? `\nRelated recent emails:\n${emailContext}\n` : ""}${webContext ? `\nWeb context:\n${webContext}\n` : ""}${peopleContext ? `\nRelationship history with attendees:\n${peopleContext}\n` : ""}${memoryContext ? `\nWhat we know about the user:\n${memoryContext}\n` : ""}
 
 Output exactly 3 short bullets (one line each, no headers):
 • Who/what — one line on the meeting and key person/company

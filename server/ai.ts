@@ -192,7 +192,9 @@ ${skippedTasks.length > completedTasks.length ? 'This person tends to skip more 
 ${completedTasks.length > skippedTasks.length ? 'This person is on a good streak — maintain momentum with a balanced plan.' : ''}`
     : 'No history yet — create a balanced starter plan.';
 
-  const lifeCtxSection = lifeContext
+  // lifeCtxSection is now only a fallback when SOUL is unavailable —
+  // SOUL is the authoritative "about this person" source (Phase 4).
+  const lifeCtxSectionRaw = lifeContext
     ? `\nAbout this person:\n` +
       (lifeContext.priorityGoal ? `- Current priority: ${lifeContext.priorityGoal}\n` : '') +
       (lifeContext.upcomingDeadline ? `- Upcoming deadline: ${lifeContext.upcomingDeadline}\n` : '') +
@@ -252,7 +254,7 @@ ${completedTasks.length > skippedTasks.length ? 'This person is on a good streak
       }
     } catch (e) { console.error("[generateSmartPlan] patterns load failed", e); }
     try {
-      const { retrieveMemories } = await import("./memory/retrieve");
+      const { retrieveRelevantMemories: retrieveMemories } = await import("./memory/retrieve");
       const seedQuery = [
         lifeContext?.priorityGoal,
         lifeContext?.improvementArea,
@@ -273,7 +275,7 @@ User's goals:
 ${goalsText}
 
 Recent activity:
-${historyText}${energyFocusText}${lifeCtxSection}${gmailSection}${existingTasksSection}${carriedOverSection}${blockedSection}
+${historyText}${energyFocusText}${soulSection ? "" : lifeCtxSectionRaw}${gmailSection}${existingTasksSection}${carriedOverSection}${blockedSection}
 
 Create a daily plan with 5-8 tasks. For each task provide:
 - title: short, action-oriented task name

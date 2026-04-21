@@ -12,7 +12,7 @@
  * Peter Steinberger).
  */
 import { db } from "../db";
-import { eq, and, sql } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { getGoogleCalendarEvents } from "../integrations/googleCalendar";
 import { getEmailsSince } from "../integrations/gmail";
@@ -142,10 +142,6 @@ export async function syncPeopleFromGoogle(userId: string, accessToken: string, 
     const { markSoulStale } = await import("./soul");
     await markSoulStale(userId);
   } catch {}
-
-  // Reference sql import to silence unused warning in case the file
-  // grows other helpers later.
-  void sql;
 
   console.log(`[PeopleSync] user=${userId} upserted=${upserts}`);
   return upserts;
