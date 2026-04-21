@@ -208,9 +208,43 @@ export function registerDataRoutes(app: Express): void {
         .from(schema.goals)
         .where(eq(schema.goals.userId, userId))
         .limit(1);
-      const prevList = ((prev?.data as Array<{ id: string }> | undefined) || []);
-      const prevIds = new Set(prevList.map((g) => g.id));
-      const newGoals = incoming.filter((g) => g && g.id && g.title && !prevIds.has(g.id));
+      type GoalShape = {
+        id: string;
+        title: string;
+        description?: string;
+        targetDate?: string;
+        target?: string;
+        why?: string;
+      };
+      const prevList = ((prev?.data as GoalShape[] | undefined) || []);
+      const prevById = new Map(prevList.map((g) => [g.id, g]));
+      const incomingTyped = incoming as GoalShape[];
+      const incomingIds = new Set(incomingTyped.map((g) => g.id));
+
+      const goalsToDecompose: GoalShape[] = [];
+      for (const g of incomingTyped) {
+        if (!g || !g.id || !g.title) continue;
+        const prevGoal = prevById.get(g.id);
+        if (!prevGoal) {
+          // Net-new goal
+          goalsToDecompose.push(g);
+          continue;
+        }
+        // Existing goal: re-decompose if any meaningful field changed.
+        const changed =
+          (prevGoal.title || "") !== (g.title || "") ||
+          (prevGoal.description || "") !== (g.description || "") ||
+          (prevGoal.targetDate || "") !== (g.targetDate || "") ||
+          (prevGoal.target || "") !== (g.target || "") ||
+          (prevGoal.why || "") !== (g.why || "");
+        if (changed) goalsToDecompose.push(g);
+      }
+
+      // Goals removed since the last save: tear down their goal trees so
+      // the daily-plan walker stops injecting tasks from deleted goals.
+      const removedIds = prevList
+        .map((g) => g.id)
+        .filter((id) => id && !incomingIds.has(id));
 
       await db
         .insert(schema.goals)
@@ -220,16 +254,31 @@ export function registerDataRoutes(app: Express): void {
           set: { data, updatedAt: new Date() },
         });
 
-      // Fire-and-forget: enqueue a decomposition for each net-new goal.
-      // The worker is throttled per-user, so a burst of new goals
-      // queues sequentially without overwhelming the LLM.
-      if (newGoals.length > 0) {
+      // Reconcile goal_trees: drop trees whose goal was removed so the
+      // scheduler can no longer inject tasks from deleted goals.
+      if (removedIds.length > 0) {
+        try {
+          for (const removedId of removedIds) {
+            await db
+              .delete(schema.goalTrees)
+              .where(and(eq(schema.goalTrees.userId, userId), eq(schema.goalTrees.goalId, removedId)));
+          }
+          console.log(`[Goals] removed ${removedIds.length} stale goal tree(s) user=${userId}`);
+        } catch (e) {
+          console.error("[Goals] stale-tree cleanup failed:", e);
+        }
+      }
+
+      // Fire-and-forget: enqueue a decomposition for each new OR
+      // materially-changed goal. The worker is throttled per-user, so a
+      // burst queues sequentially without overwhelming the LLM.
+      if (goalsToDecompose.length > 0) {
         try {
           const { enqueueGoalDecomposition } = await import("./agent/goalDecomposer");
-          for (const g of newGoals) {
+          for (const g of goalsToDecompose) {
             await enqueueGoalDecomposition(userId, { id: g.id, title: g.title });
           }
-          console.log(`[Goals] auto-queued decomposition for ${newGoals.length} new goal(s) user=${userId}`);
+          console.log(`[Goals] auto-queued decomposition for ${goalsToDecompose.length} new/changed goal(s) user=${userId}`);
         } catch (e) {
           console.error("[Goals] auto-decompose enqueue failed:", e);
         }
