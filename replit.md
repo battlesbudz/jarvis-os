@@ -20,6 +20,13 @@ Key architectural patterns and features include:
 -   **Multi-User Support:** All user data is stored server-side and scoped by user ID, accessible across devices.
 -   **Onboarding:** A guided onboarding flow captures initial user preferences and goals.
 
+## Agent Harness (Phase 1 — Action Engine)
+Inspired by OpenClaw (MIT licensed, © 2025 Peter Steinberger). Located in `server/agent/`:
+- **harness.ts** — OpenClaw-style tool-calling loop: runs up to N turns, executes tool calls in parallel, force-final-answers if maxTurns hit.
+- **types.ts** — typed `AgentTool`, `ToolContext` (mutable shared state for inter-tool comms), `ToolResult`.
+- **tools/** — typed registry: `webSearch`, `gmailActions`, `manageTasks`, `documents`, `googleDriveTools`. Bundle `telegramCoachTools()` is consumed by `handleCoachReply` in `server/telegramRoutes.ts`.
+- Google scopes now include `drive.file` and `gmail.modify`; existing users must reconnect Google to grant them.
+
 ## External Dependencies
 -   **AI Services:** OpenAI (gpt-5-mini, Whisper, TTS "alloy")
 -   **Database:** PostgreSQL
