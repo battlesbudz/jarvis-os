@@ -1,5 +1,5 @@
 import type { AgentTool, ToolContext, ToolArgs, ToolResult } from "../types";
-import { getUserOAuthStatus } from "../../userTokenStore";
+import { getUserOAuthStatus, getValidGoogleToken, getValidMicrosoftToken } from "../../userTokenStore";
 import { db } from "../../db";
 import { eq } from "drizzle-orm";
 import { channelLinks, telegramLinks } from "@shared/schema";
@@ -23,18 +23,22 @@ export const checkConnectionsTool: AgentTool = {
   },
   async execute(_args: ToolArgs, ctx: ToolContext): Promise<ToolResult> {
     try {
-      const [oauthStatus, tgRows, channelRows] = await Promise.all([
-        getUserOAuthStatus(ctx.userId),
+      const [googleToken, msToken, oauthStatus, tgRows, channelRows] = await Promise.all([
+        getValidGoogleToken(ctx.userId).catch(() => null),
+        getValidMicrosoftToken(ctx.userId).catch(() => null),
+        getUserOAuthStatus(ctx.userId).catch(() => ({} as Record<string, any>)),
         db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq(telegramLinks.userId, ctx.userId)).limit(1),
         db.select().from(channelLinks).where(eq(channelLinks.userId, ctx.userId)),
       ]);
 
       const daemonConnected = isUserPaired(ctx.userId);
+      const googleEmail = oauthStatus?.google?.email || oauthStatus?.google?.accounts?.[0]?.email || 'unknown';
+      const msEmail = oauthStatus?.microsoft?.email || oauthStatus?.microsoft?.accounts?.[0]?.email || 'unknown';
 
       const lines: string[] = [
-        `Google (Gmail + Calendar): ${oauthStatus.google?.connected ? `✓ connected as ${oauthStatus.google.email || 'unknown'}` : '✗ not connected'}`,
-        `Microsoft (Outlook + Calendar): ${oauthStatus.microsoft?.connected ? `✓ connected as ${oauthStatus.microsoft.email || 'unknown'}` : '✗ not connected'}`,
-        `Slack OAuth: ${oauthStatus.slack?.connected ? `✓ connected` : '✗ not connected'}`,
+        `Google (Gmail + Calendar): ${googleToken ? `✓ token valid — ${googleEmail}` : '✗ not connected or token expired (reconnect needed)'}`,
+        `Microsoft (Outlook + Calendar): ${msToken ? `✓ token valid — ${msEmail}` : '✗ not connected or token expired (reconnect needed)'}`,
+        `Slack OAuth: ${oauthStatus?.slack?.connected ? '✓ connected' : '✗ not connected'}`,
         `Telegram: ${tgRows.length > 0 ? '✓ linked' : '✗ not linked'}`,
         `WhatsApp: ${channelRows.some(r => r.channel === 'whatsapp') ? '✓ linked' : '✗ not linked'}`,
         `Discord: ${channelRows.some(r => r.channel === 'discord') ? '✓ linked' : '✗ not linked'}`,
@@ -84,10 +88,12 @@ export const generateReconnectLinkTool: AgentTool = {
         response_type: "code",
         scope: [
           "openid", "email",
+          "https://www.googleapis.com/auth/calendar.events",
           "https://www.googleapis.com/auth/calendar.readonly",
           "https://www.googleapis.com/auth/gmail.readonly",
           "https://www.googleapis.com/auth/gmail.compose",
           "https://www.googleapis.com/auth/gmail.modify",
+          "https://www.googleapis.com/auth/drive.file",
         ].join(" "),
         access_type: "offline",
         prompt: "consent",
@@ -112,7 +118,7 @@ export const generateReconnectLinkTool: AgentTool = {
         client_id: clientId,
         redirect_uri: redirectUri,
         response_type: "code",
-        scope: "offline_access Calendars.ReadWrite Mail.Read Mail.Send User.Read",
+        scope: "offline_access Calendars.ReadWrite Mail.ReadWrite Mail.Send User.Read",
         state: ctx.userId,
         response_mode: "query",
       });

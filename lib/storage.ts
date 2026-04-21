@@ -272,11 +272,13 @@ export interface LifeContext {
 }
 
 export interface CoachAction {
-  type: 'task' | 'goal';
+  type: 'task' | 'goal' | 'link';
   title: string;
   category: string;
   priority?: 'high' | 'medium' | 'low';
   description?: string;
+  url?: string;
+  buttonLabel?: string;
 }
 
 export interface ExecutedAction {

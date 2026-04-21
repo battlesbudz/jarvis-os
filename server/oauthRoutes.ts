@@ -97,6 +97,7 @@ oauthRouter.get('/google/authorize', (req: Request, res: Response) => {
     scope: [
       'openid',
       'email',
+      'https://www.googleapis.com/auth/calendar.events',
       'https://www.googleapis.com/auth/calendar.readonly',
       'https://www.googleapis.com/auth/gmail.readonly',
       'https://www.googleapis.com/auth/gmail.compose',
@@ -195,7 +196,7 @@ oauthRouter.get('/microsoft/authorize', (req: Request, res: Response) => {
     client_id: clientId,
     redirect_uri: redirectUri,
     response_type: 'code',
-    scope: 'offline_access Calendars.Read Mail.Read User.Read',
+    scope: 'offline_access Calendars.ReadWrite Mail.ReadWrite Mail.Send User.Read',
     state: userId,
     response_mode: 'query',
   });
@@ -230,7 +231,7 @@ oauthCallbackRouter.get('/microsoft/callback', async (req: Request, res: Respons
         client_secret: clientSecret,
         redirect_uri: redirectUri,
         grant_type: 'authorization_code',
-        scope: 'offline_access Calendars.Read Mail.Read User.Read',
+        scope: 'offline_access Calendars.ReadWrite Mail.ReadWrite Mail.Send User.Read',
       }),
     });
 
