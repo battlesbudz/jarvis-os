@@ -40,7 +40,7 @@ The Profile screen now has a "Connected Channels" section: WhatsApp link flow wi
 Inspired by OpenClaw (MIT licensed, © 2025 Peter Steinberger). Located in `server/agent/`:
 - **harness.ts** — OpenClaw-style tool-calling loop: runs up to N turns, executes tool calls in parallel, force-final-answers if maxTurns hit.
 - **types.ts** — typed `AgentTool`, `ToolContext` (mutable shared state for inter-tool comms), `ToolResult`.
-- **tools/** — typed registry: `webSearch` (search_web, research_topic), `gmailActions` (gmail_action, create_gmail_draft), `calendar` (fetch_calendar), `manageTasks`, `documents`, `googleDriveTools` (Drive read accepts ID or full URL). Bundle `telegramCoachTools()` is consumed by `handleCoachReply` in `server/telegramRoutes.ts`.
+- **tools/** — typed registry: `webSearch` (search_web, research_topic), `gmailActions` (gmail_action, create_gmail_draft), `calendar` (fetch_calendar), `calendarCreate` (create_calendar_event — supports Google & Outlook), `fetchEmails` (fetch_emails — Gmail & Outlook), `sendEmail` (send_email — Gmail & Outlook), `connections` (check_connections, generate_reconnect_link), `manageTasks`, `documents`, `googleDriveTools` (Drive read accepts ID or full URL). Bundle `telegramCoachTools()` is used by all channel pipelines (`runCoachAgent`); the app-chat route (`/api/coach/chat`) mirrors these tools via `coachTools` + `executeCoachTool` in `server/routes.ts`.
 - **Artifact delivery** — `create_document` saves to the Documents library AND queues a `pendingAttachments` entry in `ctx.state`; the Telegram caller delivers the file via `sendTelegramDocument` so the user receives it in-channel.
 - Google scopes now include `drive.file` and `gmail.modify`; existing users must reconnect Google to grant them.
 

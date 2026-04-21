@@ -766,6 +766,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
     {
       type: "function" as const,
       function: {
+        name: "fetch_calendar",
+        description: "Fetch the user's Google Calendar events for a given day or date range. Use whenever the user asks about their schedule, meetings, availability, or what's coming up. Returns events with title, time, and location.",
+        parameters: {
+          type: "object",
+          properties: {
+            date: { type: "string", description: "ISO date YYYY-MM-DD. Defaults to today if omitted." },
+            days: { type: "number", description: "Number of consecutive days to fetch starting from date. Default 1, max 14." },
+          },
+        },
+      },
+    },
+    {
+      type: "function" as const,
+      function: {
         name: "fetch_emails",
         description: "Fetch recent emails on demand. Use when the user asks about their inbox beyond what's already in the system context. provider: 'google' (Gmail) or 'microsoft' (Outlook). count: number of emails to fetch (default 10, max 25).",
         parameters: {
@@ -1073,6 +1087,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
             return { result: 'success', label: `Event created: ${title}`, detail: `Created on ${start.slice(0, 10)}` };
           }
           return { result: 'error', label: 'Unknown provider', detail: `Unknown provider: ${provider}` };
+        }
+        case 'fetch_calendar': {
+          const tokens = await getValidGoogleTokens(userId);
+          if (!tokens.length) return { result: 'error', label: 'Google not connected', detail: 'Connect Google in Profile to fetch calendar events.' };
+          const startDate = String(args.date || new Date().toISOString().slice(0, 10));
+          const days = Math.min(Math.max(Number(args.days) || 1, 1), 14);
+          function addDaysLocal(dateStr: string, n: number): string {
+            const d = new Date(dateStr + 'T12:00:00Z');
+            d.setUTCDate(d.getUTCDate() + n);
+            return d.toISOString().slice(0, 10);
+          }
+          const blocks: string[] = [];
+          let totalEvents = 0;
+          for (let i = 0; i < days; i++) {
+            const d = addDaysLocal(startDate, i);
+            const events = await getGoogleCalendarEvents(d, undefined, undefined, tokens[0]);
+            totalEvents += events.length;
+            if (events.length === 0) {
+              blocks.push(`${d}: (no events)`);
+              continue;
+            }
+            const lines = events.map((e: any) => {
+              const loc = e.location ? ` @ ${e.location}` : '';
+              return `  - ${e.time || e.start || ''}${e.end ? `–${e.end}` : ''}: ${e.title || '(no title)'}${loc}`;
+            });
+            blocks.push(`${d}:\n${lines.join('\n')}`);
+          }
+          return { result: 'success', label: `Calendar: ${totalEvents} event(s) over ${days} day(s)`, detail: blocks.join('\n\n') };
         }
         case 'fetch_emails': {
           const provider = (String(args.provider || 'google')).toLowerCase();
