@@ -16,6 +16,9 @@
 
 import { runAgent } from "./harness";
 import type { AgentTool, ToolContext } from "./types";
+import { db } from "../db";
+import * as schema from "@shared/schema";
+import { and, eq, sql } from "drizzle-orm";
 import {
   webSearchTool,
   researchTopicTool,
@@ -213,10 +216,49 @@ export async function runSubAgent(opts: RunSubAgentOptions): Promise<SubAgentRes
   const hasGoogle = !!opts.context.googleAccessToken;
   const tools = spec.tools({ hasGoogle });
 
+  // Phase 4: enrich the email sub-agent's system prompt with SOUL +
+  // relationship context for whoever the user is writing to. Other
+  // sub-agent types stay lean.
+  let systemPrompt = spec.systemPrompt;
+  if (opts.agentType === "email" && opts.context.userId) {
+    const enrich: string[] = [];
+    try {
+      const { getSoul } = await import("../memory/soul");
+      const soul = await getSoul(opts.context.userId);
+      const soulText = soul?.manualOverride || soul?.content;
+      if (soulText && soulText.trim()) {
+        enrich.push(`What I know about the sender (JARVIS Soul):\n${soulText.trim()}`);
+      }
+    } catch {}
+    try {
+      const emailMatches = Array.from(opts.prompt.matchAll(/[\w.+-]+@[\w-]+\.[\w.-]+/g)).map((m) => m[0].toLowerCase());
+      if (emailMatches.length > 0) {
+        const peopleRows = await db
+          .select()
+          .from(schema.people)
+          .where(and(eq(schema.people.userId, opts.context.userId), sql`lower(${schema.people.email}) = ANY(${emailMatches})`));
+        if (peopleRows.length > 0) {
+          const lines = peopleRows.map((p) => {
+            const bits = [`${p.name}${p.email ? ` <${p.email}>` : ""}`];
+            if (p.relationship) bits.push(`relationship: ${p.relationship}`);
+            if (p.interactionCount) bits.push(`prior interactions: ${p.interactionCount}`);
+            if (p.lastInteractionAt) bits.push(`last seen: ${new Date(p.lastInteractionAt).toISOString().slice(0, 10)}`);
+            if (p.notes) bits.push(`notes: ${p.notes.slice(0, 200)}`);
+            return `- ${bits.join(" — ")}`;
+          });
+          enrich.push(`Recipient relationship history:\n${lines.join("\n")}`);
+        }
+      }
+    } catch {}
+    if (enrich.length > 0) {
+      systemPrompt = `${spec.systemPrompt}\n\n--- CONTEXT ---\n${enrich.join("\n\n")}`;
+    }
+  }
+
   const result = await runAgent({
     model: "gpt-5-mini",
     messages: [
-      { role: "system", content: spec.systemPrompt },
+      { role: "system", content: systemPrompt },
       { role: "user", content: opts.prompt },
     ],
     tools,
