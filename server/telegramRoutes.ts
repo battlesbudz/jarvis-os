@@ -3,6 +3,8 @@ import { db } from "./db";
 import { eq, and, desc, sql, gte, lte } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { sendMessage, sendMessageWithButtons, sendTelegramDocument, answerCallbackQuery, isTelegramConfigured, getUpdates, downloadTelegramFile, downloadTelegramFileBuffer } from "./integrations/telegram";
+import { notifyUser } from "./channels/registry";
+import type { NotificationType } from "@shared/schema";
 import { startMomentumSession, handleMomentumDone, hasMomentumSessionToday, startMomentumExpiryScheduler } from "./momentumCoach";
 import { getRecentEmailCommitments, getEmailsSince, getStarredFollowUpEmails, gmailModifyMessage } from "./integrations/gmail";
 import { getGoogleCalendarEvents } from "./integrations/googleCalendar";
@@ -910,7 +912,7 @@ async function sendScheduledMessage(
     }).join('\n');
     const msg = `📬 ${starredEmails.length} starred/important email${starredEmails.length === 1 ? '' : 's'} sitting >3 days:\n\n${emailList}\n\nStill relevant? Reply, archive, or unstar anything you've handled.`;
     console.log(`[Proactive] Sending followup_check to user ${link.userId} (${timezone})`);
-    await sendMessage(link.chatId, msg);
+    await notifyUser(link.userId, "general", msg);
     logInteraction(link.userId, "notification", "outbound", msg, "followup_check").catch(() => {});
     return;
   }
@@ -951,7 +953,17 @@ async function sendScheduledMessage(
 
   if (message) {
     console.log(`[Proactive] Sending ${schedule.type} to user ${link.userId} (${timezone})`);
-    await sendMessage(link.chatId, message);
+    // Map proactive schedule types onto registered NotificationType values so
+    // per-type channel preferences (telegram/whatsapp/slack/daemon) apply.
+    const typeMap: Record<string, NotificationType> = {
+      morning: "morning_briefing",
+      commitment_check: "commitment_check",
+      weekly_planning: "weekly_planning",
+      followup_check: "general",
+      momentum_nudge: "general",
+    };
+    const notifType = typeMap[schedule.type] || "general";
+    await notifyUser(link.userId, notifType, message);
     logInteraction(link.userId, "notification", "outbound", message, schedule.type).catch(() => {});
   }
 }
@@ -1151,7 +1163,7 @@ Write a sharp 2-3 sentence meeting prep brief. Include what the meeting is about
                 const header = `📅 Meeting in ~15 min: ${event.title} (${eventTime})${event.location ? `\n📍 ${event.location}` : ''}`;
                 const fullMsg = `${header}\n\n${briefMessage}`;
                 console.log(`[MeetingBrief] Sending brief for "${event.title}" to user ${link.userId}`);
-                await sendMessage(link.chatId, fullMsg);
+                await notifyUser(link.userId, "meeting_brief", fullMsg);
                 logInteraction(link.userId, "notification", "outbound", fullMsg, "meeting_brief").catch(() => {});
               }
             } catch (err) {
@@ -1268,7 +1280,7 @@ export async function startEmailAlertScanner(): Promise<void> {
           } catch {}
           const senderName = email.from.replace(/<.*>/, '').trim() || email.from;
           const msg = `📧 Surfaced for you:\nFrom: ${senderName}\n"${email.subject}"\n\n${email.snippet.slice(0, 150)}${email.snippet.length > 150 ? '...' : ''}\n\nJarvis: ${reason}`;
-          await sendMessage(link.chatId, msg);
+          await notifyUser(link.userId, "email_alert", msg);
           logInteraction(link.userId, "notification", "outbound", msg, "email_surfaced").catch(() => {});
         }
 
@@ -1348,7 +1360,7 @@ Return [] if nothing is urgent.`,
           } catch {}
 
           const msg = `📧 Email needs your attention:\nFrom: ${senderName}\n"${email.subject}"\n\n${email.snippet.slice(0, 150)}${email.snippet.length > 150 ? '...' : ''}\n\nJarvis: ${flag.reason}`;
-          await sendMessage(link.chatId, msg);
+          await notifyUser(link.userId, "email_alert", msg);
           logInteraction(link.userId, "notification", "outbound", msg, "email_alert").catch(() => {});
           console.log(`[EmailAlert] Alerted user ${link.userId}: "${email.subject}"`);
         }
