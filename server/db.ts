@@ -163,6 +163,49 @@ export async function ensureTablesExist() {
         extracted_at TIMESTAMP NOT NULL DEFAULT NOW()
       )
     `);
+    // Phase 4 — typed memory layer + relationships + soul + insights.
+    await db.execute(sql`ALTER TABLE user_memories ADD COLUMN IF NOT EXISTS relevance_score INTEGER NOT NULL DEFAULT 50`).catch(() => {});
+    await db.execute(sql`ALTER TABLE user_memories ADD COLUMN IF NOT EXISTS confidence INTEGER NOT NULL DEFAULT 70`).catch(() => {});
+    await db.execute(sql`ALTER TABLE user_memories ADD COLUMN IF NOT EXISTS source_type VARCHAR NOT NULL DEFAULT 'manual'`).catch(() => {});
+    await db.execute(sql`ALTER TABLE user_memories ADD COLUMN IF NOT EXISTS source_ref VARCHAR`).catch(() => {});
+    await db.execute(sql`ALTER TABLE user_memories ADD COLUMN IF NOT EXISTS last_referenced_at TIMESTAMP`).catch(() => {});
+    await db.execute(sql`ALTER TABLE user_memories ADD COLUMN IF NOT EXISTS embedding JSONB`).catch(() => {});
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS user_memories_fts_idx ON user_memories USING gin(to_tsvector('english', content))`).catch(() => {});
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS people (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        email VARCHAR,
+        relationship TEXT,
+        notes TEXT,
+        interaction_count INTEGER NOT NULL DEFAULT 0,
+        last_interaction_at TIMESTAMP,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS people_user_idx ON people(user_id)`).catch(() => {});
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS jarvis_souls (
+        user_id VARCHAR PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        content TEXT NOT NULL DEFAULT '',
+        manual_override TEXT,
+        generated_at TIMESTAMP,
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS weekly_insights (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        week_of VARCHAR NOT NULL,
+        patterns JSONB NOT NULL DEFAULT '[]'::jsonb,
+        summary TEXT,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS weekly_insights_user_week_idx ON weekly_insights(user_id, week_of)`).catch(() => {});
 
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS integration_owner (

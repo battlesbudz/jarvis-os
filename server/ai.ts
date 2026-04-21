@@ -41,6 +41,7 @@ export interface GeneratePlanRequest {
   existingTasks?: { title: string; description?: string; category: string }[];
   carriedOverTasks?: { title: string; category: string; skipDays: number }[];
   blockedTasks?: { title: string; skipDays: number; blockerType?: string }[];
+  userId?: string;
 }
 
 export interface UnblockTaskRequest {
@@ -221,7 +222,52 @@ ${completedTasks.length > skippedTasks.length ? 'This person is on a good streak
       blockedTasks.map(t => `- "${t.title}" (stuck ${t.skipDays} days${t.blockerType ? `, blocker: ${t.blockerType.replace('_', ' ')}` : ''})`).join('\n')
     : '';
 
-  const prompt = `You create personalized daily task plans for people. Today is ${dayOfWeek}.
+  let soulSection = "";
+  let patternSection = "";
+  let memorySection = "";
+  if (req.userId) {
+    try {
+      const { getSoul } = await import("./memory/soul");
+      const soul = await getSoul(req.userId);
+      const soulText = soul?.manualOverride || soul?.content;
+      if (soulText && soulText.trim().length > 0) {
+        soulSection = `\n\nWhat I know about this person (JARVIS Soul):\n${soulText.trim()}\n`;
+      }
+    } catch (e) { console.error("[generateSmartPlan] soul load failed", e); }
+    try {
+      const { db: ddb } = await import("./db");
+      const { sql: dsql } = await import("drizzle-orm");
+      const rows = await ddb.execute(dsql`
+        SELECT patterns, summary FROM weekly_insights
+        WHERE user_id = ${req.userId}
+        ORDER BY created_at DESC LIMIT 1
+      `);
+      const row: any = (rows as any).rows?.[0];
+      if (row) {
+        const patterns = Array.isArray(row.patterns) ? row.patterns : [];
+        const top = patterns.slice(0, 3).map((p: any) => `- ${p.observation || p.summary || JSON.stringify(p)}`).join("\n");
+        if (top || row.summary) {
+          patternSection = `\n\nRecent weekly patterns I've noticed:\n${row.summary ? row.summary + "\n" : ""}${top}\n`;
+        }
+      }
+    } catch (e) { console.error("[generateSmartPlan] patterns load failed", e); }
+    try {
+      const { retrieveMemories } = await import("./memory/retrieve");
+      const seedQuery = [
+        lifeContext?.priorityGoal,
+        lifeContext?.improvementArea,
+        ...(goals.slice(0, 3).map(g => g.title)),
+      ].filter(Boolean).join(" • ");
+      if (seedQuery) {
+        const mems = await retrieveMemories(req.userId, seedQuery, 6);
+        if (mems.length > 0) {
+          memorySection = `\n\nRelevant memories:\n${mems.map(m => `- [${m.category}] ${m.content}`).join("\n")}\n`;
+        }
+      }
+    } catch (e) { console.error("[generateSmartPlan] retrieve failed", e); }
+  }
+
+  const prompt = `You create personalized daily task plans for people. Today is ${dayOfWeek}.${soulSection}${patternSection}${memorySection}
 
 User's goals:
 ${goalsText}
