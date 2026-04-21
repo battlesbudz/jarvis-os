@@ -560,6 +560,49 @@ export async function ensureTablesExist() {
         ON deliverables (user_id, status, created_at DESC)
     `).catch(() => {});
 
+    // ── Phase 5: multi-channel + computer control ──────────────────
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS channel_links (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        channel VARCHAR NOT NULL,
+        address TEXT NOT NULL,
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        last_seen_at TIMESTAMP,
+        UNIQUE (channel, address)
+      )
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS channel_links_user_idx
+        ON channel_links (user_id, channel)
+    `).catch(() => {});
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS channel_link_codes (
+        code VARCHAR PRIMARY KEY,
+        user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        channel VARCHAR NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        expires_at TIMESTAMP
+      )
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS channel_link_codes_channel_expires_idx
+        ON channel_link_codes (channel, expires_at)
+    `).catch(() => {});
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS channel_preferences (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        notification_type VARCHAR NOT NULL,
+        channels JSONB NOT NULL DEFAULT '[]'::jsonb,
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        UNIQUE (user_id, notification_type)
+      )
+    `);
+
     console.log("Database tables verified");
   } catch (error) {
     console.error("Failed to ensure database tables exist:", error);

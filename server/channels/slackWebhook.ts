@@ -11,7 +11,13 @@ import { buildPlanFromInputs } from "../routes";
 const SLACK_SIGNING_SECRET = process.env.SLACK_SIGNING_SECRET;
 
 function verifySlackSignature(req: Request): boolean {
-  if (!SLACK_SIGNING_SECRET) return true; // skip if not configured
+  // Fail closed: never accept Slack webhooks/commands without a configured
+  // signing secret, otherwise an attacker could spoof inbound Slack events
+  // and drive the coach agent as the linked user.
+  if (!SLACK_SIGNING_SECRET) {
+    console.error("[slack] rejecting request: SLACK_SIGNING_SECRET is not configured");
+    return false;
+  }
   const ts = req.header("x-slack-request-timestamp");
   const sig = req.header("x-slack-signature");
   if (!ts || !sig) return false;

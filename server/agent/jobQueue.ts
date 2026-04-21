@@ -7,7 +7,7 @@ import { runGoalDecomposition } from "./goalDecomposer";
 import { runWeeklyPatternJob } from "../memory/weeklyJob";
 import { getValidGoogleTokens } from "../userTokenStore";
 import type { ToolContext } from "./types";
-import { sendMessage, isTelegramConfigured } from "../integrations/telegram";
+import { notifyUser } from "../channels/registry";
 
 async function notifyJobComplete(
   userId: string,
@@ -15,15 +15,15 @@ async function notifyJobComplete(
   title: string,
   body: string,
 ): Promise<void> {
-  if (!isTelegramConfigured()) return;
   try {
-    const [link] = await db
-      .select({ chatId: schema.telegramLinks.chatId })
-      .from(schema.telegramLinks)
-      .where(eq(schema.telegramLinks.userId, userId))
-      .limit(1);
-    if (!link?.chatId) return;
-    await sendMessage(link.chatId, `Jarvis (${agentType}): ${title}\n\n${body}`.slice(0, 3500));
+    // Sub-agent deliverables (decompositions, drafts, etc.) typically need a
+    // human approval before they take effect — route through the user's
+    // configured channel for "approval_request".
+    await notifyUser(
+      userId,
+      "approval_request",
+      `Jarvis (${agentType}): ${title}\n\n${body}`.slice(0, 3500),
+    );
   } catch (err) {
     console.error("[JobQueue] notify failed:", err);
   }
