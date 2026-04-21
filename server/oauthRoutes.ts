@@ -273,24 +273,33 @@ oauthCallbackRouter.get('/microsoft/callback', async (req: Request, res: Respons
 
 /* ─── Slack OAuth ─────────────────────────────────────────────── */
 
-oauthRouter.get('/slack/authorize', (req: Request, res: Response) => {
-  const userId = req.userId;
-  if (!userId) return res.status(401).json({ error: 'Not authenticated' });
-
+/**
+ * Shared helper — builds the Slack OAuth2 (user token) authorize URL.
+ * Uses user_scope so the callback receives authed_user.access_token.
+ * Can be called without a live request object (agent tool context).
+ */
+export function buildSlackAuthorizeUrl(userId: string, redirectUri: string): string | null {
   const clientId = process.env.SLACK_CLIENT_ID;
-  if (!clientId) return res.json({ error: 'Slack OAuth not configured' });
-
-  const baseUrl = getBaseUrl(req);
-  const redirectUri = `${baseUrl}/api/oauth/slack/callback`;
-
+  if (!clientId) return null;
   const params = new URLSearchParams({
     client_id: clientId,
     user_scope: 'channels:history,channels:read,im:history,im:read,groups:history,groups:read,users:read',
     redirect_uri: redirectUri,
     state: userId,
   });
+  return `https://slack.com/oauth/v2/authorize?${params.toString()}`;
+}
 
-  const url = `https://slack.com/oauth/v2/authorize?${params.toString()}`;
+oauthRouter.get('/slack/authorize', (req: Request, res: Response) => {
+  const userId = req.userId;
+  if (!userId) return res.status(401).json({ error: 'Not authenticated' });
+
+  if (!process.env.SLACK_CLIENT_ID) return res.json({ error: 'Slack OAuth not configured' });
+
+  const baseUrl = getBaseUrl(req);
+  const redirectUri = `${baseUrl}/api/oauth/slack/callback`;
+  const url = buildSlackAuthorizeUrl(userId, redirectUri);
+  if (!url) return res.json({ error: 'Slack OAuth not configured' });
   res.json({ url, redirectUri });
 });
 
