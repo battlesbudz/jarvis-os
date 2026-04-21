@@ -44,6 +44,7 @@ interface JobRow {
   status: string;
   title: string;
   createdAt: string;
+  input?: { goalId?: string } | null;
 }
 
 interface Props {
@@ -67,8 +68,13 @@ export default function GoalTreeSection({ goalId, goalTitle }: Props) {
     refetchInterval: 10000,
   });
 
+  // Match decompose jobs by the structured input.goalId rather than by
+  // the human-readable title (titles may collide or be edited).
   const decomposing = (jobsQuery.data || []).some(
-    (j) => j.agentType === 'goal_decompose' && (j.status === 'queued' || j.status === 'running') && j.title.includes(goalTitle),
+    (j) =>
+      j.agentType === 'goal_decompose' &&
+      (j.status === 'queued' || j.status === 'running') &&
+      j.input?.goalId === goalId,
   );
 
   const treeQuery = useQuery<GoalTreeRow | { hasTree: false }>({
