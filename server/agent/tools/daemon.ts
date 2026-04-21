@@ -1,5 +1,11 @@
 import type { AgentTool, ToolContext, ToolArgs, ToolResult } from "../types";
-import { sendDaemonOp, isUserPaired, isDaemonActionAllowed } from "../../daemon/bridge";
+import { sendDaemonOp, isUserPaired, isDaemonActionAllowed, type DaemonAction, type DaemonOp } from "../../daemon/bridge";
+
+const ALLOWED_ACTIONS: readonly DaemonAction[] = ["shell", "notify", "file_read", "file_write", "file_list"] as const;
+
+function isDaemonAction(value: string): value is DaemonAction {
+  return (ALLOWED_ACTIONS as readonly string[]).includes(value);
+}
 
 export const daemonActionTool: AgentTool = {
   name: "daemon_action",
@@ -22,15 +28,15 @@ export const daemonActionTool: AgentTool = {
     if (!isUserPaired(ctx.userId)) {
       return { ok: false, content: JSON.stringify({ ok: false, error: "No desktop daemon paired. Ask the user to install the GamePlan daemon and pair it from Profile → Connected Channels → Desktop Daemon." }) };
     }
-    const action = String(args.action || "") as any;
-    const allowedActions = ["shell", "notify", "file_read", "file_write", "file_list"] as const;
-    if (!allowedActions.includes(action)) {
-      return { ok: false, content: JSON.stringify({ ok: false, error: `unknown action ${action}` }) };
+    const rawAction = String(args.action || "");
+    if (!isDaemonAction(rawAction)) {
+      return { ok: false, content: JSON.stringify({ ok: false, error: `unknown action ${rawAction}` }) };
     }
+    const action: DaemonAction = rawAction;
     if (!(await isDaemonActionAllowed(ctx.userId, action))) {
       return { ok: false, content: JSON.stringify({ ok: false, error: `Action '${action}' is not permitted on this user's daemon. Ask the user to enable it in Profile → Connected Channels → Desktop Daemon → Permissions.` }) };
     }
-    let op: any;
+    let op: DaemonOp;
     if (action === "shell") {
       if (!args.cmd) return { ok: false, content: JSON.stringify({ ok: false, error: "cmd required" }) };
       op = { type: "shell", cmd: String(args.cmd), cwd: args.cwd ? String(args.cwd) : undefined, timeoutMs: typeof args.timeoutMs === "number" ? args.timeoutMs : undefined };

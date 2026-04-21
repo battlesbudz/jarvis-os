@@ -566,13 +566,16 @@ export async function ensureTablesExist() {
         id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
         user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         channel VARCHAR NOT NULL,
-        address TEXT NOT NULL,
+        address VARCHAR NOT NULL,
         metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
-        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-        last_seen_at TIMESTAMP,
-        UNIQUE (channel, address)
+        linked_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        last_seen_at TIMESTAMP
       )
     `);
+    await db.execute(sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS channel_links_channel_address_idx
+        ON channel_links (channel, address)
+    `).catch(() => {});
     await db.execute(sql`
       CREATE INDEX IF NOT EXISTS channel_links_user_idx
         ON channel_links (user_id, channel)
@@ -594,12 +597,11 @@ export async function ensureTablesExist() {
 
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS channel_preferences (
-        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
         user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         notification_type VARCHAR NOT NULL,
         channels JSONB NOT NULL DEFAULT '[]'::jsonb,
         updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
-        UNIQUE (user_id, notification_type)
+        PRIMARY KEY (user_id, notification_type)
       )
     `);
 
