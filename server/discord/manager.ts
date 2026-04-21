@@ -1,4 +1,4 @@
-import { Client, GatewayIntentBits, Events, Partials, Message, DMChannel } from "discord.js";
+import { Client, GatewayIntentBits, Events, Partials, Message, DMChannel, type GuildBasedChannel } from "discord.js";
 import { db } from "../db";
 import { eq, and } from "drizzle-orm";
 import { channelLinks, users } from "@shared/schema";
@@ -226,7 +226,7 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
       if (placeholder) {
         await editOrSendLong(placeholder, reply);
       } else {
-        await sendLong(message.channel as any, reply);
+        await sendLong(message.channel as { send(t: string): Promise<unknown> }, reply);
       }
     } catch (err) {
       console.error("[DiscordManager] runCoachAgent failed:", err);
@@ -328,7 +328,8 @@ export async function bootAllBots(): Promise<void> {
       sql`SELECT user_id, access_token FROM user_oauth_tokens WHERE provider = 'discord_bot'`,
     );
     const items: { user_id: string; access_token: string }[] =
-      (rows as any).rows ?? (Array.isArray(rows) ? rows : []);
+      ((rows as unknown as { rows?: { user_id: string; access_token: string }[] }).rows ??
+        (Array.isArray(rows) ? (rows as { user_id: string; access_token: string }[]) : []));
     let started = 0;
     for (const row of items) {
       try {
@@ -386,7 +387,7 @@ export async function completePairing(userId: string, code: string): Promise<{ o
       userId,
       channel: "discord",
       address: rec.discordUserId,
-      metadata: meta as any,
+      metadata: meta as unknown,
       linkedAt: new Date(),
     });
   } catch (err) {
@@ -472,7 +473,7 @@ export async function getChannelsForGuild(
     const channels = await guild.channels.fetch();
     return channels
       .filter((ch): ch is NonNullable<typeof ch> => !!ch && ch.isTextBased && ch.isTextBased())
-      .map((ch) => ({ id: ch.id, name: (ch as any).name ?? ch.id, type: ch.type.toString() }));
+      .map((ch) => ({ id: ch.id, name: (ch as GuildBasedChannel).name, type: ch.type.toString() }));
   } catch {
     return [];
   }
