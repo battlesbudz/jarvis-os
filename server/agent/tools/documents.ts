@@ -41,9 +41,23 @@ export const createDocumentTool: AgentTool = {
       const docId = inserted[0]?.id || "";
       console.log(`[${ctx.channel || "Agent"}] create_document id=${docId} name="${name}" bytes=${Buffer.byteLength(content, "utf8")}`);
 
+      // Queue this artifact for delivery on the calling channel (e.g. Telegram
+      // sends the file after the agent finishes responding). The caller reads
+      // ctx.state.pendingAttachments after runAgent returns.
+      const pending = (ctx.state.pendingAttachments ||= []);
+      const safeFilename = name.replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 80) + ".md";
+      pending.push({
+        kind: "document",
+        documentId: docId,
+        filename: safeFilename,
+        content,
+        caption: summary || name,
+        mimeType: "text/markdown",
+      });
+
       return {
         ok: true,
-        content: `Created document "${name}" (id: ${docId}). The user can find it in their Documents library.`,
+        content: `Created document "${name}" (id: ${docId}). It is saved in the user's Documents library and queued to be delivered on this channel.`,
         label: `Created document: ${name}`,
         detail: docId,
       };

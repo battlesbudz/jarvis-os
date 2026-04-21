@@ -91,6 +91,37 @@ export async function sendMessage(
   }
 }
 
+/**
+ * Sends a generated document (e.g. markdown brief) to a Telegram chat as a
+ * file attachment. Used by the agent's create_document tool so the user can
+ * actually receive the artifact in the channel they're chatting in.
+ */
+export async function sendTelegramDocument(
+  chatId: string,
+  filename: string,
+  content: string | Buffer,
+  caption?: string,
+  mimeType: string = 'text/markdown',
+): Promise<boolean> {
+  if (!BOT_TOKEN) return false;
+  try {
+    const buf = typeof content === 'string' ? Buffer.from(content, 'utf8') : content;
+    const form = new FormData();
+    form.append('chat_id', chatId);
+    if (caption) form.append('caption', caption.slice(0, 1024));
+    form.append('document', new Blob([buf], { type: mimeType }), filename);
+    const res = await fetch(`${BASE}/sendDocument`, { method: 'POST', body: form as any });
+    if (!res.ok) {
+      console.error('Telegram sendDocument error:', await res.text());
+      return false;
+    }
+    return true;
+  } catch (e: any) {
+    console.error('Telegram sendDocument threw:', e?.message || e);
+    return false;
+  }
+}
+
 export async function sendMessageWithButtons(
   chatId: string,
   text: string,

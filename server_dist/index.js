@@ -14,30 +14,38 @@ __export(schema_exports, {
   blockedTasks: () => blockedTasks,
   brainDumpInbox: () => brainDumpInbox,
   chatHistory: () => chatHistory,
+  chatgptImports: () => chatgptImports,
   commitments: () => commitments,
   completedCalendarIds: () => completedCalendarIds,
   completionHistory: () => completionHistory,
   energyCheckins: () => energyCheckins,
   goals: () => goals,
+  inboxItems: () => inboxItems,
+  inboxRules: () => inboxRules,
   insertUserSchema: () => insertUserSchema,
+  interactionLog: () => interactionLog,
   lifeContext: () => lifeContext,
   mobileAuthSessions: () => mobileAuthSessions,
+  momentumSessions: () => momentumSessions,
   morningVoiceNotes: () => morningVoiceNotes,
   planSnapshots: () => planSnapshots,
   plans: () => plans,
+  proactiveQuestionsSent: () => proactiveQuestionsSent,
+  proactiveScheduleLog: () => proactiveScheduleLog,
   stats: () => stats,
   telegramGroupMessages: () => telegramGroupMessages,
   telegramLinkCodes: () => telegramLinkCodes,
   telegramLinks: () => telegramLinks,
   timerSettings: () => timerSettings,
+  userDocuments: () => userDocuments,
   userMemories: () => userMemories,
   userPreferences: () => userPreferences,
   users: () => users
 });
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, jsonb, timestamp, date, primaryKey } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, jsonb, timestamp, date, primaryKey, integer } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
-var users, insertUserSchema, plans, goals, stats, brainDumpInbox, energyCheckins, chatHistory, lifeContext, timerSettings, userPreferences, completionHistory, blockedTasks, completedCalendarIds, planSnapshots, telegramLinks, telegramLinkCodes, telegramGroupMessages, commitments, userMemories, mobileAuthSessions, morningVoiceNotes;
+var users, insertUserSchema, plans, goals, stats, brainDumpInbox, energyCheckins, chatHistory, lifeContext, timerSettings, userPreferences, completionHistory, blockedTasks, completedCalendarIds, planSnapshots, telegramLinks, telegramLinkCodes, telegramGroupMessages, commitments, userMemories, proactiveQuestionsSent, inboxRules, inboxItems, mobileAuthSessions, userDocuments, chatgptImports, proactiveScheduleLog, momentumSessions, morningVoiceNotes, interactionLog;
 var init_schema = __esm({
   "shared/schema.ts"() {
     "use strict";
@@ -165,10 +173,80 @@ var init_schema = __esm({
       category: varchar("category").notNull().default("fact"),
       extractedAt: timestamp("extracted_at").defaultNow().notNull()
     });
+    proactiveQuestionsSent = pgTable("proactive_questions_sent", {
+      id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+      userId: varchar("user_id").notNull().references(() => users.id),
+      sourceType: varchar("source_type").notNull(),
+      sourceId: varchar("source_id").notNull(),
+      question: text("question").notNull(),
+      sentAt: timestamp("sent_at").defaultNow(),
+      answeredAt: timestamp("answered_at")
+    });
+    inboxRules = pgTable("inbox_rules", {
+      id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+      userId: varchar("user_id").notNull().references(() => users.id),
+      type: varchar("type").notNull(),
+      scope: varchar("scope").notNull(),
+      pattern: text("pattern").notNull(),
+      matchHints: jsonb("match_hints"),
+      source: varchar("source").notNull(),
+      matchCount: varchar("match_count").default("0"),
+      active: varchar("active").default("true"),
+      createdAt: timestamp("created_at").defaultNow(),
+      updatedAt: timestamp("updated_at").defaultNow()
+    });
+    inboxItems = pgTable("inbox_items", {
+      id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+      userId: varchar("user_id").notNull().references(() => users.id),
+      sourceType: varchar("source_type").notNull(),
+      sourceId: varchar("source_id").notNull(),
+      subject: text("subject"),
+      sender: text("sender"),
+      snippet: text("snippet"),
+      jarvisReason: text("jarvis_reason"),
+      suggestedActions: jsonb("suggested_actions"),
+      status: varchar("status").default("pending"),
+      dismissCount: varchar("dismiss_count").default("0"),
+      matchedRuleId: varchar("matched_rule_id"),
+      surfacedAt: timestamp("surfaced_at").defaultNow(),
+      actedAt: timestamp("acted_at")
+    });
     mobileAuthSessions = pgTable("mobile_auth_sessions", {
       sessionId: text("session_id").primaryKey(),
       token: text("token").notNull(),
       expiresAt: timestamp("expires_at").notNull()
+    });
+    userDocuments = pgTable("user_documents", {
+      id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+      userId: varchar("user_id").notNull().references(() => users.id),
+      name: text("name").notNull(),
+      mimeType: varchar("mime_type").notNull(),
+      sizeBytes: integer("size_bytes").notNull().default(0),
+      status: varchar("status").notNull().default("processing"),
+      extractedText: text("extracted_text"),
+      summary: text("summary"),
+      uploadedAt: timestamp("uploaded_at").defaultNow().notNull()
+    });
+    chatgptImports = pgTable("chatgpt_imports", {
+      userId: varchar("user_id").notNull().primaryKey().references(() => users.id),
+      importedAt: timestamp("imported_at").defaultNow().notNull(),
+      memoriesAdded: integer("memories_added").notNull().default(0)
+    });
+    proactiveScheduleLog = pgTable("proactive_schedule_log", {
+      id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+      userId: varchar("user_id").notNull().references(() => users.id),
+      messageType: varchar("message_type").notNull(),
+      sentDate: varchar("sent_date").notNull(),
+      sentAt: timestamp("sent_at").defaultNow()
+    });
+    momentumSessions = pgTable("momentum_sessions", {
+      userId: varchar("user_id").notNull().primaryKey().references(() => users.id),
+      currentStep: integer("current_step").notNull().default(0),
+      sessionDate: varchar("session_date").notNull().default(""),
+      completedSteps: integer("completed_steps").notNull().default(0),
+      steps: jsonb("steps").$type().notNull().default(sql`'[]'::jsonb`),
+      status: varchar("status").notNull().default("active"),
+      lastStepAt: timestamp("last_step_at")
     });
     morningVoiceNotes = pgTable("morning_voice_notes", {
       id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -180,6 +258,15 @@ var init_schema = __esm({
       blockers: jsonb("blockers").notNull().default(sql`'[]'::jsonb`),
       wins: jsonb("wins").notNull().default(sql`'[]'::jsonb`),
       intention: text("intention"),
+      createdAt: timestamp("created_at").defaultNow().notNull()
+    });
+    interactionLog = pgTable("interaction_log", {
+      id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+      userId: varchar("user_id").notNull().references(() => users.id),
+      channel: varchar("channel").notNull(),
+      direction: varchar("direction").notNull(),
+      content: text("content").notNull(),
+      label: varchar("label"),
       createdAt: timestamp("created_at").defaultNow().notNull()
     });
   }
@@ -392,6 +479,22 @@ async function ensureTablesExist() {
       )
     `);
     await db.execute(sql2`
+      CREATE TABLE IF NOT EXISTS proactive_questions_sent (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id VARCHAR NOT NULL REFERENCES users(id),
+        source_type VARCHAR NOT NULL,
+        source_id VARCHAR NOT NULL,
+        question TEXT NOT NULL,
+        sent_at TIMESTAMP DEFAULT NOW(),
+        answered_at TIMESTAMP
+      )
+    `);
+    await db.execute(sql2`
+      CREATE UNIQUE INDEX IF NOT EXISTS proactive_questions_user_source_idx
+        ON proactive_questions_sent (user_id, source_type, source_id)
+    `).catch(() => {
+    });
+    await db.execute(sql2`
       CREATE TABLE IF NOT EXISTS mobile_auth_sessions (
         session_id TEXT PRIMARY KEY,
         token TEXT NOT NULL,
@@ -420,6 +523,137 @@ async function ensureTablesExist() {
     });
     await db.execute(sql2`ALTER TABLE morning_voice_notes ADD CONSTRAINT morning_voice_notes_user_date_unique UNIQUE (user_id, recorded_at)`).catch(() => {
     });
+    await db.execute(sql2`
+      CREATE TABLE IF NOT EXISTS chatgpt_imports (
+        "userId" VARCHAR PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        "importedAt" TIMESTAMP DEFAULT NOW(),
+        "memoriesAdded" INTEGER DEFAULT 0
+      )
+    `);
+    await db.execute(sql2`
+      CREATE TABLE IF NOT EXISTS inbox_rules (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        "userId" VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        type VARCHAR NOT NULL DEFAULT 'suppress',
+        scope VARCHAR NOT NULL DEFAULT 'all',
+        pattern TEXT NOT NULL,
+        "matchHints" JSONB NOT NULL DEFAULT '{}'::jsonb,
+        active VARCHAR NOT NULL DEFAULT 'true',
+        "matchCount" VARCHAR NOT NULL DEFAULT '0',
+        "dismissCount" VARCHAR NOT NULL DEFAULT '0',
+        source VARCHAR NOT NULL DEFAULT 'user',
+        "createdAt" TIMESTAMP DEFAULT NOW(),
+        "updatedAt" TIMESTAMP DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql2`
+      CREATE TABLE IF NOT EXISTS inbox_items (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        "userId" VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        "sourceType" VARCHAR NOT NULL,
+        "sourceId" VARCHAR NOT NULL,
+        subject TEXT,
+        sender TEXT,
+        snippet TEXT,
+        "jarvisReason" TEXT,
+        "suggestedActions" JSONB NOT NULL DEFAULT '[]'::jsonb,
+        "matchedRuleId" VARCHAR,
+        status VARCHAR NOT NULL DEFAULT 'pending',
+        "actedAt" TIMESTAMP,
+        "dismissCount" VARCHAR NOT NULL DEFAULT '0',
+        "createdAt" TIMESTAMP DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql2`
+      CREATE TABLE IF NOT EXISTS proactive_schedule_log (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        message_type VARCHAR NOT NULL,
+        sent_date VARCHAR NOT NULL,
+        sent_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql2`
+      CREATE TABLE IF NOT EXISTS momentum_sessions (
+        user_id VARCHAR PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        current_step INTEGER NOT NULL DEFAULT 0,
+        session_date VARCHAR NOT NULL DEFAULT '',
+        completed_steps INTEGER NOT NULL DEFAULT 0,
+        steps JSONB NOT NULL DEFAULT '[]'::jsonb,
+        status VARCHAR NOT NULL DEFAULT 'active',
+        last_step_at TIMESTAMP
+      )
+    `);
+    await db.execute(sql2`
+      ALTER TABLE momentum_sessions
+        ADD COLUMN IF NOT EXISTS status VARCHAR NOT NULL DEFAULT 'active'
+    `);
+    await db.execute(sql2`
+      CREATE UNIQUE INDEX IF NOT EXISTS proactive_schedule_log_uniq
+        ON proactive_schedule_log (user_id, message_type, sent_date)
+    `);
+    await db.execute(sql2`
+      DO $$
+      BEGIN
+        IF EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_name = 'chatgpt_imports' AND column_name = 'userId'
+        ) THEN
+          ALTER TABLE chatgpt_imports RENAME COLUMN "userId" TO user_id;
+        END IF;
+      END$$
+    `);
+    await db.execute(sql2`
+      DO $$
+      BEGIN
+        IF EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_name = 'chatgpt_imports' AND column_name = 'importedAt'
+        ) THEN
+          ALTER TABLE chatgpt_imports RENAME COLUMN "importedAt" TO imported_at;
+        END IF;
+      END$$
+    `);
+    await db.execute(sql2`
+      DO $$
+      BEGIN
+        IF EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_name = 'chatgpt_imports' AND column_name = 'memoriesAdded'
+        ) THEN
+          ALTER TABLE chatgpt_imports RENAME COLUMN "memoriesAdded" TO memories_added;
+        END IF;
+      END$$
+    `);
+    await db.execute(sql2`
+      CREATE TABLE IF NOT EXISTS user_documents (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        mime_type VARCHAR NOT NULL,
+        size_bytes INTEGER NOT NULL DEFAULT 0,
+        status VARCHAR NOT NULL DEFAULT 'processing',
+        extracted_text TEXT,
+        summary TEXT,
+        uploaded_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql2`
+      CREATE TABLE IF NOT EXISTS interaction_log (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        channel VARCHAR NOT NULL,
+        direction VARCHAR NOT NULL,
+        content TEXT NOT NULL,
+        label VARCHAR,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql2`
+      CREATE INDEX IF NOT EXISTS interaction_log_user_created_idx
+        ON interaction_log (user_id, created_at DESC)
+    `).catch(() => {
+    });
     console.log("Database tables verified");
   } catch (error) {
     console.error("Failed to ensure database tables exist:", error);
@@ -438,6 +672,746 @@ var init_db = __esm({
       connectionString: process.env.DATABASE_URL
     });
     db = drizzle(pool, { schema: schema_exports });
+  }
+});
+
+// server/integrations/googleCalendar.ts
+import { google } from "googleapis";
+async function getProjectAccessToken() {
+  const hostname = process.env.REPLIT_CONNECTORS_HOSTNAME;
+  const xReplitToken = process.env.REPL_IDENTITY ? "repl " + process.env.REPL_IDENTITY : process.env.WEB_REPL_RENEWAL ? "depl " + process.env.WEB_REPL_RENEWAL : null;
+  if (!xReplitToken) throw new Error("X-Replit-Token not available");
+  const connectionSettings = await fetch(
+    "https://" + hostname + "/api/v2/connection?include_secrets=true&connector_names=google-calendar",
+    { headers: { Accept: "application/json", "X-Replit-Token": xReplitToken } }
+  ).then((res) => res.json()).then((data) => data.items?.[0]);
+  const accessToken = connectionSettings?.settings?.access_token || connectionSettings?.settings?.oauth?.credentials?.access_token;
+  if (!accessToken) throw new Error("Google Calendar not connected");
+  return accessToken;
+}
+function buildCalendarClient(accessToken) {
+  const oauth2Client = new google.auth.OAuth2();
+  oauth2Client.setCredentials({ access_token: accessToken });
+  return google.calendar({ version: "v3", auth: oauth2Client });
+}
+async function getGoogleCalendarEvents(date2, startTime, endTime, userAccessToken) {
+  const accessToken = userAccessToken ?? await getProjectAccessToken();
+  const calendar = buildCalendarClient(accessToken);
+  const startOfDay = startTime ? new Date(startTime) : /* @__PURE__ */ new Date(date2 + "T00:00:00Z");
+  const endOfDay = endTime ? new Date(endTime) : /* @__PURE__ */ new Date(date2 + "T23:59:59Z");
+  const calList = await calendar.calendarList.list({ minAccessRole: "reader" });
+  const calendarIds = (calList.data.items || []).filter((c) => !c.deleted).map((c) => c.id).filter(Boolean);
+  console.log(`[Calendar] Found ${calendarIds.length} calendar(s) for token. Querying ${startOfDay.toISOString()} \u2192 ${endOfDay.toISOString()}`);
+  const allEvents = [];
+  const seenIds = /* @__PURE__ */ new Set();
+  await Promise.all(
+    calendarIds.map(async (calId) => {
+      try {
+        const res = await calendar.events.list({
+          calendarId: calId,
+          timeMin: startOfDay.toISOString(),
+          timeMax: endOfDay.toISOString(),
+          singleEvents: true,
+          orderBy: "startTime",
+          maxResults: 20
+        });
+        const items = res.data.items || [];
+        console.log(`[Calendar] Cal "${calId}": ${items.length} event(s)`);
+        items.filter((e) => e.summary && !seenIds.has(e.id || "")).forEach((e) => {
+          seenIds.add(e.id || "");
+          allEvents.push({
+            id: e.id || String(Math.random()),
+            title: e.summary || "Event",
+            start: e.start?.dateTime || e.start?.date || date2,
+            end: e.end?.dateTime || e.end?.date || date2,
+            description: e.description || void 0,
+            location: e.location || void 0
+          });
+        });
+      } catch (err) {
+        console.error(`[Calendar] Error fetching events for cal "${calId}":`, err?.message || err);
+      }
+    })
+  );
+  allEvents.sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime());
+  return allEvents;
+}
+async function checkGoogleCalendarConnection(userAccessToken) {
+  try {
+    if (userAccessToken) return true;
+    await getProjectAccessToken();
+    return true;
+  } catch {
+    return false;
+  }
+}
+var init_googleCalendar = __esm({
+  "server/integrations/googleCalendar.ts"() {
+    "use strict";
+  }
+});
+
+// server/integrations/outlook.ts
+var outlook_exports = {};
+__export(outlook_exports, {
+  checkOutlookConnection: () => checkOutlookConnection,
+  getOutlookCalendarEvents: () => getOutlookCalendarEvents
+});
+import { Client } from "@microsoft/microsoft-graph-client";
+function ensureUtc(dateTime) {
+  if (/Z$|[+-]\d{2}:\d{2}$/.test(dateTime)) return dateTime;
+  return dateTime + "Z";
+}
+async function getProjectAccessToken2() {
+  const hostname = process.env.REPLIT_CONNECTORS_HOSTNAME;
+  const xReplitToken = process.env.REPL_IDENTITY ? "repl " + process.env.REPL_IDENTITY : process.env.WEB_REPL_RENEWAL ? "depl " + process.env.WEB_REPL_RENEWAL : null;
+  if (!xReplitToken) throw new Error("X-Replit-Token not available");
+  const connectionSettings = await fetch(
+    "https://" + hostname + "/api/v2/connection?include_secrets=true&connector_names=outlook",
+    { headers: { Accept: "application/json", "X-Replit-Token": xReplitToken } }
+  ).then((res) => res.json()).then((data) => data.items?.[0]);
+  const accessToken = connectionSettings?.settings?.access_token || connectionSettings?.settings?.oauth?.credentials?.access_token;
+  if (!accessToken) throw new Error("Outlook not connected");
+  return accessToken;
+}
+function buildOutlookClient(accessToken) {
+  return Client.initWithMiddleware({
+    authProvider: { getAccessToken: async () => accessToken }
+  });
+}
+async function getOutlookCalendarEvents(date2, startTime, endTime, userAccessToken) {
+  const accessToken = userAccessToken ?? await getProjectAccessToken2();
+  const client = buildOutlookClient(accessToken);
+  const startOfDay = startTime ? new Date(startTime).toISOString() : (/* @__PURE__ */ new Date(date2 + "T00:00:00")).toISOString();
+  const endOfDay = endTime ? new Date(endTime).toISOString() : (/* @__PURE__ */ new Date(date2 + "T23:59:59")).toISOString();
+  const res = await client.api("/me/calendarView").query({ startDateTime: startOfDay, endDateTime: endOfDay }).header("Prefer", 'outlook.timezone="UTC"').select("id,subject,start,end,body,location").orderby("start/dateTime").top(20).get();
+  const items = res.value || [];
+  return items.map((e) => ({
+    id: e.id || String(Math.random()),
+    title: e.subject || "Event",
+    start: e.start?.dateTime ? ensureUtc(e.start.dateTime) : date2,
+    end: e.end?.dateTime ? ensureUtc(e.end.dateTime) : date2,
+    description: e.body?.content ? e.body.content.replace(/<[^>]+>/g, "").trim().slice(0, 120) : void 0,
+    location: e.location?.displayName || void 0
+  }));
+}
+async function checkOutlookConnection(userAccessToken) {
+  try {
+    if (userAccessToken) return true;
+    await getProjectAccessToken2();
+    return true;
+  } catch {
+    return false;
+  }
+}
+var init_outlook = __esm({
+  "server/integrations/outlook.ts"() {
+    "use strict";
+  }
+});
+
+// server/integrations/gmailClient.ts
+import { google as google2 } from "googleapis";
+async function getProjectAccessToken3() {
+  const hostname = process.env.REPLIT_CONNECTORS_HOSTNAME;
+  const xReplitToken = process.env.REPL_IDENTITY ? "repl " + process.env.REPL_IDENTITY : process.env.WEB_REPL_RENEWAL ? "depl " + process.env.WEB_REPL_RENEWAL : null;
+  if (!xReplitToken) throw new Error("X-Replit-Token not available");
+  const connectionSettings = await fetch(
+    "https://" + hostname + "/api/v2/connection?include_secrets=true&connector_names=google-mail",
+    { headers: { Accept: "application/json", "X-Replit-Token": xReplitToken } }
+  ).then((res) => res.json()).then((data) => data.items?.[0]);
+  const accessToken = connectionSettings?.settings?.access_token || connectionSettings?.settings?.oauth?.credentials?.access_token;
+  if (!accessToken) throw new Error("Gmail not connected");
+  return accessToken;
+}
+async function getGmailClient(userAccessToken) {
+  const accessToken = userAccessToken ?? await getProjectAccessToken3();
+  const oauth2Client = new google2.auth.OAuth2();
+  oauth2Client.setCredentials({ access_token: accessToken });
+  return google2.gmail({ version: "v1", auth: oauth2Client });
+}
+var init_gmailClient = __esm({
+  "server/integrations/gmailClient.ts"() {
+    "use strict";
+  }
+});
+
+// server/integrations/gmail.ts
+import { Buffer as Buffer2 } from "node:buffer";
+async function createGmailDraft(userAccessToken, to, subject, body) {
+  const gmail = await getGmailClient(userAccessToken);
+  const messageParts = [
+    `To: ${to}`,
+    `Subject: ${subject}`,
+    'Content-Type: text/plain; charset="UTF-8"',
+    "",
+    body
+  ].join("\r\n");
+  const encodedMessage = Buffer2.from(messageParts).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  const res = await gmail.users.drafts.create({
+    userId: "me",
+    requestBody: {
+      message: {
+        raw: encodedMessage
+      }
+    }
+  });
+  const draftId = res.data.id || "";
+  const messageId = res.data.message?.id || "";
+  const gmailUrl = `https://mail.google.com/mail/#drafts/${messageId}`;
+  return { draftId, gmailUrl };
+}
+async function getEmailsSince(sinceMs, userAccessToken) {
+  try {
+    const gmail = await getGmailClient(userAccessToken);
+    const sinceSeconds = Math.floor(sinceMs / 1e3);
+    const listRes = await gmail.users.messages.list({
+      userId: "me",
+      q: `in:inbox -from:me after:${sinceSeconds}`,
+      maxResults: 20
+    });
+    const messages = listRes.data.messages || [];
+    if (messages.length === 0) return [];
+    const results = [];
+    const BATCH_SIZE = 10;
+    for (let i = 0; i < messages.length; i += BATCH_SIZE) {
+      const batch = messages.slice(i, i + BATCH_SIZE);
+      const batchResults = await Promise.all(
+        batch.map(async (msg) => {
+          if (!msg.id) return null;
+          try {
+            const detail = await gmail.users.messages.get({
+              userId: "me",
+              id: msg.id,
+              format: "metadata",
+              metadataHeaders: ["Subject", "From", "Date"]
+            });
+            const headers = detail.data.payload?.headers || [];
+            const subject = headers.find((h) => h.name === "Subject")?.value || "(no subject)";
+            const from = headers.find((h) => h.name === "From")?.value || "unknown";
+            const snippet = (detail.data.snippet || "").slice(0, 200);
+            const receivedAt = parseInt(detail.data.internalDate || "0", 10);
+            const labelIds = detail.data.labelIds || [];
+            if (labelIds.includes("SENT") || labelIds.includes("DRAFT")) return null;
+            return { messageId: msg.id, subject, from, snippet, receivedAt };
+          } catch {
+            return null;
+          }
+        })
+      );
+      for (const r of batchResults) {
+        if (r) results.push(r);
+      }
+    }
+    return results;
+  } catch (err) {
+    console.error("[Gmail] getEmailsSince error:", err);
+    return [];
+  }
+}
+async function checkGmailConnection(userAccessToken) {
+  try {
+    await getGmailClient(userAccessToken);
+    return true;
+  } catch {
+    return false;
+  }
+}
+async function getRecentEmailCommitments(days = 7, userAccessToken) {
+  try {
+    const gmail = await getGmailClient(userAccessToken);
+    const afterDate = /* @__PURE__ */ new Date();
+    afterDate.setDate(afterDate.getDate() - days);
+    const afterDateStr = afterDate.toISOString().slice(0, 10).replace(/-/g, "/");
+    const listRes = await gmail.users.messages.list({
+      userId: "me",
+      q: `after:${afterDateStr}`,
+      maxResults: 100
+    });
+    const messages = (listRes.data.messages || []).slice(0, 100);
+    const results = [];
+    const BATCH_SIZE = 10;
+    for (let i = 0; i < messages.length; i += BATCH_SIZE) {
+      const batch = messages.slice(i, i + BATCH_SIZE);
+      const batchResults = await Promise.all(
+        batch.map(async (msg) => {
+          if (!msg.id) return null;
+          try {
+            const detail = await gmail.users.messages.get({
+              userId: "me",
+              id: msg.id,
+              format: "metadata",
+              metadataHeaders: ["Subject", "Date", "From"]
+            });
+            const headers = detail.data.payload?.headers || [];
+            const subject = headers.find((h) => h.name === "Subject")?.value || "(no subject)";
+            const date2 = headers.find((h) => h.name === "Date")?.value || "";
+            const from = headers.find((h) => h.name === "From")?.value || "";
+            const snippet = (detail.data.snippet || "").slice(0, 150);
+            const labelIds = detail.data.labelIds || [];
+            const labels = labelIds.map((id) => LABEL_NAMES[id] || id);
+            return { id: msg.id, subject, snippet, date: date2, from, labels };
+          } catch {
+            return null;
+          }
+        })
+      );
+      for (const r of batchResults) {
+        if (r) results.push(r);
+      }
+    }
+    return results;
+  } catch (err) {
+    console.error("[Gmail] getRecentEmailCommitments error:", err);
+    return [];
+  }
+}
+async function getStarredFollowUpEmails(userAccessToken, minAgeDays = 3) {
+  try {
+    const gmail = await getGmailClient(userAccessToken);
+    const fourteenDaysAgo = Math.floor((Date.now() - 14 * 24 * 60 * 60 * 1e3) / 1e3);
+    const listRes = await gmail.users.messages.list({
+      userId: "me",
+      q: `in:inbox (is:starred OR is:important) -from:me after:${fourteenDaysAgo}`,
+      maxResults: 20
+    });
+    const messages = listRes.data.messages || [];
+    if (messages.length === 0) return [];
+    const results = [];
+    const nowMs = Date.now();
+    const minAgeMs = minAgeDays * 24 * 60 * 60 * 1e3;
+    const BATCH_SIZE = 10;
+    for (let i = 0; i < messages.length; i += BATCH_SIZE) {
+      const batch = messages.slice(i, i + BATCH_SIZE);
+      const batchResults = await Promise.all(
+        batch.map(async (msg) => {
+          if (!msg.id) return null;
+          try {
+            const detail = await gmail.users.messages.get({
+              userId: "me",
+              id: msg.id,
+              format: "metadata",
+              metadataHeaders: ["Subject", "From", "Date"]
+            });
+            const headers = detail.data.payload?.headers || [];
+            const subject = headers.find((h) => h.name === "Subject")?.value || "(no subject)";
+            const from = headers.find((h) => h.name === "From")?.value || "unknown";
+            const snippet = (detail.data.snippet || "").slice(0, 200);
+            const receivedAt = parseInt(detail.data.internalDate || "0", 10);
+            const labelIds = detail.data.labelIds || [];
+            if (!labelIds.includes("INBOX")) return null;
+            if (labelIds.includes("SENT") || labelIds.includes("DRAFT")) return null;
+            const ageMs = nowMs - receivedAt;
+            if (ageMs < minAgeMs) return null;
+            const ageDays = Math.floor(ageMs / (24 * 60 * 60 * 1e3));
+            return { messageId: msg.id, subject, from, snippet, receivedAt, ageDays };
+          } catch {
+            return null;
+          }
+        })
+      );
+      for (const r of batchResults) {
+        if (r) results.push(r);
+      }
+    }
+    results.sort((a, b) => a.receivedAt - b.receivedAt);
+    return results;
+  } catch (err) {
+    console.error("[Gmail] getStarredFollowUpEmails error:", err);
+    return [];
+  }
+}
+async function gmailModifyMessage(messageId, addLabelIds, removeLabelIds, userAccessToken) {
+  const gmail = await getGmailClient(userAccessToken);
+  await gmail.users.messages.modify({
+    userId: "me",
+    id: messageId,
+    requestBody: {
+      addLabelIds: addLabelIds.length > 0 ? addLabelIds : void 0,
+      removeLabelIds: removeLabelIds.length > 0 ? removeLabelIds : void 0
+    }
+  });
+}
+var LABEL_NAMES;
+var init_gmail = __esm({
+  "server/integrations/gmail.ts"() {
+    "use strict";
+    init_gmailClient();
+    LABEL_NAMES = {
+      STARRED: "\u2B50 Starred",
+      INBOX: "Inbox",
+      IMPORTANT: "Important",
+      CATEGORY_PERSONAL: "Personal",
+      CATEGORY_UPDATES: "Updates",
+      CATEGORY_PROMOTIONS: "Promotions",
+      CATEGORY_SOCIAL: "Social",
+      CATEGORY_FORUMS: "Forums",
+      SENT: "Sent",
+      DRAFT: "Draft"
+    };
+  }
+});
+
+// server/integrations/telegram.ts
+var telegram_exports = {};
+__export(telegram_exports, {
+  answerCallbackQuery: () => answerCallbackQuery,
+  deleteWebhook: () => deleteWebhook,
+  downloadTelegramFile: () => downloadTelegramFile,
+  downloadTelegramFileBuffer: () => downloadTelegramFileBuffer,
+  getUpdates: () => getUpdates,
+  getWebhookSecret: () => getWebhookSecret,
+  isTelegramConfigured: () => isTelegramConfigured,
+  logTelegramStatus: () => logTelegramStatus,
+  sendMessage: () => sendMessage,
+  sendMessageWithButtons: () => sendMessageWithButtons,
+  setWebhook: () => setWebhook,
+  verifyWebhookSecret: () => verifyWebhookSecret
+});
+import crypto2 from "crypto";
+function generateWebhookSecret() {
+  if (process.env.TELEGRAM_WEBHOOK_SECRET) return process.env.TELEGRAM_WEBHOOK_SECRET;
+  const secret = crypto2.randomBytes(32).toString("hex");
+  process.env.TELEGRAM_WEBHOOK_SECRET = secret;
+  return secret;
+}
+function getWebhookSecret() {
+  if (!webhookSecret) {
+    webhookSecret = generateWebhookSecret();
+  }
+  return webhookSecret;
+}
+function verifyWebhookSecret(headerValue) {
+  if (!webhookSecret) return false;
+  return headerValue === webhookSecret;
+}
+async function sendMessage(chatId, text2, replyMarkup) {
+  if (!BOT_TOKEN) return;
+  const body = { chat_id: chatId, text: text2 };
+  if (replyMarkup) body.reply_markup = replyMarkup;
+  const res = await fetch(`${BASE}/sendMessage`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) {
+    const errBody = await res.text();
+    console.error("Telegram sendMessage error:", errBody);
+  }
+}
+async function sendMessageWithButtons(chatId, text2, buttons) {
+  return sendMessage(chatId, text2, {
+    inline_keyboard: [buttons]
+  });
+}
+async function answerCallbackQuery(callbackQueryId, text2) {
+  if (!BOT_TOKEN) return;
+  try {
+    await fetch(`${BASE}/answerCallbackQuery`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ callback_query_id: callbackQueryId, text: text2 || "" })
+    });
+  } catch {
+  }
+}
+async function setWebhook(webhookUrl) {
+  if (!BOT_TOKEN) return;
+  const res = await fetch(`${BASE}/setWebhook`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      url: webhookUrl,
+      allowed_updates: ["message", "my_chat_member", "callback_query"]
+    })
+  });
+  const data = await res.json();
+  if (data.ok) {
+    console.log("[Telegram] Webhook set successfully:", webhookUrl);
+  } else {
+    throw new Error(`Failed to set Telegram webhook: ${JSON.stringify(data)}`);
+  }
+}
+function isTelegramConfigured() {
+  return !!BOT_TOKEN;
+}
+async function deleteWebhook() {
+  if (!BOT_TOKEN) return;
+  try {
+    await fetch(`${BASE}/deleteWebhook`, { method: "POST" });
+  } catch {
+  }
+}
+async function downloadTelegramFile(fileId) {
+  if (!BOT_TOKEN) return null;
+  try {
+    const infoRes = await fetch(`${BASE}/getFile?file_id=${fileId}`);
+    if (!infoRes.ok) return null;
+    const info = await infoRes.json();
+    if (!info.ok || !info.result?.file_path) return null;
+    const fileUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${info.result.file_path}`;
+    const fileRes = await fetch(fileUrl);
+    if (!fileRes.ok) return null;
+    const buffer = await fileRes.arrayBuffer();
+    const base64 = Buffer.from(buffer).toString("base64");
+    const ext = info.result.file_path.split(".").pop()?.toLowerCase() || "jpg";
+    const mime = ext === "png" ? "image/png" : ext === "webp" ? "image/webp" : "image/jpeg";
+    return `data:${mime};base64,${base64}`;
+  } catch {
+    return null;
+  }
+}
+async function downloadTelegramFileBuffer(fileId) {
+  if (!BOT_TOKEN) return null;
+  try {
+    const infoRes = await fetch(`${BASE}/getFile?file_id=${fileId}`);
+    if (!infoRes.ok) return null;
+    const info = await infoRes.json();
+    if (!info.ok || !info.result?.file_path) return null;
+    const fileUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${info.result.file_path}`;
+    const fileRes = await fetch(fileUrl);
+    if (!fileRes.ok) return null;
+    const arrayBuf = await fileRes.arrayBuffer();
+    const ext = info.result.file_path.split(".").pop()?.toLowerCase() || "ogg";
+    return { buffer: Buffer.from(arrayBuf), ext };
+  } catch {
+    return null;
+  }
+}
+async function getUpdates(offset) {
+  if (!BOT_TOKEN) return [];
+  try {
+    const res = await fetch(
+      `${BASE}/getUpdates?offset=${offset}&timeout=5&limit=100&allowed_updates=["message","my_chat_member","callback_query"]`
+    );
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.ok ? data.result || [] : [];
+  } catch {
+    return [];
+  }
+}
+function logTelegramStatus() {
+  if (BOT_TOKEN) {
+    console.log("Telegram: configured \u2713");
+  } else {
+    console.log("Telegram: not configured (set TELEGRAM_BOT_TOKEN in Replit Secrets)");
+  }
+}
+var BOT_TOKEN, BASE, webhookSecret;
+var init_telegram = __esm({
+  "server/integrations/telegram.ts"() {
+    "use strict";
+    BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+    BASE = `https://api.telegram.org/bot${BOT_TOKEN}`;
+    webhookSecret = null;
+  }
+});
+
+// server/momentumCoach.ts
+import { eq as eq5, and as and2, lt as lt2 } from "drizzle-orm";
+import OpenAI3 from "openai";
+async function generateMomentumSteps(_userId, context) {
+  const incompleteTasks = (context.tasks || []).filter((t) => !t.completed);
+  const taskList = incompleteTasks.slice(0, 5).map((t) => t.title).join(", ") || "no specific tasks planned";
+  const goalsText = (context.goals || []).slice(0, 3).map((g) => `${g.title} (${g.current || 0}/${g.target})`).join(", ") || "none set";
+  const streak = context.stats?.streak || 0;
+  const completedToday = (context.tasks || []).filter((t) => t.completed).length;
+  const prompt = `You are designing a 4-step momentum sequence for someone with ADHD who has task aversion right now.
+
+Their situation:
+- Today's tasks: ${taskList}
+- Goals: ${goalsText}
+- Streak: ${streak} days
+- Completed today: ${completedToday} tasks
+- Date: ${context.dateKey}
+
+Design 4 escalating micro-tasks. Step 1 must be TINY \u2014 a single physical action that takes under 60 seconds and removes all friction (e.g., "Just open your email and glance at the subject lines \u2014 don't reply to anything"). Each step is slightly larger than the last.
+
+Each step must use a specific ADHD tactic:
+- Step 1: Implementation intention ("When you sit down, just... [specific physical action]")
+- Step 2: Identity framing ("You're someone who... one quick thing to prove it")
+- Step 3: Social contrast or streak leverage ("Yesterday/this week you did X... let's match it with one thing")
+- Step 4: Momentum statement ("You're already rolling \u2014 just one more and you can call it a win")
+
+Respond with a JSON array of 4 objects: [{ "text": "message to send", "tactic": "implementation_intention|identity_framing|social_contrast|momentum" }, ...]
+Keep each text under 2 sentences. Plain text only \u2014 no markdown, no asterisks.`;
+  try {
+    const resp = await openai3.chat.completions.create({
+      model: "gpt-5-mini",
+      messages: [
+        { role: "system", content: "You are an ADHD productivity coach. Respond with valid JSON only." },
+        { role: "user", content: prompt }
+      ],
+      max_completion_tokens: 800
+    });
+    const raw = resp.choices[0]?.message?.content || "[]";
+    const cleaned = raw.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+    const parsed = JSON.parse(cleaned);
+    if (!Array.isArray(parsed) || parsed.length < 4) throw new Error("bad shape");
+    const xpPerStep = [5, 10, 15, 20];
+    return parsed.slice(0, 4).map((s, i) => ({
+      text: typeof s.text === "string" ? s.text : String(s.text),
+      tactic: typeof s.tactic === "string" ? s.tactic : "momentum",
+      xp: xpPerStep[i]
+    }));
+  } catch (err) {
+    console.error("[Momentum] Failed to generate steps:", err);
+    return [
+      { text: "When you sit down right now, just open your task list \u2014 don't do anything yet, just look.", tactic: "implementation_intention", xp: 5 },
+      { text: "You're someone who follows through. Pick the smallest task on that list and spend just 5 minutes on it.", tactic: "identity_framing", xp: 10 },
+      { text: "You've already done 2 things \u2014 that's momentum. One more task and you'll have a real streak going.", tactic: "social_contrast", xp: 15 },
+      { text: "You're rolling now. One final thing and you can close your laptop knowing today counted.", tactic: "momentum", xp: 20 }
+    ];
+  }
+}
+async function startMomentumSession(userId, chatId, context) {
+  const steps = await generateMomentumSteps(userId, context);
+  await db.insert(momentumSessions).values({
+    userId,
+    currentStep: 0,
+    sessionDate: context.dateKey,
+    completedSteps: 0,
+    steps,
+    status: "active",
+    lastStepAt: /* @__PURE__ */ new Date()
+  }).onConflictDoUpdate({
+    target: momentumSessions.userId,
+    set: {
+      currentStep: 0,
+      sessionDate: context.dateKey,
+      completedSteps: 0,
+      steps,
+      status: "active",
+      lastStepAt: /* @__PURE__ */ new Date()
+    }
+  });
+  const step = steps[0];
+  await sendMessageWithButtons(chatId, `Jarvis here. ${step.text}`, [
+    { text: "\u2705 Done", callback_data: `momentum_done:${userId}:0` }
+  ]);
+  console.log(`[Momentum] Session started for user ${userId}, step 0`);
+}
+async function handleMomentumDone(userId, chatId, stepIndex) {
+  const rows = await db.select().from(momentumSessions).where(eq5(momentumSessions.userId, userId)).limit(1);
+  if (rows.length === 0) return;
+  const session = rows[0];
+  if (session.status === "expired") {
+    await sendMessage(chatId, "That session already expired \u2014 start fresh tomorrow.");
+    return;
+  }
+  const steps = session.steps;
+  if (stepIndex >= steps.length) return;
+  if (session.currentStep !== stepIndex) return;
+  const completedStep = steps[stepIndex];
+  const xpEarned = completedStep.xp;
+  await awardXp(userId, xpEarned);
+  const nextStep = stepIndex + 1;
+  const newCompletedSteps = (session.completedSteps || 0) + 1;
+  const isFinished = nextStep >= steps.length;
+  await db.update(momentumSessions).set({
+    currentStep: nextStep,
+    completedSteps: newCompletedSteps,
+    status: isFinished ? "completed" : "active",
+    lastStepAt: /* @__PURE__ */ new Date()
+  }).where(eq5(momentumSessions.userId, userId));
+  const ackMessages = {
+    implementation_intention: `Done \u2014 +${xpEarned} XP. That first step is always the hardest.`,
+    identity_framing: `Locked in \u2014 +${xpEarned} XP. That's exactly who you are.`,
+    social_contrast: `Nice \u2014 +${xpEarned} XP. Momentum is real now.`,
+    momentum: `That's it \u2014 +${xpEarned} XP. Today counts.`
+  };
+  const ack = ackMessages[completedStep.tactic] ?? `+${xpEarned} XP. Keep going.`;
+  await sendMessage(chatId, ack);
+  if (isFinished) {
+    const totalXp = steps.reduce((sum, s) => sum + s.xp, 0);
+    await sendMessage(chatId, `Full sequence complete \u2014 ${totalXp} XP earned today. That's a win.`);
+    return;
+  }
+  setTimeout(async () => {
+    try {
+      const freshRows = await db.select().from(momentumSessions).where(eq5(momentumSessions.userId, userId)).limit(1);
+      if (freshRows.length === 0 || freshRows[0].currentStep !== nextStep) return;
+      const freshSession = freshRows[0];
+      if (freshSession.status !== "active") return;
+      const lastStepTime = freshSession.lastStepAt ? new Date(freshSession.lastStepAt) : /* @__PURE__ */ new Date();
+      if (Date.now() - lastStepTime.getTime() > SESSION_TIMEOUT_MS) {
+        await expireSession(userId, chatId);
+        return;
+      }
+      const nextStepData = freshSession.steps[nextStep];
+      await sendMessageWithButtons(chatId, nextStepData.text, [
+        { text: "\u2705 Done", callback_data: `momentum_done:${userId}:${nextStep}` }
+      ]);
+      console.log(`[Momentum] Sent step ${nextStep} to user ${userId}`);
+    } catch (err) {
+      console.error("[Momentum] Error sending next step:", err);
+    }
+  }, STEP_DELAY_MS);
+}
+async function expireSession(userId, chatId) {
+  await db.update(momentumSessions).set({ status: "expired" }).where(eq5(momentumSessions.userId, userId));
+  await sendMessage(chatId, "No worries \u2014 we'll pick it back up tomorrow.");
+  console.log(`[Momentum] Session expired for user ${userId}`);
+}
+async function awardXp(userId, amount) {
+  try {
+    const rows = await db.select().from(stats).where(eq5(stats.userId, userId)).limit(1);
+    if (rows.length === 0) return;
+    const data = rows[0].data ?? {};
+    const currentXp = Number(data.xp ?? 0);
+    await db.update(stats).set({ data: { ...data, xp: currentXp + amount }, updatedAt: /* @__PURE__ */ new Date() }).where(eq5(stats.userId, userId));
+  } catch (err) {
+    console.error("[Momentum] Failed to award XP:", err);
+  }
+}
+async function hasMomentumSessionToday(userId, dateKey) {
+  const rows = await db.select({ sessionDate: momentumSessions.sessionDate }).from(momentumSessions).where(eq5(momentumSessions.userId, userId)).limit(1);
+  return rows.length > 0 && rows[0].sessionDate === dateKey;
+}
+async function expireStaleMomentumSessions() {
+  try {
+    const cutoff = new Date(Date.now() - SESSION_TIMEOUT_MS);
+    const staleSessions = await db.select().from(momentumSessions).where(
+      and2(
+        eq5(momentumSessions.status, "active"),
+        lt2(momentumSessions.lastStepAt, cutoff)
+      )
+    );
+    for (const session of staleSessions) {
+      const links = await db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq5(telegramLinks.userId, session.userId)).limit(1);
+      await db.update(momentumSessions).set({ status: "expired" }).where(eq5(momentumSessions.userId, session.userId));
+      if (links.length > 0) {
+        await sendMessage(links[0].chatId, "No worries \u2014 we'll pick it back up tomorrow.").catch(() => {
+        });
+      }
+      console.log(`[Momentum] Sweep expired session for user ${session.userId}`);
+    }
+  } catch (err) {
+    console.error("[Momentum] Error in expiry sweep:", err);
+  }
+}
+function startMomentumExpiryScheduler() {
+  setInterval(() => {
+    expireStaleMomentumSessions().catch(
+      (err) => console.error("[Momentum] Expiry scheduler error:", err)
+    );
+  }, 5 * 60 * 1e3);
+  console.log("[Momentum] Expiry scheduler started (5-min interval)");
+}
+var openai3, SESSION_TIMEOUT_MS, STEP_DELAY_MS;
+var init_momentumCoach = __esm({
+  "server/momentumCoach.ts"() {
+    "use strict";
+    init_db();
+    init_schema();
+    init_telegram();
+    openai3 = new OpenAI3({
+      apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
+      baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL
+    });
+    SESSION_TIMEOUT_MS = 30 * 60 * 1e3;
+    STEP_DELAY_MS = 3 * 60 * 1e3;
   }
 });
 
@@ -639,13 +1613,949 @@ var init_userTokenStore = __esm({
   }
 });
 
+// server/interactionLog.ts
+import { eq as eq6, desc as desc2, gte, and as and3 } from "drizzle-orm";
+async function logInteraction(userId, channel, direction, content, label) {
+  try {
+    await db.insert(interactionLog).values({
+      userId,
+      channel,
+      direction,
+      content,
+      label: label || null
+    });
+  } catch (err) {
+    console.error("[InteractionLog] Failed to log interaction:", err);
+  }
+}
+async function getRecentInteractions(userId, limit = 20, withinHours = 48) {
+  try {
+    const since = new Date(Date.now() - withinHours * 60 * 60 * 1e3);
+    return await db.select().from(interactionLog).where(
+      and3(
+        eq6(interactionLog.userId, userId),
+        gte(interactionLog.createdAt, since)
+      )
+    ).orderBy(desc2(interactionLog.createdAt)).limit(limit);
+  } catch (err) {
+    console.error("[InteractionLog] Failed to fetch interactions:", err);
+    return [];
+  }
+}
+function formatInteractionTimeline(interactions) {
+  if (interactions.length === 0) return "";
+  const sorted = [...interactions].sort(
+    (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+  );
+  const lines = sorted.map((row) => {
+    const ts = new Date(row.createdAt).toLocaleTimeString("en-US", {
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true
+    });
+    const date2 = new Date(row.createdAt).toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric"
+    });
+    let channelLabel;
+    if (row.channel === "app_chat") {
+      channelLabel = "App";
+    } else if (row.channel === "telegram") {
+      channelLabel = "Telegram";
+    } else {
+      channelLabel = row.label ? `Notification \u2013 ${row.label}` : "Notification";
+    }
+    const who = row.direction === "inbound" ? "User" : `Jarvis (${channelLabel})`;
+    const labelTag = row.channel !== "notification" && row.label ? ` [${row.label}]` : "";
+    const displayContent = row.content.length > DISPLAY_TRUNCATE_LENGTH ? row.content.slice(0, DISPLAY_TRUNCATE_LENGTH) + "\u2026" : row.content;
+    return `[${date2} ${ts}] ${who}${labelTag}: ${displayContent}`;
+  });
+  return `
+## Recent Cross-Channel Activity (last 48 hours)
+This shows everything that happened between you and the user across all channels \u2014 app conversations, Telegram messages, and any notifications you sent. Use this to understand the full context before responding.
+${lines.join("\n")}`;
+}
+var DISPLAY_TRUNCATE_LENGTH;
+var init_interactionLog = __esm({
+  "server/interactionLog.ts"() {
+    "use strict";
+    init_db();
+    init_schema();
+    DISPLAY_TRUNCATE_LENGTH = 1200;
+  }
+});
+
+// server/agent/harness.ts
+import OpenAI4 from "openai";
+function toOpenAITool(t) {
+  return {
+    type: "function",
+    function: {
+      name: t.name,
+      description: t.description,
+      parameters: t.parameters
+    }
+  };
+}
+async function runAgent(opts) {
+  const {
+    model = "gpt-5-mini",
+    tools,
+    context,
+    maxTurns = 6,
+    maxCompletionTokens = 2e3,
+    toolChoice = "auto"
+  } = opts;
+  const channel = context.channel || "Agent";
+  const toolMap = new Map(tools.map((t) => [t.name, t]));
+  const openAITools = tools.length > 0 ? tools.map(toOpenAITool) : void 0;
+  const messages = [
+    ...opts.messages
+  ];
+  const toolCalls = [];
+  let lastFinish = null;
+  let reply = "";
+  for (let turn = 0; turn < maxTurns; turn++) {
+    const completion = await openai4.chat.completions.create({
+      model,
+      messages,
+      tools: openAITools,
+      tool_choice: openAITools ? toolChoice : void 0,
+      max_completion_tokens: maxCompletionTokens
+    });
+    const choice = completion.choices[0];
+    lastFinish = choice?.finish_reason || null;
+    const msg = choice?.message;
+    console.log(`[${channel}/Agent] turn=${turn} finish=${lastFinish} tool_calls=${msg?.tool_calls?.length || 0}`);
+    if (!msg) break;
+    if (msg.tool_calls && msg.tool_calls.length > 0) {
+      messages.push(msg);
+      const results = await Promise.all(
+        msg.tool_calls.map(async (tc) => {
+          const start = Date.now();
+          const tool = toolMap.get(tc.function.name);
+          let parsedArgs = {};
+          try {
+            parsedArgs = JSON.parse(tc.function.arguments || "{}");
+          } catch (e) {
+            parsedArgs = {};
+          }
+          if (!tool) {
+            const result = {
+              ok: false,
+              content: `Unknown tool: ${tc.function.name}`,
+              label: "Unknown tool"
+            };
+            toolCalls.push({ name: tc.function.name, args: parsedArgs, result, durationMs: Date.now() - start });
+            return { tc, content: result.content };
+          }
+          try {
+            const result = await tool.execute(parsedArgs, context);
+            toolCalls.push({ name: tc.function.name, args: parsedArgs, result, durationMs: Date.now() - start });
+            console.log(`[${channel}/Agent] tool=${tc.function.name} ok=${result.ok} ${result.label ? `label="${result.label}"` : ""} ${Date.now() - start}ms`);
+            return { tc, content: result.content };
+          } catch (err) {
+            const result = {
+              ok: false,
+              content: `Tool ${tc.function.name} threw: ${err?.message || String(err)}`,
+              label: "Tool error",
+              detail: String(err?.message || err)
+            };
+            toolCalls.push({ name: tc.function.name, args: parsedArgs, result, durationMs: Date.now() - start });
+            console.error(`[${channel}/Agent] tool=${tc.function.name} threw:`, err);
+            return { tc, content: result.content };
+          }
+        })
+      );
+      for (const { tc, content } of results) {
+        messages.push({
+          role: "tool",
+          tool_call_id: tc.id,
+          content
+        });
+      }
+      continue;
+    }
+    reply = msg.content || "";
+    return { reply, turns: turn + 1, toolCalls, finishReason: lastFinish, messages };
+  }
+  console.warn(`[${channel}/Agent] hit maxTurns=${maxTurns}, forcing final answer`);
+  try {
+    const final = await openai4.chat.completions.create({
+      model,
+      messages,
+      max_completion_tokens: maxCompletionTokens
+    });
+    reply = final.choices[0]?.message?.content || "";
+    lastFinish = final.choices[0]?.finish_reason || lastFinish;
+  } catch (err) {
+    console.error(`[${channel}/Agent] final-answer call failed:`, err);
+  }
+  return { reply, turns: maxTurns, toolCalls, finishReason: lastFinish, messages };
+}
+var openai4;
+var init_harness = __esm({
+  "server/agent/harness.ts"() {
+    "use strict";
+    openai4 = new OpenAI4({
+      apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
+      baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL
+    });
+  }
+});
+
+// server/integrations/search.ts
+async function tavilySearch(query, maxResults = 5) {
+  const apiKey = process.env.TAVILY_API_KEY;
+  if (!apiKey) throw new Error("TAVILY_API_KEY not set");
+  const res = await fetch("https://api.tavily.com/search", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      api_key: apiKey,
+      query,
+      search_depth: "basic",
+      max_results: maxResults,
+      include_answer: true
+    })
+  });
+  if (!res.ok) {
+    const text2 = await res.text();
+    throw new Error(`Tavily error ${res.status}: ${text2}`);
+  }
+  return res.json();
+}
+function formatSearchResults(result) {
+  const parts = [];
+  if (result.answer) parts.push(`Summary: ${result.answer}`);
+  for (const r of result.results) {
+    parts.push(`- ${r.title} (${r.url})
+  ${r.content.slice(0, 300)}`);
+  }
+  return parts.join("\n\n");
+}
+var init_search = __esm({
+  "server/integrations/search.ts"() {
+    "use strict";
+  }
+});
+
+// server/agent/tools/webSearch.ts
+var webSearchTool, researchTopicTool;
+var init_webSearch = __esm({
+  "server/agent/tools/webSearch.ts"() {
+    "use strict";
+    init_search();
+    webSearchTool = {
+      name: "search_web",
+      description: "Search the web for current information \u2014 news, weather, prices, recent events, product info, anything requiring up-to-date data. Returns a short answer plus the top results.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "What to search for" }
+        },
+        required: ["query"]
+      },
+      async execute(args, ctx) {
+        if (!process.env.TAVILY_API_KEY) {
+          return { ok: false, content: "Web search is not configured.", label: "Search unavailable" };
+        }
+        try {
+          const results = await tavilySearch(args.query);
+          const formatted = formatSearchResults(results);
+          console.log(`[${ctx.channel || "Agent"}] search_web "${args.query}" \u2192 ${results.results?.length || 0} results`);
+          return {
+            ok: true,
+            content: formatted || "No results found.",
+            label: `Web search: ${args.query}`,
+            detail: formatted
+          };
+        } catch (err) {
+          const msg = String(err?.message || err);
+          const label = msg.includes("401") || msg.includes("403") ? "Search auth failed" : msg.includes("429") ? "Search rate limited" : msg.includes("timeout") || msg.includes("ETIMEDOUT") ? "Search timed out" : "Search failed";
+          return { ok: false, content: `${label}: ${msg}`, label, detail: msg };
+        }
+      }
+    };
+    researchTopicTool = {
+      name: "research_topic",
+      description: "Do deeper research on a topic by running 2-4 related web searches and synthesizing the findings. Use this when the user wants a briefing, summary, or 'look into X for me' \u2014 not for quick lookups (use search_web for those). Returns aggregated raw results which you should summarize for the user.",
+      parameters: {
+        type: "object",
+        properties: {
+          topic: {
+            type: "string",
+            description: "The main topic or question to research"
+          },
+          sub_queries: {
+            type: "array",
+            items: { type: "string" },
+            description: "2-4 specific search queries that together cover the topic. If omitted, the topic itself is searched."
+          }
+        },
+        required: ["topic"]
+      },
+      async execute(args, ctx) {
+        if (!process.env.TAVILY_API_KEY) {
+          return { ok: false, content: "Research is not available \u2014 web search is not configured.", label: "Research unavailable" };
+        }
+        const queries = Array.isArray(args.sub_queries) && args.sub_queries.length > 0 ? args.sub_queries.slice(0, 4).map(String) : [String(args.topic)];
+        try {
+          const results = await Promise.all(
+            queries.map(
+              (q) => tavilySearch(q, 4).catch((err) => ({ answer: `(search failed: ${err?.message || err})`, results: [] }))
+            )
+          );
+          const sections = queries.map((q, i) => {
+            const formatted = formatSearchResults(results[i]);
+            return `### Query: ${q}
+${formatted || "(no results)"}`;
+          });
+          const aggregated = `Research findings on: ${args.topic}
+
+` + sections.join("\n\n");
+          console.log(`[${ctx.channel || "Agent"}] research_topic "${args.topic}" \u2014 ${queries.length} sub-queries`);
+          return {
+            ok: true,
+            content: aggregated,
+            label: `Researched: ${args.topic}`,
+            detail: `Ran ${queries.length} search${queries.length === 1 ? "" : "es"}`
+          };
+        } catch (err) {
+          return {
+            ok: false,
+            content: `Research failed: ${err?.message || err}`,
+            label: "Research failed",
+            detail: String(err?.message || err)
+          };
+        }
+      }
+    };
+  }
+});
+
+// server/agent/tools/gmailActions.ts
+var ACTION_MAP, gmailActionTool;
+var init_gmailActions = __esm({
+  "server/agent/tools/gmailActions.ts"() {
+    "use strict";
+    init_gmail();
+    ACTION_MAP = {
+      star: { add: ["STARRED"], remove: [] },
+      unstar: { add: [], remove: ["STARRED"] },
+      archive: { add: [], remove: ["INBOX"] },
+      mark_read: { add: [], remove: ["UNREAD"] },
+      mark_unread: { add: ["UNREAD"], remove: [] },
+      spam: { add: ["SPAM"], remove: ["INBOX"] },
+      trash: { add: ["TRASH"], remove: ["INBOX"] }
+    };
+    gmailActionTool = {
+      name: "gmail_action",
+      description: "Perform an action on a Gmail email shown in the system context. Use the message id from [id:...] in the email list. Valid actions: star, unstar, archive, mark_read, mark_unread, spam, trash.",
+      parameters: {
+        type: "object",
+        properties: {
+          message_id: { type: "string", description: "Gmail message ID from [id:...]" },
+          action: {
+            type: "string",
+            enum: Object.keys(ACTION_MAP),
+            description: "The action to perform"
+          }
+        },
+        required: ["message_id", "action"]
+      },
+      async execute(args, ctx) {
+        if (!ctx.googleAccessToken) {
+          return {
+            ok: false,
+            content: "Gmail is not connected. Ask the user to connect their Google account first.",
+            label: "Gmail not connected"
+          };
+        }
+        const knownIds = ctx.state?.gmailMessageIds || [];
+        if (knownIds.length > 0 && !knownIds.includes(args.message_id)) {
+          return {
+            ok: false,
+            content: `Message ID "${args.message_id}" is not in the current email list. Use a valid id from [id:...] in the system context.`,
+            label: "Unknown message id"
+          };
+        }
+        const mapping = ACTION_MAP[args.action];
+        if (!mapping) {
+          return {
+            ok: false,
+            content: `Unknown action: ${args.action}`,
+            label: "Unknown gmail action"
+          };
+        }
+        try {
+          await gmailModifyMessage(args.message_id, mapping.add, mapping.remove, ctx.googleAccessToken);
+          return {
+            ok: true,
+            content: `Successfully performed "${args.action}" on the email.`,
+            label: `Email ${args.action}`,
+            detail: args.message_id
+          };
+        } catch (err) {
+          return {
+            ok: false,
+            content: `Gmail action failed: ${err?.message || err}`,
+            label: "Gmail action failed",
+            detail: String(err?.message || err)
+          };
+        }
+      }
+    };
+  }
+});
+
+// server/agent/tools/manageTasks.ts
+import { and as and4, eq as eq7, desc as desc3 } from "drizzle-orm";
+async function loadPatternHelpers() {
+  const mod = await Promise.resolve().then(() => (init_telegramRoutes(), telegramRoutes_exports));
+  return {
+    getPlansForDateRange: mod.getPlansForDateRange,
+    computePatternInsights: mod.computePatternInsights
+  };
+}
+var manageTasksTool;
+var init_manageTasks = __esm({
+  "server/agent/tools/manageTasks.ts"() {
+    "use strict";
+    init_db();
+    init_schema();
+    manageTasksTool = {
+      name: "manage_tasks",
+      description: "Manage today's plan and the user's commitments. Use this to add tasks to today's plan, add commitments, complete commitments, list current items, or analyze 30-day behavioral patterns.",
+      parameters: {
+        type: "object",
+        properties: {
+          action: {
+            type: "string",
+            enum: [
+              "add_plan_task",
+              "add_commitment",
+              "complete_commitment",
+              "list_tasks",
+              "analyze_patterns"
+            ]
+          },
+          title: { type: "string", description: "Task title (add_plan_task)" },
+          content: { type: "string", description: "Commitment content (add_commitment)" },
+          due_date: { type: "string", description: "YYYY-MM-DD (add_commitment, optional)" },
+          commitment_id: { type: "string", description: "ID from [id:...] (complete_commitment)" }
+        },
+        required: ["action"]
+      },
+      async execute(args, ctx) {
+        const userId = ctx.userId;
+        const dateKey = ctx.state?.dateKey || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+        try {
+          switch (args.action) {
+            case "add_plan_task": {
+              if (!args.title) {
+                return { ok: false, content: "Error: title is required for add_plan_task", label: "Missing title" };
+              }
+              const todayPlan = ctx.state?.todayPlan || null;
+              const tasks = todayPlan?.tasks || [];
+              const newTask = {
+                id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+                title: args.title,
+                completed: false
+              };
+              tasks.push(newTask);
+              const planData = todayPlan ? { ...todayPlan, tasks } : { tasks };
+              await db.insert(plans).values({ userId, date: dateKey, data: planData }).onConflictDoUpdate({
+                target: [plans.userId, plans.date],
+                set: { data: planData, updatedAt: /* @__PURE__ */ new Date() }
+              });
+              if (ctx.state) ctx.state.todayPlan = planData;
+              return {
+                ok: true,
+                content: `Added "${args.title}" to today's plan. Today now has ${tasks.length} task(s).`,
+                label: "Task added",
+                detail: args.title
+              };
+            }
+            case "add_commitment": {
+              if (!args.content) {
+                return { ok: false, content: "Error: content is required for add_commitment", label: "Missing content" };
+              }
+              await db.insert(commitments).values({
+                userId,
+                content: args.content,
+                dueDate: args.due_date || null,
+                sourceMessage: `Added via ${ctx.channel || "agent"}`
+              });
+              return {
+                ok: true,
+                content: `Added commitment: "${args.content}"${args.due_date ? ` (due ${args.due_date})` : ""}`,
+                label: "Commitment added",
+                detail: args.content
+              };
+            }
+            case "complete_commitment": {
+              if (!args.commitment_id) {
+                return { ok: false, content: "Error: commitment_id is required for complete_commitment", label: "Missing id" };
+              }
+              const updated = await db.update(commitments).set({ status: "done", resolvedAt: /* @__PURE__ */ new Date() }).where(
+                and4(
+                  eq7(commitments.id, args.commitment_id),
+                  eq7(commitments.userId, userId),
+                  eq7(commitments.status, "pending")
+                )
+              ).returning({ id: commitments.id });
+              if (updated.length === 0) {
+                return {
+                  ok: false,
+                  content: `No pending commitment found with id "${args.commitment_id}".`,
+                  label: "Commitment not found"
+                };
+              }
+              return {
+                ok: true,
+                content: `Marked commitment as done (id: ${args.commitment_id}).`,
+                label: "Commitment completed",
+                detail: args.commitment_id
+              };
+            }
+            case "list_tasks": {
+              const todayPlan = ctx.state?.todayPlan || null;
+              const planTasks = todayPlan?.tasks || [];
+              const pendingCommitments = await db.select().from(commitments).where(and4(eq7(commitments.userId, userId), eq7(commitments.status, "pending"))).orderBy(desc3(commitments.extractedAt)).limit(10);
+              let listing = "";
+              listing += planTasks.length > 0 ? "Today's Plan:\n" + planTasks.map((t) => `- ${t.completed ? "\u2705" : "\u2B1C"} ${t.title}`).join("\n") : "Today's Plan: No tasks yet.";
+              listing += "\n\n";
+              listing += pendingCommitments.length > 0 ? "Open Commitments:\n" + pendingCommitments.map((c) => `- [id:${c.id}] "${c.content}"${c.dueDate ? ` (due ${c.dueDate})` : ""}`).join("\n") : "Open Commitments: None.";
+              return { ok: true, content: listing, label: "Listed tasks" };
+            }
+            case "analyze_patterns": {
+              const helpers = await loadPatternHelpers().catch(() => null);
+              if (!helpers || !helpers.getPlansForDateRange || !helpers.computePatternInsights) {
+                return { ok: false, content: "Pattern analysis temporarily unavailable.", label: "Pattern analysis unavailable" };
+              }
+              const today = /* @__PURE__ */ new Date();
+              const startDate = new Date(today);
+              startDate.setDate(startDate.getDate() - 30);
+              const start = startDate.toISOString().slice(0, 10);
+              const end = today.toISOString().slice(0, 10);
+              const plans2 = await helpers.getPlansForDateRange(userId, start, end);
+              if (plans2.length < 3) {
+                return { ok: true, content: "Not enough data yet for pattern analysis (need at least a few days).", label: "Not enough data" };
+              }
+              const allCommitments = await db.select().from(commitments).where(eq7(commitments.userId, userId)).limit(200);
+              const scopedCommitments = allCommitments.filter(
+                (c) => c.dueDate && c.dueDate >= start && c.dueDate <= end || c.extractedAt && c.extractedAt >= new Date(start) && c.extractedAt <= /* @__PURE__ */ new Date(end + "T23:59:59") || c.resolvedAt && c.resolvedAt >= new Date(start) && c.resolvedAt <= /* @__PURE__ */ new Date(end + "T23:59:59")
+              );
+              const patternData = helpers.computePatternInsights(plans2, scopedCommitments);
+              return {
+                ok: true,
+                content: `Behavioral pattern data from the last 30 days. Analyze it and give the user 3-5 sharp, specific observations naming each pattern with numbers.
+
+${patternData}`,
+                label: "Pattern analysis"
+              };
+            }
+            default:
+              return { ok: false, content: `Unknown action: ${args.action}`, label: "Unknown action" };
+          }
+        } catch (err) {
+          return {
+            ok: false,
+            content: `manage_tasks failed: ${err?.message || err}`,
+            label: "manage_tasks failed",
+            detail: String(err?.message || err)
+          };
+        }
+      }
+    };
+  }
+});
+
+// server/agent/tools/documents.ts
+import { eq as eq8, and as and5, desc as desc4 } from "drizzle-orm";
+var createDocumentTool, listDocumentsTool, readDocumentTool;
+var init_documents = __esm({
+  "server/agent/tools/documents.ts"() {
+    "use strict";
+    init_db();
+    init_schema();
+    createDocumentTool = {
+      name: "create_document",
+      description: "Create a new text/markdown document in the user's GamePlan document library. Use this to draft notes, briefs, summaries, plans, or any longer-form content the user asks for. The user can review, edit, and reference these later. Returns the new document id.",
+      parameters: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "Short descriptive title for the document" },
+          content: { type: "string", description: "Full document body in markdown" },
+          summary: { type: "string", description: "One-sentence summary (optional but recommended)" }
+        },
+        required: ["name", "content"]
+      },
+      async execute(args, ctx) {
+        const name = String(args.name || "").trim().slice(0, 200);
+        const content = String(args.content || "");
+        const summary = args.summary ? String(args.summary).slice(0, 500) : null;
+        if (!name) return { ok: false, content: "Document name is required.", label: "Missing name" };
+        if (!content.trim()) return { ok: false, content: "Document content cannot be empty.", label: "Empty content" };
+        try {
+          const inserted = await db.insert(userDocuments).values({
+            userId: ctx.userId,
+            name,
+            mimeType: "text/markdown",
+            sizeBytes: Buffer.byteLength(content, "utf8"),
+            status: "ready",
+            extractedText: content,
+            summary
+          }).returning({ id: userDocuments.id });
+          const docId = inserted[0]?.id || "";
+          console.log(`[${ctx.channel || "Agent"}] create_document id=${docId} name="${name}" bytes=${Buffer.byteLength(content, "utf8")}`);
+          return {
+            ok: true,
+            content: `Created document "${name}" (id: ${docId}). The user can find it in their Documents library.`,
+            label: `Created document: ${name}`,
+            detail: docId
+          };
+        } catch (err) {
+          return {
+            ok: false,
+            content: `Failed to create document: ${err?.message || err}`,
+            label: "Document create failed",
+            detail: String(err?.message || err)
+          };
+        }
+      }
+    };
+    listDocumentsTool = {
+      name: "list_documents",
+      description: "List the user's recent documents (name, id, summary, uploaded date). Use this when the user asks 'what documents do I have' or before reading or updating a specific one.",
+      parameters: {
+        type: "object",
+        properties: {
+          limit: { type: "number", description: "Max documents to return (default 20)" }
+        }
+      },
+      async execute(args, ctx) {
+        const limit = Math.min(Math.max(Number(args.limit) || 20, 1), 50);
+        try {
+          const rows = await db.select({
+            id: userDocuments.id,
+            name: userDocuments.name,
+            summary: userDocuments.summary,
+            uploadedAt: userDocuments.uploadedAt,
+            status: userDocuments.status,
+            sizeBytes: userDocuments.sizeBytes
+          }).from(userDocuments).where(eq8(userDocuments.userId, ctx.userId)).orderBy(desc4(userDocuments.uploadedAt)).limit(limit);
+          if (rows.length === 0) {
+            return { ok: true, content: "The user has no documents yet.", label: "No documents" };
+          }
+          const formatted = rows.map((r) => `- [id:${r.id}] "${r.name}" \u2014 ${r.summary || "(no summary)"} (${r.status}, ${r.sizeBytes} bytes)`).join("\n");
+          return {
+            ok: true,
+            content: `User has ${rows.length} document(s):
+${formatted}`,
+            label: `Listed ${rows.length} document(s)`
+          };
+        } catch (err) {
+          return { ok: false, content: `Failed to list documents: ${err?.message || err}`, label: "List failed" };
+        }
+      }
+    };
+    readDocumentTool = {
+      name: "read_document",
+      description: "Read the full content of a document by id. Use this when the user references a specific document or you need to update one.",
+      parameters: {
+        type: "object",
+        properties: {
+          document_id: { type: "string", description: "Document ID from [id:...] in list_documents output" }
+        },
+        required: ["document_id"]
+      },
+      async execute(args, ctx) {
+        try {
+          const rows = await db.select().from(userDocuments).where(and5(eq8(userDocuments.userId, ctx.userId), eq8(userDocuments.id, String(args.document_id)))).limit(1);
+          if (rows.length === 0) {
+            return { ok: false, content: `No document found with id "${args.document_id}".`, label: "Document not found" };
+          }
+          const doc = rows[0];
+          const body = (doc.extractedText || "").slice(0, 12e3);
+          return {
+            ok: true,
+            content: `Document "${doc.name}" (id: ${doc.id}, ${doc.mimeType}):
+
+${body}`,
+            label: `Read document: ${doc.name}`
+          };
+        } catch (err) {
+          return { ok: false, content: `Failed to read document: ${err?.message || err}`, label: "Read failed" };
+        }
+      }
+    };
+  }
+});
+
+// server/integrations/googleDrive.ts
+import { google as google3 } from "googleapis";
+import { Readable } from "node:stream";
+function buildDriveClient(accessToken) {
+  const oauth2Client = new google3.auth.OAuth2();
+  oauth2Client.setCredentials({ access_token: accessToken });
+  return google3.drive({ version: "v3", auth: oauth2Client });
+}
+async function ensureJarvisFolder(accessToken) {
+  const drive = buildDriveClient(accessToken);
+  const list = await drive.files.list({
+    q: `mimeType='application/vnd.google-apps.folder' and name='${JARVIS_FOLDER_NAME}' and trashed=false`,
+    fields: "files(id,name)",
+    spaces: "drive",
+    pageSize: 1
+  });
+  const existing = list.data.files?.[0];
+  if (existing?.id) return existing.id;
+  const created = await drive.files.create({
+    requestBody: {
+      name: JARVIS_FOLDER_NAME,
+      mimeType: "application/vnd.google-apps.folder"
+    },
+    fields: "id"
+  });
+  if (!created.data.id) throw new Error("Failed to create Jarvis folder");
+  return created.data.id;
+}
+async function createDriveTextFile(accessToken, name, body, options = {}) {
+  const drive = buildDriveClient(accessToken);
+  const folderId = await ensureJarvisFolder(accessToken);
+  const sourceMime = options.mimeType || "text/markdown";
+  const targetMime = options.convertToDoc ? "application/vnd.google-apps.document" : sourceMime;
+  const res = await drive.files.create({
+    requestBody: {
+      name,
+      mimeType: targetMime,
+      parents: [folderId]
+    },
+    media: {
+      mimeType: sourceMime,
+      body: Readable.from([body])
+    },
+    fields: "id,name,mimeType,webViewLink",
+    supportsAllDrives: false
+  });
+  if (!res.data.id) throw new Error("Drive file create returned no id");
+  return {
+    fileId: res.data.id,
+    name: res.data.name || name,
+    mimeType: res.data.mimeType || targetMime,
+    webViewLink: res.data.webViewLink || `https://drive.google.com/file/d/${res.data.id}/view`
+  };
+}
+async function listJarvisDriveFiles(accessToken, limit = 25) {
+  const drive = buildDriveClient(accessToken);
+  const folderId = await ensureJarvisFolder(accessToken);
+  const list = await drive.files.list({
+    q: `'${folderId}' in parents and trashed=false`,
+    fields: "files(id,name,mimeType,modifiedTime,webViewLink)",
+    orderBy: "modifiedTime desc",
+    pageSize: Math.min(limit, 100)
+  });
+  return (list.data.files || []).map((f) => ({
+    id: f.id || "",
+    name: f.name || "",
+    mimeType: f.mimeType || "",
+    modifiedTime: f.modifiedTime || void 0,
+    webViewLink: f.webViewLink || void 0
+  }));
+}
+async function readDriveFile(accessToken, fileId) {
+  const drive = buildDriveClient(accessToken);
+  const meta = await drive.files.get({
+    fileId,
+    fields: "id,name,mimeType"
+  });
+  const mimeType = meta.data.mimeType || "text/plain";
+  const name = meta.data.name || "file";
+  if (mimeType.startsWith("application/vnd.google-apps.")) {
+    const exportMime = mimeType === "application/vnd.google-apps.document" ? "text/plain" : mimeType === "application/vnd.google-apps.spreadsheet" ? "text/csv" : "text/plain";
+    const res2 = await drive.files.export(
+      { fileId, mimeType: exportMime },
+      { responseType: "text" }
+    );
+    return { name, mimeType, content: String(res2.data || "") };
+  }
+  const res = await drive.files.get(
+    { fileId, alt: "media" },
+    { responseType: "text" }
+  );
+  return { name, mimeType, content: String(res.data || "") };
+}
+var JARVIS_FOLDER_NAME;
+var init_googleDrive = __esm({
+  "server/integrations/googleDrive.ts"() {
+    "use strict";
+    JARVIS_FOLDER_NAME = "Jarvis";
+  }
+});
+
+// server/agent/tools/googleDriveTools.ts
+function noDrive() {
+  return {
+    ok: false,
+    content: "Google Drive is not available \u2014 the user needs to reconnect their Google account from the Profile screen so Jarvis can request the drive.file scope.",
+    label: "Drive not connected"
+  };
+}
+var driveCreateFileTool, driveListFilesTool, driveReadFileTool;
+var init_googleDriveTools = __esm({
+  "server/agent/tools/googleDriveTools.ts"() {
+    "use strict";
+    init_googleDrive();
+    driveCreateFileTool = {
+      name: "drive_create_file",
+      description: "Create a new file in the user's Google Drive inside the 'Jarvis' folder (created automatically). Use this for content the user wants saved to Drive \u2014 meeting notes, briefs, plans, etc. Set as_google_doc=true to save as an editable Google Doc; otherwise it's saved as markdown.",
+      parameters: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "File name (without extension; one will be added if needed)" },
+          content: { type: "string", description: "File body text/markdown" },
+          as_google_doc: {
+            type: "boolean",
+            description: "If true, convert to an editable Google Doc. If false (default), save as a .md file."
+          }
+        },
+        required: ["name", "content"]
+      },
+      async execute(args, ctx) {
+        if (!ctx.googleAccessToken) return noDrive();
+        let name = String(args.name || "").trim().slice(0, 200) || "Untitled";
+        const asDoc = !!args.as_google_doc;
+        if (!asDoc && !/\.[a-zA-Z0-9]{1,8}$/.test(name)) name += ".md";
+        try {
+          const file = await createDriveTextFile(ctx.googleAccessToken, name, String(args.content || ""), {
+            convertToDoc: asDoc
+          });
+          console.log(`[${ctx.channel || "Agent"}] drive_create_file name="${name}" asDoc=${asDoc} id=${file.fileId}`);
+          return {
+            ok: true,
+            content: `Saved to Google Drive: "${file.name}" \u2014 ${file.webViewLink}`,
+            label: `Saved to Drive: ${file.name}`,
+            detail: file.webViewLink
+          };
+        } catch (err) {
+          const msg = String(err?.message || err);
+          const insufficientScope = /insufficient|scope|permission/i.test(msg);
+          return {
+            ok: false,
+            content: insufficientScope ? "Drive write failed \u2014 the user's Google connection is missing the drive.file scope. Ask them to reconnect Google in the Profile screen." : `Drive write failed: ${msg}`,
+            label: "Drive write failed",
+            detail: msg
+          };
+        }
+      }
+    };
+    driveListFilesTool = {
+      name: "drive_list_files",
+      description: "List files Jarvis has previously saved to the user's Google Drive (in the Jarvis folder).",
+      parameters: {
+        type: "object",
+        properties: {
+          limit: { type: "number", description: "Max files to return (default 20)" }
+        }
+      },
+      async execute(args, ctx) {
+        if (!ctx.googleAccessToken) return noDrive();
+        try {
+          const files = await listJarvisDriveFiles(ctx.googleAccessToken, Number(args.limit) || 20);
+          if (files.length === 0) {
+            return { ok: true, content: "No files in the Jarvis Drive folder yet.", label: "Drive: 0 files" };
+          }
+          const formatted = files.map((f) => `- [id:${f.id}] "${f.name}" (${f.mimeType})${f.modifiedTime ? ` modified ${f.modifiedTime}` : ""}`).join("\n");
+          return {
+            ok: true,
+            content: `Files in Jarvis Drive folder:
+${formatted}`,
+            label: `Drive: ${files.length} files`
+          };
+        } catch (err) {
+          return { ok: false, content: `Drive list failed: ${err?.message || err}`, label: "Drive list failed" };
+        }
+      }
+    };
+    driveReadFileTool = {
+      name: "drive_read_file",
+      description: "Read the contents of a file from the Jarvis folder in the user's Google Drive by id. Returns up to ~12k characters.",
+      parameters: {
+        type: "object",
+        properties: {
+          file_id: { type: "string", description: "Drive file ID from drive_list_files" }
+        },
+        required: ["file_id"]
+      },
+      async execute(args, ctx) {
+        if (!ctx.googleAccessToken) return noDrive();
+        try {
+          const f = await readDriveFile(ctx.googleAccessToken, String(args.file_id));
+          const body = f.content.slice(0, 12e3);
+          return {
+            ok: true,
+            content: `File "${f.name}" (${f.mimeType}):
+
+${body}`,
+            label: `Read Drive file: ${f.name}`
+          };
+        } catch (err) {
+          return { ok: false, content: `Drive read failed: ${err?.message || err}`, label: "Drive read failed" };
+        }
+      }
+    };
+  }
+});
+
+// server/agent/tools/index.ts
+function telegramCoachTools(opts) {
+  const base = [
+    webSearchTool,
+    researchTopicTool,
+    manageTasksTool,
+    createDocumentTool,
+    listDocumentsTool,
+    readDocumentTool
+  ];
+  if (opts.hasGoogle) {
+    base.push(gmailActionTool, driveCreateFileTool, driveListFilesTool, driveReadFileTool);
+  }
+  return base;
+}
+var ALL_TOOLS, TOOL_INDEX;
+var init_tools = __esm({
+  "server/agent/tools/index.ts"() {
+    "use strict";
+    init_webSearch();
+    init_gmailActions();
+    init_manageTasks();
+    init_documents();
+    init_googleDriveTools();
+    ALL_TOOLS = [
+      webSearchTool,
+      researchTopicTool,
+      gmailActionTool,
+      manageTasksTool,
+      createDocumentTool,
+      listDocumentsTool,
+      readDocumentTool,
+      driveCreateFileTool,
+      driveListFilesTool,
+      driveReadFileTool
+    ];
+    TOOL_INDEX = new Map(ALL_TOOLS.map((t) => [t.name, t]));
+  }
+});
+
 // server/replit_integrations/audio/client.ts
 var client_exports = {};
 __export(client_exports, {
   convertToWav: () => convertToWav,
   detectAudioFormat: () => detectAudioFormat,
   ensureCompatibleFormat: () => ensureCompatibleFormat,
-  openai: () => openai2,
+  openai: () => openai5,
   speechToText: () => speechToText,
   speechToTextStream: () => speechToTextStream,
   textToSpeech: () => textToSpeech,
@@ -653,7 +2563,7 @@ __export(client_exports, {
   voiceChat: () => voiceChat,
   voiceChatStream: () => voiceChatStream
 });
-import OpenAI2, { toFile } from "openai";
+import OpenAI5, { toFile } from "openai";
 import { Buffer as Buffer3 } from "node:buffer";
 import { spawn } from "child_process";
 import { writeFile, unlink, readFile } from "fs/promises";
@@ -729,7 +2639,7 @@ async function ensureCompatibleFormat(audioBuffer) {
 }
 async function voiceChat(audioBuffer, voice = "alloy", inputFormat = "wav", outputFormat = "mp3") {
   const audioBase64 = audioBuffer.toString("base64");
-  const response = await openai2.chat.completions.create({
+  const response = await openai5.chat.completions.create({
     model: "gpt-audio",
     modalities: ["text", "audio"],
     audio: { voice, format: outputFormat },
@@ -750,7 +2660,7 @@ async function voiceChat(audioBuffer, voice = "alloy", inputFormat = "wav", outp
 }
 async function voiceChatStream(audioBuffer, voice = "alloy", inputFormat = "wav") {
   const audioBase64 = audioBuffer.toString("base64");
-  const stream = await openai2.chat.completions.create({
+  const stream = await openai5.chat.completions.create({
     model: "gpt-audio",
     modalities: ["text", "audio"],
     audio: { voice, format: "pcm16" },
@@ -775,21 +2685,21 @@ async function voiceChatStream(audioBuffer, voice = "alloy", inputFormat = "wav"
     }
   })();
 }
-async function textToSpeech(text2, voice = "alloy", format = "wav") {
-  const response = await openai2.chat.completions.create({
+async function textToSpeech(text2, voice = "alloy", format = "mp3") {
+  const response = await openai5.chat.completions.create({
     model: "gpt-audio",
     modalities: ["text", "audio"],
     audio: { voice, format },
     messages: [
-      { role: "system", content: "You are an assistant that performs text-to-speech." },
-      { role: "user", content: `Repeat the following text verbatim: ${text2}` }
+      { role: "system", content: "You are an assistant that performs text-to-speech. Repeat the user's text exactly as written, with no additions, commentary, or modifications." },
+      { role: "user", content: text2 }
     ]
   });
   const audioData = response.choices[0]?.message?.audio?.data ?? "";
   return Buffer3.from(audioData, "base64");
 }
 async function textToSpeechStream(text2, voice = "alloy") {
-  const stream = await openai2.chat.completions.create({
+  const stream = await openai5.chat.completions.create({
     model: "gpt-audio",
     modalities: ["text", "audio"],
     audio: { voice, format: "pcm16" },
@@ -810,16 +2720,18 @@ async function textToSpeechStream(text2, voice = "alloy") {
   })();
 }
 async function speechToText(audioBuffer, format = "wav") {
-  const file = await toFile(audioBuffer, `audio.${format}`);
-  const response = await openai2.audio.transcriptions.create({
+  const ext = format === "unknown" ? "wav" : format;
+  const file = await toFile(audioBuffer, `audio.${ext}`);
+  const response = await openai5.audio.transcriptions.create({
     file,
     model: "gpt-4o-mini-transcribe"
   });
   return response.text;
 }
 async function speechToTextStream(audioBuffer, format = "wav") {
-  const file = await toFile(audioBuffer, `audio.${format}`);
-  const stream = await openai2.audio.transcriptions.create({
+  const ext = format === "unknown" ? "wav" : format;
+  const file = await toFile(audioBuffer, `audio.${ext}`);
+  const stream = await openai5.audio.transcriptions.create({
     file,
     model: "gpt-4o-mini-transcribe",
     stream: true
@@ -832,1461 +2744,218 @@ async function speechToTextStream(audioBuffer, format = "wav") {
     }
   })();
 }
-var openai2;
+var openai5;
 var init_client = __esm({
   "server/replit_integrations/audio/client.ts"() {
     "use strict";
-    openai2 = new OpenAI2({
+    openai5 = new OpenAI5({
       apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
       baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL
     });
   }
 });
 
-// server/index.ts
-import express from "express";
-
-// server/routes.ts
-init_db();
-init_schema();
-init_schema();
-import { createServer } from "node:http";
-import OpenAI4 from "openai";
-import { eq as eq5, and as and3, desc as desc2, sql as sql6, gte as gte2 } from "drizzle-orm";
-
-// server/ai.ts
-import OpenAI from "openai";
-var openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL
+// server/inboxRules.ts
+var inboxRules_exports = {};
+__export(inboxRules_exports, {
+  createRuleFromText: () => createRuleFromText,
+  getUserInboxRules: () => getUserInboxRules,
+  learnFromDismissal: () => learnFromDismissal,
+  matchItemAgainstRules: () => matchItemAgainstRules
 });
-async function resizeTask(req) {
-  const { taskTitle, taskDescription, detailLevel, direction, history } = req;
-  const completedTasks = history.filter((h) => h.completed).map((h) => h.title);
-  const skippedTasks = history.filter((h) => !h.completed).map((h) => h.title);
-  const historyContext = completedTasks.length > 0 || skippedTasks.length > 0 ? `
-Recent history for context:
-- Tasks they completed recently: ${completedTasks.slice(0, 5).join(", ") || "none"}
-- Tasks they left undone recently: ${skippedTasks.slice(0, 5).join(", ") || "none"}
-Use this to calibrate step size. If they tend to skip tasks, make steps more approachable and concrete. If they complete everything easily, steps can be slightly more ambitious.` : "";
-  let directionPrompt;
-  if (direction === "smaller") {
-    const stepCounts = {
-      1: "2-3 broad steps",
-      2: "3-4 clear steps",
-      3: "4-6 specific steps",
-      4: "6-8 detailed steps",
-      5: "8-12 very small, immediately actionable micro-steps"
-    };
-    directionPrompt = `Break this task into ${stepCounts[detailLevel] || "4-6 steps"}. Each step should be concrete and actionable \u2014 something you can do right now without thinking about what it means. For higher detail levels, break steps into the smallest possible actions (e.g., "open laptop" rather than "start working").`;
-  } else {
-    directionPrompt = `Combine or simplify this task into ${detailLevel <= 2 ? "1 single clear action" : "1-2 higher-level actions"}. Make it feel less overwhelming by framing it as one focused activity instead of multiple separate things.`;
+import { eq as eq9, and as and6 } from "drizzle-orm";
+import OpenAI6 from "openai";
+function normalizeForMatch(text2) {
+  return (text2 || "").toLowerCase().trim();
+}
+function extractDomain(email) {
+  const match = email.match(/@([a-zA-Z0-9.-]+)/);
+  return match ? match[1].toLowerCase() : "";
+}
+function doesRuleMatch(rule, senderNorm, senderDomain, subjectNorm, snippetNorm, locationNorm, allText) {
+  const hints = rule.matchHints || {};
+  if (hints.domains && hints.domains.length > 0) {
+    for (const d of hints.domains) {
+      if (senderDomain.includes(d.toLowerCase())) return true;
+    }
   }
-  const prompt = `You help people who struggle with getting started on tasks. Your job is to resize tasks to make them more manageable.
-
-Task: "${taskTitle}"${taskDescription ? `
-Context: ${taskDescription}` : ""}
-${historyContext}
-
-${directionPrompt}
-
-Rules:
-- Start each step with a verb (action word)
-- Keep language simple and encouraging
-- No numbering, just the step text
-- Each step should take no more than 5-15 minutes
-- Make steps feel easy to start \u2014 low friction, low intimidation
-
-Return ONLY a JSON object with a "steps" array of strings. No other text.`;
-  const response = await openai.chat.completions.create({
-    model: "gpt-5-mini",
-    messages: [{ role: "user", content: prompt }],
-    response_format: { type: "json_object" },
-    max_completion_tokens: 8192
+  if (hints.senders && hints.senders.length > 0) {
+    for (const s of hints.senders) {
+      if (senderNorm.includes(s.toLowerCase())) return true;
+    }
+  }
+  if (hints.subjectKeywords && hints.subjectKeywords.length > 0) {
+    for (const kw of hints.subjectKeywords) {
+      if (subjectNorm.includes(kw.toLowerCase()) || snippetNorm.includes(kw.toLowerCase())) return true;
+    }
+  }
+  if (hints.locationKeywords && hints.locationKeywords.length > 0) {
+    for (const lk of hints.locationKeywords) {
+      if (locationNorm.includes(lk.toLowerCase()) || allText.includes(lk.toLowerCase())) return true;
+    }
+  }
+  const patternWords = rule.pattern.toLowerCase().split(/\s+/).filter((w) => w.length > 2 && !["from", "any", "all", "the", "about", "with", "that", "this"].includes(w));
+  if (patternWords.length > 0) {
+    const matchedWords = patternWords.filter((w) => allText.includes(w));
+    if (matchedWords.length >= Math.ceil(patternWords.length * 0.6)) return true;
+  }
+  return false;
+}
+function incrementMatchCount(rule) {
+  db.update(inboxRules).set({
+    matchCount: String(parseInt(rule.matchCount || "0") + 1),
+    updatedAt: /* @__PURE__ */ new Date()
+  }).where(eq9(inboxRules.id, rule.id)).catch(() => {
   });
-  const content = response.choices[0]?.message?.content || '{"steps":[]}';
-  try {
-    const parsed = JSON.parse(content);
-    return { steps: Array.isArray(parsed.steps) ? parsed.steps : [] };
-  } catch {
-    return { steps: [] };
-  }
 }
-async function unblockTask(req) {
-  const { taskTitle, taskDescription, blockerType, skipDays } = req;
-  const blockerGuide = {
-    too_big: "Identify the single smallest possible first action \u2014 something takeable in under 5 minutes \u2014 and describe it concretely.",
-    bad_timing: "Suggest a specific time block or trigger today when this task would fit naturally.",
-    need_info: "Identify exactly what information is missing and one specific place to find it.",
-    low_energy: "Either shrink the scope dramatically to a version doable in 10 minutes, or identify the one upcoming time today when energy will be higher.",
-    unknown: "Ask one clarifying question that would help identify the real blocker, then give a default starting action."
-  };
-  const prompt = `You help people overcome mental blocks on tasks. Be direct, specific, and practical. No pep talk.
-
-Task: "${taskTitle}"${taskDescription ? `
-Context: ${taskDescription}` : ""}
-Days carried without completing: ${skipDays}
-What the person says is blocking them: ${blockerType.replace("_", " ")}
-
-${blockerGuide[blockerType] || blockerGuide.unknown}
-
-Write 2-3 sentences max. Focus on one concrete next action, not general advice. Make it feel achievable right now.
-
-Return ONLY a JSON object: {"suggestion": "your 2-3 sentence response"}`;
-  const response = await openai.chat.completions.create({
-    model: "gpt-5-mini",
-    messages: [{ role: "user", content: prompt }],
-    response_format: { type: "json_object" },
-    max_completion_tokens: 512
-  });
-  try {
-    const parsed = JSON.parse(response.choices[0]?.message?.content || "{}");
-    return { suggestion: parsed.suggestion || "Try starting with just one minute on this task \u2014 set a timer and begin." };
-  } catch {
-    return { suggestion: "Try starting with just one minute on this task \u2014 set a timer and begin." };
-  }
-}
-async function generateSmartPlan(req) {
-  const { goals: goals2, history, dayOfWeek, lifeContext: lifeContext2, gmailItems, energyCheckin, existingTasks, carriedOverTasks, blockedTasks: blockedTasks2 } = req;
-  const completedTasks = history.filter((h) => h.completed);
-  const skippedTasks = history.filter((h) => !h.completed);
-  const energyFocusText = energyCheckin ? `
-Morning Check-in (Today's state):
-- Energy Level: ${energyCheckin.energy}/5
-- Focus Quality: ${energyCheckin.focus}
-${energyCheckin.energy <= 2 ? "The user has low energy today. Keep the plan very light, focusing only on essential or low-effort tasks." : ""}
-${energyCheckin.focus === "Low" ? "The user is feeling foggy. Break tasks into even smaller, more manageable steps if possible, or avoid high-complexity deep work." : ""}` : "";
-  const goalsText = goals2.length > 0 ? goals2.map((g) => `- [id:${g.id}] ${g.title} (${g.category}): ${g.current}/${g.target} ${g.unit}`).join("\n") : "No specific goals set yet.";
-  const historyText = history.length > 0 ? `Completed ${completedTasks.length} of ${history.length} tasks in the last 7 days.
-Tasks completed: ${completedTasks.map((h) => h.title).slice(0, 8).join(", ") || "none"}
-Tasks left undone: ${skippedTasks.map((h) => h.title).slice(0, 8).join(", ") || "none"}
-${skippedTasks.length > completedTasks.length ? "This person tends to skip more tasks than they complete \u2014 keep today's plan lighter and more approachable." : ""}
-${completedTasks.length > skippedTasks.length ? "This person is on a good streak \u2014 maintain momentum with a balanced plan." : ""}` : "No history yet \u2014 create a balanced starter plan.";
-  const lifeCtxSection = lifeContext2 ? `
-About this person:
-` + (lifeContext2.priorityGoal ? `- Current priority: ${lifeContext2.priorityGoal}
-` : "") + (lifeContext2.upcomingDeadline ? `- Upcoming deadline: ${lifeContext2.upcomingDeadline}
-` : "") + (lifeContext2.improvementArea ? `- Wants to improve: ${lifeContext2.improvementArea}
-` : "") + (lifeContext2.currentBlocker ? `- Known blocker: ${lifeContext2.currentBlocker}
-` : "") + (lifeContext2.freeText ? `- Additional context: ${lifeContext2.freeText}` : "") : "";
-  const gmailSection = gmailItems && gmailItems.length > 0 ? `
-Recent email signals (possible commitments/deadlines):
-` + gmailItems.slice(0, 8).map((i) => `- "${i.subject}": ${i.snippet}`).join("\n") : "";
-  const existingTasksSection = existingTasks && existingTasks.length > 0 ? `
-User-committed tasks (MUST include ALL of these in the plan \u2014 you may refine the wording for clarity but do not drop or skip any):
-` + existingTasks.map((t) => `- ${t.title}${t.description ? `: ${t.description}` : ""}`).join("\n") + `
-These count toward your task total. Add goal-aligned tasks to reach 5-8 total.` : "";
-  const carriedOverSection = carriedOverTasks && carriedOverTasks.length > 0 ? `
-Carried-over tasks (incomplete from previous days \u2014 MUST include all of them; consider breaking into a smaller first step if they've been skipped multiple days):
-` + carriedOverTasks.map((t) => `- ${t.title} (${t.category}, skipped ${t.skipDays} day${t.skipDays > 1 ? "s" : ""})`).join("\n") : "";
-  const blockedSection = blockedTasks2 && blockedTasks2.length > 0 ? `
-Chronically stuck tasks (skipped 2+ days in a row \u2014 do NOT just repeat them verbatim; instead include a concrete "prepare to tackle" micro-task or a broken-down first step):
-` + blockedTasks2.map((t) => `- "${t.title}" (stuck ${t.skipDays} days${t.blockerType ? `, blocker: ${t.blockerType.replace("_", " ")}` : ""})`).join("\n") : "";
-  const prompt = `You create personalized daily task plans for people. Today is ${dayOfWeek}.
-
-User's goals:
-${goalsText}
-
-Recent activity:
-${historyText}${energyFocusText}${lifeCtxSection}${gmailSection}${existingTasksSection}${carriedOverSection}${blockedSection}
-
-Create a daily plan with 5-8 tasks. For each task provide:
-- title: short, action-oriented task name
-- category: one of "calendar", "fitness", "finance", "career", "personal", "social"
-- priority: "high", "medium", or "low"
-- time: suggested time like "7:00 AM", "9:30 AM", etc.
-- description: one-line helpful context
-- goalId: (optional) the id from the goals list above (e.g. "id:abc123") if this task directly works toward that specific goal \u2014 omit for general tasks
-
-Rules:
-- Align tasks with the user's goals
-- When a task directly advances a specific goal (e.g. a fitness task for a running goal), set goalId to that goal's id (the value in [id:...])
-- If they've been skipping fitness tasks, make fitness tasks easier/shorter
-- If they've been completing everything, add one slightly challenging stretch task
-- Include at least one personal/wellness task
-- On weekends (Saturday/Sunday), lean more toward personal and social tasks
-- Keep task names concise and starting with a verb
-- Also include an "insight" \u2014 a brief motivational or strategic observation about their patterns
-
-Return ONLY a JSON object with "tasks" array and "insight" string. No other text.`;
-  const response = await openai.chat.completions.create({
-    model: "gpt-5-mini",
-    messages: [{ role: "user", content: prompt }],
-    response_format: { type: "json_object" },
-    max_completion_tokens: 8192
-  });
-  const content = response.choices[0]?.message?.content || '{"tasks":[],"insight":""}';
-  try {
-    const parsed = JSON.parse(content);
-    return {
-      tasks: Array.isArray(parsed.tasks) ? parsed.tasks : [],
-      insight: parsed.insight || "Start small, stay consistent."
-    };
-  } catch {
-    return { tasks: [], insight: "Start small, stay consistent." };
-  }
-}
-
-// server/integrations/googleCalendar.ts
-import { google } from "googleapis";
-async function getProjectAccessToken() {
-  const hostname = process.env.REPLIT_CONNECTORS_HOSTNAME;
-  const xReplitToken = process.env.REPL_IDENTITY ? "repl " + process.env.REPL_IDENTITY : process.env.WEB_REPL_RENEWAL ? "depl " + process.env.WEB_REPL_RENEWAL : null;
-  if (!xReplitToken) throw new Error("X-Replit-Token not available");
-  const connectionSettings = await fetch(
-    "https://" + hostname + "/api/v2/connection?include_secrets=true&connector_names=google-calendar",
-    { headers: { Accept: "application/json", "X-Replit-Token": xReplitToken } }
-  ).then((res) => res.json()).then((data) => data.items?.[0]);
-  const accessToken = connectionSettings?.settings?.access_token || connectionSettings?.settings?.oauth?.credentials?.access_token;
-  if (!accessToken) throw new Error("Google Calendar not connected");
-  return accessToken;
-}
-function buildCalendarClient(accessToken) {
-  const oauth2Client = new google.auth.OAuth2();
-  oauth2Client.setCredentials({ access_token: accessToken });
-  return google.calendar({ version: "v3", auth: oauth2Client });
-}
-async function getGoogleCalendarEvents(date2, startTime, endTime, userAccessToken) {
-  const accessToken = userAccessToken ?? await getProjectAccessToken();
-  const calendar = buildCalendarClient(accessToken);
-  const startOfDay = startTime ? new Date(startTime) : /* @__PURE__ */ new Date(date2 + "T00:00:00Z");
-  const endOfDay = endTime ? new Date(endTime) : /* @__PURE__ */ new Date(date2 + "T23:59:59Z");
-  const calList = await calendar.calendarList.list({ minAccessRole: "reader" });
-  const calendarIds = (calList.data.items || []).filter((c) => !c.deleted).map((c) => c.id).filter(Boolean);
-  console.log(`[Calendar] Found ${calendarIds.length} calendar(s) for token. Querying ${startOfDay.toISOString()} \u2192 ${endOfDay.toISOString()}`);
-  const allEvents = [];
-  const seenIds = /* @__PURE__ */ new Set();
-  await Promise.all(
-    calendarIds.map(async (calId) => {
-      try {
-        const res = await calendar.events.list({
-          calendarId: calId,
-          timeMin: startOfDay.toISOString(),
-          timeMax: endOfDay.toISOString(),
-          singleEvents: true,
-          orderBy: "startTime",
-          maxResults: 20
-        });
-        const items = res.data.items || [];
-        console.log(`[Calendar] Cal "${calId}": ${items.length} event(s)`);
-        items.filter((e) => e.summary && !seenIds.has(e.id || "")).forEach((e) => {
-          seenIds.add(e.id || "");
-          allEvents.push({
-            id: e.id || String(Math.random()),
-            title: e.summary || "Event",
-            start: e.start?.dateTime || e.start?.date || date2,
-            end: e.end?.dateTime || e.end?.date || date2,
-            description: e.description || void 0,
-            location: e.location || void 0
-          });
-        });
-      } catch (err) {
-        console.error(`[Calendar] Error fetching events for cal "${calId}":`, err?.message || err);
-      }
-    })
+function matchItemAgainstRules(item, rules) {
+  const senderNorm = normalizeForMatch(item.sender || "");
+  const subjectNorm = normalizeForMatch(item.subject || "");
+  const snippetNorm = normalizeForMatch(item.snippet || "");
+  const locationNorm = normalizeForMatch(item.location || "");
+  const senderDomain = item.sender ? extractDomain(item.sender) : "";
+  const allText = `${senderNorm} ${subjectNorm} ${snippetNorm} ${locationNorm}`;
+  const activeRules = rules.filter(
+    (r) => r.active !== "false" && (r.scope === "both" || r.scope === item.sourceType)
   );
-  allEvents.sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime());
-  return allEvents;
-}
-async function checkGoogleCalendarConnection(userAccessToken) {
-  try {
-    if (userAccessToken) return true;
-    await getProjectAccessToken();
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-// server/integrations/outlook.ts
-import { Client } from "@microsoft/microsoft-graph-client";
-async function getProjectAccessToken2() {
-  const hostname = process.env.REPLIT_CONNECTORS_HOSTNAME;
-  const xReplitToken = process.env.REPL_IDENTITY ? "repl " + process.env.REPL_IDENTITY : process.env.WEB_REPL_RENEWAL ? "depl " + process.env.WEB_REPL_RENEWAL : null;
-  if (!xReplitToken) throw new Error("X-Replit-Token not available");
-  const connectionSettings = await fetch(
-    "https://" + hostname + "/api/v2/connection?include_secrets=true&connector_names=outlook",
-    { headers: { Accept: "application/json", "X-Replit-Token": xReplitToken } }
-  ).then((res) => res.json()).then((data) => data.items?.[0]);
-  const accessToken = connectionSettings?.settings?.access_token || connectionSettings?.settings?.oauth?.credentials?.access_token;
-  if (!accessToken) throw new Error("Outlook not connected");
-  return accessToken;
-}
-function buildOutlookClient(accessToken) {
-  return Client.initWithMiddleware({
-    authProvider: { getAccessToken: async () => accessToken }
-  });
-}
-async function getOutlookCalendarEvents(date2, startTime, endTime, userAccessToken) {
-  const accessToken = userAccessToken ?? await getProjectAccessToken2();
-  const client = buildOutlookClient(accessToken);
-  const startOfDay = startTime ? new Date(startTime).toISOString() : (/* @__PURE__ */ new Date(date2 + "T00:00:00")).toISOString();
-  const endOfDay = endTime ? new Date(endTime).toISOString() : (/* @__PURE__ */ new Date(date2 + "T23:59:59")).toISOString();
-  const res = await client.api("/me/calendarView").query({ startDateTime: startOfDay, endDateTime: endOfDay }).select("id,subject,start,end,body,location").orderby("start/dateTime").top(20).get();
-  const items = res.value || [];
-  return items.map((e) => ({
-    id: e.id || String(Math.random()),
-    title: e.subject || "Event",
-    start: e.start?.dateTime || date2,
-    end: e.end?.dateTime || date2,
-    description: e.body?.content ? e.body.content.replace(/<[^>]+>/g, "").trim().slice(0, 120) : void 0,
-    location: e.location?.displayName || void 0
-  }));
-}
-async function checkOutlookConnection(userAccessToken) {
-  try {
-    if (userAccessToken) return true;
-    await getProjectAccessToken2();
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-// server/integrations/gmailClient.ts
-import { google as google2 } from "googleapis";
-async function getProjectAccessToken3() {
-  const hostname = process.env.REPLIT_CONNECTORS_HOSTNAME;
-  const xReplitToken = process.env.REPL_IDENTITY ? "repl " + process.env.REPL_IDENTITY : process.env.WEB_REPL_RENEWAL ? "depl " + process.env.WEB_REPL_RENEWAL : null;
-  if (!xReplitToken) throw new Error("X-Replit-Token not available");
-  const connectionSettings = await fetch(
-    "https://" + hostname + "/api/v2/connection?include_secrets=true&connector_names=google-mail",
-    { headers: { Accept: "application/json", "X-Replit-Token": xReplitToken } }
-  ).then((res) => res.json()).then((data) => data.items?.[0]);
-  const accessToken = connectionSettings?.settings?.access_token || connectionSettings?.settings?.oauth?.credentials?.access_token;
-  if (!accessToken) throw new Error("Gmail not connected");
-  return accessToken;
-}
-async function getGmailClient(userAccessToken) {
-  const accessToken = userAccessToken ?? await getProjectAccessToken3();
-  const oauth2Client = new google2.auth.OAuth2();
-  oauth2Client.setCredentials({ access_token: accessToken });
-  return google2.gmail({ version: "v1", auth: oauth2Client });
-}
-
-// server/integrations/gmail.ts
-import { Buffer as Buffer2 } from "node:buffer";
-var LABEL_NAMES = {
-  STARRED: "\u2B50 Starred",
-  INBOX: "Inbox",
-  IMPORTANT: "Important",
-  CATEGORY_PERSONAL: "Personal",
-  CATEGORY_UPDATES: "Updates",
-  CATEGORY_PROMOTIONS: "Promotions",
-  CATEGORY_SOCIAL: "Social",
-  CATEGORY_FORUMS: "Forums",
-  SENT: "Sent",
-  DRAFT: "Draft"
-};
-async function createGmailDraft(userAccessToken, to, subject, body) {
-  const gmail = await getGmailClient(userAccessToken);
-  const messageParts = [
-    `To: ${to}`,
-    `Subject: ${subject}`,
-    'Content-Type: text/plain; charset="UTF-8"',
-    "",
-    body
-  ].join("\r\n");
-  const encodedMessage = Buffer2.from(messageParts).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-  const res = await gmail.users.drafts.create({
-    userId: "me",
-    requestBody: {
-      message: {
-        raw: encodedMessage
-      }
+  const suppressRules = activeRules.filter((r) => r.type === "suppress");
+  const surfaceRules = activeRules.filter((r) => r.type === "surface");
+  for (const rule of suppressRules) {
+    if (doesRuleMatch(rule, senderNorm, senderDomain, subjectNorm, snippetNorm, locationNorm, allText)) {
+      incrementMatchCount(rule);
+      return { verdict: "suppress", matchedRuleId: rule.id };
     }
-  });
-  const draftId = res.data.id || "";
-  const messageId = res.data.message?.id || "";
-  const gmailUrl = `https://mail.google.com/mail/#drafts/${messageId}`;
-  return { draftId, gmailUrl };
-}
-async function getEmailsSince(sinceMs, userAccessToken) {
-  try {
-    const gmail = await getGmailClient(userAccessToken);
-    const sinceSeconds = Math.floor(sinceMs / 1e3);
-    const listRes = await gmail.users.messages.list({
-      userId: "me",
-      q: `in:inbox -from:me after:${sinceSeconds}`,
-      maxResults: 20
-    });
-    const messages = listRes.data.messages || [];
-    if (messages.length === 0) return [];
-    const results = [];
-    const BATCH_SIZE = 10;
-    for (let i = 0; i < messages.length; i += BATCH_SIZE) {
-      const batch = messages.slice(i, i + BATCH_SIZE);
-      const batchResults = await Promise.all(
-        batch.map(async (msg) => {
-          if (!msg.id) return null;
-          try {
-            const detail = await gmail.users.messages.get({
-              userId: "me",
-              id: msg.id,
-              format: "metadata",
-              metadataHeaders: ["Subject", "From", "Date"]
-            });
-            const headers = detail.data.payload?.headers || [];
-            const subject = headers.find((h) => h.name === "Subject")?.value || "(no subject)";
-            const from = headers.find((h) => h.name === "From")?.value || "unknown";
-            const snippet = (detail.data.snippet || "").slice(0, 200);
-            const receivedAt = parseInt(detail.data.internalDate || "0", 10);
-            const labelIds = detail.data.labelIds || [];
-            if (labelIds.includes("SENT") || labelIds.includes("DRAFT")) return null;
-            return { messageId: msg.id, subject, from, snippet, receivedAt };
-          } catch {
-            return null;
-          }
-        })
-      );
-      for (const r of batchResults) {
-        if (r) results.push(r);
-      }
+  }
+  for (const rule of surfaceRules) {
+    if (doesRuleMatch(rule, senderNorm, senderDomain, subjectNorm, snippetNorm, locationNorm, allText)) {
+      incrementMatchCount(rule);
+      return { verdict: "surface", matchedRuleId: rule.id };
     }
-    return results;
-  } catch (err) {
-    console.error("[Gmail] getEmailsSince error:", err);
-    return [];
   }
+  return { verdict: "default" };
 }
-async function checkGmailConnection(userAccessToken) {
-  try {
-    await getGmailClient(userAccessToken);
-    return true;
-  } catch {
-    return false;
-  }
+async function getUserInboxRules(userId) {
+  return db.select().from(inboxRules).where(eq9(inboxRules.userId, userId));
 }
-async function getRecentEmailCommitments(days = 7, userAccessToken) {
-  try {
-    const gmail = await getGmailClient(userAccessToken);
-    const afterDate = /* @__PURE__ */ new Date();
-    afterDate.setDate(afterDate.getDate() - days);
-    const afterDateStr = afterDate.toISOString().slice(0, 10).replace(/-/g, "/");
-    const listRes = await gmail.users.messages.list({
-      userId: "me",
-      q: `after:${afterDateStr}`,
-      maxResults: 100
-    });
-    const messages = (listRes.data.messages || []).slice(0, 100);
-    const results = [];
-    const BATCH_SIZE = 10;
-    for (let i = 0; i < messages.length; i += BATCH_SIZE) {
-      const batch = messages.slice(i, i + BATCH_SIZE);
-      const batchResults = await Promise.all(
-        batch.map(async (msg) => {
-          if (!msg.id) return null;
-          try {
-            const detail = await gmail.users.messages.get({
-              userId: "me",
-              id: msg.id,
-              format: "metadata",
-              metadataHeaders: ["Subject", "Date", "From"]
-            });
-            const headers = detail.data.payload?.headers || [];
-            const subject = headers.find((h) => h.name === "Subject")?.value || "(no subject)";
-            const date2 = headers.find((h) => h.name === "Date")?.value || "";
-            const from = headers.find((h) => h.name === "From")?.value || "";
-            const snippet = (detail.data.snippet || "").slice(0, 150);
-            const labelIds = detail.data.labelIds || [];
-            const labels = labelIds.map((id) => LABEL_NAMES[id] || id);
-            return { id: msg.id, subject, snippet, date: date2, from, labels };
-          } catch {
-            return null;
-          }
-        })
-      );
-      for (const r of batchResults) {
-        if (r) results.push(r);
-      }
-    }
-    return results;
-  } catch (err) {
-    console.error("[Gmail] getRecentEmailCommitments error:", err);
-    return [];
-  }
-}
-async function getStarredFollowUpEmails(userAccessToken, minAgeDays = 3) {
-  try {
-    const gmail = await getGmailClient(userAccessToken);
-    const fourteenDaysAgo = Math.floor((Date.now() - 14 * 24 * 60 * 60 * 1e3) / 1e3);
-    const listRes = await gmail.users.messages.list({
-      userId: "me",
-      q: `in:inbox (is:starred OR is:important) -from:me after:${fourteenDaysAgo}`,
-      maxResults: 20
-    });
-    const messages = listRes.data.messages || [];
-    if (messages.length === 0) return [];
-    const results = [];
-    const nowMs = Date.now();
-    const minAgeMs = minAgeDays * 24 * 60 * 60 * 1e3;
-    const BATCH_SIZE = 10;
-    for (let i = 0; i < messages.length; i += BATCH_SIZE) {
-      const batch = messages.slice(i, i + BATCH_SIZE);
-      const batchResults = await Promise.all(
-        batch.map(async (msg) => {
-          if (!msg.id) return null;
-          try {
-            const detail = await gmail.users.messages.get({
-              userId: "me",
-              id: msg.id,
-              format: "metadata",
-              metadataHeaders: ["Subject", "From", "Date"]
-            });
-            const headers = detail.data.payload?.headers || [];
-            const subject = headers.find((h) => h.name === "Subject")?.value || "(no subject)";
-            const from = headers.find((h) => h.name === "From")?.value || "unknown";
-            const snippet = (detail.data.snippet || "").slice(0, 200);
-            const receivedAt = parseInt(detail.data.internalDate || "0", 10);
-            const labelIds = detail.data.labelIds || [];
-            if (!labelIds.includes("INBOX")) return null;
-            if (labelIds.includes("SENT") || labelIds.includes("DRAFT")) return null;
-            const ageMs = nowMs - receivedAt;
-            if (ageMs < minAgeMs) return null;
-            const ageDays = Math.floor(ageMs / (24 * 60 * 60 * 1e3));
-            return { messageId: msg.id, subject, from, snippet, receivedAt, ageDays };
-          } catch {
-            return null;
-          }
-        })
-      );
-      for (const r of batchResults) {
-        if (r) results.push(r);
-      }
-    }
-    results.sort((a, b) => a.receivedAt - b.receivedAt);
-    return results;
-  } catch (err) {
-    console.error("[Gmail] getStarredFollowUpEmails error:", err);
-    return [];
-  }
-}
-async function gmailModifyMessage(messageId, addLabelIds, removeLabelIds, userAccessToken) {
-  const gmail = await getGmailClient(userAccessToken);
-  await gmail.users.messages.modify({
-    userId: "me",
-    id: messageId,
-    requestBody: {
-      addLabelIds: addLabelIds.length > 0 ? addLabelIds : void 0,
-      removeLabelIds: removeLabelIds.length > 0 ? removeLabelIds : void 0
-    }
-  });
-}
-
-// server/integrations/slack.ts
-async function slackApi(endpoint, accessToken, params = {}) {
-  const url = new URL(`https://slack.com/api/${endpoint}`);
-  for (const [k, v] of Object.entries(params)) {
-    url.searchParams.set(k, v);
-  }
-  const res = await fetch(url.toString(), {
-    headers: { Authorization: `Bearer ${accessToken}` }
-  });
-  const data = await res.json();
-  if (!data.ok) {
-    throw new Error(`Slack API error (${endpoint}): ${data.error || "unknown"}`);
-  }
-  return data;
-}
-async function resolveUserNames(accessToken, userIds) {
-  const unique = [...new Set(userIds)];
-  const nameMap = {};
-  await Promise.all(
-    unique.map(async (uid) => {
-      try {
-        const data = await slackApi("users.info", accessToken, { user: uid });
-        const u = data.user;
-        nameMap[uid] = u?.profile?.display_name || u?.real_name || u?.name || uid;
-      } catch {
-        nameMap[uid] = uid;
-      }
-    })
+async function learnFromDismissal(userId, itemId, telegramChatId) {
+  const [item] = await db.select().from(inboxItems).where(and6(eq9(inboxItems.id, itemId), eq9(inboxItems.userId, userId)));
+  if (!item) return { learned: false };
+  if (item.sourceType !== "email") return { learned: false };
+  const newCount = String(parseInt(item.dismissCount || "0") + 1);
+  await db.update(inboxItems).set({ dismissCount: newCount, status: "dismissed", actedAt: /* @__PURE__ */ new Date() }).where(eq9(inboxItems.id, itemId));
+  const senderDomain = item.sender ? extractDomain(item.sender) : "";
+  if (!senderDomain) return { learned: false };
+  const dismissed = await db.select().from(inboxItems).where(
+    and6(
+      eq9(inboxItems.userId, userId),
+      eq9(inboxItems.status, "dismissed")
+    )
   );
-  return nameMap;
-}
-async function getSlackMessages(accessToken) {
-  const sevenDaysAgo = Math.floor((Date.now() - 7 * 24 * 60 * 60 * 1e3) / 1e3);
-  const convData = await slackApi("conversations.list", accessToken, {
-    types: "public_channel,private_channel,im,mpim",
-    exclude_archived: "true",
-    limit: "200"
-  });
-  const conversations = convData.channels || [];
-  const withActivity = conversations.filter((c) => c.updated && c.updated > sevenDaysAgo).sort((a, b) => (b.updated || 0) - (a.updated || 0)).slice(0, 5);
-  if (withActivity.length === 0) return [];
-  const allMessages = [];
-  const userIdsToResolve = [];
-  await Promise.all(
-    withActivity.map(async (conv) => {
-      try {
-        const histData = await slackApi("conversations.history", accessToken, {
-          channel: conv.id,
-          oldest: sevenDaysAgo.toString(),
-          limit: "30"
-        });
-        const msgs = histData.messages || [];
-        for (const msg of msgs) {
-          if (msg.bot_id) continue;
-          if (msg.subtype && msg.subtype !== "me_message") continue;
-          if (!msg.text || !msg.text.trim()) continue;
-          if (!msg.ts) continue;
-          const ts = parseFloat(msg.ts);
-          if (ts < sevenDaysAgo) continue;
-          if (msg.user) userIdsToResolve.push(msg.user);
-          const channelType = conv.is_im ? "dm" : conv.is_group || conv.is_mpim ? "group" : "channel";
-          allMessages.push({
-            channel: conv.name || conv.id,
-            channelType,
-            user: msg.user || "unknown",
-            text: msg.text.slice(0, 500),
-            timestamp: new Date(ts * 1e3).toISOString()
-          });
-        }
-      } catch (err) {
-        console.error(`Failed to fetch history for channel ${conv.id}:`, err);
-      }
-    })
-  );
-  const nameMap = await resolveUserNames(accessToken, userIdsToResolve);
-  for (const msg of allMessages) {
-    if (nameMap[msg.user]) {
-      msg.user = nameMap[msg.user];
-    }
-  }
-  allMessages.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-  return allMessages;
-}
-
-// server/auth.ts
-init_db();
-init_schema();
-import { Router } from "express";
-import bcrypt from "bcryptjs";
-import jwt from "jsonwebtoken";
-import { eq } from "drizzle-orm";
-import crypto2 from "crypto";
-function getJwtSecret() {
-  if (process.env.JWT_SECRET) {
-    return process.env.JWT_SECRET;
-  }
-  const generated = crypto2.randomBytes(32).toString("hex");
-  process.env.JWT_SECRET = generated;
-  console.log("Generated JWT_SECRET (set JWT_SECRET env var for persistent tokens across restarts)");
-  return generated;
-}
-var JWT_SECRET = getJwtSecret();
-var TOKEN_EXPIRY = "30d";
-function generateToken(userId) {
-  return jwt.sign({ userId }, JWT_SECRET, { expiresIn: TOKEN_EXPIRY });
-}
-var authRouter = Router();
-authRouter.post("/register", async (req, res) => {
-  try {
-    const { username, password } = req.body;
-    if (!username || !password) {
-      return res.status(400).json({ error: "Username and password are required" });
-    }
-    if (username.length < 3) {
-      return res.status(400).json({ error: "Username must be at least 3 characters" });
-    }
-    if (password.length < 6) {
-      return res.status(400).json({ error: "Password must be at least 6 characters" });
-    }
-    const existing = await db.select().from(users).where(eq(users.username, username)).limit(1);
-    if (existing.length > 0) {
-      return res.status(409).json({ error: "Username already taken" });
-    }
-    const hashedPassword = await bcrypt.hash(password, 10);
-    const [user] = await db.insert(users).values({
-      username,
-      password: hashedPassword
-    }).returning();
-    const token = generateToken(user.id);
-    res.status(201).json({
-      token,
-      userId: user.id,
-      username: user.username
+  const domainDismissals = dismissed.filter(
+    (d) => d.sender && extractDomain(d.sender) === senderDomain
+  ).length;
+  if (domainDismissals >= 3) {
+    const existing = await db.select().from(inboxRules).where(
+      and6(
+        eq9(inboxRules.userId, userId),
+        eq9(inboxRules.type, "suppress"),
+        eq9(inboxRules.source, "learned")
+      )
+    );
+    const alreadyHas = existing.some((r) => {
+      const hints = r.matchHints || {};
+      return hints.domains?.includes(senderDomain);
     });
-  } catch (error) {
-    console.error("Registration error:", error);
-    res.status(500).json({ error: "Failed to create account" });
-  }
-});
-authRouter.post("/login", async (req, res) => {
-  try {
-    const { username, password } = req.body;
-    if (!username || !password) {
-      return res.status(400).json({ error: "Username and password are required" });
-    }
-    const [user] = await db.select().from(users).where(eq(users.username, username)).limit(1);
-    if (!user) {
-      return res.status(401).json({ error: "Invalid username or password" });
-    }
-    if (!user.password) {
-      return res.status(401).json({ error: "This account uses Google Sign-In" });
-    }
-    const valid = await bcrypt.compare(password, user.password);
-    if (!valid) {
-      return res.status(401).json({ error: "Invalid username or password" });
-    }
-    const token = generateToken(user.id);
-    res.json({
-      token,
-      userId: user.id,
-      username: user.username
-    });
-  } catch (error) {
-    console.error("Login error:", error);
-    res.status(500).json({ error: "Failed to log in" });
-  }
-});
-authRouter.post("/google", async (req, res) => {
-  try {
-    const { idToken, accessToken } = req.body;
-    if (!idToken && !accessToken) {
-      return res.status(400).json({ error: "ID token or access token is required" });
-    }
-    let googleUser;
-    if (idToken) {
-      const tokenInfoRes = await fetch(
-        `https://oauth2.googleapis.com/tokeninfo?id_token=${idToken}`
-      );
-      if (!tokenInfoRes.ok) {
-        return res.status(401).json({ error: "Invalid Google ID token" });
-      }
-      const tokenInfo = await tokenInfoRes.json();
-      if (tokenInfo.error_description) {
-        return res.status(401).json({ error: "Invalid Google ID token" });
-      }
-      const validClientIds = [
-        process.env.GOOGLE_WEB_CLIENT_ID,
-        process.env.GOOGLE_IOS_CLIENT_ID,
-        process.env.GOOGLE_ANDROID_CLIENT_ID
-      ].filter(Boolean);
-      if (validClientIds.length > 0 && tokenInfo.aud && !validClientIds.includes(tokenInfo.aud)) {
-        return res.status(401).json({ error: "Token audience mismatch" });
-      }
-      if (!tokenInfo.sub) {
-        return res.status(401).json({ error: "Could not retrieve Google user info" });
-      }
-      googleUser = { id: tokenInfo.sub, name: tokenInfo.name, email: tokenInfo.email };
-    } else {
-      const userInfoRes = await fetch(
-        `https://www.googleapis.com/userinfo/v2/me`,
-        { headers: { Authorization: `Bearer ${accessToken}` } }
-      );
-      if (!userInfoRes.ok) {
-        return res.status(401).json({ error: "Invalid Google access token" });
-      }
-      const info = await userInfoRes.json();
-      if (!info.id) {
-        return res.status(401).json({ error: "Could not retrieve Google user info" });
-      }
-      googleUser = info;
-    }
-    if (!googleUser.id) {
-      return res.status(401).json({ error: "Could not retrieve Google user info" });
-    }
-    const existing = await db.select().from(users).where(eq(users.googleId, googleUser.id)).limit(1);
-    let user;
-    if (existing.length > 0) {
-      user = existing[0];
-      if (googleUser.name && googleUser.name !== user.displayName) {
-        await db.update(users).set({ displayName: googleUser.name }).where(eq(users.id, user.id));
-        user = { ...user, displayName: googleUser.name };
-      }
-    } else {
-      const username = googleUser.email ? googleUser.email.split("@")[0] : `google_${googleUser.id.slice(0, 8)}`;
-      let uniqueUsername = username;
-      const existingUsername = await db.select().from(users).where(eq(users.username, username)).limit(1);
-      if (existingUsername.length > 0) {
-        uniqueUsername = `${username}_${Date.now().toString(36)}`;
-      }
-      const [newUser] = await db.insert(users).values({
-        username: uniqueUsername,
-        googleId: googleUser.id,
-        displayName: googleUser.name || uniqueUsername
-      }).returning();
-      user = newUser;
-    }
-    const token = generateToken(user.id);
-    res.json({
-      token,
-      userId: user.id,
-      username: user.displayName || user.username
-    });
-  } catch (error) {
-    console.error("Google auth error:", error);
-    res.status(500).json({ error: "Failed to authenticate with Google" });
-  }
-});
-authRouter.get("/me", async (req, res) => {
-  try {
-    const authHeader = req.headers.authorization;
-    if (!authHeader?.startsWith("Bearer ")) {
-      return res.status(401).json({ error: "No token provided" });
-    }
-    const token = authHeader.slice(7);
-    const payload = jwt.verify(token, JWT_SECRET);
-    const [user] = await db.select({
-      id: users.id,
-      username: users.username,
-      displayName: users.displayName,
-      createdAt: users.createdAt
-    }).from(users).where(eq(users.id, payload.userId)).limit(1);
-    if (!user) {
-      return res.status(401).json({ error: "User not found" });
-    }
-    res.json({
-      userId: user.id,
-      username: user.displayName || user.username
-    });
-  } catch (error) {
-    return res.status(401).json({ error: "Invalid token" });
-  }
-});
-function authMiddleware(req, res, next) {
-  if (req.path.startsWith("/api/auth/")) {
-    return next();
-  }
-  if (req.path === "/api/oauth/google/callback" || req.path === "/api/oauth/microsoft/callback") {
-    return next();
-  }
-  if (!req.path.startsWith("/api/")) {
-    return next();
-  }
-  const authHeader = req.headers.authorization;
-  if (!authHeader?.startsWith("Bearer ")) {
-    return res.status(401).json({ error: "Authentication required" });
-  }
-  try {
-    const token = authHeader.slice(7);
-    const payload = jwt.verify(token, JWT_SECRET);
-    req.userId = payload.userId;
-    next();
-  } catch {
-    return res.status(401).json({ error: "Invalid or expired token" });
-  }
-}
-
-// server/mobileAuthRoutes.ts
-init_db();
-init_schema();
-import { Router as Router2 } from "express";
-import { eq as eq2, lt } from "drizzle-orm";
-var mobileAuthRouter = Router2();
-function getCallbackUrl(req) {
-  const proto = req.headers["x-forwarded-proto"] || req.protocol;
-  const host = req.headers["x-forwarded-host"] || req.get("host") || "";
-  return `${proto}://${host}/api/auth/mobile/callback`;
-}
-function successHtml(token) {
-  const encodedToken = encodeURIComponent(token);
-  return `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Signed In \u2014 GamePlan</title>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      background: #0f0f0f; color: #fff;
-      display: flex; align-items: center; justify-content: center;
-      min-height: 100vh; padding: 20px;
-    }
-    .card { text-align: center; max-width: 340px; }
-    .icon { font-size: 56px; margin-bottom: 20px; }
-    h2 { font-size: 22px; font-weight: 700; margin-bottom: 10px; }
-    p { color: #888; font-size: 15px; line-height: 1.5; }
-    .dots { display: inline-flex; gap: 6px; margin-top: 24px; }
-    .dot { width: 8px; height: 8px; border-radius: 50%; background: #6366f1;
-           animation: pulse 1.2s ease-in-out infinite; }
-    .dot:nth-child(2) { animation-delay: 0.2s; }
-    .dot:nth-child(3) { animation-delay: 0.4s; }
-    @keyframes pulse { 0%,80%,100% { opacity: 0.3; } 40% { opacity: 1; } }
-  </style>
-</head>
-<body>
-  <div class="card">
-    <div class="icon">\u2705</div>
-    <h2>Signed in successfully</h2>
-    <p>Taking you back to GamePlan...</p>
-    <div class="dots">
-      <div class="dot"></div>
-      <div class="dot"></div>
-      <div class="dot"></div>
-    </div>
-  </div>
-  <script>
-    try {
-      window.location.href = 'gameplan://auth/complete?token=${encodedToken}';
-    } catch(e) {}
-  </script>
-</body>
-</html>`;
-}
-function errorHtml(message) {
-  return `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>Error \u2014 GamePlan</title>
-  <style>
-    body { font-family: sans-serif; background: #0f0f0f; color: #fff;
-           display: flex; align-items: center; justify-content: center; min-height: 100vh; }
-    .card { text-align: center; padding: 40px; }
-  </style>
-</head>
-<body>
-  <div class="card">
-    <div style="font-size:48px;margin-bottom:16px">\u274C</div>
-    <h2>Sign-in Failed</h2>
-    <p style="color:#888;margin-top:8px">${message}</p>
-    <p style="color:#555;margin-top:20px;font-size:13px">You can close this tab and try again.</p>
-  </div>
-</body>
-</html>`;
-}
-mobileAuthRouter.get("/start", (req, res) => {
-  const { session_id } = req.query;
-  if (!session_id) return res.status(400).json({ error: "session_id required" });
-  const clientId = process.env.GOOGLE_WEB_CLIENT_ID;
-  if (!clientId) return res.status(500).json({ error: "Google OAuth not configured" });
-  const callbackUrl = getCallbackUrl(req);
-  const params = new URLSearchParams({
-    client_id: clientId,
-    redirect_uri: callbackUrl,
-    response_type: "code",
-    scope: "openid email profile",
-    state: session_id,
-    access_type: "offline",
-    prompt: "select_account"
-  });
-  res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`);
-});
-mobileAuthRouter.get("/callback", async (req, res) => {
-  const { code, state: session_id, error } = req.query;
-  if (error || !code || !session_id) {
-    return res.send(errorHtml(error || "Sign-in was cancelled."));
-  }
-  const clientId = process.env.GOOGLE_WEB_CLIENT_ID;
-  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-  if (!clientId || !clientSecret) {
-    return res.send(errorHtml("OAuth credentials not configured on the server."));
-  }
-  const callbackUrl = getCallbackUrl(req);
-  try {
-    const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        code,
-        client_id: clientId,
-        client_secret: clientSecret,
-        redirect_uri: callbackUrl,
-        grant_type: "authorization_code"
-      })
-    });
-    const tokenData = await tokenRes.json();
-    if (!tokenData.id_token && !tokenData.access_token) {
-      console.error("Mobile auth token exchange failed:", tokenData);
-      return res.send(errorHtml("Failed to exchange authorization code. Please try again."));
-    }
-    let googleUser;
-    if (tokenData.id_token) {
-      const infoRes = await fetch(
-        `https://oauth2.googleapis.com/tokeninfo?id_token=${tokenData.id_token}`
-      );
-      const info = await infoRes.json();
-      if (!info.sub) return res.send(errorHtml("Could not retrieve Google user info."));
-      googleUser = { id: info.sub, name: info.name, email: info.email };
-    } else {
-      const infoRes = await fetch("https://www.googleapis.com/userinfo/v2/me", {
-        headers: { Authorization: `Bearer ${tokenData.access_token}` }
+    if (!alreadyHas) {
+      const ruleName = `Auto: suppress ${senderDomain}`;
+      await db.insert(inboxRules).values({
+        userId,
+        type: "suppress",
+        scope: "email",
+        pattern: ruleName,
+        matchHints: { domains: [senderDomain] },
+        source: "learned"
       });
-      const info = await infoRes.json();
-      if (!info.id) return res.send(errorHtml("Could not retrieve Google user info."));
-      googleUser = { id: info.id, name: info.name, email: info.email };
+      console.log(`[InboxRules] Learned suppress rule for ${senderDomain} (user ${userId})`);
+      if (telegramChatId) {
+        try {
+          const { sendMessage: sendMessage2 } = await Promise.resolve().then(() => (init_telegram(), telegram_exports));
+          await sendMessage2(
+            telegramChatId,
+            `\u{1F9E0} I've learned to stop surfacing emails from ${senderDomain} \u2014 you've dismissed them ${domainDismissals} times. You can review or remove this rule in your Inbox Rules settings.`
+          );
+        } catch {
+        }
+      }
+      return { learned: true, ruleName };
     }
-    const existing = await db.select().from(users).where(eq2(users.googleId, googleUser.id)).limit(1);
-    let user;
-    if (existing.length > 0) {
-      user = existing[0];
-    } else {
-      const base = googleUser.email ? googleUser.email.split("@")[0] : `google_${googleUser.id.slice(0, 8)}`;
-      let uniqueUsername = base;
-      const existingUsername = await db.select().from(users).where(eq2(users.username, base)).limit(1);
-      if (existingUsername.length > 0) uniqueUsername = `${base}_${Date.now().toString(36)}`;
-      const [newUser] = await db.insert(users).values({
-        username: uniqueUsername,
-        googleId: googleUser.id,
-        displayName: googleUser.name || uniqueUsername
-      }).returning();
-      user = newUser;
-    }
-    const token = generateToken(user.id);
-    const expiresAt = new Date(Date.now() + 10 * 60 * 1e3);
-    await db.insert(mobileAuthSessions).values({
-      sessionId: session_id,
-      token,
-      expiresAt
-    }).onConflictDoUpdate({
-      target: mobileAuthSessions.sessionId,
-      set: { token, expiresAt }
+  }
+  return { learned: false };
+}
+async function createRuleFromText(userId, text2, type, scope) {
+  let matchHints = {};
+  try {
+    const response = await openai6.chat.completions.create({
+      model: "gpt-5-mini",
+      messages: [
+        {
+          role: "system",
+          content: `Extract matching hints from this inbox rule description. Return JSON only:
+{ "senders": [], "subjectKeywords": [], "domains": [], "locationKeywords": [] }
+
+Examples:
+- "suppress Replit notifications" \u2192 { "senders": ["replit"], "subjectKeywords": ["replit"], "domains": ["replit.com"], "locationKeywords": [] }
+- "always surface New York events" \u2192 { "senders": [], "subjectKeywords": ["new york"], "domains": [], "locationKeywords": ["new york", "nyc", "manhattan"] }
+- "suppress newsletters" \u2192 { "senders": [], "subjectKeywords": ["newsletter", "unsubscribe"], "domains": [], "locationKeywords": [] }`
+        },
+        { role: "user", content: text2 }
+      ],
+      response_format: { type: "json_object" },
+      max_completion_tokens: 300
     });
-    return res.send(successHtml(token));
+    const content = response.choices[0]?.message?.content || "{}";
+    matchHints = JSON.parse(content);
   } catch (err) {
-    console.error("Mobile auth callback error:", err);
-    return res.send(errorHtml("An unexpected error occurred. Please try again."));
+    console.error("[InboxRules] Failed to extract match hints:", err);
+  }
+  const [rule] = await db.insert(inboxRules).values({
+    userId,
+    type,
+    scope,
+    pattern: text2,
+    matchHints,
+    source: "user"
+  }).returning();
+  return rule;
+}
+var openai6;
+var init_inboxRules = __esm({
+  "server/inboxRules.ts"() {
+    "use strict";
+    init_db();
+    init_schema();
+    openai6 = new OpenAI6({
+      apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
+      baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL
+    });
   }
 });
-mobileAuthRouter.get("/poll", async (req, res) => {
-  const { session_id } = req.query;
-  if (!session_id) return res.status(400).json({ error: "session_id required" });
-  try {
-    await db.delete(mobileAuthSessions).where(lt(mobileAuthSessions.expiresAt, /* @__PURE__ */ new Date()));
-    const rows = await db.select().from(mobileAuthSessions).where(eq2(mobileAuthSessions.sessionId, session_id)).limit(1);
-    if (rows.length === 0) {
-      return res.status(404).json({ ready: false });
-    }
-    const session = rows[0];
-    await db.delete(mobileAuthSessions).where(eq2(mobileAuthSessions.sessionId, session_id));
-    return res.json({ ready: true, token: session.token });
-  } catch (err) {
-    console.error("Mobile auth poll error:", err);
-    return res.status(500).json({ ready: false, error: "Internal error" });
-  }
-});
-
-// server/dataRoutes.ts
-init_db();
-init_schema();
-import { eq as eq3, and } from "drizzle-orm";
-function requireUserId(req, res) {
-  const userId = req.userId;
-  if (!userId) {
-    res.status(401).json({ error: "Authentication required" });
-    return null;
-  }
-  return userId;
-}
-function registerSimpleJsonCrud(app2, path2, table) {
-  app2.get(`/api/data/${path2}`, async (req, res) => {
-    try {
-      const userId = requireUserId(req, res);
-      if (!userId) return;
-      const result = await db.select({ data: table.data }).from(table).where(eq3(table.userId, userId));
-      if (result.length === 0) return res.json({ data: null });
-      res.json({ data: result[0].data });
-    } catch (e) {
-      console.error(`Error fetching ${path2}:`, e);
-      res.status(500).json({ error: `Failed to fetch ${path2}` });
-    }
-  });
-  app2.put(`/api/data/${path2}`, async (req, res) => {
-    try {
-      const userId = requireUserId(req, res);
-      if (!userId) return;
-      const { data } = req.body;
-      await db.insert(table).values({ userId, data, updatedAt: /* @__PURE__ */ new Date() }).onConflictDoUpdate({
-        target: [table.userId],
-        set: { data, updatedAt: /* @__PURE__ */ new Date() }
-      });
-      res.json({ ok: true });
-    } catch (e) {
-      console.error(`Error saving ${path2}:`, e);
-      res.status(500).json({ error: `Failed to save ${path2}` });
-    }
-  });
-  app2.delete(`/api/data/${path2}`, async (req, res) => {
-    try {
-      const userId = requireUserId(req, res);
-      if (!userId) return;
-      await db.delete(table).where(eq3(table.userId, userId));
-      res.json({ ok: true });
-    } catch (e) {
-      console.error(`Error deleting ${path2}:`, e);
-      res.status(500).json({ error: `Failed to delete ${path2}` });
-    }
-  });
-}
-function registerDataRoutes(app2) {
-  app2.get("/api/data/plans/:date", async (req, res) => {
-    try {
-      const userId = requireUserId(req, res);
-      if (!userId) return;
-      const { date: date2 } = req.params;
-      const result = await db.select().from(plans).where(and(eq3(plans.userId, userId), eq3(plans.date, date2)));
-      if (result.length === 0) return res.json({ data: null });
-      res.json({ data: result[0].data });
-    } catch (e) {
-      console.error("Error fetching plan:", e);
-      res.status(500).json({ error: "Failed to fetch plan" });
-    }
-  });
-  app2.get("/api/data/plans", async (req, res) => {
-    try {
-      const userId = requireUserId(req, res);
-      if (!userId) return;
-      const result = await db.select().from(plans).where(eq3(plans.userId, userId));
-      const plansMap = {};
-      for (const row of result) {
-        plansMap[row.date] = row.data;
-      }
-      res.json({ data: plansMap });
-    } catch (e) {
-      console.error("Error fetching plans:", e);
-      res.status(500).json({ error: "Failed to fetch plans" });
-    }
-  });
-  app2.put("/api/data/plans/:date", async (req, res) => {
-    try {
-      const userId = requireUserId(req, res);
-      if (!userId) return;
-      const { date: date2 } = req.params;
-      const { data } = req.body;
-      await db.insert(plans).values({ userId, date: date2, data, updatedAt: /* @__PURE__ */ new Date() }).onConflictDoUpdate({
-        target: [plans.userId, plans.date],
-        set: { data, updatedAt: /* @__PURE__ */ new Date() }
-      });
-      res.json({ ok: true });
-    } catch (e) {
-      console.error("Error saving plan:", e);
-      res.status(500).json({ error: "Failed to save plan" });
-    }
-  });
-  registerSimpleJsonCrud(app2, "goals", goals);
-  registerSimpleJsonCrud(app2, "stats", stats);
-  registerSimpleJsonCrud(app2, "brain-dump-inbox", brainDumpInbox);
-  registerSimpleJsonCrud(app2, "chat-history", chatHistory);
-  registerSimpleJsonCrud(app2, "life-context", lifeContext);
-  registerSimpleJsonCrud(app2, "timer-settings", timerSettings);
-  registerSimpleJsonCrud(app2, "user-preferences", userPreferences);
-  app2.post("/api/data/auto-built-plan/dismiss", async (req, res) => {
-    try {
-      const userId = requireUserId(req, res);
-      if (!userId) return;
-      const result = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq3(userPreferences.userId, userId));
-      const currentPrefs = result[0]?.data || {};
-      if (currentPrefs.autoBuiltPlan) {
-        currentPrefs.autoBuiltPlan.dismissed = true;
-      }
-      await db.insert(userPreferences).values({ userId, data: currentPrefs, updatedAt: /* @__PURE__ */ new Date() }).onConflictDoUpdate({
-        target: [userPreferences.userId],
-        set: { data: currentPrefs, updatedAt: /* @__PURE__ */ new Date() }
-      });
-      res.json({ ok: true });
-    } catch (e) {
-      console.error("Error dismissing auto-built plan:", e);
-      res.status(500).json({ error: "Failed to dismiss auto-built plan" });
-    }
-  });
-  registerSimpleJsonCrud(app2, "completion-history", completionHistory);
-  registerSimpleJsonCrud(app2, "blocked-tasks", blockedTasks);
-  registerSimpleJsonCrud(app2, "plan-snapshots", planSnapshots);
-  app2.get("/api/data/energy-checkins/:date", async (req, res) => {
-    try {
-      const userId = requireUserId(req, res);
-      if (!userId) return;
-      const { date: date2 } = req.params;
-      const result = await db.select().from(energyCheckins).where(and(eq3(energyCheckins.userId, userId), eq3(energyCheckins.date, date2)));
-      if (result.length === 0) return res.json({ data: null });
-      res.json({ data: result[0].data });
-    } catch (e) {
-      console.error("Error fetching energy checkin:", e);
-      res.status(500).json({ error: "Failed to fetch energy checkin" });
-    }
-  });
-  app2.put("/api/data/energy-checkins/:date", async (req, res) => {
-    try {
-      const userId = requireUserId(req, res);
-      if (!userId) return;
-      const { date: date2 } = req.params;
-      const { data } = req.body;
-      await db.insert(energyCheckins).values({ userId, date: date2, data, updatedAt: /* @__PURE__ */ new Date() }).onConflictDoUpdate({
-        target: [energyCheckins.userId, energyCheckins.date],
-        set: { data, updatedAt: /* @__PURE__ */ new Date() }
-      });
-      res.json({ ok: true });
-    } catch (e) {
-      console.error("Error saving energy checkin:", e);
-      res.status(500).json({ error: "Failed to save energy checkin" });
-    }
-  });
-  app2.get("/api/data/completed-calendar-ids/:date", async (req, res) => {
-    try {
-      const userId = requireUserId(req, res);
-      if (!userId) return;
-      const { date: date2 } = req.params;
-      const result = await db.select().from(completedCalendarIds).where(and(eq3(completedCalendarIds.userId, userId), eq3(completedCalendarIds.date, date2)));
-      if (result.length === 0) return res.json({ data: [] });
-      res.json({ data: result[0].data });
-    } catch (e) {
-      console.error("Error fetching completed calendar ids:", e);
-      res.status(500).json({ error: "Failed to fetch completed calendar ids" });
-    }
-  });
-  app2.put("/api/data/completed-calendar-ids/:date", async (req, res) => {
-    try {
-      const userId = requireUserId(req, res);
-      if (!userId) return;
-      const { date: date2 } = req.params;
-      const { data } = req.body;
-      await db.insert(completedCalendarIds).values({ userId, date: date2, data, updatedAt: /* @__PURE__ */ new Date() }).onConflictDoUpdate({
-        target: [completedCalendarIds.userId, completedCalendarIds.date],
-        set: { data, updatedAt: /* @__PURE__ */ new Date() }
-      });
-      res.json({ ok: true });
-    } catch (e) {
-      console.error("Error saving completed calendar ids:", e);
-      res.status(500).json({ error: "Failed to save completed calendar ids" });
-    }
-  });
-  app2.get("/api/data/export", async (req, res) => {
-    try {
-      const userId = requireUserId(req, res);
-      if (!userId) return;
-      const [goalsRow] = await db.select({ data: goals.data }).from(goals).where(eq3(goals.userId, userId));
-      const [statsRow] = await db.select({ data: stats.data }).from(stats).where(eq3(stats.userId, userId));
-      const [lifeContextRow] = await db.select({ data: lifeContext.data }).from(lifeContext).where(eq3(lifeContext.userId, userId));
-      const [userPrefsRow] = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq3(userPreferences.userId, userId));
-      const [chatHistoryRow] = await db.select({ data: chatHistory.data }).from(chatHistory).where(eq3(chatHistory.userId, userId));
-      const [timerSettingsRow] = await db.select({ data: timerSettings.data }).from(timerSettings).where(eq3(timerSettings.userId, userId));
-      const [brainDumpRow] = await db.select({ data: brainDumpInbox.data }).from(brainDumpInbox).where(eq3(brainDumpInbox.userId, userId));
-      const [completionHistoryRow] = await db.select({ data: completionHistory.data }).from(completionHistory).where(eq3(completionHistory.userId, userId));
-      const [blockedTasksRow] = await db.select({ data: blockedTasks.data }).from(blockedTasks).where(eq3(blockedTasks.userId, userId));
-      const [planSnapshotsRow] = await db.select({ data: planSnapshots.data }).from(planSnapshots).where(eq3(planSnapshots.userId, userId));
-      const plansRows = await db.select().from(plans).where(eq3(plans.userId, userId));
-      const plans2 = {};
-      for (const row of plansRows) {
-        plans2[row.date] = row.data;
-      }
-      const energyRows = await db.select().from(energyCheckins).where(eq3(energyCheckins.userId, userId));
-      const energyCheckins2 = {};
-      for (const row of energyRows) {
-        energyCheckins2[row.date] = row.data;
-      }
-      const calendarIdRows = await db.select().from(completedCalendarIds).where(eq3(completedCalendarIds.userId, userId));
-      const completedCalendarIds2 = {};
-      for (const row of calendarIdRows) {
-        completedCalendarIds2[row.date] = row.data;
-      }
-      res.json({
-        data: {
-          goals: goalsRow?.data ?? null,
-          stats: statsRow?.data ?? null,
-          lifeContext: lifeContextRow?.data ?? null,
-          userPreferences: userPrefsRow?.data ?? null,
-          chatHistory: chatHistoryRow?.data ?? null,
-          timerSettings: timerSettingsRow?.data ?? null,
-          brainDumpInbox: brainDumpRow?.data ?? null,
-          completionHistory: completionHistoryRow?.data ?? null,
-          blockedTasks: blockedTasksRow?.data ?? null,
-          planSnapshots: planSnapshotsRow?.data ?? null,
-          plans: plans2,
-          energyCheckins: energyCheckins2,
-          completedCalendarIds: completedCalendarIds2
-        }
-      });
-    } catch (e) {
-      console.error("Error exporting data:", e);
-      res.status(500).json({ error: "Failed to export data" });
-    }
-  });
-  app2.post("/api/data/import", async (req, res) => {
-    try {
-      const userId = requireUserId(req, res);
-      if (!userId) return;
-      const { data } = req.body;
-      if (!data || typeof data !== "object") {
-        return res.status(400).json({ error: "Missing data object in request body" });
-      }
-      const now = /* @__PURE__ */ new Date();
-      await db.transaction(async (tx) => {
-        const replaceSimple = async (table, value) => {
-          if (value === null || value === void 0) {
-            await tx.delete(table).where(eq3(table.userId, userId));
-            return;
-          }
-          await tx.insert(table).values({ userId, data: value, updatedAt: now }).onConflictDoUpdate({ target: [table.userId], set: { data: value, updatedAt: now } });
-        };
-        await replaceSimple(goals, data.goals);
-        await replaceSimple(stats, data.stats);
-        await replaceSimple(lifeContext, data.lifeContext);
-        await replaceSimple(chatHistory, data.chatHistory);
-        await replaceSimple(timerSettings, data.timerSettings);
-        await replaceSimple(brainDumpInbox, data.brainDumpInbox);
-        await replaceSimple(completionHistory, data.completionHistory);
-        await replaceSimple(blockedTasks, data.blockedTasks);
-        await replaceSimple(planSnapshots, data.planSnapshots);
-        await replaceSimple(userPreferences, data.userPreferences);
-        if (data.plans && typeof data.plans === "object") {
-          await tx.delete(plans).where(eq3(plans.userId, userId));
-          for (const [date2, planData] of Object.entries(data.plans)) {
-            await tx.insert(plans).values({ userId, date: date2, data: planData, updatedAt: now });
-          }
-        }
-        if (data.energyCheckins && typeof data.energyCheckins === "object") {
-          await tx.delete(energyCheckins).where(eq3(energyCheckins.userId, userId));
-          for (const [date2, checkinData] of Object.entries(data.energyCheckins)) {
-            await tx.insert(energyCheckins).values({ userId, date: date2, data: checkinData, updatedAt: now });
-          }
-        }
-        if (data.completedCalendarIds && typeof data.completedCalendarIds === "object") {
-          await tx.delete(completedCalendarIds).where(eq3(completedCalendarIds.userId, userId));
-          for (const [date2, idsData] of Object.entries(data.completedCalendarIds)) {
-            await tx.insert(completedCalendarIds).values({ userId, date: date2, data: idsData, updatedAt: now });
-          }
-        }
-      });
-      res.json({ ok: true });
-    } catch (e) {
-      console.error("Error importing data:", e);
-      res.status(500).json({ error: "Failed to import data" });
-    }
-  });
-}
 
 // server/telegramRoutes.ts
-init_db();
-init_schema();
-import { eq as eq4, and as and2, desc, sql as sql4, gte, lte } from "drizzle-orm";
-
-// server/integrations/telegram.ts
-var BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-var BASE = `https://api.telegram.org/bot${BOT_TOKEN}`;
-async function sendMessage(chatId, text2) {
-  if (!BOT_TOKEN) return;
-  const res = await fetch(`${BASE}/sendMessage`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      chat_id: chatId,
-      text: text2
-    })
-  });
-  if (!res.ok) {
-    const body = await res.text();
-    console.error("Telegram sendMessage error:", body);
-  }
-}
-async function setWebhook(webhookUrl) {
-  if (!BOT_TOKEN) return;
-  const res = await fetch(`${BASE}/setWebhook`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      url: webhookUrl,
-      allowed_updates: ["message", "my_chat_member"]
-    })
-  });
-  const data = await res.json();
-  if (data.ok) {
-    console.log("[Telegram] Webhook set successfully:", webhookUrl);
-  } else {
-    throw new Error(`Failed to set Telegram webhook: ${JSON.stringify(data)}`);
-  }
-}
-function isTelegramConfigured() {
-  return !!BOT_TOKEN;
-}
-async function downloadTelegramFile(fileId) {
-  if (!BOT_TOKEN) return null;
-  try {
-    const infoRes = await fetch(`${BASE}/getFile?file_id=${fileId}`);
-    if (!infoRes.ok) return null;
-    const info = await infoRes.json();
-    if (!info.ok || !info.result?.file_path) return null;
-    const fileUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${info.result.file_path}`;
-    const fileRes = await fetch(fileUrl);
-    if (!fileRes.ok) return null;
-    const buffer = await fileRes.arrayBuffer();
-    const base64 = Buffer.from(buffer).toString("base64");
-    const ext = info.result.file_path.split(".").pop()?.toLowerCase() || "jpg";
-    const mime = ext === "png" ? "image/png" : ext === "webp" ? "image/webp" : "image/jpeg";
-    return `data:${mime};base64,${base64}`;
-  } catch {
-    return null;
-  }
-}
-async function downloadTelegramFileBuffer(fileId) {
-  if (!BOT_TOKEN) return null;
-  try {
-    const infoRes = await fetch(`${BASE}/getFile?file_id=${fileId}`);
-    if (!infoRes.ok) return null;
-    const info = await infoRes.json();
-    if (!info.ok || !info.result?.file_path) return null;
-    const fileUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${info.result.file_path}`;
-    const fileRes = await fetch(fileUrl);
-    if (!fileRes.ok) return null;
-    const arrayBuf = await fileRes.arrayBuffer();
-    const ext = info.result.file_path.split(".").pop()?.toLowerCase() || "ogg";
-    return { buffer: Buffer.from(arrayBuf), ext };
-  } catch {
-    return null;
-  }
-}
-async function getUpdates(offset) {
-  if (!BOT_TOKEN) return [];
-  try {
-    const res = await fetch(`${BASE}/getUpdates?offset=${offset}&timeout=5&limit=100`);
-    if (!res.ok) return [];
-    const data = await res.json();
-    return data.ok ? data.result || [] : [];
-  } catch {
-    return [];
-  }
-}
-function logTelegramStatus() {
-  if (BOT_TOKEN) {
-    console.log("Telegram: configured \u2713");
-  } else {
-    console.log("Telegram: not configured (set TELEGRAM_BOT_TOKEN in Replit Secrets)");
-  }
-}
-
-// server/telegramRoutes.ts
-init_userTokenStore();
-
-// server/integrations/search.ts
-async function tavilySearch(query, maxResults = 5) {
-  const apiKey = process.env.TAVILY_API_KEY;
-  if (!apiKey) throw new Error("TAVILY_API_KEY not set");
-  const res = await fetch("https://api.tavily.com/search", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      api_key: apiKey,
-      query,
-      search_depth: "basic",
-      max_results: maxResults,
-      include_answer: true
-    })
-  });
-  if (!res.ok) {
-    const text2 = await res.text();
-    throw new Error(`Tavily error ${res.status}: ${text2}`);
-  }
-  return res.json();
-}
-function formatSearchResults(result) {
-  const parts = [];
-  if (result.answer) parts.push(`Summary: ${result.answer}`);
-  for (const r of result.results) {
-    parts.push(`- ${r.title} (${r.url})
-  ${r.content.slice(0, 300)}`);
-  }
-  return parts.join("\n\n");
-}
-
-// server/telegramRoutes.ts
-import OpenAI3 from "openai";
-var openai3 = new OpenAI3({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL
+var telegramRoutes_exports = {};
+__export(telegramRoutes_exports, {
+  computePatternInsights: () => computePatternInsights,
+  getPlansForDateRange: () => getPlansForDateRange,
+  registerTelegramRoutes: () => registerTelegramRoutes,
+  registerTelegramWebhook: () => registerTelegramWebhook,
+  runProactiveStartupCatchup: () => runProactiveStartupCatchup,
+  startEmailAlertScanner: () => startEmailAlertScanner,
+  startMeetingBriefScanner: () => startMeetingBriefScanner,
+  startProactiveScheduler: () => startProactiveScheduler,
+  startTelegramPolling: () => startTelegramPolling
 });
+import { eq as eq10, and as and7, desc as desc5, sql as sql6, gte as gte2, lte } from "drizzle-orm";
+import OpenAI7 from "openai";
 function generateLinkCode() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let code = "";
@@ -2306,15 +2975,19 @@ async function handleCoachReply(userId, chatId, userText, imageUrl) {
     let calendarEvents = [];
     let gmailConnected = false;
     let googleAccessToken = null;
-    const [goalsRow, statsRow, lcRow, chatRow, commitmentsRows, googleTokens, prefsRow] = await Promise.allSettled([
-      db.select().from(goals).where(eq4(goals.userId, userId)).limit(1),
-      db.select().from(stats).where(eq4(stats.userId, userId)).limit(1),
-      db.select().from(lifeContext).where(eq4(lifeContext.userId, userId)).limit(1),
-      db.select().from(chatHistory).where(eq4(chatHistory.userId, userId)).limit(1),
-      db.select().from(commitments).where(and2(eq4(commitments.userId, userId), eq4(commitments.status, "pending"))).orderBy(desc(commitments.extractedAt)).limit(10),
+    const [goalsRow, statsRow, lcRow, chatRow, commitmentsRows, googleTokens, prefsRow, memoriesRow, recentInteractionsResult] = await Promise.allSettled([
+      db.select().from(goals).where(eq10(goals.userId, userId)).limit(1),
+      db.select().from(stats).where(eq10(stats.userId, userId)).limit(1),
+      db.select().from(lifeContext).where(eq10(lifeContext.userId, userId)).limit(1),
+      db.select().from(chatHistory).where(eq10(chatHistory.userId, userId)).limit(1),
+      db.select().from(commitments).where(and7(eq10(commitments.userId, userId), eq10(commitments.status, "pending"))).orderBy(desc5(commitments.extractedAt)).limit(10),
       getValidGoogleTokens(userId),
-      db.select().from(userPreferences).where(eq4(userPreferences.userId, userId)).limit(1)
+      db.select().from(userPreferences).where(eq10(userPreferences.userId, userId)).limit(1),
+      db.select({ content: userMemories.content, category: userMemories.category }).from(userMemories).where(eq10(userMemories.userId, userId)).orderBy(desc5(userMemories.extractedAt)).limit(50),
+      getRecentInteractions(userId, 20)
     ]);
+    logInteraction(userId, "telegram", "inbound", userText || "[image]").catch(() => {
+    });
     let userTimezone = "America/New_York";
     if (goalsRow.status === "fulfilled") userGoals = goalsRow.value[0]?.data || [];
     if (statsRow.status === "fulfilled") userStats = statsRow.value[0]?.data || {};
@@ -2330,7 +3003,7 @@ async function handleCoachReply(userId, chatId, userText, imageUrl) {
     const dateKey = `${localForDateKey.getFullYear()}-${String(localForDateKey.getMonth() + 1).padStart(2, "0")}-${String(localForDateKey.getDate()).padStart(2, "0")}`;
     let todayPlan = null;
     try {
-      const planRows = await db.select().from(plans).where(and2(eq4(plans.userId, userId), eq4(plans.date, dateKey))).limit(1);
+      const planRows = await db.select().from(plans).where(and7(eq10(plans.userId, userId), eq10(plans.date, dateKey))).limit(1);
       todayPlan = planRows[0]?.data || null;
     } catch {
     }
@@ -2395,9 +3068,62 @@ Gmail not connected \u2014 if asked about emails, let the user know.`;
     }
     const nextSlot = scheduleSlots.find((s) => s.hour > localHour || s.hour === localHour && s.minute > localMinute);
     const nextScheduledText = nextSlot ? `Next scheduled notification: ${nextSlot.label} (${userTimezone})` : "All scheduled notifications for today have already passed. Next: 8:00 AM tomorrow morning check-in";
+    let userMemoriesData = [];
+    if (memoriesRow.status === "fulfilled") userMemoriesData = memoriesRow.value;
+    const recentInteractions = recentInteractionsResult.status === "fulfilled" ? recentInteractionsResult.value : [];
+    const crossChannelSection = formatInteractionTimeline(recentInteractions);
+    let proactiveQuestionContext = "";
+    try {
+      const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1e3);
+      const recentUnanswered = await db.select().from(proactiveQuestionsSent).where(
+        and7(
+          eq10(proactiveQuestionsSent.userId, userId),
+          sql6`${proactiveQuestionsSent.answeredAt} IS NULL`,
+          sql6`${proactiveQuestionsSent.sentAt} > ${twentyFourHoursAgo}`
+        )
+      ).orderBy(desc5(proactiveQuestionsSent.sentAt)).limit(3);
+      if (recentUnanswered.length > 0) {
+        proactiveQuestionContext = `
+## Recent Proactive Questions You Asked (unanswered)
+You recently sent these curiosity-driven questions. If the user's message seems to be answering one of them, acknowledge it warmly and ask a brief follow-up to learn more about them.
+` + recentUnanswered.map((q) => `- "${q.question}" (about ${q.sourceType}: ${q.sourceId.replace(/^(cal|gmail):/, "")})`).join("\n");
+      }
+    } catch {
+    }
+    const memoriesSection = (() => {
+      if (userMemoriesData.length === 0) return "";
+      const categoryLabels = {
+        personality: "Personality & Communication",
+        values: "Values & Motivations",
+        work_style: "Work Style & Patterns",
+        accomplishment: "Accomplishments & Wins",
+        goal_discovered: "Discovered Goals",
+        relationship: "Key People & Relationships",
+        pattern: "Recurring Patterns",
+        preference: "Preferences",
+        fact: "General Facts",
+        goal: "Goals",
+        achievement: "Achievements"
+      };
+      const grouped = {};
+      for (const m of userMemoriesData) {
+        const cat = m.category || "fact";
+        if (!grouped[cat]) grouped[cat] = [];
+        grouped[cat].push(m.content);
+      }
+      let section = "\n## What I Know About You (from past conversations)";
+      for (const [cat, items] of Object.entries(grouped)) {
+        const label = categoryLabels[cat] || cat;
+        section += `
+### ${label}
+${items.map((i) => `- ${i}`).join("\n")}`;
+      }
+      return section;
+    })();
     const systemPrompt = `You are GamePlan Coach Jarvis \u2014 a sharp, supportive personal productivity coach. You're responding via Telegram, so keep messages SHORT (2-4 sentences max). Use plain text, no markdown headers.
 
 Today is ${dayOfWeek}, ${dateStr}. User's timezone: ${userTimezone}.
+${crossChannelSection}
 
 ## What You Do Automatically (you do NOT control these \u2014 the system runs them)
 - 8:00 AM: Morning check-in with today's plan and inbox highlights
@@ -2405,14 +3131,16 @@ Today is ${dayOfWeek}, ${dateStr}. User's timezone: ${userTimezone}.
 - 8:00 PM: Evening recap of what was completed and what's still open
 - 7:00 PM Sundays: Weekly planning session (comprehensive week review + pattern insights + next week intentions)
 - Every 30 minutes: Email scanner checks Gmail and sends a Telegram alert ONLY for genuinely urgent emails
-All times are in the user's timezone (${userTimezone}). These fire automatically \u2014 you cannot pause, delay, reschedule, or skip them. You have no log of whether a specific notification was actually sent.
+- Every 30 minutes: Curiosity scanner sends proactive questions about upcoming meetings and important emails to help learn about you
+All times are in the user's timezone (${userTimezone}). These fire automatically \u2014 you cannot pause, delay, reschedule, or skip them.
 ${nextScheduledText}
 
 ## What You Must NEVER Do
 - NEVER claim you "paused", "held", "scheduled", "decided to wait", or took any autonomous action regarding notifications. You don't have that ability.
-- NEVER invent a narrative about your own past behavior or past conversations you don't have in your message history below.
-- If asked whether a notification went out, be honest: "I don't have a record of which notifications fired. The morning check-in is scheduled for 8 AM \u2014 I can tell you what's in your data right now."
-- If asked about past conversations not in your message history, say so. Don't fabricate.
+- NEVER invent a narrative about your own past behavior or past conversations you don't have in your message history or cross-channel activity log below.
+- If asked whether a notification went out, check the "Recent Cross-Channel Activity" section above \u2014 it records every message you've sent and received across all channels in the last 48 hours.
+- If asked about past conversations not in your message history or the cross-channel log, say so. Don't fabricate.
+${memoriesSection}${proactiveQuestionContext}
 
 ## User Profile
 - Streak: ${userStats.streak || 0} days
@@ -2450,264 +3178,31 @@ Be direct, specific, actionable. No fluff. You have full access to the user's em
         { type: "text", text: userText || "What do you see in this image? Give me your thoughts and any relevant actions." },
         { type: "image_url", image_url: { url: imageUrl } }
       ] : userText;
-      const searchTool = {
-        type: "function",
-        function: {
-          name: "search_web",
-          description: "Search the web for current information, news, weather, prices, recent events, or anything requiring up-to-date data.",
-          parameters: {
-            type: "object",
-            properties: {
-              query: { type: "string", description: "The search query" }
-            },
-            required: ["query"]
-          }
-        }
-      };
-      const gmailActionTool = {
-        type: "function",
-        function: {
-          name: "gmail_action",
-          description: "Perform an action on a Gmail email. Use the message id from the email list provided in the system prompt.",
-          parameters: {
-            type: "object",
-            properties: {
-              message_id: { type: "string", description: "The Gmail message ID (from [id:...] in the email list)" },
-              action: { type: "string", enum: ["star", "unstar", "archive", "mark_read", "mark_unread", "spam", "trash"], description: "The action to perform on the email" }
-            },
-            required: ["message_id", "action"]
-          }
-        }
-      };
-      const manageTasksTool = {
-        type: "function",
-        function: {
-          name: "manage_tasks",
-          description: "Manage the user's daily plan tasks and commitments. Use this to add tasks to today's plan, add commitments, complete/resolve commitments, list current tasks, or analyze behavioral patterns from historical data.",
-          parameters: {
-            type: "object",
-            properties: {
-              action: {
-                type: "string",
-                enum: ["add_plan_task", "add_commitment", "complete_commitment", "list_tasks", "analyze_patterns"],
-                description: "The action to perform"
-              },
-              title: {
-                type: "string",
-                description: "Title of the task (required for add_plan_task)"
-              },
-              content: {
-                type: "string",
-                description: "Content of the commitment (required for add_commitment)"
-              },
-              due_date: {
-                type: "string",
-                description: "Due date in YYYY-MM-DD format (optional, for add_commitment)"
-              },
-              commitment_id: {
-                type: "string",
-                description: "The commitment ID from [id:...] (required for complete_commitment)"
-              }
-            },
-            required: ["action"]
-          }
-        }
-      };
       const baseMessages = [
         { role: "system", content: systemPrompt },
         ...recentMessages.map((m) => ({ role: m.role, content: m.content })),
         { role: "user", content: userMessageContent }
       ];
-      const response = await openai3.chat.completions.create({
+      const agentResult = await runAgent({
         model: "gpt-5-mini",
         messages: baseMessages,
-        tools: [searchTool, gmailActionTool, manageTasksTool],
-        tool_choice: "auto",
-        max_completion_tokens: 2e3
+        tools: telegramCoachTools({ hasGoogle: !!googleAccessToken }),
+        context: {
+          userId,
+          channel: "Telegram",
+          googleAccessToken: googleAccessToken || void 0,
+          state: {
+            dateKey,
+            todayPlan,
+            gmailMessageIds: gmailItems.map((i) => i.id).filter(Boolean)
+          }
+        },
+        maxTurns: 6,
+        maxCompletionTokens: 2e3
       });
-      const finishReason = response.choices?.[0]?.finish_reason;
-      console.log(`[Telegram] OpenAI finish_reason: ${finishReason}`);
-      if (finishReason === "tool_calls") {
-        const toolCall = response.choices[0].message.tool_calls?.[0];
-        if (toolCall?.function?.name === "search_web") {
-          let searchResult = "Search unavailable right now.";
-          try {
-            const args = JSON.parse(toolCall.function.arguments);
-            console.log(`[Telegram] Web search: "${args.query}"`);
-            const results = await tavilySearch(args.query);
-            searchResult = formatSearchResults(results);
-            console.log(`[Telegram] Search returned ${results.results.length} results`);
-          } catch (searchErr) {
-            console.error("[Telegram] Search failed:", searchErr.message);
-          }
-          const followUp = await openai3.chat.completions.create({
-            model: "gpt-5-mini",
-            messages: [
-              ...baseMessages,
-              response.choices[0].message,
-              { role: "tool", tool_call_id: toolCall.id, content: searchResult }
-            ],
-            max_completion_tokens: 2e3
-          });
-          console.log(`[Telegram] Follow-up finish_reason: ${followUp.choices?.[0]?.finish_reason}`);
-          reply = followUp.choices[0]?.message?.content || reply;
-        } else if (toolCall?.function?.name === "gmail_action") {
-          let actionResult = "Gmail action failed.";
-          try {
-            const args = JSON.parse(toolCall.function.arguments);
-            console.log(`[Telegram] Gmail action: ${args.action} on message ${args.message_id}`);
-            if (!googleAccessToken) {
-              actionResult = "Gmail is not connected. Ask the user to connect their Google account first.";
-            } else if (gmailItems.length > 0 && !gmailItems.some((e) => e.id === args.message_id)) {
-              actionResult = `Message ID "${args.message_id}" not found in the current email list. Please use a valid message ID from the emails shown.`;
-            } else {
-              const actionMap = {
-                star: { add: ["STARRED"], remove: [] },
-                unstar: { add: [], remove: ["STARRED"] },
-                archive: { add: [], remove: ["INBOX"] },
-                mark_read: { add: [], remove: ["UNREAD"] },
-                mark_unread: { add: ["UNREAD"], remove: [] },
-                spam: { add: ["SPAM"], remove: ["INBOX"] },
-                trash: { add: ["TRASH"], remove: ["INBOX"] }
-              };
-              const mapping = actionMap[args.action];
-              if (!mapping) {
-                actionResult = `Unknown action: ${args.action}`;
-              } else {
-                await gmailModifyMessage(args.message_id, mapping.add, mapping.remove, googleAccessToken);
-                actionResult = `Successfully performed "${args.action}" on the email.`;
-                console.log(`[Telegram] Gmail action succeeded: ${args.action} on ${args.message_id}`);
-              }
-            }
-          } catch (gmailErr) {
-            console.error("[Telegram] Gmail action failed:", gmailErr.message);
-            actionResult = `Gmail action failed: ${gmailErr.message}`;
-          }
-          const followUp = await openai3.chat.completions.create({
-            model: "gpt-5-mini",
-            messages: [
-              ...baseMessages,
-              response.choices[0].message,
-              { role: "tool", tool_call_id: toolCall.id, content: actionResult }
-            ],
-            max_completion_tokens: 2e3
-          });
-          console.log(`[Telegram] Follow-up finish_reason: ${followUp.choices?.[0]?.finish_reason}`);
-          reply = followUp.choices[0]?.message?.content || reply;
-        } else if (toolCall?.function?.name === "manage_tasks") {
-          let taskResult = "Task management action failed.";
-          try {
-            const args = JSON.parse(toolCall.function.arguments);
-            console.log(`[Telegram] manage_tasks action: ${args.action}`);
-            if (args.action === "add_plan_task") {
-              if (!args.title) {
-                taskResult = "Error: title is required for add_plan_task";
-              } else {
-                const tasks = todayPlan?.tasks || [];
-                const newTask = {
-                  id: crypto.randomUUID(),
-                  title: args.title,
-                  completed: false
-                };
-                tasks.push(newTask);
-                const planData = todayPlan ? { ...todayPlan, tasks } : { tasks };
-                await db.insert(plans).values({ userId, date: dateKey, data: planData }).onConflictDoUpdate({
-                  target: [plans.userId, plans.date],
-                  set: { data: planData, updatedAt: /* @__PURE__ */ new Date() }
-                });
-                todayPlan = planData;
-                taskResult = `Added "${args.title}" to today's plan. Today's plan now has ${tasks.length} task(s).`;
-                console.log(`[Telegram] Added plan task: "${args.title}"`);
-              }
-            } else if (args.action === "add_commitment") {
-              if (!args.content) {
-                taskResult = "Error: content is required for add_commitment";
-              } else {
-                await db.insert(commitments).values({
-                  userId,
-                  content: args.content,
-                  dueDate: args.due_date || null,
-                  sourceMessage: `Added via Telegram`
-                });
-                taskResult = `Added commitment: "${args.content}"${args.due_date ? ` (due ${args.due_date})` : ""}`;
-                console.log(`[Telegram] Added commitment: "${args.content}"`);
-              }
-            } else if (args.action === "complete_commitment") {
-              if (!args.commitment_id) {
-                taskResult = "Error: commitment_id is required for complete_commitment";
-              } else {
-                const updated = await db.update(commitments).set({ status: "done", resolvedAt: /* @__PURE__ */ new Date() }).where(and2(eq4(commitments.id, args.commitment_id), eq4(commitments.userId, userId), eq4(commitments.status, "pending"))).returning({ id: commitments.id });
-                if (updated.length > 0) {
-                  taskResult = `Marked commitment as done (id: ${args.commitment_id}).`;
-                  console.log(`[Telegram] Completed commitment: ${args.commitment_id}`);
-                } else {
-                  taskResult = `Error: No pending commitment found with id "${args.commitment_id}". Check the commitment ID and try again.`;
-                  console.log(`[Telegram] Commitment not found: ${args.commitment_id}`);
-                }
-              }
-            } else if (args.action === "list_tasks") {
-              const planTasks = todayPlan?.tasks || [];
-              const pendingCommitments = await db.select().from(commitments).where(and2(eq4(commitments.userId, userId), eq4(commitments.status, "pending"))).orderBy(desc(commitments.extractedAt)).limit(10);
-              let listing = "";
-              if (planTasks.length > 0) {
-                listing += "Today's Plan:\n" + planTasks.map(
-                  (t) => `- ${t.completed ? "\u2705" : "\u2B1C"} ${t.title}`
-                ).join("\n");
-              } else {
-                listing += "Today's Plan: No tasks yet.";
-              }
-              listing += "\n\n";
-              if (pendingCommitments.length > 0) {
-                listing += "Open Commitments:\n" + pendingCommitments.map(
-                  (c) => `- [id:${c.id}] "${c.content}"${c.dueDate ? ` (due ${c.dueDate})` : ""}`
-                ).join("\n");
-              } else {
-                listing += "Open Commitments: None.";
-              }
-              taskResult = listing;
-              console.log(`[Telegram] Listed tasks: ${planTasks.length} plan tasks, ${pendingCommitments.length} commitments`);
-            } else if (args.action === "analyze_patterns") {
-              const today = /* @__PURE__ */ new Date();
-              const thirtyDaysAgo = new Date(today);
-              thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-              const startDate = thirtyDaysAgo.toISOString().slice(0, 10);
-              const endDate = today.toISOString().slice(0, 10);
-              const plans2 = await getPlansForDateRange(userId, startDate, endDate);
-              if (plans2.length < 3) {
-                taskResult = "Not enough data yet for pattern analysis. Need at least a few days of plan data to identify meaningful patterns.";
-              } else {
-                const allCommitments = await db.select().from(commitments).where(eq4(commitments.userId, userId)).limit(200);
-                const scopedCommitments = allCommitments.filter(
-                  (c) => c.dueDate && c.dueDate >= startDate && c.dueDate <= endDate || c.extractedAt && c.extractedAt >= new Date(startDate) && c.extractedAt <= /* @__PURE__ */ new Date(endDate + "T23:59:59") || c.resolvedAt && c.resolvedAt >= new Date(startDate) && c.resolvedAt <= /* @__PURE__ */ new Date(endDate + "T23:59:59")
-                );
-                const patternData = computePatternInsights(plans2, scopedCommitments);
-                taskResult = `Here is the user's behavioral pattern data from the last 30 days. Analyze this and provide 3-5 sharp, specific behavioral observations. Name each pattern (e.g. "Friday drop-off", "Health task avoidance", "Overplanning on Mondays"). Use specific numbers from the data. Be direct and insightful, not generic.
-
-${patternData}`;
-              }
-              console.log(`[Telegram] Pattern analysis: ${plans2.length} days of data`);
-            } else {
-              taskResult = `Unknown action: ${args.action}`;
-            }
-          } catch (taskErr) {
-            console.error("[Telegram] manage_tasks failed:", taskErr.message);
-            taskResult = `Task management failed: ${taskErr.message}`;
-          }
-          const followUp = await openai3.chat.completions.create({
-            model: "gpt-5-mini",
-            messages: [
-              ...baseMessages,
-              response.choices[0].message,
-              { role: "tool", tool_call_id: toolCall.id, content: taskResult }
-            ],
-            max_completion_tokens: 2e3
-          });
-          console.log(`[Telegram] Follow-up finish_reason: ${followUp.choices?.[0]?.finish_reason}`);
-          reply = followUp.choices[0]?.message?.content || reply;
-        }
-      } else {
-        reply = response.choices[0]?.message?.content || reply;
-      }
+      todayPlan = agentResult.toolCalls.length > 0 ? agentResult.context?.state?.todayPlan ?? todayPlan : todayPlan;
+      reply = agentResult.reply || reply;
+      console.log(`[Telegram] Agent done \u2014 turns=${agentResult.turns}, tool calls=${agentResult.toolCalls.length}, finish=${agentResult.finishReason}`);
     } catch (aiErr) {
       console.error("[Telegram] OpenAI error:", aiErr?.status, aiErr?.message, aiErr?.error);
       throw aiErr;
@@ -2723,13 +3218,146 @@ ${patternData}`;
     } catch {
     }
     await sendMessage(chatId, reply);
+    logInteraction(userId, "telegram", "outbound", reply).catch(() => {
+    });
+    extractProfileFromTelegram(userId, userText).catch((err) => {
+      console.error("[Profile] Telegram extraction error:", err);
+    });
   } catch (error) {
     console.error("Error handling Telegram coach reply:", error);
     await sendMessage(chatId, "Sorry, I encountered an error. Please try again.");
   }
 }
+async function isReplyToProactiveQuestion(userText, question) {
+  try {
+    const response = await openai7.chat.completions.create({
+      model: "gpt-5-mini",
+      messages: [{
+        role: "user",
+        content: `Is the following user message a reply to (or related to) this question? Only answer "yes" or "no".
+
+Question that was asked: "${question}"
+User's message: "${userText}"
+
+Answer (yes/no):`
+      }],
+      max_completion_tokens: 10
+    });
+    const answer = (response.choices[0]?.message?.content || "").trim().toLowerCase();
+    return answer.startsWith("yes");
+  } catch {
+    return false;
+  }
+}
+async function extractProfileFromTelegram(userId, userText) {
+  try {
+    const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1e3);
+    const unanswered = await db.select().from(proactiveQuestionsSent).where(
+      and7(
+        eq10(proactiveQuestionsSent.userId, userId),
+        sql6`${proactiveQuestionsSent.answeredAt} IS NULL`,
+        sql6`${proactiveQuestionsSent.sentAt} > ${twentyFourHoursAgo}`
+      )
+    ).orderBy(desc5(proactiveQuestionsSent.sentAt)).limit(1);
+    let answeredQuestion = null;
+    if (unanswered.length > 0) {
+      const mostRecent = unanswered[0];
+      const isReply = await isReplyToProactiveQuestion(userText, mostRecent.question);
+      if (isReply) {
+        await db.update(proactiveQuestionsSent).set({ answeredAt: /* @__PURE__ */ new Date() }).where(eq10(proactiveQuestionsSent.id, mostRecent.id));
+        answeredQuestion = mostRecent;
+        console.log(`[Profile] Marked proactive question as answered: ${mostRecent.id}`);
+      }
+    }
+    const existingRows = await db.select({ content: userMemories.content }).from(userMemories).where(eq10(userMemories.userId, userId));
+    const existingMemories = existingRows.map((r) => r.content);
+    const normalizedExisting = new Set(existingMemories.map((c) => c.trim().toLowerCase().replace(/[^\w\s]/g, "").replace(/\s+/g, " ")));
+    const existingList = existingMemories.length > 0 ? `
+Existing memories (DO NOT duplicate these):
+${existingMemories.map((m) => `- ${m}`).join("\n")}` : "";
+    const contextNote = answeredQuestion ? `
+The user was recently asked this proactive question: "${answeredQuestion.question}"
+Their reply is answering this question \u2014 extract insights from their answer.` : "";
+    const prompt = `You are extracting profile facts about the user from their Telegram message.
+Output a JSON array of { category, content } objects. Only extract facts that are specific, meaningful, and not already captured.
+${contextNote}
+
+Categories:
+- personality \u2014 how they communicate, humor, energy, decision style
+- values \u2014 what they care about deeply, what motivates them
+- work_style \u2014 when/how they focus, work patterns, tools they use
+- accomplishment \u2014 wins, achievements, proud moments mentioned
+- goal_discovered \u2014 goals inferred from behavior (not just stated)
+- relationship \u2014 key people in their life (family, teammates, boss)
+- pattern \u2014 recurring behaviors, habits, tendencies
+- preference \u2014 explicit preferences (meeting times, communication style, etc.)
+${existingList}
+
+User message:
+${userText}
+
+Return JSON: { "memories": [{"content": "string describing the fact", "category": "one of the categories above"}] }
+Return { "memories": [] } if nothing new was learned. Do NOT repeat or rephrase existing memories.`;
+    const response = await openai7.chat.completions.create({
+      model: "gpt-5-mini",
+      messages: [{ role: "user", content: prompt }],
+      response_format: { type: "json_object" },
+      max_completion_tokens: 400
+    });
+    const content = response.choices[0]?.message?.content || '{"memories":[]}';
+    const parsed = JSON.parse(content);
+    const rawMemories = Array.isArray(parsed.memories) ? parsed.memories : Array.isArray(parsed) ? parsed : [];
+    const newMemories = rawMemories.slice(0, 3);
+    const validCategories = ["personality", "values", "work_style", "accomplishment", "goal_discovered", "relationship", "pattern", "preference", "fact", "goal", "achievement"];
+    for (const mem of newMemories) {
+      if (!mem.content || typeof mem.content !== "string" || mem.content.trim().length === 0) continue;
+      const normalized = mem.content.trim().toLowerCase().replace(/[^\w\s]/g, "").replace(/\s+/g, " ");
+      if (normalizedExisting.has(normalized)) continue;
+      const category = validCategories.includes(mem.category) ? mem.category : "fact";
+      await db.insert(userMemories).values({
+        userId,
+        content: mem.content.trim(),
+        category
+      });
+      normalizedExisting.add(normalized);
+      console.log(`[Profile/Telegram] Extracted: [${category}] ${mem.content.trim().slice(0, 60)}...`);
+    }
+  } catch (err) {
+    console.error("[Profile/Telegram] Extraction error:", err);
+  }
+}
+async function handleCallbackQuery(callbackQuery) {
+  const queryId = callbackQuery.id;
+  const data = callbackQuery.data || "";
+  const chatId = callbackQuery.message?.chat?.id?.toString();
+  if (!chatId) {
+    await answerCallbackQuery(queryId);
+    return;
+  }
+  if (data.startsWith("momentum_done:")) {
+    const parts = data.split(":");
+    const claimedUserId = parts[1] ?? "";
+    const stepIndex = parseInt(parts[2] ?? "0", 10);
+    const links = await db.select({ userId: telegramLinks.userId }).from(telegramLinks).where(eq10(telegramLinks.chatId, chatId)).limit(1);
+    if (links.length === 0 || links[0].userId !== claimedUserId) {
+      await answerCallbackQuery(queryId, "Session not found \u2014 please re-link your account.");
+      console.warn(`[Momentum] Ownership mismatch: claimed=${claimedUserId}, actual=${links[0]?.userId ?? "none"}, chatId=${chatId}`);
+      return;
+    }
+    await answerCallbackQuery(queryId, "Got it! +XP incoming...");
+    await handleMomentumDone(claimedUserId, chatId, stepIndex);
+    return;
+  }
+  await answerCallbackQuery(queryId);
+}
 async function processUpdate(update) {
   try {
+    if (update.callback_query) {
+      await handleCallbackQuery(update.callback_query).catch(
+        (err) => console.error("[Telegram] callback_query error:", err)
+      );
+      return;
+    }
     if (update.my_chat_member) {
       const chatMember = update.my_chat_member;
       const chat = chatMember.chat;
@@ -2739,14 +3367,14 @@ async function processUpdate(update) {
         if (fromUserId) {
           try {
             const link = await db.select().from(telegramLinks).where(
-              sql4`${telegramLinks.chatId} = ${fromUserId}`
+              sql6`${telegramLinks.chatId} = ${fromUserId}`
             ).limit(1);
             if (link[0]) {
               const currentGroups = link[0].groupChatIds || [];
               const chatIdStr = chat.id.toString();
               if (!currentGroups.includes(chatIdStr)) {
                 currentGroups.push(chatIdStr);
-                await db.update(telegramLinks).set({ groupChatIds: currentGroups }).where(eq4(telegramLinks.userId, link[0].userId));
+                await db.update(telegramLinks).set({ groupChatIds: currentGroups }).where(eq10(telegramLinks.userId, link[0].userId));
               }
             }
           } catch (err) {
@@ -2782,9 +3410,9 @@ async function processUpdate(update) {
           await sendMessage(chatId, "Sorry, I couldn't download that voice message. Could you try again or type it out?");
           return;
         }
-        const { speechToText: speechToText2, ensureCompatibleFormat: ensureCompatibleFormat2 } = await Promise.resolve().then(() => (init_client(), client_exports));
-        const { buffer, format } = await ensureCompatibleFormat2(file.buffer);
-        const transcript = await speechToText2(buffer, format);
+        const { speechToText: speechToText2, detectAudioFormat: detectAudioFormat2 } = await Promise.resolve().then(() => (init_client(), client_exports));
+        const format = detectAudioFormat2(file.buffer);
+        const transcript = await speechToText2(file.buffer, format);
         if (!transcript || !transcript.trim()) {
           await sendMessage(chatId, "Sorry, I couldn't make out what you said. Could you try again or type it out?");
           return;
@@ -2803,7 +3431,7 @@ async function processUpdate(update) {
       if (!text2) return;
       try {
         const links = await db.select().from(telegramLinks).where(
-          sql4`${telegramLinks.groupChatIds}::jsonb @> ${JSON.stringify([chatId])}::jsonb`
+          sql6`${telegramLinks.groupChatIds}::jsonb @> ${JSON.stringify([chatId])}::jsonb`
         );
         for (const link of links) {
           await db.insert(telegramGroupMessages).values({
@@ -2823,7 +3451,7 @@ async function processUpdate(update) {
     if (text2.startsWith("/start ") || text2.length === 6 && /^[A-Z0-9]+$/.test(text2)) {
       const code = text2.startsWith("/start ") ? text2.slice(7).trim() : text2;
       try {
-        const codeRows = await db.select().from(telegramLinkCodes).where(eq4(telegramLinkCodes.code, code));
+        const codeRows = await db.select().from(telegramLinkCodes).where(eq10(telegramLinkCodes.code, code));
         if (codeRows.length === 0) {
           await sendMessage(chatId, "Invalid or expired link code. Please generate a new one from the app.");
           return;
@@ -2831,7 +3459,7 @@ async function processUpdate(update) {
         const { userId } = codeRows[0];
         const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1e3);
         if (codeRows[0].createdAt < fiveMinAgo) {
-          await db.delete(telegramLinkCodes).where(eq4(telegramLinkCodes.code, code));
+          await db.delete(telegramLinkCodes).where(eq10(telegramLinkCodes.code, code));
           await sendMessage(chatId, "This link code has expired. Please generate a new one from the app.");
           return;
         }
@@ -2839,7 +3467,7 @@ async function processUpdate(update) {
           target: telegramLinks.userId,
           set: { chatId, username: message.from?.username || message.from?.first_name || null, linkedAt: /* @__PURE__ */ new Date() }
         });
-        await db.delete(telegramLinkCodes).where(eq4(telegramLinkCodes.code, code));
+        await db.delete(telegramLinkCodes).where(eq10(telegramLinkCodes.code, code));
         await sendMessage(chatId, "\u2705 You're connected to GamePlan! Jarvis will send you morning check-ins and you can chat anytime right here.");
         console.log(`[Telegram] Linked user ${userId} to chat ${chatId}`);
       } catch (err) {
@@ -2853,7 +3481,7 @@ async function processUpdate(update) {
       return;
     }
     try {
-      const link = await db.select().from(telegramLinks).where(eq4(telegramLinks.chatId, chatId)).limit(1);
+      const link = await db.select().from(telegramLinks).where(eq10(telegramLinks.chatId, chatId)).limit(1);
       if (link.length === 0) {
         await sendMessage(chatId, "Your Telegram isn't linked to a GamePlan account yet. Open the app, go to Profile > Connected Apps > Telegram, and send the link code here.");
         return;
@@ -2867,8 +3495,6 @@ async function processUpdate(update) {
     console.error("Telegram processUpdate error:", error);
   }
 }
-var pollingOffset = 0;
-var pollingActive = false;
 async function startTelegramPolling() {
   if (!isTelegramConfigured()) return;
   if (pollingActive) return;
@@ -2903,7 +3529,7 @@ function registerTelegramRoutes(app2) {
       if (!isTelegramConfigured()) {
         return res.status(400).json({ error: "Telegram bot not configured. Add TELEGRAM_BOT_TOKEN to secrets." });
       }
-      await db.delete(telegramLinkCodes).where(eq4(telegramLinkCodes.userId, userId));
+      await db.delete(telegramLinkCodes).where(eq10(telegramLinkCodes.userId, userId));
       const code = generateLinkCode();
       await db.insert(telegramLinkCodes).values({ code, userId });
       res.json({ code });
@@ -2916,7 +3542,7 @@ function registerTelegramRoutes(app2) {
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const link = await db.select().from(telegramLinks).where(eq4(telegramLinks.userId, userId)).limit(1);
+      const link = await db.select().from(telegramLinks).where(eq10(telegramLinks.userId, userId)).limit(1);
       if (link.length === 0) {
         return res.json({ connected: false, username: null, configured: isTelegramConfigured() });
       }
@@ -2934,7 +3560,7 @@ function registerTelegramRoutes(app2) {
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      await db.delete(telegramLinks).where(eq4(telegramLinks.userId, userId));
+      await db.delete(telegramLinks).where(eq10(telegramLinks.userId, userId));
       res.json({ success: true });
     } catch (error) {
       console.error("Error disconnecting Telegram:", error);
@@ -2945,15 +3571,15 @@ function registerTelegramRoutes(app2) {
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const link = await db.select().from(telegramLinks).where(eq4(telegramLinks.userId, userId)).limit(1);
+      const link = await db.select().from(telegramLinks).where(eq10(telegramLinks.userId, userId)).limit(1);
       if (link.length === 0) {
         return res.json({ connected: false, messages: [] });
       }
       const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1e3);
-      const messages = await db.select().from(telegramGroupMessages).where(and2(
-        eq4(telegramGroupMessages.userId, userId),
-        gte(telegramGroupMessages.messageDate, sevenDaysAgo)
-      )).orderBy(desc(telegramGroupMessages.messageDate)).limit(50);
+      const messages = await db.select().from(telegramGroupMessages).where(and7(
+        eq10(telegramGroupMessages.userId, userId),
+        gte2(telegramGroupMessages.messageDate, sevenDaysAgo)
+      )).orderBy(desc5(telegramGroupMessages.messageDate)).limit(50);
       res.json({
         connected: true,
         messages: messages.map((m) => ({
@@ -2974,7 +3600,7 @@ function registerTelegramRoutes(app2) {
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const { type, message: msgText } = req.body;
       if (!msgText) return res.status(400).json({ error: "message is required" });
-      const link = await db.select().from(telegramLinks).where(eq4(telegramLinks.userId, userId)).limit(1);
+      const link = await db.select().from(telegramLinks).where(eq10(telegramLinks.userId, userId)).limit(1);
       if (link.length === 0) {
         return res.json({ sent: false, reason: "Not linked" });
       }
@@ -2988,16 +3614,16 @@ function registerTelegramRoutes(app2) {
 }
 async function getCommitmentsForUser(userId) {
   try {
-    return await db.select().from(commitments).where(and2(eq4(commitments.userId, userId), eq4(commitments.status, "pending"))).orderBy(desc(commitments.extractedAt)).limit(20);
+    return await db.select().from(commitments).where(and7(eq10(commitments.userId, userId), eq10(commitments.status, "pending"))).orderBy(desc5(commitments.extractedAt)).limit(20);
   } catch {
     return [];
   }
 }
 async function getPlansForDateRange(userId, startDate, endDate) {
   try {
-    const rows = await db.select().from(plans).where(and2(
-      eq4(plans.userId, userId),
-      gte(plans.date, startDate),
+    const rows = await db.select().from(plans).where(and7(
+      eq10(plans.userId, userId),
+      gte2(plans.date, startDate),
       lte(plans.date, endDate)
     ));
     return rows.map((r) => ({
@@ -3206,7 +3832,7 @@ Write a concise evening recap (3-4 sentences). Acknowledge what was done, note w
       const catSummary = Object.entries(categoryBreakdown).map(([cat, v]) => `  ${cat}: ${v.done}/${v.total} (${Math.round(v.done / v.total * 100)}%)`).join("\n");
       const droppedTypeEntries = Object.entries(droppedCategories).sort((a, b) => b[1] - a[1]);
       const droppedSummary = droppedTypeEntries.length > 0 ? `Top dropped task types: ${droppedTypeEntries.slice(0, 5).map(([cat, count]) => `${cat} (${count})`).join(", ")}` : "No incomplete tasks this week";
-      const allWeekCommitments = await db.select().from(commitments).where(eq4(commitments.userId, userId)).limit(200);
+      const allWeekCommitments = await db.select().from(commitments).where(eq10(commitments.userId, userId)).limit(200);
       const weekDueCommitments = allWeekCommitments.filter(
         (c) => c.dueDate && c.dueDate >= startDate && c.dueDate <= endDate
       );
@@ -3243,7 +3869,7 @@ Write a concise evening recap (3-4 sentences). Acknowledge what was done, note w
         thirtyDaysAgoDate.setDate(thirtyDaysAgoDate.getDate() - 30);
         const thirtyDayStart = thirtyDaysAgoDate.toISOString().slice(0, 10);
         const allPlans = await getPlansForDateRange(userId, thirtyDayStart, endDate);
-        const allCommitmentsRaw = await db.select().from(commitments).where(eq4(commitments.userId, userId)).limit(200);
+        const allCommitmentsRaw = await db.select().from(commitments).where(eq10(commitments.userId, userId)).limit(200);
         const scopedCommitments30d = allCommitmentsRaw.filter(
           (c) => c.dueDate && c.dueDate >= thirtyDayStart && c.dueDate <= endDate || c.extractedAt && c.extractedAt >= new Date(thirtyDayStart) && c.extractedAt <= /* @__PURE__ */ new Date(endDate + "T23:59:59") || c.resolvedAt && c.resolvedAt >= new Date(thirtyDayStart) && c.resolvedAt <= /* @__PURE__ */ new Date(endDate + "T23:59:59")
         );
@@ -3290,7 +3916,7 @@ Write a sharp weekly summary (3-4 sentences). What's the trend? What needs focus
   if (!prompt) return null;
   const isWeeklyPlanning = type === "weekly" || type === "weekly_planning";
   try {
-    const resp = await openai3.chat.completions.create({
+    const resp = await openai7.chat.completions.create({
       model: "gpt-5-mini",
       messages: [
         {
@@ -3307,16 +3933,129 @@ Write a sharp weekly summary (3-4 sentences). What's the trend? What needs focus
     return null;
   }
 }
+async function hasAlreadySent(userId, messageType, dateKey) {
+  try {
+    const rows = await db.select({ id: proactiveScheduleLog.id }).from(proactiveScheduleLog).where(
+      and7(
+        eq10(proactiveScheduleLog.userId, userId),
+        eq10(proactiveScheduleLog.messageType, messageType),
+        eq10(proactiveScheduleLog.sentDate, dateKey)
+      )
+    ).limit(1);
+    return rows.length > 0;
+  } catch {
+    return false;
+  }
+}
+async function markAsSent(userId, messageType, dateKey) {
+  try {
+    await db.insert(proactiveScheduleLog).values({ userId, messageType, sentDate: dateKey }).catch(() => {
+    });
+  } catch {
+  }
+}
+async function sendScheduledMessage(link, schedule, dateKey, timezone) {
+  if (schedule.type === "followup_check") {
+    const tokens = await getValidGoogleTokens(link.userId).catch(() => []);
+    if (!tokens || tokens.length === 0) return;
+    const token = tokens[0];
+    const starredEmails = await getStarredFollowUpEmails(token, 3);
+    if (starredEmails.length === 0) return;
+    const emailList = starredEmails.slice(0, 10).map((e) => {
+      const senderName = e.from.replace(/<.*>/, "").trim() || e.from;
+      return `${senderName} (${e.ageDays}d) \u2014 "${e.subject}"`;
+    }).join("\n");
+    const msg = `\u{1F4EC} ${starredEmails.length} starred/important email${starredEmails.length === 1 ? "" : "s"} sitting >3 days:
+
+${emailList}
+
+Still relevant? Reply, archive, or unstar anything you've handled.`;
+    console.log(`[Proactive] Sending followup_check to user ${link.userId} (${timezone})`);
+    await sendMessage(link.chatId, msg);
+    logInteraction(link.userId, "notification", "outbound", msg, "followup_check").catch(() => {
+    });
+    return;
+  }
+  const [goalsRow, planRow, statsRow] = await Promise.allSettled([
+    db.select().from(goals).where(eq10(goals.userId, link.userId)).limit(1),
+    db.select().from(plans).where(and7(eq10(plans.userId, link.userId), eq10(plans.date, dateKey))).limit(1),
+    db.select().from(stats).where(eq10(stats.userId, link.userId)).limit(1)
+  ]);
+  const userGoals = goalsRow.status === "fulfilled" ? goalsRow.value[0]?.data || [] : [];
+  const todayPlan = planRow.status === "fulfilled" ? planRow.value[0]?.data : null;
+  const userStats = statsRow.status === "fulfilled" ? statsRow.value[0]?.data || {} : {};
+  const tasks = todayPlan?.tasks || [];
+  if (schedule.type === "momentum_nudge") {
+    const alreadyHasSession = await hasMomentumSessionToday(link.userId, dateKey);
+    if (alreadyHasSession) return;
+    console.log(`[Proactive] Sending momentum_nudge to user ${link.userId} (${timezone})`);
+    await startMomentumSession(link.userId, link.chatId, {
+      tasks,
+      goals: userGoals,
+      stats: userStats,
+      dateKey
+    });
+    logInteraction(link.userId, "notification", "outbound", "[Momentum coaching session started]", "momentum_nudge").catch(() => {
+    });
+    return;
+  }
+  const commitments2 = await getCommitmentsForUser(link.userId);
+  const message = await generateProactiveMessage(schedule.type, {
+    tasks,
+    goals: userGoals,
+    commitments: commitments2,
+    stats: userStats,
+    dateKey,
+    userId: link.userId
+  });
+  if (message) {
+    console.log(`[Proactive] Sending ${schedule.type} to user ${link.userId} (${timezone})`);
+    await sendMessage(link.chatId, message);
+    logInteraction(link.userId, "notification", "outbound", message, schedule.type).catch(() => {
+    });
+  }
+}
+async function runProactiveStartupCatchup() {
+  if (!isTelegramConfigured()) return;
+  try {
+    const links = await db.select().from(telegramLinks);
+    if (links.length === 0) return;
+    const allPrefs = await db.select().from(userPreferences);
+    const prefsMap = {};
+    for (const p of allPrefs) prefsMap[p.userId] = p.data || {};
+    const now = /* @__PURE__ */ new Date();
+    for (const link of links) {
+      const timezone = prefsMap[link.userId]?.timezone || "America/New_York";
+      const localDate = new Date(now.toLocaleString("en-US", { timeZone: timezone }));
+      const localHour = localDate.getHours();
+      const localDay = localDate.getDay();
+      const yr = localDate.getFullYear();
+      const mo = String(localDate.getMonth() + 1).padStart(2, "0");
+      const dy = String(localDate.getDate()).padStart(2, "0");
+      const dateKey = `${yr}-${mo}-${dy}`;
+      for (const schedule of PROACTIVE_SCHEDULE) {
+        if (schedule.type === "weekly_planning" && localDay !== (schedule.dayOfWeek ?? -1)) continue;
+        const scheduleMinutesFromMidnight = schedule.hour * 60 + schedule.minute;
+        const currentMinutesFromMidnight = localHour * 60 + localDate.getMinutes();
+        const minutesSinceScheduled = currentMinutesFromMidnight - scheduleMinutesFromMidnight;
+        if (minutesSinceScheduled < 0 || minutesSinceScheduled > 120) continue;
+        const alreadySent = await hasAlreadySent(link.userId, schedule.type, dateKey);
+        if (alreadySent) continue;
+        console.log(`[Proactive] Catchup: sending missed ${schedule.type} to user ${link.userId}`);
+        try {
+          await sendScheduledMessage(link, schedule, dateKey, timezone);
+          await markAsSent(link.userId, schedule.type, dateKey);
+        } catch (err) {
+          console.error(`[Proactive] Catchup error for ${link.userId}:`, err);
+        }
+      }
+    }
+  } catch (err) {
+    console.error("[Proactive] Startup catchup error:", err);
+  }
+}
 async function startProactiveScheduler() {
   if (!isTelegramConfigured()) return;
-  const SCHEDULE = [
-    { type: "morning", hour: 8, minute: 0 },
-    { type: "commitment_check", hour: 10, minute: 0 },
-    { type: "followup_check", hour: 12, minute: 0 },
-    { type: "evening", hour: 20, minute: 0 },
-    { type: "weekly_planning", dayOfWeek: 0, hour: 19, minute: 0 }
-  ];
-  const lastSent = {};
   setInterval(async () => {
     const now = /* @__PURE__ */ new Date();
     try {
@@ -3335,58 +4074,14 @@ async function startProactiveScheduler() {
         const mo = String(localDate.getMonth() + 1).padStart(2, "0");
         const dy = String(localDate.getDate()).padStart(2, "0");
         const dateKey = `${yr}-${mo}-${dy}`;
-        for (const schedule of SCHEDULE) {
+        for (const schedule of PROACTIVE_SCHEDULE) {
           if (localHour !== schedule.hour || localMinute !== schedule.minute) continue;
-          if (schedule.type === "weekly_planning" && localDay !== schedule.dayOfWeek) continue;
-          const sentKey = `${link.userId}-${schedule.type}-${dateKey}`;
-          if (lastSent[sentKey]) continue;
-          lastSent[sentKey] = dateKey;
+          if (schedule.type === "weekly_planning" && localDay !== (schedule.dayOfWeek ?? -1)) continue;
+          const alreadySent = await hasAlreadySent(link.userId, schedule.type, dateKey);
+          if (alreadySent) continue;
           try {
-            if (schedule.type === "followup_check") {
-              const tokens = await getValidGoogleTokens(link.userId).catch(() => []);
-              if (!tokens || tokens.length === 0) continue;
-              const token = tokens[0];
-              const starredEmails = await getStarredFollowUpEmails(token, 3);
-              if (starredEmails.length === 0) continue;
-              const emailList = starredEmails.slice(0, 10).map((e) => {
-                const senderName = e.from.replace(/<.*>/, "").trim() || e.from;
-                return `${senderName} (${e.ageDays}d) \u2014 "${e.subject}"`;
-              }).join("\n");
-              const msg = `\u{1F4EC} ${starredEmails.length} starred/important email${starredEmails.length === 1 ? "" : "s"} sitting >3 days:
-
-${emailList}
-
-Still relevant? Reply, archive, or unstar anything you've handled.`;
-              console.log(`[Proactive] Sending followup_check to user ${link.userId} (${timezone})`);
-              await sendMessage(link.chatId, msg);
-              continue;
-            }
-            let userGoals = [];
-            let todayPlan = null;
-            let userStats = {};
-            let commitments2 = [];
-            const [goalsRow, planRow, statsRow] = await Promise.allSettled([
-              db.select().from(goals).where(eq4(goals.userId, link.userId)).limit(1),
-              db.select().from(plans).where(and2(eq4(plans.userId, link.userId), eq4(plans.date, dateKey))).limit(1),
-              db.select().from(stats).where(eq4(stats.userId, link.userId)).limit(1)
-            ]);
-            if (goalsRow.status === "fulfilled") userGoals = goalsRow.value[0]?.data || [];
-            if (planRow.status === "fulfilled") todayPlan = planRow.value[0]?.data;
-            if (statsRow.status === "fulfilled") userStats = statsRow.value[0]?.data || {};
-            commitments2 = await getCommitmentsForUser(link.userId);
-            const tasks = todayPlan?.tasks || [];
-            const message = await generateProactiveMessage(schedule.type, {
-              tasks,
-              goals: userGoals,
-              commitments: commitments2,
-              stats: userStats,
-              dateKey,
-              userId: link.userId
-            });
-            if (message) {
-              console.log(`[Proactive] Sending ${schedule.type} to user ${link.userId} (${timezone})`);
-              await sendMessage(link.chatId, message);
-            }
+            await sendScheduledMessage(link, schedule, dateKey, timezone);
+            await markAsSent(link.userId, schedule.type, dateKey);
           } catch (err) {
             console.error(`[Proactive] Error for user ${link.userId}:`, err);
           }
@@ -3462,7 +4157,7 @@ ${relevantEmails.map((e) => `- ${e}`).join("\n")}` : ""}
 
 Write a sharp 2-3 sentence meeting prep brief. Include what the meeting is about, highlight any relevant email context if provided, and end with one clear action item or thing to focus on. Be direct, no fluff.`;
             try {
-              const resp = await openai3.chat.completions.create({
+              const resp = await openai7.chat.completions.create({
                 model: "gpt-5-mini",
                 messages: [
                   {
@@ -3482,6 +4177,8 @@ Write a sharp 2-3 sentence meeting prep brief. Include what the meeting is about
 ${briefMessage}`;
                 console.log(`[MeetingBrief] Sending brief for "${event.title}" to user ${link.userId}`);
                 await sendMessage(link.chatId, fullMsg);
+                logInteraction(link.userId, "notification", "outbound", fullMsg, "meeting_brief").catch(() => {
+                });
               }
             } catch (err) {
               console.error(`[MeetingBrief] AI generation failed for "${event.title}":`, err);
@@ -3525,14 +4222,76 @@ async function startEmailAlertScanner() {
         const emails = await getEmailsSince(sinceMs, token);
         if (emails.length === 0) continue;
         console.log(`[EmailAlert] ${emails.length} new email(s) for user ${link.userId}, classifying...`);
-        const emailList = emails.map(
+        const { getUserInboxRules: getUserInboxRules2, matchItemAgainstRules: matchItemAgainstRules2 } = await Promise.resolve().then(() => (init_inboxRules(), inboxRules_exports));
+        const userRules = await getUserInboxRules2(link.userId);
+        const filteredEmails = [];
+        const autoSurfaced = [];
+        for (const email of emails) {
+          const result = matchItemAgainstRules2(
+            {
+              sourceType: "email",
+              sourceId: email.messageId || "",
+              sender: email.from,
+              subject: email.subject,
+              snippet: email.snippet
+            },
+            userRules
+          );
+          if (result.verdict === "suppress") {
+            console.log(`[EmailAlert] Suppressed "${email.subject}" by rule ${result.matchedRuleId}`);
+            continue;
+          }
+          if (result.verdict === "surface") {
+            autoSurfaced.push({ email, ruleId: result.matchedRuleId, reason: "Matched your surface rule" });
+            continue;
+          }
+          filteredEmails.push(email);
+        }
+        for (const { email, ruleId, reason } of autoSurfaced) {
+          const suggestedActions = email.messageId ? [
+            { label: "Archive", actionType: "archive" },
+            { label: "Star", actionType: "mark_important" },
+            { label: "Save as Task", actionType: "save_as_task" },
+            { label: "Dismiss", actionType: "dismiss" }
+          ] : [
+            { label: "Save as Task", actionType: "save_as_task" },
+            { label: "Dismiss", actionType: "dismiss" }
+          ];
+          try {
+            await db.insert(inboxItems).values({
+              userId: link.userId,
+              sourceType: "email",
+              sourceId: email.messageId ? `gmail:${email.messageId}` : `gmail:${email.subject}`,
+              subject: email.subject,
+              sender: email.from,
+              snippet: email.snippet,
+              jarvisReason: reason,
+              suggestedActions,
+              matchedRuleId: ruleId || null
+            });
+          } catch {
+          }
+          const senderName = email.from.replace(/<.*>/, "").trim() || email.from;
+          const msg = `\u{1F4E7} Surfaced for you:
+From: ${senderName}
+"${email.subject}"
+
+${email.snippet.slice(0, 150)}${email.snippet.length > 150 ? "..." : ""}
+
+Jarvis: ${reason}`;
+          await sendMessage(link.chatId, msg);
+          logInteraction(link.userId, "notification", "outbound", msg, "email_surfaced").catch(() => {
+          });
+        }
+        if (filteredEmails.length === 0) continue;
+        const emailList = filteredEmails.map(
           (e, i) => `${i}. From: ${e.from}
    Subject: "${e.subject}"
    Preview: ${e.snippet}`
         ).join("\n\n");
         let flagged = [];
         try {
-          const classification = await openai3.chat.completions.create({
+          const classification = await openai7.chat.completions.create({
             model: "gpt-5-mini",
             messages: [
               {
@@ -3572,9 +4331,30 @@ ${emailList}`
           continue;
         }
         for (const flag of flagged) {
-          const email = emails[flag.index];
+          const email = filteredEmails[flag.index];
           if (!email) continue;
           const senderName = email.from.replace(/<.*>/, "").trim() || email.from;
+          const suggestedActions = email.messageId ? [
+            { label: "Archive", actionType: "archive" },
+            { label: "Save as Task", actionType: "save_as_task" },
+            { label: "Dismiss", actionType: "dismiss" }
+          ] : [
+            { label: "Save as Task", actionType: "save_as_task" },
+            { label: "Dismiss", actionType: "dismiss" }
+          ];
+          try {
+            await db.insert(inboxItems).values({
+              userId: link.userId,
+              sourceType: "email",
+              sourceId: email.messageId ? `gmail:${email.messageId}` : `gmail:${email.subject}`,
+              subject: email.subject,
+              sender: email.from,
+              snippet: email.snippet,
+              jarvisReason: flag.reason,
+              suggestedActions
+            });
+          } catch {
+          }
           const msg = `\u{1F4E7} Email needs your attention:
 From: ${senderName}
 "${email.subject}"
@@ -3583,6 +4363,8 @@ ${email.snippet.slice(0, 150)}${email.snippet.length > 150 ? "..." : ""}
 
 Jarvis: ${flag.reason}`;
           await sendMessage(link.chatId, msg);
+          logInteraction(link.userId, "notification", "outbound", msg, "email_alert").catch(() => {
+          });
           console.log(`[EmailAlert] Alerted user ${link.userId}: "${email.subject}"`);
         }
       }
@@ -3593,15 +4375,1336 @@ Jarvis: ${flag.reason}`;
   setInterval(runScan, SCAN_INTERVAL_MS);
   console.log("Email alert scanner started (30-min interval)");
 }
+var openai7, pollingOffset, pollingActive, PROACTIVE_SCHEDULE;
+var init_telegramRoutes = __esm({
+  "server/telegramRoutes.ts"() {
+    "use strict";
+    init_db();
+    init_schema();
+    init_telegram();
+    init_momentumCoach();
+    init_gmail();
+    init_googleCalendar();
+    init_userTokenStore();
+    init_interactionLog();
+    init_harness();
+    init_tools();
+    openai7 = new OpenAI7({
+      apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
+      baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL
+    });
+    pollingOffset = 0;
+    pollingActive = false;
+    PROACTIVE_SCHEDULE = [
+      { type: "morning", hour: 8, minute: 0 },
+      { type: "commitment_check", hour: 10, minute: 0 },
+      { type: "followup_check", hour: 12, minute: 0 },
+      { type: "momentum_nudge", hour: 14, minute: 0 },
+      { type: "evening", hour: 20, minute: 0 },
+      { type: "weekly_planning", dayOfWeek: 0, hour: 19, minute: 0 }
+    ];
+  }
+});
+
+// server/inboxActions.ts
+var inboxActions_exports = {};
+__export(inboxActions_exports, {
+  executeInboxAction: () => executeInboxAction
+});
+import { eq as eq11, and as and8 } from "drizzle-orm";
+async function getGoogleToken(userId) {
+  try {
+    const tokens = await getValidGoogleTokens(userId);
+    return tokens?.[0] || null;
+  } catch {
+    return null;
+  }
+}
+async function executeInboxAction(userId, itemId, actionType, telegramChatId) {
+  const [item] = await db.select().from(inboxItems).where(and8(eq11(inboxItems.id, itemId), eq11(inboxItems.userId, userId)));
+  if (!item) {
+    return { success: false, message: "Item not found" };
+  }
+  switch (actionType) {
+    case "dismiss": {
+      if (item.sourceType === "email") {
+        const result = await learnFromDismissal(userId, itemId, telegramChatId);
+        return {
+          success: true,
+          message: result.learned ? `Dismissed. Jarvis learned to suppress ${result.ruleName}` : "Dismissed",
+          learned: result.learned
+        };
+      }
+      await db.update(inboxItems).set({ status: "dismissed", actedAt: /* @__PURE__ */ new Date() }).where(eq11(inboxItems.id, itemId));
+      return { success: true, message: "Dismissed" };
+    }
+    case "never_again": {
+      const senderDomain = item.sender ? (item.sender.match(/@([a-zA-Z0-9.-]+)/)?.[1] || "").toLowerCase() : "";
+      const pattern = senderDomain ? `Auto: suppress ${senderDomain}` : `Auto: suppress "${item.subject || item.sender}"`;
+      const matchHints = senderDomain ? { domains: [senderDomain] } : { subjectKeywords: [(item.subject || "").toLowerCase()] };
+      await db.insert(inboxRules).values({
+        userId,
+        type: "suppress",
+        scope: item.sourceType === "calendar" ? "calendar" : "email",
+        pattern,
+        matchHints,
+        source: "user"
+      });
+      await db.update(inboxItems).set({ status: "dismissed", actedAt: /* @__PURE__ */ new Date() }).where(eq11(inboxItems.id, itemId));
+      return { success: true, message: "Rule created \u2014 you'll never see these again" };
+    }
+    case "archive": {
+      if (item.sourceType !== "email") {
+        return { success: false, message: "Archive only works for emails" };
+      }
+      const rawId = (item.sourceId || "").replace(/^gmail:/, "");
+      const token = await getGoogleToken(userId);
+      if (!token) {
+        return { success: false, message: "No Google connection found" };
+      }
+      try {
+        await gmailModifyMessage(rawId, [], ["INBOX"], token);
+        await db.update(inboxItems).set({ status: "approved", actedAt: /* @__PURE__ */ new Date() }).where(eq11(inboxItems.id, itemId));
+        return { success: true, message: "Email archived" };
+      } catch (err) {
+        return { success: false, message: `Archive failed: ${err.message || "unknown error"}` };
+      }
+    }
+    case "mark_important": {
+      if (item.sourceType !== "email") {
+        return { success: false, message: "Only works for emails" };
+      }
+      const rawId = (item.sourceId || "").replace(/^gmail:/, "");
+      const token = await getGoogleToken(userId);
+      if (!token) {
+        return { success: false, message: "No Google connection found" };
+      }
+      try {
+        await gmailModifyMessage(rawId, ["STARRED"], [], token);
+        await db.update(inboxItems).set({ status: "approved", actedAt: /* @__PURE__ */ new Date() }).where(eq11(inboxItems.id, itemId));
+        return { success: true, message: "Email starred" };
+      } catch (err) {
+        return { success: false, message: `Star failed: ${err.message || "unknown error"}` };
+      }
+    }
+    case "save_as_task": {
+      const taskTitle = item.subject || item.snippet || "Untitled task";
+      const plans2 = await db.select().from(plans).where(eq11(plans.userId, userId));
+      const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+      const existingPlan = plans2.find((p) => p.date === today);
+      const planData = existingPlan?.data || { tasks: [] };
+      const tasks = Array.isArray(planData.tasks) ? planData.tasks : [];
+      const newTask = {
+        id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+        title: taskTitle,
+        completed: false,
+        duration: 15,
+        priority: "high",
+        source: item.sourceType === "email" ? "email" : "calendar"
+      };
+      tasks.push(newTask);
+      planData.tasks = tasks;
+      await db.insert(plans).values({ userId, date: today, data: planData }).onConflictDoUpdate({
+        target: [plans.userId, plans.date],
+        set: { data: planData, updatedAt: /* @__PURE__ */ new Date() }
+      });
+      await db.update(inboxItems).set({ status: "approved", actedAt: /* @__PURE__ */ new Date() }).where(eq11(inboxItems.id, itemId));
+      return { success: true, message: `Task added: "${taskTitle}"` };
+    }
+    case "add_prep_time": {
+      if (item.sourceType !== "calendar") {
+        return { success: false, message: "Only works for calendar events" };
+      }
+      const prepTitle = `Prep: ${item.subject || "upcoming meeting"}`;
+      const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+      const plans2 = await db.select().from(plans).where(eq11(plans.userId, userId));
+      const existingPlan = plans2.find((p) => p.date === today);
+      const planData = existingPlan?.data || { tasks: [] };
+      const tasks = Array.isArray(planData.tasks) ? planData.tasks : [];
+      const prepTask = {
+        id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+        title: prepTitle,
+        completed: false,
+        duration: 15,
+        priority: "high",
+        source: "calendar"
+      };
+      tasks.push(prepTask);
+      planData.tasks = tasks;
+      await db.insert(plans).values({ userId, date: today, data: planData }).onConflictDoUpdate({
+        target: [plans.userId, plans.date],
+        set: { data: planData, updatedAt: /* @__PURE__ */ new Date() }
+      });
+      await db.update(inboxItems).set({ status: "approved", actedAt: /* @__PURE__ */ new Date() }).where(eq11(inboxItems.id, itemId));
+      return { success: true, message: `Prep task added: "${prepTitle}"` };
+    }
+    case "save_to_focus": {
+      const contextText = `${item.subject || ""} \u2014 ${item.snippet || ""}`.trim();
+      const [existing] = await db.select().from(lifeContext).where(eq11(lifeContext.userId, userId));
+      const data = existing?.data || {};
+      const freeText = (data.freeText || "") + `
+[From ${item.sourceType}] ${contextText}`;
+      data.freeText = freeText.trim();
+      await db.insert(lifeContext).values({ userId, data }).onConflictDoUpdate({
+        target: lifeContext.userId,
+        set: { data, updatedAt: /* @__PURE__ */ new Date() }
+      });
+      await db.update(inboxItems).set({ status: "approved", actedAt: /* @__PURE__ */ new Date() }).where(eq11(inboxItems.id, itemId));
+      return { success: true, message: "Saved to your life context" };
+    }
+    default:
+      return { success: false, message: `Unknown action: ${actionType}` };
+  }
+}
+var init_inboxActions = __esm({
+  "server/inboxActions.ts"() {
+    "use strict";
+    init_db();
+    init_schema();
+    init_inboxRules();
+    init_gmail();
+    init_userTokenStore();
+  }
+});
+
+// server/index.ts
+import express from "express";
+
+// server/routes.ts
+init_db();
+init_schema();
+init_schema();
+import { createServer } from "node:http";
+import OpenAI8 from "openai";
+import { eq as eq12, and as and9, desc as desc6, sql as sql8, gte as gte3 } from "drizzle-orm";
+
+// server/documentProcessor.ts
+init_db();
+init_schema();
+import OpenAI from "openai";
+import { eq, desc } from "drizzle-orm";
+var openai = new OpenAI({
+  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
+  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL
+});
+var MAX_DOCS_PER_USER = 10;
+var MAX_EXTRACTED_CHARS = 8e4;
+var MAX_SUMMARY_INPUT_CHARS = 6e4;
+var SUPPORTED_MIME_TYPES = [
+  "application/pdf",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/msword",
+  "text/plain",
+  "text/markdown",
+  "text/csv",
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/gif"
+];
+var SUPPORTED_EXTENSIONS = [".pdf", ".docx", ".doc", ".txt", ".md", ".csv", ".jpg", ".jpeg", ".png", ".webp", ".gif"];
+async function extractFromPdfWithPdfjs(buffer) {
+  const { pathToFileURL } = await import("url");
+  const { resolve: resolve2 } = await import("path");
+  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  const workerPath = resolve2("./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs");
+  pdfjs.GlobalWorkerOptions.workerSrc = pathToFileURL(workerPath).href;
+  const uint8 = new Uint8Array(buffer);
+  const loadingTask = pdfjs.getDocument({ data: uint8, useSystemFonts: true });
+  const pdf = await loadingTask.promise;
+  let fullText = "";
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    const pageText = content.items.filter((item) => "str" in item).map((item) => item.str).join(" ");
+    fullText += pageText + "\n";
+  }
+  return fullText.trim();
+}
+async function extractFromPdfWithPdfParse(buffer) {
+  const pdfParse = (await import("pdf-parse")).default;
+  const data = await pdfParse(buffer);
+  return data.text || "";
+}
+async function extractFromPdf(buffer) {
+  let text2 = "";
+  try {
+    text2 = await extractFromPdfWithPdfjs(buffer);
+  } catch (err) {
+    console.warn("[Docs] pdfjs-dist failed, falling back to pdf-parse:", err instanceof Error ? err.message : err);
+  }
+  if (!text2) {
+    console.log("[Docs] pdfjs-dist returned empty text, falling back to pdf-parse");
+    try {
+      text2 = await extractFromPdfWithPdfParse(buffer);
+    } catch (err) {
+      console.warn("[Docs] pdf-parse also failed:", err instanceof Error ? err.message : err);
+    }
+  }
+  if (!text2.trim()) {
+    throw new Error("Could not extract text from PDF. The file may be encrypted, image-only, or in an unsupported format.");
+  }
+  return text2;
+}
+async function extractFromDocx(buffer) {
+  const mammoth = await import("mammoth");
+  const result = await mammoth.extractRawText({ buffer });
+  return result.value || "";
+}
+async function extractFromImage(buffer, mimeType) {
+  const base64 = buffer.toString("base64");
+  const dataUrl = `data:${mimeType};base64,${base64}`;
+  const response = await openai.chat.completions.create({
+    model: "gpt-4o",
+    messages: [
+      {
+        role: "user",
+        content: [
+          {
+            type: "image_url",
+            image_url: { url: dataUrl, detail: "high" }
+          },
+          {
+            type: "text",
+            text: "Extract all text from this image. Return only the text content, preserving structure as much as possible. If there is no text, describe what you see concisely."
+          }
+        ]
+      }
+    ],
+    max_tokens: 4096
+  });
+  return response.choices[0]?.message?.content || "";
+}
+async function summarizeText(name, text2) {
+  const input = text2.slice(0, MAX_SUMMARY_INPUT_CHARS);
+  const response = await openai.chat.completions.create({
+    model: "gpt-4o-mini",
+    messages: [
+      {
+        role: "system",
+        content: `You are a document summarizer. Given content from a document, produce a dense, structured summary that captures the key information an AI assistant would need to answer questions about it. Include: main topics, key facts, names/entities, dates, action items, and any important details. Be thorough but concise. Output under 600 words.`
+      },
+      {
+        role: "user",
+        content: `Document name: "${name}"
+
+Content:
+${input}`
+      }
+    ],
+    temperature: 0.2,
+    max_tokens: 1e3
+  });
+  return response.choices[0]?.message?.content || text2.slice(0, 3e3);
+}
+async function processDocument(userId, documentId, name, mimeType, buffer) {
+  try {
+    let extractedText = "";
+    if (mimeType === "application/pdf") {
+      extractedText = await extractFromPdf(buffer);
+    } else if (mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" || mimeType === "application/msword") {
+      extractedText = await extractFromDocx(buffer);
+    } else if (mimeType.startsWith("text/") || mimeType === "application/json") {
+      extractedText = buffer.toString("utf-8");
+    } else if (mimeType.startsWith("image/")) {
+      extractedText = await extractFromImage(buffer, mimeType);
+    } else {
+      extractedText = buffer.toString("utf-8");
+    }
+    extractedText = extractedText.replace(/\r\n/g, "\n").replace(/\n{4,}/g, "\n\n\n").trim().slice(0, MAX_EXTRACTED_CHARS);
+    const needsSummary = extractedText.length > 6e3;
+    const summary = needsSummary ? await summarizeText(name, extractedText) : null;
+    await db.update(userDocuments).set({ status: "ready", extractedText, summary }).where(eq(userDocuments.id, documentId));
+    console.log(`[Docs] Processed "${name}" \u2014 ${extractedText.length} chars${needsSummary ? ", summarized" : ""}`);
+  } catch (err) {
+    console.error(`[Docs] Error processing "${name}":`, err);
+    await db.update(userDocuments).set({
+      status: "error",
+      summary: `Failed to extract text: ${err instanceof Error ? err.message : "Unknown error"}`
+    }).where(eq(userDocuments.id, documentId));
+  }
+}
+async function getUserDocumentContext(userId) {
+  const docs = await db.select().from(userDocuments).where(eq(userDocuments.userId, userId)).orderBy(desc(userDocuments.uploadedAt)).limit(MAX_DOCS_PER_USER);
+  const readyDocs = docs.filter((d) => d.status === "ready" && (d.extractedText || d.summary));
+  if (readyDocs.length === 0) return "";
+  const sections = readyDocs.map((doc) => {
+    const content = doc.summary || (doc.extractedText?.slice(0, 5e3) ?? "");
+    return `### ${doc.name}
+${content}`;
+  });
+  return `
+## My Documents & Knowledge Base
+The user has uploaded the following documents. Refer to this content when answering questions \u2014 treat it as authoritative information about them or their business.
+
+${sections.join("\n\n")}`;
+}
+
+// server/ai.ts
+import OpenAI2 from "openai";
+var openai2 = new OpenAI2({
+  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
+  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL
+});
+async function resizeTask(req) {
+  const { taskTitle, taskDescription, detailLevel, direction, history } = req;
+  const completedTasks = history.filter((h) => h.completed).map((h) => h.title);
+  const skippedTasks = history.filter((h) => !h.completed).map((h) => h.title);
+  const historyContext = completedTasks.length > 0 || skippedTasks.length > 0 ? `
+Recent history for context:
+- Tasks they completed recently: ${completedTasks.slice(0, 5).join(", ") || "none"}
+- Tasks they left undone recently: ${skippedTasks.slice(0, 5).join(", ") || "none"}
+Use this to calibrate step size. If they tend to skip tasks, make steps more approachable and concrete. If they complete everything easily, steps can be slightly more ambitious.` : "";
+  let directionPrompt;
+  if (direction === "smaller") {
+    const stepCounts = {
+      1: "2-3 broad steps",
+      2: "3-4 clear steps",
+      3: "4-6 specific steps",
+      4: "6-8 detailed steps",
+      5: "8-12 very small, immediately actionable micro-steps"
+    };
+    directionPrompt = `Break this task into ${stepCounts[detailLevel] || "4-6 steps"}. Each step should be concrete and actionable \u2014 something you can do right now without thinking about what it means. For higher detail levels, break steps into the smallest possible actions (e.g., "open laptop" rather than "start working").`;
+  } else {
+    directionPrompt = `Combine or simplify this task into ${detailLevel <= 2 ? "1 single clear action" : "1-2 higher-level actions"}. Make it feel less overwhelming by framing it as one focused activity instead of multiple separate things.`;
+  }
+  const prompt = `You help people who struggle with getting started on tasks. Your job is to resize tasks to make them more manageable.
+
+Task: "${taskTitle}"${taskDescription ? `
+Context: ${taskDescription}` : ""}
+${historyContext}
+
+${directionPrompt}
+
+Rules:
+- Start each step with a verb (action word)
+- Keep language simple and encouraging
+- No numbering, just the step text
+- Each step should take no more than 5-15 minutes
+- Make steps feel easy to start \u2014 low friction, low intimidation
+
+Return ONLY a JSON object with a "steps" array of strings. No other text.`;
+  const response = await openai2.chat.completions.create({
+    model: "gpt-5-mini",
+    messages: [{ role: "user", content: prompt }],
+    response_format: { type: "json_object" },
+    max_completion_tokens: 8192
+  });
+  const content = response.choices[0]?.message?.content || '{"steps":[]}';
+  try {
+    const parsed = JSON.parse(content);
+    return { steps: Array.isArray(parsed.steps) ? parsed.steps : [] };
+  } catch {
+    return { steps: [] };
+  }
+}
+async function unblockTask(req) {
+  const { taskTitle, taskDescription, blockerType, skipDays } = req;
+  const blockerGuide = {
+    too_big: "Identify the single smallest possible first action \u2014 something takeable in under 5 minutes \u2014 and describe it concretely.",
+    bad_timing: "Suggest a specific time block or trigger today when this task would fit naturally.",
+    need_info: "Identify exactly what information is missing and one specific place to find it.",
+    low_energy: "Either shrink the scope dramatically to a version doable in 10 minutes, or identify the one upcoming time today when energy will be higher.",
+    unknown: "Ask one clarifying question that would help identify the real blocker, then give a default starting action."
+  };
+  const prompt = `You help people overcome mental blocks on tasks. Be direct, specific, and practical. No pep talk.
+
+Task: "${taskTitle}"${taskDescription ? `
+Context: ${taskDescription}` : ""}
+Days carried without completing: ${skipDays}
+What the person says is blocking them: ${blockerType.replace("_", " ")}
+
+${blockerGuide[blockerType] || blockerGuide.unknown}
+
+Write 2-3 sentences max. Focus on one concrete next action, not general advice. Make it feel achievable right now.
+
+Return ONLY a JSON object: {"suggestion": "your 2-3 sentence response"}`;
+  const response = await openai2.chat.completions.create({
+    model: "gpt-5-mini",
+    messages: [{ role: "user", content: prompt }],
+    response_format: { type: "json_object" },
+    max_completion_tokens: 512
+  });
+  try {
+    const parsed = JSON.parse(response.choices[0]?.message?.content || "{}");
+    return { suggestion: parsed.suggestion || "Try starting with just one minute on this task \u2014 set a timer and begin." };
+  } catch {
+    return { suggestion: "Try starting with just one minute on this task \u2014 set a timer and begin." };
+  }
+}
+async function generateSmartPlan(req) {
+  const { goals: goals2, history, dayOfWeek, lifeContext: lifeContext2, gmailItems, energyCheckin, existingTasks, carriedOverTasks, blockedTasks: blockedTasks2 } = req;
+  const completedTasks = history.filter((h) => h.completed);
+  const skippedTasks = history.filter((h) => !h.completed);
+  const energyFocusText = energyCheckin ? `
+Morning Check-in (Today's state):
+- Energy Level: ${energyCheckin.energy}/5
+- Focus Quality: ${energyCheckin.focus}
+${energyCheckin.energy <= 2 ? "The user has low energy today. Keep the plan very light, focusing only on essential or low-effort tasks." : ""}
+${energyCheckin.focus === "Low" ? "The user is feeling foggy. Break tasks into even smaller, more manageable steps if possible, or avoid high-complexity deep work." : ""}` : "";
+  const goalsText = goals2.length > 0 ? goals2.map((g) => `- [id:${g.id}] ${g.title} (${g.category}): ${g.current}/${g.target} ${g.unit}`).join("\n") : "No specific goals set yet.";
+  const historyText = history.length > 0 ? `Completed ${completedTasks.length} of ${history.length} tasks in the last 7 days.
+Tasks completed: ${completedTasks.map((h) => h.title).slice(0, 8).join(", ") || "none"}
+Tasks left undone: ${skippedTasks.map((h) => h.title).slice(0, 8).join(", ") || "none"}
+${skippedTasks.length > completedTasks.length ? "This person tends to skip more tasks than they complete \u2014 keep today's plan lighter and more approachable." : ""}
+${completedTasks.length > skippedTasks.length ? "This person is on a good streak \u2014 maintain momentum with a balanced plan." : ""}` : "No history yet \u2014 create a balanced starter plan.";
+  const lifeCtxSection = lifeContext2 ? `
+About this person:
+` + (lifeContext2.priorityGoal ? `- Current priority: ${lifeContext2.priorityGoal}
+` : "") + (lifeContext2.upcomingDeadline ? `- Upcoming deadline: ${lifeContext2.upcomingDeadline}
+` : "") + (lifeContext2.improvementArea ? `- Wants to improve: ${lifeContext2.improvementArea}
+` : "") + (lifeContext2.currentBlocker ? `- Known blocker: ${lifeContext2.currentBlocker}
+` : "") + (lifeContext2.freeText ? `- Additional context: ${lifeContext2.freeText}` : "") : "";
+  const gmailSection = gmailItems && gmailItems.length > 0 ? `
+Recent email signals (possible commitments/deadlines):
+` + gmailItems.slice(0, 8).map((i) => `- "${i.subject}": ${i.snippet}`).join("\n") : "";
+  const existingTasksSection = existingTasks && existingTasks.length > 0 ? `
+User-committed tasks (MUST include ALL of these in the plan \u2014 you may refine the wording for clarity but do not drop or skip any):
+` + existingTasks.map((t) => `- ${t.title}${t.description ? `: ${t.description}` : ""}`).join("\n") + `
+These count toward your task total. Add goal-aligned tasks to reach 5-8 total.` : "";
+  const carriedOverSection = carriedOverTasks && carriedOverTasks.length > 0 ? `
+Carried-over tasks (incomplete from previous days \u2014 MUST include all of them; consider breaking into a smaller first step if they've been skipped multiple days):
+` + carriedOverTasks.map((t) => `- ${t.title} (${t.category}, skipped ${t.skipDays} day${t.skipDays > 1 ? "s" : ""})`).join("\n") : "";
+  const blockedSection = blockedTasks2 && blockedTasks2.length > 0 ? `
+Chronically stuck tasks (skipped 2+ days in a row \u2014 do NOT just repeat them verbatim; instead include a concrete "prepare to tackle" micro-task or a broken-down first step):
+` + blockedTasks2.map((t) => `- "${t.title}" (stuck ${t.skipDays} days${t.blockerType ? `, blocker: ${t.blockerType.replace("_", " ")}` : ""})`).join("\n") : "";
+  const prompt = `You create personalized daily task plans for people. Today is ${dayOfWeek}.
+
+User's goals:
+${goalsText}
+
+Recent activity:
+${historyText}${energyFocusText}${lifeCtxSection}${gmailSection}${existingTasksSection}${carriedOverSection}${blockedSection}
+
+Create a daily plan with 5-8 tasks. For each task provide:
+- title: short, action-oriented task name
+- category: one of "calendar", "fitness", "finance", "career", "personal", "social"
+- priority: "high", "medium", or "low"
+- time: suggested time like "7:00 AM", "9:30 AM", etc.
+- description: one-line helpful context
+- goalId: (optional) the id from the goals list above (e.g. "id:abc123") if this task directly works toward that specific goal \u2014 omit for general tasks
+
+Rules:
+- Align tasks with the user's goals
+- When a task directly advances a specific goal (e.g. a fitness task for a running goal), set goalId to that goal's id (the value in [id:...])
+- If they've been skipping fitness tasks, make fitness tasks easier/shorter
+- If they've been completing everything, add one slightly challenging stretch task
+- Include at least one personal/wellness task
+- On weekends (Saturday/Sunday), lean more toward personal and social tasks
+- Keep task names concise and starting with a verb
+- Also include an "insight" \u2014 a brief motivational or strategic observation about their patterns
+
+Return ONLY a JSON object with "tasks" array and "insight" string. No other text.`;
+  const response = await openai2.chat.completions.create({
+    model: "gpt-5-mini",
+    messages: [{ role: "user", content: prompt }],
+    response_format: { type: "json_object" },
+    max_completion_tokens: 8192
+  });
+  const content = response.choices[0]?.message?.content || '{"tasks":[],"insight":""}';
+  try {
+    const parsed = JSON.parse(content);
+    return {
+      tasks: Array.isArray(parsed.tasks) ? parsed.tasks : [],
+      insight: parsed.insight || "Start small, stay consistent."
+    };
+  } catch {
+    return { tasks: [], insight: "Start small, stay consistent." };
+  }
+}
+
+// server/routes.ts
+init_googleCalendar();
+init_outlook();
+init_gmail();
+
+// server/integrations/slack.ts
+async function slackApi(endpoint, accessToken, params = {}) {
+  const url = new URL(`https://slack.com/api/${endpoint}`);
+  for (const [k, v] of Object.entries(params)) {
+    url.searchParams.set(k, v);
+  }
+  const res = await fetch(url.toString(), {
+    headers: { Authorization: `Bearer ${accessToken}` }
+  });
+  const data = await res.json();
+  if (!data.ok) {
+    throw new Error(`Slack API error (${endpoint}): ${data.error || "unknown"}`);
+  }
+  return data;
+}
+async function resolveUserNames(accessToken, userIds) {
+  const unique = [...new Set(userIds)];
+  const nameMap = {};
+  await Promise.all(
+    unique.map(async (uid) => {
+      try {
+        const data = await slackApi("users.info", accessToken, { user: uid });
+        const u = data.user;
+        nameMap[uid] = u?.profile?.display_name || u?.real_name || u?.name || uid;
+      } catch {
+        nameMap[uid] = uid;
+      }
+    })
+  );
+  return nameMap;
+}
+async function getSlackMessages(accessToken) {
+  const sevenDaysAgo = Math.floor((Date.now() - 7 * 24 * 60 * 60 * 1e3) / 1e3);
+  const convData = await slackApi("conversations.list", accessToken, {
+    types: "public_channel,private_channel,im,mpim",
+    exclude_archived: "true",
+    limit: "200"
+  });
+  const conversations = convData.channels || [];
+  const withActivity = conversations.filter((c) => c.updated && c.updated > sevenDaysAgo).sort((a, b) => (b.updated || 0) - (a.updated || 0)).slice(0, 5);
+  if (withActivity.length === 0) return [];
+  const allMessages = [];
+  const userIdsToResolve = [];
+  await Promise.all(
+    withActivity.map(async (conv) => {
+      try {
+        const histData = await slackApi("conversations.history", accessToken, {
+          channel: conv.id,
+          oldest: sevenDaysAgo.toString(),
+          limit: "30"
+        });
+        const msgs = histData.messages || [];
+        for (const msg of msgs) {
+          if (msg.bot_id) continue;
+          if (msg.subtype && msg.subtype !== "me_message") continue;
+          if (!msg.text || !msg.text.trim()) continue;
+          if (!msg.ts) continue;
+          const ts = parseFloat(msg.ts);
+          if (ts < sevenDaysAgo) continue;
+          if (msg.user) userIdsToResolve.push(msg.user);
+          const channelType = conv.is_im ? "dm" : conv.is_group || conv.is_mpim ? "group" : "channel";
+          allMessages.push({
+            channel: conv.name || conv.id,
+            channelType,
+            user: msg.user || "unknown",
+            text: msg.text.slice(0, 500),
+            timestamp: new Date(ts * 1e3).toISOString()
+          });
+        }
+      } catch (err) {
+        console.error(`Failed to fetch history for channel ${conv.id}:`, err);
+      }
+    })
+  );
+  const nameMap = await resolveUserNames(accessToken, userIdsToResolve);
+  for (const msg of allMessages) {
+    if (nameMap[msg.user]) {
+      msg.user = nameMap[msg.user];
+    }
+  }
+  allMessages.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+  return allMessages;
+}
+
+// server/auth.ts
+init_db();
+init_schema();
+import { Router } from "express";
+import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
+import { eq as eq2 } from "drizzle-orm";
+import crypto from "crypto";
+function getJwtSecret() {
+  if (process.env.JWT_SECRET) {
+    return process.env.JWT_SECRET;
+  }
+  const generated = crypto.randomBytes(32).toString("hex");
+  process.env.JWT_SECRET = generated;
+  console.log("Generated JWT_SECRET (set JWT_SECRET env var for persistent tokens across restarts)");
+  return generated;
+}
+var JWT_SECRET = getJwtSecret();
+var TOKEN_EXPIRY = "30d";
+function generateToken(userId) {
+  return jwt.sign({ userId }, JWT_SECRET, { expiresIn: TOKEN_EXPIRY });
+}
+var authRouter = Router();
+authRouter.post("/register", async (req, res) => {
+  try {
+    const { username, password } = req.body;
+    if (!username || !password) {
+      return res.status(400).json({ error: "Username and password are required" });
+    }
+    if (username.length < 3) {
+      return res.status(400).json({ error: "Username must be at least 3 characters" });
+    }
+    if (password.length < 6) {
+      return res.status(400).json({ error: "Password must be at least 6 characters" });
+    }
+    const existing = await db.select().from(users).where(eq2(users.username, username)).limit(1);
+    if (existing.length > 0) {
+      return res.status(409).json({ error: "Username already taken" });
+    }
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const [user] = await db.insert(users).values({
+      username,
+      password: hashedPassword
+    }).returning();
+    const token = generateToken(user.id);
+    res.status(201).json({
+      token,
+      userId: user.id,
+      username: user.username
+    });
+  } catch (error) {
+    console.error("Registration error:", error);
+    res.status(500).json({ error: "Failed to create account" });
+  }
+});
+authRouter.post("/login", async (req, res) => {
+  try {
+    const { username, password } = req.body;
+    if (!username || !password) {
+      return res.status(400).json({ error: "Username and password are required" });
+    }
+    const [user] = await db.select().from(users).where(eq2(users.username, username)).limit(1);
+    if (!user) {
+      return res.status(401).json({ error: "Invalid username or password" });
+    }
+    if (!user.password) {
+      return res.status(401).json({ error: "This account uses Google Sign-In" });
+    }
+    const valid = await bcrypt.compare(password, user.password);
+    if (!valid) {
+      return res.status(401).json({ error: "Invalid username or password" });
+    }
+    const token = generateToken(user.id);
+    res.json({
+      token,
+      userId: user.id,
+      username: user.username
+    });
+  } catch (error) {
+    console.error("Login error:", error);
+    res.status(500).json({ error: "Failed to log in" });
+  }
+});
+authRouter.post("/google", async (req, res) => {
+  try {
+    const { idToken, accessToken } = req.body;
+    if (!idToken && !accessToken) {
+      return res.status(400).json({ error: "ID token or access token is required" });
+    }
+    let googleUser;
+    if (idToken) {
+      const tokenInfoRes = await fetch(
+        `https://oauth2.googleapis.com/tokeninfo?id_token=${idToken}`
+      );
+      if (!tokenInfoRes.ok) {
+        return res.status(401).json({ error: "Invalid Google ID token" });
+      }
+      const tokenInfo = await tokenInfoRes.json();
+      if (tokenInfo.error_description) {
+        return res.status(401).json({ error: "Invalid Google ID token" });
+      }
+      const validClientIds = [
+        process.env.GOOGLE_WEB_CLIENT_ID,
+        process.env.GOOGLE_IOS_CLIENT_ID,
+        process.env.GOOGLE_ANDROID_CLIENT_ID
+      ].filter(Boolean);
+      if (validClientIds.length > 0 && tokenInfo.aud && !validClientIds.includes(tokenInfo.aud)) {
+        return res.status(401).json({ error: "Token audience mismatch" });
+      }
+      if (!tokenInfo.sub) {
+        return res.status(401).json({ error: "Could not retrieve Google user info" });
+      }
+      googleUser = { id: tokenInfo.sub, name: tokenInfo.name, email: tokenInfo.email };
+    } else {
+      const userInfoRes = await fetch(
+        `https://www.googleapis.com/userinfo/v2/me`,
+        { headers: { Authorization: `Bearer ${accessToken}` } }
+      );
+      if (!userInfoRes.ok) {
+        return res.status(401).json({ error: "Invalid Google access token" });
+      }
+      const info = await userInfoRes.json();
+      if (!info.id) {
+        return res.status(401).json({ error: "Could not retrieve Google user info" });
+      }
+      googleUser = info;
+    }
+    if (!googleUser.id) {
+      return res.status(401).json({ error: "Could not retrieve Google user info" });
+    }
+    const existing = await db.select().from(users).where(eq2(users.googleId, googleUser.id)).limit(1);
+    let user;
+    if (existing.length > 0) {
+      user = existing[0];
+      if (googleUser.name && googleUser.name !== user.displayName) {
+        await db.update(users).set({ displayName: googleUser.name }).where(eq2(users.id, user.id));
+        user = { ...user, displayName: googleUser.name };
+      }
+    } else {
+      const username = googleUser.email ? googleUser.email.split("@")[0] : `google_${googleUser.id.slice(0, 8)}`;
+      let uniqueUsername = username;
+      const existingUsername = await db.select().from(users).where(eq2(users.username, username)).limit(1);
+      if (existingUsername.length > 0) {
+        uniqueUsername = `${username}_${Date.now().toString(36)}`;
+      }
+      const [newUser] = await db.insert(users).values({
+        username: uniqueUsername,
+        googleId: googleUser.id,
+        displayName: googleUser.name || uniqueUsername
+      }).returning();
+      user = newUser;
+    }
+    const token = generateToken(user.id);
+    res.json({
+      token,
+      userId: user.id,
+      username: user.displayName || user.username
+    });
+  } catch (error) {
+    console.error("Google auth error:", error);
+    res.status(500).json({ error: "Failed to authenticate with Google" });
+  }
+});
+authRouter.get("/me", async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader?.startsWith("Bearer ")) {
+      return res.status(401).json({ error: "No token provided" });
+    }
+    const token = authHeader.slice(7);
+    const payload = jwt.verify(token, JWT_SECRET);
+    const [user] = await db.select({
+      id: users.id,
+      username: users.username,
+      displayName: users.displayName,
+      createdAt: users.createdAt
+    }).from(users).where(eq2(users.id, payload.userId)).limit(1);
+    if (!user) {
+      return res.status(401).json({ error: "User not found" });
+    }
+    res.json({
+      userId: user.id,
+      username: user.displayName || user.username
+    });
+  } catch (error) {
+    return res.status(401).json({ error: "Invalid token" });
+  }
+});
+function authMiddleware(req, res, next) {
+  if (req.path.startsWith("/api/auth/")) {
+    return next();
+  }
+  if (req.path === "/api/oauth/google/callback" || req.path === "/api/oauth/microsoft/callback") {
+    return next();
+  }
+  if (!req.path.startsWith("/api/")) {
+    return next();
+  }
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith("Bearer ")) {
+    return res.status(401).json({ error: "Authentication required" });
+  }
+  try {
+    const token = authHeader.slice(7);
+    const payload = jwt.verify(token, JWT_SECRET);
+    req.userId = payload.userId;
+    next();
+  } catch {
+    return res.status(401).json({ error: "Invalid or expired token" });
+  }
+}
+
+// server/mobileAuthRoutes.ts
+init_db();
+init_schema();
+import { Router as Router2 } from "express";
+import { eq as eq3, lt } from "drizzle-orm";
+var mobileAuthRouter = Router2();
+function getCallbackUrl(req) {
+  const proto = req.headers["x-forwarded-proto"] || req.protocol;
+  const host = req.headers["x-forwarded-host"] || req.get("host") || "";
+  return `${proto}://${host}/api/auth/mobile/callback`;
+}
+function successHtml(token) {
+  const encodedToken = encodeURIComponent(token);
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Signed In \u2014 GamePlan</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #0f0f0f; color: #fff;
+      display: flex; align-items: center; justify-content: center;
+      min-height: 100vh; padding: 20px;
+    }
+    .card { text-align: center; max-width: 340px; }
+    .icon { font-size: 56px; margin-bottom: 20px; }
+    h2 { font-size: 22px; font-weight: 700; margin-bottom: 10px; }
+    p { color: #888; font-size: 15px; line-height: 1.5; }
+    .dots { display: inline-flex; gap: 6px; margin-top: 24px; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: #6366f1;
+           animation: pulse 1.2s ease-in-out infinite; }
+    .dot:nth-child(2) { animation-delay: 0.2s; }
+    .dot:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes pulse { 0%,80%,100% { opacity: 0.3; } 40% { opacity: 1; } }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">\u2705</div>
+    <h2>Signed in successfully</h2>
+    <p>Taking you back to GamePlan...</p>
+    <div class="dots">
+      <div class="dot"></div>
+      <div class="dot"></div>
+      <div class="dot"></div>
+    </div>
+  </div>
+  <script>
+    try {
+      window.location.href = 'gameplan://auth/complete?token=${encodedToken}';
+    } catch(e) {}
+  </script>
+</body>
+</html>`;
+}
+function errorHtml(message) {
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Error \u2014 GamePlan</title>
+  <style>
+    body { font-family: sans-serif; background: #0f0f0f; color: #fff;
+           display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+    .card { text-align: center; padding: 40px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div style="font-size:48px;margin-bottom:16px">\u274C</div>
+    <h2>Sign-in Failed</h2>
+    <p style="color:#888;margin-top:8px">${message}</p>
+    <p style="color:#555;margin-top:20px;font-size:13px">You can close this tab and try again.</p>
+  </div>
+</body>
+</html>`;
+}
+mobileAuthRouter.get("/start", (req, res) => {
+  const { session_id } = req.query;
+  if (!session_id) return res.status(400).json({ error: "session_id required" });
+  const clientId = process.env.GOOGLE_WEB_CLIENT_ID;
+  if (!clientId) return res.status(500).json({ error: "Google OAuth not configured" });
+  const callbackUrl = getCallbackUrl(req);
+  const params = new URLSearchParams({
+    client_id: clientId,
+    redirect_uri: callbackUrl,
+    response_type: "code",
+    scope: "openid email profile",
+    state: session_id,
+    access_type: "offline",
+    prompt: "select_account"
+  });
+  res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`);
+});
+mobileAuthRouter.get("/callback", async (req, res) => {
+  const { code, state: session_id, error } = req.query;
+  if (error || !code || !session_id) {
+    return res.send(errorHtml(error || "Sign-in was cancelled."));
+  }
+  const clientId = process.env.GOOGLE_WEB_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+  if (!clientId || !clientSecret) {
+    return res.send(errorHtml("OAuth credentials not configured on the server."));
+  }
+  const callbackUrl = getCallbackUrl(req);
+  try {
+    const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        code,
+        client_id: clientId,
+        client_secret: clientSecret,
+        redirect_uri: callbackUrl,
+        grant_type: "authorization_code"
+      })
+    });
+    const tokenData = await tokenRes.json();
+    if (!tokenData.id_token && !tokenData.access_token) {
+      console.error("Mobile auth token exchange failed:", tokenData);
+      return res.send(errorHtml("Failed to exchange authorization code. Please try again."));
+    }
+    let googleUser;
+    if (tokenData.id_token) {
+      const infoRes = await fetch(
+        `https://oauth2.googleapis.com/tokeninfo?id_token=${tokenData.id_token}`
+      );
+      const info = await infoRes.json();
+      if (!info.sub) return res.send(errorHtml("Could not retrieve Google user info."));
+      googleUser = { id: info.sub, name: info.name, email: info.email };
+    } else {
+      const infoRes = await fetch("https://www.googleapis.com/userinfo/v2/me", {
+        headers: { Authorization: `Bearer ${tokenData.access_token}` }
+      });
+      const info = await infoRes.json();
+      if (!info.id) return res.send(errorHtml("Could not retrieve Google user info."));
+      googleUser = { id: info.id, name: info.name, email: info.email };
+    }
+    const existing = await db.select().from(users).where(eq3(users.googleId, googleUser.id)).limit(1);
+    let user;
+    if (existing.length > 0) {
+      user = existing[0];
+    } else {
+      const base = googleUser.email ? googleUser.email.split("@")[0] : `google_${googleUser.id.slice(0, 8)}`;
+      let uniqueUsername = base;
+      const existingUsername = await db.select().from(users).where(eq3(users.username, base)).limit(1);
+      if (existingUsername.length > 0) uniqueUsername = `${base}_${Date.now().toString(36)}`;
+      const [newUser] = await db.insert(users).values({
+        username: uniqueUsername,
+        googleId: googleUser.id,
+        displayName: googleUser.name || uniqueUsername
+      }).returning();
+      user = newUser;
+    }
+    const token = generateToken(user.id);
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1e3);
+    await db.insert(mobileAuthSessions).values({
+      sessionId: session_id,
+      token,
+      expiresAt
+    }).onConflictDoUpdate({
+      target: mobileAuthSessions.sessionId,
+      set: { token, expiresAt }
+    });
+    return res.send(successHtml(token));
+  } catch (err) {
+    console.error("Mobile auth callback error:", err);
+    return res.send(errorHtml("An unexpected error occurred. Please try again."));
+  }
+});
+mobileAuthRouter.get("/poll", async (req, res) => {
+  const { session_id } = req.query;
+  if (!session_id) return res.status(400).json({ error: "session_id required" });
+  try {
+    await db.delete(mobileAuthSessions).where(lt(mobileAuthSessions.expiresAt, /* @__PURE__ */ new Date()));
+    const rows = await db.select().from(mobileAuthSessions).where(eq3(mobileAuthSessions.sessionId, session_id)).limit(1);
+    if (rows.length === 0) {
+      return res.status(404).json({ ready: false });
+    }
+    const session = rows[0];
+    await db.delete(mobileAuthSessions).where(eq3(mobileAuthSessions.sessionId, session_id));
+    return res.json({ ready: true, token: session.token });
+  } catch (err) {
+    console.error("Mobile auth poll error:", err);
+    return res.status(500).json({ ready: false, error: "Internal error" });
+  }
+});
+
+// server/dataRoutes.ts
+init_db();
+init_schema();
+import { eq as eq4, and } from "drizzle-orm";
+function requireUserId(req, res) {
+  const userId = req.userId;
+  if (!userId) {
+    res.status(401).json({ error: "Authentication required" });
+    return null;
+  }
+  return userId;
+}
+function registerSimpleJsonCrud(app2, path2, table) {
+  app2.get(`/api/data/${path2}`, async (req, res) => {
+    try {
+      const userId = requireUserId(req, res);
+      if (!userId) return;
+      const result = await db.select({ data: table.data }).from(table).where(eq4(table.userId, userId));
+      if (result.length === 0) return res.json({ data: null });
+      res.json({ data: result[0].data });
+    } catch (e) {
+      console.error(`Error fetching ${path2}:`, e);
+      res.status(500).json({ error: `Failed to fetch ${path2}` });
+    }
+  });
+  app2.put(`/api/data/${path2}`, async (req, res) => {
+    try {
+      const userId = requireUserId(req, res);
+      if (!userId) return;
+      const { data } = req.body;
+      await db.insert(table).values({ userId, data, updatedAt: /* @__PURE__ */ new Date() }).onConflictDoUpdate({
+        target: [table.userId],
+        set: { data, updatedAt: /* @__PURE__ */ new Date() }
+      });
+      res.json({ ok: true });
+    } catch (e) {
+      console.error(`Error saving ${path2}:`, e);
+      res.status(500).json({ error: `Failed to save ${path2}` });
+    }
+  });
+  app2.delete(`/api/data/${path2}`, async (req, res) => {
+    try {
+      const userId = requireUserId(req, res);
+      if (!userId) return;
+      await db.delete(table).where(eq4(table.userId, userId));
+      res.json({ ok: true });
+    } catch (e) {
+      console.error(`Error deleting ${path2}:`, e);
+      res.status(500).json({ error: `Failed to delete ${path2}` });
+    }
+  });
+}
+function registerDataRoutes(app2) {
+  app2.get("/api/data/plans/:date", async (req, res) => {
+    try {
+      const userId = requireUserId(req, res);
+      if (!userId) return;
+      const { date: date2 } = req.params;
+      const result = await db.select().from(plans).where(and(eq4(plans.userId, userId), eq4(plans.date, date2)));
+      if (result.length === 0) return res.json({ data: null });
+      res.json({ data: result[0].data });
+    } catch (e) {
+      console.error("Error fetching plan:", e);
+      res.status(500).json({ error: "Failed to fetch plan" });
+    }
+  });
+  app2.get("/api/data/plans", async (req, res) => {
+    try {
+      const userId = requireUserId(req, res);
+      if (!userId) return;
+      const result = await db.select().from(plans).where(eq4(plans.userId, userId));
+      const plansMap = {};
+      for (const row of result) {
+        plansMap[row.date] = row.data;
+      }
+      res.json({ data: plansMap });
+    } catch (e) {
+      console.error("Error fetching plans:", e);
+      res.status(500).json({ error: "Failed to fetch plans" });
+    }
+  });
+  app2.put("/api/data/plans/:date", async (req, res) => {
+    try {
+      const userId = requireUserId(req, res);
+      if (!userId) return;
+      const { date: date2 } = req.params;
+      const { data } = req.body;
+      await db.insert(plans).values({ userId, date: date2, data, updatedAt: /* @__PURE__ */ new Date() }).onConflictDoUpdate({
+        target: [plans.userId, plans.date],
+        set: { data, updatedAt: /* @__PURE__ */ new Date() }
+      });
+      res.json({ ok: true });
+    } catch (e) {
+      console.error("Error saving plan:", e);
+      res.status(500).json({ error: "Failed to save plan" });
+    }
+  });
+  registerSimpleJsonCrud(app2, "goals", goals);
+  registerSimpleJsonCrud(app2, "stats", stats);
+  registerSimpleJsonCrud(app2, "brain-dump-inbox", brainDumpInbox);
+  registerSimpleJsonCrud(app2, "chat-history", chatHistory);
+  registerSimpleJsonCrud(app2, "life-context", lifeContext);
+  registerSimpleJsonCrud(app2, "timer-settings", timerSettings);
+  registerSimpleJsonCrud(app2, "user-preferences", userPreferences);
+  app2.post("/api/data/auto-built-plan/dismiss", async (req, res) => {
+    try {
+      const userId = requireUserId(req, res);
+      if (!userId) return;
+      const result = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq4(userPreferences.userId, userId));
+      const currentPrefs = result[0]?.data || {};
+      if (currentPrefs.autoBuiltPlan) {
+        currentPrefs.autoBuiltPlan.dismissed = true;
+      }
+      await db.insert(userPreferences).values({ userId, data: currentPrefs, updatedAt: /* @__PURE__ */ new Date() }).onConflictDoUpdate({
+        target: [userPreferences.userId],
+        set: { data: currentPrefs, updatedAt: /* @__PURE__ */ new Date() }
+      });
+      res.json({ ok: true });
+    } catch (e) {
+      console.error("Error dismissing auto-built plan:", e);
+      res.status(500).json({ error: "Failed to dismiss auto-built plan" });
+    }
+  });
+  registerSimpleJsonCrud(app2, "completion-history", completionHistory);
+  registerSimpleJsonCrud(app2, "blocked-tasks", blockedTasks);
+  registerSimpleJsonCrud(app2, "plan-snapshots", planSnapshots);
+  app2.get("/api/data/energy-checkins/:date", async (req, res) => {
+    try {
+      const userId = requireUserId(req, res);
+      if (!userId) return;
+      const { date: date2 } = req.params;
+      const result = await db.select().from(energyCheckins).where(and(eq4(energyCheckins.userId, userId), eq4(energyCheckins.date, date2)));
+      if (result.length === 0) return res.json({ data: null });
+      res.json({ data: result[0].data });
+    } catch (e) {
+      console.error("Error fetching energy checkin:", e);
+      res.status(500).json({ error: "Failed to fetch energy checkin" });
+    }
+  });
+  app2.put("/api/data/energy-checkins/:date", async (req, res) => {
+    try {
+      const userId = requireUserId(req, res);
+      if (!userId) return;
+      const { date: date2 } = req.params;
+      const { data } = req.body;
+      await db.insert(energyCheckins).values({ userId, date: date2, data, updatedAt: /* @__PURE__ */ new Date() }).onConflictDoUpdate({
+        target: [energyCheckins.userId, energyCheckins.date],
+        set: { data, updatedAt: /* @__PURE__ */ new Date() }
+      });
+      res.json({ ok: true });
+    } catch (e) {
+      console.error("Error saving energy checkin:", e);
+      res.status(500).json({ error: "Failed to save energy checkin" });
+    }
+  });
+  app2.get("/api/data/completed-calendar-ids/:date", async (req, res) => {
+    try {
+      const userId = requireUserId(req, res);
+      if (!userId) return;
+      const { date: date2 } = req.params;
+      const result = await db.select().from(completedCalendarIds).where(and(eq4(completedCalendarIds.userId, userId), eq4(completedCalendarIds.date, date2)));
+      if (result.length === 0) return res.json({ data: [] });
+      res.json({ data: result[0].data });
+    } catch (e) {
+      console.error("Error fetching completed calendar ids:", e);
+      res.status(500).json({ error: "Failed to fetch completed calendar ids" });
+    }
+  });
+  app2.put("/api/data/completed-calendar-ids/:date", async (req, res) => {
+    try {
+      const userId = requireUserId(req, res);
+      if (!userId) return;
+      const { date: date2 } = req.params;
+      const { data } = req.body;
+      await db.insert(completedCalendarIds).values({ userId, date: date2, data, updatedAt: /* @__PURE__ */ new Date() }).onConflictDoUpdate({
+        target: [completedCalendarIds.userId, completedCalendarIds.date],
+        set: { data, updatedAt: /* @__PURE__ */ new Date() }
+      });
+      res.json({ ok: true });
+    } catch (e) {
+      console.error("Error saving completed calendar ids:", e);
+      res.status(500).json({ error: "Failed to save completed calendar ids" });
+    }
+  });
+  app2.get("/api/data/export", async (req, res) => {
+    try {
+      const userId = requireUserId(req, res);
+      if (!userId) return;
+      const [goalsRow] = await db.select({ data: goals.data }).from(goals).where(eq4(goals.userId, userId));
+      const [statsRow] = await db.select({ data: stats.data }).from(stats).where(eq4(stats.userId, userId));
+      const [lifeContextRow] = await db.select({ data: lifeContext.data }).from(lifeContext).where(eq4(lifeContext.userId, userId));
+      const [userPrefsRow] = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq4(userPreferences.userId, userId));
+      const [chatHistoryRow] = await db.select({ data: chatHistory.data }).from(chatHistory).where(eq4(chatHistory.userId, userId));
+      const [timerSettingsRow] = await db.select({ data: timerSettings.data }).from(timerSettings).where(eq4(timerSettings.userId, userId));
+      const [brainDumpRow] = await db.select({ data: brainDumpInbox.data }).from(brainDumpInbox).where(eq4(brainDumpInbox.userId, userId));
+      const [completionHistoryRow] = await db.select({ data: completionHistory.data }).from(completionHistory).where(eq4(completionHistory.userId, userId));
+      const [blockedTasksRow] = await db.select({ data: blockedTasks.data }).from(blockedTasks).where(eq4(blockedTasks.userId, userId));
+      const [planSnapshotsRow] = await db.select({ data: planSnapshots.data }).from(planSnapshots).where(eq4(planSnapshots.userId, userId));
+      const plansRows = await db.select().from(plans).where(eq4(plans.userId, userId));
+      const plans2 = {};
+      for (const row of plansRows) {
+        plans2[row.date] = row.data;
+      }
+      const energyRows = await db.select().from(energyCheckins).where(eq4(energyCheckins.userId, userId));
+      const energyCheckins2 = {};
+      for (const row of energyRows) {
+        energyCheckins2[row.date] = row.data;
+      }
+      const calendarIdRows = await db.select().from(completedCalendarIds).where(eq4(completedCalendarIds.userId, userId));
+      const completedCalendarIds2 = {};
+      for (const row of calendarIdRows) {
+        completedCalendarIds2[row.date] = row.data;
+      }
+      res.json({
+        data: {
+          goals: goalsRow?.data ?? null,
+          stats: statsRow?.data ?? null,
+          lifeContext: lifeContextRow?.data ?? null,
+          userPreferences: userPrefsRow?.data ?? null,
+          chatHistory: chatHistoryRow?.data ?? null,
+          timerSettings: timerSettingsRow?.data ?? null,
+          brainDumpInbox: brainDumpRow?.data ?? null,
+          completionHistory: completionHistoryRow?.data ?? null,
+          blockedTasks: blockedTasksRow?.data ?? null,
+          planSnapshots: planSnapshotsRow?.data ?? null,
+          plans: plans2,
+          energyCheckins: energyCheckins2,
+          completedCalendarIds: completedCalendarIds2
+        }
+      });
+    } catch (e) {
+      console.error("Error exporting data:", e);
+      res.status(500).json({ error: "Failed to export data" });
+    }
+  });
+  app2.post("/api/data/import", async (req, res) => {
+    try {
+      const userId = requireUserId(req, res);
+      if (!userId) return;
+      const { data } = req.body;
+      if (!data || typeof data !== "object") {
+        return res.status(400).json({ error: "Missing data object in request body" });
+      }
+      const now = /* @__PURE__ */ new Date();
+      await db.transaction(async (tx) => {
+        const replaceSimple = async (table, value) => {
+          if (value === null || value === void 0) {
+            await tx.delete(table).where(eq4(table.userId, userId));
+            return;
+          }
+          await tx.insert(table).values({ userId, data: value, updatedAt: now }).onConflictDoUpdate({ target: [table.userId], set: { data: value, updatedAt: now } });
+        };
+        await replaceSimple(goals, data.goals);
+        await replaceSimple(stats, data.stats);
+        await replaceSimple(lifeContext, data.lifeContext);
+        await replaceSimple(chatHistory, data.chatHistory);
+        await replaceSimple(timerSettings, data.timerSettings);
+        await replaceSimple(brainDumpInbox, data.brainDumpInbox);
+        await replaceSimple(completionHistory, data.completionHistory);
+        await replaceSimple(blockedTasks, data.blockedTasks);
+        await replaceSimple(planSnapshots, data.planSnapshots);
+        await replaceSimple(userPreferences, data.userPreferences);
+        if (data.plans && typeof data.plans === "object") {
+          await tx.delete(plans).where(eq4(plans.userId, userId));
+          for (const [date2, planData] of Object.entries(data.plans)) {
+            await tx.insert(plans).values({ userId, date: date2, data: planData, updatedAt: now });
+          }
+        }
+        if (data.energyCheckins && typeof data.energyCheckins === "object") {
+          await tx.delete(energyCheckins).where(eq4(energyCheckins.userId, userId));
+          for (const [date2, checkinData] of Object.entries(data.energyCheckins)) {
+            await tx.insert(energyCheckins).values({ userId, date: date2, data: checkinData, updatedAt: now });
+          }
+        }
+        if (data.completedCalendarIds && typeof data.completedCalendarIds === "object") {
+          await tx.delete(completedCalendarIds).where(eq4(completedCalendarIds.userId, userId));
+          for (const [date2, idsData] of Object.entries(data.completedCalendarIds)) {
+            await tx.insert(completedCalendarIds).values({ userId, date: date2, data: idsData, updatedAt: now });
+          }
+        }
+      });
+      res.json({ ok: true });
+    } catch (e) {
+      console.error("Error importing data:", e);
+      res.status(500).json({ error: "Failed to import data" });
+    }
+  });
+}
+
+// server/routes.ts
+init_telegramRoutes();
 
 // server/integrationOwner.ts
 init_db();
-import { sql as sql5 } from "drizzle-orm";
+import { sql as sql7 } from "drizzle-orm";
 var cachedOwnerId = null;
 async function getIntegrationOwnerId() {
   if (cachedOwnerId) return cachedOwnerId;
   try {
-    const result = await db.execute(sql5`SELECT owner_user_id FROM integration_owner LIMIT 1`);
+    const result = await db.execute(sql7`SELECT owner_user_id FROM integration_owner LIMIT 1`);
     const row = result.rows?.[0];
     if (row?.owner_user_id) {
       cachedOwnerId = row.owner_user_id;
@@ -3616,7 +5719,7 @@ async function claimIntegrationOwnership(userId) {
   try {
     const existing = await getIntegrationOwnerId();
     if (existing) return existing === userId;
-    await db.execute(sql5`INSERT INTO integration_owner (owner_user_id) VALUES (${userId})`);
+    await db.execute(sql7`INSERT INTO integration_owner (owner_user_id) VALUES (${userId})`);
     cachedOwnerId = userId;
     return true;
   } catch {
@@ -3720,7 +5823,9 @@ oauthRouter.get("/google/authorize", (req, res) => {
       "email",
       "https://www.googleapis.com/auth/calendar.readonly",
       "https://www.googleapis.com/auth/gmail.readonly",
-      "https://www.googleapis.com/auth/gmail.compose"
+      "https://www.googleapis.com/auth/gmail.compose",
+      "https://www.googleapis.com/auth/gmail.modify",
+      "https://www.googleapis.com/auth/drive.file"
     ].join(" "),
     access_type: "offline",
     prompt: "consent",
@@ -3937,6 +6042,13 @@ oauthRouter.get("/status", async (req, res) => {
   if (!userId) return res.status(401).json({ error: "Not authenticated" });
   try {
     const status = await getUserOAuthStatus(userId);
+    if (!status.microsoft?.connected) {
+      const { checkOutlookConnection: checkOutlookConnection2 } = await Promise.resolve().then(() => (init_outlook(), outlook_exports));
+      const projConnected = await checkOutlookConnection2().catch(() => false);
+      if (projConnected) {
+        status.microsoft = { connected: true, accounts: [] };
+      }
+    }
     res.json(status);
   } catch (err) {
     console.error("OAuth status error:", err);
@@ -3962,7 +6074,9 @@ oauthRouter.delete("/:provider/disconnect", async (req, res) => {
 
 // server/routes.ts
 init_userTokenStore();
-var openai4 = new OpenAI4({
+init_search();
+init_interactionLog();
+var openai8 = new OpenAI8({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL
 });
@@ -3998,7 +6112,7 @@ function getPersonaBlock(coachingMode) {
 var morningNoteSummaryCache = /* @__PURE__ */ new Map();
 async function getUserLocalDate(userId) {
   try {
-    const prefs = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq5(userPreferences.userId, userId)).limit(1);
+    const prefs = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq12(userPreferences.userId, userId)).limit(1);
     const tz = prefs[0]?.data?.timezone || "America/New_York";
     return (/* @__PURE__ */ new Date()).toLocaleDateString("en-CA", { timeZone: tz });
   } catch {
@@ -4013,10 +6127,10 @@ async function getMorningNoteSummary(userId) {
     const thirtyDaysAgo = /* @__PURE__ */ new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
     const cutoffDate = thirtyDaysAgo.toISOString().slice(0, 10);
-    const notes = await db.select().from(morningVoiceNotes).where(and3(
-      eq5(morningVoiceNotes.userId, userId),
-      gte2(morningVoiceNotes.recordedAt, cutoffDate)
-    )).orderBy(desc2(morningVoiceNotes.recordedAt)).limit(30);
+    const notes = await db.select().from(morningVoiceNotes).where(and9(
+      eq12(morningVoiceNotes.userId, userId),
+      gte3(morningVoiceNotes.recordedAt, cutoffDate)
+    )).orderBy(desc6(morningVoiceNotes.recordedAt)).limit(30);
     if (notes.length === 0) return "";
     const moodCounts = {};
     const allThemes = {};
@@ -4051,7 +6165,7 @@ async function getMorningNoteSummary(userId) {
     return "";
   }
 }
-function buildCoachSystemPrompt(goals2, stats2, history, calendarEvents = [], lifeContext2, gmailItems, gmailConnected, slackMessages, slackConnected, commitmentsList, coachingMode, memories, telegramMessages, telegramConnected, morningNoteSummary) {
+function buildCoachSystemPrompt(goals2, stats2, history, calendarEvents = [], lifeContext2, gmailItems, gmailConnected, slackMessages, slackConnected, commitmentsList, coachingMode, memories, telegramMessages, telegramConnected, morningNoteSummary, documentsContext, crossChannelContext) {
   const completedHistory = history.filter((h) => h.completed);
   const skippedHistory = history.filter((h) => !h.completed);
   const completionRate = history.length > 0 ? Math.round(completedHistory.length / history.length * 100) : 0;
@@ -4071,6 +6185,7 @@ function buildCoachSystemPrompt(goals2, stats2, history, calendarEvents = [], li
 ` : "") + (lifeContext2.improvementArea ? `- Wants to improve: ${lifeContext2.improvementArea}
 ` : "") + (lifeContext2.currentBlocker ? `- Current blocker: ${lifeContext2.currentBlocker}
 ` : "") + (lifeContext2.freeText ? `- Additional context: ${lifeContext2.freeText}` : "") : "";
+  const documentsSection = documentsContext || "";
   const commitmentsSection = commitmentsList && commitmentsList.length > 0 ? `
 ## Open Commitments (user said they would do these)
 ` + commitmentsList.filter((c) => c.status === "pending").slice(0, 10).map((c) => `- "${c.content}"${c.dueDate ? ` (due ${c.dueDate})` : ""}`).join("\n") + `
@@ -4098,9 +6213,36 @@ Gmail is not connected \u2014 you have no access to the user's inbox. If asked a
 (Use these to identify commitments, follow-ups, and unresolved discussions. Treat Slack messages like emails \u2014 surface actionable items without asking for more info.)` : `
 ## Recent Slack Messages
 Slack is connected but no messages were found in the last 7 days.` : "";
-  const memoriesSection = memories && memories.length > 0 ? `
-## What I Know About You (from past conversations)
-` + memories.slice(0, 20).map((m) => `- [${m.category}] ${m.content}`).join("\n") : "";
+  const memoriesSection = (() => {
+    if (!memories || memories.length === 0) return "";
+    const categoryLabels = {
+      personality: "Personality & Communication",
+      values: "Values & Motivations",
+      work_style: "Work Style & Patterns",
+      accomplishment: "Accomplishments & Wins",
+      goal_discovered: "Discovered Goals",
+      relationship: "Key People & Relationships",
+      pattern: "Recurring Patterns",
+      preference: "Preferences",
+      fact: "General Facts",
+      goal: "Goals",
+      achievement: "Achievements"
+    };
+    const grouped = {};
+    for (const m of memories) {
+      const cat = m.category || "fact";
+      if (!grouped[cat]) grouped[cat] = [];
+      grouped[cat].push(m.content);
+    }
+    let section = "\n## What I Know About You (from past conversations)";
+    for (const [cat, items] of Object.entries(grouped)) {
+      const label = categoryLabels[cat] || cat;
+      section += `
+### ${label}
+${items.map((i) => `- ${i}`).join("\n")}`;
+    }
+    return section;
+  })();
   const telegramSection = telegramConnected ? telegramMessages && telegramMessages.length > 0 ? `
 ## Recent Telegram Group Messages (last 7 days)
 ` + telegramMessages.slice(0, 50).map((m) => {
@@ -4117,6 +6259,7 @@ Telegram is connected but no group messages were found in the last 7 days.` : ""
   return `You are GamePlan Coach \u2014 a sharp, supportive personal productivity coach embedded in the GamePlan app. You know this user's goals, habits, and patterns intimately. You give specific, actionable advice \u2014 not generic motivational fluff.
 
 Today is ${dayOfWeek}, ${dateStr}.
+${crossChannelContext || ""}
 
 ${COACHING_FRAMEWORKS}
 
@@ -4129,7 +6272,7 @@ ${memoriesSection}
 - Total tasks completed: ${stats2.totalCompleted || 0}
 - Total XP earned: ${stats2.xp || 0}
 - Task completion rate (last 7 days): ${completionRate}% (${completedHistory.length} completed, ${skippedHistory.length} skipped)
-${strugglingCategories.length > 0 ? `- Struggling most with: ${strugglingCategories.join(", ")}` : ""}${lifeContextSection}
+${strugglingCategories.length > 0 ? `- Struggling most with: ${strugglingCategories.join(", ")}` : ""}${lifeContextSection}${documentsSection}
 
 ## Active Goals
 ${goalsText}
@@ -4239,7 +6382,7 @@ ${modeText}
 
 Return JSON: { "reasoning": "2-3 sentences on your planning logic, referencing specific data points", "tasks": [{ "title": "...", "category": "...", "priority": "...", "duration": 60, "time": "9:30 AM", "description": "..." }] }
 Return ONLY the JSON object.`;
-  const response = await openai4.chat.completions.create({
+  const response = await openai8.chat.completions.create({
     model: "gpt-5-mini",
     messages: [{ role: "user", content: prompt }],
     response_format: { type: "json_object" },
@@ -4270,12 +6413,12 @@ async function buildPlanForUser(userId) {
   try {
     const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
     const [goalsRow, historyRow, brainDumpRow, lifeContextRow, prefsRow, energyRow] = await Promise.all([
-      db.select({ data: goals.data }).from(goals).where(eq5(goals.userId, userId)),
-      db.select({ data: completionHistory.data }).from(completionHistory).where(eq5(completionHistory.userId, userId)),
-      db.select({ data: brainDumpInbox.data }).from(brainDumpInbox).where(eq5(brainDumpInbox.userId, userId)),
-      db.select({ data: lifeContext.data }).from(lifeContext).where(eq5(lifeContext.userId, userId)),
-      db.select({ data: userPreferences.data }).from(userPreferences).where(eq5(userPreferences.userId, userId)),
-      db.select({ data: energyCheckins.data }).from(energyCheckins).where(and3(eq5(energyCheckins.userId, userId), eq5(energyCheckins.date, today)))
+      db.select({ data: goals.data }).from(goals).where(eq12(goals.userId, userId)),
+      db.select({ data: completionHistory.data }).from(completionHistory).where(eq12(completionHistory.userId, userId)),
+      db.select({ data: brainDumpInbox.data }).from(brainDumpInbox).where(eq12(brainDumpInbox.userId, userId)),
+      db.select({ data: lifeContext.data }).from(lifeContext).where(eq12(lifeContext.userId, userId)),
+      db.select({ data: userPreferences.data }).from(userPreferences).where(eq12(userPreferences.userId, userId)),
+      db.select({ data: energyCheckins.data }).from(energyCheckins).where(and9(eq12(energyCheckins.userId, userId), eq12(energyCheckins.date, today)))
     ]);
     const goals2 = goalsRow[0]?.data || [];
     const completionHistory2 = historyRow[0]?.data || [];
@@ -4479,7 +6622,21 @@ async function registerRoutes(app2) {
           required: ["taskTitle"]
         }
       }
-    }
+    },
+    ...process.env.TAVILY_API_KEY ? [{
+      type: "function",
+      function: {
+        name: "web_search",
+        description: "Search the internet for real-time information such as current events, weather, stock prices, news, product reviews, or anything else that requires up-to-date data. Use this when the user asks about something you don't know or when current information is needed.",
+        parameters: {
+          type: "object",
+          properties: {
+            query: { type: "string", description: "The search query to look up" }
+          },
+          required: ["query"]
+        }
+      }
+    }] : []
   ];
   function fuzzyMatch(needle, haystack) {
     const n = needle.toLowerCase().trim();
@@ -4491,7 +6648,7 @@ async function registerRoutes(app2) {
     try {
       switch (toolName) {
         case "add_task": {
-          const planResult = await db.select({ data: plans.data }).from(plans).where(and3(eq5(plans.userId, userId), eq5(plans.date, todayKey)));
+          const planResult = await db.select({ data: plans.data }).from(plans).where(and9(eq12(plans.userId, userId), eq12(plans.date, todayKey)));
           const plan = planResult.length > 0 ? planResult[0].data : { date: todayKey, tasks: [], greeting: "", insight: "" };
           const tasks = Array.isArray(plan.tasks) ? plan.tasks : [];
           const catMap = { health: "fitness", work: "career", learning: "personal" };
@@ -4512,7 +6669,7 @@ async function registerRoutes(app2) {
           return { result: "success", label: `Task added to today`, detail: `Added "${args.title}"` };
         }
         case "add_to_brain_dump": {
-          const bdResult = await db.select({ data: brainDumpInbox.data }).from(brainDumpInbox).where(eq5(brainDumpInbox.userId, userId));
+          const bdResult = await db.select({ data: brainDumpInbox.data }).from(brainDumpInbox).where(eq12(brainDumpInbox.userId, userId));
           const items = bdResult.length > 0 ? Array.isArray(bdResult[0].data) ? bdResult[0].data : [] : [];
           items.unshift({
             id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
@@ -4526,7 +6683,7 @@ async function registerRoutes(app2) {
           return { result: "success", label: `Added to brain dump`, detail: `Added "${args.text}"` };
         }
         case "log_goal_progress": {
-          const goalsResult = await db.select({ data: goals.data }).from(goals).where(eq5(goals.userId, userId));
+          const goalsResult = await db.select({ data: goals.data }).from(goals).where(eq12(goals.userId, userId));
           if (goalsResult.length === 0) return { result: "error", label: "No goals found", detail: "User has no goals set" };
           const goalsList = Array.isArray(goalsResult[0].data) ? goalsResult[0].data : [];
           const matched = goalsList.find((g) => fuzzyMatch(args.goalTitle, g.title));
@@ -4540,7 +6697,7 @@ async function registerRoutes(app2) {
           return { result: "success", label: `Progress logged`, detail: `Added ${args.amount} to "${matched.title}"` };
         }
         case "update_life_context": {
-          const lcResult = await db.select({ data: lifeContext.data }).from(lifeContext).where(eq5(lifeContext.userId, userId));
+          const lcResult = await db.select({ data: lifeContext.data }).from(lifeContext).where(eq12(lifeContext.userId, userId));
           const existing = lcResult.length > 0 ? lcResult[0].data : {};
           const merged = { ...existing };
           if (args.priorityGoal) merged.priorityGoal = args.priorityGoal;
@@ -4557,7 +6714,7 @@ async function registerRoutes(app2) {
           return { result: "success", label: `Context updated`, detail: `Updated: ${updatedFields}` };
         }
         case "complete_task": {
-          const planResult = await db.select({ data: plans.data }).from(plans).where(and3(eq5(plans.userId, userId), eq5(plans.date, todayKey)));
+          const planResult = await db.select({ data: plans.data }).from(plans).where(and9(eq12(plans.userId, userId), eq12(plans.date, todayKey)));
           if (planResult.length === 0) return { result: "error", label: "No plan today", detail: "No plan found for today" };
           const plan = planResult[0].data;
           const tasks = Array.isArray(plan.tasks) ? plan.tasks : [];
@@ -4571,12 +6728,128 @@ async function registerRoutes(app2) {
           });
           return { result: "success", label: `Task completed`, detail: `Marked "${matched.title}" as done` };
         }
+        case "web_search": {
+          try {
+            const results = await tavilySearch(args.query);
+            const formatted = formatSearchResults(results);
+            return { result: "success", label: `Web search: ${args.query}`, detail: formatted };
+          } catch (searchErr) {
+            const msg = String(searchErr?.message || searchErr);
+            if (msg.includes("401") || msg.includes("403") || msg.includes("api_key")) {
+              return { result: "error", label: "Search unavailable", detail: "Web search API key is invalid or expired. Tell the user web search is currently unavailable." };
+            }
+            if (msg.includes("429") || msg.includes("rate limit")) {
+              return { result: "error", label: "Search rate limited", detail: "Web search rate limit reached. Tell the user to try again in a moment." };
+            }
+            if (msg.includes("timeout") || msg.includes("ECONNRESET") || msg.includes("ETIMEDOUT")) {
+              return { result: "error", label: "Search timed out", detail: "Web search timed out. Tell the user the search could not complete and suggest trying again." };
+            }
+            return { result: "error", label: "Search failed", detail: `Web search failed: ${msg}. Tell the user you were unable to retrieve results.` };
+          }
+        }
         default:
           return { result: "error", label: "Unknown action", detail: `Unknown tool: ${toolName}` };
       }
     } catch (error) {
       console.error(`Error executing tool ${toolName}:`, error);
       return { result: "error", label: "Action failed", detail: String(error) };
+    }
+  }
+  function normalizeMemoryContent(content) {
+    return content.trim().toLowerCase().replace(/[^\w\s]/g, "").replace(/\s+/g, " ");
+  }
+  async function extractProfileInBackground(userId, messages) {
+    try {
+      const recentMessages = messages.slice(-6);
+      if (recentMessages.length === 0) return;
+      const existingRows = await db.select({ content: userMemories.content }).from(userMemories).where(eq12(userMemories.userId, userId));
+      const existingMemories = existingRows.map((r) => r.content);
+      const normalizedExisting = new Set(existingMemories.map(normalizeMemoryContent));
+      const conversationText = recentMessages.map((m) => `${m.role}: ${m.content}`).join("\n");
+      const existingList = existingMemories.length > 0 ? `
+Existing memories (DO NOT duplicate these):
+${existingMemories.map((m) => `- ${m}`).join("\n")}` : "";
+      const prompt = `You are extracting profile facts about the user from this conversation.
+Output a JSON array of { category, content } objects. Only extract facts that are specific, meaningful, and not already captured.
+
+Categories:
+- personality \u2014 how they communicate, humor, energy, decision style
+- values \u2014 what they care about deeply, what motivates them
+- work_style \u2014 when/how they focus, work patterns, tools they use
+- accomplishment \u2014 wins, achievements, proud moments mentioned
+- goal_discovered \u2014 goals inferred from behavior (not just stated)
+- relationship \u2014 key people in their life (family, teammates, boss)
+- pattern \u2014 recurring behaviors, habits, tendencies
+- preference \u2014 explicit preferences (meeting times, communication style, etc.)
+${existingList}
+
+Conversation:
+${conversationText}
+
+Return JSON: { "memories": [{"content": "string describing the fact", "category": "one of the categories above"}] }
+Return { "memories": [] } if nothing new was learned. Do NOT repeat or rephrase existing memories.`;
+      const response = await openai8.chat.completions.create({
+        model: "gpt-5-mini",
+        messages: [{ role: "user", content: prompt }],
+        response_format: { type: "json_object" },
+        max_completion_tokens: 400
+      });
+      const content = response.choices[0]?.message?.content || '{"memories":[]}';
+      const parsed = JSON.parse(content);
+      const rawMemories = Array.isArray(parsed.memories) ? parsed.memories : Array.isArray(parsed) ? parsed : [];
+      const newMemories = rawMemories.slice(0, 3);
+      const validCategories = ["personality", "values", "work_style", "accomplishment", "goal_discovered", "relationship", "pattern", "preference", "fact", "goal", "achievement"];
+      for (const mem of newMemories) {
+        if (!mem.content || typeof mem.content !== "string" || mem.content.trim().length === 0) continue;
+        const normalized = normalizeMemoryContent(mem.content);
+        if (normalizedExisting.has(normalized)) continue;
+        const category = validCategories.includes(mem.category) ? mem.category : "fact";
+        await db.insert(userMemories).values({
+          userId,
+          content: mem.content.trim(),
+          category
+        });
+        normalizedExisting.add(normalized);
+        console.log(`[Profile] Extracted: [${category}] ${mem.content.trim().slice(0, 60)}...`);
+      }
+    } catch (err) {
+      console.error("[Profile] Background extraction error:", err);
+    }
+  }
+  async function markProactiveQuestionsAnswered(userId, messages) {
+    try {
+      const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1e3);
+      const unanswered = await db.select().from(proactiveQuestionsSent).where(
+        and9(
+          eq12(proactiveQuestionsSent.userId, userId),
+          sql8`${proactiveQuestionsSent.answeredAt} IS NULL`,
+          sql8`${proactiveQuestionsSent.sentAt} > ${twentyFourHoursAgo}`
+        )
+      ).orderBy(desc6(proactiveQuestionsSent.sentAt)).limit(1);
+      if (unanswered.length > 0) {
+        const lastUserMessage = messages.filter((m) => m.role === "user").pop();
+        if (!lastUserMessage?.content) return;
+        const checkResponse = await openai8.chat.completions.create({
+          model: "gpt-5-mini",
+          messages: [{
+            role: "user",
+            content: `Is the following user message a reply to (or related to) this question? Only answer "yes" or "no".
+
+Question that was asked: "${unanswered[0].question}"
+User's message: "${lastUserMessage.content}"
+
+Answer (yes/no):`
+          }],
+          max_completion_tokens: 10
+        });
+        const answer = (checkResponse.choices[0]?.message?.content || "").trim().toLowerCase();
+        if (answer.startsWith("yes")) {
+          await db.update(proactiveQuestionsSent).set({ answeredAt: /* @__PURE__ */ new Date() }).where(eq12(proactiveQuestionsSent.id, unanswered[0].id));
+          console.log(`[Profile] Marked proactive question as answered via coach chat: ${unanswered[0].id}`);
+        }
+      }
+    } catch (err) {
+      console.error("[Profile] Error marking proactive question answered:", err);
     }
   }
   app2.post("/api/coach/chat", async (req, res) => {
@@ -4586,35 +6859,84 @@ async function registerRoutes(app2) {
       if (!messages || !Array.isArray(messages)) {
         return res.status(400).json({ error: "messages array is required" });
       }
+      let resolvedGmailConnected = gmailConnected ?? false;
+      let resolvedGmailItems = gmailItems || [];
+      if (!resolvedGmailConnected && userId) {
+        try {
+          const userTokens = await getUserTokens(userId, "google");
+          if (userTokens.length > 0) {
+            resolvedGmailConnected = true;
+            const perAccountItems = await Promise.all(
+              userTokens.map(async (t) => {
+                const emails = await getRecentEmailCommitments(7, t.accessToken).catch(() => []);
+                return emails.map((e) => ({ ...e, accountEmail: t.accountEmail }));
+              })
+            );
+            resolvedGmailItems = perAccountItems.flat();
+          }
+        } catch {
+        }
+      }
       let userCommitments = [];
       if (userId) {
         try {
-          userCommitments = await db.select().from(commitments).where(and3(eq5(commitments.userId, userId), eq5(commitments.status, "pending"))).orderBy(desc2(commitments.extractedAt)).limit(20);
+          userCommitments = await db.select().from(commitments).where(and9(eq12(commitments.userId, userId), eq12(commitments.status, "pending"))).orderBy(desc6(commitments.extractedAt)).limit(20);
         } catch {
         }
       }
       let memories = [];
       let morningNoteSummary = "";
+      let documentsContext = "";
       if (userId) {
         try {
-          const [rows, noteSummary] = await Promise.all([
-            db.select({ content: userMemories.content, category: userMemories.category }).from(userMemories).where(eq5(userMemories.userId, userId)).orderBy(desc2(userMemories.extractedAt)).limit(20),
-            getMorningNoteSummary(userId)
+          const [rows, noteSummary, docsCtx] = await Promise.all([
+            db.select({ content: userMemories.content, category: userMemories.category }).from(userMemories).where(eq12(userMemories.userId, userId)).orderBy(desc6(userMemories.extractedAt)).limit(50),
+            getMorningNoteSummary(userId),
+            getUserDocumentContext(userId)
           ]);
           memories = rows;
           morningNoteSummary = noteSummary;
+          documentsContext = docsCtx;
         } catch {
         }
       }
-      const systemPrompt = buildCoachSystemPrompt(goals2 || [], stats2 || {}, history || [], calendarEvents || [], lifeContext2 || null, gmailItems || [], gmailConnected ?? false, slackMessages || [], slackConnected ?? false, userCommitments, coachingMode, memories, telegramMessages || [], telegramConnected ?? false, morningNoteSummary);
+      let proactiveQuestionContext = "";
+      if (userId) {
+        try {
+          const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1e3);
+          const recentUnanswered = await db.select().from(proactiveQuestionsSent).where(
+            and9(
+              eq12(proactiveQuestionsSent.userId, userId),
+              sql8`${proactiveQuestionsSent.answeredAt} IS NULL`,
+              sql8`${proactiveQuestionsSent.sentAt} > ${twentyFourHoursAgo}`
+            )
+          ).orderBy(desc6(proactiveQuestionsSent.sentAt)).limit(3);
+          if (recentUnanswered.length > 0) {
+            proactiveQuestionContext = `
+## Recent Proactive Questions You Asked (unanswered)
+You recently sent these curiosity-driven questions via Telegram. If the user's message seems to be answering one of them, acknowledge it warmly and ask a brief follow-up to learn more about them.
+` + recentUnanswered.map((q) => `- "${q.question}"`).join("\n");
+          }
+        } catch {
+        }
+      }
+      let crossChannelContext = "";
+      if (userId) {
+        try {
+          const recentInteractions = await getRecentInteractions(userId, 20);
+          crossChannelContext = formatInteractionTimeline(recentInteractions);
+        } catch {
+        }
+      }
+      const systemPrompt = buildCoachSystemPrompt(goals2 || [], stats2 || {}, history || [], calendarEvents || [], lifeContext2 || null, resolvedGmailItems, resolvedGmailConnected, slackMessages || [], slackConnected ?? false, userCommitments, coachingMode, memories, telegramMessages || [], telegramConnected ?? false, morningNoteSummary, documentsContext, crossChannelContext);
       const chatMessages = [
-        { role: "system", content: systemPrompt + "\n\nYou can take actions on the user's behalf using the available tools. When a user asks you to add a task, log progress, update their context, etc., use the appropriate tool. Respond naturally \u2014 do not mention 'tool calls' or 'functions' to the user. Just confirm what you did conversationally." },
+        { role: "system", content: systemPrompt + proactiveQuestionContext + "\n\nYou can take actions on the user's behalf using the available tools. When a user asks you to add a task, log progress, update their context, etc., use the appropriate tool. Respond naturally \u2014 do not mention 'tool calls' or 'functions' to the user. Just confirm what you did conversationally." + (process.env.TAVILY_API_KEY ? "\n\nYou also have a web_search tool. Use it whenever the user asks about current events, live data (weather, stock prices, sports scores, news), or anything requiring real-time information you wouldn't know. Cite your sources naturally in your response." : "") },
         ...messages.map((m) => ({ role: m.role, content: m.content }))
       ];
       const actionResults = [];
       let toolMessages = [];
       if (userId) {
-        const phase1 = await openai4.chat.completions.create({
+        const phase1 = await openai8.chat.completions.create({
           model: "gpt-5-mini",
           messages: chatMessages,
           tools: coachTools,
@@ -4623,6 +6945,17 @@ async function registerRoutes(app2) {
         const choice = phase1.choices[0];
         if (choice.finish_reason === "tool_calls" && choice.message.tool_calls?.length) {
           toolMessages.push(choice.message);
+          const hasWebSearch = choice.message.tool_calls.some((tc) => tc.function.name === "web_search");
+          if (hasWebSearch && !res.headersSent) {
+            res.setHeader("Content-Type", "text/event-stream");
+            res.setHeader("Cache-Control", "no-cache, no-transform");
+            res.setHeader("X-Accel-Buffering", "no");
+            res.setHeader("Access-Control-Allow-Origin", "*");
+            res.flushHeaders();
+            res.write(`data: ${JSON.stringify({ type: "searching" })}
+
+`);
+          }
           for (const tc of choice.message.tool_calls) {
             let args = {};
             try {
@@ -4649,29 +6982,46 @@ async function registerRoutes(app2) {
 `);
           res.write("data: [DONE]\n\n");
           res.end();
+          if (userId) {
+            extractProfileInBackground(userId, messages);
+            markProactiveQuestionsAnswered(userId, messages).catch(() => {
+            });
+            const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
+            if (lastUserMsg?.content) logInteraction(userId, "app_chat", "inbound", typeof lastUserMsg.content === "string" ? lastUserMsg.content : JSON.stringify(lastUserMsg.content)).catch(() => {
+            });
+            logInteraction(userId, "app_chat", "outbound", words).catch(() => {
+            });
+          }
           return;
         }
       }
-      res.setHeader("Content-Type", "text/event-stream");
-      res.setHeader("Cache-Control", "no-cache, no-transform");
-      res.setHeader("X-Accel-Buffering", "no");
-      res.setHeader("Access-Control-Allow-Origin", "*");
-      res.flushHeaders();
+      if (!res.headersSent) {
+        res.setHeader("Content-Type", "text/event-stream");
+        res.setHeader("Cache-Control", "no-cache, no-transform");
+        res.setHeader("X-Accel-Buffering", "no");
+        res.setHeader("Access-Control-Allow-Origin", "*");
+        res.flushHeaders();
+      }
       if (actionResults.length > 0) {
-        res.write(`data: ${JSON.stringify({ type: "actions", actions: actionResults })}
+        const nonSearchActions = actionResults.filter((a) => a.tool !== "web_search");
+        if (nonSearchActions.length > 0) {
+          res.write(`data: ${JSON.stringify({ type: "actions", actions: nonSearchActions })}
 
 `);
+        }
       }
       const streamMessages = toolMessages.length > 0 ? [...chatMessages, ...toolMessages] : chatMessages;
-      const stream = await openai4.chat.completions.create({
+      const stream = await openai8.chat.completions.create({
         model: "gpt-5-mini",
         messages: streamMessages,
         stream: true,
         max_completion_tokens: 8192
       });
+      let fullStreamedReply = "";
       for await (const chunk of stream) {
         const content = chunk.choices[0]?.delta?.content || "";
         if (content) {
+          fullStreamedReply += content;
           res.write(`data: ${JSON.stringify({ content })}
 
 `);
@@ -4679,6 +7029,16 @@ async function registerRoutes(app2) {
       }
       res.write("data: [DONE]\n\n");
       res.end();
+      if (userId) {
+        extractProfileInBackground(userId, messages);
+        markProactiveQuestionsAnswered(userId, messages).catch(() => {
+        });
+        const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
+        if (lastUserMsg?.content) logInteraction(userId, "app_chat", "inbound", typeof lastUserMsg.content === "string" ? lastUserMsg.content : JSON.stringify(lastUserMsg.content)).catch(() => {
+        });
+        if (fullStreamedReply) logInteraction(userId, "app_chat", "outbound", fullStreamedReply).catch(() => {
+        });
+      }
     } catch (error) {
       console.error("Error in coach chat:", error);
       if (!res.headersSent) {
@@ -4710,7 +7070,7 @@ Return a JSON object with:
 2. "followups": array of exactly 3 short follow-up questions (max 7 words each) the user would naturally ask next.
 
 Return ONLY the JSON object.`;
-      const response = await openai4.chat.completions.create({
+      const response = await openai8.chat.completions.create({
         model: "gpt-5-mini",
         messages: [{ role: "user", content: prompt }],
         response_format: { type: "json_object" },
@@ -4751,7 +7111,7 @@ For each task provide:
 - subtasks: array of short action strings (empty array if not needed)
 
 Return ONLY a JSON object with a "tasks" array. No other text.`;
-      const response = await openai4.chat.completions.create({
+      const response = await openai8.chat.completions.create({
         model: "gpt-5-mini",
         messages: [{ role: "user", content: prompt }],
         response_format: { type: "json_object" },
@@ -4785,7 +7145,7 @@ Return ONLY a JSON object with a "tasks" array. No other text.`;
       let commitmentText = "";
       if (userId) {
         try {
-          const pendingCommitments = await db.select().from(commitments).where(and3(eq5(commitments.userId, userId), eq5(commitments.status, "pending"))).limit(5);
+          const pendingCommitments = await db.select().from(commitments).where(and9(eq12(commitments.userId, userId), eq12(commitments.status, "pending"))).limit(5);
           if (pendingCommitments.length > 0) {
             commitmentText = `
 - Open commitments: ${pendingCommitments.map((c) => `"${c.content}"${c.dueDate ? ` (due ${c.dueDate})` : ""}`).join(", ")}`;
@@ -4807,7 +7167,7 @@ Their profile:
 Write ONE short, specific coaching observation. Be direct \u2014 name what's working or what to fix. If they have a clear priority or blocker, reference it specifically. If they have open commitments, call out specific ones by name. No greeting, no sign-off.
 
 Return JSON: { "note": "your 1-2 sentence note here" }`;
-      const response = await openai4.chat.completions.create({
+      const response = await openai8.chat.completions.create({
         model: "gpt-5-mini",
         messages: [{ role: "user", content: prompt }],
         response_format: { type: "json_object" },
@@ -5000,7 +7360,7 @@ Return JSON:
   }
 ]}
 Only return the JSON object, no extra text.`;
-      const response = await openai4.chat.completions.create({
+      const response = await openai8.chat.completions.create({
         model: "gpt-5-mini",
         messages: [{ role: "user", content: prompt }],
         response_format: { type: "json_object" },
@@ -5132,7 +7492,7 @@ Return JSON with:
 taskOrder: Return up to 3 task IDs from the task list above, reordered optimally for this energy level. Only include IDs that appear in the task list. Prioritise momentum-building.
 
 Return ONLY the JSON object.`;
-      const response = await openai4.chat.completions.create({
+      const response = await openai8.chat.completions.create({
         model: "gpt-5-mini",
         messages: [{ role: "user", content: prompt }],
         response_format: { type: "json_object" },
@@ -5174,10 +7534,10 @@ Return ONLY the JSON object.`;
       if (!audio || typeof audio !== "string") {
         return res.status(400).json({ error: "audio (base64) is required" });
       }
-      const { speechToText: speechToText2, ensureCompatibleFormat: ensureCompatibleFormat2 } = await Promise.resolve().then(() => (init_client(), client_exports));
+      const { speechToText: speechToText2, detectAudioFormat: detectAudioFormat2 } = await Promise.resolve().then(() => (init_client(), client_exports));
       const rawBuffer = Buffer.from(audio, "base64");
-      const { buffer, format } = await ensureCompatibleFormat2(rawBuffer);
-      const text2 = await speechToText2(buffer, format);
+      const format = detectAudioFormat2(rawBuffer);
+      const text2 = await speechToText2(rawBuffer, format);
       res.json({ text: text2 });
     } catch (error) {
       console.error("Error transcribing audio:", error);
@@ -5211,7 +7571,7 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const rows = await db.select().from(commitments).where(and3(eq5(commitments.userId, userId), eq5(commitments.status, "pending"))).orderBy(desc2(commitments.extractedAt));
+      const rows = await db.select().from(commitments).where(and9(eq12(commitments.userId, userId), eq12(commitments.status, "pending"))).orderBy(desc6(commitments.extractedAt));
       res.json({ commitments: rows });
     } catch (error) {
       console.error("Error fetching commitments:", error);
@@ -5227,7 +7587,7 @@ Return ONLY the JSON object.`;
       if (!status || !["done", "skipped", "pending"].includes(status)) {
         return res.status(400).json({ error: "status must be 'done', 'skipped', or 'pending'" });
       }
-      await db.update(commitments).set({ status, resolvedAt: status !== "pending" ? /* @__PURE__ */ new Date() : null }).where(and3(eq5(commitments.id, id), eq5(commitments.userId, userId)));
+      await db.update(commitments).set({ status, resolvedAt: status !== "pending" ? /* @__PURE__ */ new Date() : null }).where(and9(eq12(commitments.id, id), eq12(commitments.userId, userId)));
       res.json({ ok: true });
     } catch (error) {
       console.error("Error updating commitment:", error);
@@ -5239,7 +7599,7 @@ Return ONLY the JSON object.`;
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
-      await db.delete(commitments).where(and3(eq5(commitments.id, id), eq5(commitments.userId, userId)));
+      await db.delete(commitments).where(and9(eq12(commitments.id, id), eq12(commitments.userId, userId)));
       res.json({ ok: true });
     } catch (error) {
       console.error("Error deleting commitment:", error);
@@ -5259,7 +7619,7 @@ Return ONLY the JSON object.`;
 User message: "${message}"
 
 Return ONLY JSON: { "hasCommitment": boolean, "commitment": "the thing they committed to" or null, "dueDate": "YYYY-MM-DD" or null }`;
-      const response = await openai4.chat.completions.create({
+      const response = await openai8.chat.completions.create({
         model: "gpt-5-mini",
         messages: [{ role: "user", content: prompt }],
         response_format: { type: "json_object" },
@@ -5291,7 +7651,7 @@ Return ONLY JSON: { "hasCommitment": boolean, "commitment": "the thing they comm
       if (!context) return res.status(400).json({ error: "context is required" });
       let userCommitments = [];
       try {
-        userCommitments = await db.select().from(commitments).where(and3(eq5(commitments.userId, userId), eq5(commitments.status, "pending"))).orderBy(desc2(commitments.extractedAt)).limit(10);
+        userCommitments = await db.select().from(commitments).where(and9(eq12(commitments.userId, userId), eq12(commitments.status, "pending"))).orderBy(desc6(commitments.extractedAt)).limit(10);
       } catch {
       }
       const systemPrompt = buildCoachSystemPrompt(goals2 || [], stats2 || {}, history || [], [], lifeContext2 || null, [], false, [], false, userCommitments, void 0, [], [], false);
@@ -5300,7 +7660,7 @@ Return ONLY JSON: { "hasCommitment": boolean, "commitment": "the thing they comm
       res.setHeader("X-Accel-Buffering", "no");
       res.setHeader("Access-Control-Allow-Origin", "*");
       res.flushHeaders();
-      const stream = await openai4.chat.completions.create({
+      const stream = await openai8.chat.completions.create({
         model: "gpt-5-mini",
         messages: [
           { role: "system", content: systemPrompt + `
@@ -5342,7 +7702,7 @@ ${context}` },
       try {
         const sevenDaysAgo = /* @__PURE__ */ new Date();
         sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-        weekCommitments = await db.select().from(commitments).where(eq5(commitments.userId, userId)).orderBy(desc2(commitments.extractedAt)).limit(30);
+        weekCommitments = await db.select().from(commitments).where(eq12(commitments.userId, userId)).orderBy(desc6(commitments.extractedAt)).limit(30);
         weekCommitments = weekCommitments.filter(
           (c) => new Date(c.extractedAt).getTime() >= sevenDaysAgo.getTime()
         );
@@ -5373,7 +7733,7 @@ Return JSON:
 }
 
 Return ONLY the JSON object.`;
-      const response = await openai4.chat.completions.create({
+      const response = await openai8.chat.completions.create({
         model: "gpt-5-mini",
         messages: [{ role: "user", content: prompt }],
         response_format: { type: "json_object" },
@@ -5401,7 +7761,7 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const rows = await db.select().from(userMemories).where(eq5(userMemories.userId, userId)).orderBy(desc2(userMemories.extractedAt));
+      const rows = await db.select().from(userMemories).where(eq12(userMemories.userId, userId)).orderBy(desc6(userMemories.extractedAt));
       res.json({ memories: rows });
     } catch (error) {
       console.error("Error fetching memories:", error);
@@ -5413,7 +7773,7 @@ Return ONLY the JSON object.`;
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
-      await db.delete(userMemories).where(sql6`${userMemories.id} = ${id} AND ${userMemories.userId} = ${userId}`);
+      await db.delete(userMemories).where(sql8`${userMemories.id} = ${id} AND ${userMemories.userId} = ${userId}`);
       res.json({ ok: true });
     } catch (error) {
       console.error("Error deleting memory:", error);
@@ -5428,21 +7788,35 @@ Return ONLY the JSON object.`;
       if (!messages || !Array.isArray(messages) || messages.length === 0) {
         return res.json({ added: 0 });
       }
-      const existingRows = await db.select({ content: userMemories.content }).from(userMemories).where(eq5(userMemories.userId, userId)).orderBy(desc2(userMemories.extractedAt));
+      const existingRows = await db.select({ content: userMemories.content }).from(userMemories).where(eq12(userMemories.userId, userId)).orderBy(desc6(userMemories.extractedAt));
       const existingMemories = existingRows.map((r) => r.content);
       const conversationText = messages.map((m) => `${m.role}: ${m.content}`).join("\n");
       const existingList = existingMemories.length > 0 ? `
 Existing memories (DO NOT duplicate these):
 ${existingMemories.map((m) => `- ${m}`).join("\n")}` : "";
-      const prompt = `You are a memory extractor. Given this conversation snippet, extract 0-3 key facts about the user worth remembering long-term. Only extract facts that would be useful in future coaching sessions. Skip generic statements, greetings, and things already known.
+      const prompt = `You are extracting profile facts about the user from this conversation.
+Output a JSON array of { category, content } objects. Only extract facts that are specific, meaningful, and not already captured.
+
+Categories:
+- personality \u2014 how they communicate, humor, energy, decision style
+- values \u2014 what they care about deeply, what motivates them
+- work_style \u2014 when/how they focus, work patterns, tools they use
+- accomplishment \u2014 wins, achievements, proud moments mentioned
+- goal_discovered \u2014 goals inferred from behavior (not just stated)
+- relationship \u2014 key people in their life (family, teammates, boss)
+- pattern \u2014 recurring behaviors, habits, tendencies
+- preference \u2014 explicit preferences (meeting times, communication style, etc.)
+- fact \u2014 general facts about the user
+- goal \u2014 explicitly stated goals
+- achievement \u2014 specific achievements mentioned
 ${existingList}
 
 Conversation:
 ${conversationText}
 
-Return JSON: { "memories": [{"content": "string describing the fact", "category": "fact"|"pattern"|"preference"|"goal"|"achievement"}] }
-Return an empty array if nothing notable was said. Do NOT repeat or rephrase existing memories.`;
-      const response = await openai4.chat.completions.create({
+Return JSON: { "memories": [{"content": "string describing the fact", "category": "one of the categories above"}] }
+Return { "memories": [] } if nothing new was learned. Do NOT repeat or rephrase existing memories.`;
+      const response = await openai8.chat.completions.create({
         model: "gpt-5-mini",
         messages: [{ role: "user", content: prompt }],
         response_format: { type: "json_object" },
@@ -5452,10 +7826,11 @@ Return an empty array if nothing notable was said. Do NOT repeat or rephrase exi
       let added = 0;
       try {
         const parsed = JSON.parse(content);
-        const newMemories = Array.isArray(parsed.memories) ? parsed.memories.slice(0, 3) : [];
+        const rawMemories = Array.isArray(parsed.memories) ? parsed.memories : Array.isArray(parsed) ? parsed : [];
+        const newMemories = rawMemories.slice(0, 3);
         for (const mem of newMemories) {
           if (!mem.content || typeof mem.content !== "string" || mem.content.trim().length === 0) continue;
-          const validCategories = ["fact", "pattern", "preference", "goal", "achievement"];
+          const validCategories = ["fact", "pattern", "preference", "goal", "achievement", "personality", "values", "work_style", "accomplishment", "goal_discovered", "relationship"];
           const category = validCategories.includes(mem.category) ? mem.category : "fact";
           await db.insert(userMemories).values({
             userId,
@@ -5476,7 +7851,7 @@ Return an empty array if nothing notable was said. Do NOT repeat or rephrase exi
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const row = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq5(userPreferences.userId, userId)).limit(1);
+      const row = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq12(userPreferences.userId, userId)).limit(1);
       return res.json(row[0]?.data || {});
     } catch (error) {
       console.error("Error getting preferences:", error);
@@ -5488,7 +7863,7 @@ Return an empty array if nothing notable was said. Do NOT repeat or rephrase exi
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const updates = req.body;
-      const existing = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq5(userPreferences.userId, userId)).limit(1);
+      const existing = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq12(userPreferences.userId, userId)).limit(1);
       const current = existing[0]?.data || {};
       const merged = { ...current, ...updates };
       await db.insert(userPreferences).values({ userId, data: merged }).onConflictDoUpdate({
@@ -5506,7 +7881,7 @@ Return an empty array if nothing notable was said. Do NOT repeat or rephrase exi
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const limit = parseInt(req.query.limit) || 30;
-      const notes = await db.select().from(morningVoiceNotes).where(eq5(morningVoiceNotes.userId, userId)).orderBy(desc2(morningVoiceNotes.recordedAt)).limit(limit);
+      const notes = await db.select().from(morningVoiceNotes).where(eq12(morningVoiceNotes.userId, userId)).orderBy(desc6(morningVoiceNotes.recordedAt)).limit(limit);
       res.json({ notes });
     } catch (error) {
       console.error("Error fetching morning voice notes:", error);
@@ -5518,7 +7893,7 @@ Return an empty array if nothing notable was said. Do NOT repeat or rephrase exi
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const today = await getUserLocalDate(userId);
-      const notes = await db.select().from(morningVoiceNotes).where(and3(eq5(morningVoiceNotes.userId, userId), eq5(morningVoiceNotes.recordedAt, today))).limit(1);
+      const notes = await db.select().from(morningVoiceNotes).where(and9(eq12(morningVoiceNotes.userId, userId), eq12(morningVoiceNotes.recordedAt, today))).limit(1);
       res.json({ note: notes[0] || null });
     } catch (error) {
       console.error("Error fetching today's morning voice note:", error);
@@ -5539,7 +7914,7 @@ Extract:
 
 Return JSON: { "moodSignal": "...", "themes": [...], "blockers": [...], "wins": [...], "intention": "..." }
 Return ONLY the JSON object.`;
-    const extraction = await openai4.chat.completions.create({
+    const extraction = await openai8.chat.completions.create({
       model: "gpt-5-mini",
       messages: [{ role: "user", content: extractionPrompt }],
       response_format: { type: "json_object" },
@@ -5583,7 +7958,7 @@ Return ONLY the JSON object.`;
         return res.status(400).json({ error: "transcript is required" });
       }
       const today = await getUserLocalDate(userId);
-      const existing = await db.select({ id: morningVoiceNotes.id }).from(morningVoiceNotes).where(and3(eq5(morningVoiceNotes.userId, userId), eq5(morningVoiceNotes.recordedAt, today))).limit(1);
+      const existing = await db.select({ id: morningVoiceNotes.id }).from(morningVoiceNotes).where(and9(eq12(morningVoiceNotes.userId, userId), eq12(morningVoiceNotes.recordedAt, today))).limit(1);
       if (existing.length > 0) {
         return res.status(409).json({ error: "Morning note already recorded today" });
       }
@@ -5634,7 +8009,7 @@ Return ONLY the JSON object.`;
       const buffer = Buffer.from(audioBase64, "base64");
       const ext = (mimeType || "audio/webm").includes("mp4") ? "mp4" : "webm";
       const file = new File([buffer], `recording.${ext}`, { type: mimeType || "audio/webm" });
-      const transcription = await openai4.audio.transcriptions.create({
+      const transcription = await openai8.audio.transcriptions.create({
         model: "whisper-1",
         file
       });
@@ -5644,17 +8019,538 @@ Return ONLY the JSON object.`;
       res.status(500).json({ error: "Failed to transcribe audio" });
     }
   });
+  app2.get("/api/inbox/items", async (req, res) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const items = await db.select().from(inboxItems).where(and9(eq12(inboxItems.userId, userId), eq12(inboxItems.status, "pending")));
+      res.json(items);
+    } catch (error) {
+      console.error("Error fetching inbox items:", error);
+      res.status(500).json({ error: "Failed to fetch inbox items" });
+    }
+  });
+  app2.post("/api/inbox/items/:id/action", async (req, res) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const { id } = req.params;
+      const { actionType } = req.body;
+      if (!actionType) return res.status(400).json({ error: "actionType is required" });
+      let telegramChatId;
+      try {
+        const [link] = await db.select().from(telegramLinks).where(eq12(telegramLinks.userId, userId));
+        telegramChatId = link?.chatId;
+      } catch {
+      }
+      const { executeInboxAction: executeInboxAction2 } = await Promise.resolve().then(() => (init_inboxActions(), inboxActions_exports));
+      const result = await executeInboxAction2(userId, id, actionType, telegramChatId);
+      res.json(result);
+    } catch (error) {
+      console.error("Error executing inbox action:", error);
+      res.status(500).json({ error: "Failed to execute action" });
+    }
+  });
+  app2.get("/api/inbox/rules", async (req, res) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const rules = await db.select().from(inboxRules).where(eq12(inboxRules.userId, userId));
+      res.json(rules);
+    } catch (error) {
+      console.error("Error fetching inbox rules:", error);
+      res.status(500).json({ error: "Failed to fetch rules" });
+    }
+  });
+  app2.post("/api/inbox/rules", async (req, res) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const { pattern, type, scope } = req.body;
+      if (!pattern || !type || !scope) {
+        return res.status(400).json({ error: "pattern, type, and scope are required" });
+      }
+      const { createRuleFromText: createRuleFromText2 } = await Promise.resolve().then(() => (init_inboxRules(), inboxRules_exports));
+      const rule = await createRuleFromText2(userId, pattern, type, scope);
+      res.json(rule);
+    } catch (error) {
+      console.error("Error creating inbox rule:", error);
+      res.status(500).json({ error: "Failed to create rule" });
+    }
+  });
+  app2.delete("/api/inbox/rules/:id", async (req, res) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const { id } = req.params;
+      await db.delete(inboxRules).where(and9(eq12(inboxRules.id, id), eq12(inboxRules.userId, userId)));
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error deleting inbox rule:", error);
+      res.status(500).json({ error: "Failed to delete rule" });
+    }
+  });
+  app2.patch("/api/inbox/rules/:id", async (req, res) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const { id } = req.params;
+      const { active } = req.body;
+      await db.update(inboxRules).set({ active: active ? "true" : "false", updatedAt: /* @__PURE__ */ new Date() }).where(and9(eq12(inboxRules.id, id), eq12(inboxRules.userId, userId)));
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error updating inbox rule:", error);
+      res.status(500).json({ error: "Failed to update rule" });
+    }
+  });
+  app2.get("/api/documents", async (req, res) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const docs = await db.select({
+        id: userDocuments.id,
+        name: userDocuments.name,
+        mimeType: userDocuments.mimeType,
+        sizeBytes: userDocuments.sizeBytes,
+        status: userDocuments.status,
+        summary: userDocuments.summary,
+        uploadedAt: userDocuments.uploadedAt
+      }).from(userDocuments).where(eq12(userDocuments.userId, userId)).orderBy(desc6(userDocuments.uploadedAt)).limit(MAX_DOCS_PER_USER);
+      res.json({ documents: docs });
+    } catch (error) {
+      console.error("Error fetching documents:", error);
+      res.status(500).json({ error: "Failed to fetch documents" });
+    }
+  });
+  app2.post("/api/documents", async (req, res) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const { name, mimeType, data } = req.body;
+      if (!name || !mimeType || !data) {
+        return res.status(400).json({ error: "name, mimeType, and data are required" });
+      }
+      if (!SUPPORTED_MIME_TYPES.includes(mimeType)) {
+        return res.status(400).json({ error: `Unsupported file type. Supported: ${SUPPORTED_EXTENSIONS.join(", ")}` });
+      }
+      const existing = await db.select({ id: userDocuments.id }).from(userDocuments).where(eq12(userDocuments.userId, userId));
+      if (existing.length >= MAX_DOCS_PER_USER) {
+        return res.status(400).json({ error: `Maximum ${MAX_DOCS_PER_USER} documents allowed. Delete some to upload more.` });
+      }
+      const buffer = Buffer.from(data, "base64");
+      const sizeBytes = buffer.length;
+      if (sizeBytes > 20 * 1024 * 1024) {
+        return res.status(400).json({ error: "File too large. Maximum size is 20MB." });
+      }
+      const [inserted] = await db.insert(userDocuments).values({ userId, name, mimeType, sizeBytes, status: "processing" }).returning();
+      res.json({ document: inserted });
+      processDocument(userId, inserted.id, name, mimeType, buffer).catch((err) => {
+        console.error("[Docs] Background processing error:", err);
+      });
+    } catch (error) {
+      console.error("Error uploading document:", error);
+      res.status(500).json({ error: "Failed to upload document" });
+    }
+  });
+  app2.delete("/api/documents/:id", async (req, res) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const { id } = req.params;
+      await db.delete(userDocuments).where(and9(eq12(userDocuments.id, id), eq12(userDocuments.userId, userId)));
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error deleting document:", error);
+      res.status(500).json({ error: "Failed to delete document" });
+    }
+  });
+  app2.get("/api/chatgpt-import/status", async (req, res) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const rows = await db.select().from(chatgptImports).where(eq12(chatgptImports.userId, userId));
+      if (rows.length === 0) {
+        return res.json({ imported: false });
+      }
+      const row = rows[0];
+      res.json({ imported: true, importedAt: row.importedAt, memoriesAdded: row.memoriesAdded });
+    } catch (error) {
+      console.error("Error getting ChatGPT import status:", error);
+      res.status(500).json({ error: "Failed to get import status" });
+    }
+  });
+  app2.post("/api/chatgpt-import", async (req, res) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const { conversations } = req.body;
+      if (!conversations || !Array.isArray(conversations) || conversations.length === 0) {
+        return res.status(400).json({ error: "No conversations found. Please upload a valid ChatGPT export file." });
+      }
+      const recentConversations = conversations.slice(-150);
+      const allTexts = [];
+      for (const convo of recentConversations) {
+        const lines = [];
+        if (convo.title) lines.push(`[Conversation: ${convo.title}]`);
+        if (convo.messages && Array.isArray(convo.messages)) {
+          for (const msg of convo.messages) {
+            if (msg.role && msg.text && typeof msg.text === "string") {
+              lines.push(`${msg.role}: ${msg.text.slice(0, 500)}`);
+            }
+          }
+        } else if (convo.mapping && typeof convo.mapping === "object") {
+          const nodes = Object.values(convo.mapping).filter((n) => n?.message?.create_time).sort((a, b) => (a.message.create_time || 0) - (b.message.create_time || 0));
+          const unsortedNodes = Object.values(convo.mapping).filter((n) => !n?.message?.create_time);
+          for (const node of [...nodes, ...unsortedNodes]) {
+            const msg = node?.message;
+            if (!msg || !msg.content?.parts) continue;
+            const role = msg.author?.role;
+            if (role !== "user" && role !== "assistant") continue;
+            const text2 = msg.content.parts.filter((p) => typeof p === "string").join(" ").trim();
+            if (text2.length > 0) {
+              lines.push(`${role}: ${text2.slice(0, 500)}`);
+            }
+          }
+        }
+        if (lines.length > 1) {
+          allTexts.push(lines.join("\n"));
+        }
+      }
+      if (allTexts.length === 0) {
+        return res.status(400).json({ error: "No readable conversations found in the file." });
+      }
+      const existingRows = await db.select({ content: userMemories.content }).from(userMemories).where(eq12(userMemories.userId, userId));
+      const existingMemories = existingRows.map((r) => r.content);
+      const normalizedExisting = new Set(existingMemories.map(normalizeMemoryContent));
+      const batchSize = 10;
+      let totalAdded = 0;
+      const validCategories = ["personality", "values", "work_style", "accomplishment", "goal_discovered", "relationship", "pattern", "preference", "fact", "goal", "achievement"];
+      for (let i = 0; i < allTexts.length; i += batchSize) {
+        const batch = allTexts.slice(i, i + batchSize);
+        const batchText = batch.join("\n\n---\n\n").slice(0, 12e3);
+        const currentMemories = [...existingMemories];
+        const existingList = currentMemories.length > 0 ? `
+Existing memories (DO NOT duplicate these):
+${currentMemories.map((m) => `- ${m}`).join("\n")}` : "";
+        const prompt = `You are extracting profile facts about a user from their ChatGPT conversation history.
+Output a JSON array of { category, content } objects. Only extract facts that are specific, meaningful, and not already captured.
+Focus on discovering: personality traits, values, work patterns, goals, relationships, preferences, and recurring behaviors.
+
+Categories:
+- personality \u2014 how they communicate, humor, energy, decision style
+- values \u2014 what they care about deeply, what motivates them
+- work_style \u2014 when/how they focus, work patterns, tools they use
+- accomplishment \u2014 wins, achievements, proud moments mentioned
+- goal_discovered \u2014 goals inferred from behavior (not just stated)
+- relationship \u2014 key people in their life (family, teammates, boss)
+- pattern \u2014 recurring behaviors, habits, tendencies
+- preference \u2014 explicit preferences (meeting times, communication style, etc.)
+- fact \u2014 general facts about the user
+- goal \u2014 explicitly stated goals
+- achievement \u2014 specific achievements mentioned
+${existingList}
+
+Conversations:
+${batchText}
+
+Return JSON: { "memories": [{"content": "string describing the fact", "category": "one of the categories above"}] }
+Return { "memories": [] } if nothing new was learned. Do NOT repeat or rephrase existing memories.
+Extract up to 8 memories per batch.`;
+        try {
+          const response = await openai8.chat.completions.create({
+            model: "gpt-5-mini",
+            messages: [{ role: "user", content: prompt }],
+            response_format: { type: "json_object" },
+            max_completion_tokens: 800
+          });
+          const content = response.choices[0]?.message?.content || '{"memories":[]}';
+          const parsed = JSON.parse(content);
+          const rawMemories = Array.isArray(parsed.memories) ? parsed.memories : Array.isArray(parsed) ? parsed : [];
+          const newMemories = rawMemories.slice(0, 8);
+          for (const mem of newMemories) {
+            if (!mem.content || typeof mem.content !== "string" || mem.content.trim().length === 0) continue;
+            const normalized = normalizeMemoryContent(mem.content);
+            if (normalizedExisting.has(normalized)) continue;
+            const category = validCategories.includes(mem.category) ? mem.category : "fact";
+            await db.insert(userMemories).values({
+              userId,
+              content: mem.content.trim(),
+              category
+            });
+            normalizedExisting.add(normalized);
+            existingMemories.push(mem.content.trim());
+            totalAdded++;
+            console.log(`[ChatGPT Import] Extracted: [${category}] ${mem.content.trim().slice(0, 60)}...`);
+          }
+        } catch (err) {
+          console.error("[ChatGPT Import] Batch extraction error:", err);
+        }
+      }
+      await db.insert(chatgptImports).values({ userId, importedAt: /* @__PURE__ */ new Date(), memoriesAdded: totalAdded }).onConflictDoUpdate({
+        target: [chatgptImports.userId],
+        set: { importedAt: /* @__PURE__ */ new Date(), memoriesAdded: totalAdded }
+      });
+      console.log(`[ChatGPT Import] User ${userId}: imported ${totalAdded} memories from ${allTexts.length} conversations`);
+      res.json({ imported: totalAdded, importedAt: (/* @__PURE__ */ new Date()).toISOString() });
+    } catch (error) {
+      console.error("Error importing ChatGPT history:", error);
+      res.status(500).json({ error: "Failed to import ChatGPT history" });
+    }
+  });
   const httpServer = createServer(app2);
   return httpServer;
 }
 
 // server/index.ts
 init_db();
+init_telegramRoutes();
+init_momentumCoach();
+
+// server/curiosityScanner.ts
+init_db();
+init_schema();
+init_telegram();
+init_googleCalendar();
+init_gmail();
+init_userTokenStore();
+init_interactionLog();
+import { eq as eq13 } from "drizzle-orm";
+import OpenAI9 from "openai";
+var openai9 = new OpenAI9({
+  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
+  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL
+});
+async function getAlreadyAskedSourceIds(userId) {
+  const rows = await db.select({ sourceId: proactiveQuestionsSent.sourceId }).from(proactiveQuestionsSent).where(eq13(proactiveQuestionsSent.userId, userId));
+  return new Set(rows.map((r) => r.sourceId));
+}
+async function getUserMemories(userId) {
+  return db.select({
+    content: userMemories.content,
+    category: userMemories.category
+  }).from(userMemories).where(eq13(userMemories.userId, userId));
+}
+async function generateCuriosityQuestions(items, memories) {
+  if (items.length === 0) return [];
+  const memoriesContext = memories.length > 0 ? `
+What I already know about this user:
+${memories.map((m) => `- [${m.category}] ${m.content}`).join("\n")}` : "";
+  const itemsList = items.map(
+    (i, idx) => `${idx + 1}. [${i.sourceType}] id="${i.sourceId}" \u2014 ${i.summary}`
+  ).join("\n");
+  const prompt = `You are a curious, empathetic personal coach. Given these upcoming calendar events and recent emails, decide which ones are worth asking the user about to learn more about them.
+
+${memoriesContext}
+
+Items to evaluate:
+${itemsList}
+
+Rules:
+- Skip: recurring standup meetings, automated/system emails, newsletters, marketing, calendar holds with no attendees
+- Ask about: meetings with specific people, important-sounding events, emails from real people about substantive topics, anything with "urgent" or "important" markers, blocked focus time (ask what they plan to work on)
+- Generate genuinely curious, warm questions that would help you understand the user better
+- For calendar events: ask about their goal going in, what a win would look like, how they feel about it
+- For emails: ask about the backstory, whether it's something they've been thinking about, what they plan to do about it
+- Keep questions conversational and short (1-2 sentences)
+
+Return JSON: { "questions": [{ "sourceId": "string", "sourceType": "calendar"|"gmail", "question": "string" }] }
+Return only items worth asking about. Return { "questions": [] } if nothing is interesting enough.`;
+  const response = await openai9.chat.completions.create({
+    model: "gpt-5-mini",
+    messages: [{ role: "user", content: prompt }],
+    response_format: { type: "json_object" },
+    max_completion_tokens: 800
+  });
+  const content = response.choices[0]?.message?.content || '{"questions":[]}';
+  try {
+    const parsed = JSON.parse(content);
+    return Array.isArray(parsed.questions) ? parsed.questions : [];
+  } catch {
+    return [];
+  }
+}
+async function runCuriosityScan() {
+  try {
+    const links = await db.select().from(telegramLinks);
+    if (links.length === 0) return;
+    for (const link of links) {
+      try {
+        const tokens = await getValidGoogleTokens(link.userId).catch(
+          () => []
+        );
+        if (!tokens || tokens.length === 0) continue;
+        const token = tokens[0];
+        const alreadyAsked = await getAlreadyAskedSourceIds(link.userId);
+        const memories = await getUserMemories(link.userId);
+        const now = /* @__PURE__ */ new Date();
+        const tomorrow = new Date(now);
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        const todayKey = now.toISOString().slice(0, 10);
+        const tomorrowKey = tomorrow.toISOString().slice(0, 10);
+        let calendarEvents = [];
+        try {
+          const todayEvents = await getGoogleCalendarEvents(
+            todayKey,
+            void 0,
+            void 0,
+            token
+          );
+          const tomorrowEvents = await getGoogleCalendarEvents(
+            tomorrowKey,
+            void 0,
+            void 0,
+            token
+          );
+          calendarEvents = [...todayEvents, ...tomorrowEvents];
+        } catch (err) {
+          console.error(
+            `[Curiosity] Calendar fetch failed for user ${link.userId}:`,
+            err
+          );
+        }
+        let recentEmails = [];
+        try {
+          const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1e3);
+          recentEmails = await getEmailsSince(
+            oneDayAgo.getTime(),
+            token
+          );
+        } catch (err) {
+          console.error(
+            `[Curiosity] Email fetch failed for user ${link.userId}:`,
+            err
+          );
+        }
+        const { getUserInboxRules: getUserInboxRules2, matchItemAgainstRules: matchItemAgainstRules2 } = await Promise.resolve().then(() => (init_inboxRules(), inboxRules_exports));
+        const userRules = await getUserInboxRules2(link.userId);
+        const items = [];
+        for (const ev of calendarEvents) {
+          const eventId = ev.id ? `cal:${ev.id}` : `cal:${ev.title}:${ev.start || ""}`;
+          if (alreadyAsked.has(eventId)) continue;
+          const ruleResult = matchItemAgainstRules2(
+            { sourceType: "calendar", sourceId: eventId, subject: ev.title, location: ev.location },
+            userRules
+          );
+          if (ruleResult.verdict === "suppress") continue;
+          if (ruleResult.verdict === "surface") {
+            try {
+              await db.insert(inboxItems).values({
+                userId: link.userId,
+                sourceType: "calendar",
+                sourceId: eventId,
+                subject: ev.title,
+                sender: ev.organizer || null,
+                snippet: `${ev.start ? new Date(ev.start).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : ""}${ev.location ? " at " + ev.location : ""}${ev.description ? " \u2014 " + ev.description : ""}`,
+                jarvisReason: "Matched your surface rule",
+                suggestedActions: [
+                  { label: "Add Prep", actionType: "add_prep_time" },
+                  { label: "Save Context", actionType: "save_to_focus" },
+                  { label: "Dismiss", actionType: "dismiss" }
+                ],
+                matchedRuleId: ruleResult.matchedRuleId || null
+              });
+              console.log(`[Curiosity] Surfaced calendar event for user ${link.userId}: ${ev.title}`);
+            } catch {
+            }
+            continue;
+          }
+          const startTime = ev.start ? new Date(ev.start).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : "";
+          items.push({
+            sourceType: "calendar",
+            sourceId: eventId,
+            summary: `${ev.title}${startTime ? " at " + startTime : ""}${ev.location ? " at " + ev.location : ""}${ev.description ? " \u2014 " + ev.description : ""}`
+          });
+        }
+        for (const email of recentEmails) {
+          const emailId = email.messageId ? `gmail:${email.messageId}` : `gmail:${email.subject}:${email.from || ""}`;
+          if (alreadyAsked.has(emailId)) continue;
+          const ruleResult = matchItemAgainstRules2(
+            { sourceType: "email", sourceId: emailId, sender: email.from, subject: email.subject, snippet: email.snippet },
+            userRules
+          );
+          if (ruleResult.verdict === "suppress") continue;
+          items.push({
+            sourceType: "gmail",
+            sourceId: emailId,
+            summary: `From: ${email.from || "unknown"} | Subject: "${email.subject || "no subject"}"${email.snippet ? " \u2014 " + email.snippet : ""}`
+          });
+        }
+        if (items.length === 0) continue;
+        const candidateSourceIds = new Set(items.map((i) => i.sourceId));
+        const questions = await generateCuriosityQuestions(
+          items.slice(0, 15),
+          memories
+        );
+        const validQuestions = questions.filter(
+          (q) => q.sourceId && q.sourceType && q.question && candidateSourceIds.has(q.sourceId)
+        );
+        let sentCount = 0;
+        const MAX_QUESTIONS_PER_SCAN = 2;
+        for (const q of validQuestions) {
+          if (sentCount >= MAX_QUESTIONS_PER_SCAN) break;
+          try {
+            await db.insert(proactiveQuestionsSent).values({
+              userId: link.userId,
+              sourceType: q.sourceType,
+              sourceId: q.sourceId,
+              question: q.question
+            });
+            try {
+              await sendMessage(link.chatId, q.question);
+              sentCount++;
+              logInteraction(link.userId, "notification", "outbound", q.question, "curiosity_question").catch(() => {
+              });
+              console.log(
+                `[Curiosity] Sent question to user ${link.userId}: ${q.question.slice(0, 60)}...`
+              );
+            } catch (sendErr) {
+              console.error(
+                `[Curiosity] DB recorded but Telegram send failed for user ${link.userId}:`,
+                sendErr
+              );
+            }
+          } catch (dbErr) {
+            if (dbErr?.code === "23505") {
+              console.log(`[Curiosity] Skipping duplicate source: ${q.sourceId}`);
+            } else {
+              console.error(
+                `[Curiosity] Failed to record question for user ${link.userId}:`,
+                dbErr
+              );
+            }
+          }
+        }
+      } catch (userErr) {
+        console.error(
+          `[Curiosity] Error processing user ${link.userId}:`,
+          userErr
+        );
+      }
+    }
+  } catch (err) {
+    console.error("[Curiosity] Scanner error:", err);
+  }
+}
+async function startCuriosityScanner() {
+  if (!isTelegramConfigured()) return;
+  console.log("[Curiosity] Scanner started \u2014 runs every 30 minutes");
+  setInterval(
+    async () => {
+      console.log("[Curiosity] Running scan...");
+      await runCuriosityScan();
+    },
+    30 * 60 * 1e3
+  );
+  setTimeout(() => runCuriosityScan(), 60 * 1e3);
+}
+
+// server/index.ts
+init_telegram();
 
 // server/scheduler.ts
 init_db();
 init_schema();
-import { eq as eq6, and as and4 } from "drizzle-orm";
+import { eq as eq14, and as and11 } from "drizzle-orm";
 var schedulerRunning = false;
 function startScheduler() {
   if (schedulerRunning) return;
@@ -5676,7 +8572,7 @@ async function runMorningPlanBuild() {
   console.log(`[Scheduler] Processing ${allUsers.length} user(s) for auto-plan build`);
   for (const user of allUsers) {
     try {
-      const existingPlan = await db.select({ data: plans.data }).from(plans).where(and4(eq6(plans.userId, user.id), eq6(plans.date, today)));
+      const existingPlan = await db.select({ data: plans.data }).from(plans).where(and11(eq14(plans.userId, user.id), eq14(plans.date, today)));
       const existingTasks = existingPlan[0]?.data?.tasks || [];
       if (existingTasks.length > 0) {
         console.log(`[Scheduler] User ${user.id} already has ${existingTasks.length} tasks, skipping`);
@@ -5708,7 +8604,7 @@ async function runMorningPlanBuild() {
         set: { data: { date: today, tasks: newTasks }, updatedAt: /* @__PURE__ */ new Date() }
       });
       const topTask = result.tasks[0];
-      const existingPrefs = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq6(userPreferences.userId, user.id));
+      const existingPrefs = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq14(userPreferences.userId, user.id));
       const currentPrefs = existingPrefs[0]?.data || {};
       const updatedPrefs = {
         ...currentPrefs,
@@ -5939,11 +8835,18 @@ function setupErrorHandler(app2) {
         startProactiveScheduler().catch((err) => {
           console.error("Failed to start proactive scheduler:", err);
         });
+        runProactiveStartupCatchup().catch((err) => {
+          console.error("Failed to run proactive startup catchup:", err);
+        });
+        startMomentumExpiryScheduler();
         startEmailAlertScanner().catch((err) => {
           console.error("Failed to start email alert scanner:", err);
         });
         startMeetingBriefScanner().catch((err) => {
           console.error("Failed to start meeting brief scanner:", err);
+        });
+        startCuriosityScanner().catch((err) => {
+          console.error("Failed to start curiosity scanner:", err);
         });
       }
     }
