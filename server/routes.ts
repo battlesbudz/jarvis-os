@@ -566,6 +566,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         existingTasks: brainDumpTasks || [],
         carriedOverTasks: carriedOverTasks || [],
         blockedTasks: blockedTasks || [],
+        userId: (req as any).userId,
       });
 
       res.json(result);
@@ -818,9 +819,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
               const { markSoulStale } = await import("./memory/soul");
               await extractAndStore({
                 userId,
-                source: "plan_completion",
+                source: `User just completed task: "${matched.title}". Notes: ${matched.notes || "(none)"}.`,
+                sourceType: "plan_completion",
                 sourceRef: `${todayKey}:${matched.title}`,
-                text: `User just completed task: "${matched.title}". Notes: ${matched.notes || "(none)"}.`,
               });
               await markSoulStale(userId);
             } catch (extractErr) {

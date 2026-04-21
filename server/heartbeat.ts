@@ -9,7 +9,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import { db } from "./db";
-import { eq, and, sql, desc } from "drizzle-orm";
+import { eq, and, sql, desc, gte } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { sendMessage, isTelegramConfigured } from "./integrations/telegram";
 import { getGoogleCalendarEvents, type CalendarEvent } from "./integrations/googleCalendar";
@@ -163,13 +163,23 @@ async function runMeetingBriefs(
       }
     } catch {}
 
-    const memoryContext = memories.length > 0
-      ? memories.slice(0, 10).map((m) => `- [${m.category}] ${m.content}`).join("\n")
-      : "";
-
     const attendeeList = attendees.length > 0
       ? attendees.slice(0, 6).map((a) => a.displayName || a.email).join(", ")
       : "no listed attendees";
+
+    let memoryContext = "";
+    try {
+      const { retrieveMemories } = await import("./memory/retrieve");
+      const seedQuery = [event.title, attendeeList, event.description?.slice(0, 200) || ""].filter(Boolean).join(" • ");
+      const ranked = await retrieveMemories(userId, seedQuery, 8);
+      if (ranked.length > 0) {
+        memoryContext = ranked.map((m) => `- [${m.category}] ${m.content}`).join("\n");
+      }
+    } catch {
+      memoryContext = memories.length > 0
+        ? memories.slice(0, 10).map((m) => `- [${m.category}] ${m.content}`).join("\n")
+        : "";
+    }
 
     const eventTime = new Date(event.start).toLocaleTimeString("en-US", {
       hour: "numeric", minute: "2-digit", hour12: true, timeZone: tz,
@@ -707,13 +717,13 @@ async function runHeartbeatMemoryPass(userId: string, googleToken: string | null
       .orderBy(desc(schema.telegramGroupMessages.messageDate))
       .limit(20);
     if (recentMessages.length > 0) {
-      const text = recentMessages.map((m) => `[${m.senderName ?? "?"}]: ${m.text}`).join("\n").slice(0, 4000);
+      const text = recentMessages.map((m) => `[${m.fromUser ?? "?"}]: ${m.text}`).join("\n").slice(0, 4000);
       const { extractAndStore } = await import("./memory/extractor");
       await extractAndStore({
         userId,
-        source: "heartbeat_telegram",
+        source: text,
+        sourceType: "heartbeat_telegram",
         sourceRef: `${now.toISOString().slice(0, 13)}`,
-        text,
       });
     }
   } catch (err) {
