@@ -448,6 +448,72 @@ export async function ensureTablesExist() {
         ON interaction_log (user_id, created_at DESC)
     `).catch(() => {});
 
+    // ── Phase 3: Sub-agent goals tables ──────────────────────────────
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS goal_trees (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        goal_id VARCHAR NOT NULL,
+        title TEXT NOT NULL,
+        tree JSONB NOT NULL DEFAULT '{"phases":[]}'::jsonb,
+        status VARCHAR NOT NULL DEFAULT 'active',
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS goal_trees_user_goal_uniq
+        ON goal_trees (user_id, goal_id)
+    `).catch(() => {});
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS agent_jobs (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        agent_type VARCHAR NOT NULL,
+        title TEXT NOT NULL,
+        prompt TEXT NOT NULL,
+        input JSONB NOT NULL DEFAULT '{}'::jsonb,
+        status VARCHAR NOT NULL DEFAULT 'queued',
+        result JSONB,
+        error TEXT,
+        turns INTEGER DEFAULT 0,
+        tool_calls_count INTEGER DEFAULT 0,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        started_at TIMESTAMP,
+        completed_at TIMESTAMP
+      )
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS agent_jobs_status_created_idx
+        ON agent_jobs (status, created_at)
+    `).catch(() => {});
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS agent_jobs_user_status_idx
+        ON agent_jobs (user_id, status, created_at DESC)
+    `).catch(() => {});
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS deliverables (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        job_id VARCHAR REFERENCES agent_jobs(id) ON DELETE SET NULL,
+        agent_type VARCHAR NOT NULL,
+        type VARCHAR NOT NULL,
+        title TEXT NOT NULL,
+        summary TEXT,
+        body TEXT NOT NULL,
+        meta JSONB NOT NULL DEFAULT '{}'::jsonb,
+        status VARCHAR NOT NULL DEFAULT 'pending_approval',
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        acted_at TIMESTAMP
+      )
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS deliverables_user_status_idx
+        ON deliverables (user_id, status, created_at DESC)
+    `).catch(() => {});
+
     console.log("Database tables verified");
   } catch (error) {
     console.error("Failed to ensure database tables exist:", error);

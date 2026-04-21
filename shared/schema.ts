@@ -271,6 +271,82 @@ export const emailDrafts = pgTable("email_drafts", {
   actedAt: timestamp("acted_at"),
 });
 
+export interface GoalTreeTask {
+  id: string;
+  title: string;
+  description?: string;
+  estimateHours?: number;
+  status: "ready" | "in_progress" | "blocked" | "complete";
+  dueDate?: string;
+  completedAt?: string;
+  injectedOnDates?: string[];
+}
+
+export interface GoalTreeMilestone {
+  id: string;
+  title: string;
+  description?: string;
+  status: "ready" | "in_progress" | "complete";
+  tasks: GoalTreeTask[];
+}
+
+export interface GoalTreePhase {
+  id: string;
+  title: string;
+  description?: string;
+  status: "ready" | "in_progress" | "complete";
+  milestones: GoalTreeMilestone[];
+}
+
+export interface GoalTreeData {
+  phases: GoalTreePhase[];
+  rationale?: string;
+  generatedAt?: string;
+}
+
+export const goalTrees = pgTable("goal_trees", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  goalId: varchar("goal_id").notNull(),
+  title: text("title").notNull(),
+  tree: jsonb("tree").$type<GoalTreeData>().notNull().default(sql`'{"phases":[]}'::jsonb`),
+  status: varchar("status").notNull().default("active"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const agentJobs = pgTable("agent_jobs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  agentType: varchar("agent_type").notNull(),
+  title: text("title").notNull(),
+  prompt: text("prompt").notNull(),
+  input: jsonb("input").notNull().default(sql`'{}'::jsonb`),
+  status: varchar("status").notNull().default("queued"),
+  result: jsonb("result"),
+  error: text("error"),
+  turns: integer("turns").default(0),
+  toolCallsCount: integer("tool_calls_count").default(0),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  startedAt: timestamp("started_at"),
+  completedAt: timestamp("completed_at"),
+});
+
+export const deliverables = pgTable("deliverables", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  jobId: varchar("job_id").references(() => agentJobs.id, { onDelete: "set null" }),
+  agentType: varchar("agent_type").notNull(),
+  type: varchar("type").notNull(),
+  title: text("title").notNull(),
+  summary: text("summary"),
+  body: text("body").notNull(),
+  meta: jsonb("meta").notNull().default(sql`'{}'::jsonb`),
+  status: varchar("status").notNull().default("pending_approval"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  actedAt: timestamp("acted_at"),
+});
+
 export const interactionLog = pgTable("interaction_log", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id").notNull().references(() => users.id),

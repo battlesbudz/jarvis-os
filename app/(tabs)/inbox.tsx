@@ -31,6 +31,32 @@ interface InboxItem {
   surfacedAt: string;
 }
 
+interface Deliverable {
+  id: string;
+  agentType: string;
+  type: string;
+  title: string;
+  summary: string | null;
+  body: string;
+  meta: Record<string, unknown> | null;
+  status: string;
+  createdAt: string;
+}
+
+const DELIVERABLE_ICON: Record<string, keyof typeof Ionicons.glyphMap> = {
+  research: 'search',
+  document: 'document-text',
+  plan: 'list',
+  email_draft: 'mail',
+};
+
+const DELIVERABLE_LABEL: Record<string, string> = {
+  research: 'Research brief',
+  document: 'Document',
+  plan: 'Plan',
+  email_draft: 'Email draft',
+};
+
 interface EmailDraft {
   id: string;
   fromSender: string | null;
@@ -58,6 +84,40 @@ export default function InboxScreen() {
 
   const { data: drafts = [], refetch: refetchDrafts } = useQuery<EmailDraft[]>({
     queryKey: ['/api/email-drafts'],
+  });
+
+  const { data: deliverables = [], refetch: refetchDeliverables } = useQuery<Deliverable[]>({
+    queryKey: ['/api/deliverables'],
+    refetchInterval: 30000,
+  });
+
+  const approveDeliverableMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await apiRequest('POST', `/api/deliverables/${id}/approve`, {});
+      return res.json() as Promise<{ ok: boolean; gmailDraftUrl?: string }>;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/deliverables'] });
+      Alert.alert(
+        'Approved',
+        data?.gmailDraftUrl
+          ? 'Email saved to Gmail drafts.'
+          : 'Saved to your Documents library.',
+      );
+    },
+    onError: () => {
+      Alert.alert('Error', 'Could not approve this item.');
+    },
+  });
+
+  const discardDeliverableMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await apiRequest('POST', `/api/deliverables/${id}/discard`, {});
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/deliverables'] });
+    },
   });
 
   const actionMutation = useMutation({
@@ -109,7 +169,8 @@ export default function InboxScreen() {
     useCallback(() => {
       refetch();
       refetchDrafts();
-    }, [refetch, refetchDrafts])
+      refetchDeliverables();
+    }, [refetch, refetchDrafts, refetchDeliverables])
   );
 
   const handleAction = (itemId: string, actionType: string) => {
@@ -193,6 +254,88 @@ export default function InboxScreen() {
     );
   };
 
+  const renderDeliverables = () => {
+    if (deliverables.length === 0) return null;
+    return (
+      <View style={styles.draftSection}>
+        <View style={styles.draftHeader}>
+          <Ionicons name="sparkles" size={16} color={Colors.primary} />
+          <Text style={styles.draftHeaderText}>
+            Deliverables · {deliverables.length} ready for review
+          </Text>
+        </View>
+        {deliverables.map((d, index) => {
+          const icon = DELIVERABLE_ICON[d.type] || 'document-text';
+          const typeLabel = DELIVERABLE_LABEL[d.type] || d.type;
+          const busy =
+            (approveDeliverableMutation.isPending && approveDeliverableMutation.variables === d.id) ||
+            (discardDeliverableMutation.isPending && discardDeliverableMutation.variables === d.id);
+          const meta = d.meta as { to?: string; subject?: string } | null;
+          return (
+            <Animated.View key={d.id} entering={FadeInDown.duration(300).delay(index * 60)}>
+              <View style={styles.draftCard}>
+                <View style={styles.cardHeader}>
+                  <View style={[styles.sourceIcon, { backgroundColor: Colors.primary + '15' }]}>
+                    <Ionicons name={icon} size={18} color={Colors.primary} />
+                  </View>
+                  <View style={styles.cardHeaderText}>
+                    <Text style={styles.senderName} numberOfLines={1}>{typeLabel}</Text>
+                    <Text style={styles.timestamp}>
+                      {new Date(d.createdAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+                    </Text>
+                  </View>
+                </View>
+
+                <Text style={styles.subject} numberOfLines={2}>{d.title}</Text>
+
+                {d.type === 'email_draft' && meta?.to && (
+                  <View style={styles.reasonContainer}>
+                    <Ionicons name="arrow-forward-outline" size={12} color={Colors.primary} />
+                    <Text style={styles.reasonText} numberOfLines={1}>To: {meta.to}</Text>
+                  </View>
+                )}
+
+                <View style={styles.draftBodyBox}>
+                  <Text style={styles.draftBodyText} numberOfLines={8}>
+                    {d.summary || d.body}
+                  </Text>
+                </View>
+
+                <View style={styles.actionsRow}>
+                  <Pressable
+                    style={styles.actionButton}
+                    onPress={() => approveDeliverableMutation.mutate(d.id)}
+                    disabled={busy}
+                    testID={`deliverable-approve-${d.id}`}
+                  >
+                    <Text style={styles.actionText}>
+                      {d.type === 'email_draft' ? 'Save to Gmail' : 'Save to Documents'}
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    style={[styles.actionButton, styles.actionButtonDismiss]}
+                    onPress={() => discardDeliverableMutation.mutate(d.id)}
+                    disabled={busy}
+                    testID={`deliverable-discard-${d.id}`}
+                  >
+                    <Text style={[styles.actionText, styles.actionTextDismiss]}>Discard</Text>
+                  </Pressable>
+                </View>
+              </View>
+            </Animated.View>
+          );
+        })}
+      </View>
+    );
+  };
+
+  const renderListHeader = () => (
+    <View>
+      {renderDeliverables()}
+      {renderDraftQueue()}
+    </View>
+  );
+
   const renderDraftQueue = () => {
     if (drafts.length === 0) return null;
     return (
@@ -263,6 +406,7 @@ export default function InboxScreen() {
   const renderEmpty = () => {
     if (isLoading) return null;
     if (drafts.length > 0) return null;
+    if (deliverables.length > 0) return null;
     return (
       <View style={styles.emptyContainer}>
         <View style={styles.emptyIcon}>
@@ -297,7 +441,7 @@ export default function InboxScreen() {
           renderItem={renderItem}
           keyExtractor={(item) => item.id}
           contentContainerStyle={[styles.list, { paddingBottom: isWeb ? 34 : insets.bottom + 90 }]}
-          ListHeaderComponent={renderDraftQueue}
+          ListHeaderComponent={renderListHeader}
           ListEmptyComponent={renderEmpty}
           refreshControl={
             <RefreshControl refreshing={false} onRefresh={refetch} tintColor={Colors.primary} />

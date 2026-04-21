@@ -5,6 +5,7 @@ import { ensureTablesExist } from "./db";
 import { registerTelegramWebhook, startProactiveScheduler, startTelegramPolling, startEmailAlertScanner, runProactiveStartupCatchup } from "./telegramRoutes";
 import { startMomentumExpiryScheduler } from "./momentumCoach";
 import { startHeartbeat } from "./heartbeat";
+import { startJobQueueWorker } from "./agent/jobQueue";
 import { isTelegramConfigured, logTelegramStatus, setWebhook } from "./integrations/telegram";
 import { startScheduler } from "./scheduler";
 import * as fs from "fs";
@@ -247,6 +248,9 @@ function setupErrorHandler(app: express.Application) {
   const server = await registerRoutes(app);
 
   startScheduler();
+  // Sub-agent background worker — runs queued goal_decompose / research /
+  // writing / planning / email jobs and writes deliverables for approval.
+  startJobQueueWorker();
 
   setupErrorHandler(app);
 
