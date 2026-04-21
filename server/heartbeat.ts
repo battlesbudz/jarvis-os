@@ -668,9 +668,68 @@ export async function runHeartbeatTick(): Promise<void> {
       if (await runEveningWrapUp(link.userId, link.chatId, token, prefs, now, tz)) actionsFired++;
     } catch (err) { console.error(`[Heartbeat] wrap-up failed for ${link.userId}:`, err); }
 
+    // Phase 4 — heartbeat memory ingestion. Pull anything new since the
+    // last tick (recent telegram messages, today's calendar attendees)
+    // and push it through the unified extractor + people-sync passes.
+    try {
+      await runHeartbeatMemoryPass(link.userId, token, now);
+    } catch (err) {
+      console.error(`[Heartbeat] memory pass failed for ${link.userId}:`, err);
+    }
+
     if (actionsFired > 0) {
       console.log(`[Heartbeat] user ${link.userId} — ${actionsFired} action(s) fired`);
     }
+  }
+}
+
+/**
+ * Phase 4 — incremental memory + people ingestion called once per user
+ * per heartbeat tick. Keeps the SOUL fresh without waiting for the
+ * weekly Sunday job.
+ */
+const lastHeartbeatExtractAt: Record<string, number> = {};
+const HEARTBEAT_EXTRACT_INTERVAL_MS = 60 * 60 * 1000; // hourly per user
+
+async function runHeartbeatMemoryPass(userId: string, googleToken: string | null, now: Date): Promise<void> {
+  const last = lastHeartbeatExtractAt[userId] || 0;
+  if (now.getTime() - last < HEARTBEAT_EXTRACT_INTERVAL_MS) return;
+  lastHeartbeatExtractAt[userId] = now.getTime();
+
+  const sinceCutoff = new Date(now.getTime() - HEARTBEAT_EXTRACT_INTERVAL_MS);
+
+  // 1) Telegram messages received in the last hour → memory extraction.
+  try {
+    const recentMessages = await db
+      .select()
+      .from(schema.telegramGroupMessages)
+      .where(and(eq(schema.telegramGroupMessages.userId, userId), gte(schema.telegramGroupMessages.messageDate, sinceCutoff)))
+      .orderBy(desc(schema.telegramGroupMessages.messageDate))
+      .limit(20);
+    if (recentMessages.length > 0) {
+      const text = recentMessages.map((m) => `[${m.senderName ?? "?"}]: ${m.text}`).join("\n").slice(0, 4000);
+      const { extractAndStore } = await import("./memory/extractor");
+      await extractAndStore({
+        userId,
+        source: "heartbeat_telegram",
+        sourceRef: `${now.toISOString().slice(0, 13)}`,
+        text,
+      });
+    }
+  } catch (err) {
+    console.error(`[Heartbeat] telegram extract failed for ${userId}:`, err);
+  }
+
+  // 2) People sync from today's calendar attendees + recent gmail
+  // senders. Each non-self attendee/sender is upserted into the people
+  // table with role hints; future runs increment interaction_count.
+  try {
+    if (googleToken) {
+      const { syncPeopleFromGoogle } = await import("./memory/peopleSync");
+      await syncPeopleFromGoogle(userId, googleToken, now);
+    }
+  } catch (err) {
+    console.error(`[Heartbeat] people sync failed for ${userId}:`, err);
   }
 }
 

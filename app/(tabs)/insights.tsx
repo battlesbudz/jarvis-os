@@ -378,6 +378,16 @@ export default function InsightsScreen() {
   const initialScanDoneRef = useRef(false);
   const [commitments, setCommitments] = useState<Commitment[]>([]);
   const [commitmentsCollapsed, setCommitmentsCollapsed] = useState(false);
+  const [weeklyInsights, setWeeklyInsights] = useState<{
+    id: string;
+    weekOf: string;
+    summary: string | null;
+    patterns: { category: string; observation: string; evidence: string[]; confidence: number }[];
+    createdAt: string;
+  }[]>([]);
+  const [weeklyInsightsLoading, setWeeklyInsightsLoading] = useState(true);
+  const [weeklyInsightsCollapsed, setWeeklyInsightsCollapsed] = useState(false);
+  const latestInsight = weeklyInsights[0] || null;
   const [isBaseLoading, setIsBaseLoading] = useState(true);
   const [isEmailLoading, setIsEmailLoading] = useState(true);
   const commitmentsRef = useRef<Commitment[]>([]);
@@ -709,6 +719,21 @@ export default function InsightsScreen() {
       }
     } catch {}
   }, []);
+
+  const fetchWeeklyInsights = useCallback(async () => {
+    setWeeklyInsightsLoading(true);
+    try {
+      const url = new URL('/api/weekly-insights', getApiUrl());
+      const res = await authFetch(url.toString());
+      const data = await res.json();
+      if (data.insights && Array.isArray(data.insights)) {
+        setWeeklyInsights(data.insights);
+      }
+    } catch {}
+    setWeeklyInsightsLoading(false);
+  }, []);
+
+  useEffect(() => { fetchWeeklyInsights(); }, [fetchWeeklyInsights]);
 
   const markCommitmentDone = useCallback(async (id: string) => {
     try {
@@ -1187,6 +1212,55 @@ export default function InsightsScreen() {
     return { bg: '#ECFDF5', color: '#059669', label: dueDate };
   };
 
+  const renderWeeklyInsightsSection = () => {
+    if (weeklyInsightsLoading) return null;
+    if (!latestInsight || (!latestInsight.summary && (!latestInsight.patterns || latestInsight.patterns.length === 0))) return null;
+    return (
+      <View style={[styles.commitmentsSection, { backgroundColor: Colors.surface }]}>
+        <Pressable style={styles.commitmentsHeader} onPress={() => setWeeklyInsightsCollapsed(p => !p)}>
+          <View style={styles.commitmentsHeaderLeft}>
+            <Ionicons name="bulb-outline" size={16} color={Colors.primary} />
+            <Text style={styles.commitmentsHeaderTitle}>What we're noticing</Text>
+            <View style={styles.commitmentsBadge}>
+              <Text style={styles.commitmentsBadgeText}>{latestInsight.patterns?.length || 0}</Text>
+            </View>
+          </View>
+          <Ionicons
+            name={weeklyInsightsCollapsed ? 'chevron-down' : 'chevron-up'}
+            size={16}
+            color={Colors.textSecondary}
+          />
+        </Pressable>
+        {!weeklyInsightsCollapsed && (
+          <View style={{ paddingHorizontal: 14, paddingBottom: 12 }}>
+            {latestInsight.summary ? (
+              <Text style={{ color: Colors.text, fontSize: 13, lineHeight: 19, marginBottom: 10 }}>
+                {latestInsight.summary}
+              </Text>
+            ) : null}
+            {(latestInsight.patterns || []).slice(0, 5).map((p, i) => (
+              <View key={i} style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginBottom: 8 }}>
+                <View style={{ marginTop: 6, width: 5, height: 5, borderRadius: 3, backgroundColor: Colors.primary }} />
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: Colors.text, fontSize: 13, lineHeight: 18 }}>{p.observation}</Text>
+                  {p.evidence && p.evidence.length > 0 ? (
+                    <Text style={{ color: Colors.textTertiary, fontSize: 11, marginTop: 2 }}>
+                      Why: {p.evidence.slice(0, 2).join(' · ')}
+                    </Text>
+                  ) : null}
+                </View>
+                <Text style={{ color: Colors.textTertiary, fontSize: 10, fontWeight: '600' }}>{p.confidence}%</Text>
+              </View>
+            ))}
+            <Text style={{ color: Colors.textTertiary, fontSize: 10, marginTop: 4 }}>
+              Updated weekly · learned from your last 30 days
+            </Text>
+          </View>
+        )}
+      </View>
+    );
+  };
+
   const renderCommitmentsSection = () => {
     if (commitments.length === 0) return null;
     return (
@@ -1344,6 +1418,7 @@ export default function InsightsScreen() {
         </View>
       )}
 
+      {renderWeeklyInsightsSection()}
       {renderCommitmentsSection()}
 
       <View style={styles.chatArea}>

@@ -101,8 +101,18 @@ async function loadGoal(userId: string, goalId: string): Promise<UserGoal | null
   return list.find((g) => g.id === goalId) || null;
 }
 
-async function generateTreeWithLLM(goal: UserGoal): Promise<GoalTreeData> {
+async function generateTreeWithLLM(goal: UserGoal, userId: string): Promise<GoalTreeData> {
+  // Phase 4 — pull SOUL so decomposition reflects the user's working
+  // patterns, blockers, and energy rhythms rather than treating every
+  // user as generic.
+  let soulBlock = "";
+  try {
+    const { getSoulPromptBlock } = await import("../memory/soul");
+    soulBlock = await getSoulPromptBlock(userId);
+  } catch {}
   const system = `You are Jarvis's goal-decomposition planner. Break a single user goal into a concrete, sequenced project tree.
+
+${soulBlock ? `${soulBlock}\n\n` : ""}
 
 Hard rules:
 - 2 to 4 PHASES (chronological, each represents a meaningful chunk of progress)
@@ -181,7 +191,7 @@ export async function runGoalDecomposition(
   const goal = await loadGoal(job.userId, goalId);
   if (!goal) throw new Error(`Goal ${goalId} not found for user ${job.userId}`);
 
-  const tree = await generateTreeWithLLM(goal);
+  const tree = await generateTreeWithLLM(goal, job.userId);
   if (tree.phases.length === 0) {
     throw new Error("Decomposition returned no phases");
   }
