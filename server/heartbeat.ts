@@ -91,6 +91,7 @@ async function runMeetingBriefs(
   memories: { content: string; category: string }[],
   now: Date,
   tz: string,
+  userEmail: string | null,
 ): Promise<number> {
   const localKey = localDateKey(now, tz);
   let events: CalendarEvent[] = [];
@@ -102,6 +103,11 @@ async function runMeetingBriefs(
   }
   if (events.length === 0) return 0;
 
+  const userDomain = userEmail && userEmail.includes("@")
+    ? userEmail.split("@")[1].toLowerCase()
+    : null;
+  const userEmailLower = userEmail?.toLowerCase() || null;
+
   const nowMs = now.getTime();
   let fired = 0;
 
@@ -111,8 +117,21 @@ async function runMeetingBriefs(
     if (minutesUntil < 30 || minutesUntil > 60) continue;
 
     const attendees = (event.attendees || []).filter((a) => !a.self);
-    const hasSubstance = attendees.length > 0 || (event.description && event.description.length > 80);
-    if (!hasSubstance) continue;
+    if (attendees.length === 0) continue;
+
+    // External attendee gating: at least one attendee must be from a
+    // different domain than the user (or simply not be the user themselves
+    // when we don't know the user's domain). Skip purely-internal meetings.
+    const externalAttendees = attendees.filter((a) => {
+      const email = a.email?.toLowerCase();
+      if (!email || !email.includes("@")) return false;
+      if (userEmailLower && email === userEmailLower) return false;
+      const domain = email.split("@")[1];
+      if (userDomain) return domain !== userDomain;
+      // Without a known user domain, treat any non-self attendee as external.
+      return true;
+    });
+    if (externalAttendees.length === 0) continue;
 
     const messageType = `meeting_brief:${event.id}`;
     if (await alreadyLogged(userId, messageType, localKey)) continue;
@@ -132,11 +151,11 @@ async function runMeetingBriefs(
       }
     } catch {}
 
-    // Light web search for the first external attendee or company
+    // Light web search keyed on the first external attendee or their company
     let webContext = "";
     try {
-      const externalAttendee = attendees.find((a) => a.email && !a.email.endsWith("@gmail.com"));
-      const query = externalAttendee?.displayName || externalAttendee?.email?.split("@")[1] || event.title;
+      const focal = externalAttendees[0];
+      const query = focal.displayName || focal.email.split("@")[1] || event.title;
       if (query && query.length > 2) {
         const result = await tavilySearch(query, 3);
         const formatted = formatSearchResults(result).slice(0, 1500);
@@ -209,8 +228,9 @@ async function runEmailDrafts(
   token: string,
   now: Date,
 ): Promise<number> {
-  // Look at recent inbox items that the email-alert classifier flagged as urgent
-  // in the last ~12h and that we haven't already drafted for.
+  // Pick only inbox items that came from the email-alert *classifier*
+  // (status=pending, no matched rule, has a jarvis_reason). Rule-surfaced
+  // items have matched_rule_id set and are NOT reply-needed candidates.
   const twelveHoursAgo = new Date(now.getTime() - 12 * 60 * 60 * 1000);
   let urgentItems: typeof schema.inboxItems.$inferSelect[] = [];
   try {
@@ -224,6 +244,7 @@ async function runEmailDrafts(
           eq(schema.inboxItems.status, "pending"),
           sql`${schema.inboxItems.surfacedAt} > ${twelveHoursAgo}`,
           sql`${schema.inboxItems.jarvisReason} IS NOT NULL`,
+          sql`${schema.inboxItems.matchedRuleId} IS NULL`,
         ),
       )
       .limit(10);
@@ -231,6 +252,14 @@ async function runEmailDrafts(
     console.error(`[Heartbeat] urgent inbox fetch failed:`, err);
     return 0;
   }
+  if (urgentItems.length === 0) return 0;
+
+  // Second filter: the alert reason must read as "reply needed". The email-
+  // alert classifier flags several categories (deadline, cancelled meeting,
+  // urgent reply, time-sensitive). We only auto-draft for reply-needed ones —
+  // a meeting cancellation or a deadline reminder doesn't need a reply.
+  const replySignals = /reply|respond|response|answer|follow[- ]?up|confirm|question|asking|requesting/i;
+  urgentItems = urgentItems.filter((it) => replySignals.test(it.jarvisReason || ""));
   if (urgentItems.length === 0) return 0;
 
   // Pull recent email bodies to give the drafter context

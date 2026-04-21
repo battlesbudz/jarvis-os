@@ -2479,7 +2479,7 @@ Return ONLY the JSON object.`;
         })
         .where(eq(schema.emailDrafts.id, id));
 
-      res.json({ success: true, gmailDraftUrl: result.webUrl });
+      res.json({ success: true, gmailDraftUrl: result.gmailUrl });
     } catch (error) {
       console.error("Error approving email draft:", error);
       res.status(500).json({ error: "Failed to approve draft" });
