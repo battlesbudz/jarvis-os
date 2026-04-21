@@ -2,7 +2,7 @@ import { db } from "./db";
 import { eq, desc, gte, and } from "drizzle-orm";
 import * as schema from "@shared/schema";
 
-export type InteractionChannel = "app_chat" | "telegram" | "notification";
+export type InteractionChannel = "app_chat" | "telegram" | "notification" | "whatsapp" | "slack" | "daemon";
 
 export type InteractionDirection = "inbound" | "outbound";
 

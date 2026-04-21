@@ -20,6 +20,22 @@ Key architectural patterns and features include:
 -   **Multi-User Support:** All user data is stored server-side and scoped by user ID, accessible across devices.
 -   **Onboarding:** A guided onboarding flow captures initial user preferences and goals.
 
+## Multi-Channel & Computer Control (Phase 5)
+
+The coach is no longer Telegram-only. A channel abstraction layer (`server/channels/`) lets every notification and conversation flow through Telegram, WhatsApp (Twilio Business API), Slack DM (chat.postMessage + Events API + `/jarvis` slash command), and a paired desktop daemon — chosen per notification type via `channel_preferences`.
+
+- **`coachAgent.ts`** — channel-agnostic `runCoachAgent({userId, userText, channelName, imageUrl})` extracted from the legacy Telegram path; loads goals/stats/calendar/email/SOUL block, runs the agent, persists chat history, returns `{reply, attachments}`.
+- **Adapters** — `telegramChannel`, `whatsappChannel`, `slackChannel`, `daemonChannel` — each implements the `Channel` interface (`isConfigured`, `isLinkedFor`, `sendMessage`).
+- **Registry** — `notifyUser(userId, notificationType, text, opts)` looks up `channel_preferences` and fans the message out in parallel; falls back to Telegram when no prefs exist.
+- **Inbound webhooks** — `POST /api/channels/whatsapp/webhook` (Twilio form-encoded), `POST /api/slack/events` (URL verification + signature-verified message events), `POST /api/slack/commands` (`/jarvis plan|brain-dump|status`).
+- **Link codes** — `channel_link_codes` issues short-lived 6/8-char codes for WhatsApp (text the code) and the desktop daemon (paste into the daemon CLI). Codes expire in 15 min and are single-use.
+
+### Desktop Daemon
+A standalone Node.js script in `daemon/jarvis-daemon.js` pairs to the server over a WebSocket (`/api/daemon/ws`). It exposes a sandboxed set of operations — `shell`, `notify`, `file_read`, `file_write`, `file_list` — all confined to `JARVIS_DAEMON_ROOT` (default `~/jarvis-workspace`). The agent invokes them via the `daemon_action` tool, and `daemonChannel` uses the `notify` op to send native desktop notifications when channel preferences route a notification to the daemon. Pattern inspired by [OpenClaw](https://github.com/steipete/openclaw) (MIT, © 2025 Peter Steinberger).
+
+### Profile UI
+The Profile screen now has a "Connected Channels" section: WhatsApp link flow with code display, daemon pairing code with the exact CLI command, Slack DM connection status, and a notification-routing grid (notification type × channel checkboxes) backed by `GET/PUT /api/channels[/preferences]`.
+
 ## Agent Harness (Phase 1 — Action Engine)
 Inspired by OpenClaw (MIT licensed, © 2025 Peter Steinberger). Located in `server/agent/`:
 - **harness.ts** — OpenClaw-style tool-calling loop: runs up to N turns, executes tool calls in parallel, force-final-answers if maxTurns hit.

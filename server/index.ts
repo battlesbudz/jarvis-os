@@ -8,6 +8,10 @@ import { startHeartbeat } from "./heartbeat";
 import { startJobQueueWorker } from "./agent/jobQueue";
 import { isTelegramConfigured, logTelegramStatus, setWebhook } from "./integrations/telegram";
 import { startScheduler } from "./scheduler";
+import { initChannels } from "./channels";
+import { registerWhatsAppWebhook } from "./channels/whatsappWebhook";
+import { registerSlackWebhook } from "./channels/slackWebhook";
+import { startDaemonBridge } from "./daemon/bridge";
 import * as fs from "fs";
 import * as path from "path";
 
@@ -244,8 +248,13 @@ function setupErrorHandler(app: express.Application) {
   configureExpoAndLanding(app);
 
   registerTelegramWebhook(app);
+  registerWhatsAppWebhook(app);
+  registerSlackWebhook(app);
 
   const server = await registerRoutes(app);
+
+  initChannels();
+  startDaemonBridge(server);
 
   startScheduler();
   // Sub-agent background worker — runs queued goal_decompose / research /

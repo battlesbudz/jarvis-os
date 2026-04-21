@@ -197,6 +197,16 @@ export default function ProfileScreen() {
   });
   const [telegramLinkCode, setTelegramLinkCode] = useState<string | null>(null);
   const [telegramPolling, setTelegramPolling] = useState(false);
+  const [channelData, setChannelData] = useState<{
+    channels: { name: string; configured: boolean; connected: boolean }[];
+    connected: Record<string, boolean>;
+    meta: Record<string, any>;
+    notificationTypes: string[];
+    preferences: Record<string, string[]>;
+  } | null>(null);
+  const [whatsappCode, setWhatsappCode] = useState<{ code: string; twilioNumber: string | null } | null>(null);
+  const [daemonCode, setDaemonCode] = useState<string | null>(null);
+  const [channelBusy, setChannelBusy] = useState<string | null>(null);
   const telegramPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [loadingStatus, setLoadingStatus] = useState(true);
   const [connectingId, setConnectingId] = useState<string | null>(null);
@@ -237,6 +247,16 @@ export default function ProfileScreen() {
   const [documentsLoading, setDocumentsLoading] = useState(false);
   const [documentUploading, setDocumentUploading] = useState(false);
   const documentPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const loadChannels = useCallback(async () => {
+    try {
+      const res = await apiRequest('GET', '/api/channels');
+      const data = await res.json();
+      setChannelData(data);
+    } catch (err) {
+      console.error('[channels] load failed:', err);
+    }
+  }, []);
 
   const loadTelegramStatus = useCallback(async () => {
     try {
@@ -518,7 +538,7 @@ export default function ProfileScreen() {
     setLifeContext(lc);
     setNotificationsEnabledState(notifications);
     setUserName(name);
-    await Promise.all([loadOAuthStatus(), loadMemories(), loadTelegramStatus(), loadMorningNotes(), loadDocuments(), loadSoul(), loadPeople()]);
+    await Promise.all([loadOAuthStatus(), loadMemories(), loadTelegramStatus(), loadMorningNotes(), loadDocuments(), loadSoul(), loadPeople(), loadChannels()]);
     try {
       const importRes = await apiRequest('GET', '/api/chatgpt-import/status');
       const importData = await importRes.json();
@@ -530,7 +550,7 @@ export default function ProfileScreen() {
       if (prefs.timezone) setTimezone(prefs.timezone);
       if (typeof prefs.emailAlertsEnabled === 'boolean') setEmailAlertsEnabled(prefs.emailAlertsEnabled);
     } catch {}
-  }, [loadOAuthStatus, loadMemories, loadTelegramStatus, loadMorningNotes, loadDocuments, loadSoul, loadPeople]);
+  }, [loadOAuthStatus, loadMemories, loadTelegramStatus, loadMorningNotes, loadDocuments, loadSoul, loadPeople, loadChannels]);
 
   const handleToggleEmailAlerts = useCallback(async () => {
     const newValue = !emailAlertsEnabled;
@@ -716,6 +736,67 @@ export default function ProfileScreen() {
       setConnectingId(null);
     }
   }, [stopTelegramPolling]);
+
+  const handleGenerateWhatsAppCode = useCallback(async () => {
+    setChannelBusy('whatsapp');
+    try {
+      const res = await apiRequest('POST', '/api/channels/whatsapp/code');
+      const data = await res.json();
+      setWhatsappCode({ code: data.code, twilioNumber: data.twilioNumber });
+    } catch (err) {
+      console.error('[whatsapp] code error:', err);
+    } finally {
+      setChannelBusy(null);
+    }
+  }, []);
+
+  const handleGenerateDaemonCode = useCallback(async () => {
+    setChannelBusy('daemon');
+    try {
+      const res = await apiRequest('POST', '/api/channels/daemon/code');
+      const data = await res.json();
+      setDaemonCode(data.code);
+    } catch (err) {
+      console.error('[daemon] code error:', err);
+    } finally {
+      setChannelBusy(null);
+    }
+  }, []);
+
+  const handleUnlinkChannel = useCallback(async (channel: string) => {
+    setChannelBusy(channel);
+    try {
+      await apiRequest('DELETE', `/api/channels/${channel}`);
+      if (channel === 'whatsapp') setWhatsappCode(null);
+      if (channel === 'daemon') setDaemonCode(null);
+      await loadChannels();
+    } catch (err) {
+      console.error('[channels] unlink error:', err);
+    } finally {
+      setChannelBusy(null);
+    }
+  }, [loadChannels]);
+
+  const handleTogglePreference = useCallback(async (notificationType: string, channel: string) => {
+    if (!channelData) return;
+    const current = channelData.preferences[notificationType] || ['telegram'];
+    const next = current.includes(channel)
+      ? current.filter(c => c !== channel)
+      : [...current, channel];
+    setChannelData({
+      ...channelData,
+      preferences: { ...channelData.preferences, [notificationType]: next },
+    });
+    try {
+      await apiRequest('PUT', '/api/channels/preferences', {
+        notificationType,
+        channels: next,
+      });
+    } catch (err) {
+      console.error('[channels] preference toggle failed:', err);
+      await loadChannels();
+    }
+  }, [channelData, loadChannels]);
 
   const handleDisconnectTelegram = useCallback(async () => {
     setConnectingId('telegram');
@@ -1644,6 +1725,190 @@ export default function ProfileScreen() {
           <Text style={styles.connectionHint}>
             Your data stays private — each account connects independently.
           </Text>
+        </Animated.View>
+
+        {/* Connected Channels (Phase 5: multi-channel + desktop daemon) */}
+        <Animated.View entering={FadeInDown.duration(400).delay(450)}>
+          <Text style={[styles.sectionTitle, { marginTop: 28 }]}>Connected Channels</Text>
+          <View style={styles.platformsList}>
+            <View style={{ paddingHorizontal: 16, paddingTop: 14, paddingBottom: 6 }}>
+              <Text style={{ fontSize: 13, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, lineHeight: 18, marginBottom: 12 }}>
+                Choose where Jarvis reaches you for each kind of nudge — and pair a desktop daemon so the agent can run shell commands, edit files, and pop native notifications on your computer.
+              </Text>
+            </View>
+
+            {/* WhatsApp */}
+            <View style={[styles.platformRow, { borderTopWidth: 1, borderTopColor: Colors.border }]}>
+              <View style={[styles.platformIcon, { backgroundColor: '#25D36618' }]}>
+                <Ionicons name="logo-whatsapp" size={20} color="#25D366" />
+              </View>
+              <View style={styles.platformInfo}>
+                <Text style={styles.platformName}>WhatsApp</Text>
+                <Text style={styles.platformSubtitle}>
+                  {channelData?.connected.whatsapp
+                    ? channelData.meta?.whatsapp?.phone || 'Linked'
+                    : 'Get nudges + chat with Jarvis on WhatsApp'}
+                </Text>
+              </View>
+              {channelBusy === 'whatsapp' ? (
+                <ActivityIndicator size="small" color="#25D366" />
+              ) : channelData?.connected.whatsapp ? (
+                <Pressable style={styles.disconnectBtn} onPress={() => handleUnlinkChannel('whatsapp')}>
+                  <Ionicons name="checkmark-circle" size={18} color={Colors.success} />
+                  <Text style={styles.disconnectBtnText}>Unlink</Text>
+                </Pressable>
+              ) : (
+                <Pressable
+                  style={[styles.connectBtn, { borderColor: '#25D366' }]}
+                  onPress={handleGenerateWhatsAppCode}
+                  disabled={!channelData?.channels.find(c => c.name === 'whatsapp')?.configured}
+                >
+                  <Text style={[styles.connectBtnText, { color: '#25D366' }]}>
+                    {channelData?.channels.find(c => c.name === 'whatsapp')?.configured ? 'Get code' : 'Not configured'}
+                  </Text>
+                </Pressable>
+              )}
+            </View>
+            {whatsappCode && (
+              <View style={{ paddingHorizontal: 16, paddingVertical: 12, backgroundColor: Colors.background }}>
+                <Text style={{ fontSize: 13, fontFamily: 'Inter_500Medium', color: Colors.text, marginBottom: 6 }}>
+                  Send this code from WhatsApp to {whatsappCode.twilioNumber || 'the GamePlan number'}:
+                </Text>
+                <Text selectable style={{ fontSize: 24, fontFamily: 'Inter_700Bold', letterSpacing: 4, color: '#25D366', marginBottom: 6 }}>
+                  {whatsappCode.code}
+                </Text>
+                <Text style={{ fontSize: 11, color: Colors.textTertiary, fontFamily: 'Inter_400Regular' }}>
+                  Code expires in 15 minutes.
+                </Text>
+              </View>
+            )}
+
+            {/* Slack */}
+            <View style={[styles.platformRow, { borderTopWidth: 1, borderTopColor: Colors.border }]}>
+              <View style={[styles.platformIcon, { backgroundColor: '#4A154B18' }]}>
+                <Ionicons name="logo-slack" size={20} color="#4A154B" />
+              </View>
+              <View style={styles.platformInfo}>
+                <Text style={styles.platformName}>Slack DM</Text>
+                <Text style={styles.platformSubtitle}>
+                  {channelData?.connected.slack ? 'Workspace linked — DM Jarvis or use /jarvis' : 'Connect Slack above to enable DM coaching'}
+                </Text>
+              </View>
+              {channelData?.connected.slack && (
+                <Ionicons name="checkmark-circle" size={20} color={Colors.success} />
+              )}
+            </View>
+
+            {/* Desktop Daemon */}
+            <View style={[styles.platformRow, { borderTopWidth: 1, borderTopColor: Colors.border }]}>
+              <View style={[styles.platformIcon, { backgroundColor: '#6B72FF18' }]}>
+                <Ionicons name="desktop-outline" size={20} color="#6B72FF" />
+              </View>
+              <View style={styles.platformInfo}>
+                <Text style={styles.platformName}>Desktop Daemon</Text>
+                <Text style={styles.platformSubtitle}>
+                  {channelData?.connected.daemon
+                    ? `Connected${channelData.meta?.daemon?.hostname ? ` • ${channelData.meta.daemon.hostname}` : ''}`
+                    : 'Run the daemon and let the agent control your computer'}
+                </Text>
+              </View>
+              {channelBusy === 'daemon' ? (
+                <ActivityIndicator size="small" color="#6B72FF" />
+              ) : channelData?.connected.daemon ? (
+                <Pressable style={styles.disconnectBtn} onPress={() => handleUnlinkChannel('daemon')}>
+                  <Ionicons name="checkmark-circle" size={18} color={Colors.success} />
+                  <Text style={styles.disconnectBtnText}>Unpair</Text>
+                </Pressable>
+              ) : (
+                <Pressable
+                  style={[styles.connectBtn, { borderColor: '#6B72FF' }]}
+                  onPress={handleGenerateDaemonCode}
+                >
+                  <Text style={[styles.connectBtnText, { color: '#6B72FF' }]}>Pair</Text>
+                </Pressable>
+              )}
+            </View>
+            {daemonCode && (
+              <View style={{ paddingHorizontal: 16, paddingVertical: 12, backgroundColor: Colors.background }}>
+                <Text style={{ fontSize: 13, fontFamily: 'Inter_500Medium', color: Colors.text, marginBottom: 6 }}>
+                  Pairing code (valid 15 min):
+                </Text>
+                <Text selectable style={{ fontSize: 24, fontFamily: 'Inter_700Bold', letterSpacing: 4, color: '#6B72FF', marginBottom: 8 }}>
+                  {daemonCode}
+                </Text>
+                <Text selectable style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, lineHeight: 18 }}>
+                  On your computer, install the daemon (`cd daemon && npm install`) then run:
+                </Text>
+                <Text selectable style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: Colors.text, backgroundColor: Colors.background, padding: 8, marginTop: 6, borderRadius: 6 }}>
+                  JARVIS_SERVER={'<your-app-url>'} JARVIS_PAIR_CODE={daemonCode} node jarvis-daemon.js
+                </Text>
+              </View>
+            )}
+          </View>
+
+          {/* Notification routing grid */}
+          {channelData && (
+            <View style={[styles.platformsList, { marginTop: 12 }]}>
+              <View style={{ paddingHorizontal: 16, paddingTop: 14, paddingBottom: 8 }}>
+                <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: Colors.text, marginBottom: 4 }}>
+                  Notification routing
+                </Text>
+                <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, lineHeight: 17 }}>
+                  Pick which channels each notification type sends to. Empty rows fall back to Telegram.
+                </Text>
+              </View>
+              {channelData.notificationTypes.map((nt) => {
+                const selected = new Set(channelData.preferences[nt] || ['telegram']);
+                const NICE: Record<string, string> = {
+                  morning_briefing: 'Morning briefing',
+                  meeting_brief: 'Meeting brief',
+                  email_alert: 'Urgent email alert',
+                  evening_wrap: 'Evening wrap-up',
+                  commitment_check: 'Commitment check',
+                  weekly_planning: 'Weekly planning',
+                  approval_request: 'Approval request',
+                  general: 'General messages',
+                };
+                return (
+                  <View key={nt} style={{ paddingHorizontal: 16, paddingVertical: 10, borderTopWidth: 1, borderTopColor: Colors.border }}>
+                    <Text style={{ fontSize: 13, fontFamily: 'Inter_500Medium', color: Colors.text, marginBottom: 8 }}>
+                      {NICE[nt] || nt}
+                    </Text>
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                      {(['telegram', 'whatsapp', 'slack', 'daemon'] as const).map((ch) => {
+                        const connected = channelData.connected[ch];
+                        const isSelected = selected.has(ch);
+                        return (
+                          <Pressable
+                            key={ch}
+                            onPress={() => connected && handleTogglePreference(nt, ch)}
+                            disabled={!connected}
+                            style={{
+                              paddingHorizontal: 10,
+                              paddingVertical: 6,
+                              borderRadius: 14,
+                              borderWidth: 1,
+                              borderColor: isSelected ? Colors.accent : Colors.border,
+                              backgroundColor: isSelected ? Colors.accent + '22' : 'transparent',
+                              opacity: connected ? 1 : 0.4,
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              gap: 4,
+                            }}
+                          >
+                            {isSelected && <Ionicons name="checkmark" size={12} color={Colors.accent} />}
+                            <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: isSelected ? Colors.accent : Colors.textSecondary, textTransform: 'capitalize' }}>
+                              {ch}
+                            </Text>
+                          </Pressable>
+                        );
+                      })}
+                    </View>
+                  </View>
+                );
+              })}
+            </View>
+          )}
         </Animated.View>
 
         {/* My Documents */}

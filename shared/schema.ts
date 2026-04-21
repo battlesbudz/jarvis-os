@@ -430,6 +430,59 @@ export const deliverables = pgTable("deliverables", {
   actedAt: timestamp("acted_at"),
 });
 
+// Phase 5 — generic per-channel link table for non-Telegram channels.
+// (telegram_links stays separate to preserve existing rows.) Channel values:
+// "whatsapp" (address = E.164 phone), "slack" (address = slack user id +
+// team id, scoped via metadata), "daemon" (address = daemon uuid).
+export const channelLinks = pgTable("channel_links", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  channel: varchar("channel").notNull(),
+  address: varchar("address").notNull(),
+  metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+  linkedAt: timestamp("linked_at").defaultNow().notNull(),
+  lastSeenAt: timestamp("last_seen_at"),
+}, (table) => [
+  uniqueIndex("channel_links_channel_address_idx").on(table.channel, table.address),
+]);
+
+// Phase 5 — short-lived pairing codes used by WhatsApp/Slack/daemon to bind
+// an external identity (phone, slack user, daemon process) to a userId.
+export const channelLinkCodes = pgTable("channel_link_codes", {
+  code: varchar("code").primaryKey(),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  channel: varchar("channel").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  expiresAt: timestamp("expires_at"),
+});
+
+// Phase 5 — per-notification-type channel routing. Rows are keyed by
+// (user, notification_type); channels is a string[] in priority order.
+// Empty/missing rows mean "fall back to telegram only" (legacy behavior).
+export const channelPreferences = pgTable("channel_preferences", {
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  notificationType: varchar("notification_type").notNull(),
+  channels: jsonb("channels").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => [
+  primaryKey({ columns: [table.userId, table.notificationType] }),
+]);
+
+export const NOTIFICATION_TYPES = [
+  "morning_briefing",
+  "meeting_brief",
+  "email_alert",
+  "evening_wrap",
+  "commitment_check",
+  "weekly_planning",
+  "approval_request",
+  "general",
+] as const;
+export type NotificationType = typeof NOTIFICATION_TYPES[number];
+
+export const CHANNEL_NAMES = ["telegram", "whatsapp", "slack", "daemon"] as const;
+export type ChannelName = typeof CHANNEL_NAMES[number];
+
 export const interactionLog = pgTable("interaction_log", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id").notNull().references(() => users.id),

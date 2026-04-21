@@ -9,6 +9,7 @@ import { createDocumentTool, listDocumentsTool, readDocumentTool } from "./docum
 import { driveCreateFileTool, driveListFilesTool, driveReadFileTool } from "./googleDriveTools";
 import { fetchCalendarTool } from "./calendar";
 import { spawnSubagentTool } from "./spawnSubagent";
+import { daemonActionTool } from "./daemon";
 
 export const ALL_TOOLS: AgentTool[] = [
   webSearchTool,
@@ -24,6 +25,7 @@ export const ALL_TOOLS: AgentTool[] = [
   driveListFilesTool,
   driveReadFileTool,
   spawnSubagentTool,
+  daemonActionTool,
 ];
 
 const TOOL_INDEX = new Map(ALL_TOOLS.map((t) => [t.name, t]));
@@ -42,6 +44,7 @@ export function telegramCoachTools(opts: { hasGoogle: boolean }): AgentTool[] {
     listDocumentsTool,
     readDocumentTool,
     spawnSubagentTool,
+    daemonActionTool,
   ];
   if (opts.hasGoogle) {
     base.push(gmailActionTool, gmailDraftTool, fetchCalendarTool, driveCreateFileTool, driveListFilesTool, driveReadFileTool);
@@ -63,4 +66,5 @@ export {
   driveListFilesTool,
   driveReadFileTool,
   spawnSubagentTool,
+  daemonActionTool,
 };

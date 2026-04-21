@@ -25,6 +25,7 @@ import { authRouter, authMiddleware } from "./auth";
 import { mobileAuthRouter } from "./mobileAuthRoutes";
 import { registerDataRoutes } from "./dataRoutes";
 import { registerTelegramRoutes } from "./telegramRoutes";
+import { registerChannelRoutes } from "./channels/routes";
 import { isIntegrationOwner, claimIntegrationOwnership } from "./integrationOwner";
 import { oauthRouter, oauthCallbackRouter } from "./oauthRoutes";
 import { getValidGoogleTokens, getValidMicrosoftToken, getUserTokens, getUserToken } from "./userTokenStore";
@@ -529,6 +530,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   registerDataRoutes(app);
   registerTelegramRoutes(app);
+  registerChannelRoutes(app);
 
   app.post("/api/ai/resize-task", async (req: Request, res: Response) => {
     try {
