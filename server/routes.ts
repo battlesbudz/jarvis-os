@@ -311,7 +311,7 @@ export async function buildPlanFromInputs(body: any): Promise<{
   reasoning: string;
   tasks: Array<{ title: string; category: string; priority: string; duration?: number; time?: string; description?: string }>;
 }> {
-  const { goals, calendarEvents, gmailItems, brainDump, completionHistory, energyLevel, coachingMode, existingTasks } = body;
+  const { goals, calendarEvents, gmailItems, brainDump, completionHistory, energyLevel, coachingMode, existingTasks, userId } = body;
 
   const goalsText = Array.isArray(goals) && goals.length > 0
     ? goals.map((g: any) => `- ${g.title} (${g.category}): ${g.current}/${g.target} ${g.unit} — ${Math.round((g.current / Math.max(g.target, 1)) * 100)}% complete`).join('\n')
@@ -365,9 +365,17 @@ export async function buildPlanFromInputs(body: any): Promise<{
   const dayOfWeek = now.toLocaleDateString('en-US', { weekday: 'long' });
   const dateStr = now.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
 
+  const { buildAiContextSections } = await import("./memory/promptContext");
+  const planSeed = [
+    ...(Array.isArray(goals) ? goals.slice(0, 3).map((g: any) => g?.title).filter(Boolean) : []),
+    ...(Array.isArray(brainDump) ? brainDump.slice(0, 3).map((b: any) => b?.text || b).filter(Boolean) : []),
+  ].join(" • ");
+  const { soulSection: planSoul, patternSection: planPatterns, memorySection: planMemories } =
+    await buildAiContextSections(typeof userId === "string" ? userId : undefined, planSeed);
+
   const prompt = `You are Jarvis, an autonomous planning AI. Build a realistic, prioritized daily plan for this person.
 
-Today is ${dayOfWeek}, ${dateStr}.
+Today is ${dayOfWeek}, ${dateStr}.${planSoul}${planPatterns}${planMemories}
 
 ## Calendar
 ${calendarText}
@@ -501,6 +509,7 @@ export async function buildPlanForUser(userId: string): Promise<{
       energyLevel: energyLevel ?? 3,
       coachingMode,
       existingTasks: [],
+      userId,
     });
 
     if (!result || result.tasks.length === 0) return null;

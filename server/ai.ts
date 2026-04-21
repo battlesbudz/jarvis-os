@@ -224,60 +224,13 @@ ${completedTasks.length > skippedTasks.length ? 'This person is on a good streak
       blockedTasks.map(t => `- "${t.title}" (stuck ${t.skipDays} days${t.blockerType ? `, blocker: ${t.blockerType.replace('_', ' ')}` : ''})`).join('\n')
     : '';
 
-  let soulSection = "";
-  let patternSection = "";
-  let memorySection = "";
-  if (req.userId) {
-    try {
-      const { getSoulPromptBlock } = await import("./memory/soul");
-      const soulText = await getSoulPromptBlock(req.userId);
-      if (soulText && soulText.trim().length > 0) {
-        soulSection = `\n\nWhat I know about this person (JARVIS Soul):\n${soulText.trim()}\n`;
-      }
-    } catch (e) { console.error("[generateSmartPlan] soul load failed", e); }
-    try {
-      const { db: ddb } = await import("./db");
-      const { sql: dsql } = await import("drizzle-orm");
-      interface PatternRow {
-        patterns: unknown;
-        summary: string | null;
-      }
-      interface PatternEntry {
-        observation?: string;
-        summary?: string;
-      }
-      const rows = await ddb.execute<PatternRow>(dsql`
-        SELECT patterns, summary FROM weekly_insights
-        WHERE user_id = ${req.userId}
-        ORDER BY created_at DESC LIMIT 1
-      `);
-      const row = rows.rows?.[0];
-      if (row) {
-        const patterns: PatternEntry[] = Array.isArray(row.patterns) ? (row.patterns as PatternEntry[]) : [];
-        const top = patterns
-          .slice(0, 3)
-          .map((p) => `- ${p.observation || p.summary || JSON.stringify(p)}`)
-          .join("\n");
-        if (top || row.summary) {
-          patternSection = `\n\nRecent weekly patterns I've noticed:\n${row.summary ? row.summary + "\n" : ""}${top}\n`;
-        }
-      }
-    } catch (e) { console.error("[generateSmartPlan] patterns load failed", e); }
-    try {
-      const { retrieveRelevantMemories: retrieveMemories } = await import("./memory/retrieve");
-      const seedQuery = [
-        lifeContext?.priorityGoal,
-        lifeContext?.improvementArea,
-        ...(goals.slice(0, 3).map(g => g.title)),
-      ].filter(Boolean).join(" • ");
-      if (seedQuery) {
-        const mems = await retrieveMemories(req.userId, seedQuery, 6);
-        if (mems.length > 0) {
-          memorySection = `\n\nRelevant memories:\n${mems.map(m => `- [${m.category}] ${m.content}`).join("\n")}\n`;
-        }
-      }
-    } catch (e) { console.error("[generateSmartPlan] retrieve failed", e); }
-  }
+  const { buildAiContextSections } = await import("./memory/promptContext");
+  const seedQuery = [
+    lifeContext?.priorityGoal,
+    lifeContext?.improvementArea,
+    ...(goals.slice(0, 3).map(g => g.title)),
+  ].filter(Boolean).join(" • ");
+  const { soulSection, patternSection, memorySection } = await buildAiContextSections(req.userId, seedQuery);
 
   const prompt = `You create personalized daily task plans for people. Today is ${dayOfWeek}.${soulSection}${patternSection}${memorySection}
 
