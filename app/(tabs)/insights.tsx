@@ -15,7 +15,7 @@ import { fetch as expoFetch } from 'expo/fetch';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BottomTabBarHeightContext } from '@react-navigation/bottom-tabs';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import Animated, { FadeInDown, FadeIn, useSharedValue, useAnimatedStyle, withRepeat, withTiming, Easing } from 'react-native-reanimated';
 import { Audio } from 'expo-av';
@@ -141,6 +141,7 @@ interface MessageBubbleProps {
 
 function MessageBubble({ message, isFirst, isLastAssistant, goals, onFollowup, onSpeak, isSpeaking, isStreaming }: MessageBubbleProps) {
   const isUser = message.role === 'user';
+  const router = useRouter();
   const [addedMap, setAddedMap] = useState<Record<string, boolean>>({});
   const [draftStatus, setDraftStatus] = useState<'idle' | 'saving' | 'saved' | 'error' | 'reconnect'>('idle');
   const [gmailUrl, setGmailUrl] = useState<string | null>(null);
@@ -178,7 +179,13 @@ function MessageBubble({ message, isFirst, isLastAssistant, goals, onFollowup, o
   const handleAddAction = useCallback(async (action: CoachAction, key: string) => {
     if (addedMap[key]) return;
     if (action.type === 'link') {
-      if (action.url) Linking.openURL(action.url);
+      if (action.url) {
+        if (action.url.startsWith('profile://')) {
+          router.push('/(tabs)/profile');
+        } else {
+          Linking.openURL(action.url);
+        }
+      }
       return;
     }
     setAddedMap(prev => ({ ...prev, [key]: true }));
@@ -328,15 +335,15 @@ function MessageBubble({ message, isFirst, isLastAssistant, goals, onFollowup, o
             return (
               <Pressable
                 key={key}
-                style={[styles.actionPill, added && styles.actionPillAdded]}
+                style={[styles.actionPill, added && styles.actionPillAdded, action.type === 'link' && styles.actionPillLink]}
                 onPress={() => handleAddAction(action, key)}
               >
                 <Ionicons
-                  name={action.type === 'link' ? 'open-outline' : added ? 'checkmark' : action.type === 'task' ? 'add-circle-outline' : 'flag-outline'}
+                  name={action.type === 'link' ? 'link-outline' : added ? 'checkmark' : action.type === 'task' ? 'add-circle-outline' : 'flag-outline'}
                   size={13}
-                  color={action.type === 'link' ? Colors.primary : added ? Colors.success : Colors.primary}
+                  color={action.type === 'link' ? '#818CF8' : added ? Colors.success : Colors.primary}
                 />
-                <Text style={[styles.actionPillText, added && styles.actionPillTextAdded]}>
+                <Text style={[styles.actionPillText, added && styles.actionPillTextAdded, action.type === 'link' && styles.actionPillTextLink]}>
                   {action.type === 'link'
                     ? (action.buttonLabel || action.title)
                     : added ? 'Added!'
@@ -1737,6 +1744,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#ECFDF5',
     borderColor: '#A7F3D0',
   },
+  actionPillLink: {
+    backgroundColor: 'rgba(99, 102, 241, 0.1)',
+    borderColor: 'rgba(99, 102, 241, 0.4)',
+  },
   actionPillText: {
     fontSize: 12,
     fontFamily: 'Inter_500Medium',
@@ -1744,6 +1755,10 @@ const styles = StyleSheet.create({
   },
   actionPillTextAdded: {
     color: Colors.success,
+  },
+  actionPillTextLink: {
+    color: '#818CF8',
+    fontWeight: '600' as const,
   },
   followupRow: {
     flexDirection: 'row',
