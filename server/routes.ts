@@ -2537,8 +2537,8 @@ Return ONLY the JSON object.`;
         .from(schema.goalTrees)
         .where(and(eq(schema.goalTrees.userId, userId), eq(schema.goalTrees.goalId, goalId)))
         .limit(1);
-      if (!tree) return res.status(404).json({ error: "No tree yet", hasTree: false });
-      res.json(tree);
+      if (!tree) return res.status(200).json({ hasTree: false });
+      res.json({ hasTree: true, ...tree });
     } catch (err) {
       console.error("Error fetching goal tree:", err);
       res.status(500).json({ error: "Failed to fetch tree" });
