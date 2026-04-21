@@ -11,6 +11,7 @@ import {
   FlatList,
   Alert,
   TextInput,
+  Switch,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -206,6 +207,8 @@ export default function ProfileScreen() {
   } | null>(null);
   const [whatsappCode, setWhatsappCode] = useState<{ code: string; twilioNumber: string | null } | null>(null);
   const [daemonCode, setDaemonCode] = useState<string | null>(null);
+  const [daemonPerms, setDaemonPerms] = useState<Record<string, boolean> | null>(null);
+  const [daemonPermsBusy, setDaemonPermsBusy] = useState<string | null>(null);
   const [channelBusy, setChannelBusy] = useState<string | null>(null);
   const telegramPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [loadingStatus, setLoadingStatus] = useState(true);
@@ -538,7 +541,7 @@ export default function ProfileScreen() {
     setLifeContext(lc);
     setNotificationsEnabledState(notifications);
     setUserName(name);
-    await Promise.all([loadOAuthStatus(), loadMemories(), loadTelegramStatus(), loadMorningNotes(), loadDocuments(), loadSoul(), loadPeople(), loadChannels()]);
+    await Promise.all([loadOAuthStatus(), loadMemories(), loadTelegramStatus(), loadMorningNotes(), loadDocuments(), loadSoul(), loadPeople(), loadChannels(), loadDaemonPerms()]);
     try {
       const importRes = await apiRequest('GET', '/api/chatgpt-import/status');
       const importData = await importRes.json();
@@ -762,6 +765,31 @@ export default function ProfileScreen() {
       setChannelBusy(null);
     }
   }, []);
+
+  const loadDaemonPerms = useCallback(async () => {
+    try {
+      const res = await apiRequest('GET', '/api/channels/daemon/permissions');
+      const data = await res.json();
+      setDaemonPerms(data.permissions || null);
+    } catch (err) {
+      console.error('[daemon] permissions load error:', err);
+    }
+  }, []);
+
+  const handleToggleDaemonPerm = useCallback(async (action: string) => {
+    if (!daemonPerms) return;
+    setDaemonPermsBusy(action);
+    const next = { ...daemonPerms, [action]: !daemonPerms[action] };
+    setDaemonPerms(next);
+    try {
+      await apiRequest('PUT', '/api/channels/daemon/permissions', { permissions: next });
+    } catch (err) {
+      console.error('[daemon] permissions update error:', err);
+      setDaemonPerms(daemonPerms);
+    } finally {
+      setDaemonPermsBusy(null);
+    }
+  }, [daemonPerms]);
 
   const handleUnlinkChannel = useCallback(async (channel: string) => {
     setChannelBusy(channel);
@@ -1842,6 +1870,39 @@ export default function ProfileScreen() {
                 <Text selectable style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: Colors.text, backgroundColor: Colors.background, padding: 8, marginTop: 6, borderRadius: 6 }}>
                   JARVIS_SERVER={'<your-app-url>'} JARVIS_PAIR_CODE={daemonCode} node jarvis-daemon.js
                 </Text>
+              </View>
+            )}
+
+            {/* Daemon per-action permissions — gates what the agent can do on the user's machine */}
+            {daemonPerms && (
+              <View style={{ paddingHorizontal: 16, paddingVertical: 12, borderTopWidth: 1, borderTopColor: Colors.border, backgroundColor: Colors.background }}>
+                <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: Colors.text, marginBottom: 4 }}>
+                  Daemon permissions
+                </Text>
+                <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, lineHeight: 17, marginBottom: 10 }}>
+                  Choose exactly what the agent is allowed to do on your computer. Shell and file writes are off by default.
+                </Text>
+                {([
+                  { key: 'notify',     label: 'Send desktop notifications' },
+                  { key: 'file_read',  label: 'Read files in the workspace' },
+                  { key: 'file_list',  label: 'List files in the workspace' },
+                  { key: 'file_write', label: 'Write files in the workspace' },
+                  { key: 'shell',      label: 'Run shell commands' },
+                ] as const).map((p) => (
+                  <View key={p.key} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8 }}>
+                    <Text style={{ flex: 1, fontSize: 13, fontFamily: 'Inter_400Regular', color: Colors.text }}>{p.label}</Text>
+                    {daemonPermsBusy === p.key ? (
+                      <ActivityIndicator size="small" color="#6B72FF" />
+                    ) : (
+                      <Switch
+                        value={!!daemonPerms[p.key]}
+                        onValueChange={() => handleToggleDaemonPerm(p.key)}
+                        trackColor={{ false: Colors.border, true: '#6B72FF88' }}
+                        thumbColor={daemonPerms[p.key] ? '#6B72FF' : '#f4f3f4'}
+                      />
+                    )}
+                  </View>
+                ))}
               </View>
             )}
           </View>

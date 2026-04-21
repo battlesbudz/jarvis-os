@@ -354,6 +354,18 @@ oauthCallbackRouter.get('/slack/callback', async (req: Request, res: Response) =
       accountEmail,
     });
 
+    // Wire the Slack identity into channel_links so inbound DMs and /jarvis
+    // slash commands can resolve the GamePlan user.
+    try {
+      const teamId = tokenData.team?.id || '';
+      if (teamId && authedUserId) {
+        const { registerSlackUserLink } = await import('./channels/slackWebhook');
+        await registerSlackUserLink(userId, teamId, authedUserId);
+      }
+    } catch (linkErr) {
+      console.error('[slack] registerSlackUserLink failed (non-fatal):', linkErr);
+    }
+
     return res.send(successHtml('slack', accountEmail));
   } catch (err) {
     console.error('Slack OAuth callback error:', err);

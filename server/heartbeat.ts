@@ -12,6 +12,7 @@ import { db } from "./db";
 import { eq, and, sql, desc, gte } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { sendMessage, isTelegramConfigured } from "./integrations/telegram";
+import { notifyUser } from "./channels/registry";
 import { getGoogleCalendarEvents, type CalendarEvent } from "./integrations/googleCalendar";
 import { getEmailsSince } from "./integrations/gmail";
 import { tavilySearch, formatSearchResults } from "./integrations/search";
@@ -244,7 +245,9 @@ Plain text, no markdown asterisks, no preamble.`;
     const header = `📅 Meeting in ~${Math.round(minutesUntil)} min — ${event.title} (${eventTime})`;
     const fullMsg = `${header}\n\n${brief}`;
     try {
-      await sendMessage(chatId, fullMsg);
+      // Route through channel preferences (telegram/whatsapp/slack/daemon).
+      // Falls back to telegram by default if the user hasn't set prefs.
+      await notifyUser(userId, "meeting_brief", fullMsg);
       await recordLog(userId, messageType, localKey);
       logInteraction(userId, "notification", "outbound", fullMsg, "meeting_brief").catch(() => {});
       fired++;
@@ -568,9 +571,9 @@ Return JSON:
   }
   if (!summary) return false;
 
-  // ── Send to Telegram ──────────────────────────────────────
+  // ── Send through channel preferences (telegram/whatsapp/slack/daemon) ──
   try {
-    await sendMessage(chatId, `🌙 Evening wrap-up\n\n${summary}`);
+    await notifyUser(userId, "evening_wrap", `🌙 Evening wrap-up\n\n${summary}`);
     logInteraction(userId, "notification", "outbound", summary, "evening_wrapup").catch(() => {});
   } catch (err) {
     console.error(`[Heartbeat] wrap-up send failed:`, err);

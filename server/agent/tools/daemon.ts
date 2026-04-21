@@ -1,5 +1,5 @@
 import type { AgentTool, ToolContext, ToolArgs, ToolResult } from "../types";
-import { sendDaemonOp, isUserPaired } from "../../daemon/bridge";
+import { sendDaemonOp, isUserPaired, isDaemonActionAllowed } from "../../daemon/bridge";
 
 export const daemonActionTool: AgentTool = {
   name: "daemon_action",
@@ -20,28 +20,35 @@ export const daemonActionTool: AgentTool = {
   },
   async execute(args: ToolArgs, ctx: ToolContext): Promise<ToolResult> {
     if (!isUserPaired(ctx.userId)) {
-      return { content: JSON.stringify({ ok: false, error: "No desktop daemon paired. Ask the user to install the GamePlan daemon and pair it from Profile → Connected Channels → Desktop Daemon." }) };
+      return { ok: false, content: JSON.stringify({ ok: false, error: "No desktop daemon paired. Ask the user to install the GamePlan daemon and pair it from Profile → Connected Channels → Desktop Daemon." }) };
     }
-    const action = String(args.action || "");
+    const action = String(args.action || "") as any;
+    const allowedActions = ["shell", "notify", "file_read", "file_write", "file_list"] as const;
+    if (!allowedActions.includes(action)) {
+      return { ok: false, content: JSON.stringify({ ok: false, error: `unknown action ${action}` }) };
+    }
+    if (!(await isDaemonActionAllowed(ctx.userId, action))) {
+      return { ok: false, content: JSON.stringify({ ok: false, error: `Action '${action}' is not permitted on this user's daemon. Ask the user to enable it in Profile → Connected Channels → Desktop Daemon → Permissions.` }) };
+    }
     let op: any;
     if (action === "shell") {
-      if (!args.cmd) return { content: JSON.stringify({ ok: false, error: "cmd required" }) };
+      if (!args.cmd) return { ok: false, content: JSON.stringify({ ok: false, error: "cmd required" }) };
       op = { type: "shell", cmd: String(args.cmd), cwd: args.cwd ? String(args.cwd) : undefined, timeoutMs: typeof args.timeoutMs === "number" ? args.timeoutMs : undefined };
     } else if (action === "notify") {
       op = { type: "notify", title: String(args.title || "GamePlan"), body: String(args.body || "") };
     } else if (action === "file_read") {
-      if (!args.path) return { content: JSON.stringify({ ok: false, error: "path required" }) };
+      if (!args.path) return { ok: false, content: JSON.stringify({ ok: false, error: "path required" }) };
       op = { type: "file_read", path: String(args.path) };
     } else if (action === "file_write") {
-      if (!args.path || typeof args.content !== "string") return { content: JSON.stringify({ ok: false, error: "path and content required" }) };
+      if (!args.path || typeof args.content !== "string") return { ok: false, content: JSON.stringify({ ok: false, error: "path and content required" }) };
       op = { type: "file_write", path: String(args.path), content: String(args.content) };
     } else if (action === "file_list") {
-      if (!args.path) return { content: JSON.stringify({ ok: false, error: "path required" }) };
+      if (!args.path) return { ok: false, content: JSON.stringify({ ok: false, error: "path required" }) };
       op = { type: "file_list", path: String(args.path) };
     } else {
-      return { content: JSON.stringify({ ok: false, error: `unknown action ${action}` }) };
+      return { ok: false, content: JSON.stringify({ ok: false, error: `unknown action ${action}` }) };
     }
     const result = await sendDaemonOp(ctx.userId, op, action === "shell" ? 30000 : 10000);
-    return { content: JSON.stringify(result).slice(0, 8000) };
+    return { ok: !!result.ok, content: JSON.stringify(result).slice(0, 8000) };
   },
 };

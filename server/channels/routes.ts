@@ -4,7 +4,7 @@ import { eq, and } from "drizzle-orm";
 import { channelLinks, channelLinkCodes, telegramLinks, NOTIFICATION_TYPES, CHANNEL_NAMES, type ChannelName, type NotificationType } from "@shared/schema";
 import { authMiddleware } from "../auth";
 import { getAllPreferences, setPreference, getChannel, listChannels } from "./registry";
-import { createDaemonPairingCode, isUserPaired } from "../daemon/bridge";
+import { createDaemonPairingCode, isUserPaired, closeUserDaemon, getDaemonPermissions, setDaemonPermissions, isDaemonActionAllowed, DEFAULT_DAEMON_PERMISSIONS, type DaemonAction } from "../daemon/bridge";
 
 function generateCode(len = 6): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -105,12 +105,46 @@ export function registerChannelRoutes(app: Express): void {
       return res.status(400).json({ error: "channel not unlinkable here" });
     }
     try {
+      // For the daemon, force-close any live socket BEFORE removing the row so
+      // in-flight or future ops are immediately rejected with "daemon unlinked".
+      if (channel === "daemon") {
+        closeUserDaemon(userId);
+      }
       await db.delete(channelLinks)
         .where(and(eq(channelLinks.userId, userId), eq(channelLinks.channel, channel)));
       res.json({ ok: true });
     } catch (err) {
       console.error("[channels] unlink failed:", err);
       res.status(500).json({ error: "failed to unlink" });
+    }
+  });
+
+  // GET /api/channels/daemon/permissions — current per-action allow/deny
+  app.get("/api/channels/daemon/permissions", authMiddleware, async (req: Request, res: Response) => {
+    const userId = (req as any).user.id;
+    try {
+      const perms = await getDaemonPermissions(userId);
+      res.json({ permissions: perms, defaults: DEFAULT_DAEMON_PERMISSIONS });
+    } catch (err) {
+      console.error("[channels] daemon permissions GET failed:", err);
+      res.status(500).json({ error: "failed to load permissions" });
+    }
+  });
+
+  // PUT /api/channels/daemon/permissions — body: { permissions: Partial<DaemonPermissions> }
+  app.put("/api/channels/daemon/permissions", authMiddleware, async (req: Request, res: Response) => {
+    const userId = (req as any).user.id;
+    const incoming = (req.body?.permissions || {}) as Record<string, unknown>;
+    const sanitized: Record<string, boolean> = {};
+    for (const k of ["shell", "notify", "file_read", "file_write", "file_list"]) {
+      if (k in incoming) sanitized[k] = !!incoming[k];
+    }
+    try {
+      const merged = await setDaemonPermissions(userId, sanitized as any);
+      res.json({ ok: true, permissions: merged });
+    } catch (err) {
+      console.error("[channels] daemon permissions PUT failed:", err);
+      res.status(500).json({ error: "failed to update permissions" });
     }
   });
 
@@ -136,6 +170,9 @@ export function registerChannelRoutes(app: Express): void {
     const allowed = ["shell", "file_read", "file_write", "file_list", "notify"];
     if (!op || !allowed.includes(op.type)) {
       return res.status(400).json({ ok: false, error: "invalid op" });
+    }
+    if (!(await isDaemonActionAllowed(userId, op.type as DaemonAction))) {
+      return res.status(403).json({ ok: false, error: `Action '${op.type}' is not permitted. Enable it in Profile → Connected Channels → Desktop Daemon → Permissions.` });
     }
     const result = await sendDaemonOp(userId, op, 30000);
     res.json(result);
