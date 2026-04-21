@@ -15,6 +15,27 @@ import { runSubAgent } from "./subagents";
 import { runGoalDecomposition } from "./goalDecomposer";
 import { getValidGoogleTokens } from "../userTokenStore";
 import type { ToolContext } from "./types";
+import { sendMessage, isTelegramConfigured } from "../integrations/telegram";
+
+async function notifyJobComplete(
+  userId: string,
+  agentType: AgentJobType,
+  title: string,
+  body: string,
+): Promise<void> {
+  if (!isTelegramConfigured()) return;
+  try {
+    const [link] = await db
+      .select({ chatId: schema.telegramLinks.chatId })
+      .from(schema.telegramLinks)
+      .where(eq(schema.telegramLinks.userId, userId))
+      .limit(1);
+    if (!link?.chatId) return;
+    await sendMessage(link.chatId, `Jarvis (${agentType}): ${title}\n\n${body}`.slice(0, 3500));
+  } catch (err) {
+    console.error("[JobQueue] notify failed:", err);
+  }
+}
 
 const TICK_MS = 15 * 1000;
 const MAX_JOB_DURATION_MS = 5 * 60 * 1000;
@@ -116,6 +137,12 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
         toolCallsCount: result.toolCallsCount,
       });
       console.log(`[JobQueue] complete goal_decompose job ${job.id} → tree ${result.goalTreeId}`);
+      await notifyJobComplete(
+        job.userId,
+        "goal_decompose",
+        job.title,
+        `Goal broken into ${result.phaseCount} phase(s). Open the Goals tab to review.`,
+      );
       return;
     }
 
@@ -157,6 +184,12 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
       toolCallsCount: sub.toolCallsCount,
     });
     console.log(`[JobQueue] complete ${job.agentType} job ${job.id} → deliverable ${deliverableId}`);
+    await notifyJobComplete(
+      job.userId,
+      job.agentType as AgentJobType,
+      sub.title,
+      `${sub.summary || "Ready for review"} — open Inbox to approve, edit, or discard.`,
+    );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[JobQueue] job ${job.id} failed:`, err);

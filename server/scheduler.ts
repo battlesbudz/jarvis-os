@@ -72,13 +72,13 @@ export async function runMorningPlanBuild() {
       }
       for (const pick of injected) {
         const minutes = Math.max(15, Math.round((pick.estimateHours || 1) * 60));
-        newTasks.push({
+        const goalTask: typeof newTasks[number] & { goalTreeId: string; goalTaskId: string } = {
           id: `goal_${pick.taskId}_${today}`,
           title: pick.title,
           category: 'goal',
           priority: 'high',
           duration: minutes,
-          time: undefined as unknown as string,
+          time: undefined,
           description: pick.description
             ? `${pick.description} (from goal: ${pick.goalTitle})`
             : `From goal: ${pick.goalTitle}`,
@@ -87,7 +87,8 @@ export async function runMorningPlanBuild() {
           fromJarvis: true,
           goalTreeId: pick.goalTreeId,
           goalTaskId: pick.taskId,
-        } as typeof newTasks[number] & { goalTreeId: string; goalTaskId: string });
+        };
+        newTasks.push(goalTask);
       }
       if (injected.length > 0) {
         try {

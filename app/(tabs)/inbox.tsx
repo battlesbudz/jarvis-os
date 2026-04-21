@@ -9,6 +9,10 @@ import {
   Platform,
   Alert,
   RefreshControl,
+  Modal,
+  TextInput,
+  ScrollView,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
@@ -119,6 +123,55 @@ export default function InboxScreen() {
       queryClient.invalidateQueries({ queryKey: ['/api/deliverables'] });
     },
   });
+
+  const [editingDeliverable, setEditingDeliverable] = useState<Deliverable | null>(null);
+  const [editTitle, setEditTitle] = useState('');
+  const [editBody, setEditBody] = useState('');
+  const [editTo, setEditTo] = useState('');
+  const [editSubject, setEditSubject] = useState('');
+
+  const openEditDeliverable = useCallback((d: Deliverable) => {
+    const meta = (d.meta as { to?: string; subject?: string; emailBody?: string } | null) || {};
+    setEditingDeliverable(d);
+    setEditTitle(d.title);
+    setEditBody(d.type === 'email_draft' ? (meta.emailBody || d.body) : d.body);
+    setEditTo(meta.to || '');
+    setEditSubject(meta.subject || '');
+  }, []);
+
+  const closeEditDeliverable = useCallback(() => {
+    setEditingDeliverable(null);
+  }, []);
+
+  const editDeliverableMutation = useMutation({
+    mutationFn: async (input: { id: string; payload: Record<string, unknown> }) => {
+      const res = await apiRequest('PUT', `/api/deliverables/${input.id}`, input.payload);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/deliverables'] });
+      closeEditDeliverable();
+    },
+    onError: () => {
+      Alert.alert('Error', 'Could not save your edits.');
+    },
+  });
+
+  const saveEdit = useCallback(() => {
+    if (!editingDeliverable) return;
+    const payload: Record<string, unknown> = {
+      title: editTitle,
+      body: editBody,
+    };
+    if (editingDeliverable.type === 'email_draft') {
+      payload.meta = {
+        to: editTo,
+        subject: editSubject,
+        emailBody: editBody,
+      };
+    }
+    editDeliverableMutation.mutate({ id: editingDeliverable.id, payload });
+  }, [editingDeliverable, editTitle, editBody, editTo, editSubject, editDeliverableMutation]);
 
   const actionMutation = useMutation({
     mutationFn: async ({ itemId, actionType }: { itemId: string; actionType: string }) => {
@@ -314,6 +367,14 @@ export default function InboxScreen() {
                   </Pressable>
                   <Pressable
                     style={[styles.actionButton, styles.actionButtonDismiss]}
+                    onPress={() => openEditDeliverable(d)}
+                    disabled={busy}
+                    testID={`deliverable-edit-${d.id}`}
+                  >
+                    <Text style={[styles.actionText, styles.actionTextDismiss]}>Edit</Text>
+                  </Pressable>
+                  <Pressable
+                    style={[styles.actionButton, styles.actionButtonDismiss]}
                     onPress={() => discardDeliverableMutation.mutate(d.id)}
                     disabled={busy}
                     testID={`deliverable-discard-${d.id}`}
@@ -449,6 +510,96 @@ export default function InboxScreen() {
           showsVerticalScrollIndicator={false}
         />
       )}
+
+      <Modal
+        visible={!!editingDeliverable}
+        animationType="slide"
+        transparent
+        onRequestClose={closeEditDeliverable}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.editModalRoot}
+        >
+          <View style={styles.editSheet}>
+            <View style={styles.editHeader}>
+              <Text style={styles.editTitle}>
+                Edit {editingDeliverable ? (DELIVERABLE_LABEL[editingDeliverable.type] || editingDeliverable.type) : ''}
+              </Text>
+              <Pressable onPress={closeEditDeliverable} testID="deliverable-edit-close">
+                <Ionicons name="close" size={22} color={Colors.textSecondary} />
+              </Pressable>
+            </View>
+            <ScrollView style={styles.editBodyScroll} keyboardShouldPersistTaps="handled">
+              <Text style={styles.editLabel}>Title</Text>
+              <TextInput
+                value={editTitle}
+                onChangeText={setEditTitle}
+                style={styles.editInput}
+                placeholder="Title"
+                placeholderTextColor={Colors.textTertiary}
+                testID="deliverable-edit-title"
+              />
+              {editingDeliverable?.type === 'email_draft' && (
+                <>
+                  <Text style={styles.editLabel}>To</Text>
+                  <TextInput
+                    value={editTo}
+                    onChangeText={setEditTo}
+                    style={styles.editInput}
+                    placeholder="recipient@example.com"
+                    placeholderTextColor={Colors.textTertiary}
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    testID="deliverable-edit-to"
+                  />
+                  <Text style={styles.editLabel}>Subject</Text>
+                  <TextInput
+                    value={editSubject}
+                    onChangeText={setEditSubject}
+                    style={styles.editInput}
+                    placeholder="Subject"
+                    placeholderTextColor={Colors.textTertiary}
+                    testID="deliverable-edit-subject"
+                  />
+                </>
+              )}
+              <Text style={styles.editLabel}>
+                {editingDeliverable?.type === 'email_draft' ? 'Email body' : 'Body'}
+              </Text>
+              <TextInput
+                value={editBody}
+                onChangeText={setEditBody}
+                style={[styles.editInput, styles.editBody]}
+                placeholder="Content"
+                placeholderTextColor={Colors.textTertiary}
+                multiline
+                textAlignVertical="top"
+                testID="deliverable-edit-body"
+              />
+            </ScrollView>
+            <View style={styles.editFooter}>
+              <Pressable
+                style={[styles.actionButton, styles.actionButtonDismiss]}
+                onPress={closeEditDeliverable}
+                testID="deliverable-edit-cancel"
+              >
+                <Text style={[styles.actionText, styles.actionTextDismiss]}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                style={styles.actionButton}
+                onPress={saveEdit}
+                disabled={editDeliverableMutation.isPending}
+                testID="deliverable-edit-save"
+              >
+                <Text style={styles.actionText}>
+                  {editDeliverableMutation.isPending ? 'Saving…' : 'Save changes'}
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </View>
   );
 }
@@ -457,6 +608,58 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.background,
+  },
+  editModalRoot: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    backgroundColor: 'rgba(0,0,0,0.45)',
+  },
+  editSheet: {
+    backgroundColor: Colors.background,
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 24,
+    maxHeight: '85%',
+  },
+  editHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  editTitle: {
+    fontSize: 17,
+    fontFamily: 'Inter_700Bold',
+    color: Colors.text,
+  },
+  editBodyScroll: {
+    maxHeight: 480,
+  },
+  editLabel: {
+    fontSize: 12,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.textSecondary,
+    marginTop: 12,
+    marginBottom: 6,
+  },
+  editInput: {
+    backgroundColor: Colors.surface,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.text,
+  },
+  editBody: {
+    minHeight: 180,
+  },
+  editFooter: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 16,
   },
   header: {
     flexDirection: 'row',
