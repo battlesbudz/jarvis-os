@@ -9,6 +9,8 @@ import { getGoogleCalendarEvents } from "./integrations/googleCalendar";
 import { getValidGoogleTokens } from "./userTokenStore";
 import { tavilySearch, formatSearchResults } from "./integrations/search";
 import { logInteraction, getRecentInteractions, formatInteractionTimeline } from "./interactionLog";
+import { extractAndStore } from "./memory/extractor";
+import { getSoulPromptBlock } from "./memory/soul";
 import { runAgent } from "./agent/harness";
 import { telegramCoachTools } from "./agent/tools";
 import OpenAI from "openai";
@@ -191,21 +193,10 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
       }
     } catch {}
 
-    const memoriesSection = (() => {
+    // Phase 4: replace per-message memory dump with the unified SOUL block.
+    const soulBlock = await getSoulPromptBlock(userId);
+    const memoriesSection = soulBlock || (() => {
       if (userMemoriesData.length === 0) return '';
-      const categoryLabels: Record<string, string> = {
-        personality: 'Personality & Communication',
-        values: 'Values & Motivations',
-        work_style: 'Work Style & Patterns',
-        accomplishment: 'Accomplishments & Wins',
-        goal_discovered: 'Discovered Goals',
-        relationship: 'Key People & Relationships',
-        pattern: 'Recurring Patterns',
-        preference: 'Preferences',
-        fact: 'General Facts',
-        goal: 'Goals',
-        achievement: 'Achievements',
-      };
       const grouped: Record<string, string[]> = {};
       for (const m of userMemoriesData) {
         const cat = m.category || 'fact';
@@ -214,8 +205,7 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
       }
       let section = '\n## What I Know About You (from past conversations)';
       for (const [cat, items] of Object.entries(grouped)) {
-        const label = categoryLabels[cat] || cat;
-        section += `\n### ${label}\n${items.map(i => `- ${i}`).join('\n')}`;
+        section += `\n### ${cat}\n${items.map(i => `- ${i}`).join('\n')}`;
       }
       return section;
     })();
@@ -401,7 +391,7 @@ async function extractProfileFromTelegram(userId: string, userText: string): Pro
       .orderBy(desc(schema.proactiveQuestionsSent.sentAt))
       .limit(1);
 
-    let answeredQuestion: typeof unanswered[0] | null = null;
+    let contextHint: string | undefined;
     if (unanswered.length > 0) {
       const mostRecent = unanswered[0];
       const isReply = await isReplyToProactiveQuestion(userText, mostRecent.question);
@@ -409,72 +399,17 @@ async function extractProfileFromTelegram(userId: string, userText: string): Pro
         await db.update(schema.proactiveQuestionsSent)
           .set({ answeredAt: new Date() })
           .where(eq(schema.proactiveQuestionsSent.id, mostRecent.id));
-        answeredQuestion = mostRecent;
+        contextHint = `User is answering proactive question: "${mostRecent.question}"`;
         console.log(`[Profile] Marked proactive question as answered: ${mostRecent.id}`);
       }
     }
 
-    const existingRows = await db.select({ content: schema.userMemories.content })
-      .from(schema.userMemories)
-      .where(eq(schema.userMemories.userId, userId));
-    const existingMemories = existingRows.map(r => r.content);
-    const normalizedExisting = new Set(existingMemories.map(c => c.trim().toLowerCase().replace(/[^\w\s]/g, '').replace(/\s+/g, ' ')));
-
-    const existingList = existingMemories.length > 0
-      ? `\nExisting memories (DO NOT duplicate these):\n${existingMemories.map(m => `- ${m}`).join('\n')}`
-      : '';
-
-    const contextNote = answeredQuestion
-      ? `\nThe user was recently asked this proactive question: "${answeredQuestion.question}"\nTheir reply is answering this question — extract insights from their answer.`
-      : '';
-
-    const prompt = `You are extracting profile facts about the user from their Telegram message.
-Output a JSON array of { category, content } objects. Only extract facts that are specific, meaningful, and not already captured.
-${contextNote}
-
-Categories:
-- personality — how they communicate, humor, energy, decision style
-- values — what they care about deeply, what motivates them
-- work_style — when/how they focus, work patterns, tools they use
-- accomplishment — wins, achievements, proud moments mentioned
-- goal_discovered — goals inferred from behavior (not just stated)
-- relationship — key people in their life (family, teammates, boss)
-- pattern — recurring behaviors, habits, tendencies
-- preference — explicit preferences (meeting times, communication style, etc.)
-${existingList}
-
-User message:
-${userText}
-
-Return JSON: { "memories": [{"content": "string describing the fact", "category": "one of the categories above"}] }
-Return { "memories": [] } if nothing new was learned. Do NOT repeat or rephrase existing memories.`;
-
-    const response = await openai.chat.completions.create({
-      model: "gpt-5-mini",
-      messages: [{ role: "user", content: prompt }],
-      response_format: { type: "json_object" },
-      max_completion_tokens: 400,
+    await extractAndStore({
+      userId,
+      source: userText,
+      sourceType: "telegram",
+      contextHint,
     });
-
-    const content = response.choices[0]?.message?.content || '{"memories":[]}';
-    const parsed = JSON.parse(content);
-    const rawMemories = Array.isArray(parsed.memories) ? parsed.memories : (Array.isArray(parsed) ? parsed : []);
-    const newMemories = rawMemories.slice(0, 3);
-    const validCategories = ['personality', 'values', 'work_style', 'accomplishment', 'goal_discovered', 'relationship', 'pattern', 'preference', 'fact', 'goal', 'achievement'];
-
-    for (const mem of newMemories) {
-      if (!mem.content || typeof mem.content !== 'string' || mem.content.trim().length === 0) continue;
-      const normalized = mem.content.trim().toLowerCase().replace(/[^\w\s]/g, '').replace(/\s+/g, ' ');
-      if (normalizedExisting.has(normalized)) continue;
-      const category = validCategories.includes(mem.category) ? mem.category : 'fact';
-      await db.insert(schema.userMemories).values({
-        userId,
-        content: mem.content.trim(),
-        category,
-      });
-      normalizedExisting.add(normalized);
-      console.log(`[Profile/Telegram] Extracted: [${category}] ${mem.content.trim().slice(0, 60)}...`);
-    }
   } catch (err) {
     console.error("[Profile/Telegram] Extraction error:", err);
   }

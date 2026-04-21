@@ -10,6 +10,7 @@ import {
   Modal,
   FlatList,
   Alert,
+  TextInput,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -207,6 +208,15 @@ export default function ProfileScreen() {
   const [userName, setUserName] = useState('');
   const [memories, setMemories] = useState<Memory[]>([]);
   const [memoriesLoading, setMemoriesLoading] = useState(true);
+  const [soul, setSoul] = useState<{ content: string; manualOverride: string | null; generatedAt: string | null } | null>(null);
+  const [soulLoading, setSoulLoading] = useState(true);
+  const [soulExpanded, setSoulExpanded] = useState(false);
+  const [soulRegenerating, setSoulRegenerating] = useState(false);
+  const [overrideDraft, setOverrideDraft] = useState('');
+  const [overrideEditing, setOverrideEditing] = useState(false);
+  const [savingOverride, setSavingOverride] = useState(false);
+  const [people, setPeople] = useState<{ id: string; name: string; email: string | null; relationship: string | null; notes: string | null; lastInteractionAt: string | null }[]>([]);
+  const [peopleLoading, setPeopleLoading] = useState(true);
   const [morningNotes, setMorningNotes] = useState<MorningVoiceNote[]>([]);
   const [morningNotesLoading, setMorningNotesLoading] = useState(true);
   const [expandedNoteId, setExpandedNoteId] = useState<string | null>(null);
@@ -267,6 +277,77 @@ export default function ProfileScreen() {
     } catch {}
     setMemoriesLoading(false);
   }, []);
+
+  const loadSoul = useCallback(async () => {
+    setSoulLoading(true);
+    try {
+      const url = new URL('/api/soul', getApiUrl());
+      const res = await authFetch(url.toString());
+      const data = await res.json();
+      if (data && typeof data.content === 'string') {
+        setSoul({ content: data.content, manualOverride: data.manualOverride ?? null, generatedAt: data.generatedAt ?? null });
+        setOverrideDraft(data.manualOverride ?? '');
+      }
+    } catch {}
+    setSoulLoading(false);
+  }, []);
+
+  const handleRegenerateSoul = useCallback(async () => {
+    setSoulRegenerating(true);
+    try {
+      const url = new URL('/api/soul/regenerate', getApiUrl());
+      const res = await authFetch(url.toString(), { method: 'POST' });
+      const data = await res.json();
+      if (data && typeof data.content === 'string') {
+        setSoul({ content: data.content, manualOverride: data.manualOverride ?? null, generatedAt: data.generatedAt ?? null });
+      }
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch {}
+    setSoulRegenerating(false);
+  }, []);
+
+  const handleSaveOverride = useCallback(async () => {
+    setSavingOverride(true);
+    try {
+      const url = new URL('/api/soul/override', getApiUrl());
+      const res = await authFetch(url.toString(), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ override: overrideDraft }),
+      });
+      const data = await res.json();
+      if (data && typeof data.content === 'string') {
+        setSoul({ content: data.content, manualOverride: data.manualOverride ?? null, generatedAt: data.generatedAt ?? null });
+      }
+      setOverrideEditing(false);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch {}
+    setSavingOverride(false);
+  }, [overrideDraft]);
+
+  const loadPeople = useCallback(async () => {
+    setPeopleLoading(true);
+    try {
+      const url = new URL('/api/people', getApiUrl());
+      const res = await authFetch(url.toString());
+      const data = await res.json();
+      if (data.people && Array.isArray(data.people)) {
+        setPeople(data.people);
+      }
+    } catch {}
+    setPeopleLoading(false);
+  }, []);
+
+  const handleDeletePerson = useCallback(async (id: string) => {
+    setPeople(prev => prev.filter(p => p.id !== id));
+    try {
+      const url = new URL(`/api/people/${id}`, getApiUrl());
+      await authFetch(url.toString(), { method: 'DELETE' });
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch {
+      loadPeople();
+    }
+  }, [loadPeople]);
 
   const handleDeleteMemory = useCallback(async (id: string) => {
     setMemories(prev => prev.filter(m => m.id !== id));
@@ -418,7 +499,7 @@ export default function ProfileScreen() {
     setLifeContext(lc);
     setNotificationsEnabledState(notifications);
     setUserName(name);
-    await Promise.all([loadOAuthStatus(), loadMemories(), loadTelegramStatus(), loadMorningNotes(), loadDocuments()]);
+    await Promise.all([loadOAuthStatus(), loadMemories(), loadTelegramStatus(), loadMorningNotes(), loadDocuments(), loadSoul(), loadPeople()]);
     try {
       const importRes = await apiRequest('GET', '/api/chatgpt-import/status');
       const importData = await importRes.json();
@@ -430,7 +511,7 @@ export default function ProfileScreen() {
       if (prefs.timezone) setTimezone(prefs.timezone);
       if (typeof prefs.emailAlertsEnabled === 'boolean') setEmailAlertsEnabled(prefs.emailAlertsEnabled);
     } catch {}
-  }, [loadOAuthStatus, loadMemories, loadTelegramStatus, loadMorningNotes, loadDocuments]);
+  }, [loadOAuthStatus, loadMemories, loadTelegramStatus, loadMorningNotes, loadDocuments, loadSoul, loadPeople]);
 
   const handleToggleEmailAlerts = useCallback(async () => {
     const newValue = !emailAlertsEnabled;
@@ -963,6 +1044,158 @@ export default function ProfileScreen() {
                   <Text style={styles.aboutUpdateBtn}>Update</Text>
                 </Pressable>
               </View>
+            </View>
+          )}
+        </Animated.View>
+
+        {/* JARVIS Soul */}
+        <Animated.View entering={FadeInDown.duration(400).delay(410)}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 28 }}>
+            <Text style={styles.sectionTitle}>JARVIS Soul</Text>
+            <Pressable
+              onPress={handleRegenerateSoul}
+              disabled={soulRegenerating}
+              hitSlop={8}
+              style={{ flexDirection: 'row', alignItems: 'center', gap: 6, opacity: soulRegenerating ? 0.5 : 1 }}
+            >
+              {soulRegenerating ? (
+                <ActivityIndicator size="small" color={Colors.textTertiary} />
+              ) : (
+                <Ionicons name="refresh" size={16} color={Colors.textSecondary} />
+              )}
+              <Text style={{ color: Colors.textSecondary, fontSize: 13, fontWeight: '500' }}>Regenerate</Text>
+            </Pressable>
+          </View>
+          <Text style={styles.sectionSubtitle}>
+            How your coach sees you — distilled from memories, patterns, and people
+          </Text>
+          {soulLoading ? (
+            <View style={styles.memoryEmptyCard}>
+              <ActivityIndicator size="small" color={Colors.textTertiary} />
+            </View>
+          ) : !soul || !soul.content ? (
+            <View style={styles.memoryEmptyCard}>
+              <View style={styles.memoryEmptyIcon}>
+                <Ionicons name="sparkles-outline" size={22} color={Colors.textTertiary} />
+              </View>
+              <Text style={styles.memoryEmptyText}>
+                No soul yet — chat with the coach to start building one
+              </Text>
+            </View>
+          ) : (
+            <View style={[styles.memoryEmptyCard, { alignItems: 'stretch' }]}>
+              <Text
+                style={{ color: Colors.text, fontSize: 14, lineHeight: 21 }}
+                numberOfLines={soulExpanded ? undefined : 8}
+              >
+                {soul.content}
+              </Text>
+              <Pressable onPress={() => setSoulExpanded(v => !v)} hitSlop={8} style={{ marginTop: 10 }}>
+                <Text style={{ color: Colors.textSecondary, fontSize: 13, fontWeight: '500' }}>
+                  {soulExpanded ? 'Show less' : 'Show more'}
+                </Text>
+              </Pressable>
+              {soul.generatedAt && (
+                <Text style={{ color: Colors.textTertiary, fontSize: 11, marginTop: 8 }}>
+                  Updated {new Date(soul.generatedAt).toLocaleString()}
+                </Text>
+              )}
+            </View>
+          )}
+
+          <View style={{ marginTop: 12 }}>
+            {!overrideEditing ? (
+              <Pressable
+                onPress={() => setOverrideEditing(true)}
+                hitSlop={8}
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}
+              >
+                <Ionicons name="create-outline" size={15} color={Colors.textSecondary} />
+                <Text style={{ color: Colors.textSecondary, fontSize: 13, fontWeight: '500' }}>
+                  {soul?.manualOverride ? 'Edit your override' : 'Add personal override'}
+                </Text>
+              </Pressable>
+            ) : (
+              <View>
+                <TextInput
+                  value={overrideDraft}
+                  onChangeText={setOverrideDraft}
+                  multiline
+                  placeholder="Add anything you want JARVIS to always remember about you..."
+                  placeholderTextColor={Colors.textTertiary}
+                  style={{
+                    backgroundColor: Colors.surface,
+                    borderRadius: 12,
+                    padding: 12,
+                    color: Colors.text,
+                    fontSize: 14,
+                    minHeight: 100,
+                    textAlignVertical: 'top',
+                    borderWidth: 1,
+                    borderColor: Colors.border,
+                  }}
+                />
+                <View style={{ flexDirection: 'row', gap: 12, marginTop: 10 }}>
+                  <Pressable
+                    onPress={handleSaveOverride}
+                    disabled={savingOverride}
+                    style={{ flex: 1, backgroundColor: Colors.text, padding: 12, borderRadius: 10, alignItems: 'center', opacity: savingOverride ? 0.6 : 1 }}
+                  >
+                    <Text style={{ color: Colors.background, fontWeight: '600', fontSize: 14 }}>
+                      {savingOverride ? 'Saving…' : 'Save'}
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => { setOverrideEditing(false); setOverrideDraft(soul?.manualOverride ?? ''); }}
+                    style={{ flex: 1, backgroundColor: Colors.surface, padding: 12, borderRadius: 10, alignItems: 'center' }}
+                  >
+                    <Text style={{ color: Colors.text, fontWeight: '500', fontSize: 14 }}>Cancel</Text>
+                  </Pressable>
+                </View>
+              </View>
+            )}
+          </View>
+        </Animated.View>
+
+        {/* People */}
+        <Animated.View entering={FadeInDown.duration(400).delay(415)}>
+          <Text style={[styles.sectionTitle, { marginTop: 28 }]}>People</Text>
+          <Text style={styles.sectionSubtitle}>
+            Folks JARVIS has learned about from your conversations
+          </Text>
+          {peopleLoading ? (
+            <View style={styles.memoryEmptyCard}>
+              <ActivityIndicator size="small" color={Colors.textTertiary} />
+            </View>
+          ) : people.length === 0 ? (
+            <View style={styles.memoryEmptyCard}>
+              <View style={styles.memoryEmptyIcon}>
+                <Ionicons name="people-outline" size={22} color={Colors.textTertiary} />
+              </View>
+              <Text style={styles.memoryEmptyText}>
+                No people yet — mention someone by name in chat
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.memoryList}>
+              {people.map((p, idx) => (
+                <View key={p.id} style={[styles.memoryRow, idx < people.length - 1 && styles.memoryRowBorder]}>
+                  <View style={styles.memoryContent}>
+                    <Text style={[styles.memoryText, { fontWeight: '600' }]}>{p.name}</Text>
+                    {p.relationship ? (
+                      <Text style={{ color: Colors.textSecondary, fontSize: 13, marginTop: 2 }}>{p.relationship}</Text>
+                    ) : null}
+                    {p.notes ? (
+                      <Text style={{ color: Colors.textTertiary, fontSize: 12, marginTop: 4 }} numberOfLines={2}>
+                        {p.notes}
+                      </Text>
+                    ) : null}
+                  </View>
+                  <Pressable style={styles.memoryDeleteBtn} onPress={() => handleDeletePerson(p.id)} hitSlop={8}>
+                    <Ionicons name="trash-outline" size={16} color={Colors.textTertiary} />
+                  </Pressable>
+                </View>
+              ))}
             </View>
           )}
         </Animated.View>

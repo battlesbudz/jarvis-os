@@ -3,8 +3,19 @@ import { eq, and } from 'drizzle-orm';
 import * as schema from '@shared/schema';
 import { buildPlanForUser } from './routes';
 import { getInjectableGoalTasks, markTasksInjected, type InjectableGoalTask } from './goalScheduler';
+import { enqueueWeeklyPatternJobs } from './memory/weeklyJob';
 
 let schedulerRunning = false;
+let lastWeeklyRunKey = '';
+
+function sundayKey(d: Date): string {
+  // Identify the Sunday-of-week so we only run weekly_pattern once per week
+  // even if the process restarts inside the trigger minute.
+  const start = new Date(d);
+  const day = start.getDay();
+  start.setDate(start.getDate() - day);
+  return `${start.getFullYear()}-${start.getMonth() + 1}-${start.getDate()}`;
+}
 
 export function startScheduler() {
   if (schedulerRunning) return;
@@ -14,14 +25,32 @@ export function startScheduler() {
     const now = new Date();
     const h = now.getHours();
     const m = now.getMinutes();
+    const dow = now.getDay();
 
     if (h === 7 && m === 0) {
       console.log('[Scheduler] Running morning plan build...');
       await runMorningPlanBuild();
     }
+
+    // Sunday 03:00 local — enqueue weekly pattern recognition jobs for
+    // every active user. Workers (jobQueue) pick them up over the next
+    // few minutes, regenerate each user's SOUL, and deliver a Telegram
+    // summary. Idempotent across restarts via lastWeeklyRunKey.
+    if (dow === 0 && h === 3 && m === 0) {
+      const key = sundayKey(now);
+      if (key !== lastWeeklyRunKey) {
+        lastWeeklyRunKey = key;
+        try {
+          const count = await enqueueWeeklyPatternJobs();
+          console.log(`[Scheduler] Sunday weekly pattern jobs enqueued: ${count}`);
+        } catch (err) {
+          console.error('[Scheduler] enqueueWeeklyPatternJobs failed:', err);
+        }
+      }
+    }
   }, 60 * 1000);
 
-  console.log('[Scheduler] Started — will run morning plan build at 7:00 AM daily');
+  console.log('[Scheduler] Started — morning plan 7:00 AM daily, weekly patterns Sunday 3:00 AM');
 }
 
 export async function runMorningPlanBuild() {

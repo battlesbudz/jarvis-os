@@ -1,0 +1,284 @@
+/**
+ * Phase 4 — Sunday weekly pattern recognition.
+ *
+ * Pulls the last 7 days of activity (completion history, brain dump,
+ * chat, telegram messages, energy check-ins) and asks an LLM to
+ * surface 3-5 durable patterns. Patterns are stored in
+ * `weekly_insights`; high-confidence ones are also promoted into
+ * `user_memories` (sourceType='weekly_pattern') so they influence
+ * future coaching. The SOUL is then regenerated.
+ *
+ * Inspired by OpenClaw's reflective sub-agent loop (MIT, © 2025
+ * Peter Steinberger).
+ */
+import { db } from "../db";
+import { eq, and, gte, desc, sql } from "drizzle-orm";
+import * as schema from "@shared/schema";
+import OpenAI from "openai";
+import { normalizeCategory } from "./categories";
+import type { WeeklyPattern, MemoryCategory } from "@shared/schema";
+import { regenerateSoul } from "./soul";
+
+const openai = new OpenAI({
+  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
+  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
+});
+
+interface ChatMessage {
+  role?: string;
+  content?: string;
+}
+
+interface BrainDumpItem {
+  text?: string;
+  createdAt?: string;
+}
+
+interface CompletionItem {
+  date?: string;
+  completed?: number;
+  title?: string;
+}
+
+function asArray<T>(value: unknown): T[] {
+  return Array.isArray(value) ? (value as T[]) : [];
+}
+
+function weekOfKey(now: Date): string {
+  const start = new Date(now);
+  const day = start.getDay();
+  start.setDate(start.getDate() - day);
+  return `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, "0")}-${String(start.getDate()).padStart(2, "0")}`;
+}
+
+interface RawPattern {
+  category?: unknown;
+  observation?: unknown;
+  evidence?: unknown;
+  confidence?: unknown;
+}
+
+function parsePatterns(raw: string): WeeklyPattern[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  const list: RawPattern[] = (() => {
+    if (parsed && typeof parsed === "object" && "patterns" in parsed) {
+      const p = (parsed as { patterns: unknown }).patterns;
+      return Array.isArray(p) ? (p as RawPattern[]) : [];
+    }
+    return Array.isArray(parsed) ? (parsed as RawPattern[]) : [];
+  })();
+
+  const out: WeeklyPattern[] = [];
+  for (const r of list.slice(0, 5)) {
+    if (typeof r.observation !== "string" || !r.observation.trim()) continue;
+    const evidence = Array.isArray(r.evidence)
+      ? (r.evidence as unknown[]).filter((x): x is string => typeof x === "string").slice(0, 5)
+      : [];
+    const confidenceNum = typeof r.confidence === "number" ? r.confidence : Number(r.confidence);
+    const confidence = Number.isFinite(confidenceNum) ? Math.max(0, Math.min(100, Math.round(confidenceNum))) : 60;
+    const category: MemoryCategory | "fact" =
+      typeof r.category === "string" ? normalizeCategory(r.category) : "fact";
+    out.push({ category, observation: r.observation.trim(), evidence, confidence });
+  }
+  return out;
+}
+
+interface WeeklyJobResult {
+  weekOf: string;
+  patternCount: number;
+  promotedMemories: number;
+  summary: string;
+}
+
+export async function runWeeklyPatternJob(userId: string): Promise<WeeklyJobResult> {
+  const now = new Date();
+  const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+  const weekOf = weekOfKey(now);
+
+  // Gather activity context.
+  const [completionRow, brainRow, chatRow, telegramRows, energyRows] = await Promise.allSettled([
+    db.select().from(schema.completionHistory).where(eq(schema.completionHistory.userId, userId)).limit(1),
+    db.select().from(schema.brainDumpInbox).where(eq(schema.brainDumpInbox.userId, userId)).limit(1),
+    db.select().from(schema.chatHistory).where(eq(schema.chatHistory.userId, userId)).limit(1),
+    db
+      .select()
+      .from(schema.telegramGroupMessages)
+      .where(and(eq(schema.telegramGroupMessages.userId, userId), gte(schema.telegramGroupMessages.messageDate, sevenDaysAgo)))
+      .orderBy(desc(schema.telegramGroupMessages.messageDate))
+      .limit(50),
+    db
+      .select()
+      .from(schema.energyCheckins)
+      .where(eq(schema.energyCheckins.userId, userId))
+      .orderBy(desc(schema.energyCheckins.date))
+      .limit(7),
+  ]);
+
+  const completionData =
+    completionRow.status === "fulfilled" ? asArray<CompletionItem>(completionRow.value[0]?.data) : [];
+  const brainData =
+    brainRow.status === "fulfilled" ? asArray<BrainDumpItem>(brainRow.value[0]?.data) : [];
+  const chatData =
+    chatRow.status === "fulfilled" ? asArray<ChatMessage>(chatRow.value[0]?.data).slice(0, 30) : [];
+  const telegramData = telegramRows.status === "fulfilled" ? telegramRows.value : [];
+  const energyData = energyRows.status === "fulfilled" ? energyRows.value : [];
+
+  const completionsText = completionData
+    .filter((c) => c.date && new Date(c.date) >= sevenDaysAgo)
+    .slice(0, 50)
+    .map((c) => `- ${c.date}: ${c.completed ?? 0} completions${c.title ? ` (${c.title})` : ""}`)
+    .join("\n");
+  const brainText = brainData
+    .slice(0, 25)
+    .map((b) => `- ${b.text ?? ""}`)
+    .filter((s) => s.length > 2)
+    .join("\n");
+  const chatText = chatData
+    .map((m) => `${m.role ?? "?"}: ${(m.content ?? "").slice(0, 200)}`)
+    .filter((s) => s.length > 5)
+    .join("\n");
+  const telegramText = telegramData
+    .slice(0, 30)
+    .map((t) => `- ${t.text.slice(0, 200)}`)
+    .join("\n");
+  const energyText = energyData
+    .map((e) => {
+      const d = e.data;
+      if (!d || typeof d !== "object") return "";
+      const obj = d as Record<string, unknown>;
+      const energy = typeof obj.energy === "number" ? obj.energy : "?";
+      const focus = typeof obj.focus === "number" ? obj.focus : "?";
+      return `- ${e.date}: energy=${energy} focus=${focus}`;
+    })
+    .filter((s) => s.length > 0)
+    .join("\n");
+
+  const prompt = `You are reviewing the last 7 days of one user's activity to identify 3-5 durable behavioral patterns that should influence how a personal AI coach supports them long-term.
+
+Output JSON: { "patterns": [{ "category": one-of-categories, "observation": "...", "evidence": ["...", "..."], "confidence": 0-100 }], "summary": "1-2 sentence summary of the week" }
+
+Categories:
+- work_patterns | communication_style | energy_rhythms | goals_history
+- relationships | values | blockers | accomplishments | preferences | fact
+
+Rules:
+- Patterns must be DURABLE — recurring behaviors, not one-off events.
+- Each evidence item must be a concrete data point from the input.
+- Confidence: 90+ overwhelmingly clear; 70-89 strong; 60-69 plausible. Skip below 60.
+- Return at most 5 patterns. Empty array if nothing notable.
+
+## Completion history
+${completionsText || "(none)"}
+
+## Brain dump items
+${brainText || "(none)"}
+
+## Recent chat (most recent first)
+${chatText || "(none)"}
+
+## Group chat messages
+${telegramText || "(none)"}
+
+## Energy check-ins
+${energyText || "(none)"}`;
+
+  let patterns: WeeklyPattern[] = [];
+  let summary = "";
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-5-mini",
+      messages: [{ role: "user", content: prompt }],
+      response_format: { type: "json_object" },
+      max_completion_tokens: 1200,
+    });
+    const content = response.choices[0]?.message?.content || "{}";
+    patterns = parsePatterns(content);
+    try {
+      const meta = JSON.parse(content) as { summary?: unknown };
+      if (typeof meta.summary === "string") summary = meta.summary.trim().slice(0, 600);
+    } catch {
+      // already handled
+    }
+  } catch (err) {
+    console.error("[WeeklyPattern] LLM call failed:", err);
+  }
+
+  await db.insert(schema.weeklyInsights).values({
+    userId,
+    weekOf,
+    patterns,
+    summary: summary || null,
+  });
+
+  // Promote high-confidence patterns into user_memories so they show
+  // up in the SOUL even after this week's row is rotated out of view.
+  let promoted = 0;
+  for (const p of patterns) {
+    if (p.confidence < 80) continue;
+    const cat = p.category === "fact" ? "fact" : p.category;
+    try {
+      await db.insert(schema.userMemories).values({
+        userId,
+        content: p.observation,
+        category: cat,
+        confidence: p.confidence,
+        relevanceScore: 70,
+        sourceType: "weekly_pattern",
+        sourceRef: weekOf,
+      });
+      promoted += 1;
+    } catch (err) {
+      console.error("[WeeklyPattern] promote failed:", err);
+    }
+  }
+
+  // Rebuild SOUL so the new patterns / summary land in the coach prompt.
+  try {
+    await regenerateSoul(userId);
+  } catch (err) {
+    console.error("[WeeklyPattern] regenerateSoul failed:", err);
+  }
+
+  console.log(
+    `[WeeklyPattern] user=${userId} week=${weekOf} patterns=${patterns.length} promoted=${promoted}`,
+  );
+  return {
+    weekOf,
+    patternCount: patterns.length,
+    promotedMemories: promoted,
+    summary: summary || (patterns.length === 0 ? "No notable patterns this week." : `${patterns.length} pattern(s) identified.`),
+  };
+}
+
+/** Enqueue weekly pattern jobs for every user with recent activity. */
+export async function enqueueWeeklyPatternJobs(): Promise<number> {
+  const { submitAgentJob } = await import("../agent/jobQueue");
+  // Active = anyone with chat history updated in the last 14 days OR a
+  // login in the last 14 days. Cheap heuristic: just use chat_history.
+  const rows = await db.execute<{ user_id: string }>(sql`
+    SELECT DISTINCT user_id FROM chat_history
+    WHERE updated_at > NOW() - INTERVAL '14 days'
+  `);
+  let count = 0;
+  for (const r of rows.rows ?? []) {
+    if (!r.user_id) continue;
+    try {
+      await submitAgentJob({
+        userId: r.user_id,
+        agentType: "weekly_pattern",
+        title: "Weekly pattern review",
+        prompt: "Reflect on the last 7 days and identify durable patterns.",
+      });
+      count += 1;
+    } catch (err) {
+      console.error(`[WeeklyPattern] enqueue failed for ${r.user_id}:`, err);
+    }
+  }
+  console.log(`[WeeklyPattern] enqueued ${count} job(s)`);
+  return count;
+}
