@@ -5,6 +5,8 @@ import { channelLinks, channelLinkCodes, telegramLinks, NOTIFICATION_TYPES, CHAN
 import { authMiddleware } from "../auth";
 import { getAllPreferences, setPreference, getChannel, listChannels } from "./registry";
 import { createDaemonPairingCode, isUserPaired, closeUserDaemon, getDaemonPermissions, setDaemonPermissions, isDaemonActionAllowed, DEFAULT_DAEMON_PERMISSIONS, type DaemonAction, type DaemonPermissions } from "../daemon/bridge";
+import { startUserBot, stopUserBot, getBotStatus, completePairing, getGuildsForUser, getChannelsForGuild, type AllowlistedGuild } from "../discord/manager";
+import { saveUserToken, getUserToken, deleteUserToken } from "../userTokenStore";
 
 function generateCode(len = 6): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -24,11 +26,13 @@ export function registerChannelRoutes(app: Express): void {
         getAllPreferences(userId),
       ]);
 
+      const discordTok = await getUserToken(userId, "discord_bot").catch(() => null);
       const connected: Record<ChannelName, boolean> = {
         telegram: tgRows.length > 0,
         whatsapp: false,
         slack: false,
         daemon: false,
+        discord: false,
       };
       const meta: Record<string, unknown> = {};
 
@@ -37,11 +41,25 @@ export function registerChannelRoutes(app: Express): void {
         if (ch === "daemon") {
           connected.daemon = isUserPaired(userId);
           meta.daemon = { hostname: (row.metadata as any)?.hostname, lastSeenAt: row.lastSeenAt, connected: connected.daemon };
+        } else if (ch === "discord") {
+          connected.discord = getBotStatus(userId) === "running";
+          meta.discord = {
+            discordUsername: (row.metadata as any)?.discordUsername,
+            botStatus: getBotStatus(userId),
+            hasBotToken: !!discordTok,
+            lastSeenAt: row.lastSeenAt,
+          };
         } else if (CHANNEL_NAMES.includes(ch)) {
           connected[ch] = true;
           if (ch === "whatsapp") meta.whatsapp = { phone: row.address, lastSeenAt: row.lastSeenAt };
           if (ch === "slack") meta.slack = { teamId: (row.metadata as any)?.teamId, lastSeenAt: row.lastSeenAt };
         }
+      }
+
+      // Discord bot token saved but not yet paired
+      if (discordTok && !connected.discord) {
+        connected.discord = getBotStatus(userId) === "running";
+        meta.discord = { ...(meta.discord as any || {}), hasBotToken: true, botStatus: getBotStatus(userId) };
       }
 
       const channels = listChannels().map((c) => ({
@@ -105,10 +123,12 @@ export function registerChannelRoutes(app: Express): void {
       return res.status(400).json({ error: "channel not unlinkable here" });
     }
     try {
-      // For the daemon, force-close any live socket BEFORE removing the row so
-      // in-flight or future ops are immediately rejected with "daemon unlinked".
       if (channel === "daemon") {
         closeUserDaemon(userId);
+      }
+      if (channel === "discord") {
+        stopUserBot(userId);
+        await deleteUserToken(userId, "discord_bot").catch(() => {});
       }
       await db.delete(channelLinks)
         .where(and(eq(channelLinks.userId, userId), eq(channelLinks.channel, channel)));
@@ -177,5 +197,124 @@ export function registerChannelRoutes(app: Express): void {
     }
     const result = await sendDaemonOp(userId, op, 30000);
     res.json(result);
+  });
+
+  // ── Discord routes ──────────────────────────────────────────────────────
+
+  // POST /api/channels/discord/token — save bot token and start gateway
+  app.post("/api/channels/discord/token", authMiddleware, async (req: Request, res: Response) => {
+    const userId = (req as any).user.id;
+    const { botToken } = req.body || {};
+    if (!botToken || typeof botToken !== "string" || botToken.trim().length < 20) {
+      return res.status(400).json({ error: "Invalid bot token" });
+    }
+    try {
+      // Persist the token
+      await saveUserToken({
+        userId,
+        provider: "discord_bot",
+        accessToken: botToken.trim(),
+        accountEmail: "",
+      });
+      // Start (or restart) the gateway connection
+      await startUserBot(userId, botToken.trim());
+      res.json({ ok: true, botStatus: getBotStatus(userId) });
+    } catch (err: any) {
+      console.error("[channels] discord token save failed:", err);
+      res.status(400).json({ ok: false, error: err?.message || "Failed to connect bot — check the token and ensure Message Content + Server Members intents are enabled in the Discord Developer Portal." });
+    }
+  });
+
+  // POST /api/channels/discord/pair — complete pairing with code from Discord DM
+  app.post("/api/channels/discord/pair", authMiddleware, async (req: Request, res: Response) => {
+    const userId = (req as any).user.id;
+    const { code } = req.body || {};
+    if (!code || typeof code !== "string") {
+      return res.status(400).json({ error: "code required" });
+    }
+    const result = await completePairing(userId, code.trim().toUpperCase());
+    if (!result.ok) return res.status(400).json({ error: result.error });
+    res.json({ ok: true, discordUsername: result.discordUsername });
+  });
+
+  // GET /api/channels/discord/guilds — guilds the bot is currently in
+  app.get("/api/channels/discord/guilds", authMiddleware, async (req: Request, res: Response) => {
+    const userId = (req as any).user.id;
+    const guilds = getGuildsForUser(userId);
+    res.json({ guilds });
+  });
+
+  // GET /api/channels/discord/channels/:guildId — text channels in a guild
+  app.get("/api/channels/discord/channels/:guildId", authMiddleware, async (req: Request, res: Response) => {
+    const userId = (req as any).user.id;
+    const { guildId } = req.params;
+    const channels = await getChannelsForGuild(userId, guildId);
+    res.json({ channels });
+  });
+
+  // PUT /api/channels/discord/allowlist — add a guild channel to the allowlist
+  app.put("/api/channels/discord/allowlist", authMiddleware, async (req: Request, res: Response) => {
+    const userId = (req as any).user.id;
+    const { guildId, guildName, channelId, channelName, requireMention } = req.body || {};
+    if (!guildId || !channelId) {
+      return res.status(400).json({ error: "guildId and channelId required" });
+    }
+    try {
+      const rows = await db
+        .select()
+        .from(channelLinks)
+        .where(and(eq(channelLinks.userId, userId), eq(channelLinks.channel, "discord")))
+        .limit(1);
+      if (!rows[0]) return res.status(404).json({ error: "Discord account not linked" });
+      const meta = (rows[0].metadata as any) || {};
+      const guilds: AllowlistedGuild[] = meta.allowlistedGuilds || [];
+      const existing = guilds.findIndex((g) => g.guildId === guildId && g.channelId === channelId);
+      const entry: AllowlistedGuild = {
+        guildId,
+        guildName: guildName || guildId,
+        channelId,
+        channelName: channelName || channelId,
+        requireMention: requireMention !== false,
+      };
+      if (existing >= 0) {
+        guilds[existing] = entry;
+      } else {
+        guilds.push(entry);
+      }
+      await db
+        .update(channelLinks)
+        .set({ metadata: { ...meta, allowlistedGuilds: guilds } })
+        .where(and(eq(channelLinks.userId, userId), eq(channelLinks.channel, "discord")));
+      res.json({ ok: true, allowlistedGuilds: guilds });
+    } catch (err) {
+      console.error("[channels] discord allowlist update failed:", err);
+      res.status(500).json({ error: "failed to update allowlist" });
+    }
+  });
+
+  // DELETE /api/channels/discord/allowlist/:guildId/:channelId — remove from allowlist
+  app.delete("/api/channels/discord/allowlist/:guildId/:channelId", authMiddleware, async (req: Request, res: Response) => {
+    const userId = (req as any).user.id;
+    const { guildId, channelId } = req.params;
+    try {
+      const rows = await db
+        .select()
+        .from(channelLinks)
+        .where(and(eq(channelLinks.userId, userId), eq(channelLinks.channel, "discord")))
+        .limit(1);
+      if (!rows[0]) return res.status(404).json({ error: "Discord account not linked" });
+      const meta = (rows[0].metadata as any) || {};
+      const guilds: AllowlistedGuild[] = (meta.allowlistedGuilds || []).filter(
+        (g: AllowlistedGuild) => !(g.guildId === guildId && g.channelId === channelId),
+      );
+      await db
+        .update(channelLinks)
+        .set({ metadata: { ...meta, allowlistedGuilds: guilds } })
+        .where(and(eq(channelLinks.userId, userId), eq(channelLinks.channel, "discord")));
+      res.json({ ok: true, allowlistedGuilds: guilds });
+    } catch (err) {
+      console.error("[channels] discord allowlist delete failed:", err);
+      res.status(500).json({ error: "failed to update allowlist" });
+    }
   });
 }

@@ -12,6 +12,7 @@ import { initChannels } from "./channels";
 import { registerWhatsAppWebhook } from "./channels/whatsappWebhook";
 import { registerSlackWebhook } from "./channels/slackWebhook";
 import { startDaemonBridge } from "./daemon/bridge";
+import { bootAllBots as bootDiscordBots } from "./discord/manager";
 import * as fs from "fs";
 import * as path from "path";
 
@@ -306,9 +307,14 @@ function setupErrorHandler(app: express.Application) {
         }
       }
 
+      // Boot Discord bots for users who have saved a bot token
+      bootDiscordBots().catch(err => {
+        console.error("Failed to boot Discord bots:", err);
+      });
+
       // Channel-agnostic proactive engines — iterate every user with any
-      // linked channel (telegram/whatsapp/slack/daemon) and route through
-      // notifyUser() so WhatsApp/Slack-only users get the full experience.
+      // linked channel (telegram/whatsapp/slack/daemon/discord) and route through
+      // notifyUser() so WhatsApp/Slack/Discord-only users get the full experience.
       startProactiveScheduler().catch(err => {
         console.error("Failed to start proactive scheduler:", err);
       });

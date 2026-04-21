@@ -246,6 +246,11 @@ export default function ProfileScreen() {
   }>({ imported: false });
   const [chatgptImporting, setChatgptImporting] = useState(false);
   const [chatgptImportResult, setChatgptImportResult] = useState<number | null>(null);
+  const [discordBotToken, setDiscordBotToken] = useState('');
+  const [discordBotTokenVisible, setDiscordBotTokenVisible] = useState(false);
+  const [discordPairCode, setDiscordPairCode] = useState('');
+  const [discordSaving, setDiscordSaving] = useState(false);
+  const [discordPairing, setDiscordPairing] = useState(false);
   const [documents, setDocuments] = useState<UserDocument[]>([]);
   const [documentsLoading, setDocumentsLoading] = useState(false);
   const [documentUploading, setDocumentUploading] = useState(false);
@@ -797,6 +802,7 @@ export default function ProfileScreen() {
       await apiRequest('DELETE', `/api/channels/${channel}`);
       if (channel === 'whatsapp') setWhatsappCode(null);
       if (channel === 'daemon') setDaemonCode(null);
+      if (channel === 'discord') { setDiscordBotToken(''); setDiscordPairCode(''); }
       await loadChannels();
     } catch (err) {
       console.error('[channels] unlink error:', err);
@@ -804,6 +810,34 @@ export default function ProfileScreen() {
       setChannelBusy(null);
     }
   }, [loadChannels]);
+
+  const handleSaveDiscordToken = useCallback(async () => {
+    if (!discordBotToken.trim()) return;
+    setDiscordSaving(true);
+    try {
+      const res = await apiRequest('POST', '/api/channels/discord/token', { botToken: discordBotToken.trim() });
+      const data = await res.json();
+      if (data.error) { alert(data.error); }
+      else { setDiscordBotToken(''); await loadChannels(); }
+    } catch (err: any) {
+      alert(err?.message || 'Failed to save bot token — check the token and ensure Message Content + Server Members intents are enabled.');
+    }
+    setDiscordSaving(false);
+  }, [discordBotToken, loadChannels]);
+
+  const handleDiscordPair = useCallback(async () => {
+    if (!discordPairCode.trim()) return;
+    setDiscordPairing(true);
+    try {
+      const res = await apiRequest('POST', '/api/channels/discord/pair', { code: discordPairCode.trim().toUpperCase() });
+      const data = await res.json();
+      if (data.error) { alert(data.error); }
+      else { setDiscordPairCode(''); await loadChannels(); }
+    } catch (err: any) {
+      alert(err?.message || 'Pairing failed — check the code and try again.');
+    }
+    setDiscordPairing(false);
+  }, [discordPairCode, loadChannels]);
 
   const handleTogglePreference = useCallback(async (notificationType: string, channel: string) => {
     if (!channelData) return;
@@ -1827,6 +1861,136 @@ export default function ProfileScreen() {
               )}
             </View>
 
+            {/* Discord */}
+            <View style={[styles.platformRow, { borderTopWidth: 1, borderTopColor: Colors.border }]}>
+              <View style={[styles.platformIcon, { backgroundColor: '#5865F218' }]}>
+                <Ionicons name="logo-discord" size={20} color="#5865F2" />
+              </View>
+              <View style={styles.platformInfo}>
+                <Text style={styles.platformName}>Discord</Text>
+                <Text style={styles.platformSubtitle}>
+                  {channelData?.connected.discord
+                    ? (channelData.meta?.discord as any)?.discordUsername
+                      ? `Linked as ${(channelData.meta.discord as any).discordUsername}`
+                      : 'Bot running — DM it to pair'
+                    : (channelData?.meta?.discord as any)?.hasBotToken
+                      ? 'Bot saved — DM it to get your pairing code'
+                      : 'Bring your own Discord bot for coaching via DMs'}
+                </Text>
+              </View>
+              {channelBusy === 'discord' ? (
+                <ActivityIndicator size="small" color="#5865F2" />
+              ) : channelData?.connected.discord ? (
+                <Pressable style={styles.disconnectBtn} onPress={() => handleUnlinkChannel('discord')}>
+                  <Ionicons name="checkmark-circle" size={18} color={Colors.success} />
+                  <Text style={styles.disconnectBtnText}>Unlink</Text>
+                </Pressable>
+              ) : (channelData?.meta?.discord as any)?.hasBotToken ? (
+                <Pressable style={styles.disconnectBtn} onPress={() => handleUnlinkChannel('discord')}>
+                  <Text style={[styles.disconnectBtnText, { color: Colors.textSecondary }]}>Remove</Text>
+                </Pressable>
+              ) : null}
+            </View>
+            {/* Discord setup panel */}
+            {!channelData?.connected.discord && (
+              <View style={{ paddingHorizontal: 16, paddingVertical: 12, backgroundColor: Colors.background, borderTopWidth: 1, borderTopColor: Colors.border }}>
+                {!(channelData?.meta?.discord as any)?.hasBotToken ? (
+                  <>
+                    {/* Step 1: Create bot + paste token */}
+                    <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: Colors.text, marginBottom: 6 }}>
+                      Step 1 — Create a Discord bot
+                    </Text>
+                    <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, lineHeight: 17, marginBottom: 10 }}>
+                      1. Go to{' '}
+                      <Text style={{ color: '#5865F2' }}>discord.com/developers/applications</Text>
+                      {'\n'}2. New Application → Bot tab → Reset Token → copy the token
+                      {'\n'}3. Under Privileged Gateway Intents enable{' '}
+                      <Text style={{ fontFamily: 'Inter_600SemiBold' }}>Message Content</Text> and{' '}
+                      <Text style={{ fontFamily: 'Inter_600SemiBold' }}>Server Members</Text>
+                      {'\n'}4. OAuth2 → URL Generator: scopes{' '}
+                      <Text style={{ fontFamily: 'Inter_600SemiBold' }}>bot</Text>, permissions{' '}
+                      <Text style={{ fontFamily: 'Inter_600SemiBold' }}>Send Messages + Read Messages</Text>
+                      {'\n'}5. Open the generated URL to invite the bot to your server (or skip for DM-only use)
+                    </Text>
+                    <Text style={{ fontSize: 12, fontFamily: 'Inter_500Medium', color: Colors.text, marginBottom: 4 }}>
+                      Paste your bot token here:
+                    </Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                      <TextInput
+                        value={discordBotToken}
+                        onChangeText={setDiscordBotToken}
+                        placeholder="Bot token…"
+                        secureTextEntry={!discordBotTokenVisible}
+                        placeholderTextColor={Colors.textTertiary}
+                        style={{
+                          flex: 1, fontSize: 13, fontFamily: 'Inter_400Regular',
+                          color: Colors.text, borderWidth: 1, borderColor: Colors.border,
+                          borderRadius: 8, paddingHorizontal: 10, paddingVertical: 7,
+                          backgroundColor: Colors.card,
+                        }}
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                      />
+                      <Pressable onPress={() => setDiscordBotTokenVisible(v => !v)} style={{ padding: 6 }}>
+                        <Ionicons name={discordBotTokenVisible ? 'eye-off-outline' : 'eye-outline'} size={18} color={Colors.textSecondary} />
+                      </Pressable>
+                    </View>
+                    <Pressable
+                      onPress={handleSaveDiscordToken}
+                      disabled={discordSaving || !discordBotToken.trim()}
+                      style={{
+                        marginTop: 10, paddingVertical: 8, borderRadius: 8, alignItems: 'center',
+                        backgroundColor: '#5865F2', opacity: discordSaving || !discordBotToken.trim() ? 0.5 : 1,
+                      }}
+                    >
+                      {discordSaving
+                        ? <ActivityIndicator size="small" color="#fff" />
+                        : <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: '#fff' }}>Save token & connect bot</Text>}
+                    </Pressable>
+                  </>
+                ) : (
+                  <>
+                    {/* Step 2: DM the bot + enter pairing code */}
+                    <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: Colors.text, marginBottom: 6 }}>
+                      Step 2 — Pair your Discord account
+                    </Text>
+                    <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, lineHeight: 17, marginBottom: 10 }}>
+                      Open Discord, find your bot, and send it any message. It will reply with a 6-character pairing code — enter it here.
+                    </Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                      <TextInput
+                        value={discordPairCode}
+                        onChangeText={t => setDiscordPairCode(t.toUpperCase())}
+                        placeholder="Pairing code (e.g. AB3X7Y)"
+                        placeholderTextColor={Colors.textTertiary}
+                        style={{
+                          flex: 1, fontSize: 15, fontFamily: 'Inter_600SemiBold', letterSpacing: 3,
+                          color: '#5865F2', borderWidth: 1, borderColor: '#5865F2',
+                          borderRadius: 8, paddingHorizontal: 10, paddingVertical: 7,
+                          backgroundColor: Colors.card, textAlign: 'center',
+                        }}
+                        autoCapitalize="characters"
+                        autoCorrect={false}
+                        maxLength={6}
+                      />
+                      <Pressable
+                        onPress={handleDiscordPair}
+                        disabled={discordPairing || discordPairCode.trim().length !== 6}
+                        style={{
+                          paddingHorizontal: 14, paddingVertical: 9, borderRadius: 8,
+                          backgroundColor: '#5865F2', opacity: discordPairing || discordPairCode.trim().length !== 6 ? 0.5 : 1,
+                        }}
+                      >
+                        {discordPairing
+                          ? <ActivityIndicator size="small" color="#fff" />
+                          : <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: '#fff' }}>Pair</Text>}
+                      </Pressable>
+                    </View>
+                  </>
+                )}
+              </View>
+            )}
+
             {/* Desktop Daemon */}
             <View style={[styles.platformRow, { borderTopWidth: 1, borderTopColor: Colors.border }]}>
               <View style={[styles.platformIcon, { backgroundColor: '#6B72FF18' }]}>
@@ -1962,7 +2126,7 @@ export default function ProfileScreen() {
                       {NICE[nt] || nt}
                     </Text>
                     <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-                      {(['telegram', 'whatsapp', 'slack', 'daemon'] as const).map((ch) => {
+                      {(['telegram', 'whatsapp', 'slack', 'daemon', 'discord'] as const).map((ch) => {
                         const connected = channelData.connected[ch];
                         const isSelected = selected.has(ch);
                         return (

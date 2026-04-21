@@ -27,6 +27,7 @@ const FORMAT_HINTS: Record<string, string> = {
   WhatsApp: "You're responding via WhatsApp. Keep messages SHORT (2-4 sentences). Plain text. WhatsApp supports *bold*, _italic_, `code` only — no markdown headers.",
   Slack: "You're responding via Slack DM. Keep messages SHORT (2-4 sentences). Use Slack mrkdwn (*bold*, _italic_, `code`, > quote). No markdown headers.",
   Daemon: "You're responding to a desktop daemon. Plain text only. The user sees the reply as a desktop notification — keep it under 2 sentences when possible.",
+  Discord: "You're responding via Discord DM. Keep messages SHORT (2-4 sentences). Discord renders standard markdown: **bold**, _italic_, `code`, ```blocks```. No oversized headers.",
 };
 
 // Channel-agnostic coach pipeline shared by Telegram / WhatsApp / Slack /
