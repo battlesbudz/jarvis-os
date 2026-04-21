@@ -102,14 +102,13 @@ async function loadGoal(userId: string, goalId: string): Promise<UserGoal | null
 }
 
 async function generateTreeWithLLM(goal: UserGoal, userId: string): Promise<GoalTreeData> {
-  // Phase 4 — pull SOUL so decomposition reflects the user's working
-  // patterns, blockers, and energy rhythms rather than treating every
-  // user as generic.
   let soulBlock = "";
   try {
     const { getSoulPromptBlock } = await import("../memory/soul");
     soulBlock = await getSoulPromptBlock(userId);
-  } catch {}
+  } catch (err) {
+    console.error(`[goalDecomposer] SOUL load failed for ${userId}:`, err);
+  }
   const system = `You are Jarvis's goal-decomposition planner. Break a single user goal into a concrete, sequenced project tree.
 
 ${soulBlock ? `${soulBlock}\n\n` : ""}

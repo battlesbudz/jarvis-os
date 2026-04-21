@@ -1,17 +1,3 @@
-/**
- * Phase 4 — memory decay.
- *
- * Memories that go unused for too long lose relevance and eventually
- * drop out of the SOUL. Modeled loosely on OpenClaw's memory pruning
- * pass (MIT, © 2025 Peter Steinberger). Runs once per UTC day from the
- * heartbeat — the first heartbeat tick of a new day calls runDailyDecay.
- *
- * Rules:
- * - If lastReferencedAt is older than 7d (or null AND extractedAt > 14d):
- *   relevanceScore -= DECAY_STEP
- * - If relevanceScore drops below DECAY_FLOOR after the step, delete.
- * - High-confidence memories (>= 90) decay 1/3 as fast.
- */
 import { db } from "../db";
 import { eq, sql, and } from "drizzle-orm";
 import * as schema from "@shared/schema";

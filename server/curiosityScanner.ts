@@ -190,7 +190,9 @@ export async function runCuriosityScan(): Promise<void> {
                 matchedRuleId: ruleResult.matchedRuleId || null,
               });
               console.log(`[Curiosity] Surfaced calendar event for user ${link.userId}: ${ev.title}`);
-            } catch {}
+            } catch (err) {
+              console.error(`[Curiosity] context-rule surface failed for ${link.userId}:`, err);
+            }
             continue;
           }
 

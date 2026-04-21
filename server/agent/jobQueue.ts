@@ -1,12 +1,3 @@
-/**
- * Background job queue — DB-backed, survives restarts.
- *
- * Inspired by OpenClaw's background-task pattern (MIT, © 2025 Peter
- * Steinberger). One Node process, single polling tick. Picks the
- * oldest queued job per user (one-at-a-time per user to keep tool-call
- * concurrency sane), runs the matching sub-agent, persists the
- * deliverable, and marks the job complete.
- */
 import { db } from "../db";
 import { eq, and, sql, asc } from "drizzle-orm";
 import * as schema from "@shared/schema";

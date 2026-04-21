@@ -1,15 +1,3 @@
-/**
- * Phase 4 — JARVIS_SOUL.md builder.
- *
- * One curated markdown document per user, regenerated weekly (or on
- * demand) from typed memories + life context + people + weekly
- * insights. Replaces the per-message memory dump that used to be
- * spliced into the coach prompt.
- *
- * Inspired by OpenClaw's SOUL.md loader (MIT, © 2025 Peter
- * Steinberger). We keep the format human-readable so users can review
- * and override it from the profile screen.
- */
 import { db } from "../db";
 import { eq, desc, and, inArray } from "drizzle-orm";
 import * as schema from "@shared/schema";

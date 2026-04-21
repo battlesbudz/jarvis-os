@@ -1,11 +1,3 @@
-/**
- * Phase 4 — canonical memory category map and legacy aliasing.
- *
- * Old extractors emitted free-form categories ("personality", "work_style",
- * "preference", …). Phase 4 introduces a closed set so the SOUL builder can
- * group reliably. We accept legacy values on read but always normalize before
- * write.
- */
 import { MEMORY_CATEGORIES, type MemoryCategory } from "@shared/schema";
 
 export { MEMORY_CATEGORIES };
