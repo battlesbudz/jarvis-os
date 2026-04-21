@@ -1,16 +1,3 @@
-/**
- * Phase 4 — Sunday weekly pattern recognition.
- *
- * Pulls the last 30 days of activity (completion history, brain dump,
- * chat, telegram messages, energy check-ins) and asks an LLM to
- * surface 3-5 durable patterns. Patterns are stored in
- * `weekly_insights`; high-confidence ones are also promoted into
- * `user_memories` (sourceType='weekly_pattern') so they influence
- * future coaching. The SOUL is then regenerated.
- *
- * Inspired by OpenClaw's reflective sub-agent loop (MIT, © 2025
- * Peter Steinberger).
- */
 import { db } from "../db";
 import { eq, and, gte, desc, sql } from "drizzle-orm";
 import * as schema from "@shared/schema";

@@ -1,12 +1,3 @@
-/**
- * Phase 4 — unified memory extractor.
- *
- * Replaces the three near-duplicate extractors that used to live in
- * routes.ts (chat), telegramRoutes.ts (Telegram), and heartbeat.ts. One
- * call site, one prompt, one dedup pass, one set of typed categories.
- *
- * Inspired by OpenClaw's memory layer (MIT, © 2025 Peter Steinberger).
- */
 import { db } from "../db";
 import { eq, desc } from "drizzle-orm";
 import * as schema from "@shared/schema";

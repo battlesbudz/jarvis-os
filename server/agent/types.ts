@@ -1,6 +1,3 @@
-// Agent tool-calling types — adapted from OpenClaw patterns
-// (MIT-licensed concepts: typed tool registry + permissioned execution)
-// Original: Copyright (c) 2025 Peter Steinberger
 
 /** Pending artifact that a tool has produced and that the calling channel
  * (e.g. Telegram) should deliver to the user after the agent finishes. */

@@ -1,10 +1,3 @@
-/**
- * Phase 4 — people directory.
- *
- * Lightweight upsert for names/emails/relationships discovered from
- * Gmail senders, calendar attendees, or user mentions. Used by the SOUL
- * builder and (eventually) the email-draft sub-agent.
- */
 import { db } from "../db";
 import { eq, and, sql } from "drizzle-orm";
 import * as schema from "@shared/schema";

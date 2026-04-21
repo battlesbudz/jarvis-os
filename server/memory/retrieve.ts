@@ -1,17 +1,3 @@
-/**
- * Phase 4 — hybrid memory retrieval.
- *
- * Combines Postgres full-text search (primary recall) with cached
- * OpenAI embeddings (semantic re-rank) and the per-row relevance
- * score, then returns the top N memories most likely to be useful
- * for the current user query. Used by SOUL builder and by inline
- * coach prompts that want focused context instead of dumping every
- * memory into the system message.
- *
- * Inspired by OpenClaw's memory retrieval pass (MIT, © 2025 Peter
- * Steinberger). pgvector is intentionally avoided — embeddings are
- * stored as jsonb arrays so the layer works on a stock Postgres.
- */
 import { db } from "../db";
 import { sql } from "drizzle-orm";
 import OpenAI from "openai";

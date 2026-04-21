@@ -1,6 +1,3 @@
-// Tool-calling loop — adapted from OpenClaw's agent harness pattern
-// (MIT-licensed: while-loop tool execution with bounded turns)
-// Original: Copyright (c) 2025 Peter Steinberger
 
 import OpenAI from "openai";
 import type { AgentTool, AgentToolCallRecord, ToolContext } from "./types";

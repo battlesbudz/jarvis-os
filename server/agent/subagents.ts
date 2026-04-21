@@ -1,19 +1,3 @@
-/**
- * Typed sub-agents — narrow system prompts + tool whitelists.
- *
- * Inspired by OpenClaw's sub-agent spawning pattern (MIT-licensed,
- * © 2025 Peter Steinberger). Each sub-agent is the same OpenAI tool-
- * calling loop (runAgent) but constrained to a specific job:
- *   RESEARCH — web research and synthesis
- *   WRITING  — draft a longer document/note/brief
- *   PLANNING — break a problem into a structured plan
- *   EMAIL    — draft an outbound email reply
- *
- * Sub-agents do NOT send anything to the user directly. They produce
- * a `SubAgentResult` which the job queue persists into the
- * `deliverables` table for human approval.
- */
-
 import { runAgent } from "./harness";
 import type { AgentTool, ToolContext } from "./types";
 import { db } from "../db";
@@ -228,7 +212,9 @@ export async function runSubAgent(opts: RunSubAgentOptions): Promise<SubAgentRes
       if (soulText && soulText.trim()) {
         enrich.push(`What I know about the sender (JARVIS Soul):\n${soulText.trim()}`);
       }
-    } catch {}
+    } catch (err) {
+      console.error(`[subagents/email] SOUL enrichment failed for ${opts.context.userId}:`, err);
+    }
     try {
       const emailMatches = Array.from(opts.prompt.matchAll(/[\w.+-]+@[\w-]+\.[\w.-]+/g)).map((m) => m[0].toLowerCase());
       if (emailMatches.length > 0) {
@@ -248,7 +234,9 @@ export async function runSubAgent(opts: RunSubAgentOptions): Promise<SubAgentRes
           enrich.push(`Recipient relationship history:\n${lines.join("\n")}`);
         }
       }
-    } catch {}
+    } catch (err) {
+      console.error(`[subagents/email] people enrichment failed for ${opts.context.userId}:`, err);
+    }
     if (enrich.length > 0) {
       systemPrompt = `${spec.systemPrompt}\n\n--- CONTEXT ---\n${enrich.join("\n\n")}`;
     }

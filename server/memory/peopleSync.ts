@@ -1,16 +1,3 @@
-/**
- * Phase 4 — automatic relationship intelligence.
- *
- * Each heartbeat tick, scan the user's upcoming calendar attendees
- * and recent gmail senders. Each non-self party gets upserted into
- * the `people` table with an incremented interaction count and a
- * lightweight role hint (e.g. "calendar_attendee:work-meeting" or
- * "email_sender"). The next SOUL regeneration picks them up so the
- * coach knows who shows up in the user's life and how often.
- *
- * Inspired by OpenClaw's relationship-graph builder (MIT, © 2025
- * Peter Steinberger).
- */
 import { db } from "../db";
 import { eq, and } from "drizzle-orm";
 import * as schema from "@shared/schema";
@@ -161,7 +148,9 @@ export async function syncPeopleFromGoogle(userId: string, accessToken: string, 
   try {
     const { markSoulStale } = await import("./soul");
     await markSoulStale(userId);
-  } catch {}
+  } catch (err) {
+    console.error(`[PeopleSync] markSoulStale failed for ${userId}:`, err);
+  }
 
   console.log(`[PeopleSync] user=${userId} upserted=${upserts}`);
   return upserts;
