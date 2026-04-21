@@ -172,7 +172,7 @@ export async function refreshMicrosoftToken(token: UserToken): Promise<UserToken
         client_secret: clientSecret,
         refresh_token: token.refreshToken,
         grant_type: 'refresh_token',
-        scope: 'offline_access Calendars.Read Mail.Read User.Read',
+        scope: 'offline_access Calendars.ReadWrite Mail.ReadWrite Mail.Send User.Read',
       }),
     });
     const data = await res.json() as any;
