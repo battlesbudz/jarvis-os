@@ -189,6 +189,8 @@ export async function markTreeTaskComplete(userId: string, goalTreeId: string, t
   if (!row) return;
   const tree = (row.tree as GoalTreeData) || { phases: [] };
   let mutated = false;
+
+  // 1. Mark the task complete and roll up milestone / phase status.
   for (const ph of tree.phases) {
     for (const ms of ph.milestones) {
       for (const t of ms.tasks) {
@@ -202,14 +204,49 @@ export async function markTreeTaskComplete(userId: string, goalTreeId: string, t
       if (allDone && ms.status !== "complete") {
         ms.status = "complete";
         mutated = true;
+      } else if (
+        ms.status !== "complete" &&
+        ms.tasks.some((t) => t.status === "complete" || t.status === "in_progress")
+      ) {
+        if (ms.status !== "in_progress") {
+          ms.status = "in_progress";
+          mutated = true;
+        }
       }
     }
-    const allDone = ph.milestones.length > 0 && ph.milestones.every((m) => m.status === "complete");
-    if (allDone && ph.status !== "complete") {
+    const phaseDone = ph.milestones.length > 0 && ph.milestones.every((m) => m.status === "complete");
+    if (phaseDone && ph.status !== "complete") {
       ph.status = "complete";
       mutated = true;
+    } else if (
+      ph.status !== "complete" &&
+      ph.milestones.some((m) => m.status === "complete" || m.status === "in_progress")
+    ) {
+      if (ph.status !== "in_progress") {
+        ph.status = "in_progress";
+        mutated = true;
+      }
     }
   }
+
+  // 2. Advance the wavefront: the FIRST non-complete milestone of the
+  //    FIRST non-complete phase is the active milestone — flip all of
+  //    its blocked tasks to ready so the daily-plan walker can inject
+  //    them. This is what unblocks downstream work after a phase or
+  //    milestone has been finished.
+  const activePhase = tree.phases.find((p) => p.status !== "complete");
+  if (activePhase) {
+    const activeMs = activePhase.milestones.find((m) => m.status !== "complete");
+    if (activeMs) {
+      for (const t of activeMs.tasks) {
+        if (t.status === "blocked") {
+          t.status = "ready";
+          mutated = true;
+        }
+      }
+    }
+  }
+
   if (mutated) {
     await db
       .update(schema.goalTrees)
