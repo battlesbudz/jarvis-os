@@ -1439,7 +1439,11 @@ User's active goals:
 ${(goals || []).map((g: any) => `- ${g.title} (${g.category})`).join('\n') || 'None set'}
 
 Return a JSON object with:
-1. "actions": array of 0-2 specific, immediately actionable tasks or goals mentioned or implied in the message. Each action: { "type": "task" or "goal", "title": string (concise, starts with verb for tasks), "category": one of "fitness/finance/career/personal/social", "priority": "high"/"medium"/"low" (tasks only), "description": short one-line context }. Only include if genuinely specific and actionable — return empty array if message is conversational.
+1. "actions": array of 0-2 actionable suggestions. Three action types are supported:
+   - { "type": "task", "title": string (verb phrase), "category": "fitness"/"finance"/"career"/"personal"/"social", "priority": "high"/"medium"/"low", "description": one-line context }
+   - { "type": "goal", "title": string, "category": "fitness"/"finance"/"career"/"personal"/"social", "description": one-line context }
+   - { "type": "link", "title": string, "buttonLabel": string (short CTA ≤4 words), "url": string (use "profile://connections" to open connection settings, or a full https:// URL), "category": "personal" } — Use ONLY when the message explicitly suggests connecting/reconnecting Google, Microsoft, Outlook, or Gmail.
+   Only include actions that are specific and actionable. Return empty array for purely conversational messages.
 2. "followups": array of exactly 3 short follow-up questions (max 7 words each) the user would naturally ask next.
 
 Return ONLY the JSON object.`;
