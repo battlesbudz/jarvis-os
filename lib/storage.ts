@@ -289,6 +289,21 @@ export interface ExecutedAction {
   buttonLabel?: string;
 }
 
+export interface PendingConfirm {
+  token: string;
+  tool: string;
+  preview: {
+    to?: string;
+    subject?: string;
+    body?: string;
+    provider?: string;
+    action?: string;
+    cmd?: string;
+    path?: string;
+    content?: string;
+  };
+}
+
 export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
@@ -296,6 +311,7 @@ export interface ChatMessage {
   actions?: CoachAction[];
   followups?: string[];
   executedActions?: ExecutedAction[];
+  pendingConfirm?: PendingConfirm;
 }
 
 export interface Commitment {

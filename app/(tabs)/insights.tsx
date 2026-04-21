@@ -44,6 +44,7 @@ import {
   type Commitment,
   type CoachingMode,
   type ExecutedAction,
+  type PendingConfirm,
 } from '@/lib/storage';
 import {
   scheduleEveningAccountability,
@@ -128,6 +129,90 @@ function SearchingIndicator() {
   );
 }
 
+interface ConfirmCardProps {
+  pendingConfirm: PendingConfirm;
+  onConfirm: () => void;
+  onCancel: () => void;
+  isLoading: boolean;
+}
+
+function ConfirmCard({ pendingConfirm, onConfirm, onCancel, isLoading }: ConfirmCardProps) {
+  const isEmail = pendingConfirm.tool === 'send_email';
+  const preview = pendingConfirm.preview;
+
+  return (
+    <View style={styles.confirmCard}>
+      <View style={styles.confirmCardHeader}>
+        <Ionicons
+          name={isEmail ? 'mail-outline' : 'terminal-outline'}
+          size={15}
+          color={Colors.primary}
+        />
+        <Text style={styles.confirmCardTitle}>
+          {isEmail ? 'Send email?' : `Run terminal command?`}
+        </Text>
+      </View>
+
+      {isEmail ? (
+        <View style={styles.confirmPreview}>
+          <Text style={styles.confirmPreviewLabel}>To</Text>
+          <Text style={styles.confirmPreviewValue} numberOfLines={1}>{preview.to}</Text>
+          <Text style={styles.confirmPreviewLabel}>Subject</Text>
+          <Text style={styles.confirmPreviewValue} numberOfLines={1}>{preview.subject}</Text>
+          {!!preview.body && (
+            <>
+              <Text style={styles.confirmPreviewLabel}>Body</Text>
+              <Text style={styles.confirmPreviewValue} numberOfLines={4}>{preview.body}</Text>
+            </>
+          )}
+        </View>
+      ) : (
+        <View style={styles.confirmPreview}>
+          <Text style={styles.confirmPreviewLabel}>Action</Text>
+          <Text style={styles.confirmPreviewValue}>{preview.action}</Text>
+          {!!preview.cmd && (
+            <>
+              <Text style={styles.confirmPreviewLabel}>Command</Text>
+              <Text style={styles.confirmPreviewCode}>{preview.cmd}</Text>
+            </>
+          )}
+          {!!preview.path && (
+            <>
+              <Text style={styles.confirmPreviewLabel}>Path</Text>
+              <Text style={styles.confirmPreviewCode}>{preview.path}</Text>
+            </>
+          )}
+        </View>
+      )}
+
+      <View style={styles.confirmBtnRow}>
+        <Pressable
+          style={[styles.confirmBtn, styles.confirmBtnCancel]}
+          onPress={onCancel}
+          disabled={isLoading}
+        >
+          <Ionicons name="close" size={14} color={Colors.textSecondary} />
+          <Text style={styles.confirmBtnCancelText}>Cancel</Text>
+        </Pressable>
+        <Pressable
+          style={[styles.confirmBtn, styles.confirmBtnConfirm, isLoading && { opacity: 0.7 }]}
+          onPress={onConfirm}
+          disabled={isLoading}
+        >
+          {isLoading ? (
+            <ActivityIndicator size="small" color="#fff" />
+          ) : (
+            <Ionicons name="checkmark" size={14} color="#fff" />
+          )}
+          <Text style={styles.confirmBtnConfirmText}>
+            {isLoading ? (isEmail ? 'Sending...' : 'Running...') : isEmail ? 'Send' : 'Run'}
+          </Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
 interface MessageBubbleProps {
   message: ChatMessage;
   isFirst: boolean;
@@ -137,14 +222,31 @@ interface MessageBubbleProps {
   onSpeak?: (text: string) => void;
   isSpeaking?: boolean;
   isStreaming?: boolean;
+  onConfirmAction?: (msgId: string, confirmed: boolean) => void;
 }
 
-function MessageBubble({ message, isFirst, isLastAssistant, goals, onFollowup, onSpeak, isSpeaking, isStreaming }: MessageBubbleProps) {
+function MessageBubble({ message, isFirst, isLastAssistant, goals, onFollowup, onSpeak, isSpeaking, isStreaming, onConfirmAction }: MessageBubbleProps) {
   const isUser = message.role === 'user';
   const router = useRouter();
   const [addedMap, setAddedMap] = useState<Record<string, boolean>>({});
   const [draftStatus, setDraftStatus] = useState<'idle' | 'saving' | 'saved' | 'error' | 'reconnect'>('idle');
   const [gmailUrl, setGmailUrl] = useState<string | null>(null);
+  const [confirmLoading, setConfirmLoading] = useState(false);
+
+  const handleConfirm = useCallback(async () => {
+    if (!onConfirmAction || !message.pendingConfirm || confirmLoading) return;
+    setConfirmLoading(true);
+    try {
+      await onConfirmAction(message.id, true);
+    } finally {
+      setConfirmLoading(false);
+    }
+  }, [onConfirmAction, message.id, message.pendingConfirm, confirmLoading]);
+
+  const handleCancelConfirm = useCallback(async () => {
+    if (!onConfirmAction || !message.pendingConfirm) return;
+    await onConfirmAction(message.id, false);
+  }, [onConfirmAction, message.id, message.pendingConfirm]);
 
   const parsedDraft = !isUser ? parseEmailDraft(message.content) : null;
 
@@ -229,12 +331,21 @@ function MessageBubble({ message, isFirst, isLastAssistant, goals, onFollowup, o
           <Text style={styles.coachLabelText}>GamePlan Coach</Text>
         </View>
       )}
-      <View style={[styles.bubble, isUser ? styles.bubbleUser : styles.bubbleAssistant]}>
-        <MarkdownText
-          text={message.content}
-          isUser={isUser}
+      {!isUser && message.pendingConfirm ? (
+        <ConfirmCard
+          pendingConfirm={message.pendingConfirm}
+          onConfirm={handleConfirm}
+          onCancel={handleCancelConfirm}
+          isLoading={confirmLoading}
         />
-      </View>
+      ) : (
+        <View style={[styles.bubble, isUser ? styles.bubbleUser : styles.bubbleAssistant]}>
+          <MarkdownText
+            text={message.content}
+            isUser={isUser}
+          />
+        </View>
+      )}
 
       {!isUser && message.executedActions && message.executedActions.length > 0 && (
         <View style={styles.executedActionsRow}>
@@ -1065,6 +1176,7 @@ export default function InsightsScreen() {
       let fullContent = '';
       let buffer = '';
       let executedActions: ExecutedAction[] = [];
+      let gotConfirmRequired = false;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -1079,7 +1191,21 @@ export default function InsightsScreen() {
             if (data === '[DONE]') continue;
             try {
               const parsed = JSON.parse(data);
-              if (parsed.type === 'searching') {
+              if (parsed.type === 'confirm_required') {
+                gotConfirmRequired = true;
+                const pendingConfirm: PendingConfirm = {
+                  token: parsed.token,
+                  tool: parsed.tool,
+                  preview: parsed.preview,
+                };
+                setMessages(prev => {
+                  const updated = [...prev];
+                  const idx = updated.findIndex(m => m.id === assistantId);
+                  if (idx !== -1) updated[idx] = { ...updated[idx], pendingConfirm };
+                  saveChatHistory(updated);
+                  return updated;
+                });
+              } else if (parsed.type === 'searching') {
                 setIsSearchingWeb(true);
               } else if (parsed.type === 'actions' && Array.isArray(parsed.actions)) {
                 executedActions = parsed.actions;
@@ -1111,6 +1237,10 @@ export default function InsightsScreen() {
 
       setIsStreaming(false);
       setIsSearchingWeb(false);
+
+      if (gotConfirmRequired) {
+        return;
+      }
 
       const finalContent = fullContent;
       const finalActions = executedActions;
@@ -1186,6 +1316,111 @@ export default function InsightsScreen() {
     sendMessageRef.current = sendMessage;
   }, [sendMessage]);
 
+  const handleConfirmAction = useCallback(async (msgId: string, confirmed: boolean) => {
+    const msg = messagesRef.current.find(m => m.id === msgId);
+    if (!msg?.pendingConfirm) return;
+    const { token, tool } = msg.pendingConfirm;
+
+    if (!confirmed) {
+      setMessages(prev => {
+        const updated = [...prev];
+        const idx = updated.findIndex(m => m.id === msgId);
+        if (idx !== -1) {
+          updated[idx] = {
+            ...updated[idx],
+            pendingConfirm: undefined,
+            content: 'Got it — I\'ll leave that for now.',
+          };
+        }
+        saveChatHistory(updated);
+        return updated;
+      });
+      try {
+        const declineUrl = new URL('/api/coach/decline-action', getApiUrl());
+        const res = await authFetch(declineUrl.toString(), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.content) {
+            setMessages(prev => {
+              const updated = [...prev];
+              const idx = updated.findIndex(m => m.id === msgId);
+              if (idx !== -1) updated[idx] = { ...updated[idx], content: data.content };
+              saveChatHistory(updated);
+              return updated;
+            });
+          }
+        }
+      } catch {}
+      return;
+    }
+
+    try {
+      const url = new URL('/api/coach/execute-confirmed', getApiUrl());
+      const res = await authFetch(url.toString(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setMessages(prev => {
+          const updated = [...prev];
+          const idx = updated.findIndex(m => m.id === msgId);
+          if (idx !== -1) {
+            updated[idx] = {
+              ...updated[idx],
+              pendingConfirm: undefined,
+              content: data.error || 'Could not execute that action. The confirmation may have expired.',
+            };
+          }
+          saveChatHistory(updated);
+          return updated;
+        });
+        return;
+      }
+      const execAction: ExecutedAction = {
+        tool,
+        result: data.result || 'error',
+        label: data.label || (data.result === 'success' ? 'Done' : 'Failed'),
+      };
+      const successContent = data.result === 'success'
+        ? (tool === 'send_email' ? `Email sent successfully.` : `Command executed successfully.`)
+        : `Action failed: ${data.detail || data.error || 'Unknown error'}`;
+      setMessages(prev => {
+        const updated = [...prev];
+        const idx = updated.findIndex(m => m.id === msgId);
+        if (idx !== -1) {
+          updated[idx] = {
+            ...updated[idx],
+            pendingConfirm: undefined,
+            content: successContent,
+            executedActions: [execAction],
+          };
+        }
+        saveChatHistory(updated);
+        return updated;
+      });
+    } catch {
+      setMessages(prev => {
+        const updated = [...prev];
+        const idx = updated.findIndex(m => m.id === msgId);
+        if (idx !== -1) {
+          updated[idx] = {
+            ...updated[idx],
+            pendingConfirm: undefined,
+            content: 'Something went wrong while executing that action.',
+          };
+        }
+        saveChatHistory(updated);
+        return updated;
+      });
+    }
+  }, []);
+
   const handleModeChange = useCallback((mode: CoachingMode) => {
     setCoachingMode(mode);
     coachingModeRef.current = mode;
@@ -1238,9 +1473,10 @@ export default function InsightsScreen() {
         onSpeak={speakText}
         isSpeaking={isSpeaking}
         isStreaming={isStreaming}
+        onConfirmAction={handleConfirmAction}
       />
     );
-  }, [listData, lastAssistantId, goals, sendMessage, speakText, isSpeaking, isStreaming]);
+  }, [listData, lastAssistantId, goals, sendMessage, speakText, isSpeaking, isStreaming, handleConfirmAction]);
 
   const isEmpty = messages.length === 0 && !isStreaming;
 
@@ -1728,6 +1964,87 @@ const styles = StyleSheet.create({
   },
   executedActionTextError: {
     color: '#EF4444',
+  },
+  confirmCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: 14,
+    padding: 14,
+    marginTop: 2,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    maxWidth: 300,
+  },
+  confirmCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 10,
+  },
+  confirmCardTitle: {
+    fontSize: 14,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.text,
+  },
+  confirmPreview: {
+    backgroundColor: Colors.background,
+    borderRadius: 8,
+    padding: 10,
+    gap: 4,
+    marginBottom: 12,
+  },
+  confirmPreviewLabel: {
+    fontSize: 11,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.textSecondary,
+    textTransform: 'uppercase' as const,
+    letterSpacing: 0.5,
+    marginTop: 4,
+  },
+  confirmPreviewValue: {
+    fontSize: 13,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.text,
+    lineHeight: 18,
+  },
+  confirmPreviewCode: {
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.text,
+    backgroundColor: Colors.border,
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  confirmBtnRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  confirmBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    paddingVertical: 9,
+    borderRadius: 10,
+  },
+  confirmBtnCancel: {
+    backgroundColor: Colors.background,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  confirmBtnConfirm: {
+    backgroundColor: Colors.primary,
+  },
+  confirmBtnCancelText: {
+    fontSize: 14,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.textSecondary,
+  },
+  confirmBtnConfirmText: {
+    fontSize: 14,
+    fontFamily: 'Inter_600SemiBold',
+    color: '#fff',
   },
   actionRow: {
     flexDirection: 'row',
