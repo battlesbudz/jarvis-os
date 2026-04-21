@@ -1,18 +1,9 @@
 import type { AgentTool } from "../types";
-import { getGoogleCalendarEvents } from "../../integrations/googleCalendar";
+import { getGoogleCalendarEvents, type CalendarEvent } from "../../integrations/googleCalendar";
 
 interface CalendarFetchArgs {
   date?: string;
   days?: number;
-}
-
-interface CalendarTime { dateTime?: string | null; date?: string | null }
-interface CalendarEventLike {
-  summary?: string | null;
-  location?: string | null;
-  start?: CalendarTime | null;
-  end?: CalendarTime | null;
-  attendees?: Array<unknown> | null;
 }
 
 function todayInTZ(tz: string = "Europe/London"): string {
@@ -61,19 +52,15 @@ export const fetchCalendarTool: AgentTool = {
       let totalEvents = 0;
       for (let i = 0; i < days; i++) {
         const d = addDays(startDate, i);
-        const events = (await getGoogleCalendarEvents(d, undefined, undefined, ctx.googleAccessToken)) as CalendarEventLike[];
+        const events: CalendarEvent[] = await getGoogleCalendarEvents(d, undefined, undefined, ctx.googleAccessToken);
         totalEvents += events.length;
         if (events.length === 0) {
           blocks.push(`### ${d}\n(no events)`);
           continue;
         }
         const lines = events.map((e) => {
-          const t = e.start?.dateTime || e.start?.date || "";
-          const end = e.end?.dateTime || e.end?.date || "";
           const loc = e.location ? ` @ ${e.location}` : "";
-          const attCount = Array.isArray(e.attendees) ? e.attendees.length : 0;
-          const att = attCount > 0 ? ` (${attCount} attendee${attCount === 1 ? "" : "s"})` : "";
-          return `- ${t}${end ? `–${end}` : ""}: ${e.summary || "(no title)"}${loc}${att}`;
+          return `- ${e.start}${e.end ? `–${e.end}` : ""}: ${e.title || "(no title)"}${loc}`;
         });
         blocks.push(`### ${d}\n${lines.join("\n")}`);
       }
