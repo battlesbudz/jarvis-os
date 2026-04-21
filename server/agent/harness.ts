@@ -308,10 +308,13 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
         openAITools: undefined, // no tools — force text reply
         toolChoice: "none",
         maxCompletionTokens,
-        onToken,
       });
       reply = streamResult.textContent;
       lastFinish = streamResult.finishReason;
+      // Replay buffered chunks — this is always a text-only turn (no tools).
+      for (const chunk of streamResult.textChunks) {
+        onToken(chunk);
+      }
     } else {
       const final = await openai.chat.completions.create({
         model,
