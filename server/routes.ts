@@ -855,6 +855,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
     return h.includes(n) || n.includes(h);
   }
 
+  const pendingConfirmations = new Map<string, { userId: string; tool: string; args: any; expiresAt: number }>();
+  setInterval(() => {
+    const now = Date.now();
+    for (const [token, entry] of pendingConfirmations.entries()) {
+      if (entry.expiresAt < now) pendingConfirmations.delete(token);
+    }
+  }, 60_000);
+
   async function executeCoachTool(
     toolName: string,
     args: any,
@@ -1403,6 +1411,43 @@ Answer (yes/no):`,
           for (const tc of choice.message.tool_calls) {
             let args: any = {};
             try { args = JSON.parse(tc.function.arguments); } catch {}
+
+            const isHighStakes = tc.function.name === 'send_email' ||
+              (tc.function.name === 'daemon_action' && ['shell', 'file_write'].includes(String(args.action || '')));
+
+            if (isHighStakes) {
+              if (!res.headersSent) {
+                res.setHeader('Content-Type', 'text/event-stream');
+                res.setHeader('Cache-Control', 'no-cache, no-transform');
+                res.setHeader('X-Accel-Buffering', 'no');
+                res.setHeader('Access-Control-Allow-Origin', '*');
+                res.flushHeaders();
+              }
+              const preview: Record<string, string> = {};
+              if (tc.function.name === 'send_email') {
+                preview.to = String(args.to || '');
+                preview.subject = String(args.subject || '');
+                preview.body = String(args.body || '');
+                preview.provider = String(args.provider || 'google');
+              } else {
+                preview.action = String(args.action || '');
+                if (args.cmd) preview.cmd = String(args.cmd);
+                if (args.path) preview.path = String(args.path);
+                if (args.content) preview.content = String(args.content).slice(0, 200);
+              }
+              const confirmToken = Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+              pendingConfirmations.set(confirmToken, {
+                userId,
+                tool: tc.function.name,
+                args,
+                expiresAt: Date.now() + 5 * 60 * 1000,
+              });
+              res.write(`data: ${JSON.stringify({ type: 'confirm_required', token: confirmToken, tool: tc.function.name, preview })}\n\n`);
+              res.write('data: [DONE]\n\n');
+              res.end();
+              return;
+            }
+
             const execResult = await executeCoachTool(tc.function.name, args, userId);
             let linkData: { url?: string; buttonLabel?: string } = {};
             if ((tc.function.name === 'generate_reconnect_link' || tc.function.name === 'connect_channel') && execResult.result === 'success') {
@@ -1489,6 +1534,62 @@ Answer (yes/no):`,
         res.write(`data: ${JSON.stringify({ error: "Stream interrupted" })}\n\n`);
         res.end();
       }
+    }
+  });
+
+  app.post("/api/coach/execute-confirmed", async (req: Request, res: Response) => {
+    try {
+      const { token } = req.body;
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+      if (!token) return res.status(400).json({ error: 'token is required' });
+      const pending = pendingConfirmations.get(token);
+      if (!pending) return res.status(400).json({ error: 'Confirmation token not found or expired' });
+      if (pending.userId !== userId) return res.status(403).json({ error: 'Token does not belong to this user' });
+      if (pending.expiresAt < Date.now()) {
+        pendingConfirmations.delete(token);
+        return res.status(400).json({ error: 'Confirmation token has expired' });
+      }
+      pendingConfirmations.delete(token);
+      const execResult = await executeCoachTool(pending.tool, pending.args, userId);
+      return res.json({ result: execResult.result, label: execResult.label, detail: execResult.detail });
+    } catch (error) {
+      console.error('Error in execute-confirmed:', error);
+      return res.status(500).json({ error: 'Failed to execute confirmed action' });
+    }
+  });
+
+  app.post("/api/coach/decline-action", async (req: Request, res: Response) => {
+    try {
+      const { token } = req.body;
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+      let tool = 'unknown';
+      let preview: Record<string, string> = {};
+      if (token) {
+        const pending = pendingConfirmations.get(token);
+        if (pending && pending.userId === userId) {
+          tool = pending.tool;
+          const a = pending.args;
+          if (tool === 'send_email') preview = { to: a.to || '', subject: a.subject || '' };
+          else preview = { action: a.action || '', cmd: a.cmd || '', path: a.path || '' };
+          pendingConfirmations.delete(token);
+        }
+      }
+      const toolLabel = tool === 'send_email'
+        ? `sending an email to ${preview.to || 'the recipient'}`
+        : `running a terminal command (${preview.cmd || preview.action || 'shell'})`;
+      const prompt = `The user has just declined an action you proposed. You were about to ${toolLabel} but they cancelled. Acknowledge briefly and naturally in one sentence — do not re-propose the action. Stay in your coaching persona.`;
+      const resp = await openai.chat.completions.create({
+        model: 'gpt-5-mini',
+        messages: [{ role: 'user', content: prompt }],
+        max_completion_tokens: 80,
+      });
+      const content = resp.choices[0]?.message?.content || 'Got it — I won\'t proceed with that action.';
+      return res.json({ content });
+    } catch (error) {
+      console.error('Error in decline-action:', error);
+      return res.json({ content: 'Got it — I\'ll leave that for now.' });
     }
   });
 
