@@ -227,18 +227,37 @@ function MessageBubble({ message, isFirst, isLastAssistant, goals, onFollowup, o
 
       {!isUser && message.executedActions && message.executedActions.length > 0 && (
         <View style={styles.executedActionsRow}>
-          {message.executedActions.map((ea, idx) => (
-            <View key={idx} style={[styles.executedActionBadge, ea.result === 'error' && styles.executedActionBadgeError]}>
-              <Ionicons
-                name={ea.result === 'success' ? 'checkmark-circle' : 'alert-circle'}
-                size={12}
-                color={ea.result === 'success' ? Colors.success : '#EF4444'}
-              />
-              <Text style={[styles.executedActionText, ea.result === 'error' && styles.executedActionTextError]}>
-                {ea.label}
-              </Text>
-            </View>
-          ))}
+          {message.executedActions.map((ea, idx) => {
+            const badgeStyle = [
+              styles.executedActionBadge,
+              ea.result === 'error' && styles.executedActionBadgeError,
+              !!ea.url && styles.executedActionBadgeLink,
+            ];
+            const inner = (
+              <>
+                <Ionicons
+                  name={ea.url ? 'link' : ea.result === 'success' ? 'checkmark-circle' : 'alert-circle'}
+                  size={12}
+                  color={ea.url ? Colors.primary : ea.result === 'success' ? Colors.success : '#EF4444'}
+                />
+                <Text style={[styles.executedActionText, ea.result === 'error' && styles.executedActionTextError, !!ea.url && styles.executedActionTextLink]}>
+                  {ea.buttonLabel || ea.label}
+                </Text>
+              </>
+            );
+            if (ea.url) {
+              return (
+                <Pressable key={idx} style={badgeStyle} onPress={() => Linking.openURL(ea.url!)}>
+                  {inner}
+                </Pressable>
+              );
+            }
+            return (
+              <View key={idx} style={badgeStyle}>
+                {inner}
+              </View>
+            );
+          })}
         </View>
       )}
 
@@ -1671,6 +1690,15 @@ const styles = StyleSheet.create({
   },
   executedActionBadgeError: {
     backgroundColor: 'rgba(239, 68, 68, 0.1)',
+  },
+  executedActionBadgeLink: {
+    backgroundColor: 'rgba(99, 102, 241, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(99, 102, 241, 0.3)',
+  },
+  executedActionTextLink: {
+    color: '#818CF8',
+    fontWeight: '600' as const,
   },
   executedActionText: {
     fontSize: 12,

@@ -10,6 +10,9 @@ import { driveCreateFileTool, driveListFilesTool, driveReadFileTool } from "./go
 import { fetchCalendarTool } from "./calendar";
 import { spawnSubagentTool } from "./spawnSubagent";
 import { daemonActionTool } from "./daemon";
+import { checkConnectionsTool, generateReconnectLinkTool } from "./connections";
+import { createCalendarEventTool } from "./calendarCreate";
+import { sendEmailTool } from "./sendEmail";
 
 export const ALL_TOOLS: AgentTool[] = [
   webSearchTool,
@@ -17,6 +20,7 @@ export const ALL_TOOLS: AgentTool[] = [
   gmailActionTool,
   gmailDraftTool,
   fetchCalendarTool,
+  createCalendarEventTool,
   manageTasksTool,
   createDocumentTool,
   listDocumentsTool,
@@ -26,6 +30,9 @@ export const ALL_TOOLS: AgentTool[] = [
   driveReadFileTool,
   spawnSubagentTool,
   daemonActionTool,
+  checkConnectionsTool,
+  generateReconnectLinkTool,
+  sendEmailTool,
 ];
 
 const TOOL_INDEX = new Map(ALL_TOOLS.map((t) => [t.name, t]));
@@ -45,6 +52,10 @@ export function telegramCoachTools(opts: { hasGoogle: boolean }): AgentTool[] {
     readDocumentTool,
     spawnSubagentTool,
     daemonActionTool,
+    checkConnectionsTool,
+    generateReconnectLinkTool,
+    createCalendarEventTool,
+    sendEmailTool,
   ];
   if (opts.hasGoogle) {
     base.push(gmailActionTool, gmailDraftTool, fetchCalendarTool, driveCreateFileTool, driveListFilesTool, driveReadFileTool);
@@ -58,6 +69,7 @@ export {
   gmailActionTool,
   gmailDraftTool,
   fetchCalendarTool,
+  createCalendarEventTool,
   manageTasksTool,
   createDocumentTool,
   listDocumentsTool,
@@ -67,4 +79,7 @@ export {
   driveReadFileTool,
   spawnSubagentTool,
   daemonActionTool,
+  checkConnectionsTool,
+  generateReconnectLinkTool,
+  sendEmailTool,
 };

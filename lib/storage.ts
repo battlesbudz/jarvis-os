@@ -283,6 +283,8 @@ export interface ExecutedAction {
   tool: string;
   result: 'success' | 'error';
   label: string;
+  url?: string;
+  buttonLabel?: string;
 }
 
 export interface ChatMessage {

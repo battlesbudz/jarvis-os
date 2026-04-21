@@ -126,3 +126,23 @@ export async function checkGoogleCalendarConnection(userAccessToken?: string | n
     return false;
   }
 }
+
+export async function createGoogleCalendarEvent(
+  accessToken: string,
+  event: { title: string; start: string; end: string; description?: string; location?: string }
+): Promise<{ id: string; htmlLink: string }> {
+  const calendar = buildCalendarClient(accessToken);
+  const startDt = event.start.includes('T') ? event.start : event.start + 'T00:00:00Z';
+  const endDt = event.end.includes('T') ? event.end : event.end + 'T01:00:00Z';
+  const res = await calendar.events.insert({
+    calendarId: 'primary',
+    requestBody: {
+      summary: event.title,
+      description: event.description || undefined,
+      location: event.location || undefined,
+      start: { dateTime: startDt },
+      end: { dateTime: endDt },
+    },
+  });
+  return { id: res.data.id || '', htmlLink: res.data.htmlLink || '' };
+}

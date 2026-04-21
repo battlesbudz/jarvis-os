@@ -10,15 +10,20 @@ import { resizeTask, generateSmartPlan, unblockTask } from "./ai";
 import {
   getGoogleCalendarEvents,
   checkGoogleCalendarConnection,
+  createGoogleCalendarEvent,
 } from "./integrations/googleCalendar";
 import {
   getOutlookCalendarEvents,
   checkOutlookConnection,
+  createOutlookCalendarEvent,
+  sendOutlookEmail,
+  getRecentOutlookEmails,
 } from "./integrations/outlook";
 import {
   checkGmailConnection,
   getRecentEmailCommitments,
   createGmailDraft,
+  sendGmailEmail,
 } from "./integrations/gmail";
 import { getSlackMessages } from "./integrations/slack";
 import { authRouter, authMiddleware } from "./auth";
@@ -28,12 +33,15 @@ import { registerTelegramRoutes } from "./telegramRoutes";
 import { registerChannelRoutes } from "./channels/routes";
 import { isIntegrationOwner, claimIntegrationOwnership } from "./integrationOwner";
 import { oauthRouter, oauthCallbackRouter } from "./oauthRoutes";
-import { getValidGoogleTokens, getValidMicrosoftToken, getUserTokens, getUserToken } from "./userTokenStore";
+import { getValidGoogleTokens, getValidGoogleToken, getValidMicrosoftToken, getUserTokens, getUserToken, getUserOAuthStatus } from "./userTokenStore";
 import { tavilySearch, formatSearchResults } from "./integrations/search";
 import { logInteraction, getRecentInteractions, formatInteractionTimeline } from "./interactionLog";
 import { extractAndStore } from "./memory/extractor";
 import { getSoul, getSoulPromptBlock, regenerateSoul, setManualOverride, setSoulContent } from "./memory/soul";
 import { listPeople, deletePerson } from "./memory/people";
+import { isUserPaired, sendDaemonOp, isDaemonActionAllowed } from "./daemon/bridge";
+import type { DaemonAction, DaemonOp } from "./daemon/bridge";
+import { telegramLinks, channelLinks } from "@shared/schema";
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
@@ -305,7 +313,19 @@ Subject: [subject line]
 Body:
 [email body]
 ---END DRAFT---
-Then add a brief note like "I've formatted this as a draft — tap 'Save to Drafts' to send it to your Gmail."`;
+Then add a brief note like "I've formatted this as a draft — tap 'Save to Drafts' to send it to your Gmail."
+
+## Actuation — You Have Real Hands
+You can take real actions on connected services. Use these tools proactively when the user asks:
+
+- **check_connections** — Always call this before claiming a service is (or isn't) connected. Never make assumptions about connection status.
+- **generate_reconnect_link** — When a service is disconnected and the user wants to reconnect, call this to generate a tappable OAuth button. Do not just describe how to reconnect — actually generate the link.
+- **create_calendar_event** — When the user says "block time", "schedule a meeting", "add to my calendar" — call this to actually create the event. Don't describe what you'd do, do it.
+- **fetch_emails** — Fetch inbox emails on demand beyond the ambient context.
+- **send_email** — When the user explicitly confirms they want to send an email (not just draft), call this. Always confirm before sending.
+- **daemon_action** — If the user has paired their desktop daemon, you can run shell commands, send desktop notifications, and read/write files in their workspace. Always confirm before destructive shell/write actions.
+
+**Critical rule**: Never claim you can or cannot access a service without first calling check_connections. Never promise to send an email, create a calendar event, or run a daemon command if you haven't verified the service is connected.`;
 }
 
 export async function buildPlanFromInputs(body: any): Promise<{
@@ -700,6 +720,98 @@ export async function registerRoutes(app: Express): Promise<Server> {
         },
       },
     }] : []),
+    {
+      type: "function" as const,
+      function: {
+        name: "check_connections",
+        description: "Check which external accounts and channels the user has connected (Google/Gmail/Calendar, Microsoft/Outlook, Telegram, WhatsApp, Discord, Desktop Daemon). Always call this before claiming a service is or isn't available.",
+        parameters: { type: "object", properties: {} },
+      },
+    },
+    {
+      type: "function" as const,
+      function: {
+        name: "generate_reconnect_link",
+        description: "Generate a fresh OAuth authorization URL so the user can reconnect a disconnected Google or Microsoft account. Returns a tappable link button. Use after check_connections confirms the service is not connected.",
+        parameters: {
+          type: "object",
+          properties: {
+            provider: { type: "string", enum: ["google", "microsoft"], description: "Which provider to reconnect" },
+          },
+          required: ["provider"],
+        },
+      },
+    },
+    {
+      type: "function" as const,
+      function: {
+        name: "create_calendar_event",
+        description: "Create a calendar event on the user's Google or Outlook calendar. Use when the user asks to schedule or block time. start and end must be ISO 8601 datetime strings.",
+        parameters: {
+          type: "object",
+          properties: {
+            title: { type: "string", description: "Event title" },
+            start: { type: "string", description: "Start datetime ISO 8601 (e.g. '2025-04-22T14:00:00Z')" },
+            end: { type: "string", description: "End datetime ISO 8601 (e.g. '2025-04-22T15:00:00Z')" },
+            description: { type: "string", description: "Optional event notes" },
+            location: { type: "string", description: "Optional location or video link" },
+            provider: { type: "string", enum: ["google", "microsoft"], description: "Calendar provider, default 'google'" },
+          },
+          required: ["title", "start", "end"],
+        },
+      },
+    },
+    {
+      type: "function" as const,
+      function: {
+        name: "fetch_emails",
+        description: "Fetch recent emails on demand. Use when the user asks about their inbox beyond what's already in the system context. provider: 'google' (Gmail) or 'microsoft' (Outlook). count: number of emails to fetch (default 10, max 25).",
+        parameters: {
+          type: "object",
+          properties: {
+            provider: { type: "string", enum: ["google", "microsoft"], description: "Email provider" },
+            count: { type: "number", description: "Number of emails to fetch (max 25)" },
+          },
+          required: ["provider"],
+        },
+      },
+    },
+    {
+      type: "function" as const,
+      function: {
+        name: "send_email",
+        description: "Send an email immediately via Gmail or Outlook. Only use after the user explicitly confirms they want to send. Requires Google or Microsoft to be connected.",
+        parameters: {
+          type: "object",
+          properties: {
+            to: { type: "string", description: "Recipient email address" },
+            subject: { type: "string", description: "Email subject" },
+            body: { type: "string", description: "Email body (plain text)" },
+            provider: { type: "string", enum: ["google", "microsoft"], description: "Which provider to use, default 'google'" },
+          },
+          required: ["to", "subject", "body"],
+        },
+      },
+    },
+    {
+      type: "function" as const,
+      function: {
+        name: "daemon_action",
+        description: "Execute a sandboxed action on the user's paired desktop daemon. Actions: shell (run a shell command), notify (send desktop notification), file_read (read a file), file_write (write a file), file_list (list directory). Only available if the user has paired the GamePlan desktop daemon.",
+        parameters: {
+          type: "object",
+          properties: {
+            action: { type: "string", enum: ["shell", "notify", "file_read", "file_write", "file_list"] },
+            cmd: { type: "string", description: "Shell command (for 'shell' action)" },
+            title: { type: "string", description: "Notification title (for 'notify' action)" },
+            body: { type: "string", description: "Notification body (for 'notify' action)" },
+            path: { type: "string", description: "File/directory path (for file_read/file_write/file_list)" },
+            content: { type: "string", description: "File content (for file_write)" },
+          },
+          required: ["action"],
+        },
+      },
+    },
   ];
 
   function fuzzyMatch(needle: string, haystack: string): boolean {
@@ -859,6 +971,152 @@ export async function registerRoutes(app: Express): Promise<Server> {
             }
             return { result: 'error', label: 'Search failed', detail: `Web search failed: ${msg}. Tell the user you were unable to retrieve results.` };
           }
+        }
+        case 'check_connections': {
+          const [oauthStatus, tgRows, chRows] = await Promise.all([
+            getUserOAuthStatus(userId),
+            db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq(telegramLinks.userId, userId)).limit(1),
+            db.select().from(channelLinks).where(eq(channelLinks.userId, userId)),
+          ]);
+          const daemonOnline = isUserPaired(userId);
+          const lines = [
+            `Google (Gmail + Calendar): ${oauthStatus.google?.connected ? `✓ connected as ${oauthStatus.google.email || 'unknown'}` : '✗ not connected'}`,
+            `Microsoft (Outlook + Calendar): ${oauthStatus.microsoft?.connected ? `✓ connected as ${oauthStatus.microsoft.email || 'unknown'}` : '✗ not connected'}`,
+            `Telegram: ${tgRows.length > 0 ? '✓ linked' : '✗ not linked'}`,
+            `WhatsApp: ${chRows.some((r: any) => r.channel === 'whatsapp') ? '✓ linked' : '✗ not linked'}`,
+            `Discord: ${chRows.some((r: any) => r.channel === 'discord') ? '✓ linked' : '✗ not linked'}`,
+            `Desktop Daemon: ${daemonOnline ? '✓ online' : '✗ not connected'}`,
+          ];
+          return { result: 'success', label: 'Connection status checked', detail: lines.join('\n') };
+        }
+        case 'generate_reconnect_link': {
+          const provider = String(args.provider || '').toLowerCase();
+          const domain = process.env.REPLIT_DOMAINS?.split(',')[0];
+          const isDev = process.env.REPLIT_DEV_DOMAIN === domain;
+          const baseUrl = domain ? (isDev ? `https://${domain}:5000` : `https://${domain}`) : 'http://localhost:5000';
+          if (provider === 'google') {
+            const clientId = process.env.GOOGLE_WEB_CLIENT_ID;
+            if (!clientId) return { result: 'error', label: 'Google not configured', detail: 'Google OAuth client ID not set on server.' };
+            const params = new URLSearchParams({
+              client_id: clientId,
+              redirect_uri: `${baseUrl}/api/oauth/google/callback`,
+              response_type: 'code',
+              scope: 'openid email https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose https://www.googleapis.com/auth/gmail.modify',
+              access_type: 'offline',
+              prompt: 'consent',
+              state: userId,
+            });
+            const url = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
+            return { result: 'success', label: 'Reconnect Google', detail: JSON.stringify({ url, buttonLabel: 'Reconnect Google', provider: 'google' }) };
+          }
+          if (provider === 'microsoft') {
+            const clientId = process.env.MICROSOFT_CLIENT_ID;
+            if (!clientId) return { result: 'error', label: 'Microsoft not configured', detail: 'Microsoft OAuth client ID not set on server.' };
+            const params = new URLSearchParams({
+              client_id: clientId,
+              redirect_uri: `${baseUrl}/api/oauth/microsoft/callback`,
+              response_type: 'code',
+              scope: 'offline_access Calendars.ReadWrite Mail.Read Mail.Send User.Read',
+              state: userId,
+              response_mode: 'query',
+            });
+            const url = `https://login.microsoftonline.com/common/oauth2/v2.0/authorize?${params.toString()}`;
+            return { result: 'success', label: 'Reconnect Outlook', detail: JSON.stringify({ url, buttonLabel: 'Reconnect Outlook', provider: 'microsoft' }) };
+          }
+          return { result: 'error', label: 'Unknown provider', detail: `Unknown provider: ${provider}` };
+        }
+        case 'create_calendar_event': {
+          const title = String(args.title || '').trim();
+          const start = String(args.start || '').trim();
+          const end = String(args.end || '').trim();
+          const description = args.description ? String(args.description).trim() : undefined;
+          const location = args.location ? String(args.location).trim() : undefined;
+          const provider = (String(args.provider || 'google')).toLowerCase();
+          if (!title || !start || !end) return { result: 'error', label: 'Missing fields', detail: 'title, start, and end are required.' };
+          if (provider === 'google') {
+            const tokens = await getValidGoogleTokens(userId);
+            if (!tokens.length) return { result: 'error', label: 'Google not connected', detail: 'Connect Google in Profile to create calendar events.' };
+            const result = await createGoogleCalendarEvent(tokens[0], { title, start, end, description, location });
+            return { result: 'success', label: `Event created: ${title}`, detail: result.htmlLink || `Created on ${start.slice(0, 10)}` };
+          }
+          if (provider === 'microsoft') {
+            const msToken = await getValidMicrosoftToken(userId);
+            if (!msToken) return { result: 'error', label: 'Microsoft not connected', detail: 'Connect Microsoft in Profile to create Outlook calendar events.' };
+            await createOutlookCalendarEvent(msToken, { title, start, end, description, location });
+            return { result: 'success', label: `Event created: ${title}`, detail: `Created on ${start.slice(0, 10)}` };
+          }
+          return { result: 'error', label: 'Unknown provider', detail: `Unknown provider: ${provider}` };
+        }
+        case 'fetch_emails': {
+          const provider = (String(args.provider || 'google')).toLowerCase();
+          const count = Math.min(Number(args.count) || 10, 25);
+          if (provider === 'google') {
+            const tokens = await getValidGoogleTokens(userId);
+            if (!tokens.length) return { result: 'error', label: 'Gmail not connected', detail: 'Connect Google in Profile to fetch emails.' };
+            const emails = await getRecentEmailCommitments(14, tokens[0]);
+            const recent = emails.slice(0, count).map((e: any) => `- From: ${e.from || 'unknown'} | "${e.subject}" — ${e.snippet}`).join('\n');
+            return { result: 'success', label: `Fetched ${Math.min(emails.length, count)} Gmail emails`, detail: recent || 'No emails found.' };
+          }
+          if (provider === 'microsoft') {
+            const msToken = await getValidMicrosoftToken(userId);
+            if (!msToken) return { result: 'error', label: 'Outlook not connected', detail: 'Connect Microsoft in Profile to fetch emails.' };
+            const emails = await getRecentOutlookEmails(msToken, count);
+            const text = emails.map((e: any) => `- From: ${e.from} | "${e.subject}" — ${e.snippet}`).join('\n');
+            return { result: 'success', label: `Fetched ${emails.length} Outlook emails`, detail: text || 'No emails found.' };
+          }
+          return { result: 'error', label: 'Unknown provider', detail: `Unknown provider: ${provider}` };
+        }
+        case 'send_email': {
+          const to = String(args.to || '').trim();
+          const subject = String(args.subject || '').trim();
+          const body = String(args.body || '');
+          const provider = (String(args.provider || 'google')).toLowerCase();
+          if (!to || !subject || !body.trim()) return { result: 'error', label: 'Missing fields', detail: 'to, subject, and body are all required.' };
+          const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+          if (!emailRegex.test(to)) return { result: 'error', label: 'Invalid recipient', detail: `"${to}" is not a valid email address.` };
+          if (provider === 'google') {
+            const token = await getValidGoogleToken(userId);
+            if (!token) return { result: 'error', label: 'Gmail not connected', detail: 'Connect Google in Profile to send emails.' };
+            const result = await sendGmailEmail(token, to, subject, body);
+            return { result: 'success', label: `Email sent to ${to}`, detail: `Gmail message ID: ${result.messageId}` };
+          }
+          if (provider === 'microsoft') {
+            const msToken = await getValidMicrosoftToken(userId);
+            if (!msToken) return { result: 'error', label: 'Outlook not connected', detail: 'Connect Microsoft in Profile to send emails.' };
+            await sendOutlookEmail(msToken, to, subject, body);
+            return { result: 'success', label: `Email sent to ${to}`, detail: `Sent via Outlook` };
+          }
+          return { result: 'error', label: 'Unknown provider', detail: `Unknown provider: ${provider}` };
+        }
+        case 'daemon_action': {
+          const action = String(args.action || '') as DaemonAction;
+          if (!isUserPaired(userId)) {
+            return { result: 'error', label: 'Daemon not connected', detail: 'No desktop daemon paired. User needs to install and pair the GamePlan daemon from Profile → Connected Channels.' };
+          }
+          const allowed = ['shell', 'notify', 'file_read', 'file_write', 'file_list'];
+          if (!allowed.includes(action)) return { result: 'error', label: 'Invalid action', detail: `Unknown daemon action: ${action}` };
+          if (!(await isDaemonActionAllowed(userId, action))) {
+            return { result: 'error', label: `Action '${action}' not permitted`, detail: `Enable '${action}' in Profile → Connected Channels → Desktop Daemon → Permissions.` };
+          }
+          let op: DaemonOp;
+          if (action === 'shell') {
+            if (!args.cmd) return { result: 'error', label: 'cmd required', detail: 'Provide cmd for shell action.' };
+            op = { type: 'shell', cmd: String(args.cmd), cwd: args.cwd ? String(args.cwd) : undefined };
+          } else if (action === 'notify') {
+            op = { type: 'notify', title: String(args.title || 'GamePlan'), body: String(args.body || '') };
+          } else if (action === 'file_read') {
+            if (!args.path) return { result: 'error', label: 'path required', detail: 'Provide path for file_read.' };
+            op = { type: 'file_read', path: String(args.path) };
+          } else if (action === 'file_write') {
+            if (!args.path || typeof args.content !== 'string') return { result: 'error', label: 'path+content required', detail: 'Provide path and content for file_write.' };
+            op = { type: 'file_write', path: String(args.path), content: String(args.content) };
+          } else {
+            if (!args.path) return { result: 'error', label: 'path required', detail: 'Provide path for file_list.' };
+            op = { type: 'file_list', path: String(args.path) };
+          }
+          const daemonResult = await sendDaemonOp(userId, op, action === 'shell' ? 30000 : 10000);
+          if (!daemonResult.ok) return { result: 'error', label: 'Daemon action failed', detail: daemonResult.error || 'Unknown error' };
+          return { result: 'success', label: `Daemon: ${action}`, detail: JSON.stringify(daemonResult.data || {}).slice(0, 2000) };
         }
         default:
           return { result: 'error', label: 'Unknown action', detail: `Unknown tool: ${toolName}` };
@@ -1028,7 +1286,7 @@ Answer (yes/no):`,
         ...messages.map((m: any) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
       ];
 
-      const actionResults: { tool: string; result: 'success' | 'error'; label: string }[] = [];
+      const actionResults: { tool: string; result: 'success' | 'error'; label: string; url?: string; buttonLabel?: string }[] = [];
       let toolMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [];
 
       if (userId) {
@@ -1057,7 +1315,11 @@ Answer (yes/no):`,
             let args: any = {};
             try { args = JSON.parse(tc.function.arguments); } catch {}
             const execResult = await executeCoachTool(tc.function.name, args, userId);
-            actionResults.push({ tool: tc.function.name, result: execResult.result, label: execResult.label });
+            let linkData: { url?: string; buttonLabel?: string } = {};
+            if (tc.function.name === 'generate_reconnect_link' && execResult.result === 'success') {
+              try { linkData = JSON.parse(execResult.detail); } catch {}
+            }
+            actionResults.push({ tool: tc.function.name, result: execResult.result, label: execResult.label, ...linkData });
             toolMessages.push({
               role: "tool",
               tool_call_id: tc.id,
