@@ -26,9 +26,9 @@ import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
 
-/** Thread-safe in-memory log ring buffer. Max 40 entries. UI observes via listener. */
+/** Thread-safe in-memory log ring buffer. Max 30 entries. UI observes via listener. */
 object DaemonLog {
-    private const val MAX = 40
+    private const val MAX = 30
     private val entries = ArrayDeque<String>(MAX)
     private val lock = Any()
     var onChanged: (() -> Unit)? = null

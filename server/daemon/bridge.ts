@@ -260,7 +260,7 @@ export interface OpAuditEntry {
   durationMs: number;
 }
 const opAuditLog = new Map<string, OpAuditEntry[]>();
-const MAX_AUDIT_ENTRIES = 60;
+const MAX_AUDIT_ENTRIES = 20;
 
 function recordAuditEntry(userId: string, entry: OpAuditEntry) {
   let arr = opAuditLog.get(userId);
@@ -333,7 +333,11 @@ export async function sendDaemonOp(
     userMap.set(id, {
       resolve: (result) => {
         const durationMs = Date.now() - sentAt;
-        console.log(`[daemon] op RESULT userId=${userId} op=${op.type} ok=${result.ok}`, result.ok ? '' : `err=${result.error}`);
+        if (op.type === "ping") {
+          console.log(`[daemon] ping RTT ${durationMs}ms userId=${userId} ok=${result.ok}`, result.ok ? '' : `err=${result.error}`);
+        } else {
+          console.log(`[daemon] op RESULT userId=${userId} op=${op.type} ok=${result.ok}`, result.ok ? '' : `err=${result.error}`);
+        }
         recordAuditEntry(userId, { ts: sentAt, type: op.type, ok: result.ok, error: result.error, durationMs });
         resolve(result);
       },
