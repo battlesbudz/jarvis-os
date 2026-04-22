@@ -191,6 +191,9 @@ function configureExpoAndLanding(app: express.Application) {
   const landingPageTemplate = fs.readFileSync(templatePath, "utf-8");
   const appName = getAppName();
 
+  const webBuildDir = path.resolve(process.cwd(), "static-build", "web");
+  const webIndexPath = path.join(webBuildDir, "index.html");
+
   log("Serving static Expo files with dynamic manifest routing");
 
   app.use((req: Request, res: Response, next: NextFunction) => {
@@ -208,6 +211,11 @@ function configureExpoAndLanding(app: express.Application) {
     }
 
     if (req.path === "/") {
+      // Serve the React Native Web build if it was produced by the build script
+      if (fs.existsSync(webIndexPath)) {
+        return res.sendFile(webIndexPath);
+      }
+      // Fall back to Expo Go landing page (dev / no web build)
       return serveLandingPage({
         req,
         res,
@@ -219,8 +227,23 @@ function configureExpoAndLanding(app: express.Application) {
     next();
   });
 
+  // Serve web build assets (/_expo/static/..., /assets/..., etc.)
+  if (fs.existsSync(webBuildDir)) {
+    app.use(express.static(webBuildDir));
+  }
+
   app.use("/assets", express.static(path.resolve(process.cwd(), "assets")));
   app.use(express.static(path.resolve(process.cwd(), "static-build")));
+
+  // SPA catch-all: for web build, serve index.html for any non-API, non-asset path
+  // so that client-side Expo Router navigation works in Chrome
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    if (req.path.startsWith("/api") || req.path.startsWith("/assets")) return next();
+    if (fs.existsSync(webIndexPath)) {
+      return res.sendFile(webIndexPath);
+    }
+    next();
+  });
 
   log("Expo routing: Checking expo-platform header on / and /manifest");
 }
