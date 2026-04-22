@@ -48,6 +48,10 @@ class JarvisAccessibilityService : AccessibilityService() {
     // IMPORTANT: These are called from a background executor thread (WebSocketService).
     // startActivity() must be dispatched to the main looper — Samsung OneUI silently
     // blocks activity starts from non-main threads even inside an AccessibilityService.
+    //
+    // Samsung OneUI issue: startActivity() doesn't throw even when OneUI silently
+    // swallows the intent. We therefore verify the app actually came to foreground
+    // by polling rootInActiveWindow.packageName for up to 3 seconds after dispatch.
     fun launchApp(packageName: String): Boolean {
         val pm = packageManager
         val intent = pm.getLaunchIntentForPackage(packageName) ?: return false
@@ -56,7 +60,10 @@ class JarvisAccessibilityService : AccessibilityService() {
             Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED or
             Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
         )
-        return postAndWaitForLaunch { startActivity(intent) }
+        val dispatched = postAndWaitForDispatch { startActivity(intent) }
+        if (!dispatched) return false
+        // Verify the target package actually came to foreground (handles Samsung silent blocks)
+        return waitForForeground(packageName, timeoutMs = 3000)
     }
 
     fun browseUrl(url: String): Boolean {
@@ -66,12 +73,13 @@ class JarvisAccessibilityService : AccessibilityService() {
                 Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED
             )
         }
-        return postAndWaitForLaunch { startActivity(intent) }
+        // For URLs we only verify the call dispatched (any browser may open, not just one package)
+        return postAndWaitForDispatch { startActivity(intent) }
     }
 
-    // Dispatch a startActivity() call to the main thread and wait up to 3 s for it.
-    // Returns true only if the call completed without throwing.
-    private fun postAndWaitForLaunch(block: () -> Unit): Boolean {
+    // Dispatch a startActivity() to the main thread and wait up to 3 s for the call to complete.
+    // Returns true only if the call completed without throwing an exception.
+    private fun postAndWaitForDispatch(block: () -> Unit): Boolean {
         val latch = java.util.concurrent.CountDownLatch(1)
         var success = false
         android.os.Handler(android.os.Looper.getMainLooper()).post {
@@ -90,6 +98,19 @@ class JarvisAccessibilityService : AccessibilityService() {
         } catch (e: InterruptedException) {
             false
         }
+    }
+
+    // Poll rootInActiveWindow.packageName until it matches targetPackage or timeout.
+    // Returns false (not launched) if the package never comes to foreground.
+    private fun waitForForeground(targetPackage: String, timeoutMs: Long): Boolean {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            val fg = rootInActiveWindow?.packageName?.toString()
+            if (fg == targetPackage) return true
+            Thread.sleep(200)
+        }
+        Log.w(TAG, "launchApp: $targetPackage never came to foreground (Samsung block?)")
+        return false
     }
 
     // ── Screenshot via AccessibilityService.takeScreenshot() (API 30+) ──────

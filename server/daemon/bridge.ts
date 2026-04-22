@@ -274,15 +274,18 @@ export async function sendDaemonOp(
 ): Promise<{ ok: boolean; data?: unknown; error?: string }> {
   const sock = userSockets.get(userId);
   if (!sock || sock.readyState !== WebSocket.OPEN) {
+    console.log(`[daemon] op SKIPPED — daemon not connected userId=${userId} op=${op.type}`);
     return { ok: false, error: "daemon not connected" };
   }
   const platformErr = await validateOpForPlatform(userId, op);
   if (platformErr) return platformErr;
+  console.log(`[daemon] op SENT userId=${userId} op=${op.type}`, 'packageName' in op ? `pkg=${(op as any).packageName}` : '');
   return new Promise((resolve) => {
     const id = nextOpId();
     const timer = setTimeout(() => {
       const map = pendingByUser.get(userId);
       map?.delete(id);
+      console.log(`[daemon] op TIMEOUT userId=${userId} op=${op.type}`);
       resolve({ ok: false, error: "daemon timeout" });
     }, timeoutMs);
     let userMap = pendingByUser.get(userId);
@@ -290,7 +293,13 @@ export async function sendDaemonOp(
       userMap = new Map();
       pendingByUser.set(userId, userMap);
     }
-    userMap.set(id, { resolve, timer });
+    userMap.set(id, {
+      resolve: (result) => {
+        console.log(`[daemon] op RESULT userId=${userId} op=${op.type} ok=${result.ok}`, result.ok ? '' : `err=${result.error}`);
+        resolve(result);
+      },
+      timer,
+    });
     try {
       sock.send(JSON.stringify({ type: "op", id, op }));
     } catch (err) {
