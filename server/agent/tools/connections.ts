@@ -3,7 +3,7 @@ import { getUserOAuthStatus, getValidGoogleToken, getValidMicrosoftToken } from 
 import { db } from "../../db";
 import { eq } from "drizzle-orm";
 import { channelLinks, telegramLinks } from "@shared/schema";
-import { isUserPaired } from "../../daemon/bridge";
+import { isUserPaired, isAndroidDaemonActive } from "../../daemon/bridge";
 
 function getServerBaseUrl(): string {
   const domain = process.env.REPLIT_DOMAINS?.split(',')[0];
@@ -32,8 +32,15 @@ export const checkConnectionsTool: AgentTool = {
       ]);
 
       const daemonConnected = isUserPaired(ctx.userId);
+      const androidActive = daemonConnected ? await isAndroidDaemonActive(ctx.userId) : false;
       const googleEmail = oauthStatus?.google?.email || oauthStatus?.google?.accounts?.[0]?.email || 'unknown';
       const msEmail = oauthStatus?.microsoft?.email || oauthStatus?.microsoft?.accounts?.[0]?.email || 'unknown';
+
+      const daemonLabel = daemonConnected
+        ? androidActive
+          ? `Android Device Daemon: ✓ online — use android_* actions (android_open_app, android_browse, android_screenshot, android_read_screen, android_tap, android_type, android_swipe, android_press_key, android_file_list, android_file_read). DO NOT use desktop shell/notify/file_read/file_write actions.`
+          : `Desktop Daemon: ✓ online — use shell, notify, file_read, file_write, file_list actions.`
+        : `Android/Desktop Daemon: ✗ not connected`;
 
       const lines: string[] = [
         `Google (Gmail + Calendar): ${googleToken ? `✓ token valid — ${googleEmail}` : '✗ not connected or token expired (reconnect needed)'}`,
@@ -42,7 +49,7 @@ export const checkConnectionsTool: AgentTool = {
         `Telegram: ${tgRows.length > 0 ? '✓ linked' : '✗ not linked'}`,
         `WhatsApp: ${channelRows.some(r => r.channel === 'whatsapp') ? '✓ linked' : '✗ not linked'}`,
         `Discord: ${channelRows.some(r => r.channel === 'discord') ? '✓ linked' : '✗ not linked'}`,
-        `Desktop Daemon: ${daemonConnected ? '✓ online' : '✗ not connected'}`,
+        daemonLabel,
       ];
 
       const summary = lines.join('\n');
