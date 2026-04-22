@@ -280,12 +280,8 @@ async function processUpdate(update: any): Promise<void> {
 
     if (text.startsWith('/start ') || (text.length === 6 && /^[A-Z0-9]+$/.test(text))) {
       const code = text.startsWith('/start ') ? text.slice(7).trim() : text;
-      console.log(`[Telegram] Code attempt — chatId=${chatId}, rawText="${text}", extractedCode="${code}", codeLen=${code.length}`);
       try {
-        const allCodes = await db.select().from(schema.telegramLinkCodes);
-        console.log(`[Telegram] All codes in DB: ${JSON.stringify(allCodes.map(r => r.code))}`);
         const codeRows = await db.select().from(schema.telegramLinkCodes).where(eq(schema.telegramLinkCodes.code, code));
-        console.log(`[Telegram] Lookup result for "${code}": ${codeRows.length} row(s)`);
         if (codeRows.length === 0) {
           await sendMessage(chatId, "Invalid or expired link code. Please generate a new one from the app.");
           return;
