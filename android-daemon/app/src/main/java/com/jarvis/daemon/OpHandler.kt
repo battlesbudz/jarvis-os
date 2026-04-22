@@ -141,8 +141,9 @@ object OpHandler {
         val svc = JarvisAccessibilityService.instance
             ?: return OpResult(false, error = "Accessibility service not running. Enable it in Settings > Accessibility > Jarvis Daemon.")
         return try {
-            val tree = svc.readScreenContent()
-            OpResult(true, data = JSONObject().put("screen", tree))
+            val json = JSONObject(svc.readScreenContent())
+            // Return structured data directly so the server gets package/activity/text/clickable fields
+            OpResult(true, data = json)
         } catch (e: Exception) {
             OpResult(false, error = "Read screen error: ${e.message}")
         }

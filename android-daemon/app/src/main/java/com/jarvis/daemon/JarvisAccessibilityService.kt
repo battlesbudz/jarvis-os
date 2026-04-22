@@ -3,13 +3,21 @@ package com.jarvis.daemon
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.content.Intent
+import android.graphics.Bitmap
 import android.graphics.Path
+import android.graphics.Rect
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.util.Base64
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.ByteArrayOutputStream
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 class JarvisAccessibilityService : AccessibilityService() {
 
@@ -37,20 +45,16 @@ class JarvisAccessibilityService : AccessibilityService() {
     }
 
     // ── Activity launch (exempt from Android background restriction) ─────────
-    // Accessibility services are exempt from Android 10+ background activity
-    // start restrictions. Calling startActivity from this context works even
-    // when the app is in the background.
-
     fun launchApp(packageName: String): Boolean {
         val pm = packageManager
         val intent = pm.getLaunchIntentForPackage(packageName) ?: return false
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        try {
+        return try {
             startActivity(intent)
-            return true
+            true
         } catch (e: Exception) {
             Log.e(TAG, "launchApp failed for $packageName: ${e.message}")
-            return false
+            false
         }
     }
 
@@ -68,57 +72,102 @@ class JarvisAccessibilityService : AccessibilityService() {
     }
 
     // ── Screenshot ──────────────────────────────────────────────────────────
-
-    // Screenshot capture stubbed out — screen reading (readScreenContent) and
-    // gesture control are the primary daemon features used by Jarvis.
     fun takeScreenshotBase64(): String? {
-        Log.i(TAG, "Screenshot capture not available in this build")
-        return null
-    }
-
-    // ── Read screen ──────────────────────────────────────────────────────────
-
-    fun readScreenContent(): String {
-        val root = rootInActiveWindow ?: return "[screen unavailable — accessibility not connected]"
-        val sb = StringBuilder()
-        traverseNode(root, sb, 0)
-        return sb.toString().take(12000)
-    }
-
-    private fun traverseNode(node: AccessibilityNodeInfo?, sb: StringBuilder, depth: Int) {
-        if (node == null || depth > 20) return
-        val indent = "  ".repeat(depth)
-        val className = node.className?.toString()?.substringAfterLast('.') ?: "View"
-        val text = node.text?.toString()?.trim()
-        val contentDesc = node.contentDescription?.toString()?.trim()
-        val hint = node.hintText?.toString()?.trim()
-        val isClickable = node.isClickable
-        val isEditable = node.isEditable
-        val isFocused = node.isFocused
-
-        val info = buildString {
-            append(indent)
-            append("[$className")
-            if (isClickable) append(" clickable")
-            if (isEditable) append(" editable")
-            if (isFocused) append(" focused")
-            append("]")
-            if (!text.isNullOrEmpty()) append(" text=\"$text\"")
-            if (!contentDesc.isNullOrEmpty() && contentDesc != text) append(" desc=\"$contentDesc\"")
-            if (!hint.isNullOrEmpty()) append(" hint=\"$hint\"")
-            val bounds = android.graphics.Rect()
-            node.getBoundsInScreen(bounds)
-            append(" bounds=(${bounds.left},${bounds.top},${bounds.right},${bounds.bottom})")
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            Log.w(TAG, "Screenshot requires Android 11+")
+            return null
         }
-        sb.appendLine(info)
+        val latch = CountDownLatch(1)
+        var encoded: String? = null
 
+        takeScreenshot(
+            android.view.Display.DEFAULT_DISPLAY,
+            mainExecutor,
+            object : TakeScreenshotCallback {
+                override fun onSuccess(result: ScreenshotResult) {
+                    try {
+                        val hw = result.hardwareBitmap
+                        val soft = hw.copy(Bitmap.Config.ARGB_8888, false)
+                        hw.recycle()
+                        val bos = ByteArrayOutputStream()
+                        soft.compress(Bitmap.CompressFormat.PNG, 90, bos)
+                        soft.recycle()
+                        encoded = Base64.encodeToString(bos.toByteArray(), Base64.NO_WRAP)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Screenshot encode failed: ${e.message}")
+                    } finally {
+                        latch.countDown()
+                    }
+                }
+
+                override fun onFailure(errorCode: Int) {
+                    Log.e(TAG, "takeScreenshot failed — code $errorCode")
+                    latch.countDown()
+                }
+            }
+        )
+
+        latch.await(8, TimeUnit.SECONDS)
+        return encoded
+    }
+
+    // ── Read screen — returns compact JSON ──────────────────────────────────
+    fun readScreenContent(): String {
+        val root = rootInActiveWindow
+        val packageName = root?.packageName?.toString() ?: ""
+        val activityName = try {
+            // ActivityName is not directly accessible via accessibility API;
+            // derive it from the window title or fallback to packageName
+            root?.findAccessibilityNodeInfosByViewId("${packageName}:id/action_bar")
+                ?.firstOrNull()?.parent?.className?.toString() ?: packageName
+        } catch (e: Exception) { packageName }
+
+        val texts = mutableListOf<String>()
+        val clickable = mutableListOf<JSONObject>()
+        if (root != null) collectNodes(root, texts, clickable, 0)
+
+        return JSONObject()
+            .put("package", packageName)
+            .put("activity", activityName)
+            .put("text", JSONArray(texts))
+            .put("clickable", clickable.fold(JSONArray()) { arr, obj -> arr.put(obj); arr })
+            .toString()
+    }
+
+    private fun collectNodes(
+        node: AccessibilityNodeInfo?,
+        texts: MutableList<String>,
+        clickable: MutableList<JSONObject>,
+        depth: Int
+    ) {
+        if (node == null || depth > 25) return
+        val text = node.text?.toString()?.trim()
+        val desc = node.contentDescription?.toString()?.trim()
+
+        val label = when {
+            !text.isNullOrEmpty() -> text
+            !desc.isNullOrEmpty() -> desc
+            else -> null
+        }
+        if (label != null && label.length > 1 && !texts.contains(label)) {
+            texts.add(label)
+        }
+        if (node.isClickable && label != null) {
+            val bounds = Rect()
+            node.getBoundsInScreen(bounds)
+            clickable.add(
+                JSONObject()
+                    .put("label", label)
+                    .put("x", bounds.centerX())
+                    .put("y", bounds.centerY())
+            )
+        }
         for (i in 0 until node.childCount) {
-            traverseNode(node.getChild(i), sb, depth + 1)
+            collectNodes(node.getChild(i), texts, clickable, depth + 1)
         }
     }
 
     // ── Tap ─────────────────────────────────────────────────────────────────
-
     fun performTap(x: Float, y: Float) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
             Log.w(TAG, "Gestures require Android 7+")
@@ -131,7 +180,6 @@ class JarvisAccessibilityService : AccessibilityService() {
     }
 
     // ── Type ─────────────────────────────────────────────────────────────────
-
     fun typeText(text: String) {
         val focused = findFocusedEditable(rootInActiveWindow)
         if (focused != null) {
@@ -140,7 +188,6 @@ class JarvisAccessibilityService : AccessibilityService() {
             }
             focused.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
         } else {
-            // Fallback: paste text via clipboard
             val args = Bundle().apply {
                 putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
             }
@@ -159,7 +206,6 @@ class JarvisAccessibilityService : AccessibilityService() {
     }
 
     // ── Swipe ────────────────────────────────────────────────────────────────
-
     fun performSwipe(x1: Float, y1: Float, x2: Float, y2: Float, durationMs: Long) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return
         val path = Path().apply {
@@ -172,14 +218,12 @@ class JarvisAccessibilityService : AccessibilityService() {
     }
 
     // ── Key press ────────────────────────────────────────────────────────────
-
     fun pressKey(key: String) {
         when (key) {
             "back" -> performGlobalAction(GLOBAL_ACTION_BACK)
             "home" -> performGlobalAction(GLOBAL_ACTION_HOME)
             "recents" -> performGlobalAction(GLOBAL_ACTION_RECENTS)
-            "volume_up" -> { /* handled via AudioManager if needed */ }
-            "volume_down" -> { /* handled via AudioManager if needed */ }
+            "notifications" -> performGlobalAction(GLOBAL_ACTION_NOTIFICATIONS)
         }
     }
 }
