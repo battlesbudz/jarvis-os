@@ -44,7 +44,7 @@ class JarvisAccessibilityService : AccessibilityService() {
         super.onDestroy()
     }
 
-    // ── Activity launch (exempt from Android background restriction) ─────────
+    // ── Activity launch ──────────────────────────────────────────────────────
     fun launchApp(packageName: String): Boolean {
         val pm = packageManager
         val intent = pm.getLaunchIntentForPackage(packageName) ?: return false
@@ -71,7 +71,8 @@ class JarvisAccessibilityService : AccessibilityService() {
         }
     }
 
-    // ── Screenshot ──────────────────────────────────────────────────────────
+    // ── Screenshot via AccessibilityService.takeScreenshot() (API 30+) ──────
+    @Suppress("NewApi")
     fun takeScreenshotBase64(): String? {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
             Log.w(TAG, "Screenshot requires Android 11+")
@@ -81,17 +82,21 @@ class JarvisAccessibilityService : AccessibilityService() {
         var encoded: String? = null
 
         takeScreenshot(
-            android.view.Display.DEFAULT_DISPLAY,
+            0, // Display.DEFAULT_DISPLAY
             mainExecutor,
             object : TakeScreenshotCallback {
-                override fun onSuccess(result: ScreenshotResult) {
+                override fun onSuccess(screenshotResult: ScreenshotResult) {
                     try {
-                        val hw = result.hardwareBitmap
-                        val soft = hw.copy(Bitmap.Config.ARGB_8888, false)
-                        hw.recycle()
+                        val bmp = screenshotResult.bitmap
+                        // Hardware bitmaps cannot be compressed — copy to software config first
+                        val soft = if (bmp.config == Bitmap.Config.HARDWARE) {
+                            bmp.copy(Bitmap.Config.ARGB_8888, false)
+                        } else {
+                            bmp
+                        }
                         val bos = ByteArrayOutputStream()
                         soft.compress(Bitmap.CompressFormat.PNG, 90, bos)
-                        soft.recycle()
+                        if (soft !== bmp) soft.recycle()
                         encoded = Base64.encodeToString(bos.toByteArray(), Base64.NO_WRAP)
                     } catch (e: Exception) {
                         Log.e(TAG, "Screenshot encode failed: ${e.message}")
@@ -101,7 +106,7 @@ class JarvisAccessibilityService : AccessibilityService() {
                 }
 
                 override fun onFailure(errorCode: Int) {
-                    Log.e(TAG, "takeScreenshot failed — code $errorCode")
+                    Log.e(TAG, "takeScreenshot failed with code $errorCode")
                     latch.countDown()
                 }
             }
@@ -115,29 +120,26 @@ class JarvisAccessibilityService : AccessibilityService() {
     fun readScreenContent(): String {
         val root = rootInActiveWindow
         val packageName = root?.packageName?.toString() ?: ""
-        val activityName = try {
-            // ActivityName is not directly accessible via accessibility API;
-            // derive it from the window title or fallback to packageName
-            root?.findAccessibilityNodeInfosByViewId("${packageName}:id/action_bar")
-                ?.firstOrNull()?.parent?.className?.toString() ?: packageName
-        } catch (e: Exception) { packageName }
 
         val texts = mutableListOf<String>()
-        val clickable = mutableListOf<JSONObject>()
-        if (root != null) collectNodes(root, texts, clickable, 0)
+        val clickableArr = JSONArray()
+        if (root != null) collectNodes(root, texts, clickableArr, 0)
+
+        val textArr = JSONArray()
+        for (t in texts) textArr.put(t)
 
         return JSONObject()
             .put("package", packageName)
-            .put("activity", activityName)
-            .put("text", JSONArray(texts))
-            .put("clickable", clickable.fold(JSONArray()) { arr, obj -> arr.put(obj); arr })
+            .put("activity", packageName)
+            .put("text", textArr)
+            .put("clickable", clickableArr)
             .toString()
     }
 
     private fun collectNodes(
         node: AccessibilityNodeInfo?,
         texts: MutableList<String>,
-        clickable: MutableList<JSONObject>,
+        clickable: JSONArray,
         depth: Int
     ) {
         if (node == null || depth > 25) return
@@ -155,7 +157,7 @@ class JarvisAccessibilityService : AccessibilityService() {
         if (node.isClickable && label != null) {
             val bounds = Rect()
             node.getBoundsInScreen(bounds)
-            clickable.add(
+            clickable.put(
                 JSONObject()
                     .put("label", label)
                     .put("x", bounds.centerX())
