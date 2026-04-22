@@ -10,7 +10,9 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.provider.Settings
 import android.text.Editable
 import android.text.TextWatcher
@@ -26,6 +28,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var prefs: SharedPreferences
     private var wsService: WebSocketService? = null
     private var serviceBound = false
+    private val logHandler = Handler(Looper.getMainLooper())
 
     private val requestNotificationPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -101,6 +104,23 @@ class MainActivity : AppCompatActivity() {
         requestNotificationPermissionIfNeeded()
         checkPermissionsStatus()
         bindToService()
+
+        DaemonLog.onChanged = {
+            logHandler.post { refreshLogPanel() }
+        }
+        refreshLogPanel()
+    }
+
+    private fun refreshLogPanel() {
+        val lines = DaemonLog.getAll()
+        binding.tvActivityLog.text = if (lines.isEmpty()) {
+            "No activity yet"
+        } else {
+            lines.joinToString("\n")
+        }
+        binding.scrollActivityLog.post {
+            binding.scrollActivityLog.fullScroll(android.view.View.FOCUS_DOWN)
+        }
     }
 
     override fun onResume() {
@@ -224,6 +244,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        DaemonLog.onChanged = null
         if (serviceBound) {
             unbindService(serviceConnection)
             serviceBound = false
