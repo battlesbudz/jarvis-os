@@ -33,10 +33,9 @@ object DaemonLog {
     private val lock = Any()
     var onChanged: (() -> Unit)? = null
 
-    private val fmt = SimpleDateFormat("HH:mm:ss", Locale.US)
-
     fun add(msg: String) {
-        val line = "[${fmt.format(Date())}] $msg"
+        val ts = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date())
+        val line = "[$ts] $msg"
         Log.d("JarvisLog", line)
         synchronized(lock) {
             if (entries.size >= MAX) entries.removeFirst()
