@@ -228,19 +228,47 @@ class JarvisAccessibilityService : AccessibilityService() {
     }
 
     // ── Type ─────────────────────────────────────────────────────────────────
-    fun typeText(text: String) {
-        val focused = findFocusedEditable(rootInActiveWindow)
-        if (focused != null) {
-            val args = Bundle().apply {
-                putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
-            }
-            focused.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
-        } else {
-            val args = Bundle().apply {
-                putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
-            }
-            rootInActiveWindow?.performAction(AccessibilityNodeInfo.ACTION_PASTE, args)
+    //
+    // ACTION_IME_ENTER: public in API 33 ext5+, reflected with fallback for older APIs.
+    // PhoneClaw pattern: https://github.com/rohanarun/phoneclaw
+    private val actionImeEnterCompat: Int by lazy {
+        try {
+            AccessibilityNodeInfo::class.java.getField("ACTION_IME_ENTER").getInt(null)
+        } catch (_: Throwable) {
+            0x00002000  // Internal bit flag — consistent across AOSP since API 16
         }
+    }
+
+    /** Type text into the currently-focused editable field.
+     *  @param submit If true, send IME action (Search/Go/Enter) after typing. */
+    fun typeText(text: String, submit: Boolean = false): Boolean {
+        val focused = findFocusedEditable(rootInActiveWindow)
+            ?: findFirstEditable(rootInActiveWindow)
+
+        if (focused == null) {
+            Log.w(TAG, "typeText: no editable field found")
+            return false
+        }
+
+        // Set text
+        val args = Bundle().apply {
+            putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
+        }
+        val ok = focused.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+
+        // Optional IME submit (Search/Go/Enter key on keyboard)
+        if (submit && ok) {
+            Thread.sleep(80)  // Give IME time to react
+            focused.performAction(actionImeEnterCompat)
+        }
+
+        return ok
+    }
+
+    /** Press the IME action key (Search/Go/Done/Enter) on the currently focused field. */
+    fun pressImeAction(): Boolean {
+        val focused = findFocusedEditable(rootInActiveWindow) ?: return false
+        return focused.performAction(actionImeEnterCompat)
     }
 
     private fun findFocusedEditable(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
@@ -248,6 +276,16 @@ class JarvisAccessibilityService : AccessibilityService() {
         if (node.isEditable && node.isFocused) return node
         for (i in 0 until node.childCount) {
             val result = findFocusedEditable(node.getChild(i))
+            if (result != null) return result
+        }
+        return null
+    }
+
+    private fun findFirstEditable(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+        if (node == null) return null
+        if (node.isEditable) return node
+        for (i in 0 until node.childCount) {
+            val result = findFirstEditable(node.getChild(i))
             if (result != null) return result
         }
         return null
