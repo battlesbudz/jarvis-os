@@ -81,9 +81,9 @@ class WebSocketService : Service() {
     }
 
     private fun startForegroundCompat() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(NOTIFICATION_ID, buildNotification("Starting…"),
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
         } else {
             startForeground(NOTIFICATION_ID, buildNotification("Starting…"))
         }
