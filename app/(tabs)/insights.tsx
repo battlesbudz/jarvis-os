@@ -627,7 +627,14 @@ export default function InsightsScreen() {
 
   useEffect(() => {
     return () => {
-      recordingRef.current?.stopAndUnloadAsync().catch(() => {});
+      if (recordingRef.current) {
+        recordingRef.current.stopAndUnloadAsync().catch(() => {});
+        recordingRef.current = null;
+        // Always release exclusive audio focus so other apps can use the mic
+        if (Platform.OS !== 'web') {
+          Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true }).catch(() => {});
+        }
+      }
       soundRef.current?.unloadAsync().catch(() => {});
       speakAbortRef.current?.abort();
       if (Platform.OS === 'web') {
@@ -751,6 +758,8 @@ export default function InsightsScreen() {
         const msg = error instanceof Error ? error.message : 'Unknown error';
         console.error('Failed to process recording:', msg);
         setIsTranscribing(false);
+        // Release audio focus even on error so other apps can use the mic
+        Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true }).catch(() => {});
         Alert.alert('Recording Error', `Could not process your recording: ${msg}. Please try again.`);
       }
     }
