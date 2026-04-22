@@ -287,10 +287,10 @@ async function processUpdate(update: any): Promise<void> {
           return;
         }
         const { userId } = codeRows[0];
-        const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000);
-        if (codeRows[0].createdAt < fiveMinAgo) {
+        const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1000);
+        if (codeRows[0].createdAt < thirtyMinAgo) {
           await db.delete(schema.telegramLinkCodes).where(eq(schema.telegramLinkCodes.code, code));
-          await sendMessage(chatId, "This link code has expired. Please generate a new one from the app.");
+          await sendMessage(chatId, "This link code has expired. Please ask Jarvis to connect Telegram again or use Profile → Connections to get a new one.");
           return;
         }
         await db.insert(schema.telegramLinks)
@@ -388,8 +388,6 @@ export function registerTelegramRoutes(app: Express): void {
       if (!isTelegramConfigured()) {
         return res.status(400).json({ error: "Telegram bot not configured. Add TELEGRAM_BOT_TOKEN to secrets." });
       }
-
-      await db.delete(schema.telegramLinkCodes).where(eq(schema.telegramLinkCodes.userId, userId));
 
       const code = generateLinkCode();
       await db.insert(schema.telegramLinkCodes).values({ code, userId });
