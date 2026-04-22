@@ -131,9 +131,13 @@ class MainActivity : AppCompatActivity() {
         binding.tvStatusDot.setBackgroundResource(
             if (connected) R.drawable.dot_green else R.drawable.dot_gray
         )
-        binding.btnDisconnect.visibility = if (connected) View.VISIBLE else View.GONE
-        binding.btnPair.visibility = if (connected) View.GONE else View.VISIBLE
-        binding.layoutPairInput.visibility = if (connected) View.GONE else View.VISIBLE
+        // Show disconnect button whenever the service is active (connected OR reconnecting)
+        val serviceActive = connected ||
+            status.contains("Connecting") ||
+            status.contains("Reconnecting")
+        binding.btnDisconnect.visibility = if (serviceActive) View.VISIBLE else View.GONE
+        binding.btnPair.visibility = if (serviceActive) View.GONE else View.VISIBLE
+        binding.layoutPairInput.visibility = if (serviceActive) View.GONE else View.VISIBLE
     }
 
     private fun checkPermissionsStatus() {
