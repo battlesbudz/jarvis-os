@@ -15,6 +15,7 @@ import { createCalendarEventTool } from "./calendarCreate";
 import { sendEmailTool } from "./sendEmail";
 import { fetchEmailsTool } from "./fetchEmails";
 import { connectChannelTool } from "./connectChannel";
+import { discordPostTool } from "./discordPost";
 
 export const ALL_TOOLS: AgentTool[] = [
   webSearchTool,
@@ -37,6 +38,7 @@ export const ALL_TOOLS: AgentTool[] = [
   sendEmailTool,
   fetchEmailsTool,
   connectChannelTool,
+  discordPostTool,
 ];
 
 const TOOL_INDEX = new Map(ALL_TOOLS.map((t) => [t.name, t]));
@@ -62,6 +64,7 @@ export function telegramCoachTools(opts: { hasGoogle: boolean }): AgentTool[] {
     sendEmailTool,
     fetchEmailsTool,
     connectChannelTool,
+    discordPostTool,
   ];
   if (opts.hasGoogle) {
     base.push(gmailActionTool, gmailDraftTool, fetchCalendarTool, driveCreateFileTool, driveListFilesTool, driveReadFileTool);
@@ -90,4 +93,5 @@ export {
   sendEmailTool,
   fetchEmailsTool,
   connectChannelTool,
+  discordPostTool,
 };

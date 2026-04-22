@@ -1,0 +1,256 @@
+/**
+ * Jarvis Discord Workspace
+ *
+ * Sets up an organised category + topic channels inside a Discord guild so
+ * Jarvis can think, plan, and coach across different life areas.
+ *
+ * Topic channels:
+ *   📋 tasks      — daily plans, task lists, morning briefings
+ *   💰 finance     — money, budgets, financial goals
+ *   💡 ideas       — app ideas, product thoughts, creative sparks
+ *   💼 business    — work, clients, business goals
+ *   🌱 personal    — health, relationships, personal growth
+ *   🧠 thinking    — Jarvis reasoning, reflections, long-form planning
+ */
+
+import {
+  Client,
+  ChannelType,
+  PermissionFlagsBits,
+  type Guild,
+  type TextChannel,
+  type CategoryChannel,
+} from "discord.js";
+import { db } from "../db";
+import { channelLinks } from "@shared/schema";
+import { eq, and } from "drizzle-orm";
+import type { DiscordLinkMeta } from "./manager";
+
+// ── Topic definitions ────────────────────────────────────────────────────────
+
+export interface WorkspaceTopic {
+  key: string;
+  emoji: string;
+  name: string;
+  description: string;
+  keywords: string[];
+}
+
+export const WORKSPACE_TOPICS: WorkspaceTopic[] = [
+  {
+    key: "tasks",
+    emoji: "📋",
+    name: "tasks",
+    description: "Daily plans, tasks, morning briefings, and to-do tracking.",
+    keywords: ["task", "todo", "plan", "morning", "schedule", "reminder", "deadline", "priority", "checklist", "habit"],
+  },
+  {
+    key: "finance",
+    emoji: "💰",
+    name: "finance",
+    description: "Money, budgets, expenses, investments, and financial goals.",
+    keywords: ["money", "finance", "budget", "expense", "income", "invest", "savings", "cost", "revenue", "profit", "debt", "credit", "bank", "tax", "salary", "payment"],
+  },
+  {
+    key: "ideas",
+    emoji: "💡",
+    name: "ideas",
+    description: "App ideas, product concepts, creative sparks, and feature brainstorms.",
+    keywords: ["idea", "app", "product", "feature", "build", "startup", "prototype", "design", "concept", "innovation", "saas", "tool", "software"],
+  },
+  {
+    key: "business",
+    emoji: "💼",
+    name: "business",
+    description: "Work, clients, business strategy, goals, and professional growth.",
+    keywords: ["business", "client", "work", "project", "meeting", "strategy", "goal", "company", "sales", "marketing", "partnership", "pitch", "contract", "team"],
+  },
+  {
+    key: "personal",
+    emoji: "🌱",
+    name: "personal",
+    description: "Health, relationships, personal growth, and life balance.",
+    keywords: ["health", "sleep", "exercise", "workout", "relationship", "family", "friend", "personal", "mindset", "stress", "energy", "mental", "wellness", "habit", "life"],
+  },
+  {
+    key: "thinking",
+    emoji: "🧠",
+    name: "thinking",
+    description: "Jarvis reflections, long-form planning, and strategic thinking logs.",
+    keywords: ["reflect", "think", "insight", "analysis", "review", "retrospective", "learn", "pattern", "observation"],
+  },
+];
+
+export interface WorkspaceMeta {
+  guildId: string;
+  guildName: string;
+  categoryId: string;
+  channels: Record<string, string>; // topicKey → channel ID
+}
+
+// ── Topic classifier ─────────────────────────────────────────────────────────
+
+/**
+ * Returns the topic key that best matches the given text,
+ * or "thinking" as a fallback.
+ */
+export function classifyTopic(text: string): string {
+  const lower = text.toLowerCase();
+  let best = { key: "thinking", score: 0 };
+
+  for (const topic of WORKSPACE_TOPICS) {
+    let score = 0;
+    for (const kw of topic.keywords) {
+      if (lower.includes(kw)) score++;
+    }
+    if (score > best.score) {
+      best = { key: topic.key, score };
+    }
+  }
+
+  return best.key;
+}
+
+// ── Workspace setup ──────────────────────────────────────────────────────────
+
+export async function setupWorkspace(
+  client: Client,
+  userId: string,
+  guildId: string,
+): Promise<{ ok: boolean; error?: string; workspace?: WorkspaceMeta }> {
+  try {
+    const guild = await client.guilds.fetch(guildId) as Guild;
+
+    // Create (or find) the Jarvis category
+    const existingCat = guild.channels.cache.find(
+      (ch) => ch.type === ChannelType.GuildCategory && ch.name === "🧠 Jarvis Workspace",
+    ) as CategoryChannel | undefined;
+
+    let category: CategoryChannel;
+    if (existingCat) {
+      category = existingCat;
+    } else {
+      category = await guild.channels.create({
+        name: "🧠 Jarvis Workspace",
+        type: ChannelType.GuildCategory,
+      }) as CategoryChannel;
+    }
+
+    // Create (or find) each topic channel under the category
+    const channelIds: Record<string, string> = {};
+
+    for (const topic of WORKSPACE_TOPICS) {
+      const channelName = `${topic.emoji}${topic.name}`;
+      const existing = guild.channels.cache.find(
+        (ch) =>
+          ch.type === ChannelType.GuildText &&
+          (ch as TextChannel).parentId === category.id &&
+          ch.name === `${topic.emoji}${topic.name}`,
+      ) as TextChannel | undefined;
+
+      if (existing) {
+        channelIds[topic.key] = existing.id;
+      } else {
+        const created = await guild.channels.create({
+          name: channelName,
+          type: ChannelType.GuildText,
+          parent: category.id,
+          topic: topic.description,
+        }) as TextChannel;
+        channelIds[topic.key] = created.id;
+        // Welcome message
+        await created.send(
+          `**${topic.emoji} ${topic.name.charAt(0).toUpperCase() + topic.name.slice(1)}**\n${topic.description}\n\n_Jarvis will post relevant updates here and you can ask me anything in this topic._`,
+        ).catch(() => {});
+      }
+    }
+
+    const workspace: WorkspaceMeta = {
+      guildId,
+      guildName: guild.name,
+      categoryId: category.id,
+      channels: channelIds,
+    };
+
+    // Persist workspace metadata into the channel_links row
+    const rows = await db
+      .select()
+      .from(channelLinks)
+      .where(and(eq(channelLinks.userId, userId), eq(channelLinks.channel, "discord")))
+      .limit(1);
+
+    if (rows.length > 0) {
+      const existing = (rows[0].metadata as DiscordLinkMeta) || {};
+      await db
+        .update(channelLinks)
+        .set({ metadata: { ...existing, workspace } })
+        .where(and(eq(channelLinks.userId, userId), eq(channelLinks.channel, "discord")));
+    }
+
+    return { ok: true, workspace };
+  } catch (err: unknown) {
+    console.error("[Workspace] setup failed:", err);
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+// ── Topic-based posting ──────────────────────────────────────────────────────
+
+/**
+ * Posts a message to the topic channel that best matches the given topic key.
+ * Falls back to the "thinking" channel if the specific channel isn't found.
+ */
+export async function postToTopicChannel(
+  client: Client,
+  workspace: WorkspaceMeta,
+  topicKey: string,
+  text: string,
+): Promise<boolean> {
+  const channelId = workspace.channels[topicKey] ?? workspace.channels["thinking"];
+  if (!channelId) return false;
+
+  try {
+    const channel = await client.channels.fetch(channelId) as TextChannel | null;
+    if (!channel || !channel.isTextBased()) return false;
+
+    const chunks = splitIntoChunks(text, 1900);
+    for (const chunk of chunks) {
+      await (channel as TextChannel).send(chunk);
+    }
+    return true;
+  } catch (err) {
+    console.error("[Workspace] postToTopicChannel failed:", err);
+    return false;
+  }
+}
+
+function splitIntoChunks(text: string, maxLen: number): string[] {
+  if (text.length <= maxLen) return [text];
+  const chunks: string[] = [];
+  while (text.length > 0) {
+    let cut = maxLen;
+    if (text.length > maxLen) {
+      const nl = text.lastIndexOf("\n", maxLen);
+      if (nl > maxLen * 0.5) cut = nl + 1;
+    }
+    chunks.push(text.slice(0, cut));
+    text = text.slice(cut);
+  }
+  return chunks;
+}
+
+// ── Channel → topic lookup ───────────────────────────────────────────────────
+
+/** Returns the topic for a given Discord channel ID, or null if not a workspace channel. */
+export function getTopicForChannel(
+  workspace: WorkspaceMeta | undefined,
+  channelId: string,
+): WorkspaceTopic | null {
+  if (!workspace) return null;
+  for (const [key, id] of Object.entries(workspace.channels)) {
+    if (id === channelId) {
+      return WORKSPACE_TOPICS.find((t) => t.key === key) ?? null;
+    }
+  }
+  return null;
+}

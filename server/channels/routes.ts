@@ -5,7 +5,7 @@ import { channelLinks, channelLinkCodes, telegramLinks, NOTIFICATION_TYPES, CHAN
 import { authMiddleware } from "../auth";
 import { getAllPreferences, setPreference, getChannel, listChannels } from "./registry";
 import { createDaemonPairingCode, isUserPaired, closeUserDaemon, getDaemonPermissions, setDaemonPermissions, isDaemonActionAllowed, DEFAULT_DAEMON_PERMISSIONS, type DaemonAction, type DaemonPermissions } from "../daemon/bridge";
-import { startUserBot, stopUserBot, getBotStatus, completePairing, getGuildsForUser, getChannelsForGuild, type AllowlistedGuild, type DiscordLinkMeta } from "../discord/manager";
+import { startUserBot, stopUserBot, getBotStatus, completePairing, getGuildsForUser, getChannelsForGuild, setupDiscordWorkspace, type AllowlistedGuild, type DiscordLinkMeta, WORKSPACE_TOPICS } from "../discord/manager";
 import { saveUserToken, getUserToken, deleteUserToken } from "../userTokenStore";
 
 function generateCode(len = 6): string {
@@ -341,5 +341,25 @@ export function registerChannelRoutes(app: Express): void {
       console.error("[channels] discord allowlist delete failed:", err);
       res.status(500).json({ error: "failed to update allowlist" });
     }
+  });
+
+  // POST /api/channels/discord/workspace/setup — create Jarvis Workspace channels in a guild
+  app.post("/api/channels/discord/workspace/setup", authMiddleware, async (req: Request, res: Response) => {
+    const userId = (req as any).user.id;
+    const { guildId } = req.body as { guildId?: string };
+    if (!guildId) return res.status(400).json({ error: "guildId is required" });
+    try {
+      const result = await setupDiscordWorkspace(userId, guildId);
+      if (!result.ok) return res.status(400).json({ error: result.error });
+      res.json({ ok: true, workspace: result.workspace, topics: WORKSPACE_TOPICS });
+    } catch (err) {
+      console.error("[channels] discord workspace setup failed:", err);
+      res.status(500).json({ error: "failed to set up workspace" });
+    }
+  });
+
+  // GET /api/channels/discord/workspace/topics — list all available topics
+  app.get("/api/channels/discord/workspace/topics", authMiddleware, (_req: Request, res: Response) => {
+    res.json({ topics: WORKSPACE_TOPICS });
   });
 }

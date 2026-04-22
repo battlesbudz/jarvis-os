@@ -4,6 +4,7 @@ import { eq, and } from "drizzle-orm";
 import { channelLinks, users } from "@shared/schema";
 import { getUserToken, saveUserToken, deleteUserToken } from "../userTokenStore";
 import { runCoachAgent } from "../channels/coachAgent";
+import { setupWorkspace as _setupWorkspace, postToTopicChannel as _postToTopicChannel, classifyTopic, getTopicForChannel, WORKSPACE_TOPICS, type WorkspaceMeta } from "./workspace";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -19,6 +20,7 @@ export interface DiscordLinkMeta {
   discordUsername?: string;
   dmChannelId?: string;
   allowlistedGuilds?: AllowlistedGuild[];
+  workspace?: import("./workspace").WorkspaceMeta;
 }
 
 export interface AllowlistedGuild {
@@ -191,6 +193,17 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
 
     if (!userText) return;
 
+    // ── Detect workspace topic channel ─────────────────────────────────
+    const link2 = await lookupLink(botOwnerId);
+    const workspace = link2?.meta.workspace;
+    const topicForChannel = getTopicForChannel(workspace, message.channelId);
+    const channelLabel = topicForChannel
+      ? `Discord #${topicForChannel.emoji}${topicForChannel.name}`
+      : "Discord";
+    const topicContext = topicForChannel
+      ? `\n\n[Workspace channel: ${topicForChannel.emoji} ${topicForChannel.name.charAt(0).toUpperCase() + topicForChannel.name.slice(1)}. ${topicForChannel.description} Keep your response focused on this life area unless the user explicitly asks about something else.]`
+      : "";
+
     // ── Route through coach pipeline with streaming edits ──────────────
     let placeholder: Message | null = null;
     try {
@@ -216,8 +229,8 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
     try {
       const result = await runCoachAgent({
         userId,
-        userText,
-        channelName: "Discord",
+        userText: topicContext ? userText + topicContext : userText,
+        channelName: channelLabel,
         onToken,
       });
 
@@ -477,4 +490,36 @@ export async function getChannelsForGuild(
   } catch {
     return [];
   }
+}
+
+// ── Workspace ────────────────────────────────────────────────────────────────
+
+export { WORKSPACE_TOPICS, classifyTopic, type WorkspaceMeta } from "./workspace";
+
+/** Set up the Jarvis Workspace category + topic channels in a guild. */
+export async function setupDiscordWorkspace(
+  userId: string,
+  guildId: string,
+): Promise<{ ok: boolean; error?: string; workspace?: WorkspaceMeta }> {
+  const client = botClients.get(userId);
+  if (!client || !client.isReady()) {
+    return { ok: false, error: "Discord bot is not running. Make sure your bot token is saved and the bot is in the server." };
+  }
+  return _setupWorkspace(client, userId, guildId);
+}
+
+/** Post a message to a topic channel in the user's workspace. */
+export async function postToDiscordWorkspace(
+  userId: string,
+  topicKey: string,
+  text: string,
+): Promise<boolean> {
+  const client = botClients.get(userId);
+  if (!client || !client.isReady()) return false;
+
+  const link = await lookupLink(userId);
+  const workspace = link?.meta.workspace;
+  if (!workspace) return false;
+
+  return _postToTopicChannel(client, workspace, topicKey, text);
 }
