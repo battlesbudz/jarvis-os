@@ -209,6 +209,9 @@ export default function ProfileScreen() {
   const [daemonCode, setDaemonCode] = useState<string | null>(null);
   const [daemonPerms, setDaemonPerms] = useState<Record<string, boolean> | null>(null);
   const [daemonPermsBusy, setDaemonPermsBusy] = useState<string | null>(null);
+  const [androidDaemonCode, setAndroidDaemonCode] = useState<string | null>(null);
+  const [androidDaemonPerms, setAndroidDaemonPerms] = useState<Record<string, boolean> | null>(null);
+  const [androidDaemonPermsBusy, setAndroidDaemonPermsBusy] = useState<string | null>(null);
   const [channelBusy, setChannelBusy] = useState<string | null>(null);
   const telegramPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [loadingStatus, setLoadingStatus] = useState(true);
@@ -557,7 +560,7 @@ export default function ProfileScreen() {
     setLifeContext(lc);
     setNotificationsEnabledState(notifications);
     setUserName(name);
-    await Promise.all([loadOAuthStatus(), loadMemories(), loadTelegramStatus(), loadMorningNotes(), loadDocuments(), loadSoul(), loadPeople(), loadChannels(), loadDaemonPerms()]);
+    await Promise.all([loadOAuthStatus(), loadMemories(), loadTelegramStatus(), loadMorningNotes(), loadDocuments(), loadSoul(), loadPeople(), loadChannels(), loadDaemonPerms(), loadAndroidDaemonPerms()]);
     try {
       const importRes = await apiRequest('GET', '/api/chatgpt-import/status');
       const importData = await importRes.json();
@@ -569,6 +572,10 @@ export default function ProfileScreen() {
       if (prefs.timezone) setTimezone(prefs.timezone);
       if (typeof prefs.emailAlertsEnabled === 'boolean') setEmailAlertsEnabled(prefs.emailAlertsEnabled);
     } catch {}
+  // loadDaemonPerms and loadAndroidDaemonPerms are useCallback([], []) — they are
+  // referentially stable and safe to omit from deps; including them causes a
+  // temporal-dead-zone ReferenceError because they are declared after loadAll.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadOAuthStatus, loadMemories, loadTelegramStatus, loadMorningNotes, loadDocuments, loadSoul, loadPeople, loadChannels]);
 
   const handleToggleEmailAlerts = useCallback(async () => {
@@ -807,12 +814,50 @@ export default function ProfileScreen() {
     }
   }, [daemonPerms]);
 
+  const handleGenerateAndroidDaemonCode = useCallback(async () => {
+    setChannelBusy('android-daemon');
+    try {
+      const res = await apiRequest('POST', '/api/channels/daemon/code');
+      const data = await res.json();
+      setAndroidDaemonCode(data.code);
+    } catch (err) {
+      console.error('[android-daemon] code error:', err);
+    } finally {
+      setChannelBusy(null);
+    }
+  }, []);
+
+  const loadAndroidDaemonPerms = useCallback(async () => {
+    try {
+      const res = await apiRequest('GET', '/api/channels/android-daemon/permissions');
+      const data = await res.json();
+      setAndroidDaemonPerms(data.permissions || null);
+    } catch (err) {
+      console.error('[android-daemon] permissions load error:', err);
+    }
+  }, []);
+
+  const handleToggleAndroidDaemonPerm = useCallback(async (action: string) => {
+    if (!androidDaemonPerms) return;
+    setAndroidDaemonPermsBusy(action);
+    const next = { ...androidDaemonPerms, [action]: !androidDaemonPerms[action] };
+    setAndroidDaemonPerms(next);
+    try {
+      await apiRequest('PUT', '/api/channels/android-daemon/permissions', { permissions: next });
+    } catch (err) {
+      console.error('[android-daemon] permissions update error:', err);
+      setAndroidDaemonPerms(androidDaemonPerms);
+    } finally {
+      setAndroidDaemonPermsBusy(null);
+    }
+  }, [androidDaemonPerms]);
+
   const handleUnlinkChannel = useCallback(async (channel: string) => {
     setChannelBusy(channel);
     try {
       await apiRequest('DELETE', `/api/channels/${channel}`);
       if (channel === 'whatsapp') setWhatsappCode(null);
-      if (channel === 'daemon') setDaemonCode(null);
+      if (channel === 'daemon') { setDaemonCode(null); setAndroidDaemonCode(null); }
       if (channel === 'discord') { setDiscordBotToken(''); setDiscordPairCode(''); }
       await loadChannels();
     } catch (err) {
@@ -2369,14 +2414,14 @@ export default function ProfileScreen() {
               <View style={styles.platformInfo}>
                 <Text style={styles.platformName}>Desktop Daemon</Text>
                 <Text style={styles.platformSubtitle}>
-                  {channelData?.connected.daemon
+                  {channelData?.connected.daemon && channelData?.meta?.daemon?.platform !== 'android'
                     ? `Connected${channelData.meta?.daemon?.hostname ? ` • ${channelData.meta.daemon.hostname}` : ''}`
                     : 'Run the daemon and let the agent control your computer'}
                 </Text>
               </View>
               {channelBusy === 'daemon' ? (
                 <ActivityIndicator size="small" color="#6B72FF" />
-              ) : channelData?.connected.daemon ? (
+              ) : channelData?.connected.daemon && channelData?.meta?.daemon?.platform !== 'android' ? (
                 <Pressable style={styles.disconnectBtn} onPress={() => handleUnlinkChannel('daemon')}>
                   <Ionicons name="checkmark-circle" size={18} color={Colors.success} />
                   <Text style={styles.disconnectBtnText}>Unpair</Text>
@@ -2459,6 +2504,118 @@ export default function ProfileScreen() {
                         onValueChange={() => handleToggleDaemonPerm(p.key)}
                         trackColor={{ false: Colors.border, true: '#6B72FF88' }}
                         thumbColor={daemonPerms[p.key] ? '#6B72FF' : '#f4f3f4'}
+                      />
+                    )}
+                  </View>
+                ))}
+              </View>
+            )}
+
+            {/* Android Device */}
+            <View style={[styles.platformRow, { borderTopWidth: 1, borderTopColor: Colors.border }]}>
+              <View style={[styles.platformIcon, { backgroundColor: '#34A85318' }]}>
+                <Ionicons name="phone-portrait-outline" size={20} color="#34A853" />
+              </View>
+              <View style={styles.platformInfo}>
+                <Text style={styles.platformName}>Android Device</Text>
+                <Text style={styles.platformSubtitle}>
+                  {channelData?.connected.daemon && channelData?.meta?.daemon?.platform === 'android'
+                    ? `Connected${channelData.meta?.daemon?.hostname ? ` • ${channelData.meta.daemon.hostname}` : ''}`
+                    : 'Sideload the APK and let Jarvis control your Android phone'}
+                </Text>
+              </View>
+              {channelBusy === 'android-daemon' ? (
+                <ActivityIndicator size="small" color="#34A853" />
+              ) : channelData?.connected.daemon && channelData?.meta?.daemon?.platform === 'android' ? (
+                <Pressable style={styles.disconnectBtn} onPress={() => handleUnlinkChannel('daemon')}>
+                  <Ionicons name="checkmark-circle" size={18} color={Colors.success} />
+                  <Text style={styles.disconnectBtnText}>Unpair</Text>
+                </Pressable>
+              ) : (
+                <Pressable
+                  style={[styles.connectBtn, { borderColor: '#34A853' }]}
+                  onPress={handleGenerateAndroidDaemonCode}
+                >
+                  <Text style={[styles.connectBtnText, { color: '#34A853' }]}>Pair</Text>
+                </Pressable>
+              )}
+            </View>
+            {androidDaemonCode && (
+              <View style={{ paddingHorizontal: 16, paddingVertical: 12, backgroundColor: Colors.background }}>
+                <Text style={{ fontSize: 13, fontFamily: 'Inter_500Medium', color: Colors.text, marginBottom: 6 }}>
+                  Pairing code (valid 15 min):
+                </Text>
+                <Text selectable style={{ fontSize: 24, fontFamily: 'Inter_700Bold', letterSpacing: 4, color: '#34A853', marginBottom: 8 }}>
+                  {androidDaemonCode}
+                </Text>
+                <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, lineHeight: 18, marginBottom: 6 }}>
+                  Build the APK from the android-daemon/ source in your Jarvis project, sideload it on your Android phone (enable "Install from unknown sources" in Settings), then open the app and enter this code.
+                </Text>
+                <View style={{ padding: 10, borderRadius: 8, backgroundColor: '#34A85312', borderWidth: 1, borderColor: '#34A853' }}>
+                  <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: '#1a6b30', marginBottom: 4 }}>
+                    Required permissions on Android:
+                  </Text>
+                  <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: '#1a6b30', lineHeight: 16 }}>
+                    1. Accessibility Service — lets Jarvis read the screen and perform taps{'\n'}
+                    2. Storage / Files — lets Jarvis access gallery, downloads, and any folder{'\n'}
+                    3. The app must stay running (it shows a persistent notification to stay alive)
+                  </Text>
+                </View>
+              </View>
+            )}
+
+            {/* Android daemon per-action permissions */}
+            {androidDaemonPerms && (
+              <View style={{ paddingHorizontal: 16, paddingVertical: 12, borderTopWidth: 1, borderTopColor: Colors.border, backgroundColor: Colors.background }}>
+                <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: Colors.text, marginBottom: 4 }}>
+                  Android permissions
+                </Text>
+                <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, lineHeight: 17, marginBottom: 10 }}>
+                  Choose what Jarvis can do on your Android. Tap/type and file reads are off by default.
+                </Text>
+                {([
+                  { key: 'android_screenshot',  label: 'Take screenshots' },
+                  { key: 'android_read_screen',  label: 'Read screen content (accessibility tree)' },
+                  { key: 'android_open_app',     label: 'Open apps by name' },
+                  { key: 'android_browse',       label: 'Open URLs in browser' },
+                  { key: 'android_file_list',    label: 'List files (gallery, downloads, any folder)' },
+                  { key: 'android_file_read',    label: 'Read files from device storage' },
+                  { key: 'android_tap_type',     label: 'Tap, type and swipe on screen' },
+                ] as const).map((p) => p.key === 'android_tap_type' ? (
+                  <View key={p.key}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8 }}>
+                      <Text style={{ flex: 1, fontSize: 13, fontFamily: 'Inter_400Regular', color: Colors.text }}>{p.label}</Text>
+                      {androidDaemonPermsBusy === p.key ? (
+                        <ActivityIndicator size="small" color="#34A853" />
+                      ) : (
+                        <Switch
+                          value={!!androidDaemonPerms[p.key]}
+                          onValueChange={() => handleToggleAndroidDaemonPerm(p.key)}
+                          trackColor={{ false: Colors.border, true: '#34A85388' }}
+                          thumbColor={androidDaemonPerms[p.key] ? '#34A853' : '#f4f3f4'}
+                        />
+                      )}
+                    </View>
+                    <View style={{ marginTop: 4, marginBottom: 4, padding: 10, borderRadius: 8, backgroundColor: '#FFF4E5', borderWidth: 1, borderColor: '#F0B44A' }}>
+                      <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: '#8A5A00', marginBottom: 2 }}>
+                        ⚠ Tap/type gives Jarvis input control
+                      </Text>
+                      <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: '#8A5A00', lineHeight: 16 }}>
+                        Jarvis will always ask for confirmation before tapping or typing on your behalf. Enable only if you trust Jarvis to act on your screen.
+                      </Text>
+                    </View>
+                  </View>
+                ) : (
+                  <View key={p.key} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8 }}>
+                    <Text style={{ flex: 1, fontSize: 13, fontFamily: 'Inter_400Regular', color: Colors.text }}>{p.label}</Text>
+                    {androidDaemonPermsBusy === p.key ? (
+                      <ActivityIndicator size="small" color="#34A853" />
+                    ) : (
+                      <Switch
+                        value={!!androidDaemonPerms[p.key]}
+                        onValueChange={() => handleToggleAndroidDaemonPerm(p.key)}
+                        trackColor={{ false: Colors.border, true: '#34A85388' }}
+                        thumbColor={androidDaemonPerms[p.key] ? '#34A853' : '#f4f3f4'}
                       />
                     )}
                   </View>

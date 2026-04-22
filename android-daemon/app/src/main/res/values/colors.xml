@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="brand_green">#34A853</color>
+    <color name="brand_purple">#6B72FF</color>
+    <color name="background">#F8F9FA</color>
+    <color name="surface">#FFFFFF</color>
+    <color name="text_primary">#1A1A2E</color>
+    <color name="text_secondary">#6B7280</color>
+    <color name="status_ok">#34A853</color>
+    <color name="status_warn">#F59E0B</color>
+    <color name="status_error">#EF4444</color>
+    <color name="border">#E5E7EB</color>
+</resources>

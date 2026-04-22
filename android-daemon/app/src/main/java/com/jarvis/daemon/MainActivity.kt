@@ -1,0 +1,210 @@
+package com.jarvis.daemon
+
+import android.app.AlertDialog
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.content.ServiceConnection
+import android.content.SharedPreferences
+import android.net.Uri
+import android.os.Build
+import android.os.Bundle
+import android.os.Environment
+import android.os.IBinder
+import android.provider.Settings
+import android.text.Editable
+import android.text.TextWatcher
+import android.view.View
+import android.widget.Toast
+import androidx.appcompat.app.AppCompatActivity
+import com.jarvis.daemon.databinding.ActivityMainBinding
+
+class MainActivity : AppCompatActivity() {
+
+    private lateinit var binding: ActivityMainBinding
+    private lateinit var prefs: SharedPreferences
+    private var wsService: WebSocketService? = null
+    private var serviceBound = false
+
+    private val serviceConnection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
+            val b = binder as? WebSocketService.LocalBinder ?: return
+            wsService = b.getService()
+            serviceBound = true
+            wsService?.onStatusChanged = { status, connected ->
+                runOnUiThread { updateStatus(status, connected) }
+            }
+            updateStatus(wsService?.currentStatus ?: "Disconnected", wsService?.isConnected ?: false)
+        }
+        override fun onServiceDisconnected(name: ComponentName?) {
+            wsService = null
+            serviceBound = false
+        }
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        binding = ActivityMainBinding.inflate(layoutInflater)
+        setContentView(binding.root)
+
+        prefs = getSharedPreferences("jarvis_daemon", Context.MODE_PRIVATE)
+
+        val savedUrl = prefs.getString("server_url", "") ?: ""
+        if (savedUrl.isNotEmpty()) {
+            binding.etServerUrl.setText(savedUrl)
+        }
+
+        binding.etServerUrl.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: Editable?) {
+                prefs.edit().putString("server_url", s.toString().trim()).apply()
+            }
+        })
+
+        binding.btnPair.setOnClickListener {
+            val url = binding.etServerUrl.text.toString().trim()
+            val code = binding.etPairCode.text.toString().trim().uppercase()
+            if (url.isEmpty()) {
+                Toast.makeText(this, "Enter the Jarvis server URL first", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            if (code.length != 8) {
+                Toast.makeText(this, "Pairing code must be 8 characters", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            startDaemonService(url, code)
+            binding.etPairCode.setText("")
+        }
+
+        binding.btnDisconnect.setOnClickListener {
+            stopDaemonService()
+        }
+
+        binding.btnCheckAccessibility.setOnClickListener {
+            openAccessibilitySettings()
+        }
+
+        binding.btnCheckStorage.setOnClickListener {
+            openStoragePermission()
+        }
+
+        checkPermissionsStatus()
+        bindToService()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        checkPermissionsStatus()
+    }
+
+    private fun bindToService() {
+        val intent = Intent(this, WebSocketService::class.java)
+        bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+    }
+
+    private fun startDaemonService(serverUrl: String, pairCode: String) {
+        val intent = Intent(this, WebSocketService::class.java).apply {
+            action = WebSocketService.ACTION_CONNECT
+            putExtra(WebSocketService.EXTRA_SERVER_URL, serverUrl)
+            putExtra(WebSocketService.EXTRA_PAIR_CODE, pairCode)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(intent)
+        } else {
+            startService(intent)
+        }
+        prefs.edit().putString("server_url", serverUrl).apply()
+        Toast.makeText(this, "Connecting to Jarvis…", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun stopDaemonService() {
+        val intent = Intent(this, WebSocketService::class.java).apply {
+            action = WebSocketService.ACTION_DISCONNECT
+        }
+        startService(intent)
+        Toast.makeText(this, "Disconnected", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun updateStatus(status: String, connected: Boolean) {
+        binding.tvStatus.text = status
+        binding.tvStatusDot.setBackgroundResource(
+            if (connected) R.drawable.dot_green else R.drawable.dot_gray
+        )
+        binding.btnDisconnect.visibility = if (connected) View.VISIBLE else View.GONE
+        binding.btnPair.visibility = if (connected) View.GONE else View.VISIBLE
+        binding.layoutPairInput.visibility = if (connected) View.GONE else View.VISIBLE
+    }
+
+    private fun checkPermissionsStatus() {
+        val accessibilityEnabled = isAccessibilityEnabled()
+        val storageGranted = isStorageGranted()
+
+        binding.tvAccessibilityStatus.text = if (accessibilityEnabled) "✓ Enabled" else "✗ Not enabled — tap to fix"
+        binding.tvAccessibilityStatus.setTextColor(
+            if (accessibilityEnabled) getColor(R.color.status_ok) else getColor(R.color.status_warn)
+        )
+
+        binding.tvStorageStatus.text = if (storageGranted) "✓ Granted" else "✗ Not granted — tap to fix"
+        binding.tvStorageStatus.setTextColor(
+            if (storageGranted) getColor(R.color.status_ok) else getColor(R.color.status_warn)
+        )
+    }
+
+    private fun isAccessibilityEnabled(): Boolean {
+        val service = "${packageName}/${JarvisAccessibilityService::class.java.canonicalName}"
+        val enabled = Settings.Secure.getString(contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: ""
+        return enabled.contains(service)
+    }
+
+    private fun isStorageGranted(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            Environment.isExternalStorageManager()
+        } else {
+            checkSelfPermission(android.Manifest.permission.READ_EXTERNAL_STORAGE) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        }
+    }
+
+    private fun openAccessibilitySettings() {
+        AlertDialog.Builder(this)
+            .setTitle("Enable Accessibility Service")
+            .setMessage("1. Tap 'Installed apps' or scroll to find 'Jarvis Daemon'\n2. Tap it and enable the toggle\n3. Confirm any warnings\n\nThis allows Jarvis to read your screen and perform actions on your behalf.")
+            .setPositiveButton("Open Settings") { _, _ ->
+                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun openStoragePermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            AlertDialog.Builder(this)
+                .setTitle("Allow File Access")
+                .setMessage("Jarvis needs 'All files access' to read your gallery, downloads, and other folders.\n\nIn the next screen, find 'Jarvis Daemon' and enable 'Allow access to manage all files'.")
+                .setPositiveButton("Open Settings") { _, _ ->
+                    try {
+                        val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                            Uri.parse("package:$packageName"))
+                        startActivity(intent)
+                    } catch (e: Exception) {
+                        startActivity(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
+                    }
+                }
+                .setNegativeButton("Cancel", null)
+                .show()
+        } else {
+            requestPermissions(arrayOf(
+                android.Manifest.permission.READ_EXTERNAL_STORAGE,
+                android.Manifest.permission.WRITE_EXTERNAL_STORAGE
+            ), 1001)
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        if (serviceBound) {
+            unbindService(serviceConnection)
+            serviceBound = false
+        }
+    }
+}

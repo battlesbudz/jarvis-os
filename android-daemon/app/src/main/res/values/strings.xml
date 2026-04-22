@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Jarvis Daemon</string>
+    <string name="accessibility_service_label">Jarvis Device Control</string>
+    <string name="accessibility_service_description">Allows Jarvis to read screen content, tap, type, swipe, and take screenshots on your behalf — only when you send a command through the Jarvis app or Telegram.</string>
+</resources>
