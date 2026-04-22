@@ -40,7 +40,7 @@ import { logInteraction, getRecentInteractions, formatInteractionTimeline } from
 import { extractAndStore } from "./memory/extractor";
 import { getSoul, getSoulPromptBlock, regenerateSoul, setManualOverride, setSoulContent } from "./memory/soul";
 import { listPeople, deletePerson } from "./memory/people";
-import { isUserPaired, sendDaemonOp, isDaemonActionAllowed } from "./daemon/bridge";
+import { isUserPaired, sendDaemonOp, isDaemonActionAllowed, isAndroidDaemonActive, isAndroidDaemonActionAllowed, type AndroidDaemonAction } from "./daemon/bridge";
 import type { DaemonAction, DaemonOp } from "./daemon/bridge";
 import { telegramLinks, channelLinks } from "@shared/schema";
 import { connectChannelTool } from "./agent/tools/connectChannel";
@@ -145,7 +145,7 @@ async function getMorningNoteSummary(userId: string): Promise<string> {
   }
 }
 
-function buildCoachSystemPrompt(goals: any[], stats: any, history: any[], calendarEvents: any[] = [], lifeContext?: any, gmailItems?: any[], gmailConnected?: boolean, slackMessages?: any[], slackConnected?: boolean, commitmentsList?: any[], coachingMode?: string, memories?: { content: string; category: string }[], telegramMessages?: any[], telegramConnected?: boolean, morningNoteSummary?: string, documentsContext?: string, crossChannelContext?: string, soulBlock?: string): string {
+function buildCoachSystemPrompt(goals: any[], stats: any, history: any[], calendarEvents: any[] = [], lifeContext?: any, gmailItems?: any[], gmailConnected?: boolean, slackMessages?: any[], slackConnected?: boolean, commitmentsList?: any[], coachingMode?: string, memories?: { content: string; category: string }[], telegramMessages?: any[], telegramConnected?: boolean, morningNoteSummary?: string, documentsContext?: string, crossChannelContext?: string, soulBlock?: string, daemonSection?: string): string {
   const completedHistory = history.filter((h: any) => h.completed);
   const skippedHistory = history.filter((h: any) => !h.completed);
   const completionRate = history.length > 0
@@ -326,7 +326,7 @@ You can take real actions on connected services. Use these tools proactively whe
 - **create_calendar_event** — When the user says "block time", "schedule a meeting", "add to my calendar" — call this to actually create the event. Don't describe what you'd do, do it.
 - **fetch_emails** — Fetch inbox emails on demand beyond the ambient context.
 - **send_email** — When the user explicitly confirms they want to send an email (not just draft), call this. Always confirm before sending.
-- **daemon_action** — If the user has paired their desktop daemon, you can run shell commands, send desktop notifications, and read/write files in their workspace. Always confirm before destructive shell/write actions.
+- **daemon_action** — Execute actions on the user's paired daemon (desktop or Android). ${daemonSection || 'Call check_connections first to determine which daemon type is paired and which actions are available.'}
 
 **Critical rule**: Never claim you can or cannot access a service without first calling check_connections. Never promise to send an email, create a calendar event, or run a daemon command if you haven't verified the service is connected. When a user asks to connect any channel, always call connect_channel rather than giving manual instructions.`;
 }
@@ -816,16 +816,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
       type: "function" as const,
       function: {
         name: "daemon_action",
-        description: "Execute a sandboxed action on the user's paired desktop daemon. Actions: shell (run a shell command), notify (send desktop notification), file_read (read a file), file_write (write a file), file_list (list directory). Only available if the user has paired the GamePlan desktop daemon.",
+        description: "Execute a sandboxed action on the user's paired daemon — either a desktop daemon or an Android device daemon. DESKTOP actions (when desktop daemon paired): shell, notify, file_read, file_write, file_list. ANDROID actions (when Android daemon paired): android_open_app (launch app by package name e.g. 'com.google.android.youtube'), android_browse (open URL in browser), android_screenshot (capture screen), android_read_screen (read visible UI text), android_tap (tap at x/y), android_type (type text), android_swipe (swipe gesture), android_press_key (back/home/recents), android_file_list, android_file_read. Always call check_connections first to know which daemon type is paired.",
         parameters: {
           type: "object",
           properties: {
-            action: { type: "string", enum: ["shell", "notify", "file_read", "file_write", "file_list"] },
+            action: { type: "string", enum: ["shell", "notify", "file_read", "file_write", "file_list", "android_open_app", "android_browse", "android_screenshot", "android_read_screen", "android_tap", "android_type", "android_swipe", "android_press_key", "android_file_list", "android_file_read"] },
             cmd: { type: "string", description: "Shell command (for 'shell' action)" },
             title: { type: "string", description: "Notification title (for 'notify' action)" },
             body: { type: "string", description: "Notification body (for 'notify' action)" },
-            path: { type: "string", description: "File/directory path (for file_read/file_write/file_list)" },
+            path: { type: "string", description: "File/directory path (for file_read/file_write/file_list/android_file_list/android_file_read)" },
             content: { type: "string", description: "File content (for file_write)" },
+            packageName: { type: "string", description: "Android app package name (for android_open_app, e.g. 'com.google.android.youtube')" },
+            url: { type: "string", description: "URL to open (for android_browse)" },
+            x: { type: "number", description: "X pixel coordinate (for android_tap)" },
+            y: { type: "number", description: "Y pixel coordinate (for android_tap)" },
+            text: { type: "string", description: "Text to type (for android_type)" },
+            x1: { type: "number", description: "Swipe start X (for android_swipe)" },
+            y1: { type: "number", description: "Swipe start Y (for android_swipe)" },
+            x2: { type: "number", description: "Swipe end X (for android_swipe)" },
+            y2: { type: "number", description: "Swipe end Y (for android_swipe)" },
+            key: { type: "string", enum: ["back", "home", "recents", "volume_up", "volume_down"], description: "System key (for android_press_key)" },
           },
           required: ["action"],
         },
@@ -1026,9 +1036,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
             db.select().from(channelLinks).where(eq(channelLinks.userId, userId)),
           ]);
           const daemonOnline = isUserPaired(userId);
+          const isAndroid = daemonOnline ? await isAndroidDaemonActive(userId) : false;
           const googleEmail = oauthStatus?.google?.email || (oauthStatus?.google?.accounts?.[0]?.email) || 'unknown';
           const msEmail = oauthStatus?.microsoft?.email || (oauthStatus?.microsoft?.accounts?.[0]?.email) || 'unknown';
           const slackConnectedCheck = (oauthStatus as any)?.slack?.connected ?? false;
+          const daemonLabel = daemonOnline
+            ? isAndroid
+              ? `Android Device Daemon: ✓ online — use android_open_app, android_browse, android_screenshot, android_read_screen, android_tap, android_type, android_swipe, android_press_key, android_file_list, android_file_read. DO NOT use desktop shell/notify/file actions.`
+              : `Desktop Daemon: ✓ online — use shell, notify, file_read, file_write, file_list actions.`
+            : `Android/Desktop Daemon: ✗ not connected`;
           const lines = [
             `Google (Gmail + Calendar): ${googleToken ? `✓ token valid — ${googleEmail}` : '✗ not connected or token expired (reconnect needed)'}`,
             `Microsoft (Outlook + Calendar): ${msToken ? `✓ token valid — ${msEmail}` : '✗ not connected or token expired (reconnect needed)'}`,
@@ -1036,7 +1052,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             `Telegram: ${tgRows.length > 0 ? '✓ linked' : '✗ not linked'}`,
             `WhatsApp: ${chRows.some((r: any) => r.channel === 'whatsapp') ? '✓ linked' : '✗ not linked'}`,
             `Discord: ${chRows.some((r: any) => r.channel === 'discord') ? '✓ linked' : '✗ not linked'}`,
-            `Desktop Daemon: ${daemonOnline ? '✓ online' : '✗ not connected'}`,
+            daemonLabel,
           ];
           return { result: 'success', label: 'Connection status checked', detail: lines.join('\n') };
         }
@@ -1181,32 +1197,84 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return { result: 'error', label: 'Unknown provider', detail: `Unknown provider: ${provider}` };
         }
         case 'daemon_action': {
-          const action = String(args.action || '') as DaemonAction;
+          const action = String(args.action || '');
           if (!isUserPaired(userId)) {
-            return { result: 'error', label: 'Daemon not connected', detail: 'No desktop daemon paired. User needs to install and pair the GamePlan daemon from Profile → Connected Channels.' };
+            return { result: 'error', label: 'Daemon not connected', detail: 'No daemon paired. Install and pair either the desktop daemon or the Android APK from Profile → Connected Channels.' };
           }
-          const allowed = ['shell', 'notify', 'file_read', 'file_write', 'file_list'];
-          if (!allowed.includes(action)) return { result: 'error', label: 'Invalid action', detail: `Unknown daemon action: ${action}` };
-          if (!(await isDaemonActionAllowed(userId, action))) {
-            return { result: 'error', label: `Action '${action}' not permitted`, detail: `Enable '${action}' in Profile → Connected Channels → Desktop Daemon → Permissions.` };
-          }
+          const isAndroidDaemon = await isAndroidDaemonActive(userId);
+          const androidActions = ['android_open_app', 'android_browse', 'android_screenshot', 'android_read_screen', 'android_tap', 'android_type', 'android_swipe', 'android_press_key', 'android_file_list', 'android_file_read'];
+          const desktopActions = ['shell', 'notify', 'file_read', 'file_write', 'file_list'];
+
           let op: DaemonOp;
-          if (action === 'shell') {
-            if (!args.cmd) return { result: 'error', label: 'cmd required', detail: 'Provide cmd for shell action.' };
-            op = { type: 'shell', cmd: String(args.cmd), cwd: args.cwd ? String(args.cwd) : undefined };
-          } else if (action === 'notify') {
-            op = { type: 'notify', title: String(args.title || 'GamePlan'), body: String(args.body || '') };
-          } else if (action === 'file_read') {
-            if (!args.path) return { result: 'error', label: 'path required', detail: 'Provide path for file_read.' };
-            op = { type: 'file_read', path: String(args.path) };
-          } else if (action === 'file_write') {
-            if (!args.path || typeof args.content !== 'string') return { result: 'error', label: 'path+content required', detail: 'Provide path and content for file_write.' };
-            op = { type: 'file_write', path: String(args.path), content: String(args.content) };
+          if (androidActions.includes(action)) {
+            if (!isAndroidDaemon) return { result: 'error', label: 'Android daemon required', detail: 'This action requires an Android daemon. The paired daemon is a desktop daemon.' };
+            // Check Android permissions
+            const permMap: Record<string, AndroidDaemonAction | null> = {
+              android_screenshot: 'android_screenshot', android_read_screen: 'android_read_screen',
+              android_open_app: 'android_open_app', android_browse: 'android_browse',
+              android_file_list: 'android_file_list', android_file_read: 'android_file_read',
+              android_tap: 'android_tap_type', android_type: 'android_tap_type',
+              android_swipe: 'android_tap_type', android_press_key: 'android_tap_type',
+            };
+            const permKey = permMap[action];
+            if (permKey && !(await isAndroidDaemonActionAllowed(userId, permKey))) {
+              return { result: 'error', label: `Permission denied`, detail: `Android action '${action}' is not permitted. Enable it in Profile → Connected Channels → Android Device → Permissions.` };
+            }
+            if (action === 'android_open_app') {
+              if (!args.packageName) return { result: 'error', label: 'packageName required', detail: 'Provide packageName for android_open_app.' };
+              op = { type: 'android_open_app', packageName: String(args.packageName) };
+            } else if (action === 'android_browse') {
+              if (!args.url) return { result: 'error', label: 'url required', detail: 'Provide url for android_browse.' };
+              op = { type: 'android_browse', url: String(args.url) };
+            } else if (action === 'android_screenshot') {
+              op = { type: 'android_screenshot' };
+            } else if (action === 'android_read_screen') {
+              op = { type: 'android_read_screen' };
+            } else if (action === 'android_tap') {
+              if (typeof args.x !== 'number' || typeof args.y !== 'number') return { result: 'error', label: 'x,y required', detail: 'Provide x and y for android_tap.' };
+              op = { type: 'android_tap', x: args.x, y: args.y };
+            } else if (action === 'android_type') {
+              if (!args.text) return { result: 'error', label: 'text required', detail: 'Provide text for android_type.' };
+              op = { type: 'android_type', text: String(args.text) };
+            } else if (action === 'android_swipe') {
+              if (typeof args.x1 !== 'number' || typeof args.y1 !== 'number' || typeof args.x2 !== 'number' || typeof args.y2 !== 'number') return { result: 'error', label: 'coords required', detail: 'Provide x1,y1,x2,y2 for android_swipe.' };
+              op = { type: 'android_swipe', x1: args.x1, y1: args.y1, x2: args.x2, y2: args.y2, durationMs: typeof args.durationMs === 'number' ? args.durationMs : 300 };
+            } else if (action === 'android_press_key') {
+              const validKeys = ['back', 'home', 'recents', 'volume_up', 'volume_down'] as const;
+              const key = String(args.key || 'back') as typeof validKeys[number];
+              if (!validKeys.includes(key)) return { result: 'error', label: 'invalid key', detail: 'Key must be back, home, recents, volume_up, or volume_down.' };
+              op = { type: 'android_press_key', key };
+            } else if (action === 'android_file_list') {
+              if (!args.path) return { result: 'error', label: 'path required', detail: 'Provide path for android_file_list.' };
+              op = { type: 'android_file_list', path: String(args.path) };
+            } else {
+              if (!args.path) return { result: 'error', label: 'path required', detail: 'Provide path for android_file_read.' };
+              op = { type: 'android_file_read', path: String(args.path) };
+            }
+          } else if (desktopActions.includes(action)) {
+            if (isAndroidDaemon) return { result: 'error', label: 'Wrong daemon type', detail: `Action '${action}' is desktop-only. Use android_* actions for the connected Android daemon.` };
+            if (!(await isDaemonActionAllowed(userId, action as DaemonAction))) {
+              return { result: 'error', label: `Action '${action}' not permitted`, detail: `Enable '${action}' in Profile → Connected Channels → Desktop Daemon → Permissions.` };
+            }
+            if (action === 'shell') {
+              if (!args.cmd) return { result: 'error', label: 'cmd required', detail: 'Provide cmd for shell action.' };
+              op = { type: 'shell', cmd: String(args.cmd), cwd: args.cwd ? String(args.cwd) : undefined };
+            } else if (action === 'notify') {
+              op = { type: 'notify', title: String(args.title || 'Jarvis'), body: String(args.body || '') };
+            } else if (action === 'file_read') {
+              if (!args.path) return { result: 'error', label: 'path required', detail: 'Provide path for file_read.' };
+              op = { type: 'file_read', path: String(args.path) };
+            } else if (action === 'file_write') {
+              if (!args.path || typeof args.content !== 'string') return { result: 'error', label: 'path+content required', detail: 'Provide path and content for file_write.' };
+              op = { type: 'file_write', path: String(args.path), content: String(args.content) };
+            } else {
+              if (!args.path) return { result: 'error', label: 'path required', detail: 'Provide path for file_list.' };
+              op = { type: 'file_list', path: String(args.path) };
+            }
           } else {
-            if (!args.path) return { result: 'error', label: 'path required', detail: 'Provide path for file_list.' };
-            op = { type: 'file_list', path: String(args.path) };
+            return { result: 'error', label: 'Unknown action', detail: `Unknown daemon action: ${action}` };
           }
-          const daemonResult = await sendDaemonOp(userId, op, action === 'shell' ? 30000 : 10000);
+          const daemonResult = await sendDaemonOp(userId, op, action === 'shell' ? 30000 : 30000);
           if (!daemonResult.ok) return { result: 'error', label: 'Daemon action failed', detail: daemonResult.error || 'Unknown error' };
           return { result: 'success', label: `Daemon: ${action}`, detail: JSON.stringify(daemonResult.data || {}).slice(0, 2000) };
         }
@@ -1378,7 +1446,14 @@ Answer (yes/no):`,
       }
 
       const soulBlock = await getSoulPromptBlock(userId);
-      const systemPrompt = buildCoachSystemPrompt(goals || [], stats || {}, history || [], calendarEvents || [], lifeContext || null, resolvedGmailItems, resolvedGmailConnected, slackMessages || [], slackConnected ?? false, userCommitments, coachingMode, memories, telegramMessages || [], telegramConnected ?? false, morningNoteSummary, documentsContext, crossChannelContext, soulBlock);
+      const daemonPaired = userId ? isUserPaired(userId) : false;
+      const androidActive = daemonPaired && userId ? await isAndroidDaemonActive(userId) : false;
+      const daemonSection = daemonPaired
+        ? androidActive
+          ? 'Android Device Daemon is ACTIVE. Use android_open_app, android_browse, android_screenshot, android_read_screen, android_tap, android_type, android_swipe, android_press_key, android_file_list, android_file_read actions. DO NOT use shell/notify/file_read/file_write desktop actions.'
+          : 'Desktop Daemon is ACTIVE. Use shell, notify, file_read, file_write, file_list actions.'
+        : 'No daemon paired yet.';
+      const systemPrompt = buildCoachSystemPrompt(goals || [], stats || {}, history || [], calendarEvents || [], lifeContext || null, resolvedGmailItems, resolvedGmailConnected, slackMessages || [], slackConnected ?? false, userCommitments, coachingMode, memories, telegramMessages || [], telegramConnected ?? false, morningNoteSummary, documentsContext, crossChannelContext, soulBlock, daemonSection);
 
       const chatMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
         { role: "system", content: systemPrompt + proactiveQuestionContext + "\n\nYou can take actions on the user's behalf using the available tools. When a user asks you to add a task, log progress, update their context, etc., use the appropriate tool. Respond naturally — do not mention 'tool calls' or 'functions' to the user. Just confirm what you did conversationally." + (process.env.TAVILY_API_KEY ? "\n\nYou also have a web_search tool. Use it whenever the user asks about current events, live data (weather, stock prices, sports scores, news), or anything requiring real-time information you wouldn't know. Cite your sources naturally in your response." : "") },
