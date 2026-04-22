@@ -45,28 +45,49 @@ class JarvisAccessibilityService : AccessibilityService() {
     }
 
     // ── Activity launch ──────────────────────────────────────────────────────
+    // IMPORTANT: These are called from a background executor thread (WebSocketService).
+    // startActivity() must be dispatched to the main looper — Samsung OneUI silently
+    // blocks activity starts from non-main threads even inside an AccessibilityService.
     fun launchApp(packageName: String): Boolean {
         val pm = packageManager
         val intent = pm.getLaunchIntentForPackage(packageName) ?: return false
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        return try {
-            startActivity(intent)
-            true
-        } catch (e: Exception) {
-            Log.e(TAG, "launchApp failed for $packageName: ${e.message}")
-            false
-        }
+        intent.addFlags(
+            Intent.FLAG_ACTIVITY_NEW_TASK or
+            Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED or
+            Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+        )
+        return postAndWaitForLaunch { startActivity(intent) }
     }
 
     fun browseUrl(url: String): Boolean {
-        return try {
-            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+            addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK or
+                Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED
+            )
+        }
+        return postAndWaitForLaunch { startActivity(intent) }
+    }
+
+    // Dispatch a startActivity() call to the main thread and wait up to 3 s for it.
+    // Returns true only if the call completed without throwing.
+    private fun postAndWaitForLaunch(block: () -> Unit): Boolean {
+        val latch = java.util.concurrent.CountDownLatch(1)
+        var success = false
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            try {
+                block()
+                success = true
+            } catch (e: Exception) {
+                Log.e(TAG, "Activity launch failed: ${e.message}")
+            } finally {
+                latch.countDown()
             }
-            startActivity(intent)
-            true
-        } catch (e: Exception) {
-            Log.e(TAG, "browseUrl failed for $url: ${e.message}")
+        }
+        return try {
+            latch.await(3, java.util.concurrent.TimeUnit.SECONDS)
+            success
+        } catch (e: InterruptedException) {
             false
         }
     }
