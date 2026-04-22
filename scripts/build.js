@@ -498,6 +498,42 @@ function updateManifests(manifests, timestamp, baseUrl, assetsByHash) {
   console.log("Manifests updated");
 }
 
+async function buildWebExport(domain) {
+  console.log("Building Expo web export...");
+  const webOutputDir = path.join("static-build", "web");
+  fs.mkdirSync(webOutputDir, { recursive: true });
+
+  return new Promise((resolve, reject) => {
+    const env = {
+      ...process.env,
+      EXPO_PUBLIC_DOMAIN: domain,
+    };
+    const proc = spawn(
+      "npx",
+      ["expo", "export", "--platform", "web", "--output-dir", webOutputDir, "--clear"],
+      { stdio: ["ignore", "pipe", "pipe"], env }
+    );
+
+    if (proc.stdout) proc.stdout.on("data", (d) => { const s = d.toString().trim(); if (s) console.log(`[WebExport] ${s}`); });
+    if (proc.stderr) proc.stderr.on("data", (d) => { const s = d.toString().trim(); if (s) console.error(`[WebExport] ${s}`); });
+
+    proc.on("close", (code) => {
+      if (code === 0) {
+        console.log("Web export complete");
+        resolve();
+      } else {
+        console.warn(`Web export exited with code ${code} — web build may be incomplete`);
+        resolve(); // non-fatal: iOS/Android still work
+      }
+    });
+
+    proc.on("error", (err) => {
+      console.warn("Web export error:", err.message, "— continuing without web build");
+      resolve(); // non-fatal
+    });
+  });
+}
+
 async function main() {
   console.log("Building static Expo Go deployment...");
 
@@ -548,11 +584,17 @@ async function main() {
   console.log("Updating manifests and creating landing page...");
   updateManifests(manifests, timestamp, baseUrl, assetsByHash);
 
-  console.log("Build complete! Deploy to:", baseUrl);
-
+  // Kill Metro before web export (both would use port 8081)
   if (metroProcess) {
     metroProcess.kill();
+    metroProcess = null;
+    await new Promise((r) => setTimeout(r, 2000)); // wait for port to free
   }
+
+  await buildWebExport(domain);
+
+  console.log("Build complete! Deploy to:", baseUrl);
+
   process.exit(0);
 }
 
