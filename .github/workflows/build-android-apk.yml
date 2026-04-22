@@ -36,10 +36,17 @@ jobs:
           echo "Downloading Gradle 8.4 distribution..."
           curl -sL https://services.gradle.org/distributions/gradle-8.4-bin.zip -o /tmp/gradle-8.4-bin.zip
           unzip -q /tmp/gradle-8.4-bin.zip -d /tmp/gradle-dist
-          echo "Generating wrapper with official Gradle 8.4..."
-          chmod +x /tmp/gradle-dist/gradle-8.4/bin/gradle
-          /tmp/gradle-dist/gradle-8.4/bin/gradle wrapper --gradle-version 8.4 --project-dir android-daemon
-          echo "Wrapper jar size: $(ls -lh android-daemon/gradle/wrapper/gradle-wrapper.jar)"
+          echo "Extracting gradle-wrapper.jar directly from distribution (no Maven needed)..."
+          WRAPPER_JAR=$(find /tmp/gradle-dist/gradle-8.4 -name "gradle-wrapper.jar" 2>/dev/null | head -1)
+          if [ -n "$WRAPPER_JAR" ]; then
+            mkdir -p android-daemon/gradle/wrapper
+            cp "$WRAPPER_JAR" android-daemon/gradle/wrapper/gradle-wrapper.jar
+            echo "Wrapper jar ready: $(ls -lh android-daemon/gradle/wrapper/gradle-wrapper.jar)"
+          else
+            echo "gradle-wrapper.jar not found in distribution zip. Contents:"
+            find /tmp/gradle-dist/gradle-8.4 -name "*.jar" | head -20
+            exit 1
+          fi
 
       - name: Grant execute permission for gradlew
         run: chmod +x android-daemon/gradlew
