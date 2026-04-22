@@ -68,12 +68,12 @@ export const connectChannelTool: AgentTool = {
             label: "Could not get bot username",
           };
         }
-        const url = `https://t.me/${botUsername}?start=${code}`;
+        const url = `https://t.me/${botUsername}`;
         return {
           ok: true,
-          content: JSON.stringify({ url, buttonLabel: "Open Telegram", channel: "telegram" }),
+          content: JSON.stringify({ url, buttonLabel: "Open Telegram", channel: "telegram", code }),
           label: "Open Telegram",
-          detail: JSON.stringify({ url, buttonLabel: "Open Telegram", channel: "telegram" }),
+          detail: JSON.stringify({ url, buttonLabel: "Open Telegram", channel: "telegram", code }),
         };
       }
 

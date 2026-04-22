@@ -353,20 +353,42 @@ function MessageBubble({ message, isFirst, isLastAssistant, goals, onFollowup, o
         return (
           <>
             {urlActions.map((ea, idx) => (
-              <Pressable
-                key={`link-${idx}`}
-                style={({ pressed }) => [styles.executedActionButton, pressed && { opacity: 0.8 }]}
-                onPress={() => {
-                  if (ea.url!.startsWith('profile://')) {
-                    router.push('/(tabs)/profile');
-                  } else {
-                    Linking.openURL(ea.url!);
-                  }
-                }}
-              >
-                <Ionicons name="open-outline" size={15} color="#fff" />
-                <Text style={styles.executedActionButtonText}>{ea.buttonLabel || ea.label}</Text>
-              </Pressable>
+              <View key={`link-${idx}`}>
+                <Pressable
+                  style={({ pressed }) => [styles.executedActionButton, pressed && { opacity: 0.8 }]}
+                  onPress={() => {
+                    if (ea.url!.startsWith('profile://')) {
+                      router.push('/(tabs)/profile');
+                    } else {
+                      Linking.openURL(ea.url!);
+                    }
+                  }}
+                >
+                  <Ionicons name="open-outline" size={15} color="#fff" />
+                  <Text style={styles.executedActionButtonText}>{ea.buttonLabel || ea.label}</Text>
+                </Pressable>
+                {ea.code && (
+                  <Pressable
+                    style={styles.connectCodeBlock}
+                    onPress={() => {
+                      if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.clipboard) {
+                        navigator.clipboard.writeText(ea.code!);
+                      }
+                    }}
+                  >
+                    <Text style={styles.connectCodeLabel}>Your code — send this to the bot:</Text>
+                    <View style={styles.connectCodeRow}>
+                      <Text selectable style={styles.connectCodeText}>{ea.code}</Text>
+                      {Platform.OS === 'web' && (
+                        <Ionicons name="copy-outline" size={14} color={Colors.textSecondary} />
+                      )}
+                    </View>
+                    {Platform.OS !== 'web' && (
+                      <Text style={styles.connectCodeHint}>Long-press the code to copy</Text>
+                    )}
+                  </Pressable>
+                )}
+              </View>
             ))}
             {nonUrlActions.length > 0 && (
               <View style={styles.executedActionsRow}>
@@ -1944,6 +1966,39 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 14,
     fontFamily: 'Inter_600SemiBold',
+  },
+  connectCodeBlock: {
+    marginTop: 8,
+    backgroundColor: 'rgba(30, 41, 59, 0.06)',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    padding: 10,
+    alignSelf: 'flex-start',
+    minWidth: 180,
+  },
+  connectCodeLabel: {
+    fontSize: 11,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.textSecondary,
+    marginBottom: 4,
+  },
+  connectCodeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  connectCodeText: {
+    fontSize: 22,
+    fontFamily: 'Inter_700Bold',
+    color: Colors.text,
+    letterSpacing: 4,
+  },
+  connectCodeHint: {
+    fontSize: 10,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+    marginTop: 4,
   },
   executedActionsRow: {
     flexDirection: 'row',
