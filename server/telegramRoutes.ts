@@ -293,6 +293,10 @@ async function processUpdate(update: any): Promise<void> {
           await sendMessage(chatId, "This link code has expired. Please ask Jarvis to connect Telegram again or use Profile → Connections to get a new one.");
           return;
         }
+        // Remove any stale links from other accounts that claimed this chatId
+        await db.delete(schema.telegramLinks).where(
+          and(eq(schema.telegramLinks.chatId, chatId), sql`${schema.telegramLinks.userId} != ${userId}`)
+        );
         await db.insert(schema.telegramLinks)
           .values({ userId, chatId, username: message.from?.username || message.from?.first_name || null })
           .onConflictDoUpdate({
