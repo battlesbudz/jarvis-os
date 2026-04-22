@@ -50,6 +50,15 @@ const openai = new OpenAI({
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
 });
 
+// Temporary in-memory screenshot store keyed by UUID (30-minute TTL)
+const screenshotStore = new Map<string, { data: Buffer; expires: number }>();
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, entry] of screenshotStore) {
+    if (entry.expires < now) screenshotStore.delete(id);
+  }
+}, 5 * 60 * 1000);
+
 const COACHING_FRAMEWORKS = `## Coaching Frameworks You Draw From
 Apply these when relevant — reference them by name:
 - Atomic Habits (James Clear): Habits = cue + craving + response + reward. Small 1% improvements compound. Environment design > willpower.
@@ -549,6 +558,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use("/api/auth/mobile", mobileAuthRouter);
   app.use("/api/oauth", oauthCallbackRouter);
   registerDownloadRoutes(app);
+
+  // Public screenshot endpoint — IDs are random/opaque with 30-min TTL (no auth header needed by Image component)
+  app.get("/api/daemon/screenshot/:id", (req: Request, res: Response) => {
+    const entry = screenshotStore.get(req.params.id);
+    if (!entry || entry.expires < Date.now()) {
+      return res.status(404).json({ error: 'Screenshot not found or expired' });
+    }
+    res.setHeader('Content-Type', 'image/png');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.send(entry.data);
+  });
+
   app.use(authMiddleware);
   app.use("/api/oauth", oauthRouter);
 
@@ -1276,6 +1297,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
           const daemonResult = await sendDaemonOp(userId, op, action === 'shell' ? 30000 : 30000);
           if (!daemonResult.ok) return { result: 'error', label: 'Daemon action failed', detail: daemonResult.error || 'Unknown error' };
+
+          // Handle screenshot specially: store the image and return a URL instead of raw base64
+          if (action === 'android_screenshot' && daemonResult.data) {
+            const data = daemonResult.data as Record<string, unknown>;
+            const b64 = data.screenshot as string | undefined;
+            if (b64 && b64.length > 0) {
+              const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+              const buf = Buffer.from(b64, 'base64');
+              screenshotStore.set(id, { data: buf, expires: Date.now() + 30 * 60 * 1000 });
+              return { result: 'success', label: 'Screenshot captured', detail: JSON.stringify({ screenshotUrl: `/api/daemon/screenshot/${id}` }) };
+            }
+          }
+
           return { result: 'success', label: `Daemon: ${action}`, detail: JSON.stringify(daemonResult.data || {}).slice(0, 2000) };
         }
         case 'connect_channel': {
@@ -1526,9 +1560,13 @@ Answer (yes/no):`,
             }
 
             const execResult = await executeCoachTool(tc.function.name, args, userId);
-            let linkData: { url?: string; buttonLabel?: string; code?: string; channel?: string } = {};
+            let linkData: { url?: string; buttonLabel?: string; code?: string; channel?: string; screenshotUrl?: string } = {};
             if ((tc.function.name === 'generate_reconnect_link' || tc.function.name === 'connect_channel') && execResult.result === 'success') {
               try { linkData = JSON.parse(execResult.detail); } catch {}
+            }
+            // Extract screenshotUrl from daemon screenshot results
+            if (tc.function.name === 'daemon_action' && String(args.action) === 'android_screenshot' && execResult.result === 'success') {
+              try { const parsed = JSON.parse(execResult.detail); if (parsed.screenshotUrl) linkData.screenshotUrl = parsed.screenshotUrl; } catch {}
             }
             actionResults.push({ tool: tc.function.name, result: execResult.result, label: execResult.label, ...linkData });
             toolMessages.push({

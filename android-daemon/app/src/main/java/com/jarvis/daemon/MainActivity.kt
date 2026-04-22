@@ -16,6 +16,7 @@ import android.text.Editable
 import android.text.TextWatcher
 import android.view.View
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import com.jarvis.daemon.databinding.ActivityMainBinding
 
@@ -25,6 +26,14 @@ class MainActivity : AppCompatActivity() {
     private lateinit var prefs: SharedPreferences
     private var wsService: WebSocketService? = null
     private var serviceBound = false
+
+    private val requestNotificationPermission = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (!granted) {
+            Toast.makeText(this, "Notification permission required for app-launch actions. Please grant it in Settings → Apps → Jarvis Daemon → Notifications.", Toast.LENGTH_LONG).show()
+        }
+    }
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
@@ -89,6 +98,7 @@ class MainActivity : AppCompatActivity() {
             openStoragePermission()
         }
 
+        requestNotificationPermissionIfNeeded()
         checkPermissionsStatus()
         bindToService()
     }
@@ -96,6 +106,15 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         checkPermissionsStatus()
+    }
+
+    private fun requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
+                android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                requestNotificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
     }
 
     private fun bindToService() {
@@ -131,7 +150,6 @@ class MainActivity : AppCompatActivity() {
         binding.tvStatusDot.setBackgroundResource(
             if (connected) R.drawable.dot_green else R.drawable.dot_gray
         )
-        // Show disconnect button whenever the service is active (connected OR reconnecting)
         val serviceActive = connected ||
             status.contains("Connecting") ||
             status.contains("Reconnecting")
