@@ -1322,24 +1322,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
           } else {
             return { result: 'error', label: 'Unknown action', detail: `Unknown daemon action: ${action}` };
           }
-          // Auto-preflight: for android_* ops, verify the daemon is alive before
-          // committing to the real op. Run preflight only when the last successful op
-          // was >30s ago (or there's no recent history) to avoid adding latency to
-          // rapid consecutive ops.
+          // Auto-preflight: for every android_* op (except android_notifications_list which
+          // is served from the server cache), run a 5s ping first. This causes the op to
+          // fail fast (<5s) if the daemon is stale or the accessibility service has crashed,
+          // rather than waiting the full 30s op timeout on a silent failure.
           if (action.startsWith('android_') && action !== 'android_notifications_list') {
-            const auditHistory = getOpAuditLog(userId);
-            const lastEntry = auditHistory.length > 0 ? auditHistory[auditHistory.length - 1] : null;
-            const lastSuccessAge = lastEntry && lastEntry.ok ? Date.now() - lastEntry.ts : Infinity;
-            const needsPreflight = lastSuccessAge > 30000;
-            if (needsPreflight) {
-              const preflightResult = await pingDaemon(userId, 5000);
-              if (!preflightResult.ok) {
-                return {
-                  result: 'error',
-                  label: 'Daemon preflight failed',
-                  detail: `Daemon ping failed before '${action}': ${preflightResult.error}. The daemon may be disconnected or the accessibility service may have stopped. Ask the user to check the Jarvis Daemon app on their phone.`,
-                };
-              }
+            const preflightResult = await pingDaemon(userId, 5000);
+            if (!preflightResult.ok) {
+              return {
+                result: 'error',
+                label: 'Daemon preflight failed',
+                detail: `Daemon ping failed before '${action}': ${preflightResult.error}. The daemon may be disconnected or the accessibility service may have stopped. Ask the user to check the Jarvis Daemon app on their phone.`,
+              };
             }
           }
 
@@ -1566,8 +1560,8 @@ Answer (yes/no):`,
 
       const daemonSection = daemonPaired
         ? androidActive
-          ? `Android Device Daemon is ACTIVE and connected.\n${deviceHints}\nAvailable actions: android_open_app, android_browse, android_screenshot, android_read_screen, android_tap, android_type, android_swipe, android_press_key, android_file_list, android_file_read, android_notifications_list. DO NOT use desktop shell/notify/file actions.\nDIAGNOSTICS: If an op times out or behaves unexpectedly, call daemon_diagnostic (no args) to ping the device and retrieve the recent op audit log. Report the ping result and failure pattern to the user.`
-          : 'Desktop Daemon is ACTIVE. Use shell, notify, file_read, file_write, file_list actions. ALWAYS report errors immediately if a tool returns result:error. Use daemon_diagnostic (no args) to check daemon health if ops are failing.'
+          ? `Android Device Daemon is ACTIVE and connected.\n${deviceHints}\nAvailable actions: android_open_app, android_browse, android_screenshot, android_read_screen, android_tap, android_type, android_swipe, android_press_key, android_file_list, android_file_read, android_notifications_list. DO NOT use desktop shell/notify/file actions.\nDIAGNOSTICS: (1) Before any multi-step phone action sequence (e.g. open app → screenshot → tap → type), call daemon_diagnostic first to verify accessibility is enabled and see the current foreground app. (2) If any op returns result:error or times out, immediately call daemon_diagnostic to diagnose the failure before retrying. Report the ping RTT, accessibilityEnabled flag, and the recent op audit log to the user so they can act on it.`
+          : 'Desktop Daemon is ACTIVE. Use shell, notify, file_read, file_write, file_list actions. ALWAYS report errors immediately if a tool returns result:error. Use daemon_diagnostic (no args) to check daemon health before multi-step sequences or when ops are failing.'
         : '⚠️ NO DAEMON CONNECTED. Do NOT call daemon_action — it will fail with "daemon not connected". If the user asks to control their phone or computer, tell them exactly this: "Your phone daemon isn\'t connected. To fix it: (1) Open the Jarvis app → Profile → scroll to \'Android Device\' → tap \'Get Pairing Code\', (2) Open the Jarvis Daemon APK on your phone, (3) Make sure the Server URL is https://GameplanAI.replit.app, (4) Enter the 8-character pairing code, (5) Tap Pair. The status dot should turn green within a few seconds." Do not attempt daemon_action until they confirm it\'s connected.';
       const systemPrompt = buildCoachSystemPrompt(goals || [], stats || {}, history || [], calendarEvents || [], lifeContext || null, resolvedGmailItems, resolvedGmailConnected, slackMessages || [], slackConnected ?? false, userCommitments, coachingMode, memories, telegramMessages || [], telegramConnected ?? false, morningNoteSummary, documentsContext, crossChannelContext, soulBlock, daemonSection);
 
