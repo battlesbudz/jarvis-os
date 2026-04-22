@@ -60,6 +60,8 @@ class WebSocketService : Service() {
     private var reconnectSecret: String = ""
     private var paired = false
     private var reconnectEnabled = true
+    private var reconnectAttempts = 0
+    private val maxReconnectAttempts = 8
     private var pingFuture: java.util.concurrent.ScheduledFuture<*>? = null
 
     var isConnected = false
@@ -99,6 +101,7 @@ class WebSocketService : Service() {
                 pairCode = code
                 paired = false
                 reconnectEnabled = true
+                reconnectAttempts = 0
                 getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                     .edit().putString(PREF_SERVER_URL, url).apply()
                 connect(useDaemonId = false)
@@ -243,6 +246,7 @@ class WebSocketService : Service() {
                             .apply()
                         Log.i(TAG, "Credentials stored for future reconnect (daemonId=${serverDaemonId.take(8)}…)")
                     }
+                    reconnectAttempts = 0
                     updateStatus("Connected • ${Build.MODEL}", true)
                     Log.i(TAG, "Paired/reconnected successfully")
                 } else {
@@ -303,9 +307,24 @@ class WebSocketService : Service() {
     }
 
     private fun scheduleReconnect(preferDaemonId: Boolean) {
-        updateStatus("Reconnecting in 5s…", false)
+        reconnectAttempts++
+        if (reconnectAttempts > maxReconnectAttempts) {
+            // Too many failures — clear credentials so user must re-pair
+            daemonId = ""
+            reconnectSecret = ""
+            getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+                .remove(PREF_DAEMON_ID)
+                .remove(PREF_RECONNECT_SECRET)
+                .apply()
+            reconnectEnabled = false
+            updateStatus("Connection lost — tap Pair to reconnect", false)
+            Log.w(TAG, "Max reconnect attempts reached — credentials cleared")
+            return
+        }
+        val attempt = reconnectAttempts
+        updateStatus("Reconnecting ($attempt/$maxReconnectAttempts)…", false)
         executor.schedule({
-            if (reconnectEnabled) connect(useDaemonId = preferDaemonId)
+            if (reconnectEnabled) connect(useDaemonId = preferDaemonId && daemonId.isNotEmpty() && reconnectSecret.isNotEmpty())
         }, RECONNECT_DELAY_MS, TimeUnit.MILLISECONDS)
     }
 
