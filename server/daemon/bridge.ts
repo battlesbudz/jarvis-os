@@ -138,6 +138,19 @@ async function findUserDaemonRow(userId: string) {
   return real || rows[0];
 }
 
+export async function getDaemonDeviceMeta(userId: string): Promise<{ hostname: string | null; platform: string | null }> {
+  try {
+    const row = await findUserDaemonRow(userId);
+    const meta = (row?.metadata as Record<string, unknown> | null) || null;
+    return {
+      hostname: (meta?.hostname as string | undefined) || null,
+      platform: (meta?.platform as string | undefined) || null,
+    };
+  } catch {
+    return { hostname: null, platform: null };
+  }
+}
+
 export async function getDaemonPermissions(userId: string): Promise<DaemonPermissions> {
   try {
     const row = await findUserDaemonRow(userId);
