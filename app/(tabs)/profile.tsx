@@ -2587,17 +2587,25 @@ export default function ProfileScreen() {
                 <Text selectable style={{ fontSize: 24, fontFamily: 'Inter_700Bold', letterSpacing: 4, color: '#34A853', marginBottom: 8 }}>
                   {androidDaemonCode}
                 </Text>
-                <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, lineHeight: 18, marginBottom: 6 }}>
-                  Open the Jarvis Daemon app on your Android phone, enter your server URL and this code, then tap "Connect to Jarvis".
+                <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, lineHeight: 18, marginBottom: 8 }}>
+                  Open the Jarvis Daemon app on your phone, then:
                 </Text>
-                <View style={{ padding: 10, borderRadius: 8, backgroundColor: '#34A85312', borderWidth: 1, borderColor: '#34A853' }}>
-                  <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: '#1a6b30', marginBottom: 4 }}>
-                    Required permissions on Android:
+                <View style={{ padding: 10, borderRadius: 8, backgroundColor: '#34A85312', borderWidth: 1, borderColor: '#34A853', marginBottom: 8 }}>
+                  <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: '#1a6b30', lineHeight: 20 }}>
+                    1. Server URL:{'\n'}
+                    <Text style={{ fontFamily: 'Inter_700Bold', letterSpacing: 0.5 }}>https://GameplanAI.replit.app</Text>{'\n\n'}
+                    2. Pairing Code: enter the code above{'\n\n'}
+                    3. Tap <Text style={{ fontFamily: 'Inter_700Bold' }}>Pair</Text>. The dot turns green when connected.
                   </Text>
-                  <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: '#1a6b30', lineHeight: 16 }}>
-                    1. Accessibility Service — lets Jarvis read the screen and perform taps{'\n'}
-                    2. Storage / Files — lets Jarvis access gallery, downloads, and any folder{'\n'}
-                    3. The app must stay running (it shows a persistent notification to stay alive)
+                </View>
+                <View style={{ padding: 10, borderRadius: 8, backgroundColor: '#FFF9E6', borderWidth: 1, borderColor: '#F0C040' }}>
+                  <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: '#7A5A00', marginBottom: 3 }}>
+                    Required permissions in the daemon app:
+                  </Text>
+                  <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: '#7A5A00', lineHeight: 16 }}>
+                    • Accessibility Service — for screen reading and taps{'\n'}
+                    • Storage — for file access{'\n'}
+                    • (Optional) Notification Access — to forward your notifications to Jarvis
                   </Text>
                 </View>
               </View>
