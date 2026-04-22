@@ -472,7 +472,16 @@ export function startDaemonBridge(server: HttpServer): void {
       }
     });
 
+    // Server-side keepalive — ping the daemon every 20 s so Replit's proxy
+    // doesn't drop the WebSocket due to idle timeout.
+    const keepalive = setInterval(() => {
+      if (ws.readyState === WebSocket.OPEN) {
+        try { ws.ping(); } catch { /* noop */ }
+      }
+    }, 20000);
+
     ws.on("close", () => {
+      clearInterval(keepalive);
       if (pairedUserId && userSockets.get(pairedUserId) === ws) {
         userSockets.delete(pairedUserId);
         console.log(`[daemon] disconnected userId=${pairedUserId}`);
