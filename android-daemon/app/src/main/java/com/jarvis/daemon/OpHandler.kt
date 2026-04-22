@@ -53,33 +53,53 @@ object OpHandler {
             pm.getApplicationLabel(pm.getApplicationInfo(packageName, 0)).toString()
         } catch (e: Exception) { packageName }
 
-        // Step 1: Try direct launch via accessibility service (may work on some devices/OS versions)
+        // Require the accessibility service to be running for direct launch.
+        // Without it, background activity starts are silently blocked on Android 10+ / Samsung OneUI.
         val svc = JarvisAccessibilityService.instance
-        var directLaunched = false
-        if (svc != null) {
-            try {
-                directLaunched = svc.launchApp(packageName)
-            } catch (e: Exception) {
-                Log.w(TAG, "Direct accessibility launch failed: ${e.message}")
-            }
+        if (svc == null) {
+            // Show a tappable notification as a best-effort fallback
+            val pi = PendingIntent.getActivity(
+                context, packageName.hashCode(), launchIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            NotificationHelper.showAction(context, "▶ Open $appLabel", "Tap to open (accessibility service offline)", pi, packageName.hashCode())
+            return OpResult(
+                false,
+                error = "Accessibility service is not running — the app could NOT be launched automatically. " +
+                    "A notification has been shown on your phone as a fallback (tap it to open $appLabel manually). " +
+                    "To fix autonomous control: go to Settings > Accessibility > Installed Apps > Jarvis Daemon and enable it."
+            )
         }
 
-        // Step 2: ALWAYS show a high-priority heads-up notification.
-        // Background activity starts are silently blocked on Android 10+ in many configurations
-        // (including Samsung OneUI). The notification is the guaranteed visible action.
-        val pi = PendingIntent.getActivity(
-            context, packageName.hashCode(), launchIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-        NotificationHelper.showAction(context, "▶ Open $appLabel", "Tap to open now", pi, packageName.hashCode())
+        var launched = false
+        try {
+            launched = svc.launchApp(packageName)
+        } catch (e: Exception) {
+            Log.w(TAG, "Direct accessibility launch failed: ${e.message}")
+        }
+
+        if (!launched) {
+            // Service is running but launch was blocked (Samsung background restriction).
+            // Show tappable notification as fallback.
+            val pi = PendingIntent.getActivity(
+                context, packageName.hashCode(), launchIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            NotificationHelper.showAction(context, "▶ Open $appLabel", "Tap to open now", pi, packageName.hashCode())
+            return OpResult(
+                false,
+                error = "Background launch was blocked by Android (Samsung OneUI restriction). " +
+                    "A notification has appeared on your phone — tap '▶ Open $appLabel' to open it manually. " +
+                    "Alternatively, ask me to open it again while the screen is on and the phone is unlocked."
+            )
+        }
 
         return OpResult(
             true,
             data = JSONObject()
                 .put("appName", appLabel)
                 .put("package", packageName)
-                .put("directLaunchAttempted", directLaunched)
-                .put("notification", "shown — tap 'Open $appLabel' notification on your phone")
+                .put("launched", true)
         )
     }
 
@@ -88,34 +108,53 @@ object OpHandler {
             return OpResult(false, error = "url required")
         }
 
-        // Step 1: Try direct launch via accessibility service
         val svc = JarvisAccessibilityService.instance
-        var directOpened = false
-        if (svc != null) {
-            try {
-                directOpened = svc.browseUrl(url)
-            } catch (e: Exception) {
-                Log.w(TAG, "Direct browse launch failed: ${e.message}")
+        if (svc == null) {
+            val viewIntent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
+            val pi = PendingIntent.getActivity(
+                context, url.hashCode(), viewIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            val shortUrl = if (url.length > 50) url.take(47) + "…" else url
+            NotificationHelper.showAction(context, "▶ Open Link", shortUrl, pi, url.hashCode())
+            return OpResult(
+                false,
+                error = "Accessibility service is not running — the URL could NOT be opened automatically. " +
+                    "A notification has been shown on your phone (tap it to open the link). " +
+                    "To fix: Settings > Accessibility > Installed Apps > Jarvis Daemon and enable it."
+            )
         }
 
-        // Step 2: ALWAYS show a high-priority heads-up notification as guaranteed fallback
-        val viewIntent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        var opened = false
+        try {
+            opened = svc.browseUrl(url)
+        } catch (e: Exception) {
+            Log.w(TAG, "Direct browse launch failed: ${e.message}")
         }
-        val pi = PendingIntent.getActivity(
-            context, url.hashCode(), viewIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-        val shortUrl = if (url.length > 50) url.take(47) + "…" else url
-        NotificationHelper.showAction(context, "▶ Open Link", shortUrl, pi, url.hashCode())
+
+        if (!opened) {
+            val viewIntent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            val pi = PendingIntent.getActivity(
+                context, url.hashCode(), viewIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            val shortUrl = if (url.length > 50) url.take(47) + "…" else url
+            NotificationHelper.showAction(context, "▶ Open Link", shortUrl, pi, url.hashCode())
+            return OpResult(
+                false,
+                error = "Background launch was blocked by Android. A notification has appeared on your phone — tap it to open the link."
+            )
+        }
 
         return OpResult(
             true,
             data = JSONObject()
                 .put("url", url)
-                .put("directLaunchAttempted", directOpened)
-                .put("notification", "shown — tap the notification on your phone to open the link")
+                .put("opened", true)
         )
     }
 
