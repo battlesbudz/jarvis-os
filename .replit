@@ -81,6 +81,7 @@ JWT_SECRET = "41a3d76a2524f3a40e29c50ad4f16d7245a6f740dd97a04f8cdb07a7f75613454c
 EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID = "464052645678-au43qstbkio1gc6foomqo1a40c9f5vpk.apps.googleusercontent.com"
 GOOGLE_WEB_CLIENT_ID = "464052645678-au43qstbkio1gc6foomqo1a40c9f5vpk.apps.googleusercontent.com"
 GOOGLE_CLIENT_SECRET = "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"
+ANDROID_APK_URL = "https://github.com/battlesbudz/JarvisAi/releases/download/android-daemon-latest/jarvis-daemon.apk"
 
 [postMerge]
 path = "scripts/post-merge.sh"
