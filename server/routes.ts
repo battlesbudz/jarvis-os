@@ -40,7 +40,7 @@ import { logInteraction, getRecentInteractions, formatInteractionTimeline } from
 import { extractAndStore } from "./memory/extractor";
 import { getSoul, getSoulPromptBlock, regenerateSoul, setManualOverride, setSoulContent } from "./memory/soul";
 import { listPeople, deletePerson } from "./memory/people";
-import { isUserPaired, sendDaemonOp, isDaemonActionAllowed, isAndroidDaemonActive, isAndroidDaemonActionAllowed, getRecentPhoneNotifications, type AndroidDaemonAction } from "./daemon/bridge";
+import { isUserPaired, sendDaemonOp, isDaemonActionAllowed, isAndroidDaemonActive, isAndroidDaemonActionAllowed, getRecentPhoneNotifications, getDaemonDeviceMeta, type AndroidDaemonAction } from "./daemon/bridge";
 import type { DaemonAction, DaemonOp } from "./daemon/bridge";
 import { telegramLinks, channelLinks } from "@shared/schema";
 import { connectChannelTool } from "./agent/tools/connectChannel";
@@ -1496,10 +1496,24 @@ Answer (yes/no):`,
 
       const soulBlock = await getSoulPromptBlock(userId);
       const daemonPaired = userId ? isUserPaired(userId) : false;
-      const androidActive = daemonPaired && userId ? await isAndroidDaemonActive(userId) : false;
+      const [androidActive, daemonDeviceMeta] = daemonPaired && userId
+        ? await Promise.all([isAndroidDaemonActive(userId), getDaemonDeviceMeta(userId)])
+        : [false, { hostname: null, platform: null }];
+
+      // Build device-specific package hints for Samsung devices (hostname starts with SM-)
+      const hostname = daemonDeviceMeta.hostname || '';
+      const isSamsung = hostname.startsWith('SM-') || hostname.toLowerCase().includes('samsung');
+      const deviceHints = androidActive ? [
+        `Device: ${hostname || 'unknown'}`,
+        isSamsung ? 'Samsung device — use these package names: Camera=com.sec.android.app.camera, Gallery=com.sec.android.apps.myfiles, Messages=com.samsung.android.messaging, Settings=com.android.settings, Chrome=com.android.chrome, Phone=com.samsung.android.dialer, Contacts=com.samsung.android.contacts, YouTube=com.google.android.youtube, Maps=com.google.android.apps.maps, Gmail=com.google.android.gm, Instagram=com.instagram.android, Spotify=com.spotify.music' : '',
+        'For android_press_key, valid keys are ONLY: back, home, recents, volume_up, volume_down, enter — no KEYCODE_ prefix, no camera key.',
+        'For taking a photo: open the camera app with android_open_app, use android_screenshot to verify it opened, then ask the user to tap the shutter themselves (or use android_tap with the shutter button coordinates from android_read_screen).',
+        'CRITICAL: If any tool returns result:error, you MUST report that failure immediately. NEVER describe a failed action as successful or invent file names, screenshots, or results that were not in the tool response.',
+      ].filter(Boolean).join('\n') : '';
+
       const daemonSection = daemonPaired
         ? androidActive
-          ? 'Android Device Daemon is ACTIVE and connected. Use android_open_app, android_browse, android_screenshot, android_read_screen, android_tap, android_type, android_swipe, android_press_key, android_file_list, android_file_read, android_notifications_list actions. DO NOT use desktop shell/notify/file actions. After any android_open_app or android_browse succeeds, tell the user what opened. ALWAYS report errors immediately if a tool returns result:error.'
+          ? `Android Device Daemon is ACTIVE and connected.\n${deviceHints}\nAvailable actions: android_open_app, android_browse, android_screenshot, android_read_screen, android_tap, android_type, android_swipe, android_press_key, android_file_list, android_file_read, android_notifications_list. DO NOT use desktop shell/notify/file actions.`
           : 'Desktop Daemon is ACTIVE. Use shell, notify, file_read, file_write, file_list actions. ALWAYS report errors immediately if a tool returns result:error.'
         : '⚠️ NO DAEMON CONNECTED. Do NOT call daemon_action — it will fail with "daemon not connected". If the user asks to control their phone or computer, tell them exactly this: "Your phone daemon isn\'t connected. To fix it: (1) Open the Jarvis app → Profile → scroll to \'Android Device\' → tap \'Get Pairing Code\', (2) Open the Jarvis Daemon APK on your phone, (3) Make sure the Server URL is https://GameplanAI.replit.app, (4) Enter the 8-character pairing code, (5) Tap Pair. The status dot should turn green within a few seconds." Do not attempt daemon_action until they confirm it\'s connected.';
       const systemPrompt = buildCoachSystemPrompt(goals || [], stats || {}, history || [], calendarEvents || [], lifeContext || null, resolvedGmailItems, resolvedGmailConnected, slackMessages || [], slackConnected ?? false, userCommitments, coachingMode, memories, telegramMessages || [], telegramConnected ?? false, morningNoteSummary, documentsContext, crossChannelContext, soulBlock, daemonSection);
@@ -1584,10 +1598,17 @@ Answer (yes/no):`,
               try { const parsed = JSON.parse(execResult.detail); if (parsed.screenshotUrl) linkData.screenshotUrl = parsed.screenshotUrl; } catch {}
             }
             actionResults.push({ tool: tc.function.name, result: execResult.result, label: execResult.label, ...linkData });
+            // For daemon_action errors: make the failure unmistakably clear so the AI cannot hallucinate success
+            let toolResultContent: string;
+            if (tc.function.name === 'daemon_action' && execResult.result === 'error') {
+              toolResultContent = `⛔ DAEMON ACTION FAILED — THE PHONE DID NOT EXECUTE THIS COMMAND.\nAction attempted: ${String(args.action || 'unknown')}\nError: ${execResult.detail || execResult.label}\n\nYou MUST tell the user this specific action FAILED. Do NOT describe it as successful. Do NOT invent what the phone showed or did.`;
+            } else {
+              toolResultContent = JSON.stringify({ result: execResult.result, detail: execResult.detail });
+            }
             toolMessages.push({
               role: "tool",
               tool_call_id: tc.id,
-              content: JSON.stringify({ result: execResult.result, detail: execResult.detail }),
+              content: toolResultContent,
             });
           }
         } else if (choice.message.content) {
@@ -1625,6 +1646,16 @@ Answer (yes/no):`,
         if (nonSearchActions.length > 0) {
           res.write(`data: ${JSON.stringify({ type: 'actions', actions: nonSearchActions })}\n\n`);
         }
+      }
+
+      // Inject a hard error summary before the final synthesis if any daemon actions failed.
+      // This prevents the AI from hallucinating success when tool calls returned errors.
+      const failedDaemonActions = actionResults.filter(a => a.tool === 'daemon_action' && a.result === 'error');
+      if (failedDaemonActions.length > 0) {
+        toolMessages.push({
+          role: "system" as const,
+          content: `⛔ MANDATORY: ${failedDaemonActions.length} phone action(s) FAILED. You MUST report these failures honestly in your response. Do NOT claim any of these actions succeeded or describe fabricated results:\n${failedDaemonActions.map(a => `- ${a.label}`).join('\n')}\nOnly describe what actually succeeded based on real tool results above.`,
+        });
       }
 
       const streamMessages = toolMessages.length > 0
