@@ -24,25 +24,29 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Accept Android SDK licenses
+        run: |
+          export ANDROID_HOME=$ANDROID_SDK_ROOT
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
+          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platforms;android-34" "build-tools;34.0.0"
 
       - name: Grant execute permission for gradlew
         run: chmod +x android-daemon/gradlew
 
-      - name: Build release APK
+      - name: Build debug APK
         working-directory: android-daemon
-        run: ./gradlew assembleRelease
+        env:
+          ANDROID_HOME: ${{ env.ANDROID_SDK_ROOT }}
+        run: ./gradlew assembleDebug --no-daemon
 
       - name: Locate and rename APK
         run: |
           mkdir -p dist
-          APK=$(find android-daemon/app/build/outputs/apk/release -name "*.apk" | head -1)
+          APK=$(find android-daemon/app/build/outputs/apk/debug -name "*.apk" | head -1)
           if [ -z "$APK" ]; then
             echo "No APK found after build" && exit 1
           fi
           cp "$APK" dist/jarvis-daemon.apk
-          echo "APK_PATH=dist/jarvis-daemon.apk" >> "$GITHUB_ENV"
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
