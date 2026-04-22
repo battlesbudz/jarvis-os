@@ -258,6 +258,10 @@ export default function ProfileScreen() {
   const [discordSelChannelId, setDiscordSelChannelId] = useState('');
   const [discordRequireMention, setDiscordRequireMention] = useState(true);
   const [discordAllowlistBusy, setDiscordAllowlistBusy] = useState(false);
+  const [discordWorkspaceBusy, setDiscordWorkspaceBusy] = useState(false);
+  const [discordWorkspaceGuilds, setDiscordWorkspaceGuilds] = useState<{id: string; name: string}[]>([]);
+  const [discordWorkspaceSelGuild, setDiscordWorkspaceSelGuild] = useState('');
+  const [discordShowWorkspaceSetup, setDiscordShowWorkspaceSetup] = useState(false);
   const [documents, setDocuments] = useState<UserDocument[]>([]);
   const [documentsLoading, setDocumentsLoading] = useState(false);
   const [documentUploading, setDocumentUploading] = useState(false);
@@ -904,6 +908,37 @@ export default function ProfileScreen() {
       alert(err?.message || 'Failed to remove channel.');
     }
     setDiscordAllowlistBusy(false);
+  }, [loadChannels]);
+
+  const handleOpenWorkspaceSetup = useCallback(async () => {
+    setDiscordShowWorkspaceSetup(v => !v);
+    if (!discordShowWorkspaceSetup && discordWorkspaceGuilds.length === 0) {
+      setDiscordWorkspaceBusy(true);
+      try {
+        const res = await apiRequest('GET', '/api/channels/discord/guilds');
+        const data = await res.json();
+        setDiscordWorkspaceGuilds(data.guilds || []);
+      } catch (err: any) {
+        console.error('[discord workspace] fetch guilds failed:', err);
+      }
+      setDiscordWorkspaceBusy(false);
+    }
+  }, [discordShowWorkspaceSetup, discordWorkspaceGuilds.length]);
+
+  const handleSetupWorkspace = useCallback(async (guildId: string) => {
+    setDiscordWorkspaceBusy(true);
+    try {
+      const res = await apiRequest('POST', '/api/channels/discord/workspace/setup', { guildId });
+      const data = await res.json();
+      if (!res.ok) { alert(data.error || 'Setup failed.'); return; }
+      setDiscordShowWorkspaceSetup(false);
+      setDiscordWorkspaceSelGuild('');
+      await loadChannels();
+      alert('✅ Jarvis Workspace created! Check your Discord server for the new channels.');
+    } catch (err: any) {
+      alert(err?.message || 'Setup failed.');
+    }
+    setDiscordWorkspaceBusy(false);
   }, [loadChannels]);
 
   const handleTogglePreference = useCallback(async (notificationType: string, channel: string) => {
@@ -2100,6 +2135,135 @@ export default function ProfileScreen() {
                     </Pressable>
                   </View>
                 ))}
+
+                {/* Workspace setup inline banner */}
+                {!(channelData.meta?.discord as any)?.workspace && !discordShowManage && (
+                  <View style={{ marginTop: 6, padding: 10, borderRadius: 10, backgroundColor: '#5865F210', borderWidth: 1, borderColor: '#5865F230' }}>
+                    <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: '#5865F2', marginBottom: 2 }}>
+                      🧠 Jarvis Workspace
+                    </Text>
+                    <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, marginBottom: 8 }}>
+                      Let Jarvis organise your life in Discord — topic channels for Finance, Ideas, Business, and more.
+                    </Text>
+                    <Pressable
+                      onPress={handleOpenWorkspaceSetup}
+                      style={{ alignSelf: 'flex-start', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, backgroundColor: '#5865F2' }}
+                    >
+                      <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: '#fff' }}>
+                        {discordShowWorkspaceSetup ? 'Cancel' : 'Set up Workspace'}
+                      </Text>
+                    </Pressable>
+                    {discordShowWorkspaceSetup && (
+                      <View style={{ marginTop: 10, gap: 6 }}>
+                        {discordWorkspaceBusy && discordWorkspaceGuilds.length === 0 ? (
+                          <ActivityIndicator size="small" color="#5865F2" />
+                        ) : discordWorkspaceGuilds.length === 0 ? (
+                          <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: Colors.textSecondary }}>
+                            No servers found — make sure your bot is in a server.
+                          </Text>
+                        ) : (
+                          <>
+                            <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: Colors.textSecondary }}>
+                              Pick the server for the workspace:
+                            </Text>
+                            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                              <View style={{ flexDirection: 'row', gap: 6 }}>
+                                {discordWorkspaceGuilds.map(g => (
+                                  <Pressable
+                                    key={g.id}
+                                    onPress={() => setDiscordWorkspaceSelGuild(g.id)}
+                                    style={{
+                                      paddingHorizontal: 10, paddingVertical: 5, borderRadius: 10,
+                                      borderWidth: 1,
+                                      borderColor: discordWorkspaceSelGuild === g.id ? '#5865F2' : Colors.border,
+                                      backgroundColor: discordWorkspaceSelGuild === g.id ? '#5865F215' : Colors.card,
+                                    }}
+                                  >
+                                    <Text style={{ fontSize: 12, fontFamily: 'Inter_500Medium', color: discordWorkspaceSelGuild === g.id ? '#5865F2' : Colors.text }}>
+                                      {g.name}
+                                    </Text>
+                                  </Pressable>
+                                ))}
+                              </View>
+                            </ScrollView>
+                            {discordWorkspaceSelGuild !== '' && (
+                              <Pressable
+                                onPress={() => handleSetupWorkspace(discordWorkspaceSelGuild)}
+                                disabled={discordWorkspaceBusy}
+                                style={{ alignSelf: 'flex-start', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, backgroundColor: '#5865F2', opacity: discordWorkspaceBusy ? 0.5 : 1 }}
+                              >
+                                {discordWorkspaceBusy
+                                  ? <ActivityIndicator size="small" color="#fff" />
+                                  : <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: '#fff' }}>Create Workspace →</Text>}
+                              </Pressable>
+                            )}
+                          </>
+                        )}
+                      </View>
+                    )}
+                  </View>
+                )}
+
+                {/* Existing workspace info */}
+                {(channelData.meta?.discord as any)?.workspace && (
+                  <View style={{ marginTop: 6, padding: 10, borderRadius: 10, backgroundColor: '#5865F210', borderWidth: 1, borderColor: '#5865F230' }}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: '#5865F2' }}>
+                          🧠 Jarvis Workspace
+                        </Text>
+                        <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, marginTop: 2 }}>
+                          Active in {(channelData.meta.discord as any).workspace.guildName}
+                        </Text>
+                        <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: Colors.textTertiary, marginTop: 3 }}>
+                          {Object.keys((channelData.meta.discord as any).workspace.channels || {}).map((k: string) => {
+                            const emojis: Record<string, string> = { tasks: '📋', finance: '💰', ideas: '💡', business: '💼', personal: '🌱', thinking: '🧠' };
+                            return (emojis[k] || '') + '#' + k;
+                          }).join('  ')}
+                        </Text>
+                      </View>
+                      <Pressable
+                        onPress={handleOpenWorkspaceSetup}
+                        style={{ paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, backgroundColor: '#5865F215' }}
+                      >
+                        <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: '#5865F2' }}>
+                          {discordShowWorkspaceSetup ? 'Cancel' : 'Reconfigure'}
+                        </Text>
+                      </Pressable>
+                    </View>
+                    {discordShowWorkspaceSetup && (
+                      <View style={{ marginTop: 10, gap: 6 }}>
+                        {discordWorkspaceBusy && discordWorkspaceGuilds.length === 0 ? (
+                          <ActivityIndicator size="small" color="#5865F2" />
+                        ) : discordWorkspaceGuilds.length === 0 ? (
+                          <Text style={{ fontSize: 11, color: Colors.textSecondary }}>No servers found.</Text>
+                        ) : (
+                          <>
+                            <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: Colors.textSecondary }}>Pick a server:</Text>
+                            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                              <View style={{ flexDirection: 'row', gap: 6 }}>
+                                {discordWorkspaceGuilds.map(g => (
+                                  <Pressable key={g.id} onPress={() => setDiscordWorkspaceSelGuild(g.id)}
+                                    style={{ paddingHorizontal: 10, paddingVertical: 5, borderRadius: 10, borderWidth: 1,
+                                      borderColor: discordWorkspaceSelGuild === g.id ? '#5865F2' : Colors.border,
+                                      backgroundColor: discordWorkspaceSelGuild === g.id ? '#5865F215' : Colors.card }}>
+                                    <Text style={{ fontSize: 12, fontFamily: 'Inter_500Medium', color: discordWorkspaceSelGuild === g.id ? '#5865F2' : Colors.text }}>{g.name}</Text>
+                                  </Pressable>
+                                ))}
+                              </View>
+                            </ScrollView>
+                            {discordWorkspaceSelGuild !== '' && (
+                              <Pressable onPress={() => handleSetupWorkspace(discordWorkspaceSelGuild)} disabled={discordWorkspaceBusy}
+                                style={{ alignSelf: 'flex-start', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, backgroundColor: '#5865F2', opacity: discordWorkspaceBusy ? 0.5 : 1 }}>
+                                {discordWorkspaceBusy ? <ActivityIndicator size="small" color="#fff" /> : <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: '#fff' }}>Recreate Workspace →</Text>}
+                              </Pressable>
+                            )}
+                          </>
+                        )}
+                      </View>
+                    )}
+                  </View>
+                )}
 
                 {/* Add channel form */}
                 {discordShowManage && (
