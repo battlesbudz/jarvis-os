@@ -87,16 +87,14 @@ class JarvisAccessibilityService : AccessibilityService() {
             object : TakeScreenshotCallback {
                 override fun onSuccess(screenshotResult: ScreenshotResult) {
                     try {
-                        val bmp = screenshotResult.bitmap
+                        // getHardwareBitmap() returns a Bitmap in HARDWARE config
+                        val bmp = screenshotResult.hardwareBitmap
                         // Hardware bitmaps cannot be compressed — copy to software config first
-                        val soft = if (bmp.config == Bitmap.Config.HARDWARE) {
-                            bmp.copy(Bitmap.Config.ARGB_8888, false)
-                        } else {
-                            bmp
-                        }
+                        val soft = bmp.copy(Bitmap.Config.ARGB_8888, false)
+                        bmp.recycle()
                         val bos = ByteArrayOutputStream()
                         soft.compress(Bitmap.CompressFormat.PNG, 90, bos)
-                        if (soft !== bmp) soft.recycle()
+                        soft.recycle()
                         encoded = Base64.encodeToString(bos.toByteArray(), Base64.NO_WRAP)
                     } catch (e: Exception) {
                         Log.e(TAG, "Screenshot encode failed: ${e.message}")
