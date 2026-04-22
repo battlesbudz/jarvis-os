@@ -31,29 +31,14 @@ jobs:
           printf "8933bad161af4178b1185d1a37fbf41ea5269c55\nd56f5187479451eabf01fb78af6dfcb131a6481e\n24333f8a63b6825ea9c5514f83c2829b004d1fee\n" > "$SDK/licenses/android-sdk-license"
           printf "84831b9409646a918e30573bab4c9c91346d8abd\n" > "$SDK/licenses/android-sdk-preview-license"
 
-      - name: Generate correct Gradle wrapper jar
-        run: |
-          echo "Downloading Gradle 8.4 distribution..."
-          curl -sL https://services.gradle.org/distributions/gradle-8.4-bin.zip -o /tmp/gradle-8.4-bin.zip
-          unzip -q /tmp/gradle-8.4-bin.zip -d /tmp/gradle-dist
-          echo "Extracting gradle-wrapper.jar directly from distribution (no Maven needed)..."
-          WRAPPER_JAR=$(find /tmp/gradle-dist/gradle-8.4 -name "gradle-wrapper.jar" 2>/dev/null | head -1)
-          if [ -n "$WRAPPER_JAR" ]; then
-            mkdir -p android-daemon/gradle/wrapper
-            cp "$WRAPPER_JAR" android-daemon/gradle/wrapper/gradle-wrapper.jar
-            echo "Wrapper jar ready: $(ls -lh android-daemon/gradle/wrapper/gradle-wrapper.jar)"
-          else
-            echo "gradle-wrapper.jar not found in distribution zip. Contents:"
-            find /tmp/gradle-dist/gradle-8.4 -name "*.jar" | head -20
-            exit 1
-          fi
-
-      - name: Grant execute permission for gradlew
-        run: chmod +x android-daemon/gradlew
+      - name: Setup Gradle 8.4
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.4'
 
       - name: Build debug APK
         working-directory: android-daemon
-        run: ./gradlew assembleDebug --no-daemon
+        run: gradle assembleDebug --no-daemon
 
       - name: Locate and rename APK
         run: |
