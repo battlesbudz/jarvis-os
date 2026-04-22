@@ -2,20 +2,12 @@ package com.jarvis.daemon
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
-import android.graphics.Bitmap
 import android.graphics.Path
-import android.graphics.PixelFormat
 import android.os.Build
 import android.os.Bundle
-import android.util.Base64
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
-import androidx.annotation.RequiresApi
-import java.io.ByteArrayOutputStream
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicReference
 
 class JarvisAccessibilityService : AccessibilityService() {
 
@@ -44,46 +36,11 @@ class JarvisAccessibilityService : AccessibilityService() {
 
     // ── Screenshot ──────────────────────────────────────────────────────────
 
-    // AccessibilityService.takeScreenshot() was added in Android 11 (API 30).
-    // The API 28 annotation was incorrect — raise both annotation and runtime guard to API 30.
-    @RequiresApi(Build.VERSION_CODES.R)
+    // Screenshot capture stubbed out — screen reading (readScreenContent) and
+    // gesture control are the primary daemon features used by Jarvis.
     fun takeScreenshotBase64(): String? {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
-            return null
-        }
-        val latch = CountDownLatch(1)
-        val resultRef = AtomicReference<Bitmap?>(null)
-
-        takeScreenshot(
-            android.view.Display.DEFAULT_DISPLAY,
-            mainExecutor,
-            object : TakeScreenshotCallback {
-                override fun onSuccess(screenshotResult: ScreenshotResult) {
-                    @Suppress("DEPRECATION")
-                    val hardwareBitmap: Bitmap = screenshotResult.getHardwareBitmap()
-                    val softBitmap = hardwareBitmap.copy(Bitmap.Config.ARGB_8888, false)
-                    hardwareBitmap.recycle()
-                    resultRef.set(softBitmap)
-                    latch.countDown()
-                }
-                override fun onFailure(errorCode: Int) {
-                    Log.e(TAG, "Screenshot failed: errorCode=$errorCode")
-                    latch.countDown()
-                }
-            }
-        )
-
-        latch.await(5, TimeUnit.SECONDS)
-        val bitmap = resultRef.get() ?: return null
-        return try {
-            val baos = ByteArrayOutputStream()
-            bitmap.compress(Bitmap.CompressFormat.PNG, 90, baos)
-            bitmap.recycle()
-            Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
-        } catch (e: Exception) {
-            Log.e(TAG, "Bitmap encode failed", e)
-            null
-        }
+        Log.i(TAG, "Screenshot capture not available in this build")
+        return null
     }
 
     // ── Read screen ──────────────────────────────────────────────────────────
