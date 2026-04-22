@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet, TextStyle } from 'react-native';
+import { View, Text, StyleSheet, TextStyle, Linking } from 'react-native';
 
 interface Props {
   text: string;
@@ -50,28 +50,42 @@ function tokenize(text: string): Token[] {
 
 function renderInline(text: string, baseColor: string): React.ReactNode[] {
   const parts: React.ReactNode[] = [];
-  const regex = /\*\*(.+?)\*\*/g;
+  const regex = /(\*\*(.+?)\*\*)|(https?:\/\/[^\s)\]]+)/g;
   let last = 0;
   let match: RegExpExecArray | null;
+  let keyIdx = 0;
 
   while ((match = regex.exec(text)) !== null) {
     if (match.index > last) {
       parts.push(
-        <Text key={`t${last}`} style={{ color: baseColor }}>
+        <Text key={`t${keyIdx++}`} style={{ color: baseColor }}>
           {text.slice(last, match.index)}
         </Text>
       );
     }
-    parts.push(
-      <Text key={`b${match.index}`} style={{ color: baseColor, fontFamily: 'Inter_700Bold' }}>
-        {match[1]}
-      </Text>
-    );
+    if (match[1]) {
+      parts.push(
+        <Text key={`b${keyIdx++}`} style={{ color: baseColor, fontFamily: 'Inter_700Bold' }}>
+          {match[2]}
+        </Text>
+      );
+    } else {
+      const url = match[0];
+      parts.push(
+        <Text
+          key={`u${keyIdx++}`}
+          style={{ color: '#818CF8', textDecorationLine: 'underline' }}
+          onPress={() => Linking.openURL(url)}
+        >
+          {url}
+        </Text>
+      );
+    }
     last = match.index + match[0].length;
   }
   if (last < text.length) {
     parts.push(
-      <Text key={`t${last}`} style={{ color: baseColor }}>
+      <Text key={`t${keyIdx++}`} style={{ color: baseColor }}>
         {text.slice(last)}
       </Text>
     );
