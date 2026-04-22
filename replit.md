@@ -33,6 +33,24 @@ The coach is no longer Telegram-only. A channel abstraction layer (`server/chann
 ### Desktop Daemon
 A standalone Node.js script in `daemon/jarvis-daemon.js` pairs to the server over a WebSocket (`/api/daemon/ws`). It exposes a sandboxed set of operations — `shell`, `notify`, `file_read`, `file_write`, `file_list` — all confined to `JARVIS_DAEMON_ROOT` (default `~/jarvis-workspace`). The agent invokes them via the `daemon_action` tool, and `daemonChannel` uses the `notify` op to send native desktop notifications when channel preferences route a notification to the daemon. Pattern inspired by [OpenClaw](https://github.com/steipete/openclaw) (MIT, © 2025 Peter Steinberger).
 
+### Android Daemon APK
+An Android APK (`android-daemon/`) pairs to the server and exposes phone-control ops:
+- **android_open_app** — launch any app by package name (dispatched to main looper for Samsung OneUI compatibility)
+- **android_browse** — open URLs in the default browser
+- **android_screenshot** — capture screen via `AccessibilityService.takeScreenshot()` with reflection-based API 30 compat
+- **android_read_screen** — read all text + clickable elements from the accessibility tree
+- **android_tap** / **android_swipe** — gesture dispatch via GestureDescription
+- **android_type** — type text into focused field; `submit: true` sends IME Enter (PhoneClaw pattern: reflection-based ACTION_IME_ENTER_COMPAT)
+- **android_press_key** — system keys: back/home/recents/enter (enter = pressImeAction)
+- **android_file_list** / **android_file_read** — access device storage
+- **android_notifications_list** — list recent notifications received on the phone (served from server cache, zero round-trip)
+- **notify** — post a local Android notification
+
+**Notification Forwarding** (`JarvisNotificationListener`): A `NotificationListenerService` runs alongside the daemon. Every non-system notification is cached (last 60, newest-first) and pushed to the server as `{type:"notification_event"}` over the existing WebSocket. The server caches per-user (`userNotifications` map in `bridge.ts`). The AI can read the cache instantly via `android_notifications_list`.
+
+Build: push to `android-daemon/**` → GitHub Actions auto-builds → overwrites `android-daemon-latest` release. APK URL: `ANDROID_APK_URL` env var.
+Key files: `JarvisAccessibilityService.kt`, `JarvisNotificationListener.kt`, `OpHandler.kt`, `WebSocketService.kt`, `server/daemon/bridge.ts`.
+
 ### Profile UI
 The Profile screen now has a "Connected Channels" section: WhatsApp link flow with code display, daemon pairing code with the exact CLI command, Slack DM connection status, and a notification-routing grid (notification type × channel checkboxes) backed by `GET/PUT /api/channels[/preferences]`.
 
