@@ -18,7 +18,7 @@ function generateCode(len = 6): string {
 export function registerChannelRoutes(app: Express): void {
   // GET /api/channels — connection status + preferences
   app.get("/api/channels", authMiddleware, async (req: Request, res: Response) => {
-    const userId = (req as any).user.id;
+    const userId = (req as any).userId;
     try {
       const [tgRows, channelRows, prefs] = await Promise.all([
         db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq(telegramLinks.userId, userId)).limit(1),
@@ -99,7 +99,7 @@ export function registerChannelRoutes(app: Express): void {
 
   // PUT /api/channels/preferences — body: { notificationType, channels: ChannelName[] }
   app.put("/api/channels/preferences", authMiddleware, async (req: Request, res: Response) => {
-    const userId = (req as any).user.id;
+    const userId = (req as any).userId;
     const { notificationType, channels } = req.body || {};
     if (!NOTIFICATION_TYPES.includes(notificationType)) {
       return res.status(400).json({ error: "invalid notificationType" });
@@ -119,7 +119,7 @@ export function registerChannelRoutes(app: Express): void {
 
   // POST /api/channels/whatsapp/code — generate link code; user texts it from WhatsApp
   app.post("/api/channels/whatsapp/code", authMiddleware, async (req: Request, res: Response) => {
-    const userId = (req as any).user.id;
+    const userId = (req as any).userId;
     try {
       const code = generateCode(6);
       const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
@@ -133,7 +133,7 @@ export function registerChannelRoutes(app: Express): void {
 
   // DELETE /api/channels/:channel — unlink
   app.delete("/api/channels/:channel", authMiddleware, async (req: Request, res: Response) => {
-    const userId = (req as any).user.id;
+    const userId = (req as any).userId;
     const channel = req.params.channel as ChannelName;
     if (!CHANNEL_NAMES.includes(channel) || channel === "telegram") {
       return res.status(400).json({ error: "channel not unlinkable here" });
@@ -162,7 +162,7 @@ export function registerChannelRoutes(app: Express): void {
 
   // GET /api/channels/daemon/permissions — current per-action allow/deny
   app.get("/api/channels/daemon/permissions", authMiddleware, async (req: Request, res: Response) => {
-    const userId = (req as any).user.id;
+    const userId = (req as any).userId;
     try {
       const perms = await getDaemonPermissions(userId);
       res.json({ permissions: perms, defaults: DEFAULT_DAEMON_PERMISSIONS });
@@ -174,7 +174,7 @@ export function registerChannelRoutes(app: Express): void {
 
   // PUT /api/channels/daemon/permissions — body: { permissions: Partial<DaemonPermissions> }
   app.put("/api/channels/daemon/permissions", authMiddleware, async (req: Request, res: Response) => {
-    const userId = (req as any).user.id;
+    const userId = (req as any).userId;
     const incoming = (req.body?.permissions || {}) as Record<string, unknown>;
     const ACTIONS: readonly DaemonAction[] = ["shell", "notify", "file_read", "file_write", "file_list"] as const;
     const sanitized: Partial<DaemonPermissions> = {};
@@ -192,7 +192,7 @@ export function registerChannelRoutes(app: Express): void {
 
   // POST /api/channels/daemon/code — generate pairing code for desktop daemon
   app.post("/api/channels/daemon/code", authMiddleware, async (req: Request, res: Response) => {
-    const userId = (req as any).user.id;
+    const userId = (req as any).userId;
     try {
       const code = await createDaemonPairingCode(userId);
       res.json({ code, expiresInSec: 15 * 60 });
@@ -207,7 +207,7 @@ export function registerChannelRoutes(app: Express): void {
   // Android ops (android_*) are routed exclusively via the agent daemon_action tool;
   // bridge-layer gating in sendDaemonOp rejects android_* ops sent here.
   app.post("/api/channels/daemon/exec", authMiddleware, async (req: Request, res: Response) => {
-    const userId = (req as any).user.id;
+    const userId = (req as any).userId;
     const { sendDaemonOp, isUserPaired: paired } = await import("../daemon/bridge");
     if (!paired(userId)) return res.status(409).json({ ok: false, error: "daemon not connected" });
     const { op } = req.body || {};
@@ -226,7 +226,7 @@ export function registerChannelRoutes(app: Express): void {
 
   // GET /api/channels/android-daemon/permissions — current per-action allow/deny
   app.get("/api/channels/android-daemon/permissions", authMiddleware, async (req: Request, res: Response) => {
-    const userId = (req as any).user.id;
+    const userId = (req as any).userId;
     try {
       const perms = await getAndroidDaemonPermissions(userId);
       res.json({ permissions: perms, defaults: DEFAULT_ANDROID_DAEMON_PERMISSIONS });
@@ -238,7 +238,7 @@ export function registerChannelRoutes(app: Express): void {
 
   // PUT /api/channels/android-daemon/permissions — body: { permissions: Partial<AndroidDaemonPermissions> }
   app.put("/api/channels/android-daemon/permissions", authMiddleware, async (req: Request, res: Response) => {
-    const userId = (req as any).user.id;
+    const userId = (req as any).userId;
     const incoming = (req.body?.permissions || {}) as Record<string, unknown>;
     const ANDROID_ACTIONS: readonly AndroidDaemonAction[] = [
       "android_screenshot", "android_read_screen", "android_open_app", "android_browse",
@@ -261,7 +261,7 @@ export function registerChannelRoutes(app: Express): void {
 
   // POST /api/channels/discord/token — save bot token and start gateway
   app.post("/api/channels/discord/token", authMiddleware, async (req: Request, res: Response) => {
-    const userId = (req as any).user.id;
+    const userId = (req as any).userId;
     const { botToken } = req.body || {};
     if (!botToken || typeof botToken !== "string" || botToken.trim().length < 20) {
       return res.status(400).json({ error: "Invalid bot token" });
@@ -291,7 +291,7 @@ export function registerChannelRoutes(app: Express): void {
 
   // POST /api/channels/discord/pair — complete pairing with code from Discord DM
   app.post("/api/channels/discord/pair", authMiddleware, async (req: Request, res: Response) => {
-    const userId = (req as any).user.id;
+    const userId = (req as any).userId;
     const { code } = req.body || {};
     if (!code || typeof code !== "string") {
       return res.status(400).json({ error: "code required" });
@@ -303,14 +303,14 @@ export function registerChannelRoutes(app: Express): void {
 
   // GET /api/channels/discord/guilds — guilds the bot is currently in
   app.get("/api/channels/discord/guilds", authMiddleware, async (req: Request, res: Response) => {
-    const userId = (req as any).user.id;
+    const userId = (req as any).userId;
     const guilds = getGuildsForUser(userId);
     res.json({ guilds });
   });
 
   // GET /api/channels/discord/channels/:guildId — text channels in a guild
   app.get("/api/channels/discord/channels/:guildId", authMiddleware, async (req: Request, res: Response) => {
-    const userId = (req as any).user.id;
+    const userId = (req as any).userId;
     const { guildId } = req.params;
     const channels = await getChannelsForGuild(userId, guildId);
     res.json({ channels });
@@ -318,7 +318,7 @@ export function registerChannelRoutes(app: Express): void {
 
   // PUT /api/channels/discord/allowlist — add a guild channel to the allowlist
   app.put("/api/channels/discord/allowlist", authMiddleware, async (req: Request, res: Response) => {
-    const userId = (req as any).user.id;
+    const userId = (req as any).userId;
     const { guildId, guildName, channelId, channelName, requireMention } = req.body || {};
     if (!guildId || !channelId) {
       return res.status(400).json({ error: "guildId and channelId required" });
@@ -358,7 +358,7 @@ export function registerChannelRoutes(app: Express): void {
 
   // DELETE /api/channels/discord/allowlist/:guildId/:channelId — remove from allowlist
   app.delete("/api/channels/discord/allowlist/:guildId/:channelId", authMiddleware, async (req: Request, res: Response) => {
-    const userId = (req as any).user.id;
+    const userId = (req as any).userId;
     const { guildId, channelId } = req.params;
     try {
       const rows = await db
@@ -384,7 +384,7 @@ export function registerChannelRoutes(app: Express): void {
 
   // POST /api/channels/discord/workspace/setup — create Jarvis Workspace channels in a guild
   app.post("/api/channels/discord/workspace/setup", authMiddleware, async (req: Request, res: Response) => {
-    const userId = (req as any).user.id;
+    const userId = (req as any).userId;
     const { guildId } = req.body as { guildId?: string };
     if (!guildId) return res.status(400).json({ error: "guildId is required" });
     try {
