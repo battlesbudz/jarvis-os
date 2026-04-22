@@ -31,6 +31,7 @@ object OpHandler {
                 "android_press_key" -> handlePressKey(op)
                 "android_file_list" -> handleFileList(op)
                 "android_file_read" -> handleFileRead(op)
+                "android_notifications_list" -> handleNotificationsList(op)
                 "notify" -> handleNotify(context, op)
                 else -> OpResult(false, error = "Unknown op type: $type")
             }
@@ -202,10 +203,17 @@ object OpHandler {
         val text = op.optString("text").ifEmpty {
             return OpResult(false, error = "text required")
         }
+        val submit = op.optBoolean("submit", false)
         val svc = JarvisAccessibilityService.instance
             ?: return OpResult(false, error = "Accessibility service not running.")
-        svc.typeText(text)
-        return OpResult(true, data = JSONObject().put("typed", text.length))
+        val ok = svc.typeText(text, submit)
+        return OpResult(
+            ok = ok,
+            data = JSONObject()
+                .put("typed", text.length)
+                .put("submitted", submit && ok),
+            error = if (!ok) "No editable field found — tap a text input first, then type" else null
+        )
     }
 
     private fun handleSwipe(op: JSONObject): OpResult {
@@ -283,6 +291,20 @@ object OpHandler {
         } catch (e: Exception) {
             OpResult(false, error = "Read failed: ${e.message}")
         }
+    }
+
+    private fun handleNotificationsList(op: JSONObject): OpResult {
+        val limit = op.optInt("limit", 20).coerceIn(1, 60)
+        val listenerRunning = JarvisNotificationListener.instance != null
+        val arr = JarvisNotificationListener.getRecentJson(limit)
+        return OpResult(
+            ok = true,
+            data = JSONObject()
+                .put("notifications", arr)
+                .put("count", arr.length())
+                .put("listenerEnabled", listenerRunning)
+                .put("hint", if (!listenerRunning) "Grant notification access in Settings > Notifications > Device & App Notifications > Jarvis Daemon" else null)
+        )
     }
 
     private fun handleNotify(context: Context, op: JSONObject): OpResult {

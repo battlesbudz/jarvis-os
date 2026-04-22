@@ -42,6 +42,15 @@ class WebSocketService : Service() {
         const val PREF_SERVER_URL = "server_url"
         const val PREF_DAEMON_ID = "daemon_id"
         const val PREF_RECONNECT_SECRET = "reconnect_secret"
+
+        // Static instance reference — used by JarvisNotificationListener to push events
+        @Volatile var instance: WebSocketService? = null
+            private set
+
+        /** Send an arbitrary JSON string event to the server (best-effort, no throw). */
+        fun sendEvent(json: String) {
+            instance?.send(json)
+        }
     }
 
     inner class LocalBinder : Binder() {
@@ -72,6 +81,7 @@ class WebSocketService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        instance = this
         createNotificationChannel()
         // Load persisted credentials — do NOT call startForeground() here.
         // startForeground() is only valid when the service is started via
@@ -383,6 +393,7 @@ class WebSocketService : Service() {
     }
 
     override fun onDestroy() {
+        instance = null
         reconnectEnabled = false
         disconnect()
         executor.shutdownNow()
