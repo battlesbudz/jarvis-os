@@ -251,7 +251,7 @@ export async function isAndroidDaemonActive(userId: string): Promise<boolean> {
 }
 
 // ───── Op audit log ─────────────────────────────────────────────────────
-// Keeps the last 60 op results per user for daemon_diagnostic queries.
+// Keeps the last 20 op results per user for daemon_diagnostic queries.
 export interface OpAuditEntry {
   ts: number;
   type: string;

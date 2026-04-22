@@ -1331,8 +1331,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             if (!preflightResult.ok) {
               return {
                 result: 'error',
-                label: 'Daemon preflight failed',
-                detail: `Daemon ping failed before '${action}': ${preflightResult.error}. The daemon may be disconnected or the accessibility service may have stopped. Ask the user to check the Jarvis Daemon app on their phone.`,
+                label: '⛔ Daemon is not responding',
+                detail: `Daemon ping failed before '${action}' (${preflightResult.error}). The daemon is not responding — it may have been killed by Samsung battery optimisation, the accessibility service may have been disabled, or the phone may be locked. Tell the user: "The Jarvis Daemon isn't responding. Please open the Jarvis Daemon app on your phone to check the status dot and the Recent Activity log — if the accessibility service is disabled, tap Fix to re-enable it."`,
               };
             }
           }
