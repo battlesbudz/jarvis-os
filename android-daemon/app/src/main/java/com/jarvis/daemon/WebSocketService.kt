@@ -19,9 +19,34 @@ import org.java_websocket.client.WebSocketClient
 import org.java_websocket.handshake.ServerHandshake
 import org.json.JSONObject
 import java.net.URI
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
+
+/** Thread-safe in-memory log ring buffer. Max 40 entries. UI observes via listener. */
+object DaemonLog {
+    private const val MAX = 40
+    private val entries = ArrayDeque<String>(MAX)
+    private val lock = Any()
+    var onChanged: (() -> Unit)? = null
+
+    private val fmt = SimpleDateFormat("HH:mm:ss", Locale.US)
+
+    fun add(msg: String) {
+        val line = "[${fmt.format(Date())}] $msg"
+        Log.d("JarvisLog", line)
+        synchronized(lock) {
+            if (entries.size >= MAX) entries.removeFirst()
+            entries.addLast(line)
+        }
+        onChanged?.invoke()
+    }
+
+    fun getAll(): List<String> = synchronized(lock) { entries.toList() }
+}
 
 class WebSocketService : Service() {
 
@@ -160,6 +185,7 @@ class WebSocketService : Service() {
         wsClient = object : WebSocketClient(URI(wsUrl)) {
             override fun onOpen(handshakedata: ServerHandshake?) {
                 Log.i(TAG, "WebSocket opened")
+                DaemonLog.add("WS opened → sending ${if (useDaemonId && daemonId.isNotEmpty()) "reconnect" else "pair"}")
                 if (!paired) {
                     if (useDaemonId && daemonId.isNotEmpty() && reconnectSecret.isNotEmpty()) {
                         sendReconnectMessage()
@@ -182,6 +208,7 @@ class WebSocketService : Service() {
 
             override fun onClose(code: Int, reason: String?, remote: Boolean) {
                 Log.w(TAG, "WebSocket closed: code=$code reason=$reason remote=$remote")
+                DaemonLog.add("WS closed: code=$code reason=${reason ?: "none"}")
                 pingFuture?.cancel(false)
                 isConnected = false
                 paired = false
@@ -193,6 +220,7 @@ class WebSocketService : Service() {
 
             override fun onError(ex: Exception?) {
                 Log.e(TAG, "WebSocket error", ex)
+                DaemonLog.add("WS error: ${ex?.message ?: "unknown"}")
                 updateStatus("Error: ${ex?.message ?: "unknown"}", false)
             }
         }
@@ -259,8 +287,10 @@ class WebSocketService : Service() {
                     reconnectAttempts = 0
                     updateStatus("Connected • ${Build.MODEL}", true)
                     Log.i(TAG, "Paired/reconnected successfully")
+                    DaemonLog.add("paired/reconnected ✓ userId=${json.optString("userId", "?")}")
                 } else {
                     val err = json.optString("error", "pairing failed")
+                    DaemonLog.add("pair FAILED: $err")
                     updateStatus("Pair failed: $err", false)
                     // Server rejected our credentials — clear them so user must re-pair
                     if (err.contains("invalid reconnect secret") || err.contains("re-pair") ||

@@ -13,6 +13,7 @@ interface PingMsg { type: "ping" }
 interface NotificationEventMsg { type: "notification_event"; notification: PhoneNotification }
 
 export type DaemonOp =
+  | { type: "ping" }
   | { type: "shell"; cmd: string; cwd?: string; timeoutMs?: number }
   | { type: "notify"; title: string; body: string }
   | { type: "file_read"; path: string }
@@ -249,13 +250,46 @@ export async function isAndroidDaemonActive(userId: string): Promise<boolean> {
   }
 }
 
+// ───── Op audit log ─────────────────────────────────────────────────────
+// Keeps the last 60 op results per user for daemon_diagnostic queries.
+export interface OpAuditEntry {
+  ts: number;
+  type: string;
+  ok: boolean;
+  error?: string;
+  durationMs: number;
+}
+const opAuditLog = new Map<string, OpAuditEntry[]>();
+const MAX_AUDIT_ENTRIES = 60;
+
+function recordAuditEntry(userId: string, entry: OpAuditEntry) {
+  let arr = opAuditLog.get(userId);
+  if (!arr) { arr = []; opAuditLog.set(userId, arr); }
+  arr.push(entry);
+  if (arr.length > MAX_AUDIT_ENTRIES) arr.splice(0, arr.length - MAX_AUDIT_ENTRIES);
+}
+
+export function getOpAuditLog(userId: string): OpAuditEntry[] {
+  return opAuditLog.get(userId) || [];
+}
+
+// Convenience: send a ping op and return the device state (or error).
+export async function pingDaemon(
+  userId: string,
+  timeoutMs = 5000,
+): Promise<{ ok: boolean; data?: unknown; error?: string }> {
+  return sendDaemonOp(userId, { type: "ping" }, timeoutMs);
+}
+
 // Platform-level gating: android_* ops can only go to android daemons,
 // and desktop ops cannot go to android daemons. Enforced here so all
 // callers (tools, routes, etc.) are protected by a single check.
+// "ping" is platform-neutral and bypasses this check.
 async function validateOpForPlatform(
   userId: string,
   op: DaemonOp,
 ): Promise<{ ok: false; error: string } | null> {
+  if (op.type === "ping") return null;
   const isAndroid = await isAndroidDaemonActive(userId);
   const isAndroidOp = op.type.startsWith("android_");
   if (isAndroidOp && !isAndroid) {
@@ -280,12 +314,15 @@ export async function sendDaemonOp(
   const platformErr = await validateOpForPlatform(userId, op);
   if (platformErr) return platformErr;
   console.log(`[daemon] op SENT userId=${userId} op=${op.type}`, 'packageName' in op ? `pkg=${(op as any).packageName}` : '');
+  const sentAt = Date.now();
   return new Promise((resolve) => {
     const id = nextOpId();
     const timer = setTimeout(() => {
       const map = pendingByUser.get(userId);
       map?.delete(id);
       console.log(`[daemon] op TIMEOUT userId=${userId} op=${op.type}`);
+      const durationMs = Date.now() - sentAt;
+      recordAuditEntry(userId, { ts: sentAt, type: op.type, ok: false, error: "timeout", durationMs });
       resolve({ ok: false, error: "daemon timeout" });
     }, timeoutMs);
     let userMap = pendingByUser.get(userId);
@@ -295,7 +332,9 @@ export async function sendDaemonOp(
     }
     userMap.set(id, {
       resolve: (result) => {
+        const durationMs = Date.now() - sentAt;
         console.log(`[daemon] op RESULT userId=${userId} op=${op.type} ok=${result.ok}`, result.ok ? '' : `err=${result.error}`);
+        recordAuditEntry(userId, { ts: sentAt, type: op.type, ok: result.ok, error: result.error, durationMs });
         resolve(result);
       },
       timer,
@@ -305,6 +344,8 @@ export async function sendDaemonOp(
     } catch (err) {
       clearTimeout(timer);
       userMap.delete(id);
+      const durationMs = Date.now() - sentAt;
+      recordAuditEntry(userId, { ts: sentAt, type: op.type, ok: false, error: String(err), durationMs });
       resolve({ ok: false, error: String(err) });
     }
   });

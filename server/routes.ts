@@ -40,7 +40,7 @@ import { logInteraction, getRecentInteractions, formatInteractionTimeline } from
 import { extractAndStore } from "./memory/extractor";
 import { getSoul, getSoulPromptBlock, regenerateSoul, setManualOverride, setSoulContent } from "./memory/soul";
 import { listPeople, deletePerson } from "./memory/people";
-import { isUserPaired, sendDaemonOp, isDaemonActionAllowed, isAndroidDaemonActive, isAndroidDaemonActionAllowed, getRecentPhoneNotifications, getDaemonDeviceMeta, type AndroidDaemonAction } from "./daemon/bridge";
+import { isUserPaired, sendDaemonOp, pingDaemon, getOpAuditLog, isDaemonActionAllowed, isAndroidDaemonActive, isAndroidDaemonActionAllowed, getRecentPhoneNotifications, getDaemonDeviceMeta, type AndroidDaemonAction } from "./daemon/bridge";
 import type { DaemonAction, DaemonOp } from "./daemon/bridge";
 import { telegramLinks, channelLinks } from "@shared/schema";
 import { connectChannelTool } from "./agent/tools/connectChannel";
@@ -867,6 +867,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
     {
       type: "function" as const,
       function: {
+        name: "daemon_diagnostic",
+        description: "Ping the paired daemon to verify it is alive and retrieve the recent op audit log (last 20 ops with timestamps and durations). Use this when: (1) an android_* op timed out or failed unexpectedly, (2) the user reports the daemon isn't responding, or (3) you want to check if the accessibility service is enabled on the device. Returns device state (model, androidVersion, accessibilityEnabled, foregroundPackage) and a timestamped log of recent ops.",
+        parameters: {
+          type: "object",
+          properties: {},
+          required: [],
+        },
+      },
+    },
+    {
+      type: "function" as const,
+      function: {
         name: "connect_channel",
         description: "Generate a one-tap deep link so the user can connect a new messaging channel (Telegram, WhatsApp, Slack, or Discord) to Jarvis. Returns a tappable link button. Use proactively when the user asks to connect/link any of these services.",
         parameters: {
@@ -1310,7 +1322,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
           } else {
             return { result: 'error', label: 'Unknown action', detail: `Unknown daemon action: ${action}` };
           }
-          const daemonResult = await sendDaemonOp(userId, op, action === 'shell' ? 30000 : 30000);
+          // Auto-preflight: for android_* ops, verify the daemon is alive before
+          // committing to the real op. Run preflight only when the last successful op
+          // was >30s ago (or there's no recent history) to avoid adding latency to
+          // rapid consecutive ops.
+          if (action.startsWith('android_') && action !== 'android_notifications_list') {
+            const auditHistory = getOpAuditLog(userId);
+            const lastEntry = auditHistory.length > 0 ? auditHistory[auditHistory.length - 1] : null;
+            const lastSuccessAge = lastEntry && lastEntry.ok ? Date.now() - lastEntry.ts : Infinity;
+            const needsPreflight = lastSuccessAge > 30000;
+            if (needsPreflight) {
+              const preflightResult = await pingDaemon(userId, 5000);
+              if (!preflightResult.ok) {
+                return {
+                  result: 'error',
+                  label: 'Daemon preflight failed',
+                  detail: `Daemon ping failed before '${action}': ${preflightResult.error}. The daemon may be disconnected or the accessibility service may have stopped. Ask the user to check the Jarvis Daemon app on their phone.`,
+                };
+              }
+            }
+          }
+
+          const daemonResult = await sendDaemonOp(userId, op, 30000);
           if (!daemonResult.ok) return { result: 'error', label: 'Daemon action failed', detail: daemonResult.error || 'Unknown error' };
 
           // Handle screenshot specially: store the image and return a URL instead of raw base64
@@ -1326,6 +1359,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
 
           return { result: 'success', label: `Daemon: ${action}`, detail: JSON.stringify(daemonResult.data || {}).slice(0, 2000) };
+        }
+        case 'daemon_diagnostic': {
+          if (!isUserPaired(userId)) {
+            return { result: 'error', label: 'Daemon not connected', detail: 'No daemon paired — cannot run diagnostic.' };
+          }
+          const pingResult = await pingDaemon(userId, 5000);
+          const auditEntries = getOpAuditLog(userId);
+          const recent = auditEntries.slice(-20).reverse();
+          const recentStr = recent.length === 0 ? 'No ops recorded yet.' : recent.map((e) => {
+            const d = new Date(e.ts).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            return `[${d}] ${e.type} → ${e.ok ? 'OK' : `FAIL: ${e.error}`} (${e.durationMs}ms)`;
+          }).join('\n');
+          const pingStr = pingResult.ok
+            ? `ping OK — ${JSON.stringify(pingResult.data)}`
+            : `ping FAILED — ${pingResult.error}`;
+          return {
+            result: pingResult.ok ? 'success' : 'error',
+            label: pingResult.ok ? 'Daemon alive' : 'Daemon ping failed',
+            detail: `${pingStr}\n\nRecent op log (newest first):\n${recentStr}`,
+          };
         }
         case 'connect_channel': {
           const toolResult = await connectChannelTool.execute(args, { userId, state: {} });
@@ -1513,8 +1566,8 @@ Answer (yes/no):`,
 
       const daemonSection = daemonPaired
         ? androidActive
-          ? `Android Device Daemon is ACTIVE and connected.\n${deviceHints}\nAvailable actions: android_open_app, android_browse, android_screenshot, android_read_screen, android_tap, android_type, android_swipe, android_press_key, android_file_list, android_file_read, android_notifications_list. DO NOT use desktop shell/notify/file actions.`
-          : 'Desktop Daemon is ACTIVE. Use shell, notify, file_read, file_write, file_list actions. ALWAYS report errors immediately if a tool returns result:error.'
+          ? `Android Device Daemon is ACTIVE and connected.\n${deviceHints}\nAvailable actions: android_open_app, android_browse, android_screenshot, android_read_screen, android_tap, android_type, android_swipe, android_press_key, android_file_list, android_file_read, android_notifications_list. DO NOT use desktop shell/notify/file actions.\nDIAGNOSTICS: If an op times out or behaves unexpectedly, call daemon_diagnostic (no args) to ping the device and retrieve the recent op audit log. Report the ping result and failure pattern to the user.`
+          : 'Desktop Daemon is ACTIVE. Use shell, notify, file_read, file_write, file_list actions. ALWAYS report errors immediately if a tool returns result:error. Use daemon_diagnostic (no args) to check daemon health if ops are failing.'
         : '⚠️ NO DAEMON CONNECTED. Do NOT call daemon_action — it will fail with "daemon not connected". If the user asks to control their phone or computer, tell them exactly this: "Your phone daemon isn\'t connected. To fix it: (1) Open the Jarvis app → Profile → scroll to \'Android Device\' → tap \'Get Pairing Code\', (2) Open the Jarvis Daemon APK on your phone, (3) Make sure the Server URL is https://GameplanAI.replit.app, (4) Enter the 8-character pairing code, (5) Tap Pair. The status dot should turn green within a few seconds." Do not attempt daemon_action until they confirm it\'s connected.';
       const systemPrompt = buildCoachSystemPrompt(goals || [], stats || {}, history || [], calendarEvents || [], lifeContext || null, resolvedGmailItems, resolvedGmailConnected, slackMessages || [], slackConnected ?? false, userCommitments, coachingMode, memories, telegramMessages || [], telegramConnected ?? false, morningNoteSummary, documentsContext, crossChannelContext, soulBlock, daemonSection);
 

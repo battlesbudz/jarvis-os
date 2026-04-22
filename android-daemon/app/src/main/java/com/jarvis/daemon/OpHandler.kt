@@ -6,6 +6,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
+import android.os.SystemClock
 import android.util.Base64
 import android.util.Log
 import org.json.JSONArray
@@ -19,8 +20,12 @@ object OpHandler {
     private const val TAG = "JarvisOp"
 
     fun handle(context: Context, op: JSONObject): OpResult {
+        val type = op.optString("type")
+        val startMs = SystemClock.elapsedRealtime()
+        DaemonLog.add("op received: $type")
         return try {
-            when (val type = op.optString("type")) {
+            val result = when (type) {
+                "ping" -> handlePing()
                 "android_open_app" -> handleOpenApp(context, op)
                 "android_browse" -> handleBrowse(context, op)
                 "android_screenshot" -> handleScreenshot()
@@ -35,10 +40,41 @@ object OpHandler {
                 "notify" -> handleNotify(context, op)
                 else -> OpResult(false, error = "Unknown op type: $type")
             }
+            val durationMs = SystemClock.elapsedRealtime() - startMs
+            if (result.ok) {
+                DaemonLog.add("op OK: $type (${durationMs}ms)")
+            } else {
+                DaemonLog.add("op FAILED: $type — ${result.error} (${durationMs}ms)")
+            }
+            result
         } catch (e: Exception) {
+            val durationMs = SystemClock.elapsedRealtime() - startMs
             Log.e(TAG, "Op failed", e)
+            DaemonLog.add("op EXCEPTION: $type — ${e.message} (${durationMs}ms)")
             OpResult(false, error = e.message ?: "unknown error")
         }
+    }
+
+    private fun handlePing(): OpResult {
+        val svc = JarvisAccessibilityService.instance
+        val accessibilityEnabled = svc != null
+        val notificationListenerActive = JarvisNotificationListener.instance != null
+        val foregroundPackage = try {
+            svc?.rootInActiveWindow?.packageName?.toString() ?: "unknown"
+        } catch (e: Exception) { "unknown" }
+
+        return OpResult(
+            ok = true,
+            data = JSONObject()
+                .put("model", Build.MODEL)
+                .put("manufacturer", Build.MANUFACTURER)
+                .put("androidVersion", Build.VERSION.RELEASE)
+                .put("sdkInt", Build.VERSION.SDK_INT)
+                .put("accessibilityEnabled", accessibilityEnabled)
+                .put("notificationListenerActive", notificationListenerActive)
+                .put("foregroundPackage", foregroundPackage)
+                .put("uptimeMs", SystemClock.elapsedRealtime())
+        )
     }
 
     private fun handleOpenApp(context: Context, op: JSONObject): OpResult {
