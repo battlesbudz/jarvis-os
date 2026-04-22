@@ -53,30 +53,33 @@ object OpHandler {
             pm.getApplicationLabel(pm.getApplicationInfo(packageName, 0)).toString()
         } catch (e: Exception) { packageName }
 
-        // Android 10+ restricts background activity starts. Accessibility service
-        // context is exempt (Android 14+). Try that first, then notification fallback.
+        // Step 1: Try direct launch via accessibility service (may work on some devices/OS versions)
         val svc = JarvisAccessibilityService.instance
+        var directLaunched = false
         if (svc != null) {
-            val launched = svc.launchApp(packageName)
-            if (launched) {
-                return OpResult(true, data = JSONObject().put("launched", packageName).put("appName", appLabel))
+            try {
+                directLaunched = svc.launchApp(packageName)
+            } catch (e: Exception) {
+                Log.w(TAG, "Direct accessibility launch failed: ${e.message}")
             }
         }
 
-        // Fallback: show a high-priority heads-up notification the user can tap.
-        // This is 100% reliable on all Android versions regardless of background restrictions.
+        // Step 2: ALWAYS show a high-priority heads-up notification.
+        // Background activity starts are silently blocked on Android 10+ in many configurations
+        // (including Samsung OneUI). The notification is the guaranteed visible action.
         val pi = PendingIntent.getActivity(
             context, packageName.hashCode(), launchIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        NotificationHelper.showAction(context, "Open $appLabel", "Tap here to open", pi, packageName.hashCode())
+        NotificationHelper.showAction(context, "▶ Open $appLabel", "Tap to open now", pi, packageName.hashCode())
+
         return OpResult(
             true,
             data = JSONObject()
-                .put("launched", packageName)
                 .put("appName", appLabel)
-                .put("method", "notification")
-                .put("note", "Tap the notification on your phone to open $appLabel (enable Jarvis Accessibility Service in Settings for automatic launch)")
+                .put("package", packageName)
+                .put("directLaunchAttempted", directLaunched)
+                .put("notification", "shown — tap 'Open $appLabel' notification on your phone")
         )
     }
 
@@ -85,16 +88,18 @@ object OpHandler {
             return OpResult(false, error = "url required")
         }
 
-        // Try via accessibility service first (exempt from background activity restriction)
+        // Step 1: Try direct launch via accessibility service
         val svc = JarvisAccessibilityService.instance
+        var directOpened = false
         if (svc != null) {
-            val opened = svc.browseUrl(url)
-            if (opened) {
-                return OpResult(true, data = JSONObject().put("opened", url))
+            try {
+                directOpened = svc.browseUrl(url)
+            } catch (e: Exception) {
+                Log.w(TAG, "Direct browse launch failed: ${e.message}")
             }
         }
 
-        // Fallback: tap-to-open notification
+        // Step 2: ALWAYS show a high-priority heads-up notification as guaranteed fallback
         val viewIntent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
@@ -102,14 +107,15 @@ object OpHandler {
             context, url.hashCode(), viewIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        val shortUrl = if (url.length > 40) url.take(37) + "…" else url
-        NotificationHelper.showAction(context, "Open Link", shortUrl, pi, url.hashCode())
+        val shortUrl = if (url.length > 50) url.take(47) + "…" else url
+        NotificationHelper.showAction(context, "▶ Open Link", shortUrl, pi, url.hashCode())
+
         return OpResult(
             true,
             data = JSONObject()
-                .put("opened", url)
-                .put("method", "notification")
-                .put("note", "Tap the notification on your phone to open the link (enable Jarvis Accessibility Service for automatic launch)")
+                .put("url", url)
+                .put("directLaunchAttempted", directOpened)
+                .put("notification", "shown — tap the notification on your phone to open the link")
         )
     }
 

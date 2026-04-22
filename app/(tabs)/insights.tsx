@@ -55,7 +55,7 @@ import {
 } from '@/lib/notifications';
 import { getApiUrl, queryClient } from '@/lib/query-client';
 import { authFetch, getAuthToken } from '@/lib/auth-context';
-import { Linking } from 'react-native';
+import { Linking, Image } from 'react-native';
 
 interface EmailSuggestion {
   title: string;
@@ -349,7 +349,8 @@ function MessageBubble({ message, isFirst, isLastAssistant, goals, onFollowup, o
 
       {!isUser && message.executedActions && message.executedActions.length > 0 && (() => {
         const urlActions = message.executedActions!.filter(ea => ea.url);
-        const nonUrlActions = message.executedActions!.filter(ea => !ea.url);
+        const screenshotActions = message.executedActions!.filter(ea => !ea.url && ea.screenshotUrl);
+        const nonUrlActions = message.executedActions!.filter(ea => !ea.url && !ea.screenshotUrl);
         return (
           <>
             {urlActions.map((ea, idx) => (
@@ -406,6 +407,19 @@ function MessageBubble({ message, isFirst, isLastAssistant, goals, onFollowup, o
                 ))}
               </View>
             )}
+            {screenshotActions.map((ea, idx) => (
+              <View key={`screenshot-${idx}`} style={styles.screenshotContainer}>
+                <View style={styles.screenshotBadgeRow}>
+                  <Ionicons name="phone-portrait-outline" size={12} color={Colors.success} />
+                  <Text style={styles.screenshotLabel}>{ea.label}</Text>
+                </View>
+                <Image
+                  source={{ uri: `${getApiUrl().replace(/\/$/, '')}${ea.screenshotUrl}` }}
+                  style={styles.screenshotImage}
+                  resizeMode="contain"
+                />
+              </View>
+            ))}
           </>
         );
       })()}
@@ -2025,6 +2039,34 @@ const styles = StyleSheet.create({
   },
   executedActionTextError: {
     color: '#EF4444',
+  },
+  screenshotContainer: {
+    marginTop: 10,
+    borderRadius: 12,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: Colors.border,
+    maxWidth: 280,
+  },
+  screenshotBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: 'rgba(16, 185, 129, 0.08)',
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  screenshotLabel: {
+    fontSize: 11,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.success,
+  },
+  screenshotImage: {
+    width: 280,
+    height: 497,
+    backgroundColor: '#000',
   },
   confirmCard: {
     backgroundColor: Colors.surface,
