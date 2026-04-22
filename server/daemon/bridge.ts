@@ -10,6 +10,7 @@ interface ReconnectMsg { type: "reconnect"; daemonId: string; reconnectSecret: s
 interface ResultMsg { type: "result"; id: string; ok: boolean; data?: unknown; error?: string }
 interface HelloMsg { type: "hello"; ok: boolean; userId?: string; error?: string }
 interface PingMsg { type: "ping" }
+interface NotificationEventMsg { type: "notification_event"; notification: PhoneNotification }
 
 export type DaemonOp =
   | { type: "shell"; cmd: string; cwd?: string; timeoutMs?: number }
@@ -22,11 +23,31 @@ export type DaemonOp =
   | { type: "android_screenshot" }
   | { type: "android_read_screen" }
   | { type: "android_tap"; x: number; y: number }
-  | { type: "android_type"; text: string }
+  | { type: "android_type"; text: string; submit?: boolean }
   | { type: "android_swipe"; x1: number; y1: number; x2: number; y2: number; durationMs?: number }
-  | { type: "android_press_key"; key: "back" | "home" | "recents" | "volume_up" | "volume_down" }
+  | { type: "android_press_key"; key: "back" | "home" | "recents" | "volume_up" | "volume_down" | "enter" }
   | { type: "android_file_list"; path: string }
-  | { type: "android_file_read"; path: string };
+  | { type: "android_file_read"; path: string }
+  | { type: "android_notifications_list"; limit?: number };
+
+export interface PhoneNotification {
+  pkg: string;
+  app: string;
+  title: string;
+  text: string;
+  ts: number;
+  key: string;
+}
+
+// In-memory notification cache per user (newest first, max 60 per user)
+const userNotifications = new Map<string, PhoneNotification[]>();
+
+const MAX_NOTIFS_PER_USER = 60;
+
+export function getRecentPhoneNotifications(userId: string, limit = 20): PhoneNotification[] {
+  const arr = userNotifications.get(userId) || [];
+  return arr.slice(0, limit);
+}
 
 interface PendingOp {
   resolve: (r: { ok: boolean; data?: unknown; error?: string }) => void;
@@ -453,6 +474,18 @@ export function startDaemonBridge(server: HttpServer): void {
 
       if (m.type === "ping") {
         try { ws.send(JSON.stringify({ type: "pong" })); } catch { /* noop */ }
+        return;
+      }
+
+      // Notification event pushed from Android daemon — cache server-side
+      if (m.type === "notification_event" && pairedUserId) {
+        const ne = m as NotificationEventMsg;
+        if (ne.notification && typeof ne.notification === "object") {
+          const arr = userNotifications.get(pairedUserId) || [];
+          arr.unshift(ne.notification); // newest first
+          while (arr.length > MAX_NOTIFS_PER_USER) arr.pop();
+          userNotifications.set(pairedUserId, arr);
+        }
         return;
       }
 

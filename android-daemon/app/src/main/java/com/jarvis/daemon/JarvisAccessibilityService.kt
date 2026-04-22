@@ -310,6 +310,7 @@ class JarvisAccessibilityService : AccessibilityService() {
             "home" -> performGlobalAction(GLOBAL_ACTION_HOME)
             "recents" -> performGlobalAction(GLOBAL_ACTION_RECENTS)
             "notifications" -> performGlobalAction(GLOBAL_ACTION_NOTIFICATIONS)
+            "enter" -> pressImeAction()
         }
     }
 }
