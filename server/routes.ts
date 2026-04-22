@@ -40,7 +40,7 @@ import { logInteraction, getRecentInteractions, formatInteractionTimeline } from
 import { extractAndStore } from "./memory/extractor";
 import { getSoul, getSoulPromptBlock, regenerateSoul, setManualOverride, setSoulContent } from "./memory/soul";
 import { listPeople, deletePerson } from "./memory/people";
-import { isUserPaired, sendDaemonOp, isDaemonActionAllowed, isAndroidDaemonActive, isAndroidDaemonActionAllowed, type AndroidDaemonAction } from "./daemon/bridge";
+import { isUserPaired, sendDaemonOp, isDaemonActionAllowed, isAndroidDaemonActive, isAndroidDaemonActionAllowed, getRecentPhoneNotifications, type AndroidDaemonAction } from "./daemon/bridge";
 import type { DaemonAction, DaemonOp } from "./daemon/bridge";
 import { telegramLinks, channelLinks } from "@shared/schema";
 import { connectChannelTool } from "./agent/tools/connectChannel";
@@ -837,11 +837,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       type: "function" as const,
       function: {
         name: "daemon_action",
-        description: "Execute a sandboxed action on the user's paired daemon — either a desktop daemon or an Android device daemon. DESKTOP actions (when desktop daemon paired): shell, notify, file_read, file_write, file_list. ANDROID actions (when Android daemon paired): android_open_app (launch app by package name e.g. 'com.google.android.youtube'), android_browse (open URL in browser), android_screenshot (capture screen), android_read_screen (read visible UI text), android_tap (tap at x/y), android_type (type text), android_swipe (swipe gesture), android_press_key (back/home/recents), android_file_list, android_file_read. IMPORTANT for android_open_app and android_browse: Before calling the tool, FIRST tell the user 'Look at your phone now — launching [app name]' so they're watching the screen when it opens. After the tool returns, call android_read_screen to verify the correct app is in the foreground. Always call check_connections first to know which daemon type is paired.",
+        description: "Execute a sandboxed action on the user's paired daemon — either a desktop daemon or an Android device daemon. DESKTOP actions (when desktop daemon paired): shell, notify, file_read, file_write, file_list. ANDROID actions (when Android daemon paired): android_open_app (launch app by package name e.g. 'com.google.android.youtube'), android_browse (open URL in browser), android_screenshot (capture screen), android_read_screen (read visible UI text), android_tap (tap at x/y), android_type (type text into focused field — set submit:true to also press Search/Go/Enter after typing), android_swipe (swipe gesture), android_press_key (back/home/recents), android_file_list, android_file_read, android_notifications_list (list recent notifications received on the phone — great for checking for new messages/emails without opening apps). IMPORTANT for android_open_app and android_browse: Before calling the tool, FIRST tell the user 'Look at your phone now — launching [app name]' so they're watching the screen when it opens. After the tool returns, call android_read_screen to verify the correct app is in the foreground. Always call check_connections first to know which daemon type is paired.",
         parameters: {
           type: "object",
           properties: {
-            action: { type: "string", enum: ["shell", "notify", "file_read", "file_write", "file_list", "android_open_app", "android_browse", "android_screenshot", "android_read_screen", "android_tap", "android_type", "android_swipe", "android_press_key", "android_file_list", "android_file_read"] },
+            action: { type: "string", enum: ["shell", "notify", "file_read", "file_write", "file_list", "android_open_app", "android_browse", "android_screenshot", "android_read_screen", "android_tap", "android_type", "android_swipe", "android_press_key", "android_file_list", "android_file_read", "android_notifications_list"] },
             cmd: { type: "string", description: "Shell command (for 'shell' action)" },
             title: { type: "string", description: "Notification title (for 'notify' action)" },
             body: { type: "string", description: "Notification body (for 'notify' action)" },
@@ -852,11 +852,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
             x: { type: "number", description: "X pixel coordinate (for android_tap)" },
             y: { type: "number", description: "Y pixel coordinate (for android_tap)" },
             text: { type: "string", description: "Text to type (for android_type)" },
+            submit: { type: "boolean", description: "If true, press IME Search/Go/Enter after typing (for android_type only)" },
             x1: { type: "number", description: "Swipe start X (for android_swipe)" },
             y1: { type: "number", description: "Swipe start Y (for android_swipe)" },
             x2: { type: "number", description: "Swipe end X (for android_swipe)" },
             y2: { type: "number", description: "Swipe end Y (for android_swipe)" },
-            key: { type: "string", enum: ["back", "home", "recents", "volume_up", "volume_down"], description: "System key (for android_press_key)" },
+            key: { type: "string", enum: ["back", "home", "recents", "volume_up", "volume_down", "enter"], description: "System key (for android_press_key). Use 'enter' to press IME Search/Go/Done/Enter on the keyboard." },
+            limit: { type: "number", description: "Max notifications to return (for android_notifications_list, default 20)" },
           },
           required: ["action"],
         },
@@ -1223,7 +1225,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             return { result: 'error', label: 'Daemon not connected', detail: 'No daemon paired. Install and pair either the desktop daemon or the Android APK from Profile → Connected Channels.' };
           }
           const isAndroidDaemon = await isAndroidDaemonActive(userId);
-          const androidActions = ['android_open_app', 'android_browse', 'android_screenshot', 'android_read_screen', 'android_tap', 'android_type', 'android_swipe', 'android_press_key', 'android_file_list', 'android_file_read'];
+          const androidActions = ['android_open_app', 'android_browse', 'android_screenshot', 'android_read_screen', 'android_tap', 'android_type', 'android_swipe', 'android_press_key', 'android_file_list', 'android_file_read', 'android_notifications_list'];
           const desktopActions = ['shell', 'notify', 'file_read', 'file_write', 'file_list'];
 
           let op: DaemonOp;
@@ -1236,6 +1238,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               android_file_list: 'android_file_list', android_file_read: 'android_file_read',
               android_tap: 'android_tap_type', android_type: 'android_tap_type',
               android_swipe: 'android_tap_type', android_press_key: 'android_tap_type',
+              android_notifications_list: null,  // served from server cache — no daemon permission needed
             };
             const permKey = permMap[action];
             if (permKey && !(await isAndroidDaemonActionAllowed(userId, permKey))) {
@@ -1256,14 +1259,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
               op = { type: 'android_tap', x: args.x, y: args.y };
             } else if (action === 'android_type') {
               if (!args.text) return { result: 'error', label: 'text required', detail: 'Provide text for android_type.' };
-              op = { type: 'android_type', text: String(args.text) };
+              op = { type: 'android_type', text: String(args.text), submit: !!args.submit };
+            } else if (action === 'android_notifications_list') {
+              // android_notifications_list is served from the server-side cache (no op sent to daemon)
+              const limit = typeof args.limit === 'number' ? Math.min(args.limit, 60) : 20;
+              const notifs = getRecentPhoneNotifications(userId, limit);
+              if (notifs.length === 0) {
+                return { result: 'success', label: 'No recent notifications', detail: 'The notification cache is empty. This could mean: (1) the daemon is not connected, (2) Notification Access is not granted to Jarvis Daemon (Settings > Notifications > Device & App Notifications > Jarvis Daemon), or (3) no notifications have arrived since the daemon started.' };
+              }
+              const formatted = notifs.map(n => {
+                const d = new Date(n.ts).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+                return `[${d}] ${n.app}: ${n.title}${n.text ? ' — ' + n.text.slice(0, 120) : ''}`;
+              }).join('\n');
+              return { result: 'success', label: `${notifs.length} recent notification${notifs.length !== 1 ? 's' : ''}`, detail: formatted };
             } else if (action === 'android_swipe') {
               if (typeof args.x1 !== 'number' || typeof args.y1 !== 'number' || typeof args.x2 !== 'number' || typeof args.y2 !== 'number') return { result: 'error', label: 'coords required', detail: 'Provide x1,y1,x2,y2 for android_swipe.' };
               op = { type: 'android_swipe', x1: args.x1, y1: args.y1, x2: args.x2, y2: args.y2, durationMs: typeof args.durationMs === 'number' ? args.durationMs : 300 };
             } else if (action === 'android_press_key') {
-              const validKeys = ['back', 'home', 'recents', 'volume_up', 'volume_down'] as const;
+              const validKeys = ['back', 'home', 'recents', 'volume_up', 'volume_down', 'enter'] as const;
               const key = String(args.key || 'back') as typeof validKeys[number];
-              if (!validKeys.includes(key)) return { result: 'error', label: 'invalid key', detail: 'Key must be back, home, recents, volume_up, or volume_down.' };
+              if (!validKeys.includes(key)) return { result: 'error', label: 'invalid key', detail: 'Key must be back, home, recents, volume_up, volume_down, or enter.' };
               op = { type: 'android_press_key', key };
             } else if (action === 'android_file_list') {
               if (!args.path) return { result: 'error', label: 'path required', detail: 'Provide path for android_file_list.' };
