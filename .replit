@@ -83,6 +83,9 @@ GOOGLE_WEB_CLIENT_ID = "464052645678-au43qstbkio1gc6foomqo1a40c9f5vpk.apps.googl
 GOOGLE_CLIENT_SECRET = "your-google-client-secret"
 ANDROID_APK_URL = "https://github.com/battlesbudz/JarvisAi/releases/download/android-daemon-latest/jarvis-daemon.apk"
 
+[userenv.production]
+EXPO_PUBLIC_DOMAIN = "GameplanAI.replit.app"
+
 [postMerge]
 path = "scripts/post-merge.sh"
 timeoutMs = 120000
