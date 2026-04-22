@@ -31,6 +31,7 @@ import { mobileAuthRouter } from "./mobileAuthRoutes";
 import { registerDataRoutes } from "./dataRoutes";
 import { registerTelegramRoutes } from "./telegramRoutes";
 import { registerChannelRoutes } from "./channels/routes";
+import { registerDownloadRoutes } from "./downloadRoutes";
 import { isIntegrationOwner, claimIntegrationOwnership } from "./integrationOwner";
 import { oauthRouter, oauthCallbackRouter } from "./oauthRoutes";
 import { getValidGoogleTokens, getValidGoogleToken, getValidMicrosoftToken, getUserTokens, getUserToken, getUserOAuthStatus } from "./userTokenStore";
@@ -547,6 +548,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use("/api/auth", authRouter);
   app.use("/api/auth/mobile", mobileAuthRouter);
   app.use("/api/oauth", oauthCallbackRouter);
+  registerDownloadRoutes(app);
   app.use(authMiddleware);
   app.use("/api/oauth", oauthRouter);
 

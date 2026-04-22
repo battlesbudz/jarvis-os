@@ -12,6 +12,7 @@ import {
   Alert,
   TextInput,
   Switch,
+  Image,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -2540,16 +2541,54 @@ export default function ProfileScreen() {
                 </Pressable>
               )}
             </View>
+            {!(channelData?.connected.daemon && channelData?.meta?.daemon?.platform === 'android') && (() => {
+              const apkUrl = `${getApiUrl()}/api/download/apk`;
+              const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(apkUrl)}`;
+              return (
+                <View style={{ paddingHorizontal: 16, paddingVertical: 12, borderTopWidth: 1, borderTopColor: Colors.border, backgroundColor: Colors.background }}>
+                  <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: Colors.text, marginBottom: 4 }}>
+                    Step 1 — Get the app
+                  </Text>
+                  <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, lineHeight: 18, marginBottom: 10 }}>
+                    Download the Jarvis Daemon APK and install it on your Android phone. Enable "Install from unknown sources" when prompted.
+                  </Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                    <View style={{ alignItems: 'center' }}>
+                      <Image
+                        source={{ uri: qrUrl }}
+                        style={{ width: 100, height: 100, borderRadius: 8 }}
+                        resizeMode="contain"
+                      />
+                      <Text style={{ fontSize: 10, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, marginTop: 4 }}>
+                        Scan to download
+                      </Text>
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Pressable
+                        style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#34A853', paddingVertical: 10, paddingHorizontal: 14, borderRadius: 8 }}
+                        onPress={() => WebBrowser.openBrowserAsync(apkUrl)}
+                      >
+                        <Ionicons name="download-outline" size={16} color="#fff" />
+                        <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: '#fff' }}>Download APK</Text>
+                      </Pressable>
+                      <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, marginTop: 6, lineHeight: 16 }}>
+                        Tap "Pair" above after installing to get your connection code.
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+              );
+            })()}
             {androidDaemonCode && (
               <View style={{ paddingHorizontal: 16, paddingVertical: 12, backgroundColor: Colors.background }}>
                 <Text style={{ fontSize: 13, fontFamily: 'Inter_500Medium', color: Colors.text, marginBottom: 6 }}>
-                  Pairing code (valid 15 min):
+                  Step 2 — Enter pairing code (valid 15 min):
                 </Text>
                 <Text selectable style={{ fontSize: 24, fontFamily: 'Inter_700Bold', letterSpacing: 4, color: '#34A853', marginBottom: 8 }}>
                   {androidDaemonCode}
                 </Text>
                 <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, lineHeight: 18, marginBottom: 6 }}>
-                  Build the APK from the android-daemon/ source in your Jarvis project, sideload it on your Android phone (enable "Install from unknown sources" in Settings), then open the app and enter this code.
+                  Open the Jarvis Daemon app on your Android phone, enter your server URL and this code, then tap "Connect to Jarvis".
                 </Text>
                 <View style={{ padding: 10, borderRadius: 8, backgroundColor: '#34A85312', borderWidth: 1, borderColor: '#34A853' }}>
                   <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: '#1a6b30', marginBottom: 4 }}>
