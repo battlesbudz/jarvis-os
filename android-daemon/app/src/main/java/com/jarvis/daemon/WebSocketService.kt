@@ -71,21 +71,26 @@ class WebSocketService : Service() {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            startForeground(NOTIFICATION_ID, buildNotification("Starting…"),
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
-        } else {
-            startForeground(NOTIFICATION_ID, buildNotification("Starting…"))
-        }
-
-        // Load persisted credentials
+        // Load persisted credentials — do NOT call startForeground() here.
+        // startForeground() is only valid when the service is started via
+        // startForegroundService(), not when it is only bound.
         val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         serverUrl = prefs.getString(PREF_SERVER_URL, "") ?: ""
         daemonId = prefs.getString(PREF_DAEMON_ID, "") ?: ""
         reconnectSecret = prefs.getString(PREF_RECONNECT_SECRET, "") ?: ""
     }
 
+    private fun startForegroundCompat() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startForeground(NOTIFICATION_ID, buildNotification("Starting…"),
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
+        } else {
+            startForeground(NOTIFICATION_ID, buildNotification("Starting…"))
+        }
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        startForegroundCompat()
         when (intent?.action) {
             ACTION_CONNECT -> {
                 val url = intent.getStringExtra(EXTRA_SERVER_URL) ?: return START_STICKY
