@@ -6,7 +6,7 @@ import { registerTelegramWebhook, startProactiveScheduler, startTelegramPolling,
 import { startMomentumExpiryScheduler } from "./momentumCoach";
 import { startHeartbeat } from "./heartbeat";
 import { startJobQueueWorker } from "./agent/jobQueue";
-import { isTelegramConfigured, logTelegramStatus, setWebhook } from "./integrations/telegram";
+import { isTelegramConfigured, logTelegramStatus, setWebhook, deleteWebhook } from "./integrations/telegram";
 import { startScheduler } from "./scheduler";
 import { initChannels } from "./channels";
 import { registerWhatsAppWebhook } from "./channels/whatsappWebhook";
@@ -301,9 +301,14 @@ function setupErrorHandler(app: express.Application) {
             console.error("[Telegram] Production mode but REPLIT_DOMAINS is not set — cannot register webhook");
           }
         } else {
-          startTelegramPolling().catch(err => {
-            console.error("Failed to start Telegram polling:", err);
-          });
+          // Delete any previously-set webhook (e.g. from a production deploy)
+          // before starting polling — Telegram only delivers to ONE endpoint,
+          // so an active webhook silently swallows all getUpdates responses.
+          deleteWebhook()
+            .then(() => startTelegramPolling())
+            .catch(err => {
+              console.error("Failed to start Telegram polling:", err);
+            });
         }
       }
 

@@ -171,7 +171,9 @@ export function isTelegramConfigured(): boolean {
 export async function deleteWebhook(): Promise<void> {
   if (!BOT_TOKEN) return;
   try {
-    await fetch(`${BASE}/deleteWebhook`, { method: 'POST' });
+    const res = await fetch(`${BASE}/deleteWebhook`, { method: 'POST' });
+    const data = await res.json() as { ok: boolean };
+    console.log('[Telegram] Webhook cleared before polling:', data.ok ? 'ok' : 'failed');
   } catch {
     // ignore
   }
