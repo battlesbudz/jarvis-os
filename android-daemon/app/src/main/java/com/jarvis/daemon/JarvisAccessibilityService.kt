@@ -1,6 +1,8 @@
 package com.jarvis.daemon
 
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.AccessibilityService.ScreenshotResult
+import android.accessibilityservice.AccessibilityService.TakeScreenshotCallback
 import android.accessibilityservice.GestureDescription
 import android.content.Intent
 import android.graphics.Bitmap
@@ -87,8 +89,8 @@ class JarvisAccessibilityService : AccessibilityService() {
             object : TakeScreenshotCallback {
                 override fun onSuccess(screenshotResult: ScreenshotResult) {
                     try {
-                        // getHardwareBitmap() returns a Bitmap in HARDWARE config
-                        val bmp = screenshotResult.hardwareBitmap
+                        // getBitmap() returns a Bitmap (may be HARDWARE config)
+                        val bmp = screenshotResult.bitmap
                         // Hardware bitmaps cannot be compressed — copy to software config first
                         val soft = bmp.copy(Bitmap.Config.ARGB_8888, false)
                         bmp.recycle()
