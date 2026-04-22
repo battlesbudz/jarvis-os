@@ -59,7 +59,8 @@ class JarvisAccessibilityService : AccessibilityService() {
             mainExecutor,
             object : TakeScreenshotCallback {
                 override fun onSuccess(screenshotResult: ScreenshotResult) {
-                    val hardwareBitmap = screenshotResult.hardwareBitmap
+                    @Suppress("DEPRECATION")
+                    val hardwareBitmap: Bitmap = screenshotResult.getHardwareBitmap()
                     val softBitmap = hardwareBitmap.copy(Bitmap.Config.ARGB_8888, false)
                     hardwareBitmap.recycle()
                     resultRef.set(softBitmap)
