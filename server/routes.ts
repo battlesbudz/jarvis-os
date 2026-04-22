@@ -1565,8 +1565,29 @@ Answer (yes/no):`,
         : '⚠️ NO DAEMON CONNECTED. Do NOT call daemon_action — it will fail with "daemon not connected". If the user asks to control their phone or computer, tell them exactly this: "Your phone daemon isn\'t connected. To fix it: (1) Open the Jarvis app → Profile → scroll to \'Android Device\' → tap \'Get Pairing Code\', (2) Open the Jarvis Daemon APK on your phone, (3) Make sure the Server URL is https://GameplanAI.replit.app, (4) Enter the 8-character pairing code, (5) Tap Pair. The status dot should turn green within a few seconds." Do not attempt daemon_action until they confirm it\'s connected.';
       const systemPrompt = buildCoachSystemPrompt(goals || [], stats || {}, history || [], calendarEvents || [], lifeContext || null, resolvedGmailItems, resolvedGmailConnected, slackMessages || [], slackConnected ?? false, userCommitments, coachingMode, memories, telegramMessages || [], telegramConnected ?? false, morningNoteSummary, documentsContext, crossChannelContext, soulBlock, daemonSection);
 
+      // Detect if the user's current message is a device-control request so we can
+      // force tool use rather than letting the model respond with plain text.
+      const lastUserMsg = [...messages].reverse().find((m: any) => m.role === 'user');
+      const lastUserContent = typeof lastUserMsg?.content === 'string' ? lastUserMsg.content.toLowerCase() : '';
+      const deviceControlKeywords = [
+        'screenshot', 'screen shot', 'screen capture',
+        'open youtube', 'open instagram', 'open spotify', 'open chrome', 'open camera',
+        'open settings', 'open messages', 'open gmail', 'open maps', 'open the app',
+        'launch', 'take a photo', 'tap on', 'tap the', 'swipe', 'read the screen',
+        "what's on the screen", 'what is on the screen', 'what does the screen', 'browse to',
+        'android_', 'navigate to', 'type into', 'open app',
+      ];
+      const isDeviceControlRequest = androidActive && deviceControlKeywords.some(k => lastUserContent.includes(k));
+
+      // Absolute prohibition injected at the TOP of the system message so the model
+      // reads it before any other context. Without this, the model pattern-matches
+      // against prior hallucinated assistant messages in the chat history and repeats them.
+      const daemonAbsoluteRule = androidActive
+        ? `\n⚠️ ABSOLUTE RULE — DEVICE CONTROL: You have ZERO physical ability to open apps, take screenshots, tap, swipe, type, or perform any action on the phone through text alone. The ONLY way ANY phone action can happen is by calling the daemon_action tool and receiving result:'success'. If daemon_action is not called, NOTHING happened on the phone. Prior conversation messages where you (the assistant) described performing phone actions without a daemon_action tool call were ERRORS — do not repeat that pattern. For EVERY phone action request, call daemon_action. Never write "I opened X" or "I took a screenshot" unless daemon_action returned result:'success' in this response.\n`
+        : '';
+
       const chatMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-        { role: "system", content: systemPrompt + proactiveQuestionContext + "\n\nYou can take actions on the user's behalf using the available tools. When a user asks you to add a task, log progress, update their context, etc., use the appropriate tool. Respond naturally — do not mention 'tool calls' or 'functions' to the user. Just confirm what you did conversationally." + (process.env.TAVILY_API_KEY ? "\n\nYou also have a web_search tool. Use it whenever the user asks about current events, live data (weather, stock prices, sports scores, news), or anything requiring real-time information you wouldn't know. Cite your sources naturally in your response." : "") },
+        { role: "system", content: daemonAbsoluteRule + systemPrompt + proactiveQuestionContext + "\n\nYou can take actions on the user's behalf using the available tools. When a user asks you to add a task, log progress, update their context, etc., use the appropriate tool. Respond naturally — do not mention 'tool calls' or 'functions' to the user. Just confirm what you did conversationally." + (process.env.TAVILY_API_KEY ? "\n\nYou also have a web_search tool. Use it whenever the user asks about current events, live data (weather, stock prices, sports scores, news), or anything requiring real-time information you wouldn't know. Cite your sources naturally in your response." : "") },
         ...messages.map((m: any) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
       ];
 
@@ -1578,6 +1599,11 @@ Answer (yes/no):`,
           model: "gpt-5-mini",
           messages: chatMessages,
           tools: coachTools,
+          // Force the model to call a tool when the message is clearly a device-control
+          // request and the Android daemon is active. Without this, the model sometimes
+          // returns a text-only response (hallucinating the result) instead of calling
+          // daemon_action, especially when chat history contains prior hallucinated messages.
+          tool_choice: isDeviceControlRequest ? "required" : "auto",
           max_completion_tokens: 2048,
         });
 
@@ -1659,13 +1685,38 @@ Answer (yes/no):`,
             });
           }
         } else if (choice.message.content) {
+          // Safety net: if the daemon is active and the response describes a device action
+          // without any tool call having been made, the model has hallucinated. Override
+          // with an honest correction rather than surfacing the fabricated result.
+          const responseText = choice.message.content;
+          const hallucIndicators = [
+            "i've opened", "i opened", "i launched", "i took a screenshot", "i captured",
+            "screenshot has been taken", "screenshot taken", "i've taken", "i tapped",
+            "i swiped", "i typed", "here is the screenshot", "here's the screenshot",
+          ];
+          const looksHallucinated = androidActive && hallucIndicators.some(h => responseText.toLowerCase().includes(h));
+          if (looksHallucinated) {
+            console.warn(`[daemon] HALLUCINATION DETECTED userId=${userId} — model claimed device action without tool call. Intercepting.`);
+            // Replace with an honest error rather than surfacing a fabricated result.
+            const correctedResponse = "I wasn't able to perform that action on your phone — I need to call the phone tool to do that, and it didn't get called this time. Please try again and I'll make sure to actually execute the command.";
+            res.setHeader('Content-Type', 'text/event-stream');
+            res.setHeader('Cache-Control', 'no-cache, no-transform');
+            res.setHeader('X-Accel-Buffering', 'no');
+            res.setHeader('Access-Control-Allow-Origin', '*');
+            res.flushHeaders();
+            res.write(`data: ${JSON.stringify({ content: correctedResponse })}\n\n`);
+            res.write('data: [DONE]\n\n');
+            res.end();
+            return;
+          }
+
           res.setHeader('Content-Type', 'text/event-stream');
           res.setHeader('Cache-Control', 'no-cache, no-transform');
           res.setHeader('X-Accel-Buffering', 'no');
           res.setHeader('Access-Control-Allow-Origin', '*');
           res.flushHeaders();
 
-          const words = choice.message.content;
+          const words = responseText;
           res.write(`data: ${JSON.stringify({ content: words })}\n\n`);
           res.write('data: [DONE]\n\n');
           res.end();
