@@ -816,7 +816,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       type: "function" as const,
       function: {
         name: "daemon_action",
-        description: "Execute a sandboxed action on the user's paired daemon — either a desktop daemon or an Android device daemon. DESKTOP actions (when desktop daemon paired): shell, notify, file_read, file_write, file_list. ANDROID actions (when Android daemon paired): android_open_app (launch app by package name e.g. 'com.google.android.youtube'), android_browse (open URL in browser), android_screenshot (capture screen), android_read_screen (read visible UI text), android_tap (tap at x/y), android_type (type text), android_swipe (swipe gesture), android_press_key (back/home/recents), android_file_list, android_file_read. Always call check_connections first to know which daemon type is paired.",
+        description: "Execute a sandboxed action on the user's paired daemon — either a desktop daemon or an Android device daemon. DESKTOP actions (when desktop daemon paired): shell, notify, file_read, file_write, file_list. ANDROID actions (when Android daemon paired): android_open_app (launch app by package name e.g. 'com.google.android.youtube'), android_browse (open URL in browser), android_screenshot (capture screen), android_read_screen (read visible UI text), android_tap (tap at x/y), android_type (type text), android_swipe (swipe gesture), android_press_key (back/home/recents), android_file_list, android_file_read. IMPORTANT for android_open_app and android_browse: Before calling the tool, FIRST tell the user 'Look at your phone now — launching [app name]' so they're watching the screen when it opens. After the tool returns, call android_read_screen to verify the correct app is in the foreground. Always call check_connections first to know which daemon type is paired.",
         parameters: {
           type: "object",
           properties: {
@@ -1042,7 +1042,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const slackConnectedCheck = (oauthStatus as any)?.slack?.connected ?? false;
           const daemonLabel = daemonOnline
             ? isAndroid
-              ? `Android Device Daemon: ✓ online — use android_open_app, android_browse, android_screenshot, android_read_screen, android_tap, android_type, android_swipe, android_press_key, android_file_list, android_file_read. DO NOT use desktop shell/notify/file actions.`
+              ? `Android Device Daemon: ✓ online — use android_open_app, android_browse, android_screenshot, android_read_screen, android_tap, android_type, android_swipe, android_press_key, android_file_list, android_file_read. DO NOT use desktop shell/notify/file actions. CRITICAL: When launching an app (android_open_app/android_browse), tell the user to look at their phone BEFORE calling the tool — the app opens immediately and they may miss it while reading this response. Always verify with android_read_screen after launching.`
               : `Desktop Daemon: ✓ online — use shell, notify, file_read, file_write, file_list actions.`
             : `Android/Desktop Daemon: ✗ not connected`;
           const lines = [
