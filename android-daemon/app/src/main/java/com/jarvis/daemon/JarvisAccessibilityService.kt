@@ -2,7 +2,9 @@ package com.jarvis.daemon
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
+import android.content.Intent
 import android.graphics.Path
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
@@ -32,6 +34,37 @@ class JarvisAccessibilityService : AccessibilityService() {
     override fun onDestroy() {
         instance = null
         super.onDestroy()
+    }
+
+    // ── Activity launch (exempt from Android background restriction) ─────────
+    // Accessibility services are exempt from Android 10+ background activity
+    // start restrictions. Calling startActivity from this context works even
+    // when the app is in the background.
+
+    fun launchApp(packageName: String): Boolean {
+        val pm = packageManager
+        val intent = pm.getLaunchIntentForPackage(packageName) ?: return false
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        try {
+            startActivity(intent)
+            return true
+        } catch (e: Exception) {
+            Log.e(TAG, "launchApp failed for $packageName: ${e.message}")
+            return false
+        }
+    }
+
+    fun browseUrl(url: String): Boolean {
+        return try {
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(intent)
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "browseUrl failed for $url: ${e.message}")
+            false
+        }
     }
 
     // ── Screenshot ──────────────────────────────────────────────────────────
