@@ -1,8 +1,6 @@
 package com.jarvis.daemon
 
 import android.accessibilityservice.AccessibilityService
-import android.accessibilityservice.AccessibilityService.ScreenshotResult
-import android.accessibilityservice.AccessibilityService.TakeScreenshotCallback
 import android.accessibilityservice.GestureDescription
 import android.content.Intent
 import android.graphics.Bitmap
@@ -74,46 +72,73 @@ class JarvisAccessibilityService : AccessibilityService() {
     }
 
     // ── Screenshot via AccessibilityService.takeScreenshot() (API 30+) ──────
-    @Suppress("NewApi")
+    // Uses reflection throughout to avoid compile-time dependency on the
+    // TakeScreenshotCallback / ScreenshotResult nested types (their exact
+    // method names vary by SDK version and are unavailable at compile time).
     fun takeScreenshotBase64(): String? {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
             Log.w(TAG, "Screenshot requires Android 11+")
             return null
         }
-        val latch = CountDownLatch(1)
-        var encoded: String? = null
+        return try {
+            val latch = CountDownLatch(1)
+            var encoded: String? = null
 
-        takeScreenshot(
-            0, // Display.DEFAULT_DISPLAY
-            mainExecutor,
-            object : TakeScreenshotCallback {
-                override fun onSuccess(screenshotResult: ScreenshotResult) {
-                    try {
-                        // getBitmap() returns a Bitmap (may be HARDWARE config)
-                        val bmp = screenshotResult.bitmap
-                        // Hardware bitmaps cannot be compressed — copy to software config first
-                        val soft = bmp.copy(Bitmap.Config.ARGB_8888, false)
-                        bmp.recycle()
-                        val bos = ByteArrayOutputStream()
-                        soft.compress(Bitmap.CompressFormat.PNG, 90, bos)
-                        soft.recycle()
-                        encoded = Base64.encodeToString(bos.toByteArray(), Base64.NO_WRAP)
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Screenshot encode failed: ${e.message}")
-                    } finally {
+            val callbackClass = Class.forName(
+                "android.accessibilityservice.AccessibilityService\$TakeScreenshotCallback"
+            )
+            val handler = java.lang.reflect.InvocationHandler { _, method, args ->
+                when (method.name) {
+                    "onSuccess" -> {
+                        try {
+                            val result = if (args != null && args.isNotEmpty()) args[0] else null
+                            if (result != null) {
+                                // Discover the bitmap getter at runtime (getBitmap or getHardwareBitmap)
+                                val bmp = result.javaClass.methods
+                                    .firstOrNull { m ->
+                                        m.parameterCount == 0 &&
+                                        Bitmap::class.java.isAssignableFrom(m.returnType)
+                                    }
+                                    ?.invoke(result) as? Bitmap
+                                if (bmp != null) {
+                                    val soft = if (bmp.config == Bitmap.Config.HARDWARE) {
+                                        bmp.copy(Bitmap.Config.ARGB_8888, false).also { bmp.recycle() }
+                                    } else bmp
+                                    val bos = ByteArrayOutputStream()
+                                    soft.compress(Bitmap.CompressFormat.PNG, 90, bos)
+                                    soft.recycle()
+                                    encoded = Base64.encodeToString(bos.toByteArray(), Base64.NO_WRAP)
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Screenshot encode failed: ${e.message}")
+                        } finally {
+                            latch.countDown()
+                        }
+                    }
+                    "onFailure" -> {
+                        val code = if (args != null && args.isNotEmpty()) args[0] else "?"
+                        Log.e(TAG, "takeScreenshot failed, code=$code")
                         latch.countDown()
                     }
                 }
-
-                override fun onFailure(errorCode: Int) {
-                    Log.e(TAG, "takeScreenshot failed with code $errorCode")
-                    latch.countDown()
-                }
+                null
             }
-        )
+            val callback = java.lang.reflect.Proxy.newProxyInstance(
+                callbackClass.classLoader, arrayOf(callbackClass), handler
+            )
 
-        latch.await(8, TimeUnit.SECONDS)
-        return encoded
+            val takeMethod = AccessibilityService::class.java.getMethod(
+                "takeScreenshot", Int::class.java,
+                java.util.concurrent.Executor::class.java, callbackClass
+            )
+            takeMethod.invoke(this, 0, mainExecutor, callback)
+            latch.await(8, TimeUnit.SECONDS)
+            encoded
+        } catch (e: Exception) {
+            Log.e(TAG, "takeScreenshotBase64 failed: ${e.message}")
+            null
+        }
     }
 
     // ── Read screen — returns compact JSON ──────────────────────────────────
