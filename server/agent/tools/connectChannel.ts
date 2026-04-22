@@ -57,7 +57,6 @@ export const connectChannelTool: AgentTool = {
             label: "Telegram not configured",
           };
         }
-        await db.delete(telegramLinkCodes).where(eq(telegramLinkCodes.userId, userId));
         const code = generateCode(6);
         await db.insert(telegramLinkCodes).values({ code, userId });
         const botUsername = await getTelegramBotUsername();
