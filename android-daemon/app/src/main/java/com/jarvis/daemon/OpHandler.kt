@@ -1,5 +1,6 @@
 package com.jarvis.daemon
 
+import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -45,21 +46,71 @@ object OpHandler {
         }
         val pm = context.packageManager
         val launchIntent = pm.getLaunchIntentForPackage(packageName)
-            ?: return OpResult(false, error = "App not found: $packageName")
+            ?: return OpResult(false, error = "App not installed: $packageName")
         launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        context.startActivity(launchIntent)
-        return OpResult(true, data = JSONObject().put("launched", packageName))
+
+        val appLabel = try {
+            pm.getApplicationLabel(pm.getApplicationInfo(packageName, 0)).toString()
+        } catch (e: Exception) { packageName }
+
+        // Android 10+ restricts background activity starts. Accessibility service
+        // context is exempt (Android 14+). Try that first, then notification fallback.
+        val svc = JarvisAccessibilityService.instance
+        if (svc != null) {
+            val launched = svc.launchApp(packageName)
+            if (launched) {
+                return OpResult(true, data = JSONObject().put("launched", packageName).put("appName", appLabel))
+            }
+        }
+
+        // Fallback: show a high-priority heads-up notification the user can tap.
+        // This is 100% reliable on all Android versions regardless of background restrictions.
+        val pi = PendingIntent.getActivity(
+            context, packageName.hashCode(), launchIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        NotificationHelper.showAction(context, "Open $appLabel", "Tap here to open", pi, packageName.hashCode())
+        return OpResult(
+            true,
+            data = JSONObject()
+                .put("launched", packageName)
+                .put("appName", appLabel)
+                .put("method", "notification")
+                .put("note", "Tap the notification on your phone to open $appLabel (enable Jarvis Accessibility Service in Settings for automatic launch)")
+        )
     }
 
     private fun handleBrowse(context: Context, op: JSONObject): OpResult {
         val url = op.optString("url").ifEmpty {
             return OpResult(false, error = "url required")
         }
-        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+
+        // Try via accessibility service first (exempt from background activity restriction)
+        val svc = JarvisAccessibilityService.instance
+        if (svc != null) {
+            val opened = svc.browseUrl(url)
+            if (opened) {
+                return OpResult(true, data = JSONObject().put("opened", url))
+            }
+        }
+
+        // Fallback: tap-to-open notification
+        val viewIntent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
-        context.startActivity(intent)
-        return OpResult(true, data = JSONObject().put("opened", url))
+        val pi = PendingIntent.getActivity(
+            context, url.hashCode(), viewIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val shortUrl = if (url.length > 40) url.take(37) + "…" else url
+        NotificationHelper.showAction(context, "Open Link", shortUrl, pi, url.hashCode())
+        return OpResult(
+            true,
+            data = JSONObject()
+                .put("opened", url)
+                .put("method", "notification")
+                .put("note", "Tap the notification on your phone to open the link (enable Jarvis Accessibility Service for automatic launch)")
+        )
     }
 
     private fun handleScreenshot(): OpResult {
