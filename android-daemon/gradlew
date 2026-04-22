@@ -1,0 +1,49 @@
+#!/usr/bin/env sh
+#
+# Gradle wrapper shell script (POSIX sh compatible)
+# Based on the canonical Gradle wrapper template.
+#
+
+# Attempt to set APP_HOME
+PRG="$0"
+# Need this for relative symlinks
+while [ -h "$PRG" ] ; do
+    ls=`ls -ld "$PRG"`
+    link=`expr "$ls" : '.*-> \(.*\)$'`
+    if expr "$link" : '/.*' > /dev/null; then
+        PRG="$link"
+    else
+        PRG=`dirname "$PRG"`"/$link"
+    fi
+done
+APP_HOME=`dirname "$PRG"`
+APP_HOME=`cd "$APP_HOME" && pwd`
+
+DEFAULT_JVM_OPTS='"-Xmx64m" "-Xms64m"'
+
+GRADLE_WRAPPER_JAR="$APP_HOME/gradle/wrapper/gradle-wrapper.jar"
+
+# Locate java
+if [ -n "$JAVA_HOME" ] ; then
+    JAVA="$JAVA_HOME/bin/java"
+else
+    JAVA="java"
+fi
+
+if ! "$JAVA" -version >/dev/null 2>&1 ; then
+    echo "ERROR: JAVA_HOME is not set and 'java' was not found on PATH." >&2
+    echo "Install JDK 17 and set JAVA_HOME, or open this project in Android Studio." >&2
+    exit 1
+fi
+
+if [ ! -f "$GRADLE_WRAPPER_JAR" ] ; then
+    echo "ERROR: gradle/wrapper/gradle-wrapper.jar is missing." >&2
+    echo "Open the project in Android Studio once to generate the wrapper files," >&2
+    echo "or run: gradle wrapper --gradle-version 8.4" >&2
+    exit 1
+fi
+
+exec "$JAVA" $DEFAULT_JVM_OPTS \
+    -classpath "$GRADLE_WRAPPER_JAR" \
+    org.gradle.wrapper.GradleWrapperMain \
+    "$@"

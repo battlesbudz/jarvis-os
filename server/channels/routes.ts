@@ -4,7 +4,7 @@ import { eq, and } from "drizzle-orm";
 import { channelLinks, channelLinkCodes, telegramLinks, NOTIFICATION_TYPES, CHANNEL_NAMES, type ChannelName, type NotificationType } from "@shared/schema";
 import { authMiddleware } from "../auth";
 import { getAllPreferences, setPreference, getChannel, listChannels } from "./registry";
-import { createDaemonPairingCode, isUserPaired, closeUserDaemon, getDaemonPermissions, setDaemonPermissions, isDaemonActionAllowed, DEFAULT_DAEMON_PERMISSIONS, type DaemonAction, type DaemonPermissions } from "../daemon/bridge";
+import { createDaemonPairingCode, isUserPaired, closeUserDaemon, getDaemonPermissions, setDaemonPermissions, isDaemonActionAllowed, DEFAULT_DAEMON_PERMISSIONS, getAndroidDaemonPermissions, setAndroidDaemonPermissions, DEFAULT_ANDROID_DAEMON_PERMISSIONS, isAndroidDaemonActive, type DaemonAction, type DaemonPermissions, type AndroidDaemonAction, type AndroidDaemonPermissions } from "../daemon/bridge";
 import { startUserBot, stopUserBot, getBotStatus, completePairing, getGuildsForUser, getChannelsForGuild, setupDiscordWorkspace, type AllowlistedGuild, type DiscordLinkMeta, WORKSPACE_TOPICS } from "../discord/manager";
 import { saveUserToken, getUserToken, deleteUserToken } from "../userTokenStore";
 
@@ -39,8 +39,10 @@ export function registerChannelRoutes(app: Express): void {
       for (const row of channelRows) {
         const ch = row.channel as ChannelName;
         if (ch === "daemon") {
+          const daemonMeta = row.metadata as any;
+          const platform = daemonMeta?.platform || "desktop";
           connected.daemon = isUserPaired(userId);
-          meta.daemon = { hostname: (row.metadata as any)?.hostname, lastSeenAt: row.lastSeenAt, connected: connected.daemon };
+          meta.daemon = { hostname: daemonMeta?.hostname, lastSeenAt: row.lastSeenAt, connected: connected.daemon, platform };
         } else if (ch === "discord") {
           // A channel_links row exists → account IS paired (connected = true).
           // Bot runtime state is exposed separately so the UI can distinguish
@@ -201,7 +203,9 @@ export function registerChannelRoutes(app: Express): void {
   });
 
   // POST /api/channels/daemon/exec — agent / user can run a daemon op
-  // Allowed types: shell | file_read | file_write | file_list | notify
+  // Desktop-daemon ops only: shell | file_read | file_write | file_list | notify
+  // Android ops (android_*) are routed exclusively via the agent daemon_action tool;
+  // bridge-layer gating in sendDaemonOp rejects android_* ops sent here.
   app.post("/api/channels/daemon/exec", authMiddleware, async (req: Request, res: Response) => {
     const userId = (req as any).user.id;
     const { sendDaemonOp, isUserPaired: paired } = await import("../daemon/bridge");
@@ -216,6 +220,41 @@ export function registerChannelRoutes(app: Express): void {
     }
     const result = await sendDaemonOp(userId, op, 30000);
     res.json(result);
+  });
+
+  // ── Android daemon routes ───────────────────────────────────────────────
+
+  // GET /api/channels/android-daemon/permissions — current per-action allow/deny
+  app.get("/api/channels/android-daemon/permissions", authMiddleware, async (req: Request, res: Response) => {
+    const userId = (req as any).user.id;
+    try {
+      const perms = await getAndroidDaemonPermissions(userId);
+      res.json({ permissions: perms, defaults: DEFAULT_ANDROID_DAEMON_PERMISSIONS });
+    } catch (err) {
+      console.error("[channels] android daemon permissions GET failed:", err);
+      res.status(500).json({ error: "failed to load android permissions" });
+    }
+  });
+
+  // PUT /api/channels/android-daemon/permissions — body: { permissions: Partial<AndroidDaemonPermissions> }
+  app.put("/api/channels/android-daemon/permissions", authMiddleware, async (req: Request, res: Response) => {
+    const userId = (req as any).user.id;
+    const incoming = (req.body?.permissions || {}) as Record<string, unknown>;
+    const ANDROID_ACTIONS: readonly AndroidDaemonAction[] = [
+      "android_screenshot", "android_read_screen", "android_open_app", "android_browse",
+      "android_file_list", "android_file_read", "android_tap_type",
+    ] as const;
+    const sanitized: Partial<AndroidDaemonPermissions> = {};
+    for (const k of ANDROID_ACTIONS) {
+      if (k in incoming) sanitized[k] = !!incoming[k];
+    }
+    try {
+      const merged = await setAndroidDaemonPermissions(userId, sanitized);
+      res.json({ ok: true, permissions: merged });
+    } catch (err) {
+      console.error("[channels] android daemon permissions PUT failed:", err);
+      res.status(500).json({ error: "failed to update android permissions" });
+    }
   });
 
   // ── Discord routes ──────────────────────────────────────────────────────

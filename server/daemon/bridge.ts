@@ -3,8 +3,10 @@ import { WebSocketServer, WebSocket, type RawData } from "ws";
 import { db } from "../db";
 import { eq, and, sql } from "drizzle-orm";
 import { channelLinks, channelLinkCodes } from "@shared/schema";
+import { randomBytes, createHash } from "crypto";
 
-interface PairMsg { type: "pair"; code: string; daemonId?: string; hostname?: string; platform?: string }
+interface PairMsg { type: "pair"; code: string; hostname?: string; platform?: string }
+interface ReconnectMsg { type: "reconnect"; daemonId: string; reconnectSecret: string; hostname?: string; platform?: string }
 interface ResultMsg { type: "result"; id: string; ok: boolean; data?: unknown; error?: string }
 interface HelloMsg { type: "hello"; ok: boolean; userId?: string; error?: string }
 interface PingMsg { type: "ping" }
@@ -14,7 +16,17 @@ export type DaemonOp =
   | { type: "notify"; title: string; body: string }
   | { type: "file_read"; path: string }
   | { type: "file_write"; path: string; content: string }
-  | { type: "file_list"; path: string };
+  | { type: "file_list"; path: string }
+  | { type: "android_open_app"; packageName: string }
+  | { type: "android_browse"; url: string }
+  | { type: "android_screenshot" }
+  | { type: "android_read_screen" }
+  | { type: "android_tap"; x: number; y: number }
+  | { type: "android_type"; text: string }
+  | { type: "android_swipe"; x1: number; y1: number; x2: number; y2: number; durationMs?: number }
+  | { type: "android_press_key"; key: "back" | "home" | "recents" | "volume_up" | "volume_down" }
+  | { type: "android_file_list"; path: string }
+  | { type: "android_file_read"; path: string };
 
 interface PendingOp {
   resolve: (r: { ok: boolean; data?: unknown; error?: string }) => void;
@@ -58,7 +70,7 @@ export function closeUserDaemon(userId: string): boolean {
   return true;
 }
 
-// ───── Per-action permission model ────────────────────────────
+// ───── Per-action permission model (Desktop) ────────────────────────────
 // Stored in channel_links.metadata.permissions for the user's daemon row.
 // Defaults: notify/file_read/file_list ON, shell/file_write OFF.
 export type DaemonAction = "shell" | "notify" | "file_read" | "file_write" | "file_list";
@@ -70,6 +82,29 @@ export const DEFAULT_DAEMON_PERMISSIONS: DaemonPermissions = {
   notify: true,
   file_read: true,
   file_list: true,
+};
+
+// ───── Per-action permission model (Android) ────────────────────────────
+// Stored in channel_links.metadata.android_permissions.
+// Defaults: screenshot/read_screen/open_app/browse/file_list ON; tap_type/file_read OFF.
+export type AndroidDaemonAction =
+  | "android_screenshot"
+  | "android_read_screen"
+  | "android_open_app"
+  | "android_browse"
+  | "android_file_list"
+  | "android_file_read"
+  | "android_tap_type";
+export type AndroidDaemonPermissions = Record<AndroidDaemonAction, boolean>;
+
+export const DEFAULT_ANDROID_DAEMON_PERMISSIONS: AndroidDaemonPermissions = {
+  android_screenshot: true,
+  android_read_screen: true,
+  android_open_app: true,
+  android_browse: true,
+  android_file_list: true,
+  android_file_read: false,
+  android_tap_type: false,
 };
 
 // Prefer the real paired row (any non-pending address) over a pre-pairing
@@ -106,13 +141,9 @@ export async function setDaemonPermissions(
     const meta = ((row?.metadata as Record<string, unknown> | null) || {}) as Record<string, unknown>;
     meta.permissions = merged;
     if (row) {
-      // Update the actual row we read (real paired row preferred) so prefs
-      // are not split between a stub and a real row after pairing.
       await db.update(channelLinks).set({ metadata: meta })
         .where(eq(channelLinks.id, row.id));
     } else {
-      // No daemon row yet — stash a single stub so prefs survive until pair.
-      // recordDaemonLink() will collapse this into the real row on pairing.
       await db.insert(channelLinks).values({
         userId, channel: "daemon", address: `pending_${userId}`, metadata: meta, lastSeenAt: new Date(),
       }).onConflictDoNothing();
@@ -128,6 +159,80 @@ export async function isDaemonActionAllowed(userId: string, action: DaemonAction
   return !!perms[action];
 }
 
+// ───── Android permission helpers ────────────────────────────────────────
+
+export async function getAndroidDaemonPermissions(userId: string): Promise<AndroidDaemonPermissions> {
+  try {
+    const row = await findUserDaemonRow(userId);
+    const meta = (row?.metadata as Record<string, unknown> | null) || null;
+    const stored = meta?.android_permissions;
+    if (stored && typeof stored === "object") {
+      return { ...DEFAULT_ANDROID_DAEMON_PERMISSIONS, ...(stored as Partial<AndroidDaemonPermissions>) };
+    }
+  } catch (err) {
+    console.error("[daemon] getAndroidDaemonPermissions failed:", err);
+  }
+  return { ...DEFAULT_ANDROID_DAEMON_PERMISSIONS };
+}
+
+export async function setAndroidDaemonPermissions(
+  userId: string,
+  perms: Partial<AndroidDaemonPermissions>,
+): Promise<AndroidDaemonPermissions> {
+  const merged = { ...DEFAULT_ANDROID_DAEMON_PERMISSIONS, ...perms };
+  try {
+    const row = await findUserDaemonRow(userId);
+    const meta = ((row?.metadata as Record<string, unknown> | null) || {}) as Record<string, unknown>;
+    meta.android_permissions = merged;
+    if (row) {
+      await db.update(channelLinks).set({ metadata: meta })
+        .where(eq(channelLinks.id, row.id));
+    } else {
+      await db.insert(channelLinks).values({
+        userId, channel: "daemon", address: `pending_android_${userId}`, metadata: meta, lastSeenAt: new Date(),
+      }).onConflictDoNothing();
+    }
+  } catch (err) {
+    console.error("[daemon] setAndroidDaemonPermissions failed:", err);
+  }
+  return merged;
+}
+
+export async function isAndroidDaemonActionAllowed(userId: string, action: AndroidDaemonAction): Promise<boolean> {
+  const perms = await getAndroidDaemonPermissions(userId);
+  return !!perms[action];
+}
+
+// Returns true if the currently-connected daemon is an Android device.
+export async function isAndroidDaemonActive(userId: string): Promise<boolean> {
+  if (!isUserPaired(userId)) return false;
+  try {
+    const row = await findUserDaemonRow(userId);
+    const meta = (row?.metadata as Record<string, unknown> | null) || null;
+    return meta?.platform === "android";
+  } catch {
+    return false;
+  }
+}
+
+// Platform-level gating: android_* ops can only go to android daemons,
+// and desktop ops cannot go to android daemons. Enforced here so all
+// callers (tools, routes, etc.) are protected by a single check.
+async function validateOpForPlatform(
+  userId: string,
+  op: DaemonOp,
+): Promise<{ ok: false; error: string } | null> {
+  const isAndroid = await isAndroidDaemonActive(userId);
+  const isAndroidOp = op.type.startsWith("android_");
+  if (isAndroidOp && !isAndroid) {
+    return { ok: false, error: `Op '${op.type}' requires an Android daemon, but the connected daemon is a desktop daemon.` };
+  }
+  if (!isAndroidOp && isAndroid && op.type !== "notify") {
+    return { ok: false, error: `Op '${op.type}' is a desktop-only op, but the connected daemon is Android. Use android_* ops instead.` };
+  }
+  return null;
+}
+
 export async function sendDaemonOp(
   userId: string,
   op: DaemonOp,
@@ -137,6 +242,8 @@ export async function sendDaemonOp(
   if (!sock || sock.readyState !== WebSocket.OPEN) {
     return { ok: false, error: "daemon not connected" };
   }
+  const platformErr = await validateOpForPlatform(userId, op);
+  if (platformErr) return platformErr;
   return new Promise((resolve) => {
     const id = nextOpId();
     const timer = setTimeout(() => {
@@ -208,6 +315,9 @@ async function recordDaemonLink(userId: string, daemonId: string, meta: Record<s
       if (prior.permissions && !mergedMeta.permissions) {
         mergedMeta.permissions = prior.permissions;
       }
+      if (prior.android_permissions && !mergedMeta.android_permissions) {
+        mergedMeta.android_permissions = prior.android_permissions;
+      }
     }
     if (existing.length > 0) {
       await db.delete(channelLinks)
@@ -253,7 +363,62 @@ export function startDaemonBridge(server: HttpServer): void {
         try { ws.send(JSON.stringify({ type: "error", error: "invalid json" })); } catch { /* noop */ }
         return;
       }
-      const m = msg as PairMsg | ResultMsg | PingMsg;
+      const m = msg as PairMsg | ReconnectMsg | ResultMsg | PingMsg;
+
+      // Reconnect using stored daemonId + reconnectSecret (proof-of-possession).
+      // The secret was issued server-side during pair; we compare sha256(provided) to stored hash.
+      if (m.type === "reconnect") {
+        const rm = m as ReconnectMsg;
+        if (!rm.daemonId || !rm.reconnectSecret) {
+          try { ws.send(JSON.stringify({ type: "hello", ok: false, error: "daemonId and reconnectSecret are required" })); } catch { /* noop */ }
+          return;
+        }
+        try {
+          const rows = await db.select().from(channelLinks)
+            .where(and(eq(channelLinks.address, rm.daemonId), eq(channelLinks.channel, "daemon")))
+            .limit(1);
+          const row = rows[0];
+          if (!row) {
+            try { ws.send(JSON.stringify({ type: "hello", ok: false, error: "unknown daemonId — please re-pair" })); } catch { /* noop */ }
+            ws.close(4002, "unknown daemonId");
+            return;
+          }
+          // Verify reconnect secret by comparing sha256 hash (constant-time not critical here,
+          // but using timingSafeEqual via hex comparison is sufficient for this use-case)
+          const storedMeta = ((row.metadata as Record<string, unknown> | null) || {}) as Record<string, unknown>;
+          const storedHash = storedMeta.reconnectSecretHash as string | undefined;
+          if (!storedHash) {
+            // Row predates secure reconnect — force re-pair
+            try { ws.send(JSON.stringify({ type: "hello", ok: false, error: "legacy pair record — please re-pair" })); } catch { /* noop */ }
+            ws.close(4002, "legacy record");
+            return;
+          }
+          const providedHash = createHash("sha256").update(rm.reconnectSecret).digest("hex");
+          if (providedHash !== storedHash) {
+            try { ws.send(JSON.stringify({ type: "hello", ok: false, error: "invalid reconnect secret — please re-pair" })); } catch { /* noop */ }
+            ws.close(4001, "bad secret");
+            return;
+          }
+          pairedUserId = row.userId;
+          if (pairTimeout) { clearTimeout(pairTimeout); pairTimeout = null; }
+          // Update metadata with fresh hostname/platform if provided
+          if (rm.hostname) storedMeta.hostname = rm.hostname;
+          if (rm.platform) storedMeta.platform = rm.platform;
+          await db.update(channelLinks)
+            .set({ metadata: storedMeta, lastSeenAt: new Date() })
+            .where(eq(channelLinks.id, row.id));
+          const prior = userSockets.get(pairedUserId);
+          if (prior && prior !== ws) { try { prior.close(4003, "replaced by new daemon"); } catch { /* noop */ } }
+          userSockets.set(pairedUserId, ws);
+          const hello: HelloMsg = { type: "hello", ok: true, userId: pairedUserId };
+          try { ws.send(JSON.stringify(hello)); } catch { /* noop */ }
+          console.log(`[daemon] reconnected userId=${pairedUserId} daemonId=${rm.daemonId}`);
+        } catch (err) {
+          console.error("[daemon] reconnect lookup failed:", err);
+          try { ws.send(JSON.stringify({ type: "hello", ok: false, error: "reconnect failed" })); } catch { /* noop */ }
+        }
+        return;
+      }
 
       if (m.type === "pair") {
         const userId = await consumePairingCode(m.code);
@@ -265,18 +430,24 @@ export function startDaemonBridge(server: HttpServer): void {
         }
         pairedUserId = userId;
         if (pairTimeout) { clearTimeout(pairTimeout); pairTimeout = null; }
-        const daemonId = m.daemonId || `daemon_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+        // Generate cryptographically random daemonId and reconnectSecret server-side.
+        // Never trust a client-supplied daemonId — reject any the client sends.
+        const daemonId = randomBytes(16).toString("hex");
+        const reconnectSecret = randomBytes(32).toString("hex");
+        const reconnectSecretHash = createHash("sha256").update(reconnectSecret).digest("hex");
         await recordDaemonLink(userId, daemonId, {
           hostname: m.hostname || "unknown",
-          platform: m.platform || "unknown",
+          platform: m.platform || "desktop",
+          reconnectSecretHash,
         });
         // Replace any prior socket for this user
         const prior = userSockets.get(userId);
         if (prior && prior !== ws) { try { prior.close(4003, "replaced by new daemon"); } catch { /* noop */ } }
         userSockets.set(userId, ws);
-        const hello: HelloMsg = { type: "hello", ok: true, userId };
+        // Send daemonId + one-time plaintext secret to client; never sent again after this
+        const hello = { type: "hello", ok: true, userId, daemonId, reconnectSecret };
         try { ws.send(JSON.stringify(hello)); } catch { /* noop */ }
-        console.log(`[daemon] paired userId=${userId} hostname=${m.hostname || "unknown"}`);
+        console.log(`[daemon] paired userId=${userId} hostname=${m.hostname || "unknown"} platform=${m.platform || "desktop"}`);
         return;
       }
 

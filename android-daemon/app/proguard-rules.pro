@@ -1,0 +1,4 @@
+-keep class com.jarvis.daemon.** { *; }
+-keep class org.java_websocket.** { *; }
+-keepattributes Signature
+-keepattributes *Annotation*

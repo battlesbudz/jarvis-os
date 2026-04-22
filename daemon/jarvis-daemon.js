@@ -128,23 +128,39 @@ async function handleOp(op) {
 let backoffMs = 1000;
 const MAX_BACKOFF = 60000;
 
+// Credentials stored after first successful pair for reconnect auth.
+// daemonId and reconnectSecret are server-generated and persisted for the
+// lifetime of this process; on Wi-Fi drop / server restart the daemon
+// reconnects with reconnectSecret proof-of-possession instead of code.
+let storedDaemonId = null;
+let storedReconnectSecret = null;
+
 function connect() {
   const url = wsUrl(SERVER);
-  console.log(`[daemon] connecting to ${url}`);
+  console.log(`[daemon] connecting to ${url} (${storedDaemonId ? "reconnect" : "pair"})`);
   const ws = new WebSocket(url);
   let paired = false;
   let pingTimer = null;
 
   ws.on("open", () => {
     backoffMs = 1000;
-    const pair = {
-      type: "pair",
-      code: CODE,
-      hostname: os.hostname(),
-      platform: process.platform,
-      daemonId: `daemon_${os.hostname()}_${process.pid}`,
-    };
-    ws.send(JSON.stringify(pair));
+    if (storedDaemonId && storedReconnectSecret) {
+      // Reconnect using server-issued credentials — no pair code needed
+      ws.send(JSON.stringify({
+        type: "reconnect",
+        daemonId: storedDaemonId,
+        reconnectSecret: storedReconnectSecret,
+        hostname: os.hostname(),
+        platform: process.platform,
+      }));
+    } else {
+      ws.send(JSON.stringify({
+        type: "pair",
+        code: CODE,
+        hostname: os.hostname(),
+        platform: process.platform,
+      }));
+    }
   });
 
   ws.on("message", async (raw) => {
@@ -153,11 +169,22 @@ function connect() {
     if (msg.type === "hello") {
       if (!msg.ok) {
         console.error("[daemon] pairing rejected:", msg.error);
+        // If reconnect secret was rejected, clear it and exit — user must re-pair
+        if (msg.error && (msg.error.includes("invalid reconnect secret") || msg.error.includes("re-pair") || msg.error.includes("legacy"))) {
+          storedDaemonId = null;
+          storedReconnectSecret = null;
+        }
         try { ws.close(); } catch (_) { /* noop */ }
         process.exit(2);
         return;
       }
       paired = true;
+      // On first pair, server issues daemonId + reconnectSecret. Store for future reconnects.
+      if (msg.daemonId && msg.reconnectSecret) {
+        storedDaemonId = msg.daemonId;
+        storedReconnectSecret = msg.reconnectSecret;
+        console.log(`[daemon] credentials stored (daemonId=${storedDaemonId.slice(0, 8)}…)`);
+      }
       console.log(`[daemon] paired as user ${msg.userId}; workspace=${ROOT}`);
       pingTimer = setInterval(() => {
         if (ws.readyState === WebSocket.OPEN) {
