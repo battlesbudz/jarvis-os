@@ -1,6 +1,9 @@
 package com.jarvis.daemon
 
 import android.app.PendingIntent
+import android.content.ClipData
+import android.content.ClipDescription
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -9,6 +12,8 @@ import android.os.Environment
 import android.os.SystemClock
 import android.util.Base64
 import android.util.Log
+import android.webkit.MimeTypeMap
+import androidx.core.content.FileProvider
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -38,6 +43,9 @@ object OpHandler {
                 "android_file_list" -> handleFileList(op)
                 "android_file_read" -> handleFileRead(op)
                 "android_notifications_list" -> handleNotificationsList(op)
+                "android_file_search" -> handleFileSearch(op)
+                "android_open_file" -> handleOpenFile(context, op)
+                "android_copy_to_clipboard" -> handleCopyToClipboard(context, op)
                 "notify" -> handleNotify(context, op)
                 else -> OpResult(false, error = "Unknown op type: $type")
             }
@@ -479,6 +487,135 @@ object OpHandler {
         val body = op.optString("body", "")
         NotificationHelper.show(context, title, body)
         return OpResult(true, data = JSONObject().put("notified", true))
+    }
+
+    // ── android_file_search ──────────────────────────────────────────────────
+    // Recursively walks the filesystem looking for files whose name contains
+    // the query string (case-insensitive). Optional type filter and maxDepth.
+    private fun handleFileSearch(op: JSONObject): OpResult {
+        val query = op.optString("query").ifEmpty {
+            return OpResult(false, error = "query required")
+        }
+        val rootPath = op.optString("root").ifEmpty { null }
+            ?: Environment.getExternalStorageDirectory().absolutePath
+        // Reads from "fileType" field. The server normalises any legacy "type" alias
+        // before dispatching, so the daemon only needs to handle the canonical name.
+        val typeFilter = op.optString("fileType", "any").lowercase()
+        val maxDepth = op.optInt("maxDepth", 4).coerceIn(1, 8)
+
+        val mimeCategories = mapOf(
+            "image" to setOf("jpg","jpeg","png","gif","webp","bmp","heic","heif"),
+            "video" to setOf("mp4","mkv","avi","mov","3gp","webm","ts"),
+            "audio" to setOf("mp3","aac","flac","ogg","wav","m4a","opus"),
+            "document" to setOf("pdf","doc","docx","xls","xlsx","ppt","pptx","txt","csv","json","xml","html","htm","md")
+        )
+        val allowedExts: Set<String>? = if (typeFilter == "any") null else mimeCategories[typeFilter]
+
+        val results = mutableListOf<File>()
+
+        fun walk(dir: File, depth: Int) {
+            if (depth > maxDepth || results.size >= 100) return
+            val children = try { dir.listFiles() } catch (e: SecurityException) { null } ?: return
+            for (child in children) {
+                if (results.size >= 100) break
+                if (child.isFile) {
+                    if (!child.name.contains(query, ignoreCase = true)) continue
+                    if (allowedExts != null && child.extension.lowercase() !in allowedExts) continue
+                    results.add(child)
+                } else if (child.isDirectory) {
+                    walk(child, depth + 1)
+                }
+            }
+        }
+
+        val rootDir = File(rootPath)
+        if (!rootDir.exists()) return OpResult(false, error = "Root path not found: $rootPath")
+        walk(rootDir, 1)
+
+        val arr = JSONArray()
+        for (f in results) {
+            arr.put(JSONObject()
+                .put("name", f.name)
+                .put("path", f.absolutePath)
+                .put("size", f.length())
+                .put("lastModified", f.lastModified()))
+        }
+        return OpResult(
+            ok = true,
+            data = JSONObject()
+                .put("query", query)
+                .put("root", rootPath)
+                .put("results", arr)
+                .put("count", results.size)
+        )
+    }
+
+    // ── android_open_file ─────────────────────────────────────────────────────
+    // Opens a file in the appropriate app via ACTION_VIEW Intent.
+    // For images this launches the gallery app at that specific file.
+    private fun handleOpenFile(context: Context, op: JSONObject): OpResult {
+        val path = op.optString("path").ifEmpty {
+            return OpResult(false, error = "path required")
+        }
+        val file = File(path)
+        if (!file.exists()) return OpResult(false, error = "File not found: $path")
+
+        val ext = file.extension.lowercase()
+        val mimeType = MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) ?: "*/*"
+
+        return try {
+            val uri = FileProvider.getUriForFile(
+                context, "${context.packageName}.fileprovider", file
+            )
+            val viewIntent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, mimeType)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(viewIntent)
+            OpResult(true, data = JSONObject()
+                .put("path", path)
+                .put("mimeType", mimeType)
+                .put("opened", true))
+        } catch (e: Exception) {
+            Log.e(TAG, "android_open_file failed: ${e.message}")
+            OpResult(false, error = "Could not open file: ${e.message}")
+        }
+    }
+
+    // ── android_copy_to_clipboard ─────────────────────────────────────────────
+    // Copies an image file to the Android clipboard as a content URI so it can
+    // be pasted into any app that supports image paste (Telegram, WhatsApp, etc.).
+    private fun handleCopyToClipboard(context: Context, op: JSONObject): OpResult {
+        val path = op.optString("path").ifEmpty {
+            return OpResult(false, error = "path required")
+        }
+        val file = File(path)
+        if (!file.exists()) return OpResult(false, error = "File not found: $path")
+
+        val ext = file.extension.lowercase()
+        val mimeType = MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) ?: "image/*"
+        val imageMime = if (mimeType.startsWith("image/")) mimeType else "image/*"
+
+        return try {
+            val uri = FileProvider.getUriForFile(
+                context, "${context.packageName}.fileprovider", file
+            )
+            // Construct ClipData with an explicit MIME type array so receiving apps
+            // (Telegram, WhatsApp, etc.) can reliably detect image content without
+            // relying on ContentResolver MIME inference.
+            val clipDescription = ClipDescription(file.name, arrayOf(imageMime))
+            val clipData = ClipData(clipDescription, ClipData.Item(uri))
+            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            clipboard.setPrimaryClip(clipData)
+            Log.i(TAG, "Copied to clipboard: $path (mime=$imageMime)")
+            OpResult(true, data = JSONObject()
+                .put("path", path)
+                .put("mimeType", imageMime)
+                .put("copied", true))
+        } catch (e: Exception) {
+            Log.e(TAG, "android_copy_to_clipboard failed: ${e.message}")
+            OpResult(false, error = "Could not copy to clipboard: ${e.message}")
+        }
     }
 
     private fun resolvePath(path: String): String {

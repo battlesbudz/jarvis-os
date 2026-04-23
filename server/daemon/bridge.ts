@@ -30,7 +30,10 @@ export type DaemonOp =
   | { type: "android_file_list"; path: string }
   | { type: "android_file_read"; path: string }
   | { type: "android_notifications_list"; limit?: number }
-  | { type: "android_return_to_jarvis" };
+  | { type: "android_return_to_jarvis" }
+  | { type: "android_file_search"; query: string; root?: string; fileType?: string; maxDepth?: number }
+  | { type: "android_open_file"; path: string }
+  | { type: "android_copy_to_clipboard"; path: string };
 
 export interface PhoneNotification {
   pkg: string;

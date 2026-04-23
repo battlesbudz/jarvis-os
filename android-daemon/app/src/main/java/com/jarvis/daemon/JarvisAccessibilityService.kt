@@ -2,6 +2,7 @@ package com.jarvis.daemon
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
+import android.content.ContentUris
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Path
@@ -9,6 +10,7 @@ import android.graphics.Rect
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.MediaStore
 import android.util.Base64
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
@@ -247,51 +249,115 @@ class JarvisAccessibilityService : AccessibilityService() {
     // the hardware screenshot button and read the saved file from the gallery.
     // Samsung's screenshot service uses a different code path that can capture
     // content the accessibility API cannot.
+    //
+    // Strategy (most reliable first):
+    // 1. MediaStore query — vendor-agnostic, works on Samsung, Pixel, OnePlus, etc.
+    //    Asks Android for the most recently added image created after the pre-shot timestamp.
+    // 2. Filesystem walk fallback — if MediaStore hasn't indexed yet, walk the top two
+    //    levels of DCIM, Pictures, and sdcard root for any "screenshot" subdirectory.
     fun takeScreenshotViaGlobalAction(): String? {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return null
         return try {
-            // Record the timestamp BEFORE taking the screenshot so we can identify the new file.
+            // Record timestamp BEFORE the shot so we can filter only the new file.
             val beforeMs = System.currentTimeMillis() - 500
+            val beforeSec = beforeMs / 1000L
 
-            // Simulate the hardware screenshot button combination.
             val fired = performGlobalAction(GLOBAL_ACTION_TAKE_SCREENSHOT)
             if (!fired) {
                 Log.w(TAG, "GLOBAL_ACTION_TAKE_SCREENSHOT returned false")
                 return null
             }
 
-            // Wait for the system screenshot service to save the file (~1-2 s on Samsung).
+            // Wait for the system screenshot service to save and index the file.
             Thread.sleep(2000)
 
-            // Search common Samsung screenshot directories.
-            val searchDirs = listOf(
-                android.os.Environment.getExternalStoragePublicDirectory(
-                    android.os.Environment.DIRECTORY_PICTURES).absolutePath + "/Screenshots",
-                android.os.Environment.getExternalStoragePublicDirectory(
-                    android.os.Environment.DIRECTORY_DCIM).absolutePath + "/Screenshots",
-                "/sdcard/Pictures/Screenshots",
-                "/sdcard/DCIM/Screenshots"
-            )
+            // ── Strategy 1: MediaStore query ──────────────────────────────────────
+            val mediaStoreBytes = readNewestImageFromMediaStore(beforeSec)
+            if (mediaStoreBytes != null) {
+                Log.i(TAG, "Global action screenshot via MediaStore: ${mediaStoreBytes.size} bytes")
+                return Base64.encodeToString(mediaStoreBytes, Base64.NO_WRAP)
+            }
 
-            val latestFile = searchDirs
-                .flatMap { path -> java.io.File(path).listFiles()?.toList() ?: emptyList() }
-                .filter { f -> f.isFile && f.lastModified() > beforeMs &&
-                    f.extension.lowercase() in listOf("jpg", "jpeg", "png", "webp") }
+            Log.w(TAG, "MediaStore returned nothing — trying filesystem walk fallback")
+
+            // ── Strategy 2: Filesystem walk — top-2-level "screenshot" dirs ───────
+            val imageExtensions = setOf("jpg", "jpeg", "png", "webp")
+            val roots = listOf(
+                android.os.Environment.getExternalStoragePublicDirectory(
+                    android.os.Environment.DIRECTORY_DCIM),
+                android.os.Environment.getExternalStoragePublicDirectory(
+                    android.os.Environment.DIRECTORY_PICTURES),
+                android.os.Environment.getExternalStorageDirectory()
+            ).filterNotNull().map { it.absolutePath }
+
+            val screenshotDirs = mutableListOf<java.io.File>()
+            for (rootPath in roots) {
+                val root = java.io.File(rootPath)
+                if (!root.isDirectory) continue
+                // Depth 1
+                root.listFiles()?.forEach { child ->
+                    if (child.isDirectory && child.name.contains("screenshot", ignoreCase = true)) {
+                        screenshotDirs.add(child)
+                    } else if (child.isDirectory) {
+                        // Depth 2
+                        child.listFiles()?.forEach { grandchild ->
+                            if (grandchild.isDirectory &&
+                                grandchild.name.contains("screenshot", ignoreCase = true)) {
+                                screenshotDirs.add(grandchild)
+                            }
+                        }
+                    }
+                }
+            }
+
+            val latestFile = screenshotDirs
+                .flatMap { dir -> dir.listFiles()?.toList() ?: emptyList() }
+                .filter { f ->
+                    f.isFile && f.lastModified() > beforeMs &&
+                        f.extension.lowercase() in imageExtensions
+                }
                 .maxByOrNull { it.lastModified() }
 
             if (latestFile == null) {
-                Log.w(TAG, "Global action screenshot: no new file found in gallery")
+                Log.w(TAG, "Global action screenshot: no new file found via filesystem walk")
                 return null
             }
 
             val bytes = latestFile.readBytes()
-            Log.i(TAG, "Global action screenshot: ${bytes.size} bytes from ${latestFile.name}")
+            Log.i(TAG, "Global action screenshot via filesystem: ${bytes.size} bytes from ${latestFile.name}")
             Base64.encodeToString(bytes, Base64.NO_WRAP)
         } catch (oom: OutOfMemoryError) {
             Log.e(TAG, "takeScreenshotViaGlobalAction OOM")
             null
         } catch (e: Exception) {
             Log.e(TAG, "takeScreenshotViaGlobalAction exception: ${e.message}")
+            null
+        }
+    }
+
+    // Query MediaStore for the most recently added image created after `afterSec` (epoch seconds).
+    // Returns the raw bytes of the file, or null if nothing is found.
+    private fun readNewestImageFromMediaStore(afterSec: Long): ByteArray? {
+        return try {
+            val projection = arrayOf(
+                MediaStore.Images.Media._ID,
+                MediaStore.Images.Media.DATE_ADDED,
+                MediaStore.Images.Media.DISPLAY_NAME
+            )
+            val selection = "${MediaStore.Images.Media.DATE_ADDED} >= ?"
+            val selectionArgs = arrayOf(afterSec.toString())
+            val sortOrder = "${MediaStore.Images.Media.DATE_ADDED} DESC"
+            val uri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+
+            contentResolver.query(uri, projection, selection, selectionArgs, sortOrder)?.use { cursor ->
+                if (!cursor.moveToFirst()) return null
+                val idCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
+                val id = cursor.getLong(idCol)
+                val contentUri = ContentUris.withAppendedId(uri, id)
+                contentResolver.openInputStream(contentUri)?.use { it.readBytes() }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "MediaStore query failed: ${e.message}")
             null
         }
     }
