@@ -1576,6 +1576,13 @@ Answer (yes/no):`,
         'launch', 'take a photo', 'tap on', 'tap the', 'swipe', 'read the screen',
         "what's on the screen", 'what is on the screen', 'what does the screen', 'browse to',
         'android_', 'navigate to', 'type into', 'open app',
+        // notification keywords
+        'notification', 'notifications', 'my notifications', 'read my notification',
+        'check notification', 'show notification', 'what notification', 'any notification',
+        'new notification', 'recent notification', 'latest notification',
+        // general phone/device read actions
+        'read my phone', 'check my phone', 'what is on my phone', "what's on my phone",
+        'phone screen', 'my screen', 'my phone',
       ];
       const isDeviceControlRequest = androidActive && deviceControlKeywords.some(k => lastUserContent.includes(k));
 
@@ -1693,8 +1700,31 @@ Answer (yes/no):`,
             "i've opened", "i opened", "i launched", "i took a screenshot", "i captured",
             "screenshot has been taken", "screenshot taken", "i've taken", "i tapped",
             "i swiped", "i typed", "here is the screenshot", "here's the screenshot",
+            // notification fabrication patterns
+            "here are your current android notifications",
+            "here are your android notifications",
+            "here are your notifications",
+            "got it — here are your",
+            "got it, here are your",
+            "your current notifications",
+            "your android notifications",
+            "fetching your notifications",
+            "i'll fetch your android",
+            "i will fetch your android",
+            "fetched your notifications",
           ];
-          const looksHallucinated = androidActive && hallucIndicators.some(h => responseText.toLowerCase().includes(h));
+          // Also detect when the model embeds a raw tool-call JSON blob in its text
+          // instead of actually calling the function (visible as {"name":"daemon_action",...} in the response)
+          const hasRawToolCallBlob = androidActive && (
+            responseText.includes('"name":"daemon_action"') ||
+            responseText.includes('"name": "daemon_action"') ||
+            responseText.includes('android_notifications_list') ||
+            responseText.includes('android_open_app') ||
+            responseText.includes('android_screenshot') ||
+            responseText.includes('android_tap') ||
+            responseText.includes('android_read_screen')
+          );
+          const looksHallucinated = androidActive && (hasRawToolCallBlob || hallucIndicators.some(h => responseText.toLowerCase().includes(h)));
           if (looksHallucinated) {
             console.warn(`[daemon] HALLUCINATION DETECTED userId=${userId} — model claimed device action without tool call. Intercepting.`);
             // Replace with an honest error rather than surfacing a fabricated result.
