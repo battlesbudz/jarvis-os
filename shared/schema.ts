@@ -273,7 +273,7 @@ export const inboxItems = pgTable("inbox_items", {
   matchedRuleId: varchar("matched_rule_id"),
   surfacedAt: timestamp("surfaced_at").defaultNow(),
   actedAt: timestamp("acted_at"),
-});
+}, (t) => [uniqueIndex("inbox_items_user_source_idx").on(t.userId, t.sourceId)]);
 
 export const mobileAuthSessions = pgTable("mobile_auth_sessions", {
   sessionId: text("session_id").primaryKey(),

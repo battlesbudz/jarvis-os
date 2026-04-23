@@ -437,7 +437,7 @@ export default function MissionControlScreen() {
 
   const handleReplyWithJarvis = useCallback((item: InboxItem) => {
     setInboxModal(false);
-    router.push('/(tabs)/jarvis');
+    router.push('/(tabs)/insights');
   }, [router]);
 
   const handleApproveDeliverable = useCallback(async (id: string) => {
@@ -781,7 +781,7 @@ export default function MissionControlScreen() {
 
       {/* Today tasks modal */}
       <FullModal visible={tasksModal} title="TODAY'S TASKS" accent={Colors.violet} onClose={() => setTasksModal(false)}>
-        <Pressable style={styles.manageDayBtn} onPress={() => { setTasksModal(false); router.push('/(tabs)/jarvis'); }}>
+        <Pressable style={styles.manageDayBtn} onPress={() => { setTasksModal(false); router.push('/(tabs)/insights'); }}>
           <Ionicons name="flash-outline" size={14} color={Colors.violet} />
           <Text style={styles.manageDayBtnText}>Plan / Rebuild My Day with Jarvis</Text>
           <Ionicons name="chevron-forward" size={14} color={Colors.violet} />
