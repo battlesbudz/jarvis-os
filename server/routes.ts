@@ -45,6 +45,7 @@ import type { DaemonAction, DaemonOp } from "./daemon/bridge";
 import { telegramLinks, channelLinks } from "@shared/schema";
 import { connectChannelTool } from "./agent/tools/connectChannel";
 import { YoutubeTranscript } from "youtube-transcript";
+import ytSearch from "yt-search";
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
@@ -881,8 +882,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
     {
       type: "function" as const,
       function: {
+        name: "search_youtube",
+        description: "Search YouTube server-side and return structured results with title, channel name, view count, published date, duration, and video ID — without touching the phone. Use this BEFORE opening a video so you can intelligently pick the best result (reputable channel, high views, recent date). Returns up to 10 results. Then use fetch_youtube_transcript to get the transcript of the chosen video, and android_browse to open it on the phone.",
+        parameters: {
+          type: "object",
+          properties: {
+            query: { type: "string", description: "Search query, e.g. 'how to improve focus ADHD'" },
+            maxResults: { type: "number", description: "Number of results to return (1-10, default 8)" },
+          },
+          required: ["query"],
+        },
+      },
+    },
+    {
+      type: "function" as const,
+      function: {
         name: "fetch_youtube_transcript",
-        description: "Fetch the full transcript of a YouTube video server-side without touching the phone. Use this INSTEAD of trying to navigate YouTube's UI transcript viewer. Works from a video URL (https://youtube.com/watch?v=...) or just the video ID. Call this after the daemon has opened/navigated to the video and you know the video URL or ID — or use web_search to find the video ID first. Returns the transcript as plain text that you can then summarize or answer questions about.",
+        description: "Fetch the COMPLETE transcript/captions of a YouTube video server-side — returns the full text with no truncation. Use this INSTEAD of navigating YouTube's transcript UI on the phone (never tap through 3-dot menus). Call it with the video ID after search_youtube or after reading the video ID from android_read_screen. The transcript can be long for lengthy videos — use it to answer questions, summarize content, or extract specific information.",
         parameters: {
           type: "object",
           properties: {
@@ -1520,6 +1536,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
             detail: `${pingStr}\n\nRecent op log (newest first):\n${recentStr}`,
           };
         }
+        case 'search_youtube': {
+          const query = String(args.query || '').trim();
+          if (!query) return { result: 'error', label: 'query required', detail: 'Provide a search query.' };
+          const maxResults = Math.min(Math.max(typeof args.maxResults === 'number' ? args.maxResults : 8, 1), 10);
+          try {
+            const searchResult = await ytSearch({ query, pageStart: 1, pageEnd: 1 });
+            const videos = (searchResult.videos || []).slice(0, maxResults);
+            if (videos.length === 0) return { result: 'error', label: 'No results', detail: `No YouTube videos found for: "${query}"` };
+            const formatted = videos.map((v: any, i: number) => {
+              const views = typeof v.views === 'number' ? v.views.toLocaleString() : (v.views || 'unknown');
+              const ago = v.ago || 'unknown date';
+              const duration = v.duration?.timestamp || v.duration || 'unknown';
+              return `${i + 1}. "${v.title}"\n   Channel: ${v.author?.name || 'unknown'}\n   Views: ${views} | Posted: ${ago} | Duration: ${duration}\n   Video ID: ${v.videoId}\n   URL: ${v.url}`;
+            }).join('\n\n');
+            return {
+              result: 'success',
+              label: `YouTube search: ${videos.length} results`,
+              detail: `Search: "${query}"\n\n${formatted}\n\nTo open a video on the phone: android_browse with url='vnd.youtube://watch?v=VIDEO_ID'\nTo get its transcript: fetch_youtube_transcript with videoId='VIDEO_ID'`,
+            };
+          } catch (err: any) {
+            return { result: 'error', label: 'YouTube search failed', detail: err?.message || String(err) };
+          }
+        }
         case 'fetch_youtube_transcript': {
           const rawInput = String(args.videoId || '').trim();
           if (!rawInput) return { result: 'error', label: 'videoId required', detail: 'Provide a YouTube video ID or URL.' };
@@ -1536,8 +1575,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               return { result: 'error', label: 'No transcript available', detail: `The video '${videoId}' does not have a transcript/captions enabled. This is common for music videos or videos where the creator disabled captions.` };
             }
             const fullText = transcriptItems.map(t => t.text).join(' ').replace(/\s+/g, ' ').trim();
-            const truncated = fullText.length > 12000 ? fullText.slice(0, 12000) + '… [transcript truncated at 12000 chars]' : fullText;
-            return { result: 'success', label: 'Transcript fetched', detail: `Video ID: ${videoId}\nTranscript (${transcriptItems.length} segments, ${fullText.length} chars):\n\n${truncated}` };
+            return { result: 'success', label: 'Transcript fetched', detail: `Video ID: ${videoId}\nTranscript (${transcriptItems.length} segments, ${fullText.length} chars total):\n\n${fullText}` };
           } catch (err: any) {
             const msg = err?.message || String(err);
             if (msg.includes('disabled') || msg.includes('Transcript is disabled')) {
@@ -1732,7 +1770,7 @@ Answer (yes/no):`,
 
       const daemonSection = daemonPaired
         ? androidActive
-          ? `Android Device Daemon is ACTIVE and connected.\n${deviceHints}\nAvailable daemon actions: android_open_app, android_browse, android_screenshot, android_read_screen, android_tap, android_type, android_swipe, android_press_key, android_wait, android_file_list, android_file_read, android_notifications_list, notify. DO NOT use desktop shell/file actions.\nSEARCH SHORTCUTS — use android_browse with these deep links (opens native app directly to results): YouTube search → url='vnd.youtube://results?search_query=YOUR_QUERY', Google Maps → url='geo:0,0?q=YOUR_QUERY', Spotify → url='spotify:search:YOUR_QUERY'.\nUI SETTLING — use android_wait (ms: 1500–3000) after tapping interactive elements that trigger loading (videos, pages, navigation) before calling android_read_screen. This prevents read_screen from seeing a blank or transitioning state.\nYOUTUBE TRANSCRIPTS — NEVER try to navigate YouTube's transcript UI (3-dot menu, etc.) to read a transcript. Instead: (1) open and play the video using android_browse or android_tap, (2) call android_read_screen to confirm the video is playing and note the video ID or URL from the screen, (3) call the separate fetch_youtube_transcript tool with the video ID — it fetches the full text server-side instantly. This saves 5–10 tool turns.\nACTION FLOW for multi-step tasks: Use as many tool-call turns as the task requires — there is no turn limit. For each step: (1) If unsure what is on screen, call android_read_screen first. (2) Act — call android_browse, android_tap, android_swipe, android_type, etc. as needed. (3) After acting, call android_read_screen to confirm the result, then decide the next step. Complete the FULL task end-to-end (open app → search → pick result → play/navigate) before responding — do NOT stop mid-task and ask the user to finish. NEVER re-open an app that is already on screen — check the screen first, then interact with what is there. NEVER describe app content without calling android_read_screen first. If an op returns result:error, tell the user what failed and what you tried.\nCOMPLETION NOTIFICATIONS — after finishing any multi-step phone task (open app, search, navigate, play, etc.), ALWAYS call notify as the FINAL step with action:'notify', title:'Jarvis ✓', body: a one-line summary of what was done (e.g. "Playing Lo-Fi Hip Hop on YouTube" or "Opened Reddit → r/productivity"). This pops up a banner on the phone so the user knows the task is done without looking at the Jarvis app.`
+          ? `Android Device Daemon is ACTIVE and connected.\n${deviceHints}\nAvailable daemon actions: android_open_app, android_browse, android_screenshot, android_read_screen, android_tap, android_type, android_swipe, android_press_key, android_wait, android_file_list, android_file_read, android_notifications_list, notify. DO NOT use desktop shell/file actions.\nSEARCH SHORTCUTS — use android_browse with these deep links (opens native app directly to results): YouTube search → url='vnd.youtube://results?search_query=YOUR_QUERY', Google Maps → url='geo:0,0?q=YOUR_QUERY', Spotify → url='spotify:search:YOUR_QUERY'.\nUI SETTLING — use android_wait (ms: 1500–3000) after tapping interactive elements that trigger loading (videos, pages, navigation) before calling android_read_screen. This prevents read_screen from seeing a blank or transitioning state.\n\nYOUTUBE RESEARCH WORKFLOW — when the user asks to research something on YouTube, find a good video and summarize it:\n  1. Call search_youtube (server-side) with the query. This returns results with channel name, views, date, and video ID — use this to pick a reputable, high-view-count, recent video without touching the phone at all.\n  2. Call fetch_youtube_transcript with the chosen video ID — this fetches the COMPLETE transcript server-side with no truncation.\n  3. Call android_browse with url='vnd.youtube://watch?v=VIDEO_ID' to open the video on the phone so the user can watch it.\n  4. Summarize the transcript content for the user.\n  5. Call notify as the final step (see NOTIFICATIONS below).\n  NEVER navigate YouTube's transcript UI (3-dot menu, Show Transcript, scroll) — always use fetch_youtube_transcript.\n\nACTION FLOW for multi-step tasks: Use as many tool-call turns as the task requires — there is no turn limit. For each step: (1) If unsure what is on screen, call android_read_screen first. (2) Act — call android_browse, android_tap, android_swipe, android_type, etc. as needed. (3) After acting, call android_read_screen to confirm the result, then decide the next step. Complete the FULL task end-to-end before responding — do NOT stop mid-task and ask the user to finish. NEVER re-open an app that is already on screen. NEVER describe app content without calling android_read_screen first. If an op returns result:error, tell the user what failed and what you tried.\n\nNOTIFICATIONS — ALWAYS send a notify banner at the end of every multi-step task, success OR failure:\n- SUCCESS: notify with title:'Jarvis ✓', body: one-line summary of what was done (e.g. "Playing Lo-Fi Hip Hop — 2.1M views, posted 3 days ago")\n- FAILURE: notify with title:'Jarvis ✗', body: one-line summary of what went wrong (e.g. "Couldn't get transcript — captions disabled on this video")\nThis ensures the user always gets a phone banner and never waits silently for a task that already ended.`
           : 'Desktop Daemon is ACTIVE. Use shell, notify, file_read, file_write, file_list actions. ALWAYS report errors immediately if a tool returns result:error. Use daemon_diagnostic (no args) to check daemon health before multi-step sequences or when ops are failing.'
         : '⚠️ NO DAEMON CONNECTED. Do NOT call daemon_action — it will fail with "daemon not connected". If the user asks to control their phone or computer, tell them exactly this: "Your phone daemon isn\'t connected. To fix it: (1) Open the Jarvis app → Profile → scroll to \'Android Device\' → tap \'Get Pairing Code\', (2) Open the Jarvis Daemon APK on your phone, (3) Make sure the Server URL is https://GameplanAI.replit.app, (4) Enter the 8-character pairing code, (5) Tap Pair. The status dot should turn green within a few seconds." Do not attempt daemon_action until they confirm it\'s connected.';
       const systemPrompt = buildCoachSystemPrompt(goals || [], stats || {}, history || [], calendarEvents || [], lifeContext || null, resolvedGmailItems, resolvedGmailConnected, slackMessages || [], slackConnected ?? false, userCommitments, coachingMode, memories, telegramMessages || [], telegramConnected ?? false, morningNoteSummary, documentsContext, crossChannelContext, soulBlock, daemonSection);
@@ -1758,6 +1796,8 @@ Answer (yes/no):`,
         // youtube / video intelligence
         'transcript', 'summarize the video', 'summarize that video', 'what is the video about',
         "what's the video about", 'give me a summary', 'summarize what', 'tell me what the video',
+        'search youtube', 'find a youtube', 'look up on youtube', 'research on youtube',
+        'look something up', 'look it up', 'find a video', 'find me a video',
       ];
       const isDeviceControlRequest = androidActive && deviceControlKeywords.some(k => lastUserContent.includes(k));
 
@@ -2056,6 +2096,14 @@ Answer (yes/no):`,
       }
     } catch (error) {
       console.error("Error in coach chat:", error);
+      // Push a failure banner to the phone so the user isn't left waiting silently
+      if (userId && isUserPaired(userId)) {
+        sendDaemonOp(userId, {
+          type: 'notify',
+          title: 'Jarvis ✗ Task failed',
+          body: 'Something went wrong — check the app for details and try again.',
+        }, 5000).catch(() => {});
+      }
       if (!res.headersSent) {
         res.status(500).json({ error: "Failed to get coach response" });
       } else {

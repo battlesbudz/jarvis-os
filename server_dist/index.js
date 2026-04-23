@@ -1133,7 +1133,7 @@ ${input}`
   });
   return response.choices[0]?.message?.content || text2.slice(0, 3e3);
 }
-async function processDocument(userId, documentId, name, mimeType, buffer) {
+async function processDocument(userId2, documentId, name, mimeType, buffer) {
   try {
     let extractedText = "";
     if (mimeType === "application/pdf") {
@@ -1160,8 +1160,8 @@ async function processDocument(userId, documentId, name, mimeType, buffer) {
     }).where(eq(userDocuments.id, documentId));
   }
 }
-async function getUserDocumentContext(userId) {
-  const docs = await db.select().from(userDocuments).where(eq(userDocuments.userId, userId)).orderBy(desc(userDocuments.uploadedAt)).limit(MAX_DOCS_PER_USER);
+async function getUserDocumentContext(userId2) {
+  const docs = await db.select().from(userDocuments).where(eq(userDocuments.userId, userId2)).orderBy(desc(userDocuments.uploadedAt)).limit(MAX_DOCS_PER_USER);
   const readyDocs = docs.filter((d) => d.status === "ready" && (d.extractedText || d.summary));
   if (readyDocs.length === 0) return "";
   const sections = readyDocs.map((doc) => {
@@ -1270,12 +1270,12 @@ function readLifeContextData(value) {
   }
   return Object.keys(out).length > 0 ? out : null;
 }
-async function buildSoulMarkdown(userId) {
+async function buildSoulMarkdown(userId2) {
   const [memoriesRows, lifeRows, peopleRows, insightRows] = await Promise.all([
-    db.select().from(userMemories).where(eq2(userMemories.userId, userId)).orderBy(desc2(userMemories.relevanceScore), desc2(userMemories.confidence), desc2(userMemories.extractedAt)).limit(120),
-    db.select().from(lifeContext).where(eq2(lifeContext.userId, userId)).limit(1),
-    db.select().from(people).where(eq2(people.userId, userId)).orderBy(desc2(people.lastInteractionAt)).limit(15),
-    db.select().from(weeklyInsights).where(eq2(weeklyInsights.userId, userId)).orderBy(desc2(weeklyInsights.createdAt)).limit(1)
+    db.select().from(userMemories).where(eq2(userMemories.userId, userId2)).orderBy(desc2(userMemories.relevanceScore), desc2(userMemories.confidence), desc2(userMemories.extractedAt)).limit(120),
+    db.select().from(lifeContext).where(eq2(lifeContext.userId, userId2)).limit(1),
+    db.select().from(people).where(eq2(people.userId, userId2)).orderBy(desc2(people.lastInteractionAt)).limit(15),
+    db.select().from(weeklyInsights).where(eq2(weeklyInsights.userId, userId2)).orderBy(desc2(weeklyInsights.createdAt)).limit(1)
   ]);
   const grouped = /* @__PURE__ */ new Map();
   for (const m of memoriesRows) {
@@ -1339,15 +1339,15 @@ _${latestInsight.summary}_`);
   }
   return sections.join("\n");
 }
-async function regenerateSoul(userId) {
-  const content = await buildSoulMarkdown(userId);
+async function regenerateSoul(userId2) {
+  const content = await buildSoulMarkdown(userId2);
   const now = /* @__PURE__ */ new Date();
-  const inserted = await db.insert(jarvisSouls).values({ userId, content, generatedAt: now, updatedAt: now }).onConflictDoUpdate({
+  const inserted = await db.insert(jarvisSouls).values({ userId: userId2, content, generatedAt: now, updatedAt: now }).onConflictDoUpdate({
     target: jarvisSouls.userId,
     set: { content, generatedAt: now, updatedAt: now }
   }).returning();
   const row = inserted[0];
-  console.log(`[Soul] regenerated for user ${userId} (${content.length} chars)`);
+  console.log(`[Soul] regenerated for user ${userId2} (${content.length} chars)`);
   return {
     content: row?.content ?? content,
     manualOverride: row?.manualOverride ?? null,
@@ -1355,10 +1355,10 @@ async function regenerateSoul(userId) {
     updatedAt: row?.updatedAt ?? now
   };
 }
-async function getSoul(userId, opts) {
-  const [existing] = await db.select().from(jarvisSouls).where(eq2(jarvisSouls.userId, userId)).limit(1);
+async function getSoul(userId2, opts) {
+  const [existing] = await db.select().from(jarvisSouls).where(eq2(jarvisSouls.userId, userId2)).limit(1);
   if (!existing || opts?.forceFresh || isStale(existing.generatedAt) || !existing.content.trim()) {
-    const fresh = await regenerateSoul(userId);
+    const fresh = await regenerateSoul(userId2);
     return {
       content: fresh.content,
       manualOverride: existing?.manualOverride ?? fresh.manualOverride,
@@ -1373,28 +1373,28 @@ async function getSoul(userId, opts) {
     updatedAt: existing.updatedAt
   };
 }
-async function setSoulContent(userId, content) {
+async function setSoulContent(userId2, content) {
   const trimmed = content.trim();
   const now = /* @__PURE__ */ new Date();
-  await db.insert(jarvisSouls).values({ userId, content: trimmed, manualOverride: null, generatedAt: now, updatedAt: now }).onConflictDoUpdate({
+  await db.insert(jarvisSouls).values({ userId: userId2, content: trimmed, manualOverride: null, generatedAt: now, updatedAt: now }).onConflictDoUpdate({
     target: jarvisSouls.userId,
     set: { content: trimmed, manualOverride: null, generatedAt: now, updatedAt: now }
   });
 }
-async function setManualOverride(userId, override) {
+async function setManualOverride(userId2, override) {
   const trimmed = override?.trim() || null;
   const now = /* @__PURE__ */ new Date();
-  await db.insert(jarvisSouls).values({ userId, content: "", manualOverride: trimmed, updatedAt: now }).onConflictDoUpdate({
+  await db.insert(jarvisSouls).values({ userId: userId2, content: "", manualOverride: trimmed, updatedAt: now }).onConflictDoUpdate({
     target: jarvisSouls.userId,
     set: { manualOverride: trimmed, updatedAt: now }
   });
 }
-async function markSoulStale(userId) {
-  await db.update(jarvisSouls).set({ generatedAt: null }).where(eq2(jarvisSouls.userId, userId));
+async function markSoulStale(userId2) {
+  await db.update(jarvisSouls).set({ generatedAt: null }).where(eq2(jarvisSouls.userId, userId2));
 }
-async function getSoulPromptBlock(userId) {
+async function getSoulPromptBlock(userId2) {
   try {
-    const soul = await getSoul(userId);
+    const soul = await getSoul(userId2);
     const parts = [];
     if (soul.content.trim()) parts.push(soul.content.trim());
     if (soul.manualOverride && soul.manualOverride.trim()) {
@@ -1410,10 +1410,10 @@ ${parts.join("\n")}
     return "";
   }
 }
-async function touchReferencedMemories(userId, ids) {
+async function touchReferencedMemories(userId2, ids) {
   if (ids.length === 0) return;
   try {
-    await db.update(userMemories).set({ lastReferencedAt: /* @__PURE__ */ new Date() }).where(and(eq2(userMemories.userId, userId), inArray(userMemories.id, ids)));
+    await db.update(userMemories).set({ lastReferencedAt: /* @__PURE__ */ new Date() }).where(and(eq2(userMemories.userId, userId2), inArray(userMemories.id, ids)));
   } catch (err) {
     console.error("[Soul] touchReferencedMemories failed:", err);
   }
@@ -1476,7 +1476,7 @@ function cosine(a, b) {
   const denom = Math.sqrt(na) * Math.sqrt(nb);
   return denom === 0 ? 0 : dot / denom;
 }
-async function retrieveRelevantMemories(userId, query, limit = 12) {
+async function retrieveRelevantMemories(userId2, query, limit = 12) {
   const q = query.trim();
   if (!q) return [];
   const queryVec = await embedText(q);
@@ -1484,7 +1484,7 @@ async function retrieveRelevantMemories(userId, query, limit = 12) {
     SELECT id, content, category, relevance_score, confidence, embedding,
            ts_rank(to_tsvector('english', content), plainto_tsquery('english', ${q})) AS fts_rank
     FROM user_memories
-    WHERE user_id = ${userId}
+    WHERE user_id = ${userId2}
     ORDER BY fts_rank DESC NULLS LAST, relevance_score DESC
     LIMIT 60
   `);
@@ -1528,11 +1528,11 @@ __export(promptContext_exports, {
   buildAiContextSections: () => buildAiContextSections
 });
 import { sql as sql4 } from "drizzle-orm";
-async function buildAiContextSections(userId, seedQuery) {
-  if (!userId) return EMPTY_AI_CONTEXT;
+async function buildAiContextSections(userId2, seedQuery) {
+  if (!userId2) return EMPTY_AI_CONTEXT;
   const out = { ...EMPTY_AI_CONTEXT };
   try {
-    const soulText = await getSoulPromptBlock(userId);
+    const soulText = await getSoulPromptBlock(userId2);
     if (soulText && soulText.trim().length > 0) {
       out.soulSection = `
 
@@ -1546,7 +1546,7 @@ ${soulText.trim()}
   try {
     const rows = await db.execute(sql4`
       SELECT patterns, summary FROM weekly_insights
-      WHERE user_id = ${userId}
+      WHERE user_id = ${userId2}
       ORDER BY created_at DESC LIMIT 1
     `);
     const row = rows.rows?.[0];
@@ -1567,7 +1567,7 @@ ${row.summary ? row.summary + "\n" : ""}${top}
   try {
     const trimmed = (seedQuery || "").trim();
     if (trimmed.length > 0) {
-      const mems = await retrieveRelevantMemories(userId, trimmed, 6);
+      const mems = await retrieveRelevantMemories(userId2, trimmed, 6);
       if (mems.length > 0) {
         out.memorySection = `
 
@@ -2353,8 +2353,8 @@ function getJwtSecret() {
   console.log("Generated JWT_SECRET (set JWT_SECRET env var for persistent tokens across restarts)");
   return generated;
 }
-function generateToken(userId) {
-  return jwt.sign({ userId }, JWT_SECRET, { expiresIn: TOKEN_EXPIRY });
+function generateToken(userId2) {
+  return jwt.sign({ userId: userId2 }, JWT_SECRET, { expiresIn: TOKEN_EXPIRY });
 }
 function authMiddleware(req, res, next) {
   if (req.path.startsWith("/api/auth/")) {
@@ -2783,9 +2783,9 @@ function nextActionableTasksFromTree(tree) {
   }
   return out;
 }
-async function recentCompletionRate(userId) {
+async function recentCompletionRate(userId2) {
   try {
-    const [row] = await db.select({ data: completionHistory.data }).from(completionHistory).where(eq5(completionHistory.userId, userId)).limit(1);
+    const [row] = await db.select({ data: completionHistory.data }).from(completionHistory).where(eq5(completionHistory.userId, userId2)).limit(1);
     const arr = row?.data || [];
     if (arr.length === 0) return 1;
     const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1e3;
@@ -2800,10 +2800,10 @@ async function recentCompletionRate(userId) {
     return 1;
   }
 }
-async function getInjectableGoalTasks(userId, dateKey) {
-  const trees = await db.select().from(goalTrees).where(and2(eq5(goalTrees.userId, userId), eq5(goalTrees.status, "active")));
+async function getInjectableGoalTasks(userId2, dateKey) {
+  const trees = await db.select().from(goalTrees).where(and2(eq5(goalTrees.userId, userId2), eq5(goalTrees.status, "active")));
   if (trees.length === 0) return [];
-  const rate = await recentCompletionRate(userId);
+  const rate = await recentCompletionRate(userId2);
   const dailyCap = rate < 0.5 ? 1 : 3;
   const candidates = [];
   for (const row of trees) {
@@ -2837,7 +2837,7 @@ async function getInjectableGoalTasks(userId, dateKey) {
   }
   return candidates;
 }
-async function markTasksInjected(userId, picks, dateKey) {
+async function markTasksInjected(userId2, picks, dateKey) {
   if (picks.length === 0) return;
   const byTree = /* @__PURE__ */ new Map();
   for (const p of picks) {
@@ -2846,7 +2846,7 @@ async function markTasksInjected(userId, picks, dateKey) {
     byTree.set(p.goalTreeId, list);
   }
   for (const [treeId, items] of byTree.entries()) {
-    const [row] = await db.select().from(goalTrees).where(and2(eq5(goalTrees.id, treeId), eq5(goalTrees.userId, userId))).limit(1);
+    const [row] = await db.select().from(goalTrees).where(and2(eq5(goalTrees.id, treeId), eq5(goalTrees.userId, userId2))).limit(1);
     if (!row) continue;
     const tree = row.tree || { phases: [] };
     const ids = new Set(items.map((i) => i.taskId));
@@ -2873,8 +2873,8 @@ async function markTasksInjected(userId, picks, dateKey) {
     }
   }
 }
-async function markTreeTaskComplete(userId, goalTreeId, taskId) {
-  const [row] = await db.select().from(goalTrees).where(and2(eq5(goalTrees.id, goalTreeId), eq5(goalTrees.userId, userId))).limit(1);
+async function markTreeTaskComplete(userId2, goalTreeId, taskId) {
+  const [row] = await db.select().from(goalTrees).where(and2(eq5(goalTrees.id, goalTreeId), eq5(goalTrees.userId, userId2))).limit(1);
   if (!row) return;
   const tree = row.tree || { phases: [] };
   let mutated = false;
@@ -3615,10 +3615,10 @@ var init_telegram = __esm({
 
 // server/interactionLog.ts
 import { eq as eq6, desc as desc3, gte, and as and3 } from "drizzle-orm";
-async function logInteraction(userId, channel, direction, content, label) {
+async function logInteraction(userId2, channel, direction, content, label) {
   try {
     await db.insert(interactionLog).values({
-      userId,
+      userId: userId2,
       channel,
       direction,
       content,
@@ -3628,12 +3628,12 @@ async function logInteraction(userId, channel, direction, content, label) {
     console.error("[InteractionLog] Failed to log interaction:", err);
   }
 }
-async function getRecentInteractions(userId, limit = 20, withinHours = 48) {
+async function getRecentInteractions(userId2, limit = 20, withinHours = 48) {
   try {
     const since = new Date(Date.now() - withinHours * 60 * 60 * 1e3);
     return await db.select().from(interactionLog).where(
       and3(
-        eq6(interactionLog.userId, userId),
+        eq6(interactionLog.userId, userId2),
         gte(interactionLog.createdAt, since)
       )
     ).orderBy(desc3(interactionLog.createdAt)).limit(limit);
@@ -3693,10 +3693,10 @@ function registerChannel(channel) {
 function listChannels() {
   return Array.from(channels.values());
 }
-async function getActiveChannelsFor(userId, notificationType) {
+async function getActiveChannelsFor(userId2, notificationType) {
   try {
     const rows = await db.select().from(channelPreferences).where(and4(
-      eq7(channelPreferences.userId, userId),
+      eq7(channelPreferences.userId, userId2),
       eq7(channelPreferences.notificationType, notificationType)
     )).limit(1);
     const prefs = rows[0]?.channels;
@@ -3706,10 +3706,10 @@ async function getActiveChannelsFor(userId, notificationType) {
   }
   return DEFAULT_FALLBACK;
 }
-async function getAllPreferences(userId) {
+async function getAllPreferences(userId2) {
   const out = {};
   try {
-    const rows = await db.select().from(channelPreferences).where(eq7(channelPreferences.userId, userId));
+    const rows = await db.select().from(channelPreferences).where(eq7(channelPreferences.userId, userId2));
     for (const r of rows) {
       out[r.notificationType] = r.channels || [];
     }
@@ -3718,20 +3718,20 @@ async function getAllPreferences(userId) {
   }
   return out;
 }
-async function setPreference(userId, notificationType, selected) {
-  await db.insert(channelPreferences).values({ userId, notificationType, channels: selected, updatedAt: /* @__PURE__ */ new Date() }).onConflictDoUpdate({
+async function setPreference(userId2, notificationType, selected) {
+  await db.insert(channelPreferences).values({ userId: userId2, notificationType, channels: selected, updatedAt: /* @__PURE__ */ new Date() }).onConflictDoUpdate({
     target: [channelPreferences.userId, channelPreferences.notificationType],
     set: { channels: selected, updatedAt: /* @__PURE__ */ new Date() }
   });
 }
-async function trySendOnChannel(userId, name, text2, opts, notificationType) {
+async function trySendOnChannel(userId2, name, text2, opts, notificationType) {
   const ch = channels.get(name);
   if (!ch) return { channel: name, result: { ok: false, error: "channel not registered" } };
   if (!ch.isConfigured()) return { channel: name, result: { ok: false, error: "channel not configured" } };
-  if (!await ch.isLinkedFor(userId)) return { channel: name, result: { ok: false, error: "user not linked" } };
+  if (!await ch.isLinkedFor(userId2)) return { channel: name, result: { ok: false, error: "user not linked" } };
   try {
-    const result = await ch.sendMessage(userId, text2, { ...opts, notificationType });
-    if (result.ok) logInteraction(userId, name, "outbound", text2).catch(() => {
+    const result = await ch.sendMessage(userId2, text2, { ...opts, notificationType });
+    if (result.ok) logInteraction(userId2, name, "outbound", text2).catch(() => {
     });
     return { channel: name, result };
   } catch (err) {
@@ -3739,10 +3739,10 @@ async function trySendOnChannel(userId, name, text2, opts, notificationType) {
     return { channel: name, result: { ok: false, error: String(err) } };
   }
 }
-async function notifyUser(userId, notificationType, text2, opts = {}) {
-  const targets = await getActiveChannelsFor(userId, notificationType);
+async function notifyUser(userId2, notificationType, text2, opts = {}) {
+  const targets = await getActiveChannelsFor(userId2, notificationType);
   const results = await Promise.all(
-    targets.map((name) => trySendOnChannel(userId, name, text2, opts, notificationType))
+    targets.map((name) => trySendOnChannel(userId2, name, text2, opts, notificationType))
   );
   if (results.some((r) => r.result.ok)) return results;
   const tried = new Set(targets);
@@ -3753,10 +3753,10 @@ async function notifyUser(userId, notificationType, text2, opts = {}) {
   for (const name of fallbackOrder) {
     if (tried.has(name)) continue;
     tried.add(name);
-    const r = await trySendOnChannel(userId, name, text2, opts, notificationType);
+    const r = await trySendOnChannel(userId2, name, text2, opts, notificationType);
     results.push(r);
     if (r.result.ok) {
-      console.warn(`[channels] notifyUser fallback delivered via ${name} after preferred targets [${targets.join(",")}] failed for user ${userId}`);
+      console.warn(`[channels] notifyUser fallback delivered via ${name} after preferred targets [${targets.join(",")}] failed for user ${userId2}`);
       return results;
     }
   }
@@ -3831,10 +3831,10 @@ Keep each text under 2 sentences. Plain text only \u2014 no markdown, no asteris
     ];
   }
 }
-async function startMomentumSession(userId, chatId, context) {
-  const steps = await generateMomentumSteps(userId, context);
+async function startMomentumSession(userId2, chatId, context) {
+  const steps = await generateMomentumSteps(userId2, context);
   await db.insert(momentumSessions).values({
-    userId,
+    userId: userId2,
     currentStep: 0,
     sessionDate: context.dateKey,
     completedSteps: 0,
@@ -3854,12 +3854,12 @@ async function startMomentumSession(userId, chatId, context) {
   });
   const step = steps[0];
   await sendMessageWithButtons(chatId, `Jarvis here. ${step.text}`, [
-    { text: "\u2705 Done", callback_data: `momentum_done:${userId}:0` }
+    { text: "\u2705 Done", callback_data: `momentum_done:${userId2}:0` }
   ]);
-  console.log(`[Momentum] Session started for user ${userId}, step 0`);
+  console.log(`[Momentum] Session started for user ${userId2}, step 0`);
 }
-async function handleMomentumDone(userId, chatId, stepIndex) {
-  const rows = await db.select().from(momentumSessions).where(eq8(momentumSessions.userId, userId)).limit(1);
+async function handleMomentumDone(userId2, chatId, stepIndex) {
+  const rows = await db.select().from(momentumSessions).where(eq8(momentumSessions.userId, userId2)).limit(1);
   if (rows.length === 0) return;
   const session = rows[0];
   if (session.status === "expired") {
@@ -3871,7 +3871,7 @@ async function handleMomentumDone(userId, chatId, stepIndex) {
   if (session.currentStep !== stepIndex) return;
   const completedStep = steps[stepIndex];
   const xpEarned = completedStep.xp;
-  await awardXp(userId, xpEarned);
+  await awardXp(userId2, xpEarned);
   const nextStep = stepIndex + 1;
   const newCompletedSteps = (session.completedSteps || 0) + 1;
   const isFinished = nextStep >= steps.length;
@@ -3880,7 +3880,7 @@ async function handleMomentumDone(userId, chatId, stepIndex) {
     completedSteps: newCompletedSteps,
     status: isFinished ? "completed" : "active",
     lastStepAt: /* @__PURE__ */ new Date()
-  }).where(eq8(momentumSessions.userId, userId));
+  }).where(eq8(momentumSessions.userId, userId2));
   const ackMessages = {
     implementation_intention: `Done \u2014 +${xpEarned} XP. That first step is always the hardest.`,
     identity_framing: `Locked in \u2014 +${xpEarned} XP. That's exactly who you are.`,
@@ -3896,43 +3896,43 @@ async function handleMomentumDone(userId, chatId, stepIndex) {
   }
   setTimeout(async () => {
     try {
-      const freshRows = await db.select().from(momentumSessions).where(eq8(momentumSessions.userId, userId)).limit(1);
+      const freshRows = await db.select().from(momentumSessions).where(eq8(momentumSessions.userId, userId2)).limit(1);
       if (freshRows.length === 0 || freshRows[0].currentStep !== nextStep) return;
       const freshSession = freshRows[0];
       if (freshSession.status !== "active") return;
       const lastStepTime = freshSession.lastStepAt ? new Date(freshSession.lastStepAt) : /* @__PURE__ */ new Date();
       if (Date.now() - lastStepTime.getTime() > SESSION_TIMEOUT_MS) {
-        await expireSession(userId, chatId);
+        await expireSession(userId2, chatId);
         return;
       }
       const nextStepData = freshSession.steps[nextStep];
       await sendMessageWithButtons(chatId, nextStepData.text, [
-        { text: "\u2705 Done", callback_data: `momentum_done:${userId}:${nextStep}` }
+        { text: "\u2705 Done", callback_data: `momentum_done:${userId2}:${nextStep}` }
       ]);
-      console.log(`[Momentum] Sent step ${nextStep} to user ${userId}`);
+      console.log(`[Momentum] Sent step ${nextStep} to user ${userId2}`);
     } catch (err) {
       console.error("[Momentum] Error sending next step:", err);
     }
   }, STEP_DELAY_MS);
 }
-async function expireSession(userId, chatId) {
-  await db.update(momentumSessions).set({ status: "expired" }).where(eq8(momentumSessions.userId, userId));
+async function expireSession(userId2, chatId) {
+  await db.update(momentumSessions).set({ status: "expired" }).where(eq8(momentumSessions.userId, userId2));
   await sendMessage(chatId, "No worries \u2014 we'll pick it back up tomorrow.");
-  console.log(`[Momentum] Session expired for user ${userId}`);
+  console.log(`[Momentum] Session expired for user ${userId2}`);
 }
-async function awardXp(userId, amount) {
+async function awardXp(userId2, amount) {
   try {
-    const rows = await db.select().from(stats).where(eq8(stats.userId, userId)).limit(1);
+    const rows = await db.select().from(stats).where(eq8(stats.userId, userId2)).limit(1);
     if (rows.length === 0) return;
     const data = rows[0].data ?? {};
     const currentXp = Number(data.xp ?? 0);
-    await db.update(stats).set({ data: { ...data, xp: currentXp + amount }, updatedAt: /* @__PURE__ */ new Date() }).where(eq8(stats.userId, userId));
+    await db.update(stats).set({ data: { ...data, xp: currentXp + amount }, updatedAt: /* @__PURE__ */ new Date() }).where(eq8(stats.userId, userId2));
   } catch (err) {
     console.error("[Momentum] Failed to award XP:", err);
   }
 }
-async function hasMomentumSessionToday(userId, dateKey) {
-  const rows = await db.select({ sessionDate: momentumSessions.sessionDate }).from(momentumSessions).where(eq8(momentumSessions.userId, userId)).limit(1);
+async function hasMomentumSessionToday(userId2, dateKey) {
+  const rows = await db.select({ sessionDate: momentumSessions.sessionDate }).from(momentumSessions).where(eq8(momentumSessions.userId, userId2)).limit(1);
   return rows.length > 0 && rows[0].sessionDate === dateKey;
 }
 async function expireStaleMomentumSessions() {
@@ -4012,11 +4012,11 @@ async function saveUserToken(token) {
       updated_at = NOW()
   `);
 }
-async function getUserToken(userId, provider) {
+async function getUserToken(userId2, provider) {
   const rows = await db.execute(sql5`
     SELECT user_id, provider, access_token, refresh_token, expires_at, scopes, account_email
     FROM user_oauth_tokens
-    WHERE user_id = ${userId} AND provider = ${provider}
+    WHERE user_id = ${userId2} AND provider = ${provider}
     LIMIT 1
   `);
   const row = rows.rows?.[0] ?? (Array.isArray(rows) ? rows[0] : null);
@@ -4031,11 +4031,11 @@ async function getUserToken(userId, provider) {
     accountEmail: row.account_email ?? ""
   };
 }
-async function getUserTokens(userId, provider) {
+async function getUserTokens(userId2, provider) {
   const rows = await db.execute(sql5`
     SELECT user_id, provider, access_token, refresh_token, expires_at, scopes, account_email
     FROM user_oauth_tokens
-    WHERE user_id = ${userId} AND provider = ${provider}
+    WHERE user_id = ${userId2} AND provider = ${provider}
   `);
   const items = rows.rows ?? (Array.isArray(rows) ? rows : []);
   return items.map((row) => ({
@@ -4048,20 +4048,20 @@ async function getUserTokens(userId, provider) {
     accountEmail: row.account_email ?? ""
   }));
 }
-async function deleteUserToken(userId, provider, accountEmail) {
+async function deleteUserToken(userId2, provider, accountEmail) {
   if (accountEmail) {
     await db.execute(sql5`
-      DELETE FROM user_oauth_tokens WHERE user_id = ${userId} AND provider = ${provider} AND account_email = ${accountEmail}
+      DELETE FROM user_oauth_tokens WHERE user_id = ${userId2} AND provider = ${provider} AND account_email = ${accountEmail}
     `);
   } else {
     await db.execute(sql5`
-      DELETE FROM user_oauth_tokens WHERE user_id = ${userId} AND provider = ${provider}
+      DELETE FROM user_oauth_tokens WHERE user_id = ${userId2} AND provider = ${provider}
     `);
   }
 }
-async function getUserOAuthStatus(userId) {
+async function getUserOAuthStatus(userId2) {
   const rows = await db.execute(sql5`
-    SELECT provider, account_email, expires_at, scopes FROM user_oauth_tokens WHERE user_id = ${userId}
+    SELECT provider, account_email, expires_at, scopes FROM user_oauth_tokens WHERE user_id = ${userId2}
   `);
   const result = {
     google: { connected: false, accounts: [] },
@@ -4109,8 +4109,8 @@ async function refreshGoogleToken(token) {
     return null;
   }
 }
-async function getValidGoogleToken(userId) {
-  const token = await getUserToken(userId, "google");
+async function getValidGoogleToken(userId2) {
+  const token = await getUserToken(userId2, "google");
   if (!token) return null;
   if (token.expiresAt && token.expiresAt.getTime() < Date.now() + 6e4) {
     const refreshed = await refreshGoogleToken(token);
@@ -4118,8 +4118,8 @@ async function getValidGoogleToken(userId) {
   }
   return token.accessToken;
 }
-async function getValidGoogleTokens(userId) {
-  const tokens = await getUserTokens(userId, "google");
+async function getValidGoogleTokens(userId2) {
+  const tokens = await getUserTokens(userId2, "google");
   const accessTokens = [];
   for (const token of tokens) {
     if (token.expiresAt && token.expiresAt.getTime() < Date.now() + 6e4) {
@@ -4163,8 +4163,8 @@ async function refreshMicrosoftToken(token) {
     return null;
   }
 }
-async function getValidMicrosoftToken(userId) {
-  const token = await getUserToken(userId, "microsoft");
+async function getValidMicrosoftToken(userId2) {
+  const token = await getUserToken(userId2, "microsoft");
   if (!token) return null;
   if (token.expiresAt && token.expiresAt.getTime() < Date.now() + 6e4) {
     const refreshed = await refreshMicrosoftToken(token);
@@ -4208,11 +4208,11 @@ function parseExtraction(raw) {
   return [];
 }
 async function extractAndStore(input) {
-  const { userId, source, sourceType, sourceRef, contextHint, maxNew = 3 } = input;
+  const { userId: userId2, source, sourceType, sourceRef, contextHint, maxNew = 3 } = input;
   if (!source.trim()) return [];
   let stored = [];
   try {
-    const existingRows = await db.select({ content: userMemories.content }).from(userMemories).where(eq9(userMemories.userId, userId)).orderBy(desc4(userMemories.extractedAt)).limit(150);
+    const existingRows = await db.select({ content: userMemories.content }).from(userMemories).where(eq9(userMemories.userId, userId2)).orderBy(desc4(userMemories.extractedAt)).limit(150);
     const existingMemories = existingRows.map((r) => r.content);
     const seen = new Set(existingMemories.map(normalizeForDedup));
     const existingList = existingMemories.length > 0 ? `
@@ -4272,7 +4272,7 @@ Return { "memories": [] } if nothing new and high-confidence was learned.`;
         console.error("[Memory] embed on insert failed:", embedErr);
       }
       await db.insert(userMemories).values({
-        userId,
+        userId: userId2,
         content: text2,
         category,
         confidence,
@@ -4289,7 +4289,7 @@ Return { "memories": [] } if nothing new and high-confidence was learned.`;
     console.error("[Memory] extract failed:", err);
   }
   if (stored.length > 0) {
-    markSoulStale(userId).catch((err) => console.error("[Memory] markSoulStale:", err));
+    markSoulStale(userId2).catch((err) => console.error("[Memory] markSoulStale:", err));
   }
   return stored;
 }
@@ -4335,30 +4335,30 @@ __export(bridge_exports, {
 import { WebSocketServer, WebSocket } from "ws";
 import { eq as eq10, and as and6, sql as sql6 } from "drizzle-orm";
 import { randomBytes, createHash } from "crypto";
-function getRecentPhoneNotifications(userId, limit = 20) {
-  const arr = userNotifications.get(userId) || [];
+function getRecentPhoneNotifications(userId2, limit = 20) {
+  const arr = userNotifications.get(userId2) || [];
   return arr.slice(0, limit);
 }
 function nextOpId() {
   opCounter += 1;
   return `op_${Date.now().toString(36)}_${opCounter}`;
 }
-function isUserPaired(userId) {
-  const sock = userSockets.get(userId);
+function isUserPaired(userId2) {
+  const sock = userSockets.get(userId2);
   return !!(sock && sock.readyState === WebSocket.OPEN);
 }
 function listPairedUsers() {
   return [...userSockets.keys()];
 }
-function closeUserDaemon(userId) {
-  const sock = userSockets.get(userId);
+function closeUserDaemon(userId2) {
+  const sock = userSockets.get(userId2);
   if (!sock) return false;
   try {
     sock.close(4004, "unlinked by user");
   } catch {
   }
-  userSockets.delete(userId);
-  const pending = pendingByUser.get(userId);
+  userSockets.delete(userId2);
+  const pending = pendingByUser.get(userId2);
   if (pending) {
     for (const [id, p] of pending) {
       clearTimeout(p.timer);
@@ -4368,15 +4368,15 @@ function closeUserDaemon(userId) {
   }
   return true;
 }
-async function findUserDaemonRow(userId) {
-  const rows = await db.select().from(channelLinks).where(and6(eq10(channelLinks.userId, userId), eq10(channelLinks.channel, "daemon")));
+async function findUserDaemonRow(userId2) {
+  const rows = await db.select().from(channelLinks).where(and6(eq10(channelLinks.userId, userId2), eq10(channelLinks.channel, "daemon")));
   if (rows.length === 0) return null;
   const real = rows.find((r) => !r.address.startsWith("pending_"));
   return real || rows[0];
 }
-async function getDaemonDeviceMeta(userId) {
+async function getDaemonDeviceMeta(userId2) {
   try {
-    const row = await findUserDaemonRow(userId);
+    const row = await findUserDaemonRow(userId2);
     const meta = row?.metadata || null;
     return {
       hostname: meta?.hostname || null,
@@ -4386,9 +4386,9 @@ async function getDaemonDeviceMeta(userId) {
     return { hostname: null, platform: null };
   }
 }
-async function getDaemonPermissions(userId) {
+async function getDaemonPermissions(userId2) {
   try {
-    const row = await findUserDaemonRow(userId);
+    const row = await findUserDaemonRow(userId2);
     const meta = row?.metadata || null;
     const stored = meta?.permissions;
     if (stored && typeof stored === "object") {
@@ -4399,19 +4399,19 @@ async function getDaemonPermissions(userId) {
   }
   return { ...DEFAULT_DAEMON_PERMISSIONS };
 }
-async function setDaemonPermissions(userId, perms) {
+async function setDaemonPermissions(userId2, perms) {
   const merged = { ...DEFAULT_DAEMON_PERMISSIONS, ...perms };
   try {
-    const row = await findUserDaemonRow(userId);
+    const row = await findUserDaemonRow(userId2);
     const meta = row?.metadata || {};
     meta.permissions = merged;
     if (row) {
       await db.update(channelLinks).set({ metadata: meta }).where(eq10(channelLinks.id, row.id));
     } else {
       await db.insert(channelLinks).values({
-        userId,
+        userId: userId2,
         channel: "daemon",
-        address: `pending_${userId}`,
+        address: `pending_${userId2}`,
         metadata: meta,
         lastSeenAt: /* @__PURE__ */ new Date()
       }).onConflictDoNothing();
@@ -4421,13 +4421,13 @@ async function setDaemonPermissions(userId, perms) {
   }
   return merged;
 }
-async function isDaemonActionAllowed(userId, action) {
-  const perms = await getDaemonPermissions(userId);
+async function isDaemonActionAllowed(userId2, action) {
+  const perms = await getDaemonPermissions(userId2);
   return !!perms[action];
 }
-async function getAndroidDaemonPermissions(userId) {
+async function getAndroidDaemonPermissions(userId2) {
   try {
-    const row = await findUserDaemonRow(userId);
+    const row = await findUserDaemonRow(userId2);
     const meta = row?.metadata || null;
     const stored = meta?.android_permissions;
     if (stored && typeof stored === "object") {
@@ -4438,19 +4438,19 @@ async function getAndroidDaemonPermissions(userId) {
   }
   return { ...DEFAULT_ANDROID_DAEMON_PERMISSIONS };
 }
-async function setAndroidDaemonPermissions(userId, perms) {
+async function setAndroidDaemonPermissions(userId2, perms) {
   const merged = { ...DEFAULT_ANDROID_DAEMON_PERMISSIONS, ...perms };
   try {
-    const row = await findUserDaemonRow(userId);
+    const row = await findUserDaemonRow(userId2);
     const meta = row?.metadata || {};
     meta.android_permissions = merged;
     if (row) {
       await db.update(channelLinks).set({ metadata: meta }).where(eq10(channelLinks.id, row.id));
     } else {
       await db.insert(channelLinks).values({
-        userId,
+        userId: userId2,
         channel: "daemon",
-        address: `pending_android_${userId}`,
+        address: `pending_android_${userId2}`,
         metadata: meta,
         lastSeenAt: /* @__PURE__ */ new Date()
       }).onConflictDoNothing();
@@ -4460,38 +4460,38 @@ async function setAndroidDaemonPermissions(userId, perms) {
   }
   return merged;
 }
-async function isAndroidDaemonActionAllowed(userId, action) {
-  const perms = await getAndroidDaemonPermissions(userId);
+async function isAndroidDaemonActionAllowed(userId2, action) {
+  const perms = await getAndroidDaemonPermissions(userId2);
   return !!perms[action];
 }
-async function isAndroidDaemonActive(userId) {
-  if (!isUserPaired(userId)) return false;
+async function isAndroidDaemonActive(userId2) {
+  if (!isUserPaired(userId2)) return false;
   try {
-    const row = await findUserDaemonRow(userId);
+    const row = await findUserDaemonRow(userId2);
     const meta = row?.metadata || null;
     return meta?.platform === "android";
   } catch {
     return false;
   }
 }
-function recordAuditEntry(userId, entry) {
-  let arr = opAuditLog.get(userId);
+function recordAuditEntry(userId2, entry) {
+  let arr = opAuditLog.get(userId2);
   if (!arr) {
     arr = [];
-    opAuditLog.set(userId, arr);
+    opAuditLog.set(userId2, arr);
   }
   arr.push(entry);
   if (arr.length > MAX_AUDIT_ENTRIES) arr.splice(0, arr.length - MAX_AUDIT_ENTRIES);
 }
-function getOpAuditLog(userId) {
-  return opAuditLog.get(userId) || [];
+function getOpAuditLog(userId2) {
+  return opAuditLog.get(userId2) || [];
 }
-async function pingDaemon(userId, timeoutMs = 5e3) {
-  return sendDaemonOp(userId, { type: "ping" }, timeoutMs);
+async function pingDaemon(userId2, timeoutMs = 5e3) {
+  return sendDaemonOp(userId2, { type: "ping" }, timeoutMs);
 }
-async function validateOpForPlatform(userId, op) {
+async function validateOpForPlatform(userId2, op) {
   if (op.type === "ping") return null;
-  const isAndroid = await isAndroidDaemonActive(userId);
+  const isAndroid = await isAndroidDaemonActive(userId2);
   const isAndroidOp = op.type.startsWith("android_");
   if (isAndroidOp && !isAndroid) {
     return { ok: false, error: `Op '${op.type}' requires an Android daemon, but the connected daemon is a desktop daemon.` };
@@ -4501,40 +4501,40 @@ async function validateOpForPlatform(userId, op) {
   }
   return null;
 }
-async function sendDaemonOp(userId, op, timeoutMs = 15e3) {
-  const sock = userSockets.get(userId);
+async function sendDaemonOp(userId2, op, timeoutMs = 15e3) {
+  const sock = userSockets.get(userId2);
   if (!sock || sock.readyState !== WebSocket.OPEN) {
-    console.log(`[daemon] op SKIPPED \u2014 daemon not connected userId=${userId} op=${op.type}`);
+    console.log(`[daemon] op SKIPPED \u2014 daemon not connected userId=${userId2} op=${op.type}`);
     return { ok: false, error: "daemon not connected" };
   }
-  const platformErr = await validateOpForPlatform(userId, op);
+  const platformErr = await validateOpForPlatform(userId2, op);
   if (platformErr) return platformErr;
-  console.log(`[daemon] op SENT userId=${userId} op=${op.type}`, "packageName" in op ? `pkg=${op.packageName}` : "");
+  console.log(`[daemon] op SENT userId=${userId2} op=${op.type}`, "packageName" in op ? `pkg=${op.packageName}` : "");
   const sentAt = Date.now();
   return new Promise((resolve4) => {
     const id = nextOpId();
     const timer = setTimeout(() => {
-      const map = pendingByUser.get(userId);
+      const map = pendingByUser.get(userId2);
       map?.delete(id);
-      console.log(`[daemon] op TIMEOUT userId=${userId} op=${op.type}`);
+      console.log(`[daemon] op TIMEOUT userId=${userId2} op=${op.type}`);
       const durationMs = Date.now() - sentAt;
-      recordAuditEntry(userId, { ts: sentAt, type: op.type, ok: false, error: "timeout", durationMs });
+      recordAuditEntry(userId2, { ts: sentAt, type: op.type, ok: false, error: "timeout", durationMs });
       resolve4({ ok: false, error: "daemon timeout" });
     }, timeoutMs);
-    let userMap = pendingByUser.get(userId);
+    let userMap = pendingByUser.get(userId2);
     if (!userMap) {
       userMap = /* @__PURE__ */ new Map();
-      pendingByUser.set(userId, userMap);
+      pendingByUser.set(userId2, userMap);
     }
     userMap.set(id, {
       resolve: (result) => {
         const durationMs = Date.now() - sentAt;
         if (op.type === "ping") {
-          console.log(`[daemon] ping RTT ${durationMs}ms userId=${userId} ok=${result.ok}`, result.ok ? "" : `err=${result.error}`);
+          console.log(`[daemon] ping RTT ${durationMs}ms userId=${userId2} ok=${result.ok}`, result.ok ? "" : `err=${result.error}`);
         } else {
-          console.log(`[daemon] op RESULT userId=${userId} op=${op.type} ok=${result.ok}`, result.ok ? "" : `err=${result.error}`);
+          console.log(`[daemon] op RESULT userId=${userId2} op=${op.type} ok=${result.ok}`, result.ok ? "" : `err=${result.error}`);
         }
-        recordAuditEntry(userId, { ts: sentAt, type: op.type, ok: result.ok, error: result.error, durationMs });
+        recordAuditEntry(userId2, { ts: sentAt, type: op.type, ok: result.ok, error: result.error, durationMs });
         resolve4(result);
       },
       timer
@@ -4545,7 +4545,7 @@ async function sendDaemonOp(userId, op, timeoutMs = 15e3) {
       clearTimeout(timer);
       userMap.delete(id);
       const durationMs = Date.now() - sentAt;
-      recordAuditEntry(userId, { ts: sentAt, type: op.type, ok: false, error: String(err), durationMs });
+      recordAuditEntry(userId2, { ts: sentAt, type: op.type, ok: false, error: String(err), durationMs });
       resolve4({ ok: false, error: String(err) });
     }
   });
@@ -4556,12 +4556,12 @@ function generatePairingCode() {
   for (let i = 0; i < 8; i++) code += chars[Math.floor(Math.random() * chars.length)];
   return code;
 }
-async function createDaemonPairingCode(userId) {
+async function createDaemonPairingCode(userId2) {
   const code = generatePairingCode();
   const expiresAt = new Date(Date.now() + 15 * 60 * 1e3);
   await db.insert(channelLinkCodes).values({
     code,
-    userId,
+    userId: userId2,
     channel: "daemon",
     expiresAt
   });
@@ -4583,9 +4583,9 @@ async function consumePairingCode(code) {
     return null;
   }
 }
-async function recordDaemonLink(userId, daemonId, meta) {
+async function recordDaemonLink(userId2, daemonId, meta) {
   try {
-    const existing = await db.select().from(channelLinks).where(and6(eq10(channelLinks.userId, userId), eq10(channelLinks.channel, "daemon")));
+    const existing = await db.select().from(channelLinks).where(and6(eq10(channelLinks.userId, userId2), eq10(channelLinks.channel, "daemon")));
     const mergedMeta = { ...meta };
     for (const row of existing) {
       const prior = row.metadata || {};
@@ -4597,17 +4597,17 @@ async function recordDaemonLink(userId, daemonId, meta) {
       }
     }
     if (existing.length > 0) {
-      await db.delete(channelLinks).where(and6(eq10(channelLinks.userId, userId), eq10(channelLinks.channel, "daemon")));
+      await db.delete(channelLinks).where(and6(eq10(channelLinks.userId, userId2), eq10(channelLinks.channel, "daemon")));
     }
     await db.insert(channelLinks).values({
-      userId,
+      userId: userId2,
       channel: "daemon",
       address: daemonId,
       metadata: mergedMeta,
       lastSeenAt: /* @__PURE__ */ new Date()
     }).onConflictDoUpdate({
       target: [channelLinks.channel, channelLinks.address],
-      set: { userId, metadata: mergedMeta, lastSeenAt: /* @__PURE__ */ new Date() }
+      set: { userId: userId2, metadata: mergedMeta, lastSeenAt: /* @__PURE__ */ new Date() }
     });
   } catch (err) {
     console.error("[daemon] recordDaemonLink failed:", err);
@@ -4715,8 +4715,8 @@ function startDaemonBridge(server) {
         return;
       }
       if (m.type === "pair") {
-        const userId = await consumePairingCode(m.code);
-        if (!userId) {
+        const userId2 = await consumePairingCode(m.code);
+        if (!userId2) {
           const reply = { type: "hello", ok: false, error: "invalid or expired code" };
           try {
             ws.send(JSON.stringify(reply));
@@ -4725,7 +4725,7 @@ function startDaemonBridge(server) {
           ws.close(4002, "invalid code");
           return;
         }
-        pairedUserId = userId;
+        pairedUserId = userId2;
         if (pairTimeout) {
           clearTimeout(pairTimeout);
           pairTimeout = null;
@@ -4733,25 +4733,25 @@ function startDaemonBridge(server) {
         const daemonId = randomBytes(16).toString("hex");
         const reconnectSecret = randomBytes(32).toString("hex");
         const reconnectSecretHash = createHash("sha256").update(reconnectSecret).digest("hex");
-        await recordDaemonLink(userId, daemonId, {
+        await recordDaemonLink(userId2, daemonId, {
           hostname: m.hostname || "unknown",
           platform: m.platform || "desktop",
           reconnectSecretHash
         });
-        const prior = userSockets.get(userId);
+        const prior = userSockets.get(userId2);
         if (prior && prior !== ws) {
           try {
             prior.close(4003, "replaced by new daemon");
           } catch {
           }
         }
-        userSockets.set(userId, ws);
-        const hello = { type: "hello", ok: true, userId, daemonId, reconnectSecret };
+        userSockets.set(userId2, ws);
+        const hello = { type: "hello", ok: true, userId: userId2, daemonId, reconnectSecret };
         try {
           ws.send(JSON.stringify(hello));
         } catch {
         }
-        console.log(`[daemon] paired userId=${userId} hostname=${m.hostname || "unknown"} platform=${m.platform || "desktop"}`);
+        console.log(`[daemon] paired userId=${userId2} hostname=${m.hostname || "unknown"} platform=${m.platform || "desktop"}`);
         return;
       }
       if (m.type === "ping") {
@@ -4856,7 +4856,7 @@ var init_bridge = __esm({
 // server/channels/coachAgent.ts
 import { eq as eq11, and as and7, desc as desc5 } from "drizzle-orm";
 async function runCoachAgent(input) {
-  const { userId, userText, channelName, imageUrl, onToken } = input;
+  const { userId: userId2, userText, channelName, imageUrl, onToken } = input;
   const channelLower = channelName.toLowerCase();
   let userGoals = [];
   let userStats = {};
@@ -4868,16 +4868,16 @@ async function runCoachAgent(input) {
   let gmailConnected = false;
   let googleAccessToken = null;
   const [goalsRow, statsRow, lcRow, chatRow, commitmentsRows, googleTokens, prefsRow, recentInteractionsResult] = await Promise.allSettled([
-    db.select().from(goals).where(eq11(goals.userId, userId)).limit(1),
-    db.select().from(stats).where(eq11(stats.userId, userId)).limit(1),
-    db.select().from(lifeContext).where(eq11(lifeContext.userId, userId)).limit(1),
-    db.select().from(chatHistory).where(eq11(chatHistory.userId, userId)).limit(1),
-    db.select().from(commitments).where(and7(eq11(commitments.userId, userId), eq11(commitments.status, "pending"))).orderBy(desc5(commitments.extractedAt)).limit(10),
-    getValidGoogleTokens(userId),
-    db.select().from(userPreferences).where(eq11(userPreferences.userId, userId)).limit(1),
-    getRecentInteractions(userId, 20)
+    db.select().from(goals).where(eq11(goals.userId, userId2)).limit(1),
+    db.select().from(stats).where(eq11(stats.userId, userId2)).limit(1),
+    db.select().from(lifeContext).where(eq11(lifeContext.userId, userId2)).limit(1),
+    db.select().from(chatHistory).where(eq11(chatHistory.userId, userId2)).limit(1),
+    db.select().from(commitments).where(and7(eq11(commitments.userId, userId2), eq11(commitments.status, "pending"))).orderBy(desc5(commitments.extractedAt)).limit(10),
+    getValidGoogleTokens(userId2),
+    db.select().from(userPreferences).where(eq11(userPreferences.userId, userId2)).limit(1),
+    getRecentInteractions(userId2, 20)
   ]);
-  logInteraction(userId, channelLower, "inbound", userText || "[image]").catch(() => {
+  logInteraction(userId2, channelLower, "inbound", userText || "[image]").catch(() => {
   });
   let userTimezone = "America/New_York";
   if (goalsRow.status === "fulfilled") userGoals = goalsRow.value[0]?.data || [];
@@ -4893,7 +4893,7 @@ async function runCoachAgent(input) {
   const dateKey = `${localForDateKey.getFullYear()}-${String(localForDateKey.getMonth() + 1).padStart(2, "0")}-${String(localForDateKey.getDate()).padStart(2, "0")}`;
   let todayPlan = null;
   try {
-    const planRows = await db.select().from(plans).where(and7(eq11(plans.userId, userId), eq11(plans.date, dateKey))).limit(1);
+    const planRows = await db.select().from(plans).where(and7(eq11(plans.userId, userId2), eq11(plans.date, dateKey))).limit(1);
     todayPlan = planRows[0]?.data || null;
   } catch (err) {
     console.error("[coach] plan fetch failed:", err);
@@ -4932,10 +4932,10 @@ Gmail is connected but no emails found.` : `## Recent Emails
 Gmail not connected.`;
   const recentInteractions = recentInteractionsResult.status === "fulfilled" ? recentInteractionsResult.value : [];
   const crossChannelSection = formatInteractionTimeline(recentInteractions);
-  const soulBlock = await getSoulPromptBlock(userId);
+  const soulBlock = await getSoulPromptBlock(userId2);
   const formatHint = FORMAT_HINTS[channelName] || FORMAT_HINTS.Telegram;
-  const daemonPaired = isUserPaired(userId);
-  const androidActive = daemonPaired ? await isAndroidDaemonActive(userId) : false;
+  const daemonPaired = isUserPaired(userId2);
+  const androidActive = daemonPaired ? await isAndroidDaemonActive(userId2) : false;
   const daemonSection = daemonPaired ? androidActive ? "## Connected Devices\n- Android device daemon is ACTIVE. You can open apps (android_open_app), take screenshots (android_screenshot), read the screen (android_read_screen), browse URLs (android_browse), list/read files on the device (android_file_list/android_file_read). Tap/type/swipe actions are available when user enables them. Proactively mention Android capabilities when relevant." : "## Connected Devices\n- Desktop daemon is ACTIVE. You can run shell commands, send desktop notifications, and read/write files in the user's workspace." : "## Android Daemon Setup Guidance (no daemon paired)\nIf the user asks how to install or set up the Android daemon, give them these steps:\n1. In the Jarvis app \u2192 Profile \u2192 Connected Channels \u2192 Android Device \u2192 tap Pair to get an 8-character code.\n2. Build the APK: open android-daemon/ in Android Studio \u2192 Build \u2192 Generate Signed Bundle/APK \u2192 APK \u2192 debug. Or run `gradle wrapper --gradle-version 8.4` then `./gradlew assembleDebug` from the android-daemon/ directory.\n3. Transfer the APK to the Android phone and install it (Settings \u2192 Apps \u2192 Special app access \u2192 Install unknown apps \u2192 allow your file manager).\n4. Open the app \u2192 enter the server URL + the 8-character code \u2192 tap Connect.\n5. Grant the two permissions the app requests: Accessibility Service (Settings \u2192 Accessibility \u2192 Jarvis Daemon \u2192 enable) and All Files Access.\n6. The app stays connected in the background and reconnects automatically after reboots or Wi-Fi drops.";
   const systemPrompt = `You are GamePlan Coach Jarvis \u2014 a sharp, supportive personal productivity coach. ${formatHint}
 
@@ -4979,7 +4979,7 @@ You can manage tasks, commitments, and analyze patterns via the manage_tasks too
     { role: "user", content: userMessageContent }
   ];
   const agentCtx = {
-    userId,
+    userId: userId2,
     channel: channelName,
     googleAccessToken: googleAccessToken || void 0,
     state: {
@@ -5005,7 +5005,7 @@ You can manage tasks, commitments, and analyze patterns via the manage_tasks too
   const assistantMsg = { id: (Date.now() + 1).toString(), role: "assistant", content: reply };
   const updatedChat = [assistantMsg, userMsg, ...chatMessages].slice(0, 100);
   try {
-    await db.insert(chatHistory).values({ userId, data: updatedChat }).onConflictDoUpdate({
+    await db.insert(chatHistory).values({ userId: userId2, data: updatedChat }).onConflictDoUpdate({
       target: chatHistory.userId,
       set: { data: updatedChat, updatedAt: /* @__PURE__ */ new Date() }
     });
@@ -5057,7 +5057,7 @@ function classifyTopic(text2) {
   }
   return best.key;
 }
-async function setupWorkspace(client, userId, guildId) {
+async function setupWorkspace(client, userId2, guildId) {
   try {
     const guild = await client.guilds.fetch(guildId);
     const existingCat = guild.channels.cache.find(
@@ -5103,10 +5103,10 @@ _Jarvis will post relevant updates here and you can ask me anything in this topi
       categoryId: category.id,
       channels: channelIds
     };
-    const rows = await db.select().from(channelLinks).where(and8(eq12(channelLinks.userId, userId), eq12(channelLinks.channel, "discord"))).limit(1);
+    const rows = await db.select().from(channelLinks).where(and8(eq12(channelLinks.userId, userId2), eq12(channelLinks.channel, "discord"))).limit(1);
     if (rows.length > 0) {
       const existing = rows[0].metadata || {};
-      await db.update(channelLinks).set({ metadata: { ...existing, workspace } }).where(and8(eq12(channelLinks.userId, userId), eq12(channelLinks.channel, "discord")));
+      await db.update(channelLinks).set({ metadata: { ...existing, workspace } }).where(and8(eq12(channelLinks.userId, userId2), eq12(channelLinks.channel, "discord")));
     }
     return { ok: true, workspace };
   } catch (err) {
@@ -5421,9 +5421,9 @@ function generateCode(len = 6) {
   for (let i = 0; i < len; i++) code += chars[Math.floor(Math.random() * chars.length)];
   return code;
 }
-async function lookupLink(userId) {
+async function lookupLink(userId2) {
   try {
-    const rows = await db.select().from(channelLinks).where(and9(eq13(channelLinks.userId, userId), eq13(channelLinks.channel, "discord"))).limit(1);
+    const rows = await db.select().from(channelLinks).where(and9(eq13(channelLinks.userId, userId2), eq13(channelLinks.channel, "discord"))).limit(1);
     const row = rows[0];
     if (!row) return null;
     return { address: row.address, meta: row.metadata || {} };
@@ -5496,8 +5496,8 @@ Valid for 1 hour. Message me again once linked!`
       ).catch((err) => console.error("[DiscordManager] reply failed:", err));
       return;
     }
-    const userId = pairedUser.userId;
-    db.update(channelLinks).set({ lastSeenAt: /* @__PURE__ */ new Date() }).where(and9(eq13(channelLinks.userId, userId), eq13(channelLinks.channel, "discord"))).catch(() => {
+    const userId2 = pairedUser.userId;
+    db.update(channelLinks).set({ lastSeenAt: /* @__PURE__ */ new Date() }).where(and9(eq13(channelLinks.userId, userId2), eq13(channelLinks.channel, "discord"))).catch(() => {
     });
     let userText = message.content?.trim() || "";
     const audioAtt = [...message.attachments.values()].find(
@@ -5554,7 +5554,7 @@ Valid for 1 hour. Message me again once linked!`
     };
     try {
       const result = await runCoachAgent({
-        userId,
+        userId: userId2,
         userText: topicContext ? userText + topicContext : userText,
         channelName: channelLabel,
         onToken
@@ -5604,8 +5604,8 @@ function splitIntoChunks2(text2, maxLen) {
   }
   return chunks;
 }
-async function startUserBot(userId, botToken) {
-  stopUserBot(userId);
+async function startUserBot(userId2, botToken) {
+  stopUserBot(userId2);
   const client = new Client3({
     intents: [
       GatewayIntentBits.Guilds,
@@ -5617,31 +5617,31 @@ async function startUserBot(userId, botToken) {
     partials: [Partials.Channel, Partials.Message]
   });
   client.once(Events.ClientReady, (c) => {
-    console.log(`[DiscordManager] Bot ready for user ${userId}: ${c.user.tag}`);
+    console.log(`[DiscordManager] Bot ready for user ${userId2}: ${c.user.tag}`);
   });
-  client.on(Events.MessageCreate, buildMessageHandler(userId, client));
+  client.on(Events.MessageCreate, buildMessageHandler(userId2, client));
   client.on(Events.Error, (err) => {
-    console.error(`[DiscordManager] Client error for user ${userId}:`, err.message);
+    console.error(`[DiscordManager] Client error for user ${userId2}:`, err.message);
   });
-  botClients.set(userId, client);
+  botClients.set(userId2, client);
   try {
     await client.login(botToken);
   } catch (err) {
-    console.error(`[DiscordManager] Login failed for user ${userId}:`, err);
-    botClients.delete(userId);
+    console.error(`[DiscordManager] Login failed for user ${userId2}:`, err);
+    botClients.delete(userId2);
     throw err;
   }
 }
-function stopUserBot(userId) {
-  const client = botClients.get(userId);
+function stopUserBot(userId2) {
+  const client = botClients.get(userId2);
   if (client) {
     client.destroy();
-    botClients.delete(userId);
-    console.log(`[DiscordManager] Bot stopped for user ${userId}`);
+    botClients.delete(userId2);
+    console.log(`[DiscordManager] Bot stopped for user ${userId2}`);
   }
 }
-function getBotStatus(userId) {
-  const client = botClients.get(userId);
+function getBotStatus(userId2) {
+  const client = botClients.get(userId2);
   if (!client) return "stopped";
   return client.isReady() ? "running" : "stopped";
 }
@@ -5666,14 +5666,14 @@ async function bootAllBots() {
     console.error("[DiscordManager] bootAllBots failed:", err);
   }
 }
-async function completePairing(userId, code) {
+async function completePairing(userId2, code) {
   const rec = pairingCodes.get(code.toUpperCase());
   if (!rec) return { ok: false, error: "Invalid or expired pairing code." };
   if (rec.expiresAt < Date.now()) {
     pairingCodes.delete(code.toUpperCase());
     return { ok: false, error: "Pairing code has expired." };
   }
-  if (rec.botOwnerId !== userId) {
+  if (rec.botOwnerId !== userId2) {
     return { ok: false, error: "This pairing code belongs to a different account." };
   }
   try {
@@ -5683,13 +5683,13 @@ async function completePairing(userId, code) {
       allowlistedGuilds: []
     };
     await db.delete(channelLinks).where(
-      and9(eq13(channelLinks.userId, userId), eq13(channelLinks.channel, "discord"))
+      and9(eq13(channelLinks.userId, userId2), eq13(channelLinks.channel, "discord"))
     );
     await db.delete(channelLinks).where(
       and9(eq13(channelLinks.channel, "discord"), eq13(channelLinks.address, rec.discordUserId))
     );
     await db.insert(channelLinks).values({
-      userId,
+      userId: userId2,
       channel: "discord",
       address: rec.discordUserId,
       metadata: meta,
@@ -5700,7 +5700,7 @@ async function completePairing(userId, code) {
     return { ok: false, error: "Database error \u2014 please try again." };
   }
   pairingCodes.delete(code.toUpperCase());
-  const client = botClients.get(userId);
+  const client = botClients.get(userId2);
   if (client) {
     try {
       const dmChannel = await client.channels.fetch(rec.discordDmChannelId);
@@ -5714,10 +5714,10 @@ async function completePairing(userId, code) {
   }
   return { ok: true, discordUsername: rec.discordUsername };
 }
-async function sendToDiscordUser(userId, text2) {
-  const client = botClients.get(userId);
+async function sendToDiscordUser(userId2, text2) {
+  const client = botClients.get(userId2);
   if (!client || !client.isReady()) return false;
-  const link = await lookupLink(userId);
+  const link = await lookupLink(userId2);
   if (!link) return false;
   let dmChannelId = link.meta.dmChannelId;
   const discordUserId = link.address;
@@ -5726,7 +5726,7 @@ async function sendToDiscordUser(userId, text2) {
       const discordUser = await client.users.fetch(discordUserId);
       const dm = await discordUser.createDM();
       dmChannelId = dm.id;
-      await db.update(channelLinks).set({ metadata: { ...link.meta, dmChannelId } }).where(and9(eq13(channelLinks.userId, userId), eq13(channelLinks.channel, "discord")));
+      await db.update(channelLinks).set({ metadata: { ...link.meta, dmChannelId } }).where(and9(eq13(channelLinks.userId, userId2), eq13(channelLinks.channel, "discord")));
     }
     const channel = await client.channels.fetch(dmChannelId);
     if (!channel) return false;
@@ -5736,17 +5736,17 @@ async function sendToDiscordUser(userId, text2) {
     }
     return true;
   } catch (err) {
-    console.error(`[DiscordManager] sendToDiscordUser failed for ${userId}:`, err);
+    console.error(`[DiscordManager] sendToDiscordUser failed for ${userId2}:`, err);
     return false;
   }
 }
-function getGuildsForUser(userId) {
-  const client = botClients.get(userId);
+function getGuildsForUser(userId2) {
+  const client = botClients.get(userId2);
   if (!client || !client.isReady()) return [];
   return client.guilds.cache.map((g) => ({ id: g.id, name: g.name, icon: g.iconURL() }));
 }
-async function getChannelsForGuild(userId, guildId) {
-  const client = botClients.get(userId);
+async function getChannelsForGuild(userId2, guildId) {
+  const client = botClients.get(userId2);
   if (!client || !client.isReady()) return [];
   try {
     const guild = await client.guilds.fetch(guildId);
@@ -5756,17 +5756,17 @@ async function getChannelsForGuild(userId, guildId) {
     return [];
   }
 }
-async function setupDiscordWorkspace(userId, guildId) {
-  const client = botClients.get(userId);
+async function setupDiscordWorkspace(userId2, guildId) {
+  const client = botClients.get(userId2);
   if (!client || !client.isReady()) {
     return { ok: false, error: "Discord bot is not running. Make sure your bot token is saved and the bot is in the server." };
   }
-  return setupWorkspace(client, userId, guildId);
+  return setupWorkspace(client, userId2, guildId);
 }
-async function postToDiscordWorkspace(userId, topicKey, text2) {
-  const client = botClients.get(userId);
+async function postToDiscordWorkspace(userId2, topicKey, text2) {
+  const client = botClients.get(userId2);
   if (!client || !client.isReady()) return false;
-  const link = await lookupLink(userId);
+  const link = await lookupLink(userId2);
   const workspace = link?.meta.workspace;
   if (!workspace) return false;
   return postToTopicChannel(client, workspace, topicKey, text2);
@@ -5870,11 +5870,11 @@ function matchItemAgainstRules(item, rules) {
   }
   return { verdict: "default" };
 }
-async function getUserInboxRules(userId) {
-  return db.select().from(inboxRules).where(eq14(inboxRules.userId, userId));
+async function getUserInboxRules(userId2) {
+  return db.select().from(inboxRules).where(eq14(inboxRules.userId, userId2));
 }
-async function learnFromDismissal(userId, itemId, telegramChatId) {
-  const [item] = await db.select().from(inboxItems).where(and10(eq14(inboxItems.id, itemId), eq14(inboxItems.userId, userId)));
+async function learnFromDismissal(userId2, itemId, telegramChatId) {
+  const [item] = await db.select().from(inboxItems).where(and10(eq14(inboxItems.id, itemId), eq14(inboxItems.userId, userId2)));
   if (!item) return { learned: false };
   if (item.sourceType !== "email") return { learned: false };
   const newCount = String(parseInt(item.dismissCount || "0") + 1);
@@ -5883,7 +5883,7 @@ async function learnFromDismissal(userId, itemId, telegramChatId) {
   if (!senderDomain) return { learned: false };
   const dismissed = await db.select().from(inboxItems).where(
     and10(
-      eq14(inboxItems.userId, userId),
+      eq14(inboxItems.userId, userId2),
       eq14(inboxItems.status, "dismissed")
     )
   );
@@ -5893,7 +5893,7 @@ async function learnFromDismissal(userId, itemId, telegramChatId) {
   if (domainDismissals >= 3) {
     const existing = await db.select().from(inboxRules).where(
       and10(
-        eq14(inboxRules.userId, userId),
+        eq14(inboxRules.userId, userId2),
         eq14(inboxRules.type, "suppress"),
         eq14(inboxRules.source, "learned")
       )
@@ -5905,14 +5905,14 @@ async function learnFromDismissal(userId, itemId, telegramChatId) {
     if (!alreadyHas) {
       const ruleName = `Auto: suppress ${senderDomain}`;
       await db.insert(inboxRules).values({
-        userId,
+        userId: userId2,
         type: "suppress",
         scope: "email",
         pattern: ruleName,
         matchHints: { domains: [senderDomain] },
         source: "learned"
       });
-      console.log(`[InboxRules] Learned suppress rule for ${senderDomain} (user ${userId})`);
+      console.log(`[InboxRules] Learned suppress rule for ${senderDomain} (user ${userId2})`);
       if (telegramChatId) {
         try {
           const { sendMessage: sendMessage2 } = await Promise.resolve().then(() => (init_telegram(), telegram_exports));
@@ -5928,7 +5928,7 @@ async function learnFromDismissal(userId, itemId, telegramChatId) {
   }
   return { learned: false };
 }
-async function createRuleFromText(userId, text2, type, scope) {
+async function createRuleFromText(userId2, text2, type, scope) {
   let matchHints = {};
   try {
     const response = await openai8.chat.completions.create({
@@ -5955,7 +5955,7 @@ Examples:
     console.error("[InboxRules] Failed to extract match hints:", err);
   }
   const [rule] = await db.insert(inboxRules).values({
-    userId,
+    userId: userId2,
     type,
     scope,
     pattern: text2,
@@ -6000,10 +6000,10 @@ function generateLinkCode() {
   }
   return code;
 }
-async function handleCoachReply(userId, chatId, userText, imageUrl) {
+async function handleCoachReply(userId2, chatId, userText, imageUrl) {
   try {
     const { reply, attachments } = await runCoachAgent({
-      userId,
+      userId: userId2,
       userText,
       channelName: "Telegram",
       imageUrl
@@ -6015,7 +6015,7 @@ async function handleCoachReply(userId, chatId, userText, imageUrl) {
       } catch (sendErr) {
         console.error("[Telegram] failed to send text before attachment:", sendErr);
       }
-      logInteraction(userId, "telegram", "outbound", textReply).catch(() => {
+      logInteraction(userId2, "telegram", "outbound", textReply).catch(() => {
       });
       textReply = "";
     }
@@ -6027,10 +6027,10 @@ async function handleCoachReply(userId, chatId, userText, imageUrl) {
     }
     if (textReply && textReply.trim()) {
       await sendMessage(chatId, textReply);
-      logInteraction(userId, "telegram", "outbound", textReply).catch(() => {
+      logInteraction(userId2, "telegram", "outbound", textReply).catch(() => {
       });
     }
-    extractProfileFromTelegram(userId, userText).catch((err) => {
+    extractProfileFromTelegram(userId2, userText).catch((err) => {
       console.error("[Profile] Telegram extraction error:", err);
     });
     return;
@@ -6061,12 +6061,12 @@ Answer (yes/no):`
     return false;
   }
 }
-async function extractProfileFromTelegram(userId, userText) {
+async function extractProfileFromTelegram(userId2, userText) {
   try {
     const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1e3);
     const unanswered = await db.select().from(proactiveQuestionsSent).where(
       and11(
-        eq15(proactiveQuestionsSent.userId, userId),
+        eq15(proactiveQuestionsSent.userId, userId2),
         sql9`${proactiveQuestionsSent.answeredAt} IS NULL`,
         sql9`${proactiveQuestionsSent.sentAt} > ${twentyFourHoursAgo}`
       )
@@ -6082,7 +6082,7 @@ async function extractProfileFromTelegram(userId, userText) {
       }
     }
     await extractAndStore({
-      userId,
+      userId: userId2,
       source: userText,
       sourceType: "telegram",
       contextHint
@@ -6221,7 +6221,7 @@ async function processUpdate(update) {
           await sendMessage(chatId, "Invalid or expired link code. Please generate a new one from the app.");
           return;
         }
-        const { userId } = codeRows[0];
+        const { userId: userId2 } = codeRows[0];
         const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1e3);
         if (codeRows[0].createdAt < thirtyMinAgo) {
           await db.delete(telegramLinkCodes).where(eq15(telegramLinkCodes.code, code));
@@ -6229,15 +6229,15 @@ async function processUpdate(update) {
           return;
         }
         await db.delete(telegramLinks).where(
-          and11(eq15(telegramLinks.chatId, chatId), sql9`${telegramLinks.userId} != ${userId}`)
+          and11(eq15(telegramLinks.chatId, chatId), sql9`${telegramLinks.userId} != ${userId2}`)
         );
-        await db.insert(telegramLinks).values({ userId, chatId, username: message.from?.username || message.from?.first_name || null }).onConflictDoUpdate({
+        await db.insert(telegramLinks).values({ userId: userId2, chatId, username: message.from?.username || message.from?.first_name || null }).onConflictDoUpdate({
           target: telegramLinks.userId,
           set: { chatId, username: message.from?.username || message.from?.first_name || null, linkedAt: /* @__PURE__ */ new Date() }
         });
         await db.delete(telegramLinkCodes).where(eq15(telegramLinkCodes.code, code));
         await sendMessage(chatId, "\u2705 You're connected to GamePlan! Jarvis will send you morning check-ins and you can chat anytime right here.");
-        console.log(`[Telegram] Linked user ${userId} to chat ${chatId}`);
+        console.log(`[Telegram] Linked user ${userId2} to chat ${chatId}`);
       } catch (err) {
         console.error("Error linking Telegram:", err);
         await sendMessage(chatId, "Something went wrong linking your account. Please try again.");
@@ -6303,13 +6303,13 @@ function registerTelegramWebhook(app2) {
 function registerTelegramRoutes(app2) {
   app2.post("/api/telegram/link-code", async (req, res) => {
     try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       if (!isTelegramConfigured()) {
         return res.status(400).json({ error: "Telegram bot not configured. Add TELEGRAM_BOT_TOKEN to secrets." });
       }
       const code = generateLinkCode();
-      await db.insert(telegramLinkCodes).values({ code, userId });
+      await db.insert(telegramLinkCodes).values({ code, userId: userId2 });
       res.json({ code });
     } catch (error) {
       console.error("Error generating link code:", error);
@@ -6318,9 +6318,9 @@ function registerTelegramRoutes(app2) {
   });
   app2.get("/api/telegram/status", async (req, res) => {
     try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const link = await db.select().from(telegramLinks).where(eq15(telegramLinks.userId, userId)).limit(1);
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
+      const link = await db.select().from(telegramLinks).where(eq15(telegramLinks.userId, userId2)).limit(1);
       if (link.length === 0) {
         return res.json({ connected: false, username: null, configured: isTelegramConfigured() });
       }
@@ -6336,9 +6336,9 @@ function registerTelegramRoutes(app2) {
   });
   app2.delete("/api/telegram/disconnect", async (req, res) => {
     try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      await db.delete(telegramLinks).where(eq15(telegramLinks.userId, userId));
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
+      await db.delete(telegramLinks).where(eq15(telegramLinks.userId, userId2));
       res.json({ success: true });
     } catch (error) {
       console.error("Error disconnecting Telegram:", error);
@@ -6347,15 +6347,15 @@ function registerTelegramRoutes(app2) {
   });
   app2.get("/api/telegram/messages", async (req, res) => {
     try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const link = await db.select().from(telegramLinks).where(eq15(telegramLinks.userId, userId)).limit(1);
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
+      const link = await db.select().from(telegramLinks).where(eq15(telegramLinks.userId, userId2)).limit(1);
       if (link.length === 0) {
         return res.json({ connected: false, messages: [] });
       }
       const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1e3);
       const messages = await db.select().from(telegramGroupMessages).where(and11(
-        eq15(telegramGroupMessages.userId, userId),
+        eq15(telegramGroupMessages.userId, userId2),
         gte2(telegramGroupMessages.messageDate, sevenDaysAgo)
       )).orderBy(desc6(telegramGroupMessages.messageDate)).limit(50);
       res.json({
@@ -6374,11 +6374,11 @@ function registerTelegramRoutes(app2) {
   });
   app2.post("/api/telegram/notify", async (req, res) => {
     try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       const { type, message: msgText } = req.body;
       if (!msgText) return res.status(400).json({ error: "message is required" });
-      const link = await db.select().from(telegramLinks).where(eq15(telegramLinks.userId, userId)).limit(1);
+      const link = await db.select().from(telegramLinks).where(eq15(telegramLinks.userId, userId2)).limit(1);
       if (link.length === 0) {
         return res.json({ sent: false, reason: "Not linked" });
       }
@@ -6390,17 +6390,17 @@ function registerTelegramRoutes(app2) {
     }
   });
 }
-async function getCommitmentsForUser(userId) {
+async function getCommitmentsForUser(userId2) {
   try {
-    return await db.select().from(commitments).where(and11(eq15(commitments.userId, userId), eq15(commitments.status, "pending"))).orderBy(desc6(commitments.extractedAt)).limit(20);
+    return await db.select().from(commitments).where(and11(eq15(commitments.userId, userId2), eq15(commitments.status, "pending"))).orderBy(desc6(commitments.extractedAt)).limit(20);
   } catch {
     return [];
   }
 }
-async function getPlansForDateRange(userId, startDate, endDate) {
+async function getPlansForDateRange(userId2, startDate, endDate) {
   try {
     const rows = await db.select().from(plans).where(and11(
-      eq15(plans.userId, userId),
+      eq15(plans.userId, userId2),
       gte2(plans.date, startDate),
       lte(plans.date, endDate)
     ));
@@ -6564,14 +6564,14 @@ Streak: ${context.stats?.streak || 0} days
 
 Write a concise evening recap (3-4 sentences). Acknowledge what was done, note what's still open. If there are items due tomorrow, specifically call them out so the user can plan tonight. End with something forward-looking. No platitudes.`;
   } else if (type === "weekly" || type === "weekly_planning") {
-    const userId = context.userId;
-    if (userId) {
+    const userId2 = context.userId;
+    if (userId2) {
       const endDate = context.dateKey || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
       const anchorDate = /* @__PURE__ */ new Date(endDate + "T12:00:00");
       const startOfWeekDate = new Date(anchorDate);
       startOfWeekDate.setDate(startOfWeekDate.getDate() - 6);
       const startDate = startOfWeekDate.toISOString().slice(0, 10);
-      const weekPlans = await getPlansForDateRange(userId, startDate, endDate);
+      const weekPlans = await getPlansForDateRange(userId2, startDate, endDate);
       const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
       let dayByDay = "";
       let weekCompleted = 0;
@@ -6610,7 +6610,7 @@ Write a concise evening recap (3-4 sentences). Acknowledge what was done, note w
       const catSummary = Object.entries(categoryBreakdown).map(([cat, v]) => `  ${cat}: ${v.done}/${v.total} (${Math.round(v.done / v.total * 100)}%)`).join("\n");
       const droppedTypeEntries = Object.entries(droppedCategories).sort((a, b) => b[1] - a[1]);
       const droppedSummary = droppedTypeEntries.length > 0 ? `Top dropped task types: ${droppedTypeEntries.slice(0, 5).map(([cat, count]) => `${cat} (${count})`).join(", ")}` : "No incomplete tasks this week";
-      const allWeekCommitments = await db.select().from(commitments).where(eq15(commitments.userId, userId)).limit(200);
+      const allWeekCommitments = await db.select().from(commitments).where(eq15(commitments.userId, userId2)).limit(200);
       const weekDueCommitments = allWeekCommitments.filter(
         (c) => c.dueDate && c.dueDate >= startDate && c.dueDate <= endDate
       );
@@ -6646,8 +6646,8 @@ Write a concise evening recap (3-4 sentences). Acknowledge what was done, note w
         const thirtyDaysAgoDate = new Date(anchorDate);
         thirtyDaysAgoDate.setDate(thirtyDaysAgoDate.getDate() - 30);
         const thirtyDayStart = thirtyDaysAgoDate.toISOString().slice(0, 10);
-        const allPlans = await getPlansForDateRange(userId, thirtyDayStart, endDate);
-        const allCommitmentsRaw = await db.select().from(commitments).where(eq15(commitments.userId, userId)).limit(200);
+        const allPlans = await getPlansForDateRange(userId2, thirtyDayStart, endDate);
+        const allCommitmentsRaw = await db.select().from(commitments).where(eq15(commitments.userId, userId2)).limit(200);
         const scopedCommitments30d = allCommitmentsRaw.filter(
           (c) => c.dueDate && c.dueDate >= thirtyDayStart && c.dueDate <= endDate || c.extractedAt && c.extractedAt >= new Date(thirtyDayStart) && c.extractedAt <= /* @__PURE__ */ new Date(endDate + "T23:59:59") || c.resolvedAt && c.resolvedAt >= new Date(thirtyDayStart) && c.resolvedAt <= /* @__PURE__ */ new Date(endDate + "T23:59:59")
         );
@@ -6711,11 +6711,11 @@ Write a sharp weekly summary (3-4 sentences). What's the trend? What needs focus
     return null;
   }
 }
-async function hasAlreadySent(userId, messageType, dateKey) {
+async function hasAlreadySent(userId2, messageType, dateKey) {
   try {
     const rows = await db.select({ id: proactiveScheduleLog.id }).from(proactiveScheduleLog).where(
       and11(
-        eq15(proactiveScheduleLog.userId, userId),
+        eq15(proactiveScheduleLog.userId, userId2),
         eq15(proactiveScheduleLog.messageType, messageType),
         eq15(proactiveScheduleLog.sentDate, dateKey)
       )
@@ -6725,9 +6725,9 @@ async function hasAlreadySent(userId, messageType, dateKey) {
     return false;
   }
 }
-async function markAsSent(userId, messageType, dateKey) {
+async function markAsSent(userId2, messageType, dateKey) {
   try {
-    await db.insert(proactiveScheduleLog).values({ userId, messageType, sentDate: dateKey }).catch(() => {
+    await db.insert(proactiveScheduleLog).values({ userId: userId2, messageType, sentDate: dateKey }).catch(() => {
     });
   } catch {
   }
@@ -6744,7 +6744,7 @@ async function getProactiveEligibleUsers() {
   for (const r of tgRows) userIds.add(r.userId);
   for (const r of chRows) userIds.add(r.userId);
   for (const r of prefRows) userIds.add(r.userId);
-  return Array.from(userIds).map((userId) => ({ userId, chatId: chatIdByUser.get(userId) }));
+  return Array.from(userIds).map((userId2) => ({ userId: userId2, chatId: chatIdByUser.get(userId2) }));
 }
 async function sendScheduledMessage(link, schedule, dateKey, timezone) {
   if (schedule.type === "followup_check") {
@@ -7244,7 +7244,7 @@ var init_manageTasks = __esm({
         required: ["action"]
       },
       async execute(args, ctx) {
-        const userId = ctx.userId;
+        const userId2 = ctx.userId;
         const dateKey = ctx.state?.dateKey || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
         const a = args;
         try {
@@ -7262,7 +7262,7 @@ var init_manageTasks = __esm({
               };
               tasks.push(newTask);
               const planData = todayPlan ? { ...todayPlan, tasks } : { tasks };
-              await db.insert(plans).values({ userId, date: dateKey, data: planData }).onConflictDoUpdate({
+              await db.insert(plans).values({ userId: userId2, date: dateKey, data: planData }).onConflictDoUpdate({
                 target: [plans.userId, plans.date],
                 set: { data: planData, updatedAt: /* @__PURE__ */ new Date() }
               });
@@ -7279,7 +7279,7 @@ var init_manageTasks = __esm({
                 return { ok: false, content: "Error: content is required for add_commitment", label: "Missing content" };
               }
               await db.insert(commitments).values({
-                userId,
+                userId: userId2,
                 content: a.content,
                 dueDate: a.due_date || null,
                 sourceMessage: `Added via ${ctx.channel || "agent"}`
@@ -7298,7 +7298,7 @@ var init_manageTasks = __esm({
               const updated = await db.update(commitments).set({ status: "done", resolvedAt: /* @__PURE__ */ new Date() }).where(
                 and12(
                   eq16(commitments.id, a.commitment_id),
-                  eq16(commitments.userId, userId),
+                  eq16(commitments.userId, userId2),
                   eq16(commitments.status, "pending")
                 )
               ).returning({ id: commitments.id });
@@ -7319,7 +7319,7 @@ var init_manageTasks = __esm({
             case "list_tasks": {
               const todayPlan = ctx.state?.todayPlan ?? null;
               const planTasks = todayPlan?.tasks ?? [];
-              const pendingCommitments = await db.select().from(commitments).where(and12(eq16(commitments.userId, userId), eq16(commitments.status, "pending"))).orderBy(desc7(commitments.extractedAt)).limit(10);
+              const pendingCommitments = await db.select().from(commitments).where(and12(eq16(commitments.userId, userId2), eq16(commitments.status, "pending"))).orderBy(desc7(commitments.extractedAt)).limit(10);
               let listing = "";
               listing += planTasks.length > 0 ? "Today's Plan:\n" + planTasks.map((t) => `- ${t.completed ? "\u2705" : "\u2B1C"} ${t.title}`).join("\n") : "Today's Plan: No tasks yet.";
               listing += "\n\n";
@@ -7336,11 +7336,11 @@ var init_manageTasks = __esm({
               startDate.setDate(startDate.getDate() - 30);
               const start = startDate.toISOString().slice(0, 10);
               const end = today.toISOString().slice(0, 10);
-              const plans2 = await helpers.getPlansForDateRange(userId, start, end);
+              const plans2 = await helpers.getPlansForDateRange(userId2, start, end);
               if (plans2.length < 3) {
                 return { ok: true, content: "Not enough data yet for pattern analysis (need at least a few days).", label: "Not enough data" };
               }
-              const allCommitments = await db.select().from(commitments).where(eq16(commitments.userId, userId)).limit(200);
+              const allCommitments = await db.select().from(commitments).where(eq16(commitments.userId, userId2)).limit(200);
               const startDt = new Date(start);
               const endDt = /* @__PURE__ */ new Date(end + "T23:59:59");
               const scopedCommitments = allCommitments.filter(
@@ -8511,9 +8511,9 @@ async function openSlackDm(botToken, slackUserId) {
     return null;
   }
 }
-async function lookupLink2(userId) {
+async function lookupLink2(userId2) {
   try {
-    const rows = await db.select().from(channelLinks).where(and14(eq19(channelLinks.userId, userId), eq19(channelLinks.channel, "slack"))).limit(1);
+    const rows = await db.select().from(channelLinks).where(and14(eq19(channelLinks.userId, userId2), eq19(channelLinks.channel, "slack"))).limit(1);
     const row = rows[0];
     if (!row) return null;
     return { address: row.address, meta: row.metadata || {} };
@@ -8522,8 +8522,8 @@ async function lookupLink2(userId) {
     return null;
   }
 }
-async function getSlackBotToken(userId) {
-  const tok = await getUserToken(userId, "slack");
+async function getSlackBotToken(userId2) {
+  const tok = await getUserToken(userId2, "slack");
   return tok?.accessToken ?? null;
 }
 var slackChannel;
@@ -8537,22 +8537,22 @@ var init_slackChannel = __esm({
       name: "slack",
       // "Configured" if any user has a slack OAuth — we check on demand per user.
       isConfigured: () => true,
-      async isLinkedFor(userId) {
-        const link = await lookupLink2(userId);
+      async isLinkedFor(userId2) {
+        const link = await lookupLink2(userId2);
         if (!link) return false;
-        const tok = await getSlackBotToken(userId);
+        const tok = await getSlackBotToken(userId2);
         return !!tok;
       },
-      async sendMessage(userId, text2, opts = {}) {
-        const link = await lookupLink2(userId);
+      async sendMessage(userId2, text2, opts = {}) {
+        const link = await lookupLink2(userId2);
         if (!link) return { ok: false, error: "no slack link" };
-        const botToken = await getSlackBotToken(userId);
+        const botToken = await getSlackBotToken(userId2);
         if (!botToken) return { ok: false, error: "no slack bot token" };
         let target = link.meta.imChannelId;
         if (!target && link.meta.slackUserId) {
           target = await openSlackDm(botToken, link.meta.slackUserId) || void 0;
           if (target) {
-            await db.update(channelLinks).set({ metadata: { ...link.meta, imChannelId: target } }).where(and14(eq19(channelLinks.userId, userId), eq19(channelLinks.channel, "slack")));
+            await db.update(channelLinks).set({ metadata: { ...link.meta, imChannelId: target } }).where(and14(eq19(channelLinks.userId, userId2), eq19(channelLinks.channel, "slack")));
           }
         }
         if (!target) target = link.address;
@@ -8605,16 +8605,16 @@ async function findUserBySlackId(teamId, slackUserId) {
     return null;
   }
 }
-async function registerSlackUserLink(userId, teamId, slackUserId) {
+async function registerSlackUserLink(userId2, teamId, slackUserId) {
   await db.insert(channelLinks).values({
-    userId,
+    userId: userId2,
     channel: "slack",
     address: `${teamId}:${slackUserId}`,
     metadata: { teamId, slackUserId },
     lastSeenAt: /* @__PURE__ */ new Date()
   }).onConflictDoUpdate({
     target: [channelLinks.channel, channelLinks.address],
-    set: { userId, metadata: { teamId, slackUserId }, lastSeenAt: /* @__PURE__ */ new Date() }
+    set: { userId: userId2, metadata: { teamId, slackUserId }, lastSeenAt: /* @__PURE__ */ new Date() }
   });
 }
 function registerSlackWebhook(app2) {
@@ -8640,9 +8640,9 @@ function registerSlackWebhook(app2) {
       if (ev.bot_id || ev.subtype) return;
       if (ev.type !== "message" && ev.type !== "app_mention") return;
       if (ev.type === "message" && ev.channel_type !== "im") return;
-      const userId = await findUserBySlackId(teamId, slackUserId);
+      const userId2 = await findUserBySlackId(teamId, slackUserId);
       const text2 = String(ev.text || "").replace(/<@[A-Z0-9]+>/g, "").trim();
-      if (!userId) {
+      if (!userId2) {
         const tok = await db.select().from(channelLinks).where(and15(eq20(channelLinks.channel, "slack"))).limit(1);
         const replyToken = tok[0] ? await getSlackBotToken(tok[0].userId) : null;
         if (replyToken) {
@@ -8651,10 +8651,10 @@ function registerSlackWebhook(app2) {
         return;
       }
       if (!text2) return;
-      const botToken = await getSlackBotToken(userId);
+      const botToken = await getSlackBotToken(userId2);
       if (!botToken) return;
       try {
-        const { reply } = await runCoachAgent({ userId, userText: text2, channelName: "Slack" });
+        const { reply } = await runCoachAgent({ userId: userId2, userText: text2, channelName: "Slack" });
         if (reply && reply.trim()) {
           await postSlackMessage(botToken, ev.channel, reply);
         }
@@ -8678,8 +8678,8 @@ function registerSlackWebhook(app2) {
       const slackUserId = String(req.body.user_id || "");
       const text2 = String(req.body.text || "").trim();
       const responseUrl = String(req.body.response_url || "");
-      const userId = await findUserBySlackId(teamId, slackUserId);
-      if (!userId) {
+      const userId2 = await findUserBySlackId(teamId, slackUserId);
+      if (!userId2) {
         return res.json({ response_type: "ephemeral", text: "Your Slack isn't linked to a GamePlan account. Open the app \u2192 Profile \u2192 Connected Apps and reconnect." });
       }
       const [sub, ...rest] = text2.split(/\s+/);
@@ -8700,7 +8700,7 @@ function registerSlackWebhook(app2) {
       };
       try {
         if (subcommand === "plan") {
-          const plan = await buildPlanFromInputs({ userId, brainDump: arg ? [{ text: arg }] : [] });
+          const plan = await buildPlanFromInputs({ userId: userId2, brainDump: arg ? [{ text: arg }] : [] });
           const lines = plan.tasks.map((t, i) => `${i + 1}. *${t.title}* \u2014 ${t.priority}${t.time ? ` @ ${t.time}` : ""}`).join("\n");
           await respond(`*Today's plan*
 ${lines}
@@ -8711,10 +8711,10 @@ _${plan.reasoning}_`);
             await respond("Add the thought after the command, e.g. `/jarvis brain-dump finish Q3 deck`.");
             return;
           }
-          const { reply } = await runCoachAgent({ userId, userText: `Brain dump: ${arg}`, channelName: "Slack" });
+          const { reply } = await runCoachAgent({ userId: userId2, userText: `Brain dump: ${arg}`, channelName: "Slack" });
           await respond(reply);
         } else if (subcommand === "status") {
-          const { reply } = await runCoachAgent({ userId, userText: arg || "What's the status of my day?", channelName: "Slack" });
+          const { reply } = await runCoachAgent({ userId: userId2, userText: arg || "What's the status of my day?", channelName: "Slack" });
           await respond(reply);
         } else {
           await respond("Unknown subcommand. Try `/jarvis plan`, `/jarvis brain-dump <thought>`, or `/jarvis status`.");
@@ -8812,14 +8812,14 @@ function errorHtml2(message) {
 </body>
 </html>`;
 }
-function buildSlackAuthorizeUrl(userId, redirectUri) {
+function buildSlackAuthorizeUrl(userId2, redirectUri) {
   const clientId = process.env.SLACK_CLIENT_ID;
   if (!clientId) return null;
   const params = new URLSearchParams({
     client_id: clientId,
     user_scope: "channels:history,channels:read,im:history,im:read,groups:history,groups:read,users:read",
     redirect_uri: redirectUri,
-    state: userId
+    state: userId2
   });
   return `https://slack.com/oauth/v2/authorize?${params.toString()}`;
 }
@@ -8831,8 +8831,8 @@ var init_oauthRoutes = __esm({
     oauthRouter = Router3();
     oauthCallbackRouter = Router3();
     oauthRouter.get("/google/authorize", (req, res) => {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       const clientId = process.env.GOOGLE_WEB_CLIENT_ID;
       if (!clientId) return res.status(500).json({ error: "Google OAuth not configured" });
       const baseUrl = getBaseUrl(req);
@@ -8853,14 +8853,14 @@ var init_oauthRoutes = __esm({
         ].join(" "),
         access_type: "offline",
         prompt: "consent",
-        state: userId
+        state: userId2
       });
       const url = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
       res.json({ url, redirectUri });
     });
     oauthCallbackRouter.get("/google/callback", async (req, res) => {
-      const { code, state: userId, error } = req.query;
-      if (error || !code || !userId) {
+      const { code, state: userId2, error } = req.query;
+      if (error || !code || !userId2) {
         return res.send(errorHtml2(error || "Authorization was cancelled."));
       }
       const clientId = process.env.GOOGLE_WEB_CLIENT_ID;
@@ -8898,7 +8898,7 @@ var init_oauthRoutes = __esm({
         }
         const expiresAt = tokenData.expires_in ? new Date(Date.now() + tokenData.expires_in * 1e3) : null;
         await saveUserToken({
-          userId,
+          userId: userId2,
           provider: "google",
           accessToken: tokenData.access_token,
           refreshToken: tokenData.refresh_token,
@@ -8913,8 +8913,8 @@ var init_oauthRoutes = __esm({
       }
     });
     oauthRouter.get("/microsoft/authorize", (req, res) => {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       const clientId = process.env.MICROSOFT_CLIENT_ID;
       if (!clientId) {
         return res.json({ error: "Microsoft OAuth not configured" });
@@ -8926,15 +8926,15 @@ var init_oauthRoutes = __esm({
         redirect_uri: redirectUri,
         response_type: "code",
         scope: "offline_access Calendars.ReadWrite Mail.ReadWrite Mail.Send User.Read",
-        state: userId,
+        state: userId2,
         response_mode: "query"
       });
       const url = `https://login.microsoftonline.com/common/oauth2/v2.0/authorize?${params.toString()}`;
       res.json({ url, redirectUri });
     });
     oauthCallbackRouter.get("/microsoft/callback", async (req, res) => {
-      const { code, state: userId, error, error_description } = req.query;
-      if (error || !code || !userId) {
+      const { code, state: userId2, error, error_description } = req.query;
+      if (error || !code || !userId2) {
         return res.send(errorHtml2(error_description || error || "Authorization was cancelled."));
       }
       const clientId = process.env.MICROSOFT_CLIENT_ID;
@@ -8973,7 +8973,7 @@ var init_oauthRoutes = __esm({
         }
         const expiresAt = tokenData.expires_in ? new Date(Date.now() + tokenData.expires_in * 1e3) : null;
         await saveUserToken({
-          userId,
+          userId: userId2,
           provider: "microsoft",
           accessToken: tokenData.access_token,
           refreshToken: tokenData.refresh_token,
@@ -8988,18 +8988,18 @@ var init_oauthRoutes = __esm({
       }
     });
     oauthRouter.get("/slack/authorize", (req, res) => {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       if (!process.env.SLACK_CLIENT_ID) return res.json({ error: "Slack OAuth not configured" });
       const baseUrl = getBaseUrl(req);
       const redirectUri = `${baseUrl}/api/oauth/slack/callback`;
-      const url = buildSlackAuthorizeUrl(userId, redirectUri);
+      const url = buildSlackAuthorizeUrl(userId2, redirectUri);
       if (!url) return res.json({ error: "Slack OAuth not configured" });
       res.json({ url, redirectUri });
     });
     oauthCallbackRouter.get("/slack/callback", async (req, res) => {
-      const { code, state: userId, error: oauthError } = req.query;
-      if (oauthError || !code || !userId) {
+      const { code, state: userId2, error: oauthError } = req.query;
+      if (oauthError || !code || !userId2) {
         return res.send(errorHtml2(oauthError || "Authorization was cancelled."));
       }
       const clientId = process.env.SLACK_CLIENT_ID;
@@ -9041,7 +9041,7 @@ var init_oauthRoutes = __esm({
         }
         if (!accountEmail) accountEmail = teamName || authedUserId;
         await saveUserToken({
-          userId,
+          userId: userId2,
           provider: "slack",
           accessToken: userToken,
           refreshToken: null,
@@ -9053,7 +9053,7 @@ var init_oauthRoutes = __esm({
           const teamId = tokenData.team?.id || "";
           if (teamId && authedUserId) {
             const { registerSlackUserLink: registerSlackUserLink2 } = await Promise.resolve().then(() => (init_slackWebhook(), slackWebhook_exports));
-            await registerSlackUserLink2(userId, teamId, authedUserId);
+            await registerSlackUserLink2(userId2, teamId, authedUserId);
           }
         } catch (linkErr) {
           console.error("[slack] registerSlackUserLink failed (non-fatal):", linkErr);
@@ -9065,10 +9065,10 @@ var init_oauthRoutes = __esm({
       }
     });
     oauthRouter.get("/status", async (req, res) => {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       try {
-        const status = await getUserOAuthStatus(userId);
+        const status = await getUserOAuthStatus(userId2);
         if (!status.microsoft?.connected) {
           const { checkOutlookConnection: checkOutlookConnection2 } = await Promise.resolve().then(() => (init_outlook(), outlook_exports));
           const projConnected = await checkOutlookConnection2().catch(() => false);
@@ -9083,15 +9083,15 @@ var init_oauthRoutes = __esm({
       }
     });
     oauthRouter.delete("/:provider/disconnect", async (req, res) => {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       const { provider } = req.params;
       if (!["google", "microsoft", "slack"].includes(provider)) {
         return res.status(400).json({ error: "Unknown provider" });
       }
       try {
         const email = req.query.email;
-        await deleteUserToken(userId, provider, email);
+        await deleteUserToken(userId2, provider, email);
         res.json({ success: true });
       } catch (err) {
         console.error("Disconnect error:", err);
@@ -9135,7 +9135,7 @@ var init_connectChannel = __esm({
       },
       async execute(args, ctx) {
         const channel = String(args.channel || "").toLowerCase();
-        const userId = ctx.userId;
+        const userId2 = ctx.userId;
         if (!["telegram", "whatsapp", "discord", "slack"].includes(channel)) {
           return {
             ok: false,
@@ -9153,7 +9153,7 @@ var init_connectChannel = __esm({
               };
             }
             const code = generateCode2(6);
-            await db.insert(telegramLinkCodes).values({ code, userId });
+            await db.insert(telegramLinkCodes).values({ code, userId: userId2 });
             const botUsername = await getTelegramBotUsername();
             if (!botUsername) {
               return {
@@ -9182,8 +9182,8 @@ var init_connectChannel = __esm({
             const phone = twilioRaw.replace(/^whatsapp:/i, "").replace(/\s+/g, "");
             const code = generateCode2(6);
             const expiresAt = new Date(Date.now() + 15 * 60 * 1e3);
-            await db.delete(channelLinkCodes).where(and16(eq21(channelLinkCodes.userId, userId), eq21(channelLinkCodes.channel, "whatsapp")));
-            await db.insert(channelLinkCodes).values({ code, userId, channel: "whatsapp", expiresAt });
+            await db.delete(channelLinkCodes).where(and16(eq21(channelLinkCodes.userId, userId2), eq21(channelLinkCodes.channel, "whatsapp")));
+            await db.insert(channelLinkCodes).values({ code, userId: userId2, channel: "whatsapp", expiresAt });
             const body = encodeURIComponent(`CONNECT ${code}`);
             const url = `https://wa.me/${phone.replace("+", "")}?text=${body}`;
             return {
@@ -9204,7 +9204,7 @@ var init_connectChannel = __esm({
             const domain = process.env.REPLIT_DOMAINS?.split(",")[0];
             const baseUrl = domain ? `https://${domain}` : "http://localhost:5000";
             const redirectUri = `${baseUrl}/api/oauth/slack/callback`;
-            const url = buildSlackAuthorizeUrl(userId, redirectUri);
+            const url = buildSlackAuthorizeUrl(userId2, redirectUri);
             if (!url) {
               return { ok: false, content: "Slack OAuth not configured.", label: "Slack not configured" };
             }
@@ -9274,10 +9274,10 @@ var init_discordPost = __esm({
         required: ["message"]
       },
       async execute(args, ctx) {
-        const { userId } = ctx;
+        const { userId: userId2 } = ctx;
         const topicKey = args.topic ?? classifyTopic(args.message);
         const topicMeta = WORKSPACE_TOPICS.find((t) => t.key === topicKey);
-        const posted = await postToDiscordWorkspace(userId, topicKey, args.message);
+        const posted = await postToDiscordWorkspace(userId2, topicKey, args.message);
         if (!posted) {
           return {
             ok: false,
@@ -9629,17 +9629,17 @@ function parsePatterns(raw) {
   }
   return out;
 }
-async function runWeeklyPatternJob(userId) {
+async function runWeeklyPatternJob(userId2) {
   const now = /* @__PURE__ */ new Date();
   const windowStart = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1e3);
   const sevenDaysAgo = windowStart;
   const weekOf = weekOfKey(now);
   const [completionRow, brainRow, chatRow, telegramRows, energyRows] = await Promise.allSettled([
-    db.select().from(completionHistory).where(eq23(completionHistory.userId, userId)).limit(1),
-    db.select().from(brainDumpInbox).where(eq23(brainDumpInbox.userId, userId)).limit(1),
-    db.select().from(chatHistory).where(eq23(chatHistory.userId, userId)).limit(1),
-    db.select().from(telegramGroupMessages).where(and18(eq23(telegramGroupMessages.userId, userId), gte3(telegramGroupMessages.messageDate, sevenDaysAgo))).orderBy(desc9(telegramGroupMessages.messageDate)).limit(50),
-    db.select().from(energyCheckins).where(and18(eq23(energyCheckins.userId, userId), gte3(energyCheckins.date, sevenDaysAgo.toISOString().slice(0, 10)))).orderBy(desc9(energyCheckins.date)).limit(60)
+    db.select().from(completionHistory).where(eq23(completionHistory.userId, userId2)).limit(1),
+    db.select().from(brainDumpInbox).where(eq23(brainDumpInbox.userId, userId2)).limit(1),
+    db.select().from(chatHistory).where(eq23(chatHistory.userId, userId2)).limit(1),
+    db.select().from(telegramGroupMessages).where(and18(eq23(telegramGroupMessages.userId, userId2), gte3(telegramGroupMessages.messageDate, sevenDaysAgo))).orderBy(desc9(telegramGroupMessages.messageDate)).limit(50),
+    db.select().from(energyCheckins).where(and18(eq23(energyCheckins.userId, userId2), gte3(energyCheckins.date, sevenDaysAgo.toISOString().slice(0, 10)))).orderBy(desc9(energyCheckins.date)).limit(60)
   ]);
   const completionData = completionRow.status === "fulfilled" ? asArray(completionRow.value[0]?.data) : [];
   const brainData = brainRow.status === "fulfilled" ? asArray(brainRow.value[0]?.data) : [];
@@ -9733,10 +9733,10 @@ ${energyText || "(none)"}`;
   }
   const signalCount = recentCompletions.length + brainData.length + chatData.length + telegramData.length + energyData.length;
   if (signalCount < 5) {
-    console.log(`[WeeklyPattern] user=${userId} week=${weekOf} skipped \u2014 only ${signalCount} signal(s) in 30-day window`);
+    console.log(`[WeeklyPattern] user=${userId2} week=${weekOf} skipped \u2014 only ${signalCount} signal(s) in 30-day window`);
     return { weekOf, patterns: [], summary: "" };
   }
-  await db.insert(weeklyInsights).values({ userId, weekOf, patterns, summary: summary || null }).onConflictDoUpdate({
+  await db.insert(weeklyInsights).values({ userId: userId2, weekOf, patterns, summary: summary || null }).onConflictDoUpdate({
     target: [weeklyInsights.userId, weeklyInsights.weekOf],
     set: { patterns, summary: summary || null }
   });
@@ -9746,7 +9746,7 @@ ${energyText || "(none)"}`;
     const cat = p.category === "fact" ? "fact" : p.category;
     try {
       await db.insert(userMemories).values({
-        userId,
+        userId: userId2,
         content: p.observation,
         category: cat,
         confidence: p.confidence,
@@ -9760,12 +9760,12 @@ ${energyText || "(none)"}`;
     }
   }
   try {
-    await regenerateSoul(userId);
+    await regenerateSoul(userId2);
   } catch (err) {
     console.error("[WeeklyPattern] regenerateSoul failed:", err);
   }
   console.log(
-    `[WeeklyPattern] user=${userId} week=${weekOf} patterns=${patterns.length} promoted=${promoted}`
+    `[WeeklyPattern] user=${userId2} week=${weekOf} patterns=${patterns.length} promoted=${promoted}`
   );
   return {
     weekOf,
@@ -9821,10 +9821,10 @@ __export(jobQueue_exports, {
   submitAgentJob: () => submitAgentJob
 });
 import { eq as eq24, sql as sql13 } from "drizzle-orm";
-async function notifyJobComplete(userId, agentType, title, body) {
+async function notifyJobComplete(userId2, agentType, title, body) {
   try {
     await notifyUser(
-      userId,
+      userId2,
       "approval_request",
       `Jarvis (${agentType}): ${title}
 
@@ -10095,18 +10095,18 @@ function normaliseTree(raw, fallbackTitle) {
     generatedAt: (/* @__PURE__ */ new Date()).toISOString()
   };
 }
-async function loadGoal(userId, goalId) {
-  const [row] = await db.select({ data: goals.data }).from(goals).where(eq25(goals.userId, userId)).limit(1);
+async function loadGoal(userId2, goalId) {
+  const [row] = await db.select({ data: goals.data }).from(goals).where(eq25(goals.userId, userId2)).limit(1);
   const list = row?.data || [];
   return list.find((g) => g.id === goalId) || null;
 }
-async function generateTreeWithLLM(goal, userId) {
+async function generateTreeWithLLM(goal, userId2) {
   let soulBlock = "";
   try {
     const { getSoulPromptBlock: getSoulPromptBlock2 } = await Promise.resolve().then(() => (init_soul(), soul_exports));
-    soulBlock = await getSoulPromptBlock2(userId);
+    soulBlock = await getSoulPromptBlock2(userId2);
   } catch (err) {
-    console.error(`[goalDecomposer] SOUL load failed for ${userId}:`, err);
+    console.error(`[goalDecomposer] SOUL load failed for ${userId2}:`, err);
   }
   const system = `You are Jarvis's goal-decomposition planner. Break a single user goal into a concrete, sequenced project tree.
 
@@ -10199,10 +10199,10 @@ async function runGoalDecomposition(job) {
     toolCallsCount: 0
   };
 }
-async function enqueueGoalDecomposition(userId, goal) {
+async function enqueueGoalDecomposition(userId2, goal) {
   const { submitAgentJob: submitAgentJob2 } = await Promise.resolve().then(() => (init_jobQueue(), jobQueue_exports));
   return submitAgentJob2({
-    userId,
+    userId: userId2,
     agentType: "goal_decompose",
     title: `Decompose: ${goal.title}`,
     prompt: `Break the goal "${goal.title}" into a phased plan.`,
@@ -10225,19 +10225,19 @@ var init_goalDecomposer = __esm({
 // server/dataRoutes.ts
 import { eq as eq26, and as and21 } from "drizzle-orm";
 function requireUserId(req, res) {
-  const userId = req.userId;
-  if (!userId) {
+  const userId2 = req.userId;
+  if (!userId2) {
     res.status(401).json({ error: "Authentication required" });
     return null;
   }
-  return userId;
+  return userId2;
 }
 function registerSimpleJsonCrud(app2, path4, table) {
   app2.get(`/api/data/${path4}`, async (req, res) => {
     try {
-      const userId = requireUserId(req, res);
-      if (!userId) return;
-      const result = await db.select({ data: table.data }).from(table).where(eq26(table.userId, userId));
+      const userId2 = requireUserId(req, res);
+      if (!userId2) return;
+      const result = await db.select({ data: table.data }).from(table).where(eq26(table.userId, userId2));
       if (result.length === 0) return res.json({ data: null });
       res.json({ data: result[0].data });
     } catch (e) {
@@ -10247,10 +10247,10 @@ function registerSimpleJsonCrud(app2, path4, table) {
   });
   app2.put(`/api/data/${path4}`, async (req, res) => {
     try {
-      const userId = requireUserId(req, res);
-      if (!userId) return;
+      const userId2 = requireUserId(req, res);
+      if (!userId2) return;
       const { data } = req.body;
-      await db.insert(table).values({ userId, data, updatedAt: /* @__PURE__ */ new Date() }).onConflictDoUpdate({
+      await db.insert(table).values({ userId: userId2, data, updatedAt: /* @__PURE__ */ new Date() }).onConflictDoUpdate({
         target: [table.userId],
         set: { data, updatedAt: /* @__PURE__ */ new Date() }
       });
@@ -10262,9 +10262,9 @@ function registerSimpleJsonCrud(app2, path4, table) {
   });
   app2.delete(`/api/data/${path4}`, async (req, res) => {
     try {
-      const userId = requireUserId(req, res);
-      if (!userId) return;
-      await db.delete(table).where(eq26(table.userId, userId));
+      const userId2 = requireUserId(req, res);
+      if (!userId2) return;
+      await db.delete(table).where(eq26(table.userId, userId2));
       res.json({ ok: true });
     } catch (e) {
       console.error(`Error deleting ${path4}:`, e);
@@ -10275,10 +10275,10 @@ function registerSimpleJsonCrud(app2, path4, table) {
 function registerDataRoutes(app2) {
   app2.get("/api/data/plans/:date", async (req, res) => {
     try {
-      const userId = requireUserId(req, res);
-      if (!userId) return;
+      const userId2 = requireUserId(req, res);
+      if (!userId2) return;
       const { date: date2 } = req.params;
-      const result = await db.select().from(plans).where(and21(eq26(plans.userId, userId), eq26(plans.date, date2)));
+      const result = await db.select().from(plans).where(and21(eq26(plans.userId, userId2), eq26(plans.date, date2)));
       if (result.length === 0) return res.json({ data: null });
       res.json({ data: result[0].data });
     } catch (e) {
@@ -10288,9 +10288,9 @@ function registerDataRoutes(app2) {
   });
   app2.get("/api/data/plans", async (req, res) => {
     try {
-      const userId = requireUserId(req, res);
-      if (!userId) return;
-      const result = await db.select().from(plans).where(eq26(plans.userId, userId));
+      const userId2 = requireUserId(req, res);
+      if (!userId2) return;
+      const result = await db.select().from(plans).where(eq26(plans.userId, userId2));
       const plansMap = {};
       for (const row of result) {
         plansMap[row.date] = row.data;
@@ -10303,12 +10303,12 @@ function registerDataRoutes(app2) {
   });
   app2.put("/api/data/plans/:date", async (req, res) => {
     try {
-      const userId = requireUserId(req, res);
-      if (!userId) return;
+      const userId2 = requireUserId(req, res);
+      if (!userId2) return;
       const { date: date2 } = req.params;
       const { data } = req.body;
       try {
-        const [prev] = await db.select({ data: plans.data }).from(plans).where(and21(eq26(plans.userId, userId), eq26(plans.date, date2))).limit(1);
+        const [prev] = await db.select({ data: plans.data }).from(plans).where(and21(eq26(plans.userId, userId2), eq26(plans.date, date2))).limit(1);
         const prevTasks = prev?.data?.tasks || [];
         const newTasks = data?.tasks || [];
         const prevById = new Map(prevTasks.map((t) => [t.id, t]));
@@ -10321,13 +10321,13 @@ function registerDataRoutes(app2) {
         if (justCompleted.length > 0) {
           const { markTreeTaskComplete: markTreeTaskComplete2 } = await Promise.resolve().then(() => (init_goalScheduler(), goalScheduler_exports));
           for (const t of justCompleted) {
-            await markTreeTaskComplete2(userId, t.goalTreeId, t.goalTaskId);
+            await markTreeTaskComplete2(userId2, t.goalTreeId, t.goalTaskId);
           }
         }
       } catch (e) {
         console.error("[Plans] goal-tree completion propagation failed:", e);
       }
-      await db.insert(plans).values({ userId, date: date2, data, updatedAt: /* @__PURE__ */ new Date() }).onConflictDoUpdate({
+      await db.insert(plans).values({ userId: userId2, date: date2, data, updatedAt: /* @__PURE__ */ new Date() }).onConflictDoUpdate({
         target: [plans.userId, plans.date],
         set: { data, updatedAt: /* @__PURE__ */ new Date() }
       });
@@ -10339,9 +10339,9 @@ function registerDataRoutes(app2) {
   });
   app2.get("/api/data/goals", async (req, res) => {
     try {
-      const userId = requireUserId(req, res);
-      if (!userId) return;
-      const result = await db.select({ data: goals.data }).from(goals).where(eq26(goals.userId, userId));
+      const userId2 = requireUserId(req, res);
+      if (!userId2) return;
+      const result = await db.select({ data: goals.data }).from(goals).where(eq26(goals.userId, userId2));
       if (result.length === 0) return res.json({ data: null });
       res.json({ data: result[0].data });
     } catch (e) {
@@ -10351,9 +10351,9 @@ function registerDataRoutes(app2) {
   });
   app2.delete("/api/data/goals", async (req, res) => {
     try {
-      const userId = requireUserId(req, res);
-      if (!userId) return;
-      await db.delete(goals).where(eq26(goals.userId, userId));
+      const userId2 = requireUserId(req, res);
+      if (!userId2) return;
+      await db.delete(goals).where(eq26(goals.userId, userId2));
       res.json({ ok: true });
     } catch (e) {
       console.error("Error deleting goals:", e);
@@ -10362,11 +10362,11 @@ function registerDataRoutes(app2) {
   });
   app2.put("/api/data/goals", async (req, res) => {
     try {
-      const userId = requireUserId(req, res);
-      if (!userId) return;
+      const userId2 = requireUserId(req, res);
+      if (!userId2) return;
       const { data } = req.body;
       const incoming = Array.isArray(data) ? data : [];
-      const [prev] = await db.select({ data: goals.data }).from(goals).where(eq26(goals.userId, userId)).limit(1);
+      const [prev] = await db.select({ data: goals.data }).from(goals).where(eq26(goals.userId, userId2)).limit(1);
       const prevList = prev?.data || [];
       const prevById = new Map(prevList.map((g) => [g.id, g]));
       const incomingTyped = incoming;
@@ -10383,16 +10383,16 @@ function registerDataRoutes(app2) {
         if (changed) goalsToDecompose.push(g);
       }
       const removedIds = prevList.map((g) => g.id).filter((id) => id && !incomingIds.has(id));
-      await db.insert(goals).values({ userId, data, updatedAt: /* @__PURE__ */ new Date() }).onConflictDoUpdate({
+      await db.insert(goals).values({ userId: userId2, data, updatedAt: /* @__PURE__ */ new Date() }).onConflictDoUpdate({
         target: [goals.userId],
         set: { data, updatedAt: /* @__PURE__ */ new Date() }
       });
       if (removedIds.length > 0) {
         try {
           for (const removedId of removedIds) {
-            await db.delete(goalTrees).where(and21(eq26(goalTrees.userId, userId), eq26(goalTrees.goalId, removedId)));
+            await db.delete(goalTrees).where(and21(eq26(goalTrees.userId, userId2), eq26(goalTrees.goalId, removedId)));
           }
-          console.log(`[Goals] removed ${removedIds.length} stale goal tree(s) user=${userId}`);
+          console.log(`[Goals] removed ${removedIds.length} stale goal tree(s) user=${userId2}`);
         } catch (e) {
           console.error("[Goals] stale-tree cleanup failed:", e);
         }
@@ -10401,9 +10401,9 @@ function registerDataRoutes(app2) {
         try {
           const { enqueueGoalDecomposition: enqueueGoalDecomposition2 } = await Promise.resolve().then(() => (init_goalDecomposer(), goalDecomposer_exports));
           for (const g of goalsToDecompose) {
-            await enqueueGoalDecomposition2(userId, { id: g.id, title: g.title });
+            await enqueueGoalDecomposition2(userId2, { id: g.id, title: g.title });
           }
-          console.log(`[Goals] auto-queued decomposition for ${goalsToDecompose.length} new/changed goal(s) user=${userId}`);
+          console.log(`[Goals] auto-queued decomposition for ${goalsToDecompose.length} new/changed goal(s) user=${userId2}`);
         } catch (e) {
           console.error("[Goals] auto-decompose enqueue failed:", e);
         }
@@ -10422,14 +10422,14 @@ function registerDataRoutes(app2) {
   registerSimpleJsonCrud(app2, "user-preferences", userPreferences);
   app2.post("/api/data/auto-built-plan/dismiss", async (req, res) => {
     try {
-      const userId = requireUserId(req, res);
-      if (!userId) return;
-      const result = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq26(userPreferences.userId, userId));
+      const userId2 = requireUserId(req, res);
+      if (!userId2) return;
+      const result = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq26(userPreferences.userId, userId2));
       const currentPrefs = result[0]?.data || {};
       if (currentPrefs.autoBuiltPlan) {
         currentPrefs.autoBuiltPlan.dismissed = true;
       }
-      await db.insert(userPreferences).values({ userId, data: currentPrefs, updatedAt: /* @__PURE__ */ new Date() }).onConflictDoUpdate({
+      await db.insert(userPreferences).values({ userId: userId2, data: currentPrefs, updatedAt: /* @__PURE__ */ new Date() }).onConflictDoUpdate({
         target: [userPreferences.userId],
         set: { data: currentPrefs, updatedAt: /* @__PURE__ */ new Date() }
       });
@@ -10444,10 +10444,10 @@ function registerDataRoutes(app2) {
   registerSimpleJsonCrud(app2, "plan-snapshots", planSnapshots);
   app2.get("/api/data/energy-checkins/:date", async (req, res) => {
     try {
-      const userId = requireUserId(req, res);
-      if (!userId) return;
+      const userId2 = requireUserId(req, res);
+      if (!userId2) return;
       const { date: date2 } = req.params;
-      const result = await db.select().from(energyCheckins).where(and21(eq26(energyCheckins.userId, userId), eq26(energyCheckins.date, date2)));
+      const result = await db.select().from(energyCheckins).where(and21(eq26(energyCheckins.userId, userId2), eq26(energyCheckins.date, date2)));
       if (result.length === 0) return res.json({ data: null });
       res.json({ data: result[0].data });
     } catch (e) {
@@ -10457,11 +10457,11 @@ function registerDataRoutes(app2) {
   });
   app2.put("/api/data/energy-checkins/:date", async (req, res) => {
     try {
-      const userId = requireUserId(req, res);
-      if (!userId) return;
+      const userId2 = requireUserId(req, res);
+      if (!userId2) return;
       const { date: date2 } = req.params;
       const { data } = req.body;
-      await db.insert(energyCheckins).values({ userId, date: date2, data, updatedAt: /* @__PURE__ */ new Date() }).onConflictDoUpdate({
+      await db.insert(energyCheckins).values({ userId: userId2, date: date2, data, updatedAt: /* @__PURE__ */ new Date() }).onConflictDoUpdate({
         target: [energyCheckins.userId, energyCheckins.date],
         set: { data, updatedAt: /* @__PURE__ */ new Date() }
       });
@@ -10473,10 +10473,10 @@ function registerDataRoutes(app2) {
   });
   app2.get("/api/data/completed-calendar-ids/:date", async (req, res) => {
     try {
-      const userId = requireUserId(req, res);
-      if (!userId) return;
+      const userId2 = requireUserId(req, res);
+      if (!userId2) return;
       const { date: date2 } = req.params;
-      const result = await db.select().from(completedCalendarIds).where(and21(eq26(completedCalendarIds.userId, userId), eq26(completedCalendarIds.date, date2)));
+      const result = await db.select().from(completedCalendarIds).where(and21(eq26(completedCalendarIds.userId, userId2), eq26(completedCalendarIds.date, date2)));
       if (result.length === 0) return res.json({ data: [] });
       res.json({ data: result[0].data });
     } catch (e) {
@@ -10486,11 +10486,11 @@ function registerDataRoutes(app2) {
   });
   app2.put("/api/data/completed-calendar-ids/:date", async (req, res) => {
     try {
-      const userId = requireUserId(req, res);
-      if (!userId) return;
+      const userId2 = requireUserId(req, res);
+      if (!userId2) return;
       const { date: date2 } = req.params;
       const { data } = req.body;
-      await db.insert(completedCalendarIds).values({ userId, date: date2, data, updatedAt: /* @__PURE__ */ new Date() }).onConflictDoUpdate({
+      await db.insert(completedCalendarIds).values({ userId: userId2, date: date2, data, updatedAt: /* @__PURE__ */ new Date() }).onConflictDoUpdate({
         target: [completedCalendarIds.userId, completedCalendarIds.date],
         set: { data, updatedAt: /* @__PURE__ */ new Date() }
       });
@@ -10502,29 +10502,29 @@ function registerDataRoutes(app2) {
   });
   app2.get("/api/data/export", async (req, res) => {
     try {
-      const userId = requireUserId(req, res);
-      if (!userId) return;
-      const [goalsRow] = await db.select({ data: goals.data }).from(goals).where(eq26(goals.userId, userId));
-      const [statsRow] = await db.select({ data: stats.data }).from(stats).where(eq26(stats.userId, userId));
-      const [lifeContextRow] = await db.select({ data: lifeContext.data }).from(lifeContext).where(eq26(lifeContext.userId, userId));
-      const [userPrefsRow] = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq26(userPreferences.userId, userId));
-      const [chatHistoryRow] = await db.select({ data: chatHistory.data }).from(chatHistory).where(eq26(chatHistory.userId, userId));
-      const [timerSettingsRow] = await db.select({ data: timerSettings.data }).from(timerSettings).where(eq26(timerSettings.userId, userId));
-      const [brainDumpRow] = await db.select({ data: brainDumpInbox.data }).from(brainDumpInbox).where(eq26(brainDumpInbox.userId, userId));
-      const [completionHistoryRow] = await db.select({ data: completionHistory.data }).from(completionHistory).where(eq26(completionHistory.userId, userId));
-      const [blockedTasksRow] = await db.select({ data: blockedTasks.data }).from(blockedTasks).where(eq26(blockedTasks.userId, userId));
-      const [planSnapshotsRow] = await db.select({ data: planSnapshots.data }).from(planSnapshots).where(eq26(planSnapshots.userId, userId));
-      const plansRows = await db.select().from(plans).where(eq26(plans.userId, userId));
+      const userId2 = requireUserId(req, res);
+      if (!userId2) return;
+      const [goalsRow] = await db.select({ data: goals.data }).from(goals).where(eq26(goals.userId, userId2));
+      const [statsRow] = await db.select({ data: stats.data }).from(stats).where(eq26(stats.userId, userId2));
+      const [lifeContextRow] = await db.select({ data: lifeContext.data }).from(lifeContext).where(eq26(lifeContext.userId, userId2));
+      const [userPrefsRow] = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq26(userPreferences.userId, userId2));
+      const [chatHistoryRow] = await db.select({ data: chatHistory.data }).from(chatHistory).where(eq26(chatHistory.userId, userId2));
+      const [timerSettingsRow] = await db.select({ data: timerSettings.data }).from(timerSettings).where(eq26(timerSettings.userId, userId2));
+      const [brainDumpRow] = await db.select({ data: brainDumpInbox.data }).from(brainDumpInbox).where(eq26(brainDumpInbox.userId, userId2));
+      const [completionHistoryRow] = await db.select({ data: completionHistory.data }).from(completionHistory).where(eq26(completionHistory.userId, userId2));
+      const [blockedTasksRow] = await db.select({ data: blockedTasks.data }).from(blockedTasks).where(eq26(blockedTasks.userId, userId2));
+      const [planSnapshotsRow] = await db.select({ data: planSnapshots.data }).from(planSnapshots).where(eq26(planSnapshots.userId, userId2));
+      const plansRows = await db.select().from(plans).where(eq26(plans.userId, userId2));
       const plans2 = {};
       for (const row of plansRows) {
         plans2[row.date] = row.data;
       }
-      const energyRows = await db.select().from(energyCheckins).where(eq26(energyCheckins.userId, userId));
+      const energyRows = await db.select().from(energyCheckins).where(eq26(energyCheckins.userId, userId2));
       const energyCheckins2 = {};
       for (const row of energyRows) {
         energyCheckins2[row.date] = row.data;
       }
-      const calendarIdRows = await db.select().from(completedCalendarIds).where(eq26(completedCalendarIds.userId, userId));
+      const calendarIdRows = await db.select().from(completedCalendarIds).where(eq26(completedCalendarIds.userId, userId2));
       const completedCalendarIds2 = {};
       for (const row of calendarIdRows) {
         completedCalendarIds2[row.date] = row.data;
@@ -10553,8 +10553,8 @@ function registerDataRoutes(app2) {
   });
   app2.post("/api/data/import", async (req, res) => {
     try {
-      const userId = requireUserId(req, res);
-      if (!userId) return;
+      const userId2 = requireUserId(req, res);
+      if (!userId2) return;
       const { data } = req.body;
       if (!data || typeof data !== "object") {
         return res.status(400).json({ error: "Missing data object in request body" });
@@ -10563,10 +10563,10 @@ function registerDataRoutes(app2) {
       await db.transaction(async (tx) => {
         const replaceSimple = async (table, value) => {
           if (value === null || value === void 0) {
-            await tx.delete(table).where(eq26(table.userId, userId));
+            await tx.delete(table).where(eq26(table.userId, userId2));
             return;
           }
-          await tx.insert(table).values({ userId, data: value, updatedAt: now }).onConflictDoUpdate({ target: [table.userId], set: { data: value, updatedAt: now } });
+          await tx.insert(table).values({ userId: userId2, data: value, updatedAt: now }).onConflictDoUpdate({ target: [table.userId], set: { data: value, updatedAt: now } });
         };
         await replaceSimple(goals, data.goals);
         await replaceSimple(stats, data.stats);
@@ -10579,21 +10579,21 @@ function registerDataRoutes(app2) {
         await replaceSimple(planSnapshots, data.planSnapshots);
         await replaceSimple(userPreferences, data.userPreferences);
         if (data.plans && typeof data.plans === "object") {
-          await tx.delete(plans).where(eq26(plans.userId, userId));
+          await tx.delete(plans).where(eq26(plans.userId, userId2));
           for (const [date2, planData] of Object.entries(data.plans)) {
-            await tx.insert(plans).values({ userId, date: date2, data: planData, updatedAt: now });
+            await tx.insert(plans).values({ userId: userId2, date: date2, data: planData, updatedAt: now });
           }
         }
         if (data.energyCheckins && typeof data.energyCheckins === "object") {
-          await tx.delete(energyCheckins).where(eq26(energyCheckins.userId, userId));
+          await tx.delete(energyCheckins).where(eq26(energyCheckins.userId, userId2));
           for (const [date2, checkinData] of Object.entries(data.energyCheckins)) {
-            await tx.insert(energyCheckins).values({ userId, date: date2, data: checkinData, updatedAt: now });
+            await tx.insert(energyCheckins).values({ userId: userId2, date: date2, data: checkinData, updatedAt: now });
           }
         }
         if (data.completedCalendarIds && typeof data.completedCalendarIds === "object") {
-          await tx.delete(completedCalendarIds).where(eq26(completedCalendarIds.userId, userId));
+          await tx.delete(completedCalendarIds).where(eq26(completedCalendarIds.userId, userId2));
           for (const [date2, idsData] of Object.entries(data.completedCalendarIds)) {
-            await tx.insert(completedCalendarIds).values({ userId, date: date2, data: idsData, updatedAt: now });
+            await tx.insert(completedCalendarIds).values({ userId: userId2, date: date2, data: idsData, updatedAt: now });
           }
         }
       });
@@ -10622,14 +10622,14 @@ function generateCode3(len = 6) {
 }
 function registerChannelRoutes(app2) {
   app2.get("/api/channels", authMiddleware, async (req, res) => {
-    const userId = req.userId;
+    const userId2 = req.userId;
     try {
       const [tgRows, channelRows, prefs] = await Promise.all([
-        db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq27(telegramLinks.userId, userId)).limit(1),
-        db.select().from(channelLinks).where(eq27(channelLinks.userId, userId)),
-        getAllPreferences(userId)
+        db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq27(telegramLinks.userId, userId2)).limit(1),
+        db.select().from(channelLinks).where(eq27(channelLinks.userId, userId2)),
+        getAllPreferences(userId2)
       ]);
-      const discordTok = await getUserToken(userId, "discord_bot").catch(() => null);
+      const discordTok = await getUserToken(userId2, "discord_bot").catch(() => null);
       const connected = {
         telegram: tgRows.length > 0,
         whatsapp: false,
@@ -10643,12 +10643,12 @@ function registerChannelRoutes(app2) {
         if (ch === "daemon") {
           const daemonMeta = row.metadata;
           const platform = daemonMeta?.platform || "desktop";
-          connected.daemon = isUserPaired(userId);
+          connected.daemon = isUserPaired(userId2);
           meta.daemon = { hostname: daemonMeta?.hostname, lastSeenAt: row.lastSeenAt, connected: connected.daemon, platform };
         } else if (ch === "discord") {
           connected.discord = true;
           const discordMeta = row.metadata;
-          const botStatus = getBotStatus(userId);
+          const botStatus = getBotStatus(userId2);
           meta.discord = {
             discordUsername: discordMeta?.discordUsername,
             botStatus,
@@ -10665,7 +10665,7 @@ function registerChannelRoutes(app2) {
         }
       }
       if (discordTok && !connected.discord) {
-        const botStatus = getBotStatus(userId);
+        const botStatus = getBotStatus(userId2);
         meta.discord = {
           hasBotToken: true,
           botStatus,
@@ -10691,7 +10691,7 @@ function registerChannelRoutes(app2) {
     }
   });
   app2.put("/api/channels/preferences", authMiddleware, async (req, res) => {
-    const userId = req.userId;
+    const userId2 = req.userId;
     const { notificationType, channels: channels2 } = req.body || {};
     if (!NOTIFICATION_TYPES.includes(notificationType)) {
       return res.status(400).json({ error: "invalid notificationType" });
@@ -10701,7 +10701,7 @@ function registerChannelRoutes(app2) {
     }
     try {
       const unique = [...new Set(channels2)];
-      await setPreference(userId, notificationType, unique);
+      await setPreference(userId2, notificationType, unique);
       res.json({ ok: true, notificationType, channels: unique });
     } catch (err) {
       console.error("[channels] preference update failed:", err);
@@ -10709,11 +10709,11 @@ function registerChannelRoutes(app2) {
     }
   });
   app2.post("/api/channels/whatsapp/code", authMiddleware, async (req, res) => {
-    const userId = req.userId;
+    const userId2 = req.userId;
     try {
       const code = generateCode3(6);
       const expiresAt = new Date(Date.now() + 15 * 60 * 1e3);
-      await db.insert(channelLinkCodes).values({ code, userId, channel: "whatsapp", expiresAt });
+      await db.insert(channelLinkCodes).values({ code, userId: userId2, channel: "whatsapp", expiresAt });
       res.json({ code, expiresAt, twilioNumber: process.env.TWILIO_WHATSAPP_NUMBER || null });
     } catch (err) {
       console.error("[channels] whatsapp code failed:", err);
@@ -10721,23 +10721,23 @@ function registerChannelRoutes(app2) {
     }
   });
   app2.delete("/api/channels/:channel", authMiddleware, async (req, res) => {
-    const userId = req.userId;
+    const userId2 = req.userId;
     const channel = req.params.channel;
     if (!CHANNEL_NAMES.includes(channel) || channel === "telegram") {
       return res.status(400).json({ error: "channel not unlinkable here" });
     }
     try {
       if (channel === "daemon") {
-        closeUserDaemon(userId);
+        closeUserDaemon(userId2);
       }
       if (channel === "discord") {
-        stopUserBot(userId);
-        await deleteUserToken(userId, "discord_bot").catch(() => {
+        stopUserBot(userId2);
+        await deleteUserToken(userId2, "discord_bot").catch(() => {
         });
-        await db.delete(channelLinkCodes).where(and22(eq27(channelLinkCodes.userId, userId), eq27(channelLinkCodes.channel, "discord"))).catch(() => {
+        await db.delete(channelLinkCodes).where(and22(eq27(channelLinkCodes.userId, userId2), eq27(channelLinkCodes.channel, "discord"))).catch(() => {
         });
       }
-      await db.delete(channelLinks).where(and22(eq27(channelLinks.userId, userId), eq27(channelLinks.channel, channel)));
+      await db.delete(channelLinks).where(and22(eq27(channelLinks.userId, userId2), eq27(channelLinks.channel, channel)));
       res.json({ ok: true });
     } catch (err) {
       console.error("[channels] unlink failed:", err);
@@ -10745,9 +10745,9 @@ function registerChannelRoutes(app2) {
     }
   });
   app2.get("/api/channels/daemon/permissions", authMiddleware, async (req, res) => {
-    const userId = req.userId;
+    const userId2 = req.userId;
     try {
-      const perms = await getDaemonPermissions(userId);
+      const perms = await getDaemonPermissions(userId2);
       res.json({ permissions: perms, defaults: DEFAULT_DAEMON_PERMISSIONS });
     } catch (err) {
       console.error("[channels] daemon permissions GET failed:", err);
@@ -10755,7 +10755,7 @@ function registerChannelRoutes(app2) {
     }
   });
   app2.put("/api/channels/daemon/permissions", authMiddleware, async (req, res) => {
-    const userId = req.userId;
+    const userId2 = req.userId;
     const incoming = req.body?.permissions || {};
     const ACTIONS2 = ["shell", "notify", "file_read", "file_write", "file_list"];
     const sanitized = {};
@@ -10763,7 +10763,7 @@ function registerChannelRoutes(app2) {
       if (k in incoming) sanitized[k] = !!incoming[k];
     }
     try {
-      const merged = await setDaemonPermissions(userId, sanitized);
+      const merged = await setDaemonPermissions(userId2, sanitized);
       res.json({ ok: true, permissions: merged });
     } catch (err) {
       console.error("[channels] daemon permissions PUT failed:", err);
@@ -10771,9 +10771,9 @@ function registerChannelRoutes(app2) {
     }
   });
   app2.post("/api/channels/daemon/code", authMiddleware, async (req, res) => {
-    const userId = req.userId;
+    const userId2 = req.userId;
     try {
-      const code = await createDaemonPairingCode(userId);
+      const code = await createDaemonPairingCode(userId2);
       res.json({ code, expiresInSec: 15 * 60 });
     } catch (err) {
       console.error("[channels] daemon code failed:", err);
@@ -10781,24 +10781,24 @@ function registerChannelRoutes(app2) {
     }
   });
   app2.post("/api/channels/daemon/exec", authMiddleware, async (req, res) => {
-    const userId = req.userId;
+    const userId2 = req.userId;
     const { sendDaemonOp: sendDaemonOp2, isUserPaired: paired } = await Promise.resolve().then(() => (init_bridge(), bridge_exports));
-    if (!paired(userId)) return res.status(409).json({ ok: false, error: "daemon not connected" });
+    if (!paired(userId2)) return res.status(409).json({ ok: false, error: "daemon not connected" });
     const { op } = req.body || {};
     const allowed = ["shell", "file_read", "file_write", "file_list", "notify"];
     if (!op || !allowed.includes(op.type)) {
       return res.status(400).json({ ok: false, error: "invalid op" });
     }
-    if (!await isDaemonActionAllowed(userId, op.type)) {
+    if (!await isDaemonActionAllowed(userId2, op.type)) {
       return res.status(403).json({ ok: false, error: `Action '${op.type}' is not permitted. Enable it in Profile \u2192 Connected Channels \u2192 Desktop Daemon \u2192 Permissions.` });
     }
-    const result = await sendDaemonOp2(userId, op, 3e4);
+    const result = await sendDaemonOp2(userId2, op, 3e4);
     res.json(result);
   });
   app2.get("/api/channels/android-daemon/permissions", authMiddleware, async (req, res) => {
-    const userId = req.userId;
+    const userId2 = req.userId;
     try {
-      const perms = await getAndroidDaemonPermissions(userId);
+      const perms = await getAndroidDaemonPermissions(userId2);
       res.json({ permissions: perms, defaults: DEFAULT_ANDROID_DAEMON_PERMISSIONS });
     } catch (err) {
       console.error("[channels] android daemon permissions GET failed:", err);
@@ -10806,7 +10806,7 @@ function registerChannelRoutes(app2) {
     }
   });
   app2.put("/api/channels/android-daemon/permissions", authMiddleware, async (req, res) => {
-    const userId = req.userId;
+    const userId2 = req.userId;
     const incoming = req.body?.permissions || {};
     const ANDROID_ACTIONS2 = [
       "android_screenshot",
@@ -10822,7 +10822,7 @@ function registerChannelRoutes(app2) {
       if (k in incoming) sanitized[k] = !!incoming[k];
     }
     try {
-      const merged = await setAndroidDaemonPermissions(userId, sanitized);
+      const merged = await setAndroidDaemonPermissions(userId2, sanitized);
       res.json({ ok: true, permissions: merged });
     } catch (err) {
       console.error("[channels] android daemon permissions PUT failed:", err);
@@ -10830,60 +10830,60 @@ function registerChannelRoutes(app2) {
     }
   });
   app2.post("/api/channels/discord/token", authMiddleware, async (req, res) => {
-    const userId = req.userId;
+    const userId2 = req.userId;
     const { botToken } = req.body || {};
     if (!botToken || typeof botToken !== "string" || botToken.trim().length < 20) {
       return res.status(400).json({ error: "Invalid bot token" });
     }
     try {
       await saveUserToken({
-        userId,
+        userId: userId2,
         provider: "discord_bot",
         accessToken: botToken.trim(),
         accountEmail: ""
       });
       try {
-        await startUserBot(userId, botToken.trim());
+        await startUserBot(userId2, botToken.trim());
       } catch (loginErr) {
-        await deleteUserToken(userId, "discord_bot").catch(() => {
+        await deleteUserToken(userId2, "discord_bot").catch(() => {
         });
         throw loginErr;
       }
-      res.json({ ok: true, botStatus: getBotStatus(userId) });
+      res.json({ ok: true, botStatus: getBotStatus(userId2) });
     } catch (err) {
       console.error("[channels] discord token save failed:", err);
       res.status(400).json({ ok: false, error: err?.message || "Failed to connect bot \u2014 check the token and ensure Message Content + Server Members intents are enabled in the Discord Developer Portal." });
     }
   });
   app2.post("/api/channels/discord/pair", authMiddleware, async (req, res) => {
-    const userId = req.userId;
+    const userId2 = req.userId;
     const { code } = req.body || {};
     if (!code || typeof code !== "string") {
       return res.status(400).json({ error: "code required" });
     }
-    const result = await completePairing(userId, code.trim().toUpperCase());
+    const result = await completePairing(userId2, code.trim().toUpperCase());
     if (!result.ok) return res.status(400).json({ error: result.error });
     res.json({ ok: true, discordUsername: result.discordUsername });
   });
   app2.get("/api/channels/discord/guilds", authMiddleware, async (req, res) => {
-    const userId = req.userId;
-    const guilds = getGuildsForUser(userId);
+    const userId2 = req.userId;
+    const guilds = getGuildsForUser(userId2);
     res.json({ guilds });
   });
   app2.get("/api/channels/discord/channels/:guildId", authMiddleware, async (req, res) => {
-    const userId = req.userId;
+    const userId2 = req.userId;
     const { guildId } = req.params;
-    const channels2 = await getChannelsForGuild(userId, guildId);
+    const channels2 = await getChannelsForGuild(userId2, guildId);
     res.json({ channels: channels2 });
   });
   app2.put("/api/channels/discord/allowlist", authMiddleware, async (req, res) => {
-    const userId = req.userId;
+    const userId2 = req.userId;
     const { guildId, guildName, channelId, channelName, requireMention } = req.body || {};
     if (!guildId || !channelId) {
       return res.status(400).json({ error: "guildId and channelId required" });
     }
     try {
-      const rows = await db.select().from(channelLinks).where(and22(eq27(channelLinks.userId, userId), eq27(channelLinks.channel, "discord"))).limit(1);
+      const rows = await db.select().from(channelLinks).where(and22(eq27(channelLinks.userId, userId2), eq27(channelLinks.channel, "discord"))).limit(1);
       if (!rows[0]) return res.status(404).json({ error: "Discord account not linked" });
       const meta = rows[0].metadata || {};
       const guilds = meta.allowlistedGuilds || [];
@@ -10900,7 +10900,7 @@ function registerChannelRoutes(app2) {
       } else {
         guilds.push(entry);
       }
-      await db.update(channelLinks).set({ metadata: { ...meta, allowlistedGuilds: guilds } }).where(and22(eq27(channelLinks.userId, userId), eq27(channelLinks.channel, "discord")));
+      await db.update(channelLinks).set({ metadata: { ...meta, allowlistedGuilds: guilds } }).where(and22(eq27(channelLinks.userId, userId2), eq27(channelLinks.channel, "discord")));
       res.json({ ok: true, allowlistedGuilds: guilds });
     } catch (err) {
       console.error("[channels] discord allowlist update failed:", err);
@@ -10908,16 +10908,16 @@ function registerChannelRoutes(app2) {
     }
   });
   app2.delete("/api/channels/discord/allowlist/:guildId/:channelId", authMiddleware, async (req, res) => {
-    const userId = req.userId;
+    const userId2 = req.userId;
     const { guildId, channelId } = req.params;
     try {
-      const rows = await db.select().from(channelLinks).where(and22(eq27(channelLinks.userId, userId), eq27(channelLinks.channel, "discord"))).limit(1);
+      const rows = await db.select().from(channelLinks).where(and22(eq27(channelLinks.userId, userId2), eq27(channelLinks.channel, "discord"))).limit(1);
       if (!rows[0]) return res.status(404).json({ error: "Discord account not linked" });
       const meta = rows[0].metadata || {};
       const guilds = (meta.allowlistedGuilds || []).filter(
         (g) => !(g.guildId === guildId && g.channelId === channelId)
       );
-      await db.update(channelLinks).set({ metadata: { ...meta, allowlistedGuilds: guilds } }).where(and22(eq27(channelLinks.userId, userId), eq27(channelLinks.channel, "discord")));
+      await db.update(channelLinks).set({ metadata: { ...meta, allowlistedGuilds: guilds } }).where(and22(eq27(channelLinks.userId, userId2), eq27(channelLinks.channel, "discord")));
       res.json({ ok: true, allowlistedGuilds: guilds });
     } catch (err) {
       console.error("[channels] discord allowlist delete failed:", err);
@@ -10925,11 +10925,11 @@ function registerChannelRoutes(app2) {
     }
   });
   app2.post("/api/channels/discord/workspace/setup", authMiddleware, async (req, res) => {
-    const userId = req.userId;
+    const userId2 = req.userId;
     const { guildId } = req.body;
     if (!guildId) return res.status(400).json({ error: "guildId is required" });
     try {
-      const result = await setupDiscordWorkspace(userId, guildId);
+      const result = await setupDiscordWorkspace(userId2, guildId);
       if (!result.ok) return res.status(400).json({ error: result.error });
       res.json({ ok: true, workspace: result.workspace, topics: WORKSPACE_TOPICS });
     } catch (err) {
@@ -11022,21 +11022,21 @@ async function getIntegrationOwnerId() {
     return null;
   }
 }
-async function claimIntegrationOwnership(userId) {
+async function claimIntegrationOwnership(userId2) {
   try {
     const existing = await getIntegrationOwnerId();
-    if (existing) return existing === userId;
-    await db.execute(sql14`INSERT INTO integration_owner (owner_user_id) VALUES (${userId})`);
-    cachedOwnerId = userId;
+    if (existing) return existing === userId2;
+    await db.execute(sql14`INSERT INTO integration_owner (owner_user_id) VALUES (${userId2})`);
+    cachedOwnerId = userId2;
     return true;
   } catch {
     return false;
   }
 }
-async function isIntegrationOwner(userId) {
+async function isIntegrationOwner(userId2) {
   const ownerId = await getIntegrationOwnerId();
   if (!ownerId) return false;
-  return ownerId === userId;
+  return ownerId === userId2;
 }
 var cachedOwnerId;
 var init_integrationOwner = __esm({
@@ -11049,11 +11049,11 @@ var init_integrationOwner = __esm({
 
 // server/memory/people.ts
 import { eq as eq28, and as and23, sql as sql15 } from "drizzle-orm";
-async function listPeople(userId) {
-  return db.select().from(people).where(eq28(people.userId, userId)).orderBy(sql15`COALESCE(${people.lastInteractionAt}, ${people.createdAt}) DESC`);
+async function listPeople(userId2) {
+  return db.select().from(people).where(eq28(people.userId, userId2)).orderBy(sql15`COALESCE(${people.lastInteractionAt}, ${people.createdAt}) DESC`);
 }
-async function deletePerson(userId, id) {
-  await db.delete(people).where(and23(eq28(people.userId, userId), eq28(people.id, id)));
+async function deletePerson(userId2, id) {
+  await db.delete(people).where(and23(eq28(people.userId, userId2), eq28(people.id, id)));
 }
 var init_people = __esm({
   "server/memory/people.ts"() {
@@ -11069,23 +11069,23 @@ __export(inboxActions_exports, {
   executeInboxAction: () => executeInboxAction
 });
 import { eq as eq29, and as and24 } from "drizzle-orm";
-async function getGoogleToken(userId) {
+async function getGoogleToken(userId2) {
   try {
-    const tokens = await getValidGoogleTokens(userId);
+    const tokens = await getValidGoogleTokens(userId2);
     return tokens?.[0] || null;
   } catch {
     return null;
   }
 }
-async function executeInboxAction(userId, itemId, actionType, telegramChatId) {
-  const [item] = await db.select().from(inboxItems).where(and24(eq29(inboxItems.id, itemId), eq29(inboxItems.userId, userId)));
+async function executeInboxAction(userId2, itemId, actionType, telegramChatId) {
+  const [item] = await db.select().from(inboxItems).where(and24(eq29(inboxItems.id, itemId), eq29(inboxItems.userId, userId2)));
   if (!item) {
     return { success: false, message: "Item not found" };
   }
   switch (actionType) {
     case "dismiss": {
       if (item.sourceType === "email") {
-        const result = await learnFromDismissal(userId, itemId, telegramChatId);
+        const result = await learnFromDismissal(userId2, itemId, telegramChatId);
         return {
           success: true,
           message: result.learned ? `Dismissed. Jarvis learned to suppress ${result.ruleName}` : "Dismissed",
@@ -11100,7 +11100,7 @@ async function executeInboxAction(userId, itemId, actionType, telegramChatId) {
       const pattern = senderDomain ? `Auto: suppress ${senderDomain}` : `Auto: suppress "${item.subject || item.sender}"`;
       const matchHints = senderDomain ? { domains: [senderDomain] } : { subjectKeywords: [(item.subject || "").toLowerCase()] };
       await db.insert(inboxRules).values({
-        userId,
+        userId: userId2,
         type: "suppress",
         scope: item.sourceType === "calendar" ? "calendar" : "email",
         pattern,
@@ -11115,7 +11115,7 @@ async function executeInboxAction(userId, itemId, actionType, telegramChatId) {
         return { success: false, message: "Archive only works for emails" };
       }
       const rawId = (item.sourceId || "").replace(/^gmail:/, "");
-      const token = await getGoogleToken(userId);
+      const token = await getGoogleToken(userId2);
       if (!token) {
         return { success: false, message: "No Google connection found" };
       }
@@ -11132,7 +11132,7 @@ async function executeInboxAction(userId, itemId, actionType, telegramChatId) {
         return { success: false, message: "Only works for emails" };
       }
       const rawId = (item.sourceId || "").replace(/^gmail:/, "");
-      const token = await getGoogleToken(userId);
+      const token = await getGoogleToken(userId2);
       if (!token) {
         return { success: false, message: "No Google connection found" };
       }
@@ -11146,7 +11146,7 @@ async function executeInboxAction(userId, itemId, actionType, telegramChatId) {
     }
     case "save_as_task": {
       const taskTitle = item.subject || item.snippet || "Untitled task";
-      const plans2 = await db.select().from(plans).where(eq29(plans.userId, userId));
+      const plans2 = await db.select().from(plans).where(eq29(plans.userId, userId2));
       const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
       const existingPlan = plans2.find((p) => p.date === today);
       const planData = existingPlan?.data || { tasks: [] };
@@ -11161,7 +11161,7 @@ async function executeInboxAction(userId, itemId, actionType, telegramChatId) {
       };
       tasks.push(newTask);
       planData.tasks = tasks;
-      await db.insert(plans).values({ userId, date: today, data: planData }).onConflictDoUpdate({
+      await db.insert(plans).values({ userId: userId2, date: today, data: planData }).onConflictDoUpdate({
         target: [plans.userId, plans.date],
         set: { data: planData, updatedAt: /* @__PURE__ */ new Date() }
       });
@@ -11174,7 +11174,7 @@ async function executeInboxAction(userId, itemId, actionType, telegramChatId) {
       }
       const prepTitle = `Prep: ${item.subject || "upcoming meeting"}`;
       const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
-      const plans2 = await db.select().from(plans).where(eq29(plans.userId, userId));
+      const plans2 = await db.select().from(plans).where(eq29(plans.userId, userId2));
       const existingPlan = plans2.find((p) => p.date === today);
       const planData = existingPlan?.data || { tasks: [] };
       const tasks = Array.isArray(planData.tasks) ? planData.tasks : [];
@@ -11188,7 +11188,7 @@ async function executeInboxAction(userId, itemId, actionType, telegramChatId) {
       };
       tasks.push(prepTask);
       planData.tasks = tasks;
-      await db.insert(plans).values({ userId, date: today, data: planData }).onConflictDoUpdate({
+      await db.insert(plans).values({ userId: userId2, date: today, data: planData }).onConflictDoUpdate({
         target: [plans.userId, plans.date],
         set: { data: planData, updatedAt: /* @__PURE__ */ new Date() }
       });
@@ -11197,12 +11197,12 @@ async function executeInboxAction(userId, itemId, actionType, telegramChatId) {
     }
     case "save_to_focus": {
       const contextText = `${item.subject || ""} \u2014 ${item.snippet || ""}`.trim();
-      const [existing] = await db.select().from(lifeContext).where(eq29(lifeContext.userId, userId));
+      const [existing] = await db.select().from(lifeContext).where(eq29(lifeContext.userId, userId2));
       const data = existing?.data || {};
       const freeText = (data.freeText || "") + `
 [From ${item.sourceType}] ${contextText}`;
       data.freeText = freeText.trim();
-      await db.insert(lifeContext).values({ userId, data }).onConflictDoUpdate({
+      await db.insert(lifeContext).values({ userId: userId2, data }).onConflictDoUpdate({
         target: lifeContext.userId,
         set: { data, updatedAt: /* @__PURE__ */ new Date() }
       });
@@ -11229,28 +11229,29 @@ import { createServer } from "node:http";
 import OpenAI12 from "openai";
 import { eq as eq30, and as and25, desc as desc10, sql as sql16, gte as gte4 } from "drizzle-orm";
 import { YoutubeTranscript } from "youtube-transcript";
+import ytSearch from "yt-search";
 function getPersonaBlock(coachingMode) {
   return PERSONA_BLOCKS[coachingMode || "sharp"] || PERSONA_BLOCKS.sharp;
 }
-async function getUserLocalDate(userId) {
+async function getUserLocalDate(userId2) {
   try {
-    const prefs = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq30(userPreferences.userId, userId)).limit(1);
+    const prefs = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq30(userPreferences.userId, userId2)).limit(1);
     const tz = prefs[0]?.data?.timezone || "America/New_York";
     return (/* @__PURE__ */ new Date()).toLocaleDateString("en-CA", { timeZone: tz });
   } catch {
     return (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
   }
 }
-async function getMorningNoteSummary(userId) {
-  const today = await getUserLocalDate(userId);
-  const cached = morningNoteSummaryCache.get(userId);
+async function getMorningNoteSummary(userId2) {
+  const today = await getUserLocalDate(userId2);
+  const cached = morningNoteSummaryCache.get(userId2);
   if (cached && cached.date === today) return cached.summary;
   try {
     const thirtyDaysAgo = /* @__PURE__ */ new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
     const cutoffDate = thirtyDaysAgo.toISOString().slice(0, 10);
     const notes = await db.select().from(morningVoiceNotes).where(and25(
-      eq30(morningVoiceNotes.userId, userId),
+      eq30(morningVoiceNotes.userId, userId2),
       gte4(morningVoiceNotes.recordedAt, cutoffDate)
     )).orderBy(desc10(morningVoiceNotes.recordedAt)).limit(30);
     if (notes.length === 0) return "";
@@ -11281,7 +11282,7 @@ async function getMorningNoteSummary(userId) {
     if (recentIntentions.length > 0) summary += `- Recent intentions: ${recentIntentions.slice(0, 3).map((i) => `"${i}"`).join(", ")}
 `;
     summary += `Use these patterns to provide personalized coaching. Reference specific trends when relevant.`;
-    morningNoteSummaryCache.set(userId, { summary, date: today });
+    morningNoteSummaryCache.set(userId2, { summary, date: today });
     return summary;
   } catch {
     return "";
@@ -11447,7 +11448,7 @@ You can take real actions on connected services. Use these tools proactively whe
 **Critical rule**: Never claim you can or cannot access a service without first calling check_connections. Never promise to send an email, create a calendar event, or run a daemon command if you haven't verified the service is connected. When a user asks to connect any channel, always call connect_channel rather than giving manual instructions.`;
 }
 async function buildPlanFromInputs(body) {
-  const { goals: goals2, calendarEvents, gmailItems, brainDump, completionHistory: completionHistory2, energyLevel, coachingMode, existingTasks, userId } = body;
+  const { goals: goals2, calendarEvents, gmailItems, brainDump, completionHistory: completionHistory2, energyLevel, coachingMode, existingTasks, userId: userId2 } = body;
   const goalsText = Array.isArray(goals2) && goals2.length > 0 ? goals2.map((g) => `- ${g.title} (${g.category}): ${g.current}/${g.target} ${g.unit} \u2014 ${Math.round(g.current / Math.max(g.target, 1) * 100)}% complete`).join("\n") : "No goals set";
   const calendarText = Array.isArray(calendarEvents) && calendarEvents.length > 0 ? calendarEvents.map((e) => `- ${e.time ? e.time + ": " : ""}${e.title}${e.description ? " (" + e.description + ")" : ""}`).join("\n") : "No calendar events today";
   const gmailText = Array.isArray(gmailItems) && gmailItems.length > 0 ? gmailItems.slice(0, 20).map((e) => `- From: ${e.from || "unknown"} | "${e.subject}" \u2014 ${e.snippet}`).join("\n") : "No emails available";
@@ -11481,7 +11482,7 @@ Left undone recently: ${skipped.map((h) => h.title).join(", ") || "none"}`;
     ...Array.isArray(goals2) ? goals2.slice(0, 3).map((g) => g?.title).filter(Boolean) : [],
     ...Array.isArray(brainDump) ? brainDump.slice(0, 3).map((b) => b?.text || b).filter(Boolean) : []
   ].join(" \u2022 ");
-  const { soulSection: planSoul, patternSection: planPatterns, memorySection: planMemories } = await buildAiContextSections2(typeof userId === "string" ? userId : void 0, planSeed);
+  const { soulSection: planSoul, patternSection: planPatterns, memorySection: planMemories } = await buildAiContextSections2(typeof userId2 === "string" ? userId2 : void 0, planSeed);
   const prompt = `You are Jarvis, an autonomous planning AI. Build a realistic, prioritized daily plan for this person.
 
 Today is ${dayOfWeek}, ${dateStr}.${planSoul}${planPatterns}${planMemories}
@@ -11550,16 +11551,16 @@ Return ONLY the JSON object.`;
     return { reasoning: "", tasks: [] };
   }
 }
-async function buildPlanForUser(userId) {
+async function buildPlanForUser(userId2) {
   try {
     const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
     const [goalsRow, historyRow, brainDumpRow, lifeContextRow, prefsRow, energyRow] = await Promise.all([
-      db.select({ data: goals.data }).from(goals).where(eq30(goals.userId, userId)),
-      db.select({ data: completionHistory.data }).from(completionHistory).where(eq30(completionHistory.userId, userId)),
-      db.select({ data: brainDumpInbox.data }).from(brainDumpInbox).where(eq30(brainDumpInbox.userId, userId)),
-      db.select({ data: lifeContext.data }).from(lifeContext).where(eq30(lifeContext.userId, userId)),
-      db.select({ data: userPreferences.data }).from(userPreferences).where(eq30(userPreferences.userId, userId)),
-      db.select({ data: energyCheckins.data }).from(energyCheckins).where(and25(eq30(energyCheckins.userId, userId), eq30(energyCheckins.date, today)))
+      db.select({ data: goals.data }).from(goals).where(eq30(goals.userId, userId2)),
+      db.select({ data: completionHistory.data }).from(completionHistory).where(eq30(completionHistory.userId, userId2)),
+      db.select({ data: brainDumpInbox.data }).from(brainDumpInbox).where(eq30(brainDumpInbox.userId, userId2)),
+      db.select({ data: lifeContext.data }).from(lifeContext).where(eq30(lifeContext.userId, userId2)),
+      db.select({ data: userPreferences.data }).from(userPreferences).where(eq30(userPreferences.userId, userId2)),
+      db.select({ data: energyCheckins.data }).from(energyCheckins).where(and25(eq30(energyCheckins.userId, userId2), eq30(energyCheckins.date, today)))
     ]);
     const goals2 = goalsRow[0]?.data || [];
     const completionHistory2 = historyRow[0]?.data || [];
@@ -11571,7 +11572,7 @@ async function buildPlanForUser(userId) {
     let calendarEvents = [];
     let gmailItems = [];
     try {
-      const googleTokens = await getValidGoogleTokens(userId);
+      const googleTokens = await getValidGoogleTokens(userId2);
       if (googleTokens.length > 0) {
         const startTime = (/* @__PURE__ */ new Date(today + "T00:00:00")).toISOString();
         const endTime = (/* @__PURE__ */ new Date(today + "T23:59:59")).toISOString();
@@ -11585,7 +11586,7 @@ async function buildPlanForUser(userId) {
     } catch {
     }
     try {
-      const googleTokens = await getValidGoogleTokens(userId);
+      const googleTokens = await getValidGoogleTokens(userId2);
       if (googleTokens.length > 0) {
         gmailItems = await getRecentEmailCommitments(7, googleTokens[0]);
       }
@@ -11606,12 +11607,12 @@ async function buildPlanForUser(userId) {
       energyLevel: energyLevel ?? 3,
       coachingMode,
       existingTasks: [],
-      userId
+      userId: userId2
     });
     if (!result || result.tasks.length === 0) return null;
     return result;
   } catch (err) {
-    console.error(`buildPlanForUser failed for ${userId}:`, err);
+    console.error(`buildPlanForUser failed for ${userId2}:`, err);
     return null;
   }
 }
@@ -11926,8 +11927,23 @@ async function registerRoutes(app2) {
     {
       type: "function",
       function: {
+        name: "search_youtube",
+        description: "Search YouTube server-side and return structured results with title, channel name, view count, published date, duration, and video ID \u2014 without touching the phone. Use this BEFORE opening a video so you can intelligently pick the best result (reputable channel, high views, recent date). Returns up to 10 results. Then use fetch_youtube_transcript to get the transcript of the chosen video, and android_browse to open it on the phone.",
+        parameters: {
+          type: "object",
+          properties: {
+            query: { type: "string", description: "Search query, e.g. 'how to improve focus ADHD'" },
+            maxResults: { type: "number", description: "Number of results to return (1-10, default 8)" }
+          },
+          required: ["query"]
+        }
+      }
+    },
+    {
+      type: "function",
+      function: {
         name: "fetch_youtube_transcript",
-        description: "Fetch the full transcript of a YouTube video server-side without touching the phone. Use this INSTEAD of trying to navigate YouTube's UI transcript viewer. Works from a video URL (https://youtube.com/watch?v=...) or just the video ID. Call this after the daemon has opened/navigated to the video and you know the video URL or ID \u2014 or use web_search to find the video ID first. Returns the transcript as plain text that you can then summarize or answer questions about.",
+        description: "Fetch the COMPLETE transcript/captions of a YouTube video server-side \u2014 returns the full text with no truncation. Use this INSTEAD of navigating YouTube's transcript UI on the phone (never tap through 3-dot menus). Call it with the video ID after search_youtube or after reading the video ID from android_read_screen. The transcript can be long for lengthy videos \u2014 use it to answer questions, summarize content, or extract specific information.",
         parameters: {
           type: "object",
           properties: {
@@ -11968,12 +11984,12 @@ async function registerRoutes(app2) {
       if (entry.expiresAt < now) pendingConfirmations.delete(token);
     }
   }, 6e4);
-  async function executeCoachTool(toolName, args, userId) {
+  async function executeCoachTool(toolName, args, userId2) {
     const todayKey = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
     try {
       switch (toolName) {
         case "add_task": {
-          const planResult = await db.select({ data: plans.data }).from(plans).where(and25(eq30(plans.userId, userId), eq30(plans.date, todayKey)));
+          const planResult = await db.select({ data: plans.data }).from(plans).where(and25(eq30(plans.userId, userId2), eq30(plans.date, todayKey)));
           const plan = planResult.length > 0 ? planResult[0].data : { date: todayKey, tasks: [], greeting: "", insight: "" };
           const tasks = Array.isArray(plan.tasks) ? plan.tasks : [];
           const catMap = { health: "fitness", work: "career", learning: "personal" };
@@ -11987,42 +12003,42 @@ async function registerRoutes(app2) {
           };
           tasks.push(newTask);
           const updatedPlan = { ...plan, tasks };
-          await db.insert(plans).values({ userId, date: todayKey, data: updatedPlan, updatedAt: /* @__PURE__ */ new Date() }).onConflictDoUpdate({
+          await db.insert(plans).values({ userId: userId2, date: todayKey, data: updatedPlan, updatedAt: /* @__PURE__ */ new Date() }).onConflictDoUpdate({
             target: [plans.userId, plans.date],
             set: { data: updatedPlan, updatedAt: /* @__PURE__ */ new Date() }
           });
           return { result: "success", label: `Task added to today`, detail: `Added "${args.title}"` };
         }
         case "add_to_brain_dump": {
-          const bdResult = await db.select({ data: brainDumpInbox.data }).from(brainDumpInbox).where(eq30(brainDumpInbox.userId, userId));
+          const bdResult = await db.select({ data: brainDumpInbox.data }).from(brainDumpInbox).where(eq30(brainDumpInbox.userId, userId2));
           const items = bdResult.length > 0 ? Array.isArray(bdResult[0].data) ? bdResult[0].data : [] : [];
           items.unshift({
             id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
             text: args.text,
             createdAt: (/* @__PURE__ */ new Date()).toISOString()
           });
-          await db.insert(brainDumpInbox).values({ userId, data: items, updatedAt: /* @__PURE__ */ new Date() }).onConflictDoUpdate({
+          await db.insert(brainDumpInbox).values({ userId: userId2, data: items, updatedAt: /* @__PURE__ */ new Date() }).onConflictDoUpdate({
             target: [brainDumpInbox.userId],
             set: { data: items, updatedAt: /* @__PURE__ */ new Date() }
           });
           return { result: "success", label: `Added to brain dump`, detail: `Added "${args.text}"` };
         }
         case "log_goal_progress": {
-          const goalsResult = await db.select({ data: goals.data }).from(goals).where(eq30(goals.userId, userId));
+          const goalsResult = await db.select({ data: goals.data }).from(goals).where(eq30(goals.userId, userId2));
           if (goalsResult.length === 0) return { result: "error", label: "No goals found", detail: "User has no goals set" };
           const goalsList = Array.isArray(goalsResult[0].data) ? goalsResult[0].data : [];
           const matched = goalsList.find((g) => fuzzyMatch(args.goalTitle, g.title));
           if (!matched) return { result: "error", label: `Goal not found`, detail: `Could not find goal matching "${args.goalTitle}"` };
           matched.current = (matched.current || 0) + args.amount;
           matched.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
-          await db.insert(goals).values({ userId, data: goalsList, updatedAt: /* @__PURE__ */ new Date() }).onConflictDoUpdate({
+          await db.insert(goals).values({ userId: userId2, data: goalsList, updatedAt: /* @__PURE__ */ new Date() }).onConflictDoUpdate({
             target: [goals.userId],
             set: { data: goalsList, updatedAt: /* @__PURE__ */ new Date() }
           });
           return { result: "success", label: `Progress logged`, detail: `Added ${args.amount} to "${matched.title}"` };
         }
         case "update_life_context": {
-          const lcResult = await db.select({ data: lifeContext.data }).from(lifeContext).where(eq30(lifeContext.userId, userId));
+          const lcResult = await db.select({ data: lifeContext.data }).from(lifeContext).where(eq30(lifeContext.userId, userId2));
           const existing = lcResult.length > 0 ? lcResult[0].data : {};
           const merged = { ...existing };
           if (args.priorityGoal) merged.priorityGoal = args.priorityGoal;
@@ -12031,7 +12047,7 @@ async function registerRoutes(app2) {
           if (args.upcomingDeadline) merged.upcomingDeadline = args.upcomingDeadline;
           if (args.freeText) merged.freeText = args.freeText;
           merged.lastUpdated = (/* @__PURE__ */ new Date()).toISOString();
-          await db.insert(lifeContext).values({ userId, data: merged, updatedAt: /* @__PURE__ */ new Date() }).onConflictDoUpdate({
+          await db.insert(lifeContext).values({ userId: userId2, data: merged, updatedAt: /* @__PURE__ */ new Date() }).onConflictDoUpdate({
             target: [lifeContext.userId],
             set: { data: merged, updatedAt: /* @__PURE__ */ new Date() }
           });
@@ -12039,7 +12055,7 @@ async function registerRoutes(app2) {
           return { result: "success", label: `Context updated`, detail: `Updated: ${updatedFields}` };
         }
         case "complete_task": {
-          const planResult = await db.select({ data: plans.data }).from(plans).where(and25(eq30(plans.userId, userId), eq30(plans.date, todayKey)));
+          const planResult = await db.select({ data: plans.data }).from(plans).where(and25(eq30(plans.userId, userId2), eq30(plans.date, todayKey)));
           if (planResult.length === 0) return { result: "error", label: "No plan today", detail: "No plan found for today" };
           const plan = planResult[0].data;
           const tasks = Array.isArray(plan.tasks) ? plan.tasks : [];
@@ -12047,7 +12063,7 @@ async function registerRoutes(app2) {
           if (!matched) return { result: "error", label: `Task not found`, detail: `Could not find incomplete task matching "${args.taskTitle}"` };
           matched.completed = true;
           const updatedPlan = { ...plan, tasks };
-          await db.insert(plans).values({ userId, date: todayKey, data: updatedPlan, updatedAt: /* @__PURE__ */ new Date() }).onConflictDoUpdate({
+          await db.insert(plans).values({ userId: userId2, date: todayKey, data: updatedPlan, updatedAt: /* @__PURE__ */ new Date() }).onConflictDoUpdate({
             target: [plans.userId, plans.date],
             set: { data: updatedPlan, updatedAt: /* @__PURE__ */ new Date() }
           });
@@ -12056,12 +12072,12 @@ async function registerRoutes(app2) {
               const { extractAndStore: extractAndStore2 } = await Promise.resolve().then(() => (init_extractor(), extractor_exports));
               const { markSoulStale: markSoulStale2 } = await Promise.resolve().then(() => (init_soul(), soul_exports));
               await extractAndStore2({
-                userId,
+                userId: userId2,
                 source: `User just completed task: "${matched.title}". Notes: ${matched.notes || "(none)"}.`,
                 sourceType: "plan_completion",
                 sourceRef: `${todayKey}:${matched.title}`
               });
-              await markSoulStale2(userId);
+              await markSoulStale2(userId2);
             } catch (extractErr) {
               console.error("[Phase4] plan-completion extract failed:", extractErr);
             }
@@ -12089,14 +12105,14 @@ async function registerRoutes(app2) {
         }
         case "check_connections": {
           const [googleToken, msToken, oauthStatus, tgRows, chRows] = await Promise.all([
-            getValidGoogleToken(userId).catch(() => null),
-            getValidMicrosoftToken(userId).catch(() => null),
-            getUserOAuthStatus(userId).catch(() => ({})),
-            db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq30(telegramLinks.userId, userId)).limit(1),
-            db.select().from(channelLinks).where(eq30(channelLinks.userId, userId))
+            getValidGoogleToken(userId2).catch(() => null),
+            getValidMicrosoftToken(userId2).catch(() => null),
+            getUserOAuthStatus(userId2).catch(() => ({})),
+            db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq30(telegramLinks.userId, userId2)).limit(1),
+            db.select().from(channelLinks).where(eq30(channelLinks.userId, userId2))
           ]);
-          const daemonOnline = isUserPaired(userId);
-          const isAndroid = daemonOnline ? await isAndroidDaemonActive(userId) : false;
+          const daemonOnline = isUserPaired(userId2);
+          const isAndroid = daemonOnline ? await isAndroidDaemonActive(userId2) : false;
           const googleEmail = oauthStatus?.google?.email || oauthStatus?.google?.accounts?.[0]?.email || "unknown";
           const msEmail = oauthStatus?.microsoft?.email || oauthStatus?.microsoft?.accounts?.[0]?.email || "unknown";
           const slackConnectedCheck = oauthStatus?.slack?.connected ?? false;
@@ -12127,7 +12143,7 @@ async function registerRoutes(app2) {
               scope: "openid email https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/drive.file",
               access_type: "offline",
               prompt: "consent",
-              state: userId
+              state: userId2
             });
             const url = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
             return { result: "success", label: "Reconnect Google", detail: JSON.stringify({ url, buttonLabel: "Reconnect Google", provider: "google" }) };
@@ -12140,7 +12156,7 @@ async function registerRoutes(app2) {
               redirect_uri: `${baseUrl}/api/oauth/microsoft/callback`,
               response_type: "code",
               scope: "offline_access Calendars.ReadWrite Mail.ReadWrite Mail.Send User.Read",
-              state: userId,
+              state: userId2,
               response_mode: "query"
             });
             const url = `https://login.microsoftonline.com/common/oauth2/v2.0/authorize?${params.toString()}`;
@@ -12157,13 +12173,13 @@ async function registerRoutes(app2) {
           const provider = String(args.provider || "google").toLowerCase();
           if (!title || !start || !end) return { result: "error", label: "Missing fields", detail: "title, start, and end are required." };
           if (provider === "google") {
-            const tokens = await getValidGoogleTokens(userId);
+            const tokens = await getValidGoogleTokens(userId2);
             if (!tokens.length) return { result: "error", label: "Google not connected", detail: "Connect Google in Profile to create calendar events." };
             const result = await createGoogleCalendarEvent(tokens[0], { title, start, end, description, location });
             return { result: "success", label: `Event created: ${title}`, detail: result.htmlLink || `Created on ${start.slice(0, 10)}` };
           }
           if (provider === "microsoft") {
-            const msToken = await getValidMicrosoftToken(userId);
+            const msToken = await getValidMicrosoftToken(userId2);
             if (!msToken) return { result: "error", label: "Microsoft not connected", detail: "Connect Microsoft in Profile to create Outlook calendar events." };
             await createOutlookCalendarEvent(msToken, { title, start, end, description, location });
             return { result: "success", label: `Event created: ${title}`, detail: `Created on ${start.slice(0, 10)}` };
@@ -12177,7 +12193,7 @@ async function registerRoutes(app2) {
             return d.toISOString().slice(0, 10);
           };
           var addDaysLocal = addDaysLocal2;
-          const tokens = await getValidGoogleTokens(userId);
+          const tokens = await getValidGoogleTokens(userId2);
           if (!tokens.length) return { result: "error", label: "Google not connected", detail: "Connect Google in Profile to fetch calendar events." };
           const startDate = String(args.date || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10));
           const days = Math.min(Math.max(Number(args.days) || 1, 1), 14);
@@ -12204,14 +12220,14 @@ ${lines.join("\n")}`);
           const provider = String(args.provider || "google").toLowerCase();
           const count = Math.min(Number(args.count) || 10, 25);
           if (provider === "google") {
-            const tokens = await getValidGoogleTokens(userId);
+            const tokens = await getValidGoogleTokens(userId2);
             if (!tokens.length) return { result: "error", label: "Gmail not connected", detail: "Connect Google in Profile to fetch emails." };
             const emails = await getRecentEmailCommitments(14, tokens[0]);
             const recent = emails.slice(0, count).map((e) => `- From: ${e.from || "unknown"} | "${e.subject}" \u2014 ${e.snippet}`).join("\n");
             return { result: "success", label: `Fetched ${Math.min(emails.length, count)} Gmail emails`, detail: recent || "No emails found." };
           }
           if (provider === "microsoft") {
-            const msToken = await getValidMicrosoftToken(userId);
+            const msToken = await getValidMicrosoftToken(userId2);
             if (!msToken) return { result: "error", label: "Outlook not connected", detail: "Connect Microsoft in Profile to fetch emails." };
             const emails = await getRecentOutlookEmails(msToken, count);
             const text2 = emails.map((e) => `- From: ${e.from} | "${e.subject}" \u2014 ${e.snippet}`).join("\n");
@@ -12231,23 +12247,23 @@ ${lines.join("\n")}`);
           if (provider === "google") {
             let token = null;
             if (accountHint) {
-              const allTokens = await getUserTokens(userId, "google");
+              const allTokens = await getUserTokens(userId2, "google");
               const match = allTokens.find((t) => (t.accountEmail || "").toLowerCase() === accountHint);
               if (match) {
                 if (match.expiresAt && match.expiresAt.getTime() < Date.now() + 6e4) {
-                  token = await getValidGoogleToken(userId);
+                  token = await getValidGoogleToken(userId2);
                 } else {
                   token = match.accessToken;
                 }
               }
             }
-            if (!token) token = await getValidGoogleToken(userId);
+            if (!token) token = await getValidGoogleToken(userId2);
             if (!token) return { result: "error", label: "Gmail not connected", detail: "Connect Google in Profile to send emails." };
             const result = await sendGmailEmail(token, to, subject, body);
             return { result: "success", label: `Email sent to ${to}`, detail: `Gmail message ID: ${result.messageId}` };
           }
           if (provider === "microsoft") {
-            const msToken = await getValidMicrosoftToken(userId);
+            const msToken = await getValidMicrosoftToken(userId2);
             if (!msToken) return { result: "error", label: "Outlook not connected", detail: "Connect Microsoft in Profile to send emails." };
             await sendOutlookEmail(msToken, to, subject, body);
             return { result: "success", label: `Email sent to ${to}`, detail: `Sent via Outlook` };
@@ -12256,10 +12272,10 @@ ${lines.join("\n")}`);
         }
         case "daemon_action": {
           const action = String(args.action || "");
-          if (!isUserPaired(userId)) {
+          if (!isUserPaired(userId2)) {
             return { result: "error", label: "Daemon not connected", detail: "No daemon paired. Install and pair either the desktop daemon or the Android APK from Profile \u2192 Connected Channels." };
           }
-          const isAndroidDaemon = await isAndroidDaemonActive(userId);
+          const isAndroidDaemon = await isAndroidDaemonActive(userId2);
           const androidActions = ["android_open_app", "android_browse", "android_screenshot", "android_read_screen", "android_tap", "android_type", "android_swipe", "android_press_key", "android_file_list", "android_file_read", "android_notifications_list", "android_wait", "notify"];
           const desktopActions = ["shell", "notify", "file_read", "file_write", "file_list"];
           let op;
@@ -12280,7 +12296,7 @@ ${lines.join("\n")}`);
               // served from server cache — no daemon permission needed
             };
             const permKey = permMap[action];
-            if (permKey && !await isAndroidDaemonActionAllowed(userId, permKey)) {
+            if (permKey && !await isAndroidDaemonActionAllowed(userId2, permKey)) {
               return { result: "error", label: `Permission denied`, detail: `Android action '${action}' is not permitted. Enable it in Profile \u2192 Connected Channels \u2192 Android Device \u2192 Permissions.` };
             }
             if (action === "android_open_app") {
@@ -12289,8 +12305,8 @@ ${lines.join("\n")}`);
             } else if (action === "android_browse") {
               if (!args.url) return { result: "error", label: "url required", detail: "Provide url for android_browse." };
               let browseUrl = String(args.url);
-              const ytSearch = browseUrl.match(/(?:https?:\/\/)?(?:www\.)?youtube\.com\/results\?search_query=([^&]+)/);
-              if (ytSearch) browseUrl = `vnd.youtube://results?search_query=${ytSearch[1]}`;
+              const ytSearch2 = browseUrl.match(/(?:https?:\/\/)?(?:www\.)?youtube\.com\/results\?search_query=([^&]+)/);
+              if (ytSearch2) browseUrl = `vnd.youtube://results?search_query=${ytSearch2[1]}`;
               const ytWatch = browseUrl.match(/(?:https?:\/\/)?(?:www\.)?youtube\.com\/watch\?v=([^&]+)/);
               if (ytWatch) browseUrl = `vnd.youtube://watch?v=${ytWatch[1]}`;
               op = { type: "android_browse", url: browseUrl };
@@ -12306,7 +12322,7 @@ ${lines.join("\n")}`);
               op = { type: "android_type", text: String(args.text), submit: !!args.submit };
             } else if (action === "android_notifications_list") {
               const limit = typeof args.limit === "number" ? Math.min(args.limit, 60) : 20;
-              const daemonNotifResult = await sendDaemonOp(userId, { type: "android_notifications_list", limit }, 1e4);
+              const daemonNotifResult = await sendDaemonOp(userId2, { type: "android_notifications_list", limit }, 1e4);
               if (daemonNotifResult.ok) {
                 const d = daemonNotifResult.data;
                 const listenerEnabled = !!d?.listenerEnabled;
@@ -12344,11 +12360,11 @@ ${formatted}`
                     detail: "The notification listener is active on the phone and reports zero current notifications. The tray is clear."
                   };
                 }
-                console.warn(`[daemon] android_notifications_list: listenerEnabled=false for userId=${userId}, falling back to shade`);
+                console.warn(`[daemon] android_notifications_list: listenerEnabled=false for userId=${userId2}, falling back to shade`);
               } else {
                 console.warn(`[daemon] android_notifications_list direct op failed (${daemonNotifResult.error}), falling back to shade`);
               }
-              const swipeOp = await sendDaemonOp(userId, {
+              const swipeOp = await sendDaemonOp(userId2, {
                 type: "android_swipe",
                 x1: 540,
                 y1: 10,
@@ -12364,8 +12380,8 @@ ${formatted}`
                 };
               }
               await new Promise((r) => setTimeout(r, 700));
-              const shadeReadOp = await sendDaemonOp(userId, { type: "android_read_screen" }, 1e4);
-              sendDaemonOp(userId, { type: "android_press_key", key: "back" }, 5e3).catch(() => {
+              const shadeReadOp = await sendDaemonOp(userId2, { type: "android_read_screen" }, 1e4);
+              sendDaemonOp(userId2, { type: "android_press_key", key: "back" }, 5e3).catch(() => {
               });
               if (!shadeReadOp.ok) {
                 return {
@@ -12412,7 +12428,7 @@ ${shadeText}`
             }
           } else if (desktopActions.includes(action)) {
             if (isAndroidDaemon) return { result: "error", label: "Wrong daemon type", detail: `Action '${action}' is desktop-only. Use android_* actions for the connected Android daemon.` };
-            if (!await isDaemonActionAllowed(userId, action)) {
+            if (!await isDaemonActionAllowed(userId2, action)) {
               return { result: "error", label: `Action '${action}' not permitted`, detail: `Enable '${action}' in Profile \u2192 Connected Channels \u2192 Desktop Daemon \u2192 Permissions.` };
             }
             if (action === "shell") {
@@ -12434,7 +12450,7 @@ ${shadeText}`
             return { result: "error", label: "Unknown action", detail: `Unknown daemon action: ${action}` };
           }
           if (action.startsWith("android_") && action !== "android_notifications_list") {
-            const preflightResult = await pingDaemon(userId, 5e3);
+            const preflightResult = await pingDaemon(userId2, 5e3);
             if (!preflightResult.ok) {
               return {
                 result: "error",
@@ -12462,7 +12478,7 @@ ${shadeText}`
             file_list: 8e3
           };
           const timeoutMs = actionTimeouts[action] ?? 12e3;
-          const daemonResult = await sendDaemonOp(userId, op, timeoutMs);
+          const daemonResult = await sendDaemonOp(userId2, op, timeoutMs);
           if (!daemonResult.ok) return { result: "error", label: "Daemon action failed", detail: daemonResult.error || "Unknown error" };
           if (action === "android_screenshot" && daemonResult.data) {
             const data = daemonResult.data;
@@ -12477,11 +12493,11 @@ ${shadeText}`
           return { result: "success", label: `Daemon: ${action}`, detail: JSON.stringify(daemonResult.data || {}).slice(0, 2e3) };
         }
         case "daemon_diagnostic": {
-          if (!isUserPaired(userId)) {
+          if (!isUserPaired(userId2)) {
             return { result: "error", label: "Daemon not connected", detail: "No daemon paired \u2014 cannot run diagnostic." };
           }
-          const pingResult = await pingDaemon(userId, 5e3);
-          const auditEntries = getOpAuditLog(userId);
+          const pingResult = await pingDaemon(userId2, 5e3);
+          const auditEntries = getOpAuditLog(userId2);
           const recent = auditEntries.slice(-20).reverse();
           const recentStr = recent.length === 0 ? "No ops recorded yet." : recent.map((e) => {
             const d = new Date(e.ts).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
@@ -12497,6 +12513,38 @@ Recent op log (newest first):
 ${recentStr}`
           };
         }
+        case "search_youtube": {
+          const query = String(args.query || "").trim();
+          if (!query) return { result: "error", label: "query required", detail: "Provide a search query." };
+          const maxResults = Math.min(Math.max(typeof args.maxResults === "number" ? args.maxResults : 8, 1), 10);
+          try {
+            const searchResult = await ytSearch({ query, pageStart: 1, pageEnd: 1 });
+            const videos = (searchResult.videos || []).slice(0, maxResults);
+            if (videos.length === 0) return { result: "error", label: "No results", detail: `No YouTube videos found for: "${query}"` };
+            const formatted = videos.map((v, i) => {
+              const views = typeof v.views === "number" ? v.views.toLocaleString() : v.views || "unknown";
+              const ago = v.ago || "unknown date";
+              const duration = v.duration?.timestamp || v.duration || "unknown";
+              return `${i + 1}. "${v.title}"
+   Channel: ${v.author?.name || "unknown"}
+   Views: ${views} | Posted: ${ago} | Duration: ${duration}
+   Video ID: ${v.videoId}
+   URL: ${v.url}`;
+            }).join("\n\n");
+            return {
+              result: "success",
+              label: `YouTube search: ${videos.length} results`,
+              detail: `Search: "${query}"
+
+${formatted}
+
+To open a video on the phone: android_browse with url='vnd.youtube://watch?v=VIDEO_ID'
+To get its transcript: fetch_youtube_transcript with videoId='VIDEO_ID'`
+            };
+          } catch (err) {
+            return { result: "error", label: "YouTube search failed", detail: err?.message || String(err) };
+          }
+        }
         case "fetch_youtube_transcript": {
           const rawInput = String(args.videoId || "").trim();
           if (!rawInput) return { result: "error", label: "videoId required", detail: "Provide a YouTube video ID or URL." };
@@ -12511,11 +12559,10 @@ ${recentStr}`
               return { result: "error", label: "No transcript available", detail: `The video '${videoId}' does not have a transcript/captions enabled. This is common for music videos or videos where the creator disabled captions.` };
             }
             const fullText = transcriptItems.map((t) => t.text).join(" ").replace(/\s+/g, " ").trim();
-            const truncated = fullText.length > 12e3 ? fullText.slice(0, 12e3) + "\u2026 [transcript truncated at 12000 chars]" : fullText;
             return { result: "success", label: "Transcript fetched", detail: `Video ID: ${videoId}
-Transcript (${transcriptItems.length} segments, ${fullText.length} chars):
+Transcript (${transcriptItems.length} segments, ${fullText.length} chars total):
 
-${truncated}` };
+${fullText}` };
           } catch (err) {
             const msg = err?.message || String(err);
             if (msg.includes("disabled") || msg.includes("Transcript is disabled")) {
@@ -12525,7 +12572,7 @@ ${truncated}` };
           }
         }
         case "connect_channel": {
-          const toolResult = await connectChannelTool.execute(args, { userId, state: {} });
+          const toolResult = await connectChannelTool.execute(args, { userId: userId2, state: {} });
           if (!toolResult.ok) {
             return { result: "error", label: toolResult.label || "Connection failed", detail: toolResult.content };
           }
@@ -12542,22 +12589,22 @@ ${truncated}` };
   function normalizeMemoryContent(content) {
     return content.trim().toLowerCase().replace(/[^\w\s]/g, "").replace(/\s+/g, " ");
   }
-  async function extractProfileInBackground(userId, messages) {
+  async function extractProfileInBackground(userId2, messages) {
     const recentMessages = messages.slice(-6);
     if (recentMessages.length === 0) return;
     const conversationText = recentMessages.map((m) => `${m.role}: ${m.content}`).join("\n");
     await extractAndStore({
-      userId,
+      userId: userId2,
       source: conversationText,
       sourceType: "chat"
     });
   }
-  async function markProactiveQuestionsAnswered(userId, messages) {
+  async function markProactiveQuestionsAnswered(userId2, messages) {
     try {
       const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1e3);
       const unanswered = await db.select().from(proactiveQuestionsSent).where(
         and25(
-          eq30(proactiveQuestionsSent.userId, userId),
+          eq30(proactiveQuestionsSent.userId, userId2),
           sql16`${proactiveQuestionsSent.answeredAt} IS NULL`,
           sql16`${proactiveQuestionsSent.sentAt} > ${twentyFourHoursAgo}`
         )
@@ -12591,15 +12638,15 @@ Answer (yes/no):`
   app2.post("/api/coach/chat", async (req, res) => {
     try {
       const { messages, goals: goals2, stats: stats2, history, calendarEvents, lifeContext: lifeContext2, gmailItems, gmailConnected, slackMessages, slackConnected, coachingMode, telegramMessages, telegramConnected } = req.body;
-      const userId = req.userId;
+      const userId2 = req.userId;
       if (!messages || !Array.isArray(messages)) {
         return res.status(400).json({ error: "messages array is required" });
       }
       let resolvedGmailConnected = gmailConnected ?? false;
       let resolvedGmailItems = gmailItems || [];
-      if (!resolvedGmailConnected && userId) {
+      if (!resolvedGmailConnected && userId2) {
         try {
-          const userTokens = await getUserTokens(userId, "google");
+          const userTokens = await getUserTokens(userId2, "google");
           if (userTokens.length > 0) {
             resolvedGmailConnected = true;
             const perAccountItems = await Promise.all(
@@ -12614,21 +12661,21 @@ Answer (yes/no):`
         }
       }
       let userCommitments = [];
-      if (userId) {
+      if (userId2) {
         try {
-          userCommitments = await db.select().from(commitments).where(and25(eq30(commitments.userId, userId), eq30(commitments.status, "pending"))).orderBy(desc10(commitments.extractedAt)).limit(20);
+          userCommitments = await db.select().from(commitments).where(and25(eq30(commitments.userId, userId2), eq30(commitments.status, "pending"))).orderBy(desc10(commitments.extractedAt)).limit(20);
         } catch {
         }
       }
       let memories = [];
       let morningNoteSummary = "";
       let documentsContext = "";
-      if (userId) {
+      if (userId2) {
         try {
           const [rows, noteSummary, docsCtx] = await Promise.all([
-            db.select({ content: userMemories.content, category: userMemories.category }).from(userMemories).where(eq30(userMemories.userId, userId)).orderBy(desc10(userMemories.extractedAt)).limit(50),
-            getMorningNoteSummary(userId),
-            getUserDocumentContext(userId)
+            db.select({ content: userMemories.content, category: userMemories.category }).from(userMemories).where(eq30(userMemories.userId, userId2)).orderBy(desc10(userMemories.extractedAt)).limit(50),
+            getMorningNoteSummary(userId2),
+            getUserDocumentContext(userId2)
           ]);
           memories = rows;
           morningNoteSummary = noteSummary;
@@ -12637,12 +12684,12 @@ Answer (yes/no):`
         }
       }
       let proactiveQuestionContext = "";
-      if (userId) {
+      if (userId2) {
         try {
           const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1e3);
           const recentUnanswered = await db.select().from(proactiveQuestionsSent).where(
             and25(
-              eq30(proactiveQuestionsSent.userId, userId),
+              eq30(proactiveQuestionsSent.userId, userId2),
               sql16`${proactiveQuestionsSent.answeredAt} IS NULL`,
               sql16`${proactiveQuestionsSent.sentAt} > ${twentyFourHoursAgo}`
             )
@@ -12657,16 +12704,16 @@ You recently sent these curiosity-driven questions via Telegram. If the user's m
         }
       }
       let crossChannelContext = "";
-      if (userId) {
+      if (userId2) {
         try {
-          const recentInteractions = await getRecentInteractions(userId, 20);
+          const recentInteractions = await getRecentInteractions(userId2, 20);
           crossChannelContext = formatInteractionTimeline(recentInteractions);
         } catch {
         }
       }
-      const soulBlock = await getSoulPromptBlock(userId);
-      const daemonPaired = userId ? isUserPaired(userId) : false;
-      const [androidActive, daemonDeviceMeta] = daemonPaired && userId ? await Promise.all([isAndroidDaemonActive(userId), getDaemonDeviceMeta(userId)]) : [false, { hostname: null, platform: null }];
+      const soulBlock = await getSoulPromptBlock(userId2);
+      const daemonPaired = userId2 ? isUserPaired(userId2) : false;
+      const [androidActive, daemonDeviceMeta] = daemonPaired && userId2 ? await Promise.all([isAndroidDaemonActive(userId2), getDaemonDeviceMeta(userId2)]) : [false, { hostname: null, platform: null }];
       const hostname = daemonDeviceMeta.hostname || "";
       const isSamsung = hostname.startsWith("SM-") || hostname.toLowerCase().includes("samsung");
       const deviceHints = androidActive ? [
@@ -12681,9 +12728,21 @@ ${deviceHints}
 Available daemon actions: android_open_app, android_browse, android_screenshot, android_read_screen, android_tap, android_type, android_swipe, android_press_key, android_wait, android_file_list, android_file_read, android_notifications_list, notify. DO NOT use desktop shell/file actions.
 SEARCH SHORTCUTS \u2014 use android_browse with these deep links (opens native app directly to results): YouTube search \u2192 url='vnd.youtube://results?search_query=YOUR_QUERY', Google Maps \u2192 url='geo:0,0?q=YOUR_QUERY', Spotify \u2192 url='spotify:search:YOUR_QUERY'.
 UI SETTLING \u2014 use android_wait (ms: 1500\u20133000) after tapping interactive elements that trigger loading (videos, pages, navigation) before calling android_read_screen. This prevents read_screen from seeing a blank or transitioning state.
-YOUTUBE TRANSCRIPTS \u2014 NEVER try to navigate YouTube's transcript UI (3-dot menu, etc.) to read a transcript. Instead: (1) open and play the video using android_browse or android_tap, (2) call android_read_screen to confirm the video is playing and note the video ID or URL from the screen, (3) call the separate fetch_youtube_transcript tool with the video ID \u2014 it fetches the full text server-side instantly. This saves 5\u201310 tool turns.
-ACTION FLOW for multi-step tasks: Use as many tool-call turns as the task requires \u2014 there is no turn limit. For each step: (1) If unsure what is on screen, call android_read_screen first. (2) Act \u2014 call android_browse, android_tap, android_swipe, android_type, etc. as needed. (3) After acting, call android_read_screen to confirm the result, then decide the next step. Complete the FULL task end-to-end (open app \u2192 search \u2192 pick result \u2192 play/navigate) before responding \u2014 do NOT stop mid-task and ask the user to finish. NEVER re-open an app that is already on screen \u2014 check the screen first, then interact with what is there. NEVER describe app content without calling android_read_screen first. If an op returns result:error, tell the user what failed and what you tried.
-COMPLETION NOTIFICATIONS \u2014 after finishing any multi-step phone task (open app, search, navigate, play, etc.), ALWAYS call notify as the FINAL step with action:'notify', title:'Jarvis \u2713', body: a one-line summary of what was done (e.g. "Playing Lo-Fi Hip Hop on YouTube" or "Opened Reddit \u2192 r/productivity"). This pops up a banner on the phone so the user knows the task is done without looking at the Jarvis app.` : "Desktop Daemon is ACTIVE. Use shell, notify, file_read, file_write, file_list actions. ALWAYS report errors immediately if a tool returns result:error. Use daemon_diagnostic (no args) to check daemon health before multi-step sequences or when ops are failing." : `\u26A0\uFE0F NO DAEMON CONNECTED. Do NOT call daemon_action \u2014 it will fail with "daemon not connected". If the user asks to control their phone or computer, tell them exactly this: "Your phone daemon isn't connected. To fix it: (1) Open the Jarvis app \u2192 Profile \u2192 scroll to 'Android Device' \u2192 tap 'Get Pairing Code', (2) Open the Jarvis Daemon APK on your phone, (3) Make sure the Server URL is https://GameplanAI.replit.app, (4) Enter the 8-character pairing code, (5) Tap Pair. The status dot should turn green within a few seconds." Do not attempt daemon_action until they confirm it's connected.`;
+
+YOUTUBE RESEARCH WORKFLOW \u2014 when the user asks to research something on YouTube, find a good video and summarize it:
+  1. Call search_youtube (server-side) with the query. This returns results with channel name, views, date, and video ID \u2014 use this to pick a reputable, high-view-count, recent video without touching the phone at all.
+  2. Call fetch_youtube_transcript with the chosen video ID \u2014 this fetches the COMPLETE transcript server-side with no truncation.
+  3. Call android_browse with url='vnd.youtube://watch?v=VIDEO_ID' to open the video on the phone so the user can watch it.
+  4. Summarize the transcript content for the user.
+  5. Call notify as the final step (see NOTIFICATIONS below).
+  NEVER navigate YouTube's transcript UI (3-dot menu, Show Transcript, scroll) \u2014 always use fetch_youtube_transcript.
+
+ACTION FLOW for multi-step tasks: Use as many tool-call turns as the task requires \u2014 there is no turn limit. For each step: (1) If unsure what is on screen, call android_read_screen first. (2) Act \u2014 call android_browse, android_tap, android_swipe, android_type, etc. as needed. (3) After acting, call android_read_screen to confirm the result, then decide the next step. Complete the FULL task end-to-end before responding \u2014 do NOT stop mid-task and ask the user to finish. NEVER re-open an app that is already on screen. NEVER describe app content without calling android_read_screen first. If an op returns result:error, tell the user what failed and what you tried.
+
+NOTIFICATIONS \u2014 ALWAYS send a notify banner at the end of every multi-step task, success OR failure:
+- SUCCESS: notify with title:'Jarvis \u2713', body: one-line summary of what was done (e.g. "Playing Lo-Fi Hip Hop \u2014 2.1M views, posted 3 days ago")
+- FAILURE: notify with title:'Jarvis \u2717', body: one-line summary of what went wrong (e.g. "Couldn't get transcript \u2014 captions disabled on this video")
+This ensures the user always gets a phone banner and never waits silently for a task that already ended.` : "Desktop Daemon is ACTIVE. Use shell, notify, file_read, file_write, file_list actions. ALWAYS report errors immediately if a tool returns result:error. Use daemon_diagnostic (no args) to check daemon health before multi-step sequences or when ops are failing." : `\u26A0\uFE0F NO DAEMON CONNECTED. Do NOT call daemon_action \u2014 it will fail with "daemon not connected". If the user asks to control their phone or computer, tell them exactly this: "Your phone daemon isn't connected. To fix it: (1) Open the Jarvis app \u2192 Profile \u2192 scroll to 'Android Device' \u2192 tap 'Get Pairing Code', (2) Open the Jarvis Daemon APK on your phone, (3) Make sure the Server URL is https://GameplanAI.replit.app, (4) Enter the 8-character pairing code, (5) Tap Pair. The status dot should turn green within a few seconds." Do not attempt daemon_action until they confirm it's connected.`;
       const systemPrompt = buildCoachSystemPrompt(goals2 || [], stats2 || {}, history || [], calendarEvents || [], lifeContext2 || null, resolvedGmailItems, resolvedGmailConnected, slackMessages || [], slackConnected ?? false, userCommitments, coachingMode, memories, telegramMessages || [], telegramConnected ?? false, morningNoteSummary, documentsContext, crossChannelContext, soulBlock, daemonSection);
       const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
       const lastUserContent = typeof lastUserMsg?.content === "string" ? lastUserMsg.content.toLowerCase() : "";
@@ -12743,7 +12802,15 @@ COMPLETION NOTIFICATIONS \u2014 after finishing any multi-step phone task (open 
         "what's the video about",
         "give me a summary",
         "summarize what",
-        "tell me what the video"
+        "tell me what the video",
+        "search youtube",
+        "find a youtube",
+        "look up on youtube",
+        "research on youtube",
+        "look something up",
+        "look it up",
+        "find a video",
+        "find me a video"
       ];
       const isDeviceControlRequest = androidActive && deviceControlKeywords.some((k) => lastUserContent.includes(k));
       const daemonAbsoluteRule = androidActive ? `
@@ -12755,7 +12822,7 @@ COMPLETION NOTIFICATIONS \u2014 after finishing any multi-step phone task (open 
       ];
       const actionResults = [];
       let toolMessages = [];
-      if (userId) {
+      if (userId2) {
         const MAX_TOOL_TURNS = 20;
         let loopFinalText = null;
         for (let turn = 0; turn < MAX_TOOL_TURNS; turn++) {
@@ -12805,7 +12872,7 @@ COMPLETION NOTIFICATIONS \u2014 after finishing any multi-step phone task (open 
               const hasRawToolCallBlob = androidActive && (responseText.includes('"name":"daemon_action"') || responseText.includes('"name": "daemon_action"') || responseText.includes("android_notifications_list") || responseText.includes("android_open_app") || responseText.includes("android_screenshot") || responseText.includes("android_tap") || responseText.includes("android_read_screen"));
               const looksHallucinated = androidActive && (hasRawToolCallBlob || hallucIndicators.some((h) => responseText.toLowerCase().includes(h)));
               if (looksHallucinated) {
-                console.warn(`[daemon] HALLUCINATION DETECTED userId=${userId} \u2014 model claimed device action without tool call. Intercepting.`);
+                console.warn(`[daemon] HALLUCINATION DETECTED userId=${userId2} \u2014 model claimed device action without tool call. Intercepting.`);
                 const correctedResponse = "I wasn't able to perform that action on your phone \u2014 I need to call the phone tool to do that, and it didn't get called this time. Please try again and I'll make sure to actually execute the command.";
                 res.setHeader("Content-Type", "text/event-stream");
                 res.setHeader("Cache-Control", "no-cache, no-transform");
@@ -12829,13 +12896,13 @@ COMPLETION NOTIFICATIONS \u2014 after finishing any multi-step phone task (open 
 `);
               res.write("data: [DONE]\n\n");
               res.end();
-              extractProfileInBackground(userId, messages);
-              markProactiveQuestionsAnswered(userId, messages).catch(() => {
+              extractProfileInBackground(userId2, messages);
+              markProactiveQuestionsAnswered(userId2, messages).catch(() => {
               });
               const lastUserMsg0 = [...messages].reverse().find((m) => m.role === "user");
-              if (lastUserMsg0?.content) logInteraction(userId, "app_chat", "inbound", typeof lastUserMsg0.content === "string" ? lastUserMsg0.content : JSON.stringify(lastUserMsg0.content)).catch(() => {
+              if (lastUserMsg0?.content) logInteraction(userId2, "app_chat", "inbound", typeof lastUserMsg0.content === "string" ? lastUserMsg0.content : JSON.stringify(lastUserMsg0.content)).catch(() => {
               });
-              logInteraction(userId, "app_chat", "outbound", responseText).catch(() => {
+              logInteraction(userId2, "app_chat", "outbound", responseText).catch(() => {
               });
               return;
             }
@@ -12883,7 +12950,7 @@ COMPLETION NOTIFICATIONS \u2014 after finishing any multi-step phone task (open 
               }
               const confirmToken = Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
               pendingConfirmations.set(confirmToken, {
-                userId,
+                userId: userId2,
                 tool: tc.function.name,
                 args,
                 expiresAt: Date.now() + 5 * 60 * 1e3
@@ -12920,7 +12987,7 @@ COMPLETION NOTIFICATIONS \u2014 after finishing any multi-step phone task (open 
 
 `);
             }
-            const execResult = await executeCoachTool(tc.function.name, args, userId);
+            const execResult = await executeCoachTool(tc.function.name, args, userId2);
             let linkData = {};
             if ((tc.function.name === "generate_reconnect_link" || tc.function.name === "connect_channel") && execResult.result === "success") {
               try {
@@ -12972,13 +13039,13 @@ You MUST tell the user this specific action FAILED. Do NOT describe it as succes
 `);
           res.write("data: [DONE]\n\n");
           res.end();
-          extractProfileInBackground(userId, messages);
-          markProactiveQuestionsAnswered(userId, messages).catch(() => {
+          extractProfileInBackground(userId2, messages);
+          markProactiveQuestionsAnswered(userId2, messages).catch(() => {
           });
           const lastUserMsgLoop = [...messages].reverse().find((m) => m.role === "user");
-          if (lastUserMsgLoop?.content) logInteraction(userId, "app_chat", "inbound", typeof lastUserMsgLoop.content === "string" ? lastUserMsgLoop.content : JSON.stringify(lastUserMsgLoop.content)).catch(() => {
+          if (lastUserMsgLoop?.content) logInteraction(userId2, "app_chat", "inbound", typeof lastUserMsgLoop.content === "string" ? lastUserMsgLoop.content : JSON.stringify(lastUserMsgLoop.content)).catch(() => {
           });
-          logInteraction(userId, "app_chat", "outbound", loopFinalText).catch(() => {
+          logInteraction(userId2, "app_chat", "outbound", loopFinalText).catch(() => {
           });
           return;
         }
@@ -13025,18 +13092,26 @@ ${failedDaemonActions.map((a) => `- ${a.label}: ${a.result}`).join("\n")}`
       }
       res.write("data: [DONE]\n\n");
       res.end();
-      if (userId) {
-        extractProfileInBackground(userId, messages);
-        markProactiveQuestionsAnswered(userId, messages).catch(() => {
+      if (userId2) {
+        extractProfileInBackground(userId2, messages);
+        markProactiveQuestionsAnswered(userId2, messages).catch(() => {
         });
         const lastUserMsg2 = [...messages].reverse().find((m) => m.role === "user");
-        if (lastUserMsg2?.content) logInteraction(userId, "app_chat", "inbound", typeof lastUserMsg2.content === "string" ? lastUserMsg2.content : JSON.stringify(lastUserMsg2.content)).catch(() => {
+        if (lastUserMsg2?.content) logInteraction(userId2, "app_chat", "inbound", typeof lastUserMsg2.content === "string" ? lastUserMsg2.content : JSON.stringify(lastUserMsg2.content)).catch(() => {
         });
-        if (fullStreamedReply) logInteraction(userId, "app_chat", "outbound", fullStreamedReply).catch(() => {
+        if (fullStreamedReply) logInteraction(userId2, "app_chat", "outbound", fullStreamedReply).catch(() => {
         });
       }
     } catch (error) {
       console.error("Error in coach chat:", error);
+      if (userId && isUserPaired(userId)) {
+        sendDaemonOp(userId, {
+          type: "notify",
+          title: "Jarvis \u2717 Task failed",
+          body: "Something went wrong \u2014 check the app for details and try again."
+        }, 5e3).catch(() => {
+        });
+      }
       if (!res.headersSent) {
         res.status(500).json({ error: "Failed to get coach response" });
       } else {
@@ -13050,18 +13125,18 @@ ${failedDaemonActions.map((a) => `- ${a.label}: ${a.result}`).join("\n")}`
   app2.post("/api/coach/execute-confirmed", async (req, res) => {
     try {
       const { token } = req.body;
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Unauthorized" });
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Unauthorized" });
       if (!token) return res.status(400).json({ error: "token is required" });
       const pending = pendingConfirmations.get(token);
       if (!pending) return res.status(400).json({ error: "Confirmation token not found or expired" });
-      if (pending.userId !== userId) return res.status(403).json({ error: "Token does not belong to this user" });
+      if (pending.userId !== userId2) return res.status(403).json({ error: "Token does not belong to this user" });
       if (pending.expiresAt < Date.now()) {
         pendingConfirmations.delete(token);
         return res.status(400).json({ error: "Confirmation token has expired" });
       }
       pendingConfirmations.delete(token);
-      const execResult = await executeCoachTool(pending.tool, pending.args, userId);
+      const execResult = await executeCoachTool(pending.tool, pending.args, userId2);
       return res.json({ result: execResult.result, label: execResult.label, detail: execResult.detail });
     } catch (error) {
       console.error("Error in execute-confirmed:", error);
@@ -13071,13 +13146,13 @@ ${failedDaemonActions.map((a) => `- ${a.label}: ${a.result}`).join("\n")}`
   app2.post("/api/coach/decline-action", async (req, res) => {
     try {
       const { token } = req.body;
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Unauthorized" });
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Unauthorized" });
       let tool = "unknown";
       let preview = {};
       if (token) {
         const pending = pendingConfirmations.get(token);
-        if (pending && pending.userId === userId) {
+        if (pending && pending.userId === userId2) {
           tool = pending.tool;
           const a = pending.args;
           if (tool === "send_email") preview = { to: a.to || "", subject: a.subject || "" };
@@ -13185,7 +13260,7 @@ Return ONLY a JSON object with a "tasks" array. No other text.`;
   app2.post("/api/coach/checkin", async (req, res) => {
     try {
       const { goals: goals2, stats: stats2, history, lifeContext: lifeContext2, coachingMode } = req.body;
-      const userId = req.userId;
+      const userId2 = req.userId;
       const completedHistory = (history || []).filter((h) => h.completed);
       const skippedHistory = (history || []).filter((h) => !h.completed);
       const completionRate = history?.length > 0 ? Math.round(completedHistory.length / history.length * 100) : 0;
@@ -13195,9 +13270,9 @@ Return ONLY a JSON object with a "tasks" array. No other text.`;
 - Known blocker: ${lifeContext2.currentBlocker}` : "") + (lifeContext2.improvementArea ? `
 - Wants to improve: ${lifeContext2.improvementArea}` : "") : "";
       let commitmentText = "";
-      if (userId) {
+      if (userId2) {
         try {
-          const pendingCommitments = await db.select().from(commitments).where(and25(eq30(commitments.userId, userId), eq30(commitments.status, "pending"))).limit(5);
+          const pendingCommitments = await db.select().from(commitments).where(and25(eq30(commitments.userId, userId2), eq30(commitments.status, "pending"))).limit(5);
           if (pendingCommitments.length > 0) {
             commitmentText = `
 - Open commitments: ${pendingCommitments.map((c) => `"${c.content}"${c.dueDate ? ` (due ${c.dueDate})` : ""}`).join(", ")}`;
@@ -13239,16 +13314,16 @@ Return JSON: { "note": "your 1-2 sentence note here" }`;
   });
   app2.get("/api/calendar/status", async (req, res) => {
     try {
-      const userId = req.userId;
-      if (!userId) return res.json({ google: false, outlook: false });
+      const userId2 = req.userId;
+      if (!userId2) return res.json({ google: false, outlook: false });
       const [googleTokens, microsoftToken] = await Promise.all([
-        getValidGoogleTokens(userId),
-        getValidMicrosoftToken(userId)
+        getValidGoogleTokens(userId2),
+        getValidMicrosoftToken(userId2)
       ]);
       let googleConnected = googleTokens.length > 0;
       let outlookConnected = !!microsoftToken;
       if (!googleConnected || !outlookConnected) {
-        const isOwner = await isIntegrationOwner(userId);
+        const isOwner = await isIntegrationOwner(userId2);
         if (isOwner) {
           const [projGoogle, projOutlook] = await Promise.all([
             googleConnected ? true : checkGoogleCalendarConnection(),
@@ -13256,7 +13331,7 @@ Return JSON: { "note": "your 1-2 sentence note here" }`;
           ]);
           googleConnected = googleConnected || projGoogle;
           outlookConnected = outlookConnected || projOutlook;
-          if (projGoogle || projOutlook) await claimIntegrationOwnership(userId);
+          if (projGoogle || projOutlook) await claimIntegrationOwnership(userId2);
         }
       }
       res.json({ google: googleConnected, outlook: outlookConnected });
@@ -13267,12 +13342,12 @@ Return JSON: { "note": "your 1-2 sentence note here" }`;
   });
   app2.get("/api/calendar/google/events", async (req, res) => {
     try {
-      const userId = req.userId;
-      if (!userId) return res.json({ connected: false, events: [] });
-      const accessTokens = await getValidGoogleTokens(userId);
+      const userId2 = req.userId;
+      if (!userId2) return res.json({ connected: false, events: [] });
+      const accessTokens = await getValidGoogleTokens(userId2);
       let hasIntegration = false;
       if (accessTokens.length === 0) {
-        if (!await isIntegrationOwner(userId)) return res.json({ connected: false, events: [] });
+        if (!await isIntegrationOwner(userId2)) return res.json({ connected: false, events: [] });
         hasIntegration = true;
       }
       const date2 = req.query.date || (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
@@ -13294,11 +13369,11 @@ Return JSON: { "note": "your 1-2 sentence note here" }`;
   });
   app2.get("/api/calendar/outlook/events", async (req, res) => {
     try {
-      const userId = req.userId;
-      if (!userId) return res.json({ connected: false, events: [] });
-      let accessToken = await getValidMicrosoftToken(userId);
+      const userId2 = req.userId;
+      if (!userId2) return res.json({ connected: false, events: [] });
+      let accessToken = await getValidMicrosoftToken(userId2);
       if (!accessToken) {
-        if (!await isIntegrationOwner(userId)) return res.json({ connected: false, events: [] });
+        if (!await isIntegrationOwner(userId2)) return res.json({ connected: false, events: [] });
       }
       const date2 = req.query.date || (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
       const startTime = req.query.startTime;
@@ -13313,14 +13388,14 @@ Return JSON: { "note": "your 1-2 sentence note here" }`;
   });
   app2.get("/api/gmail/status", async (req, res) => {
     try {
-      const userId = req.userId;
-      if (!userId) return res.json({ connected: false });
-      const googleTokens = await getValidGoogleTokens(userId);
+      const userId2 = req.userId;
+      if (!userId2) return res.json({ connected: false });
+      const googleTokens = await getValidGoogleTokens(userId2);
       if (googleTokens.length > 0) return res.json({ connected: true });
-      const isOwner = await isIntegrationOwner(userId);
+      const isOwner = await isIntegrationOwner(userId2);
       if (!isOwner) return res.json({ connected: false });
       const connected = await checkGmailConnection();
-      if (connected) await claimIntegrationOwnership(userId);
+      if (connected) await claimIntegrationOwnership(userId2);
       res.json({ connected });
     } catch (error) {
       console.error("Error checking Gmail status:", error);
@@ -13329,11 +13404,11 @@ Return JSON: { "note": "your 1-2 sentence note here" }`;
   });
   app2.get("/api/gmail/commitments", async (req, res) => {
     try {
-      const userId = req.userId;
-      if (!userId) return res.json({ connected: false, items: [] });
-      const userTokens = await getUserTokens(userId, "google");
+      const userId2 = req.userId;
+      if (!userId2) return res.json({ connected: false, items: [] });
+      const userTokens = await getUserTokens(userId2, "google");
       if (userTokens.length === 0) {
-        if (!await isIntegrationOwner(userId)) return res.json({ connected: false, items: [] });
+        if (!await isIntegrationOwner(userId2)) return res.json({ connected: false, items: [] });
         const connected = await checkGmailConnection();
         if (!connected) return res.json({ connected: false, items: [] });
         const items = await getRecentEmailCommitments(7, void 0);
@@ -13360,16 +13435,16 @@ Return JSON: { "note": "your 1-2 sentence note here" }`;
   });
   app2.post("/api/gmail/scan-for-tasks", async (req, res) => {
     try {
-      const userId = req.userId;
-      if (!userId) return res.json({ suggestions: [] });
+      const userId2 = req.userId;
+      if (!userId2) return res.json({ suggestions: [] });
       const { goals: goals2 } = req.body;
       if (!goals2 || !Array.isArray(goals2) || goals2.length === 0) {
         return res.json({ suggestions: [] });
       }
-      const userTokens = await getUserTokens(userId, "google");
+      const userTokens = await getUserTokens(userId2, "google");
       let allEmails = [];
       if (userTokens.length === 0) {
-        if (!await isIntegrationOwner(userId)) return res.json({ suggestions: [] });
+        if (!await isIntegrationOwner(userId2)) return res.json({ suggestions: [] });
         const connected = await checkGmailConnection();
         if (!connected) return res.json({ suggestions: [] });
         const items = await getRecentEmailCommitments(7, void 0);
@@ -13433,13 +13508,13 @@ Only return the JSON object, no extra text.`;
   });
   app2.post("/api/gmail/create-draft", async (req, res) => {
     try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       const { to, subject, body, accountEmail } = req.body;
       if (!to || !subject || !body) {
         return res.status(400).json({ error: "to, subject, and body are required" });
       }
-      const userTokens = await getUserTokens(userId, "google");
+      const userTokens = await getUserTokens(userId2, "google");
       if (userTokens.length === 0) {
         return res.status(400).json({ error: "no_google_account", message: "Connect your Google account in Profile to enable drafting" });
       }
@@ -13475,9 +13550,9 @@ Only return the JSON object, no extra text.`;
   });
   app2.get("/api/slack/status", async (req, res) => {
     try {
-      const userId = req.userId;
-      if (!userId) return res.json({ slack: false });
-      const token = await getUserToken(userId, "slack");
+      const userId2 = req.userId;
+      if (!userId2) return res.json({ slack: false });
+      const token = await getUserToken(userId2, "slack");
       res.json({ slack: !!token });
     } catch (error) {
       console.error("Error checking Slack status:", error);
@@ -13486,9 +13561,9 @@ Only return the JSON object, no extra text.`;
   });
   app2.get("/api/slack/messages", async (req, res) => {
     try {
-      const userId = req.userId;
-      if (!userId) return res.json({ connected: false, messages: [] });
-      const token = await getUserToken(userId, "slack");
+      const userId2 = req.userId;
+      if (!userId2) return res.json({ connected: false, messages: [] });
+      const token = await getUserToken(userId2, "slack");
       if (!token) return res.json({ connected: false, messages: [] });
       const messages = await getSlackMessages(token.accessToken);
       res.json({ connected: true, messages });
@@ -13580,8 +13655,8 @@ Return ONLY the JSON object.`;
   });
   app2.post("/api/coach/transcribe", async (req, res) => {
     try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       const { audio } = req.body;
       if (!audio || typeof audio !== "string") {
         return res.status(400).json({ error: "audio (base64) is required" });
@@ -13598,8 +13673,8 @@ Return ONLY the JSON object.`;
   });
   app2.post("/api/coach/speak", async (req, res) => {
     try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       const { text: text2, voice } = req.body;
       if (!text2 || typeof text2 !== "string") {
         return res.status(400).json({ error: "text is required" });
@@ -13621,9 +13696,9 @@ Return ONLY the JSON object.`;
   });
   app2.get("/api/commitments", async (req, res) => {
     try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const rows = await db.select().from(commitments).where(and25(eq30(commitments.userId, userId), eq30(commitments.status, "pending"))).orderBy(desc10(commitments.extractedAt));
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
+      const rows = await db.select().from(commitments).where(and25(eq30(commitments.userId, userId2), eq30(commitments.status, "pending"))).orderBy(desc10(commitments.extractedAt));
       res.json({ commitments: rows });
     } catch (error) {
       console.error("Error fetching commitments:", error);
@@ -13632,14 +13707,14 @@ Return ONLY the JSON object.`;
   });
   app2.put("/api/commitments/:id", async (req, res) => {
     try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
       const { status } = req.body;
       if (!status || !["done", "skipped", "pending"].includes(status)) {
         return res.status(400).json({ error: "status must be 'done', 'skipped', or 'pending'" });
       }
-      await db.update(commitments).set({ status, resolvedAt: status !== "pending" ? /* @__PURE__ */ new Date() : null }).where(and25(eq30(commitments.id, id), eq30(commitments.userId, userId)));
+      await db.update(commitments).set({ status, resolvedAt: status !== "pending" ? /* @__PURE__ */ new Date() : null }).where(and25(eq30(commitments.id, id), eq30(commitments.userId, userId2)));
       res.json({ ok: true });
     } catch (error) {
       console.error("Error updating commitment:", error);
@@ -13648,10 +13723,10 @@ Return ONLY the JSON object.`;
   });
   app2.delete("/api/commitments/:id", async (req, res) => {
     try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
-      await db.delete(commitments).where(and25(eq30(commitments.id, id), eq30(commitments.userId, userId)));
+      await db.delete(commitments).where(and25(eq30(commitments.id, id), eq30(commitments.userId, userId2)));
       res.json({ ok: true });
     } catch (error) {
       console.error("Error deleting commitment:", error);
@@ -13660,8 +13735,8 @@ Return ONLY the JSON object.`;
   });
   app2.post("/api/commitments/extract", async (req, res) => {
     try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       const { message } = req.body;
       if (!message || typeof message !== "string") {
         return res.json({ hasCommitment: false });
@@ -13681,7 +13756,7 @@ Return ONLY JSON: { "hasCommitment": boolean, "commitment": "the thing they comm
       const parsed = JSON.parse(content);
       if (parsed.hasCommitment && parsed.commitment) {
         await db.insert(commitments).values({
-          userId,
+          userId: userId2,
           content: parsed.commitment,
           dueDate: parsed.dueDate || null,
           sourceMessage: message
@@ -13697,16 +13772,16 @@ Return ONLY JSON: { "hasCommitment": boolean, "commitment": "the thing they comm
   });
   app2.post("/api/coach/proactive", async (req, res) => {
     try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       const { context, goals: goals2, stats: stats2, history, lifeContext: lifeContext2 } = req.body;
       if (!context) return res.status(400).json({ error: "context is required" });
       let userCommitments = [];
       try {
-        userCommitments = await db.select().from(commitments).where(and25(eq30(commitments.userId, userId), eq30(commitments.status, "pending"))).orderBy(desc10(commitments.extractedAt)).limit(10);
+        userCommitments = await db.select().from(commitments).where(and25(eq30(commitments.userId, userId2), eq30(commitments.status, "pending"))).orderBy(desc10(commitments.extractedAt)).limit(10);
       } catch {
       }
-      const soulBlock = await getSoulPromptBlock(userId);
+      const soulBlock = await getSoulPromptBlock(userId2);
       const systemPrompt = buildCoachSystemPrompt(goals2 || [], stats2 || {}, history || [], [], lifeContext2 || null, [], false, [], false, userCommitments, void 0, [], [], false, void 0, void 0, void 0, soulBlock);
       res.setHeader("Content-Type", "text/event-stream");
       res.setHeader("Cache-Control", "no-cache, no-transform");
@@ -13748,14 +13823,14 @@ ${context}` },
   });
   app2.post("/api/coach/weekly-review", async (req, res) => {
     try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       const { goals: goals2, stats: stats2, history } = req.body;
       let weekCommitments = [];
       try {
         const sevenDaysAgo = /* @__PURE__ */ new Date();
         sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-        weekCommitments = await db.select().from(commitments).where(eq30(commitments.userId, userId)).orderBy(desc10(commitments.extractedAt)).limit(30);
+        weekCommitments = await db.select().from(commitments).where(eq30(commitments.userId, userId2)).orderBy(desc10(commitments.extractedAt)).limit(30);
         weekCommitments = weekCommitments.filter(
           (c) => new Date(c.extractedAt).getTime() >= sevenDaysAgo.getTime()
         );
@@ -13812,9 +13887,9 @@ Return ONLY the JSON object.`;
   });
   app2.get("/api/memories", async (req, res) => {
     try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const rows = await db.select().from(userMemories).where(eq30(userMemories.userId, userId)).orderBy(desc10(userMemories.extractedAt));
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
+      const rows = await db.select().from(userMemories).where(eq30(userMemories.userId, userId2)).orderBy(desc10(userMemories.extractedAt));
       res.json({ memories: rows });
     } catch (error) {
       console.error("Error fetching memories:", error);
@@ -13823,10 +13898,10 @@ Return ONLY the JSON object.`;
   });
   app2.delete("/api/memories/:id", async (req, res) => {
     try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
-      await db.delete(userMemories).where(sql16`${userMemories.id} = ${id} AND ${userMemories.userId} = ${userId}`);
+      await db.delete(userMemories).where(sql16`${userMemories.id} = ${id} AND ${userMemories.userId} = ${userId2}`);
       res.json({ ok: true });
     } catch (error) {
       console.error("Error deleting memory:", error);
@@ -13835,15 +13910,15 @@ Return ONLY the JSON object.`;
   });
   app2.post("/api/memories/extract", async (req, res) => {
     try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       const { messages } = req.body;
       if (!messages || !Array.isArray(messages) || messages.length === 0) {
         return res.json({ added: 0 });
       }
       const conversationText = messages.map((m) => `${m.role}: ${m.content}`).join("\n");
       const stored = await extractAndStore({
-        userId,
+        userId: userId2,
         source: conversationText,
         sourceType: "chat"
       });
@@ -13855,9 +13930,9 @@ Return ONLY the JSON object.`;
   });
   app2.get("/api/soul", async (req, res) => {
     try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const soul = await getSoul(userId);
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
+      const soul = await getSoul(userId2);
       res.json(soul);
     } catch (error) {
       console.error("Error fetching SOUL:", error);
@@ -13866,9 +13941,9 @@ Return ONLY the JSON object.`;
   });
   app2.post("/api/soul/regenerate", async (req, res) => {
     try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const soul = await regenerateSoul(userId);
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
+      const soul = await regenerateSoul(userId2);
       res.json(soul);
     } catch (error) {
       console.error("Error regenerating SOUL:", error);
@@ -13877,12 +13952,12 @@ Return ONLY the JSON object.`;
   });
   app2.put("/api/soul/override", async (req, res) => {
     try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       const body = req.body;
       const override = typeof body.override === "string" ? body.override : null;
-      await setManualOverride(userId, override);
-      const soul = await getSoul(userId);
+      await setManualOverride(userId2, override);
+      const soul = await getSoul(userId2);
       res.json(soul);
     } catch (error) {
       console.error("Error setting SOUL override:", error);
@@ -13891,12 +13966,12 @@ Return ONLY the JSON object.`;
   });
   app2.put("/api/soul/content", async (req, res) => {
     try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       const body = req.body;
       const content = typeof body.content === "string" ? body.content : "";
-      await setSoulContent(userId, content);
-      const soul = await getSoul(userId);
+      await setSoulContent(userId2, content);
+      const soul = await getSoul(userId2);
       res.json(soul);
     } catch (error) {
       console.error("Error saving SOUL content:", error);
@@ -13905,9 +13980,9 @@ Return ONLY the JSON object.`;
   });
   app2.get("/api/people", async (req, res) => {
     try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const people2 = await listPeople(userId);
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
+      const people2 = await listPeople(userId2);
       res.json({ people: people2 });
     } catch (error) {
       console.error("Error fetching people:", error);
@@ -13916,9 +13991,9 @@ Return ONLY the JSON object.`;
   });
   app2.delete("/api/people/:id", async (req, res) => {
     try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      await deletePerson(userId, req.params.id);
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
+      await deletePerson(userId2, req.params.id);
       res.json({ ok: true });
     } catch (error) {
       console.error("Error deleting person:", error);
@@ -13927,9 +14002,9 @@ Return ONLY the JSON object.`;
   });
   app2.get("/api/weekly-insights", async (req, res) => {
     try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const rows = await db.select().from(weeklyInsights).where(eq30(weeklyInsights.userId, userId)).orderBy(desc10(weeklyInsights.createdAt)).limit(4);
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
+      const rows = await db.select().from(weeklyInsights).where(eq30(weeklyInsights.userId, userId2)).orderBy(desc10(weeklyInsights.createdAt)).limit(4);
       return res.json({ insights: rows });
     } catch (error) {
       console.error("Error getting weekly insights:", error);
@@ -13938,9 +14013,9 @@ Return ONLY the JSON object.`;
   });
   app2.get("/api/preferences", async (req, res) => {
     try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const row = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq30(userPreferences.userId, userId)).limit(1);
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
+      const row = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq30(userPreferences.userId, userId2)).limit(1);
       return res.json(row[0]?.data || {});
     } catch (error) {
       console.error("Error getting preferences:", error);
@@ -13949,13 +14024,13 @@ Return ONLY the JSON object.`;
   });
   app2.patch("/api/preferences", async (req, res) => {
     try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       const updates = req.body;
-      const existing = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq30(userPreferences.userId, userId)).limit(1);
+      const existing = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq30(userPreferences.userId, userId2)).limit(1);
       const current = existing[0]?.data || {};
       const merged = { ...current, ...updates };
-      await db.insert(userPreferences).values({ userId, data: merged }).onConflictDoUpdate({
+      await db.insert(userPreferences).values({ userId: userId2, data: merged }).onConflictDoUpdate({
         target: userPreferences.userId,
         set: { data: merged, updatedAt: /* @__PURE__ */ new Date() }
       });
@@ -13967,10 +14042,10 @@ Return ONLY the JSON object.`;
   });
   app2.get("/api/morning-voice-notes", async (req, res) => {
     try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       const limit = parseInt(req.query.limit) || 30;
-      const notes = await db.select().from(morningVoiceNotes).where(eq30(morningVoiceNotes.userId, userId)).orderBy(desc10(morningVoiceNotes.recordedAt)).limit(limit);
+      const notes = await db.select().from(morningVoiceNotes).where(eq30(morningVoiceNotes.userId, userId2)).orderBy(desc10(morningVoiceNotes.recordedAt)).limit(limit);
       res.json({ notes });
     } catch (error) {
       console.error("Error fetching morning voice notes:", error);
@@ -13979,10 +14054,10 @@ Return ONLY the JSON object.`;
   });
   app2.get("/api/morning-voice-notes/today", async (req, res) => {
     try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const today = await getUserLocalDate(userId);
-      const notes = await db.select().from(morningVoiceNotes).where(and25(eq30(morningVoiceNotes.userId, userId), eq30(morningVoiceNotes.recordedAt, today))).limit(1);
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
+      const today = await getUserLocalDate(userId2);
+      const notes = await db.select().from(morningVoiceNotes).where(and25(eq30(morningVoiceNotes.userId, userId2), eq30(morningVoiceNotes.recordedAt, today))).limit(1);
       res.json({ note: notes[0] || null });
     } catch (error) {
       console.error("Error fetching today's morning voice note:", error);
@@ -14025,8 +14100,8 @@ Return ONLY the JSON object.`;
   }
   app2.post("/api/morning-voice-notes/extract", async (req, res) => {
     try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       const { transcript } = req.body;
       if (!transcript || typeof transcript !== "string" || !transcript.trim()) {
         return res.status(400).json({ error: "transcript is required" });
@@ -14040,14 +14115,14 @@ Return ONLY the JSON object.`;
   });
   app2.post("/api/morning-voice-notes", async (req, res) => {
     try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       const { transcript, extracted: preExtracted } = req.body;
       if (!transcript || typeof transcript !== "string" || !transcript.trim()) {
         return res.status(400).json({ error: "transcript is required" });
       }
-      const today = await getUserLocalDate(userId);
-      const existing = await db.select({ id: morningVoiceNotes.id }).from(morningVoiceNotes).where(and25(eq30(morningVoiceNotes.userId, userId), eq30(morningVoiceNotes.recordedAt, today))).limit(1);
+      const today = await getUserLocalDate(userId2);
+      const existing = await db.select({ id: morningVoiceNotes.id }).from(morningVoiceNotes).where(and25(eq30(morningVoiceNotes.userId, userId2), eq30(morningVoiceNotes.recordedAt, today))).limit(1);
       if (existing.length > 0) {
         return res.status(409).json({ error: "Morning note already recorded today" });
       }
@@ -14059,7 +14134,7 @@ Return ONLY the JSON object.`;
       const wins = Array.isArray(extracted.wins) ? extracted.wins.slice(0, 3).map(String) : [];
       const intention = typeof extracted.intention === "string" ? extracted.intention : null;
       const [inserted] = await db.insert(morningVoiceNotes).values({
-        userId,
+        userId: userId2,
         recordedAt: today,
         transcript: transcript.trim(),
         moodSignal,
@@ -14071,13 +14146,13 @@ Return ONLY the JSON object.`;
       const memorySummary = `Morning note (${today}): Mood=${moodSignal}. Themes: ${themes.join(", ") || "none"}. ${intention ? `Intention: ${intention}` : ""}`;
       try {
         await db.insert(userMemories).values({
-          userId,
+          userId: userId2,
           content: memorySummary,
           category: "pattern"
         });
       } catch {
       }
-      morningNoteSummaryCache.delete(userId);
+      morningNoteSummaryCache.delete(userId2);
       res.json({
         note: inserted,
         extracted: { moodSignal, themes, blockers, wins, intention }
@@ -14089,8 +14164,8 @@ Return ONLY the JSON object.`;
   });
   app2.post("/api/morning-voice-notes/transcribe", async (req, res) => {
     try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       const { audioBase64, mimeType } = req.body;
       if (!audioBase64) {
         return res.status(400).json({ error: "audioBase64 is required" });
@@ -14110,9 +14185,9 @@ Return ONLY the JSON object.`;
   });
   app2.get("/api/inbox/items", async (req, res) => {
     try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const items = await db.select().from(inboxItems).where(and25(eq30(inboxItems.userId, userId), eq30(inboxItems.status, "pending")));
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
+      const items = await db.select().from(inboxItems).where(and25(eq30(inboxItems.userId, userId2), eq30(inboxItems.status, "pending")));
       res.json(items);
     } catch (error) {
       console.error("Error fetching inbox items:", error);
@@ -14121,19 +14196,19 @@ Return ONLY the JSON object.`;
   });
   app2.post("/api/inbox/items/:id/action", async (req, res) => {
     try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
       const { actionType } = req.body;
       if (!actionType) return res.status(400).json({ error: "actionType is required" });
       let telegramChatId;
       try {
-        const [link] = await db.select().from(telegramLinks).where(eq30(telegramLinks.userId, userId));
+        const [link] = await db.select().from(telegramLinks).where(eq30(telegramLinks.userId, userId2));
         telegramChatId = link?.chatId;
       } catch {
       }
       const { executeInboxAction: executeInboxAction2 } = await Promise.resolve().then(() => (init_inboxActions(), inboxActions_exports));
-      const result = await executeInboxAction2(userId, id, actionType, telegramChatId);
+      const result = await executeInboxAction2(userId2, id, actionType, telegramChatId);
       res.json(result);
     } catch (error) {
       console.error("Error executing inbox action:", error);
@@ -14142,9 +14217,9 @@ Return ONLY the JSON object.`;
   });
   app2.get("/api/inbox/rules", async (req, res) => {
     try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const rules = await db.select().from(inboxRules).where(eq30(inboxRules.userId, userId));
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
+      const rules = await db.select().from(inboxRules).where(eq30(inboxRules.userId, userId2));
       res.json(rules);
     } catch (error) {
       console.error("Error fetching inbox rules:", error);
@@ -14153,14 +14228,14 @@ Return ONLY the JSON object.`;
   });
   app2.post("/api/inbox/rules", async (req, res) => {
     try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       const { pattern, type, scope } = req.body;
       if (!pattern || !type || !scope) {
         return res.status(400).json({ error: "pattern, type, and scope are required" });
       }
       const { createRuleFromText: createRuleFromText2 } = await Promise.resolve().then(() => (init_inboxRules(), inboxRules_exports));
-      const rule = await createRuleFromText2(userId, pattern, type, scope);
+      const rule = await createRuleFromText2(userId2, pattern, type, scope);
       res.json(rule);
     } catch (error) {
       console.error("Error creating inbox rule:", error);
@@ -14169,10 +14244,10 @@ Return ONLY the JSON object.`;
   });
   app2.delete("/api/inbox/rules/:id", async (req, res) => {
     try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
-      await db.delete(inboxRules).where(and25(eq30(inboxRules.id, id), eq30(inboxRules.userId, userId)));
+      await db.delete(inboxRules).where(and25(eq30(inboxRules.id, id), eq30(inboxRules.userId, userId2)));
       res.json({ success: true });
     } catch (error) {
       console.error("Error deleting inbox rule:", error);
@@ -14181,11 +14256,11 @@ Return ONLY the JSON object.`;
   });
   app2.patch("/api/inbox/rules/:id", async (req, res) => {
     try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
       const { active } = req.body;
-      await db.update(inboxRules).set({ active: active ? "true" : "false", updatedAt: /* @__PURE__ */ new Date() }).where(and25(eq30(inboxRules.id, id), eq30(inboxRules.userId, userId)));
+      await db.update(inboxRules).set({ active: active ? "true" : "false", updatedAt: /* @__PURE__ */ new Date() }).where(and25(eq30(inboxRules.id, id), eq30(inboxRules.userId, userId2)));
       res.json({ success: true });
     } catch (error) {
       console.error("Error updating inbox rule:", error);
@@ -14194,9 +14269,9 @@ Return ONLY the JSON object.`;
   });
   app2.get("/api/email-drafts", async (req, res) => {
     try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const drafts = await db.select().from(emailDrafts).where(and25(eq30(emailDrafts.userId, userId), eq30(emailDrafts.status, "pending_approval"))).orderBy(desc10(emailDrafts.createdAt));
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
+      const drafts = await db.select().from(emailDrafts).where(and25(eq30(emailDrafts.userId, userId2), eq30(emailDrafts.status, "pending_approval"))).orderBy(desc10(emailDrafts.createdAt));
       res.json(drafts);
     } catch (error) {
       console.error("Error fetching email drafts:", error);
@@ -14205,11 +14280,11 @@ Return ONLY the JSON object.`;
   });
   app2.post("/api/email-drafts/:id/approve", async (req, res) => {
     try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
       const { editedSubject, editedBody } = req.body;
-      const [draft] = await db.select().from(emailDrafts).where(and25(eq30(emailDrafts.id, id), eq30(emailDrafts.userId, userId))).limit(1);
+      const [draft] = await db.select().from(emailDrafts).where(and25(eq30(emailDrafts.id, id), eq30(emailDrafts.userId, userId2))).limit(1);
       if (!draft) return res.status(404).json({ error: "Draft not found" });
       if (draft.status !== "pending_approval") return res.status(400).json({ error: "Draft already actioned" });
       const subject = editedSubject?.trim() || draft.draftSubject;
@@ -14219,7 +14294,7 @@ Return ONLY the JSON object.`;
       if (!recipient || !recipient.includes("@")) {
         return res.status(400).json({ error: "Could not determine recipient address" });
       }
-      const tokens = await getValidGoogleTokens(userId);
+      const tokens = await getValidGoogleTokens(userId2);
       const token = tokens?.[0];
       if (!token) return res.status(400).json({ error: "Gmail not connected" });
       const { createGmailDraft: createGmailDraft2 } = await Promise.resolve().then(() => (init_gmail(), gmail_exports));
@@ -14240,10 +14315,10 @@ Return ONLY the JSON object.`;
   });
   app2.post("/api/email-drafts/:id/discard", async (req, res) => {
     try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
-      await db.update(emailDrafts).set({ status: "discarded", actedAt: /* @__PURE__ */ new Date() }).where(and25(eq30(emailDrafts.id, id), eq30(emailDrafts.userId, userId)));
+      await db.update(emailDrafts).set({ status: "discarded", actedAt: /* @__PURE__ */ new Date() }).where(and25(eq30(emailDrafts.id, id), eq30(emailDrafts.userId, userId2)));
       res.json({ success: true });
     } catch (error) {
       console.error("Error discarding email draft:", error);
@@ -14252,15 +14327,15 @@ Return ONLY the JSON object.`;
   });
   app2.post("/api/goals/:id/decompose", async (req, res) => {
     try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       const goalId = req.params.id;
-      const [goalsRow] = await db.select({ data: goals.data }).from(goals).where(eq30(goals.userId, userId)).limit(1);
+      const [goalsRow] = await db.select({ data: goals.data }).from(goals).where(eq30(goals.userId, userId2)).limit(1);
       const goalsList = goalsRow?.data || [];
       const goal = goalsList.find((g) => g.id === goalId);
       if (!goal) return res.status(404).json({ error: "Goal not found" });
       const { enqueueGoalDecomposition: enqueueGoalDecomposition2 } = await Promise.resolve().then(() => (init_goalDecomposer(), goalDecomposer_exports));
-      const jobId = await enqueueGoalDecomposition2(userId, { id: goal.id, title: goal.title });
+      const jobId = await enqueueGoalDecomposition2(userId2, { id: goal.id, title: goal.title });
       res.json({ ok: true, jobId, status: "queued" });
     } catch (err) {
       console.error("Error queuing goal decompose:", err);
@@ -14269,10 +14344,10 @@ Return ONLY the JSON object.`;
   });
   app2.get("/api/goals/:id/tree", async (req, res) => {
     try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       const goalId = req.params.id;
-      const [tree] = await db.select().from(goalTrees).where(and25(eq30(goalTrees.userId, userId), eq30(goalTrees.goalId, goalId))).limit(1);
+      const [tree] = await db.select().from(goalTrees).where(and25(eq30(goalTrees.userId, userId2), eq30(goalTrees.goalId, goalId))).limit(1);
       if (!tree) return res.status(200).json({ hasTree: false });
       res.json({ hasTree: true, ...tree });
     } catch (err) {
@@ -14282,8 +14357,8 @@ Return ONLY the JSON object.`;
   });
   app2.post("/api/agent-jobs", async (req, res) => {
     try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       const { agentType, title, prompt, input } = req.body;
       const allowed = ["research", "writing", "planning", "email", "goal_decompose"];
       if (!agentType || !allowed.includes(agentType)) {
@@ -14294,7 +14369,7 @@ Return ONLY the JSON object.`;
       }
       const { submitAgentJob: submitAgentJob2 } = await Promise.resolve().then(() => (init_jobQueue(), jobQueue_exports));
       const jobId = await submitAgentJob2({
-        userId,
+        userId: userId2,
         agentType,
         title,
         prompt,
@@ -14308,11 +14383,11 @@ Return ONLY the JSON object.`;
   });
   app2.get("/api/agent-jobs", async (req, res) => {
     try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       const limit = Math.min(Math.max(Number(req.query.limit) || 30, 1), 100);
       const status = typeof req.query.status === "string" ? req.query.status : null;
-      const where = status ? and25(eq30(agentJobs.userId, userId), eq30(agentJobs.status, status)) : eq30(agentJobs.userId, userId);
+      const where = status ? and25(eq30(agentJobs.userId, userId2), eq30(agentJobs.status, status)) : eq30(agentJobs.userId, userId2);
       const jobs = await db.select().from(agentJobs).where(where).orderBy(desc10(agentJobs.createdAt)).limit(limit);
       res.json(jobs);
     } catch (err) {
@@ -14322,10 +14397,10 @@ Return ONLY the JSON object.`;
   });
   app2.get("/api/deliverables", async (req, res) => {
     try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       const status = typeof req.query.status === "string" ? req.query.status : "pending_approval";
-      const items = await db.select().from(deliverables).where(and25(eq30(deliverables.userId, userId), eq30(deliverables.status, status))).orderBy(desc10(deliverables.createdAt)).limit(50);
+      const items = await db.select().from(deliverables).where(and25(eq30(deliverables.userId, userId2), eq30(deliverables.status, status))).orderBy(desc10(deliverables.createdAt)).limit(50);
       res.json(items);
     } catch (err) {
       console.error("Error listing deliverables:", err);
@@ -14334,10 +14409,10 @@ Return ONLY the JSON object.`;
   });
   app2.post("/api/deliverables/:id/approve", async (req, res) => {
     try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       const id = req.params.id;
-      const [d] = await db.select().from(deliverables).where(and25(eq30(deliverables.id, id), eq30(deliverables.userId, userId))).limit(1);
+      const [d] = await db.select().from(deliverables).where(and25(eq30(deliverables.id, id), eq30(deliverables.userId, userId2))).limit(1);
       if (!d) return res.status(404).json({ error: "Deliverable not found" });
       if (d.status !== "pending_approval") {
         return res.status(400).json({ error: "Already actioned" });
@@ -14349,7 +14424,7 @@ Return ONLY the JSON object.`;
         if (!to || !to.includes("@")) {
           return res.status(400).json({ error: "Email draft missing valid recipient" });
         }
-        const tokens = await getValidGoogleTokens(userId);
+        const tokens = await getValidGoogleTokens(userId2);
         const token = tokens?.[0];
         if (!token) return res.status(400).json({ error: "Gmail not connected" });
         const { createGmailDraft: createGmailDraft2 } = await Promise.resolve().then(() => (init_gmail(), gmail_exports));
@@ -14357,7 +14432,7 @@ Return ONLY the JSON object.`;
         resultExtra = { gmailDraftUrl: result.gmailUrl, gmailDraftId: result.draftId };
       } else {
         await db.insert(userDocuments).values({
-          userId,
+          userId: userId2,
           name: d.title.slice(0, 200),
           mimeType: "text/markdown",
           sizeBytes: Buffer.byteLength(d.body, "utf8"),
@@ -14378,11 +14453,11 @@ Return ONLY the JSON object.`;
   });
   app2.put("/api/deliverables/:id", async (req, res) => {
     try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       const id = req.params.id;
       const { title, summary, body, meta } = req.body;
-      const [existing] = await db.select().from(deliverables).where(and25(eq30(deliverables.id, id), eq30(deliverables.userId, userId))).limit(1);
+      const [existing] = await db.select().from(deliverables).where(and25(eq30(deliverables.id, id), eq30(deliverables.userId, userId2))).limit(1);
       if (!existing) return res.status(404).json({ error: "Deliverable not found" });
       if (existing.status !== "pending_approval") {
         return res.status(400).json({ error: "Only pending deliverables can be edited" });
@@ -14406,11 +14481,11 @@ Return ONLY the JSON object.`;
   });
   app2.post("/api/deliverables/:id/discard", async (req, res) => {
     try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       const id = req.params.id;
-      const [d] = await db.select({ jobId: deliverables.jobId }).from(deliverables).where(and25(eq30(deliverables.id, id), eq30(deliverables.userId, userId))).limit(1);
-      await db.update(deliverables).set({ status: "discarded", actedAt: /* @__PURE__ */ new Date() }).where(and25(eq30(deliverables.id, id), eq30(deliverables.userId, userId)));
+      const [d] = await db.select({ jobId: deliverables.jobId }).from(deliverables).where(and25(eq30(deliverables.id, id), eq30(deliverables.userId, userId2))).limit(1);
+      await db.update(deliverables).set({ status: "discarded", actedAt: /* @__PURE__ */ new Date() }).where(and25(eq30(deliverables.id, id), eq30(deliverables.userId, userId2)));
       if (d?.jobId) {
         await db.update(agentJobs).set({ status: "delivered" }).where(and25(eq30(agentJobs.id, d.jobId), eq30(agentJobs.status, "complete")));
       }
@@ -14422,8 +14497,8 @@ Return ONLY the JSON object.`;
   });
   app2.get("/api/documents", async (req, res) => {
     try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       const docs = await db.select({
         id: userDocuments.id,
         name: userDocuments.name,
@@ -14432,7 +14507,7 @@ Return ONLY the JSON object.`;
         status: userDocuments.status,
         summary: userDocuments.summary,
         uploadedAt: userDocuments.uploadedAt
-      }).from(userDocuments).where(eq30(userDocuments.userId, userId)).orderBy(desc10(userDocuments.uploadedAt)).limit(MAX_DOCS_PER_USER);
+      }).from(userDocuments).where(eq30(userDocuments.userId, userId2)).orderBy(desc10(userDocuments.uploadedAt)).limit(MAX_DOCS_PER_USER);
       res.json({ documents: docs });
     } catch (error) {
       console.error("Error fetching documents:", error);
@@ -14441,8 +14516,8 @@ Return ONLY the JSON object.`;
   });
   app2.post("/api/documents", async (req, res) => {
     try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       const { name, mimeType, data } = req.body;
       if (!name || !mimeType || !data) {
         return res.status(400).json({ error: "name, mimeType, and data are required" });
@@ -14450,7 +14525,7 @@ Return ONLY the JSON object.`;
       if (!SUPPORTED_MIME_TYPES.includes(mimeType)) {
         return res.status(400).json({ error: `Unsupported file type. Supported: ${SUPPORTED_EXTENSIONS.join(", ")}` });
       }
-      const existing = await db.select({ id: userDocuments.id }).from(userDocuments).where(eq30(userDocuments.userId, userId));
+      const existing = await db.select({ id: userDocuments.id }).from(userDocuments).where(eq30(userDocuments.userId, userId2));
       if (existing.length >= MAX_DOCS_PER_USER) {
         return res.status(400).json({ error: `Maximum ${MAX_DOCS_PER_USER} documents allowed. Delete some to upload more.` });
       }
@@ -14459,9 +14534,9 @@ Return ONLY the JSON object.`;
       if (sizeBytes > 20 * 1024 * 1024) {
         return res.status(400).json({ error: "File too large. Maximum size is 20MB." });
       }
-      const [inserted] = await db.insert(userDocuments).values({ userId, name, mimeType, sizeBytes, status: "processing" }).returning();
+      const [inserted] = await db.insert(userDocuments).values({ userId: userId2, name, mimeType, sizeBytes, status: "processing" }).returning();
       res.json({ document: inserted });
-      processDocument(userId, inserted.id, name, mimeType, buffer).catch((err) => {
+      processDocument(userId2, inserted.id, name, mimeType, buffer).catch((err) => {
         console.error("[Docs] Background processing error:", err);
       });
     } catch (error) {
@@ -14471,10 +14546,10 @@ Return ONLY the JSON object.`;
   });
   app2.delete("/api/documents/:id", async (req, res) => {
     try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
-      await db.delete(userDocuments).where(and25(eq30(userDocuments.id, id), eq30(userDocuments.userId, userId)));
+      await db.delete(userDocuments).where(and25(eq30(userDocuments.id, id), eq30(userDocuments.userId, userId2)));
       res.json({ success: true });
     } catch (error) {
       console.error("Error deleting document:", error);
@@ -14483,9 +14558,9 @@ Return ONLY the JSON object.`;
   });
   app2.get("/api/chatgpt-import/status", async (req, res) => {
     try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const rows = await db.select().from(chatgptImports).where(eq30(chatgptImports.userId, userId));
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
+      const rows = await db.select().from(chatgptImports).where(eq30(chatgptImports.userId, userId2));
       if (rows.length === 0) {
         return res.json({ imported: false });
       }
@@ -14498,8 +14573,8 @@ Return ONLY the JSON object.`;
   });
   app2.post("/api/chatgpt-import", async (req, res) => {
     try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       const { conversations } = req.body;
       if (!conversations || !Array.isArray(conversations) || conversations.length === 0) {
         return res.status(400).json({ error: "No conversations found. Please upload a valid ChatGPT export file." });
@@ -14536,7 +14611,7 @@ Return ONLY the JSON object.`;
       if (allTexts.length === 0) {
         return res.status(400).json({ error: "No readable conversations found in the file." });
       }
-      const existingRows = await db.select({ content: userMemories.content }).from(userMemories).where(eq30(userMemories.userId, userId));
+      const existingRows = await db.select({ content: userMemories.content }).from(userMemories).where(eq30(userMemories.userId, userId2));
       const existingMemories = existingRows.map((r) => r.content);
       const normalizedExisting = new Set(existingMemories.map(normalizeMemoryContent));
       const batchSize = 10;
@@ -14590,7 +14665,7 @@ Extract up to 8 memories per batch.`;
             if (normalizedExisting.has(normalized)) continue;
             const category = validCategories.includes(mem.category) ? mem.category : "fact";
             await db.insert(userMemories).values({
-              userId,
+              userId: userId2,
               content: mem.content.trim(),
               category
             });
@@ -14603,11 +14678,11 @@ Extract up to 8 memories per batch.`;
           console.error("[ChatGPT Import] Batch extraction error:", err);
         }
       }
-      await db.insert(chatgptImports).values({ userId, importedAt: /* @__PURE__ */ new Date(), memoriesAdded: totalAdded }).onConflictDoUpdate({
+      await db.insert(chatgptImports).values({ userId: userId2, importedAt: /* @__PURE__ */ new Date(), memoriesAdded: totalAdded }).onConflictDoUpdate({
         target: [chatgptImports.userId],
         set: { importedAt: /* @__PURE__ */ new Date(), memoriesAdded: totalAdded }
       });
-      console.log(`[ChatGPT Import] User ${userId}: imported ${totalAdded} memories from ${allTexts.length} conversations`);
+      console.log(`[ChatGPT Import] User ${userId2}: imported ${totalAdded} memories from ${allTexts.length} conversations`);
       res.json({ imported: totalAdded, importedAt: (/* @__PURE__ */ new Date()).toISOString() });
     } catch (error) {
       console.error("Error importing ChatGPT history:", error);
@@ -14736,13 +14811,13 @@ async function maybeRunDailyDecay() {
   lastDecayDayKey = key;
   return runDailyDecay();
 }
-async function reinforceMemories(userId, ids) {
+async function reinforceMemories(userId2, ids) {
   if (ids.length === 0) return;
   try {
     await db.update(userMemories).set({
       relevanceScore: sql17`LEAST(100, ${userMemories.relevanceScore} + 5)`,
       lastReferencedAt: /* @__PURE__ */ new Date()
-    }).where(and26(eq31(userMemories.userId, userId), sql17`${userMemories.id} = ANY(${ids})`));
+    }).where(and26(eq31(userMemories.userId, userId2), sql17`${userMemories.id} = ANY(${ids})`));
   } catch (err) {
     console.error("[MemoryDecay] reinforce failed:", err);
   }
@@ -14774,7 +14849,7 @@ function parseSender(from) {
   if (bare) return { name: null, email: from.trim().toLowerCase() };
   return null;
 }
-async function syncPeopleFromGoogle(userId, accessToken, now) {
+async function syncPeopleFromGoogle(userId2, accessToken, now) {
   const observations = [];
   try {
     const dayKeys = [];
@@ -14841,7 +14916,7 @@ async function syncPeopleFromGoogle(userId, accessToken, now) {
   for (const obs of byEmail.values()) {
     const upc = upcoming.get(obs.email);
     try {
-      const [existing] = await db.select().from(people).where(and27(eq32(people.userId, userId), eq32(people.email, obs.email))).limit(1);
+      const [existing] = await db.select().from(people).where(and27(eq32(people.userId, userId2), eq32(people.email, obs.email))).limit(1);
       const relationshipHint = obs.source === "calendar" ? `calendar attendee \u2014 ${obs.context}` : `email correspondent \u2014 re: ${obs.context}`;
       if (existing) {
         await db.update(people).set({
@@ -14855,7 +14930,7 @@ async function syncPeopleFromGoogle(userId, accessToken, now) {
         }).where(eq32(people.id, existing.id));
       } else {
         await db.insert(people).values({
-          userId,
+          userId: userId2,
           name: obs.name || obs.email,
           email: obs.email,
           relationship: relationshipHint,
@@ -14873,11 +14948,11 @@ async function syncPeopleFromGoogle(userId, accessToken, now) {
   }
   try {
     const { markSoulStale: markSoulStale2 } = await Promise.resolve().then(() => (init_soul(), soul_exports));
-    await markSoulStale2(userId);
+    await markSoulStale2(userId2);
   } catch (err) {
-    console.error(`[PeopleSync] markSoulStale failed for ${userId}:`, err);
+    console.error(`[PeopleSync] markSoulStale failed for ${userId2}:`, err);
   }
-  console.log(`[PeopleSync] user=${userId} upserted=${upserts}`);
+  console.log(`[PeopleSync] user=${userId2} upserted=${upserts}`);
   return upserts;
 }
 var SYNC_LOOKBACK_HOURS, SYNC_LOOKAHEAD_DAYS;
@@ -14941,30 +15016,30 @@ function localDateKey(now, tz) {
 function localHour(now, tz) {
   return new Date(now.toLocaleString("en-US", { timeZone: tz })).getHours();
 }
-async function alreadyLogged(userId, messageType, sentDate) {
+async function alreadyLogged(userId2, messageType, sentDate) {
   const rows = await db.select({ id: proactiveScheduleLog.id }).from(proactiveScheduleLog).where(
     and28(
-      eq33(proactiveScheduleLog.userId, userId),
+      eq33(proactiveScheduleLog.userId, userId2),
       eq33(proactiveScheduleLog.messageType, messageType),
       eq33(proactiveScheduleLog.sentDate, sentDate)
     )
   ).limit(1);
   return rows.length > 0;
 }
-async function recordLog(userId, messageType, sentDate) {
+async function recordLog(userId2, messageType, sentDate) {
   try {
-    await db.insert(proactiveScheduleLog).values({ userId, messageType, sentDate });
+    await db.insert(proactiveScheduleLog).values({ userId: userId2, messageType, sentDate });
   } catch (err) {
     console.error("[Heartbeat] recordLog error:", err);
   }
 }
-async function runMeetingBriefs(userId, chatId, token, memories, now, tz, userEmail) {
+async function runMeetingBriefs(userId2, chatId, token, memories, now, tz, userEmail) {
   const localKey = localDateKey(now, tz);
   let events = [];
   try {
     events = await getGoogleCalendarEvents(localKey, void 0, void 0, token);
   } catch (err) {
-    console.error(`[Heartbeat] calendar fetch failed for ${userId}:`, err);
+    console.error(`[Heartbeat] calendar fetch failed for ${userId2}:`, err);
     return 0;
   }
   if (events.length === 0) return 0;
@@ -14988,7 +15063,7 @@ async function runMeetingBriefs(userId, chatId, token, memories, now, tz, userEm
     });
     if (externalAttendees.length === 0) continue;
     const messageType = `meeting_brief:${event.id}`;
-    if (await alreadyLogged(userId, messageType, localKey)) continue;
+    if (await alreadyLogged(userId2, messageType, localKey)) continue;
     let emailContext = "";
     try {
       const titleWords = event.title.split(/[\s,\-—]+/).filter((w) => w.length > 3).map((w) => w.toLowerCase());
@@ -15017,7 +15092,7 @@ async function runMeetingBriefs(userId, chatId, token, memories, now, tz, userEm
     try {
       const { retrieveRelevantMemories: retrieveMemories } = await Promise.resolve().then(() => (init_retrieve(), retrieve_exports));
       const seedQuery = [event.title, attendeeList, event.description?.slice(0, 200) || ""].filter(Boolean).join(" \u2022 ");
-      const ranked = await retrieveMemories(userId, seedQuery, 8);
+      const ranked = await retrieveMemories(userId2, seedQuery, 8);
       if (ranked.length > 0) {
         memoryContext = ranked.map((m) => `- [${m.category}] ${m.content}`).join("\n");
       }
@@ -15028,7 +15103,7 @@ async function runMeetingBriefs(userId, chatId, token, memories, now, tz, userEm
     try {
       const emails = externalAttendees.map((a) => a.email.toLowerCase()).filter(Boolean);
       if (emails.length > 0) {
-        const peopleRows = await db.select().from(people).where(and28(eq33(people.userId, userId), sql18`lower(${people.email}) = ANY(${emails})`));
+        const peopleRows = await db.select().from(people).where(and28(eq33(people.userId, userId2), sql18`lower(${people.email}) = ANY(${emails})`));
         if (peopleRows.length > 0) {
           peopleContext = peopleRows.map((p) => {
             const bits = [`${p.name}${p.email ? ` <${p.email}>` : ""}`];
@@ -15095,25 +15170,25 @@ Plain text, no markdown asterisks, no preamble.`;
 
 ${brief}`;
     try {
-      await notifyUser(userId, "meeting_brief", fullMsg);
-      await recordLog(userId, messageType, localKey);
-      logInteraction(userId, "notification", "outbound", fullMsg, "meeting_brief").catch(() => {
+      await notifyUser(userId2, "meeting_brief", fullMsg);
+      await recordLog(userId2, messageType, localKey);
+      logInteraction(userId2, "notification", "outbound", fullMsg, "meeting_brief").catch(() => {
       });
       fired++;
-      console.log(`[Heartbeat] sent meeting brief for "${event.title}" to ${userId}`);
+      console.log(`[Heartbeat] sent meeting brief for "${event.title}" to ${userId2}`);
     } catch (err) {
       console.error(`[Heartbeat] send brief failed:`, err);
     }
   }
   return fired;
 }
-async function runEmailDrafts(userId, chatId, token, now) {
+async function runEmailDrafts(userId2, chatId, token, now) {
   const twelveHoursAgo = new Date(now.getTime() - 12 * 60 * 60 * 1e3);
   let urgentItems = [];
   try {
     urgentItems = await db.select().from(inboxItems).where(
       and28(
-        eq33(inboxItems.userId, userId),
+        eq33(inboxItems.userId, userId2),
         eq33(inboxItems.sourceType, "email"),
         eq33(inboxItems.status, "pending"),
         sql18`${inboxItems.surfacedAt} > ${twelveHoursAgo}`,
@@ -15141,7 +15216,7 @@ async function runEmailDrafts(userId, chatId, token, now) {
     try {
       const existing = await db.select({ id: emailDrafts.id }).from(emailDrafts).where(
         and28(
-          eq33(emailDrafts.userId, userId),
+          eq33(emailDrafts.userId, userId2),
           eq33(emailDrafts.sourceMessageId, sourceMessageId)
         )
       ).limit(1);
@@ -15188,7 +15263,7 @@ Return JSON: { "subject": "Re: ...", "body": "..." }`;
     if (!draftBody.trim()) continue;
     try {
       await db.insert(emailDrafts).values({
-        userId,
+        userId: userId2,
         sourceMessageId,
         fromSender: senderEmail,
         originalSubject: subject,
@@ -15197,7 +15272,7 @@ Return JSON: { "subject": "Re: ...", "body": "..." }`;
         jarvisReason: reason
       });
       queued++;
-      console.log(`[Heartbeat] queued draft reply for "${subject}" (user ${userId})`);
+      console.log(`[Heartbeat] queued draft reply for "${subject}" (user ${userId2})`);
     } catch (err) {
       const code = err?.code;
       if (code !== "23505") console.error(`[Heartbeat] draft insert failed:`, err);
@@ -15206,14 +15281,14 @@ Return JSON: { "subject": "Re: ...", "body": "..." }`;
   if (queued > 0) {
     const localKey = localDateKey(now, "UTC");
     const nudgeKey = `draft_nudge:${queued}`;
-    if (!await alreadyLogged(userId, nudgeKey, localKey)) {
+    if (!await alreadyLogged(userId2, nudgeKey, localKey)) {
       try {
         await sendMessage(
           chatId,
           `\u2709\uFE0F ${queued} email draft${queued === 1 ? "" : "s"} waiting for your review in the Inbox tab.`
         );
-        await recordLog(userId, nudgeKey, localKey);
-        logInteraction(userId, "notification", "outbound", `Draft queue: ${queued} item(s)`, "draft_nudge").catch(() => {
+        await recordLog(userId2, nudgeKey, localKey);
+        logInteraction(userId2, "notification", "outbound", `Draft queue: ${queued} item(s)`, "draft_nudge").catch(() => {
         });
       } catch (err) {
         console.error(`[Heartbeat] draft nudge send failed:`, err);
@@ -15222,16 +15297,16 @@ Return JSON: { "subject": "Re: ...", "body": "..." }`;
   }
   return queued;
 }
-async function runEveningWrapUp(userId, chatId, token, prefs, now, tz) {
+async function runEveningWrapUp(userId2, chatId, token, prefs, now, tz) {
   const wrapHour = typeof prefs.eveningWrapUpHour === "number" ? prefs.eveningWrapUpHour : 21;
   const hour = localHour(now, tz);
   if (hour < wrapHour || hour >= 24) return false;
   const localKey = localDateKey(now, tz);
   const messageType = "evening_wrapup";
-  if (await alreadyLogged(userId, messageType, localKey)) return false;
+  if (await alreadyLogged(userId2, messageType, localKey)) return false;
   let tasks = [];
   try {
-    const planRows = await db.select().from(plans).where(and28(eq33(plans.userId, userId), eq33(plans.date, localKey))).limit(1);
+    const planRows = await db.select().from(plans).where(and28(eq33(plans.userId, userId2), eq33(plans.date, localKey))).limit(1);
     const data = planRows[0]?.data || {};
     tasks = Array.isArray(data.tasks) ? data.tasks : [];
   } catch {
@@ -15239,7 +15314,7 @@ async function runEveningWrapUp(userId, chatId, token, prefs, now, tz) {
   let statsData = {};
   let statsRowExists = false;
   try {
-    const statsRows = await db.select().from(stats).where(eq33(stats.userId, userId)).limit(1);
+    const statsRows = await db.select().from(stats).where(eq33(stats.userId, userId2)).limit(1);
     if (statsRows.length > 0) {
       statsData = statsRows[0].data || {};
       statsRowExists = true;
@@ -15278,7 +15353,7 @@ async function runEveningWrapUp(userId, chatId, token, prefs, now, tz) {
           lastStreakDate: localKey
         },
         updatedAt: /* @__PURE__ */ new Date()
-      }).where(eq33(stats.userId, userId));
+      }).where(eq33(stats.userId, userId2));
       statsData = {
         ...statsData,
         streak: newStreak,
@@ -15287,7 +15362,7 @@ async function runEveningWrapUp(userId, chatId, token, prefs, now, tz) {
         totalCompleted: newTotalCompleted,
         lastStreakDate: localKey
       };
-      console.log(`[Heartbeat] stats updated for ${userId}: streak=${newStreak}, xp+${xpEarned}`);
+      console.log(`[Heartbeat] stats updated for ${userId2}: streak=${newStreak}, xp+${xpEarned}`);
     } catch (err) {
       console.error(`[Heartbeat] stats update failed (non-fatal):`, err);
     }
@@ -15331,10 +15406,10 @@ Return JSON:
   }
   if (!summary) return false;
   try {
-    await notifyUser(userId, "evening_wrap", `\u{1F319} Evening wrap-up
+    await notifyUser(userId2, "evening_wrap", `\u{1F319} Evening wrap-up
 
 ${summary}`);
-    logInteraction(userId, "notification", "outbound", summary, "evening_wrapup").catch(() => {
+    logInteraction(userId2, "notification", "outbound", summary, "evening_wrapup").catch(() => {
     });
   } catch (err) {
     console.error(`[Heartbeat] wrap-up send failed:`, err);
@@ -15346,7 +15421,7 @@ ${summary}`);
       d.setDate(d.getDate() + 1);
       return localDateKey(d, tz);
     })();
-    const prefRows = await db.select().from(userPreferences).where(eq33(userPreferences.userId, userId)).limit(1);
+    const prefRows = await db.select().from(userPreferences).where(eq33(userPreferences.userId, userId2)).limit(1);
     const prefData = prefRows[0]?.data || {};
     const tomorrowSeed = {
       date: tomorrowKey,
@@ -15355,8 +15430,8 @@ ${summary}`);
       observation,
       tomorrowPrompt
     };
-    await db.update(userPreferences).set({ data: { ...prefData, tomorrowSeed }, updatedAt: /* @__PURE__ */ new Date() }).where(eq33(userPreferences.userId, userId));
-    console.log(`[Heartbeat] tomorrow seed written for ${userId} (date: ${tomorrowKey})`);
+    await db.update(userPreferences).set({ data: { ...prefData, tomorrowSeed }, updatedAt: /* @__PURE__ */ new Date() }).where(eq33(userPreferences.userId, userId2));
+    console.log(`[Heartbeat] tomorrow seed written for ${userId2} (date: ${tomorrowKey})`);
   } catch (err) {
     console.error(`[Heartbeat] tomorrow seed write failed (non-fatal):`, err);
   }
@@ -15381,12 +15456,12 @@ ${observation}
 ${tomorrowPrompt}
 ` : ""}`;
       await createDriveTextFile(token, `reflection-${localKey}.md`, reflection, { convertToDoc: false });
-      console.log(`[Heartbeat] reflection saved to Drive for ${userId}`);
+      console.log(`[Heartbeat] reflection saved to Drive for ${userId2}`);
     } catch (err) {
       console.error(`[Heartbeat] Drive save failed (non-fatal):`, err);
     }
   }
-  await recordLog(userId, messageType, localKey);
+  await recordLog(userId2, messageType, localKey);
   return true;
 }
 async function runHeartbeatTick() {
@@ -15460,33 +15535,33 @@ async function runHeartbeatTick() {
 }
 var lastHeartbeatExtractAt = {};
 var HEARTBEAT_EXTRACT_INTERVAL_MS = 60 * 60 * 1e3;
-async function runHeartbeatMemoryPass(userId, googleToken, now) {
-  const last = lastHeartbeatExtractAt[userId] || 0;
+async function runHeartbeatMemoryPass(userId2, googleToken, now) {
+  const last = lastHeartbeatExtractAt[userId2] || 0;
   if (now.getTime() - last < HEARTBEAT_EXTRACT_INTERVAL_MS) return;
-  lastHeartbeatExtractAt[userId] = now.getTime();
+  lastHeartbeatExtractAt[userId2] = now.getTime();
   const sinceCutoff = new Date(now.getTime() - HEARTBEAT_EXTRACT_INTERVAL_MS);
   try {
-    const recentMessages = await db.select().from(telegramGroupMessages).where(and28(eq33(telegramGroupMessages.userId, userId), gte5(telegramGroupMessages.messageDate, sinceCutoff))).orderBy(desc11(telegramGroupMessages.messageDate)).limit(20);
+    const recentMessages = await db.select().from(telegramGroupMessages).where(and28(eq33(telegramGroupMessages.userId, userId2), gte5(telegramGroupMessages.messageDate, sinceCutoff))).orderBy(desc11(telegramGroupMessages.messageDate)).limit(20);
     if (recentMessages.length > 0) {
       const text2 = recentMessages.map((m) => `[${m.fromUser ?? "?"}]: ${m.text}`).join("\n").slice(0, 4e3);
       const { extractAndStore: extractAndStore2 } = await Promise.resolve().then(() => (init_extractor(), extractor_exports));
       await extractAndStore2({
-        userId,
+        userId: userId2,
         source: text2,
         sourceType: "heartbeat_telegram",
         sourceRef: `${now.toISOString().slice(0, 13)}`
       });
     }
   } catch (err) {
-    console.error(`[Heartbeat] telegram extract failed for ${userId}:`, err);
+    console.error(`[Heartbeat] telegram extract failed for ${userId2}:`, err);
   }
   try {
     if (googleToken) {
       const { syncPeopleFromGoogle: syncPeopleFromGoogle2 } = await Promise.resolve().then(() => (init_peopleSync(), peopleSync_exports));
-      await syncPeopleFromGoogle2(userId, googleToken, now);
+      await syncPeopleFromGoogle2(userId2, googleToken, now);
     }
   } catch (err) {
-    console.error(`[Heartbeat] people sync failed for ${userId}:`, err);
+    console.error(`[Heartbeat] people sync failed for ${userId2}:`, err);
   }
 }
 function startHeartbeat() {
@@ -15656,16 +15731,16 @@ import { eq as eq35 } from "drizzle-orm";
 var linkCache = /* @__PURE__ */ new Map();
 var LINK_CACHE_TTL = 6e4;
 var linkCacheTimestamps = /* @__PURE__ */ new Map();
-async function lookupChatId(userId) {
-  const ts = linkCacheTimestamps.get(userId);
+async function lookupChatId(userId2) {
+  const ts = linkCacheTimestamps.get(userId2);
   if (ts && Date.now() - ts < LINK_CACHE_TTL) {
-    return linkCache.get(userId) ?? null;
+    return linkCache.get(userId2) ?? null;
   }
   try {
-    const rows = await db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq35(telegramLinks.userId, userId)).limit(1);
+    const rows = await db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq35(telegramLinks.userId, userId2)).limit(1);
     const chatId = rows[0]?.chatId ?? null;
-    linkCache.set(userId, chatId);
-    linkCacheTimestamps.set(userId, Date.now());
+    linkCache.set(userId2, chatId);
+    linkCacheTimestamps.set(userId2, Date.now());
     return chatId;
   } catch (err) {
     console.error("[telegramChannel] link lookup failed:", err);
@@ -15675,9 +15750,9 @@ async function lookupChatId(userId) {
 var telegramChannel = {
   name: "telegram",
   isConfigured: () => isTelegramConfigured(),
-  isLinkedFor: async (userId) => !!await lookupChatId(userId),
-  async sendMessage(userId, text2, opts = {}) {
-    const chatId = await lookupChatId(userId);
+  isLinkedFor: async (userId2) => !!await lookupChatId(userId2),
+  async sendMessage(userId2, text2, opts = {}) {
+    const chatId = await lookupChatId(userId2);
     if (!chatId) return { ok: false, error: "no telegram link" };
     try {
       if (text2 && text2.trim()) await sendMessage(chatId, text2);
@@ -15727,9 +15802,9 @@ async function sendWhatsAppMessage(toAddress, body) {
     return { ok: false, error: String(err) };
   }
 }
-async function lookupAddress(userId) {
+async function lookupAddress(userId2) {
   try {
-    const rows = await db.select({ address: channelLinks.address }).from(channelLinks).where(and30(eq36(channelLinks.userId, userId), eq36(channelLinks.channel, "whatsapp"))).limit(1);
+    const rows = await db.select({ address: channelLinks.address }).from(channelLinks).where(and30(eq36(channelLinks.userId, userId2), eq36(channelLinks.channel, "whatsapp"))).limit(1);
     return rows[0]?.address ?? null;
   } catch (err) {
     console.error("[whatsappChannel] link lookup failed:", err);
@@ -15739,9 +15814,9 @@ async function lookupAddress(userId) {
 var whatsappChannel = {
   name: "whatsapp",
   isConfigured: () => isTwilioConfigured(),
-  isLinkedFor: async (userId) => !!await lookupAddress(userId),
-  async sendMessage(userId, text2, opts = {}) {
-    const address = await lookupAddress(userId);
+  isLinkedFor: async (userId2) => !!await lookupAddress(userId2),
+  async sendMessage(userId2, text2, opts = {}) {
+    const address = await lookupAddress(userId2);
     if (!address) return { ok: false, error: "no whatsapp link" };
     let body = text2 || "";
     if (opts.attachments && opts.attachments.length > 0) {
@@ -15762,9 +15837,9 @@ init_db();
 init_schema();
 init_bridge();
 import { eq as eq37, and as and31 } from "drizzle-orm";
-async function lookupDaemon(userId) {
+async function lookupDaemon(userId2) {
   try {
-    const rows = await db.select({ id: channelLinks.id }).from(channelLinks).where(and31(eq37(channelLinks.userId, userId), eq37(channelLinks.channel, "daemon"))).limit(1);
+    const rows = await db.select({ id: channelLinks.id }).from(channelLinks).where(and31(eq37(channelLinks.userId, userId2), eq37(channelLinks.channel, "daemon"))).limit(1);
     return rows.length > 0;
   } catch (err) {
     console.error("[daemonChannel] link lookup failed:", err);
@@ -15774,17 +15849,17 @@ async function lookupDaemon(userId) {
 var daemonChannel = {
   name: "daemon",
   isConfigured: () => true,
-  async isLinkedFor(userId) {
-    return await lookupDaemon(userId) && isUserPaired(userId);
+  async isLinkedFor(userId2) {
+    return await lookupDaemon(userId2) && isUserPaired(userId2);
   },
-  async sendMessage(userId, text2, _opts = {}) {
-    if (!isUserPaired(userId)) return { ok: false, error: "daemon not connected" };
-    if (!await isDaemonActionAllowed(userId, "notify")) {
+  async sendMessage(userId2, text2, _opts = {}) {
+    if (!isUserPaired(userId2)) return { ok: false, error: "daemon not connected" };
+    if (!await isDaemonActionAllowed(userId2, "notify")) {
       return { ok: false, error: "daemon notify permission disabled by user" };
     }
     try {
       const title = "GamePlan Coach";
-      const result = await sendDaemonOp(userId, { type: "notify", title, body: text2 }, 5e3);
+      const result = await sendDaemonOp(userId2, { type: "notify", title, body: text2 }, 5e3);
       if (!result.ok) return { ok: false, error: result.error || "daemon notify failed" };
       return { ok: true };
     } catch (err) {
@@ -15804,20 +15879,20 @@ var discordChannel = {
   isConfigured() {
     return true;
   },
-  async isLinkedFor(userId) {
+  async isLinkedFor(userId2) {
     try {
       const [tok, link] = await Promise.all([
-        getUserToken(userId, "discord_bot"),
-        db.select({ id: channelLinks.id }).from(channelLinks).where(and32(eq38(channelLinks.userId, userId), eq38(channelLinks.channel, "discord"))).limit(1)
+        getUserToken(userId2, "discord_bot"),
+        db.select({ id: channelLinks.id }).from(channelLinks).where(and32(eq38(channelLinks.userId, userId2), eq38(channelLinks.channel, "discord"))).limit(1)
       ]);
-      return !!(tok && link.length > 0 && getBotStatus(userId) === "running");
+      return !!(tok && link.length > 0 && getBotStatus(userId2) === "running");
     } catch {
       return false;
     }
   },
-  async sendMessage(userId, text2, _opts = {}) {
+  async sendMessage(userId2, text2, _opts = {}) {
     if (!text2?.trim()) return { ok: true };
-    const sent = await sendToDiscordUser(userId, text2);
+    const sent = await sendToDiscordUser(userId2, text2);
     if (!sent) return { ok: false, error: "Discord send failed \u2014 bot not running or user not linked" };
     return { ok: true };
   }
@@ -15908,8 +15983,8 @@ function registerWhatsAppWebhook(app2) {
     const text2 = String(req.body?.Body || "").trim();
     res.type("text/xml").status(200).send("<Response/>");
     if (!from) return;
-    let userId = await findUserByPhone(from);
-    if (!userId) {
+    let userId2 = await findUserByPhone(from);
+    if (!userId2) {
       const codeMatch = text2.match(/^[A-Z0-9]{6,8}$/i);
       if (codeMatch) {
         const linked = await tryConsumeLinkCode(text2.toUpperCase(), from);
@@ -15928,7 +16003,7 @@ function registerWhatsAppWebhook(app2) {
       return;
     }
     try {
-      const { reply } = await runCoachAgent({ userId, userText: text2, channelName: "WhatsApp" });
+      const { reply } = await runCoachAgent({ userId: userId2, userText: text2, channelName: "WhatsApp" });
       if (reply && reply.trim()) {
         await sendWhatsAppMessage(from, reply);
       }
