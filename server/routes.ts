@@ -1274,66 +1274,104 @@ export async function registerRoutes(app: Express): Promise<Server> {
               op = { type: 'android_type', text: String(args.text), submit: !!args.submit };
             } else if (action === 'android_notifications_list') {
               const limit = typeof args.limit === 'number' ? Math.min(args.limit, 60) : 20;
-              const notifs = getRecentPhoneNotifications(userId, limit);
 
-              // ── Path 1: cached notifications are available — return them immediately ──
-              if (notifs.length > 0) {
-                const formatted = notifs.map(n => {
-                  const d = new Date(n.ts).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-                  return `[${d}] ${n.app}: ${n.title}${n.text ? ' — ' + n.text.slice(0, 120) : ''}`;
-                }).join('\n');
-                return { result: 'success', label: `${notifs.length} recent notification${notifs.length !== 1 ? 's' : ''} (cached)`, detail: formatted };
+              // ── Path 1: Query the daemon's own on-device notification cache ──
+              // The daemon's JarvisNotificationListener accumulates every notification
+              // that arrives while the daemon app is running, stored in memory on the phone.
+              // This persists across server restarts — unlike the server-side cache which
+              // is empty after every server restart. Always go here first.
+              const daemonNotifResult = await sendDaemonOp(userId, { type: 'android_notifications_list', limit } as DaemonOp, 10000);
+
+              if (daemonNotifResult.ok) {
+                const d = daemonNotifResult.data as Record<string, unknown> | null;
+                const listenerEnabled = !!(d?.listenerEnabled);
+                const rawNotifications = Array.isArray(d?.notifications) ? (d!.notifications as Record<string, unknown>[]) : [];
+                const count = rawNotifications.length;
+
+                if (listenerEnabled && count > 0) {
+                  const formatted = rawNotifications.map((n) => {
+                    const ts = typeof n.ts === 'number'
+                      ? new Date(n.ts).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+                      : '?';
+                    const app = String(n.app || n.pkg || 'Unknown');
+                    const title = String(n.title || '');
+                    const text = n.text ? ` — ${String(n.text).slice(0, 120)}` : '';
+                    return `[${ts}] ${app}: ${title}${text}`;
+                  }).join('\n');
+                  return {
+                    result: 'success',
+                    label: `${count} notification${count !== 1 ? 's' : ''} from phone`,
+                    detail: `REAL NOTIFICATIONS FROM DEVICE — report these exactly as shown:\n${formatted}`,
+                  };
+                }
+
+                if (listenerEnabled && count === 0) {
+                  // Listener is active but no notifications — this IS accurate data
+                  return {
+                    result: 'success',
+                    label: 'No notifications',
+                    detail: 'The notification listener is active on the phone and reports zero current notifications. The tray is clear.',
+                  };
+                }
+
+                // listenerEnabled=false → Notification Access not granted on the phone
+                console.warn(`[daemon] android_notifications_list: listenerEnabled=false for userId=${userId}, falling back to shade`);
+              } else {
+                console.warn(`[daemon] android_notifications_list direct op failed (${daemonNotifResult.error}), falling back to shade`);
               }
 
-              // ── Path 2: cache empty — physically open notification shade and read it ──
-              // Step 1: Swipe down from the top of the screen to open the notification shade.
-              // Using x=540 (center of typical 1080px screen) — works for most Android devices.
+              // ── Path 2: Notification Access not granted OR daemon query failed ──
+              // Physically open the notification shade, read the screen, then close it.
               const swipeOp = await sendDaemonOp(userId, {
                 type: 'android_swipe',
                 x1: 540, y1: 10,
-                x2: 540, y2: 900,
-                durationMs: 350,
+                x2: 540, y2: 1200,
+                durationMs: 400,
               }, 8000);
 
               if (!swipeOp.ok) {
                 return {
                   result: 'error',
-                  label: 'Could not open notification shade',
-                  detail: `Swipe down failed: ${swipeOp.error || 'unknown error'}. Ensure the Accessibility Service is enabled in phone Settings.`,
+                  label: 'Cannot read notifications',
+                  detail: `The Notification Access permission is not granted to Jarvis Daemon (go to Settings > Notifications > Device & App Notifications > Jarvis Daemon and enable it). The shade-opening fallback also failed: ${swipeOp.error || 'swipe failed'}.`,
                 };
               }
 
-              // Step 2: Wait for the shade animation to settle.
+              // Wait for the shade animation
               await new Promise(r => setTimeout(r, 700));
 
-              // Step 3: Read the screen text via accessibility service — this captures all
-              // visible text in the notification shade without needing image recognition.
-              const readOp = await sendDaemonOp(userId, { type: 'android_read_screen' }, 10000);
+              const shadeReadOp = await sendDaemonOp(userId, { type: 'android_read_screen' }, 10000);
 
-              // Step 4: Close the notification shade (fire-and-forget — don't block on it).
+              // Close the shade in the background
               sendDaemonOp(userId, { type: 'android_press_key', key: 'back' }, 5000).catch(() => {});
 
-              if (!readOp.ok) {
+              if (!shadeReadOp.ok) {
                 return {
                   result: 'error',
                   label: 'Could not read notification shade',
-                  detail: `Screen read failed after opening shade: ${readOp.error || 'unknown error'}.`,
+                  detail: `Screen read failed: ${shadeReadOp.error || 'unknown'}. Ensure the Accessibility Service is enabled.`,
                 };
               }
 
-              const screenText = String(readOp.data || '').trim();
-              if (!screenText) {
+              // The read_screen result is a structured JSON object from the accessibility tree.
+              // Extract the text fields and return them verbatim.
+              const shadeData = shadeReadOp.data;
+              const shadeText = typeof shadeData === 'string'
+                ? shadeData
+                : JSON.stringify(shadeData || '');
+
+              if (!shadeText || shadeText === '{}' || shadeText === '""' || shadeText === 'null') {
                 return {
                   result: 'success',
-                  label: 'Notification shade opened — screen appears empty',
-                  detail: 'No text content detected on screen after opening notification shade. There may be no active notifications, or the shade did not open fully.',
+                  label: 'Notification shade appears empty',
+                  detail: 'No text was detected in the notification shade. Your notification tray may be empty.',
                 };
               }
 
               return {
                 result: 'success',
-                label: 'Notifications read from screen',
-                detail: `[Read by opening notification shade]\n${screenText}`,
+                label: 'Notification shade content read from screen',
+                detail: `SCREEN CONTENT (verbatim from phone — report ONLY what is shown here, do NOT add or infer any details):\n${shadeText}`,
               };
             } else if (action === 'android_swipe') {
               if (typeof args.x1 !== 'number' || typeof args.y1 !== 'number' || typeof args.x2 !== 'number' || typeof args.y2 !== 'number') return { result: 'error', label: 'coords required', detail: 'Provide x1,y1,x2,y2 for android_swipe.' };

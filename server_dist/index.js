@@ -12285,53 +12285,78 @@ ${lines.join("\n")}`);
               op = { type: "android_type", text: String(args.text), submit: !!args.submit };
             } else if (action === "android_notifications_list") {
               const limit = typeof args.limit === "number" ? Math.min(args.limit, 60) : 20;
-              const notifs = getRecentPhoneNotifications(userId, limit);
-              if (notifs.length > 0) {
-                const formatted = notifs.map((n) => {
-                  const d = new Date(n.ts).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
-                  return `[${d}] ${n.app}: ${n.title}${n.text ? " \u2014 " + n.text.slice(0, 120) : ""}`;
-                }).join("\n");
-                return { result: "success", label: `${notifs.length} recent notification${notifs.length !== 1 ? "s" : ""} (cached)`, detail: formatted };
+              const daemonNotifResult = await sendDaemonOp(userId, { type: "android_notifications_list", limit }, 1e4);
+              if (daemonNotifResult.ok) {
+                const d = daemonNotifResult.data;
+                const listenerEnabled = !!d?.listenerEnabled;
+                const rawNotifications = Array.isArray(d?.notifications) ? d.notifications : [];
+                const count = rawNotifications.length;
+                if (listenerEnabled && count > 0) {
+                  const formatted = rawNotifications.map((n) => {
+                    const ts = typeof n.ts === "number" ? new Date(n.ts).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }) : "?";
+                    const app3 = String(n.app || n.pkg || "Unknown");
+                    const title = String(n.title || "");
+                    const text2 = n.text ? ` \u2014 ${String(n.text).slice(0, 120)}` : "";
+                    return `[${ts}] ${app3}: ${title}${text2}`;
+                  }).join("\n");
+                  return {
+                    result: "success",
+                    label: `${count} notification${count !== 1 ? "s" : ""} from phone`,
+                    detail: `REAL NOTIFICATIONS FROM DEVICE \u2014 report these exactly as shown:
+${formatted}`
+                  };
+                }
+                if (listenerEnabled && count === 0) {
+                  return {
+                    result: "success",
+                    label: "No notifications",
+                    detail: "The notification listener is active on the phone and reports zero current notifications. The tray is clear."
+                  };
+                }
+                console.warn(`[daemon] android_notifications_list: listenerEnabled=false for userId=${userId}, falling back to shade`);
+              } else {
+                console.warn(`[daemon] android_notifications_list direct op failed (${daemonNotifResult.error}), falling back to shade`);
               }
               const swipeOp = await sendDaemonOp(userId, {
                 type: "android_swipe",
                 x1: 540,
                 y1: 10,
                 x2: 540,
-                y2: 900,
-                durationMs: 350
+                y2: 1200,
+                durationMs: 400
               }, 8e3);
               if (!swipeOp.ok) {
                 return {
                   result: "error",
-                  label: "Could not open notification shade",
-                  detail: `Swipe down failed: ${swipeOp.error || "unknown error"}. Ensure the Accessibility Service is enabled in phone Settings.`
+                  label: "Cannot read notifications",
+                  detail: `The Notification Access permission is not granted to Jarvis Daemon (go to Settings > Notifications > Device & App Notifications > Jarvis Daemon and enable it). The shade-opening fallback also failed: ${swipeOp.error || "swipe failed"}.`
                 };
               }
               await new Promise((r) => setTimeout(r, 700));
-              const readOp = await sendDaemonOp(userId, { type: "android_read_screen" }, 1e4);
+              const shadeReadOp = await sendDaemonOp(userId, { type: "android_read_screen" }, 1e4);
               sendDaemonOp(userId, { type: "android_press_key", key: "back" }, 5e3).catch(() => {
               });
-              if (!readOp.ok) {
+              if (!shadeReadOp.ok) {
                 return {
                   result: "error",
                   label: "Could not read notification shade",
-                  detail: `Screen read failed after opening shade: ${readOp.error || "unknown error"}.`
+                  detail: `Screen read failed: ${shadeReadOp.error || "unknown"}. Ensure the Accessibility Service is enabled.`
                 };
               }
-              const screenText = String(readOp.data || "").trim();
-              if (!screenText) {
+              const shadeData = shadeReadOp.data;
+              const shadeText = typeof shadeData === "string" ? shadeData : JSON.stringify(shadeData || "");
+              if (!shadeText || shadeText === "{}" || shadeText === '""' || shadeText === "null") {
                 return {
                   result: "success",
-                  label: "Notification shade opened \u2014 screen appears empty",
-                  detail: "No text content detected on screen after opening notification shade. There may be no active notifications, or the shade did not open fully."
+                  label: "Notification shade appears empty",
+                  detail: "No text was detected in the notification shade. Your notification tray may be empty."
                 };
               }
               return {
                 result: "success",
-                label: "Notifications read from screen",
-                detail: `[Read by opening notification shade]
-${screenText}`
+                label: "Notification shade content read from screen",
+                detail: `SCREEN CONTENT (verbatim from phone \u2014 report ONLY what is shown here, do NOT add or infer any details):
+${shadeText}`
               };
             } else if (action === "android_swipe") {
               if (typeof args.x1 !== "number" || typeof args.y1 !== "number" || typeof args.x2 !== "number" || typeof args.y2 !== "number") return { result: "error", label: "coords required", detail: "Provide x1,y1,x2,y2 for android_swipe." };
