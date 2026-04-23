@@ -841,7 +841,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         parameters: {
           type: "object",
           properties: {
-            action: { type: "string", enum: ["shell", "notify", "file_read", "file_write", "file_list", "android_open_app", "android_browse", "android_screenshot", "android_read_screen", "android_tap", "android_type", "android_swipe", "android_press_key", "android_file_list", "android_file_read", "android_notifications_list"] },
+            action: { type: "string", enum: ["shell", "notify", "file_read", "file_write", "file_list", "android_open_app", "android_browse", "android_screenshot", "android_read_screen", "android_tap", "android_type", "android_swipe", "android_press_key", "android_file_list", "android_file_read", "android_notifications_list"], description: "Action to perform. 'notify' works on BOTH desktop and Android daemons — sends a pop-up banner notification with title and body." },
             cmd: { type: "string", description: "Shell command (for 'shell' action)" },
             title: { type: "string", description: "Notification title (for 'notify' action)" },
             body: { type: "string", description: "Notification body (for 'notify' action)" },
@@ -1077,7 +1077,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const slackConnectedCheck = (oauthStatus as any)?.slack?.connected ?? false;
           const daemonLabel = daemonOnline
             ? isAndroid
-              ? `Android Device Daemon: ✓ online — use android_open_app, android_browse, android_screenshot, android_read_screen, android_tap, android_type, android_swipe, android_press_key, android_file_list, android_file_read, android_notifications_list. DO NOT use desktop shell/notify/file actions. If a tool returns result:error, stop and report the error immediately — do NOT fabricate success. After android_open_app or android_browse succeeds, ALWAYS call android_read_screen before describing screen content. For app searches use deep links: YouTube='vnd.youtube://results?search_query=QUERY', Maps='geo:0,0?q=QUERY', Spotify='spotify:search:QUERY'.`
+              ? `Android Device Daemon: ✓ online — use android_open_app, android_browse, android_screenshot, android_read_screen, android_tap, android_type, android_swipe, android_press_key, android_file_list, android_file_read, android_notifications_list, notify. DO NOT use desktop shell/file actions. After completing a multi-step phone task, call notify (title:'Jarvis ✓', body: one-line summary) so the user gets a banner on their phone. If a tool returns result:error, stop and report the error immediately — do NOT fabricate success. After android_open_app or android_browse succeeds, ALWAYS call android_read_screen before describing screen content. For app searches use deep links: YouTube='vnd.youtube://results?search_query=QUERY', Maps='geo:0,0?q=QUERY', Spotify='spotify:search:QUERY'.`
               : `Desktop Daemon: ✓ online — use shell, notify, file_read, file_write, file_list actions.`
             : `Android/Desktop Daemon: ✗ not connected — user must open Jarvis app → Profile → Android Device → Get Pairing Code, then open the Jarvis Daemon APK, enter server URL https://GameplanAI.replit.app and the 8-character code, tap Pair`;
           const lines = [
@@ -1237,7 +1237,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             return { result: 'error', label: 'Daemon not connected', detail: 'No daemon paired. Install and pair either the desktop daemon or the Android APK from Profile → Connected Channels.' };
           }
           const isAndroidDaemon = await isAndroidDaemonActive(userId);
-          const androidActions = ['android_open_app', 'android_browse', 'android_screenshot', 'android_read_screen', 'android_tap', 'android_type', 'android_swipe', 'android_press_key', 'android_file_list', 'android_file_read', 'android_notifications_list'];
+          const androidActions = ['android_open_app', 'android_browse', 'android_screenshot', 'android_read_screen', 'android_tap', 'android_type', 'android_swipe', 'android_press_key', 'android_file_list', 'android_file_read', 'android_notifications_list', 'notify'];
           const desktopActions = ['shell', 'notify', 'file_read', 'file_write', 'file_list'];
 
           let op: DaemonOp;
@@ -1397,6 +1397,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             } else if (action === 'android_file_list') {
               if (!args.path) return { result: 'error', label: 'path required', detail: 'Provide path for android_file_list.' };
               op = { type: 'android_file_list', path: String(args.path) };
+            } else if (action === 'notify') {
+              op = { type: 'notify', title: String(args.title || 'Jarvis'), body: String(args.body || '') };
             } else {
               if (!args.path) return { result: 'error', label: 'path required', detail: 'Provide path for android_file_read.' };
               op = { type: 'android_file_read', path: String(args.path) };
@@ -1683,7 +1685,7 @@ Answer (yes/no):`,
 
       const daemonSection = daemonPaired
         ? androidActive
-          ? `Android Device Daemon is ACTIVE and connected.\n${deviceHints}\nAvailable actions: android_open_app, android_browse, android_screenshot, android_read_screen, android_tap, android_type, android_swipe, android_press_key, android_file_list, android_file_read, android_notifications_list. DO NOT use desktop shell/notify/file actions.\nSEARCH SHORTCUTS — use android_browse with these deep links (opens native app directly to results): YouTube search → url='vnd.youtube://results?search_query=YOUR_QUERY', Google Maps → url='geo:0,0?q=YOUR_QUERY', Spotify → url='spotify:search:YOUR_QUERY'.\nACTION FLOW for multi-step tasks: Use as many tool-call turns as the task requires — there is no turn limit. For each step: (1) If unsure what is on screen, call android_read_screen first. (2) Act — call android_browse, android_tap, android_swipe, android_type, etc. as needed. (3) After acting, call android_read_screen to confirm the result, then decide the next step. Complete the FULL task end-to-end (open app → search → pick result → play/navigate) before responding — do NOT stop mid-task and ask the user to finish. NEVER re-open an app that is already on screen — check the screen first, then interact with what is there. NEVER describe app content without calling android_read_screen first. If an op returns result:error, tell the user what failed and what you tried.`
+          ? `Android Device Daemon is ACTIVE and connected.\n${deviceHints}\nAvailable actions: android_open_app, android_browse, android_screenshot, android_read_screen, android_tap, android_type, android_swipe, android_press_key, android_file_list, android_file_read, android_notifications_list, notify. DO NOT use desktop shell/file actions.\nSEARCH SHORTCUTS — use android_browse with these deep links (opens native app directly to results): YouTube search → url='vnd.youtube://results?search_query=YOUR_QUERY', Google Maps → url='geo:0,0?q=YOUR_QUERY', Spotify → url='spotify:search:YOUR_QUERY'.\nACTION FLOW for multi-step tasks: Use as many tool-call turns as the task requires — there is no turn limit. For each step: (1) If unsure what is on screen, call android_read_screen first. (2) Act — call android_browse, android_tap, android_swipe, android_type, etc. as needed. (3) After acting, call android_read_screen to confirm the result, then decide the next step. Complete the FULL task end-to-end (open app → search → pick result → play/navigate) before responding — do NOT stop mid-task and ask the user to finish. NEVER re-open an app that is already on screen — check the screen first, then interact with what is there. NEVER describe app content without calling android_read_screen first. If an op returns result:error, tell the user what failed and what you tried.\nCOMPLETION NOTIFICATIONS — after finishing any multi-step phone task (open app, search, navigate, play, etc.), ALWAYS call notify as the FINAL step with action:'notify', title:'Jarvis ✓', body: a one-line summary of what was done (e.g. "Playing Lo-Fi Hip Hop on YouTube" or "Opened Reddit → r/productivity"). This pops up a banner on the phone so the user knows the task is done without looking at the Jarvis app.`
           : 'Desktop Daemon is ACTIVE. Use shell, notify, file_read, file_write, file_list actions. ALWAYS report errors immediately if a tool returns result:error. Use daemon_diagnostic (no args) to check daemon health before multi-step sequences or when ops are failing.'
         : '⚠️ NO DAEMON CONNECTED. Do NOT call daemon_action — it will fail with "daemon not connected". If the user asks to control their phone or computer, tell them exactly this: "Your phone daemon isn\'t connected. To fix it: (1) Open the Jarvis app → Profile → scroll to \'Android Device\' → tap \'Get Pairing Code\', (2) Open the Jarvis Daemon APK on your phone, (3) Make sure the Server URL is https://GameplanAI.replit.app, (4) Enter the 8-character pairing code, (5) Tap Pair. The status dot should turn green within a few seconds." Do not attempt daemon_action until they confirm it\'s connected.';
       const systemPrompt = buildCoachSystemPrompt(goals || [], stats || {}, history || [], calendarEvents || [], lifeContext || null, resolvedGmailItems, resolvedGmailConnected, slackMessages || [], slackConnected ?? false, userCommitments, coachingMode, memories, telegramMessages || [], telegramConnected ?? false, morningNoteSummary, documentsContext, crossChannelContext, soulBlock, daemonSection);
@@ -1891,6 +1893,7 @@ Answer (yes/no):`,
                 android_screenshot: 'Taking screenshot...',
                 android_press_key: 'Pressing key...',
                 android_notifications_list: 'Checking notifications...',
+                notify: 'Sending you a notification...',
               };
               const workingMsg = actionLabel[String(args.action || '')] || 'Working on your phone...';
               res.write(`data: ${JSON.stringify({ type: 'working', message: workingMsg })}\n\n`);

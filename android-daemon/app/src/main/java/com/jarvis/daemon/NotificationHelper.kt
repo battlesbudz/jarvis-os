@@ -9,7 +9,7 @@ import androidx.core.app.NotificationCompat
 
 object NotificationHelper {
 
-    const val CHANNEL_ID = "jarvis_alerts"
+    const val CHANNEL_ID = "jarvis_alerts_v2"
     private const val ACTION_CHANNEL_ID = "jarvis_actions"
     private var notifId = 2000
 
@@ -21,6 +21,7 @@ object NotificationHelper {
             .setContentText(body)
             .setStyle(NotificationCompat.BigTextStyle().bigText(body))
             .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
             .build()
         nm.notify(notifId++, notif)
@@ -45,7 +46,7 @@ object NotificationHelper {
             val chan = NotificationChannel(
                 CHANNEL_ID,
                 "Jarvis Alerts",
-                NotificationManager.IMPORTANCE_DEFAULT
+                NotificationManager.IMPORTANCE_HIGH
             ).apply {
                 description = "Notifications from Jarvis"
             }
