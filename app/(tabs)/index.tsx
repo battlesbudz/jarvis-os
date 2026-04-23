@@ -474,6 +474,33 @@ export default function MissionControlScreen() {
     } catch {}
   }, []);
 
+  const [importantConfirmId, setImportantConfirmId] = useState<string | null>(null);
+  const importantTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    return () => {
+      if (importantTimerRef.current) clearTimeout(importantTimerRef.current);
+    };
+  }, []);
+  const handleMarkImportant = useCallback(async (item: InboxItem) => {
+    setImportantConfirmId(item.id);
+    importantTimerRef.current = setTimeout(() => {
+      setInboxItems(prev => prev.filter(i => i.id !== item.id));
+      setImportantConfirmId(null);
+      importantTimerRef.current = null;
+    }, 1200);
+    try {
+      await apiRequest('POST', `/api/inbox/items/${item.id}/important`);
+    } catch {
+      if (importantTimerRef.current) {
+        clearTimeout(importantTimerRef.current);
+        importantTimerRef.current = null;
+      }
+      setInboxItems(prev => prev.some(i => i.id === item.id) ? prev : [item, ...prev]);
+      setImportantConfirmId(null);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
+    }
+  }, []);
+
   const handleReplyWithJarvis = useCallback((item: InboxItem) => {
     setInboxModal(false);
     router.push('/(tabs)/insights');
@@ -1050,16 +1077,26 @@ export default function MissionControlScreen() {
                 <Text style={styles.modalItemTitle}>{item.subject ?? item.itemType}</Text>
                 {item.sender && <Text style={styles.modalItemMeta}>{item.sender}</Text>}
                 {item.jarvisReason && <Text style={styles.modalItemSub}>{item.jarvisReason}</Text>}
-                <View style={styles.inboxActions}>
-                  <Pressable style={styles.replyBtn} onPress={() => handleReplyWithJarvis(item)}>
-                    <Ionicons name="chatbubble-outline" size={13} color={Colors.cyan} />
-                    <Text style={styles.replyBtnText}>Reply with Jarvis</Text>
-                  </Pressable>
-                  <Pressable style={styles.dismissBtn} onPress={() => handleDismissInbox(item)}>
-                    <Ionicons name="close" size={13} color={Colors.textTertiary} />
-                    <Text style={styles.dismissBtnText}>Dismiss</Text>
-                  </Pressable>
-                </View>
+                {importantConfirmId === item.id ? (
+                  <View style={styles.inboxActions}>
+                    <Text style={styles.importantConfirmText}>Saved to memory ✓</Text>
+                  </View>
+                ) : (
+                  <View style={styles.inboxActions}>
+                    <Pressable style={styles.replyBtn} onPress={() => handleReplyWithJarvis(item)}>
+                      <Ionicons name="chatbubble-outline" size={13} color={Colors.cyan} />
+                      <Text style={styles.replyBtnText}>Reply with Jarvis</Text>
+                    </Pressable>
+                    <Pressable style={styles.importantBtn} onPress={() => handleMarkImportant(item)}>
+                      <Ionicons name="star" size={13} color={Colors.warning} />
+                      <Text style={styles.importantBtnText}>Important</Text>
+                    </Pressable>
+                    <Pressable style={styles.dismissBtn} onPress={() => handleDismissInbox(item)}>
+                      <Ionicons name="close" size={13} color={Colors.textTertiary} />
+                      <Text style={styles.dismissBtnText}>Dismiss</Text>
+                    </Pressable>
+                  </View>
+                )}
               </View>
             </View>
           ))
@@ -1846,6 +1883,28 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontFamily: 'Inter_500Medium',
     color: Colors.textTertiary,
+  },
+  importantBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    backgroundColor: Colors.warningDim,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.warning + '40',
+  },
+  importantBtnText: {
+    fontSize: 11,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.warning,
+  },
+  importantConfirmText: {
+    fontSize: 12,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.success,
+    paddingVertical: 5,
   },
   blockerBtn: {
     flexDirection: 'row',

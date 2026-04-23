@@ -2617,10 +2617,11 @@ Return JSON: { "note": "your 1-2 sentence note here" }`;
 
       const goalsText = goals.map((g: any) => `- ${g.title} (${g.category}): ${g.current}/${g.target} ${g.unit}`).join('\n');
 
-      const emailsText = allEmails.slice(0, 30).map((e: any) => {
+      const emailsText = allEmails.slice(0, 30).map((e: any, idx: number) => {
         const acct = e.accountEmail ? ` [Account: ${e.accountEmail}]` : '';
         const labels = e.labels ? ` [Labels: ${e.labels.join(', ')}]` : '';
-        return `- From: ${e.from || 'unknown'}${acct}${labels} | Subject: "${e.subject}" | Snippet: ${e.snippet}`;
+        const msgId = e.messageId ? ` [id:${e.messageId}]` : '';
+        return `${idx + 1}.${msgId} From: ${e.from || 'unknown'}${acct}${labels} | Subject: "${e.subject}" | Snippet: ${e.snippet}`;
       }).join('\n');
 
       const prompt = `You are a productivity assistant. Given the user's goals and recent emails, identify 3–5 specific tasks they should do. Prioritise emails that are Starred, Important, or from real people (not newsletters/promotions).
@@ -2637,6 +2638,7 @@ Return JSON:
     "title": "action-verb task title (concise)",
     "emailSubject": "email that triggered this",
     "emailFrom": "sender",
+    "emailMessageId": "the exact id: value from the email, if present",
     "accountEmail": "which Gmail account",
     "goalTitle": "which goal this serves (or 'General' if no specific goal)",
     "reason": "one sentence why this task matters"
@@ -2655,6 +2657,40 @@ Only return the JSON object, no extra text.`;
       try {
         const parsed = JSON.parse(content);
         const suggestions = Array.isArray(parsed.suggestions) ? parsed.suggestions.slice(0, 5) : [];
+
+        for (const suggestion of suggestions) {
+          const matchedEmail = allEmails.find((e: any) => {
+            if (suggestion.emailMessageId && e.messageId) {
+              return e.messageId === suggestion.emailMessageId;
+            }
+            if (suggestion.emailSubject && e.subject === suggestion.emailSubject) return true;
+            if (suggestion.emailFrom && e.from && e.from.includes(suggestion.emailFrom)) return true;
+            return false;
+          });
+          if (!matchedEmail) continue;
+          const emailId = matchedEmail.messageId
+            ? `gmail:${matchedEmail.messageId}`
+            : `gmail:${matchedEmail.subject}:${matchedEmail.from || ''}`;
+          try {
+            await db.insert(schema.inboxItems).values({
+              userId,
+              sourceType: "email",
+              sourceId: emailId,
+              subject: matchedEmail.subject || suggestion.emailSubject || "(no subject)",
+              sender: matchedEmail.from || suggestion.emailFrom || null,
+              snippet: matchedEmail.snippet || null,
+              jarvisReason: "Jarvis created a task from this email",
+              suggestedActions: [
+                { label: "Reply", actionType: "reply" },
+                { label: "Archive", actionType: "archive" },
+                { label: "Dismiss", actionType: "dismiss" },
+              ],
+            }).onConflictDoNothing();
+          } catch (inboxErr) {
+            console.error("[GmailScan] inbox_items insert failed:", inboxErr);
+          }
+        }
+
         res.json({ suggestions });
       } catch {
         res.json({ suggestions: [] });
@@ -3562,6 +3598,88 @@ Return ONLY the JSON object.`;
     } catch (error) {
       console.error("Error fetching inbox items:", error);
       res.status(500).json({ error: "Failed to fetch inbox items" });
+    }
+  });
+
+  app.post("/api/inbox/items/:id/important", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const { id } = req.params;
+
+      const [item] = await db
+        .select()
+        .from(schema.inboxItems)
+        .where(and(eq(schema.inboxItems.id, id), eq(schema.inboxItems.userId, userId)));
+
+      if (!item) return res.status(404).json({ error: "Item not found" });
+
+      if (item.sourceType === "email" || item.sourceType === "gmail") {
+        const senderPart = item.sender
+          ? `emails from ${item.sender}`
+          : item.subject
+            ? `emails with subject "${item.subject}"`
+            : "this type of email";
+        const memoryContent = `User marked as important: ${senderPart}${item.snippet ? ` — "${item.snippet.slice(0, 120)}"` : ""}. Always surface similar emails.`;
+
+        await db.insert(schema.userMemories).values({
+          userId,
+          content: memoryContent,
+          category: "Email Pattern",
+          confidence: 95,
+          relevanceScore: 80,
+          sourceType: "email_pattern",
+          sourceRef: item.sourceId || null,
+        });
+
+        const senderDomain = item.sender
+          ? (item.sender.match(/@([a-zA-Z0-9.-]+)/)?.[1] || "").toLowerCase()
+          : "";
+        const senderEmail = item.sender ? item.sender.toLowerCase() : "";
+
+        const subjectKw = (item.subject || "").toLowerCase().trim().slice(0, 60);
+        const canCreateRule = senderDomain || subjectKw.length > 0;
+
+        if (canCreateRule) {
+          const matchHints = senderDomain
+            ? { domains: [senderDomain], senders: senderEmail ? [senderEmail] : [] }
+            : { subjectKeywords: [subjectKw] };
+          const pattern = senderDomain
+            ? `Always surface emails from ${senderDomain}`
+            : `Always surface: "${item.subject}"`;
+
+          const { getUserInboxRules } = await import("./inboxRules");
+          const existingRules = await getUserInboxRules(userId);
+          const alreadyExists = existingRules.some(r => {
+            if (r.type !== "surface" || r.scope !== "email") return false;
+            const hints = (r.matchHints || {}) as { domains?: string[]; subjectKeywords?: string[] };
+            if (senderDomain && hints.domains?.includes(senderDomain)) return true;
+            if (!senderDomain && subjectKw && hints.subjectKeywords?.includes(subjectKw)) return true;
+            return false;
+          });
+
+          if (!alreadyExists) {
+            await db.insert(schema.inboxRules).values({
+              userId,
+              type: "surface",
+              scope: "email",
+              pattern,
+              matchHints,
+              source: "user",
+            });
+          }
+        }
+      }
+
+      await db
+        .update(schema.inboxItems)
+        .set({ status: "important", actedAt: new Date() })
+        .where(and(eq(schema.inboxItems.id, id), eq(schema.inboxItems.userId, userId)));
+
+      res.json({ success: true, message: "Saved to Jarvis memory" });
+    } catch (error) {
+      console.error("Error marking inbox item as important:", error);
+      res.status(500).json({ error: "Failed to mark as important" });
     }
   });
 
