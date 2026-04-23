@@ -540,16 +540,45 @@ export default function MissionControlScreen() {
     if (!editingTask) return;
     setBreakingDown(true);
     try {
-      const res = await apiRequest('POST', '/api/coach', {
-        message: `Break down this task into 3-5 simple actionable sub-steps and add them to my today plan: "${editingTask.title}"${editingTask.description ? ` — ${editingTask.description}` : ''}. Replace the original task with the subtasks if possible.`,
+      const res = await apiRequest('POST', '/api/coach/break-down-task', {
+        title: editingTask.title,
+        description: editingTask.description,
       });
-      if (res.ok) {
-        setEditTaskModal(false);
-        await loadLocal();
+      if (!res.ok) throw new Error('Request failed');
+      const data = await res.json();
+      const rawSubtasks: Array<{ title: string; category?: string; priority?: string }> = data.subtasks || [];
+      if (rawSubtasks.length === 0) throw new Error('No subtasks returned');
+
+      const validCategories = ['calendar', 'fitness', 'finance', 'career', 'personal', 'social'] as const;
+      const validPriorities = ['high', 'medium', 'low'] as const;
+      const newTasks: Task[] = rawSubtasks.map((s, i) => ({
+        id: `${Date.now()}${Math.random().toString(36).substr(2, 6)}${i}`,
+        title: s.title,
+        category: (validCategories.includes(s.category as any) ? s.category : editingTask.category) as Task['category'],
+        priority: (validPriorities.includes(s.priority as any) ? s.priority : 'medium') as Task['priority'],
+        completed: false,
+      }));
+
+      setPlan(prev => {
+        if (!prev) return prev;
+        return { ...prev, tasks: prev.tasks.flatMap(t => t.id === editingTask.id ? newTasks : [t]) };
+      });
+      setEditTaskModal(false);
+
+      const todayKey = getTodayKey();
+      const planRes = await apiRequest('GET', `/api/data/plans/${todayKey}`);
+      const planJson = await planRes.json();
+      if (planJson.data) {
+        const updatedTasks = (planJson.data.tasks as Task[]).flatMap((t: Task) =>
+          t.id === editingTask.id ? newTasks : [t]
+        );
+        await apiRequest('PUT', `/api/data/plans/${todayKey}`, { data: { ...planJson.data, tasks: updatedTasks } });
       }
-    } catch {}
+    } catch (e) {
+      console.error('[BreakDown] failed:', e);
+    }
     setBreakingDown(false);
-  }, [editingTask, loadLocal]);
+  }, [editingTask]);
 
   // ── Computed ──
   const PRIORITY_ORDER: Record<string, number> = { high: 0, medium: 1, low: 2 };
