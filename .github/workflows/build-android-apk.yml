@@ -68,10 +68,7 @@ jobs:
           KEYSTORE_PASSWORD: jarvis2024
           KEY_ALIAS: jarviskey
           KEY_PASSWORD: jarvis2024
-        run: |
-          sed -i 's/\r$//' gradlew
-          chmod +x gradlew
-          ./gradlew assembleRelease --no-daemon
+        run: gradle assembleRelease --no-daemon
 
       - name: Locate, rename APK and write version.json
         run: |
