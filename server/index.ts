@@ -8,6 +8,7 @@ import { startHeartbeat } from "./heartbeat";
 import { startJobQueueWorker } from "./agent/jobQueue";
 import { isTelegramConfigured, logTelegramStatus, setWebhook, deleteWebhook } from "./integrations/telegram";
 import { startScheduler } from "./scheduler";
+import { startCuriosityScanner } from "./curiosityScanner";
 import { initChannels } from "./channels";
 import { registerWhatsAppWebhook } from "./channels/whatsappWebhook";
 import { registerSlackWebhook } from "./channels/slackWebhook";
@@ -352,6 +353,9 @@ function setupErrorHandler(app: express.Application) {
       startMomentumExpiryScheduler();
       startEmailAlertScanner().catch(err => {
         console.error("Failed to start email alert scanner:", err);
+      });
+      startCuriosityScanner().catch(err => {
+        console.error("Failed to start curiosity scanner:", err);
       });
       startHeartbeat();
     },
