@@ -108,6 +108,7 @@ class MainActivity : AppCompatActivity() {
         requestNotificationPermissionIfNeeded()
         checkPermissionsStatus()
         bindToService()
+        UpdateChecker.check(this)
 
         DaemonLog.onChanged = {
             logHandler.post { refreshLogPanel() }
