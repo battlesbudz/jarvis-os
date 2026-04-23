@@ -77,13 +77,58 @@ object OpHandler {
         )
     }
 
+    // Many apps ship under multiple package names (lite vs full, different stores, beta).
+    // When the requested package has no launch intent, try these alternatives before
+    // declaring the app not installed.
+    private val packageFallbacks = mapOf(
+        "com.facebook.katana"         to listOf("com.facebook.lite", "com.facebook.mlite"),
+        "com.facebook.lite"           to listOf("com.facebook.katana"),
+        "com.twitter.android"         to listOf("com.twitter.android.lite", "com.atebits.tweetie2"),
+        "com.twitter.android.lite"    to listOf("com.twitter.android"),
+        "com.reddit.frontpage"        to listOf("com.reddit.frontpage.debug"),
+        "com.tiktok.tiktok"           to listOf("com.ss.android.ugc.trill", "com.zhiliaoapp.musically"),
+        "com.ss.android.ugc.trill"    to listOf("com.tiktok.tiktok", "com.zhiliaoapp.musically"),
+        "com.google.android.apps.messaging" to listOf("com.samsung.android.messaging"),
+        "com.samsung.android.messaging"     to listOf("com.google.android.apps.messaging"),
+        "com.microsoft.teams"         to listOf("com.microsoft.teams2"),
+        "com.snapchat.android"        to listOf("com.snapchat.android.debug"),
+        "com.discord"                 to listOf("com.discord.development"),
+        "com.linkedin.android"        to listOf("com.linkedin.android.lite"),
+        "com.amazon.mShop.android.shopping" to listOf("com.amazon.windowshop"),
+        "com.ubercab"                 to listOf("com.ubercab.driver"),
+        "com.pinterest"               to listOf("com.pinterest.twa"),
+    )
+
     private fun handleOpenApp(context: Context, op: JSONObject): OpResult {
-        val packageName = op.optString("packageName").ifEmpty {
+        val requestedPackage = op.optString("packageName").ifEmpty {
             return OpResult(false, error = "packageName required")
         }
         val pm = context.packageManager
-        val launchIntent = pm.getLaunchIntentForPackage(packageName)
-            ?: return OpResult(false, error = "App not installed: $packageName")
+
+        // Build candidate list: requested package + any known fallbacks
+        val candidates = (listOf(requestedPackage) + (packageFallbacks[requestedPackage] ?: emptyList()))
+
+        var resolvedPackage: String? = null
+        var launchIntent: Intent? = null
+        for (pkg in candidates) {
+            val intent = pm.getLaunchIntentForPackage(pkg)
+            if (intent != null) {
+                resolvedPackage = pkg
+                launchIntent = intent
+                if (pkg != requestedPackage) {
+                    Log.i(TAG, "Package fallback: $requestedPackage → $pkg")
+                    DaemonLog.add("package fallback: $requestedPackage → $pkg")
+                }
+                break
+            }
+        }
+
+        if (launchIntent == null || resolvedPackage == null) {
+            val tried = candidates.joinToString(", ")
+            return OpResult(false, error = "App not installed (tried: $tried). The app may be in Secure Folder or installed for a different user profile.")
+        }
+
+        val packageName = resolvedPackage
         launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
 
         val appLabel = try {
