@@ -68,10 +68,7 @@ jobs:
           KEYSTORE_PASSWORD: your-android-signing-password
           KEY_ALIAS: your-android-daemon-key-alias
           KEY_PASSWORD: your-android-signing-password
-        run: |
-          sed -i 's/\r$//' gradlew
-          chmod +x gradlew
-          ./gradlew assembleRelease --no-daemon
+        run: gradle assembleRelease --no-daemon
 
       - name: Locate, rename APK and write version.json
         run: |
