@@ -216,6 +216,30 @@ export async function runCuriosityScan(): Promise<void> {
           );
           if (ruleResult.verdict === "suppress") continue;
 
+          if (ruleResult.verdict === "surface") {
+            try {
+              await db.insert(schema.inboxItems).values({
+                userId: link.userId,
+                sourceType: "email",
+                sourceId: emailId,
+                subject: email.subject || "(no subject)",
+                sender: email.from || null,
+                snippet: email.snippet || null,
+                jarvisReason: "Matched your surface rule",
+                suggestedActions: [
+                  { label: "Reply", actionType: "reply" },
+                  { label: "Archive", actionType: "archive" },
+                  { label: "Dismiss", actionType: "dismiss" },
+                ],
+                matchedRuleId: ruleResult.matchedRuleId || null,
+              }).onConflictDoNothing();
+              console.log(`[Curiosity] Surfaced email for user ${link.userId}: ${email.subject}`);
+            } catch (err) {
+              console.error(`[Curiosity] inbox_items insert failed for email ${emailId}:`, err);
+            }
+            continue;
+          }
+
           items.push({
             sourceType: "gmail",
             sourceId: emailId,
@@ -260,6 +284,19 @@ export async function runCuriosityScan(): Promise<void> {
               console.log(
                 `[Curiosity] Sent question to user ${link.userId}: ${q.question.slice(0, 60)}...`
               );
+              const srcItem = items.find(i => i.sourceId === q.sourceId);
+              await db.insert(schema.inboxItems).values({
+                userId: link.userId,
+                sourceType: q.sourceType as "calendar" | "email" | "telegram" | "slack" | "discord" | "whatsapp" | "other",
+                sourceId: q.sourceId,
+                subject: srcItem?.summary?.slice(0, 200) ?? q.question.slice(0, 200),
+                snippet: q.question,
+                jarvisReason: "Jarvis sent you a curiosity question about this",
+                suggestedActions: [
+                  { label: "Reply", actionType: "reply" },
+                  { label: "Dismiss", actionType: "dismiss" },
+                ],
+              }).onConflictDoNothing();
             } catch (sendErr) {
               console.error(
                 `[Curiosity] DB recorded but Telegram send failed for user ${link.userId}:`,

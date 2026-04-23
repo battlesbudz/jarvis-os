@@ -582,7 +582,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/discord/status", async (req: Request, res: Response) => {
     try {
-      const userId = (req as any).session?.userId;
+      const userId = (req as any).userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const links = await db.select().from(channelLinks)
         .where(and(eq(channelLinks.userId, userId), eq(channelLinks.channel, 'discord')));
