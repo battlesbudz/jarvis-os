@@ -162,9 +162,23 @@ class JarvisAccessibilityService : AccessibilityService() {
             val callback = object : AccessibilityService.TakeScreenshotCallback {
                 override fun onSuccess(result: AccessibilityService.ScreenshotResult) {
                     try {
-                        // ScreenshotResult.getBitmap() (→ .bitmap in Kotlin) is the correct
-                        // API — not .hardwareBitmap which doesn't exist on this class.
-                        val rawBmp: Bitmap = result.bitmap
+                        // ScreenshotResult's bitmap getter is not exposed in the compile-time
+                        // SDK stubs for all compileSdk versions. Use reflection to call whichever
+                        // method is available at runtime: getHardwareBitmap() (API 30) or
+                        // getBitmap() (API 31+). Both return android.graphics.Bitmap.
+                        val rawBmp: Bitmap? = try {
+                            result.javaClass.getMethod("getHardwareBitmap").invoke(result) as? Bitmap
+                        } catch (_: Exception) {
+                            try {
+                                result.javaClass.getMethod("getBitmap").invoke(result) as? Bitmap
+                            } catch (_: Exception) { null }
+                        }
+
+                        if (rawBmp == null) {
+                            Log.w(TAG, "ScreenshotResult: bitmap method not found via reflection")
+                            latch.countDown()
+                            return
+                        }
 
                         // Convert HARDWARE bitmap → ARGB_8888 so pixels are CPU-readable.
                         val soft = if (rawBmp.config == Bitmap.Config.HARDWARE) {
