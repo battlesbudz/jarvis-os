@@ -1299,16 +1299,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
                     return `${Math.floor(diffHours / 24)}d ago`;
                   };
                   const formatted = rawNotifications.map((n) => {
-                    const ts = typeof n.ts === 'number' ? relativeTime(n.ts) : '?';
+                    const ago = typeof n.ts === 'number' ? relativeTime(n.ts) : '?';
                     const app = String(n.app || n.pkg || 'Unknown');
                     const title = String(n.title || '');
-                    const text = n.text ? ` — ${String(n.text).slice(0, 120)}` : '';
-                    return `[${ts}] ${app}: ${title}${text}`;
+                    const text = n.text ? `: ${String(n.text).slice(0, 120)}` : '';
+                    return `• ${app} (${ago}) — ${title}${text}`;
                   }).join('\n');
                   return {
                     result: 'success',
                     label: `${count} notification${count !== 1 ? 's' : ''} from phone`,
-                    detail: `REAL NOTIFICATIONS FROM DEVICE — report these exactly as shown:\n${formatted}`,
+                    detail: `PHONE NOTIFICATIONS (${count} total) — speak these back to the user exactly. The "(X ago)" values are relative ages; DO NOT convert them to clock times — you cannot know the user's timezone and any conversion will be wrong. Just say "X minutes ago" or "X hours ago" as shown.\n\n${formatted}`,
                   };
                 }
 

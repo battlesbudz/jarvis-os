@@ -12302,16 +12302,17 @@ ${lines.join("\n")}`);
                     return `${Math.floor(diffHours / 24)}d ago`;
                   };
                   const formatted = rawNotifications.map((n) => {
-                    const ts = typeof n.ts === "number" ? relativeTime(n.ts) : "?";
+                    const ago = typeof n.ts === "number" ? relativeTime(n.ts) : "?";
                     const app3 = String(n.app || n.pkg || "Unknown");
                     const title = String(n.title || "");
-                    const text2 = n.text ? ` \u2014 ${String(n.text).slice(0, 120)}` : "";
-                    return `[${ts}] ${app3}: ${title}${text2}`;
+                    const text2 = n.text ? `: ${String(n.text).slice(0, 120)}` : "";
+                    return `\u2022 ${app3} (${ago}) \u2014 ${title}${text2}`;
                   }).join("\n");
                   return {
                     result: "success",
                     label: `${count} notification${count !== 1 ? "s" : ""} from phone`,
-                    detail: `REAL NOTIFICATIONS FROM DEVICE \u2014 report these exactly as shown:
+                    detail: `PHONE NOTIFICATIONS (${count} total) \u2014 speak these back to the user exactly. The "(X ago)" values are relative ages; DO NOT convert them to clock times \u2014 you cannot know the user's timezone and any conversion will be wrong. Just say "X minutes ago" or "X hours ago" as shown.
+
 ${formatted}`
                   };
                 }
