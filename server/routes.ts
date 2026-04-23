@@ -1289,10 +1289,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 const count = rawNotifications.length;
 
                 if (listenerEnabled && count > 0) {
+                  const relativeTime = (tsMs: number): string => {
+                    const diffMs = Date.now() - tsMs;
+                    const diffMins = Math.round(diffMs / 60000);
+                    if (diffMins < 1) return 'just now';
+                    if (diffMins < 60) return `${diffMins}m ago`;
+                    const diffHours = Math.floor(diffMins / 60);
+                    if (diffHours < 24) return `${diffHours}h ${diffMins % 60}m ago`;
+                    return `${Math.floor(diffHours / 24)}d ago`;
+                  };
                   const formatted = rawNotifications.map((n) => {
-                    const ts = typeof n.ts === 'number'
-                      ? new Date(n.ts).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
-                      : '?';
+                    const ts = typeof n.ts === 'number' ? relativeTime(n.ts) : '?';
                     const app = String(n.app || n.pkg || 'Unknown');
                     const title = String(n.title || '');
                     const text = n.text ? ` — ${String(n.text).slice(0, 120)}` : '';

@@ -12292,8 +12292,17 @@ ${lines.join("\n")}`);
                 const rawNotifications = Array.isArray(d?.notifications) ? d.notifications : [];
                 const count = rawNotifications.length;
                 if (listenerEnabled && count > 0) {
+                  const relativeTime = (tsMs) => {
+                    const diffMs = Date.now() - tsMs;
+                    const diffMins = Math.round(diffMs / 6e4);
+                    if (diffMins < 1) return "just now";
+                    if (diffMins < 60) return `${diffMins}m ago`;
+                    const diffHours = Math.floor(diffMins / 60);
+                    if (diffHours < 24) return `${diffHours}h ${diffMins % 60}m ago`;
+                    return `${Math.floor(diffHours / 24)}d ago`;
+                  };
                   const formatted = rawNotifications.map((n) => {
-                    const ts = typeof n.ts === "number" ? new Date(n.ts).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }) : "?";
+                    const ts = typeof n.ts === "number" ? relativeTime(n.ts) : "?";
                     const app3 = String(n.app || n.pkg || "Unknown");
                     const title = String(n.title || "");
                     const text2 = n.text ? ` \u2014 ${String(n.text).slice(0, 120)}` : "";
