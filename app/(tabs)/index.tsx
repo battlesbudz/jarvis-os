@@ -31,9 +31,7 @@ import {
 import { apiRequest, getApiUrl } from '@/lib/query-client';
 import { authFetch } from '@/lib/auth-context';
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Types
-// ─────────────────────────────────────────────────────────────────────────────
 
 interface InboxItem {
   id: string;
@@ -79,9 +77,16 @@ interface ScheduledTask {
   createdAt: string;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+interface CalendarEvent {
+  id: string;
+  title: string;
+  start: string;
+  end: string;
+  description?: string;
+  source: 'google' | 'outlook';
+}
+
 // Helpers
-// ─────────────────────────────────────────────────────────────────────────────
 
 function useLiveClock() {
   const [now, setNow] = useState(new Date());
@@ -127,9 +132,7 @@ function getCategoryColor(cat: string) {
   return map[cat?.toLowerCase()] ?? Colors.textSecondary;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Panel Shell
-// ─────────────────────────────────────────────────────────────────────────────
 
 interface PanelProps {
   title: string;
@@ -178,9 +181,7 @@ function Panel({ title, icon, accent, count, loading, onViewAll, onAdd, children
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Task row (for TODAY panel)
-// ─────────────────────────────────────────────────────────────────────────────
 
 function TaskRow({ task, onToggle }: { task: Task; onToggle: () => void }) {
   const color = getCategoryColor(task.category);
@@ -203,9 +204,7 @@ function TaskRow({ task, onToggle }: { task: Task; onToggle: () => void }) {
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Modals
-// ─────────────────────────────────────────────────────────────────────────────
 
 function FullModal({ visible, title, accent, onClose, children }: {
   visible: boolean;
@@ -232,9 +231,7 @@ function FullModal({ visible, title, accent, onClose, children }: {
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Main Screen
-// ─────────────────────────────────────────────────────────────────────────────
 
 export default function MissionControlScreen() {
   const insets = useSafeAreaInsets();
@@ -268,8 +265,10 @@ export default function MissionControlScreen() {
   const [documentsLoading, setDocumentsLoading] = useState(true);
   const [scheduledTasks, setScheduledTasks] = useState<ScheduledTask[]>([]);
   const [scheduledLoading, setScheduledLoading] = useState(true);
+  const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
 
-  // ── Modal visibility ──
+  const [memorySearch, setMemorySearch] = useState('');
+
   const [tasksModal, setTasksModal] = useState(false);
   const [inboxModal, setInboxModal] = useState(false);
   const [deliverablesModal, setDeliverablesModal] = useState(false);
@@ -311,12 +310,17 @@ export default function MissionControlScreen() {
       setDiscordConnected(discordRes?.connected ?? false);
     } catch {}
 
-    const [inboxRes, delRes, memRes, docRes, schedRes] = await Promise.allSettled([
+    const weekStart = new Date().toISOString();
+    const weekEnd = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+    const calParams = `?startTime=${encodeURIComponent(weekStart)}&endTime=${encodeURIComponent(weekEnd)}`;
+    const [inboxRes, delRes, memRes, docRes, schedRes, gcalRes, ocalRes] = await Promise.allSettled([
       apiRequest('GET', '/api/inbox/items').then(r => r.json()),
       apiRequest('GET', '/api/deliverables').then(r => r.json()),
       authFetch(new URL('/api/memories', getApiUrl()).toString()).then(r => r.json()),
       authFetch(new URL('/api/documents', getApiUrl()).toString()).then(r => r.json()),
       apiRequest('GET', '/api/jarvis/scheduled-tasks').then(r => r.json()),
+      apiRequest('GET', `/api/calendar/google/events${calParams}`).then(r => r.json()).catch(() => null),
+      apiRequest('GET', `/api/calendar/outlook/events${calParams}`).then(r => r.json()).catch(() => null),
     ]);
 
     if (inboxRes.status === 'fulfilled' && Array.isArray(inboxRes.value)) {
@@ -345,6 +349,16 @@ export default function MissionControlScreen() {
       setScheduledTasks(schedRes.value);
     }
     setScheduledLoading(false);
+
+    const merged: CalendarEvent[] = [];
+    if (gcalRes.status === 'fulfilled' && gcalRes.value?.events) {
+      gcalRes.value.events.forEach((e: any) => merged.push({ id: e.id ?? e.title, title: e.title, start: e.start, end: e.end, description: e.description, source: 'google' }));
+    }
+    if (ocalRes.status === 'fulfilled' && ocalRes.value?.events) {
+      ocalRes.value.events.forEach((e: any) => merged.push({ id: e.id ?? e.title, title: e.title, start: e.start, end: e.end, description: e.description, source: 'outlook' }));
+    }
+    merged.sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime());
+    setCalendarEvents(merged);
   }, []);
 
   const loadAll = useCallback(async () => {
@@ -414,12 +428,28 @@ export default function MissionControlScreen() {
     } catch {}
   }, []);
 
-  // ── Dismiss inbox item ──
   const handleDismissInbox = useCallback(async (item: InboxItem) => {
     try {
       await apiRequest('POST', `/api/inbox/items/${item.id}/action`, { actionType: 'dismiss' });
       setInboxItems(prev => prev.filter(i => i.id !== item.id));
     } catch {}
+  }, []);
+
+  const handleReplyWithJarvis = useCallback((item: InboxItem) => {
+    setInboxModal(false);
+    router.push('/(tabs)/jarvis');
+  }, [router]);
+
+  const handleApproveDeliverable = useCallback(async (id: string) => {
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    setDeliverables(prev => prev.filter(d => d.id !== id));
+    await apiRequest('POST', `/api/deliverables/${id}/approve`).catch(() => null);
+  }, []);
+
+  const handleDiscardDeliverable = useCallback(async (id: string) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setDeliverables(prev => prev.filter(d => d.id !== id));
+    await apiRequest('POST', `/api/deliverables/${id}/discard`).catch(() => null);
   }, []);
 
   // ── Computed ──
@@ -428,6 +458,9 @@ export default function MissionControlScreen() {
   const totalCount = todayTasks.length;
   const completionPct = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
   const pendingScheduled = scheduledTasks.filter(t => !t.completedAt);
+  const filteredMemories = memorySearch.trim()
+    ? memories.filter(m => m.content.toLowerCase().includes(memorySearch.toLowerCase()) || m.category.toLowerCase().includes(memorySearch.toLowerCase()))
+    : memories;
 
   // Connection pill statuses
   const connections = [
@@ -514,6 +547,15 @@ export default function MissionControlScreen() {
             loading={tasksLoading}
             onViewAll={() => setTasksModal(true)}
           >
+            {goals.length > 0 && (
+              <Pressable style={styles.goalsSummaryRow} onPress={() => setTasksModal(true)}>
+                <Ionicons name="flag-outline" size={12} color={Colors.violet} />
+                <Text style={styles.goalsSummaryText}>
+                  {goals.length} active {goals.length === 1 ? 'goal' : 'goals'}
+                </Text>
+                <Text style={styles.goalsSummarySub}>Tap to manage day →</Text>
+              </Pressable>
+            )}
             {totalCount === 0 ? (
               <Text style={styles.emptyText}>No tasks for today. Ask Jarvis to build your day in the Jarvis tab.</Text>
             ) : (
@@ -568,7 +610,7 @@ export default function MissionControlScreen() {
             title="DELIVERABLES"
             icon="document-text-outline"
             accent={Colors.violet}
-            count={deliverables.filter(d => d.status === 'pending').length}
+            count={deliverables.length}
             loading={deliverablesLoading}
             onViewAll={() => setDeliverablesModal(true)}
           >
@@ -689,10 +731,32 @@ export default function MissionControlScreen() {
         </View>
       </Modal>
 
-      {/* Schedule Modal (all tasks) */}
-      <FullModal visible={scheduleModal} title="SCHEDULE" accent={Colors.cyan} onClose={() => setScheduleModal(false)}>
-        {scheduledTasks.length === 0 ? (
-          <Text style={[styles.emptyText, { margin: 24 }]}>No scheduled tasks. Ask Jarvis to schedule something, or tap + above.</Text>
+      {/* Schedule Modal — merged weekly calendar */}
+      <FullModal visible={scheduleModal} title="WEEKLY SCHEDULE" accent={Colors.cyan} onClose={() => setScheduleModal(false)}>
+        {calendarEvents.length > 0 && (
+          <Text style={[styles.modalSectionHeader, { color: Colors.cyan }]}>CALENDAR EVENTS</Text>
+        )}
+        {calendarEvents.map(ev => (
+          <View key={ev.id + ev.start} style={[styles.modalItemRow, { borderLeftColor: ev.source === 'google' ? '#4285F4' : '#0078D4' }]}>
+            <View style={styles.modalItemContent}>
+              <Text style={styles.modalItemTitle}>{ev.title}</Text>
+              <Text style={styles.modalItemMeta}>
+                {formatScheduledAt(ev.start)}
+                {' · '}
+                <Text style={{ color: ev.source === 'google' ? '#4285F4' : '#0078D4' }}>
+                  {ev.source === 'google' ? 'Google' : 'Outlook'}
+                </Text>
+              </Text>
+            </View>
+          </View>
+        ))}
+        {scheduledTasks.length > 0 && (
+          <Text style={[styles.modalSectionHeader, { color: Colors.cyan, marginTop: calendarEvents.length > 0 ? 8 : 0 }]}>
+            JARVIS TASKS
+          </Text>
+        )}
+        {scheduledTasks.length === 0 && calendarEvents.length === 0 ? (
+          <Text style={[styles.emptyText, { margin: 24 }]}>No scheduled tasks or calendar events. Ask Jarvis to schedule something.</Text>
         ) : (
           scheduledTasks.map(t => (
             <View key={t.id} style={[styles.modalItemRow, { borderLeftColor: isOverdue(t.scheduledAt) && !t.completedAt ? Colors.error : Colors.cyan }]}>
@@ -717,6 +781,22 @@ export default function MissionControlScreen() {
 
       {/* Today tasks modal */}
       <FullModal visible={tasksModal} title="TODAY'S TASKS" accent={Colors.violet} onClose={() => setTasksModal(false)}>
+        <Pressable style={styles.manageDayBtn} onPress={() => { setTasksModal(false); router.push('/(tabs)/jarvis'); }}>
+          <Ionicons name="flash-outline" size={14} color={Colors.violet} />
+          <Text style={styles.manageDayBtnText}>Plan / Rebuild My Day with Jarvis</Text>
+          <Ionicons name="chevron-forward" size={14} color={Colors.violet} />
+        </Pressable>
+        {goals.length > 0 && (
+          <View style={styles.modalGoalsSummary}>
+            <Text style={styles.modalSectionHeader}>ACTIVE GOALS</Text>
+            {goals.map(g => (
+              <Text key={g.id} style={styles.modalGoalItem} numberOfLines={1}>· {g.title}</Text>
+            ))}
+          </View>
+        )}
+        {todayTasks.length > 0 && (
+          <Text style={[styles.modalSectionHeader, { marginTop: 8 }]}>TODAY</Text>
+        )}
         {todayTasks.length === 0 ? (
           <Text style={[styles.emptyText, { margin: 24 }]}>No tasks. Ask Jarvis to build your day.</Text>
         ) : (
@@ -751,10 +831,17 @@ export default function MissionControlScreen() {
                 <Text style={styles.modalItemTitle}>{item.subject ?? item.itemType}</Text>
                 {item.sender && <Text style={styles.modalItemMeta}>{item.sender}</Text>}
                 {item.jarvisReason && <Text style={styles.modalItemSub}>{item.jarvisReason}</Text>}
+                <View style={styles.inboxActions}>
+                  <Pressable style={styles.replyBtn} onPress={() => handleReplyWithJarvis(item)}>
+                    <Ionicons name="chatbubble-outline" size={13} color={Colors.cyan} />
+                    <Text style={styles.replyBtnText}>Reply with Jarvis</Text>
+                  </Pressable>
+                  <Pressable style={styles.dismissBtn} onPress={() => handleDismissInbox(item)}>
+                    <Ionicons name="close" size={13} color={Colors.textTertiary} />
+                    <Text style={styles.dismissBtnText}>Dismiss</Text>
+                  </Pressable>
+                </View>
               </View>
-              <Pressable onPress={() => handleDismissInbox(item)} style={styles.modalItemDelete}>
-                <Ionicons name="close-circle-outline" size={18} color={Colors.textTertiary} />
-              </Pressable>
             </View>
           ))
         )}
@@ -773,6 +860,16 @@ export default function MissionControlScreen() {
                 </View>
                 <Text style={styles.modalItemTitle}>{d.title}</Text>
                 {d.content && <Text style={styles.modalItemSub} numberOfLines={4}>{d.content}</Text>}
+                <View style={styles.deliverableActions}>
+                  <Pressable style={styles.approveBtn} onPress={() => handleApproveDeliverable(d.id)}>
+                    <Ionicons name="checkmark" size={13} color={Colors.success} />
+                    <Text style={styles.approveBtnText}>Approve</Text>
+                  </Pressable>
+                  <Pressable style={styles.discardBtn} onPress={() => handleDiscardDeliverable(d.id)}>
+                    <Ionicons name="trash-outline" size={13} color={Colors.error} />
+                    <Text style={styles.discardBtnText}>Discard</Text>
+                  </Pressable>
+                </View>
               </View>
             </View>
           ))
@@ -796,11 +893,28 @@ export default function MissionControlScreen() {
       </FullModal>
 
       {/* Memory modal */}
-      <FullModal visible={memoriesModal} title="MEMORY" accent={Colors.violet} onClose={() => setMemoriesModal(false)}>
-        {memories.length === 0 ? (
-          <Text style={[styles.emptyText, { margin: 24 }]}>No memories yet. Jarvis learns from your conversations.</Text>
+      <FullModal visible={memoriesModal} title="MEMORY" accent={Colors.violet} onClose={() => { setMemoriesModal(false); setMemorySearch(''); }}>
+        <View style={styles.searchBar}>
+          <Ionicons name="search-outline" size={16} color={Colors.textTertiary} />
+          <TextInput
+            style={styles.searchInput}
+            value={memorySearch}
+            onChangeText={setMemorySearch}
+            placeholder="Search memories..."
+            placeholderTextColor={Colors.textTertiary}
+          />
+          {memorySearch.length > 0 && (
+            <Pressable onPress={() => setMemorySearch('')}>
+              <Ionicons name="close-circle" size={16} color={Colors.textTertiary} />
+            </Pressable>
+          )}
+        </View>
+        {filteredMemories.length === 0 ? (
+          <Text style={[styles.emptyText, { margin: 24 }]}>
+            {memorySearch ? 'No memories match your search.' : 'No memories yet. Jarvis learns from your conversations.'}
+          </Text>
         ) : (
-          memories.map(m => (
+          filteredMemories.map(m => (
             <View key={m.id} style={[styles.modalItemRow, { borderLeftColor: Colors.violet }]}>
               <View style={styles.modalItemContent}>
                 <View style={[styles.catBadge, { backgroundColor: Colors.violetDim, marginBottom: 6 }]}>
@@ -817,9 +931,7 @@ export default function MissionControlScreen() {
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Styles
-// ─────────────────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
   root: {
@@ -1331,5 +1443,158 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontFamily: 'Inter_600SemiBold',
     color: '#000',
+  },
+  goalsSummaryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 2,
+    marginBottom: 4,
+  },
+  goalsSummaryText: {
+    fontSize: 11,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.violet,
+    letterSpacing: 0.3,
+  },
+  goalsSummarySub: {
+    fontSize: 11,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textTertiary,
+    marginLeft: 'auto',
+  },
+  modalSectionHeader: {
+    fontSize: 10,
+    fontFamily: 'Inter_700Bold',
+    color: Colors.textTertiary,
+    letterSpacing: 1.5,
+    paddingHorizontal: 20,
+    paddingVertical: 8,
+  },
+  manageDayBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginHorizontal: 16,
+    marginTop: 16,
+    marginBottom: 4,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    backgroundColor: Colors.violetDim,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: Colors.violet + '40',
+  },
+  manageDayBtnText: {
+    flex: 1,
+    fontSize: 13,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.violet,
+  },
+  modalGoalsSummary: {
+    marginTop: 4,
+    marginBottom: 4,
+  },
+  modalGoalItem: {
+    fontSize: 13,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+    paddingHorizontal: 20,
+    paddingVertical: 2,
+  },
+  inboxActions: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 8,
+  },
+  replyBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    backgroundColor: Colors.cyanDim,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.cyan + '40',
+  },
+  replyBtnText: {
+    fontSize: 11,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.cyan,
+  },
+  dismissBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    backgroundColor: Colors.surface,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  dismissBtnText: {
+    fontSize: 11,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.textTertiary,
+  },
+  deliverableActions: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 8,
+  },
+  approveBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingVertical: 5,
+    paddingHorizontal: 12,
+    backgroundColor: Colors.successDim,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.success + '40',
+  },
+  approveBtnText: {
+    fontSize: 11,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.success,
+  },
+  discardBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingVertical: 5,
+    paddingHorizontal: 12,
+    backgroundColor: Colors.errorDim,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.error + '40',
+  },
+  discardBtnText: {
+    fontSize: 11,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.error,
+  },
+  searchBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginHorizontal: 16,
+    marginTop: 16,
+    marginBottom: 4,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    backgroundColor: Colors.surface,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 14,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.text,
   },
 });
