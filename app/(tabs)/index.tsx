@@ -39,11 +39,44 @@ import BlockerModal from '@/components/BlockerModal';
 interface InboxItem {
   id: string;
   itemType: string;
+  sourceType: string;
   subject: string | null;
   sender: string | null;
   jarvisReason: string | null;
   surfacedAt: string;
   status: string;
+}
+
+function getInboxSourceIcon(sourceType: string): { icon: keyof typeof Ionicons.glyphMap; color: string } {
+  switch (sourceType) {
+    case 'email':
+    case 'gmail':
+      return { icon: 'mail', color: '#EA4335' };
+    case 'calendar':
+      return { icon: 'calendar', color: Colors.primary };
+    case 'outlook':
+      return { icon: 'mail', color: '#0078D4' };
+    case 'telegram':
+      return { icon: 'paper-plane', color: '#2AABEE' };
+    default:
+      return { icon: 'notifications-outline', color: Colors.textSecondary };
+  }
+}
+
+function getInboxSourceLabel(sourceType: string): string {
+  switch (sourceType) {
+    case 'email':
+    case 'gmail':
+      return 'Gmail';
+    case 'calendar':
+      return 'Calendar';
+    case 'outlook':
+      return 'Outlook';
+    case 'telegram':
+      return 'Telegram';
+    default:
+      return sourceType || 'Inbox';
+  }
 }
 
 interface Deliverable {
@@ -794,9 +827,11 @@ export default function MissionControlScreen() {
             {inboxItems.length === 0 ? (
               <Text style={styles.emptyText}>No flagged items. Jarvis will surface important emails here.</Text>
             ) : (
-              inboxItems.slice(0, 3).map(item => (
+              inboxItems.slice(0, 3).map(item => {
+                const srcIcon = getInboxSourceIcon(item.sourceType);
+                return (
                 <View key={item.id} style={styles.inboxRow}>
-                  <View style={styles.inboxDot} />
+                  <Ionicons name={srcIcon.icon} size={13} color={srcIcon.color} style={{ marginTop: 2 }} />
                   <View style={styles.inboxContent}>
                     <Text style={styles.inboxSubject} numberOfLines={1}>{item.subject ?? item.itemType}</Text>
                     {item.sender && <Text style={styles.inboxSender} numberOfLines={1}>{item.sender}</Text>}
@@ -812,7 +847,8 @@ export default function MissionControlScreen() {
                     </View>
                   </View>
                 </View>
-              ))
+                );
+              })
             )}
           </Panel>
         </Animated.View>
@@ -1100,9 +1136,16 @@ export default function MissionControlScreen() {
         {inboxItems.length === 0 ? (
           <Text style={[styles.emptyText, { margin: 24 }]}>No flagged inbox items.</Text>
         ) : (
-          inboxItems.map(item => (
-            <View key={item.id} style={[styles.modalItemRow, { borderLeftColor: Colors.cyan }]}>
+          inboxItems.map(item => {
+            const srcIcon = getInboxSourceIcon(item.sourceType);
+            const srcLabel = getInboxSourceLabel(item.sourceType);
+            return (
+            <View key={item.id} style={[styles.modalItemRow, { borderLeftColor: srcIcon.color }]}>
               <View style={styles.modalItemContent}>
+                <View style={[styles.typeBadge, { backgroundColor: srcIcon.color + '18', marginBottom: 4, alignSelf: 'flex-start' }]}>
+                  <Ionicons name={srcIcon.icon} size={9} color={srcIcon.color} />
+                  <Text style={[styles.typeBadgeText, { color: srcIcon.color, marginLeft: 3 }]}>{srcLabel.toUpperCase()}</Text>
+                </View>
                 <Text style={styles.modalItemTitle}>{item.subject ?? item.itemType}</Text>
                 {item.sender && <Text style={styles.modalItemMeta}>{item.sender}</Text>}
                 {item.jarvisReason && <Text style={styles.modalItemSub}>{item.jarvisReason}</Text>}
@@ -1128,7 +1171,8 @@ export default function MissionControlScreen() {
                 )}
               </View>
             </View>
-          ))
+          );
+          })
         )}
       </FullModal>
 
@@ -1593,6 +1637,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   typeBadgeText: {
     fontSize: 9,
