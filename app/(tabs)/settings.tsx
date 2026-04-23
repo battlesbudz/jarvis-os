@@ -9,6 +9,7 @@ import {
   ActivityIndicator,
   Switch,
   Alert,
+  TextInput,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -28,9 +29,12 @@ import {
   TIER_COLORS,
   getLifeContext,
   getUserName,
+  getCoachingMode,
+  saveCoachingMode,
   type UserStats,
   type Reward,
   type LifeContext,
+  type CoachingMode,
 } from '@/lib/storage';
 import { areNotificationsEnabled, setNotificationsEnabled } from '@/lib/notifications';
 import { getApiUrl, apiRequest } from '@/lib/query-client';
@@ -126,6 +130,8 @@ export default function SettingsScreen() {
   const [lifeContext, setLifeContext] = useState<LifeContext | null>(null);
   const [sheetVisible, setSheetVisible] = useState(false);
   const [userName, setUserName] = useState('');
+  const [coachingMode, setCoachingModeState] = useState<CoachingMode>('sharp');
+  const [timezone, setTimezone] = useState('America/New_York');
 
   // ── Load everything ──
   const loadAll = useCallback(async () => {
@@ -150,16 +156,22 @@ export default function SettingsScreen() {
     } catch {}
     setLoadingStatus(false);
 
-    const [s, lc, name, notif] = await Promise.all([
+    const [s, lc, name, notif, cm] = await Promise.all([
       getStats(),
       getLifeContext(),
       getUserName(),
       areNotificationsEnabled(),
+      getCoachingMode(),
     ]);
     setStats(s);
     setLifeContext(lc);
     setUserName(name ?? '');
     setNotificationsEnabledState(notif);
+    setCoachingModeState(cm);
+    try {
+      const prefsRes = await apiRequest('GET', '/api/data/user-preferences').then(r => r.json()).catch(() => null);
+      if (prefsRes?.data?.timezone) setTimezone(prefsRes.data.timezone);
+    } catch {}
   }, []);
 
   useFocusEffect(useCallback(() => {
@@ -438,6 +450,60 @@ export default function SettingsScreen() {
               trackColor={{ false: Colors.border, true: Colors.violet + '60' }}
               thumbColor={notificationsEnabled ? Colors.violet : Colors.textTertiary}
             />
+          </View>
+
+          <View style={[styles.prefRow, styles.prefRowBorder]}>
+            <View style={[styles.prefLeft, { flex: 1 }]}>
+              <Ionicons name="sparkles-outline" size={16} color={Colors.violet} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.prefTitle}>Coaching Mode</Text>
+                <Text style={styles.prefSub}>How Jarvis communicates with you</Text>
+                <View style={styles.coachingModeRow}>
+                  {(['sharp', 'flow', 'mentor', 'drill', 'strategist'] as CoachingMode[]).map(m => (
+                    <Pressable
+                      key={m}
+                      style={[styles.modePill, coachingMode === m && styles.modePillActive]}
+                      onPress={async () => {
+                        setCoachingModeState(m);
+                        await saveCoachingMode(m);
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      }}
+                    >
+                      <Text style={[styles.modePillText, coachingMode === m && styles.modePillTextActive]}>
+                        {m.charAt(0).toUpperCase() + m.slice(1)}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+              </View>
+            </View>
+          </View>
+
+          <View style={[styles.prefRow, styles.prefRowBorder]}>
+            <View style={[styles.prefLeft, { flex: 1 }]}>
+              <Ionicons name="globe-outline" size={16} color={Colors.violet} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.prefTitle}>Timezone</Text>
+                <Text style={styles.prefSub}>Used for scheduling and morning briefings</Text>
+                <TextInput
+                  style={styles.tzInput}
+                  value={timezone}
+                  onChangeText={setTimezone}
+                  onBlur={async () => {
+                    try {
+                      const prefsRes = await apiRequest('GET', '/api/data/user-preferences').then(r => r.json()).catch(() => ({}));
+                      const prefs = prefsRes?.data ?? {};
+                      prefs.timezone = timezone;
+                      await apiRequest('PUT', '/api/data/user-preferences', { data: prefs });
+                    } catch {}
+                  }}
+                  placeholder="e.g. America/New_York"
+                  placeholderTextColor={Colors.textTertiary}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+              </View>
+            </View>
           </View>
         </View>
 
@@ -836,5 +902,43 @@ const styles = StyleSheet.create({
   rewardClaim: {
     fontSize: 12,
     fontFamily: 'Inter_600SemiBold',
+  },
+  coachingModeRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 10,
+  },
+  modePill: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surface,
+  },
+  modePillActive: {
+    borderColor: Colors.violet + '60',
+    backgroundColor: Colors.violetDim,
+  },
+  modePillText: {
+    fontSize: 11,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.textSecondary,
+  },
+  modePillTextActive: {
+    color: Colors.violet,
+  },
+  tzInput: {
+    marginTop: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: Colors.surfaceAlt,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    fontSize: 13,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.text,
   },
 });
