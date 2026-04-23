@@ -241,10 +241,12 @@ function FullModal({ visible, title, accent, onClose, children }: {
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
       <View style={[styles.modalContainer, { paddingTop: insets.top }]}>
         <View style={[styles.modalHeader, { borderBottomColor: accent + '30' }]}>
-          <Text style={[styles.modalTitle, { color: accent }]}>{title}</Text>
-          <Pressable onPress={onClose} style={styles.modalClose}>
-            <Ionicons name="close" size={22} color={Colors.textSecondary} />
+          <Pressable onPress={onClose} style={styles.modalBackBtn}>
+            <Ionicons name="chevron-back" size={20} color={Colors.textSecondary} />
+            <Text style={styles.modalBackText}>Back</Text>
           </Pressable>
+          <Text style={[styles.modalTitle, { color: accent }]}>{title}</Text>
+          <View style={styles.modalHeaderSpacer} />
         </View>
         <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + 24 }}>
           {children}
@@ -855,8 +857,13 @@ export default function MissionControlScreen() {
 
       {/* Add Scheduled Task Modal */}
       <Modal visible={newTaskModal} animationType="slide" presentationStyle="formSheet" onRequestClose={() => setNewTaskModal(false)}>
-        <View style={[styles.formModal, { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 24 }]}>
-          <View style={styles.formModalHandle} />
+        <View style={[styles.formModal, { paddingTop: insets.top + 8, paddingBottom: insets.bottom + 24 }]}>
+          <View style={styles.formBackRow}>
+            <Pressable onPress={() => setNewTaskModal(false)} style={styles.modalBackBtn}>
+              <Ionicons name="chevron-back" size={20} color={Colors.textSecondary} />
+              <Text style={styles.modalBackText}>Back</Text>
+            </Pressable>
+          </View>
           <Text style={styles.formModalTitle}>Schedule a Task</Text>
           <Text style={styles.formModalSub}>Jarvis will remind you and act on this when the time comes.</Text>
           <Text style={styles.formLabel}>What should Jarvis do?</Text>
@@ -1161,10 +1168,12 @@ export default function MissionControlScreen() {
       <Modal visible={editTaskModal} animationType="slide" presentationStyle="formSheet" onRequestClose={() => setEditTaskModal(false)}>
         <View style={styles.editModalRoot}>
           <View style={styles.editModalHeader}>
-            <Text style={styles.editModalTitle}>EDIT TASK</Text>
-            <Pressable onPress={() => setEditTaskModal(false)} style={styles.modalClose}>
-              <Ionicons name="close" size={20} color={Colors.textSecondary} />
+            <Pressable onPress={() => setEditTaskModal(false)} style={styles.modalBackBtn}>
+              <Ionicons name="chevron-back" size={20} color={Colors.textSecondary} />
+              <Text style={styles.modalBackText}>Back</Text>
             </Pressable>
+            <Text style={styles.editModalTitle}>EDIT TASK</Text>
+            <View style={styles.modalHeaderSpacer} />
           </View>
           <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 20 }} keyboardShouldPersistTaps="handled">
             <Text style={styles.editFieldLabel}>TITLE</Text>
@@ -1584,17 +1593,39 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 14,
     borderBottomWidth: 1,
+  },
+  modalBackBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    paddingVertical: 6,
+    paddingHorizontal: 4,
+    minWidth: 64,
+  },
+  modalBackText: {
+    fontSize: 15,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+  },
+  modalHeaderSpacer: {
+    minWidth: 64,
   },
   modalTitle: {
     fontSize: 13,
     fontFamily: 'Inter_700Bold',
     letterSpacing: 2,
+    flex: 1,
+    textAlign: 'center',
   },
   modalClose: {
     padding: 4,
+  },
+  formBackRow: {
+    paddingHorizontal: 4,
+    paddingBottom: 8,
   },
   modalItemRow: {
     flexDirection: 'row',
@@ -2029,17 +2060,19 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingTop: 20,
+    paddingHorizontal: 12,
+    paddingTop: 16,
     paddingBottom: 12,
     borderBottomWidth: 1,
     borderBottomColor: Colors.border,
   },
   editModalTitle: {
-    fontSize: 14,
+    fontSize: 13,
     fontFamily: 'Inter_700Bold',
     color: Colors.text,
-    letterSpacing: 1,
+    letterSpacing: 1.5,
+    flex: 1,
+    textAlign: 'center',
   },
   editFieldLabel: {
     fontSize: 10,
