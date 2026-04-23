@@ -276,9 +276,28 @@ object OpHandler {
         return try {
             val base64 = svc.takeScreenshotBase64()
             if (base64 != null) {
-                OpResult(true, data = JSONObject().put("screenshot", base64).put("format", "png"))
+                OpResult(true, data = JSONObject().put("screenshot", base64).put("format", "jpeg"))
             } else {
-                OpResult(false, error = "Screenshot failed — ensure accessibility service is enabled and screen is on")
+                // Null result means takeScreenshot() called onFailure for all display candidates.
+                // Most common cause: the foreground app has FLAG_SECURE set (Facebook, Instagram,
+                // banking apps, etc.). FLAG_SECURE is enforced by Android at the OS level and
+                // cannot be bypassed — not even by an accessibility service.
+                val pkg = try { svc.rootInActiveWindow?.packageName?.toString() ?: "unknown" } catch (e: Exception) { "unknown" }
+                val flagSecureApps = setOf(
+                    "com.facebook.katana", "com.facebook.lite", "com.instagram.android",
+                    "com.whatsapp", "com.snapchat.android", "com.netflix.mediaclient",
+                    "com.amazon.avod.thirdpartyclient", "com.disney.disneyplus"
+                )
+                val hint = if (pkg in flagSecureApps) {
+                    "This app ($pkg) uses FLAG_SECURE which blocks all screenshot APIs at the OS level. " +
+                    "Use android_read_screen instead to read the visible text and UI elements — " +
+                    "it reads the accessibility tree which IS available even in FLAG_SECURE apps."
+                } else {
+                    "Screenshot failed for package '$pkg'. The app may use FLAG_SECURE (which blocks all screenshots), " +
+                    "the screen may be off/locked, or the display was not detected. " +
+                    "Try android_read_screen as an alternative — it reads UI text without needing screenshot access."
+                }
+                OpResult(false, error = hint)
             }
         } catch (e: Exception) {
             OpResult(false, error = "Screenshot error: ${e.message}")
