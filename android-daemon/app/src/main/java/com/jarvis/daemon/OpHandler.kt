@@ -28,6 +28,7 @@ object OpHandler {
                 "ping" -> handlePing()
                 "android_open_app" -> handleOpenApp(context, op)
                 "android_browse" -> handleBrowse(context, op)
+                "android_return_to_jarvis" -> handleReturnToJarvis(context)
                 "android_screenshot" -> handleScreenshot()
                 "android_read_screen" -> handleReadScreen()
                 "android_tap" -> handleTap(op)
@@ -238,6 +239,32 @@ object OpHandler {
                 .put("url", url)
                 .put("opened", true)
         )
+    }
+
+    private fun handleReturnToJarvis(context: Context): OpResult {
+        // Navigate back to the Jarvis chat in the browser. Called as the final step
+        // of every multi-step task so the conversation can resume without the user
+        // having to manually navigate back.
+        val svc = JarvisAccessibilityService.instance
+        if (svc == null) {
+            // Accessibility service is not running — show a tappable notification instead
+            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW,
+                android.net.Uri.parse("https://GameplanAI.replit.app")).apply {
+                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            val pi = android.app.PendingIntent.getActivity(
+                context, "return_jarvis".hashCode(), intent,
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+            )
+            NotificationHelper.showAction(context, "↩ Return to Jarvis", "Tap to reopen the Jarvis chat", pi, "return_jarvis".hashCode())
+            return OpResult(false, error = "Accessibility service not running — showed notification to return to Jarvis")
+        }
+        val opened = try { svc.browseUrl("https://GameplanAI.replit.app") } catch (e: Exception) { false }
+        return if (opened) {
+            OpResult(true, data = org.json.JSONObject().put("returned", true).put("url", "https://GameplanAI.replit.app"))
+        } else {
+            OpResult(false, error = "Could not navigate back to Jarvis — browser launch was blocked")
+        }
     }
 
     private fun handleScreenshot(): OpResult {

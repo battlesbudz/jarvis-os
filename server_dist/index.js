@@ -11903,7 +11903,7 @@ async function registerRoutes(app2) {
         parameters: {
           type: "object",
           properties: {
-            action: { type: "string", enum: ["shell", "notify", "file_read", "file_write", "file_list", "android_open_app", "android_browse", "android_screenshot", "android_read_screen", "android_tap", "android_type", "android_swipe", "android_press_key", "android_file_list", "android_file_read", "android_notifications_list", "android_wait"], description: "Action to perform. 'notify' works on BOTH desktop and Android daemons \u2014 sends a pop-up banner notification with title and body. 'android_wait' pauses for ms milliseconds (default 1500, max 10000) \u2014 use between steps when the phone UI needs time to settle (e.g. after tapping a video to let it load before read_screen)." },
+            action: { type: "string", enum: ["shell", "notify", "file_read", "file_write", "file_list", "android_open_app", "android_browse", "android_screenshot", "android_read_screen", "android_tap", "android_type", "android_swipe", "android_press_key", "android_file_list", "android_file_read", "android_notifications_list", "android_wait", "android_return_to_jarvis"], description: "Action to perform. 'notify' works on BOTH desktop and Android daemons \u2014 sends a pop-up banner notification with title and body. 'android_wait' pauses for ms milliseconds (default 1500, max 10000) \u2014 use between steps when the phone UI needs time to settle (e.g. after tapping a video to let it load before read_screen). 'android_return_to_jarvis' navigates the phone back to the Jarvis chat in the browser \u2014 call this as the LAST step of every multi-step task after the notify banner, to return the user to the conversation." },
             cmd: { type: "string", description: "Shell command (for 'shell' action)" },
             title: { type: "string", description: "Notification title (for 'notify' action)" },
             body: { type: "string", description: "Notification body (for 'notify' action)" },
@@ -12131,7 +12131,7 @@ async function registerRoutes(app2) {
           const googleEmail = oauthStatus?.google?.email || oauthStatus?.google?.accounts?.[0]?.email || "unknown";
           const msEmail = oauthStatus?.microsoft?.email || oauthStatus?.microsoft?.accounts?.[0]?.email || "unknown";
           const slackConnectedCheck = oauthStatus?.slack?.connected ?? false;
-          const daemonLabel = daemonOnline ? isAndroid ? `Android Device Daemon: \u2713 online \u2014 use android_open_app, android_browse, android_screenshot, android_read_screen, android_tap, android_type, android_swipe, android_press_key, android_file_list, android_file_read, android_notifications_list, notify. DO NOT use desktop shell/file actions. After completing a multi-step phone task, call notify (title:'Jarvis \u2713', body: one-line summary) so the user gets a banner on their phone. If a tool returns result:error, stop and report the error immediately \u2014 do NOT fabricate success. After android_open_app or android_browse succeeds, ALWAYS call android_read_screen before describing screen content. For app searches use deep links: YouTube='vnd.youtube://results?search_query=QUERY', Maps='geo:0,0?q=QUERY', Spotify='spotify:search:QUERY'.` : `Desktop Daemon: \u2713 online \u2014 use shell, notify, file_read, file_write, file_list actions.` : `Android/Desktop Daemon: \u2717 not connected \u2014 user must open Jarvis app \u2192 Profile \u2192 Android Device \u2192 Get Pairing Code, then open the Jarvis Daemon APK, enter server URL https://GameplanAI.replit.app and the 8-character code, tap Pair`;
+          const daemonLabel = daemonOnline ? isAndroid ? `Android Device Daemon: \u2713 online \u2014 use android_open_app, android_browse, android_screenshot, android_read_screen, android_tap, android_type, android_swipe, android_press_key, android_file_list, android_file_read, android_notifications_list, notify, android_return_to_jarvis. DO NOT use desktop shell/file actions. After completing a multi-step phone task: (1) call notify (title:'Jarvis \u2713', body: one-line summary), then (2) call android_return_to_jarvis to navigate the phone back to the Jarvis chat. If a tool returns result:error, stop and report the error immediately \u2014 do NOT fabricate success. After android_open_app or android_browse succeeds, ALWAYS call android_read_screen before describing screen content. For app searches use deep links: YouTube='vnd.youtube://results?search_query=QUERY', Maps='geo:0,0?q=QUERY', Spotify='spotify:search:QUERY'.` : `Desktop Daemon: \u2713 online \u2014 use shell, notify, file_read, file_write, file_list actions.` : `Android/Desktop Daemon: \u2717 not connected \u2014 user must open Jarvis app \u2192 Profile \u2192 Android Device \u2192 Get Pairing Code, then open the Jarvis Daemon APK, enter server URL https://GameplanAI.replit.app and the 8-character code, tap Pair`;
           const lines = [
             `Google (Gmail + Calendar): ${googleToken ? `\u2713 token valid \u2014 ${googleEmail}` : "\u2717 not connected or token expired (reconnect needed)"}`,
             `Microsoft (Outlook + Calendar): ${msToken ? `\u2713 token valid \u2014 ${msEmail}` : "\u2717 not connected or token expired (reconnect needed)"}`,
@@ -12291,7 +12291,7 @@ ${lines.join("\n")}`);
             return { result: "error", label: "Daemon not connected", detail: "No daemon paired. Install and pair either the desktop daemon or the Android APK from Profile \u2192 Connected Channels." };
           }
           const isAndroidDaemon = await isAndroidDaemonActive(userId2);
-          const androidActions = ["android_open_app", "android_browse", "android_screenshot", "android_read_screen", "android_tap", "android_type", "android_swipe", "android_press_key", "android_file_list", "android_file_read", "android_notifications_list", "android_wait", "notify"];
+          const androidActions = ["android_open_app", "android_browse", "android_return_to_jarvis", "android_screenshot", "android_read_screen", "android_tap", "android_type", "android_swipe", "android_press_key", "android_file_list", "android_file_read", "android_notifications_list", "android_wait", "notify"];
           const desktopActions = ["shell", "notify", "file_read", "file_write", "file_list"];
           let op;
           if (androidActions.includes(action)) {
@@ -12325,6 +12325,8 @@ ${lines.join("\n")}`);
               const ytWatch = browseUrl.match(/(?:https?:\/\/)?(?:www\.)?youtube\.com\/watch\?v=([^&]+)/);
               if (ytWatch) browseUrl = `vnd.youtube://watch?v=${ytWatch[1]}`;
               op = { type: "android_browse", url: browseUrl };
+            } else if (action === "android_return_to_jarvis") {
+              op = { type: "android_return_to_jarvis" };
             } else if (action === "android_screenshot") {
               op = { type: "android_screenshot" };
             } else if (action === "android_read_screen") {
@@ -12481,8 +12483,9 @@ ${shadeText}`
             android_press_key: 5e3,
             android_type: 1e4,
             android_browse: 8e3,
+            android_return_to_jarvis: 1e4,
             android_open_app: 15e3,
-            android_screenshot: 15e3,
+            android_screenshot: 2e4,
             android_notifications_list: 12e3,
             android_file_list: 8e3,
             android_file_read: 1e4,
@@ -12790,7 +12793,13 @@ CAMERA TASKS \u2014 android_screenshot WILL FAIL inside camera apps. Camera apps
 NOTIFICATIONS \u2014 ALWAYS send a notify banner at the end of every multi-step task, success OR failure:
 - SUCCESS: notify with title:'Jarvis \u2713', body: one-line summary of what was done (e.g. "Playing Lo-Fi Hip Hop \u2014 2.1M views, posted 3 days ago")
 - FAILURE: notify with title:'Jarvis \u2717', body: one-line summary of what went wrong (e.g. "Couldn't get transcript \u2014 captions disabled on this video")
-This ensures the user always gets a phone banner and never waits silently for a task that already ended.` : "Desktop Daemon is ACTIVE. Use shell, notify, file_read, file_write, file_list actions. ALWAYS report errors immediately if a tool returns result:error. Use daemon_diagnostic (no args) to check daemon health before multi-step sequences or when ops are failing." : `\u26A0\uFE0F NO DAEMON CONNECTED. Do NOT call daemon_action \u2014 it will fail with "daemon not connected". If the user asks to control their phone or computer, tell them exactly this: "Your phone daemon isn't connected. To fix it: (1) Open the Jarvis app \u2192 Profile \u2192 scroll to 'Android Device' \u2192 tap 'Get Pairing Code', (2) Open the Jarvis Daemon APK on your phone, (3) Make sure the Server URL is https://GameplanAI.replit.app, (4) Enter the 8-character pairing code, (5) Tap Pair. The status dot should turn green within a few seconds." Do not attempt daemon_action until they confirm it's connected.`;
+This ensures the user always gets a phone banner and never waits silently for a task that already ended.
+
+RETURN TO JARVIS \u2014 REQUIRED FINAL STEP after every multi-step task:
+After calling notify, ALWAYS call android_return_to_jarvis as the very last step. This navigates the phone back to the Jarvis chat in the browser so the user can continue the conversation without having to manually switch apps. The full task loop is always: complete task \u2192 notify banner \u2192 android_return_to_jarvis. Never skip android_return_to_jarvis on multi-step tasks.
+
+SCREENSHOT DISPLAY \u2014 screenshots ARE shown inline in the Jarvis chat as viewable images:
+When android_screenshot succeeds, the screenshot is automatically stored and a preview URL is returned. Include a brief description of what the screenshot shows (e.g. "Here's the current Facebook screen:") before the tool result is displayed \u2014 the image will appear inline in the chat for the user to see directly.` : "Desktop Daemon is ACTIVE. Use shell, notify, file_read, file_write, file_list actions. ALWAYS report errors immediately if a tool returns result:error. Use daemon_diagnostic (no args) to check daemon health before multi-step sequences or when ops are failing." : `\u26A0\uFE0F NO DAEMON CONNECTED. Do NOT call daemon_action \u2014 it will fail with "daemon not connected". If the user asks to control their phone or computer, tell them exactly this: "Your phone daemon isn't connected. To fix it: (1) Open the Jarvis app \u2192 Profile \u2192 scroll to 'Android Device' \u2192 tap 'Get Pairing Code', (2) Open the Jarvis Daemon APK on your phone, (3) Make sure the Server URL is https://GameplanAI.replit.app, (4) Enter the 8-character pairing code, (5) Tap Pair. The status dot should turn green within a few seconds." Do not attempt daemon_action until they confirm it's connected.`;
       const systemPrompt = buildCoachSystemPrompt(goals2 || [], stats2 || {}, history || [], calendarEvents || [], lifeContext2 || null, resolvedGmailItems, resolvedGmailConnected, slackMessages || [], slackConnected ?? false, userCommitments, coachingMode, memories, telegramMessages || [], telegramConnected ?? false, morningNoteSummary, documentsContext, crossChannelContext, soulBlock, daemonSection);
       const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
       const lastUserContent = typeof lastUserMsg?.content === "string" ? lastUserMsg.content.toLowerCase() : "";

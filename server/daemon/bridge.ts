@@ -29,7 +29,8 @@ export type DaemonOp =
   | { type: "android_press_key"; key: "back" | "home" | "recents" | "volume_up" | "volume_down" | "enter" }
   | { type: "android_file_list"; path: string }
   | { type: "android_file_read"; path: string }
-  | { type: "android_notifications_list"; limit?: number };
+  | { type: "android_notifications_list"; limit?: number }
+  | { type: "android_return_to_jarvis" };
 
 export interface PhoneNotification {
   pkg: string;
