@@ -15,6 +15,11 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE" />
+    <!-- Required on Android 11+ to query/launch any installed app via getLaunchIntentForPackage().
+         Without this, the OS returns null for apps not explicitly listed in <queries>,
+         causing false "App not installed" errors for apps like Facebook, TikTok, etc.
+         Safe to include in sideloaded APKs — only restricted on Play Store submissions. -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
 
     <application
         android:allowBackup="true"
