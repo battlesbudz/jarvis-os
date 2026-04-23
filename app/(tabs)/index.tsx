@@ -25,13 +25,7 @@ import {
   getGoals,
   getTodayKey,
   incrementStats,
-  xpForTask,
   decrementStats,
-  getUserName,
-  getCoachingMode,
-  getLifeContext,
-  getCompletionHistory,
-  getStats,
   type Goal,
   type Task,
   type DayPlan,
@@ -294,9 +288,10 @@ export default function MissionControlScreen() {
   // ── Load local data ──
   const loadLocal = useCallback(async () => {
     setTasksLoading(true);
-    const [p, g] = await Promise.all([getTodayPlan(), getGoals()]);
-    setPlan(p);
+    const g = await getGoals();
     setGoals(g);
+    const p = await getTodayPlan(g);
+    setPlan(p);
     setTasksLoading(false);
   }, []);
 
@@ -370,11 +365,18 @@ export default function MissionControlScreen() {
     if (!plan) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     const newCompleted = !task.completed;
-    const updated = await updateTaskCompletion(idx, newCompleted);
-    setPlan(updated);
-    if (newCompleted) {
+    // Optimistic local update
+    setPlan(prev => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        tasks: prev.tasks.map(t => t.id === task.id ? { ...t, completed: newCompleted } : t),
+      };
+    });
+    const result = await updateTaskCompletion(getTodayKey(), task.id, newCompleted);
+    if (result.xpEarned > 0) {
       await incrementStats();
-    } else {
+    } else if (!newCompleted) {
       await decrementStats();
     }
   }, [plan]);
@@ -521,7 +523,7 @@ export default function MissionControlScreen() {
               <>
                 <View style={styles.progressRow}>
                   <View style={styles.progressBar}>
-                    <View style={[styles.progressFill, { width: `${completionPct}%` as any, backgroundColor: Colors.violet }]} />
+                    <View style={[styles.progressFill, { width: `${completionPct}%`, backgroundColor: Colors.violet }]} />
                   </View>
                   <Text style={[styles.progressPct, { color: Colors.violet }]}>{completionPct}%</Text>
                 </View>
