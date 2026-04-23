@@ -1146,6 +1146,11 @@ export default function InsightsScreen() {
             id: pendingData.id,
             role: 'assistant',
             content: pendingData.text,
+            // If the task that triggered this pending response took a screenshot,
+            // include it as an executedAction so the image renders inline.
+            ...(pendingData.screenshotUrl ? {
+              executedActions: [{ tool: 'daemon_action', result: 'success', label: 'Screenshot', screenshotUrl: pendingData.screenshotUrl }]
+            } : {}),
           };
           const updated = [pendingMsg, ...prev];
           saveChatHistory(updated);

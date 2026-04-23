@@ -242,28 +242,58 @@ object OpHandler {
     }
 
     private fun handleReturnToJarvis(context: Context): OpResult {
-        // Navigate back to the Jarvis chat in the browser. Called as the final step
-        // of every multi-step task so the conversation can resume without the user
-        // having to manually navigate back.
+        // Bring the browser to the foreground WITHOUT opening a URL.
+        //
+        // KEY INSIGHT: using browseUrl() (Intent.ACTION_VIEW + FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
+        // causes Chrome to navigate to the URL, which triggers a full page reload.
+        // A page reload kills the SSE stream that is actively delivering the AI response,
+        // causing the "something went wrong" error the user sees when Chrome reopens.
+        //
+        // FIX: use getLaunchIntentForPackage() + FLAG_ACTIVITY_REORDER_TO_FRONT instead.
+        // This brings the existing Chrome activity (with the Jarvis tab already open) to the
+        // foreground without reloading the page — the SSE stream survives and delivers normally.
+        val browserPackages = listOf(
+            "com.android.chrome",
+            "com.samsung.android.app.sbrowser", // Samsung Internet
+            "com.chrome.beta",
+            "com.chrome.dev",
+            "org.mozilla.firefox"
+        )
+        for (pkg in browserPackages) {
+            try {
+                val launchIntent = context.packageManager.getLaunchIntentForPackage(pkg) ?: continue
+                launchIntent.addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+                    // Intentionally NO FLAG_ACTIVITY_RESET_TASK_IF_NEEDED — that clears the
+                    // back stack and forces a reload, killing the live SSE connection.
+                )
+                context.startActivity(launchIntent)
+                DaemonLog.add("return_to_jarvis: brought $pkg to foreground (no reload)")
+                return OpResult(true, data = JSONObject().put("returned", true).put("pkg", pkg))
+            } catch (e: Exception) {
+                DaemonLog.add("return_to_jarvis: $pkg failed: ${e.message}")
+            }
+        }
+
+        // Last resort: open the URL directly (may cause page reload in some browsers)
         val svc = JarvisAccessibilityService.instance
         if (svc == null) {
-            // Accessibility service is not running — show a tappable notification instead
-            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW,
-                android.net.Uri.parse("https://GameplanAI.replit.app")).apply {
-                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://GameplanAI.replit.app")).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             val pi = android.app.PendingIntent.getActivity(
                 context, "return_jarvis".hashCode(), intent,
                 android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
             )
             NotificationHelper.showAction(context, "↩ Return to Jarvis", "Tap to reopen the Jarvis chat", pi, "return_jarvis".hashCode())
-            return OpResult(false, error = "Accessibility service not running — showed notification to return to Jarvis")
+            return OpResult(false, error = "No browser found to bring to foreground — showed notification")
         }
         val opened = try { svc.browseUrl("https://GameplanAI.replit.app") } catch (e: Exception) { false }
         return if (opened) {
-            OpResult(true, data = org.json.JSONObject().put("returned", true).put("url", "https://GameplanAI.replit.app"))
+            OpResult(true, data = JSONObject().put("returned", true).put("url", "https://GameplanAI.replit.app"))
         } else {
-            OpResult(false, error = "Could not navigate back to Jarvis — browser launch was blocked")
+            OpResult(false, error = "Could not navigate back to Jarvis")
         }
     }
 

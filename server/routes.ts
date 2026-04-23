@@ -2021,6 +2021,17 @@ Answer (yes/no):`,
               startKeepalive();
             }
 
+            // Before android_return_to_jarvis fires, pre-save any screenshot captured
+            // so far as a pending response. This handles the edge case where Chrome
+            // reloads (instead of just coming to foreground): the reloaded page fetches
+            // the pending response on mount and can display the screenshot immediately.
+            if (tc.function.name === 'daemon_action' && String(args.action) === 'android_return_to_jarvis' && userId) {
+              const earlyScreenshotUrl = actionResults.find(a => a.screenshotUrl)?.screenshotUrl;
+              if (earlyScreenshotUrl) {
+                savePendingResponse(userId, loopFinalText || '', earlyScreenshotUrl).catch(() => {});
+              }
+            }
+
             const execResult = await executeCoachTool(tc.function.name, args, userId);
             let linkData: { url?: string; buttonLabel?: string; code?: string; channel?: string; screenshotUrl?: string } = {};
             if ((tc.function.name === 'generate_reconnect_link' || tc.function.name === 'connect_channel') && execResult.result === 'success') {
@@ -2062,7 +2073,8 @@ Answer (yes/no):`,
           stopKeepalive();
           // Persist the response if daemon actions were involved — survives client disconnect
           if (hasDaemonActions && userId) {
-            savePendingResponse(userId, loopFinalText).catch(() => {});
+            const screenshotUrl = actionResults.find(a => a.screenshotUrl)?.screenshotUrl;
+            savePendingResponse(userId, loopFinalText, screenshotUrl).catch(() => {});
           }
           res.write(`data: ${JSON.stringify({ content: loopFinalText })}\n\n`);
           res.write('data: [DONE]\n\n');
@@ -2127,7 +2139,8 @@ Answer (yes/no):`,
 
       // Persist if daemon actions ran — response survives connection drops
       if (hasDaemonActions && userId && fullStreamedReply) {
-        savePendingResponse(userId, fullStreamedReply).catch(() => {});
+        const screenshotUrl = actionResults.find((a: any) => a.screenshotUrl)?.screenshotUrl;
+        savePendingResponse(userId, fullStreamedReply, screenshotUrl).catch(() => {});
       }
 
       if (!clientDisconnected) {
@@ -3010,12 +3023,15 @@ Return ONLY JSON: { "hasCommitment": boolean, "commitment": "the thing they comm
   // (e.g. when the user switches to a camera app and Chrome is backgrounded).
   // The response is stored under userPreferences.data.pendingResponse with a
   // unique ID and timestamp. The frontend fetches and clears it on mount.
-  async function savePendingResponse(userId: string, text: string) {
+  // screenshotUrl is optional — included when a screenshot was taken during the task.
+  async function savePendingResponse(userId: string, text: string, screenshotUrl?: string) {
     const id = `pr-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq(userPreferences.userId, userId));
     const prefs = (rows[0]?.data as any) || {};
-    await db.insert(userPreferences).values({ userId, data: { ...prefs, pendingResponse: { id, text, createdAt: Date.now() } } })
-      .onConflictDoUpdate({ target: userPreferences.userId, set: { data: { ...prefs, pendingResponse: { id, text, createdAt: Date.now() } } } });
+    const payload: any = { id, text, createdAt: Date.now() };
+    if (screenshotUrl) payload.screenshotUrl = screenshotUrl;
+    await db.insert(userPreferences).values({ userId, data: { ...prefs, pendingResponse: payload } })
+      .onConflictDoUpdate({ target: userPreferences.userId, set: { data: { ...prefs, pendingResponse: payload } } });
   }
 
   // Returns the latest pending daemon-task response (if any) and immediately clears it.
@@ -3032,7 +3048,7 @@ Return ONLY JSON: { "hasCommitment": boolean, "commitment": "the thing they comm
         // Clear after returning — one-shot delivery
         const updated = { ...prefs, pendingResponse: null };
         await db.update(userPreferences).set({ data: updated }).where(eq(userPreferences.userId, userId));
-        return res.json({ id: pending.id, text: pending.text });
+        return res.json({ id: pending.id, text: pending.text, screenshotUrl: pending.screenshotUrl || null });
       }
       return res.json({ text: null });
     } catch (err) {
