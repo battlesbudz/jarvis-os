@@ -12840,6 +12840,11 @@ This ensures the user always gets a phone banner and never waits silently for a 
       ];
       const actionResults = [];
       let toolMessages = [];
+      let clientDisconnected = false;
+      let hasDaemonActions = false;
+      req.on("close", () => {
+        if (!res.writableEnded) clientDisconnected = true;
+      });
       let keepaliveInterval = null;
       const startKeepalive = () => {
         if (keepaliveInterval) return;
@@ -13000,6 +13005,7 @@ This ensures the user always gets a phone banner and never waits silently for a 
               return;
             }
             if (tc.function.name === "daemon_action") {
+              hasDaemonActions = true;
               if (!res.headersSent) {
                 res.setHeader("Content-Type", "text/event-stream");
                 res.setHeader("Cache-Control", "no-cache, no-transform");
@@ -13073,6 +13079,10 @@ You MUST tell the user this specific action FAILED. Do NOT describe it as succes
 `);
           }
           stopKeepalive2();
+          if (hasDaemonActions && userId2) {
+            savePendingResponse(userId2, loopFinalText).catch(() => {
+            });
+          }
           res.write(`data: ${JSON.stringify({ content: loopFinalText })}
 
 `);
@@ -13125,13 +13135,24 @@ ${failedDaemonActions.map((a) => `- ${a.label}: ${a.result}`).join("\n")}`
         const content = chunk.choices[0]?.delta?.content || "";
         if (content) {
           fullStreamedReply += content;
-          res.write(`data: ${JSON.stringify({ content })}
+          if (!clientDisconnected) {
+            try {
+              res.write(`data: ${JSON.stringify({ content })}
 
 `);
+            } catch {
+            }
+          }
         }
       }
-      res.write("data: [DONE]\n\n");
-      res.end();
+      if (hasDaemonActions && userId2 && fullStreamedReply) {
+        savePendingResponse(userId2, fullStreamedReply).catch(() => {
+        });
+      }
+      if (!clientDisconnected) {
+        res.write("data: [DONE]\n\n");
+        res.end();
+      }
       if (userId2) {
         extractProfileInBackground(userId2, messages);
         markProactiveQuestionsAnswered(userId2, messages).catch(() => {
@@ -13876,6 +13897,31 @@ ${context}` },
       return res.json({ text: null });
     } catch (err) {
       console.error("Error fetching morning brief:", err);
+      return res.json({ text: null });
+    }
+  });
+  async function savePendingResponse(userId2, text2) {
+    const id = `pr-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq30(userPreferences.userId, userId2));
+    const prefs = rows[0]?.data || {};
+    await db.insert(userPreferences).values({ userId: userId2, data: { ...prefs, pendingResponse: { id, text: text2, createdAt: Date.now() } } }).onConflictDoUpdate({ target: userPreferences.userId, set: { data: { ...prefs, pendingResponse: { id, text: text2, createdAt: Date.now() } } } });
+  }
+  app2.get("/api/coach/pending-response", async (req, res) => {
+    try {
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
+      const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq30(userPreferences.userId, userId2));
+      const prefs = rows[0]?.data || {};
+      const pending = prefs.pendingResponse;
+      const ONE_HOUR = 60 * 60 * 1e3;
+      if (pending && pending.createdAt && Date.now() - pending.createdAt < ONE_HOUR && pending.text) {
+        const updated = { ...prefs, pendingResponse: null };
+        await db.update(userPreferences).set({ data: updated }).where(eq30(userPreferences.userId, userId2));
+        return res.json({ id: pending.id, text: pending.text });
+      }
+      return res.json({ text: null });
+    } catch (err) {
+      console.error("Error fetching pending response:", err);
       return res.json({ text: null });
     }
   });

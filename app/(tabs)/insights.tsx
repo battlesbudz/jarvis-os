@@ -1131,6 +1131,29 @@ export default function InsightsScreen() {
       }
     } catch {}
 
+    // Pending daemon response — fetch any Jarvis response that was saved server-side
+    // because the SSE connection dropped while the user was in another app (e.g. camera).
+    // The server stores the response in userPreferences and clears it on first fetch.
+    try {
+      const pendingUrl = new URL('/api/coach/pending-response', getApiUrl());
+      const pendingRes = await authFetch(pendingUrl.toString());
+      const pendingData = await pendingRes.json();
+      if (pendingData.text && pendingData.id) {
+        setMessages(prev => {
+          // Already in chat? Skip
+          if (prev.some(m => m.id === pendingData.id)) return prev;
+          const pendingMsg: ChatMessage = {
+            id: pendingData.id,
+            role: 'assistant',
+            content: pendingData.text,
+          };
+          const updated = [pendingMsg, ...prev];
+          saveChatHistory(updated);
+          return updated;
+        });
+      }
+    } catch {}
+
     // Check accountability on mount (proactive Jarvis message for overdue items)
     checkAccountabilityOnMount(loadedHistory, loadedCommitments, loadedGoals, loadedStats, loadedLifeContext).catch(() => {});
 

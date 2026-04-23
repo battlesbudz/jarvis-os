@@ -1816,6 +1816,14 @@ Answer (yes/no):`,
       const actionResults: { tool: string; result: 'success' | 'error'; label: string; url?: string; buttonLabel?: string }[] = [];
       let toolMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [];
 
+      // Track whether the client disconnected mid-stream (e.g. switched to camera app).
+      // If so, the full streamed response is saved to DB so it survives the disconnect.
+      let clientDisconnected = false;
+      let hasDaemonActions = false;
+      req.on('close', () => {
+        if (!res.writableEnded) clientDisconnected = true;
+      });
+
       // SSE keepalive: once the SSE stream is open, send a comment every 10s so
       // the connection isn't killed by proxies or the Android OS while daemon ops run.
       // Declared here (outer scope) so stopKeepalive() is reachable in the catch block
@@ -1985,6 +1993,7 @@ Answer (yes/no):`,
             // alive during multi-turn loops (prevents 60s gateway timeout) and
             // gives the user real-time progress instead of a blank loading state.
             if (tc.function.name === 'daemon_action') {
+              hasDaemonActions = true;
               if (!res.headersSent) {
                 res.setHeader('Content-Type', 'text/event-stream');
                 res.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -2048,6 +2057,10 @@ Answer (yes/no):`,
             if (nonSearchActions.length > 0) res.write(`data: ${JSON.stringify({ type: 'actions', actions: nonSearchActions })}\n\n`);
           }
           stopKeepalive();
+          // Persist the response if daemon actions were involved — survives client disconnect
+          if (hasDaemonActions && userId) {
+            savePendingResponse(userId, loopFinalText).catch(() => {});
+          }
           res.write(`data: ${JSON.stringify({ content: loopFinalText })}\n\n`);
           res.write('data: [DONE]\n\n');
           res.end();
@@ -2103,12 +2116,21 @@ Answer (yes/no):`,
         const content = chunk.choices[0]?.delta?.content || '';
         if (content) {
           fullStreamedReply += content;
-          res.write(`data: ${JSON.stringify({ content })}\n\n`);
+          if (!clientDisconnected) {
+            try { res.write(`data: ${JSON.stringify({ content })}\n\n`); } catch {}
+          }
         }
       }
 
-      res.write('data: [DONE]\n\n');
-      res.end();
+      // Persist if daemon actions ran — response survives connection drops
+      if (hasDaemonActions && userId && fullStreamedReply) {
+        savePendingResponse(userId, fullStreamedReply).catch(() => {});
+      }
+
+      if (!clientDisconnected) {
+        res.write('data: [DONE]\n\n');
+        res.end();
+      }
       if (userId) {
         extractProfileInBackground(userId, messages);
         markProactiveQuestionsAnswered(userId, messages).catch(() => {});
@@ -2977,6 +2999,41 @@ Return ONLY JSON: { "hasCommitment": boolean, "commitment": "the thing they comm
       return res.json({ text: null });
     } catch (err) {
       console.error('Error fetching morning brief:', err);
+      return res.json({ text: null });
+    }
+  });
+
+  // Saves the final Jarvis response to the DB so it survives connection drops
+  // (e.g. when the user switches to a camera app and Chrome is backgrounded).
+  // The response is stored under userPreferences.data.pendingResponse with a
+  // unique ID and timestamp. The frontend fetches and clears it on mount.
+  async function savePendingResponse(userId: string, text: string) {
+    const id = `pr-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq(userPreferences.userId, userId));
+    const prefs = (rows[0]?.data as any) || {};
+    await db.insert(userPreferences).values({ userId, data: { ...prefs, pendingResponse: { id, text, createdAt: Date.now() } } })
+      .onConflictDoUpdate({ target: userPreferences.userId, set: { data: { ...prefs, pendingResponse: { id, text, createdAt: Date.now() } } } });
+  }
+
+  // Returns the latest pending daemon-task response (if any) and immediately clears it.
+  // Called by the frontend on mount / focus to recover messages lost during app-switching.
+  app.get("/api/coach/pending-response", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq(userPreferences.userId, userId));
+      const prefs = (rows[0]?.data as any) || {};
+      const pending = prefs.pendingResponse;
+      const ONE_HOUR = 60 * 60 * 1000;
+      if (pending && pending.createdAt && (Date.now() - pending.createdAt) < ONE_HOUR && pending.text) {
+        // Clear after returning — one-shot delivery
+        const updated = { ...prefs, pendingResponse: null };
+        await db.update(userPreferences).set({ data: updated }).where(eq(userPreferences.userId, userId));
+        return res.json({ id: pending.id, text: pending.text });
+      }
+      return res.json({ text: null });
+    } catch (err) {
+      console.error('Error fetching pending response:', err);
       return res.json({ text: null });
     }
   });
