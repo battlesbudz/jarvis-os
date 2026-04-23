@@ -672,6 +672,45 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.post("/api/coach/break-down-task", async (req: Request, res: Response) => {
+    try {
+      const { title, description } = req.body;
+      if (!title) return res.status(400).json({ error: "title is required" });
+
+      const prompt = `Break down the following task into exactly 3-5 clear, actionable sub-steps that can each be completed independently.
+
+Task: "${title}"${description ? `\nContext: ${description}` : ""}
+
+Return JSON only — no markdown, no explanation:
+{
+  "subtasks": [
+    { "title": "concise action-verb sub-task", "category": "work|personal|health|finance|social|learning", "priority": "high|medium|low" }
+  ]
+}
+
+Rules:
+- Each sub-task title should start with a verb (e.g. "Write", "Review", "Send", "Schedule")
+- Keep each title under 60 characters
+- Choose category that best fits the subtask
+- Assign priority based on urgency/importance relative to the overall task`;
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [{ role: "user", content: prompt }],
+        response_format: { type: "json_object" },
+        max_completion_tokens: 600,
+      });
+
+      const content = response.choices[0]?.message?.content || '{"subtasks":[]}';
+      const parsed = JSON.parse(content);
+      const subtasks = Array.isArray(parsed.subtasks) ? parsed.subtasks.slice(0, 5) : [];
+      res.json({ subtasks });
+    } catch (error) {
+      console.error("Error breaking down task:", error);
+      res.status(500).json({ error: "Failed to break down task" });
+    }
+  });
+
   const coachTools: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     {
       type: "function",
