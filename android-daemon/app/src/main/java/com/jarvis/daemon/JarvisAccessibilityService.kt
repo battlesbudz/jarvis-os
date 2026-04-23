@@ -159,49 +159,56 @@ class JarvisAccessibilityService : AccessibilityService() {
             val latch = CountDownLatch(1)
             var encoded: String? = null
 
-            // Use the public SDK API directly — avoids reflection which silently fails
-            // on Samsung OneUI 6/7 (Android 14/15) due to internal class name changes.
-            takeScreenshot(displayId, mainExecutor,
-                object : AccessibilityService.TakeScreenshotCallback {
+            val callback = object : AccessibilityService.TakeScreenshotCallback {
+                override fun onSuccess(result: AccessibilityService.ScreenshotResult) {
+                    try {
+                        val rawBmp: Bitmap = result.hardwareBitmap
 
-                    override fun onSuccess(result: AccessibilityService.ScreenshotResult) {
-                        try {
-                            val rawBmp: Bitmap = result.hardwareBitmap
+                        // Convert HARDWARE bitmap → ARGB_8888 so pixels are CPU-readable.
+                        val soft = if (rawBmp.config == Bitmap.Config.HARDWARE) {
+                            rawBmp.copy(Bitmap.Config.ARGB_8888, false).also { rawBmp.recycle() }
+                        } else rawBmp
 
-                            // Convert HARDWARE bitmap → ARGB_8888 so pixels are CPU-readable.
-                            val soft = if (rawBmp.config == Bitmap.Config.HARDWARE) {
-                                rawBmp.copy(Bitmap.Config.ARGB_8888, false).also { rawBmp.recycle() }
-                            } else rawBmp
+                        // Scale to 50% — reduces ~8 MB ARGB bitmap to ~2 MB before encoding.
+                        val scaledW = (soft.width * 0.5f).toInt().coerceAtLeast(1)
+                        val scaledH = (soft.height * 0.5f).toInt().coerceAtLeast(1)
+                        val scaled = Bitmap.createScaledBitmap(soft, scaledW, scaledH, true)
+                        if (scaled !== soft) soft.recycle()
 
-                            // Scale to 50% — reduces ~8 MB ARGB bitmap to ~2 MB before encoding.
-                            // This is the key safeguard against OOM on Galaxy Z Fold 6's large display.
-                            val scaledW = (soft.width * 0.5f).toInt().coerceAtLeast(1)
-                            val scaledH = (soft.height * 0.5f).toInt().coerceAtLeast(1)
-                            val scaled = Bitmap.createScaledBitmap(soft, scaledW, scaledH, true)
-                            if (scaled !== soft) soft.recycle()
-
-                            // JPEG quality 80 — 10-20× smaller than PNG, visually sharp.
-                            val bos = ByteArrayOutputStream()
-                            scaled.compress(Bitmap.CompressFormat.JPEG, 80, bos)
-                            scaled.recycle()
-                            encoded = Base64.encodeToString(bos.toByteArray(), Base64.NO_WRAP)
-                            Log.i(TAG, "Screenshot: ${bos.size()} bytes JPEG (display $displayId, ${scaledW}×${scaledH})")
-                        } catch (oom: OutOfMemoryError) {
-                            Log.e(TAG, "Screenshot OOM on display $displayId")
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Screenshot encode error display $displayId: ${e.message}")
-                        } finally {
-                            latch.countDown()
-                        }
-                    }
-
-                    override fun onFailure(errorCode: Int) {
-                        // Error codes: 1=UNKNOWN, 2=TIMEOUT, 3=SECURE_WINDOW_NOT_ALLOWED, 4=NOT_WHITELISTED
-                        Log.w(TAG, "takeScreenshot onFailure display=$displayId code=$errorCode")
+                        val bos = ByteArrayOutputStream()
+                        scaled.compress(Bitmap.CompressFormat.JPEG, 80, bos)
+                        scaled.recycle()
+                        encoded = Base64.encodeToString(bos.toByteArray(), Base64.NO_WRAP)
+                        Log.i(TAG, "Screenshot: ${bos.size()} bytes JPEG (display $displayId, ${scaledW}×${scaledH})")
+                    } catch (oom: OutOfMemoryError) {
+                        Log.e(TAG, "Screenshot OOM on display $displayId")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Screenshot encode error display $displayId: ${e.message}")
+                    } finally {
                         latch.countDown()
                     }
                 }
-            )
+
+                override fun onFailure(errorCode: Int) {
+                    // Codes: 1=UNKNOWN, 2=TIMEOUT, 3=SECURE_WINDOW_NOT_ALLOWED, 4=NOT_WHITELISTED
+                    Log.w(TAG, "takeScreenshot onFailure display=$displayId code=$errorCode")
+                    latch.countDown()
+                }
+            }
+
+            // Dispatch takeScreenshot() to the main thread.
+            // Samsung OneUI silently blocks accessibility API calls from background threads —
+            // the same restriction that forced startActivity() to use postAndWaitForDispatch().
+            // Without this, takeScreenshot() returns onFailure on all Samsung Android 14/15 devices
+            // regardless of FLAG_SECURE status.
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                try {
+                    takeScreenshot(displayId, mainExecutor, callback)
+                } catch (e: Exception) {
+                    Log.e(TAG, "takeScreenshot call failed on main thread: ${e.message}")
+                    latch.countDown()
+                }
+            }
 
             latch.await(10, TimeUnit.SECONDS)
             encoded
@@ -210,6 +217,60 @@ class JarvisAccessibilityService : AccessibilityService() {
             null
         } catch (e: Exception) {
             Log.e(TAG, "takeScreenshotForDisplay($displayId) exception: ${e.message}")
+            null
+        }
+    }
+
+    // ── Fallback screenshot via system global action + gallery read ───────────
+    // When takeScreenshot() fails (FLAG_SECURE, Samsung policy, etc.), simulate
+    // the hardware screenshot button and read the saved file from the gallery.
+    // Samsung's screenshot service uses a different code path that can capture
+    // content the accessibility API cannot.
+    fun takeScreenshotViaGlobalAction(): String? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return null
+        return try {
+            // Record the timestamp BEFORE taking the screenshot so we can identify the new file.
+            val beforeMs = System.currentTimeMillis() - 500
+
+            // Simulate the hardware screenshot button combination.
+            val fired = performGlobalAction(GLOBAL_ACTION_TAKE_SCREENSHOT)
+            if (!fired) {
+                Log.w(TAG, "GLOBAL_ACTION_TAKE_SCREENSHOT returned false")
+                return null
+            }
+
+            // Wait for the system screenshot service to save the file (~1.5-3 s on Samsung).
+            Thread.sleep(3000)
+
+            // Search common Samsung screenshot directories.
+            val searchDirs = listOf(
+                android.os.Environment.getExternalStoragePublicDirectory(
+                    android.os.Environment.DIRECTORY_PICTURES).absolutePath + "/Screenshots",
+                android.os.Environment.getExternalStoragePublicDirectory(
+                    android.os.Environment.DIRECTORY_DCIM).absolutePath + "/Screenshots",
+                "/sdcard/Pictures/Screenshots",
+                "/sdcard/DCIM/Screenshots"
+            )
+
+            val latestFile = searchDirs
+                .flatMap { path -> java.io.File(path).listFiles()?.toList() ?: emptyList() }
+                .filter { f -> f.isFile && f.lastModified() > beforeMs &&
+                    f.extension.lowercase() in listOf("jpg", "jpeg", "png", "webp") }
+                .maxByOrNull { it.lastModified() }
+
+            if (latestFile == null) {
+                Log.w(TAG, "Global action screenshot: no new file found in gallery")
+                return null
+            }
+
+            val bytes = latestFile.readBytes()
+            Log.i(TAG, "Global action screenshot: ${bytes.size} bytes from ${latestFile.name}")
+            Base64.encodeToString(bytes, Base64.NO_WRAP)
+        } catch (oom: OutOfMemoryError) {
+            Log.e(TAG, "takeScreenshotViaGlobalAction OOM")
+            null
+        } catch (e: Exception) {
+            Log.e(TAG, "takeScreenshotViaGlobalAction exception: ${e.message}")
             null
         }
     }
