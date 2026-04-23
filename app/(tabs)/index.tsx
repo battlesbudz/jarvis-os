@@ -22,6 +22,7 @@ import Colors from '@/constants/colors';
 import {
   getTodayPlan,
   updateTaskCompletion,
+  updateTask,
   getGoals,
   getTodayKey,
   type Goal,
@@ -87,6 +88,20 @@ interface CalendarEvent {
   end: string;
   description?: string;
   source: 'google' | 'outlook';
+}
+
+interface SystemTask {
+  id: string;
+  type: string;
+  label: string;
+  icon: string;
+  timeLabel: string;
+  dayLabel: string;
+  hour: number;
+  minute: number;
+  recurrence: string;
+  dayOfWeek: number | null;
+  isSystem: true;
 }
 
 // Helpers
@@ -274,6 +289,7 @@ export default function MissionControlScreen() {
   const [scheduledTasks, setScheduledTasks] = useState<ScheduledTask[]>([]);
   const [scheduledLoading, setScheduledLoading] = useState(true);
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
+  const [systemSchedule, setSystemSchedule] = useState<SystemTask[]>([]);
 
   const [memorySearch, setMemorySearch] = useState('');
 
@@ -287,6 +303,11 @@ export default function MissionControlScreen() {
   const [brainDumpModal, setBrainDumpModal] = useState(false);
   const [blockerModal, setBlockerModal] = useState(false);
   const [blockerTask, setBlockerTask] = useState<Task | null>(null);
+  const [editTaskModal, setEditTaskModal] = useState(false);
+  const [editingTask, setEditingTask] = useState<Task | null>(null);
+  const [editTitle, setEditTitle] = useState('');
+  const [editDescription, setEditDescription] = useState('');
+  const [breakingDown, setBreakingDown] = useState(false);
 
   // ── Add Scheduled Task form ──
   const [newTitle, setNewTitle] = useState('');
@@ -324,7 +345,7 @@ export default function MissionControlScreen() {
     const weekStart = new Date().toISOString();
     const weekEnd = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
     const calParams = `?startTime=${encodeURIComponent(weekStart)}&endTime=${encodeURIComponent(weekEnd)}`;
-    const [inboxRes, delRes, memRes, docRes, schedRes, gcalRes, ocalRes] = await Promise.allSettled([
+    const [inboxRes, delRes, memRes, docRes, schedRes, gcalRes, ocalRes, sysSchedRes] = await Promise.allSettled([
       apiRequest('GET', '/api/inbox/items').then(r => r.json()),
       apiRequest('GET', '/api/deliverables').then(r => r.json()),
       authFetch(new URL('/api/memories', getApiUrl()).toString()).then(r => r.json()),
@@ -332,6 +353,7 @@ export default function MissionControlScreen() {
       apiRequest('GET', '/api/jarvis/scheduled-tasks').then(r => r.json()),
       apiRequest('GET', `/api/calendar/google/events${calParams}`).then(r => r.json()).catch(() => null),
       apiRequest('GET', `/api/calendar/outlook/events${calParams}`).then(r => r.json()).catch(() => null),
+      apiRequest('GET', '/api/jarvis/system-schedule').then(r => r.json()).catch(() => null),
     ]);
 
     if (inboxRes.status === 'fulfilled' && Array.isArray(inboxRes.value)) {
@@ -360,6 +382,10 @@ export default function MissionControlScreen() {
       setScheduledTasks(schedRes.value);
     }
     setScheduledLoading(false);
+
+    if (sysSchedRes.status === 'fulfilled' && Array.isArray(sysSchedRes.value)) {
+      setSystemSchedule(sysSchedRes.value as SystemTask[]);
+    }
 
     const merged: CalendarEvent[] = [];
     if (gcalRes.status === 'fulfilled' && gcalRes.value?.events) {
@@ -463,6 +489,39 @@ export default function MissionControlScreen() {
     await apiRequest('POST', `/api/deliverables/${id}/discard`).catch(() => null);
   }, []);
 
+  const openEditTask = useCallback((task: Task) => {
+    setEditingTask(task);
+    setEditTitle(task.title);
+    setEditDescription(task.description ?? '');
+    setEditTaskModal(true);
+  }, []);
+
+  const handleSaveEdit = useCallback(async () => {
+    if (!editingTask) return;
+    const updated = { title: editTitle.trim() || editingTask.title, description: editDescription.trim() || undefined };
+    setPlan(prev => {
+      if (!prev) return prev;
+      return { ...prev, tasks: prev.tasks.map(t => t.id === editingTask.id ? { ...t, ...updated } : t) };
+    });
+    setEditTaskModal(false);
+    await updateTask(getTodayKey(), editingTask.id, updated);
+  }, [editingTask, editTitle, editDescription]);
+
+  const handleBreakDown = useCallback(async () => {
+    if (!editingTask) return;
+    setBreakingDown(true);
+    try {
+      const res = await apiRequest('POST', '/api/coach', {
+        message: `Break down this task into 3-5 simple actionable sub-steps and add them to my today plan: "${editingTask.title}"${editingTask.description ? ` — ${editingTask.description}` : ''}. Replace the original task with the subtasks if possible.`,
+      });
+      if (res.ok) {
+        setEditTaskModal(false);
+        await loadLocal();
+      }
+    } catch {}
+    setBreakingDown(false);
+  }, [editingTask, loadLocal]);
+
   // ── Computed ──
   const PRIORITY_ORDER: Record<string, number> = { high: 0, medium: 1, low: 2 };
   const rawTodayTasks = plan?.tasks ?? [];
@@ -474,6 +533,30 @@ export default function MissionControlScreen() {
   const filteredMemories = memorySearch.trim()
     ? memories.filter(m => m.content.toLowerCase().includes(memorySearch.toLowerCase()) || m.category.toLowerCase().includes(memorySearch.toLowerCase()))
     : memories;
+
+  // ── Weekly calendar grouping (7 days starting today) ──
+  const weekDays = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date();
+    d.setDate(d.getDate() + i);
+    return d;
+  });
+  const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const weekData = weekDays.map(day => {
+    const dow = day.getDay();
+    const dateStr = day.toISOString().split('T')[0];
+    const sysTasks = systemSchedule.filter(s => s.recurrence === 'daily' || (s.recurrence === 'weekly' && s.dayOfWeek === dow));
+    const calEvts = calendarEvents.filter(e => e.start.startsWith(dateStr));
+    const jTasks = scheduledTasks.filter(t => t.scheduledAt.startsWith(dateStr));
+    const isToday = dateStr === new Date().toISOString().split('T')[0];
+    return { day, dateStr, dow, sysTasks, calEvts, jTasks, isToday, dayName: DAY_NAMES[dow] };
+  });
+  // Today's combined schedule sorted by hour
+  const todayData = weekData[0];
+  const todayScheduleItems = [
+    ...todayData.sysTasks.filter(s => s.hour >= 0).map(s => ({ hour: s.hour, minute: s.minute, kind: 'system' as const, data: s })),
+    ...todayData.calEvts.map(e => ({ hour: new Date(e.start).getHours(), minute: new Date(e.start).getMinutes(), kind: 'calendar' as const, data: e })),
+    ...todayData.jTasks.map(t => ({ hour: new Date(t.scheduledAt).getHours(), minute: new Date(t.scheduledAt).getMinutes(), kind: 'jarvis' as const, data: t })),
+  ].sort((a, b) => a.hour * 60 + a.minute - (b.hour * 60 + b.minute));
 
   // Connection pill statuses
   const connections = [
@@ -527,34 +610,78 @@ export default function MissionControlScreen() {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={Colors.cyan} />}
         showsVerticalScrollIndicator={false}
       >
-        {/* SCHEDULE */}
+        {/* SCHEDULE — weekly calendar */}
         <Animated.View entering={FadeInDown.delay(0).duration(400)}>
           <Panel
             title="SCHEDULE"
             icon="calendar-outline"
             accent={Colors.cyan}
-            count={pendingScheduled.length}
+            count={todayScheduleItems.length}
             loading={scheduledLoading}
             onViewAll={() => setScheduleModal(true)}
             onAdd={() => setNewTaskModal(true)}
           >
-            {pendingScheduled.length === 0 ? (
-              <Text style={styles.emptyText}>No upcoming scheduled tasks. Ask Jarvis to schedule something for you.</Text>
-            ) : (
-              pendingScheduled.slice(0, 5).map(t => (
-                <View key={t.id} style={styles.scheduleRow}>
-                  <View style={[styles.scheduleIcon, { backgroundColor: isOverdue(t.scheduledAt) ? Colors.errorDim : Colors.cyanDim }]}>
-                    <Ionicons name="time-outline" size={14} color={isOverdue(t.scheduledAt) ? Colors.error : Colors.cyan} />
-                  </View>
-                  <View style={styles.scheduleContent}>
-                    <Text style={styles.scheduleTitle} numberOfLines={1}>{t.title}</Text>
-                    <Text style={[styles.scheduleWhen, isOverdue(t.scheduledAt) && { color: Colors.error }]}>
-                      {formatScheduledAt(t.scheduledAt)}
-                      {t.recurrence ? ` · ${t.recurrence}` : ''}
-                    </Text>
-                  </View>
+            {/* Day strip */}
+            <View style={styles.dayStrip}>
+              {weekData.map(wd => (
+                <View key={wd.dateStr} style={[styles.dayCell, wd.isToday && styles.dayCellToday]}>
+                  <Text style={[styles.dayCellName, wd.isToday && { color: Colors.cyan }]}>{wd.dayName}</Text>
+                  <Text style={[styles.dayCellNum, wd.isToday && { color: Colors.cyan }]}>{wd.day.getDate()}</Text>
+                  {(wd.sysTasks.length + wd.calEvts.length + wd.jTasks.length) > 0 && (
+                    <View style={[styles.dayCellDot, wd.isToday && { backgroundColor: Colors.cyan }]} />
+                  )}
                 </View>
-              ))
+              ))}
+            </View>
+            {/* Today's schedule items */}
+            {todayScheduleItems.length === 0 ? (
+              <Text style={styles.emptyText}>Nothing scheduled today. Ask Jarvis to schedule tasks, or view all to see the full week.</Text>
+            ) : (
+              todayScheduleItems.slice(0, 5).map((item, idx) => {
+                if (item.kind === 'system') {
+                  const s = item.data as SystemTask;
+                  return (
+                    <View key={s.id + idx} style={styles.scheduleRow}>
+                      <View style={[styles.scheduleIcon, { backgroundColor: Colors.surfaceAlt }]}>
+                        <Ionicons name={s.icon as any} size={13} color={Colors.cyan} />
+                      </View>
+                      <View style={styles.scheduleContent}>
+                        <Text style={styles.scheduleTitle} numberOfLines={1}>{s.label}</Text>
+                        <Text style={styles.scheduleWhen}>{s.timeLabel} · JARVIS</Text>
+                      </View>
+                    </View>
+                  );
+                }
+                if (item.kind === 'calendar') {
+                  const ev = item.data as CalendarEvent;
+                  const evColor = ev.source === 'google' ? '#4285F4' : '#0078D4';
+                  return (
+                    <View key={ev.id + idx} style={styles.scheduleRow}>
+                      <View style={[styles.scheduleIcon, { backgroundColor: evColor + '20' }]}>
+                        <Ionicons name="calendar-outline" size={13} color={evColor} />
+                      </View>
+                      <View style={styles.scheduleContent}>
+                        <Text style={styles.scheduleTitle} numberOfLines={1}>{ev.title}</Text>
+                        <Text style={styles.scheduleWhen}>{formatScheduledAt(ev.start)} · {ev.source === 'google' ? 'Google' : 'Outlook'}</Text>
+                      </View>
+                    </View>
+                  );
+                }
+                const jt = item.data as ScheduledTask;
+                return (
+                  <View key={jt.id + idx} style={styles.scheduleRow}>
+                    <View style={[styles.scheduleIcon, { backgroundColor: isOverdue(jt.scheduledAt) ? Colors.errorDim : Colors.violetDim }]}>
+                      <Ionicons name="sparkles-outline" size={13} color={isOverdue(jt.scheduledAt) ? Colors.error : Colors.violet} />
+                    </View>
+                    <View style={styles.scheduleContent}>
+                      <Text style={styles.scheduleTitle} numberOfLines={1}>{jt.title}</Text>
+                      <Text style={[styles.scheduleWhen, isOverdue(jt.scheduledAt) && { color: Colors.error }]}>
+                        {formatScheduledAt(jt.scheduledAt)} · TASK
+                      </Text>
+                    </View>
+                  </View>
+                );
+              })
             )}
           </Panel>
         </Animated.View>
@@ -774,57 +901,74 @@ export default function MissionControlScreen() {
 
       {/* Schedule Modal — merged weekly calendar */}
       <FullModal visible={scheduleModal} title="WEEKLY SCHEDULE" accent={Colors.cyan} onClose={() => setScheduleModal(false)}>
-        {calendarEvents.length > 0 && (
-          <Text style={[styles.modalSectionHeader, { color: Colors.cyan }]}>CALENDAR EVENTS</Text>
-        )}
-        {calendarEvents.map(ev => (
-          <View key={ev.id + ev.start} style={[styles.modalItemRow, { borderLeftColor: ev.source === 'google' ? '#4285F4' : '#0078D4' }]}>
-            <View style={styles.modalItemContent}>
-              <Text style={styles.modalItemTitle}>{ev.title}</Text>
-              <Text style={styles.modalItemMeta}>
-                {formatScheduledAt(ev.start)}
-                {' · '}
-                <Text style={{ color: ev.source === 'google' ? '#4285F4' : '#0078D4' }}>
-                  {ev.source === 'google' ? 'Google' : 'Outlook'}
-                </Text>
+        {weekData.map(wd => {
+          const allItems = [
+            ...wd.sysTasks.map(s => ({ kind: 'system' as const, data: s, hour: s.hour, minute: s.minute })),
+            ...wd.calEvts.map(e => ({ kind: 'calendar' as const, data: e, hour: new Date(e.start).getHours(), minute: new Date(e.start).getMinutes() })),
+            ...wd.jTasks.map(t => ({ kind: 'jarvis' as const, data: t, hour: new Date(t.scheduledAt).getHours(), minute: new Date(t.scheduledAt).getMinutes() })),
+          ].sort((a, b) => a.hour * 60 + a.minute - (b.hour * 60 + b.minute));
+          if (allItems.length === 0) return null;
+          const dateLabel = `${wd.dayName} ${wd.day.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+          return (
+            <View key={wd.dateStr}>
+              <Text style={[styles.modalSectionHeader, wd.isToday && { color: Colors.cyan }]}>
+                {dateLabel.toUpperCase()}{wd.isToday ? '  — TODAY' : ''}
               </Text>
+              {allItems.map((item, idx) => {
+                if (item.kind === 'system') {
+                  const s = item.data as SystemTask;
+                  return (
+                    <View key={s.id + idx} style={[styles.modalItemRow, { borderLeftColor: Colors.cyan }]}>
+                      <View style={{ alignItems: 'center', justifyContent: 'center', marginRight: 8 }}>
+                        <Ionicons name={s.icon as any} size={14} color={Colors.cyan} />
+                      </View>
+                      <View style={styles.modalItemContent}>
+                        <Text style={styles.modalItemTitle}>{s.label}</Text>
+                        <Text style={styles.modalItemMeta}>{s.timeLabel} · {s.recurrence === 'weekly' ? `${s.dayLabel} recurring` : 'Daily recurring'} · JARVIS</Text>
+                      </View>
+                    </View>
+                  );
+                }
+                if (item.kind === 'calendar') {
+                  const ev = item.data as CalendarEvent;
+                  const evColor = ev.source === 'google' ? '#4285F4' : '#0078D4';
+                  return (
+                    <View key={ev.id + idx} style={[styles.modalItemRow, { borderLeftColor: evColor }]}>
+                      <View style={styles.modalItemContent}>
+                        <Text style={styles.modalItemTitle}>{ev.title}</Text>
+                        <Text style={styles.modalItemMeta}>{formatScheduledAt(ev.start)} · {ev.source === 'google' ? 'Google Calendar' : 'Outlook Calendar'}</Text>
+                      </View>
+                    </View>
+                  );
+                }
+                const t = item.data as ScheduledTask;
+                const done = !!t.completedAt;
+                const overdue = !done && isOverdue(t.scheduledAt);
+                const statusIcon = done ? 'checkmark-circle' : overdue ? 'warning' : 'sparkles-outline';
+                const statusColor = done ? Colors.success : overdue ? Colors.error : Colors.violet;
+                return (
+                  <View key={t.id + idx} style={[styles.modalItemRow, { borderLeftColor: done ? Colors.success : overdue ? Colors.error : Colors.violet }]}>
+                    <View style={{ alignItems: 'center', justifyContent: 'center', marginRight: 8 }}>
+                      <Ionicons name={statusIcon as any} size={14} color={statusColor} />
+                    </View>
+                    <View style={styles.modalItemContent}>
+                      <Text style={[styles.modalItemTitle, done && { opacity: 0.5, textDecorationLine: 'line-through' }]}>{t.title}</Text>
+                      {t.description && <Text style={styles.modalItemSub}>{t.description}</Text>}
+                      <Text style={[styles.modalItemMeta, overdue && { color: Colors.error }]}>{formatScheduledAt(t.scheduledAt)}{t.recurrence ? ` · ${t.recurrence}` : ''} · TASK</Text>
+                    </View>
+                    {!done && (
+                      <Pressable onPress={() => handleDeleteScheduledTask(t.id)} style={styles.modalItemDelete}>
+                        <Ionicons name="trash-outline" size={15} color={Colors.error} />
+                      </Pressable>
+                    )}
+                  </View>
+                );
+              })}
             </View>
-          </View>
-        ))}
-        {scheduledTasks.length > 0 && (
-          <Text style={[styles.modalSectionHeader, { color: Colors.cyan, marginTop: calendarEvents.length > 0 ? 8 : 0 }]}>
-            JARVIS TASKS
-          </Text>
-        )}
-        {scheduledTasks.length === 0 && calendarEvents.length === 0 ? (
-          <Text style={[styles.emptyText, { margin: 24 }]}>No scheduled tasks or calendar events. Ask Jarvis to schedule something.</Text>
-        ) : (
-          scheduledTasks.map(t => {
-            const done = !!t.completedAt;
-            const overdue = !done && isOverdue(t.scheduledAt);
-            const statusColor = done ? Colors.success : overdue ? Colors.error : Colors.textTertiary;
-            const statusIcon = done ? 'checkmark-circle' : overdue ? 'warning' : 'time-outline';
-            return (
-              <View key={t.id} style={[styles.modalItemRow, { borderLeftColor: done ? Colors.success : overdue ? Colors.error : Colors.cyan }]}>
-                <View style={{ alignItems: 'center', justifyContent: 'center', marginRight: 8 }}>
-                  <Ionicons name={statusIcon as any} size={16} color={statusColor} />
-                </View>
-                <View style={styles.modalItemContent}>
-                  <Text style={[styles.modalItemTitle, done && { opacity: 0.5, textDecorationLine: 'line-through' }]}>{t.title}</Text>
-                  {t.description && <Text style={styles.modalItemSub}>{t.description}</Text>}
-                  <Text style={[styles.modalItemMeta, overdue && { color: Colors.error }]}>
-                    {formatScheduledAt(t.scheduledAt)}
-                    {t.recurrence ? ` · ${t.recurrence}` : ''}
-                  </Text>
-                </View>
-                {!done && (
-                  <Pressable onPress={() => handleDeleteScheduledTask(t.id)} style={styles.modalItemDelete}>
-                    <Ionicons name="trash-outline" size={16} color={Colors.error} />
-                  </Pressable>
-                )}
-              </View>
-            );
-          })
+          );
+        })}
+        {weekData.every(wd => wd.sysTasks.length + wd.calEvts.length + wd.jTasks.length === 0) && (
+          <Text style={[styles.emptyText, { margin: 24 }]}>Nothing scheduled this week. Ask Jarvis to schedule tasks, or connect Google/Outlook to see your events.</Text>
         )}
       </FullModal>
 
@@ -871,10 +1015,16 @@ export default function MissionControlScreen() {
                   <Text style={[styles.modalItemMeta, { color: PRIORITY_COLOR[t.priority] ?? Colors.textTertiary }]}>{t.priority}</Text>
                 </View>
                 {!t.completed && (
-                  <Pressable style={styles.blockerBtn} onPress={() => { setBlockerTask(t); setBlockerModal(true); }}>
-                    <Ionicons name="warning-outline" size={10} color={Colors.warning} />
-                    <Text style={styles.blockerBtnText}>Report Blocker</Text>
-                  </Pressable>
+                  <View style={{ flexDirection: 'row', gap: 12, marginTop: 4 }}>
+                    <Pressable style={styles.taskActionBtn} onPress={() => openEditTask(t)}>
+                      <Ionicons name="pencil-outline" size={10} color={Colors.violet} />
+                      <Text style={[styles.taskActionBtnText, { color: Colors.violet }]}>Edit</Text>
+                    </Pressable>
+                    <Pressable style={styles.blockerBtn} onPress={() => { setBlockerTask(t); setBlockerModal(true); }}>
+                      <Ionicons name="warning-outline" size={10} color={Colors.warning} />
+                      <Text style={styles.blockerBtnText}>Report Blocker</Text>
+                    </Pressable>
+                  </View>
                 )}
               </View>
             </View>
@@ -1006,6 +1156,57 @@ export default function MissionControlScreen() {
           loadApi();
         }}
       />
+
+      {/* Edit Task Modal */}
+      <Modal visible={editTaskModal} animationType="slide" presentationStyle="formSheet" onRequestClose={() => setEditTaskModal(false)}>
+        <View style={styles.editModalRoot}>
+          <View style={styles.editModalHeader}>
+            <Text style={styles.editModalTitle}>EDIT TASK</Text>
+            <Pressable onPress={() => setEditTaskModal(false)} style={styles.modalClose}>
+              <Ionicons name="close" size={20} color={Colors.textSecondary} />
+            </Pressable>
+          </View>
+          <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 20 }} keyboardShouldPersistTaps="handled">
+            <Text style={styles.editFieldLabel}>TITLE</Text>
+            <TextInput
+              style={styles.editInput}
+              value={editTitle}
+              onChangeText={setEditTitle}
+              placeholder="Task title..."
+              placeholderTextColor={Colors.textTertiary}
+              multiline
+            />
+            <Text style={[styles.editFieldLabel, { marginTop: 16 }]}>NOTES (optional)</Text>
+            <TextInput
+              style={[styles.editInput, { minHeight: 80 }]}
+              value={editDescription}
+              onChangeText={setEditDescription}
+              placeholder="Add notes or details..."
+              placeholderTextColor={Colors.textTertiary}
+              multiline
+            />
+            <Pressable style={styles.editSaveBtn} onPress={handleSaveEdit}>
+              <Ionicons name="checkmark-circle-outline" size={16} color="#000" />
+              <Text style={styles.editSaveBtnText}>Save Changes</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.editBreakDownBtn, breakingDown && { opacity: 0.6 }]}
+              onPress={handleBreakDown}
+              disabled={breakingDown}
+            >
+              {breakingDown ? (
+                <ActivityIndicator size="small" color={Colors.cyan} />
+              ) : (
+                <Ionicons name="git-branch-outline" size={16} color={Colors.cyan} />
+              )}
+              <Text style={styles.editBreakDownBtnText}>
+                {breakingDown ? 'Breaking down...' : 'Break into Steps with Jarvis'}
+              </Text>
+            </Pressable>
+            <Text style={styles.editHint}>Breaking into steps sends this task to Jarvis, who will split it into 3–5 simpler sub-tasks and update your plan automatically.</Text>
+          </ScrollView>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -1768,5 +1969,138 @@ const styles = StyleSheet.create({
     marginHorizontal: 16,
     marginTop: 12,
     marginBottom: 4,
+  },
+  dayStrip: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+    marginHorizontal: 0,
+  },
+  dayCell: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 6,
+    borderRadius: 8,
+    gap: 2,
+  },
+  dayCellToday: {
+    backgroundColor: Colors.cyan + '18',
+  },
+  dayCellName: {
+    fontSize: 9,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.textTertiary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  dayCellNum: {
+    fontSize: 13,
+    fontFamily: 'Inter_700Bold',
+    color: Colors.textSecondary,
+  },
+  dayCellDot: {
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: Colors.textTertiary,
+    marginTop: 1,
+  },
+  taskActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 3,
+    paddingHorizontal: 8,
+    backgroundColor: Colors.violetDim,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: Colors.violet + '30',
+  },
+  taskActionBtnText: {
+    fontSize: 10,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.violet,
+  },
+  editModalRoot: {
+    flex: 1,
+    backgroundColor: Colors.background,
+  },
+  editModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  editModalTitle: {
+    fontSize: 14,
+    fontFamily: 'Inter_700Bold',
+    color: Colors.text,
+    letterSpacing: 1,
+  },
+  editFieldLabel: {
+    fontSize: 10,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.textTertiary,
+    letterSpacing: 0.8,
+    marginBottom: 6,
+  },
+  editInput: {
+    backgroundColor: Colors.surface,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    color: Colors.text,
+    fontFamily: 'Inter_400Regular',
+    fontSize: 15,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    minHeight: 48,
+    textAlignVertical: 'top',
+  },
+  editSaveBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: Colors.cyan,
+    borderRadius: 10,
+    paddingVertical: 13,
+    marginTop: 24,
+  },
+  editSaveBtnText: {
+    fontSize: 14,
+    fontFamily: 'Inter_700Bold',
+    color: '#000',
+    letterSpacing: 0.3,
+  },
+  editBreakDownBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: Colors.cyanDim,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.cyan + '40',
+    paddingVertical: 13,
+    marginTop: 10,
+  },
+  editBreakDownBtnText: {
+    fontSize: 14,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.cyan,
+    letterSpacing: 0.3,
+  },
+  editHint: {
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textTertiary,
+    textAlign: 'center',
+    marginTop: 14,
+    lineHeight: 18,
   },
 });
