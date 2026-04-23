@@ -15,11 +15,25 @@ android {
         versionName (System.getenv("VERSION_NAME") ?: "1.0.0")
     }
 
+    signingConfigs {
+        release {
+            def keystorePath = System.getenv("KEYSTORE_PATH") ?:
+                new File(rootProject.projectDir, "jarvis-daemon.keystore").absolutePath
+            storeFile file(keystorePath)
+            storePassword (System.getenv("KEYSTORE_PASSWORD") ?: "jarvis2024")
+            keyAlias (System.getenv("KEY_ALIAS") ?: "jarviskey")
+            keyPassword (System.getenv("KEY_PASSWORD") ?: "jarvis2024")
+        }
+    }
+
     buildTypes {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-            signingConfig signingConfigs.debug
+            signingConfig signingConfigs.release
+        }
+        debug {
+            signingConfig signingConfigs.release
         }
     }
 
@@ -34,6 +48,7 @@ android {
 
     buildFeatures {
         viewBinding true
+        buildConfig true
     }
 }
 
