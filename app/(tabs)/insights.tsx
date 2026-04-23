@@ -1231,6 +1231,7 @@ export default function InsightsScreen() {
       let buffer = '';
       let executedActions: ExecutedAction[] = [];
       let gotConfirmRequired = false;
+      let gotPhoneWorking = false;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -1262,6 +1263,7 @@ export default function InsightsScreen() {
               } else if (parsed.type === 'searching') {
                 setIsSearchingWeb(true);
               } else if (parsed.type === 'working') {
+                gotPhoneWorking = true;
                 setIsWorkingOnPhone(true);
                 setPhoneWorkingMessage(parsed.message || 'Working on your phone...');
               } else if (parsed.type === 'actions' && Array.isArray(parsed.actions)) {
@@ -1371,10 +1373,16 @@ export default function InsightsScreen() {
           saveChatHistory(prev);
           return prev;
         }
+        // If phone actions were underway when the stream dropped, the task likely
+        // completed (the notification arrived) but the response text was lost when
+        // you switched apps. Show a contextual message instead of a generic error.
+        const errContent = gotPhoneWorking
+          ? "Your phone task finished — the connection dropped when you switched apps. If you got a notification, it completed successfully. Ask me to recap what I did and I'll tell you."
+          : 'Sorry, I had trouble connecting. Please try again.';
         const errMsg: ChatMessage = {
           id: assistantId,
           role: 'assistant',
-          content: 'Sorry, I had trouble connecting. Please try again.',
+          content: errContent,
         };
         const updated = [errMsg, ...prev.filter(m => m.id !== assistantId)];
         saveChatHistory(updated);
