@@ -940,6 +940,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
         },
       },
     },
+    {
+      type: "function" as const,
+      function: {
+        name: "schedule_jarvis_task",
+        description: "Schedule a future task for Jarvis to act on at a specific time. Use when the user says 'remind me to...', 'schedule...', 'do X at Y time', or asks Jarvis to take an action later. Always confirm the scheduled time before calling.",
+        parameters: {
+          type: "object",
+          properties: {
+            title: { type: "string", description: "Short title for the scheduled task (e.g. 'Review inbox', 'Send weekly update')" },
+            description: { type: "string", description: "Optional details about what Jarvis should do when the time arrives" },
+            scheduledAt: { type: "string", description: "ISO 8601 datetime when to execute the task (e.g. '2025-04-23T09:00:00Z')" },
+            recurrence: { type: "string", description: "Optional recurrence pattern: 'daily', 'weekly', 'weekdays', 'every Monday', 'every Sunday', etc. Omit for one-time tasks." },
+          },
+          required: ["title", "scheduledAt"],
+        },
+      },
+    },
   ];
 
   function fuzzyMatch(needle: string, haystack: string): boolean {
@@ -1607,6 +1624,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
             return { result: 'error', label: toolResult.label || 'Connection failed', detail: toolResult.content };
           }
           return { result: 'success', label: toolResult.label || 'Connect channel', detail: toolResult.detail || toolResult.content };
+        }
+        case 'schedule_jarvis_task': {
+          if (!args.title || !args.scheduledAt) {
+            return { result: 'error', label: 'Missing required fields', detail: 'title and scheduledAt are required' };
+          }
+          const scheduledDate = new Date(args.scheduledAt);
+          if (isNaN(scheduledDate.getTime())) {
+            return { result: 'error', label: 'Invalid date', detail: `scheduledAt "${args.scheduledAt}" is not a valid ISO 8601 datetime` };
+          }
+          await db.insert(schema.jarvisScheduledTasks).values({
+            userId,
+            title: String(args.title),
+            description: args.description ? String(args.description) : null,
+            scheduledAt: scheduledDate,
+            recurrence: args.recurrence ? String(args.recurrence) : null,
+          });
+          const timeLabel = scheduledDate.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+          const recurrenceLabel = args.recurrence ? ` (${args.recurrence})` : '';
+          return { result: 'success', label: 'Task scheduled', detail: `"${args.title}" scheduled for ${timeLabel}${recurrenceLabel}` };
         }
         default:
           return { result: 'error', label: 'Unknown action', detail: `Unknown tool: ${toolName}` };
