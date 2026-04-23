@@ -12563,7 +12563,27 @@ DIAGNOSTICS: (1) Before any multi-step phone action sequence (e.g. open app \u21
         "android_",
         "navigate to",
         "type into",
-        "open app"
+        "open app",
+        // notification keywords
+        "notification",
+        "notifications",
+        "my notifications",
+        "read my notification",
+        "check notification",
+        "show notification",
+        "what notification",
+        "any notification",
+        "new notification",
+        "recent notification",
+        "latest notification",
+        // general phone/device read actions
+        "read my phone",
+        "check my phone",
+        "what is on my phone",
+        "what's on my phone",
+        "phone screen",
+        "my screen",
+        "my phone"
       ];
       const isDeviceControlRequest = androidActive && deviceControlKeywords.some((k) => lastUserContent.includes(k));
       const daemonAbsoluteRule = androidActive ? `
@@ -12689,9 +12709,22 @@ You MUST tell the user this specific action FAILED. Do NOT describe it as succes
             "i swiped",
             "i typed",
             "here is the screenshot",
-            "here's the screenshot"
+            "here's the screenshot",
+            // notification fabrication patterns
+            "here are your current android notifications",
+            "here are your android notifications",
+            "here are your notifications",
+            "got it \u2014 here are your",
+            "got it, here are your",
+            "your current notifications",
+            "your android notifications",
+            "fetching your notifications",
+            "i'll fetch your android",
+            "i will fetch your android",
+            "fetched your notifications"
           ];
-          const looksHallucinated = androidActive && hallucIndicators.some((h) => responseText.toLowerCase().includes(h));
+          const hasRawToolCallBlob = androidActive && (responseText.includes('"name":"daemon_action"') || responseText.includes('"name": "daemon_action"') || responseText.includes("android_notifications_list") || responseText.includes("android_open_app") || responseText.includes("android_screenshot") || responseText.includes("android_tap") || responseText.includes("android_read_screen"));
+          const looksHallucinated = androidActive && (hasRawToolCallBlob || hallucIndicators.some((h) => responseText.toLowerCase().includes(h)));
           if (looksHallucinated) {
             console.warn(`[daemon] HALLUCINATION DETECTED userId=${userId} \u2014 model claimed device action without tool call. Intercepting.`);
             const correctedResponse = "I wasn't able to perform that action on your phone \u2014 I need to call the phone tool to do that, and it didn't get called this time. Please try again and I'll make sure to actually execute the command.";
