@@ -61,6 +61,7 @@ class WebSocketService : Service() {
         private const val CHANNEL_ID = "jarvis_daemon"
         private const val NOTIFICATION_ID = 1001
         private const val RECONNECT_DELAY_MS = 5000L
+        private const val RECONNECT_DELAY_MAX_MS = 60000L
         private const val PING_INTERVAL_MS = 25000L
         const val PREFS_NAME = "jarvis_daemon"
         const val PREF_SERVER_URL = "server_url"
@@ -96,6 +97,7 @@ class WebSocketService : Service() {
     private var reconnectAttempts = 0
     private val maxReconnectAttempts = 8
     private var pingFuture: java.util.concurrent.ScheduledFuture<*>? = null
+    private var reconnectDelayMs = RECONNECT_DELAY_MS
 
     var isConnected = false
     var currentStatus = "Disconnected"
@@ -136,6 +138,7 @@ class WebSocketService : Service() {
                 paired = false
                 reconnectEnabled = true
                 reconnectAttempts = 0
+                reconnectDelayMs = RECONNECT_DELAY_MS
                 getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                     .edit().putString(PREF_SERVER_URL, url).apply()
                 connect(useDaemonId = false)
@@ -284,9 +287,15 @@ class WebSocketService : Service() {
                         Log.i(TAG, "Credentials stored for future reconnect (daemonId=${serverDaemonId.take(8)}…)")
                     }
                     reconnectAttempts = 0
+                    reconnectDelayMs = RECONNECT_DELAY_MS
                     updateStatus("Connected • ${Build.MODEL}", true)
                     Log.i(TAG, "Paired/reconnected successfully")
+                    // Log permission status so the user (and AI via daemon_diagnostic) can see it immediately
+                    val a11yEnabled = JarvisAccessibilityService.instance != null
+                    val notifEnabled = JarvisNotificationListener.instance != null
                     DaemonLog.add("paired/reconnected ✓ userId=${json.optString("userId", "?")}")
+                    DaemonLog.add("accessibility=${if (a11yEnabled) "ENABLED ✓" else "DISABLED ✗ — phone control will not work!"}")
+                    DaemonLog.add("notifications=${if (notifEnabled) "ENABLED ✓" else "DISABLED ✗ — notification reading unavailable"}")
                 } else {
                     val err = json.optString("error", "pairing failed")
                     DaemonLog.add("pair FAILED: $err")
@@ -347,24 +356,17 @@ class WebSocketService : Service() {
 
     private fun scheduleReconnect(preferDaemonId: Boolean) {
         reconnectAttempts++
-        if (reconnectAttempts > maxReconnectAttempts) {
-            // Too many failures — clear credentials so user must re-pair
-            daemonId = ""
-            reconnectSecret = ""
-            getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
-                .remove(PREF_DAEMON_ID)
-                .remove(PREF_RECONNECT_SECRET)
-                .apply()
-            reconnectEnabled = false
-            updateStatus("Connection lost — tap Pair to reconnect", false)
-            Log.w(TAG, "Max reconnect attempts reached — credentials cleared")
-            return
-        }
-        val attempt = reconnectAttempts
-        updateStatus("Reconnecting ($attempt/$maxReconnectAttempts)…", false)
+        // Never clear credentials on reconnect failure — keep retrying with exponential backoff
+        // capped at RECONNECT_DELAY_MAX_MS (60s). Credentials are only cleared on explicit
+        // server rejection (bad secret / unknown daemonId) or user-initiated disconnect.
+        val delay = reconnectDelayMs
+        reconnectDelayMs = minOf(reconnectDelayMs * 2, RECONNECT_DELAY_MAX_MS)
+        val delaySec = delay / 1000
+        updateStatus("Reconnecting (attempt $reconnectAttempts, ${delaySec}s)…", false)
+        DaemonLog.add("WS reconnect scheduled in ${delaySec}s (attempt $reconnectAttempts)")
         executor.schedule({
             if (reconnectEnabled) connect(useDaemonId = preferDaemonId && daemonId.isNotEmpty() && reconnectSecret.isNotEmpty())
-        }, RECONNECT_DELAY_MS, TimeUnit.MILLISECONDS)
+        }, delay, TimeUnit.MILLISECONDS)
     }
 
     private fun disconnect() {
