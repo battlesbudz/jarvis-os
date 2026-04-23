@@ -11228,7 +11228,7 @@ var init_inboxActions = __esm({
 import { createServer } from "node:http";
 import OpenAI12 from "openai";
 import { eq as eq30, and as and25, desc as desc10, sql as sql16, gte as gte4 } from "drizzle-orm";
-import YoutubeTranscript from "youtube-transcript";
+import { YoutubeTranscript } from "youtube-transcript/dist/youtube-transcript.esm.js";
 import ytSearch from "yt-search";
 function getPersonaBlock(coachingMode) {
   return PERSONA_BLOCKS[coachingMode || "sharp"] || PERSONA_BLOCKS.sharp;
