@@ -12761,28 +12761,26 @@ NOTIFICATION \u2192 YOUTUBE VIDEO WORKFLOW \u2014 when the user asks you to open
 
 YOUTUBE APP SPATIAL LAYOUT (Galaxy Z Fold 6 cover screen, portrait) \u2014 use this as your mental map when navigating:
   SCREEN ZONES (top to bottom):
-  \u2022 Video Player (top ~35% of screen): The video plays here. Tapping it toggles play/pause controls.
-  \u2022 Title Zone (~35\u201345%): Video title text.
-  \u2022 Channel Zone (~45\u201352%): Channel name + Subscribe button.
-  \u2022 Action Row (~52\u201360%): Like | Dislike | Share | Download | Save | More (\u22EE) \u2014 horizontally arranged.
-  \u2022 Comments Header (~60\u201368%): Shows 'Comments' with the count number (e.g. '1.2K Comments'). THIS IS THE TAP TARGET to open the full comment list.
-  \u2022 Description / Recommended (below 68%): Partially visible, can scroll to reveal.
+  \u2022 Video Player (top ~0\u201340% of screen): The video plays here. Tapping it toggles play/pause controls.
+  \u2022 Title Zone (~40\u201350%): Video title text + view count + date.
+  \u2022 Channel Zone (~50\u201357%): Channel name + subscriber count + Subscribe/bell button.
+  \u2022 Action Row (~57\u201365%): Like (with count) | Dislike | Share | Ask | Save \u2014 horizontally arranged.
+  \u2022 Comments Section (~65\u201378%): IMMEDIATELY VISIBLE below the action row \u2014 NO SCROLLING NEEDED. Shows 'Comments [count]' header on the left, then the first comment text directly below it as a preview. This entire block is the tap target to open the full comment list.
+  \u2022 Recommended / Store content (below 78%): Sponsored sections, other videos.
 
   READING COMMENTS STEP-BY-STEP:
-  1. After video opens: android_wait(2500), then android_screenshot to see current state.
-  2. Take note of whether comments are visible. They are NOT visible by default \u2014 they are below the fold.
-  3. Scroll down: android_swipe from (x=450, y=1800) to (x=450, y=700) \u2014 this scrolls the page DOWN (reveals content below). Repeat 1\u20132 times if needed.
-  4. android_wait(1000), android_screenshot to see if the Comments section is now visible.
-  5. Look for 'Comments' text with a number \u2014 TAP at the exact (x, y) coordinate where that text appears.
-  6. android_wait(1500), android_screenshot \u2014 the comments bottom sheet should now be open showing individual comment text.
-  7. android_read_screen to extract the comment text you need.
-  8. If the comments sheet did NOT open (video went fullscreen instead): android_press_key(back) to exit fullscreen, then retry the swipe from step 3.
+  1. After video opens: android_wait(2500), then android_screenshot to confirm the video loaded.
+  2. The comments section is ALREADY VISIBLE on screen \u2014 no scrolling required.
+  3. android_read_screen \u2014 the output will contain 'Comments [number]' and the first comment text right there in the page. You can read that first comment immediately.
+  4. To open the full comment list: android_tap at the comments block (~x=450, y=1450 on the Z Fold 6 cover screen \u2014 roughly 65% down). This opens a bottom sheet with all comments.
+  5. android_wait(1500), android_screenshot \u2014 the comment sheet should now be open.
+  6. android_read_screen to extract the comment text you need.
+  7. If tapping opened the video fullscreen instead: android_press_key(back) to exit fullscreen, then retry tapping the comments block lower on the screen.
 
   IMPORTANT COORDINATE NOTES:
-  \u2022 The Z Fold 6 cover screen is approx 904px wide \xD7 2316px tall (full pixels, not dp). Swipe x-coordinates: use x=450 (center). Swipe y-coordinates: use values in the range 600\u20131900.
-  \u2022 For SCROLLING DOWN in any app: swipe from high y (e.g. 1800) to low y (e.g. 700). This is a 'finger swipes up' gesture which scrolls content downward.
-  \u2022 After every swipe or tap, ALWAYS android_wait(1000\u20131500) then android_screenshot before the next tap. This prevents mis-taps on transitioning screens.
-  \u2022 If android_read_screen shows the comments but you need coordinates to tap a specific comment: estimate position from the screenshot \u2014 the first comment is usually near y=700\u2013900, second at y=1000\u20131200.
+  \u2022 The Z Fold 6 cover screen is approx 904px wide \xD7 2316px tall. Tap x-coordinates: use x=450 (center). y=1450 targets the comments section.
+  \u2022 After every tap, ALWAYS android_wait(1000\u20131500) then android_screenshot before the next action. This prevents mis-taps on transitioning screens.
+  \u2022 The first comment text is readable directly from android_read_screen without tapping anything \u2014 use this to answer 'what is the first comment?' type questions instantly.
 
 ACTION FLOW for multi-step tasks: Use as many tool-call turns as the task requires \u2014 there is no turn limit. For each step: (1) If unsure what is on screen, call android_read_screen first. (2) Act \u2014 call android_browse, android_tap, android_swipe, android_type, etc. as needed. (3) After acting, call android_read_screen to confirm the result, then decide the next step. Complete the FULL task end-to-end before responding \u2014 do NOT stop mid-task and ask the user to finish. NEVER re-open an app that is already on screen. NEVER describe app content without calling android_read_screen first. If an op returns result:error, tell the user what failed and what you tried.
 
