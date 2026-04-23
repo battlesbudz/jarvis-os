@@ -118,11 +118,46 @@ class JarvisAccessibilityService : AccessibilityService() {
     // Uses reflection throughout to avoid compile-time dependency on the
     // TakeScreenshotCallback / ScreenshotResult nested types (their exact
     // method names vary by SDK version and are unavailable at compile time).
+    //
+    // Galaxy Z Fold 6 note: foldable phones expose two physical displays.
+    // We detect the display ID from the currently focused accessibility window
+    // instead of hardcoding 0 (which may be the inner screen while the user
+    // is on the cover screen, or vice versa). If the detected display fails we
+    // fall back through all known display IDs (0, 1, 2) before giving up.
     fun takeScreenshotBase64(): String? {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
             Log.w(TAG, "Screenshot requires Android 11+")
             return null
         }
+
+        // Determine which display is currently showing content.
+        // AccessibilityWindowInfo.displayId is API 30+ — safe here.
+        val activeDisplayId: Int = try {
+            val wins = windows
+            val focused = wins?.firstOrNull { it.isFocused }
+                ?: wins?.firstOrNull { it.isActive }
+                ?: wins?.firstOrNull()
+            focused?.displayId ?: 0
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not determine active display, defaulting to 0: ${e.message}")
+            0
+        }
+
+        // Build a priority list: active display first, then any others we haven't tried.
+        val displayCandidates = (listOf(activeDisplayId) + listOf(0, 1)).distinct()
+
+        for (displayId in displayCandidates) {
+            val result = takeScreenshotForDisplay(displayId)
+            if (result != null) {
+                Log.i(TAG, "Screenshot succeeded on display $displayId")
+                return result
+            }
+            Log.w(TAG, "Screenshot failed on display $displayId — trying next")
+        }
+        return null
+    }
+
+    private fun takeScreenshotForDisplay(displayId: Int): String? {
         return try {
             val latch = CountDownLatch(1)
             var encoded: String? = null
@@ -154,14 +189,14 @@ class JarvisAccessibilityService : AccessibilityService() {
                                 }
                             }
                         } catch (e: Exception) {
-                            Log.e(TAG, "Screenshot encode failed: ${e.message}")
+                            Log.e(TAG, "Screenshot encode failed on display $displayId: ${e.message}")
                         } finally {
                             latch.countDown()
                         }
                     }
                     "onFailure" -> {
                         val code = if (args != null && args.isNotEmpty()) args[0] else "?"
-                        Log.e(TAG, "takeScreenshot failed, code=$code")
+                        Log.w(TAG, "takeScreenshot onFailure display=$displayId code=$code")
                         latch.countDown()
                     }
                 }
@@ -175,11 +210,11 @@ class JarvisAccessibilityService : AccessibilityService() {
                 "takeScreenshot", Int::class.java,
                 java.util.concurrent.Executor::class.java, callbackClass
             )
-            takeMethod.invoke(this, 0, mainExecutor, callback)
+            takeMethod.invoke(this, displayId, mainExecutor, callback)
             latch.await(8, TimeUnit.SECONDS)
             encoded
         } catch (e: Exception) {
-            Log.e(TAG, "takeScreenshotBase64 failed: ${e.message}")
+            Log.e(TAG, "takeScreenshotForDisplay($displayId) exception: ${e.message}")
             null
         }
     }
