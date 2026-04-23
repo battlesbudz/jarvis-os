@@ -42,15 +42,6 @@ jobs:
           printf "8933bad161af4178b1185d1a37fbf41ea5269c55\nd56f5187479451eabf01fb78af6dfcb131a6481e\n24333f8a63b6825ea9c5514f83c2829b004d1fee\n" > "$SDK/licenses/android-sdk-license"
           printf "84831b9409646a918e30573bab4c9c91346d8abd\n" > "$SDK/licenses/android-sdk-preview-license"
 
-      # Install Gradle 8.4 directly — avoids two problems:
-      # (1) setup-gradle@v4 action times out fetching version metadata
-      # (2) system Gradle 9.4.1 is incompatible with this project's AGP version
-      - name: Install Gradle 8.4
-        run: |
-          wget -q https://services.gradle.org/distributions/gradle-8.4-bin.zip -O /tmp/gradle.zip
-          unzip -q /tmp/gradle.zip -d /opt
-          echo "/opt/gradle-8.4/bin" >> $GITHUB_PATH
-
       - name: Set up Node.js 22
         uses: actions/setup-node@v4
         with:
@@ -65,6 +56,23 @@ jobs:
           EXPO_PUBLIC_DOMAIN: GameplanAI.replit.app
           EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID: 464052645678-au43qstbkio1gc6foomqo1a40c9f5vpk.apps.googleusercontent.com
         run: npx expo prebuild --platform android --clean
+
+      # Cache the Gradle wrapper distribution so Gradle 8.14.3 is only
+      # downloaded once and reused on subsequent runs.
+      - name: Cache Gradle wrapper
+        uses: actions/cache@v4
+        with:
+          path: ~/.gradle/wrapper/dists
+          key: gradle-wrapper-${{ hashFiles('android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-wrapper-
+
+      # Cache Gradle build caches to speed up incremental compilation.
+      - name: Cache Gradle build cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.gradle/caches
+          key: gradle-caches-${{ hashFiles('android/**/*.gradle*', 'android/**/gradle-wrapper.properties') }}
+          restore-keys: gradle-caches-
 
       # Generate the keystore ONCE on the first run and commit it back.
       # Every subsequent run finds it in the repo and skips generation.
@@ -112,7 +120,9 @@ jobs:
 
       - name: Build release APK
         working-directory: android
-        run: gradle assembleRelease --no-daemon
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon
 
       - name: Locate, rename APK and write version.json
         run: |
