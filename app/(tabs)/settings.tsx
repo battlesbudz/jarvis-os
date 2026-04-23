@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import {
   StyleSheet,
   View,
@@ -7,14 +7,11 @@ import {
   Pressable,
   Platform,
   ActivityIndicator,
-  Modal,
   Switch,
   Alert,
-  TextInput,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import Animated, { FadeInDown } from 'react-native-reanimated';
 import { useFocusEffect } from 'expo-router';
 import Colors from '@/constants/colors';
 import * as Haptics from 'expo-haptics';
@@ -26,12 +23,8 @@ import {
   getLevelName,
   getXpForNextLevel,
   getAvailableRewards,
-  getDailyXpEarned,
-  getDailyBudgetRemaining,
   getLifetimeXp,
-  DAILY_XP_REQUIRED,
   ALL_BADGES,
-  ALL_REWARDS,
   TIER_COLORS,
   getLifeContext,
   getUserName,
@@ -256,8 +249,9 @@ export default function SettingsScreen() {
   // ── Reward claim ──
   const handleClaimReward = useCallback(async (reward: Reward) => {
     try {
-      const updated = await claimReward(reward.id);
-      setStats(updated);
+      await claimReward(reward.id);
+      const refreshed = await getStats();
+      setStats(refreshed);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch {}
     setRewardModalVisible(false);
@@ -265,14 +259,12 @@ export default function SettingsScreen() {
   }, []);
 
   // ── Computed ──
-  const level = getLevel(stats.xp ?? 0);
-  const levelName = getLevelName(level);
-  const xpForNext = getXpForNextLevel(level);
-  const currentLevelXp = getXpForNextLevel(level - 1);
-  const xpProgress = xpForNext > currentLevelXp
-    ? ((stats.xp ?? 0) - currentLevelXp) / (xpForNext - currentLevelXp)
-    : 1;
-  const availableRewards = getAvailableRewards(stats);
+  const lifetimeXp = getLifetimeXp(stats);
+  const level = getLevel(lifetimeXp);
+  const levelName = getLevelName(lifetimeXp);
+  const xpInfo = getXpForNextLevel(lifetimeXp);
+  const xpProgress = xpInfo.progress;
+  const availableRewards = getAvailableRewards(lifetimeXp);
   const earnedBadges = (stats.badges ?? []).map(id => ALL_BADGES.find(b => b.id === id)).filter(Boolean);
 
   // OAuth platform configs
@@ -439,12 +431,12 @@ export default function SettingsScreen() {
                 <Text style={styles.xpLevelName}>{levelName}</Text>
               </View>
               <View style={styles.xpRight}>
-                <Text style={styles.xpValue}>{stats.xp ?? 0} XP</Text>
-                <Text style={styles.xpNext}>Next: {xpForNext} XP</Text>
+                <Text style={styles.xpValue}>{lifetimeXp} XP</Text>
+                <Text style={styles.xpNext}>Next: {xpInfo.needed} XP</Text>
               </View>
             </View>
             <View style={styles.xpBarTrack}>
-              <View style={[styles.xpBarFill, { width: `${Math.min(100, Math.round(xpProgress * 100))}%` as any }]} />
+              <View style={[styles.xpBarFill, { width: `${Math.min(100, Math.round(xpProgress * 100))}%` }]} />
             </View>
             <View style={styles.xpStats}>
               <View style={styles.xpStat}>
