@@ -274,28 +274,38 @@ object OpHandler {
         val svc = JarvisAccessibilityService.instance
             ?: return OpResult(false, error = "Accessibility service not running. Enable it in Settings > Accessibility > Jarvis Daemon.")
         return try {
-            val base64 = svc.takeScreenshotBase64()
+            // Method 1: Direct AccessibilityService.takeScreenshot() API
+            var base64 = svc.takeScreenshotBase64()
+
+            // Method 2: If direct API fails, try simulating the hardware screenshot button.
+            // Samsung's system screenshot service uses a different code path that works in more situations.
+            if (base64 == null) {
+                Log.i(TAG, "Direct screenshot API failed — trying global action fallback")
+                DaemonLog.add("screenshot: direct API failed, trying global action fallback")
+                base64 = svc.takeScreenshotViaGlobalAction()
+            }
+
             if (base64 != null) {
                 OpResult(true, data = JSONObject().put("screenshot", base64).put("format", "jpeg"))
             } else {
-                // Null result means takeScreenshot() called onFailure for all display candidates.
-                // Most common cause: the foreground app has FLAG_SECURE set (Facebook, Instagram,
-                // banking apps, etc.). FLAG_SECURE is enforced by Android at the OS level and
-                // cannot be bypassed — not even by an accessibility service.
                 val pkg = try { svc.rootInActiveWindow?.packageName?.toString() ?: "unknown" } catch (e: Exception) { "unknown" }
-                val flagSecureApps = setOf(
-                    "com.facebook.katana", "com.facebook.lite", "com.instagram.android",
-                    "com.whatsapp", "com.snapchat.android", "com.netflix.mediaclient",
-                    "com.amazon.avod.thirdpartyclient", "com.disney.disneyplus"
-                )
-                val hint = if (pkg in flagSecureApps) {
-                    "This app ($pkg) uses FLAG_SECURE which blocks all screenshot APIs at the OS level. " +
-                    "Use android_read_screen instead to read the visible text and UI elements — " +
-                    "it reads the accessibility tree which IS available even in FLAG_SECURE apps."
-                } else {
-                    "Screenshot failed for package '$pkg'. The app may use FLAG_SECURE (which blocks all screenshots), " +
-                    "the screen may be off/locked, or the display was not detected. " +
-                    "Try android_read_screen as an alternative — it reads UI text without needing screenshot access."
+                val hint = when {
+                    pkg == "com.android.chrome" || pkg == "com.chrome.beta" || pkg == "com.chrome.dev" ->
+                        "Chrome has FLAG_SECURE active. This almost always means you have at least one " +
+                        "incognito tab open — Chrome applies FLAG_SECURE to the entire app when ANY incognito " +
+                        "tab exists, blocking all screenshot APIs. Fix: open Chrome → tap the tab switcher → " +
+                        "close all incognito tabs (the dark tab group), then retry the screenshot. " +
+                        "Alternatively, use Samsung Internet as your browser for Jarvis instead of Chrome."
+                    pkg in setOf("com.facebook.katana", "com.facebook.lite", "com.instagram.android",
+                        "com.whatsapp", "com.snapchat.android", "com.netflix.mediaclient",
+                        "com.amazon.avod.thirdpartyclient", "com.disney.disneyplus") ->
+                        "This app ($pkg) uses FLAG_SECURE which blocks all screenshot APIs at the OS level. " +
+                        "Use android_read_screen instead — it reads the accessibility tree which works even in FLAG_SECURE apps."
+                    else ->
+                        "Screenshot failed for package '$pkg'. Both screenshot methods failed. " +
+                        "Possible causes: FLAG_SECURE window is active (Chrome incognito, banking app, etc.), " +
+                        "screen is locked, or display ID was not detected. " +
+                        "Use android_read_screen to read visible text instead."
                 }
                 OpResult(false, error = hint)
             }
