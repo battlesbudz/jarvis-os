@@ -6841,10 +6841,10 @@ async function runProactiveStartupCatchup() {
         if (minutesSinceScheduled < 0 || minutesSinceScheduled > 120) continue;
         const alreadySent = await hasAlreadySent(link.userId, schedule.type, dateKey);
         if (alreadySent) continue;
+        await markAsSent(link.userId, schedule.type, dateKey);
         console.log(`[Proactive] Catchup: sending missed ${schedule.type} to user ${link.userId}`);
         try {
           await sendScheduledMessage(link, schedule, dateKey, timezone);
-          await markAsSent(link.userId, schedule.type, dateKey);
         } catch (err) {
           console.error(`[Proactive] Catchup error for ${link.userId}:`, err);
         }
@@ -6878,9 +6878,9 @@ async function startProactiveScheduler() {
           if (schedule.type === "weekly_planning" && localDay !== (schedule.dayOfWeek ?? -1)) continue;
           const alreadySent = await hasAlreadySent(link.userId, schedule.type, dateKey);
           if (alreadySent) continue;
+          await markAsSent(link.userId, schedule.type, dateKey);
           try {
             await sendScheduledMessage(link, schedule, dateKey, timezone);
-            await markAsSent(link.userId, schedule.type, dateKey);
           } catch (err) {
             console.error(`[Proactive] Error for user ${link.userId}:`, err);
           }
