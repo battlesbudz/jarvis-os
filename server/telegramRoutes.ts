@@ -1040,10 +1040,12 @@ export async function runProactiveStartupCatchup(): Promise<void> {
         const alreadySent = await hasAlreadySent(link.userId, schedule.type, dateKey);
         if (alreadySent) continue;
 
+        // Claim the slot BEFORE sending so a concurrent scheduler tick
+        // can't also pass the hasAlreadySent check and send a duplicate.
+        await markAsSent(link.userId, schedule.type, dateKey);
         console.log(`[Proactive] Catchup: sending missed ${schedule.type} to user ${link.userId}`);
         try {
           await sendScheduledMessage(link, schedule, dateKey, timezone);
-          await markAsSent(link.userId, schedule.type, dateKey);
         } catch (err) {
           console.error(`[Proactive] Catchup error for ${link.userId}:`, err);
         }
@@ -1083,9 +1085,10 @@ export async function startProactiveScheduler(): Promise<void> {
           const alreadySent = await hasAlreadySent(link.userId, schedule.type, dateKey);
           if (alreadySent) continue;
 
+          // Claim the slot before sending to prevent catchup/scheduler races
+          await markAsSent(link.userId, schedule.type, dateKey);
           try {
             await sendScheduledMessage(link, schedule, dateKey, timezone);
-            await markAsSent(link.userId, schedule.type, dateKey);
           } catch (err) {
             console.error(`[Proactive] Error for user ${link.userId}:`, err);
           }
