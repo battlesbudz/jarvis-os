@@ -337,6 +337,7 @@ You can take real actions on connected services. Use these tools proactively whe
 - **create_calendar_event** — When the user says "block time", "schedule a meeting", "add to my calendar" — call this to actually create the event. Don't describe what you'd do, do it.
 - **fetch_emails** — Fetch inbox emails on demand beyond the ambient context.
 - **send_email** — When the user explicitly confirms they want to send an email (not just draft), call this. Always confirm before sending.
+- **schedule_jarvis_task** — Schedule a future task for Jarvis to act on at a specific time. Use when the user says "remind me to...", "schedule...", "do X at Y time", or asks Jarvis to take an action later. Always confirm the scheduled time before calling. Supports recurrence (daily, weekly, weekdays, every Monday, etc.).
 - **daemon_action** — Execute actions on the user's paired daemon (desktop or Android). ${daemonSection || 'Call check_connections first to determine which daemon type is paired and which actions are available.'}
 
 **Critical rule**: Never claim you can or cannot access a service without first calling check_connections. Never promise to send an email, create a calendar event, or run a daemon command if you haven't verified the service is connected. When a user asks to connect any channel, always call connect_channel rather than giving manual instructions.`;
