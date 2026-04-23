@@ -5,7 +5,7 @@ modules = ["nodejs-22", "postgresql-16"]
 channel = "stable-24_05"
 
 [deployment]
-deploymentTarget = "cloudrun"
+deploymentTarget = "autoscale"
 build = ["sh", "-c", "npm run expo:static:build && npm run server:build"]
 run = ["npm", "run", "server:prod"]
 
