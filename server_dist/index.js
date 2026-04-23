@@ -13074,6 +13074,13 @@ When android_screenshot succeeds, the screenshot is automatically stored and a p
 `);
               startKeepalive();
             }
+            if (tc.function.name === "daemon_action" && String(args.action) === "android_return_to_jarvis" && userId2) {
+              const earlyScreenshotUrl = actionResults.find((a) => a.screenshotUrl)?.screenshotUrl;
+              if (earlyScreenshotUrl) {
+                savePendingResponse(userId2, loopFinalText || "", earlyScreenshotUrl).catch(() => {
+                });
+              }
+            }
             const execResult = await executeCoachTool(tc.function.name, args, userId2);
             let linkData = {};
             if ((tc.function.name === "generate_reconnect_link" || tc.function.name === "connect_channel") && execResult.result === "success") {
@@ -13123,7 +13130,8 @@ You MUST tell the user this specific action FAILED. Do NOT describe it as succes
           }
           stopKeepalive2();
           if (hasDaemonActions && userId2) {
-            savePendingResponse(userId2, loopFinalText).catch(() => {
+            const screenshotUrl = actionResults.find((a) => a.screenshotUrl)?.screenshotUrl;
+            savePendingResponse(userId2, loopFinalText, screenshotUrl).catch(() => {
             });
           }
           res.write(`data: ${JSON.stringify({ content: loopFinalText })}
@@ -13189,7 +13197,8 @@ ${failedDaemonActions.map((a) => `- ${a.label}: ${a.result}`).join("\n")}`
         }
       }
       if (hasDaemonActions && userId2 && fullStreamedReply) {
-        savePendingResponse(userId2, fullStreamedReply).catch(() => {
+        const screenshotUrl = actionResults.find((a) => a.screenshotUrl)?.screenshotUrl;
+        savePendingResponse(userId2, fullStreamedReply, screenshotUrl).catch(() => {
         });
       }
       if (!clientDisconnected) {
@@ -13943,11 +13952,13 @@ ${context}` },
       return res.json({ text: null });
     }
   });
-  async function savePendingResponse(userId2, text2) {
+  async function savePendingResponse(userId2, text2, screenshotUrl) {
     const id = `pr-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq30(userPreferences.userId, userId2));
     const prefs = rows[0]?.data || {};
-    await db.insert(userPreferences).values({ userId: userId2, data: { ...prefs, pendingResponse: { id, text: text2, createdAt: Date.now() } } }).onConflictDoUpdate({ target: userPreferences.userId, set: { data: { ...prefs, pendingResponse: { id, text: text2, createdAt: Date.now() } } } });
+    const payload = { id, text: text2, createdAt: Date.now() };
+    if (screenshotUrl) payload.screenshotUrl = screenshotUrl;
+    await db.insert(userPreferences).values({ userId: userId2, data: { ...prefs, pendingResponse: payload } }).onConflictDoUpdate({ target: userPreferences.userId, set: { data: { ...prefs, pendingResponse: payload } } });
   }
   app2.get("/api/coach/pending-response", async (req, res) => {
     try {
@@ -13960,7 +13971,7 @@ ${context}` },
       if (pending && pending.createdAt && Date.now() - pending.createdAt < ONE_HOUR && pending.text) {
         const updated = { ...prefs, pendingResponse: null };
         await db.update(userPreferences).set({ data: updated }).where(eq30(userPreferences.userId, userId2));
-        return res.json({ id: pending.id, text: pending.text });
+        return res.json({ id: pending.id, text: pending.text, screenshotUrl: pending.screenshotUrl || null });
       }
       return res.json({ text: null });
     } catch (err) {
