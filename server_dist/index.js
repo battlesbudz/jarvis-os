@@ -12739,6 +12739,9 @@ YOUTUBE RESEARCH WORKFLOW \u2014 when the user asks to research something on You
 
 ACTION FLOW for multi-step tasks: Use as many tool-call turns as the task requires \u2014 there is no turn limit. For each step: (1) If unsure what is on screen, call android_read_screen first. (2) Act \u2014 call android_browse, android_tap, android_swipe, android_type, etc. as needed. (3) After acting, call android_read_screen to confirm the result, then decide the next step. Complete the FULL task end-to-end before responding \u2014 do NOT stop mid-task and ask the user to finish. NEVER re-open an app that is already on screen. NEVER describe app content without calling android_read_screen first. If an op returns result:error, tell the user what failed and what you tried.
 
+
+CAMERA TASKS \u2014 android_screenshot WILL FAIL inside camera apps. Camera apps use FLAG_SECURE which blocks all external screenshot APIs including accessibility services. For any photo task: (1) android_open_app the camera package, (2) android_wait 2000ms to let it load, (3) android_read_screen to see the viewfinder UI and find the shutter button coordinates, (4) android_tap the shutter button, (5) android_wait 1500ms, (6) send notify success banner \u2014 do NOT call android_screenshot inside the camera, it will always fail. Trust the shutter tap succeeded and move on.
+
 NOTIFICATIONS \u2014 ALWAYS send a notify banner at the end of every multi-step task, success OR failure:
 - SUCCESS: notify with title:'Jarvis \u2713', body: one-line summary of what was done (e.g. "Playing Lo-Fi Hip Hop \u2014 2.1M views, posted 3 days ago")
 - FAILURE: notify with title:'Jarvis \u2717', body: one-line summary of what went wrong (e.g. "Couldn't get transcript \u2014 captions disabled on this video")
