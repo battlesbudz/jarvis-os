@@ -68,12 +68,12 @@ jobs:
           KEYSTORE_PASSWORD: your-android-signing-password
           KEY_ALIAS: your-android-daemon-key-alias
           KEY_PASSWORD: your-android-signing-password
-        run: gradle assembleRelease --no-daemon
+        run: gradle assembleDebug --no-daemon
 
       - name: Locate, rename APK and write version.json
         run: |
           mkdir -p dist
-          APK=$(find android-daemon/app/build/outputs/apk/release -name "*.apk" | head -1)
+          APK=$(find android-daemon/app/build/outputs/apk/debug -name "*.apk" | head -1)
           if [ -z "$APK" ]; then
             echo "No APK found after build" && exit 1
           fi
