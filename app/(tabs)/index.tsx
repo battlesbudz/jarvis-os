@@ -1,2065 +1,1336 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   StyleSheet,
   View,
   Text,
   ScrollView,
-  RefreshControl,
   Pressable,
   Platform,
   ActivityIndicator,
+  Modal,
+  FlatList,
+  TextInput,
+  RefreshControl,
+  Alert,
 } from 'react-native';
-import SortableList from '@/components/SortableList';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import * as Haptics from 'expo-haptics';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { useFocusEffect, useRouter } from 'expo-router';
+import * as Haptics from 'expo-haptics';
 import Colors from '@/constants/colors';
-import TaskCard from '@/components/TaskCard';
-import ProgressRing from '@/components/ProgressRing';
-import TaskResizerSheet from '@/components/TaskResizerSheet';
-import TaskEditSheet from '@/components/TaskEditSheet';
-import LogProgressSheet from '@/components/LogProgressSheet';
-import TimelineView from '@/components/TimelineView';
-import BrainDumpModal from '@/components/BrainDumpModal';
-import BlockerModal from '@/components/BlockerModal';
 import {
   getTodayPlan,
   updateTaskCompletion,
   getGoals,
-  regeneratePlan,
-  savePlan,
-  replaceTaskWithSubtasks,
-  getCompletionHistory,
-  updateGoalProgress,
   getTodayKey,
   incrementStats,
-  awardBadge,
-  decrementStats,
   xpForTask,
-  resetStats,
-  getStats,
-  getDailyCoachNote,
-  saveDailyCoachNote,
-  getLifeContext,
-  getViewMode,
-  saveViewMode,
-  ALL_BADGES,
-  getBrainDumpInbox,
-  saveBrainDumpItem,
-  clearBrainDumpItem,
-  addTaskToToday,
-  sortTasksByEnergy,
-  getCompletedCalendarIds,
-  saveCompletedCalendarId,
+  decrementStats,
   getUserName,
-  updateTask,
-  deleteTask,
-  reorderTasks,
-  savePlanSnapshot,
-  getPlanSnapshot,
-  clearPlanSnapshot,
-  restorePlanSnapshot,
-  getBlockedTasks,
-  saveBlockerAnswer,
   getCoachingMode,
-  type DayPlan,
+  getLifeContext,
+  getCompletionHistory,
+  getStats,
   type Goal,
   type Task,
-  type ViewMode,
-  type BrainDumpItem,
+  type DayPlan,
 } from '@/lib/storage';
-import {
-  scheduleAllTaskReminders,
-  requestNotificationPermissions,
-  areNotificationsEnabled,
-  scheduleMorningBriefing,
-  scheduleStreakProtection,
-  cancelStreakProtection,
-  scheduleGoalNudges,
-  scheduleMeetingPrepAlerts,
-} from '@/lib/notifications';
 import { apiRequest, getApiUrl } from '@/lib/query-client';
 import { authFetch } from '@/lib/auth-context';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { formatDate } from '@/lib/helpers';
-import XpToast from '@/components/XpToast';
-import JustOneThingModal from '@/components/JustOneThingModal';
-import EnergyCheckIn from '@/components/EnergyCheckIn';
-import MorningBriefCard from '@/components/MorningBriefCard';
-import JarvisPlanModal from '@/components/JarvisPlanModal';
-import { getEnergyCheckin, getUserPreferences, type EnergyCheckin } from '@/lib/storage';
 
-export default function TodayScreen() {
-  const insets = useSafeAreaInsets();
-  const router = useRouter();
-  const [plan, setPlan] = useState<DayPlan | null>(null);
-  const [goals, setGoals] = useState<Goal[]>([]);
-  const [refreshing, setRefreshing] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [generatingAI, setGeneratingAI] = useState(false);
-  const [resizerVisible, setResizerVisible] = useState(false);
-  const [resizerTask, setResizerTask] = useState<Task | null>(null);
-  const [logSheetVisible, setLogSheetVisible] = useState(false);
-  const [logTask, setLogTask] = useState<Task | null>(null);
-  const [logGoal, setLogGoal] = useState<Goal | null>(null);
-  const [confirmingRefresh, setConfirmingRefresh] = useState(false);
-  const [calendarEvents, setCalendarEvents] = useState<Task[]>([]);
-  const [xpToastVisible, setXpToastVisible] = useState(false);
-  const [xpEarned, setXpEarned] = useState(0);
-  const [badgeToastVisible, setBadgeToastVisible] = useState(false);
-  const [badgeToastLabel, setBadgeToastLabel] = useState('');
-  const [coachNote, setCoachNote] = useState<string | null>(null);
-  const [brainDumpVisible, setBrainDumpVisible] = useState(false);
-  const [brainDumpInbox, setBrainDumpInbox] = useState<BrainDumpItem[]>([]);
-  const [jotVisible, setJotVisible] = useState(false);
-  const [viewMode, setViewMode] = useState<ViewMode>('list');
-  const [jotTask, setJotTask] = useState<Task | null>(null);
-  const [jotTaskIndex, setJotTaskIndex] = useState(0);
-  const [energyCheckin, setEnergyCheckin] = useState<EnergyCheckin | null>(null);
-  const [energyCheckInVisible, setEnergyCheckInVisible] = useState(false);
-  const [userName, setUserName] = useState('');
-  const [editSheetVisible, setEditSheetVisible] = useState(false);
-  const [editingTask, setEditingTask] = useState<Task | null>(null);
-  const [canUndo, setCanUndo] = useState(false);
-  const [blockerTask, setBlockerTask] = useState<Task | null>(null);
-  const [energySortApplied, setEnergySortApplied] = useState(false);
-  const [morningCard, setMorningCard] = useState<{
-    headline: string;
-    suggestion: string;
-    taskOrder: string[];
-  } | null>(null);
-  const [cardDismissed, setCardDismissed] = useState(false);
-  const [jarvisModalVisible, setJarvisModalVisible] = useState(false);
-  const [jarvisLoading, setJarvisLoading] = useState(false);
-  const [jarvisReasoning, setJarvisReasoning] = useState('');
-  const [jarvisTasks, setJarvisTasks] = useState<{ title: string; category: string; priority: string; duration?: number; time?: string; description?: string }[]>([]);
-  const [autoBuiltPlan, setAutoBuiltPlan] = useState<{
-    date: string; topTask: string; reasoning: string; taskCount: number;
-  } | null>(null);
-  const [briefDismissed, setBriefDismissed] = useState(false);
-  const energyModalTimeoutRef = React.useRef<any>(null);
+// ─────────────────────────────────────────────────────────────────────────────
+// Types
+// ─────────────────────────────────────────────────────────────────────────────
 
-  const orchestrateProactiveNotifications = useCallback(async (
-    tasks: Task[],
-    loadedGoals: Goal[],
-    calEvents: Task[],
-    stats: { streak: number; totalCompleted: number }
-  ) => {
-    if (Platform.OS === 'web') return;
-    const enabled = await areNotificationsEnabled();
-    if (!enabled) return;
+interface InboxItem {
+  id: string;
+  itemType: string;
+  subject: string | null;
+  sender: string | null;
+  jarvisReason: string | null;
+  surfacedAt: string;
+  status: string;
+}
 
-    authFetch(new URL('/api/notifications/morning-brief', getApiUrl()).toString(), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        tasks: tasks.map(t => ({ title: t.title, time: t.time, completed: t.completed })),
-        calendarEvents: calEvents.map(e => ({ title: e.title, time: e.time })),
-        goals: loadedGoals.map(g => ({ title: g.title, category: g.category, current: g.current, target: g.target, updatedAt: g.updatedAt })),
-        stats,
-      }),
-    })
-      .then(r => r.json())
-      .then(({ title, body }: { title: string; body: string }) => {
-        if (title && body) scheduleMorningBriefing(title, body);
-      })
-      .catch(() => {});
+interface Deliverable {
+  id: string;
+  type: string;
+  title: string;
+  content: string;
+  status: string;
+  createdAt: string;
+}
 
-    const anyCompleted = tasks.some(t => t.completed);
-    if (!anyCompleted) scheduleStreakProtection(stats.streak);
-    else cancelStreakProtection();
+interface Memory {
+  id: string;
+  content: string;
+  category: string;
+  extractedAt: string;
+}
 
-    scheduleGoalNudges(loadedGoals);
+interface UserDocument {
+  id: string;
+  name: string;
+  mimeType: string;
+  status: string;
+  uploadedAt: string;
+}
 
-    scheduleMeetingPrepAlerts(calEvents.map(e => ({ title: e.title, time: e.time })));
-  }, []);
+interface ScheduledTask {
+  id: string;
+  title: string;
+  description: string | null;
+  scheduledAt: string;
+  recurrence: string | null;
+  completedAt: string | null;
+  createdAt: string;
+}
 
-  const loadCalendarEvents = useCallback(async () => {
-    try {
-      const today = getTodayKey();
-      const statusUrl = new URL('/api/calendar/status', getApiUrl());
-      const statusRes = await authFetch(statusUrl.toString(), { cache: 'no-store' });
-      const status = await statusRes.json();
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────────────────
 
-      const events: Task[] = [];
-
-      const fetchEvents = async (source: 'google' | 'outlook') => {
-        const url = new URL(`/api/calendar/${source}/events`, getApiUrl());
-        url.searchParams.set('date', today);
-        // Pass local-timezone UTC bounds so server uses correct day window
-        url.searchParams.set('startTime', new Date(today + 'T00:00:00').toISOString());
-        url.searchParams.set('endTime', new Date(today + 'T23:59:59').toISOString());
-        const res = await authFetch(url.toString(), { cache: 'no-store' });
-        const data = await res.json();
-        if (data.connected && data.events?.length) {
-          data.events.forEach((e: any) => {
-            const startTime = e.start
-              ? new Date(e.start).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
-              : undefined;
-            events.push({
-              id: `cal-${source}-${e.id}`,
-              title: e.title,
-              category: 'calendar',
-              completed: false,
-              priority: 'high',
-              time: startTime,
-              description: e.location ? `📍 ${e.location}` : e.description,
-            });
-          });
-        }
-      };
-
-      if (status.google) await fetchEvents('google');
-      if (status.outlook) await fetchEvents('outlook');
-
-      // Restore previously completed calendar events for today
-      const completedIds = await getCompletedCalendarIds();
-      const eventsWithCompletion = events.map(e =>
-        completedIds.includes(e.id) ? { ...e, completed: true } : e
-      );
-
-      setCalendarEvents(eventsWithCompletion);
-      return eventsWithCompletion;
-    } catch {
-      setCalendarEvents([]);
-      return [];
-    }
-  }, []);
-
-  const loadDailyCoachNote = useCallback(async (loadedGoals: Goal[]) => {
-    try {
-      const today = getTodayKey();
-      const cached = await getDailyCoachNote();
-      if (cached && cached.date === today && cached.note) {
-        setCoachNote(cached.note);
-        return;
-      }
-      const [stats, history, lc, savedMode] = await Promise.all([getStats(), getCompletionHistory(), getLifeContext(), getCoachingMode()]);
-      const url = new URL('/api/coach/checkin', getApiUrl());
-      const res = await authFetch(url.toString(), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ goals: loadedGoals, stats, history, lifeContext: lc, coachingMode: savedMode }),
-      });
-      const data = await res.json();
-      if (data.note) {
-        setCoachNote(data.note);
-        await saveDailyCoachNote(data.note);
-      }
-    } catch {}
-  }, []);
-
-  const loadData = useCallback(async () => {
-    const loadedGoals = await getGoals();
-    setGoals(loadedGoals);
-    const todayPlan = await getTodayPlan(loadedGoals);
-    setPlan(todayPlan);
-    const [checkin, mode, inbox, name] = await Promise.all([
-      getEnergyCheckin(),
-      getViewMode(),
-      getBrainDumpInbox(),
-      getUserName(),
-    ]);
-    setUserName(name);
-    setEnergyCheckin(checkin);
-    setViewMode(mode);
-    setBrainDumpInbox(inbox);
-    const dismissKey = `morning_card_dismissed_${getTodayKey()}`;
-    const wasDismissed = await AsyncStorage.getItem(dismissKey);
-    if (wasDismissed === 'true') setCardDismissed(true);
-    const briefKey = `brief_dismissed_${getTodayKey()}`;
-    const briefWasDismissed = await AsyncStorage.getItem(briefKey);
-    if (briefWasDismissed === 'true') setBriefDismissed(true);
-    try {
-      const prefs = await getUserPreferences();
-      if (prefs?.autoBuiltPlan?.date === getTodayKey()) {
-        setAutoBuiltPlan(prefs.autoBuiltPlan);
-      }
-    } catch {}
-    if (!checkin && briefWasDismissed === 'true') {
-      setEnergyCheckInVisible(true);
-    }
-    setLoading(false);
-    const calEventsLoaded = loadCalendarEvents();
-    loadDailyCoachNote(loadedGoals);
-    const snapshot = await getPlanSnapshot();
-    if (snapshot) setCanUndo(true);
-    
-    requestNotificationPermissions().then(async (granted) => {
-      if (granted && todayPlan.tasks.length > 0) {
-        scheduleAllTaskReminders(todayPlan.tasks);
-      }
-      if (granted) {
-        try {
-          const prefsUrl = new URL('/api/data/user-preferences', getApiUrl());
-          const prefsRes = await authFetch(prefsUrl.toString(), { cache: 'no-store' });
-          const prefsData = await prefsRes.json();
-          const autoBuilt = prefsData?.data?.autoBuiltPlan;
-          const todayKey = getTodayKey();
-          if (autoBuilt && autoBuilt.date === todayKey && autoBuilt.topTask) {
-            scheduleMorningBriefing(
-              '\u2600\uFE0F Your day is planned',
-              `Top task: ${autoBuilt.topTask}`
-            );
-          } else {
-            scheduleMorningBriefing();
-          }
-        } catch {
-          scheduleMorningBriefing();
-        }
-        const [stats, calEvts] = await Promise.all([getStats(), calEventsLoaded]);
-        orchestrateProactiveNotifications(todayPlan.tasks, loadedGoals, calEvts, stats);
-      }
-    });
-  }, [loadCalendarEvents, loadDailyCoachNote, orchestrateProactiveNotifications]);
-
-  const toggleViewMode = useCallback(async () => {
-    const newMode = viewMode === 'list' ? 'timeline' : 'list';
-    setViewMode(newMode);
-    await saveViewMode(newMode);
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-  }, [viewMode]);
-
+function useLiveClock() {
+  const [now, setNow] = useState(new Date());
   useEffect(() => {
-    loadData();
-    return () => {
-      if (energyModalTimeoutRef.current) clearTimeout(energyModalTimeoutRef.current);
-    };
-  }, [loadData]);
-
-  useEffect(() => {
-    if (energySortApplied) {
-      const timer = setTimeout(() => setEnergySortApplied(false), 3000);
-      return () => clearTimeout(timer);
-    }
-  }, [energySortApplied]);
-
-  useFocusEffect(
-    useCallback(() => {
-      getGoals().then(setGoals);
-      loadCalendarEvents();
-    }, [loadCalendarEvents])
-  );
-
-  const onRefresh = useCallback(async () => {
-    setRefreshing(true);
-    const loadedGoals = await getGoals();
-    setGoals(loadedGoals);
-    const newPlan = await regeneratePlan(loadedGoals);
-    setPlan(newPlan);
-    setRefreshing(false);
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    const id = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(id);
   }, []);
+  return now;
+}
 
-  const runSmartRefresh = useCallback(async () => {
-    setGeneratingAI(true);
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    try {
-      const loadedGoals = await getGoals();
-      const currentPlan = await getTodayPlan(loadedGoals);
-      const brainDumpTasks = currentPlan.tasks.filter(t => t.fromBrainDump && !t.completed);
-      const carriedOverTasks = currentPlan.tasks
-        .filter(t => t.fromCarryover && !t.completed)
-        .map(t => ({ title: t.title, category: t.category, skipDays: t.skipDays ?? 1 }));
-      const blockedTasksList = await getBlockedTasks();
-      const history = await getCompletionHistory();
-      const dayOfWeek = new Date().toLocaleDateString('en-US', { weekday: 'long' });
+function formatClockTime(d: Date) {
+  return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+}
 
-      const [lc, gmailData] = await Promise.allSettled([
-        getLifeContext(),
-        authFetch(new URL('/api/gmail/commitments', getApiUrl()).toString(), { cache: 'no-store' }).then(r => r.json()).catch(() => ({ connected: false, items: [] })),
-      ]);
-      const lifeContext = lc.status === 'fulfilled' ? lc.value : null;
-      const gmailItems = gmailData.status === 'fulfilled' && gmailData.value.connected ? gmailData.value.items : [];
+function formatDate(d: Date) {
+  return d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }).toUpperCase();
+}
 
-      const res = await apiRequest('POST', '/api/ai/generate-plan', {
-        goals: loadedGoals.map(g => ({
-          id: g.id,
-          title: g.title,
-          category: g.category,
-          current: g.current,
-          target: g.target,
-          unit: g.unit,
-        })),
-        history,
-        dayOfWeek,
-        lifeContext,
-        gmailItems,
-        energyCheckin,
-        brainDumpTasks: brainDumpTasks.map(t => ({
-          title: t.title,
-          description: t.description,
-          category: t.category,
-        })),
-        carriedOverTasks,
-        blockedTasks: blockedTasksList.map(bt => ({
-          title: bt.title,
-          skipDays: bt.skipDays,
-          blockerType: bt.blockerType,
-        })),
-      });
-      const data = await res.json();
+function formatScheduledAt(dt: string) {
+  const d = new Date(dt);
+  const now = new Date();
+  const isToday = d.toDateString() === now.toDateString();
+  const isPast = d < now;
+  const timeStr = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  if (isToday) return `Today ${timeStr}`;
+  if (isPast) return `${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} ${timeStr}`;
+  return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) + ` ${timeStr}`;
+}
 
-      const validCategories = ['calendar', 'fitness', 'finance', 'career', 'personal', 'social'];
-      const validPriorities = ['high', 'medium', 'low'];
+function isOverdue(dt: string) {
+  return new Date(dt) < new Date();
+}
 
-      if (data.tasks && data.tasks.length > 0) {
-        const generateId = () => Date.now().toString() + Math.random().toString(36).substr(2, 9);
-        const aiTasks = data.tasks.map((t: any) => ({
-          id: generateId(),
-          title: String(t.title || 'Task'),
-          category: validCategories.includes(t.category) ? t.category : 'personal',
-          completed: false,
-          priority: validPriorities.includes(t.priority) ? t.priority : 'medium',
-          time: t.time ? String(t.time) : undefined,
-          description: t.description ? String(t.description) : undefined,
-          goalId: t.goalId ? String(t.goalId) : undefined,
-        }));
+function getCategoryColor(cat: string) {
+  const map: Record<string, string> = {
+    work: Colors.cyan,
+    health: Colors.success,
+    personal: Colors.violet,
+    learning: '#F59E0B',
+    finance: '#10B981',
+    calendar: Colors.cyan,
+  };
+  return map[cat?.toLowerCase()] ?? Colors.textSecondary;
+}
 
-        const isBrainDumpCovered = (btTitle: string): boolean => {
-          const btWords = btTitle.toLowerCase().split(/\s+/).filter(w => w.length > 3);
-          if (btWords.length === 0) return false;
-          return aiTasks.some((nt: Task) => {
-            const ntWords = nt.title.toLowerCase().split(/\s+/);
-            return btWords.some(bw => ntWords.some(nw => nw.includes(bw) || bw.includes(nw)));
-          });
-        };
+// ─────────────────────────────────────────────────────────────────────────────
+// Panel Shell
+// ─────────────────────────────────────────────────────────────────────────────
 
-        const missedBrainDumpTasks = brainDumpTasks.filter(bt => !isBrainDumpCovered(bt.title));
+interface PanelProps {
+  title: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  accent: string;
+  count?: number;
+  loading?: boolean;
+  onViewAll?: () => void;
+  onAdd?: () => void;
+  children: React.ReactNode;
+}
 
-        const newPlan: DayPlan = {
-          date: getTodayKey(),
-          tasks: [...aiTasks, ...missedBrainDumpTasks],
-          greeting: plan?.greeting || 'Good day',
-          insight: data.insight || 'Start small, stay consistent.',
-        };
-        if (currentPlan.tasks.length > 0) await savePlanSnapshot(currentPlan);
-        await savePlan(newPlan);
-        setPlan(newPlan);
-        setGoals(loadedGoals);
-        setCanUndo(true);
-        scheduleAllTaskReminders(newPlan.tasks);
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      }
-    } catch (e) {
-      console.error('AI plan generation failed, falling back:', e);
-      const loadedGoals = await getGoals();
-      const fallbackPlan = await regeneratePlan(loadedGoals);
-      setPlan(fallbackPlan);
-      setGoals(loadedGoals);
-    } finally {
-      setGeneratingAI(false);
-    }
-  }, [plan]);
-
-  const handleSmartRefresh = useCallback(() => {
-    if (generatingAI) return;
-    setConfirmingRefresh(true);
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-  }, [generatingAI]);
-
-  const handleConfirmRefresh = useCallback(() => {
-    setConfirmingRefresh(false);
-    runSmartRefresh();
-  }, [runSmartRefresh]);
-
-  const handleCancelRefresh = useCallback(() => {
-    setConfirmingRefresh(false);
-  }, []);
-
-  const handleUndo = useCallback(async () => {
-    const loadedGoals = await getGoals();
-    const restored = await restorePlanSnapshot(loadedGoals);
-    if (restored) {
-      setPlan(restored);
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    }
-    setCanUndo(false);
-  }, []);
-
-  const handleDismissUndo = useCallback(async () => {
-    await clearPlanSnapshot();
-    setCanUndo(false);
-  }, []);
-
-  const handleBuildMyDay = useCallback(async () => {
-    if (jarvisLoading) return;
-    setJarvisModalVisible(true);
-    setJarvisLoading(true);
-    setJarvisReasoning('');
-    setJarvisTasks([]);
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-
-    try {
-      const loadedGoals = await getGoals();
-      const currentPlan = await getTodayPlan(loadedGoals);
-      const [history, lc, inbox, checkin, gmailData] = await Promise.all([
-        getCompletionHistory(),
-        getLifeContext(),
-        getBrainDumpInbox(),
-        getEnergyCheckin(),
-        authFetch(new URL('/api/gmail/commitments', getApiUrl()).toString(), { cache: 'no-store' })
-          .then(r => r.json())
-          .catch(() => ({ connected: false, items: [] })),
-      ]);
-
-      const gmailItems = gmailData.connected ? gmailData.items : [];
-
-      const url = new URL('/api/coach/build-plan', getApiUrl());
-      const res = await authFetch(url.toString(), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          goals: loadedGoals.map(g => ({
-            title: g.title,
-            category: g.category,
-            current: g.current,
-            target: g.target,
-            unit: g.unit,
-          })),
-          calendarEvents: calendarEvents.map(e => ({
-            title: e.title,
-            time: e.time,
-            description: e.description,
-          })),
-          gmailItems,
-          brainDump: inbox,
-          completionHistory: history,
-          energyLevel: checkin?.energy ?? energyCheckin?.energy ?? 3,
-          existingTasks: currentPlan.tasks.map(t => ({
-            title: t.title,
-            category: t.category,
-            priority: t.priority,
-            completed: t.completed,
-          })),
-          date: getTodayKey(),
-        }),
-      });
-      const data = await res.json();
-      if (data.tasks && data.tasks.length > 0) {
-        setJarvisReasoning(data.reasoning || '');
-        setJarvisTasks(data.tasks);
-      } else {
-        setJarvisModalVisible(false);
-      }
-    } catch (e) {
-      console.error('Jarvis build plan failed:', e);
-      setJarvisModalVisible(false);
-    } finally {
-      setJarvisLoading(false);
-    }
-  }, [calendarEvents, energyCheckin, jarvisLoading]);
-
-  const handleAcceptJarvisPlan = useCallback(async () => {
-    if (jarvisTasks.length === 0) return;
-    const mkId = () => Date.now().toString() + Math.random().toString(36).substr(2, 9);
-    const validCategories = ['fitness', 'finance', 'career', 'personal', 'social'];
-    const validPriorities = ['high', 'medium', 'low'];
-
-    const newTasks: Task[] = jarvisTasks.map(t => ({
-      id: mkId(),
-      title: t.title,
-      category: (validCategories.includes(t.category) ? t.category : 'personal') as Task['category'],
-      completed: false,
-      priority: (validPriorities.includes(t.priority) ? t.priority : 'medium') as Task['priority'],
-      time: t.time,
-      description: t.description,
-    }));
-
-    const currentPlan = plan || { date: getTodayKey(), tasks: [], greeting: 'Good day', insight: '' };
-    if (currentPlan.tasks.length > 0) {
-      await savePlanSnapshot(currentPlan);
-      setCanUndo(true);
-    }
-    const updatedPlan: DayPlan = {
-      ...currentPlan,
-      tasks: [...newTasks, ...currentPlan.tasks],
-    };
-    await savePlan(updatedPlan);
-    setPlan(updatedPlan);
-    setJarvisModalVisible(false);
-    setJarvisTasks([]);
-    setJarvisReasoning('');
-    scheduleAllTaskReminders(updatedPlan.tasks);
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-  }, [jarvisTasks, plan]);
-
-  const handleDismissJarvisPlan = useCallback(() => {
-    setJarvisModalVisible(false);
-    setJarvisTasks([]);
-    setJarvisReasoning('');
-  }, []);
-
-  const handleBlockerSolved = useCallback(async (task: Task, blockerType: string, suggestion: string) => {
-    await saveBlockerAnswer(task.title, blockerType, suggestion);
-    setBlockerTask(null);
-    const loadedGoals = await getGoals();
-    const refreshed = await getTodayPlan(loadedGoals);
-    setPlan(refreshed);
-  }, []);
-
-  const showXpToast = useCallback((xp: number) => {
-    setXpEarned(xp);
-    setXpToastVisible(true);
-  }, []);
-
-  const handleToggleTask = useCallback(async (taskId: string, completed: boolean) => {
-    if (!plan) return;
-
-    let matchedTask: Task | undefined;
-    const updatedTasks = plan.tasks.map(t => {
-      if (t.id === taskId) {
-        matchedTask = t;
-        return { ...t, completed };
-      }
-      if (t.subtasks) {
-        const updatedSubs = t.subtasks.map(st =>
-          st.id === taskId ? { ...st, completed } : st
-        );
-        const allDone = updatedSubs.every(st => st.completed) && updatedSubs.length > 0;
-        return { ...t, subtasks: updatedSubs, completed: allDone };
-      }
-      return t;
-    });
-    const newPlan = { ...plan, tasks: updatedTasks };
-    setPlan(newPlan);
-    const { xpEarned: earned, newBadges } = await updateTaskCompletion(plan.date, taskId, completed);
-
-    if (completed) {
-      cancelStreakProtection();
-      if (earned > 0) showXpToast(earned);
-
-      if (newBadges.length > 0) {
-        const badgeDef = ALL_BADGES.find(b => b.id === newBadges[0]);
-        if (badgeDef) {
-          setTimeout(() => {
-            setBadgeToastLabel(`Badge: ${badgeDef.label}`);
-            setBadgeToastVisible(true);
-          }, 1800);
-        }
-      }
-
-      const allDone = newPlan.tasks.every(t =>
-        t.subtasks?.length ? t.subtasks.every(s => s.completed) : t.completed
-      ) && calendarEvents.every(e => e.completed);
-      if (allDone) await awardBadge('perfect_day');
-
-      if (matchedTask && !matchedTask.isSubtask) {
-        const linkedGoal = matchedTask.goalId
-          ? goals.find(g => g.id === matchedTask!.goalId)
-          : goals.find(g => g.category === matchedTask!.category);
-        if (linkedGoal && linkedGoal.current < linkedGoal.target) {
-          await awardBadge('goal_getter');
-          setLogTask(matchedTask);
-          setLogGoal(linkedGoal);
-          setLogSheetVisible(true);
-        }
-      }
-    }
-  }, [plan, goals, calendarEvents, showXpToast]);
-
-  const handleLogProgress = useCallback(async (amount: number) => {
-    if (!logGoal) return;
-    setLogSheetVisible(false);
-    const updated = await updateGoalProgress(logGoal.id, amount);
-    if (updated) {
-      setGoals(prev => prev.map(g => g.id === updated.id ? updated : g));
-    }
-    setLogTask(null);
-    setLogGoal(null);
-  }, [logGoal]);
-
-  const handleSkipLog = useCallback(() => {
-    setLogSheetVisible(false);
-    setLogTask(null);
-    setLogGoal(null);
-  }, []);
-
-  const handleOpenResizer = useCallback((task: Task) => {
-    setResizerTask(task);
-    setResizerVisible(true);
-  }, []);
-
-  const handleApplyResize = useCallback(async (taskId: string, steps: string[]) => {
-    if (!plan) return;
-    const updatedPlan = await replaceTaskWithSubtasks(plan.date, taskId, steps);
-    if (updatedPlan) {
-      setPlan(updatedPlan);
-    }
-  }, [plan]);
-
-  const parseBrainDump = useCallback(async (text: string) => {
-    try {
-      const url = new URL('/api/ai/parse-brain-dump', getApiUrl());
-      const res = await authFetch(url.toString(), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text }),
-      });
-      const data = await res.json();
-      if (Array.isArray(data.tasks) && data.tasks.length > 0) return data.tasks;
-    } catch {}
-    return null;
-  }, []);
-
-  const handleSaveToToday = useCallback(async (text: string) => {
-    const mkId = () => Date.now().toString() + Math.random().toString(36).substr(2, 9);
-    const parsed = await parseBrainDump(text);
-    if (parsed && parsed.length > 0) {
-      for (const t of parsed) {
-        const subtaskObjs = Array.isArray(t.subtasks) && t.subtasks.length > 0
-          ? t.subtasks.map((s: string) => ({
-              id: mkId(),
-              title: s,
-              category: t.category || 'personal',
-              completed: false,
-              priority: 'low' as const,
-              isSubtask: true,
-            }))
-          : undefined;
-        await addTaskToToday({
-          title: t.title || text,
-          description: t.description || undefined,
-          category: t.category || 'personal',
-          priority: t.priority || 'low',
-          subtasks: subtaskObjs,
-          fromBrainDump: true,
-        }, energyCheckin?.energy);
-      }
-    } else {
-      await addTaskToToday({ title: text, category: 'personal', priority: 'low', fromBrainDump: true }, energyCheckin?.energy);
-    }
-    const loadedGoals = await getGoals();
-    const todayPlan = await getTodayPlan(loadedGoals);
-    setPlan(todayPlan);
-  }, [parseBrainDump]);
-
-  const handleSaveToInbox = useCallback(async (text: string) => {
-    const parsed = await parseBrainDump(text);
-    if (parsed && parsed.length > 0) {
-      for (const t of parsed) {
-        const itemText = t.description
-          ? `${t.title}: ${t.description}`
-          : t.title;
-        await saveBrainDumpItem(itemText || text);
-      }
-    } else {
-      await saveBrainDumpItem(text);
-    }
-    const inbox = await getBrainDumpInbox();
-    setBrainDumpInbox(inbox);
-  }, [parseBrainDump, energyCheckin]);
-
-  const handlePromoteInboxItem = useCallback(async (item: BrainDumpItem) => {
-    await addTaskToToday({ title: item.text, category: 'personal', priority: 'low', fromBrainDump: true }, energyCheckin?.energy);
-    await clearBrainDumpItem(item.id);
-    const [loadedGoals, inbox] = await Promise.all([getGoals(), getBrainDumpInbox()]);
-    const todayPlan = await getTodayPlan(loadedGoals);
-    setPlan(todayPlan);
-    setBrainDumpInbox(inbox);
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-  }, [energyCheckin]);
-
-  const handleDismissInboxItem = useCallback(async (id: string) => {
-    await clearBrainDumpItem(id);
-    const inbox = await getBrainDumpInbox();
-    setBrainDumpInbox(inbox);
-  }, []);
-
-  const handleOpenEdit = useCallback((task: Task) => {
-    setEditingTask(task);
-    setEditSheetVisible(true);
-  }, []);
-
-  const handleSaveEdit = useCallback(async (updatedTask: Task) => {
-    if (!plan) return;
-    await updateTask(plan.date, updatedTask.id, updatedTask);
-    const loadedGoals = await getGoals();
-    const refreshed = await getTodayPlan(loadedGoals);
-    setPlan(refreshed);
-    setEditSheetVisible(false);
-    setEditingTask(null);
-  }, [plan]);
-
-  const handleDeleteTask = useCallback(async (taskId: string) => {
-    if (!plan) return;
-    await deleteTask(plan.date, taskId);
-    const loadedGoals = await getGoals();
-    const refreshed = await getTodayPlan(loadedGoals);
-    setPlan(refreshed);
-    setEditSheetVisible(false);
-    setEditingTask(null);
-  }, [plan]);
-
-  const handleReorderTasks = useCallback(async (newOrder: Task[]) => {
-    if (!plan) return;
-    setPlan(prev => prev ? { ...prev, tasks: [...newOrder, ...prev.tasks.filter(t => t.completed)] } : prev);
-    await reorderTasks(plan.date, newOrder);
-  }, [plan]);
-
-  const getJotTasks = useCallback(() => {
-    if (!plan) return [];
-    
-    // Pick incomplete tasks
-    let candidates = plan.tasks.filter(t => !t.completed);
-    
-    // If energy is low (<= 2), prioritize low-priority tasks (which we'll use as a proxy for low-effort)
-    // Actually, T003 says "filter to low-effort tasks when energy <= 2"
-    // Since we don't have an explicit effort field, we use priority 'low' or 'medium' as proxy
-    if (energyCheckin && energyCheckin.energy <= 2) {
-      const lowEffort = candidates.filter(t => t.priority === 'low');
-      if (lowEffort.length > 0) {
-        candidates = lowEffort;
-      } else {
-        const medEffort = candidates.filter(t => t.priority === 'medium');
-        if (medEffort.length > 0) {
-          candidates = medEffort;
-        }
-      }
-    } else {
-      // Normal energy: sort by priority high -> med -> low
-      candidates.sort((a, b) => {
-        const score = { high: 3, medium: 2, low: 1 };
-        return score[b.priority] - score[a.priority];
-      });
-    }
-
-    return candidates;
-  }, [plan, energyCheckin]);
-
-  const handleStartTopTask = useCallback(() => {
-    if (!plan) return;
-    const topTask = autoBuiltPlan
-      ? plan.tasks.find(t => !t.completed && t.title === autoBuiltPlan.topTask) || plan.tasks.find(t => !t.completed)
-      : plan.tasks.find(t => !t.completed);
-    if (!topTask) return;
-    router.push({
-      pathname: '/focus-timer' as any,
-      params: { taskTitle: topTask.title },
-    });
-  }, [plan, autoBuiltPlan, router]);
-
-  const handleDismissBrief = useCallback(async () => {
-    setBriefDismissed(true);
-    const key = `brief_dismissed_${getTodayKey()}`;
-    await AsyncStorage.setItem(key, 'true');
-    if (!energyCheckin) {
-      if (energyModalTimeoutRef.current) clearTimeout(energyModalTimeoutRef.current);
-      energyModalTimeoutRef.current = setTimeout(() => {
-        setEnergyCheckInVisible(true);
-      }, 30000);
-    }
-  }, [energyCheckin]);
-
-  const handleStartFocusOnTask = useCallback((task: Task) => {
-    router.push({
-      pathname: '/focus-timer' as any,
-      params: { taskTitle: task.title },
-    });
-  }, [router]);
-
-  const handleOpenJot = useCallback(() => {
-    const tasks = getJotTasks();
-    if (tasks.length > 0) {
-      setJotTask(tasks[0]);
-      setJotTaskIndex(0);
-      setJotVisible(true);
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    }
-  }, [getJotTasks]);
-
-  const handleJotPickAnother = useCallback(() => {
-    const tasks = getJotTasks();
-    if (tasks.length > 1) {
-      const nextIndex = (jotTaskIndex + 1) % tasks.length;
-      setJotTaskIndex(nextIndex);
-      setJotTask(tasks[nextIndex]);
-    }
-  }, [getJotTasks, jotTaskIndex]);
-
-  if (loading || !plan) {
-    return (
-      <View style={[styles.loadingContainer, { paddingTop: insets.top + (Platform.OS === 'web' ? 67 : 0) }]}>
-        <View style={styles.shimmer} />
-        <View style={[styles.shimmer, { width: '60%' }]} />
-        <View style={[styles.shimmer, { height: 100, marginTop: 20 }]} />
-        <View style={[styles.shimmer, { height: 80, marginTop: 12 }]} />
-        <View style={[styles.shimmer, { height: 80, marginTop: 12 }]} />
-      </View>
-    );
-  }
-
-  const allTasks = plan.tasks.reduce((count, t) => {
-    if (t.subtasks && t.subtasks.length > 0) return count + t.subtasks.length;
-    return count + 1;
-  }, 0);
-  const completedCount = plan.tasks.reduce((count, t) => {
-    if (t.subtasks && t.subtasks.length > 0) return count + t.subtasks.filter(s => s.completed).length;
-    return count + (t.completed ? 1 : 0);
-  }, 0);
-  const progress = allTasks > 0 ? Math.round((completedCount / allTasks) * 100) : 0;
-  const todayLabel = formatDate(getTodayKey());
-  const incompleteTasks = plan.tasks.filter(t => !t.completed);
-  const completedTasks = plan.tasks.filter(t => t.completed);
-  const incompleteCalEvents = calendarEvents.filter(e => !e.completed);
-  const completedCalEvents = calendarEvents.filter(e => e.completed);
-  const allCompleted = [...completedTasks, ...completedCalEvents];
-
+function Panel({ title, icon, accent, count, loading, onViewAll, onAdd, children }: PanelProps) {
   return (
-    <View style={styles.container}>
-      <ScrollView
-        contentContainerStyle={[
-          styles.scrollContent,
-          {
-            paddingTop: insets.top + 16 + (Platform.OS === 'web' ? 67 : 0),
-            paddingBottom: Platform.OS === 'web' ? 34 + 100 : 120,
-          },
-        ]}
-        showsVerticalScrollIndicator={false}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />
-        }
-      >
-        <Animated.View entering={FadeInDown.duration(400).delay(100)} style={styles.headerRow}>
-          <View>
-            <Text style={styles.greeting}>{plan.greeting}{userName ? `, ${userName}` : ''}</Text>
-            <View style={styles.headerDateRow}>
-              <Text style={styles.dateText}>{todayLabel}</Text>
-              {energyCheckin && (
-                <View style={[styles.energyPill, energyCheckin.energy <= 2 && styles.energyPillLow]}>
-                  <Ionicons
-                    name={energyCheckin.energy >= 4 ? 'flash' : energyCheckin.energy <= 2 ? 'bed-outline' : 'bicycle-outline'}
-                    size={11}
-                    color={energyCheckin.energy >= 4 ? '#D97706' : energyCheckin.energy <= 2 ? '#6B7280' : Colors.primary}
-                  />
-                  <Text style={[styles.energyPillText, energyCheckin.energy >= 4 && { color: '#D97706' }, energyCheckin.energy <= 2 && { color: '#6B7280' }]}>
-                    {energyCheckin.energy === 1 ? 'Dead' : energyCheckin.energy === 2 ? 'Low Energy' : energyCheckin.energy === 3 ? 'Okay' : energyCheckin.energy === 4 ? 'Good' : 'On Fire'}
-                  </Text>
-                </View>
-              )}
+    <View style={[styles.panel, { borderLeftColor: accent }]}>
+      <View style={styles.panelHeader}>
+        <View style={styles.panelHeaderLeft}>
+          <Ionicons name={icon} size={14} color={accent} />
+          <Text style={[styles.panelTitle, { color: accent }]}>{title}</Text>
+          {count !== undefined && count > 0 && (
+            <View style={[styles.countBadge, { backgroundColor: accent + '25' }]}>
+              <Text style={[styles.countBadgeText, { color: accent }]}>{count}</Text>
             </View>
-          </View>
-          <View style={styles.headerActions}>
-            <Pressable
-              onPress={toggleViewMode}
-              style={({ pressed }) => [styles.syncButton, { marginRight: 8 }, pressed && { opacity: 0.7 }]}
-              testID="toggle-view-mode"
-            >
-              <Ionicons name={viewMode === 'list' ? "calendar-outline" : "list-outline"} size={22} color={Colors.primary} />
-            </Pressable>
-            <Pressable
-              onPress={async () => {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                await loadCalendarEvents();
-              }}
-              style={({ pressed }) => [styles.syncButton, pressed && { opacity: 0.7 }]}
-              testID="sync-calendar"
-            >
-              <Ionicons name="sync-outline" size={20} color={Colors.primary} />
-            </Pressable>
-          </View>
-        </Animated.View>
-
-        <Animated.View entering={FadeInDown.duration(400).delay(200)} style={styles.progressCard}>
-          <View style={styles.progressLeft}>
-            <Text style={styles.progressTitle}>Today's Progress</Text>
-            <Text style={styles.progressSubtitle}>
-              {completedCount} of {allTasks} tasks done
-            </Text>
-            {progress === 100 ? (
-              <View style={styles.completeBadge}>
-                <Ionicons name="checkmark-circle" size={16} color={Colors.success} />
-                <Text style={styles.completeText}>All done!</Text>
-              </View>
-            ) : null}
-          </View>
-          <ProgressRing
-            progress={progress}
-            size={72}
-            strokeWidth={6}
-            color={progress === 100 ? Colors.success : Colors.primary}
-          />
-        </Animated.View>
-
-        <Animated.View entering={FadeInDown.duration(400).delay(300)} style={styles.insightCard}>
-          <Ionicons name="bulb-outline" size={18} color={Colors.warning} />
-          <Text style={styles.insightText}>{plan.insight}</Text>
-        </Animated.View>
-
-        {!briefDismissed && (autoBuiltPlan || coachNote) ? (
-          <MorningBriefCard
-            autoBuiltPlan={autoBuiltPlan}
-            coachNote={coachNote}
-            firstCalendarEvent={calendarEvents.length > 0 ? { title: calendarEvents[0].title, time: calendarEvents[0].time } : null}
-            energyCheckin={energyCheckin}
-            onStartTopTask={handleStartTopTask}
-            onDismiss={handleDismissBrief}
-            onEnergySet={(checkin) => {
-              setEnergyCheckin(checkin);
-              setEnergyCheckInVisible(false);
-              if (plan) {
-                const sorted = sortTasksByEnergy(plan.tasks, checkin.energy);
-                savePlan({ ...plan, tasks: sorted });
-                setPlan({ ...plan, tasks: sorted });
-                setEnergySortApplied(true);
-              }
-            }}
-          />
-        ) : coachNote && briefDismissed ? (
-          <Animated.View entering={FadeInDown.duration(400).delay(340)} style={styles.coachNoteCard}>
-            <View style={styles.coachNoteHeader}>
-              <Ionicons name="sparkles-outline" size={15} color={Colors.secondary} />
-              <Text style={styles.coachNoteLabel}>Coach</Text>
-            </View>
-            <Text style={styles.coachNoteText}>{coachNote}</Text>
-          </Animated.View>
-        ) : null}
-
-        {morningCard && !cardDismissed ? (
-          <Animated.View
-            entering={FadeInDown.duration(400).delay(350)}
-            style={[
-              styles.morningCard,
-              energyCheckin && energyCheckin.energy >= 4
-                ? styles.morningCardHigh
-                : energyCheckin && energyCheckin.energy <= 2
-                ? styles.morningCardLow
-                : styles.morningCardMedium,
-            ]}
-            testID="morning-briefing-card"
-          >
-            <View style={styles.morningCardContent}>
-              <View style={styles.morningCardIcon}>
-                <Ionicons
-                  name={
-                    energyCheckin && energyCheckin.energy >= 4
-                      ? 'flash'
-                      : energyCheckin && energyCheckin.energy <= 2
-                      ? 'moon-outline'
-                      : 'sunny-outline'
-                  }
-                  size={18}
-                  color={
-                    energyCheckin && energyCheckin.energy >= 4
-                      ? '#D97706'
-                      : energyCheckin && energyCheckin.energy <= 2
-                      ? '#6B7280'
-                      : Colors.primary
-                  }
-                />
-              </View>
-              <View style={styles.morningCardText}>
-                <Text style={[
-                  styles.morningCardHeadline,
-                  energyCheckin && energyCheckin.energy >= 4 && { color: '#92400E' },
-                  energyCheckin && energyCheckin.energy <= 2 && { color: '#374151' },
-                ]}>
-                  {morningCard.headline}
-                </Text>
-                <Text style={[
-                  styles.morningCardSuggestion,
-                  energyCheckin && energyCheckin.energy >= 4 && { color: '#B45309' },
-                  energyCheckin && energyCheckin.energy <= 2 && { color: '#6B7280' },
-                ]}>
-                  {morningCard.suggestion}
-                </Text>
-              </View>
-            </View>
-            <Pressable
-              onPress={async () => {
-                setCardDismissed(true);
-                const dismissKey = `morning_card_dismissed_${getTodayKey()}`;
-                await AsyncStorage.setItem(dismissKey, 'true');
-              }}
-              style={({ pressed }) => [styles.morningCardDismiss, pressed && { opacity: 0.7 }]}
-              testID="dismiss-morning-card"
-            >
-              <Text style={[
-                styles.morningCardDismissText,
-                energyCheckin && energyCheckin.energy >= 4 && { color: '#B45309' },
-                energyCheckin && energyCheckin.energy <= 2 && { color: '#6B7280' },
-              ]}>Got it</Text>
-              <Ionicons
-                name="close"
-                size={14}
-                color={
-                  energyCheckin && energyCheckin.energy >= 4
-                    ? '#B45309'
-                    : energyCheckin && energyCheckin.energy <= 2
-                    ? '#6B7280'
-                    : Colors.primary
-                }
-              />
-            </Pressable>
-          </Animated.View>
-        ) : null}
-
-        {canUndo ? (
-          <Animated.View entering={FadeInDown.duration(300)} style={styles.undoBanner}>
-            <Pressable
-              style={styles.undoBannerMain}
-              onPress={handleUndo}
-            >
-              <Ionicons name="arrow-undo-outline" size={16} color="#fff" />
-              <Text style={styles.undoBannerText}>Plan replaced — tap to undo</Text>
-            </Pressable>
-            <Pressable onPress={handleDismissUndo} style={styles.undoBannerDismiss} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-              <Ionicons name="close" size={16} color="rgba(255,255,255,0.7)" />
-            </Pressable>
-          </Animated.View>
-        ) : null}
-
-        {energyCheckin && energyCheckin.energy <= 2 ? (
-          <Animated.View entering={FadeInDown.duration(400).delay(345)} style={styles.lowEnergyBanner}>
-            <Ionicons name="moon-outline" size={15} color="#6B7280" />
-            <Text style={styles.lowEnergyText}>Low energy mode — lighter tasks are prioritized for you today</Text>
-          </Animated.View>
-        ) : null}
-
-        <Animated.View entering={FadeInDown.duration(400).delay(350)}>
-          {confirmingRefresh ? (
-            <View style={styles.confirmRow}>
-              <Text style={styles.confirmText}>Replace today's tasks?</Text>
-              <View style={styles.confirmButtons}>
-                <Pressable
-                  onPress={handleCancelRefresh}
-                  style={({ pressed }) => [styles.confirmCancel, pressed && { opacity: 0.7 }]}
-                  testID="smart-refresh-cancel"
-                >
-                  <Text style={styles.confirmCancelText}>Cancel</Text>
-                </Pressable>
-                <Pressable
-                  onPress={handleConfirmRefresh}
-                  style={({ pressed }) => [styles.confirmGo, pressed && { opacity: 0.85 }]}
-                  testID="smart-refresh-confirm"
-                >
-                  <Ionicons name="sparkles" size={14} color={Colors.white} />
-                  <Text style={styles.confirmGoText}>Yes, refresh</Text>
-                </Pressable>
-              </View>
-            </View>
-          ) : (
-            <Pressable
-              onPress={handleSmartRefresh}
-              disabled={generatingAI}
-              style={({ pressed }) => [styles.smartRefreshButton, pressed && { opacity: 0.85 }, generatingAI && { opacity: 0.7 }]}
-              testID="smart-refresh"
-            >
-              {generatingAI ? (
-                <ActivityIndicator size="small" color={Colors.white} />
-              ) : (
-                <Ionicons name="sparkles" size={16} color={Colors.white} />
-              )}
-              <Text style={styles.smartRefreshText}>
-                {generatingAI ? 'Generating...' : 'Smart Refresh'}
-              </Text>
+          )}
+        </View>
+        <View style={styles.panelHeaderRight}>
+          {onAdd && (
+            <Pressable onPress={onAdd} style={styles.panelAddBtn}>
+              <Ionicons name="add" size={16} color={accent} />
             </Pressable>
           )}
-        </Animated.View>
-
-        {viewMode === 'list' && (incompleteTasks.length > 0 || incompleteCalEvents.length > 0) ? (
-          <Animated.View entering={FadeInDown.duration(400).delay(355)} style={styles.focusToolsRow}>
-            <Pressable
-              style={({ pressed }) => [styles.focusTool, pressed && { opacity: 0.75 }]}
-              onPress={() => {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                setBrainDumpVisible(true);
-              }}
-            >
-              <View style={[styles.focusToolIcon, { backgroundColor: Colors.primary + '18' }]}>
-                <Ionicons name="create-outline" size={20} color={Colors.primary} />
-              </View>
-              <Text style={styles.focusToolLabel}>Brain Dump</Text>
-              <Text style={styles.focusToolSub}>Clear your head</Text>
+          {onViewAll && (
+            <Pressable onPress={onViewAll} style={styles.panelViewAll}>
+              <Text style={[styles.panelViewAllText, { color: accent }]}>ALL</Text>
+              <Ionicons name="chevron-forward" size={11} color={accent} />
             </Pressable>
-            <View style={styles.focusToolDivider} />
-            <Pressable
-              style={({ pressed }) => [styles.focusTool, pressed && { opacity: 0.75 }]}
-              onPress={() => {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                handleOpenJot();
-              }}
-            >
-              <View style={[styles.focusToolIcon, { backgroundColor: '#FEF3C7' }]}>
-                <Ionicons name="flash" size={20} color="#D97706" />
-              </View>
-              <Text style={styles.focusToolLabel}>Just One Thing</Text>
-              <Text style={styles.focusToolSub}>Feeling overwhelmed?</Text>
-            </Pressable>
-          </Animated.View>
-        ) : null}
-
-        {viewMode === 'list' ? (
-          <>
-            {brainDumpInbox.length > 0 ? (
-              <View style={styles.inboxSection}>
-                <View style={styles.sectionHeader}>
-                  <Ionicons name="archive-outline" size={15} color={Colors.textSecondary} />
-                  <Text style={styles.inboxSectionTitle}>Inbox</Text>
-                </View>
-                {brainDumpInbox.map((item) => (
-                  <View key={item.id} style={styles.inboxItem}>
-                    <Text style={styles.inboxItemText}>{item.text}</Text>
-                    <View style={styles.inboxActions}>
-                      <Pressable
-                        onPress={() => handleDismissInboxItem(item.id)}
-                        style={({ pressed }) => [styles.inboxAction, pressed && { opacity: 0.6 }]}
-                      >
-                        <Ionicons name="trash-outline" size={18} color={Colors.textTertiary} />
-                      </Pressable>
-                      <Pressable
-                        onPress={() => handlePromoteInboxItem(item)}
-                        style={({ pressed }) => [styles.inboxAction, styles.promoteAction, pressed && { opacity: 0.8 }]}
-                      >
-                        <Ionicons name="add" size={20} color={Colors.white} />
-                      </Pressable>
-                    </View>
-                  </View>
-                ))}
-              </View>
-            ) : null}
-
-            {incompleteCalEvents.length > 0 ? (
-              <View style={styles.section}>
-                <View style={styles.sectionHeader}>
-                  <Ionicons name="calendar" size={15} color="#4285F4" />
-                  <Text style={[styles.sectionTitle, { color: '#4285F4' }]}>Today's Events</Text>
-                </View>
-                {incompleteCalEvents.map((event) => (
-                  <TaskCard
-                    key={event.id}
-                    task={event}
-                    onToggle={async (id, done) => {
-                      const updated = calendarEvents.map(e => e.id === id ? { ...e, completed: done } : e);
-                      setCalendarEvents(updated);
-                      await saveCompletedCalendarId(id, done);
-                      if (done) {
-                        const { xpEarned: earned } = await incrementStats('high', false);
-                        showXpToast(earned);
-                        await awardBadge('calendar_pro');
-                        // Check perfect day
-                        const allTasksDone = plan?.tasks.every(t =>
-                          t.subtasks?.length ? t.subtasks.every(s => s.completed) : t.completed
-                        ) ?? true;
-                        const allCalDone = updated.every(e => e.completed);
-                        if (allTasksDone && allCalDone) await awardBadge('perfect_day');
-                      } else {
-                        await decrementStats(xpForTask('high', false));
-                      }
-                    }}
-                  />
-                ))}
-              </View>
-            ) : null}
-
-            {incompleteTasks.length > 0 ? (
-              <View style={styles.section}>
-                <View style={styles.sectionHeaderRow}>
-                  <View style={styles.sectionHeaderLeft}>
-                    <Text style={styles.sectionTitle}>To Do</Text>
-                    {autoBuiltPlan && (
-                      <View style={styles.jarvisBadge}>
-                        <Ionicons name="sparkles" size={10} color={Colors.secondary} />
-                        <Text style={styles.jarvisBadgeText}>Built by Jarvis</Text>
-                      </View>
-                    )}
-                  </View>
-                  <Pressable
-                    style={({ pressed }) => [styles.rebuildJarvisBtn, pressed && { opacity: 0.7 }]}
-                    onPress={handleBuildMyDay}
-                    testID="rebuild-with-jarvis"
-                  >
-                    <Ionicons name="sparkles" size={12} color={Colors.primary} />
-                    <Text style={styles.rebuildJarvisText}>Jarvis</Text>
-                  </Pressable>
-                </View>
-                {energySortApplied && (
-                  <Text style={styles.energySortLabel}>⚡ Ordered for your energy</Text>
-                )}
-                <SortableList
-                  data={incompleteTasks}
-                  keyExtractor={(item) => item.id}
-                  onReorder={handleReorderTasks}
-                  renderItem={({ item, isActive }) => (
-                    <TaskCard
-                      task={item}
-                      onToggle={handleToggleTask}
-                      onResize={handleOpenResizer}
-                      onEdit={handleOpenEdit}
-                      onBlockerTap={setBlockerTask}
-                      onStartFocus={handleStartFocusOnTask}
-                      isDragging={isActive}
-                    />
-                  )}
-                />
-              </View>
-            ) : allCompleted.length === 0 && incompleteCalEvents.length === 0 ? (
-              <View style={styles.emptyState}>
-                <View style={styles.jarvisEmptyIcon}>
-                  <Ionicons name="sparkles" size={32} color={Colors.primary} />
-                </View>
-                <Text style={styles.emptyStateTitle}>Let Jarvis plan your day</Text>
-                <Text style={styles.emptyStateText}>
-                  Jarvis will read your calendar, emails, goals, and brain dump to build a prioritized plan.
-                </Text>
-                <Pressable
-                  style={({ pressed }) => [styles.buildMyDayBtn, pressed && { opacity: 0.85 }]}
-                  onPress={handleBuildMyDay}
-                  testID="build-my-day"
-                >
-                  <Ionicons name="sparkles" size={18} color="#fff" />
-                  <Text style={styles.buildMyDayText}>Build My Day</Text>
-                </Pressable>
-              </View>
-            ) : null}
-
-            {allCompleted.length > 0 ? (
-              <View style={styles.section}>
-                <Text style={styles.sectionTitle}>Completed</Text>
-                {allCompleted.map((task) => (
-                  <TaskCard
-                    key={task.id}
-                    task={task}
-                    onToggle={task.category === 'calendar'
-                      ? async (id, done) => {
-                          const updated = calendarEvents.map(e => e.id === id ? { ...e, completed: done } : e);
-                          setCalendarEvents(updated);
-                          await saveCompletedCalendarId(id, done);
-                          if (!done) await decrementStats(xpForTask('high', false));
-                        }
-                      : handleToggleTask}
-                    onResize={task.category !== 'calendar' ? handleOpenResizer : undefined}
-                  />
-                ))}
-              </View>
-            ) : null}
-          </>
-        ) : (
-          <TimelineView
-            tasks={[...calendarEvents, ...plan.tasks]}
-            onToggle={async (id, done) => {
-              if (id.startsWith('cal-')) {
-                const updated = calendarEvents.map(e => e.id === id ? { ...e, completed: done } : e);
-                setCalendarEvents(updated);
-                await saveCompletedCalendarId(id, done);
-                if (done) {
-                  incrementStats('high', false).then(({ xpEarned: earned }) => {
-                    showXpToast(earned);
-                    awardBadge('calendar_pro');
-                  });
-                } else {
-                  decrementStats(xpForTask('high', false));
-                }
-              } else {
-                handleToggleTask(id, done);
-              }
-            }}
-          />
-        )}
-      </ScrollView>
-
-      <TaskResizerSheet
-        visible={resizerVisible}
-        task={resizerTask}
-        onClose={() => { setResizerVisible(false); setResizerTask(null); }}
-        onApply={handleApplyResize}
-      />
-
-      <LogProgressSheet
-        visible={logSheetVisible}
-        task={logTask}
-        goal={logGoal}
-        onLog={handleLogProgress}
-        onSkip={handleSkipLog}
-      />
-
-      <XpToast
-        visible={xpToastVisible}
-        xp={xpEarned}
-        onHide={() => setXpToastVisible(false)}
-      />
-      <XpToast
-        visible={badgeToastVisible}
-        xp={0}
-        label={badgeToastLabel}
-        onHide={() => setBadgeToastVisible(false)}
-      />
-      <JustOneThingModal
-        visible={jotVisible}
-        task={jotTask}
-        onClose={() => setJotVisible(false)}
-        onComplete={(taskId) => handleToggleTask(taskId, true)}
-        onPickAnother={handleJotPickAnother}
-      />
-      <BrainDumpModal
-        visible={brainDumpVisible}
-        onClose={() => setBrainDumpVisible(false)}
-        onSaveToToday={handleSaveToToday}
-        onSaveToInbox={handleSaveToInbox}
-      />
-
-      <EnergyCheckIn
-        visible={energyCheckInVisible}
-        onComplete={async (checkin) => {
-          const wasFresh = energyCheckin === null;
-          setEnergyCheckInVisible(false);
-          setEnergyCheckin(checkin);
-          if (wasFresh && plan) {
-            const sorted = sortTasksByEnergy(plan.tasks, checkin.energy);
-            await savePlan({ ...plan, tasks: sorted });
-            setPlan({ ...plan, tasks: sorted });
-            setEnergySortApplied(true);
-          }
-          try {
-            const currentPlan = await getTodayPlan(await getGoals());
-            const [currentStats, currentGoals] = await Promise.all([getStats(), getGoals()]);
-            const url = new URL('/api/notifications/morning-brief', getApiUrl());
-            const briefRes = await authFetch(url.toString(), {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                tasks: currentPlan?.tasks.filter(t => !t.completed).map(t => ({
-                  id: t.id,
-                  title: t.title,
-                  priority: t.priority,
-                  description: t.description,
-                  category: t.category,
-                })) || [],
-                calendarEvents: calendarEvents.map(e => ({
-                  title: e.title,
-                  time: e.time,
-                })),
-                goals: currentGoals.map(g => ({
-                  title: g.title,
-                  category: g.category,
-                  current: g.current,
-                  target: g.target,
-                  unit: g.unit,
-                })),
-                stats: currentStats,
-                energyLevel: checkin.energy,
-              }),
-            });
-            const briefData = await briefRes.json();
-            if (briefData.card) {
-              setMorningCard(briefData.card);
-              setCardDismissed(false);
-              if (briefData.card.taskOrder?.length > 0 && currentPlan) {
-                const orderedIds = briefData.card.taskOrder as string[];
-                const taskMap = new Map(currentPlan.tasks.map(t => [t.id, t]));
-                const reordered: Task[] = [];
-                for (const id of orderedIds) {
-                  const task = taskMap.get(id);
-                  if (task && !task.completed) {
-                    reordered.push(task);
-                    taskMap.delete(id);
-                  }
-                }
-                const remaining = currentPlan.tasks.filter(t => !reordered.find(r => r.id === t.id));
-                const newTasks = [...reordered, ...remaining.filter(t => !t.completed), ...remaining.filter(t => t.completed)];
-                const newPlan = { ...currentPlan, tasks: newTasks };
-                await savePlan(newPlan);
-                setPlan(newPlan);
-              }
-            }
-          } catch (e) {
-            console.error('Morning brief fetch failed:', e);
-          }
-        }}
-      />
-
-      <TaskEditSheet
-        task={editingTask}
-        visible={editSheetVisible}
-        onClose={() => { setEditSheetVisible(false); setEditingTask(null); }}
-        onSave={handleSaveEdit}
-        onDelete={handleDeleteTask}
-      />
-
-      <BlockerModal
-        visible={blockerTask !== null}
-        task={blockerTask}
-        onClose={() => setBlockerTask(null)}
-        onSolved={handleBlockerSolved}
-      />
-
-      <JarvisPlanModal
-        visible={jarvisModalVisible}
-        loading={jarvisLoading}
-        reasoning={jarvisReasoning}
-        tasks={jarvisTasks}
-        onAccept={handleAcceptJarvisPlan}
-        onDismiss={handleDismissJarvisPlan}
-      />
-
-      <Pressable
-        style={[styles.fab, { bottom: (Platform.OS === 'web' ? 34 : 0) + 90 }]}
-        onPress={() => {
-          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-          setBrainDumpVisible(true);
-        }}
-      >
-        <Ionicons name="create-outline" size={24} color={Colors.white} />
-      </Pressable>
+          )}
+        </View>
+      </View>
+      <View style={styles.panelBody}>
+        {loading ? (
+          <ActivityIndicator size="small" color={accent} style={{ margin: 12 }} />
+        ) : children}
+      </View>
     </View>
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Task row (for TODAY panel)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function TaskRow({ task, onToggle }: { task: Task; onToggle: () => void }) {
+  const color = getCategoryColor(task.category);
+  return (
+    <Pressable style={styles.taskRow} onPress={onToggle}>
+      <View style={[styles.taskCheck, task.completed && { backgroundColor: color, borderColor: color }]}>
+        {task.completed && <Ionicons name="checkmark" size={10} color="#000" />}
+      </View>
+      <View style={styles.taskContent}>
+        <Text style={[styles.taskTitle, task.completed && styles.taskDone]} numberOfLines={1}>
+          {task.title}
+        </Text>
+        <View style={styles.taskMeta}>
+          {task.time && <Text style={styles.taskMetaText}>{task.time}</Text>}
+          <View style={[styles.catDot, { backgroundColor: color }]} />
+          <Text style={[styles.taskMetaText, { color }]}>{task.category}</Text>
+        </View>
+      </View>
+    </Pressable>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Modals
+// ─────────────────────────────────────────────────────────────────────────────
+
+function FullModal({ visible, title, accent, onClose, children }: {
+  visible: boolean;
+  title: string;
+  accent: string;
+  onClose: () => void;
+  children: React.ReactNode;
+}) {
+  const insets = useSafeAreaInsets();
+  return (
+    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
+      <View style={[styles.modalContainer, { paddingTop: insets.top }]}>
+        <View style={[styles.modalHeader, { borderBottomColor: accent + '30' }]}>
+          <Text style={[styles.modalTitle, { color: accent }]}>{title}</Text>
+          <Pressable onPress={onClose} style={styles.modalClose}>
+            <Ionicons name="close" size={22} color={Colors.textSecondary} />
+          </Pressable>
+        </View>
+        <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + 24 }}>
+          {children}
+        </ScrollView>
+      </View>
+    </Modal>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Main Screen
+// ─────────────────────────────────────────────────────────────────────────────
+
+export default function MissionControlScreen() {
+  const insets = useSafeAreaInsets();
+  const router = useRouter();
+  const now = useLiveClock();
+  const topPad = Platform.OS === 'web' ? 67 : insets.top;
+
+  // ── Today's Tasks (local storage) ──
+  const [plan, setPlan] = useState<DayPlan | null>(null);
+  const [goals, setGoals] = useState<Goal[]>([]);
+  const [tasksLoading, setTasksLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+
+  // ── Connection Status ──
+  const [oauthStatus, setOAuthStatus] = useState<{
+    google: { connected: boolean };
+    microsoft: { connected: boolean };
+    slack: { connected: boolean };
+  }>({ google: { connected: false }, microsoft: { connected: false }, slack: { connected: false } });
+  const [telegramConnected, setTelegramConnected] = useState(false);
+
+  // ── API Data ──
+  const [inboxItems, setInboxItems] = useState<InboxItem[]>([]);
+  const [inboxLoading, setInboxLoading] = useState(true);
+  const [deliverables, setDeliverables] = useState<Deliverable[]>([]);
+  const [deliverablesLoading, setDeliverablesLoading] = useState(true);
+  const [memories, setMemories] = useState<Memory[]>([]);
+  const [memoriesLoading, setMemoriesLoading] = useState(true);
+  const [documents, setDocuments] = useState<UserDocument[]>([]);
+  const [documentsLoading, setDocumentsLoading] = useState(true);
+  const [scheduledTasks, setScheduledTasks] = useState<ScheduledTask[]>([]);
+  const [scheduledLoading, setScheduledLoading] = useState(true);
+
+  // ── Modal visibility ──
+  const [tasksModal, setTasksModal] = useState(false);
+  const [inboxModal, setInboxModal] = useState(false);
+  const [deliverablesModal, setDeliverablesModal] = useState(false);
+  const [memoriesModal, setMemoriesModal] = useState(false);
+  const [docsModal, setDocsModal] = useState(false);
+  const [scheduleModal, setScheduleModal] = useState(false);
+  const [newTaskModal, setNewTaskModal] = useState(false);
+
+  // ── Add Scheduled Task form ──
+  const [newTitle, setNewTitle] = useState('');
+  const [newDate, setNewDate] = useState('');
+  const [newRecurrence, setNewRecurrence] = useState('');
+  const [savingTask, setSavingTask] = useState(false);
+
+  // ── Load local data ──
+  const loadLocal = useCallback(async () => {
+    setTasksLoading(true);
+    const [p, g] = await Promise.all([getTodayPlan(), getGoals()]);
+    setPlan(p);
+    setGoals(g);
+    setTasksLoading(false);
+  }, []);
+
+  // ── Load API data ──
+  const loadApi = useCallback(async () => {
+    try {
+      const [oauthRes, telegramRes] = await Promise.all([
+        apiRequest('GET', '/api/oauth/status').then(r => r.json()).catch(() => null),
+        apiRequest('GET', '/api/telegram/status').then(r => r.json()).catch(() => null),
+      ]);
+      if (oauthRes) setOAuthStatus({
+        google: oauthRes.google ?? { connected: false },
+        microsoft: oauthRes.microsoft ?? { connected: false },
+        slack: oauthRes.slack ?? { connected: false },
+      });
+      setTelegramConnected(telegramRes?.connected ?? false);
+    } catch {}
+
+    const [inboxRes, delRes, memRes, docRes, schedRes] = await Promise.allSettled([
+      apiRequest('GET', '/api/inbox/items').then(r => r.json()),
+      apiRequest('GET', '/api/deliverables').then(r => r.json()),
+      authFetch(new URL('/api/memories', getApiUrl()).toString()).then(r => r.json()),
+      authFetch(new URL('/api/documents', getApiUrl()).toString()).then(r => r.json()),
+      apiRequest('GET', '/api/jarvis/scheduled-tasks').then(r => r.json()),
+    ]);
+
+    if (inboxRes.status === 'fulfilled' && Array.isArray(inboxRes.value)) {
+      setInboxItems(inboxRes.value);
+    }
+    setInboxLoading(false);
+
+    if (delRes.status === 'fulfilled' && Array.isArray(delRes.value)) {
+      setDeliverables(delRes.value);
+    }
+    setDeliverablesLoading(false);
+
+    if (memRes.status === 'fulfilled' && memRes.value?.memories) {
+      setMemories(memRes.value.memories);
+    }
+    setMemoriesLoading(false);
+
+    if (docRes.status === 'fulfilled' && Array.isArray(docRes.value)) {
+      setDocuments(docRes.value);
+    } else if (docRes.status === 'fulfilled' && docRes.value?.documents) {
+      setDocuments(docRes.value.documents);
+    }
+    setDocumentsLoading(false);
+
+    if (schedRes.status === 'fulfilled' && Array.isArray(schedRes.value)) {
+      setScheduledTasks(schedRes.value);
+    }
+    setScheduledLoading(false);
+  }, []);
+
+  const loadAll = useCallback(async () => {
+    await Promise.all([loadLocal(), loadApi()]);
+  }, [loadLocal, loadApi]);
+
+  useFocusEffect(useCallback(() => {
+    loadAll();
+  }, [loadAll]));
+
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await loadAll();
+    setRefreshing(false);
+  }, [loadAll]);
+
+  // ── Toggle task completion ──
+  const handleToggleTask = useCallback(async (task: Task, idx: number) => {
+    if (!plan) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    const newCompleted = !task.completed;
+    const updated = await updateTaskCompletion(idx, newCompleted);
+    setPlan(updated);
+    if (newCompleted) {
+      await incrementStats();
+    } else {
+      await decrementStats();
+    }
+  }, [plan]);
+
+  // ── Create scheduled task ──
+  const handleCreateScheduledTask = useCallback(async () => {
+    if (!newTitle.trim() || !newDate.trim()) return;
+    setSavingTask(true);
+    try {
+      const d = new Date(newDate.trim());
+      if (isNaN(d.getTime())) {
+        Alert.alert('Invalid date', 'Please enter a valid date/time.');
+        setSavingTask(false);
+        return;
+      }
+      const res = await apiRequest('POST', '/api/jarvis/scheduled-tasks', {
+        title: newTitle.trim(),
+        scheduledAt: d.toISOString(),
+        recurrence: newRecurrence.trim() || undefined,
+      });
+      const task = await res.json();
+      setScheduledTasks(prev => [...prev, task]);
+      setNewTitle('');
+      setNewDate('');
+      setNewRecurrence('');
+      setNewTaskModal(false);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch {
+      Alert.alert('Error', 'Could not create scheduled task.');
+    }
+    setSavingTask(false);
+  }, [newTitle, newDate, newRecurrence]);
+
+  // ── Delete scheduled task ──
+  const handleDeleteScheduledTask = useCallback(async (id: string) => {
+    try {
+      await apiRequest('DELETE', `/api/jarvis/scheduled-tasks/${id}`);
+      setScheduledTasks(prev => prev.filter(t => t.id !== id));
+    } catch {}
+  }, []);
+
+  // ── Dismiss inbox item ──
+  const handleDismissInbox = useCallback(async (item: InboxItem) => {
+    try {
+      await apiRequest('POST', `/api/inbox/items/${item.id}/action`, { actionType: 'dismiss' });
+      setInboxItems(prev => prev.filter(i => i.id !== item.id));
+    } catch {}
+  }, []);
+
+  // ── Computed ──
+  const todayTasks = plan?.tasks ?? [];
+  const completedCount = todayTasks.filter(t => t.completed).length;
+  const totalCount = todayTasks.length;
+  const completionPct = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
+  const pendingScheduled = scheduledTasks.filter(t => !t.completedAt);
+
+  // Connection pill statuses
+  const connections = [
+    { label: 'Google', connected: oauthStatus.google.connected, color: '#4285F4' },
+    { label: 'Microsoft', connected: oauthStatus.microsoft.connected, color: '#0078D4' },
+    { label: 'Slack', connected: oauthStatus.slack.connected, color: '#4A154B' },
+    { label: 'Telegram', connected: telegramConnected, color: '#0088CC' },
+  ];
+
+  return (
+    <View style={[styles.root, { paddingTop: topPad }]}>
+      {/* ── Header ── */}
+      <View style={styles.header}>
+        <View>
+          <Text style={styles.headerLabel}>{formatDate(now)}</Text>
+          <Text style={styles.headerClock}>{formatClockTime(now)}</Text>
+        </View>
+        <View style={styles.headerRight}>
+          <Text style={styles.headerTitle}>MISSION{'\n'}CONTROL</Text>
+        </View>
+      </View>
+
+      {/* ── Connection Pills ── */}
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.pillRow} contentContainerStyle={styles.pillRowContent}>
+        {connections.map(c => (
+          <View key={c.label} style={[styles.pill, c.connected ? { borderColor: c.color + '60', backgroundColor: c.color + '15' } : styles.pillOff]}>
+            <View style={[styles.pillDot, { backgroundColor: c.connected ? c.color : Colors.textTertiary }]} />
+            <Text style={[styles.pillText, { color: c.connected ? c.color : Colors.textTertiary }]}>{c.label}</Text>
+          </View>
+        ))}
+        <Pressable style={styles.pillSettings} onPress={() => router.push('/(tabs)/settings')}>
+          <Ionicons name="settings-outline" size={13} color={Colors.textSecondary} />
+          <Text style={styles.pillSettingsText}>Connections</Text>
+        </Pressable>
+      </ScrollView>
+
+      {/* ── Panels ── */}
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={[styles.scrollContent, { paddingBottom: (Platform.OS === 'web' ? 34 : insets.bottom) + 90 }]}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={Colors.cyan} />}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* SCHEDULE */}
+        <Animated.View entering={FadeInDown.delay(0).duration(400)}>
+          <Panel
+            title="SCHEDULE"
+            icon="calendar-outline"
+            accent={Colors.cyan}
+            count={pendingScheduled.length}
+            loading={scheduledLoading}
+            onViewAll={() => setScheduleModal(true)}
+            onAdd={() => setNewTaskModal(true)}
+          >
+            {pendingScheduled.length === 0 ? (
+              <Text style={styles.emptyText}>No upcoming scheduled tasks. Ask Jarvis to schedule something for you.</Text>
+            ) : (
+              pendingScheduled.slice(0, 4).map(t => (
+                <View key={t.id} style={styles.scheduleRow}>
+                  <View style={[styles.scheduleIcon, { backgroundColor: isOverdue(t.scheduledAt) ? Colors.errorDim : Colors.cyanDim }]}>
+                    <Ionicons name="time-outline" size={14} color={isOverdue(t.scheduledAt) ? Colors.error : Colors.cyan} />
+                  </View>
+                  <View style={styles.scheduleContent}>
+                    <Text style={styles.scheduleTitle} numberOfLines={1}>{t.title}</Text>
+                    <Text style={[styles.scheduleWhen, isOverdue(t.scheduledAt) && { color: Colors.error }]}>
+                      {formatScheduledAt(t.scheduledAt)}
+                      {t.recurrence ? ` · ${t.recurrence}` : ''}
+                    </Text>
+                  </View>
+                </View>
+              ))
+            )}
+          </Panel>
+        </Animated.View>
+
+        {/* TODAY */}
+        <Animated.View entering={FadeInDown.delay(60).duration(400)}>
+          <Panel
+            title="TODAY"
+            icon="checkmark-circle-outline"
+            accent={Colors.violet}
+            count={totalCount - completedCount}
+            loading={tasksLoading}
+            onViewAll={() => setTasksModal(true)}
+          >
+            {totalCount === 0 ? (
+              <Text style={styles.emptyText}>No tasks for today. Ask Jarvis to build your day in the Jarvis tab.</Text>
+            ) : (
+              <>
+                <View style={styles.progressRow}>
+                  <View style={styles.progressBar}>
+                    <View style={[styles.progressFill, { width: `${completionPct}%` as any, backgroundColor: Colors.violet }]} />
+                  </View>
+                  <Text style={[styles.progressPct, { color: Colors.violet }]}>{completionPct}%</Text>
+                </View>
+                {todayTasks.slice(0, 4).map((t, i) => (
+                  <TaskRow key={t.id} task={t} onToggle={() => handleToggleTask(t, i)} />
+                ))}
+              </>
+            )}
+          </Panel>
+        </Animated.View>
+
+        {/* INBOX */}
+        <Animated.View entering={FadeInDown.delay(120).duration(400)}>
+          <Panel
+            title="INBOX"
+            icon="mail-open-outline"
+            accent={Colors.cyan}
+            count={inboxItems.length}
+            loading={inboxLoading}
+            onViewAll={() => setInboxModal(true)}
+          >
+            {inboxItems.length === 0 ? (
+              <Text style={styles.emptyText}>No flagged items. Jarvis will surface important emails here.</Text>
+            ) : (
+              inboxItems.slice(0, 3).map(item => (
+                <View key={item.id} style={styles.inboxRow}>
+                  <View style={styles.inboxDot} />
+                  <View style={styles.inboxContent}>
+                    <Text style={styles.inboxSubject} numberOfLines={1}>{item.subject ?? item.itemType}</Text>
+                    {item.sender && <Text style={styles.inboxSender} numberOfLines={1}>{item.sender}</Text>}
+                    {item.jarvisReason && <Text style={styles.inboxReason} numberOfLines={2}>{item.jarvisReason}</Text>}
+                  </View>
+                  <Pressable onPress={() => handleDismissInbox(item)} style={styles.inboxDismiss}>
+                    <Ionicons name="close" size={16} color={Colors.textTertiary} />
+                  </Pressable>
+                </View>
+              ))
+            )}
+          </Panel>
+        </Animated.View>
+
+        {/* DELIVERABLES */}
+        <Animated.View entering={FadeInDown.delay(180).duration(400)}>
+          <Panel
+            title="DELIVERABLES"
+            icon="document-text-outline"
+            accent={Colors.violet}
+            count={deliverables.filter(d => d.status === 'pending').length}
+            loading={deliverablesLoading}
+            onViewAll={() => setDeliverablesModal(true)}
+          >
+            {deliverables.length === 0 ? (
+              <Text style={styles.emptyText}>No pending deliverables. Ask Jarvis to draft emails, plans, or summaries.</Text>
+            ) : (
+              deliverables.slice(0, 3).map(d => (
+                <View key={d.id} style={styles.deliverableRow}>
+                  <View style={[styles.typeBadge, { backgroundColor: Colors.violetDim }]}>
+                    <Text style={[styles.typeBadgeText, { color: Colors.violet }]}>{d.type?.toUpperCase()}</Text>
+                  </View>
+                  <Text style={styles.deliverableTitle} numberOfLines={1}>{d.title}</Text>
+                </View>
+              ))
+            )}
+          </Panel>
+        </Animated.View>
+
+        {/* DOCS */}
+        <Animated.View entering={FadeInDown.delay(240).duration(400)}>
+          <Panel
+            title="DOCS"
+            icon="folder-open-outline"
+            accent={Colors.cyan}
+            count={documents.length}
+            loading={documentsLoading}
+            onViewAll={() => setDocsModal(true)}
+          >
+            {documents.length === 0 ? (
+              <Text style={styles.emptyText}>No documents. Upload files for Jarvis to reference in conversations.</Text>
+            ) : (
+              documents.slice(0, 3).map(doc => (
+                <View key={doc.id} style={styles.docRow}>
+                  <Ionicons name="document-outline" size={14} color={Colors.cyan} />
+                  <Text style={styles.docName} numberOfLines={1}>{doc.name}</Text>
+                  <View style={[styles.docStatus, { backgroundColor: doc.status === 'ready' ? Colors.successDim : Colors.warningDim }]}>
+                    <Text style={[styles.docStatusText, { color: doc.status === 'ready' ? Colors.success : Colors.warning }]}>
+                      {doc.status}
+                    </Text>
+                  </View>
+                </View>
+              ))
+            )}
+          </Panel>
+        </Animated.View>
+
+        {/* MEMORY */}
+        <Animated.View entering={FadeInDown.delay(300).duration(400)}>
+          <Panel
+            title="MEMORY"
+            icon="bookmark-outline"
+            accent={Colors.violet}
+            count={memories.length}
+            loading={memoriesLoading}
+            onViewAll={() => setMemoriesModal(true)}
+          >
+            {memories.length === 0 ? (
+              <Text style={styles.emptyText}>No memories yet. Jarvis learns about you from conversations.</Text>
+            ) : (
+              memories.slice(0, 3).map(m => (
+                <View key={m.id} style={styles.memoryRow}>
+                  <View style={[styles.catBadge, { backgroundColor: Colors.violetDim }]}>
+                    <Text style={[styles.catBadgeText, { color: Colors.violet }]}>{m.category}</Text>
+                  </View>
+                  <Text style={styles.memoryText} numberOfLines={2}>{m.content}</Text>
+                </View>
+              ))
+            )}
+          </Panel>
+        </Animated.View>
+      </ScrollView>
+
+      {/* ─────────── MODALS ─────────── */}
+
+      {/* Add Scheduled Task Modal */}
+      <Modal visible={newTaskModal} animationType="slide" presentationStyle="formSheet" onRequestClose={() => setNewTaskModal(false)}>
+        <View style={[styles.formModal, { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 24 }]}>
+          <View style={styles.formModalHandle} />
+          <Text style={styles.formModalTitle}>Schedule a Task</Text>
+          <Text style={styles.formModalSub}>Jarvis will remind you and act on this when the time comes.</Text>
+          <Text style={styles.formLabel}>What should Jarvis do?</Text>
+          <TextInput
+            style={styles.formInput}
+            value={newTitle}
+            onChangeText={setNewTitle}
+            placeholder="e.g. Review inbox, Weekly goal check-in..."
+            placeholderTextColor={Colors.textTertiary}
+            autoFocus
+          />
+          <Text style={styles.formLabel}>When?</Text>
+          <TextInput
+            style={styles.formInput}
+            value={newDate}
+            onChangeText={setNewDate}
+            placeholder="e.g. 2025-12-01 09:00"
+            placeholderTextColor={Colors.textTertiary}
+          />
+          <Text style={styles.formLabel}>Repeat? (optional)</Text>
+          <TextInput
+            style={styles.formInput}
+            value={newRecurrence}
+            onChangeText={setNewRecurrence}
+            placeholder="e.g. every Monday, daily, weekdays"
+            placeholderTextColor={Colors.textTertiary}
+          />
+          <View style={styles.formActions}>
+            <Pressable style={styles.formCancel} onPress={() => setNewTaskModal(false)}>
+              <Text style={styles.formCancelText}>Cancel</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.formSave, (!newTitle.trim() || !newDate.trim()) && styles.formSaveDisabled]}
+              onPress={handleCreateScheduledTask}
+              disabled={savingTask || !newTitle.trim() || !newDate.trim()}
+            >
+              {savingTask ? <ActivityIndicator size="small" color="#000" /> : <Text style={styles.formSaveText}>Schedule</Text>}
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Schedule Modal (all tasks) */}
+      <FullModal visible={scheduleModal} title="SCHEDULE" accent={Colors.cyan} onClose={() => setScheduleModal(false)}>
+        {scheduledTasks.length === 0 ? (
+          <Text style={[styles.emptyText, { margin: 24 }]}>No scheduled tasks. Ask Jarvis to schedule something, or tap + above.</Text>
+        ) : (
+          scheduledTasks.map(t => (
+            <View key={t.id} style={[styles.modalItemRow, { borderLeftColor: isOverdue(t.scheduledAt) && !t.completedAt ? Colors.error : Colors.cyan }]}>
+              <View style={styles.modalItemContent}>
+                <Text style={styles.modalItemTitle}>{t.title}</Text>
+                {t.description && <Text style={styles.modalItemSub}>{t.description}</Text>}
+                <Text style={[styles.modalItemMeta, isOverdue(t.scheduledAt) && !t.completedAt && { color: Colors.error }]}>
+                  {formatScheduledAt(t.scheduledAt)}
+                  {t.recurrence ? ` · ${t.recurrence}` : ''}
+                  {t.completedAt ? ' · ✓ done' : ''}
+                </Text>
+              </View>
+              {!t.completedAt && (
+                <Pressable onPress={() => handleDeleteScheduledTask(t.id)} style={styles.modalItemDelete}>
+                  <Ionicons name="trash-outline" size={16} color={Colors.error} />
+                </Pressable>
+              )}
+            </View>
+          ))
+        )}
+      </FullModal>
+
+      {/* Today tasks modal */}
+      <FullModal visible={tasksModal} title="TODAY'S TASKS" accent={Colors.violet} onClose={() => setTasksModal(false)}>
+        {todayTasks.length === 0 ? (
+          <Text style={[styles.emptyText, { margin: 24 }]}>No tasks. Ask Jarvis to build your day.</Text>
+        ) : (
+          todayTasks.map((t, i) => (
+            <View key={t.id} style={[styles.modalItemRow, { borderLeftColor: getCategoryColor(t.category) }]}>
+              <Pressable
+                style={[styles.modalTaskCheck, t.completed && { backgroundColor: getCategoryColor(t.category) }]}
+                onPress={() => handleToggleTask(t, i)}
+              >
+                {t.completed && <Ionicons name="checkmark" size={12} color="#000" />}
+              </Pressable>
+              <View style={styles.modalItemContent}>
+                <Text style={[styles.modalItemTitle, t.completed && { opacity: 0.4, textDecorationLine: 'line-through' }]}>{t.title}</Text>
+                {t.description && <Text style={styles.modalItemSub} numberOfLines={2}>{t.description}</Text>}
+                <Text style={styles.modalItemMeta}>
+                  {t.category}{t.time ? ` · ${t.time}` : ''}{t.duration ? ` · ${t.duration}min` : ''}
+                </Text>
+              </View>
+            </View>
+          ))
+        )}
+      </FullModal>
+
+      {/* Inbox modal */}
+      <FullModal visible={inboxModal} title="INBOX" accent={Colors.cyan} onClose={() => setInboxModal(false)}>
+        {inboxItems.length === 0 ? (
+          <Text style={[styles.emptyText, { margin: 24 }]}>No flagged inbox items.</Text>
+        ) : (
+          inboxItems.map(item => (
+            <View key={item.id} style={[styles.modalItemRow, { borderLeftColor: Colors.cyan }]}>
+              <View style={styles.modalItemContent}>
+                <Text style={styles.modalItemTitle}>{item.subject ?? item.itemType}</Text>
+                {item.sender && <Text style={styles.modalItemMeta}>{item.sender}</Text>}
+                {item.jarvisReason && <Text style={styles.modalItemSub}>{item.jarvisReason}</Text>}
+              </View>
+              <Pressable onPress={() => handleDismissInbox(item)} style={styles.modalItemDelete}>
+                <Ionicons name="close-circle-outline" size={18} color={Colors.textTertiary} />
+              </Pressable>
+            </View>
+          ))
+        )}
+      </FullModal>
+
+      {/* Deliverables modal */}
+      <FullModal visible={deliverablesModal} title="DELIVERABLES" accent={Colors.violet} onClose={() => setDeliverablesModal(false)}>
+        {deliverables.length === 0 ? (
+          <Text style={[styles.emptyText, { margin: 24 }]}>No pending deliverables.</Text>
+        ) : (
+          deliverables.map(d => (
+            <View key={d.id} style={[styles.modalItemRow, { borderLeftColor: Colors.violet }]}>
+              <View style={styles.modalItemContent}>
+                <View style={[styles.typeBadge, { backgroundColor: Colors.violetDim, marginBottom: 6 }]}>
+                  <Text style={[styles.typeBadgeText, { color: Colors.violet }]}>{d.type?.toUpperCase()}</Text>
+                </View>
+                <Text style={styles.modalItemTitle}>{d.title}</Text>
+                {d.content && <Text style={styles.modalItemSub} numberOfLines={4}>{d.content}</Text>}
+              </View>
+            </View>
+          ))
+        )}
+      </FullModal>
+
+      {/* Docs modal */}
+      <FullModal visible={docsModal} title="DOCUMENTS" accent={Colors.cyan} onClose={() => setDocsModal(false)}>
+        {documents.length === 0 ? (
+          <Text style={[styles.emptyText, { margin: 24 }]}>No documents uploaded. Go to Settings to upload files.</Text>
+        ) : (
+          documents.map(doc => (
+            <View key={doc.id} style={[styles.modalItemRow, { borderLeftColor: Colors.cyan }]}>
+              <View style={styles.modalItemContent}>
+                <Text style={styles.modalItemTitle}>{doc.name}</Text>
+                <Text style={styles.modalItemMeta}>{doc.status} · {new Date(doc.uploadedAt).toLocaleDateString()}</Text>
+              </View>
+            </View>
+          ))
+        )}
+      </FullModal>
+
+      {/* Memory modal */}
+      <FullModal visible={memoriesModal} title="MEMORY" accent={Colors.violet} onClose={() => setMemoriesModal(false)}>
+        {memories.length === 0 ? (
+          <Text style={[styles.emptyText, { margin: 24 }]}>No memories yet. Jarvis learns from your conversations.</Text>
+        ) : (
+          memories.map(m => (
+            <View key={m.id} style={[styles.modalItemRow, { borderLeftColor: Colors.violet }]}>
+              <View style={styles.modalItemContent}>
+                <View style={[styles.catBadge, { backgroundColor: Colors.violetDim, marginBottom: 6 }]}>
+                  <Text style={[styles.catBadgeText, { color: Colors.violet }]}>{m.category}</Text>
+                </View>
+                <Text style={styles.modalItemTitle}>{m.content}</Text>
+                <Text style={styles.modalItemMeta}>{new Date(m.extractedAt).toLocaleDateString()}</Text>
+              </View>
+            </View>
+          ))
+        )}
+      </FullModal>
+    </View>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Styles
+// ─────────────────────────────────────────────────────────────────────────────
+
 const styles = StyleSheet.create({
-  container: {
+  root: {
     flex: 1,
-    backgroundColor: Colors.surface,
+    backgroundColor: Colors.bg,
   },
-  loadingContainer: {
-    flex: 1,
-    backgroundColor: Colors.surface,
+  header: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
     paddingHorizontal: 20,
+    paddingBottom: 10,
   },
-  shimmer: {
-    height: 28,
-    backgroundColor: Colors.border,
-    borderRadius: 8,
-    marginBottom: 8,
-    width: '80%',
-    opacity: 0.5,
+  headerLabel: {
+    fontSize: 10,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.textTertiary,
+    letterSpacing: 1.5,
   },
-  scrollContent: {
-    paddingHorizontal: 20,
-  },
-  greeting: {
-    fontSize: 28,
+  headerClock: {
+    fontSize: 26,
     fontFamily: 'Inter_700Bold',
-    color: Colors.text,
+    color: Colors.cyan,
+    letterSpacing: 2,
+    marginTop: 2,
+  },
+  headerRight: {
+    alignItems: 'flex-end',
+  },
+  headerTitle: {
+    fontSize: 13,
+    fontFamily: 'Inter_700Bold',
+    color: Colors.textTertiary,
+    letterSpacing: 2.5,
+    textAlign: 'right',
+    lineHeight: 17,
+  },
+  pillRow: {
+    flexGrow: 0,
     marginBottom: 4,
   },
-  dateText: {
-    fontSize: 15,
-    fontFamily: 'Inter_400Regular',
-    color: Colors.textSecondary,
+  pillRowContent: {
+    paddingHorizontal: 16,
+    gap: 8,
+    paddingBottom: 8,
   },
-  progressCard: {
+  pill: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: Colors.white,
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
     borderRadius: 20,
-    padding: 20,
-    marginBottom: 12,
     borderWidth: 1,
     borderColor: Colors.border,
+    backgroundColor: Colors.surface,
   },
-  progressLeft: {
-    flex: 1,
-    marginRight: 16,
+  pillOff: {
+    borderColor: Colors.border,
+    backgroundColor: Colors.surface,
   },
-  progressTitle: {
-    fontSize: 17,
+  pillDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  pillText: {
+    fontSize: 11,
     fontFamily: 'Inter_600SemiBold',
-    color: Colors.text,
-    marginBottom: 4,
+    letterSpacing: 0.3,
   },
-  progressSubtitle: {
-    fontSize: 14,
-    fontFamily: 'Inter_400Regular',
-    color: Colors.textSecondary,
-  },
-  completeBadge: {
+  pillSettings: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    marginTop: 8,
-  },
-  completeText: {
-    fontSize: 13,
-    fontFamily: 'Inter_600SemiBold',
-    color: Colors.success,
-  },
-  coachNoteCard: {
-    backgroundColor: '#F5F3FF',
-    borderRadius: 14,
-    padding: 14,
-    marginBottom: 16,
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 20,
     borderWidth: 1,
-    borderColor: '#EDE9FE',
+    borderColor: Colors.border,
+    backgroundColor: Colors.surface,
   },
-  coachNoteHeader: {
+  pillSettingsText: {
+    fontSize: 11,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.textSecondary,
+  },
+  scroll: {
+    flex: 1,
+  },
+  scrollContent: {
+    paddingHorizontal: 14,
+    paddingTop: 4,
+    gap: 10,
+  },
+  // Panel
+  panel: {
+    backgroundColor: Colors.surface,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderLeftWidth: 3,
+    overflow: 'hidden',
+  },
+  panelHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  panelHeaderLeft: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    marginBottom: 6,
   },
-  coachNoteLabel: {
+  panelTitle: {
     fontSize: 11,
-    fontFamily: 'Inter_600SemiBold',
-    color: Colors.secondary,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    fontFamily: 'Inter_700Bold',
+    letterSpacing: 1.8,
   },
-  coachNoteText: {
-    fontSize: 13,
-    fontFamily: 'Inter_400Regular',
-    color: '#4C1D95',
-    lineHeight: 20,
+  countBadge: {
+    borderRadius: 10,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    minWidth: 18,
+    alignItems: 'center',
   },
-  insightCard: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    backgroundColor: '#FFFBEB',
-    borderRadius: 14,
-    padding: 14,
-    marginBottom: 16,
-    gap: 10,
-    borderWidth: 1,
-    borderColor: '#FEF3C7',
+  countBadgeText: {
+    fontSize: 10,
+    fontFamily: 'Inter_700Bold',
   },
-  insightText: {
-    flex: 1,
-    fontSize: 13,
-    fontFamily: 'Inter_500Medium',
-    color: '#92400E',
-    lineHeight: 20,
-  },
-  smartRefreshButton: {
+  panelHeaderRight: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    backgroundColor: Colors.primary,
-    borderRadius: 12,
-    paddingVertical: 12,
-    marginBottom: 24,
-  },
-  smartRefreshText: {
-    fontSize: 14,
-    fontFamily: 'Inter_600SemiBold',
-    color: Colors.white,
-  },
-  confirmRow: {
-    backgroundColor: Colors.white,
-    borderRadius: 14,
-    padding: 14,
-    marginBottom: 24,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    gap: 12,
-  },
-  confirmText: {
-    fontSize: 14,
-    fontFamily: 'Inter_600SemiBold',
-    color: Colors.text,
-    textAlign: 'center',
-  },
-  confirmButtons: {
-    flexDirection: 'row',
     gap: 10,
   },
-  confirmCancel: {
+  panelAddBtn: {
+    padding: 2,
+  },
+  panelViewAll: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+  },
+  panelViewAllText: {
+    fontSize: 10,
+    fontFamily: 'Inter_700Bold',
+    letterSpacing: 1,
+  },
+  panelBody: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    gap: 6,
+  },
+  emptyText: {
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textTertiary,
+    lineHeight: 18,
+    paddingVertical: 4,
+  },
+  // Schedule rows
+  scheduleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 4,
+  },
+  scheduleIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  scheduleContent: {
     flex: 1,
-    paddingVertical: 10,
-    borderRadius: 10,
+  },
+  scheduleTitle: {
+    fontSize: 13,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.text,
+  },
+  scheduleWhen: {
+    fontSize: 11,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+    marginTop: 1,
+  },
+  // Task rows
+  taskRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 4,
+  },
+  taskCheck: {
+    width: 16,
+    height: 16,
+    borderRadius: 4,
     borderWidth: 1.5,
     borderColor: Colors.border,
     alignItems: 'center',
+    justifyContent: 'center',
   },
-  confirmCancelText: {
-    fontSize: 14,
+  taskContent: {
+    flex: 1,
+  },
+  taskTitle: {
+    fontSize: 13,
     fontFamily: 'Inter_500Medium',
+    color: Colors.text,
+  },
+  taskDone: {
+    opacity: 0.4,
+    textDecorationLine: 'line-through',
+  },
+  taskMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    marginTop: 2,
+  },
+  taskMetaText: {
+    fontSize: 11,
+    fontFamily: 'Inter_400Regular',
     color: Colors.textSecondary,
   },
-  confirmGo: {
-    flex: 2,
-    flexDirection: 'row',
-    paddingVertical: 10,
-    borderRadius: 10,
-    backgroundColor: Colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
+  catDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 3,
   },
-  confirmGoText: {
-    fontSize: 14,
-    fontFamily: 'Inter_600SemiBold',
-    color: Colors.white,
-  },
-  headerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 0,
-  },
-  headerDateRow: {
+  // Progress bar
+  progressRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    marginBottom: 20,
-  },
-  energyPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 20,
-    backgroundColor: Colors.primary + '15',
-  },
-  energyPillLow: {
-    backgroundColor: '#F3F4F6',
-  },
-  energyPillText: {
-    fontSize: 11,
-    fontFamily: 'Inter_600SemiBold',
-    color: Colors.primary,
-  },
-  lowEnergyBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: '#F3F4F6',
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-  },
-  lowEnergyText: {
-    flex: 1,
-    fontSize: 13,
-    fontFamily: 'Inter_400Regular',
-    color: '#4B5563',
-    lineHeight: 18,
-  },
-  undoBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#1F2937',
-    borderRadius: 14,
-    marginBottom: 12,
-    overflow: 'hidden',
-  },
-  undoBannerMain: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-  },
-  undoBannerText: {
-    flex: 1,
-    fontSize: 13,
-    fontFamily: 'Inter_500Medium',
-    color: '#fff',
-  },
-  undoBannerDismiss: {
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-  },
-  focusToolsRow: {
-    flexDirection: 'row',
-    backgroundColor: Colors.white,
-    borderRadius: 16,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    overflow: 'hidden',
-  },
-  focusTool: {
-    flex: 1,
-    alignItems: 'center',
-    paddingVertical: 14,
-    paddingHorizontal: 8,
-    gap: 4,
-  },
-  focusToolIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
     marginBottom: 4,
   },
-  focusToolLabel: {
-    fontSize: 13,
-    fontFamily: 'Inter_600SemiBold',
-    color: Colors.text,
-    textAlign: 'center',
-  },
-  focusToolSub: {
-    fontSize: 11,
-    fontFamily: 'Inter_400Regular',
-    color: Colors.textTertiary,
-    textAlign: 'center',
-  },
-  focusToolDivider: {
-    width: 1,
+  progressBar: {
+    flex: 1,
+    height: 3,
     backgroundColor: Colors.border,
-    marginVertical: 12,
+    borderRadius: 2,
+    overflow: 'hidden',
   },
-  syncButton: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
-    backgroundColor: Colors.primary + '15',
-    alignItems: 'center',
-    justifyContent: 'center',
+  progressFill: {
+    height: '100%',
+    borderRadius: 2,
   },
-  inboxSection: {
-    backgroundColor: Colors.white,
-    borderRadius: 20,
-    padding: 16,
-    marginBottom: 20,
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  inboxSectionTitle: {
-    fontSize: 13,
-    fontFamily: 'Inter_600SemiBold',
-    color: Colors.textSecondary,
-    marginLeft: 4,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  inboxItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.borderLight,
-  },
-  inboxItemText: {
-    flex: 1,
-    fontSize: 15,
-    fontFamily: 'Inter_400Regular',
-    color: Colors.text,
-    marginRight: 12,
-  },
-  inboxActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  inboxAction: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  promoteAction: {
-    backgroundColor: Colors.primary,
-  },
-  fab: {
-    position: 'absolute',
-    right: 20,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: Colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: Colors.primary,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 5,
-  },
-  section: {
-    marginBottom: 20,
-  },
-  sectionHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginBottom: 12,
-  },
-  sectionHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 12,
-  },
-  sectionHeaderLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    flex: 1,
-  },
-  jarvisBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-    backgroundColor: '#F5F3FF',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 20,
-  },
-  jarvisBadgeText: {
+  progressPct: {
     fontSize: 10,
-    fontFamily: 'Inter_600SemiBold',
-    color: '#8B5CF6',
-  },
-  dragHint: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  dragHintText: {
-    fontSize: 11,
-    fontFamily: 'Inter_400Regular',
-    color: Colors.textTertiary,
-  },
-  dragPlaceholder: {
-    height: 72,
-    borderRadius: 16,
-    backgroundColor: Colors.borderLight,
-    marginBottom: 10,
-  },
-  sectionTitle: {
-    fontSize: 16,
     fontFamily: 'Inter_700Bold',
-    color: Colors.text,
+    minWidth: 28,
+    textAlign: 'right',
   },
-  energySortLabel: {
-    fontSize: 12,
-    fontFamily: 'Inter_400Regular',
-    color: Colors.textTertiary,
-    marginBottom: 6,
-  },
-  jotSmallButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 12,
-    backgroundColor: Colors.primary + '15',
-  },
-  jotSmallButtonText: {
-    fontSize: 12,
-    fontFamily: 'Inter_600SemiBold',
-    color: Colors.primary,
-  },
-  emptyState: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 48,
-    paddingHorizontal: 32,
-    gap: 12,
-  },
-  jarvisEmptyIcon: {
-    width: 64,
-    height: 64,
-    borderRadius: 20,
-    backgroundColor: Colors.primary + '15',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 4,
-  },
-  emptyStateTitle: {
-    fontSize: 17,
-    fontFamily: 'Inter_600SemiBold',
-    color: Colors.textSecondary,
-    textAlign: 'center',
-  },
-  emptyStateText: {
-    fontSize: 14,
-    fontFamily: 'Inter_400Regular',
-    color: Colors.textTertiary,
-    textAlign: 'center',
-    lineHeight: 20,
-  },
-  buildMyDayBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    backgroundColor: Colors.primary,
-    borderRadius: 14,
-    paddingVertical: 14,
-    paddingHorizontal: 28,
-    marginTop: 8,
-  },
-  buildMyDayText: {
-    fontSize: 16,
-    fontFamily: 'Inter_600SemiBold',
-    color: '#fff',
-  },
-  rebuildJarvisBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 12,
-    backgroundColor: Colors.primary + '15',
-  },
-  rebuildJarvisText: {
-    fontSize: 12,
-    fontFamily: 'Inter_600SemiBold',
-    color: Colors.primary,
-  },
-  morningCard: {
-    borderRadius: 14,
-    padding: 14,
-    marginBottom: 12,
-    borderWidth: 1,
-  },
-  morningCardHigh: {
-    backgroundColor: '#FFFBEB',
-    borderColor: '#FDE68A',
-  },
-  morningCardMedium: {
-    backgroundColor: Colors.primary + '10',
-    borderColor: Colors.primary + '30',
-  },
-  morningCardLow: {
-    backgroundColor: '#F3F4F6',
-    borderColor: '#E5E7EB',
-  },
-  morningCardContent: {
+  // Inbox rows
+  inboxRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: 10,
-    marginBottom: 10,
+    paddingVertical: 4,
   },
-  morningCardIcon: {
-    width: 32,
-    height: 32,
-    borderRadius: 10,
-    backgroundColor: 'rgba(255,255,255,0.6)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 2,
+  inboxDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: Colors.cyan,
+    marginTop: 5,
   },
-  morningCardText: {
+  inboxContent: {
     flex: 1,
+    gap: 2,
   },
-  morningCardHeadline: {
-    fontSize: 15,
-    fontFamily: 'Inter_700Bold',
+  inboxSubject: {
+    fontSize: 13,
+    fontFamily: 'Inter_500Medium',
     color: Colors.text,
-    marginBottom: 4,
   },
-  morningCardSuggestion: {
+  inboxSender: {
+    fontSize: 11,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+  },
+  inboxReason: {
+    fontSize: 11,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.cyan,
+    lineHeight: 15,
+  },
+  inboxDismiss: {
+    padding: 2,
+  },
+  // Deliverable rows
+  deliverableRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 3,
+  },
+  typeBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  typeBadgeText: {
+    fontSize: 9,
+    fontFamily: 'Inter_700Bold',
+    letterSpacing: 0.8,
+  },
+  deliverableTitle: {
+    flex: 1,
+    fontSize: 13,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.text,
+  },
+  // Doc rows
+  docRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 3,
+  },
+  docName: {
+    flex: 1,
+    fontSize: 13,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.text,
+  },
+  docStatus: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  docStatusText: {
+    fontSize: 9,
+    fontFamily: 'Inter_600SemiBold',
+    letterSpacing: 0.5,
+  },
+  // Memory rows
+  memoryRow: {
+    paddingVertical: 4,
+    gap: 4,
+  },
+  catBadge: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  catBadgeText: {
+    fontSize: 9,
+    fontFamily: 'Inter_700Bold',
+    letterSpacing: 0.8,
+  },
+  memoryText: {
     fontSize: 13,
     fontFamily: 'Inter_400Regular',
     color: Colors.textSecondary,
     lineHeight: 19,
   },
-  morningCardDismiss: {
+  // Modals
+  modalContainer: {
+    flex: 1,
+    backgroundColor: Colors.bg,
+  },
+  modalHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    alignSelf: 'flex-end',
-    gap: 4,
-    paddingVertical: 4,
-    paddingHorizontal: 8,
-    borderRadius: 8,
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
   },
-  morningCardDismissText: {
+  modalTitle: {
     fontSize: 13,
+    fontFamily: 'Inter_700Bold',
+    letterSpacing: 2,
+  },
+  modalClose: {
+    padding: 4,
+  },
+  modalItemRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginHorizontal: 16,
+    marginVertical: 4,
+    backgroundColor: Colors.surface,
+    borderRadius: 10,
+    borderLeftWidth: 3,
+    padding: 12,
+    gap: 10,
+  },
+  modalItemContent: {
+    flex: 1,
+    gap: 3,
+  },
+  modalItemTitle: {
+    fontSize: 14,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.text,
+    lineHeight: 20,
+  },
+  modalItemSub: {
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+    lineHeight: 17,
+    marginTop: 2,
+  },
+  modalItemMeta: {
+    fontSize: 11,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textTertiary,
+    marginTop: 4,
+  },
+  modalItemDelete: {
+    padding: 4,
+  },
+  modalTaskCheck: {
+    width: 20,
+    height: 20,
+    borderRadius: 5,
+    borderWidth: 1.5,
+    borderColor: Colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 1,
+  },
+  // Form modal
+  formModal: {
+    flex: 1,
+    backgroundColor: Colors.bg,
+    paddingHorizontal: 20,
+  },
+  formModalHandle: {
+    width: 40,
+    height: 4,
+    backgroundColor: Colors.border,
+    borderRadius: 2,
+    alignSelf: 'center',
+    marginBottom: 20,
+  },
+  formModalTitle: {
+    fontSize: 20,
+    fontFamily: 'Inter_700Bold',
+    color: Colors.text,
+    marginBottom: 4,
+  },
+  formModalSub: {
+    fontSize: 13,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+    marginBottom: 20,
+    lineHeight: 19,
+  },
+  formLabel: {
+    fontSize: 11,
     fontFamily: 'Inter_600SemiBold',
-    color: Colors.primary,
+    color: Colors.textSecondary,
+    letterSpacing: 1,
+    marginBottom: 6,
+    marginTop: 12,
+  },
+  formInput: {
+    backgroundColor: Colors.surface,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 15,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.text,
+  },
+  formActions: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 28,
+  },
+  formCancel: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    alignItems: 'center',
+  },
+  formCancelText: {
+    fontSize: 15,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.textSecondary,
+  },
+  formSave: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 12,
+    backgroundColor: Colors.cyan,
+    alignItems: 'center',
+  },
+  formSaveDisabled: {
+    opacity: 0.4,
+  },
+  formSaveText: {
+    fontSize: 15,
+    fontFamily: 'Inter_600SemiBold',
+    color: '#000',
   },
 });

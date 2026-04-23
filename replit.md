@@ -12,7 +12,7 @@ GamePlan is built with a mobile-first approach using **Expo Router (React Native
 Key architectural patterns and features include:
 -   **Adaptive Task Sizing:** AI dynamically adjusts task difficulty and granularity based on user input and history.
 -   **Smart Plan Generation:** AI constructs daily plans considering user goals, completion history, "Life Context" (onboarding questionnaire), and external signals like Gmail.
--   **Intuitive UI/UX:** Features a tab-based navigation (`Today`, `Inbox`, `Goals`, `Insights`, `Profile`) with a consistent indigo/purple color scheme.
+-   **Mission Control UI:** Features a 3-tab dark futuristic command center (`Mission Control`, `Jarvis`, `Settings`) with a dark color scheme (bg #07080F, cyan #00C8FF, violet #9B59FF). The Mission Control tab is a real-time dashboard with 6 panels: Schedule, Today, Inbox, Deliverables, Docs, and Memory.
 -   **State Management:** Primarily server-side data persistence with PostgreSQL.
 -   **Accountability Engine:** AI extracts commitments from user interactions, tracks due dates, and provides proactive check-ins and notifications.
 -   **ADHD/Executive Dysfunction Support:** Includes features like Energy Check-in, Quick Capture, "Just One Thing" Mode, Focus Timer, Visual Time Blocks, Voice Interface, and Jarvis Autonomous Daily Planning.
@@ -77,6 +77,13 @@ The coach builds an ever-growing user profile through structured memory categori
 - **Automatic Extraction**: After every coach chat (both app and Telegram), a background LLM call extracts profile facts from the conversation
 - **Structured Injection**: Memories are grouped by category and injected as a structured "What I Know About You" section into the coach system prompt
 - **Deduplication**: Existing memories are passed to the extraction prompt to prevent duplicates
+
+## Jarvis Scheduled Tasks
+A new system for scheduling autonomous Jarvis actions:
+- **Table**: `jarvis_scheduled_tasks` (id, userId, title, description, scheduledAt, recurrence, completedAt, createdAt)
+- **API**: GET/POST `/api/jarvis/scheduled-tasks`, PATCH `/:id/complete`, DELETE `/:id`
+- **Agent tool**: `schedule_jarvis_task` — lets Jarvis schedule its own future actions via natural language ("every Monday", "daily at 9am")
+- **Frontend**: SCHEDULE panel in Mission Control shows upcoming tasks with overdue highlighting; + button opens create modal
 
 ## Inbox Rules Engine
 A learnable, user-configurable rules engine for filtering emails and calendar events:

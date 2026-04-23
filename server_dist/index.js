@@ -34,6 +34,7 @@ __export(schema_exports, {
   inboxRules: () => inboxRules,
   insertUserSchema: () => insertUserSchema,
   interactionLog: () => interactionLog,
+  jarvisScheduledTasks: () => jarvisScheduledTasks,
   jarvisSouls: () => jarvisSouls,
   lifeContext: () => lifeContext,
   mobileAuthSessions: () => mobileAuthSessions,
@@ -58,7 +59,7 @@ __export(schema_exports, {
 import { sql } from "drizzle-orm";
 import { pgTable, text, varchar, jsonb, timestamp, date, primaryKey, integer, uniqueIndex } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
-var users, insertUserSchema, plans, goals, stats, brainDumpInbox, energyCheckins, chatHistory, lifeContext, timerSettings, userPreferences, completionHistory, blockedTasks, completedCalendarIds, planSnapshots, telegramLinks, telegramLinkCodes, telegramGroupMessages, commitments, userMemories, MEMORY_CATEGORIES, people, jarvisSouls, weeklyInsights, proactiveQuestionsSent, inboxRules, inboxItems, mobileAuthSessions, userDocuments, chatgptImports, proactiveScheduleLog, momentumSessions, morningVoiceNotes, emailDrafts, goalTrees, agentJobs, deliverables, channelLinks, channelLinkCodes, channelPreferences, NOTIFICATION_TYPES, CHANNEL_NAMES, interactionLog;
+var users, insertUserSchema, plans, goals, stats, brainDumpInbox, energyCheckins, chatHistory, lifeContext, timerSettings, userPreferences, completionHistory, blockedTasks, completedCalendarIds, planSnapshots, telegramLinks, telegramLinkCodes, telegramGroupMessages, commitments, userMemories, MEMORY_CATEGORIES, people, jarvisSouls, weeklyInsights, proactiveQuestionsSent, inboxRules, inboxItems, mobileAuthSessions, userDocuments, chatgptImports, proactiveScheduleLog, momentumSessions, morningVoiceNotes, emailDrafts, goalTrees, jarvisScheduledTasks, agentJobs, deliverables, channelLinks, channelLinkCodes, channelPreferences, NOTIFICATION_TYPES, CHANNEL_NAMES, interactionLog;
 var init_schema = __esm({
   "shared/schema.ts"() {
     "use strict";
@@ -352,6 +353,16 @@ var init_schema = __esm({
       status: varchar("status").notNull().default("active"),
       createdAt: timestamp("created_at").defaultNow().notNull(),
       updatedAt: timestamp("updated_at").defaultNow().notNull()
+    });
+    jarvisScheduledTasks = pgTable("jarvis_scheduled_tasks", {
+      id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+      userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+      title: text("title").notNull(),
+      description: text("description"),
+      scheduledAt: timestamp("scheduled_at").notNull(),
+      recurrence: varchar("recurrence"),
+      completedAt: timestamp("completed_at"),
+      createdAt: timestamp("created_at").defaultNow().notNull()
     });
     agentJobs = pgTable("agent_jobs", {
       id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -7927,6 +7938,9 @@ function androidPermKey(action) {
   if (action === "android_browse") return "android_browse";
   if (action === "android_file_list") return "android_file_list";
   if (action === "android_file_read") return "android_file_read";
+  if (action === "android_file_search") return "android_file_list";
+  if (action === "android_open_file") return "android_file_list";
+  if (action === "android_copy_to_clipboard") return "android_file_list";
   if (action === "android_tap" || action === "android_type" || action === "android_swipe" || action === "android_press_key") return "android_tap_type";
   return null;
 }
@@ -7946,7 +7960,10 @@ var init_daemon = __esm({
       "android_swipe",
       "android_press_key",
       "android_file_list",
-      "android_file_read"
+      "android_file_read",
+      "android_file_search",
+      "android_open_file",
+      "android_copy_to_clipboard"
     ];
     daemonActionTool = {
       name: "daemon_action",
@@ -7970,6 +7987,9 @@ ANDROID actions (available when an Android device daemon is paired):
 - android_press_key: press a system key \u2014 "back", "home", "recents", "volume_up", "volume_down"
 - android_file_list: list files in any path on the device (gallery, downloads, any folder)
 - android_file_read: read any file on the device
+- android_file_search: recursively search for files by name across the device storage \u2014 accepts query (substring match), optional root path (defaults to external storage root), optional type filter (image/video/audio/document/any), optional maxDepth (default 4, max 8); returns up to 100 matches with name/path/size/lastModified
+- android_open_file: open a file in its native app (e.g. gallery for images) using an ACTION_VIEW Intent \u2014 accepts an absolute file path
+- android_copy_to_clipboard: copy an image file to the Android clipboard so it can be pasted into Telegram, WhatsApp, or any app that supports image paste \u2014 accepts an absolute image file path; falls back gracefully if the target app doesn't support paste
 
 Always confirm with the user before tap/type/swipe actions. Use android_read_screen or android_screenshot to understand context before acting. Require confirmation before any destructive shell or file_write actions. When an Android daemon is paired, prefer android_* actions. Returns the daemon's response or an error if not paired.`,
       parameters: {
@@ -7992,7 +8012,10 @@ Always confirm with the user before tap/type/swipe actions. Use android_read_scr
               "android_swipe",
               "android_press_key",
               "android_file_list",
-              "android_file_read"
+              "android_file_read",
+              "android_file_search",
+              "android_open_file",
+              "android_copy_to_clipboard"
             ]
           },
           cmd: { type: "string", description: "Shell command (when action is 'shell')" },
@@ -8012,7 +8035,11 @@ Always confirm with the user before tap/type/swipe actions. Use android_read_scr
           x2: { type: "number", description: "Swipe end X (when action is 'android_swipe')" },
           y2: { type: "number", description: "Swipe end Y (when action is 'android_swipe')" },
           durationMs: { type: "number", description: "Swipe duration in ms (when action is 'android_swipe', default 300)" },
-          key: { type: "string", enum: ["back", "home", "recents", "volume_up", "volume_down"], description: "System key (when action is 'android_press_key')" }
+          key: { type: "string", enum: ["back", "home", "recents", "volume_up", "volume_down"], description: "System key (when action is 'android_press_key')" },
+          query: { type: "string", description: "Search term \u2014 substring match against filename (when action is 'android_file_search')" },
+          root: { type: "string", description: "Root path to start search from (when action is 'android_file_search', defaults to external storage root)" },
+          fileType: { type: "string", enum: ["image", "video", "audio", "document", "any"], description: "File type filter (when action is 'android_file_search', default 'any')" },
+          maxDepth: { type: "number", description: "Maximum directory depth to recurse (when action is 'android_file_search', default 4, max 8)" }
         },
         required: ["action"]
       },
@@ -8063,6 +8090,22 @@ Always confirm with the user before tap/type/swipe actions. Use android_read_scr
           } else if (rawAction === "android_file_read") {
             if (!args.path) return { ok: false, content: JSON.stringify({ ok: false, error: "path required" }) };
             op2 = { type: "android_file_read", path: String(args.path) };
+          } else if (rawAction === "android_file_search") {
+            if (!args.query) return { ok: false, content: JSON.stringify({ ok: false, error: "query required" }) };
+            const resolvedFileType = args.fileType || args.type;
+            op2 = {
+              type: "android_file_search",
+              query: String(args.query),
+              root: args.root ? String(args.root) : void 0,
+              fileType: resolvedFileType ? String(resolvedFileType) : void 0,
+              maxDepth: typeof args.maxDepth === "number" ? args.maxDepth : void 0
+            };
+          } else if (rawAction === "android_open_file") {
+            if (!args.path) return { ok: false, content: JSON.stringify({ ok: false, error: "path required" }) };
+            op2 = { type: "android_open_file", path: String(args.path) };
+          } else if (rawAction === "android_copy_to_clipboard") {
+            if (!args.path) return { ok: false, content: JSON.stringify({ ok: false, error: "path required" }) };
+            op2 = { type: "android_copy_to_clipboard", path: String(args.path) };
           } else {
             return { ok: false, content: JSON.stringify({ ok: false, error: `unknown android action ${rawAction}` }) };
           }
@@ -9310,6 +9353,83 @@ var init_discordPost = __esm({
   }
 });
 
+// server/agent/tools/scheduleJarvisTask.ts
+var scheduleJarvisTaskTool;
+var init_scheduleJarvisTask = __esm({
+  "server/agent/tools/scheduleJarvisTask.ts"() {
+    "use strict";
+    init_db();
+    init_schema();
+    scheduleJarvisTaskTool = {
+      name: "schedule_jarvis_task",
+      description: "Schedule a recurring or one-off task for Jarvis to perform automatically. Use this when the user asks you to 'remind me every Monday to...', 'check my inbox every morning', 'do X at Y time', or any request to schedule a future autonomous action. These tasks appear in the user's Mission Control calendar so they can verify Jarvis is actually scheduled to do what they asked.",
+      parameters: {
+        type: "object",
+        properties: {
+          title: {
+            type: "string",
+            description: "Short title for the scheduled task (e.g. 'Morning inbox scan', 'Weekly goal review')"
+          },
+          description: {
+            type: "string",
+            description: "What Jarvis will do when this task runs. Be specific."
+          },
+          scheduledAt: {
+            type: "string",
+            description: "When to first run this task. ISO 8601 datetime string (e.g. '2025-05-01T09:00:00Z'). For daily/recurring tasks, use the next scheduled occurrence."
+          },
+          recurrence: {
+            type: "string",
+            description: "Optional recurrence rule in plain English (e.g. 'daily', 'every Monday', 'weekdays at 9am', 'every Sunday at 8pm'). Omit for one-off tasks."
+          }
+        },
+        required: ["title", "scheduledAt"]
+      },
+      async execute(args, ctx) {
+        const a = args;
+        const title = String(a.title || "").trim();
+        const scheduledAtStr = String(a.scheduledAt || "").trim();
+        if (!title) {
+          return { ok: false, content: "title is required.", label: "Missing title" };
+        }
+        if (!scheduledAtStr) {
+          return { ok: false, content: "scheduledAt is required.", label: "Missing scheduledAt" };
+        }
+        const scheduledAt = new Date(scheduledAtStr);
+        if (isNaN(scheduledAt.getTime())) {
+          return { ok: false, content: `Invalid scheduledAt: "${scheduledAtStr}". Use ISO 8601 format.`, label: "Invalid date" };
+        }
+        try {
+          const [task] = await db.insert(jarvisScheduledTasks).values({
+            userId: ctx.userId,
+            title,
+            description: a.description ? String(a.description).trim() : null,
+            scheduledAt,
+            recurrence: a.recurrence ? String(a.recurrence).trim() : null
+          }).returning();
+          const when = scheduledAt.toLocaleDateString("en-US", {
+            weekday: "short",
+            month: "short",
+            day: "numeric",
+            hour: "numeric",
+            minute: "2-digit"
+          });
+          return {
+            ok: true,
+            content: `Scheduled: "${title}" for ${when}${a.recurrence ? ` (${a.recurrence})` : ""}. It will appear in your Mission Control calendar.`,
+            label: `Scheduled: ${title}`,
+            detail: JSON.stringify({ id: task.id, title, scheduledAt: task.scheduledAt })
+          };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error("[schedule_jarvis_task] failed:", msg);
+          return { ok: false, content: `Failed to schedule task: ${msg}`, label: "Schedule failed", detail: msg };
+        }
+      }
+    };
+  }
+});
+
 // server/agent/tools/index.ts
 function telegramCoachTools(opts) {
   const base = [
@@ -9352,6 +9472,7 @@ var init_tools = __esm({
     init_fetchEmails();
     init_connectChannel();
     init_discordPost();
+    init_scheduleJarvisTask();
     ALL_TOOLS = [
       webSearchTool,
       researchTopicTool,
@@ -9373,7 +9494,8 @@ var init_tools = __esm({
       sendEmailTool,
       fetchEmailsTool,
       connectChannelTool,
-      discordPostTool
+      discordPostTool,
+      scheduleJarvisTaskTool
     ];
     TOOL_INDEX = new Map(ALL_TOOLS.map((t) => [t.name, t]));
   }
@@ -14345,11 +14467,59 @@ Return ONLY the JSON object.`;
     try {
       const userId2 = req.userId;
       if (!userId2) return res.status(401).json({ error: "Not authenticated" });
-      const items = await db.select().from(inboxItems).where(and25(eq30(inboxItems.userId, userId2), eq30(inboxItems.status, "pending")));
+      const items = await db.select().from(inboxItems).where(and25(eq30(inboxItems.userId, userId2), eq30(inboxItems.status, "pending"))).orderBy(desc10(inboxItems.surfacedAt));
       res.json(items);
     } catch (error) {
       console.error("Error fetching inbox items:", error);
       res.status(500).json({ error: "Failed to fetch inbox items" });
+    }
+  });
+  app2.get("/api/jarvis/scheduled-tasks", async (req, res) => {
+    try {
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
+      const tasks = await db.select().from(jarvisScheduledTasks).where(eq30(jarvisScheduledTasks.userId, userId2)).orderBy(jarvisScheduledTasks.scheduledAt);
+      res.json(tasks);
+    } catch (err) {
+      console.error("Error fetching jarvis scheduled tasks:", err);
+      res.status(500).json({ error: "Failed to fetch scheduled tasks" });
+    }
+  });
+  app2.post("/api/jarvis/scheduled-tasks", async (req, res) => {
+    try {
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
+      const { title, description, scheduledAt, recurrence } = req.body;
+      if (!title || !scheduledAt) return res.status(400).json({ error: "title and scheduledAt are required" });
+      const [task] = await db.insert(jarvisScheduledTasks).values({ userId: userId2, title, description: description || null, scheduledAt: new Date(scheduledAt), recurrence: recurrence || null }).returning();
+      res.json(task);
+    } catch (err) {
+      console.error("Error creating jarvis scheduled task:", err);
+      res.status(500).json({ error: "Failed to create scheduled task" });
+    }
+  });
+  app2.patch("/api/jarvis/scheduled-tasks/:id/complete", async (req, res) => {
+    try {
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
+      const { id } = req.params;
+      await db.update(jarvisScheduledTasks).set({ completedAt: /* @__PURE__ */ new Date() }).where(and25(eq30(jarvisScheduledTasks.id, id), eq30(jarvisScheduledTasks.userId, userId2)));
+      res.json({ ok: true });
+    } catch (err) {
+      console.error("Error completing jarvis scheduled task:", err);
+      res.status(500).json({ error: "Failed to complete task" });
+    }
+  });
+  app2.delete("/api/jarvis/scheduled-tasks/:id", async (req, res) => {
+    try {
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
+      const { id } = req.params;
+      await db.delete(jarvisScheduledTasks).where(and25(eq30(jarvisScheduledTasks.id, id), eq30(jarvisScheduledTasks.userId, userId2)));
+      res.json({ ok: true });
+    } catch (err) {
+      console.error("Error deleting jarvis scheduled task:", err);
+      res.status(500).json({ error: "Failed to delete task" });
     }
   });
   app2.post("/api/inbox/items/:id/action", async (req, res) => {
