@@ -548,8 +548,8 @@ export default function SettingsScreen() {
               <View style={styles.badgeRow}>
                 {earnedBadges.slice(0, 8).map(badge => badge && (
                   <View key={badge.id} style={styles.badge}>
-                    <Text style={styles.badgeEmoji}>{badge.emoji}</Text>
-                    <Text style={styles.badgeLabel} numberOfLines={1}>{badge.name}</Text>
+                    <Ionicons name={badge.icon as any} size={20} color={Colors.violet} />
+                    <Text style={styles.badgeLabel} numberOfLines={1}>{badge.label}</Text>
                   </View>
                 ))}
               </View>
@@ -566,9 +566,9 @@ export default function SettingsScreen() {
                   style={[styles.rewardRow, { borderColor: TIER_COLORS[r.tier] + '40', backgroundColor: TIER_COLORS[r.tier] + '12' }]}
                   onPress={() => { setSelectedReward(r); setRewardModalVisible(true); }}
                 >
-                  <Text style={styles.rewardEmoji}>{r.emoji}</Text>
+                  <Ionicons name={r.icon as any} size={18} color={TIER_COLORS[r.tier]} />
                   <View style={styles.rewardInfo}>
-                    <Text style={[styles.rewardName, { color: TIER_COLORS[r.tier] }]}>{r.name}</Text>
+                    <Text style={[styles.rewardName, { color: TIER_COLORS[r.tier] }]}>{r.title}</Text>
                     <Text style={styles.rewardDesc} numberOfLines={1}>{r.description}</Text>
                   </View>
                   <Text style={[styles.rewardClaim, { color: TIER_COLORS[r.tier] }]}>Claim →</Text>
@@ -600,11 +600,11 @@ export default function SettingsScreen() {
       {/* Life Context Sheet */}
       <LifeContextSheet
         visible={sheetVisible}
-        initialContext={lifeContext}
+        existing={lifeContext}
         onClose={() => setSheetVisible(false)}
-        onSave={ctx => {
-          setLifeContext(ctx);
+        onComplete={() => {
           setSheetVisible(false);
+          loadAll();
         }}
       />
 
@@ -613,7 +613,12 @@ export default function SettingsScreen() {
         visible={rewardModalVisible}
         reward={selectedReward}
         onClose={() => { setRewardModalVisible(false); setSelectedReward(null); }}
-        onClaim={() => selectedReward && handleClaimReward(selectedReward)}
+        onClaim={() => { if (selectedReward) handleClaimReward(selectedReward); }}
+        claimCount={0}
+        canClaim={true}
+        budgetRemaining={999}
+        dailyXpRequired={0}
+        claimedToday={false}
       />
     </View>
   );

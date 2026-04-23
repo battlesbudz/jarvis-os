@@ -67,6 +67,7 @@ export function telegramCoachTools(opts: { hasGoogle: boolean }): AgentTool[] {
     fetchEmailsTool,
     connectChannelTool,
     discordPostTool,
+    scheduleJarvisTaskTool,
   ];
   if (opts.hasGoogle) {
     base.push(gmailActionTool, gmailDraftTool, fetchCalendarTool, driveCreateFileTool, driveListFilesTool, driveReadFileTool);
@@ -96,4 +97,5 @@ export {
   fetchEmailsTool,
   connectChannelTool,
   discordPostTool,
+  scheduleJarvisTaskTool,
 };
