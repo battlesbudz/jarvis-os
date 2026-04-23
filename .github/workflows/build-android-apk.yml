@@ -69,6 +69,7 @@ jobs:
           KEY_ALIAS: your-android-daemon-key-alias
           KEY_PASSWORD: your-android-signing-password
         run: |
+          sed -i 's/\r$//' gradlew
           chmod +x gradlew
           ./gradlew assembleRelease --no-daemon
 
