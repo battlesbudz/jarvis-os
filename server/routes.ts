@@ -44,7 +44,7 @@ import { isUserPaired, sendDaemonOp, pingDaemon, getOpAuditLog, isDaemonActionAl
 import type { DaemonAction, DaemonOp } from "./daemon/bridge";
 import { telegramLinks, channelLinks } from "@shared/schema";
 import { connectChannelTool } from "./agent/tools/connectChannel";
-import { YoutubeTranscript } from "youtube-transcript";
+import YoutubeTranscript from "youtube-transcript";
 import ytSearch from "yt-search";
 
 const openai = new OpenAI({
