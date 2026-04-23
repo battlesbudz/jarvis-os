@@ -94,7 +94,7 @@ function renderInline(text: string, baseColor: string): React.ReactNode[] {
 }
 
 export default function MarkdownText({ text, isUser = false, baseStyle }: Props) {
-  const baseColor = isUser ? '#FFFFFF' : '#1E293B';
+  const baseColor = isUser ? '#FFFFFF' : '#E8EAED';
   const tokens = tokenize(text);
 
   const rendered: React.ReactNode[] = [];
