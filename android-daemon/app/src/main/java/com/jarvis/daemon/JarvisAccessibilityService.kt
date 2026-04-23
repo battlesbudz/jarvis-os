@@ -162,7 +162,9 @@ class JarvisAccessibilityService : AccessibilityService() {
             val callback = object : AccessibilityService.TakeScreenshotCallback {
                 override fun onSuccess(result: AccessibilityService.ScreenshotResult) {
                     try {
-                        val rawBmp: Bitmap = result.hardwareBitmap
+                        // ScreenshotResult.getBitmap() (→ .bitmap in Kotlin) is the correct
+                        // API — not .hardwareBitmap which doesn't exist on this class.
+                        val rawBmp: Bitmap = result.bitmap
 
                         // Convert HARDWARE bitmap → ARGB_8888 so pixels are CPU-readable.
                         val soft = if (rawBmp.config == Bitmap.Config.HARDWARE) {
