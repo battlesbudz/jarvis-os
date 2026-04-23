@@ -12611,9 +12611,8 @@ You recently sent these curiosity-driven questions via Telegram. If the user's m
       const daemonSection = daemonPaired ? androidActive ? `Android Device Daemon is ACTIVE and connected.
 ${deviceHints}
 Available actions: android_open_app, android_browse, android_screenshot, android_read_screen, android_tap, android_type, android_swipe, android_press_key, android_file_list, android_file_read, android_notifications_list. DO NOT use desktop shell/notify/file actions.
-DIAGNOSTICS: (1) Before any multi-step phone action sequence, call daemon_diagnostic first to verify accessibility is enabled and see the current foreground app. (2) If any op returns result:error, immediately stop and report the failure \u2014 do NOT continue or fabricate results. Call daemon_diagnostic to diagnose before retrying.
-SEARCH SHORTCUTS (use android_browse with these URLs instead of open_app + navigate): YouTube search \u2192 url='vnd.youtube://results?search_query=YOUR_QUERY', Google Maps \u2192 url='geo:0,0?q=YOUR_QUERY', Spotify \u2192 url='spotify:search:YOUR_QUERY'.
-AFTER OPENING: Always call android_read_screen after android_open_app or android_browse succeeds to see what is actually on screen. NEVER describe or fabricate app content without reading the screen first.` : "Desktop Daemon is ACTIVE. Use shell, notify, file_read, file_write, file_list actions. ALWAYS report errors immediately if a tool returns result:error. Use daemon_diagnostic (no args) to check daemon health before multi-step sequences or when ops are failing." : `\u26A0\uFE0F NO DAEMON CONNECTED. Do NOT call daemon_action \u2014 it will fail with "daemon not connected". If the user asks to control their phone or computer, tell them exactly this: "Your phone daemon isn't connected. To fix it: (1) Open the Jarvis app \u2192 Profile \u2192 scroll to 'Android Device' \u2192 tap 'Get Pairing Code', (2) Open the Jarvis Daemon APK on your phone, (3) Make sure the Server URL is https://GameplanAI.replit.app, (4) Enter the 8-character pairing code, (5) Tap Pair. The status dot should turn green within a few seconds." Do not attempt daemon_action until they confirm it's connected.`;
+SEARCH SHORTCUTS \u2014 use android_browse with these deep links (opens native app directly to results): YouTube search \u2192 url='vnd.youtube://results?search_query=YOUR_QUERY', Google Maps \u2192 url='geo:0,0?q=YOUR_QUERY', Spotify \u2192 url='spotify:search:YOUR_QUERY'.
+ACTION FLOW: (1) Call android_browse (or android_open_app) to open/navigate. (2) Then call android_read_screen to read what is actually visible. (3) Then respond with what you read. NEVER describe app content without calling android_read_screen first. If an op returns result:error, tell the user what failed \u2014 do NOT fabricate results or continue with the broken sequence.` : "Desktop Daemon is ACTIVE. Use shell, notify, file_read, file_write, file_list actions. ALWAYS report errors immediately if a tool returns result:error. Use daemon_diagnostic (no args) to check daemon health before multi-step sequences or when ops are failing." : `\u26A0\uFE0F NO DAEMON CONNECTED. Do NOT call daemon_action \u2014 it will fail with "daemon not connected". If the user asks to control their phone or computer, tell them exactly this: "Your phone daemon isn't connected. To fix it: (1) Open the Jarvis app \u2192 Profile \u2192 scroll to 'Android Device' \u2192 tap 'Get Pairing Code', (2) Open the Jarvis Daemon APK on your phone, (3) Make sure the Server URL is https://GameplanAI.replit.app, (4) Enter the 8-character pairing code, (5) Tap Pair. The status dot should turn green within a few seconds." Do not attempt daemon_action until they confirm it's connected.`;
       const systemPrompt = buildCoachSystemPrompt(goals2 || [], stats2 || {}, history || [], calendarEvents || [], lifeContext2 || null, resolvedGmailItems, resolvedGmailConnected, slackMessages || [], slackConnected ?? false, userCommitments, coachingMode, memories, telegramMessages || [], telegramConnected ?? false, morningNoteSummary, documentsContext, crossChannelContext, soulBlock, daemonSection);
       const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
       const lastUserContent = typeof lastUserMsg?.content === "string" ? lastUserMsg.content.toLowerCase() : "";
@@ -12677,19 +12676,92 @@ AFTER OPENING: Always call android_read_screen after android_open_app or android
       const actionResults = [];
       let toolMessages = [];
       if (userId) {
-        const phase1 = await openai12.chat.completions.create({
-          model: "gpt-5-mini",
-          messages: chatMessages,
-          tools: coachTools,
-          // Force the model to call a tool when the message is clearly a device-control
-          // request and the Android daemon is active. Without this, the model sometimes
-          // returns a text-only response (hallucinating the result) instead of calling
-          // daemon_action, especially when chat history contains prior hallucinated messages.
-          tool_choice: isDeviceControlRequest ? "required" : "auto",
-          max_completion_tokens: 2048
-        });
-        const choice = phase1.choices[0];
-        if (choice.finish_reason === "tool_calls" && choice.message.tool_calls?.length) {
+        const MAX_TOOL_TURNS = 4;
+        let loopFinalText = null;
+        for (let turn = 0; turn < MAX_TOOL_TURNS; turn++) {
+          const currentMessages = [
+            ...chatMessages,
+            ...toolMessages
+          ];
+          const phase1 = await openai12.chat.completions.create({
+            model: "gpt-5-mini",
+            messages: currentMessages,
+            tools: coachTools,
+            // Force a tool call on turn 0 for device-control requests.
+            // Subsequent turns use "auto" so the model can stop and respond.
+            tool_choice: turn === 0 && isDeviceControlRequest ? "required" : "auto",
+            max_completion_tokens: 2048
+          });
+          const choice = phase1.choices[0];
+          if (choice.finish_reason !== "tool_calls" || !choice.message.tool_calls?.length) {
+            if (turn === 0 && choice.message.content) {
+              const responseText = choice.message.content;
+              const hallucIndicators = [
+                "i've opened",
+                "i opened",
+                "i launched",
+                "i took a screenshot",
+                "i captured",
+                "screenshot has been taken",
+                "screenshot taken",
+                "i've taken",
+                "i tapped",
+                "i swiped",
+                "i typed",
+                "here is the screenshot",
+                "here's the screenshot",
+                "here are your current android notifications",
+                "here are your android notifications",
+                "here are your notifications",
+                "got it \u2014 here are your",
+                "got it, here are your",
+                "your current notifications",
+                "your android notifications",
+                "fetching your notifications",
+                "i'll fetch your android",
+                "i will fetch your android",
+                "fetched your notifications"
+              ];
+              const hasRawToolCallBlob = androidActive && (responseText.includes('"name":"daemon_action"') || responseText.includes('"name": "daemon_action"') || responseText.includes("android_notifications_list") || responseText.includes("android_open_app") || responseText.includes("android_screenshot") || responseText.includes("android_tap") || responseText.includes("android_read_screen"));
+              const looksHallucinated = androidActive && (hasRawToolCallBlob || hallucIndicators.some((h) => responseText.toLowerCase().includes(h)));
+              if (looksHallucinated) {
+                console.warn(`[daemon] HALLUCINATION DETECTED userId=${userId} \u2014 model claimed device action without tool call. Intercepting.`);
+                const correctedResponse = "I wasn't able to perform that action on your phone \u2014 I need to call the phone tool to do that, and it didn't get called this time. Please try again and I'll make sure to actually execute the command.";
+                res.setHeader("Content-Type", "text/event-stream");
+                res.setHeader("Cache-Control", "no-cache, no-transform");
+                res.setHeader("X-Accel-Buffering", "no");
+                res.setHeader("Access-Control-Allow-Origin", "*");
+                res.flushHeaders();
+                res.write(`data: ${JSON.stringify({ content: correctedResponse })}
+
+`);
+                res.write("data: [DONE]\n\n");
+                res.end();
+                return;
+              }
+              res.setHeader("Content-Type", "text/event-stream");
+              res.setHeader("Cache-Control", "no-cache, no-transform");
+              res.setHeader("X-Accel-Buffering", "no");
+              res.setHeader("Access-Control-Allow-Origin", "*");
+              res.flushHeaders();
+              res.write(`data: ${JSON.stringify({ content: responseText })}
+
+`);
+              res.write("data: [DONE]\n\n");
+              res.end();
+              extractProfileInBackground(userId, messages);
+              markProactiveQuestionsAnswered(userId, messages).catch(() => {
+              });
+              const lastUserMsg0 = [...messages].reverse().find((m) => m.role === "user");
+              if (lastUserMsg0?.content) logInteraction(userId, "app_chat", "inbound", typeof lastUserMsg0.content === "string" ? lastUserMsg0.content : JSON.stringify(lastUserMsg0.content)).catch(() => {
+              });
+              logInteraction(userId, "app_chat", "outbound", responseText).catch(() => {
+              });
+              return;
+            }
+            if (choice.message.content) loopFinalText = choice.message.content;
+            break;
+          }
           toolMessages.push(choice.message);
           const hasWebSearch = choice.message.tool_calls.some((tc) => tc.function.name === "web_search");
           if (hasWebSearch && !res.headersSent) {
@@ -12775,73 +12847,34 @@ You MUST tell the user this specific action FAILED. Do NOT describe it as succes
               content: toolResultContent
             });
           }
-        } else if (choice.message.content) {
-          const responseText = choice.message.content;
-          const hallucIndicators = [
-            "i've opened",
-            "i opened",
-            "i launched",
-            "i took a screenshot",
-            "i captured",
-            "screenshot has been taken",
-            "screenshot taken",
-            "i've taken",
-            "i tapped",
-            "i swiped",
-            "i typed",
-            "here is the screenshot",
-            "here's the screenshot",
-            // notification fabrication patterns
-            "here are your current android notifications",
-            "here are your android notifications",
-            "here are your notifications",
-            "got it \u2014 here are your",
-            "got it, here are your",
-            "your current notifications",
-            "your android notifications",
-            "fetching your notifications",
-            "i'll fetch your android",
-            "i will fetch your android",
-            "fetched your notifications"
-          ];
-          const hasRawToolCallBlob = androidActive && (responseText.includes('"name":"daemon_action"') || responseText.includes('"name": "daemon_action"') || responseText.includes("android_notifications_list") || responseText.includes("android_open_app") || responseText.includes("android_screenshot") || responseText.includes("android_tap") || responseText.includes("android_read_screen"));
-          const looksHallucinated = androidActive && (hasRawToolCallBlob || hallucIndicators.some((h) => responseText.toLowerCase().includes(h)));
-          if (looksHallucinated) {
-            console.warn(`[daemon] HALLUCINATION DETECTED userId=${userId} \u2014 model claimed device action without tool call. Intercepting.`);
-            const correctedResponse = "I wasn't able to perform that action on your phone \u2014 I need to call the phone tool to do that, and it didn't get called this time. Please try again and I'll make sure to actually execute the command.";
+        }
+        if (loopFinalText) {
+          if (!res.headersSent) {
             res.setHeader("Content-Type", "text/event-stream");
             res.setHeader("Cache-Control", "no-cache, no-transform");
             res.setHeader("X-Accel-Buffering", "no");
             res.setHeader("Access-Control-Allow-Origin", "*");
             res.flushHeaders();
-            res.write(`data: ${JSON.stringify({ content: correctedResponse })}
+          }
+          if (actionResults.length > 0) {
+            const nonSearchActions = actionResults.filter((a) => a.tool !== "web_search");
+            if (nonSearchActions.length > 0) res.write(`data: ${JSON.stringify({ type: "actions", actions: nonSearchActions })}
 
 `);
-            res.write("data: [DONE]\n\n");
-            res.end();
-            return;
           }
-          res.setHeader("Content-Type", "text/event-stream");
-          res.setHeader("Cache-Control", "no-cache, no-transform");
-          res.setHeader("X-Accel-Buffering", "no");
-          res.setHeader("Access-Control-Allow-Origin", "*");
-          res.flushHeaders();
-          const words = responseText;
-          res.write(`data: ${JSON.stringify({ content: words })}
+          res.write(`data: ${JSON.stringify({ content: loopFinalText })}
 
 `);
           res.write("data: [DONE]\n\n");
           res.end();
-          if (userId) {
-            extractProfileInBackground(userId, messages);
-            markProactiveQuestionsAnswered(userId, messages).catch(() => {
-            });
-            const lastUserMsg2 = [...messages].reverse().find((m) => m.role === "user");
-            if (lastUserMsg2?.content) logInteraction(userId, "app_chat", "inbound", typeof lastUserMsg2.content === "string" ? lastUserMsg2.content : JSON.stringify(lastUserMsg2.content)).catch(() => {
-            });
-            logInteraction(userId, "app_chat", "outbound", words).catch(() => {
-            });
-          }
+          extractProfileInBackground(userId, messages);
+          markProactiveQuestionsAnswered(userId, messages).catch(() => {
+          });
+          const lastUserMsgLoop = [...messages].reverse().find((m) => m.role === "user");
+          if (lastUserMsgLoop?.content) logInteraction(userId, "app_chat", "inbound", typeof lastUserMsgLoop.content === "string" ? lastUserMsgLoop.content : JSON.stringify(lastUserMsgLoop.content)).catch(() => {
+          });
+          logInteraction(userId, "app_chat", "outbound", loopFinalText).catch(() => {
+          });
           return;
         }
       }
