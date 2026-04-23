@@ -44,6 +44,7 @@ import { isUserPaired, sendDaemonOp, pingDaemon, getOpAuditLog, isDaemonActionAl
 import type { DaemonAction, DaemonOp } from "./daemon/bridge";
 import { telegramLinks, channelLinks } from "@shared/schema";
 import { connectChannelTool } from "./agent/tools/connectChannel";
+import { YoutubeTranscript } from "youtube-transcript";
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
@@ -841,7 +842,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         parameters: {
           type: "object",
           properties: {
-            action: { type: "string", enum: ["shell", "notify", "file_read", "file_write", "file_list", "android_open_app", "android_browse", "android_screenshot", "android_read_screen", "android_tap", "android_type", "android_swipe", "android_press_key", "android_file_list", "android_file_read", "android_notifications_list"], description: "Action to perform. 'notify' works on BOTH desktop and Android daemons — sends a pop-up banner notification with title and body." },
+            action: { type: "string", enum: ["shell", "notify", "file_read", "file_write", "file_list", "android_open_app", "android_browse", "android_screenshot", "android_read_screen", "android_tap", "android_type", "android_swipe", "android_press_key", "android_file_list", "android_file_read", "android_notifications_list", "android_wait"], description: "Action to perform. 'notify' works on BOTH desktop and Android daemons — sends a pop-up banner notification with title and body. 'android_wait' pauses for ms milliseconds (default 1500, max 10000) — use between steps when the phone UI needs time to settle (e.g. after tapping a video to let it load before read_screen)." },
             cmd: { type: "string", description: "Shell command (for 'shell' action)" },
             title: { type: "string", description: "Notification title (for 'notify' action)" },
             body: { type: "string", description: "Notification body (for 'notify' action)" },
@@ -859,6 +860,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             y2: { type: "number", description: "Swipe end Y (for android_swipe)" },
             key: { type: "string", enum: ["back", "home", "recents", "volume_up", "volume_down", "enter"], description: "System key (for android_press_key). Use 'enter' to press IME Search/Go/Done/Enter on the keyboard." },
             limit: { type: "number", description: "Max notifications to return (for android_notifications_list, default 20)" },
+            ms: { type: "number", description: "Milliseconds to wait (for android_wait, default 1500, max 10000). Use 1500–3000ms after tapping a video to let YouTube load." },
           },
           required: ["action"],
         },
@@ -873,6 +875,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
           type: "object",
           properties: {},
           required: [],
+        },
+      },
+    },
+    {
+      type: "function" as const,
+      function: {
+        name: "fetch_youtube_transcript",
+        description: "Fetch the full transcript of a YouTube video server-side without touching the phone. Use this INSTEAD of trying to navigate YouTube's UI transcript viewer. Works from a video URL (https://youtube.com/watch?v=...) or just the video ID. Call this after the daemon has opened/navigated to the video and you know the video URL or ID — or use web_search to find the video ID first. Returns the transcript as plain text that you can then summarize or answer questions about.",
+        parameters: {
+          type: "object",
+          properties: {
+            videoId: { type: "string", description: "YouTube video ID (e.g. 'dQw4w9WgXcQ') or full YouTube URL (https://youtube.com/watch?v=dQw4w9WgXcQ). Extract the video ID from the URL visible on screen via android_read_screen." },
+          },
+          required: ["videoId"],
         },
       },
     },
@@ -1237,7 +1253,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             return { result: 'error', label: 'Daemon not connected', detail: 'No daemon paired. Install and pair either the desktop daemon or the Android APK from Profile → Connected Channels.' };
           }
           const isAndroidDaemon = await isAndroidDaemonActive(userId);
-          const androidActions = ['android_open_app', 'android_browse', 'android_screenshot', 'android_read_screen', 'android_tap', 'android_type', 'android_swipe', 'android_press_key', 'android_file_list', 'android_file_read', 'android_notifications_list', 'notify'];
+          const androidActions = ['android_open_app', 'android_browse', 'android_screenshot', 'android_read_screen', 'android_tap', 'android_type', 'android_swipe', 'android_press_key', 'android_file_list', 'android_file_read', 'android_notifications_list', 'android_wait', 'notify'];
           const desktopActions = ['shell', 'notify', 'file_read', 'file_write', 'file_list'];
 
           let op: DaemonOp;
@@ -1386,6 +1402,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 label: 'Notification shade content read from screen',
                 detail: `SCREEN CONTENT (verbatim from phone — report ONLY what is shown here, do NOT add or infer any details):\n${shadeText}`,
               };
+            } else if (action === 'android_wait') {
+              // Server-side pause — no daemon op needed. Lets the phone UI settle between steps.
+              const ms = Math.min(Math.max(typeof args.ms === 'number' ? args.ms : 1500, 200), 10000);
+              await new Promise(resolve => setTimeout(resolve, ms));
+              return { result: 'success', label: `Waited ${ms}ms`, detail: `Paused ${ms}ms to let the phone UI settle.` };
             } else if (action === 'android_swipe') {
               if (typeof args.x1 !== 'number' || typeof args.y1 !== 'number' || typeof args.x2 !== 'number' || typeof args.y2 !== 'number') return { result: 'error', label: 'coords required', detail: 'Provide x1,y1,x2,y2 for android_swipe.' };
               op = { type: 'android_swipe', x1: args.x1, y1: args.y1, x2: args.x2, y2: args.y2, durationMs: typeof args.durationMs === 'number' ? args.durationMs : 300 };
@@ -1498,6 +1519,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
             label: pingResult.ok ? 'Daemon alive' : 'Daemon ping failed',
             detail: `${pingStr}\n\nRecent op log (newest first):\n${recentStr}`,
           };
+        }
+        case 'fetch_youtube_transcript': {
+          const rawInput = String(args.videoId || '').trim();
+          if (!rawInput) return { result: 'error', label: 'videoId required', detail: 'Provide a YouTube video ID or URL.' };
+          // Extract ID from URL if a full URL was given
+          let videoId = rawInput;
+          const urlMatch = rawInput.match(/(?:youtube\.com\/(?:watch\?v=|shorts\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
+          if (urlMatch) videoId = urlMatch[1];
+          // Also handle bare IDs that may include URL params
+          const idMatch = videoId.match(/^([a-zA-Z0-9_-]{11})/);
+          if (idMatch) videoId = idMatch[1];
+          try {
+            const transcriptItems = await YoutubeTranscript.fetchTranscript(videoId);
+            if (!transcriptItems || transcriptItems.length === 0) {
+              return { result: 'error', label: 'No transcript available', detail: `The video '${videoId}' does not have a transcript/captions enabled. This is common for music videos or videos where the creator disabled captions.` };
+            }
+            const fullText = transcriptItems.map(t => t.text).join(' ').replace(/\s+/g, ' ').trim();
+            const truncated = fullText.length > 12000 ? fullText.slice(0, 12000) + '… [transcript truncated at 12000 chars]' : fullText;
+            return { result: 'success', label: 'Transcript fetched', detail: `Video ID: ${videoId}\nTranscript (${transcriptItems.length} segments, ${fullText.length} chars):\n\n${truncated}` };
+          } catch (err: any) {
+            const msg = err?.message || String(err);
+            if (msg.includes('disabled') || msg.includes('Transcript is disabled')) {
+              return { result: 'error', label: 'Transcript disabled', detail: `Transcripts are disabled for video '${videoId}'. Try a different video.` };
+            }
+            return { result: 'error', label: 'Transcript fetch failed', detail: msg };
+          }
         }
         case 'connect_channel': {
           const toolResult = await connectChannelTool.execute(args, { userId, state: {} });
@@ -1685,7 +1732,7 @@ Answer (yes/no):`,
 
       const daemonSection = daemonPaired
         ? androidActive
-          ? `Android Device Daemon is ACTIVE and connected.\n${deviceHints}\nAvailable actions: android_open_app, android_browse, android_screenshot, android_read_screen, android_tap, android_type, android_swipe, android_press_key, android_file_list, android_file_read, android_notifications_list, notify. DO NOT use desktop shell/file actions.\nSEARCH SHORTCUTS — use android_browse with these deep links (opens native app directly to results): YouTube search → url='vnd.youtube://results?search_query=YOUR_QUERY', Google Maps → url='geo:0,0?q=YOUR_QUERY', Spotify → url='spotify:search:YOUR_QUERY'.\nACTION FLOW for multi-step tasks: Use as many tool-call turns as the task requires — there is no turn limit. For each step: (1) If unsure what is on screen, call android_read_screen first. (2) Act — call android_browse, android_tap, android_swipe, android_type, etc. as needed. (3) After acting, call android_read_screen to confirm the result, then decide the next step. Complete the FULL task end-to-end (open app → search → pick result → play/navigate) before responding — do NOT stop mid-task and ask the user to finish. NEVER re-open an app that is already on screen — check the screen first, then interact with what is there. NEVER describe app content without calling android_read_screen first. If an op returns result:error, tell the user what failed and what you tried.\nCOMPLETION NOTIFICATIONS — after finishing any multi-step phone task (open app, search, navigate, play, etc.), ALWAYS call notify as the FINAL step with action:'notify', title:'Jarvis ✓', body: a one-line summary of what was done (e.g. "Playing Lo-Fi Hip Hop on YouTube" or "Opened Reddit → r/productivity"). This pops up a banner on the phone so the user knows the task is done without looking at the Jarvis app.`
+          ? `Android Device Daemon is ACTIVE and connected.\n${deviceHints}\nAvailable daemon actions: android_open_app, android_browse, android_screenshot, android_read_screen, android_tap, android_type, android_swipe, android_press_key, android_wait, android_file_list, android_file_read, android_notifications_list, notify. DO NOT use desktop shell/file actions.\nSEARCH SHORTCUTS — use android_browse with these deep links (opens native app directly to results): YouTube search → url='vnd.youtube://results?search_query=YOUR_QUERY', Google Maps → url='geo:0,0?q=YOUR_QUERY', Spotify → url='spotify:search:YOUR_QUERY'.\nUI SETTLING — use android_wait (ms: 1500–3000) after tapping interactive elements that trigger loading (videos, pages, navigation) before calling android_read_screen. This prevents read_screen from seeing a blank or transitioning state.\nYOUTUBE TRANSCRIPTS — NEVER try to navigate YouTube's transcript UI (3-dot menu, etc.) to read a transcript. Instead: (1) open and play the video using android_browse or android_tap, (2) call android_read_screen to confirm the video is playing and note the video ID or URL from the screen, (3) call the separate fetch_youtube_transcript tool with the video ID — it fetches the full text server-side instantly. This saves 5–10 tool turns.\nACTION FLOW for multi-step tasks: Use as many tool-call turns as the task requires — there is no turn limit. For each step: (1) If unsure what is on screen, call android_read_screen first. (2) Act — call android_browse, android_tap, android_swipe, android_type, etc. as needed. (3) After acting, call android_read_screen to confirm the result, then decide the next step. Complete the FULL task end-to-end (open app → search → pick result → play/navigate) before responding — do NOT stop mid-task and ask the user to finish. NEVER re-open an app that is already on screen — check the screen first, then interact with what is there. NEVER describe app content without calling android_read_screen first. If an op returns result:error, tell the user what failed and what you tried.\nCOMPLETION NOTIFICATIONS — after finishing any multi-step phone task (open app, search, navigate, play, etc.), ALWAYS call notify as the FINAL step with action:'notify', title:'Jarvis ✓', body: a one-line summary of what was done (e.g. "Playing Lo-Fi Hip Hop on YouTube" or "Opened Reddit → r/productivity"). This pops up a banner on the phone so the user knows the task is done without looking at the Jarvis app.`
           : 'Desktop Daemon is ACTIVE. Use shell, notify, file_read, file_write, file_list actions. ALWAYS report errors immediately if a tool returns result:error. Use daemon_diagnostic (no args) to check daemon health before multi-step sequences or when ops are failing.'
         : '⚠️ NO DAEMON CONNECTED. Do NOT call daemon_action — it will fail with "daemon not connected". If the user asks to control their phone or computer, tell them exactly this: "Your phone daemon isn\'t connected. To fix it: (1) Open the Jarvis app → Profile → scroll to \'Android Device\' → tap \'Get Pairing Code\', (2) Open the Jarvis Daemon APK on your phone, (3) Make sure the Server URL is https://GameplanAI.replit.app, (4) Enter the 8-character pairing code, (5) Tap Pair. The status dot should turn green within a few seconds." Do not attempt daemon_action until they confirm it\'s connected.';
       const systemPrompt = buildCoachSystemPrompt(goals || [], stats || {}, history || [], calendarEvents || [], lifeContext || null, resolvedGmailItems, resolvedGmailConnected, slackMessages || [], slackConnected ?? false, userCommitments, coachingMode, memories, telegramMessages || [], telegramConnected ?? false, morningNoteSummary, documentsContext, crossChannelContext, soulBlock, daemonSection);
@@ -1708,6 +1755,9 @@ Answer (yes/no):`,
         // general phone/device read actions
         'read my phone', 'check my phone', 'what is on my phone', "what's on my phone",
         'phone screen', 'my screen', 'my phone',
+        // youtube / video intelligence
+        'transcript', 'summarize the video', 'summarize that video', 'what is the video about',
+        "what's the video about", 'give me a summary', 'summarize what', 'tell me what the video',
       ];
       const isDeviceControlRequest = androidActive && deviceControlKeywords.some(k => lastUserContent.includes(k));
 
@@ -1732,7 +1782,7 @@ Answer (yes/no):`,
         // needing its own user message. Without this loop the AI was forced to
         // spend its only tool-call turn on daemon_diagnostic, leaving no turn
         // for the actual action it needed to perform.
-        const MAX_TOOL_TURNS = 10;
+        const MAX_TOOL_TURNS = 20;
         let loopFinalText: string | null = null; // text returned by model mid-loop
 
         for (let turn = 0; turn < MAX_TOOL_TURNS; turn++) {
