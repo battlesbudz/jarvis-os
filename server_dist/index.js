@@ -6803,6 +6803,21 @@ Still relevant? Reply, archive, or unstar anything you've handled.`;
   });
   if (message) {
     console.log(`[Proactive] Sending ${schedule.type} to user ${link.userId} (${timezone})`);
+    if (schedule.type === "morning") {
+      try {
+        const existingPrefs = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq15(userPreferences.userId, link.userId));
+        const currentPrefs = existingPrefs[0]?.data || {};
+        await db.insert(userPreferences).values({
+          userId: link.userId,
+          data: { ...currentPrefs, morningBrief: { date: dateKey, text: message } }
+        }).onConflictDoUpdate({
+          target: [userPreferences.userId],
+          set: { data: { ...currentPrefs, morningBrief: { date: dateKey, text: message } }, updatedAt: /* @__PURE__ */ new Date() }
+        });
+      } catch (e) {
+        console.error("[Proactive] Failed to save morning brief:", e);
+      }
+    }
     const typeMap = {
       morning: "morning_briefing",
       commitment_check: "commitment_check",
@@ -13845,6 +13860,23 @@ ${context}` },
       } else {
         res.end();
       }
+    }
+  });
+  app2.get("/api/coach/morning-brief", async (req, res) => {
+    try {
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
+      const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+      const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq30(userPreferences.userId, userId2));
+      const prefs = rows[0]?.data || {};
+      const brief = prefs.morningBrief;
+      if (brief && brief.date === today && brief.text) {
+        return res.json({ text: brief.text, date: brief.date });
+      }
+      return res.json({ text: null });
+    } catch (err) {
+      console.error("Error fetching morning brief:", err);
+      return res.json({ text: null });
     }
   });
   app2.post("/api/coach/weekly-review", async (req, res) => {

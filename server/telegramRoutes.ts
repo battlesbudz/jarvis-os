@@ -993,6 +993,28 @@ async function sendScheduledMessage(
 
   if (message) {
     console.log(`[Proactive] Sending ${schedule.type} to user ${link.userId} (${timezone})`);
+
+    // For morning briefings: persist the exact generated text so every
+    // channel (app chat, Telegram, daemon) delivers the identical message.
+    if (schedule.type === 'morning') {
+      try {
+        const existingPrefs = await db
+          .select({ data: schema.userPreferences.data })
+          .from(schema.userPreferences)
+          .where(eq(schema.userPreferences.userId, link.userId));
+        const currentPrefs = (existingPrefs[0]?.data as any) || {};
+        await db.insert(schema.userPreferences).values({
+          userId: link.userId,
+          data: { ...currentPrefs, morningBrief: { date: dateKey, text: message } },
+        }).onConflictDoUpdate({
+          target: [schema.userPreferences.userId],
+          set: { data: { ...currentPrefs, morningBrief: { date: dateKey, text: message } }, updatedAt: new Date() },
+        });
+      } catch (e) {
+        console.error('[Proactive] Failed to save morning brief:', e);
+      }
+    }
+
     // Map proactive schedule types onto registered NotificationType values so
     // per-type channel preferences (telegram/whatsapp/slack/daemon) apply.
     const typeMap: Record<string, NotificationType> = {

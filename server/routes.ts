@@ -2957,6 +2957,30 @@ Return ONLY JSON: { "hasCommitment": boolean, "commitment": "the thing they comm
     }
   });
 
+  // Returns today's morning brief if one was generated and stored by the
+  // proactive scheduler. The frontend uses this to show the exact same text
+  // in the Insights chat that was already sent to Telegram/daemon — no re-generation.
+  app.get("/api/coach/morning-brief", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const today = new Date().toISOString().slice(0, 10);
+      const rows = await db
+        .select({ data: userPreferences.data })
+        .from(userPreferences)
+        .where(eq(userPreferences.userId, userId));
+      const prefs = (rows[0]?.data as any) || {};
+      const brief = prefs.morningBrief;
+      if (brief && brief.date === today && brief.text) {
+        return res.json({ text: brief.text, date: brief.date });
+      }
+      return res.json({ text: null });
+    } catch (err) {
+      console.error('Error fetching morning brief:', err);
+      return res.json({ text: null });
+    }
+  });
+
   app.post("/api/coach/weekly-review", async (req: Request, res: Response) => {
     try {
       const userId = req.userId;
