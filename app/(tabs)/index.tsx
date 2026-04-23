@@ -30,6 +30,8 @@ import {
 } from '@/lib/storage';
 import { apiRequest, getApiUrl } from '@/lib/query-client';
 import { authFetch } from '@/lib/auth-context';
+import BrainDumpModal from '@/components/BrainDumpModal';
+import BlockerModal from '@/components/BlockerModal';
 
 // Types
 
@@ -276,6 +278,8 @@ export default function MissionControlScreen() {
   const [docsModal, setDocsModal] = useState(false);
   const [scheduleModal, setScheduleModal] = useState(false);
   const [newTaskModal, setNewTaskModal] = useState(false);
+  const [brainDumpModal, setBrainDumpModal] = useState(false);
+  const [blockerModal, setBlockerModal] = useState(false);
 
   // ── Add Scheduled Task form ──
   const [newTitle, setNewTitle] = useState('');
@@ -487,16 +491,25 @@ export default function MissionControlScreen() {
       {/* ── Connection Pills ── */}
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.pillRow} contentContainerStyle={styles.pillRowContent}>
         {connections.map(c => (
-          <View key={c.label} style={[styles.pill, c.connected ? { borderColor: c.color + '60', backgroundColor: c.color + '15' } : styles.pillOff]}>
+          <Pressable key={c.label} onPress={() => router.push('/(tabs)/settings')} style={[styles.pill, c.connected ? { borderColor: c.color + '60', backgroundColor: c.color + '15' } : styles.pillOff]}>
             <View style={[styles.pillDot, { backgroundColor: c.connected ? c.color : Colors.textTertiary }]} />
             <Text style={[styles.pillText, { color: c.connected ? c.color : Colors.textTertiary }]}>{c.label}</Text>
-          </View>
+          </Pressable>
         ))}
         <Pressable style={styles.pillSettings} onPress={() => router.push('/(tabs)/settings')}>
           <Ionicons name="settings-outline" size={13} color={Colors.textSecondary} />
-          <Text style={styles.pillSettingsText}>Connections</Text>
+          <Text style={styles.pillSettingsText}>Manage</Text>
         </Pressable>
       </ScrollView>
+
+      {/* ── Status line ── */}
+      <View style={styles.statusLine}>
+        <Text style={styles.statusLineText}>
+          {totalCount - completedCount > 0 ? `${totalCount - completedCount} tasks left` : 'All tasks done'}
+          {inboxItems.length > 0 ? `  ·  ${inboxItems.length} inbox` : ''}
+          {pendingScheduled.length > 0 ? `  ·  ${pendingScheduled.length} scheduled` : ''}
+        </Text>
+      </View>
 
       {/* ── Panels ── */}
       <ScrollView
@@ -593,11 +606,17 @@ export default function MissionControlScreen() {
                   <View style={styles.inboxContent}>
                     <Text style={styles.inboxSubject} numberOfLines={1}>{item.subject ?? item.itemType}</Text>
                     {item.sender && <Text style={styles.inboxSender} numberOfLines={1}>{item.sender}</Text>}
-                    {item.jarvisReason && <Text style={styles.inboxReason} numberOfLines={2}>{item.jarvisReason}</Text>}
+                    {item.jarvisReason && <Text style={styles.inboxReason} numberOfLines={1}>{item.jarvisReason}</Text>}
+                    <View style={styles.inboxInlineActions}>
+                      <Pressable onPress={() => handleReplyWithJarvis(item)} style={styles.inboxInlineReply}>
+                        <Ionicons name="chatbubble-outline" size={11} color={Colors.cyan} />
+                        <Text style={styles.inboxInlineReplyText}>Reply</Text>
+                      </Pressable>
+                      <Pressable onPress={() => handleDismissInbox(item)} style={styles.inboxInlineDismiss}>
+                        <Ionicons name="close" size={11} color={Colors.textTertiary} />
+                      </Pressable>
+                    </View>
                   </View>
-                  <Pressable onPress={() => handleDismissInbox(item)} style={styles.inboxDismiss}>
-                    <Ionicons name="close" size={16} color={Colors.textTertiary} />
-                  </Pressable>
                 </View>
               ))
             )}
@@ -619,10 +638,22 @@ export default function MissionControlScreen() {
             ) : (
               deliverables.slice(0, 3).map(d => (
                 <View key={d.id} style={styles.deliverableRow}>
-                  <View style={[styles.typeBadge, { backgroundColor: Colors.violetDim }]}>
-                    <Text style={[styles.typeBadgeText, { color: Colors.violet }]}>{d.type?.toUpperCase()}</Text>
+                  <View style={styles.deliverableRowTop}>
+                    <View style={[styles.typeBadge, { backgroundColor: Colors.violetDim }]}>
+                      <Text style={[styles.typeBadgeText, { color: Colors.violet }]}>{d.type?.toUpperCase()}</Text>
+                    </View>
+                    <Text style={styles.deliverableTitle} numberOfLines={1}>{d.title}</Text>
                   </View>
-                  <Text style={styles.deliverableTitle} numberOfLines={1}>{d.title}</Text>
+                  <View style={styles.deliverableInlineActions}>
+                    <Pressable onPress={() => handleApproveDeliverable(d.id)} style={styles.deliverableApproveBtn}>
+                      <Ionicons name="checkmark" size={11} color={Colors.success} />
+                      <Text style={styles.deliverableApproveBtnText}>Approve</Text>
+                    </Pressable>
+                    <Pressable onPress={() => handleDiscardDeliverable(d.id)} style={styles.deliverableDiscardBtn}>
+                      <Ionicons name="trash-outline" size={11} color={Colors.error} />
+                      <Text style={styles.deliverableDiscardBtnText}>Discard</Text>
+                    </Pressable>
+                  </View>
                 </View>
               ))
             )}
@@ -643,7 +674,7 @@ export default function MissionControlScreen() {
               <Text style={styles.emptyText}>No documents. Upload files for Jarvis to reference in conversations.</Text>
             ) : (
               documents.slice(0, 3).map(doc => (
-                <View key={doc.id} style={styles.docRow}>
+                <Pressable key={doc.id} style={styles.docRow} onPress={() => setDocsModal(true)}>
                   <Ionicons name="document-outline" size={14} color={Colors.cyan} />
                   <Text style={styles.docName} numberOfLines={1}>{doc.name}</Text>
                   <View style={[styles.docStatus, { backgroundColor: doc.status === 'ready' ? Colors.successDim : Colors.warningDim }]}>
@@ -651,7 +682,8 @@ export default function MissionControlScreen() {
                       {doc.status}
                     </Text>
                   </View>
-                </View>
+                  <Ionicons name="chevron-forward" size={12} color={Colors.textTertiary} />
+                </Pressable>
               ))
             )}
           </Panel>
@@ -781,11 +813,16 @@ export default function MissionControlScreen() {
 
       {/* Today tasks modal */}
       <FullModal visible={tasksModal} title="TODAY'S TASKS" accent={Colors.violet} onClose={() => setTasksModal(false)}>
-        <Pressable style={styles.manageDayBtn} onPress={() => { setTasksModal(false); router.push('/(tabs)/insights'); }}>
-          <Ionicons name="flash-outline" size={14} color={Colors.violet} />
-          <Text style={styles.manageDayBtnText}>Plan / Rebuild My Day with Jarvis</Text>
-          <Ionicons name="chevron-forward" size={14} color={Colors.violet} />
-        </Pressable>
+        <View style={styles.manageDayRow}>
+          <Pressable style={styles.manageDayBtn} onPress={() => { setTasksModal(false); router.push('/(tabs)/insights'); }}>
+            <Ionicons name="flash-outline" size={14} color={Colors.violet} />
+            <Text style={styles.manageDayBtnText}>Rebuild Day with Jarvis</Text>
+          </Pressable>
+          <Pressable style={styles.manageDayBtn} onPress={() => { setTasksModal(false); setBrainDumpModal(true); }}>
+            <Ionicons name="cloud-upload-outline" size={14} color={Colors.cyan} />
+            <Text style={[styles.manageDayBtnText, { color: Colors.cyan }]}>Brain Dump</Text>
+          </Pressable>
+        </View>
         {goals.length > 0 && (
           <View style={styles.modalGoalsSummary}>
             <Text style={styles.modalSectionHeader}>ACTIVE GOALS</Text>
@@ -812,7 +849,7 @@ export default function MissionControlScreen() {
                 <Text style={[styles.modalItemTitle, t.completed && { opacity: 0.4, textDecorationLine: 'line-through' }]}>{t.title}</Text>
                 {t.description && <Text style={styles.modalItemSub} numberOfLines={2}>{t.description}</Text>}
                 <Text style={styles.modalItemMeta}>
-                  {t.category}{t.time ? ` · ${t.time}` : ''}{t.duration ? ` · ${t.duration}min` : ''}
+                  {t.category}{t.time ? ` · ${t.time}` : ''}
                 </Text>
               </View>
             </View>
@@ -927,6 +964,13 @@ export default function MissionControlScreen() {
           ))
         )}
       </FullModal>
+
+      <BrainDumpModal
+        visible={brainDumpModal}
+        onClose={() => setBrainDumpModal(false)}
+        onSaveToToday={async (_text) => { await loadApi(); }}
+        onSaveToInbox={async (_text) => { await loadApi(); }}
+      />
     </View>
   );
 }
@@ -1231,10 +1275,8 @@ const styles = StyleSheet.create({
   },
   // Deliverable rows
   deliverableRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingVertical: 3,
+    flexDirection: 'column',
+    paddingVertical: 4,
   },
   typeBadge: {
     paddingHorizontal: 6,
@@ -1473,22 +1515,20 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   manageDayBtn: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    marginHorizontal: 16,
-    marginTop: 16,
-    marginBottom: 4,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
     backgroundColor: Colors.violetDim,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: Colors.violet + '40',
   },
   manageDayBtnText: {
-    flex: 1,
-    fontSize: 13,
+    fontSize: 12,
     fontFamily: 'Inter_600SemiBold',
     color: Colors.violet,
   },
@@ -1596,5 +1636,91 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontFamily: 'Inter_400Regular',
     color: Colors.text,
+  },
+  statusLine: {
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+  },
+  statusLineText: {
+    fontSize: 11,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textTertiary,
+    letterSpacing: 0.3,
+  },
+  inboxInlineActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 6,
+  },
+  inboxInlineReply: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 3,
+    paddingHorizontal: 8,
+    backgroundColor: Colors.cyanDim,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: Colors.cyan + '30',
+  },
+  inboxInlineReplyText: {
+    fontSize: 10,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.cyan,
+  },
+  inboxInlineDismiss: {
+    padding: 4,
+  },
+  deliverableRowTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flex: 1,
+  },
+  deliverableInlineActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 6,
+  },
+  deliverableApproveBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 3,
+    paddingHorizontal: 8,
+    backgroundColor: Colors.successDim,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: Colors.success + '30',
+  },
+  deliverableApproveBtnText: {
+    fontSize: 10,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.success,
+  },
+  deliverableDiscardBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 3,
+    paddingHorizontal: 8,
+    backgroundColor: Colors.errorDim,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: Colors.error + '30',
+  },
+  deliverableDiscardBtnText: {
+    fontSize: 10,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.error,
+  },
+  manageDayRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginHorizontal: 16,
+    marginTop: 12,
+    marginBottom: 4,
   },
 });
