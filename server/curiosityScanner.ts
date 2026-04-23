@@ -1,10 +1,10 @@
 import { db } from "./db";
-import { eq, and, sql } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import * as schema from "@shared/schema";
-import { sendMessage, isTelegramConfigured } from "./integrations/telegram";
+import { sendMessage } from "./integrations/telegram";
 import { getGoogleCalendarEvents } from "./integrations/googleCalendar";
 import { getEmailsSince } from "./integrations/gmail";
-import { getValidGoogleTokens } from "./userTokenStore";
+import { getValidGoogleTokens, getAllGoogleConnectedUserIds } from "./userTokenStore";
 import { logInteraction } from "./interactionLog";
 import OpenAI from "openai";
 
@@ -101,19 +101,35 @@ Return only items worth asking about. Return { "questions": [] } if nothing is i
 
 export async function runCuriosityScan(): Promise<void> {
   try {
-    const links = await db.select().from(schema.telegramLinks);
-    if (links.length === 0) return;
+    const telegramLinks = await db.select().from(schema.telegramLinks);
+    const telegramByUserId = new Map(telegramLinks.map(l => [l.userId, l]));
 
-    for (const link of links) {
+    const googleUserIds = await getAllGoogleConnectedUserIds();
+
+    const telegramOnlyUserIds = telegramLinks
+      .filter(l => !googleUserIds.includes(l.userId))
+      .map(l => l.userId);
+
+    const userIds = [
+      ...new Set([
+        ...googleUserIds,
+        ...telegramOnlyUserIds,
+      ]),
+    ];
+
+    if (userIds.length === 0) return;
+
+    for (const userId of userIds) {
+      const link = telegramByUserId.get(userId) ?? null;
       try {
-        const tokens = await getValidGoogleTokens(link.userId).catch(
+        const tokens = await getValidGoogleTokens(userId).catch(
           () => []
         );
         if (!tokens || tokens.length === 0) continue;
         const token = tokens[0];
 
-        const alreadyAsked = await getAlreadyAskedSourceIds(link.userId);
-        const memories = await getUserMemories(link.userId);
+        const alreadyAsked = await getAlreadyAskedSourceIds(userId);
+        const memories = await getUserMemories(userId);
 
         const now = new Date();
         const tomorrow = new Date(now);
@@ -138,7 +154,7 @@ export async function runCuriosityScan(): Promise<void> {
           calendarEvents = [...todayEvents, ...tomorrowEvents];
         } catch (err) {
           console.error(
-            `[Curiosity] Calendar fetch failed for user ${link.userId}:`,
+            `[Curiosity] Calendar fetch failed for user ${userId}:`,
             err
           );
         }
@@ -152,13 +168,13 @@ export async function runCuriosityScan(): Promise<void> {
           );
         } catch (err) {
           console.error(
-            `[Curiosity] Email fetch failed for user ${link.userId}:`,
+            `[Curiosity] Email fetch failed for user ${userId}:`,
             err
           );
         }
 
         const { getUserInboxRules, matchItemAgainstRules } = await import("./inboxRules");
-        const userRules = await getUserInboxRules(link.userId);
+        const userRules = await getUserInboxRules(userId);
 
         const items: CuriosityItem[] = [];
 
@@ -175,7 +191,7 @@ export async function runCuriosityScan(): Promise<void> {
           if (ruleResult.verdict === "surface") {
             try {
               await db.insert(schema.inboxItems).values({
-                userId: link.userId,
+                userId,
                 sourceType: "calendar",
                 sourceId: eventId,
                 subject: ev.title,
@@ -189,9 +205,9 @@ export async function runCuriosityScan(): Promise<void> {
                 ],
                 matchedRuleId: ruleResult.matchedRuleId || null,
               });
-              console.log(`[Curiosity] Surfaced calendar event for user ${link.userId}: ${ev.title}`);
+              console.log(`[Curiosity] Surfaced calendar event for user ${userId}: ${ev.title}`);
             } catch (err) {
-              console.error(`[Curiosity] context-rule surface failed for ${link.userId}:`, err);
+              console.error(`[Curiosity] context-rule surface failed for ${userId}:`, err);
             }
             continue;
           }
@@ -219,7 +235,7 @@ export async function runCuriosityScan(): Promise<void> {
           if (ruleResult.verdict === "surface") {
             try {
               await db.insert(schema.inboxItems).values({
-                userId: link.userId,
+                userId,
                 sourceType: "email",
                 sourceId: emailId,
                 subject: email.subject || "(no subject)",
@@ -233,7 +249,7 @@ export async function runCuriosityScan(): Promise<void> {
                 ],
                 matchedRuleId: ruleResult.matchedRuleId || null,
               }).onConflictDoNothing();
-              console.log(`[Curiosity] Surfaced email for user ${link.userId}: ${email.subject}`);
+              console.log(`[Curiosity] Surfaced email for user ${userId}: ${email.subject}`);
             } catch (err) {
               console.error(`[Curiosity] inbox_items insert failed for email ${emailId}:`, err);
             }
@@ -256,7 +272,7 @@ export async function runCuriosityScan(): Promise<void> {
         const questions = await generateCuriosityQuestions(
           items.slice(0, 15),
           memories,
-          link.userId,
+          userId,
         );
 
         const validQuestions = questions.filter(q =>
@@ -269,54 +285,59 @@ export async function runCuriosityScan(): Promise<void> {
 
         for (const q of validQuestions) {
           if (sentCount >= MAX_QUESTIONS_PER_SCAN) break;
+          const srcItem = items.find(i => i.sourceId === q.sourceId);
+
           try {
             await db.insert(schema.proactiveQuestionsSent).values({
-              userId: link.userId,
+              userId,
               sourceType: q.sourceType,
               sourceId: q.sourceId,
               question: q.question,
             });
-
-            try {
-              await sendMessage(link.chatId, q.question);
-              sentCount++;
-              logInteraction(link.userId, "notification", "outbound", q.question, "curiosity_question").catch(() => {});
-              console.log(
-                `[Curiosity] Sent question to user ${link.userId}: ${q.question.slice(0, 60)}...`
-              );
-              const srcItem = items.find(i => i.sourceId === q.sourceId);
-              await db.insert(schema.inboxItems).values({
-                userId: link.userId,
-                sourceType: q.sourceType as "calendar" | "email" | "telegram" | "slack" | "discord" | "whatsapp" | "other",
-                sourceId: q.sourceId,
-                subject: srcItem?.summary?.slice(0, 200) ?? q.question.slice(0, 200),
-                snippet: q.question,
-                jarvisReason: "Jarvis sent you a curiosity question about this",
-                suggestedActions: [
-                  { label: "Reply", actionType: "reply" },
-                  { label: "Dismiss", actionType: "dismiss" },
-                ],
-              }).onConflictDoNothing();
-            } catch (sendErr) {
-              console.error(
-                `[Curiosity] DB recorded but Telegram send failed for user ${link.userId}:`,
-                sendErr
-              );
-            }
           } catch (dbErr: any) {
             if (dbErr?.code === '23505') {
               console.log(`[Curiosity] Skipping duplicate source: ${q.sourceId}`);
+              continue;
             } else {
-              console.error(
-                `[Curiosity] Failed to record question for user ${link.userId}:`,
-                dbErr
-              );
+              console.error(`[Curiosity] Failed to record question for user ${userId}:`, dbErr);
+              continue;
             }
+          }
+
+          try {
+            await db.insert(schema.inboxItems).values({
+              userId,
+              sourceType: q.sourceType as "calendar" | "email" | "telegram" | "slack" | "discord" | "whatsapp" | "other",
+              sourceId: q.sourceId,
+              subject: srcItem?.summary?.slice(0, 200) ?? q.question.slice(0, 200),
+              snippet: q.question,
+              jarvisReason: "Jarvis noticed something worth your attention",
+              suggestedActions: [
+                { label: "Reply", actionType: "reply" },
+                { label: "Dismiss", actionType: "dismiss" },
+              ],
+            }).onConflictDoNothing();
+          } catch (inboxErr) {
+            console.error(`[Curiosity] inbox_items insert failed for ${q.sourceId}:`, inboxErr);
+          }
+
+          if (link) {
+            try {
+              await sendMessage(link.chatId, q.question);
+              sentCount++;
+              logInteraction(userId, "notification", "outbound", q.question, "curiosity_question").catch(() => {});
+              console.log(`[Curiosity] Sent question to user ${userId}: ${q.question.slice(0, 60)}...`);
+            } catch (sendErr) {
+              console.error(`[Curiosity] Telegram send failed for user ${userId}:`, sendErr);
+            }
+          } else {
+            sentCount++;
+            console.log(`[Curiosity] Surfaced to inbox (no Telegram) for user ${userId}: ${q.question.slice(0, 60)}...`);
           }
         }
       } catch (userErr) {
         console.error(
-          `[Curiosity] Error processing user ${link.userId}:`,
+          `[Curiosity] Error processing user ${userId}:`,
           userErr
         );
       }
@@ -327,8 +348,6 @@ export async function runCuriosityScan(): Promise<void> {
 }
 
 export async function startCuriosityScanner(): Promise<void> {
-  if (!isTelegramConfigured()) return;
-
   console.log("[Curiosity] Scanner started — runs every 30 minutes");
 
   setInterval(
