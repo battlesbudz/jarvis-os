@@ -1816,6 +1816,25 @@ Answer (yes/no):`,
       const actionResults: { tool: string; result: 'success' | 'error'; label: string; url?: string; buttonLabel?: string }[] = [];
       let toolMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [];
 
+      // SSE keepalive: once the SSE stream is open, send a comment every 10s so
+      // the connection isn't killed by proxies or the Android OS while daemon ops run.
+      // Declared here (outer scope) so stopKeepalive() is reachable in the catch block
+      // and in the final streaming section that lives outside the if(userId) block.
+      let keepaliveInterval: ReturnType<typeof setInterval> | null = null;
+      const startKeepalive = () => {
+        if (keepaliveInterval) return;
+        keepaliveInterval = setInterval(() => {
+          if (!res.writableEnded && !res.destroyed) {
+            try { res.write(': keepalive\n\n'); } catch {}
+          }
+        }, 10000);
+      };
+      const stopKeepalive = () => {
+        if (keepaliveInterval) { clearInterval(keepaliveInterval); keepaliveInterval = null; }
+      };
+      // Clean up if the client disconnects mid-stream
+      req.on('close', stopKeepalive);
+
       if (userId) {
         // Multi-turn tool loop: allows the AI to chain sequential daemon ops
         // (e.g. android_browse → android_read_screen → respond) without each
@@ -1987,6 +2006,7 @@ Answer (yes/no):`,
               };
               const workingMsg = actionLabel[String(args.action || '')] || 'Working on your phone...';
               res.write(`data: ${JSON.stringify({ type: 'working', message: workingMsg })}\n\n`);
+              startKeepalive();
             }
 
             const execResult = await executeCoachTool(tc.function.name, args, userId);
@@ -2027,6 +2047,7 @@ Answer (yes/no):`,
             const nonSearchActions = actionResults.filter(a => a.tool !== 'web_search');
             if (nonSearchActions.length > 0) res.write(`data: ${JSON.stringify({ type: 'actions', actions: nonSearchActions })}\n\n`);
           }
+          stopKeepalive();
           res.write(`data: ${JSON.stringify({ content: loopFinalText })}\n\n`);
           res.write('data: [DONE]\n\n');
           res.end();
@@ -2076,6 +2097,7 @@ Answer (yes/no):`,
         max_completion_tokens: 8192,
       });
 
+      stopKeepalive();
       let fullStreamedReply = '';
       for await (const chunk of stream) {
         const content = chunk.choices[0]?.delta?.content || '';
@@ -2095,6 +2117,7 @@ Answer (yes/no):`,
         if (fullStreamedReply) logInteraction(userId, "app_chat", "outbound", fullStreamedReply).catch(() => {});
       }
     } catch (error) {
+      stopKeepalive();
       console.error("Error in coach chat:", error);
       // Push a failure banner to the phone so the user isn't left waiting silently
       if (userId && isUserPaired(userId)) {

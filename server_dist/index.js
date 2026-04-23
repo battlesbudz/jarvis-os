@@ -12822,6 +12822,25 @@ This ensures the user always gets a phone banner and never waits silently for a 
       ];
       const actionResults = [];
       let toolMessages = [];
+      let keepaliveInterval = null;
+      const startKeepalive = () => {
+        if (keepaliveInterval) return;
+        keepaliveInterval = setInterval(() => {
+          if (!res.writableEnded && !res.destroyed) {
+            try {
+              res.write(": keepalive\n\n");
+            } catch {
+            }
+          }
+        }, 1e4);
+      };
+      const stopKeepalive2 = () => {
+        if (keepaliveInterval) {
+          clearInterval(keepaliveInterval);
+          keepaliveInterval = null;
+        }
+      };
+      req.on("close", stopKeepalive2);
       if (userId2) {
         const MAX_TOOL_TURNS = 20;
         let loopFinalText = null;
@@ -12986,6 +13005,7 @@ This ensures the user always gets a phone banner and never waits silently for a 
               res.write(`data: ${JSON.stringify({ type: "working", message: workingMsg })}
 
 `);
+              startKeepalive();
             }
             const execResult = await executeCoachTool(tc.function.name, args, userId2);
             let linkData = {};
@@ -13034,6 +13054,7 @@ You MUST tell the user this specific action FAILED. Do NOT describe it as succes
 
 `);
           }
+          stopKeepalive2();
           res.write(`data: ${JSON.stringify({ content: loopFinalText })}
 
 `);
@@ -13080,6 +13101,7 @@ ${failedDaemonActions.map((a) => `- ${a.label}: ${a.result}`).join("\n")}`
         stream: true,
         max_completion_tokens: 8192
       });
+      stopKeepalive2();
       let fullStreamedReply = "";
       for await (const chunk of stream) {
         const content = chunk.choices[0]?.delta?.content || "";
@@ -13103,6 +13125,7 @@ ${failedDaemonActions.map((a) => `- ${a.label}: ${a.result}`).join("\n")}`
         });
       }
     } catch (error) {
+      stopKeepalive();
       console.error("Error in coach chat:", error);
       if (userId && isUserPaired(userId)) {
         sendDaemonOp(userId, {
