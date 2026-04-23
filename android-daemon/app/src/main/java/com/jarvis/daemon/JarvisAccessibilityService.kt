@@ -210,7 +210,12 @@ class JarvisAccessibilityService : AccessibilityService() {
                 }
             }
 
-            latch.await(10, TimeUnit.SECONDS)
+            // 4-second cap per display.
+            // On Samsung, if the call wasn't dispatched to the main thread, the callback
+            // never fires — so each display waits the full timeout. 4s × 3 displays = 12s,
+            // safely under the server's 20s op timeout. With the main-thread dispatch fix
+            // the callback fires in <500ms, so this cap is only a safety net.
+            latch.await(4, TimeUnit.SECONDS)
             encoded
         } catch (oom: OutOfMemoryError) {
             Log.e(TAG, "takeScreenshotForDisplay($displayId) OOM")
@@ -239,8 +244,8 @@ class JarvisAccessibilityService : AccessibilityService() {
                 return null
             }
 
-            // Wait for the system screenshot service to save the file (~1.5-3 s on Samsung).
-            Thread.sleep(3000)
+            // Wait for the system screenshot service to save the file (~1-2 s on Samsung).
+            Thread.sleep(2000)
 
             // Search common Samsung screenshot directories.
             val searchDirs = listOf(
