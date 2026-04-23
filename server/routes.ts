@@ -579,6 +579,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
   registerTelegramRoutes(app);
   registerChannelRoutes(app);
 
+  app.get("/api/discord/status", async (req: Request, res: Response) => {
+    try {
+      const userId = (req as any).session?.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const links = await db.select().from(channelLinks)
+        .where(and(eq(channelLinks.userId, userId), eq(channelLinks.channel, 'discord')));
+      res.json({ connected: links.length > 0 });
+    } catch (error) {
+      console.error("Error getting Discord status:", error);
+      res.status(500).json({ error: "Failed to get Discord status" });
+    }
+  });
+
   app.post("/api/ai/resize-task", async (req: Request, res: Response) => {
     try {
       const { taskTitle, taskDescription, detailLevel, direction, history } = req.body;

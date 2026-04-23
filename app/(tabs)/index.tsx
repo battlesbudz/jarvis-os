@@ -24,8 +24,6 @@ import {
   updateTaskCompletion,
   getGoals,
   getTodayKey,
-  incrementStats,
-  decrementStats,
   type Goal,
   type Task,
   type DayPlan,
@@ -257,6 +255,7 @@ export default function MissionControlScreen() {
     slack: { connected: boolean };
   }>({ google: { connected: false }, microsoft: { connected: false }, slack: { connected: false } });
   const [telegramConnected, setTelegramConnected] = useState(false);
+  const [discordConnected, setDiscordConnected] = useState(false);
 
   // ── API Data ──
   const [inboxItems, setInboxItems] = useState<InboxItem[]>([]);
@@ -298,9 +297,10 @@ export default function MissionControlScreen() {
   // ── Load API data ──
   const loadApi = useCallback(async () => {
     try {
-      const [oauthRes, telegramRes] = await Promise.all([
+      const [oauthRes, telegramRes, discordRes] = await Promise.all([
         apiRequest('GET', '/api/oauth/status').then(r => r.json()).catch(() => null),
         apiRequest('GET', '/api/telegram/status').then(r => r.json()).catch(() => null),
+        apiRequest('GET', '/api/discord/status').then(r => r.json()).catch(() => null),
       ]);
       if (oauthRes) setOAuthStatus({
         google: oauthRes.google ?? { connected: false },
@@ -308,6 +308,7 @@ export default function MissionControlScreen() {
         slack: oauthRes.slack ?? { connected: false },
       });
       setTelegramConnected(telegramRes?.connected ?? false);
+      setDiscordConnected(discordRes?.connected ?? false);
     } catch {}
 
     const [inboxRes, delRes, memRes, docRes, schedRes] = await Promise.allSettled([
@@ -373,12 +374,7 @@ export default function MissionControlScreen() {
         tasks: prev.tasks.map(t => t.id === task.id ? { ...t, completed: newCompleted } : t),
       };
     });
-    const result = await updateTaskCompletion(getTodayKey(), task.id, newCompleted);
-    if (result.xpEarned > 0) {
-      await incrementStats();
-    } else if (!newCompleted) {
-      await decrementStats();
-    }
+    await updateTaskCompletion(getTodayKey(), task.id, newCompleted);
   }, [plan]);
 
   // ── Create scheduled task ──
@@ -439,6 +435,7 @@ export default function MissionControlScreen() {
     { label: 'Microsoft', connected: oauthStatus.microsoft.connected, color: '#0078D4' },
     { label: 'Slack', connected: oauthStatus.slack.connected, color: '#4A154B' },
     { label: 'Telegram', connected: telegramConnected, color: '#0088CC' },
+    { label: 'Discord', connected: discordConnected, color: '#5865F2' },
   ];
 
   return (

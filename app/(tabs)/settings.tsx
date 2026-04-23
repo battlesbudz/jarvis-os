@@ -108,6 +108,7 @@ export default function SettingsScreen() {
   const [telegramLinkCode, setTelegramLinkCode] = useState<string | null>(null);
   const [telegramPolling, setTelegramPolling] = useState(false);
   const telegramPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [discordConnected, setDiscordConnected] = useState(false);
   const [loadingStatus, setLoadingStatus] = useState(true);
   const [connectingId, setConnectingId] = useState<string | null>(null);
   const [androidDaemonCode, setAndroidDaemonCode] = useState<string | null>(null);
@@ -130,9 +131,10 @@ export default function SettingsScreen() {
   const loadAll = useCallback(async () => {
     setLoadingStatus(true);
     try {
-      const [oauthRes, telegramRes] = await Promise.all([
+      const [oauthRes, telegramRes, discordRes] = await Promise.all([
         apiRequest('GET', '/api/oauth/status').then(r => r.json()).catch(() => null),
         apiRequest('GET', '/api/telegram/status').then(r => r.json()).catch(() => null),
+        apiRequest('GET', '/api/discord/status').then(r => r.json()).catch(() => null),
       ]);
       if (oauthRes) setOAuthStatus({
         google: oauthRes.google ?? { connected: false },
@@ -144,6 +146,7 @@ export default function SettingsScreen() {
         username: telegramRes.username ?? null,
         configured: telegramRes.configured ?? false,
       });
+      setDiscordConnected(discordRes?.connected ?? false);
     } catch {}
     setLoadingStatus(false);
 
@@ -361,6 +364,24 @@ export default function SettingsScreen() {
             </View>
           )}
 
+          {/* Discord */}
+          <View style={[styles.connRow, styles.connRowBorder]}>
+            <View style={[styles.connIconWrap, { backgroundColor: '#5865F220' }]}>
+              <Ionicons name="logo-discord" size={18} color="#5865F2" />
+            </View>
+            <View style={styles.connInfo}>
+              <Text style={styles.connName}>Discord</Text>
+              <Text style={styles.connSub}>
+                {discordConnected ? 'Connected' : 'Ask Jarvis to connect Discord'}
+              </Text>
+            </View>
+            <View style={[styles.connBtn, discordConnected ? styles.connBtnConnected : styles.connBtnDisconnected]}>
+              <Text style={[styles.connBtnText, discordConnected && styles.connBtnTextConnected]}>
+                {discordConnected ? 'Connected' : 'Via Chat'}
+              </Text>
+            </View>
+          </View>
+
           {/* Android Daemon */}
           <View style={[styles.connRow, styles.connRowBorder]}>
             <View style={[styles.connIconWrap, { backgroundColor: Colors.successDim }]}>
@@ -476,15 +497,15 @@ export default function SettingsScreen() {
               {availableRewards.slice(0, 3).map(r => (
                 <Pressable
                   key={r.id}
-                  style={[styles.rewardRow, { borderColor: (TIER_COLORS as any)[r.tier] + '40', backgroundColor: (TIER_COLORS as any)[r.tier] + '12' }]}
+                  style={[styles.rewardRow, { borderColor: TIER_COLORS[r.tier] + '40', backgroundColor: TIER_COLORS[r.tier] + '12' }]}
                   onPress={() => { setSelectedReward(r); setRewardModalVisible(true); }}
                 >
                   <Text style={styles.rewardEmoji}>{r.emoji}</Text>
                   <View style={styles.rewardInfo}>
-                    <Text style={[styles.rewardName, { color: (TIER_COLORS as any)[r.tier] }]}>{r.name}</Text>
+                    <Text style={[styles.rewardName, { color: TIER_COLORS[r.tier] }]}>{r.name}</Text>
                     <Text style={styles.rewardDesc} numberOfLines={1}>{r.description}</Text>
                   </View>
-                  <Text style={[styles.rewardClaim, { color: (TIER_COLORS as any)[r.tier] }]}>Claim →</Text>
+                  <Text style={[styles.rewardClaim, { color: TIER_COLORS[r.tier] }]}>Claim →</Text>
                 </Pressable>
               ))}
             </View>
