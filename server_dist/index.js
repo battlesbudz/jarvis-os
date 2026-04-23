@@ -12421,7 +12421,26 @@ ${shadeText}`
               };
             }
           }
-          const daemonResult = await sendDaemonOp(userId, op, 3e4);
+          const actionTimeouts = {
+            android_read_screen: 8e3,
+            android_tap: 6e3,
+            android_swipe: 6e3,
+            android_press_key: 5e3,
+            android_type: 1e4,
+            android_browse: 8e3,
+            android_open_app: 15e3,
+            android_screenshot: 15e3,
+            android_notifications_list: 12e3,
+            android_file_list: 8e3,
+            android_file_read: 1e4,
+            shell: 2e4,
+            notify: 5e3,
+            file_read: 1e4,
+            file_write: 1e4,
+            file_list: 8e3
+          };
+          const timeoutMs = actionTimeouts[action] ?? 12e3;
+          const daemonResult = await sendDaemonOp(userId, op, timeoutMs);
           if (!daemonResult.ok) return { result: "error", label: "Daemon action failed", detail: daemonResult.error || "Unknown error" };
           if (action === "android_screenshot" && daemonResult.data) {
             const data = daemonResult.data;
@@ -12612,7 +12631,7 @@ You recently sent these curiosity-driven questions via Telegram. If the user's m
 ${deviceHints}
 Available actions: android_open_app, android_browse, android_screenshot, android_read_screen, android_tap, android_type, android_swipe, android_press_key, android_file_list, android_file_read, android_notifications_list. DO NOT use desktop shell/notify/file actions.
 SEARCH SHORTCUTS \u2014 use android_browse with these deep links (opens native app directly to results): YouTube search \u2192 url='vnd.youtube://results?search_query=YOUR_QUERY', Google Maps \u2192 url='geo:0,0?q=YOUR_QUERY', Spotify \u2192 url='spotify:search:YOUR_QUERY'.
-ACTION FLOW: (1) Call android_browse (or android_open_app) to open/navigate. (2) Then call android_read_screen to read what is actually visible. (3) Then respond with what you read. NEVER describe app content without calling android_read_screen first. If an op returns result:error, tell the user what failed \u2014 do NOT fabricate results or continue with the broken sequence.` : "Desktop Daemon is ACTIVE. Use shell, notify, file_read, file_write, file_list actions. ALWAYS report errors immediately if a tool returns result:error. Use daemon_diagnostic (no args) to check daemon health before multi-step sequences or when ops are failing." : `\u26A0\uFE0F NO DAEMON CONNECTED. Do NOT call daemon_action \u2014 it will fail with "daemon not connected". If the user asks to control their phone or computer, tell them exactly this: "Your phone daemon isn't connected. To fix it: (1) Open the Jarvis app \u2192 Profile \u2192 scroll to 'Android Device' \u2192 tap 'Get Pairing Code', (2) Open the Jarvis Daemon APK on your phone, (3) Make sure the Server URL is https://GameplanAI.replit.app, (4) Enter the 8-character pairing code, (5) Tap Pair. The status dot should turn green within a few seconds." Do not attempt daemon_action until they confirm it's connected.`;
+ACTION FLOW for multi-step tasks (3 turns max per response): Turn 1 = check state (android_read_screen to see what is currently on screen \u2014 skip this if you just opened the app in the SAME response). Turn 2 = act (android_tap / android_swipe / android_browse \u2014 only call android_browse if the screen shows the WRONG app is in foreground; if the right app is already open, interact with it directly). Turn 3 = confirm (android_read_screen to verify the result). NEVER re-open an app that is already on screen. NEVER describe app content without calling android_read_screen first. If an op returns result:error, tell the user what failed \u2014 do NOT fabricate results.` : "Desktop Daemon is ACTIVE. Use shell, notify, file_read, file_write, file_list actions. ALWAYS report errors immediately if a tool returns result:error. Use daemon_diagnostic (no args) to check daemon health before multi-step sequences or when ops are failing." : `\u26A0\uFE0F NO DAEMON CONNECTED. Do NOT call daemon_action \u2014 it will fail with "daemon not connected". If the user asks to control their phone or computer, tell them exactly this: "Your phone daemon isn't connected. To fix it: (1) Open the Jarvis app \u2192 Profile \u2192 scroll to 'Android Device' \u2192 tap 'Get Pairing Code', (2) Open the Jarvis Daemon APK on your phone, (3) Make sure the Server URL is https://GameplanAI.replit.app, (4) Enter the 8-character pairing code, (5) Tap Pair. The status dot should turn green within a few seconds." Do not attempt daemon_action until they confirm it's connected.`;
       const systemPrompt = buildCoachSystemPrompt(goals2 || [], stats2 || {}, history || [], calendarEvents || [], lifeContext2 || null, resolvedGmailItems, resolvedGmailConnected, slackMessages || [], slackConnected ?? false, userCommitments, coachingMode, memories, telegramMessages || [], telegramConnected ?? false, morningNoteSummary, documentsContext, crossChannelContext, soulBlock, daemonSection);
       const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
       const lastUserContent = typeof lastUserMsg?.content === "string" ? lastUserMsg.content.toLowerCase() : "";
@@ -12676,7 +12695,7 @@ ACTION FLOW: (1) Call android_browse (or android_open_app) to open/navigate. (2)
       const actionResults = [];
       let toolMessages = [];
       if (userId) {
-        const MAX_TOOL_TURNS = 4;
+        const MAX_TOOL_TURNS = 3;
         let loopFinalText = null;
         for (let turn = 0; turn < MAX_TOOL_TURNS; turn++) {
           const currentMessages = [
@@ -12814,6 +12833,30 @@ ACTION FLOW: (1) Call android_browse (or android_open_app) to open/navigate. (2)
               res.write("data: [DONE]\n\n");
               res.end();
               return;
+            }
+            if (tc.function.name === "daemon_action") {
+              if (!res.headersSent) {
+                res.setHeader("Content-Type", "text/event-stream");
+                res.setHeader("Cache-Control", "no-cache, no-transform");
+                res.setHeader("X-Accel-Buffering", "no");
+                res.setHeader("Access-Control-Allow-Origin", "*");
+                res.flushHeaders();
+              }
+              const actionLabel = {
+                android_browse: "Opening app on your phone...",
+                android_open_app: "Launching app on your phone...",
+                android_read_screen: "Reading your phone screen...",
+                android_tap: "Tapping the screen...",
+                android_swipe: "Scrolling...",
+                android_type: "Typing on your phone...",
+                android_screenshot: "Taking screenshot...",
+                android_press_key: "Pressing key...",
+                android_notifications_list: "Checking notifications..."
+              };
+              const workingMsg = actionLabel[String(args.action || "")] || "Working on your phone...";
+              res.write(`data: ${JSON.stringify({ type: "working", message: workingMsg })}
+
+`);
             }
             const execResult = await executeCoachTool(tc.function.name, args, userId);
             let linkData = {};

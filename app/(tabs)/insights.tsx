@@ -129,6 +129,15 @@ function SearchingIndicator() {
   );
 }
 
+function PhoneWorkingIndicator({ message }: { message: string }) {
+  return (
+    <Animated.View entering={FadeIn.duration(200)} style={styles.searchingBubble}>
+      <Ionicons name="phone-portrait-outline" size={13} color={Colors.primary} />
+      <Text style={[styles.searchingText, { color: Colors.primary }]}>{message}</Text>
+    </Animated.View>
+  );
+}
+
 interface ConfirmCardProps {
   pendingConfirm: PendingConfirm;
   onConfirm: () => void;
@@ -527,6 +536,8 @@ export default function InsightsScreen() {
   const [isStreaming, setIsStreaming] = useState(false);
   const [showTyping, setShowTyping] = useState(false);
   const [isSearchingWeb, setIsSearchingWeb] = useState(false);
+  const [isWorkingOnPhone, setIsWorkingOnPhone] = useState(false);
+  const [phoneWorkingMessage, setPhoneWorkingMessage] = useState('Working on your phone...');
   const [goals, setGoals] = useState<Goal[]>([]);
   const [stats, setStats] = useState<UserStats>({ streak: 0, totalCompleted: 0, bestStreak: 0 });
   const [history, setHistory] = useState<any[]>([]);
@@ -1250,6 +1261,9 @@ export default function InsightsScreen() {
                 });
               } else if (parsed.type === 'searching') {
                 setIsSearchingWeb(true);
+              } else if (parsed.type === 'working') {
+                setIsWorkingOnPhone(true);
+                setPhoneWorkingMessage(parsed.message || 'Working on your phone...');
               } else if (parsed.type === 'actions' && Array.isArray(parsed.actions)) {
                 executedActions = parsed.actions;
                 setMessages(prev => {
@@ -1264,6 +1278,7 @@ export default function InsightsScreen() {
                 queryClient.invalidateQueries({ queryKey: ['/api/data/life-context'] });
               } else if (parsed.content) {
                 setIsSearchingWeb(false);
+                setIsWorkingOnPhone(false);
                 fullContent += parsed.content;
                 const captured = fullContent;
                 setMessages(prev => {
@@ -1280,6 +1295,7 @@ export default function InsightsScreen() {
 
       setIsStreaming(false);
       setIsSearchingWeb(false);
+      setIsWorkingOnPhone(false);
 
       if (gotConfirmRequired) {
         return;
@@ -1342,6 +1358,7 @@ export default function InsightsScreen() {
       setShowTyping(false);
       setIsStreaming(false);
       setIsSearchingWeb(false);
+      setIsWorkingOnPhone(false);
       const errMsg: ChatMessage = {
         id: assistantId,
         role: 'assistant',
@@ -1780,7 +1797,7 @@ export default function InsightsScreen() {
                 setInboxCollapsed(true);
               }
             }}
-            ListHeaderComponent={isSearchingWeb ? <SearchingIndicator /> : showTyping ? <TypingDots /> : null}
+            ListHeaderComponent={isWorkingOnPhone ? <PhoneWorkingIndicator message={phoneWorkingMessage} /> : isSearchingWeb ? <SearchingIndicator /> : showTyping ? <TypingDots /> : null}
             ListFooterComponent={gmailConnected ? renderInboxSection() : null}
           />
         )}
