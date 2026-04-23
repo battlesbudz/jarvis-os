@@ -1359,12 +1359,23 @@ export default function InsightsScreen() {
       setIsStreaming(false);
       setIsSearchingWeb(false);
       setIsWorkingOnPhone(false);
-      const errMsg: ChatMessage = {
-        id: assistantId,
-        role: 'assistant',
-        content: 'Sorry, I had trouble connecting. Please try again.',
-      };
+      // If Jarvis already sent partial content (e.g. a multi-step phone task that completed
+      // but whose SSE stream was cut by a network hiccup), keep that content rather than
+      // replacing the whole message with a generic error. Only show the error string when
+      // nothing was received at all.
       setMessages(prev => {
+        const existing = prev.find(m => m.id === assistantId);
+        const alreadyHasContent = existing && existing.content && existing.content.length > 0;
+        if (alreadyHasContent) {
+          // Keep whatever partial content arrived — the task mostly worked
+          saveChatHistory(prev);
+          return prev;
+        }
+        const errMsg: ChatMessage = {
+          id: assistantId,
+          role: 'assistant',
+          content: 'Sorry, I had trouble connecting. Please try again.',
+        };
         const updated = [errMsg, ...prev.filter(m => m.id !== assistantId)];
         saveChatHistory(updated);
         return updated;
