@@ -11882,7 +11882,7 @@ async function registerRoutes(app2) {
       type: "function",
       function: {
         name: "daemon_action",
-        description: "Execute a sandboxed action on the user's paired daemon \u2014 either a desktop daemon or an Android device daemon. DESKTOP actions (when desktop daemon paired): shell, notify, file_read, file_write, file_list. ANDROID actions (when Android daemon paired): android_open_app (launch app by package name e.g. 'com.google.android.youtube'), android_browse (open URL in browser), android_screenshot (capture screen), android_read_screen (read visible UI text), android_tap (tap at x/y), android_type (type text into focused field \u2014 set submit:true to also press Search/Go/Enter after typing), android_swipe (swipe gesture), android_press_key (back/home/recents/enter), android_file_list, android_file_read, android_notifications_list (list recent notifications received on the phone \u2014 great for checking for new messages/emails without opening apps). CRITICAL ERROR HANDLING: If this tool returns result:'error', STOP IMMEDIATELY and tell the user exactly what went wrong \u2014 do NOT proceed with any further steps or pretend the action succeeded. Do NOT narrate what you plan to do before calling this tool \u2014 only confirm what actually happened after a successful result. Always call check_connections first to know which daemon type is paired.",
+        description: "Execute a sandboxed action on the user's paired daemon \u2014 either a desktop daemon or an Android device daemon. DESKTOP actions (when desktop daemon paired): shell, notify, file_read, file_write, file_list. ANDROID actions (when Android daemon paired): android_open_app (launch app by package name e.g. 'com.google.android.youtube'), android_browse (open URL in browser), android_screenshot (capture screen), android_read_screen (read visible UI text), android_tap (tap at x/y), android_type (type text into focused field \u2014 set submit:true to also press Search/Go/Enter after typing), android_swipe (swipe gesture), android_press_key (back/home/recents/enter), android_file_list, android_file_read, android_notifications_list (read current phone notifications \u2014 checks server cache first; if cache is empty, AUTOMATICALLY swipes open the notification shade, reads the screen, then closes the shade; always returns real live data, never makes up notifications). CRITICAL ERROR HANDLING: If this tool returns result:'error', STOP IMMEDIATELY and tell the user exactly what went wrong \u2014 do NOT proceed with any further steps or pretend the action succeeded. Do NOT narrate what you plan to do before calling this tool \u2014 only confirm what actually happened after a successful result. Always call check_connections first to know which daemon type is paired.",
         parameters: {
           type: "object",
           properties: {
@@ -12286,14 +12286,53 @@ ${lines.join("\n")}`);
             } else if (action === "android_notifications_list") {
               const limit = typeof args.limit === "number" ? Math.min(args.limit, 60) : 20;
               const notifs = getRecentPhoneNotifications(userId, limit);
-              if (notifs.length === 0) {
-                return { result: "success", label: "No recent notifications", detail: "The notification cache is empty. This could mean: (1) the daemon is not connected, (2) Notification Access is not granted to Jarvis Daemon (Settings > Notifications > Device & App Notifications > Jarvis Daemon), or (3) no notifications have arrived since the daemon started." };
+              if (notifs.length > 0) {
+                const formatted = notifs.map((n) => {
+                  const d = new Date(n.ts).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
+                  return `[${d}] ${n.app}: ${n.title}${n.text ? " \u2014 " + n.text.slice(0, 120) : ""}`;
+                }).join("\n");
+                return { result: "success", label: `${notifs.length} recent notification${notifs.length !== 1 ? "s" : ""} (cached)`, detail: formatted };
               }
-              const formatted = notifs.map((n) => {
-                const d = new Date(n.ts).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
-                return `[${d}] ${n.app}: ${n.title}${n.text ? " \u2014 " + n.text.slice(0, 120) : ""}`;
-              }).join("\n");
-              return { result: "success", label: `${notifs.length} recent notification${notifs.length !== 1 ? "s" : ""}`, detail: formatted };
+              const swipeOp = await sendDaemonOp(userId, {
+                type: "android_swipe",
+                x1: 540,
+                y1: 10,
+                x2: 540,
+                y2: 900,
+                durationMs: 350
+              }, 8e3);
+              if (!swipeOp.ok) {
+                return {
+                  result: "error",
+                  label: "Could not open notification shade",
+                  detail: `Swipe down failed: ${swipeOp.error || "unknown error"}. Ensure the Accessibility Service is enabled in phone Settings.`
+                };
+              }
+              await new Promise((r) => setTimeout(r, 700));
+              const readOp = await sendDaemonOp(userId, { type: "android_read_screen" }, 1e4);
+              sendDaemonOp(userId, { type: "android_press_key", key: "back" }, 5e3).catch(() => {
+              });
+              if (!readOp.ok) {
+                return {
+                  result: "error",
+                  label: "Could not read notification shade",
+                  detail: `Screen read failed after opening shade: ${readOp.error || "unknown error"}.`
+                };
+              }
+              const screenText = String(readOp.data || "").trim();
+              if (!screenText) {
+                return {
+                  result: "success",
+                  label: "Notification shade opened \u2014 screen appears empty",
+                  detail: "No text content detected on screen after opening notification shade. There may be no active notifications, or the shade did not open fully."
+                };
+              }
+              return {
+                result: "success",
+                label: "Notifications read from screen",
+                detail: `[Read by opening notification shade]
+${screenText}`
+              };
             } else if (action === "android_swipe") {
               if (typeof args.x1 !== "number" || typeof args.y1 !== "number" || typeof args.x2 !== "number" || typeof args.y2 !== "number") return { result: "error", label: "coords required", detail: "Provide x1,y1,x2,y2 for android_swipe." };
               op = { type: "android_swipe", x1: args.x1, y1: args.y1, x2: args.x2, y2: args.y2, durationMs: typeof args.durationMs === "number" ? args.durationMs : 300 };

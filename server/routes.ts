@@ -837,7 +837,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       type: "function" as const,
       function: {
         name: "daemon_action",
-        description: "Execute a sandboxed action on the user's paired daemon — either a desktop daemon or an Android device daemon. DESKTOP actions (when desktop daemon paired): shell, notify, file_read, file_write, file_list. ANDROID actions (when Android daemon paired): android_open_app (launch app by package name e.g. 'com.google.android.youtube'), android_browse (open URL in browser), android_screenshot (capture screen), android_read_screen (read visible UI text), android_tap (tap at x/y), android_type (type text into focused field — set submit:true to also press Search/Go/Enter after typing), android_swipe (swipe gesture), android_press_key (back/home/recents/enter), android_file_list, android_file_read, android_notifications_list (list recent notifications received on the phone — great for checking for new messages/emails without opening apps). CRITICAL ERROR HANDLING: If this tool returns result:'error', STOP IMMEDIATELY and tell the user exactly what went wrong — do NOT proceed with any further steps or pretend the action succeeded. Do NOT narrate what you plan to do before calling this tool — only confirm what actually happened after a successful result. Always call check_connections first to know which daemon type is paired.",
+        description: "Execute a sandboxed action on the user's paired daemon — either a desktop daemon or an Android device daemon. DESKTOP actions (when desktop daemon paired): shell, notify, file_read, file_write, file_list. ANDROID actions (when Android daemon paired): android_open_app (launch app by package name e.g. 'com.google.android.youtube'), android_browse (open URL in browser), android_screenshot (capture screen), android_read_screen (read visible UI text), android_tap (tap at x/y), android_type (type text into focused field — set submit:true to also press Search/Go/Enter after typing), android_swipe (swipe gesture), android_press_key (back/home/recents/enter), android_file_list, android_file_read, android_notifications_list (read current phone notifications — checks server cache first; if cache is empty, AUTOMATICALLY swipes open the notification shade, reads the screen, then closes the shade; always returns real live data, never makes up notifications). CRITICAL ERROR HANDLING: If this tool returns result:'error', STOP IMMEDIATELY and tell the user exactly what went wrong — do NOT proceed with any further steps or pretend the action succeeded. Do NOT narrate what you plan to do before calling this tool — only confirm what actually happened after a successful result. Always call check_connections first to know which daemon type is paired.",
         parameters: {
           type: "object",
           properties: {
@@ -1273,17 +1273,68 @@ export async function registerRoutes(app: Express): Promise<Server> {
               if (!args.text) return { result: 'error', label: 'text required', detail: 'Provide text for android_type.' };
               op = { type: 'android_type', text: String(args.text), submit: !!args.submit };
             } else if (action === 'android_notifications_list') {
-              // android_notifications_list is served from the server-side cache (no op sent to daemon)
               const limit = typeof args.limit === 'number' ? Math.min(args.limit, 60) : 20;
               const notifs = getRecentPhoneNotifications(userId, limit);
-              if (notifs.length === 0) {
-                return { result: 'success', label: 'No recent notifications', detail: 'The notification cache is empty. This could mean: (1) the daemon is not connected, (2) Notification Access is not granted to Jarvis Daemon (Settings > Notifications > Device & App Notifications > Jarvis Daemon), or (3) no notifications have arrived since the daemon started.' };
+
+              // ── Path 1: cached notifications are available — return them immediately ──
+              if (notifs.length > 0) {
+                const formatted = notifs.map(n => {
+                  const d = new Date(n.ts).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+                  return `[${d}] ${n.app}: ${n.title}${n.text ? ' — ' + n.text.slice(0, 120) : ''}`;
+                }).join('\n');
+                return { result: 'success', label: `${notifs.length} recent notification${notifs.length !== 1 ? 's' : ''} (cached)`, detail: formatted };
               }
-              const formatted = notifs.map(n => {
-                const d = new Date(n.ts).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-                return `[${d}] ${n.app}: ${n.title}${n.text ? ' — ' + n.text.slice(0, 120) : ''}`;
-              }).join('\n');
-              return { result: 'success', label: `${notifs.length} recent notification${notifs.length !== 1 ? 's' : ''}`, detail: formatted };
+
+              // ── Path 2: cache empty — physically open notification shade and read it ──
+              // Step 1: Swipe down from the top of the screen to open the notification shade.
+              // Using x=540 (center of typical 1080px screen) — works for most Android devices.
+              const swipeOp = await sendDaemonOp(userId, {
+                type: 'android_swipe',
+                x1: 540, y1: 10,
+                x2: 540, y2: 900,
+                durationMs: 350,
+              }, 8000);
+
+              if (!swipeOp.ok) {
+                return {
+                  result: 'error',
+                  label: 'Could not open notification shade',
+                  detail: `Swipe down failed: ${swipeOp.error || 'unknown error'}. Ensure the Accessibility Service is enabled in phone Settings.`,
+                };
+              }
+
+              // Step 2: Wait for the shade animation to settle.
+              await new Promise(r => setTimeout(r, 700));
+
+              // Step 3: Read the screen text via accessibility service — this captures all
+              // visible text in the notification shade without needing image recognition.
+              const readOp = await sendDaemonOp(userId, { type: 'android_read_screen' }, 10000);
+
+              // Step 4: Close the notification shade (fire-and-forget — don't block on it).
+              sendDaemonOp(userId, { type: 'android_press_key', key: 'back' }, 5000).catch(() => {});
+
+              if (!readOp.ok) {
+                return {
+                  result: 'error',
+                  label: 'Could not read notification shade',
+                  detail: `Screen read failed after opening shade: ${readOp.error || 'unknown error'}.`,
+                };
+              }
+
+              const screenText = String(readOp.data || '').trim();
+              if (!screenText) {
+                return {
+                  result: 'success',
+                  label: 'Notification shade opened — screen appears empty',
+                  detail: 'No text content detected on screen after opening notification shade. There may be no active notifications, or the shade did not open fully.',
+                };
+              }
+
+              return {
+                result: 'success',
+                label: 'Notifications read from screen',
+                detail: `[Read by opening notification shade]\n${screenText}`,
+              };
             } else if (action === 'android_swipe') {
               if (typeof args.x1 !== 'number' || typeof args.y1 !== 'number' || typeof args.x2 !== 'number' || typeof args.y2 !== 'number') return { result: 'error', label: 'coords required', detail: 'Provide x1,y1,x2,y2 for android_swipe.' };
               op = { type: 'android_swipe', x1: args.x1, y1: args.y1, x2: args.x2, y2: args.y2, durationMs: typeof args.durationMs === 'number' ? args.durationMs : 300 };
