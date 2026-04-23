@@ -172,22 +172,42 @@ class JarvisAccessibilityService : AccessibilityService() {
                             val result = if (args != null && args.isNotEmpty()) args[0] else null
                             if (result != null) {
                                 // Discover the bitmap getter at runtime (getBitmap or getHardwareBitmap)
-                                val bmp = result.javaClass.methods
+                                val rawBmp = result.javaClass.methods
                                     .firstOrNull { m ->
                                         m.parameterCount == 0 &&
                                         Bitmap::class.java.isAssignableFrom(m.returnType)
                                     }
                                     ?.invoke(result) as? Bitmap
-                                if (bmp != null) {
-                                    val soft = if (bmp.config == Bitmap.Config.HARDWARE) {
-                                        bmp.copy(Bitmap.Config.ARGB_8888, false).also { bmp.recycle() }
-                                    } else bmp
+
+                                if (rawBmp != null) {
+                                    // Step 1: Convert HARDWARE bitmap → software bitmap so we can read pixels.
+                                    // HARDWARE bitmaps are GPU-only; compressing them directly crashes.
+                                    val soft = if (rawBmp.config == Bitmap.Config.HARDWARE) {
+                                        rawBmp.copy(Bitmap.Config.ARGB_8888, false).also { rawBmp.recycle() }
+                                    } else rawBmp
+
+                                    // Step 2: Scale down to 50% — reduces memory from ~8 MB to ~2 MB
+                                    // and cuts base64 payload from ~4 MB to ~1 MB. This is the primary
+                                    // safeguard against OOM on the Galaxy Z Fold 6's large display.
+                                    val scaledW = (soft.width * 0.5f).toInt().coerceAtLeast(1)
+                                    val scaledH = (soft.height * 0.5f).toInt().coerceAtLeast(1)
+                                    val scaled = Bitmap.createScaledBitmap(soft, scaledW, scaledH, true)
+                                    if (scaled !== soft) soft.recycle()
+
+                                    // Step 3: Compress as JPEG (lossy, ~10–20× smaller than PNG).
+                                    // PNG is lossless but extremely slow and memory-hungry at this size —
+                                    // it was the root cause of the OOM crash. Quality 80 is sharp enough.
                                     val bos = ByteArrayOutputStream()
-                                    soft.compress(Bitmap.CompressFormat.PNG, 90, bos)
-                                    soft.recycle()
+                                    scaled.compress(Bitmap.CompressFormat.JPEG, 80, bos)
+                                    scaled.recycle()
                                     encoded = Base64.encodeToString(bos.toByteArray(), Base64.NO_WRAP)
+                                    Log.i(TAG, "Screenshot encoded: ${bos.size()} bytes JPEG (display $displayId, ${scaledW}×${scaledH})")
                                 }
                             }
+                        } catch (oom: OutOfMemoryError) {
+                            // Catch OOM explicitly — it is an Error, not an Exception, so the
+                            // outer catch(e: Exception) would miss it and crash the process.
+                            Log.e(TAG, "Screenshot OOM on display $displayId — bitmap too large")
                         } catch (e: Exception) {
                             Log.e(TAG, "Screenshot encode failed on display $displayId: ${e.message}")
                         } finally {
@@ -199,6 +219,7 @@ class JarvisAccessibilityService : AccessibilityService() {
                         Log.w(TAG, "takeScreenshot onFailure display=$displayId code=$code")
                         latch.countDown()
                     }
+                    else -> { /* equals/hashCode/toString — safe to ignore */ }
                 }
                 null
             }
@@ -211,8 +232,11 @@ class JarvisAccessibilityService : AccessibilityService() {
                 java.util.concurrent.Executor::class.java, callbackClass
             )
             takeMethod.invoke(this, displayId, mainExecutor, callback)
-            latch.await(8, TimeUnit.SECONDS)
+            latch.await(10, TimeUnit.SECONDS)
             encoded
+        } catch (oom: OutOfMemoryError) {
+            Log.e(TAG, "takeScreenshotForDisplay($displayId) OOM")
+            null
         } catch (e: Exception) {
             Log.e(TAG, "takeScreenshotForDisplay($displayId) exception: ${e.message}")
             null

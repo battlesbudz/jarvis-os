@@ -4,6 +4,8 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import androidx.core.app.NotificationCompat
 
@@ -12,6 +14,19 @@ object NotificationHelper {
     const val CHANNEL_ID = "jarvis_alerts_v2"
     private const val ACTION_CHANNEL_ID = "jarvis_actions"
     private var notifId = 2000
+
+    // Tapping any Jarvis completion notification brings the user back to the Jarvis chat.
+    private const val JARVIS_URL = "https://GameplanAI.replit.app"
+
+    private fun jarvisTapIntent(context: Context): PendingIntent {
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(JARVIS_URL)).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        return PendingIntent.getActivity(
+            context, 0, intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+    }
 
     fun show(context: Context, title: String, body: String) {
         createChannel(context)
@@ -23,6 +38,7 @@ object NotificationHelper {
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
+            .setContentIntent(jarvisTapIntent(context))
             .build()
         nm.notify(notifId++, notif)
     }
