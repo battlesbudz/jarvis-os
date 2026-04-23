@@ -62,8 +62,9 @@ class JarvisAccessibilityService : AccessibilityService() {
         )
         val dispatched = postAndWaitForDispatch { startActivity(intent) }
         if (!dispatched) return false
-        // Verify the target package actually came to foreground (handles Samsung silent blocks)
-        return waitForForeground(packageName, timeoutMs = 3000)
+        // Verify the target package actually came to foreground.
+        // Samsung Galaxy Fold devices have longer animation transitions — use a generous timeout.
+        return waitForForeground(packageName, timeoutMs = 6000)
     }
 
     fun browseUrl(url: String): Boolean {
@@ -93,7 +94,7 @@ class JarvisAccessibilityService : AccessibilityService() {
             }
         }
         return try {
-            latch.await(3, java.util.concurrent.TimeUnit.SECONDS)
+            latch.await(7, java.util.concurrent.TimeUnit.SECONDS)
             success
         } catch (e: InterruptedException) {
             false

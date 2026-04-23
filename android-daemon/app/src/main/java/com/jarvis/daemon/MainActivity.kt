@@ -97,6 +97,10 @@ class MainActivity : AppCompatActivity() {
             openAccessibilitySettings()
         }
 
+        binding.btnCheckNotification.setOnClickListener {
+            openNotificationListenerSettings()
+        }
+
         binding.btnCheckStorage.setOnClickListener {
             openStoragePermission()
         }
@@ -113,14 +117,14 @@ class MainActivity : AppCompatActivity() {
 
     private fun refreshLogPanel() {
         val lines = DaemonLog.getAll()
+        val count = lines.size
+        // Show newest entries at top so the user sees the most recent activity without scrolling
         binding.tvActivityLog.text = if (lines.isEmpty()) {
             "No activity yet"
         } else {
-            lines.joinToString("\n")
+            lines.reversed().joinToString("\n")
         }
-        binding.scrollActivityLog.post {
-            binding.scrollActivityLog.fullScroll(android.view.View.FOCUS_DOWN)
-        }
+        binding.tvLogCount.text = if (count > 0) "$count entries" else ""
     }
 
     override fun onResume() {
@@ -181,10 +185,16 @@ class MainActivity : AppCompatActivity() {
     private fun checkPermissionsStatus() {
         val accessibilityEnabled = isAccessibilityEnabled()
         val storageGranted = isStorageGranted()
+        val notificationListenerEnabled = isNotificationListenerEnabled()
 
-        binding.tvAccessibilityStatus.text = if (accessibilityEnabled) "✓ Enabled" else "✗ Not enabled — tap to fix"
+        binding.tvAccessibilityStatus.text = if (accessibilityEnabled) "✓ Enabled — phone control active" else "✗ Not enabled — tap Fix (REQUIRED for screen control)"
         binding.tvAccessibilityStatus.setTextColor(
             if (accessibilityEnabled) getColor(R.color.status_ok) else getColor(R.color.status_warn)
+        )
+
+        binding.tvNotificationStatus.text = if (notificationListenerEnabled) "✓ Granted — reading notifications" else "✗ Not granted — tap Fix (needed to read notifications)"
+        binding.tvNotificationStatus.setTextColor(
+            if (notificationListenerEnabled) getColor(R.color.status_ok) else getColor(R.color.status_warn)
         )
 
         binding.tvStorageStatus.text = if (storageGranted) "✓ Granted" else "✗ Not granted — tap to fix"
@@ -197,6 +207,11 @@ class MainActivity : AppCompatActivity() {
         val service = "${packageName}/${JarvisAccessibilityService::class.java.canonicalName}"
         val enabled = Settings.Secure.getString(contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: ""
         return enabled.contains(service)
+    }
+
+    private fun isNotificationListenerEnabled(): Boolean {
+        val flat = Settings.Secure.getString(contentResolver, "enabled_notification_listeners") ?: ""
+        return flat.contains(packageName)
     }
 
     private fun isStorageGranted(): Boolean {
@@ -213,6 +228,21 @@ class MainActivity : AppCompatActivity() {
             .setMessage("1. Tap 'Installed apps' or scroll to find 'Jarvis Daemon'\n2. Tap it and enable the toggle\n3. Confirm any warnings\n\nThis allows Jarvis to read your screen and perform actions on your behalf.")
             .setPositiveButton("Open Settings") { _, _ ->
                 startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun openNotificationListenerSettings() {
+        AlertDialog.Builder(this)
+            .setTitle("Grant Notification Access")
+            .setMessage("1. Find 'Jarvis Daemon' in the list\n2. Tap it and enable 'Allow notification access'\n3. Confirm any warnings\n\nThis allows Jarvis to read your phone's notifications.")
+            .setPositiveButton("Open Settings") { _, _ ->
+                try {
+                    startActivity(Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS"))
+                } catch (e: Exception) {
+                    startActivity(Intent(Settings.ACTION_SETTINGS))
+                }
             }
             .setNegativeButton("Cancel", null)
             .show()

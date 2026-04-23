@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<ScrollView
+<androidx.core.widget.NestedScrollView
     xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
@@ -105,6 +105,49 @@
 
             <Button
                 android:id="@+id/btnCheckAccessibility"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Fix"
+                android:textSize="12sp"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton" />
+        </LinearLayout>
+
+        <!-- Notification Listener permission row -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:background="@drawable/card_background"
+            android:padding="14dp"
+            android:layout_marginBottom="10dp"
+            android:gravity="center_vertical">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Notification Access"
+                    android:textSize="14sp"
+                    android:textStyle="bold"
+                    android:textColor="@color/text_primary"
+                    android:layout_marginBottom="2dp" />
+
+                <TextView
+                    android:id="@+id/tvNotificationStatus"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Checking…"
+                    android:textSize="12sp"
+                    android:textColor="@color/status_warn" />
+            </LinearLayout>
+
+            <Button
+                android:id="@+id/btnCheckNotification"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="Fix"
@@ -235,15 +278,30 @@
             android:layout_marginTop="8dp"
             android:layout_marginBottom="20dp" />
 
-        <!-- Activity log section -->
-        <TextView
+        <!-- Activity log section — newest entries shown at top -->
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Recent Activity"
-            android:textSize="16sp"
-            android:textStyle="bold"
-            android:textColor="@color/text_primary"
-            android:layout_marginBottom="8dp" />
+            android:orientation="horizontal"
+            android:layout_marginBottom="8dp"
+            android:gravity="center_vertical">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Recent Activity"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_primary" />
+
+            <TextView
+                android:id="@+id/tvLogCount"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textSize="11sp"
+                android:textColor="@color/text_secondary" />
+        </LinearLayout>
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -251,25 +309,18 @@
             android:orientation="vertical"
             android:background="@drawable/card_background"
             android:padding="12dp"
-            android:layout_marginBottom="24dp">
+            android:layout_marginBottom="32dp">
 
-            <ScrollView
-                android:id="@+id/scrollActivityLog"
+            <TextView
+                android:id="@+id/tvActivityLog"
                 android:layout_width="match_parent"
-                android:layout_height="180dp"
-                android:scrollbarStyle="insideInset">
-
-                <TextView
-                    android:id="@+id/tvActivityLog"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="No activity yet"
-                    android:textSize="11sp"
-                    android:textColor="@color/text_secondary"
-                    android:fontFamily="monospace"
-                    android:lineSpacingMultiplier="1.3" />
-            </ScrollView>
+                android:layout_height="wrap_content"
+                android:text="No activity yet"
+                android:textSize="11sp"
+                android:textColor="@color/text_secondary"
+                android:fontFamily="monospace"
+                android:lineSpacingMultiplier="1.4" />
         </LinearLayout>
 
     </LinearLayout>
-</ScrollView>
+</androidx.core.widget.NestedScrollView>
