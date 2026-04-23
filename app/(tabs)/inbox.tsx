@@ -77,6 +77,29 @@ function getSenderName(sender: string | null): string {
   return sender.replace(/<.*>/, '').trim() || sender;
 }
 
+interface SourceConfig {
+  label: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  color: string;
+  bgColor: string;
+}
+
+function getSourceConfig(sourceType: string): SourceConfig {
+  switch (sourceType) {
+    case 'email':
+    case 'gmail':
+      return { label: 'Gmail', icon: 'mail', color: '#EA4335', bgColor: '#EA433515' };
+    case 'calendar':
+      return { label: 'Calendar', icon: 'calendar', color: Colors.primary, bgColor: Colors.primary + '15' };
+    case 'outlook':
+      return { label: 'Outlook', icon: 'mail', color: '#0078D4', bgColor: '#0078D415' };
+    case 'telegram':
+      return { label: 'Telegram', icon: 'paper-plane', color: '#2AABEE', bgColor: '#2AABEE15' };
+    default:
+      return { label: sourceType || 'Inbox', icon: 'notifications', color: Colors.textSecondary, bgColor: Colors.surface };
+  }
+}
+
 export default function InboxScreen() {
   const insets = useSafeAreaInsets();
   const isWeb = Platform.OS === 'web';
@@ -243,25 +266,26 @@ export default function InboxScreen() {
 
   const renderItem = ({ item, index }: { item: InboxItem; index: number }) => {
     const senderName = getSenderName(item.sender);
-    const isEmail = item.sourceType === 'email';
+    const src = getSourceConfig(item.sourceType);
     const actions = item.suggestedActions || [];
 
     return (
       <Animated.View entering={FadeInDown.duration(300).delay(index * 60)}>
         <View style={styles.card}>
           <View style={styles.cardHeader}>
-            <View style={[styles.sourceIcon, { backgroundColor: isEmail ? '#EA433515' : Colors.primary + '15' }]}>
-              <Ionicons
-                name={isEmail ? 'mail' : 'calendar'}
-                size={18}
-                color={isEmail ? '#EA4335' : Colors.primary}
-              />
+            <View style={[styles.sourceIcon, { backgroundColor: src.bgColor }]}>
+              <Ionicons name={src.icon} size={18} color={src.color} />
             </View>
             <View style={styles.cardHeaderText}>
               <Text style={styles.senderName} numberOfLines={1}>{senderName}</Text>
-              <Text style={styles.timestamp}>
-                {new Date(item.surfacedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
-              </Text>
+              <View style={styles.cardHeaderRight}>
+                <View style={[styles.sourceBadge, { backgroundColor: src.bgColor }]}>
+                  <Text style={[styles.sourceBadgeText, { color: src.color }]}>{src.label}</Text>
+                </View>
+                <Text style={styles.timestamp}>
+                  {new Date(item.surfacedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+                </Text>
+              </View>
             </View>
           </View>
 
@@ -725,11 +749,26 @@ const styles = StyleSheet.create({
     color: Colors.text,
     flex: 1,
   },
+  cardHeaderRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flexShrink: 0,
+  },
+  sourceBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 5,
+  },
+  sourceBadgeText: {
+    fontSize: 10,
+    fontFamily: 'Inter_600SemiBold',
+    letterSpacing: 0.3,
+  },
   timestamp: {
     fontSize: 12,
     fontFamily: 'Inter_400Regular',
     color: Colors.textTertiary,
-    marginLeft: 8,
   },
   subject: {
     fontSize: 15,
