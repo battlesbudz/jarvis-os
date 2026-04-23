@@ -397,6 +397,17 @@ export const goalTrees = pgTable("goal_trees", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
+export const jarvisScheduledTasks = pgTable("jarvis_scheduled_tasks", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  title: text("title").notNull(),
+  description: text("description"),
+  scheduledAt: timestamp("scheduled_at").notNull(),
+  recurrence: varchar("recurrence"),
+  completedAt: timestamp("completed_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
 export const agentJobs = pgTable("agent_jobs", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),

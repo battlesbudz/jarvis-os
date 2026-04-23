@@ -16,6 +16,7 @@ import { sendEmailTool } from "./sendEmail";
 import { fetchEmailsTool } from "./fetchEmails";
 import { connectChannelTool } from "./connectChannel";
 import { discordPostTool } from "./discordPost";
+import { scheduleJarvisTaskTool } from "./scheduleJarvisTask";
 
 export const ALL_TOOLS: AgentTool[] = [
   webSearchTool,
@@ -39,6 +40,7 @@ export const ALL_TOOLS: AgentTool[] = [
   fetchEmailsTool,
   connectChannelTool,
   discordPostTool,
+  scheduleJarvisTaskTool,
 ];
 
 const TOOL_INDEX = new Map(ALL_TOOLS.map((t) => [t.name, t]));

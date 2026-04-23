@@ -3506,11 +3506,77 @@ Return ONLY the JSON object.`;
       const items = await db
         .select()
         .from(schema.inboxItems)
-        .where(and(eq(schema.inboxItems.userId, userId), eq(schema.inboxItems.status, "pending")));
+        .where(and(eq(schema.inboxItems.userId, userId), eq(schema.inboxItems.status, "pending")))
+        .orderBy(desc(schema.inboxItems.surfacedAt));
       res.json(items);
     } catch (error) {
       console.error("Error fetching inbox items:", error);
       res.status(500).json({ error: "Failed to fetch inbox items" });
+    }
+  });
+
+  // ── Jarvis Scheduled Tasks (Mission Control calendar) ──────────────────
+  app.get("/api/jarvis/scheduled-tasks", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const tasks = await db
+        .select()
+        .from(schema.jarvisScheduledTasks)
+        .where(eq(schema.jarvisScheduledTasks.userId, userId))
+        .orderBy(schema.jarvisScheduledTasks.scheduledAt);
+      res.json(tasks);
+    } catch (err) {
+      console.error("Error fetching jarvis scheduled tasks:", err);
+      res.status(500).json({ error: "Failed to fetch scheduled tasks" });
+    }
+  });
+
+  app.post("/api/jarvis/scheduled-tasks", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const { title, description, scheduledAt, recurrence } = req.body;
+      if (!title || !scheduledAt) return res.status(400).json({ error: "title and scheduledAt are required" });
+      const [task] = await db
+        .insert(schema.jarvisScheduledTasks)
+        .values({ userId, title, description: description || null, scheduledAt: new Date(scheduledAt), recurrence: recurrence || null })
+        .returning();
+      res.json(task);
+    } catch (err) {
+      console.error("Error creating jarvis scheduled task:", err);
+      res.status(500).json({ error: "Failed to create scheduled task" });
+    }
+  });
+
+  app.patch("/api/jarvis/scheduled-tasks/:id/complete", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const { id } = req.params;
+      await db
+        .update(schema.jarvisScheduledTasks)
+        .set({ completedAt: new Date() })
+        .where(and(eq(schema.jarvisScheduledTasks.id, id), eq(schema.jarvisScheduledTasks.userId, userId)));
+      res.json({ ok: true });
+    } catch (err) {
+      console.error("Error completing jarvis scheduled task:", err);
+      res.status(500).json({ error: "Failed to complete task" });
+    }
+  });
+
+  app.delete("/api/jarvis/scheduled-tasks/:id", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const { id } = req.params;
+      await db
+        .delete(schema.jarvisScheduledTasks)
+        .where(and(eq(schema.jarvisScheduledTasks.id, id), eq(schema.jarvisScheduledTasks.userId, userId)));
+      res.json({ ok: true });
+    } catch (err) {
+      console.error("Error deleting jarvis scheduled task:", err);
+      res.status(500).json({ error: "Failed to delete task" });
     }
   });
 
