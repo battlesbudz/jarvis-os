@@ -13,6 +13,7 @@ import android.util.Base64
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import androidx.annotation.RequiresApi
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
@@ -115,23 +116,20 @@ class JarvisAccessibilityService : AccessibilityService() {
     }
 
     // ── Screenshot via AccessibilityService.takeScreenshot() (API 30+) ──────
-    // Uses reflection throughout to avoid compile-time dependency on the
-    // TakeScreenshotCallback / ScreenshotResult nested types (their exact
-    // method names vary by SDK version and are unavailable at compile time).
+    // Uses the public SDK API directly (no reflection) for reliability on
+    // Samsung Android 14/15 where reflection-based approaches silently fail.
     //
     // Galaxy Z Fold 6 note: foldable phones expose two physical displays.
-    // We detect the display ID from the currently focused accessibility window
-    // instead of hardcoding 0 (which may be the inner screen while the user
-    // is on the cover screen, or vice versa). If the detected display fails we
-    // fall back through all known display IDs (0, 1, 2) before giving up.
+    // We detect the active display ID from the focused accessibility window and
+    // fall back through display IDs 0 and 1 if detection fails.
+    @RequiresApi(Build.VERSION_CODES.R)
     fun takeScreenshotBase64(): String? {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
             Log.w(TAG, "Screenshot requires Android 11+")
             return null
         }
 
-        // Determine which display is currently showing content.
-        // AccessibilityWindowInfo.displayId is API 30+ — safe here.
+        // Determine which display is currently active.
         val activeDisplayId: Int = try {
             val wins = windows
             val focused = wins?.firstOrNull { it.isFocused }
@@ -143,9 +141,7 @@ class JarvisAccessibilityService : AccessibilityService() {
             0
         }
 
-        // Build a priority list: active display first, then any others we haven't tried.
         val displayCandidates = (listOf(activeDisplayId) + listOf(0, 1)).distinct()
-
         for (displayId in displayCandidates) {
             val result = takeScreenshotForDisplay(displayId)
             if (result != null) {
@@ -157,81 +153,56 @@ class JarvisAccessibilityService : AccessibilityService() {
         return null
     }
 
+    @RequiresApi(Build.VERSION_CODES.R)
     private fun takeScreenshotForDisplay(displayId: Int): String? {
         return try {
             val latch = CountDownLatch(1)
             var encoded: String? = null
 
-            val callbackClass = Class.forName(
-                "android.accessibilityservice.AccessibilityService\$TakeScreenshotCallback"
-            )
-            val handler = java.lang.reflect.InvocationHandler { _, method, args ->
-                when (method.name) {
-                    "onSuccess" -> {
+            // Use the public SDK API directly — avoids reflection which silently fails
+            // on Samsung OneUI 6/7 (Android 14/15) due to internal class name changes.
+            takeScreenshot(displayId, mainExecutor,
+                object : AccessibilityService.TakeScreenshotCallback {
+
+                    override fun onSuccess(result: AccessibilityService.ScreenshotResult) {
                         try {
-                            val result = if (args != null && args.isNotEmpty()) args[0] else null
-                            if (result != null) {
-                                // Discover the bitmap getter at runtime (getBitmap or getHardwareBitmap)
-                                val rawBmp = result.javaClass.methods
-                                    .firstOrNull { m ->
-                                        m.parameterCount == 0 &&
-                                        Bitmap::class.java.isAssignableFrom(m.returnType)
-                                    }
-                                    ?.invoke(result) as? Bitmap
+                            val rawBmp: Bitmap = result.hardwareBitmap
 
-                                if (rawBmp != null) {
-                                    // Step 1: Convert HARDWARE bitmap → software bitmap so we can read pixels.
-                                    // HARDWARE bitmaps are GPU-only; compressing them directly crashes.
-                                    val soft = if (rawBmp.config == Bitmap.Config.HARDWARE) {
-                                        rawBmp.copy(Bitmap.Config.ARGB_8888, false).also { rawBmp.recycle() }
-                                    } else rawBmp
+                            // Convert HARDWARE bitmap → ARGB_8888 so pixels are CPU-readable.
+                            val soft = if (rawBmp.config == Bitmap.Config.HARDWARE) {
+                                rawBmp.copy(Bitmap.Config.ARGB_8888, false).also { rawBmp.recycle() }
+                            } else rawBmp
 
-                                    // Step 2: Scale down to 50% — reduces memory from ~8 MB to ~2 MB
-                                    // and cuts base64 payload from ~4 MB to ~1 MB. This is the primary
-                                    // safeguard against OOM on the Galaxy Z Fold 6's large display.
-                                    val scaledW = (soft.width * 0.5f).toInt().coerceAtLeast(1)
-                                    val scaledH = (soft.height * 0.5f).toInt().coerceAtLeast(1)
-                                    val scaled = Bitmap.createScaledBitmap(soft, scaledW, scaledH, true)
-                                    if (scaled !== soft) soft.recycle()
+                            // Scale to 50% — reduces ~8 MB ARGB bitmap to ~2 MB before encoding.
+                            // This is the key safeguard against OOM on Galaxy Z Fold 6's large display.
+                            val scaledW = (soft.width * 0.5f).toInt().coerceAtLeast(1)
+                            val scaledH = (soft.height * 0.5f).toInt().coerceAtLeast(1)
+                            val scaled = Bitmap.createScaledBitmap(soft, scaledW, scaledH, true)
+                            if (scaled !== soft) soft.recycle()
 
-                                    // Step 3: Compress as JPEG (lossy, ~10–20× smaller than PNG).
-                                    // PNG is lossless but extremely slow and memory-hungry at this size —
-                                    // it was the root cause of the OOM crash. Quality 80 is sharp enough.
-                                    val bos = ByteArrayOutputStream()
-                                    scaled.compress(Bitmap.CompressFormat.JPEG, 80, bos)
-                                    scaled.recycle()
-                                    encoded = Base64.encodeToString(bos.toByteArray(), Base64.NO_WRAP)
-                                    Log.i(TAG, "Screenshot encoded: ${bos.size()} bytes JPEG (display $displayId, ${scaledW}×${scaledH})")
-                                }
-                            }
+                            // JPEG quality 80 — 10-20× smaller than PNG, visually sharp.
+                            val bos = ByteArrayOutputStream()
+                            scaled.compress(Bitmap.CompressFormat.JPEG, 80, bos)
+                            scaled.recycle()
+                            encoded = Base64.encodeToString(bos.toByteArray(), Base64.NO_WRAP)
+                            Log.i(TAG, "Screenshot: ${bos.size()} bytes JPEG (display $displayId, ${scaledW}×${scaledH})")
                         } catch (oom: OutOfMemoryError) {
-                            // Catch OOM explicitly — it is an Error, not an Exception, so the
-                            // outer catch(e: Exception) would miss it and crash the process.
-                            Log.e(TAG, "Screenshot OOM on display $displayId — bitmap too large")
+                            Log.e(TAG, "Screenshot OOM on display $displayId")
                         } catch (e: Exception) {
-                            Log.e(TAG, "Screenshot encode failed on display $displayId: ${e.message}")
+                            Log.e(TAG, "Screenshot encode error display $displayId: ${e.message}")
                         } finally {
                             latch.countDown()
                         }
                     }
-                    "onFailure" -> {
-                        val code = if (args != null && args.isNotEmpty()) args[0] else "?"
-                        Log.w(TAG, "takeScreenshot onFailure display=$displayId code=$code")
+
+                    override fun onFailure(errorCode: Int) {
+                        // Error codes: 1=UNKNOWN, 2=TIMEOUT, 3=SECURE_WINDOW_NOT_ALLOWED, 4=NOT_WHITELISTED
+                        Log.w(TAG, "takeScreenshot onFailure display=$displayId code=$errorCode")
                         latch.countDown()
                     }
-                    else -> { /* equals/hashCode/toString — safe to ignore */ }
                 }
-                null
-            }
-            val callback = java.lang.reflect.Proxy.newProxyInstance(
-                callbackClass.classLoader, arrayOf(callbackClass), handler
             )
 
-            val takeMethod = AccessibilityService::class.java.getMethod(
-                "takeScreenshot", Int::class.java,
-                java.util.concurrent.Executor::class.java, callbackClass
-            )
-            takeMethod.invoke(this, displayId, mainExecutor, callback)
             latch.await(10, TimeUnit.SECONDS)
             encoded
         } catch (oom: OutOfMemoryError) {
