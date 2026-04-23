@@ -33,6 +33,16 @@ jobs:
           printf "8933bad161af4178b1185d1a37fbf41ea5269c55\nd56f5187479451eabf01fb78af6dfcb131a6481e\n24333f8a63b6825ea9c5514f83c2829b004d1fee\n" > "$SDK/licenses/android-sdk-license"
           printf "84831b9409646a918e30573bab4c9c91346d8abd\n" > "$SDK/licenses/android-sdk-preview-license"
 
+      # Install Gradle 8.4 directly — avoids two problems:
+      # (1) setup-gradle@v4 action times out fetching version metadata
+      # (2) system Gradle 9.4.1 is incompatible with this project's AGP version
+      # (3) gradlew wrapper script has a shell quoting bug on Linux CI runners
+      - name: Install Gradle 8.4
+        run: |
+          wget -q https://services.gradle.org/distributions/gradle-8.4-bin.zip -O /tmp/gradle.zip
+          unzip -q /tmp/gradle.zip -d /opt
+          echo "/opt/gradle-8.4/bin" >> $GITHUB_PATH
+
       # Generate the keystore ONCE on the first run and commit it back.
       # Every subsequent run finds it in the repo and skips generation.
       # Same key → same signature → Android accepts updates without uninstall.
