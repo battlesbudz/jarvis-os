@@ -799,24 +799,32 @@ export default function MissionControlScreen() {
         {scheduledTasks.length === 0 && calendarEvents.length === 0 ? (
           <Text style={[styles.emptyText, { margin: 24 }]}>No scheduled tasks or calendar events. Ask Jarvis to schedule something.</Text>
         ) : (
-          scheduledTasks.map(t => (
-            <View key={t.id} style={[styles.modalItemRow, { borderLeftColor: isOverdue(t.scheduledAt) && !t.completedAt ? Colors.error : Colors.cyan }]}>
-              <View style={styles.modalItemContent}>
-                <Text style={styles.modalItemTitle}>{t.title}</Text>
-                {t.description && <Text style={styles.modalItemSub}>{t.description}</Text>}
-                <Text style={[styles.modalItemMeta, isOverdue(t.scheduledAt) && !t.completedAt && { color: Colors.error }]}>
-                  {formatScheduledAt(t.scheduledAt)}
-                  {t.recurrence ? ` · ${t.recurrence}` : ''}
-                  {t.completedAt ? ' · ✓ done' : ''}
-                </Text>
+          scheduledTasks.map(t => {
+            const done = !!t.completedAt;
+            const overdue = !done && isOverdue(t.scheduledAt);
+            const statusColor = done ? Colors.success : overdue ? Colors.error : Colors.textTertiary;
+            const statusIcon = done ? 'checkmark-circle' : overdue ? 'warning' : 'time-outline';
+            return (
+              <View key={t.id} style={[styles.modalItemRow, { borderLeftColor: done ? Colors.success : overdue ? Colors.error : Colors.cyan }]}>
+                <View style={{ alignItems: 'center', justifyContent: 'center', marginRight: 8 }}>
+                  <Ionicons name={statusIcon as any} size={16} color={statusColor} />
+                </View>
+                <View style={styles.modalItemContent}>
+                  <Text style={[styles.modalItemTitle, done && { opacity: 0.5, textDecorationLine: 'line-through' }]}>{t.title}</Text>
+                  {t.description && <Text style={styles.modalItemSub}>{t.description}</Text>}
+                  <Text style={[styles.modalItemMeta, overdue && { color: Colors.error }]}>
+                    {formatScheduledAt(t.scheduledAt)}
+                    {t.recurrence ? ` · ${t.recurrence}` : ''}
+                  </Text>
+                </View>
+                {!done && (
+                  <Pressable onPress={() => handleDeleteScheduledTask(t.id)} style={styles.modalItemDelete}>
+                    <Ionicons name="trash-outline" size={16} color={Colors.error} />
+                  </Pressable>
+                )}
               </View>
-              {!t.completedAt && (
-                <Pressable onPress={() => handleDeleteScheduledTask(t.id)} style={styles.modalItemDelete}>
-                  <Ionicons name="trash-outline" size={16} color={Colors.error} />
-                </Pressable>
-              )}
-            </View>
-          ))
+            );
+          })
         )}
       </FullModal>
 
