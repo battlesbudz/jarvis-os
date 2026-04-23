@@ -49,7 +49,8 @@ interface Deliverable {
   id: string;
   type: string;
   title: string;
-  content: string;
+  summary?: string;
+  body: string;
   status: string;
   createdAt: string;
 }
@@ -185,8 +186,11 @@ function Panel({ title, icon, accent, count, loading, onViewAll, onAdd, children
 
 // Task row (for TODAY panel)
 
+const PRIORITY_COLOR: Record<string, string> = { high: Colors.error, medium: Colors.warning, low: Colors.textTertiary };
+
 function TaskRow({ task, onToggle }: { task: Task; onToggle: () => void }) {
   const color = getCategoryColor(task.category);
+  const priorityColor = PRIORITY_COLOR[task.priority] ?? Colors.textTertiary;
   return (
     <Pressable style={styles.taskRow} onPress={onToggle}>
       <View style={[styles.taskCheck, task.completed && { backgroundColor: color, borderColor: color }]}>
@@ -200,6 +204,8 @@ function TaskRow({ task, onToggle }: { task: Task; onToggle: () => void }) {
           {task.time && <Text style={styles.taskMetaText}>{task.time}</Text>}
           <View style={[styles.catDot, { backgroundColor: color }]} />
           <Text style={[styles.taskMetaText, { color }]}>{task.category}</Text>
+          <View style={[styles.catDot, { backgroundColor: priorityColor }]} />
+          <Text style={[styles.taskMetaText, { color: priorityColor }]}>{task.priority}</Text>
         </View>
       </View>
     </Pressable>
@@ -280,6 +286,7 @@ export default function MissionControlScreen() {
   const [newTaskModal, setNewTaskModal] = useState(false);
   const [brainDumpModal, setBrainDumpModal] = useState(false);
   const [blockerModal, setBlockerModal] = useState(false);
+  const [blockerTask, setBlockerTask] = useState<Task | null>(null);
 
   // ── Add Scheduled Task form ──
   const [newTitle, setNewTitle] = useState('');
@@ -457,7 +464,9 @@ export default function MissionControlScreen() {
   }, []);
 
   // ── Computed ──
-  const todayTasks = plan?.tasks ?? [];
+  const PRIORITY_ORDER: Record<string, number> = { high: 0, medium: 1, low: 2 };
+  const rawTodayTasks = plan?.tasks ?? [];
+  const todayTasks = [...rawTodayTasks].sort((a, b) => (PRIORITY_ORDER[a.priority] ?? 2) - (PRIORITY_ORDER[b.priority] ?? 2));
   const completedCount = todayTasks.filter(t => t.completed).length;
   const totalCount = todayTasks.length;
   const completionPct = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
@@ -532,7 +541,7 @@ export default function MissionControlScreen() {
             {pendingScheduled.length === 0 ? (
               <Text style={styles.emptyText}>No upcoming scheduled tasks. Ask Jarvis to schedule something for you.</Text>
             ) : (
-              pendingScheduled.slice(0, 4).map(t => (
+              pendingScheduled.slice(0, 5).map(t => (
                 <View key={t.id} style={styles.scheduleRow}>
                   <View style={[styles.scheduleIcon, { backgroundColor: isOverdue(t.scheduledAt) ? Colors.errorDim : Colors.cyanDim }]}>
                     <Ionicons name="time-outline" size={14} color={isOverdue(t.scheduledAt) ? Colors.error : Colors.cyan} />
@@ -579,7 +588,7 @@ export default function MissionControlScreen() {
                   </View>
                   <Text style={[styles.progressPct, { color: Colors.violet }]}>{completionPct}%</Text>
                 </View>
-                {todayTasks.slice(0, 4).map((t, i) => (
+                {todayTasks.slice(0, 5).map((t, i) => (
                   <TaskRow key={t.id} task={t} onToggle={() => handleToggleTask(t, i)} />
                 ))}
               </>
@@ -848,9 +857,17 @@ export default function MissionControlScreen() {
               <View style={styles.modalItemContent}>
                 <Text style={[styles.modalItemTitle, t.completed && { opacity: 0.4, textDecorationLine: 'line-through' }]}>{t.title}</Text>
                 {t.description && <Text style={styles.modalItemSub} numberOfLines={2}>{t.description}</Text>}
-                <Text style={styles.modalItemMeta}>
-                  {t.category}{t.time ? ` · ${t.time}` : ''}
-                </Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                  <Text style={styles.modalItemMeta}>{t.category}{t.time ? ` · ${t.time}` : ''}</Text>
+                  <View style={[styles.catDot, { backgroundColor: PRIORITY_COLOR[t.priority] ?? Colors.textTertiary }]} />
+                  <Text style={[styles.modalItemMeta, { color: PRIORITY_COLOR[t.priority] ?? Colors.textTertiary }]}>{t.priority}</Text>
+                </View>
+                {!t.completed && (
+                  <Pressable style={styles.blockerBtn} onPress={() => { setBlockerTask(t); setBlockerModal(true); }}>
+                    <Ionicons name="warning-outline" size={10} color={Colors.warning} />
+                    <Text style={styles.blockerBtnText}>Report Blocker</Text>
+                  </Pressable>
+                )}
               </View>
             </View>
           ))
@@ -896,7 +913,7 @@ export default function MissionControlScreen() {
                   <Text style={[styles.typeBadgeText, { color: Colors.violet }]}>{d.type?.toUpperCase()}</Text>
                 </View>
                 <Text style={styles.modalItemTitle}>{d.title}</Text>
-                {d.content && <Text style={styles.modalItemSub} numberOfLines={4}>{d.content}</Text>}
+                {(d.summary || d.body) && <Text style={styles.modalItemSub} numberOfLines={4}>{d.summary ?? d.body}</Text>}
                 <View style={styles.deliverableActions}>
                   <Pressable style={styles.approveBtn} onPress={() => handleApproveDeliverable(d.id)}>
                     <Ionicons name="checkmark" size={13} color={Colors.success} />
@@ -970,6 +987,16 @@ export default function MissionControlScreen() {
         onClose={() => setBrainDumpModal(false)}
         onSaveToToday={async (_text) => { await loadApi(); }}
         onSaveToInbox={async (_text) => { await loadApi(); }}
+      />
+      <BlockerModal
+        visible={blockerModal}
+        task={blockerTask}
+        onClose={() => { setBlockerModal(false); setBlockerTask(null); }}
+        onSolved={(_task, _type, _suggestion) => {
+          setBlockerModal(false);
+          setBlockerTask(null);
+          loadApi();
+        }}
       />
     </View>
   );
@@ -1579,6 +1606,17 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontFamily: 'Inter_500Medium',
     color: Colors.textTertiary,
+  },
+  blockerBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 4,
+  },
+  blockerBtnText: {
+    fontSize: 10,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.warning,
   },
   deliverableActions: {
     flexDirection: 'row',
