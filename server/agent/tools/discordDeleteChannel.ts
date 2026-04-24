@@ -5,35 +5,60 @@ export const discordDeleteChannelTool: AgentTool = {
   name: "discord_delete_channel",
   description:
     "Delete a text channel from the user's Discord server by name or ID. " +
-    "Use this when the user asks Jarvis to delete a channel, remove a duplicate channel, or clean up accidentally created channels. " +
-    "You MUST confirm the channel name (and server if there is any ambiguity) with the user before calling this tool — deletion is permanent. " +
-    "Only text channels can be deleted; categories and voice channels are not supported. " +
-    "You can resolve duplicates by asking the user which copy to keep (e.g. 'which #thinking should I delete?') and then passing the channelId of the unwanted one.",
+    "IMPORTANT: You MUST first tell the user the exact channel name and server you will delete, " +
+    "then wait for them to explicitly say yes/confirm before calling this tool with confirmed=true. " +
+    "Only call with confirmed=true after the user has given explicit approval in this conversation. " +
+    "If channelId is not known, pass channelName first — if there are duplicates, the tool will " +
+    "return all matching channel IDs so you can ask the user which copy to remove. " +
+    "Only text channels can be deleted; categories and voice channels are not supported.",
   parameters: {
     type: "object",
     properties: {
+      confirmed: {
+        type: "boolean",
+        description:
+          "REQUIRED. Must be true. Only pass true after the user has explicitly confirmed " +
+          "the deletion (channel name + server) in this conversation. Never pass true speculatively.",
+      },
       channelName: {
         type: "string",
         description:
           "The channel name to delete (e.g. 'thinking', '🧠thinking'). " +
-          "Provide either channelName or channelId — channelId is preferred when the user is targeting one specific channel among duplicates.",
+          "Omit if channelId is provided. If multiple channels share this name the tool " +
+          "will return a disambiguation list instead of deleting.",
       },
       channelId: {
         type: "string",
         description:
-          "The exact Discord channel ID to delete. Prefer this over channelName when there are duplicates so the correct channel is targeted.",
+          "The exact Discord channel ID to delete. Preferred over channelName when " +
+          "targeting one specific channel among duplicates.",
       },
       guildId: {
         type: "string",
         description:
-          "Optional Discord server (guild) ID. If omitted, the bot's first connected server is used.",
+          "Optional Discord server (guild) ID. Must match the user's linked Jarvis server — " +
+          "deletion in any other server is refused.",
       },
     },
-    required: [],
+    required: ["confirmed"],
   },
 
-  async execute(args: { channelName?: string; channelId?: string; guildId?: string }, ctx) {
+  async execute(
+    args: { confirmed?: boolean; channelName?: string; channelId?: string; guildId?: string },
+    ctx,
+  ) {
     const { userId } = ctx;
+
+    // Hard confirmation gate — must be explicitly true
+    if (!args.confirmed) {
+      return {
+        ok: false,
+        content:
+          "I need you to confirm the deletion first. Please tell me the channel name and server " +
+          "you'd like to delete, and I'll ask for your approval before proceeding.",
+        label: "discord_delete_channel: confirmation required",
+      };
+    }
 
     if (!args.channelName && !args.channelId) {
       return {
@@ -48,6 +73,20 @@ export const discordDeleteChannelTool: AgentTool = {
       channelId: args.channelId,
       guildId: args.guildId,
     });
+
+    // Disambiguation: multiple channels share the same name
+    if (result.ambiguous && result.matches) {
+      const list = result.matches
+        .map((m, i) => `${i + 1}. #${m.name} (ID: \`${m.id}\`)`)
+        .join("\n");
+      return {
+        ok: false,
+        content:
+          `There are ${result.matches.length} channels named **#${args.channelName}**:\n${list}\n\n` +
+          `Which one should I delete? Please confirm the channel ID and I'll remove it.`,
+        label: `discord_delete_channel: ambiguous — ${result.matches.length} matches for "${args.channelName}"`,
+      };
+    }
 
     if (!result.ok) {
       return {
