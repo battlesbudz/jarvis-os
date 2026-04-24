@@ -584,6 +584,77 @@ export async function registerRoutes(app: Express): Promise<Server> {
   registerDiscordScheduleRoutes(app);
   app.use("/api/drive", driveRouter);
 
+  // ── Jarvis Ego — Dashboard API ─────────────────────────────────────────────
+
+  app.get("/api/ego/dashboard", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+
+      const { analyseEgo, getISOWeekMonday } = await import("./intelligence/ego");
+      const weekOf = getISOWeekMonday(new Date());
+      const analysis = await analyseEgo(userId, weekOf);
+
+      const latestReport = await db
+        .select()
+        .from(schema.egoWeeklyReports)
+        .where(eq(schema.egoWeeklyReports.userId, userId))
+        .orderBy(desc(schema.egoWeeklyReports.createdAt))
+        .limit(1);
+
+      res.json({
+        analysis,
+        latestReport: latestReport[0] ?? null,
+      });
+    } catch (err) {
+      console.error("[Ego] dashboard failed:", err);
+      res.status(500).json({ error: "Failed to load ego dashboard" });
+    }
+  });
+
+  app.get("/api/ego/reports", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+
+      const reports = await db
+        .select()
+        .from(schema.egoWeeklyReports)
+        .where(eq(schema.egoWeeklyReports.userId, userId))
+        .orderBy(desc(schema.egoWeeklyReports.createdAt))
+        .limit(12);
+
+      res.json({ reports });
+    } catch (err) {
+      console.error("[Ego] reports failed:", err);
+      res.status(500).json({ error: "Failed to load reports" });
+    }
+  });
+
+  app.post("/api/ego/trigger", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+
+      // Guard: only allow manual trigger in development, or when ?force=true is
+      // explicitly passed. This prevents partial-week reports being locked in
+      // production via early triggering (the scheduler handles Sunday 18:00 UTC).
+      const isDev = process.env.NODE_ENV !== "production";
+      const forceOverride = req.query.force === "true";
+      if (!isDev && !forceOverride) {
+        return res.status(403).json({ error: "Manual trigger not available in production (pass ?force=true to override)" });
+      }
+
+      const { runEgoForUser, getISOWeekMonday } = await import("./intelligence/ego");
+      const weekOf = getISOWeekMonday(new Date());
+      const delivered = await runEgoForUser(userId, weekOf);
+      res.json({ ok: true, delivered, weekOf });
+    } catch (err) {
+      console.error("[Ego] trigger failed:", err);
+      res.status(500).json({ error: "Failed to trigger ego report" });
+    }
+  });
+
   app.get("/api/discord/status", async (req: Request, res: Response) => {
     try {
       const userId = (req as any).userId;
@@ -1180,6 +1251,14 @@ Rules:
             } catch (extractErr) {
               console.error("[Phase4] plan-completion extract failed:", extractErr);
             }
+            // Close the ego action outcome loop: resolve the specific task_suggested
+            // and prediction_made actions tied to this task so only the intended
+            // action rows are updated (not all pending rows of that type).
+            try {
+              const { resolveActionByTaskId } = await import("./intelligence/actionLog");
+              await resolveActionByTaskId(userId, "task_suggested", matched.id, "completed");
+              await resolveActionByTaskId(userId, "prediction_made", matched.id, "completed");
+            } catch {}
           })();
           return { result: 'success', label: `Task completed`, detail: `Marked "${matched.title}" as done` };
         }
@@ -4076,6 +4155,27 @@ Return ONLY the JSON object.`;
 
       const { executeInboxAction } = await import("./inboxActions");
       const result = await executeInboxAction(userId, id, actionType, telegramChatId);
+
+      // Close the ego outcome loop: only resolve the proactive_message action
+      // when the inbox action itself succeeded, so failed UX interactions don't
+      // corrupt Ego metrics. Resolves the exact row whose metadata.sourceId
+      // matches this inbox item — never bulk-updates.
+      if (result.success) {
+        const egoOutcome = (actionType === "dismiss" || actionType === "never_again")
+          ? "dismissed"
+          : "acted_on";
+        db.select({ sourceId: schema.inboxItems.sourceId })
+          .from(schema.inboxItems)
+          .where(eq(schema.inboxItems.id, id))
+          .then(([item]) => {
+            if (!item?.sourceId) return;
+            import("./intelligence/actionLog").then(({ resolveActionByMetadataKey }) => {
+              resolveActionByMetadataKey(userId, "proactive_message", "sourceId", item.sourceId!, egoOutcome).catch(() => {});
+            }).catch(() => {});
+          })
+          .catch(() => {});
+      }
+
       res.json(result);
     } catch (error) {
       console.error("Error executing inbox action:", error);

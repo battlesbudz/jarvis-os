@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useFocusEffect } from 'expo-router';
+import { Link, useFocusEffect } from 'expo-router';
 import Colors from '@/constants/colors';
 import * as Haptics from 'expo-haptics';
 import * as WebBrowser from 'expo-web-browser';
@@ -841,6 +841,24 @@ export default function SettingsScreen() {
               </View>
             ))
           )}
+        </View>
+
+        {/* ── JARVIS REPORT ── */}
+        <SectionHeader label="JARVIS INTELLIGENCE" accent={Colors.cyan} />
+        <View style={styles.card}>
+          <Link href="/jarvis-report" asChild>
+            <Pressable style={styles.prefRow}>
+              <View style={styles.prefLeft}>
+                <Ionicons name="bar-chart-outline" size={16} color={Colors.cyan} />
+                <View>
+                  <Text style={styles.prefTitle}>Jarvis Report</Text>
+                  <Text style={styles.prefSub}>Impact metrics & weekly self-report</Text>
+                </View>
+              </View>
+              <Ionicons name="chevron-forward" size={16} color={Colors.textTertiary} />
+            </Pressable>
+          </Link>
+        </View>
         </View>
 
         {/* ── ACCOUNT ── */}

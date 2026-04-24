@@ -19,6 +19,7 @@ import { tavilySearch, formatSearchResults } from "./integrations/search";
 import { createDriveTextFile } from "./integrations/googleDrive";
 import { getValidGoogleTokens } from "./userTokenStore";
 import { logInteraction } from "./interactionLog";
+import { logAction, isActionSuppressed } from "./intelligence/actionLog";
 import OpenAI from "openai";
 
 const openai = new OpenAI({
@@ -250,6 +251,7 @@ Plain text, no markdown asterisks, no preamble.`;
       await notifyUser(userId, "meeting_brief", fullMsg);
       await recordLog(userId, messageType, localKey);
       logInteraction(userId, "notification", "outbound", fullMsg, "meeting_brief").catch(() => {});
+      logAction(userId, "meeting_brief", { eventTitle: event.title, eventId: event.id }).catch(() => {});
       fired++;
       console.log(`[Heartbeat] sent meeting brief for "${event.title}" to ${userId}`);
     } catch (err) {
@@ -382,6 +384,7 @@ Return JSON: { "subject": "Re: ...", "body": "..." }`;
         jarvisReason: reason,
       });
       queued++;
+      logAction(userId, "email_drafted", { subject, sourceMessageId }).catch(() => {});
       console.log(`[Heartbeat] queued draft reply for "${subject}" (user ${userId})`);
     } catch (err: unknown) {
       const code = (err as { code?: string })?.code;
@@ -576,6 +579,7 @@ Return JSON:
   try {
     await notifyUser(userId, "evening_wrap", `🌙 Evening wrap-up\n\n${summary}`);
     logInteraction(userId, "notification", "outbound", summary, "evening_wrapup").catch(() => {});
+    logAction(userId, "evening_wrap", { date: localKey, completedCount, openCount: open.length }).catch(() => {});
   } catch (err) {
     console.error(`[Heartbeat] wrap-up send failed:`, err);
     return false;
@@ -739,15 +743,18 @@ export async function runHeartbeatTick(): Promise<void> {
     }
 
     try {
-      if (token) actionsFired += await runMeetingBriefs(link.userId, link.chatId, token, memories, now, tz, userEmail);
+      if (token && !await isActionSuppressed(link.userId, "meeting_brief"))
+        actionsFired += await runMeetingBriefs(link.userId, link.chatId, token, memories, now, tz, userEmail);
     } catch (err) { console.error(`[Heartbeat] meeting briefs failed for ${link.userId}:`, err); }
 
     try {
-      if (token) actionsFired += await runEmailDrafts(link.userId, link.chatId, token, now);
+      if (token && !await isActionSuppressed(link.userId, "email_drafted"))
+        actionsFired += await runEmailDrafts(link.userId, link.chatId, token, now);
     } catch (err) { console.error(`[Heartbeat] email drafts failed for ${link.userId}:`, err); }
 
     try {
-      if (await runEveningWrapUp(link.userId, link.chatId, token, prefs, now, tz)) actionsFired++;
+      if (!await isActionSuppressed(link.userId, "evening_wrap") &&
+          await runEveningWrapUp(link.userId, link.chatId, token, prefs, now, tz)) actionsFired++;
     } catch (err) { console.error(`[Heartbeat] wrap-up failed for ${link.userId}:`, err); }
 
     // Phase 4 — heartbeat memory ingestion. Pull anything new since the
