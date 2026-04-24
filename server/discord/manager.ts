@@ -530,19 +530,22 @@ export { WORKSPACE_TOPICS, classifyTopic, type WorkspaceMeta } from "./workspace
 
 export async function createDiscordChannel(
   userId: string,
-  opts: { channelName: string; topic?: string; categoryName?: string; pinMessage?: string },
+  opts: { channelName: string; topic?: string; categoryName?: string; pinMessage?: string; guildId?: string },
 ): Promise<{ ok: boolean; error?: string; channelId?: string }> {
   const client = botClients.get(userId);
   if (!client || !client.isReady()) {
     return { ok: false, error: "Discord bot is not running." };
   }
 
-  // Find the first guild the bot is in
-  const guilds = client.guilds.cache;
-  if (guilds.size === 0) {
+  // Find the specified guild, or fall back to first guild
+  const guildsCache = client.guilds.cache;
+  if (guildsCache.size === 0) {
     return { ok: false, error: "Bot is not in any Discord server." };
   }
-  const guild = await guilds.first()!.fetch();
+  const rawGuild = opts.guildId
+    ? (guildsCache.get(opts.guildId) ?? guildsCache.first()!)
+    : guildsCache.first()!;
+  const guild = await rawGuild.fetch();
 
   const { ChannelType } = await import("discord.js");
 
