@@ -15,7 +15,7 @@
  */
 
 import { db } from "../db";
-import { eq, desc, and, gte } from "drizzle-orm";
+import { eq, desc, and, gte, sql } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { getValidGoogleTokens } from "../userTokenStore";
 import { getGoogleCalendarEvents } from "../integrations/googleCalendar";
@@ -640,4 +640,50 @@ export function buildEmotionalStatePromptBlock(state: typeof schema.userEmotiona
   }
 
   return `\n\n## Jarvis Perceived Emotional State\nCurrent state: **${label}** (stress ${stressScore}/10, flow ${flowScore}/10)\n${explanation}${baselineContext}\n\nCoaching instruction: ${guidance}\n`;
+}
+
+// ─── History Pruning ──────────────────────────────────────────────────────────
+
+const PRUNE_RETENTION_DAYS = 90;
+
+/**
+ * Deletes user_emotional_state_history rows older than PRUNE_RETENTION_DAYS.
+ * The computeBaseline query already limits to 90 days, so pruning beyond
+ * that window has no effect on accuracy.
+ * @returns number of rows deleted
+ */
+export async function pruneEmotionalStateHistory(): Promise<number> {
+  try {
+    const result = await db.execute<{ id: number }>(sql`
+      DELETE FROM user_emotional_state_history
+      WHERE recorded_at < NOW() - INTERVAL '${sql.raw(String(PRUNE_RETENTION_DAYS))} days'
+      RETURNING id
+    `);
+    const deleted = result.rows?.length ?? 0;
+    if (deleted > 0) {
+      console.log(`[EmotionalState] pruned ${deleted} history row(s) older than ${PRUNE_RETENTION_DAYS} days`);
+    }
+    return deleted;
+  } catch (err) {
+    console.error("[EmotionalState] history prune failed (non-fatal):", err);
+    return 0;
+  }
+}
+
+/** UTC day key used to ensure the prune runs at most once per calendar day. */
+let lastPruneDayKey = "";
+
+function utcDayKey(d: Date): string {
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
+}
+
+/**
+ * Calls pruneEmotionalStateHistory() at most once per UTC calendar day.
+ * Safe to call on every heartbeat tick — the guard is a cheap in-memory check.
+ */
+export async function maybeRunDailyHistoryPrune(): Promise<void> {
+  const today = utcDayKey(new Date());
+  if (lastPruneDayKey === today) return;
+  lastPruneDayKey = today;
+  await pruneEmotionalStateHistory();
 }

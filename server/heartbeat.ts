@@ -649,6 +649,15 @@ export async function runHeartbeatTick(): Promise<void> {
     console.error("[Heartbeat] memory decay failed:", err);
   }
 
+  // Once per UTC day, prune emotional state history rows older than 90 days.
+  // The in-memory day-key guard makes this a no-op on subsequent ticks.
+  try {
+    const { maybeRunDailyHistoryPrune } = await import("./intelligence/emotional-state");
+    await maybeRunDailyHistoryPrune();
+  } catch (err) {
+    console.error("[Heartbeat] emotional state history prune failed:", err);
+  }
+
   // Nervous System — runs first, independent of Telegram linkage.
   // The scanner tracks its own per-user 30-min throttle internally.
   try {
