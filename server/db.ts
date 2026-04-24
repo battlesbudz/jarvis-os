@@ -686,6 +686,28 @@ export async function ensureTablesExist() {
         last_stress_checkin_at TIMESTAMP
       )
     `);
+    // Baseline columns added in Task #168 — safe no-ops on existing tables
+    await db.execute(sql`ALTER TABLE user_emotional_state ADD COLUMN IF NOT EXISTS baseline_stress REAL`);
+    await db.execute(sql`ALTER TABLE user_emotional_state ADD COLUMN IF NOT EXISTS baseline_flow REAL`);
+    await db.execute(sql`ALTER TABLE user_emotional_state ADD COLUMN IF NOT EXISTS pattern_note TEXT`);
+
+    // Historical snapshots for baseline learning (Task #168)
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS user_emotional_state_history (
+        id SERIAL PRIMARY KEY,
+        user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        stress_score INTEGER NOT NULL,
+        flow_score INTEGER NOT NULL,
+        label VARCHAR NOT NULL,
+        day_of_week INTEGER NOT NULL,
+        hour_of_day INTEGER NOT NULL,
+        recorded_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS idx_ues_history_user_recorded
+        ON user_emotional_state_history (user_id, recorded_at DESC)
+    `);
 
     console.log("Database tables verified");
   } catch (error) {

@@ -15,7 +15,7 @@
  */
 
 import { db } from "../db";
-import { eq, desc, and, gte, sql } from "drizzle-orm";
+import { eq, desc, and, gte } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { getValidGoogleTokens } from "../userTokenStore";
 import { getGoogleCalendarEvents } from "../integrations/googleCalendar";
@@ -45,6 +45,10 @@ function localHour(now: Date, tz: string): number {
 function localDateKey(now: Date, tz: string): string {
   const d = new Date(now.toLocaleString("en-US", { timeZone: tz }));
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function localDayOfWeek(now: Date, tz: string): number {
+  return new Date(now.toLocaleString("en-US", { timeZone: tz })).getDay(); // 0=Sun … 6=Sat
 }
 
 // Basic sentiment heuristic (no LLM call to keep it cheap in the heartbeat)
@@ -271,6 +275,105 @@ function computeScores(signals: Signals): { stressScore: number; flowScore: numb
   return { stressScore: stress, flowScore: flow, label, explanation };
 }
 
+// ─── Baseline / Pattern Learning ─────────────────────────────────────────────
+
+const DOW_NAMES = ["Sundays", "Mondays", "Tuesdays", "Wednesdays", "Thursdays", "Fridays", "Saturdays"];
+const MIN_BASELINE_SAMPLES = 7;
+const HISTORY_WINDOW_DAYS = 90;
+
+/** Appends one heartbeat snapshot to the history table. */
+async function appendToHistory(
+  userId: string,
+  stressScore: number,
+  flowScore: number,
+  label: string,
+  now: Date,
+  tz: string,
+): Promise<void> {
+  try {
+    await db.insert(schema.userEmotionalStateHistory).values({
+      userId,
+      stressScore,
+      flowScore,
+      label,
+      dayOfWeek: localDayOfWeek(now, tz),
+      hourOfDay: localHour(now, tz),
+      recordedAt: now,
+    });
+  } catch {
+    // non-fatal
+  }
+}
+
+interface BaselineResult {
+  avgStress: number | null;
+  avgFlow: number | null;
+  sampleCount: number;
+  patternNote: string | null;
+}
+
+/**
+ * Computes a rolling baseline from the user's history.
+ * Returns null avg values when there is insufficient data.
+ */
+async function computeBaseline(userId: string, now: Date, tz: string): Promise<BaselineResult> {
+  const windowStart = new Date(now.getTime() - HISTORY_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+  try {
+    const rows = await db
+      .select({
+        stressScore: schema.userEmotionalStateHistory.stressScore,
+        flowScore: schema.userEmotionalStateHistory.flowScore,
+        dayOfWeek: schema.userEmotionalStateHistory.dayOfWeek,
+      })
+      .from(schema.userEmotionalStateHistory)
+      .where(
+        and(
+          eq(schema.userEmotionalStateHistory.userId, userId),
+          gte(schema.userEmotionalStateHistory.recordedAt, windowStart),
+        ),
+      )
+      .orderBy(desc(schema.userEmotionalStateHistory.recordedAt))
+      .limit(500);
+
+    if (rows.length < MIN_BASELINE_SAMPLES) {
+      return { avgStress: null, avgFlow: null, sampleCount: rows.length, patternNote: null };
+    }
+
+    const avgStress = rows.reduce((acc, r) => acc + r.stressScore, 0) / rows.length;
+    const avgFlow = rows.reduce((acc, r) => acc + r.flowScore, 0) / rows.length;
+
+    // Day-of-week pattern: is today notably different from the overall average?
+    const currentDow = localDayOfWeek(now, tz);
+    const dowRows = rows.filter((r) => r.dayOfWeek === currentDow);
+    let patternNote: string | null = null;
+
+    if (dowRows.length >= 3) {
+      const dowAvgStress = dowRows.reduce((acc, r) => acc + r.stressScore, 0) / dowRows.length;
+      const dowAvgFlow = dowRows.reduce((acc, r) => acc + r.flowScore, 0) / dowRows.length;
+      const dayName = DOW_NAMES[currentDow];
+      const notes: string[] = [];
+
+      if (dowAvgStress >= avgStress + 1.0) {
+        notes.push(`${dayName} tend to be high-stress for you (avg ${dowAvgStress.toFixed(1)} vs usual ${avgStress.toFixed(1)})`);
+      } else if (dowAvgStress <= avgStress - 1.0) {
+        notes.push(`${dayName} tend to be low-stress for you (avg ${dowAvgStress.toFixed(1)})`);
+      }
+
+      if (dowAvgFlow >= avgFlow + 1.0) {
+        notes.push(`your flow is typically higher on ${dayName} (avg ${dowAvgFlow.toFixed(1)})`);
+      } else if (dowAvgFlow <= avgFlow - 1.0) {
+        notes.push(`your flow tends to dip on ${dayName} (avg ${dowAvgFlow.toFixed(1)})`);
+      }
+
+      if (notes.length > 0) patternNote = notes.join("; ");
+    }
+
+    return { avgStress, avgFlow, sampleCount: rows.length, patternNote };
+  } catch {
+    return { avgStress: null, avgFlow: null, sampleCount: 0, patternNote: null };
+  }
+}
+
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 const HIGH_STRESS_THRESHOLD = 7;
@@ -284,6 +387,12 @@ export async function computeAndStoreEmotionalState(
 ): Promise<EmotionalState> {
   const signals = await gatherSignals(userId, tz, now);
   const { stressScore, flowScore, label, explanation } = computeScores(signals);
+
+  // ── Baseline learning: append snapshot + compute rolling averages ───────────
+  // Append first (before computing baseline) so the current sample is included
+  // on the next cycle, not the current one (avoids self-reference).
+  await appendToHistory(userId, stressScore, flowScore, label, now, tz);
+  const baseline = await computeBaseline(userId, now, tz);
 
   // Load existing state for consecutive-cycle tracking
   let prevState: typeof schema.userEmotionalState.$inferSelect | null = null;
@@ -340,6 +449,9 @@ export async function computeAndStoreEmotionalState(
         lastStressCheckinAt,
         computedAt: now,
         updatedAt: now,
+        baselineStress: baseline.avgStress,
+        baselineFlow: baseline.avgFlow,
+        patternNote: baseline.patternNote,
       })
       .onConflictDoUpdate({
         target: schema.userEmotionalState.userId,
@@ -352,6 +464,9 @@ export async function computeAndStoreEmotionalState(
           consecutiveHighStressCycles,
           computedAt: now,
           updatedAt: now,
+          baselineStress: baseline.avgStress,
+          baselineFlow: baseline.avgFlow,
+          patternNote: baseline.patternNote,
         },
       });
   } catch (err) {
@@ -459,7 +574,7 @@ export async function setManualStateOverride(
  * Used by promptContext.ts to inject state-aware coaching instructions.
  */
 export function buildEmotionalStatePromptBlock(state: typeof schema.userEmotionalState.$inferSelect): string {
-  const { stressScore, flowScore, label, explanation } = state;
+  const { stressScore, flowScore, label, explanation, baselineStress, baselineFlow, patternNote } = state;
 
   let guidance = "";
   if (stressScore >= 7) {
@@ -474,5 +589,23 @@ export function buildEmotionalStatePromptBlock(state: typeof schema.userEmotiona
     guidance = "The user is in a calm, baseline state. Normal coaching style applies.";
   }
 
-  return `\n\n## Jarvis Perceived Emotional State\nCurrent state: **${label}** (stress ${stressScore}/10, flow ${flowScore}/10)\n${explanation}\n\nCoaching instruction: ${guidance}\n`;
+  // ── Baseline / personalisation context ──────────────────────────────────────
+  let baselineContext = "";
+  if (baselineStress !== null && baselineStress !== undefined &&
+      baselineFlow !== null && baselineFlow !== undefined) {
+    const stressDiff = stressScore - baselineStress;
+    const flowDiff = flowScore - baselineFlow;
+
+    const stressCtx = Math.abs(stressDiff) >= 2
+      ? ` (${stressDiff > 0 ? "↑" : "↓"} ${Math.abs(stressDiff).toFixed(1)} vs your usual ${baselineStress.toFixed(1)})`
+      : ` (near your typical ${baselineStress.toFixed(1)})`;
+    const flowCtx = Math.abs(flowDiff) >= 2
+      ? ` (${flowDiff > 0 ? "↑" : "↓"} ${Math.abs(flowDiff).toFixed(1)} vs your usual ${baselineFlow.toFixed(1)})`
+      : ` (near your typical ${baselineFlow.toFixed(1)})`;
+
+    baselineContext = `\nPersonal baseline: stress ${stressScore}/10${stressCtx}, flow ${flowScore}/10${flowCtx}.`;
+    if (patternNote) baselineContext += ` Pattern: ${patternNote}.`;
+  }
+
+  return `\n\n## Jarvis Perceived Emotional State\nCurrent state: **${label}** (stress ${stressScore}/10, flow ${flowScore}/10)\n${explanation}${baselineContext}\n\nCoaching instruction: ${guidance}\n`;
 }
