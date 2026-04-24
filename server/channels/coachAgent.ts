@@ -24,6 +24,10 @@ export interface CoachReplyInput {
 
 export interface CoachReplyResult {
   reply: string;
+  /** Raw reply from the agent before channel-level fallback normalization.
+   *  Empty string when the model produced no text (e.g. silent streaming failure).
+   *  Use this to detect "no response" without string-matching the fallback message. */
+  rawReply: string;
   attachments: ChannelAttachment[];
 }
 
@@ -227,7 +231,8 @@ When a user's request involves multi-step research, drafting a document or plan,
 
   console.log(`[${channelName}] coach agent — turns=${agentResult.turns}, tools=${agentResult.toolCalls.length}, finish=${agentResult.finishReason}`);
 
-  const reply = agentResult.reply || "Sorry, I couldn't generate a response right now.";
+  const rawReply = agentResult.reply;
+  const reply = rawReply || "Sorry, I couldn't generate a response right now.";
   const attachments = (agentCtx.state.pendingAttachments || []) as ChannelAttachment[];
 
   // Save chat history (channel-agnostic — single conversation thread per user)
@@ -246,5 +251,5 @@ When a user's request involves multi-step research, drafting a document or plan,
     console.error("[coach] chat history persist failed:", err);
   }
 
-  return { reply, attachments };
+  return { reply, rawReply, attachments };
 }
