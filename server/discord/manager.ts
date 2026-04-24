@@ -98,6 +98,8 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
     const discordUserId = message.author.id;
     const discordUsername = message.author.tag || message.author.username;
 
+    console.log(`[DiscordManager] message from ${discordUsername} (${discordUserId}) isDM=${isDM} contentLen=${message.content?.length ?? 0} mentionsBot=${message.mentions.users.has(client.user?.id ?? "")}`);
+
     // ── Determine if we should respond ──────────────────────────────────
     if (!isDM) {
       // Guild channel — allow pairing flow if the bot owner isn't linked yet;
@@ -105,16 +107,34 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
       const link = await lookupLink(botOwnerId);
       if (link) {
         // Already paired — apply the normal allowlist / mention guards.
-        if (link.address !== discordUserId) return; // only the paired user
+        if (link.address !== discordUserId) {
+          console.log(`[DiscordManager] guild msg ignored — sender ${discordUserId} != paired ${link.address}`);
+          return;
+        }
         const allowed = link.meta.allowlistedGuilds || [];
         const guildId = (message.guild?.id) ?? "";
         const channelId = message.channelId;
-        const guildEntry = allowed.find((g) => g.guildId === guildId && g.channelId === channelId);
-        if (!guildEntry) return;
-        if (guildEntry.requireMention) {
-          const botId = client.user?.id;
-          const mentioned = message.mentions.users.has(botId ?? "");
-          if (!mentioned) return;
+        const botId = client.user?.id;
+        const mentioned = message.mentions.users.has(botId ?? "");
+
+        if (allowed.length === 0) {
+          // No channels configured yet — respond to @mentions anywhere so the
+          // user can verify the integration works without extra setup.
+          if (!mentioned) {
+            console.log(`[DiscordManager] guild msg ignored — no allowlist and bot not @mentioned`);
+            return;
+          }
+        } else {
+          // Channels have been configured — enforce the allowlist.
+          const guildEntry = allowed.find((g) => g.guildId === guildId && g.channelId === channelId);
+          if (!guildEntry) {
+            console.log(`[DiscordManager] guild msg ignored — channel ${channelId} not in allowlist`);
+            return;
+          }
+          if (guildEntry.requireMention && !mentioned) {
+            console.log(`[DiscordManager] guild msg ignored — requireMention=true but bot not @mentioned`);
+            return;
+          }
         }
       }
       // If !link: bot owner isn't paired yet — fall through so the pairing
@@ -123,6 +143,7 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
 
     // ── DM path: check if user is paired to this bot ───────────────────
     const pairedUser = await lookupUserByDiscordId(discordUserId);
+    console.log(`[DiscordManager] pairedUser lookup for ${discordUserId}: ${pairedUser ? `userId=${pairedUser.userId}` : "not found"}`);
 
     if (!pairedUser || pairedUser.userId !== botOwnerId) {
       // Unknown user — start pairing flow
@@ -195,7 +216,12 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
       }
     }
 
-    if (!userText) return;
+    if (!userText) {
+      console.log(`[DiscordManager] msg dropped — empty content (MessageContent intent may not be enabled in Discord Developer Portal for guild messages)`);
+      return;
+    }
+
+    console.log(`[DiscordManager] processing message: "${userText.slice(0, 80)}…"`);
 
     // ── Detect workspace topic channel ─────────────────────────────────
     const link2 = await lookupLink(botOwnerId);
