@@ -7,7 +7,7 @@ import { db } from "../db";
 import { eq, and } from "drizzle-orm";
 import { discordChannelSchedules, discordPendingApprovals } from "@shared/schema";
 import { runCoachAgent } from "../channels/coachAgent";
-import { postToDiscordChannel, postMessageAndGetId } from "./manager";
+import { postToDiscordChannel, postMessageAndGetId, postMessageAndGetInfo, pinDiscordMessage } from "./manager";
 
 const SCRIPT_DELIMITER = "---SCRIPT---";
 
@@ -219,15 +219,38 @@ export async function runSchedule(id: string, previousOutput?: string): Promise<
   } else {
     // ── Standard single-post mode ────────────────────────────────────────────
     const header = `📊 **${schedule.label}**\n`;
-    const posted = await postToDiscordChannel(
+    const fullText = header + result;
+
+    const postInfo = await postMessageAndGetInfo(
       schedule.userId,
       schedule.channelName,
       schedule.channelId ?? null,
-      header + result,
+      fullText,
     );
 
-    if (!posted) {
+    if (!postInfo) {
       console.warn(`[DiscordSchedules] Failed to post schedule ${id} to channel ${schedule.channelName}`);
+    } else {
+      // ── Phase 5B: Auto-pin deliverable reports ──────────────────────────────
+      // Pin when the report is a substantial structured document: long content
+      // (>600 chars), has markdown headers, bold-prefixed sections, or a long
+      // numbered list — all signals that this is a reference deliverable.
+      const isDeliverable =
+        result.length > 600 ||
+        (result.match(/^#{1,3}\s/m) !== null) ||
+        (result.match(/^\*\*[^*]+\*\*/m) !== null && result.length > 300) ||
+        (result.match(/^\d+\.\s/m) !== null && result.split("\n").length > 8);
+
+      if (isDeliverable) {
+        const pinned = await pinDiscordMessage(
+          schedule.userId,
+          postInfo.channelId,
+          postInfo.messageId,
+        ).catch(() => false);
+        if (pinned) {
+          console.log(`[DiscordSchedules] Auto-pinned report (schedule=${id}, msg=${postInfo.messageId})`);
+        }
+      }
     }
   }
 
