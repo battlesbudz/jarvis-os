@@ -89,6 +89,14 @@ export const setupDiscordWorkspaceTool: AgentTool = {
     const result = await setupDiscordWorkspace(userId, guildId);
 
     if (!result.ok) {
+      // Race condition: another setup call is already in progress — treat as success
+      if (result.error?.includes("already in progress")) {
+        return {
+          ok: true,
+          content: "Workspace setup is already in progress — give it a moment and it will be ready!",
+          label: "Discord workspace setup already in progress",
+        };
+      }
       return {
         ok: false,
         content: `Couldn't set up the workspace: ${result.error}`,
