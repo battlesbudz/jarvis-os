@@ -259,6 +259,7 @@ export default function ProfileScreen() {
   const [discordBotToken, setDiscordBotToken] = useState('');
   const [discordBotTokenVisible, setDiscordBotTokenVisible] = useState(false);
   const [discordPairCode, setDiscordPairCode] = useState('');
+  const [discordShowOwnBot, setDiscordShowOwnBot] = useState(false);
   const [discordSaving, setDiscordSaving] = useState(false);
   const [discordPairing, setDiscordPairing] = useState(false);
   const [discordShowManage, setDiscordShowManage] = useState(false);
@@ -2336,10 +2337,10 @@ export default function ProfileScreen() {
                   {channelData?.connected.discord
                     ? (channelData.meta?.discord as any)?.discordUsername
                       ? `Linked as ${(channelData.meta.discord as any).discordUsername}`
-                      : 'Bot running — DM it to pair'
+                      : 'Connected — DM Jarvis anytime'
                     : (channelData?.meta?.discord as any)?.hasBotToken
                       ? 'Bot saved — DM it to get your pairing code'
-                      : 'Bring your own Discord bot for coaching via DMs'}
+                      : 'Chat with Jarvis via Discord'}
                 </Text>
               </View>
               {channelBusy === 'discord' ? (
@@ -2358,26 +2359,69 @@ export default function ProfileScreen() {
             {/* Discord setup panel */}
             {!channelData?.connected.discord && (
               <View style={{ paddingHorizontal: 16, paddingVertical: 12, backgroundColor: Colors.background, borderTopWidth: 1, borderTopColor: Colors.border }}>
-                {!(channelData?.meta?.discord as any)?.hasBotToken ? (
-                  <>
-                    {/* Step 1: Create bot + paste token */}
-                    <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: Colors.text, marginBottom: 6 }}>
-                      Step 1 — Create a Discord bot
-                    </Text>
-                    <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, lineHeight: 17, marginBottom: 10 }}>
+                {/* Pairing instructions — always visible */}
+                <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: Colors.text, marginBottom: 4 }}>
+                  {(channelData?.meta?.discord as any)?.hasBotToken ? 'Pair your Discord account' : 'Connect Discord'}
+                </Text>
+                <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, lineHeight: 17, marginBottom: 10 }}>
+                  {(channelData?.meta?.discord as any)?.hasBotToken
+                    ? 'Send any message to your bot on Discord. It will reply with a 6-character code — enter it below.'
+                    : 'Add the Jarvis bot to your server (or DM it directly), send any message, and enter the 6-character code it replies with.'}
+                </Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <TextInput
+                    value={discordPairCode}
+                    onChangeText={t => setDiscordPairCode(t.toUpperCase())}
+                    placeholder="Pairing code (e.g. AB3X7Y)"
+                    placeholderTextColor={Colors.textTertiary}
+                    style={{
+                      flex: 1, fontSize: 15, fontFamily: 'Inter_600SemiBold', letterSpacing: 3,
+                      color: '#5865F2', borderWidth: 1, borderColor: '#5865F2',
+                      borderRadius: 8, paddingHorizontal: 10, paddingVertical: 7,
+                      backgroundColor: Colors.card, textAlign: 'center',
+                    }}
+                    autoCapitalize="characters"
+                    autoCorrect={false}
+                    maxLength={6}
+                  />
+                  <Pressable
+                    onPress={handleDiscordPair}
+                    disabled={discordPairing || discordPairCode.trim().length !== 6}
+                    style={{
+                      paddingHorizontal: 14, paddingVertical: 9, borderRadius: 8,
+                      backgroundColor: '#5865F2', opacity: discordPairing || discordPairCode.trim().length !== 6 ? 0.5 : 1,
+                    }}
+                  >
+                    {discordPairing
+                      ? <ActivityIndicator size="small" color="#fff" />
+                      : <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: '#fff' }}>Pair</Text>}
+                  </Pressable>
+                </View>
+
+                {/* "Use your own bot" disclosure toggle */}
+                <Pressable
+                  onPress={() => setDiscordShowOwnBot(v => !v)}
+                  style={{ flexDirection: 'row', alignItems: 'center', marginTop: 14, gap: 4 }}
+                >
+                  <Ionicons
+                    name={discordShowOwnBot ? 'chevron-down' : 'chevron-forward'}
+                    size={14}
+                    color={Colors.textSecondary}
+                  />
+                  <Text style={{ fontSize: 12, fontFamily: 'Inter_500Medium', color: Colors.textSecondary }}>
+                    Use your own bot token instead
+                  </Text>
+                </Pressable>
+
+                {discordShowOwnBot && (
+                  <View style={{ marginTop: 10 }}>
+                    <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, lineHeight: 17, marginBottom: 8 }}>
                       1. Go to{' '}
                       <Text style={{ color: '#5865F2' }}>discord.com/developers/applications</Text>
-                      {'\n'}2. New Application → Bot tab → Reset Token → copy the token
-                      {'\n'}3. Under Privileged Gateway Intents enable{' '}
-                      <Text style={{ fontFamily: 'Inter_600SemiBold' }}>Message Content</Text> and{' '}
-                      <Text style={{ fontFamily: 'Inter_600SemiBold' }}>Server Members</Text>
-                      {'\n'}4. OAuth2 → URL Generator: scopes{' '}
-                      <Text style={{ fontFamily: 'Inter_600SemiBold' }}>bot</Text>, permissions{' '}
-                      <Text style={{ fontFamily: 'Inter_600SemiBold' }}>Send Messages + Read Messages</Text>
-                      {'\n'}5. Open the generated URL to invite the bot to your server (or skip for DM-only use)
-                    </Text>
-                    <Text style={{ fontSize: 12, fontFamily: 'Inter_500Medium', color: Colors.text, marginBottom: 4 }}>
-                      Paste your bot token here:
+                      {'\n'}2. New Application → Bot → Reset Token → copy it
+                      {'\n'}3. Enable <Text style={{ fontFamily: 'Inter_600SemiBold' }}>Message Content</Text> and{' '}
+                      <Text style={{ fontFamily: 'Inter_600SemiBold' }}>Server Members</Text> intents
+                      {'\n'}4. Invite the bot to your server (OAuth2 → URL Generator)
                     </Text>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                       <TextInput
@@ -2403,57 +2447,15 @@ export default function ProfileScreen() {
                       onPress={handleSaveDiscordToken}
                       disabled={discordSaving || !discordBotToken.trim()}
                       style={{
-                        marginTop: 10, paddingVertical: 8, borderRadius: 8, alignItems: 'center',
+                        marginTop: 8, paddingVertical: 8, borderRadius: 8, alignItems: 'center',
                         backgroundColor: '#5865F2', opacity: discordSaving || !discordBotToken.trim() ? 0.5 : 1,
                       }}
                     >
                       {discordSaving
                         ? <ActivityIndicator size="small" color="#fff" />
-                        : <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: '#fff' }}>Save token & connect bot</Text>}
+                        : <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: '#fff' }}>Save token & start bot</Text>}
                     </Pressable>
-                  </>
-                ) : (
-                  <>
-                    {/* Step 2: DM the bot + enter pairing code */}
-                    <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: Colors.text, marginBottom: 6 }}>
-                      Step 2 — Pair your Discord account
-                    </Text>
-                    <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, lineHeight: 17, marginBottom: 10 }}>
-                      Open Discord, find your bot, and send it any message. It will reply with a 6-character pairing code.{'\n'}
-                      Enter it here, <Text style={{ fontFamily: 'Inter_600SemiBold' }}>or</Text> send{' '}
-                      <Text style={{ fontFamily: 'Inter_600SemiBold', color: '#5865F2' }}>approve CODE</Text>
-                      {' '}to your Jarvis Telegram bot.
-                    </Text>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                      <TextInput
-                        value={discordPairCode}
-                        onChangeText={t => setDiscordPairCode(t.toUpperCase())}
-                        placeholder="Pairing code (e.g. AB3X7Y)"
-                        placeholderTextColor={Colors.textTertiary}
-                        style={{
-                          flex: 1, fontSize: 15, fontFamily: 'Inter_600SemiBold', letterSpacing: 3,
-                          color: '#5865F2', borderWidth: 1, borderColor: '#5865F2',
-                          borderRadius: 8, paddingHorizontal: 10, paddingVertical: 7,
-                          backgroundColor: Colors.card, textAlign: 'center',
-                        }}
-                        autoCapitalize="characters"
-                        autoCorrect={false}
-                        maxLength={6}
-                      />
-                      <Pressable
-                        onPress={handleDiscordPair}
-                        disabled={discordPairing || discordPairCode.trim().length !== 6}
-                        style={{
-                          paddingHorizontal: 14, paddingVertical: 9, borderRadius: 8,
-                          backgroundColor: '#5865F2', opacity: discordPairing || discordPairCode.trim().length !== 6 ? 0.5 : 1,
-                        }}
-                      >
-                        {discordPairing
-                          ? <ActivityIndicator size="small" color="#fff" />
-                          : <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: '#fff' }}>Pair</Text>}
-                      </Pressable>
-                    </View>
-                  </>
+                  </View>
                 )}
               </View>
             )}

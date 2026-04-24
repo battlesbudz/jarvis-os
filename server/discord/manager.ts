@@ -37,6 +37,18 @@ const botClients = new Map<string, Client>();
 // code → pairing record (1-hour TTL)
 const pairingCodes = new Map<string, PairingRecord>();
 
+/** Key used to store the shared Jarvis Discord bot in botClients. */
+const SHARED_BOT_KEY = '__shared__';
+
+/**
+ * Returns the per-user bot client if one is running, otherwise falls back to
+ * the shared Jarvis bot.  Used by all outbound / utility functions so the
+ * shared bot works transparently as a drop-in.
+ */
+function getClientForUser(userId: string): Client | undefined {
+  return botClients.get(userId) ?? botClients.get(SHARED_BOT_KEY);
+}
+
 // message-id deduplication: messageId → seenAt timestamp (5-minute TTL)
 // The in-memory map is the fast path (zero latency per message).
 // DB is the persistence layer that survives server restarts.
@@ -217,48 +229,71 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
 
     // ── Determine if we should respond ──────────────────────────────────
     if (!isDM) {
-      // Guild channel — allow pairing flow if the bot owner isn't linked yet;
-      // otherwise only respond in allowlisted channels for the paired user.
-      const link = await lookupLink(botOwnerId);
-      if (link) {
-        // Already paired — apply the normal allowlist / mention guards.
-        if (link.address !== discordUserId) {
-          console.log(`[DiscordManager] guild msg ignored — sender ${discordUserId} != paired ${link.address}`);
-          return;
-        }
-        const allowed = link.meta.allowlistedGuilds || [];
-        const guildId = (message.guild?.id) ?? "";
-        const channelId = message.channelId;
-        const botId = client.user?.id;
-        const mentioned = message.mentions.users.has(botId ?? "");
-
-        if (allowed.length === 0) {
-          // No channels configured yet — respond to all messages from the
-          // paired user without requiring @mention (the sender identity check
-          // above is already the security gate).
-          console.log(`[DiscordManager] guild msg accepted — no allowlist, paired user, mention not required`);
-        } else {
-          // Channels have been configured — enforce the allowlist.
-          const guildEntry = allowed.find((g) => g.guildId === guildId && g.channelId === channelId);
-          if (!guildEntry) {
-            console.log(`[DiscordManager] guild msg ignored — channel ${channelId} not in allowlist`);
-            return;
-          }
-          if (guildEntry.requireMention && !mentioned) {
-            console.log(`[DiscordManager] guild msg ignored — requireMention=true but bot not @mentioned`);
-            return;
+      if (botOwnerId === SHARED_BOT_KEY) {
+        // Shared bot: look up the sender's paired Jarvis user to apply their
+        // allowlist settings.  If not yet paired, fall through to pairing flow.
+        const sharedPaired = await lookupUserByDiscordId(discordUserId);
+        if (sharedPaired) {
+          const allowed = sharedPaired.meta.allowlistedGuilds || [];
+          const guildId = (message.guild?.id) ?? "";
+          const channelId = message.channelId;
+          const botId = client.user?.id;
+          const mentioned = message.mentions.users.has(botId ?? "");
+          if (allowed.length === 0) {
+            console.log(`[DiscordManager] shared guild msg accepted — no allowlist, paired user`);
+          } else {
+            const guildEntry = allowed.find((g) => g.guildId === guildId && g.channelId === channelId);
+            if (!guildEntry) {
+              console.log(`[DiscordManager] shared guild msg ignored — channel ${channelId} not in allowlist`);
+              return;
+            }
+            if (guildEntry.requireMention && !mentioned) {
+              console.log(`[DiscordManager] shared guild msg ignored — requireMention=true but bot not @mentioned`);
+              return;
+            }
           }
         }
+        // If !sharedPaired: fall through to pairing flow below.
+      } else {
+        // Per-user bot: allow pairing flow if the bot owner isn't linked yet;
+        // otherwise only respond in allowlisted channels for the paired user.
+        const link = await lookupLink(botOwnerId);
+        if (link) {
+          if (link.address !== discordUserId) {
+            console.log(`[DiscordManager] guild msg ignored — sender ${discordUserId} != paired ${link.address}`);
+            return;
+          }
+          const allowed = link.meta.allowlistedGuilds || [];
+          const guildId = (message.guild?.id) ?? "";
+          const channelId = message.channelId;
+          const botId = client.user?.id;
+          const mentioned = message.mentions.users.has(botId ?? "");
+          if (allowed.length === 0) {
+            console.log(`[DiscordManager] guild msg accepted — no allowlist, paired user, mention not required`);
+          } else {
+            const guildEntry = allowed.find((g) => g.guildId === guildId && g.channelId === channelId);
+            if (!guildEntry) {
+              console.log(`[DiscordManager] guild msg ignored — channel ${channelId} not in allowlist`);
+              return;
+            }
+            if (guildEntry.requireMention && !mentioned) {
+              console.log(`[DiscordManager] guild msg ignored — requireMention=true but bot not @mentioned`);
+              return;
+            }
+          }
+        }
+        // If !link: bot owner isn't paired yet — fall through so the pairing
+        // code gets sent to whoever messaged the bot in the guild.
       }
-      // If !link: bot owner isn't paired yet — fall through so the pairing
-      // code gets sent to whoever messaged the bot in the guild.
     }
 
-    // ── DM path: check if user is paired to this bot ───────────────────
+    // ── DM / pairing path: check if user is paired to this bot ──────────
     const pairedUser = await lookupUserByDiscordId(discordUserId);
     console.log(`[DiscordManager] pairedUser lookup for ${discordUserId}: ${pairedUser ? `userId=${pairedUser.userId}` : "not found"}`);
 
-    if (!pairedUser || pairedUser.userId !== botOwnerId) {
+    // For the shared bot any paired Discord user is valid; for per-user bots
+    // the Discord user must be paired specifically to that bot's owner.
+    if (!pairedUser || (botOwnerId !== SHARED_BOT_KEY && pairedUser.userId !== botOwnerId)) {
       // Unknown user — start pairing flow
       // One active code per discord user per bot
       let code: string | null = null;
@@ -603,7 +638,7 @@ export function stopUserBot(userId: string): void {
 }
 
 export function getBotStatus(userId: string): "running" | "stopped" {
-  const client = botClients.get(userId);
+  const client = getClientForUser(userId);
   if (!client) return "stopped";
   return client.isReady() ? "running" : "stopped";
 }
@@ -655,7 +690,9 @@ export async function completePairing(userId: string, code: string): Promise<{ o
     pairingCodes.delete(code.toUpperCase());
     return { ok: false, error: "Pairing code has expired." };
   }
-  if (rec.botOwnerId !== userId) {
+  // For the shared bot, any Jarvis user can claim the code (the 6-char OTP is
+  // the sole security gate).  For per-user bots keep the strict owner check.
+  if (rec.botOwnerId !== SHARED_BOT_KEY && rec.botOwnerId !== userId) {
     return { ok: false, error: "This pairing code belongs to a different account." };
   }
 
@@ -690,8 +727,8 @@ export async function completePairing(userId: string, code: string): Promise<{ o
   // Remove used code
   pairingCodes.delete(code.toUpperCase());
 
-  // Notify the Discord user
-  const client = botClients.get(userId);
+  // Notify the Discord user (use shared bot as fallback)
+  const client = getClientForUser(userId);
   if (client) {
     try {
       const dmChannel = await client.channels.fetch(rec.discordDmChannelId);
@@ -711,7 +748,7 @@ export async function completePairing(userId: string, code: string): Promise<{ o
 // ── Outbound send ────────────────────────────────────────────────────────────
 
 export async function sendToDiscordUser(userId: string, text: string): Promise<boolean> {
-  const client = botClients.get(userId);
+  const client = getClientForUser(userId);
   if (!client || !client.isReady()) return false;
 
   const link = await lookupLink(userId);
@@ -749,7 +786,7 @@ export async function sendToDiscordUser(userId: string, text: string): Promise<b
 // ── Guild info ────────────────────────────────────────────────────────────────
 
 export function getGuildsForUser(userId: string): { id: string; name: string; icon: string | null }[] {
-  const client = botClients.get(userId);
+  const client = getClientForUser(userId);
   if (!client || !client.isReady()) return [];
   return client.guilds.cache.map((g) => ({ id: g.id, name: g.name, icon: g.iconURL() }));
 }
@@ -758,7 +795,7 @@ export async function getChannelsForGuild(
   userId: string,
   guildId: string,
 ): Promise<{ id: string; name: string; type: string }[]> {
-  const client = botClients.get(userId);
+  const client = getClientForUser(userId);
   if (!client || !client.isReady()) return [];
   try {
     const guild = await client.guilds.fetch(guildId);
@@ -790,7 +827,7 @@ export async function createDiscordChannel(
   userId: string,
   opts: { channelName: string; topic?: string; categoryName?: string; pinMessage?: string; guildId?: string; ctxGuildId?: string },
 ): Promise<{ ok: boolean; error?: string; channelId?: string }> {
-  const client = botClients.get(userId);
+  const client = getClientForUser(userId);
   if (!client || !client.isReady()) {
     return { ok: false, error: "Discord bot is not running." };
   }
@@ -895,7 +932,7 @@ export async function deleteDiscordChannel(
   ambiguous?: boolean;
   matches?: Array<{ id: string; name: string }>;
 }> {
-  const client = botClients.get(userId);
+  const client = getClientForUser(userId);
   if (!client || !client.isReady()) {
     return { ok: false, error: "Discord bot is not running." };
   }
@@ -992,9 +1029,9 @@ export async function setupDiscordWorkspace(
   userId: string,
   guildId: string,
 ): Promise<{ ok: boolean; error?: string; workspace?: WorkspaceMeta }> {
-  const client = botClients.get(userId);
+  const client = getClientForUser(userId);
   if (!client || !client.isReady()) {
-    return { ok: false, error: "Discord bot is not running. Make sure your bot token is saved and the bot is in the server." };
+    return { ok: false, error: "Discord bot is not running. Make sure the bot is in the server." };
   }
   return _setupWorkspace(client, userId, guildId);
 }
@@ -1008,7 +1045,7 @@ export async function postToDiscordChannelById(
   channelId: string,
   text: string,
 ): Promise<boolean> {
-  const client = botClients.get(userId);
+  const client = getClientForUser(userId);
   if (!client || !client.isReady()) return false;
 
   try {
@@ -1052,7 +1089,7 @@ export async function postMessageAndGetInfo(
   channelId: string | null,
   text: string,
 ): Promise<{ messageId: string; channelId: string } | null> {
-  const client = botClients.get(userId);
+  const client = getClientForUser(userId);
   if (!client || !client.isReady()) return null;
 
   const { ChannelType } = await import("discord.js");
@@ -1101,7 +1138,7 @@ export async function postToDiscordWorkspace(
   topicKey: string,
   text: string,
 ): Promise<boolean> {
-  const client = botClients.get(userId);
+  const client = getClientForUser(userId);
   if (!client || !client.isReady()) return false;
 
   const link = await lookupLink(userId);
@@ -1123,7 +1160,7 @@ export async function postToDiscordChannel(
   channelId: string | null,
   text: string,
 ): Promise<boolean> {
-  const client = botClients.get(userId);
+  const client = getClientForUser(userId);
   if (!client || !client.isReady()) return false;
 
   const { ChannelType } = await import("discord.js");
@@ -1185,7 +1222,7 @@ export async function pinDiscordMessage(
   channelId: string,
   messageId: string,
 ): Promise<boolean> {
-  const client = botClients.get(userId);
+  const client = getClientForUser(userId);
   if (!client || !client.isReady()) return false;
 
   try {
@@ -1220,6 +1257,15 @@ function buildReactionHandler(botOwnerId: string) {
       const messageId = reaction.message.id;
       const emoji = reaction.emoji.name || "";
 
+      // For the shared bot, resolve the actual Jarvis userId from the reactor's
+      // Discord ID.  Per-user bots use botOwnerId directly.
+      let effectiveUserId = botOwnerId;
+      if (botOwnerId === SHARED_BOT_KEY) {
+        const reactorPaired = await lookupUserByDiscordId(user.id as string);
+        if (!reactorPaired) return; // unknown Discord user — nothing to process
+        effectiveUserId = reactorPaired.userId;
+      }
+
       // Look up pending approval
       const rows = await db
         .select()
@@ -1227,7 +1273,7 @@ function buildReactionHandler(botOwnerId: string) {
         .where(
           and(
             eq(discordPendingApprovals.messageId, messageId),
-            eq(discordPendingApprovals.userId, botOwnerId),
+            eq(discordPendingApprovals.userId, effectiveUserId),
             eq(discordPendingApprovals.status, "pending"),
           ),
         )
@@ -1251,7 +1297,7 @@ function buildReactionHandler(botOwnerId: string) {
       // Record preference signal for the feedback training loop
       const { recordApprovalSignal } = await import("./approvalLearning");
       recordApprovalSignal({
-        userId: botOwnerId,
+        userId: effectiveUserId,
         approved: isApprove,
         contentType: approval.type,
         content: approval.content,
@@ -1264,7 +1310,7 @@ function buildReactionHandler(botOwnerId: string) {
       if (actionData) {
         const { executeApprovalAction } = await import("./approvalActions");
         executeApprovalAction(
-          botOwnerId,
+          effectiveUserId,
           actionData as any,
           approval.content,
           approval.channelId,
@@ -1336,4 +1382,61 @@ export async function registerNamedAgent(
     })
     .returning({ id: discordAgents.id });
   return row.id;
+}
+
+// ── Shared bot startup ───────────────────────────────────────────────────────
+
+/**
+ * Boot the shared Jarvis Discord bot from DISCORD_BOT_TOKEN.
+ * The bot is keyed `'__shared__'` in botClients.  It handles messages from
+ * every paired Discord user, routing them to the correct Jarvis account by
+ * looking up the sender's discord_id in channel_links.
+ *
+ * Safe to call multiple times — if the bot is already running this is a no-op.
+ */
+export async function bootSharedBot(): Promise<void> {
+  const token = process.env.DISCORD_BOT_TOKEN;
+  if (!token) {
+    console.log("[DiscordManager] DISCORD_BOT_TOKEN not set — shared bot disabled.");
+    return;
+  }
+
+  // Don't re-boot if already running
+  const existing = botClients.get(SHARED_BOT_KEY);
+  if (existing && existing.isReady()) {
+    console.log("[DiscordManager] Shared bot already running — skipping boot.");
+    return;
+  }
+
+  const client = new Client({
+    intents: [
+      GatewayIntentBits.Guilds,
+      GatewayIntentBits.GuildMessages,
+      GatewayIntentBits.MessageContent,
+      GatewayIntentBits.DirectMessages,
+      GatewayIntentBits.DirectMessageReactions,
+      GatewayIntentBits.GuildMessageReactions,
+    ],
+    partials: [Partials.Channel, Partials.Message, Partials.Reaction],
+  });
+
+  client.once(Events.ClientReady, (c) => {
+    console.log(`[DiscordManager] Shared bot ready: ${c.user.tag}`);
+  });
+
+  client.on(Events.MessageCreate, buildMessageHandler(SHARED_BOT_KEY, client));
+  client.on(Events.MessageReactionAdd, buildReactionHandler(SHARED_BOT_KEY));
+
+  client.on(Events.Error, (err) => {
+    console.error("[DiscordManager] Shared bot error:", err.message);
+  });
+
+  botClients.set(SHARED_BOT_KEY, client);
+
+  try {
+    await client.login(token);
+  } catch (err) {
+    console.error("[DiscordManager] Shared bot login failed:", err);
+    botClients.delete(SHARED_BOT_KEY);
+  }
 }
