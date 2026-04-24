@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, jsonb, timestamp, date, primaryKey, integer, uniqueIndex, boolean } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, jsonb, timestamp, date, primaryKey, integer, uniqueIndex, boolean, serial, real } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -641,6 +641,23 @@ export const userEmotionalState = pgTable("user_emotional_state", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
   consecutiveHighStressCycles: integer("consecutive_high_stress_cycles").notNull().default(0),
   lastStressCheckinAt: timestamp("last_stress_checkin_at"),
+  // Rolling baseline fields — populated from userEmotionalStateHistory
+  baselineStress: real("baseline_stress"),
+  baselineFlow: real("baseline_flow"),
+  patternNote: text("pattern_note"),
+});
+
+// Historical snapshots written each heartbeat cycle — used to compute baselines.
+// Retains up to 90 days of data; no active cleanup (rows are cheap).
+export const userEmotionalStateHistory = pgTable("user_emotional_state_history", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  stressScore: integer("stress_score").notNull(),
+  flowScore: integer("flow_score").notNull(),
+  label: varchar("label").notNull(),
+  dayOfWeek: integer("day_of_week").notNull(), // 0 = Sunday … 6 = Saturday (in user TZ)
+  hourOfDay: integer("hour_of_day").notNull(),  // 0–23 (in user TZ)
+  recordedAt: timestamp("recorded_at").notNull().defaultNow(),
 });
 
 // Dream Cycle — nightly deep synthesis insights.
