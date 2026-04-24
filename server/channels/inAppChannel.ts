@@ -10,6 +10,7 @@ const NOTIFICATION_SUBJECTS: Record<string, string> = {
   commitment_check: "Commitment check",
   weekly_planning: "Weekly planning",
   approval_request: "Approval request",
+  dream_insight: "Jarvis dreamed about you",
   general: "Jarvis notification",
 };
 

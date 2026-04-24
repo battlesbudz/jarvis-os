@@ -646,6 +646,29 @@ export async function ensureTablesExist() {
         ON nervous_system_signals (user_id, created_at DESC)
     `).catch(() => {});
 
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS dream_insights (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        dream_date VARCHAR NOT NULL,
+        insight_text TEXT NOT NULL,
+        confidence_score INTEGER NOT NULL DEFAULT 70,
+        source_memory_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+        shown_to_user BOOLEAN NOT NULL DEFAULT FALSE,
+        delivered_at TIMESTAMP,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS dream_insights_user_date_idx
+        ON dream_insights (user_id, dream_date DESC)
+    `).catch(() => {});
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS dream_insights_pending_idx
+        ON dream_insights (user_id, shown_to_user)
+        WHERE shown_to_user = FALSE
+    `).catch(() => {});
+
     console.log("Database tables verified");
   } catch (error) {
     console.error("Failed to ensure database tables exist:", error);

@@ -240,6 +240,12 @@ export default function ProfileScreen() {
   const [morningNotes, setMorningNotes] = useState<MorningVoiceNote[]>([]);
   const [morningNotesLoading, setMorningNotesLoading] = useState(true);
   const [expandedNoteId, setExpandedNoteId] = useState<string | null>(null);
+  const [dreamInsights, setDreamInsights] = useState<{ id: string; dreamDate: string; insightText: string; confidenceScore: number; shownToUser: boolean; createdAt: string; sourceMemoryIds?: string[] }[]>([]);
+  const [dreamInsightsLoading, setDreamInsightsLoading] = useState(true);
+  const [expandedDreamId, setExpandedDreamId] = useState<string | null>(null);
+  const [expandedInsightMemoryId, setExpandedInsightMemoryId] = useState<string | null>(null);
+  const [insightMemoriesCache, setInsightMemoriesCache] = useState<Record<string, { id: string; content: string; category: string; confidence: number }[]>>({});
+  const [dreamEnabled, setDreamEnabled] = useState(true);
   const [timezone, setTimezone] = useState('America/New_York');
   const [showTimezoneModal, setShowTimezoneModal] = useState(false);
   const [emailAlertsEnabled, setEmailAlertsEnabled] = useState(true);
@@ -442,6 +448,18 @@ export default function ProfileScreen() {
       }
     } catch {}
     setMorningNotesLoading(false);
+  }, []);
+
+  const loadDreamInsights = useCallback(async () => {
+    setDreamInsightsLoading(true);
+    try {
+      const res = await apiRequest('GET', '/api/dream-insights');
+      const data = await res.json();
+      if (data.insights && Array.isArray(data.insights)) {
+        setDreamInsights(data.insights);
+      }
+    } catch {}
+    setDreamInsightsLoading(false);
   }, []);
 
   const loadDocuments = useCallback(async () => {
@@ -647,7 +665,7 @@ export default function ProfileScreen() {
     setLifeContext(lc);
     setNotificationsEnabledState(notifications);
     setUserName(name);
-    await Promise.all([loadOAuthStatus(), loadMemories(), loadTelegramStatus(), loadMorningNotes(), loadDocuments(), loadSoul(), loadPeople(), loadChannels(), loadDaemonPerms(), loadAndroidDaemonPerms(), loadDriveStatus()]);
+    await Promise.all([loadOAuthStatus(), loadMemories(), loadTelegramStatus(), loadMorningNotes(), loadDocuments(), loadSoul(), loadPeople(), loadChannels(), loadDaemonPerms(), loadAndroidDaemonPerms(), loadDriveStatus(), loadDreamInsights()]);
     try {
       const importRes = await apiRequest('GET', '/api/chatgpt-import/status');
       const importData = await importRes.json();
@@ -658,12 +676,13 @@ export default function ProfileScreen() {
       const prefs = await res.json();
       if (prefs.timezone) setTimezone(prefs.timezone);
       if (typeof prefs.emailAlertsEnabled === 'boolean') setEmailAlertsEnabled(prefs.emailAlertsEnabled);
+      if (typeof prefs.dreamEnabled === 'boolean') setDreamEnabled(prefs.dreamEnabled);
     } catch {}
   // loadDaemonPerms and loadAndroidDaemonPerms are useCallback([], []) — they are
   // referentially stable and safe to omit from deps; including them causes a
   // temporal-dead-zone ReferenceError because they are declared after loadAll.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loadOAuthStatus, loadMemories, loadTelegramStatus, loadMorningNotes, loadDocuments, loadSoul, loadPeople, loadChannels, loadDriveStatus]);
+  }, [loadOAuthStatus, loadMemories, loadTelegramStatus, loadMorningNotes, loadDocuments, loadSoul, loadPeople, loadChannels, loadDriveStatus, loadDreamInsights]);
 
   const handleToggleEmailAlerts = useCallback(async () => {
     const newValue = !emailAlertsEnabled;
@@ -673,6 +692,15 @@ export default function ProfileScreen() {
     } catch {}
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   }, [emailAlertsEnabled]);
+
+  const handleToggleDreamEnabled = useCallback(async () => {
+    const newValue = !dreamEnabled;
+    setDreamEnabled(newValue);
+    try {
+      await apiRequest('PATCH', '/api/preferences', { dreamEnabled: newValue });
+    } catch {}
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  }, [dreamEnabled]);
 
   const handleTimezoneChange = useCallback(async (tz: string) => {
     setTimezone(tz);
@@ -1782,6 +1810,142 @@ export default function ProfileScreen() {
                   </Pressable>
                 );
               })}
+            </View>
+          )}
+        </Animated.View>
+
+        {/* Dreams */}
+        <Animated.View entering={FadeInDown.duration(400).delay(445)}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 28, marginBottom: 2 }}>
+            <Text style={styles.sectionTitle}>Dream Cycle</Text>
+            <Pressable onPress={handleToggleDreamEnabled} style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Ionicons
+                name={dreamEnabled ? 'moon' : 'moon-outline'}
+                size={15}
+                color={dreamEnabled ? '#818CF8' : Colors.border}
+              />
+              <Text style={{ fontSize: 12, fontFamily: 'Inter_500Medium', color: dreamEnabled ? '#818CF8' : Colors.textTertiary }}>
+                {dreamEnabled ? 'On' : 'Off'}
+              </Text>
+            </Pressable>
+          </View>
+          <Text style={styles.sectionSubtitle}>
+            Nightly synthesis — non-obvious insights from your history
+          </Text>
+          {dreamInsightsLoading ? (
+            <View style={styles.memoryEmptyCard}>
+              <ActivityIndicator size="small" color={Colors.textTertiary} />
+            </View>
+          ) : dreamInsights.length === 0 ? (
+            <View style={styles.memoryEmptyCard}>
+              <View style={styles.memoryEmptyIcon}>
+                <Ionicons name="moon-outline" size={22} color={Colors.textTertiary} />
+              </View>
+              <Text style={styles.memoryEmptyText}>
+                No dream insights yet — Jarvis synthesises while you sleep, starting when you have 2+ weeks of memory
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.memoryList}>
+              {(() => {
+                const grouped = new Map<string, typeof dreamInsights>();
+                for (const ins of dreamInsights) {
+                  const arr = grouped.get(ins.dreamDate) || [];
+                  arr.push(ins);
+                  grouped.set(ins.dreamDate, arr);
+                }
+                return Array.from(grouped.entries()).slice(0, 10).map(([date, insights]) => {
+                  const isExpanded = expandedDreamId === date;
+                  return (
+                    <Pressable
+                      key={date}
+                      onPress={() => setExpandedDreamId(isExpanded ? null : date)}
+                      style={[styles.morningNoteRow, { borderBottomColor: Colors.border, borderBottomWidth: 1 }]}
+                    >
+                      <View style={styles.morningNoteHeader}>
+                        <Ionicons name="moon" size={13} color="#818CF8" />
+                        <Text style={[styles.morningNoteDate, { flex: 1 }]}>
+                          {new Date(date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                        </Text>
+                        <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: Colors.textTertiary }}>
+                          {insights.length} insight{insights.length !== 1 ? 's' : ''}
+                        </Text>
+                        <Ionicons name={isExpanded ? 'chevron-up' : 'chevron-down'} size={16} color={Colors.textTertiary} style={{ marginLeft: 6 }} />
+                      </View>
+                      {isExpanded && (
+                        <View style={{ paddingTop: 8, gap: 10 }}>
+                          {insights.map((ins, i) => {
+                            const isInsightExpanded = expandedInsightMemoryId === ins.id;
+                            const cachedMems = insightMemoriesCache[ins.id];
+                            return (
+                              <View key={ins.id}>
+                                <Pressable
+                                  style={{ flexDirection: 'row', gap: 8 }}
+                                  onPress={async () => {
+                                    if (isInsightExpanded) {
+                                      setExpandedInsightMemoryId(null);
+                                      return;
+                                    }
+                                    setExpandedInsightMemoryId(ins.id);
+                                    if (!insightMemoriesCache[ins.id] && ins.sourceMemoryIds && ins.sourceMemoryIds.length > 0) {
+                                      try {
+                                        const { apiRequest } = await import('@/lib/query-client');
+                                        const resp = await apiRequest('GET', `/api/dream-insights/${ins.id}/memories`);
+                                        const data = await resp.json();
+                                        if (data.memories) {
+                                          setInsightMemoriesCache(prev => ({ ...prev, [ins.id]: data.memories }));
+                                        }
+                                      } catch {}
+                                    }
+                                  }}
+                                >
+                                  <View style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: '#818CF820', alignItems: 'center', justifyContent: 'center', marginTop: 1, flexShrink: 0 }}>
+                                    <Text style={{ fontSize: 10, fontFamily: 'Inter_600SemiBold', color: '#818CF8' }}>{i + 1}</Text>
+                                  </View>
+                                  <View style={{ flex: 1 }}>
+                                    <Text style={{ fontSize: 13, fontFamily: 'Inter_400Regular', color: Colors.text, lineHeight: 19 }}>
+                                      {ins.insightText}
+                                    </Text>
+                                    <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: Colors.textTertiary, marginTop: 3 }}>
+                                      Confidence: {ins.confidenceScore}%{ins.shownToUser ? ' · Delivered' : ' · Pending'}{ins.sourceMemoryIds && ins.sourceMemoryIds.length > 0 ? ` · Tap for sources` : ''}
+                                    </Text>
+                                  </View>
+                                  {ins.sourceMemoryIds && ins.sourceMemoryIds.length > 0 && (
+                                    <Ionicons name={isInsightExpanded ? 'chevron-up' : 'chevron-down'} size={14} color={Colors.textTertiary} style={{ marginTop: 3 }} />
+                                  )}
+                                </Pressable>
+                                {isInsightExpanded && (
+                                  <View style={{ marginLeft: 28, marginTop: 6, gap: 4, paddingBottom: 4 }}>
+                                    <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: Colors.textTertiary, marginBottom: 2 }}>
+                                      Source memories synthesised:
+                                    </Text>
+                                    {cachedMems === undefined ? (
+                                      <ActivityIndicator size="small" color={Colors.textTertiary} />
+                                    ) : cachedMems.length === 0 ? (
+                                      <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: Colors.textTertiary }}>
+                                        No linked memories found
+                                      </Text>
+                                    ) : (
+                                      cachedMems.map((mem) => (
+                                        <View key={mem.id} style={{ flexDirection: 'row', gap: 4, alignItems: 'flex-start' }}>
+                                          <Text style={{ fontSize: 10, fontFamily: 'Inter_500Medium', color: '#818CF880', marginTop: 2 }}>•</Text>
+                                          <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, flex: 1, lineHeight: 16 }}>
+                                            [{mem.category}] {mem.content}
+                                          </Text>
+                                        </View>
+                                      ))
+                                    )}
+                                  </View>
+                                )}
+                              </View>
+                            );
+                          })}
+                        </View>
+                      )}
+                    </Pressable>
+                  );
+                });
+              })()}
             </View>
           )}
         </Animated.View>

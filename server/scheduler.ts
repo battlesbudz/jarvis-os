@@ -1,6 +1,8 @@
 import { db } from './db';
 import { eq, and } from 'drizzle-orm';
 import * as schema from '@shared/schema';
+import { notifyUser } from './channels/registry';
+import { logInteraction } from './interactionLog';
 import { buildPlanForUser } from './routes';
 import { getInjectableGoalTasks, markTasksInjected, type InjectableGoalTask } from './goalScheduler';
 import { enqueueWeeklyPatternJobs } from './memory/weeklyJob';
@@ -141,6 +143,16 @@ export function startScheduler() {
       console.log('[Scheduler] Running morning plan build...');
       await runMorningPlanBuild();
     }
+
+    // Nightly 03:00 local per user — run Dream Cycle synthesis.
+    // Per-user timezone gating inside each function; fires every tick so it
+    // catches every user at their local 3am (synthesis) and 7-10am (delivery).
+    runDreamCycleForAllUsers(now).catch((err) =>
+      console.error('[Scheduler] Dream cycle failed:', err),
+    );
+    runDreamDeliveryForAllUsers(now).catch((err) =>
+      console.error('[Scheduler] Dream delivery failed:', err),
+    );
 
     // Sunday 03:00 local — enqueue weekly pattern recognition jobs for
     // every active user. Workers (jobQueue) pick them up over the next
@@ -332,6 +344,172 @@ export async function runMorningPlanBuild() {
   }
 
   console.log('[Scheduler] Morning plan build complete');
+}
+
+/**
+ * Return the current hour (0–23) in the given IANA timezone.
+ */
+function localHourForTz(now: Date, tz: string): number {
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz,
+      hour: "numeric",
+      hour12: false,
+    }).formatToParts(now);
+    const h = parts.find((p) => p.type === "hour");
+    return h ? parseInt(h.value, 10) : now.getUTCHours();
+  } catch {
+    return now.getUTCHours();
+  }
+}
+
+/**
+ * Return the date string (YYYY-MM-DD) in the given IANA timezone.
+ */
+function localDateKeyForTz(now: Date, tz: string): string {
+  try {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: tz,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(now);
+    return parts;
+  } catch {
+    return now.toISOString().slice(0, 10);
+  }
+}
+
+/**
+ * Run the Dream Cycle synthesis for every active user.
+ * Called every scheduler tick. Per-user timezone gating ensures each user's
+ * synthesis only fires once per night at ~3am in their local timezone.
+ * The proactiveScheduleLog provides idempotency across restarts.
+ */
+export async function runDreamCycleForAllUsers(now: Date): Promise<void> {
+  const allUsers = await db.select({ id: schema.users.id }).from(schema.users).catch(() => []);
+  const allPrefs = await db.select().from(schema.userPreferences).catch(() => []);
+  const prefsMap: Record<string, Record<string, unknown>> = {};
+  for (const p of allPrefs) prefsMap[p.userId] = (p.data as Record<string, unknown>) || {};
+
+  let totalInsights = 0;
+  for (const user of allUsers) {
+    const prefs = prefsMap[user.id] || {};
+    if (prefs.dreamEnabled === false) continue;
+
+    const tz = typeof prefs.timezone === "string" ? prefs.timezone : "UTC";
+    const localHour = localHourForTz(now, tz);
+    if (localHour !== 3) continue;
+
+    const localDate = localDateKeyForTz(now, tz);
+    const messageType = `dream_cycle:${localDate}`;
+
+    try {
+      const existing = await db
+        .select({ id: schema.proactiveScheduleLog.id })
+        .from(schema.proactiveScheduleLog)
+        .where(
+          and(
+            eq(schema.proactiveScheduleLog.userId, user.id),
+            eq(schema.proactiveScheduleLog.messageType, messageType),
+            eq(schema.proactiveScheduleLog.sentDate, localDate),
+          ),
+        )
+        .limit(1);
+      if (existing.length > 0) continue;
+    } catch {
+      continue;
+    }
+
+    try {
+      const { runDreamForUser } = await import('./memory/dream');
+      const count = await runDreamForUser(user.id, localDate);
+      totalInsights += count;
+      if (count > 0) {
+        console.log(`[Dream] ${count} insight(s) synthesised for user ${user.id} (${localDate})`);
+      }
+      await db.insert(schema.proactiveScheduleLog).values({
+        userId: user.id,
+        messageType,
+        sentDate: localDate,
+      }).catch(() => {});
+    } catch (err) {
+      console.error(`[Dream] failed for user ${user.id}:`, err);
+    }
+  }
+
+  if (totalInsights > 0) {
+    console.log(`[Dream] Cycle batch complete — ${totalInsights} total insight(s)`);
+  }
+}
+
+/**
+ * Deliver pending dream insights to every user at 7–10am local time.
+ * Runs every scheduler tick; per-user timezone gating and idempotency key
+ * ensure each user receives at most one delivery batch per day.
+ * Routes via the full channel registry (telegram, in_app, whatsapp, etc.)
+ * based on each user's notification preferences — no Telegram requirement.
+ */
+export async function runDreamDeliveryForAllUsers(now: Date): Promise<void> {
+  const allUsers = await db.select({ id: schema.users.id }).from(schema.users).catch(() => []);
+  const allPrefs = await db.select().from(schema.userPreferences).catch(() => []);
+  const prefsMap: Record<string, Record<string, unknown>> = {};
+  for (const p of allPrefs) prefsMap[p.userId] = (p.data as Record<string, unknown>) || {};
+
+  for (const user of allUsers) {
+    const prefs = prefsMap[user.id] || {};
+    if (prefs.dreamEnabled === false) continue;
+
+    const tz = typeof prefs.timezone === "string" ? prefs.timezone : "UTC";
+    const localHour = localHourForTz(now, tz);
+    if (localHour < 7 || localHour >= 10) continue;
+
+    const localDate = localDateKeyForTz(now, tz);
+    const messageType = `dream_delivery:${localDate}`;
+
+    try {
+      const existing = await db
+        .select({ id: schema.proactiveScheduleLog.id })
+        .from(schema.proactiveScheduleLog)
+        .where(
+          and(
+            eq(schema.proactiveScheduleLog.userId, user.id),
+            eq(schema.proactiveScheduleLog.messageType, messageType),
+            eq(schema.proactiveScheduleLog.sentDate, localDate),
+          ),
+        )
+        .limit(1);
+      if (existing.length > 0) continue;
+    } catch {
+      continue;
+    }
+
+    try {
+      const { getPendingDreamInsights, markDreamInsightsDelivered } = await import('./memory/dream');
+      const pending = await getPendingDreamInsights(user.id);
+      if (pending.length === 0) {
+        await db.insert(schema.proactiveScheduleLog).values({
+          userId: user.id, messageType, sentDate: localDate,
+        }).catch(() => {});
+        continue;
+      }
+
+      const insightLines = pending
+        .map((ins, i) => `${i + 1}. ${ins.insightText}`)
+        .join("\n\n");
+      const msg = `🌙 Jarvis dreamed about you\n\n${insightLines}\n\n_(Synthesised from your last 90 days of memories)_`;
+
+      await notifyUser(user.id, "dream_insight", msg);
+      await markDreamInsightsDelivered(pending.map((i) => i.id));
+      await db.insert(schema.proactiveScheduleLog).values({
+        userId: user.id, messageType, sentDate: localDate,
+      }).catch(() => {});
+      logInteraction(user.id, "notification", "outbound", msg, "dream_delivery").catch(() => {});
+      console.log(`[Dream] delivered ${pending.length} insight(s) to ${user.id} (${localDate})`);
+    } catch (err) {
+      console.error(`[Dream] delivery failed for user ${user.id}:`, err);
+    }
+  }
 }
 
 function buildPlanMarkdown(date: string, tasks: any[], reasoning?: string): string {

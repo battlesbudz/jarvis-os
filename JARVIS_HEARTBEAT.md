@@ -53,6 +53,23 @@ For each active user who has at least one watch topic defined:
 - Deliver via the user's preferred channel for `nervous_system` notifications
 - Include a one-line relevance explanation with each signal
 
+### 5. Dream Cycle (nightly, ~3am UTC)
+Once per night, Jarvis synthesises the last 90 days of memories, weekly
+patterns, energy check-ins, and task completion history for each user:
+- Pulls cross-category data corpus from `user_memories`, `weekly_insights`,
+  `energy_checkins`
+- Runs a deep LLM synthesis pass (gpt-4o) to find non-obvious correlations
+  and connections the user would not have noticed themselves
+- Stores 1–3 insights in `dream_insights` with confidence scores
+- Extracts durable findings and seeds them back into `user_memories` via the
+  extractor, then marks the SOUL stale for regeneration
+- **Does not fire** if the user has fewer than 2 weeks of memory history
+- **Delivery:** insights are queued in `dream_insights` (shownToUser=false)
+  and delivered at 7–10am local time the following morning via the user's
+  preferred channel for `dream_insight` notifications
+- Users can pause the Dream Cycle by setting `dreamEnabled=false` in
+  preferences; the toggle is in the Profile screen under "Dream Cycle"
+
 ---
 
 ## Operating rules

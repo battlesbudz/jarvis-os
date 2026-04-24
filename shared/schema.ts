@@ -517,6 +517,7 @@ export const NOTIFICATION_TYPES = [
   "weekly_planning",
   "approval_request",
   "nervous_system",
+  "dream_insight",
   "general",
 ] as const;
 export type NotificationType = typeof NOTIFICATION_TYPES[number];
@@ -619,3 +620,17 @@ export const nervousSystemSignals = pgTable("nervous_system_signals", {
 }, (table) => [
   uniqueIndex("nervous_system_signals_hash_idx").on(table.userId, table.contentHash),
 ]);
+
+// Dream Cycle — nightly deep synthesis insights.
+// Each row is one insight produced by a single dream run.
+export const dreamInsights = pgTable("dream_insights", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  dreamDate: varchar("dream_date").notNull(),
+  insightText: text("insight_text").notNull(),
+  confidenceScore: integer("confidence_score").notNull().default(70),
+  sourceMemoryIds: jsonb("source_memory_ids").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+  shownToUser: boolean("shown_to_user").notNull().default(false),
+  deliveredAt: timestamp("delivered_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});

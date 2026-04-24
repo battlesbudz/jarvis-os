@@ -631,6 +631,11 @@ Return JSON:
   return true;
 }
 
+// Dream synthesis and delivery are handled entirely by the scheduler,
+// which iterates ALL users (not just telegram-linked) with per-user timezone
+// gating. See server/scheduler.ts: runDreamCycleForAllUsers (3am local)
+// and runDreamDeliveryForAllUsers (7-10am local).
+
 // ============================================================
 // Tick — walk the checklist for every linked user
 // ============================================================
