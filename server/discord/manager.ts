@@ -644,21 +644,20 @@ export async function deleteDiscordChannel(
   const linkMeta = (linkRow[0]?.metadata as DiscordLinkMeta) ?? {};
   const linkedGuildId = linkMeta.workspace?.guildId;
 
-  // Determine the target guildId: explicit arg must match linked guild when both present
-  let resolvedGuildId: string | undefined;
-  if (opts.guildId) {
-    if (linkedGuildId && opts.guildId !== linkedGuildId) {
-      return {
-        ok: false,
-        error: `The requested server (${opts.guildId}) does not match your linked Jarvis server (${linkedGuildId}). Deletion is only allowed in your linked server.`,
-      };
-    }
-    resolvedGuildId = opts.guildId;
-  } else if (linkedGuildId) {
-    resolvedGuildId = linkedGuildId;
-  } else {
-    return { ok: false, error: "No linked Discord server found. Set up your workspace first." };
+  // Require a linked workspace guild — refuse deletion without it
+  if (!linkedGuildId) {
+    return { ok: false, error: "No linked Discord server found. Set up your Jarvis workspace first, then I can delete channels." };
   }
+
+  // If explicit guildId provided, it must match the linked guild
+  if (opts.guildId && opts.guildId !== linkedGuildId) {
+    return {
+      ok: false,
+      error: `The requested server (${opts.guildId}) does not match your linked Jarvis server (${linkedGuildId}). Deletion is only allowed in your linked server.`,
+    };
+  }
+
+  const resolvedGuildId = linkedGuildId;
 
   const rawGuild = client.guilds.cache.get(resolvedGuildId);
   if (!rawGuild) {
@@ -678,9 +677,24 @@ export async function deleteDiscordChannel(
     }
     target = ch as TextChannel;
   } else if (opts.channelName) {
-    const slug = opts.channelName.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+    // Normalize the user-supplied name to an ASCII slug (hyphens, lowercase, no punctuation)
+    // so "thinking", "#thinking", and "🧠thinking" all resolve correctly.
+    const inputLower = opts.channelName.toLowerCase().trim().replace(/^#/, "");
+    const inputSlug = inputLower.replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+
     const allMatches = guild.channels.cache
-      .filter((ch) => ch.type === ChannelType.GuildText && ch.name === slug)
+      .filter((ch) => {
+        if (ch.type !== ChannelType.GuildText) return false;
+        const chName = ch.name; // Discord channel names are already lowercase
+        // Match exact, slug-normalized, or suffix (handles emoji-prefixed workspace channels
+        // like "🧠thinking" — Discord stores emoji as the raw character in the channel name).
+        const chSlug = chName.replace(/[^a-z0-9-]/g, "");
+        return (
+          chName === inputLower ||
+          chName === inputSlug ||
+          chSlug === inputSlug
+        );
+      })
       .map((ch) => ({ id: ch.id, name: ch.name }));
 
     if (allMatches.length === 0) {
