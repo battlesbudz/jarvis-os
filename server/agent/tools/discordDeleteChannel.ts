@@ -72,6 +72,7 @@ export const discordDeleteChannelTool: AgentTool = {
       channelName: args.channelName,
       channelId: args.channelId,
       guildId: args.guildId,
+      ctxGuildId: ctx.discordGuildId,
     });
 
     // Disambiguation: multiple channels share the same name

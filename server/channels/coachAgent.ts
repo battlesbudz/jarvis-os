@@ -20,6 +20,10 @@ export interface CoachReplyInput {
    *  reply so callers can progressively update an external message (e.g. Discord
    *  message edits). Not called for intermediate tool-call turns. */
   onToken?: (chunk: string) => void;
+  /** Discord guild (server) ID — set when the request originates from a Discord guild channel.
+   *  Surfaced in ToolContext so Discord-specific tools (e.g. deleteDiscordChannel) can
+   *  identify the server without requiring a pre-configured workspace. */
+  discordGuildId?: string;
 }
 
 export interface CoachReplyResult {
@@ -49,7 +53,7 @@ function getMaxTokensForChannel(channelName: string): number {
 // daemon adapters. Returns { reply, attachments } — the caller is
 // responsible for delivery and post-send bookkeeping.
 export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyResult> {
-  const { userId, userText, channelName, imageUrl, onToken } = input;
+  const { userId, userText, channelName, imageUrl, onToken, discordGuildId } = input;
   const channelLower = channelName.toLowerCase();
 
   let userGoals: any[] = [];
@@ -211,6 +215,7 @@ When a user's request involves multi-step research, drafting a document or plan,
     userId,
     channel: channelName,
     googleAccessToken: googleAccessToken || undefined,
+    discordGuildId: discordGuildId || undefined,
     state: {
       dateKey,
       todayPlan,

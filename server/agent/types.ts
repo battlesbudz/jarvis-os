@@ -33,6 +33,8 @@ export interface ToolContext {
   state: AgentState;
   /** Optional logger label, e.g. "Telegram" or "AppChat" */
   channel?: string;
+  /** Discord guild (server) ID — set when the message originates from a Discord guild channel */
+  discordGuildId?: string;
 }
 
 export interface ToolResult {
