@@ -42,7 +42,7 @@ import { logInteraction, getRecentInteractions, formatInteractionTimeline } from
 import { extractAndStore } from "./memory/extractor";
 import { getSoul, getSoulPromptBlock, regenerateSoul, setManualOverride, setSoulContent } from "./memory/soul";
 import { listPeople, deletePerson } from "./memory/people";
-import { isUserPaired, sendDaemonOp, pingDaemon, getOpAuditLog, isDaemonActionAllowed, isAndroidDaemonActive, isAndroidDaemonActionAllowed, getRecentPhoneNotifications, getDaemonDeviceMeta, type AndroidDaemonAction } from "./daemon/bridge";
+import { isUserPaired, sendDaemonOp, pingDaemon, getOpAuditLog, isDaemonActionAllowed, isAndroidDaemonActive, isDesktopDaemonActive, isAndroidDaemonActionAllowed, getRecentPhoneNotifications, getDaemonDeviceMeta, type AndroidDaemonAction } from "./daemon/bridge";
 import type { DaemonAction, DaemonOp } from "./daemon/bridge";
 import { telegramLinks, channelLinks } from "@shared/schema";
 import { connectChannelTool } from "./agent/tools/connectChannel";
@@ -1336,14 +1336,16 @@ Rules:
             db.select().from(channelLinks).where(eq(channelLinks.userId, userId)),
           ]);
           const daemonOnline = isUserPaired(userId);
-          const isAndroid = daemonOnline ? await isAndroidDaemonActive(userId) : false;
+          const isAndroid = isAndroidDaemonActive(userId);
           const googleEmail = oauthStatus?.google?.email || (oauthStatus?.google?.accounts?.[0]?.email) || 'unknown';
           const msEmail = oauthStatus?.microsoft?.email || (oauthStatus?.microsoft?.accounts?.[0]?.email) || 'unknown';
           const slackConnectedCheck = (oauthStatus as any)?.slack?.connected ?? false;
+          const isDesktop = isDesktopDaemonActive(userId);
+          const daemonParts: string[] = [];
+          if (isDesktop) daemonParts.push(`Desktop Daemon: ✓ online — use shell, notify, file_read, file_write, file_list actions.`);
+          if (isAndroid) daemonParts.push(`Android Device Daemon: ✓ online — use android_open_app, android_browse, android_screenshot, android_read_screen, android_tap, android_type, android_swipe, android_press_key, android_file_list, android_file_read, android_notifications_list, notify, android_return_to_jarvis. After completing a multi-step phone task: (1) call notify (title:'Jarvis ✓', body: one-line summary), then (2) call android_return_to_jarvis to navigate the phone back to the Jarvis chat. If a tool returns result:error, stop and report the error immediately — do NOT fabricate success. After android_open_app or android_browse succeeds, ALWAYS call android_read_screen before describing screen content. For app searches use deep links: YouTube='vnd.youtube://results?search_query=QUERY', Maps='geo:0,0?q=QUERY', Spotify='spotify:search:QUERY'.`);
           const daemonLabel = daemonOnline
-            ? isAndroid
-              ? `Android Device Daemon: ✓ online — use android_open_app, android_browse, android_screenshot, android_read_screen, android_tap, android_type, android_swipe, android_press_key, android_file_list, android_file_read, android_notifications_list, notify, android_return_to_jarvis. DO NOT use desktop shell/file actions. After completing a multi-step phone task: (1) call notify (title:'Jarvis ✓', body: one-line summary), then (2) call android_return_to_jarvis to navigate the phone back to the Jarvis chat. If a tool returns result:error, stop and report the error immediately — do NOT fabricate success. After android_open_app or android_browse succeeds, ALWAYS call android_read_screen before describing screen content. For app searches use deep links: YouTube='vnd.youtube://results?search_query=QUERY', Maps='geo:0,0?q=QUERY', Spotify='spotify:search:QUERY'.`
-              : `Desktop Daemon: ✓ online — use shell, notify, file_read, file_write, file_list actions.`
+            ? daemonParts.join(" | ")
             : `Android/Desktop Daemon: ✗ not connected — user must open Jarvis app → Profile → Android Device → Get Pairing Code, then open the Jarvis Daemon APK, enter server URL https://GameplanAI.replit.app and the 8-character code, tap Pair`;
           const lines = [
             `Google (Gmail + Calendar): ${googleToken ? `✓ token valid — ${googleEmail}` : '✗ not connected or token expired (reconnect needed)'}`,
@@ -1501,12 +1503,16 @@ Rules:
           if (!isUserPaired(userId)) {
             return { result: 'error', label: 'Daemon not connected', detail: 'No daemon paired. Install and pair either the desktop daemon or the Android APK from Profile → Connected Channels.' };
           }
-          const isAndroidDaemon = await isAndroidDaemonActive(userId);
-          const androidActions = ['android_open_app', 'android_browse', 'android_return_to_jarvis', 'android_screenshot', 'android_read_screen', 'android_tap', 'android_type', 'android_swipe', 'android_press_key', 'android_file_list', 'android_file_read', 'android_notifications_list', 'android_wait', 'notify'];
-          const desktopActions = ['shell', 'notify', 'file_read', 'file_write', 'file_list'];
+          const isAndroidDaemon = isAndroidDaemonActive(userId);
+          const androidActions = ['android_open_app', 'android_browse', 'android_return_to_jarvis', 'android_screenshot', 'android_read_screen', 'android_tap', 'android_type', 'android_swipe', 'android_press_key', 'android_file_list', 'android_file_read', 'android_notifications_list', 'android_wait'];
+          const desktopActions = ['shell', 'file_read', 'file_write', 'file_list'];
 
           let op: DaemonOp;
-          if (androidActions.includes(action)) {
+          if (action === 'notify') {
+            // Platform-neutral: routes to desktop daemon if connected, else android fallback.
+            // sendDaemonOp handles the routing — no daemon-type guard needed here.
+            op = { type: 'notify', title: String(args.title || 'Jarvis'), body: String(args.body || '') };
+          } else if (androidActions.includes(action)) {
             if (!isAndroidDaemon) return { result: 'error', label: 'Android daemon required', detail: 'This action requires an Android daemon. The paired daemon is a desktop daemon.' };
             // Check Android permissions
             const permMap: Record<string, AndroidDaemonAction | null> = {
@@ -1676,15 +1682,13 @@ Rules:
               op = { type: 'android_file_read', path: String(args.path) };
             }
           } else if (desktopActions.includes(action)) {
-            if (isAndroidDaemon) return { result: 'error', label: 'Wrong daemon type', detail: `Action '${action}' is desktop-only. Use android_* actions for the connected Android daemon.` };
+            if (!isDesktopDaemonActive(userId)) return { result: 'error', label: 'Desktop daemon required', detail: `Action '${action}' requires the Desktop Daemon. Connect it from Profile → Connected Channels.` };
             if (!(await isDaemonActionAllowed(userId, action as DaemonAction))) {
               return { result: 'error', label: `Action '${action}' not permitted`, detail: `Enable '${action}' in Profile → Connected Channels → Desktop Daemon → Permissions.` };
             }
             if (action === 'shell') {
               if (!args.cmd) return { result: 'error', label: 'cmd required', detail: 'Provide cmd for shell action.' };
               op = { type: 'shell', cmd: String(args.cmd), cwd: args.cwd ? String(args.cwd) : undefined };
-            } else if (action === 'notify') {
-              op = { type: 'notify', title: String(args.title || 'Jarvis'), body: String(args.body || '') };
             } else if (action === 'file_read') {
               if (!args.path) return { result: 'error', label: 'path required', detail: 'Provide path for file_read.' };
               op = { type: 'file_read', path: String(args.path) };
@@ -2068,9 +2072,10 @@ Answer (yes/no):`,
       }
 
       const daemonPaired = userId ? isUserPaired(userId) : false;
-      const [androidActive, daemonDeviceMeta] = daemonPaired && userId
-        ? await Promise.all([isAndroidDaemonActive(userId), getDaemonDeviceMeta(userId)])
-        : [false, { hostname: null, platform: null }];
+      const androidActive = userId ? isAndroidDaemonActive(userId) : false;
+      const daemonDeviceMeta = daemonPaired && userId
+        ? await getDaemonDeviceMeta(userId, androidActive ? "android" : "desktop")
+        : { hostname: null, platform: null };
 
       // Build device-specific package hints for Samsung devices (hostname starts with SM-)
       const hostname = daemonDeviceMeta.hostname || '';

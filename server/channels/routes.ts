@@ -4,7 +4,7 @@ import { eq, and } from "drizzle-orm";
 import { channelLinks, channelLinkCodes, telegramLinks, NOTIFICATION_TYPES, CHANNEL_NAMES, type ChannelName, type NotificationType } from "@shared/schema";
 import { authMiddleware } from "../auth";
 import { getAllPreferences, setPreference, getChannel, listChannels } from "./registry";
-import { createDaemonPairingCode, isUserPaired, closeUserDaemon, getDaemonPermissions, setDaemonPermissions, isDaemonActionAllowed, DEFAULT_DAEMON_PERMISSIONS, getAndroidDaemonPermissions, setAndroidDaemonPermissions, DEFAULT_ANDROID_DAEMON_PERMISSIONS, isAndroidDaemonActive, type DaemonAction, type DaemonPermissions, type AndroidDaemonAction, type AndroidDaemonPermissions } from "../daemon/bridge";
+import { createDaemonPairingCode, isUserPaired, closeUserDaemon, getDaemonPermissions, setDaemonPermissions, isDaemonActionAllowed, DEFAULT_DAEMON_PERMISSIONS, getAndroidDaemonPermissions, setAndroidDaemonPermissions, DEFAULT_ANDROID_DAEMON_PERMISSIONS, isAndroidDaemonActive, isDesktopDaemonActive, type DaemonAction, type DaemonPermissions, type AndroidDaemonAction, type AndroidDaemonPermissions } from "../daemon/bridge";
 import { startUserBot, stopUserBot, getBotStatus, completePairing, getGuildsForUser, getChannelsForGuild, setupDiscordWorkspace, type AllowlistedGuild, type DiscordLinkMeta, WORKSPACE_TOPICS } from "../discord/manager";
 import { saveUserToken, getUserToken, deleteUserToken } from "../userTokenStore";
 import { createSchedule, listSchedules, deleteSchedule, toggleSchedule, parseCronExpression, SCHEDULE_TEMPLATES, nextRunTime } from "../discord/schedules";
@@ -39,13 +39,28 @@ export function registerChannelRoutes(app: Express): void {
       };
       const meta: Record<string, unknown> = {};
 
+      const desktopDaemonConnected = isDesktopDaemonActive(userId);
+      const androidDaemonConnected = isAndroidDaemonActive(userId);
+
       for (const row of channelRows) {
         const ch = row.channel as ChannelName;
         if (ch === "daemon") {
           const daemonMeta = row.metadata as any;
-          const platform = daemonMeta?.platform || "desktop";
+          const platform = (daemonMeta?.platform as string | undefined) || "desktop";
           connected.daemon = isUserPaired(userId);
-          meta.daemon = { hostname: daemonMeta?.hostname, lastSeenAt: row.lastSeenAt, connected: connected.daemon, platform };
+          if (platform === "android") {
+            if (!meta.android_daemon) {
+              meta.android_daemon = { hostname: daemonMeta?.hostname, lastSeenAt: row.lastSeenAt, connected: androidDaemonConnected };
+            }
+          } else {
+            if (!meta.desktop_daemon) {
+              meta.desktop_daemon = { hostname: daemonMeta?.hostname, lastSeenAt: row.lastSeenAt, connected: desktopDaemonConnected };
+            }
+          }
+          // Legacy single meta.daemon field for backwards compat
+          if (!meta.daemon) {
+            meta.daemon = { hostname: daemonMeta?.hostname, lastSeenAt: row.lastSeenAt, connected: connected.daemon, platform };
+          }
         } else if (ch === "discord") {
           // A channel_links row exists → account IS paired (connected = true).
           // Bot runtime state is exposed separately so the UI can distinguish
@@ -101,6 +116,8 @@ export function registerChannelRoutes(app: Express): void {
         meta,
         notificationTypes: NOTIFICATION_TYPES,
         preferences: prefs,
+        desktop_daemon_connected: desktopDaemonConnected,
+        android_daemon_connected: androidDaemonConnected,
       });
     } catch (err) {
       console.error("[channels] GET /api/channels failed:", err);
@@ -218,6 +235,50 @@ export function registerChannelRoutes(app: Express): void {
     } catch (err) {
       console.error("[channels] whatsapp code failed:", err);
       res.status(500).json({ error: "failed to generate code" });
+    }
+  });
+
+  // DELETE /api/channels/desktop-daemon — unlink only the desktop daemon
+  app.delete("/api/channels/desktop-daemon", authMiddleware, async (req: Request, res: Response) => {
+    const userId = (req as any).userId;
+    try {
+      closeUserDaemon(userId, "desktop");
+      // Remove only the desktop daemon DB row (platform === "desktop" or no platform)
+      const rows = await db.select().from(channelLinks)
+        .where(and(eq(channelLinks.userId, userId), eq(channelLinks.channel, "daemon")));
+      for (const row of rows) {
+        const meta = (row.metadata as Record<string, unknown> | null) || {};
+        const p = (meta.platform as string | undefined) || "desktop";
+        if (p === "desktop") {
+          await db.delete(channelLinks).where(eq(channelLinks.id, row.id));
+        }
+      }
+      res.json({ ok: true });
+    } catch (err) {
+      console.error("[channels] desktop-daemon unlink failed:", err);
+      res.status(500).json({ error: "failed to unlink desktop daemon" });
+    }
+  });
+
+  // DELETE /api/channels/android-daemon — unlink only the android daemon
+  app.delete("/api/channels/android-daemon", authMiddleware, async (req: Request, res: Response) => {
+    const userId = (req as any).userId;
+    try {
+      closeUserDaemon(userId, "android");
+      // Remove only the android daemon DB row
+      const rows = await db.select().from(channelLinks)
+        .where(and(eq(channelLinks.userId, userId), eq(channelLinks.channel, "daemon")));
+      for (const row of rows) {
+        const meta = (row.metadata as Record<string, unknown> | null) || {};
+        const p = (meta.platform as string | undefined) || "desktop";
+        if (p === "android") {
+          await db.delete(channelLinks).where(eq(channelLinks.id, row.id));
+        }
+      }
+      res.json({ ok: true });
+    } catch (err) {
+      console.error("[channels] android-daemon unlink failed:", err);
+      res.status(500).json({ error: "failed to unlink android daemon" });
     }
   });
 

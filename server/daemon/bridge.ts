@@ -59,6 +59,7 @@ interface PendingOp {
   timer: ReturnType<typeof setTimeout>;
 }
 
+// Keyed by `${userId}:${platform}` where platform is "desktop" or "android"
 const userSockets = new Map<string, WebSocket>();
 const pendingByUser = new Map<string, Map<string, PendingOp>>();
 let opCounter = 0;
@@ -68,32 +69,58 @@ function nextOpId(): string {
   return `op_${Date.now().toString(36)}_${opCounter}`;
 }
 
+function socketKey(userId: string, platform: string): string {
+  return `${userId}:${platform}`;
+}
+
 export function isUserPaired(userId: string): boolean {
-  const sock = userSockets.get(userId);
+  const desktop = userSockets.get(socketKey(userId, "desktop"));
+  if (desktop && desktop.readyState === WebSocket.OPEN) return true;
+  const android = userSockets.get(socketKey(userId, "android"));
+  return !!(android && android.readyState === WebSocket.OPEN);
+}
+
+export function isDesktopDaemonActive(userId: string): boolean {
+  const sock = userSockets.get(socketKey(userId, "desktop"));
   return !!(sock && sock.readyState === WebSocket.OPEN);
 }
 
 export function listPairedUsers(): string[] {
-  return [...userSockets.keys()];
+  const userIds = new Set<string>();
+  for (const key of userSockets.keys()) {
+    const colonIdx = key.indexOf(":");
+    if (colonIdx > -1) userIds.add(key.slice(0, colonIdx));
+  }
+  return [...userIds];
 }
 
-// Forcibly disconnect any active daemon socket for this user. Used when the
-// user unlinks the daemon — without this, an already-paired socket would
-// continue to accept ops until its next ping/disconnect.
-export function closeUserDaemon(userId: string): boolean {
-  const sock = userSockets.get(userId);
-  if (!sock) return false;
-  try { sock.close(4004, "unlinked by user"); } catch { /* noop */ }
-  userSockets.delete(userId);
-  const pending = pendingByUser.get(userId);
-  if (pending) {
-    for (const [id, p] of pending) {
-      clearTimeout(p.timer);
-      p.resolve({ ok: false, error: "daemon unlinked" });
-      pending.delete(id);
+// Forcibly disconnect active daemon socket(s) for this user.
+// If platform is provided, only that platform's socket is closed.
+// Without platform, all daemon sockets for the user are closed.
+export function closeUserDaemon(userId: string, platform?: string): boolean {
+  const platforms = platform ? [platform] : ["desktop", "android"];
+  let closed = false;
+  for (const p of platforms) {
+    const key = socketKey(userId, p);
+    const sock = userSockets.get(key);
+    if (sock) {
+      try { sock.close(4004, "unlinked by user"); } catch { /* noop */ }
+      userSockets.delete(key);
+      closed = true;
     }
   }
-  return true;
+  for (const p of platforms) {
+    const pKey = socketKey(userId, p);
+    const pendingMap = pendingByUser.get(pKey);
+    if (pendingMap) {
+      for (const [, op] of pendingMap) {
+        clearTimeout(op.timer);
+        op.resolve({ ok: false, error: "daemon unlinked" });
+      }
+      pendingByUser.delete(pKey);
+    }
+  }
+  return closed;
 }
 
 // ───── Per-action permission model (Desktop) ────────────────────────────
@@ -134,18 +161,29 @@ export const DEFAULT_ANDROID_DAEMON_PERMISSIONS: AndroidDaemonPermissions = {
 };
 
 // Prefer the real paired row (any non-pending address) over a pre-pairing
-// stub when both exist, so permission lookups are deterministic.
-async function findUserDaemonRow(userId: string) {
+// stub when both exist. If platform is provided, only rows for that platform
+// are considered (matched by metadata.platform).
+async function findUserDaemonRow(userId: string, platform?: string) {
   const rows = await db.select().from(channelLinks)
     .where(and(eq(channelLinks.userId, userId), eq(channelLinks.channel, "daemon")));
   if (rows.length === 0) return null;
-  const real = rows.find((r) => !r.address.startsWith("pending_"));
-  return real || rows[0];
+  let candidates = rows;
+  if (platform) {
+    const filtered = rows.filter((r) => {
+      const meta = (r.metadata as Record<string, unknown> | null) || {};
+      const p = (meta.platform as string | undefined) || "desktop";
+      return p === platform;
+    });
+    if (filtered.length === 0) return null;
+    candidates = filtered;
+  }
+  const real = candidates.find((r) => !r.address.startsWith("pending_"));
+  return real || candidates[0];
 }
 
-export async function getDaemonDeviceMeta(userId: string): Promise<{ hostname: string | null; platform: string | null }> {
+export async function getDaemonDeviceMeta(userId: string, platform?: string): Promise<{ hostname: string | null; platform: string | null }> {
   try {
-    const row = await findUserDaemonRow(userId);
+    const row = await findUserDaemonRow(userId, platform);
     const meta = (row?.metadata as Record<string, unknown> | null) || null;
     return {
       hostname: (meta?.hostname as string | undefined) || null,
@@ -158,7 +196,7 @@ export async function getDaemonDeviceMeta(userId: string): Promise<{ hostname: s
 
 export async function getDaemonPermissions(userId: string): Promise<DaemonPermissions> {
   try {
-    const row = await findUserDaemonRow(userId);
+    const row = await findUserDaemonRow(userId, "desktop");
     const meta = (row?.metadata as Record<string, unknown> | null) || null;
     const stored = meta?.permissions;
     if (stored && typeof stored === "object") {
@@ -176,7 +214,7 @@ export async function setDaemonPermissions(
 ): Promise<DaemonPermissions> {
   const merged = { ...DEFAULT_DAEMON_PERMISSIONS, ...perms };
   try {
-    const row = await findUserDaemonRow(userId);
+    const row = await findUserDaemonRow(userId, "desktop");
     const meta = ((row?.metadata as Record<string, unknown> | null) || {}) as Record<string, unknown>;
     meta.permissions = merged;
     if (row) {
@@ -184,7 +222,7 @@ export async function setDaemonPermissions(
         .where(eq(channelLinks.id, row.id));
     } else {
       await db.insert(channelLinks).values({
-        userId, channel: "daemon", address: `pending_${userId}`, metadata: meta, lastSeenAt: new Date(),
+        userId, channel: "daemon", address: `pending_${userId}`, metadata: { ...meta, platform: "desktop" }, lastSeenAt: new Date(),
       }).onConflictDoNothing();
     }
   } catch (err) {
@@ -202,7 +240,7 @@ export async function isDaemonActionAllowed(userId: string, action: DaemonAction
 
 export async function getAndroidDaemonPermissions(userId: string): Promise<AndroidDaemonPermissions> {
   try {
-    const row = await findUserDaemonRow(userId);
+    const row = await findUserDaemonRow(userId, "android");
     const meta = (row?.metadata as Record<string, unknown> | null) || null;
     const stored = meta?.android_permissions;
     if (stored && typeof stored === "object") {
@@ -220,7 +258,7 @@ export async function setAndroidDaemonPermissions(
 ): Promise<AndroidDaemonPermissions> {
   const merged = { ...DEFAULT_ANDROID_DAEMON_PERMISSIONS, ...perms };
   try {
-    const row = await findUserDaemonRow(userId);
+    const row = await findUserDaemonRow(userId, "android");
     const meta = ((row?.metadata as Record<string, unknown> | null) || {}) as Record<string, unknown>;
     meta.android_permissions = merged;
     if (row) {
@@ -228,7 +266,7 @@ export async function setAndroidDaemonPermissions(
         .where(eq(channelLinks.id, row.id));
     } else {
       await db.insert(channelLinks).values({
-        userId, channel: "daemon", address: `pending_android_${userId}`, metadata: meta, lastSeenAt: new Date(),
+        userId, channel: "daemon", address: `pending_android_${userId}`, metadata: { ...meta, platform: "android" }, lastSeenAt: new Date(),
       }).onConflictDoNothing();
     }
   } catch (err) {
@@ -242,16 +280,10 @@ export async function isAndroidDaemonActionAllowed(userId: string, action: Andro
   return !!perms[action];
 }
 
-// Returns true if the currently-connected daemon is an Android device.
-export async function isAndroidDaemonActive(userId: string): Promise<boolean> {
-  if (!isUserPaired(userId)) return false;
-  try {
-    const row = await findUserDaemonRow(userId);
-    const meta = (row?.metadata as Record<string, unknown> | null) || null;
-    return meta?.platform === "android";
-  } catch {
-    return false;
-  }
+// Returns true if the Android daemon socket is connected.
+export function isAndroidDaemonActive(userId: string): boolean {
+  const sock = userSockets.get(socketKey(userId, "android"));
+  return !!(sock && sock.readyState === WebSocket.OPEN);
 }
 
 // ───── Op audit log ─────────────────────────────────────────────────────
@@ -285,54 +317,62 @@ export async function pingDaemon(
   return sendDaemonOp(userId, { type: "ping" }, timeoutMs);
 }
 
-// Platform-level gating: android_* ops can only go to android daemons,
-// and desktop ops cannot go to android daemons. Enforced here so all
-// callers (tools, routes, etc.) are protected by a single check.
-// "ping" is platform-neutral and bypasses this check.
-async function validateOpForPlatform(
-  userId: string,
-  op: DaemonOp,
-): Promise<{ ok: false; error: string } | null> {
-  if (op.type === "ping") return null;
-  const isAndroid = await isAndroidDaemonActive(userId);
-  const isAndroidOp = op.type.startsWith("android_");
-  if (isAndroidOp && !isAndroid) {
-    return { ok: false, error: `Op '${op.type}' requires an Android daemon, but the connected daemon is a desktop daemon.` };
-  }
-  if (!isAndroidOp && isAndroid && op.type !== "notify") {
-    return { ok: false, error: `Op '${op.type}' is a desktop-only op, but the connected daemon is Android. Use android_* ops instead.` };
-  }
-  return null;
-}
-
 export async function sendDaemonOp(
   userId: string,
   op: DaemonOp,
   timeoutMs = 15000,
 ): Promise<{ ok: boolean; data?: unknown; error?: string }> {
-  const sock = userSockets.get(userId);
-  if (!sock || sock.readyState !== WebSocket.OPEN) {
-    console.log(`[daemon] op SKIPPED — daemon not connected userId=${userId} op=${op.type}`);
-    return { ok: false, error: "daemon not connected" };
+  const isAndroidOp = op.type.startsWith("android_");
+  // "notify" and "ping" are platform-neutral: route to desktop first, android fallback.
+  // All other non-android ops are desktop-only; android_* ops are android-only.
+  const isPlatformNeutral = op.type === "ping" || op.type === "notify";
+
+  let sock: WebSocket | undefined;
+  if (isPlatformNeutral) {
+    sock = userSockets.get(socketKey(userId, "desktop")) || userSockets.get(socketKey(userId, "android"));
+  } else if (isAndroidOp) {
+    sock = userSockets.get(socketKey(userId, "android"));
+  } else {
+    sock = userSockets.get(socketKey(userId, "desktop"));
   }
-  const platformErr = await validateOpForPlatform(userId, op);
-  if (platformErr) return platformErr;
+
+  if (!sock || sock.readyState !== WebSocket.OPEN) {
+    const missing = isPlatformNeutral ? "daemon" : isAndroidOp ? "android daemon" : "desktop daemon";
+    console.log(`[daemon] op SKIPPED — ${missing} not connected userId=${userId} op=${op.type}`);
+    if (isAndroidOp) {
+      return { ok: false, error: "Android daemon not connected. Ask the user to install the Jarvis Android APK and pair it." };
+    }
+    if (!isPlatformNeutral) {
+      return { ok: false, error: "Desktop daemon not connected. Ask the user to install and pair the desktop daemon." };
+    }
+    return { ok: false, error: "No daemon connected. Install and pair the desktop daemon or the Android APK from Profile → Connected Channels." };
+  }
+  // Determine which platform this op is actually going to (for scoped pending tracking)
+  let actualPlatform: string;
+  if (isPlatformNeutral) {
+    const deskSock = userSockets.get(socketKey(userId, "desktop"));
+    actualPlatform = (sock === deskSock) ? "desktop" : "android";
+  } else {
+    actualPlatform = isAndroidOp ? "android" : "desktop";
+  }
+  const pendingKey = socketKey(userId, actualPlatform);
+
   console.log(`[daemon] op SENT userId=${userId} op=${op.type}`, 'packageName' in op ? `pkg=${(op as any).packageName}` : '');
   const sentAt = Date.now();
   return new Promise((resolve) => {
     const id = nextOpId();
     const timer = setTimeout(() => {
-      const map = pendingByUser.get(userId);
+      const map = pendingByUser.get(pendingKey);
       map?.delete(id);
       console.log(`[daemon] op TIMEOUT userId=${userId} op=${op.type}`);
       const durationMs = Date.now() - sentAt;
       recordAuditEntry(userId, { ts: sentAt, type: op.type, ok: false, error: "timeout", durationMs });
       resolve({ ok: false, error: "daemon timeout" });
     }, timeoutMs);
-    let userMap = pendingByUser.get(userId);
+    let userMap = pendingByUser.get(pendingKey);
     if (!userMap) {
       userMap = new Map();
-      pendingByUser.set(userId, userMap);
+      pendingByUser.set(pendingKey, userMap);
     }
     userMap.set(id, {
       resolve: (result) => {
@@ -396,24 +436,31 @@ async function consumePairingCode(code: string): Promise<string | null> {
 
 async function recordDaemonLink(userId: string, daemonId: string, meta: Record<string, unknown>): Promise<void> {
   try {
-    // Normalize to a single daemon row per user. Read any existing rows so we
-    // can preserve previously-stored permissions, then drop them all and
-    // insert one canonical row keyed by (userId, channel="daemon", daemonId).
+    const platform = (meta.platform as string | undefined) || "desktop";
+    // Find existing rows and preserve permissions from the same-platform row.
     const existing = await db.select().from(channelLinks)
       .where(and(eq(channelLinks.userId, userId), eq(channelLinks.channel, "daemon")));
     const mergedMeta: Record<string, unknown> = { ...meta };
     for (const row of existing) {
       const prior = (row.metadata as Record<string, unknown> | null) || {};
-      if (prior.permissions && !mergedMeta.permissions) {
-        mergedMeta.permissions = prior.permissions;
-      }
-      if (prior.android_permissions && !mergedMeta.android_permissions) {
-        mergedMeta.android_permissions = prior.android_permissions;
+      const priorPlatform = (prior.platform as string | undefined) || "desktop";
+      if (priorPlatform === platform) {
+        // Preserve existing permissions for this platform
+        if (prior.permissions && !mergedMeta.permissions) {
+          mergedMeta.permissions = prior.permissions;
+        }
+        if (prior.android_permissions && !mergedMeta.android_permissions) {
+          mergedMeta.android_permissions = prior.android_permissions;
+        }
       }
     }
-    if (existing.length > 0) {
-      await db.delete(channelLinks)
-        .where(and(eq(channelLinks.userId, userId), eq(channelLinks.channel, "daemon")));
+    // Delete only the existing row for this platform (preserve the other platform's row)
+    for (const row of existing) {
+      const priorMeta = (row.metadata as Record<string, unknown> | null) || {};
+      const priorPlatform = (priorMeta.platform as string | undefined) || "desktop";
+      if (priorPlatform === platform) {
+        await db.delete(channelLinks).where(eq(channelLinks.id, row.id));
+      }
     }
     await db.insert(channelLinks).values({
       userId,
@@ -443,6 +490,7 @@ export function startDaemonBridge(server: HttpServer): void {
 
   wss.on("connection", (ws: WebSocket) => {
     let pairedUserId: string | null = null;
+    let pairedPlatform: string = "desktop";
     let pairTimeout: ReturnType<typeof setTimeout> | null = setTimeout(() => {
       if (!pairedUserId) {
         try { ws.close(4001, "pairing timeout"); } catch { /* noop */ }
@@ -499,12 +547,15 @@ export function startDaemonBridge(server: HttpServer): void {
           await db.update(channelLinks)
             .set({ metadata: storedMeta, lastSeenAt: new Date() })
             .where(eq(channelLinks.id, row.id));
-          const prior = userSockets.get(pairedUserId);
+          const reconnPlatform = (storedMeta.platform as string | undefined) || "desktop";
+          pairedPlatform = reconnPlatform;
+          const reconnKey = socketKey(pairedUserId, reconnPlatform);
+          const prior = userSockets.get(reconnKey);
           if (prior && prior !== ws) { try { prior.close(4003, "replaced by new daemon"); } catch { /* noop */ } }
-          userSockets.set(pairedUserId, ws);
+          userSockets.set(reconnKey, ws);
           const hello: HelloMsg = { type: "hello", ok: true, userId: pairedUserId };
           try { ws.send(JSON.stringify(hello)); } catch { /* noop */ }
-          console.log(`[daemon] reconnected userId=${pairedUserId} daemonId=${rm.daemonId}`);
+          console.log(`[daemon] reconnected userId=${pairedUserId} platform=${reconnPlatform} daemonId=${rm.daemonId}`);
         } catch (err) {
           console.error("[daemon] reconnect lookup failed:", err);
           try { ws.send(JSON.stringify({ type: "hello", ok: false, error: "reconnect failed" })); } catch { /* noop */ }
@@ -527,19 +578,22 @@ export function startDaemonBridge(server: HttpServer): void {
         const daemonId = randomBytes(16).toString("hex");
         const reconnectSecret = randomBytes(32).toString("hex");
         const reconnectSecretHash = createHash("sha256").update(reconnectSecret).digest("hex");
+        const pairPlatform = m.platform || "desktop";
+        pairedPlatform = pairPlatform;
         await recordDaemonLink(userId, daemonId, {
           hostname: m.hostname || "unknown",
-          platform: m.platform || "desktop",
+          platform: pairPlatform,
           reconnectSecretHash,
         });
-        // Replace any prior socket for this user
-        const prior = userSockets.get(userId);
+        // Replace any prior socket for the same platform only
+        const pairKey = socketKey(userId, pairPlatform);
+        const prior = userSockets.get(pairKey);
         if (prior && prior !== ws) { try { prior.close(4003, "replaced by new daemon"); } catch { /* noop */ } }
-        userSockets.set(userId, ws);
+        userSockets.set(pairKey, ws);
         // Send daemonId + one-time plaintext secret to client; never sent again after this
         const hello = { type: "hello", ok: true, userId, daemonId, reconnectSecret };
         try { ws.send(JSON.stringify(hello)); } catch { /* noop */ }
-        console.log(`[daemon] paired userId=${userId} hostname=${m.hostname || "unknown"} platform=${m.platform || "desktop"}`);
+        console.log(`[daemon] paired userId=${userId} hostname=${m.hostname || "unknown"} platform=${pairPlatform}`);
         return;
       }
 
@@ -561,7 +615,7 @@ export function startDaemonBridge(server: HttpServer): void {
       }
 
       if (m.type === "result" && pairedUserId) {
-        const userMap = pendingByUser.get(pairedUserId);
+        const userMap = pendingByUser.get(socketKey(pairedUserId, pairedPlatform));
         const pending = userMap?.get(m.id);
         if (pending) {
           clearTimeout(pending.timer);
@@ -586,22 +640,25 @@ export function startDaemonBridge(server: HttpServer): void {
 
     ws.on("close", () => {
       clearInterval(keepalive);
-      if (pairedUserId && userSockets.get(pairedUserId) === ws) {
-        userSockets.delete(pairedUserId);
-        console.log(`[daemon] disconnected userId=${pairedUserId}`);
-      }
-      if (pairTimeout) { clearTimeout(pairTimeout); pairTimeout = null; }
-      // Reject any pending ops for this user
       if (pairedUserId) {
-        const userMap = pendingByUser.get(pairedUserId);
+        const key = socketKey(pairedUserId, pairedPlatform);
+        if (userSockets.get(key) === ws) {
+          userSockets.delete(key);
+          console.log(`[daemon] disconnected userId=${pairedUserId} platform=${pairedPlatform}`);
+        }
+        // Reject pending ops only for this platform's socket (not the other daemon)
+        const pendingKey = socketKey(pairedUserId, pairedPlatform);
+        const userMap = pendingByUser.get(pendingKey);
         if (userMap) {
           for (const [id, pending] of userMap) {
             clearTimeout(pending.timer);
             pending.resolve({ ok: false, error: "daemon disconnected" });
             userMap.delete(id);
           }
+          pendingByUser.delete(pendingKey);
         }
       }
+      if (pairTimeout) { clearTimeout(pairTimeout); pairTimeout = null; }
     });
 
     ws.on("error", (err: Error) => {

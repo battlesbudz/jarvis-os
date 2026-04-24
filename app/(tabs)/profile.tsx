@@ -205,6 +205,8 @@ export default function ProfileScreen() {
     meta: Record<string, any>;
     notificationTypes: string[];
     preferences: Record<string, string[]>;
+    desktop_daemon_connected?: boolean;
+    android_daemon_connected?: boolean;
   } | null>(null);
   const [whatsappCode, setWhatsappCode] = useState<{ code: string; twilioNumber: string | null } | null>(null);
   const [daemonCode, setDaemonCode] = useState<string | null>(null);
@@ -893,7 +895,7 @@ export default function ProfileScreen() {
   }, []);
 
   const handleGenerateDaemonCode = useCallback(async () => {
-    setChannelBusy('daemon');
+    setChannelBusy('desktop-daemon');
     try {
       const res = await apiRequest('POST', '/api/channels/daemon/code');
       const data = await res.json();
@@ -974,6 +976,8 @@ export default function ProfileScreen() {
       await apiRequest('DELETE', `/api/channels/${channel}`);
       if (channel === 'whatsapp') setWhatsappCode(null);
       if (channel === 'daemon') { setDaemonCode(null); setAndroidDaemonCode(null); }
+      if (channel === 'desktop-daemon') { setDaemonCode(null); }
+      if (channel === 'android-daemon') { setAndroidDaemonCode(null); }
       if (channel === 'discord') { setDiscordBotToken(''); setDiscordPairCode(''); }
       await loadChannels();
     } catch (err) {
@@ -2746,15 +2750,15 @@ export default function ProfileScreen() {
               <View style={styles.platformInfo}>
                 <Text style={styles.platformName}>Desktop Daemon</Text>
                 <Text style={styles.platformSubtitle}>
-                  {channelData?.connected.daemon && channelData?.meta?.daemon?.platform !== 'android'
-                    ? `Connected${channelData.meta?.daemon?.hostname ? ` • ${channelData.meta.daemon.hostname}` : ''}`
+                  {channelData?.desktop_daemon_connected
+                    ? `Connected${channelData.meta?.desktop_daemon?.hostname ? ` • ${channelData.meta.desktop_daemon.hostname}` : ''}`
                     : 'Run the daemon and let the agent control your computer'}
                 </Text>
               </View>
-              {channelBusy === 'daemon' ? (
+              {channelBusy === 'desktop-daemon' ? (
                 <ActivityIndicator size="small" color="#6B72FF" />
-              ) : channelData?.connected.daemon && channelData?.meta?.daemon?.platform !== 'android' ? (
-                <Pressable style={styles.disconnectBtn} onPress={() => handleUnlinkChannel('daemon')}>
+              ) : channelData?.desktop_daemon_connected ? (
+                <Pressable style={styles.disconnectBtn} onPress={() => handleUnlinkChannel('desktop-daemon')}>
                   <Ionicons name="checkmark-circle" size={18} color={Colors.success} />
                   <Text style={styles.disconnectBtnText}>Unpair</Text>
                 </Pressable>
@@ -2851,15 +2855,15 @@ export default function ProfileScreen() {
               <View style={styles.platformInfo}>
                 <Text style={styles.platformName}>Android Device</Text>
                 <Text style={styles.platformSubtitle}>
-                  {channelData?.connected.daemon && channelData?.meta?.daemon?.platform === 'android'
-                    ? `Connected${channelData.meta?.daemon?.hostname ? ` • ${channelData.meta.daemon.hostname}` : ''}`
+                  {channelData?.android_daemon_connected
+                    ? `Connected${channelData.meta?.android_daemon?.hostname ? ` • ${channelData.meta.android_daemon.hostname}` : ''}`
                     : 'Sideload the APK and let Jarvis control your Android phone'}
                 </Text>
               </View>
               {channelBusy === 'android-daemon' ? (
                 <ActivityIndicator size="small" color="#34A853" />
-              ) : channelData?.connected.daemon && channelData?.meta?.daemon?.platform === 'android' ? (
-                <Pressable style={styles.disconnectBtn} onPress={() => handleUnlinkChannel('daemon')}>
+              ) : channelData?.android_daemon_connected ? (
+                <Pressable style={styles.disconnectBtn} onPress={() => handleUnlinkChannel('android-daemon')}>
                   <Ionicons name="checkmark-circle" size={18} color={Colors.success} />
                   <Text style={styles.disconnectBtnText}>Unpair</Text>
                 </Pressable>
@@ -2872,7 +2876,7 @@ export default function ProfileScreen() {
                 </Pressable>
               )}
             </View>
-            {!(channelData?.connected.daemon && channelData?.meta?.daemon?.platform === 'android') && (() => {
+            {!channelData?.android_daemon_connected && (() => {
               const apkUrl = `${getApiUrl()}/api/download/apk`;
               const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(apkUrl)}`;
               return (
