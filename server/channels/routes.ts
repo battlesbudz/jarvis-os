@@ -7,7 +7,7 @@ import { getAllPreferences, setPreference, getChannel, listChannels } from "./re
 import { createDaemonPairingCode, isUserPaired, closeUserDaemon, getDaemonPermissions, setDaemonPermissions, isDaemonActionAllowed, DEFAULT_DAEMON_PERMISSIONS, getAndroidDaemonPermissions, setAndroidDaemonPermissions, DEFAULT_ANDROID_DAEMON_PERMISSIONS, isAndroidDaemonActive, type DaemonAction, type DaemonPermissions, type AndroidDaemonAction, type AndroidDaemonPermissions } from "../daemon/bridge";
 import { startUserBot, stopUserBot, getBotStatus, completePairing, getGuildsForUser, getChannelsForGuild, setupDiscordWorkspace, type AllowlistedGuild, type DiscordLinkMeta, WORKSPACE_TOPICS } from "../discord/manager";
 import { saveUserToken, getUserToken, deleteUserToken } from "../userTokenStore";
-import { createSchedule, listSchedules, deleteSchedule, updateScheduleEnabled, SCHEDULE_TEMPLATES } from "../discord/schedules";
+import { createSchedule, listSchedules, deleteSchedule, updateScheduleEnabled, updateSchedulePrompt, SCHEDULE_TEMPLATES } from "../discord/schedules";
 
 function generateCode(len = 6): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -442,14 +442,17 @@ export function registerChannelRoutes(app: Express): void {
     }
   });
 
-  // PATCH /api/discord/schedules/:id — update enabled status or prompt
+  // PATCH /api/discord/schedules/:id — update enabled status and/or prompt
   app.patch("/api/discord/schedules/:id", authMiddleware, async (req: Request, res: Response) => {
     const userId = (req as any).userId;
     const { id } = req.params;
-    const { enabled } = req.body || {};
+    const { enabled, prompt } = req.body || {};
     try {
       if (enabled !== undefined) {
         await updateScheduleEnabled(userId, id, enabled === true || enabled === "true");
+      }
+      if (prompt !== undefined && typeof prompt === "string" && prompt.trim()) {
+        await updateSchedulePrompt(userId, id, prompt.trim());
       }
       const schedules = await listSchedules(userId);
       const updated = schedules.find((s) => s.id === id);

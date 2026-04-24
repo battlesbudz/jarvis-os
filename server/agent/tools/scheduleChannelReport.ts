@@ -13,6 +13,7 @@ import {
   listSchedules,
   deleteSchedule,
   SCHEDULE_TEMPLATES,
+  detectTemplate,
 } from "../../discord/schedules";
 import { getGuildsForUser, getChannelsForGuild, createDiscordChannel } from "../../discord/manager";
 
@@ -25,11 +26,9 @@ import { getGuildsForUser, getChannelsForGuild, createDiscordChannel } from "../
 function parseScheduleTime(raw: string): { hour: number; minute: number } | null {
   const s = raw.toLowerCase().trim();
 
-  // noon / midnight
   if (s.includes("noon")) return { hour: 12, minute: 0 };
   if (s.includes("midnight")) return { hour: 0, minute: 0 };
 
-  // Match patterns like "7am", "7:30am", "9:00 pm", "14:00"
   const match = s.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/);
   if (!match) return null;
 
@@ -60,6 +59,7 @@ export const scheduleChannelReportTool: AgentTool = {
     "Use this when the user asks to set up a daily/recurring automated report in Discord — for example " +
     "'set up a daily stock research report at 7am' or 'every morning at 8am, post YouTube competitor research to #competitor-research'. " +
     "Jarvis will create the channel if it doesn't exist, then schedule the recurring report. " +
+    "Built-in templates are available: say 'stock research' to use the AI stock template, or 'competitor YouTube' to use the YouTube research template. " +
     "IMPORTANT: Only use this for creating scheduled DISCORD channel reports. For general reminders, use schedule_jarvis_task instead.",
   parameters: {
     type: "object",
@@ -68,24 +68,26 @@ export const scheduleChannelReportTool: AgentTool = {
         type: "string",
         description:
           "The Discord channel name to post to (e.g. 'stock-research', 'competitor-research'). " +
-          "Use lowercase with hyphens. The channel will be created if it doesn't exist.",
+          "Use lowercase with hyphens. The channel will be created if it doesn't exist. " +
+          "If omitted and a template is matched, the template's default channel name will be used.",
       },
       label: {
         type: "string",
         description:
           "A short human-readable label for this schedule (e.g. 'AI Stock Research', 'Competitor YouTube Report'). " +
-          "Shown when the user asks to list or cancel their automations.",
+          "If omitted and a template is matched, the template's default label will be used.",
       },
       scheduleTime: {
         type: "string",
         description:
           "When to run the report, in natural language (e.g. '7am', '8:30am', 'every morning at 9'). " +
-          "The schedule runs daily at this time. For less frequent schedules, use daysOfWeek.",
+          "If omitted and a template is matched, the template's default time will be used.",
       },
       prompt: {
         type: "string",
         description:
           "The research instructions Jarvis will execute when the schedule fires. Be specific. " +
+          "If omitted, Jarvis will try to detect a built-in template from the label or channel name. " +
           "Example: 'Research the top 8 AI infrastructure stocks. For each: ticker, thesis, latest news.'",
       },
       daysOfWeek: {
@@ -100,35 +102,73 @@ export const scheduleChannelReportTool: AgentTool = {
           "Optional. Name of an existing Discord category to create the channel inside. " +
           "If omitted, the channel is created at the top level.",
       },
+      guildId: {
+        type: "string",
+        description:
+          "Optional. The Discord server (guild) ID to post to. " +
+          "If omitted, defaults to the first (or only) Discord server the bot is in.",
+      },
     },
-    required: ["channelName", "label", "scheduleTime", "prompt"],
+    required: [],
   },
 
   async execute(args: ToolArgs, ctx: ToolContext): Promise<ToolResult> {
     const { userId } = ctx;
-    const channelName = String(args.channelName || "").trim().toLowerCase().replace(/\s+/g, "-");
-    const label = String(args.label || "").trim();
-    const scheduleTimeRaw = String(args.scheduleTime || "").trim();
-    const prompt = String(args.prompt || "").trim();
-    const daysOfWeek = args.daysOfWeek ? String(args.daysOfWeek).trim() : "0,1,2,3,4,5,6";
+
+    // Try template auto-detection from label or channelName
+    const rawLabel = args.label ? String(args.label).trim() : "";
+    const rawChannel = args.channelName ? String(args.channelName).trim() : "";
+    const rawPrompt = args.prompt ? String(args.prompt).trim() : "";
+    const templateLookup = rawLabel || rawPrompt || rawChannel;
+    const matchedTemplate = templateLookup ? detectTemplate(templateLookup) : null;
+
+    // Merge template defaults with explicit args
+    const channelName = (rawChannel || matchedTemplate?.channelName || "")
+      .toLowerCase()
+      .replace(/\s+/g, "-");
+    const label = rawLabel || matchedTemplate?.label || "";
+    const prompt = rawPrompt || matchedTemplate?.prompt || "";
+    const daysOfWeek =
+      args.daysOfWeek
+        ? String(args.daysOfWeek).trim()
+        : matchedTemplate?.daysOfWeek ?? "0,1,2,3,4,5,6";
     const categoryName = args.categoryName ? String(args.categoryName).trim() : undefined;
+    const requestedGuildId = args.guildId ? String(args.guildId).trim() : null;
 
-    if (!channelName) return { ok: false, content: "channelName is required.", label: "Missing channelName" };
-    if (!label) return { ok: false, content: "label is required.", label: "Missing label" };
-    if (!prompt) return { ok: false, content: "prompt is required.", label: "Missing prompt" };
+    // Validate resolved fields
+    if (!channelName) {
+      return { ok: false, content: "Please provide a channelName for the report (e.g. 'stock-research').", label: "Missing channelName" };
+    }
+    if (!label) {
+      return { ok: false, content: "Please provide a label for this schedule (e.g. 'AI Stock Research').", label: "Missing label" };
+    }
+    if (!prompt) {
+      return {
+        ok: false,
+        content:
+          "Please provide the research prompt for this schedule, or say something like 'stock research' or 'competitor YouTube' to use a built-in template.",
+        label: "Missing prompt",
+      };
+    }
 
-    // Parse time
-    const parsed = parseScheduleTime(scheduleTimeRaw);
+    // Parse schedule time
+    const scheduleTimeRaw = args.scheduleTime
+      ? String(args.scheduleTime).trim()
+      : matchedTemplate
+        ? `${matchedTemplate.cronHour}:${String(matchedTemplate.cronMinute).padStart(2, "0")}`
+        : "";
+
+    const parsed = scheduleTimeRaw ? parseScheduleTime(scheduleTimeRaw) : null;
     if (!parsed) {
       return {
         ok: false,
-        content: `Couldn't parse schedule time "${scheduleTimeRaw}". Try something like "7am", "8:30am", or "9pm".`,
+        content: `Couldn't determine a schedule time${scheduleTimeRaw ? ` from "${scheduleTimeRaw}"` : ""}. Try something like "7am", "8:30am", or "9pm".`,
         label: "Invalid schedule time",
       };
     }
     const { hour, minute } = parsed;
 
-    // Get guild
+    // Get guild — use requested guildId if provided, else first guild
     const guilds = getGuildsForUser(userId);
     if (guilds.length === 0) {
       return {
@@ -139,11 +179,13 @@ export const scheduleChannelReportTool: AgentTool = {
         label: "No guild found",
       };
     }
-    const guild = guilds[0];
+    const guild = requestedGuildId
+      ? (guilds.find((g) => g.id === requestedGuildId) ?? guilds[0])
+      : guilds[0];
 
     // Find or create the channel
     const existingChannels = await getChannelsForGuild(userId, guild.id);
-    let targetChannel = existingChannels.find(
+    const targetChannel = existingChannels.find(
       (ch) => ch.name.toLowerCase() === channelName.toLowerCase(),
     );
 
@@ -153,7 +195,6 @@ export const scheduleChannelReportTool: AgentTool = {
     if (targetChannel) {
       channelId = targetChannel.id;
     } else {
-      // Create the channel
       const created = await createDiscordChannel(userId, {
         channelName,
         topic: `Automated ${label} — posted by Jarvis`,
@@ -189,10 +230,12 @@ export const scheduleChannelReportTool: AgentTool = {
         : daysOfWeek === "1,2,3,4,5" ? "weekdays"
         : `days ${daysOfWeek}`;
 
+      const templateNote = matchedTemplate ? " (using built-in template)" : "";
+
       return {
         ok: true,
         content:
-          `✅ Scheduled "${label}" — runs ${daysLabel} at ${timeStr} and posts to #${channelName} in **${guild.name}**.\n` +
+          `✅ Scheduled "${label}"${templateNote} — runs ${daysLabel} at ${timeStr} and posts to #${channelName} in **${guild.name}**.\n` +
           (channelCreated ? `Created the #${channelName} channel.\n` : "") +
           `Schedule ID: \`${schedule.id}\`\n` +
           `To cancel: say "delete my ${label} schedule" or "cancel ${channelName} report".`,
@@ -227,7 +270,12 @@ export const listChannelSchedulesTool: AgentTool = {
       if (schedules.length === 0) {
         return {
           ok: true,
-          content: "No Discord channel schedules set up yet. Ask me to set up a stock research report or any other recurring automation.",
+          content:
+            "No Discord channel schedules set up yet. " +
+            "Ask me to set up a stock research report or any other recurring automation.\n\n" +
+            "**Available templates:**\n" +
+            "• **AI Stock Research** — daily at 7am, posts to #stock-research\n" +
+            "• **Competitor YouTube Research** — daily at 8am, posts to #competitor-research",
           label: "No schedules",
         };
       }
@@ -238,7 +286,7 @@ export const listChannelSchedulesTool: AgentTool = {
           s.daysOfWeek === "0,1,2,3,4,5,6" ? "daily"
           : s.daysOfWeek === "1,2,3,4,5" ? "weekdays"
           : `days ${s.daysOfWeek}`;
-        const status = s.enabled === "true" ? "✅" : "⏸️";
+        const status = s.enabled ? "✅" : "⏸️";
         const lastRun = s.lastRun
           ? `last ran ${new Date(s.lastRun).toLocaleDateString()}`
           : "never run yet";
