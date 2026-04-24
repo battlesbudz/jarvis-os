@@ -339,7 +339,24 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
       await db.update(channelLinks)
         .set({ metadata: updatedMeta as unknown })
         .where(and(eq(channelLinks.userId, userId), eq(channelLinks.channel, "discord")))
-        .then(() => console.log(`[DiscordManager] auto-saved guildId=${incomingGuildId} for user ${userId}`))
+        .then(async () => {
+          console.log(`[DiscordManager] auto-saved guildId=${incomingGuildId} for user ${userId}`);
+          // Send a one-time DM to let the user know which server was linked.
+          const dmChannelId = pairedUser.meta.dmChannelId;
+          if (dmChannelId) {
+            try {
+              const dmChannel = await client.channels.fetch(dmChannelId);
+              if (dmChannel instanceof DMChannel) {
+                const guildName = updatedMeta.workspace?.guildName || incomingGuildId;
+                await dmChannel.send(
+                  `✅ I've linked to your **${guildName}** server — you can now ask me to create or delete channels there.`,
+                );
+              }
+            } catch (dmErr) {
+              console.warn("[DiscordManager] auto-link DM failed (non-fatal):", dmErr);
+            }
+          }
+        })
         .catch((err) => console.error("[DiscordManager] auto-save guild ID failed:", err));
     }
 
