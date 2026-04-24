@@ -8,7 +8,7 @@ import { getRecentEmailCommitments } from "../integrations/gmail";
 import { getGoogleCalendarEvents } from "../integrations/googleCalendar";
 import { getRecentInteractions, formatInteractionTimeline, logInteraction } from "../interactionLog";
 import { getSoulPromptBlock } from "../memory/soul";
-import { isUserPaired, isAndroidDaemonActive } from "../daemon/bridge";
+import { isUserPaired, isAndroidDaemonActive, isDesktopDaemonActive } from "../daemon/bridge";
 import type { ChannelAttachment } from "./types";
 
 export interface CoachReplyInput {
@@ -157,12 +157,14 @@ export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyR
   const formatHintKey = Object.keys(FORMAT_HINTS).find((k) => channelName.startsWith(k)) ?? "Telegram";
   const formatHint = FORMAT_HINTS[formatHintKey];
 
+  const androidActive = isAndroidDaemonActive(userId);
+  const desktopActive = isDesktopDaemonActive(userId);
   const daemonPaired = isUserPaired(userId);
-  const androidActive = daemonPaired ? await isAndroidDaemonActive(userId) : false;
+  const daemonLines: string[] = [];
+  if (desktopActive) daemonLines.push("- Desktop daemon is ACTIVE. You can run shell commands, send desktop notifications, and read/write files in the user's workspace.");
+  if (androidActive) daemonLines.push("- Android device daemon is ACTIVE. You can open apps (android_open_app), take screenshots (android_screenshot), read the screen (android_read_screen), browse URLs (android_browse), list/read files on the device (android_file_list/android_file_read). Tap/type/swipe actions are available when user enables them. Proactively mention Android capabilities when relevant.");
   const daemonSection = daemonPaired
-    ? androidActive
-      ? "## Connected Devices\n- Android device daemon is ACTIVE. You can open apps (android_open_app), take screenshots (android_screenshot), read the screen (android_read_screen), browse URLs (android_browse), list/read files on the device (android_file_list/android_file_read). Tap/type/swipe actions are available when user enables them. Proactively mention Android capabilities when relevant."
-      : "## Connected Devices\n- Desktop daemon is ACTIVE. You can run shell commands, send desktop notifications, and read/write files in the user's workspace."
+    ? `## Connected Devices\n${daemonLines.join("\n")}`
     : "## Android Daemon Setup Guidance (no daemon paired)\nIf the user asks how to install or set up the Android daemon, give them these steps:\n1. In the Jarvis app → Profile → Connected Channels → Android Device → tap Pair to get an 8-character code.\n2. Build the APK: open android-daemon/ in Android Studio → Build → Generate Signed Bundle/APK → APK → debug. Or run `gradle wrapper --gradle-version 8.4` then `./gradlew assembleDebug` from the android-daemon/ directory.\n3. Transfer the APK to the Android phone and install it (Settings → Apps → Special app access → Install unknown apps → allow your file manager).\n4. Open the app → enter the server URL + the 8-character code → tap Connect.\n5. Grant the two permissions the app requests: Accessibility Service (Settings → Accessibility → Jarvis Daemon → enable) and All Files Access.\n6. The app stays connected in the background and reconnects automatically after reboots or Wi-Fi drops.";
 
   const systemPrompt = `You are GamePlan Coach Jarvis — a sharp, supportive personal productivity coach. ${formatHint}

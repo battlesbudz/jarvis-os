@@ -5,6 +5,7 @@ import {
   isDaemonActionAllowed,
   isAndroidDaemonActionAllowed,
   isAndroidDaemonActive,
+  isDesktopDaemonActive,
   type DaemonAction,
   type AndroidDaemonAction,
   type DaemonOp,
@@ -116,17 +117,18 @@ Always confirm with the user before tap/type/swipe actions. Use android_read_scr
     required: ["action"],
   },
   async execute(args: ToolArgs, ctx: ToolContext): Promise<ToolResult> {
+    const rawAction = String(args.action || "");
+    const androidActive = isAndroidDaemonActive(ctx.userId);
+    const desktopActive = isDesktopDaemonActive(ctx.userId);
+
     if (!isUserPaired(ctx.userId)) {
       return { ok: false, content: JSON.stringify({ ok: false, error: "No daemon paired. Ask the user to install and pair either the desktop daemon (Profile → Connected Channels → Desktop Daemon) or the Android daemon APK (Profile → Connected Channels → Android Device)." }) };
     }
 
-    const rawAction = String(args.action || "");
-    const androidActive = await isAndroidDaemonActive(ctx.userId);
-
     // ── Android actions ────────────────────────────────────────────────────
     if (isAndroidAction(rawAction)) {
       if (!androidActive) {
-        return { ok: false, content: JSON.stringify({ ok: false, error: "No Android daemon connected. The currently-paired daemon is a desktop daemon. Ask the user to install the Jarvis Android APK and pair it." }) };
+        return { ok: false, content: JSON.stringify({ ok: false, error: "No Android daemon connected. Ask the user to install the Jarvis Android APK and pair it (Profile → Connected Channels → Android Device)." }) };
       }
       const permKey = androidPermKey(rawAction);
       if (permKey && !(await isAndroidDaemonActionAllowed(ctx.userId, permKey))) {
@@ -196,8 +198,8 @@ Always confirm with the user before tap/type/swipe actions. Use android_read_scr
       return { ok: false, content: JSON.stringify({ ok: false, error: `unknown action ${rawAction}` }) };
     }
 
-    if (androidActive) {
-      return { ok: false, content: JSON.stringify({ ok: false, error: `Action '${rawAction}' is a desktop-only action but the connected daemon is Android. Use android_* actions instead.` }) };
+    if (!desktopActive) {
+      return { ok: false, content: JSON.stringify({ ok: false, error: `Action '${rawAction}' requires the Desktop Daemon, which is not connected. Ask the user to install and pair the desktop daemon (Profile → Connected Channels → Desktop Daemon).` }) };
     }
 
     const action: DaemonAction = rawAction;
