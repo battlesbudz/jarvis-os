@@ -318,8 +318,11 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
     // ── Auto-save guild ID to channel_links metadata ──────────────────
     // When a paired user messages from a guild and workspace.guildId is
     // not yet stored, persist it so future tool calls (deleteDiscordChannel,
-    // createDiscordChannel, etc.) can resolve the guild without needing a
-    // ctx fallback or explicit workspace setup.
+    // createDiscordChannel, etc.) can resolve the guild via the primary
+    // linkMeta.workspace?.guildId path without needing a ctx fallback or
+    // explicit workspace setup.
+    // Awaited (not fire-and-forget) so any tool calls in THIS interaction
+    // also see the updated metadata when they re-query channel_links.
     const incomingGuildId = message.guild?.id;
     if (!isDM && incomingGuildId && !pairedUser.meta.workspace?.guildId) {
       const updatedMeta: DiscordLinkMeta = {
@@ -333,7 +336,7 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
           channels: pairedUser.meta.workspace?.channels ?? {},
         },
       };
-      db.update(channelLinks)
+      await db.update(channelLinks)
         .set({ metadata: updatedMeta as unknown })
         .where(and(eq(channelLinks.userId, userId), eq(channelLinks.channel, "discord")))
         .then(() => console.log(`[DiscordManager] auto-saved guildId=${incomingGuildId} for user ${userId}`))
