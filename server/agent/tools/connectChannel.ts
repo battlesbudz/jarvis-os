@@ -129,20 +129,20 @@ export const connectChannelTool: AgentTool = {
       }
 
       if (channel === "discord") {
-        const url = "profile://discord";
+        const clientId = process.env.DISCORD_CLIENT_ID;
+        // If a shared bot Client ID is configured, send the user directly to
+        // Discord's OAuth2 bot-invite page (one tap, no token required).
+        // Fall back to the in-app profile deep-link when running with a
+        // per-user bot token only.
+        const url = clientId
+          ? `https://discord.com/oauth2/authorize?client_id=${clientId}&scope=bot&permissions=68608`
+          : "profile://discord";
+        const buttonLabel = clientId ? "Add to Discord" : "Connect Discord";
         return {
           ok: true,
-          content: JSON.stringify({
-            url,
-            buttonLabel: "Connect Discord",
-            channel: "discord",
-          }),
-          label: "Connect Discord",
-          detail: JSON.stringify({
-            url,
-            buttonLabel: "Connect Discord",
-            channel: "discord",
-          }),
+          content: JSON.stringify({ url, buttonLabel, channel: "discord" }),
+          label: buttonLabel,
+          detail: JSON.stringify({ url, buttonLabel, channel: "discord" }),
         };
       }
 

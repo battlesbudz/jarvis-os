@@ -13,7 +13,7 @@ import { initChannels } from "./channels";
 import { registerWhatsAppWebhook } from "./channels/whatsappWebhook";
 import { registerSlackWebhook } from "./channels/slackWebhook";
 import { startDaemonBridge } from "./daemon/bridge";
-import { bootAllBots as bootDiscordBots } from "./discord/manager";
+import { bootAllBots as bootDiscordBots, bootSharedBot } from "./discord/manager";
 import * as fs from "fs";
 import * as path from "path";
 
@@ -339,6 +339,11 @@ function setupErrorHandler(app: express.Application) {
       // Boot Discord bots for users who have saved a bot token
       bootDiscordBots().catch(err => {
         console.error("Failed to boot Discord bots:", err);
+      });
+
+      // Boot the shared Jarvis Discord bot (DISCORD_BOT_TOKEN + DISCORD_CLIENT_ID)
+      bootSharedBot().catch(err => {
+        console.error("Failed to boot shared Discord bot:", err);
       });
 
       // Channel-agnostic proactive engines — iterate every user with any
