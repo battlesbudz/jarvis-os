@@ -62,7 +62,7 @@ export const SCHEDULE_TEMPLATES = {
     cronMinute: 0,
     daysOfWeek: "0,1,2,3,4,5,6",
     prompt:
-      "Search YouTube for videos in my niche published in the last 5 days. Rank by total view count (highest first). List the top 15 results in a table: rank | title | channel | total views | days since posted. Add a brief note for any video standing out as unusually high-performing. Keep the report tight and scannable.",
+      "Search YouTube for [TOPIC] videos published in the last 5 days. Rank by total view count (highest first). List the top 15 results in a table: rank | title | channel | total views | days since posted. Add a brief note for any video standing out as unusually high-performing. Keep the report tight and scannable.",
     triggerPhrases: ["competitor youtube", "youtube research", "competitor research", "youtube competitor"],
   },
 } as const;
