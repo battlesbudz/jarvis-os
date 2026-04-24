@@ -8,6 +8,7 @@ import { runWeeklyPatternJob } from "../memory/weeklyJob";
 import { getValidGoogleTokens } from "../userTokenStore";
 import type { ToolContext } from "./types";
 import { notifyUser } from "../channels/registry";
+import { onWorkflowJobComplete, onWorkflowJobFail } from "./workflowEngine";
 
 async function notifyJobComplete(
   userId: string,
@@ -131,6 +132,11 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
   }, MAX_JOB_DURATION_MS);
 
   try {
+    // Helper: fire the workflow hook if this job belongs to a workflow step.
+    const wfId    = (job.input as Record<string, unknown>)?.workflowId    as string | undefined;
+    const wfStep  = (job.input as Record<string, unknown>)?.workflowStepIndex as number | undefined;
+    const hasWorkflow = !!wfId && wfStep !== undefined;
+
     if (job.agentType === "weekly_pattern") {
       const result = await runWeeklyPatternJob(job.userId);
       await completeJob(job.id, {
@@ -148,6 +154,11 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
         `Weekly review (${result.weekOf})`,
         weeklyMsg,
       );
+      if (hasWorkflow) {
+        await onWorkflowJobComplete(wfId!, wfStep!, job.id, result.summary || weeklyMsg).catch((e) =>
+          console.error("[JobQueue] workflow hook failed:", e),
+        );
+      }
       return;
     }
 
@@ -159,12 +170,13 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
         toolCallsCount: result.toolCallsCount,
       });
       console.log(`[JobQueue] complete goal_decompose job ${job.id} → tree ${result.goalTreeId}`);
-      await notifyJobComplete(
-        job.userId,
-        "goal_decompose",
-        job.title,
-        `Goal broken into ${result.phaseCount} phase(s). Open the Goals tab to review.`,
-      );
+      const goalMsg = `Goal broken into ${result.phaseCount} phase(s). Open the Goals tab to review.`;
+      await notifyJobComplete(job.userId, "goal_decompose", job.title, goalMsg);
+      if (hasWorkflow) {
+        await onWorkflowJobComplete(wfId!, wfStep!, job.id, goalMsg).catch((e) =>
+          console.error("[JobQueue] workflow hook failed:", e),
+        );
+      }
       return;
     }
 
@@ -206,16 +218,31 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
       toolCallsCount: sub.toolCallsCount,
     });
     console.log(`[JobQueue] complete ${job.agentType} job ${job.id} → deliverable ${deliverableId}`);
+    const subNotifyMsg = `${sub.summary || "Ready for review"} — open Inbox to approve, edit, or discard.`;
     await notifyJobComplete(
       job.userId,
       job.agentType as AgentJobType,
       sub.title,
-      `${sub.summary || "Ready for review"} — open Inbox to approve, edit, or discard.`,
+      subNotifyMsg,
     );
+    if (hasWorkflow) {
+      const wfOutput = `${sub.title}\n\n${sub.summary || ""}\n\n${sub.body?.slice(0, 1200) || ""}`.trim();
+      await onWorkflowJobComplete(wfId!, wfStep!, job.id, wfOutput).catch((e) =>
+        console.error("[JobQueue] workflow hook failed:", e),
+      );
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[JobQueue] job ${job.id} failed:`, err);
     await failJob(job.id, msg);
+    // Fail the workflow step if applicable.
+    const wfId2   = (job.input as Record<string, unknown>)?.workflowId    as string | undefined;
+    const wfStep2 = (job.input as Record<string, unknown>)?.workflowStepIndex as number | undefined;
+    if (wfId2 && wfStep2 !== undefined) {
+      await onWorkflowJobFail(wfId2, wfStep2, msg).catch((e) =>
+        console.error("[JobQueue] workflow fail hook failed:", e),
+      );
+    }
   } finally {
     clearTimeout(watchdog);
   }
