@@ -12,6 +12,7 @@ import {
   TextInput,
   RefreshControl,
   Alert,
+  DimensionValue,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -833,10 +834,11 @@ export default function MissionControlScreen() {
                 <Ionicons name="stats-chart-outline" size={12} color={Colors.textTertiary} />
                 <Text style={styles.esBaselineSectionTitle}>YOUR PATTERNS</Text>
               </View>
-              {emotionalState?.baselineStress !== null && emotionalState?.baselineStress !== undefined ? (
+              {emotionalState?.baselineStress !== null && emotionalState?.baselineStress !== undefined
+               && emotionalState?.baselineFlow !== null && emotionalState?.baselineFlow !== undefined ? (
                 <>
                   <Text style={styles.esBaselineSubtitle}>
-                    90-day avg — stress {emotionalState.baselineStress.toFixed(1)} · flow {(emotionalState.baselineFlow ?? 0).toFixed(1)}
+                    30-day baseline: stress {emotionalState.baselineStress.toFixed(1)} · flow {emotionalState.baselineFlow.toFixed(1)}
                   </Text>
                   <View style={styles.esBaselineRow}>
                     <Text style={styles.esBaselineDimLabel}>STRESS</Text>
@@ -844,12 +846,12 @@ export default function MissionControlScreen() {
                       <View style={styles.esBaselineTrackWrap}>
                         <View style={styles.esBaselineTrack}>
                           <View style={[styles.esBaselineFill, {
-                            width: `${(emotionalState.stressScore / 10) * 100}%` as any,
+                            width: `${(emotionalState.stressScore / 10) * 100}%` as DimensionValue,
                             backgroundColor: emotionalState.stressScore >= 7 ? Colors.error : emotionalState.stressScore >= 5 ? Colors.warning : Colors.textTertiary,
                           }]} />
                         </View>
                         <View style={[styles.esBaselineMarker, {
-                          left: `${(emotionalState.baselineStress / 10) * 100}%` as any,
+                          left: `${(emotionalState.baselineStress / 10) * 100}%` as DimensionValue,
                         }]} />
                       </View>
                       <Text style={styles.esBaselineCompare}>
@@ -868,19 +870,19 @@ export default function MissionControlScreen() {
                       <View style={styles.esBaselineTrackWrap}>
                         <View style={styles.esBaselineTrack}>
                           <View style={[styles.esBaselineFill, {
-                            width: `${((emotionalState.flowScore ?? 0) / 10) * 100}%` as any,
-                            backgroundColor: (emotionalState.flowScore ?? 0) >= 7 ? Colors.cyan : (emotionalState.flowScore ?? 0) >= 5 ? Colors.violet : Colors.textTertiary,
+                            width: `${(emotionalState.flowScore / 10) * 100}%` as DimensionValue,
+                            backgroundColor: emotionalState.flowScore >= 7 ? Colors.cyan : emotionalState.flowScore >= 5 ? Colors.violet : Colors.textTertiary,
                           }]} />
                         </View>
                         <View style={[styles.esBaselineMarker, {
-                          left: `${((emotionalState.baselineFlow ?? 0) / 10) * 100}%` as any,
+                          left: `${(emotionalState.baselineFlow / 10) * 100}%` as DimensionValue,
                         }]} />
                       </View>
                       <Text style={styles.esBaselineCompare}>
                         {emotionalState.flowScore}/10
-                        {(emotionalState.flowScore ?? 0) > (emotionalState.baselineFlow ?? 5) + 1.5
+                        {emotionalState.flowScore > emotionalState.baselineFlow + 1.5
                           ? '  ↑ above usual'
-                          : (emotionalState.flowScore ?? 0) < (emotionalState.baselineFlow ?? 5) - 1.5
+                          : emotionalState.flowScore < emotionalState.baselineFlow - 1.5
                           ? '  ↓ below usual'
                           : '  · on track'}
                       </Text>
