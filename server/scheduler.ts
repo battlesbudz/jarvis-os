@@ -4,6 +4,7 @@ import * as schema from '@shared/schema';
 import { buildPlanForUser } from './routes';
 import { getInjectableGoalTasks, markTasksInjected, type InjectableGoalTask } from './goalScheduler';
 import { enqueueWeeklyPatternJobs } from './memory/weeklyJob';
+import { getDueSchedules, runSchedule } from './discord/schedules';
 
 let schedulerRunning = false;
 let lastWeeklyRunKey = '';
@@ -30,6 +31,19 @@ export function startScheduler() {
     if (h === 7 && m === 0) {
       console.log('[Scheduler] Running morning plan build...');
       await runMorningPlanBuild();
+    }
+
+    // Discord OS — fire any scheduled channel reports due right now
+    try {
+      const dueSchedules = await getDueSchedules(h, m, dow);
+      for (const schedule of dueSchedules) {
+        console.log(`[DiscordScheduler] Firing: "${schedule.label}" for user ${schedule.userId}`);
+        runSchedule(schedule.id).catch((err) =>
+          console.error(`[DiscordScheduler] runSchedule failed for ${schedule.id}:`, err),
+        );
+      }
+    } catch (err) {
+      console.error('[DiscordScheduler] getDueSchedules failed:', err);
     }
 
     // Sunday 03:00 local — enqueue weekly pattern recognition jobs for

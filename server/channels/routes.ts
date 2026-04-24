@@ -7,6 +7,7 @@ import { getAllPreferences, setPreference, getChannel, listChannels } from "./re
 import { createDaemonPairingCode, isUserPaired, closeUserDaemon, getDaemonPermissions, setDaemonPermissions, isDaemonActionAllowed, DEFAULT_DAEMON_PERMISSIONS, getAndroidDaemonPermissions, setAndroidDaemonPermissions, DEFAULT_ANDROID_DAEMON_PERMISSIONS, isAndroidDaemonActive, type DaemonAction, type DaemonPermissions, type AndroidDaemonAction, type AndroidDaemonPermissions } from "../daemon/bridge";
 import { startUserBot, stopUserBot, getBotStatus, completePairing, getGuildsForUser, getChannelsForGuild, setupDiscordWorkspace, type AllowlistedGuild, type DiscordLinkMeta, WORKSPACE_TOPICS } from "../discord/manager";
 import { saveUserToken, getUserToken, deleteUserToken } from "../userTokenStore";
+import { createSchedule, listSchedules, deleteSchedule, updateScheduleEnabled, SCHEDULE_TEMPLATES } from "../discord/schedules";
 
 function generateCode(len = 6): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -400,5 +401,75 @@ export function registerChannelRoutes(app: Express): void {
   // GET /api/channels/discord/workspace/topics — list all available topics
   app.get("/api/channels/discord/workspace/topics", authMiddleware, (_req: Request, res: Response) => {
     res.json({ topics: WORKSPACE_TOPICS });
+  });
+
+  // ── Discord OS: channel schedules ──────────────────────────────────────────
+
+  // GET /api/discord/schedules — list all schedules for the authenticated user
+  app.get("/api/discord/schedules", authMiddleware, async (req: Request, res: Response) => {
+    const userId = (req as any).userId;
+    try {
+      const schedules = await listSchedules(userId);
+      res.json({ schedules, templates: SCHEDULE_TEMPLATES });
+    } catch (err) {
+      console.error("[channels] discord schedules list failed:", err);
+      res.status(500).json({ error: "Failed to list schedules" });
+    }
+  });
+
+  // POST /api/discord/schedules — create a new schedule
+  app.post("/api/discord/schedules", authMiddleware, async (req: Request, res: Response) => {
+    const userId = (req as any).userId;
+    const { guildId, channelId, channelName, label, cronHour, cronMinute, daysOfWeek, prompt } = req.body || {};
+    if (!guildId || !channelId || !channelName || !label || cronHour == null || !prompt) {
+      return res.status(400).json({ error: "guildId, channelId, channelName, label, cronHour, and prompt are required" });
+    }
+    try {
+      const schedule = await createSchedule(userId, {
+        guildId,
+        channelId,
+        channelName,
+        label,
+        cronHour: Number(cronHour),
+        cronMinute: Number(cronMinute ?? 0),
+        daysOfWeek: daysOfWeek ?? "0,1,2,3,4,5,6",
+        prompt,
+      });
+      res.json({ ok: true, schedule });
+    } catch (err) {
+      console.error("[channels] discord schedule create failed:", err);
+      res.status(500).json({ error: "Failed to create schedule" });
+    }
+  });
+
+  // PATCH /api/discord/schedules/:id — update enabled status or prompt
+  app.patch("/api/discord/schedules/:id", authMiddleware, async (req: Request, res: Response) => {
+    const userId = (req as any).userId;
+    const { id } = req.params;
+    const { enabled } = req.body || {};
+    try {
+      if (enabled !== undefined) {
+        await updateScheduleEnabled(userId, id, enabled === true || enabled === "true");
+      }
+      const schedules = await listSchedules(userId);
+      const updated = schedules.find((s) => s.id === id);
+      res.json({ ok: true, schedule: updated ?? null });
+    } catch (err) {
+      console.error("[channels] discord schedule update failed:", err);
+      res.status(500).json({ error: "Failed to update schedule" });
+    }
+  });
+
+  // DELETE /api/discord/schedules/:id — remove a schedule
+  app.delete("/api/discord/schedules/:id", authMiddleware, async (req: Request, res: Response) => {
+    const userId = (req as any).userId;
+    const { id } = req.params;
+    try {
+      const deleted = await deleteSchedule(userId, id);
+      res.json({ ok: deleted });
+    } catch (err) {
+      console.error("[channels] discord schedule delete failed:", err);
+      res.status(500).json({ error: "Failed to delete schedule" });
+    }
   });
 }

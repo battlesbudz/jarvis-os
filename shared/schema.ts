@@ -494,6 +494,25 @@ export type NotificationType = typeof NOTIFICATION_TYPES[number];
 export const CHANNEL_NAMES = ["telegram", "whatsapp", "slack", "daemon", "discord"] as const;
 export type ChannelName = typeof CHANNEL_NAMES[number];
 
+// Discord OS — Phase 1: scheduled channel reports
+export const discordChannelSchedules = pgTable("discord_channel_schedules", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  guildId: varchar("guild_id").notNull(),
+  channelId: varchar("channel_id").notNull(),
+  channelName: varchar("channel_name").notNull(),
+  label: varchar("label").notNull(),
+  cronHour: integer("cron_hour").notNull(),
+  cronMinute: integer("cron_minute").notNull().default(0),
+  daysOfWeek: varchar("days_of_week").notNull().default("0,1,2,3,4,5,6"),
+  prompt: text("prompt").notNull(),
+  pipelineNext: varchar("pipeline_next"),
+  lastRun: timestamp("last_run"),
+  lastOutput: text("last_output"),
+  enabled: varchar("enabled").notNull().default("true"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
 export const interactionLog = pgTable("interaction_log", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id").notNull().references(() => users.id),
