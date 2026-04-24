@@ -99,7 +99,12 @@ async function lookupUserByDiscordId(
 
 function buildMessageHandler(botOwnerId: string, client: Client) {
   return async (message: Message) => {
+    // Drop bots — including this bot's own messages.
+    // With Partials.Message enabled, partial user objects may have bot=undefined
+    // (not true), so we also compare the author ID against the bot's own user ID
+    // to prevent the bot from responding to its own "_Thinking…_" placeholder.
     if (message.author.bot) return;
+    if (client.user && message.author.id === client.user.id) return;
 
     // ── Deduplication: drop re-delivered events for the same message ID ────
     if (seenMessageIds.has(message.id)) {
