@@ -230,9 +230,9 @@ ${completedTasks.length > skippedTasks.length ? 'This person is on a good streak
     lifeContext?.improvementArea,
     ...(goals.slice(0, 3).map(g => g.title)),
   ].filter(Boolean).join(" • ");
-  const { soulSection, patternSection, memorySection } = await buildAiContextSections(req.userId, seedQuery);
+  const { soulSection, patternSection, memorySection, emotionalStateSection } = await buildAiContextSections(req.userId, seedQuery);
 
-  const prompt = `You create personalized daily task plans for people. Today is ${dayOfWeek}.${soulSection}${patternSection}${memorySection}
+  const prompt = `You create personalized daily task plans for people. Today is ${dayOfWeek}.${soulSection}${patternSection}${memorySection}${emotionalStateSection}
 
 User's goals:
 ${goalsText}

@@ -2,6 +2,7 @@ import { db } from "../db";
 import { sql } from "drizzle-orm";
 import { getSoulPromptBlock } from "./soul";
 import { retrieveRelevantMemories } from "./retrieve";
+import { getEmotionalState, buildEmotionalStatePromptBlock } from "../intelligence/emotional-state";
 
 interface PatternRow {
   patterns: unknown;
@@ -16,12 +17,14 @@ export interface AiContextSections {
   soulSection: string;
   patternSection: string;
   memorySection: string;
+  emotionalStateSection: string;
 }
 
 export const EMPTY_AI_CONTEXT: AiContextSections = {
   soulSection: "",
   patternSection: "",
   memorySection: "",
+  emotionalStateSection: "",
 };
 
 export async function buildAiContextSections(
@@ -76,6 +79,15 @@ export async function buildAiContextSections(
     }
   } catch (err) {
     console.error("[promptContext] retrieve failed", err);
+  }
+
+  try {
+    const state = await getEmotionalState(userId);
+    if (state) {
+      out.emotionalStateSection = buildEmotionalStatePromptBlock(state);
+    }
+  } catch (err) {
+    console.error("[promptContext] emotional state load failed", err);
   }
 
   return out;
