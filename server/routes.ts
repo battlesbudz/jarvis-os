@@ -437,7 +437,7 @@ ${existingText}
 
 ## Energy Level
 ${energyText}
-${predictionContext ? `\n## Jarvis Foresight (pattern-based predictions)\n${predictionContext}\nUse these predictions to inform task ordering: schedule deep/demanding work during peak energy windows and avoid placing high-cognitive tasks during predicted dip hours. If a procrastination risk is flagged for a category, break the task down and put a small starter version earlier in the day. Reference the prediction in the task description if relevant.\n` : ''}
+${predictionContext ? `\n## Jarvis Foresight (pattern-based predictions)\n${predictionContext}\nScheduling rules based on these predictions:\n1. Place demanding/deep-focus tasks BEFORE the predicted dip hour and AT the predicted peak hour (if humanReadable mentions one).\n2. Move routine, low-effort, or administrative tasks INTO the predicted dip window.\n3. If a procrastination risk is flagged for a category, put a small "starter" version of that task first thing in the morning to build momentum.\n4. Assign a specific time (the "time" field in each task JSON) to at least one task that was explicitly positioned due to a Foresight prediction.\n` : ''}
 ${modeText}
 
 ## Rules
@@ -452,7 +452,7 @@ ${modeText}
 - Do NOT duplicate calendar events as tasks
 - Each task needs: title, category (one of: fitness, finance, career, personal, social), priority (high, medium, low), and optionally: duration (minutes), time (e.g. "9:30 AM"), description
 
-Return JSON: { "reasoning": "2-3 sentences on your planning logic, referencing specific data points", "tasks": [{ "title": "...", "category": "...", "priority": "...", "duration": 60, "time": "9:30 AM", "description": "..." }] }
+Return JSON: { "reasoning": "2-3 sentences on your planning logic — always name at least one concrete data point (goal, email, brain dump item). If Jarvis Foresight predictions are present, explicitly call out a task that was timed around a prediction (e.g. 'Deep work block at 9 AM — your predicted peak energy window' or 'Admin tasks slotted at 3 PM to avoid your energy dip').", "tasks": [{ "title": "...", "category": "...", "priority": "...", "duration": 60, "time": "9:30 AM", "description": "..." }] }
 Return ONLY the JSON object.`;
 
   const response = await openai.chat.completions.create({
@@ -541,8 +541,15 @@ export async function buildPlanForUser(userId: string): Promise<{
       const preds = await getTodayPredictions(userId, today, 55);
       if (preds.length > 0) {
         predictionContext = preds
-          .slice(0, 3)
-          .map((p) => `- [${p.predictionType}] ${p.humanReadable}${p.actionSuggestion ? ` → ${p.actionSuggestion}` : ''}`)
+          .slice(0, 4)
+          .map((p) => {
+            // Include the specific predicted time so the LLM can anchor tasks to exact hours.
+            const predictedHour = p.targetDatetime
+              ? new Date(p.targetDatetime).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+              : null;
+            const timeTag = predictedHour ? ` @ ${predictedHour}` : '';
+            return `- [${p.predictionType}${timeTag}] ${p.humanReadable}${p.actionSuggestion ? ` → ${p.actionSuggestion}` : ''}`;
+          })
           .join('\n');
       }
     } catch {}
