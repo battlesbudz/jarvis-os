@@ -411,6 +411,7 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
       // Fall back to a non-streaming run only when streaming produced ZERO
       // characters — if streamBuf is non-empty the placeholder was already
       // edited and we must NOT run a second full agent call.
+      const discordGuildId = message.guild?.id || undefined;
       let result: Awaited<ReturnType<typeof runCoachAgent>> | null = null;
       let streamingFailed = false;
       try {
@@ -419,6 +420,7 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
           userText: fullUserText,
           channelName: namedAgent ? `Discord #${namedAgent.name.toLowerCase()}` : channelLabel,
           onToken,
+          discordGuildId,
         });
         // Only retry when streaming produced NO visible content at all.
         // If streamBuf has content the placeholder was already edited; a
@@ -445,6 +447,7 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
           userId,
           userText: fullUserText,
           channelName: namedAgent ? `Discord #${namedAgent.name.toLowerCase()}` : channelLabel,
+          discordGuildId,
           // no onToken → forces non-streaming path
         });
       }
@@ -793,15 +796,18 @@ export async function createDiscordChannel(
  * Delete a text channel from the user's Discord server by name or ID.
  * Only text channels are eligible; categories and voice channels are excluded.
  *
- * The guild is resolved exclusively from the user's linked Discord workspace
- * metadata — no silent fallback to a random guild.
+ * Guild resolution order:
+ *   1. `linkMeta.workspace.guildId` — stored workspace metadata (primary)
+ *   2. `opts.ctxGuildId`            — guild ID from the incoming Discord message context
+ *                                     (fallback when workspace setup hasn't been run)
+ * Deletion is refused when neither source yields a guild ID.
  *
  * Returns { ambiguous: true, matches } when multiple channels share the same name
  * so the caller can ask the user to specify a channelId.
  */
 export async function deleteDiscordChannel(
   userId: string,
-  opts: { channelName?: string; channelId?: string; guildId?: string },
+  opts: { channelName?: string; channelId?: string; guildId?: string; ctxGuildId?: string },
 ): Promise<{
   ok: boolean;
   error?: string;
@@ -814,7 +820,7 @@ export async function deleteDiscordChannel(
     return { ok: false, error: "Discord bot is not running." };
   }
 
-  // Resolve linked guild from the user's channel_links row — no first-guild fallback
+  // Resolve linked guild from the user's channel_links row
   const linkRow = await db
     .select()
     .from(channelLinks)
@@ -823,20 +829,21 @@ export async function deleteDiscordChannel(
   const linkMeta = (linkRow[0]?.metadata as DiscordLinkMeta) ?? {};
   const linkedGuildId = linkMeta.workspace?.guildId;
 
-  // Require a linked workspace guild — refuse deletion without it
-  if (!linkedGuildId) {
-    return { ok: false, error: "No linked Discord server found. Set up your Jarvis workspace first, then I can delete channels." };
+  // Fall back to the guild ID surfaced from the incoming Discord message context
+  // (set when the user sends the request from within a Discord guild channel).
+  const resolvedGuildId = linkedGuildId ?? opts.ctxGuildId;
+
+  if (!resolvedGuildId) {
+    return { ok: false, error: "No linked Discord server found. Please message Jarvis from within your Discord server so it can identify which server to act on." };
   }
 
-  // If explicit guildId provided, it must match the linked guild
-  if (opts.guildId && opts.guildId !== linkedGuildId) {
+  // If an explicit guildId was provided by the agent, it must match the resolved guild
+  if (opts.guildId && opts.guildId !== resolvedGuildId) {
     return {
       ok: false,
-      error: `The requested server (${opts.guildId}) does not match your linked Jarvis server (${linkedGuildId}). Deletion is only allowed in your linked server.`,
+      error: `The requested server (${opts.guildId}) does not match your linked Jarvis server (${resolvedGuildId}). Deletion is only allowed in your linked server.`,
     };
   }
-
-  const resolvedGuildId = linkedGuildId;
 
   const rawGuild = client.guilds.cache.get(resolvedGuildId);
   if (!rawGuild) {
