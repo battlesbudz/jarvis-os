@@ -315,6 +315,31 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
       .where(and(eq(channelLinks.userId, userId), eq(channelLinks.channel, "discord")))
       .catch(() => {});
 
+    // ── Auto-save guild ID to channel_links metadata ──────────────────
+    // When a paired user messages from a guild and workspace.guildId is
+    // not yet stored, persist it so future tool calls (deleteDiscordChannel,
+    // createDiscordChannel, etc.) can resolve the guild without needing a
+    // ctx fallback or explicit workspace setup.
+    const incomingGuildId = message.guild?.id;
+    if (!isDM && incomingGuildId && !pairedUser.meta.workspace?.guildId) {
+      const updatedMeta: DiscordLinkMeta = {
+        ...pairedUser.meta,
+        workspace: {
+          guildId: incomingGuildId,
+          guildName: message.guild?.name ?? "",
+          // Preserve any existing categoryId/channels from a prior partial
+          // or full workspace setup; use empty defaults if absent.
+          categoryId: pairedUser.meta.workspace?.categoryId ?? "",
+          channels: pairedUser.meta.workspace?.channels ?? {},
+        },
+      };
+      db.update(channelLinks)
+        .set({ metadata: updatedMeta as unknown })
+        .where(and(eq(channelLinks.userId, userId), eq(channelLinks.channel, "discord")))
+        .then(() => console.log(`[DiscordManager] auto-saved guildId=${incomingGuildId} for user ${userId}`))
+        .catch((err) => console.error("[DiscordManager] auto-save guild ID failed:", err));
+    }
+
     // ── Audio attachment transcription ─────────────────────────────────
     let userText = message.content?.trim() || "";
     const audioAtt = [...message.attachments.values()].find(
