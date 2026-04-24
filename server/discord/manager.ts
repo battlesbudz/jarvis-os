@@ -75,6 +75,14 @@ const userProcessingLocks = new Map<string, Promise<void>>();
  */
 async function claimMessageId(messageId: string): Promise<boolean> {
   const seenAt = Date.now();
+
+  // Set the in-memory flag BEFORE the async DB call so any concurrent
+  // in-process event for the same ID is caught by the fast-path check
+  // at the top of the handler WITHOUT waiting for the DB round-trip.
+  // If the DB subsequently reveals another process already owns the ID,
+  // we clear the flag and return false so this process drops the message.
+  seenMessageIds.set(messageId, seenAt);
+
   // Cap the DB call at 2 s so a hanging database never stalls message handling.
   const timeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), 2000));
   try {
@@ -86,24 +94,24 @@ async function claimMessageId(messageId: string): Promise<boolean> {
     `);
     const result = await Promise.race([dbCall, timeout]);
     if (result === null) {
-      // DB timed out — fall back to in-memory ownership and allow processing.
-      console.warn(`[DiscordManager] claimMessageId timed out (>2s) for id=${messageId} — falling back to in-memory`);
-      seenMessageIds.set(messageId, seenAt);
+      // DB timed out — we already own the in-memory slot, allow processing.
+      console.warn(`[DiscordManager] claimMessageId timed out (>2s) for id=${messageId} — allowing (in-memory claim)`);
       return true;
     }
     const rows = ((result as unknown as { rows?: unknown[] }).rows ??
       (Array.isArray(result) ? result as unknown[] : []));
     if (rows.length === 0) {
-      // Another process (or this process on a retry) already owns this ID.
+      // Another process already owns this ID — undo the in-memory claim
+      // so future cross-restart dedup still relies on the DB correctly.
+      seenMessageIds.delete(messageId);
+      console.log(`[DiscordManager] claimMessageId lost DB race for id=${messageId} — dropping`);
       return false;
     }
-    // We won ownership — populate the fast-path in-memory cache.
-    seenMessageIds.set(messageId, seenAt);
+    // DB claim confirmed — in-memory flag already set above.
     return true;
   } catch (err) {
-    // DB error — fall back to in-memory-only dedup and allow processing.
-    console.warn("[DiscordManager] claimMessageId DB error (falling back to in-memory):", err);
-    seenMessageIds.set(messageId, seenAt);
+    // DB error — keep the in-memory claim and allow processing.
+    console.warn("[DiscordManager] claimMessageId DB error (allowing via in-memory):", err);
     return true;
   }
 }
