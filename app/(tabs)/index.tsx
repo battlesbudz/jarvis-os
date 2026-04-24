@@ -52,6 +52,10 @@ function getInboxSourceIcon(sourceType: string): { icon: keyof typeof Ionicons.g
     case 'email':
     case 'gmail':
       return { icon: 'mail', color: '#EA4335' };
+    case 'google_calendar':
+      return { icon: 'calendar', color: Colors.primary };
+    case 'outlook_calendar':
+      return { icon: 'calendar', color: '#0078D4' };
     case 'calendar':
       return { icon: 'calendar', color: Colors.primary };
     case 'outlook':
@@ -68,6 +72,10 @@ function getInboxSourceLabel(sourceType: string): string {
     case 'email':
     case 'gmail':
       return 'Gmail';
+    case 'google_calendar':
+      return 'Google Cal';
+    case 'outlook_calendar':
+      return 'Outlook Cal';
     case 'calendar':
       return 'Calendar';
     case 'outlook':

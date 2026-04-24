@@ -4,7 +4,8 @@ import * as schema from "@shared/schema";
 import { sendMessage } from "./integrations/telegram";
 import { getGoogleCalendarEvents } from "./integrations/googleCalendar";
 import { getEmailsSince } from "./integrations/gmail";
-import { getValidGoogleTokens, getAllGoogleConnectedUserIds } from "./userTokenStore";
+import { getValidGoogleTokens, getAllGoogleConnectedUserIds, getAllMicrosoftConnectedUserIds, getValidMicrosoftToken } from "./userTokenStore";
+import { getOutlookCalendarEvents } from "./integrations/outlook";
 import { logInteraction } from "./interactionLog";
 import OpenAI from "openai";
 
@@ -34,7 +35,7 @@ async function getUserMemories(
 }
 
 interface CuriosityItem {
-  sourceType: "calendar" | "gmail";
+  sourceType: "google_calendar" | "outlook_calendar" | "gmail";
   sourceId: string;
   summary: string;
 }
@@ -79,7 +80,7 @@ Rules:
 - For emails: ask about the backstory, whether it's something they've been thinking about, what they plan to do about it
 - Keep questions conversational and short (1-2 sentences)
 
-Return JSON: { "questions": [{ "sourceId": "string", "sourceType": "calendar"|"gmail", "question": "string" }] }
+Return JSON: { "questions": [{ "sourceId": "string", "sourceType": "google_calendar"|"outlook_calendar"|"gmail", "question": "string" }] }
 Return only items worth asking about. Return { "questions": [] } if nothing is interesting enough.`;
 
   const response = await openai.chat.completions.create({
@@ -105,14 +106,16 @@ export async function runCuriosityScan(): Promise<void> {
     const telegramByUserId = new Map(telegramLinks.map(l => [l.userId, l]));
 
     const googleUserIds = await getAllGoogleConnectedUserIds();
+    const microsoftUserIds = await getAllMicrosoftConnectedUserIds();
 
     const telegramOnlyUserIds = telegramLinks
-      .filter(l => !googleUserIds.includes(l.userId))
+      .filter(l => !googleUserIds.includes(l.userId) && !microsoftUserIds.includes(l.userId))
       .map(l => l.userId);
 
     const userIds = [
       ...new Set([
         ...googleUserIds,
+        ...microsoftUserIds,
         ...telegramOnlyUserIds,
       ]),
     ];
@@ -122,11 +125,11 @@ export async function runCuriosityScan(): Promise<void> {
     for (const userId of userIds) {
       const link = telegramByUserId.get(userId) ?? null;
       try {
-        const tokens = await getValidGoogleTokens(userId).catch(
-          () => []
-        );
-        if (!tokens || tokens.length === 0) continue;
-        const token = tokens[0];
+        const googleTokens = await getValidGoogleTokens(userId).catch(() => []);
+        const googleToken = googleTokens[0] ?? null;
+        const msToken = await getValidMicrosoftToken(userId).catch(() => null);
+
+        if (!googleToken && !msToken) continue;
 
         const alreadyAsked = await getAlreadyAskedSourceIds(userId);
         const memories = await getUserMemories(userId);
@@ -137,40 +140,41 @@ export async function runCuriosityScan(): Promise<void> {
         const todayKey = now.toISOString().slice(0, 10);
         const tomorrowKey = tomorrow.toISOString().slice(0, 10);
 
-        let calendarEvents: any[] = [];
-        try {
-          const todayEvents = await getGoogleCalendarEvents(
-            todayKey,
-            undefined,
-            undefined,
-            token
-          );
-          const tomorrowEvents = await getGoogleCalendarEvents(
-            tomorrowKey,
-            undefined,
-            undefined,
-            token
-          );
-          calendarEvents = [...todayEvents, ...tomorrowEvents];
-        } catch (err) {
-          console.error(
-            `[Curiosity] Calendar fetch failed for user ${userId}:`,
-            err
-          );
+        type TaggedEvent = { ev: any; provider: "google_calendar" | "outlook_calendar"; prefix: string };
+        const taggedCalendarEvents: TaggedEvent[] = [];
+
+        if (googleToken) {
+          try {
+            const todayEvents = await getGoogleCalendarEvents(todayKey, undefined, undefined, googleToken);
+            const tomorrowEvents = await getGoogleCalendarEvents(tomorrowKey, undefined, undefined, googleToken);
+            for (const ev of [...todayEvents, ...tomorrowEvents]) {
+              taggedCalendarEvents.push({ ev, provider: "google_calendar", prefix: "gcal" });
+            }
+          } catch (err) {
+            console.error(`[Curiosity] Google Calendar fetch failed for user ${userId}:`, err);
+          }
+        }
+
+        if (msToken) {
+          try {
+            const todayEvents = await getOutlookCalendarEvents(todayKey, undefined, undefined, msToken);
+            const tomorrowEvents = await getOutlookCalendarEvents(tomorrowKey, undefined, undefined, msToken);
+            for (const ev of [...todayEvents, ...tomorrowEvents]) {
+              taggedCalendarEvents.push({ ev, provider: "outlook_calendar", prefix: "outlookcal" });
+            }
+          } catch (err) {
+            console.error(`[Curiosity] Outlook Calendar fetch failed for user ${userId}:`, err);
+          }
         }
 
         let recentEmails: any[] = [];
-        try {
-          const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-          recentEmails = await getEmailsSince(
-            oneDayAgo.getTime(),
-            token
-          );
-        } catch (err) {
-          console.error(
-            `[Curiosity] Email fetch failed for user ${userId}:`,
-            err
-          );
+        if (googleToken) {
+          try {
+            const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+            recentEmails = await getEmailsSince(oneDayAgo.getTime(), googleToken);
+          } catch (err) {
+            console.error(`[Curiosity] Email fetch failed for user ${userId}:`, err);
+          }
         }
 
         const { getUserInboxRules, matchItemAgainstRules } = await import("./inboxRules");
@@ -178,8 +182,8 @@ export async function runCuriosityScan(): Promise<void> {
 
         const items: CuriosityItem[] = [];
 
-        for (const ev of calendarEvents) {
-          const eventId = ev.id ? `cal:${ev.id}` : `cal:${ev.title}:${ev.start || ''}`;
+        for (const { ev, provider, prefix } of taggedCalendarEvents) {
+          const eventId = ev.id ? `${prefix}:${ev.id}` : `${prefix}:${ev.title}:${ev.start || ''}`;
           if (alreadyAsked.has(eventId)) continue;
 
           const ruleResult = matchItemAgainstRules(
@@ -192,7 +196,7 @@ export async function runCuriosityScan(): Promise<void> {
             try {
               await db.insert(schema.inboxItems).values({
                 userId,
-                sourceType: "calendar",
+                sourceType: provider,
                 sourceId: eventId,
                 subject: ev.title,
                 sender: ev.organizer || null,
@@ -205,7 +209,7 @@ export async function runCuriosityScan(): Promise<void> {
                 ],
                 matchedRuleId: ruleResult.matchedRuleId || null,
               });
-              console.log(`[Curiosity] Surfaced calendar event for user ${userId}: ${ev.title}`);
+              console.log(`[Curiosity] Surfaced ${provider} event for user ${userId}: ${ev.title}`);
             } catch (err) {
               console.error(`[Curiosity] context-rule surface failed for ${userId}:`, err);
             }
@@ -214,7 +218,7 @@ export async function runCuriosityScan(): Promise<void> {
 
           const startTime = ev.start ? new Date(ev.start).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : '';
           items.push({
-            sourceType: "calendar",
+            sourceType: provider,
             sourceId: eventId,
             summary: `${ev.title}${startTime ? " at " + startTime : ""}${
               ev.location ? " at " + ev.location : ""
@@ -287,10 +291,12 @@ export async function runCuriosityScan(): Promise<void> {
           if (sentCount >= MAX_QUESTIONS_PER_SCAN) break;
           const srcItem = items.find(i => i.sourceId === q.sourceId);
 
+          const canonicalSourceType = srcItem?.sourceType ?? q.sourceType;
+
           try {
             await db.insert(schema.proactiveQuestionsSent).values({
               userId,
-              sourceType: q.sourceType,
+              sourceType: canonicalSourceType,
               sourceId: q.sourceId,
               question: q.question,
             });
@@ -307,7 +313,7 @@ export async function runCuriosityScan(): Promise<void> {
           try {
             await db.insert(schema.inboxItems).values({
               userId,
-              sourceType: q.sourceType as "calendar" | "email" | "telegram" | "slack" | "discord" | "whatsapp" | "other",
+              sourceType: canonicalSourceType as "google_calendar" | "outlook_calendar" | "email" | "telegram" | "slack" | "discord" | "whatsapp" | "other",
               sourceId: q.sourceId,
               subject: srcItem?.summary?.slice(0, 200) ?? q.question.slice(0, 200),
               snippet: q.question,
