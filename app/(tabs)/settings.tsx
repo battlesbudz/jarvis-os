@@ -156,6 +156,36 @@ export default function SettingsScreen() {
   const [nsAddingWatch, setNsAddingWatch] = useState(false);
   const [nsLoading, setNsLoading] = useState(false);
 
+  // ── Gut Threat Log ──
+  interface GutThreatSignal {
+    id: string;
+    signalType: string;
+    confidenceScore: number;
+    explanation: string;
+    itemRef: string | null;
+    userResponse: string | null;
+    createdAt: string;
+  }
+  const [threatLog, setThreatLog] = useState<GutThreatSignal[]>([]);
+  const [threatLogLoading, setThreatLogLoading] = useState(false);
+
+  const loadThreatLog = useCallback(async () => {
+    setThreatLogLoading(true);
+    try {
+      const res = await apiRequest('GET', '/api/gut/threat-log').then(r => r.json()).catch(() => []);
+      setThreatLog(Array.isArray(res) ? res : []);
+    } catch {}
+    setThreatLogLoading(false);
+  }, []);
+
+  const GUT_THREAT_LABEL: Record<string, string> = {
+    calendar_anomaly: 'Calendar Anomaly',
+    email_pattern: 'Email Manipulation',
+    deep_work_erosion: 'Deep Work Erosion',
+    project_drift: 'Project Drift',
+    relationship_anomaly: 'Relationship Signal',
+  };
+
   const loadNervousSystem = useCallback(async () => {
     setNsLoading(true);
     try {
@@ -240,10 +270,11 @@ export default function SettingsScreen() {
   useFocusEffect(useCallback(() => {
     loadAll();
     loadNervousSystem();
+    loadThreatLog();
     return () => {
       if (telegramPollRef.current) clearInterval(telegramPollRef.current);
     };
-  }, [loadAll, loadNervousSystem]));
+  }, [loadAll, loadNervousSystem, loadThreatLog]));
 
   // ── OAuth connect ──
   const handleConnect = useCallback(async (platform: string) => {
@@ -745,6 +776,70 @@ export default function SettingsScreen() {
                 </Pressable>
               ))}
             </View>
+          )}
+        </View>
+
+        {/* ── JARVIS GUT — THREAT LOG ── */}
+        <SectionHeader label="THREAT LOG" accent="#F59E0B" />
+        <View style={styles.card}>
+          <View style={tlStyles.header}>
+            <Ionicons name="eye-outline" size={16} color="#F59E0B" />
+            <Text style={tlStyles.headerText}>ANOMALY DETECTION</Text>
+            <Text style={tlStyles.headerSub}>Patterns flagged by Jarvis's reflexive gut layer</Text>
+          </View>
+          {threatLogLoading ? (
+            <View style={tlStyles.loadingRow}>
+              <ActivityIndicator size="small" color="#F59E0B" />
+            </View>
+          ) : threatLog.length === 0 ? (
+            <Text style={tlStyles.emptyText}>No anomalies detected yet. Jarvis will flag unusual patterns as they appear.</Text>
+          ) : (
+            threatLog.map((signal, idx) => (
+              <View
+                key={signal.id}
+                style={[tlStyles.signalRow, idx < threatLog.length - 1 && tlStyles.signalBorder]}
+              >
+                <View style={tlStyles.signalIconWrap}>
+                  <Ionicons
+                    name={
+                      signal.userResponse === 'confirmed' ? 'checkmark-circle' :
+                      signal.userResponse === 'dismissed' ? 'close-circle' :
+                      'alert-circle'
+                    }
+                    size={16}
+                    color={
+                      signal.userResponse === 'confirmed' ? '#10B981' :
+                      signal.userResponse === 'dismissed' ? Colors.textTertiary :
+                      '#F59E0B'
+                    }
+                  />
+                </View>
+                <View style={tlStyles.signalBody}>
+                  <View style={tlStyles.signalTitleRow}>
+                    <Text style={tlStyles.signalType}>
+                      {GUT_THREAT_LABEL[signal.signalType] || signal.signalType}
+                    </Text>
+                    <View style={[
+                      tlStyles.confidenceBadge,
+                      { backgroundColor: signal.confidenceScore >= 75 ? '#F59E0B20' : Colors.surfaceAlt }
+                    ]}>
+                      <Text style={[
+                        tlStyles.confidenceText,
+                        { color: signal.confidenceScore >= 75 ? '#D97706' : Colors.textTertiary }
+                      ]}>
+                        {signal.confidenceScore}%
+                      </Text>
+                    </View>
+                  </View>
+                  <Text style={tlStyles.signalExplanation} numberOfLines={2}>{signal.explanation}</Text>
+                  <Text style={tlStyles.signalDate}>
+                    {signal.userResponse
+                      ? signal.userResponse === 'confirmed' ? 'Good catch' : "This one's fine"
+                      : new Date(signal.createdAt).toLocaleDateString()}
+                  </Text>
+                </View>
+              </View>
+            ))
           )}
         </View>
 
@@ -1293,5 +1388,88 @@ const nsStyles = StyleSheet.create({
     color: Colors.textTertiary,
     marginTop: 2,
     textTransform: 'capitalize',
+  },
+});
+
+const tlStyles = StyleSheet.create({
+  header: {
+    padding: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  headerText: {
+    fontSize: 10,
+    fontFamily: 'Inter_700Bold',
+    color: '#F59E0B',
+    letterSpacing: 1.5,
+  },
+  headerSub: {
+    fontSize: 11,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+    width: '100%',
+    marginTop: 2,
+  },
+  loadingRow: {
+    padding: 16,
+    alignItems: 'center',
+  },
+  emptyText: {
+    paddingHorizontal: 14,
+    paddingBottom: 14,
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textTertiary,
+  },
+  signalRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+    gap: 10,
+  },
+  signalBorder: {
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  signalIconWrap: {
+    paddingTop: 2,
+  },
+  signalBody: {
+    flex: 1,
+    gap: 3,
+  },
+  signalTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  signalType: {
+    fontSize: 13,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.text,
+    flex: 1,
+  },
+  confidenceBadge: {
+    borderRadius: 5,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  confidenceText: {
+    fontSize: 10,
+    fontFamily: 'Inter_600SemiBold',
+  },
+  signalExplanation: {
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+    lineHeight: 17,
+  },
+  signalDate: {
+    fontSize: 10,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textTertiary,
   },
 });

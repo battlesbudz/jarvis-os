@@ -660,6 +660,37 @@ export const userEmotionalStateHistory = pgTable("user_emotional_state_history",
   recordedAt: timestamp("recorded_at").notNull().defaultNow(),
 });
 
+// ── Jarvis Gut — Reflexive Anomaly Detection ─────────────────────────────────
+// Fast reflex signals flagged before the full reasoning loop. Each signal
+// references an optional inbox item or calendar event and carries a one-line
+// explanation. The user's confirmations/dismissals feed back into future
+// threshold calibration.
+
+export const GUT_SIGNAL_TYPES = [
+  "calendar_anomaly",
+  "email_pattern",
+  "deep_work_erosion",
+  "project_drift",
+  "relationship_anomaly",
+] as const;
+export type GutSignalType = typeof GUT_SIGNAL_TYPES[number];
+
+export const GUT_USER_RESPONSES = ["confirmed", "dismissed", "ignored"] as const;
+export type GutUserResponse = typeof GUT_USER_RESPONSES[number];
+
+export const gutSignals = pgTable("gut_signals", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  signalType: varchar("signal_type").notNull(),
+  itemRef: varchar("item_ref"),
+  confidenceScore: integer("confidence_score").notNull().default(50),
+  explanation: text("explanation").notNull(),
+  userResponse: varchar("user_response"),
+  respondedAt: timestamp("responded_at"),
+  deliveredInMorningBrief: boolean("delivered_in_morning_brief").notNull().default(false),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
 // Dream Cycle — nightly deep synthesis insights.
 // Each row is one insight produced by a single dream run.
 export const dreamInsights = pgTable("dream_insights", {
