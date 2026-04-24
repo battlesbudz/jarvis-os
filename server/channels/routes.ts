@@ -7,7 +7,8 @@ import { getAllPreferences, setPreference, getChannel, listChannels } from "./re
 import { createDaemonPairingCode, isUserPaired, closeUserDaemon, getDaemonPermissions, setDaemonPermissions, isDaemonActionAllowed, DEFAULT_DAEMON_PERMISSIONS, getAndroidDaemonPermissions, setAndroidDaemonPermissions, DEFAULT_ANDROID_DAEMON_PERMISSIONS, isAndroidDaemonActive, type DaemonAction, type DaemonPermissions, type AndroidDaemonAction, type AndroidDaemonPermissions } from "../daemon/bridge";
 import { startUserBot, stopUserBot, getBotStatus, completePairing, getGuildsForUser, getChannelsForGuild, setupDiscordWorkspace, type AllowlistedGuild, type DiscordLinkMeta, WORKSPACE_TOPICS } from "../discord/manager";
 import { saveUserToken, getUserToken, deleteUserToken } from "../userTokenStore";
-import { createSchedule, listSchedules, deleteSchedule, toggleSchedule, parseCronExpression, SCHEDULE_TEMPLATES } from "../discord/schedules";
+import { createSchedule, listSchedules, deleteSchedule, toggleSchedule, parseCronExpression, SCHEDULE_TEMPLATES, nextRunTime } from "../discord/schedules";
+import { discordPendingApprovals, discordAgents, discordChannelSchedules } from "@shared/schema";
 
 function generateCode(len = 6): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -485,11 +486,15 @@ export function registerChannelRoutes(app: Express): void {
 
   // ── Discord OS: channel schedules ──────────────────────────────────────────
 
-  // GET /api/discord/schedules — list all schedules for the authenticated user
+  // GET /api/discord/schedules — list all schedules, enriched with nextRun
   app.get("/api/discord/schedules", authMiddleware, async (req: Request, res: Response) => {
     const userId = (req as any).userId;
     try {
-      const schedules = await listSchedules(userId);
+      const raw = await listSchedules(userId);
+      const schedules = raw.map((s) => ({
+        ...s,
+        nextRun: nextRunTime(s.cronExpression) ?? null,
+      }));
       res.json({ schedules, templates: SCHEDULE_TEMPLATES });
     } catch (err) {
       console.error("[channels] discord schedules list failed:", err);
@@ -566,6 +571,185 @@ export function registerChannelRoutes(app: Express): void {
     } catch (err) {
       console.error("[channels] discord schedule delete failed:", err);
       res.status(500).json({ error: "Failed to delete schedule" });
+    }
+  });
+
+  // POST /api/discord/schedules/:id/toggle — enable or disable a schedule (app toggle button)
+  app.post("/api/discord/schedules/:id/toggle", authMiddleware, async (req: Request, res: Response) => {
+    const userId = (req as any).userId;
+    const { id } = req.params;
+    const { enabled } = req.body || {};
+    try {
+      await toggleSchedule(userId, id, enabled === true || enabled === "true");
+      const schedules = await listSchedules(userId);
+      const updated = schedules.find((s) => s.id === id);
+      res.json({ ok: true, schedule: updated ? { ...updated, nextRun: nextRunTime(updated.cronExpression) } : null });
+    } catch (err) {
+      console.error("[channels] discord schedule toggle failed:", err);
+      res.status(500).json({ error: "Failed to toggle schedule" });
+    }
+  });
+
+  // ── Discord OS: approvals ──────────────────────────────────────────────────
+
+  // GET /api/discord/approvals — list pending approval items
+  app.get("/api/discord/approvals", authMiddleware, async (req: Request, res: Response) => {
+    const userId = (req as any).userId;
+    try {
+      const approvals = await db
+        .select()
+        .from(discordPendingApprovals)
+        .where(
+          and(
+            eq(discordPendingApprovals.userId, userId),
+            eq(discordPendingApprovals.status, "pending"),
+          ),
+        );
+      res.json({ approvals });
+    } catch (err) {
+      console.error("[channels] discord approvals list failed:", err);
+      res.status(500).json({ error: "Failed to list approvals" });
+    }
+  });
+
+  // POST /api/discord/approvals/:messageId/resolve — approve or reject from the app
+  app.post("/api/discord/approvals/:messageId/resolve", authMiddleware, async (req: Request, res: Response) => {
+    const userId = (req as any).userId;
+    const { messageId } = req.params;
+    const { action } = req.body || {};
+
+    if (action !== "approve" && action !== "reject") {
+      return res.status(400).json({ error: "action must be 'approve' or 'reject'" });
+    }
+
+    try {
+      const rows = await db
+        .select()
+        .from(discordPendingApprovals)
+        .where(
+          and(
+            eq(discordPendingApprovals.messageId, messageId),
+            eq(discordPendingApprovals.userId, userId),
+            eq(discordPendingApprovals.status, "pending"),
+          ),
+        )
+        .limit(1);
+
+      if (!rows[0]) return res.status(404).json({ error: "Approval not found or already resolved" });
+      const approval = rows[0];
+
+      const newStatus = action === "approve" ? "approved" : "rejected";
+      await db
+        .update(discordPendingApprovals)
+        .set({ status: newStatus, resolvedAt: new Date() })
+        .where(eq(discordPendingApprovals.messageId, messageId));
+
+      // Record preference signal
+      const { recordApprovalSignal } = await import("../discord/approvalLearning");
+      recordApprovalSignal({
+        userId,
+        approved: action === "approve",
+        contentType: approval.type,
+        content: approval.content,
+        channelId: approval.channelId,
+        messageId,
+      }).catch(() => {});
+
+      // Execute action asynchronously
+      const actionData = action === "approve" ? approval.onApprove : approval.onReject;
+      if (actionData) {
+        const { executeApprovalAction } = await import("../discord/approvalActions");
+        executeApprovalAction(
+          userId,
+          actionData as any,
+          approval.content,
+          approval.channelId,
+        ).catch((err) => console.error("[channels] approval action failed:", err));
+      }
+
+      res.json({ ok: true, status: newStatus });
+    } catch (err) {
+      console.error("[channels] discord approval resolve failed:", err);
+      res.status(500).json({ error: "Failed to resolve approval" });
+    }
+  });
+
+  // ── Discord OS: named agents ───────────────────────────────────────────────
+
+  // GET /api/discord/agents — list all named agents
+  app.get("/api/discord/agents", authMiddleware, async (req: Request, res: Response) => {
+    const userId = (req as any).userId;
+    try {
+      const agents = await db
+        .select()
+        .from(discordAgents)
+        .where(eq(discordAgents.userId, userId));
+      res.json({ agents });
+    } catch (err) {
+      console.error("[channels] discord agents list failed:", err);
+      res.status(500).json({ error: "Failed to list agents" });
+    }
+  });
+
+  // POST /api/discord/agents/:id/toggle — enable or disable an agent's loop
+  app.post("/api/discord/agents/:id/toggle", authMiddleware, async (req: Request, res: Response) => {
+    const userId = (req as any).userId;
+    const { id } = req.params;
+    const { loopEnabled } = req.body || {};
+    try {
+      await db
+        .update(discordAgents)
+        .set({ loopEnabled: loopEnabled ? 1 : 0 })
+        .where(and(eq(discordAgents.id, id), eq(discordAgents.userId, userId)));
+      const rows = await db.select().from(discordAgents).where(eq(discordAgents.id, id)).limit(1);
+      res.json({ ok: true, agent: rows[0] ?? null });
+    } catch (err) {
+      console.error("[channels] discord agent toggle failed:", err);
+      res.status(500).json({ error: "Failed to toggle agent loop" });
+    }
+  });
+
+  // ── Discord OS: activity feed ─────────────────────────────────────────────
+
+  // GET /api/discord/activity — chronological feed of recent agent/schedule activity
+  app.get("/api/discord/activity", authMiddleware, async (req: Request, res: Response) => {
+    const userId = (req as any).userId;
+    try {
+      const [schedules, agents] = await Promise.all([
+        db.select().from(discordChannelSchedules).where(eq(discordChannelSchedules.userId, userId)),
+        db.select().from(discordAgents).where(eq(discordAgents.userId, userId)),
+      ]);
+
+      const items: { id: string; createdAt: Date; content: string; direction: string }[] = [];
+
+      for (const s of schedules) {
+        if (s.lastRun && s.lastOutput) {
+          items.push({
+            id: `sched-${s.id}`,
+            createdAt: s.lastRun,
+            content: `📅 ${s.label}: ${s.lastOutput.slice(0, 120)}${s.lastOutput.length > 120 ? "…" : ""}`,
+            direction: `#${s.channelName}`,
+          });
+        }
+      }
+
+      for (const a of agents) {
+        if (a.lastLoopRun) {
+          items.push({
+            id: `agent-${a.id}`,
+            createdAt: a.lastLoopRun,
+            content: `🤖 ${a.name} (${a.role}) loop ran`,
+            direction: `#${a.channelName ?? a.name.toLowerCase()}`,
+          });
+        }
+      }
+
+      items.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+
+      res.json({ activity: items.slice(0, 20) });
+    } catch (err) {
+      console.error("[channels] discord activity failed:", err);
+      res.status(500).json({ error: "Failed to get activity" });
     }
   });
 }
