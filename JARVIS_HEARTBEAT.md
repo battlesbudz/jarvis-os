@@ -42,6 +42,17 @@ Once per day, after the user's configured wrap-up hour:
 - **Action:** send to Telegram AND save the reflection as a `.md` file
   to the user's "Jarvis Workspace" Drive folder
 
+### 4. Nervous System signal scan (every 30 min)
+For each active user who has at least one watch topic defined:
+- For each watch topic (keyword, company, person, or industry), run a web search
+- Pass results through an LLM relevance scorer (threshold ≥ 0.55)
+- For any result that passes, compute a SHA-256 content hash and attempt to insert
+  into `nervous_system_signals`. Unique constraint on (user_id, content_hash)
+  ensures the same story is never surfaced twice.
+- Store each qualifying signal in the inbox as `sourceType = 'nervous_system'`
+- Deliver via the user's preferred channel for `nervous_system` notifications
+- Include a one-line relevance explanation with each signal
+
 ---
 
 ## Operating rules

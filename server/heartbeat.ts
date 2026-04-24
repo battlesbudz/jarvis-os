@@ -644,6 +644,15 @@ export async function runHeartbeatTick(): Promise<void> {
     console.error("[Heartbeat] memory decay failed:", err);
   }
 
+  // Nervous System — runs first, independent of Telegram linkage.
+  // The scanner tracks its own per-user 30-min throttle internally.
+  try {
+    const { runNervousSystemScan } = await import("./nervous-system/scanner");
+    await runNervousSystemScan();
+  } catch (err) {
+    console.error("[Heartbeat] nervous system scan failed:", err);
+  }
+
   const checklist = readChecklist();
   if (!checklist) {
     console.warn("[Heartbeat] checklist file missing, skipping tick");
