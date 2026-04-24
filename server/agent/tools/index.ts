@@ -43,6 +43,14 @@ import {
   workflowResumeTool,
   workflowListTool,
 } from "./workflowTools";
+import {
+  browserNavigateTool,
+  browserClickTool,
+  browserTypeTool,
+  browserScreenshotTool,
+  browserExtractTool,
+  browserCloseTool,
+} from "./browserTools";
 
 export const ALL_TOOLS: AgentTool[] = [
   webSearchTool,
@@ -95,6 +103,12 @@ export const ALL_TOOLS: AgentTool[] = [
   workflowPauseTool,
   workflowResumeTool,
   workflowListTool,
+  browserNavigateTool,
+  browserClickTool,
+  browserTypeTool,
+  browserScreenshotTool,
+  browserExtractTool,
+  browserCloseTool,
 ];
 
 const TOOL_INDEX = new Map(ALL_TOOLS.map((t) => [t.name, t]));
@@ -149,6 +163,12 @@ export function telegramCoachTools(opts: { hasGoogle: boolean }): AgentTool[] {
     workflowPauseTool,
     workflowResumeTool,
     workflowListTool,
+    browserNavigateTool,
+    browserClickTool,
+    browserTypeTool,
+    browserScreenshotTool,
+    browserExtractTool,
+    browserCloseTool,
   ];
   if (opts.hasGoogle) {
     base.push(gmailActionTool, gmailDraftTool, fetchCalendarTool, driveCreateFileTool, driveListFilesTool, driveReadFileTool);
@@ -207,4 +227,10 @@ export {
   workflowPauseTool,
   workflowResumeTool,
   workflowListTool,
+  browserNavigateTool,
+  browserClickTool,
+  browserTypeTool,
+  browserScreenshotTool,
+  browserExtractTool,
+  browserCloseTool,
 };
