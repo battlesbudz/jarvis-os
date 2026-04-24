@@ -29,6 +29,9 @@ import { discordPinMessageTool } from "./discordPinMessage";
 import { setupNamedAgentTool } from "./setupNamedAgent";
 import { queueBackgroundJobTool } from "./queueBackgroundJob";
 import { setupContentPipelineTool } from "./setupContentPipeline";
+import { memorySearchTool, memoryGetTool } from "./memorySearch";
+import { webFetchTool } from "./webFetch";
+import { sessionsListTool, sessionsHistoryTool, sessionsSendTool } from "./sessionTools";
 
 export const ALL_TOOLS: AgentTool[] = [
   webSearchTool,
@@ -63,6 +66,12 @@ export const ALL_TOOLS: AgentTool[] = [
   youtubeSearchTool,
   queueBackgroundJobTool,
   setupContentPipelineTool,
+  memorySearchTool,
+  memoryGetTool,
+  webFetchTool,
+  sessionsListTool,
+  sessionsHistoryTool,
+  sessionsSendTool,
 ];
 
 const TOOL_INDEX = new Map(ALL_TOOLS.map((t) => [t.name, t]));
@@ -99,6 +108,12 @@ export function telegramCoachTools(opts: { hasGoogle: boolean }): AgentTool[] {
     setupNamedAgentTool,
     youtubeSearchTool,
     setupContentPipelineTool,
+    memorySearchTool,
+    memoryGetTool,
+    webFetchTool,
+    sessionsListTool,
+    sessionsHistoryTool,
+    sessionsSendTool,
   ];
   if (opts.hasGoogle) {
     base.push(gmailActionTool, gmailDraftTool, fetchCalendarTool, driveCreateFileTool, driveListFilesTool, driveReadFileTool);
@@ -139,4 +154,10 @@ export {
   youtubeSearchTool,
   queueBackgroundJobTool,
   setupContentPipelineTool,
+  memorySearchTool,
+  memoryGetTool,
+  webFetchTool,
+  sessionsListTool,
+  sessionsHistoryTool,
+  sessionsSendTool,
 };

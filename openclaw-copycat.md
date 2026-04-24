@@ -5,7 +5,7 @@ This document tracks the 8 capability gaps between Jarvis and OpenClaw's tool ar
 
 ---
 
-## Gap 1 — Agent-Callable Memory Search ⭐ PRIORITY 1
+## Gap 1 — Agent-Callable Memory Search ✅ DONE
 
 **OpenClaw tools:** `memory_search` (semantic + keyword search across all memory files), `memory_get` (targeted read by filename / line range)
 
@@ -22,7 +22,7 @@ This document tracks the 8 capability gaps between Jarvis and OpenClaw's tool ar
 
 ---
 
-## Gap 2 — Session Management Tools ⭐ PRIORITY 2
+## Gap 2 — Session Management Tools ✅ DONE
 
 **OpenClaw tools:** `sessions_list`, `sessions_history`, `sessions_send`, `sessions_spawn`, `session_status`
 
@@ -39,7 +39,7 @@ This document tracks the 8 capability gaps between Jarvis and OpenClaw's tool ar
 
 ---
 
-## Gap 3 — Direct URL Fetch Tool ⭐ PRIORITY 3
+## Gap 3 — Direct URL Fetch Tool ✅ DONE
 
 **OpenClaw tool:** `web_fetch` — fetches any URL and converts HTML to clean readable markdown/text; responses cached 15 min; `maxChars` configurable
 
@@ -108,10 +108,10 @@ This document tracks the 8 capability gaps between Jarvis and OpenClaw's tool ar
 
 | Capability | OpenClaw Tool | Jarvis Equivalent | Gap |
 |---|---|---|---|
-| Search memory at runtime | `memory_search` / `memory_get` | None (bulk inject only) | YES |
-| Message another session | `sessions_send` | None | YES |
-| List / inspect active sessions | `sessions_list` / `sessions_history` | None | YES |
-| Fetch a specific URL | `web_fetch` | None | YES |
+| Search memory at runtime | `memory_search` / `memory_get` | `memory_search`, `memory_get` tools | ✅ CLOSED |
+| Message another session | `sessions_send` | `sessions_send` tool | ✅ CLOSED |
+| List / inspect active sessions | `sessions_list` / `sessions_history` | `sessions_list`, `sessions_history` tools | ✅ CLOSED |
+| Fetch a specific URL | `web_fetch` | `web_fetch` tool | ✅ CLOSED |
 | Browser automation | `browser` (always on) | Android daemon (optional) | PARTIAL |
 | Shell execution | `exec` / `bash` (always on) | Desktop daemon (optional) | PARTIAL |
 | Voice responses (TTS) | `tts` | None | YES |
@@ -122,11 +122,18 @@ This document tracks the 8 capability gaps between Jarvis and OpenClaw's tool ar
 
 ---
 
-## Top 3 to Prioritize
+## Completed (Phase 1 — April 2026)
 
-1. **Agent-callable memory search** — highest leverage; makes Jarvis smarter over time without context bloat; restructure SOUL into queryable files
-2. **Session management tools** — `sessions_list`, `sessions_send`, `sessions_history`; unlocks true multi-agent coordination at runtime
-3. **`web_fetch` URL tool** — trivial to implement (one new tool wrapping a fetch call); immediately useful for every link-sharing scenario in chat
+1. ✅ **Agent-callable memory search** — `memory_search` + `memory_get` tools; semantic hybrid search against `user_memories` DB; category filtering; in `telegramCoachTools`
+2. ✅ **Session management tools** — `sessions_list`, `sessions_history`, `sessions_send`; built on top of `agentJobs` table; agent can now list, inspect, and spawn jobs at runtime
+3. ✅ **`web_fetch` URL tool** — fetches any URL, strips HTML via cheerio, 15-min in-memory cache, 20k char limit; handles HTML/JSON/text content types
+
+## Remaining Gaps (Next Priorities)
+
+4. **TTS voice responses** — `tts` tool wrapping OpenAI TTS; Telegram voice bubble delivery; per-session `/tts on` toggle
+5. **Agent-defined cron jobs** — `cron` tool that writes to `jarvis_scheduled_tasks`; supports isolated, main, and named-session modes; agent can list/disable/delete its own jobs
+6. **Workflow engine (lobster)** — resumable multi-step plan graph the agent defines and can pause/resume across sessions; builds on `goalDecomposer` + `agentJobs`
+7. **Browser automation** — always-on headless browser for form fills, paywalled content, web app interactions (no daemon dependency)
 
 ---
 
