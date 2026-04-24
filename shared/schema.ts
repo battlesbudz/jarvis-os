@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, jsonb, timestamp, date, primaryKey, integer, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, jsonb, timestamp, date, primaryKey, integer, uniqueIndex, boolean } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -509,7 +509,7 @@ export const discordChannelSchedules = pgTable("discord_channel_schedules", {
   pipelineNext: varchar("pipeline_next"),
   lastRun: timestamp("last_run"),
   lastOutput: text("last_output"),
-  enabled: varchar("enabled").notNull().default("true"),
+  enabled: boolean("enabled").notNull().default(true),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 

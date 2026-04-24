@@ -38,7 +38,7 @@ export interface ScheduleRow {
   pipelineNext: string | null;
   lastRun: Date | null;
   lastOutput: string | null;
-  enabled: string;
+  enabled: boolean;
   createdAt: Date;
 }
 
@@ -47,19 +47,41 @@ export interface ScheduleRow {
 export const SCHEDULE_TEMPLATES = {
   stockResearch: {
     label: "AI Stock Research",
+    channelName: "stock-research",
     cronHour: 7,
     cronMinute: 0,
+    daysOfWeek: "1,2,3,4,5",
     prompt:
       "Research the top 8 AI infrastructure stocks with competitive moats — chips, energy, memory, GPUs, and supply chain companies that stand to benefit most from the AI buildout over the next decade. For each stock: company name, ticker symbol, 1-sentence investment thesis, and the single most important news item from the last 24 hours. Format clearly with sections per company. Keep the report concise and actionable.",
+    triggerPhrases: ["stock research", "ai stocks", "stock report", "market research", "ai infrastructure stocks"],
   },
   competitorYoutube: {
     label: "Competitor YouTube Research",
+    channelName: "competitor-research",
     cronHour: 8,
     cronMinute: 0,
+    daysOfWeek: "0,1,2,3,4,5,6",
     prompt:
-      "Search YouTube for [TOPIC] videos published in the last 5 days. Rank by total view count (highest first). List the top 15 results in a table: rank | title | channel | total views | days since posted. Add a brief note for any video standing out as unusually high-performing. Keep the report tight and scannable.",
+      "Search YouTube for videos in my niche published in the last 5 days. Rank by total view count (highest first). List the top 15 results in a table: rank | title | channel | total views | days since posted. Add a brief note for any video standing out as unusually high-performing. Keep the report tight and scannable.",
+    triggerPhrases: ["competitor youtube", "youtube research", "competitor research", "youtube competitor"],
   },
 } as const;
+
+/**
+ * Try to match a user's label/phrase against a built-in template.
+ * Returns the template key if matched, or null.
+ */
+export function detectTemplate(
+  input: string,
+): (typeof SCHEDULE_TEMPLATES)[keyof typeof SCHEDULE_TEMPLATES] | null {
+  const lower = input.toLowerCase();
+  for (const tpl of Object.values(SCHEDULE_TEMPLATES)) {
+    if (tpl.triggerPhrases.some((p) => lower.includes(p))) {
+      return tpl;
+    }
+  }
+  return null;
+}
 
 // ── CRUD ─────────────────────────────────────────────────────────────────────
 
@@ -76,7 +98,7 @@ export async function createSchedule(userId: string, params: ScheduleParams): Pr
       cronMinute: params.cronMinute,
       daysOfWeek: params.daysOfWeek ?? "0,1,2,3,4,5,6",
       prompt: params.prompt,
-      enabled: "true",
+      enabled: true,
     })
     .returning();
   return row as ScheduleRow;
@@ -109,7 +131,14 @@ export async function deleteSchedule(userId: string, id: string): Promise<boolea
 export async function updateScheduleEnabled(userId: string, id: string, enabled: boolean): Promise<void> {
   await db
     .update(discordChannelSchedules)
-    .set({ enabled: enabled ? "true" : "false" })
+    .set({ enabled })
+    .where(and(eq(discordChannelSchedules.id, id), eq(discordChannelSchedules.userId, userId)));
+}
+
+export async function updateSchedulePrompt(userId: string, id: string, prompt: string): Promise<void> {
+  await db
+    .update(discordChannelSchedules)
+    .set({ prompt })
     .where(and(eq(discordChannelSchedules.id, id), eq(discordChannelSchedules.userId, userId)));
 }
 
@@ -128,7 +157,7 @@ export async function updateLastRun(id: string, output: string): Promise<void> {
  */
 export async function runSchedule(id: string): Promise<void> {
   const schedule = await getSchedule(id);
-  if (!schedule || schedule.enabled !== "true") return;
+  if (!schedule || !schedule.enabled) return;
 
   const channelLabel = `Discord #${schedule.channelName}`;
   console.log(`[DiscordScheduler] Running schedule "${schedule.label}" for user ${schedule.userId}`);
@@ -169,7 +198,7 @@ export async function getDueSchedules(h: number, m: number, dow: number): Promis
     .from(discordChannelSchedules)
     .where(
       and(
-        eq(discordChannelSchedules.enabled, "true"),
+        eq(discordChannelSchedules.enabled, true),
         eq(discordChannelSchedules.cronHour, h),
         eq(discordChannelSchedules.cronMinute, m),
       ),
