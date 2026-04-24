@@ -3499,6 +3499,103 @@ Return ONLY the JSON object.`;
     }
   });
 
+  // Dream Cycle — return history of all dream insights for the user,
+  // newest first. Grouped by dream_date for display in the app.
+  app.get("/api/dream-insights", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const rows = await db
+        .select()
+        .from(schema.dreamInsights)
+        .where(eq(schema.dreamInsights.userId, userId))
+        .orderBy(desc(schema.dreamInsights.createdAt))
+        .limit(50);
+      return res.json({ insights: rows });
+    } catch (error) {
+      console.error("Error getting dream insights:", error);
+      return res.status(500).json({ error: "Failed to get dream insights" });
+    }
+  });
+
+  // Trigger a manual dream cycle run for the current user (useful for testing).
+  // Only runs if the user has at least 2 weeks of memory data.
+  app.post("/api/dream-insights/run", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const dreamDate = new Date().toISOString().slice(0, 10);
+      const manualKey = `dream_manual:${dreamDate}`;
+      const existing = await db
+        .select({ id: schema.proactiveScheduleLog.id })
+        .from(schema.proactiveScheduleLog)
+        .where(
+          and(
+            eq(schema.proactiveScheduleLog.userId, userId),
+            eq(schema.proactiveScheduleLog.messageType, manualKey),
+            eq(schema.proactiveScheduleLog.sentDate, dreamDate),
+          ),
+        )
+        .limit(1);
+      if (existing.length > 0) {
+        return res.status(429).json({ error: "Dream cycle already run today. Try again tomorrow." });
+      }
+      const { runDreamForUser } = await import("./memory/dream");
+      const count = await runDreamForUser(userId, dreamDate);
+      await db.insert(schema.proactiveScheduleLog).values({
+        userId, messageType: manualKey, sentDate: dreamDate,
+      }).catch(() => {});
+      return res.json({ count, dreamDate });
+    } catch (error) {
+      console.error("Error running dream cycle:", error);
+      return res.status(500).json({ error: "Failed to run dream cycle" });
+    }
+  });
+
+  // Fetch the actual memory records that contributed to a dream insight's synthesis.
+  // Returns up to 10 representative memories from sourceMemoryIds.
+  app.get("/api/dream-insights/:insightId/memories", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const { insightId } = req.params;
+      const insightRows = await db
+        .select({ sourceMemoryIds: schema.dreamInsights.sourceMemoryIds })
+        .from(schema.dreamInsights)
+        .where(
+          and(
+            eq(schema.dreamInsights.id, insightId),
+            eq(schema.dreamInsights.userId, userId),
+          ),
+        )
+        .limit(1);
+      if (insightRows.length === 0) return res.status(404).json({ error: "Not found" });
+      const ids = (insightRows[0].sourceMemoryIds as string[] | null) || [];
+      if (ids.length === 0) return res.json({ memories: [] });
+      const { inArray } = await import("drizzle-orm");
+      const memories = await db
+        .select({
+          id: schema.userMemories.id,
+          content: schema.userMemories.content,
+          category: schema.userMemories.category,
+          confidence: schema.userMemories.confidence,
+          extractedAt: schema.userMemories.extractedAt,
+        })
+        .from(schema.userMemories)
+        .where(
+          and(
+            eq(schema.userMemories.userId, userId),
+            inArray(schema.userMemories.id, ids.slice(0, 50)),
+          ),
+        )
+        .limit(10);
+      return res.json({ memories });
+    } catch (error) {
+      console.error("Error getting dream source memories:", error);
+      return res.status(500).json({ error: "Failed to get source memories" });
+    }
+  });
+
   app.get("/api/preferences", async (req: Request, res: Response) => {
     try {
       const userId = req.userId;
