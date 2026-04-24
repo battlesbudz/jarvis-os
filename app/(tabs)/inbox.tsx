@@ -89,6 +89,10 @@ function getSourceConfig(sourceType: string): SourceConfig {
     case 'email':
     case 'gmail':
       return { label: 'Gmail', icon: 'mail', color: '#EA4335', bgColor: '#EA433515' };
+    case 'google_calendar':
+      return { label: 'Google Cal', icon: 'calendar', color: Colors.primary, bgColor: Colors.primary + '15' };
+    case 'outlook_calendar':
+      return { label: 'Outlook Cal', icon: 'calendar', color: '#0078D4', bgColor: '#0078D415' };
     case 'calendar':
       return { label: 'Calendar', icon: 'calendar', color: Colors.primary, bgColor: Colors.primary + '15' };
     case 'outlook':

@@ -65,10 +65,11 @@ export async function executeInboxAction(
         ? { domains: [senderDomain] }
         : { subjectKeywords: [(item.subject || "").toLowerCase()] };
 
+      const isCalendar = item.sourceType === "calendar" || item.sourceType === "google_calendar" || item.sourceType === "outlook_calendar";
       await db.insert(schema.inboxRules).values({
         userId,
         type: "suppress",
-        scope: item.sourceType === "calendar" ? "calendar" : "email",
+        scope: isCalendar ? "calendar" : "email",
         pattern,
         matchHints,
         source: "user",
@@ -160,7 +161,8 @@ export async function executeInboxAction(
     }
 
     case "add_prep_time": {
-      if (item.sourceType !== "calendar") {
+      const isCalendarItem = item.sourceType === "calendar" || item.sourceType === "google_calendar" || item.sourceType === "outlook_calendar";
+      if (!isCalendarItem) {
         return { success: false, message: "Only works for calendar events" };
       }
       const prepTitle = `Prep: ${item.subject || "upcoming meeting"}`;

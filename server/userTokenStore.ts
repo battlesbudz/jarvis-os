@@ -74,6 +74,14 @@ export async function getAllGoogleConnectedUserIds(): Promise<string[]> {
   return items.map((row: any) => String(row.user_id));
 }
 
+export async function getAllMicrosoftConnectedUserIds(): Promise<string[]> {
+  const rows = await db.execute(sql`
+    SELECT DISTINCT user_id FROM user_oauth_tokens WHERE provider = 'microsoft'
+  `);
+  const items = (rows as any).rows ?? (Array.isArray(rows) ? rows : []);
+  return items.map((row: any) => String(row.user_id));
+}
+
 export async function deleteUserToken(userId: string, provider: string, accountEmail?: string): Promise<void> {
   if (accountEmail) {
     await db.execute(sql`
