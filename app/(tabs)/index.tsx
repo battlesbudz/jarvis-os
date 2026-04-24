@@ -828,17 +828,18 @@ export default function MissionControlScreen() {
               </>
             )}
 
-            {/* ── Your Patterns / Baseline Card ── */}
+            {/* ── Your Patterns / Baseline Card — only shown once state has loaded ── */}
+            {emotionalState && (
             <View style={styles.esBaselineCard}>
               <View style={styles.esBaselineHeader}>
                 <Ionicons name="stats-chart-outline" size={12} color={Colors.textTertiary} />
                 <Text style={styles.esBaselineSectionTitle}>YOUR PATTERNS</Text>
               </View>
-              {emotionalState?.baselineStress !== null && emotionalState?.baselineStress !== undefined
-               && emotionalState?.baselineFlow !== null && emotionalState?.baselineFlow !== undefined ? (
+              {emotionalState.baselineStress !== null && emotionalState.baselineStress !== undefined
+               && emotionalState.baselineFlow !== null && emotionalState.baselineFlow !== undefined ? (
                 <>
                   <Text style={styles.esBaselineSubtitle}>
-                    30-day baseline: stress {emotionalState.baselineStress.toFixed(1)} · flow {emotionalState.baselineFlow.toFixed(1)}
+                    Your 30-day baseline: stress {emotionalState.baselineStress.toFixed(1)} · flow {emotionalState.baselineFlow.toFixed(1)}
                   </Text>
                   <View style={styles.esBaselineRow}>
                     <Text style={styles.esBaselineDimLabel}>STRESS</Text>
@@ -901,6 +902,7 @@ export default function MissionControlScreen() {
                 </Text>
               )}
             </View>
+            )}
 
             <Text style={styles.esOverrideTitle}>Correct Jarvis's perception</Text>
             <Text style={styles.esOverrideSubtitle}>Tap to tell Jarvis how you actually feel. This adjusts its tone for the next 3 hours.</Text>
