@@ -877,6 +877,10 @@ export async function ensureTablesExist() {
         seen_at BIGINT NOT NULL
       )
     `).catch(() => {});
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS discord_seen_messages_seen_at_idx
+        ON discord_seen_messages (seen_at)
+    `).catch(() => {});
 
     console.log("Database tables verified");
   } catch (error) {
