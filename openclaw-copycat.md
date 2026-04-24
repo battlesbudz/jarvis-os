@@ -79,16 +79,17 @@ This document tracks the 8 capability gaps between Jarvis and OpenClaw's tool ar
 
 ---
 
-## Gap 7 — Agent-Callable Cron Job Creation
+## Gap 7 — Agent-Callable Cron Job Creation ✅ DONE
 
 **OpenClaw tool:** `cron` — agent creates one-shot or recurring scheduled jobs at runtime from within a conversation; supports isolated / main / custom / current session modes; agent can list, edit, disable, and delete its own scheduled jobs
 
-**Session modes:**
-- `isolated` — runs in a fresh dedicated context (best for reports)
-- `main` — injects into the next heartbeat turn (best for reminders)
-- `session:custom-id` — persistent named session that builds on prior history (best for daily standups)
+**Jarvis tools (Task #150):**
+- `cron_create` — natural-language time parsing ("in 4 hours", "tomorrow 9am", "every Monday at 9am"); auto-derives `scheduledAt` + `recurrence` from a single `when` arg; writes to `jarvis_scheduled_tasks`
+- `cron_list` — lists upcoming (or all) jobs with IDs, titles, next-run times, recurrence
+- `cron_delete` — cancels a job by ID (user-scoped)
+- `cron_update` — patches title / description / when / recurrence with same NL parsing
 
-**Jarvis equivalent:** `scheduleJarvisTask` — system-level heartbeat scheduler, developer-configured. Agent cannot create a new cron job mid-conversation.
+**Files:** `server/agent/tools/cronTools.ts`, registered in `server/agent/tools/index.ts`
 
 **Why it matters:** The agent can say "I'll check on this in 4 hours" and actually create the job. Enables true autonomous follow-through without the developer pre-wiring every schedule.
 

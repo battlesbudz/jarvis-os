@@ -115,6 +115,120 @@ export function parseNaturalTime(expr: string): Date | null {
   return null;
 }
 
+/**
+ * Parse "every..." (and daily/weekly/monthly shorthand) recurring expressions.
+ * Returns { scheduledAt, recurrence } so cron_create can store both from a
+ * single natural-language string like "every Monday at 9am".
+ * Returns null if the expression is not a recurring pattern.
+ */
+export function parseRecurringExpr(expr: string): { scheduledAt: Date; recurrence: string } | null {
+  const s = expr.trim();
+  if (!s) return null;
+  const lower = s.toLowerCase();
+  const now = new Date();
+
+  // Shorthand aliases
+  if (lower === "daily") {
+    const d = new Date(now);
+    d.setDate(d.getDate() + 1);
+    d.setHours(9, 0, 0, 0);
+    return { scheduledAt: d, recurrence: "daily" };
+  }
+  if (lower === "weekly") {
+    const d = new Date(now);
+    d.setDate(d.getDate() + 7);
+    d.setHours(9, 0, 0, 0);
+    return { scheduledAt: d, recurrence: "weekly" };
+  }
+  if (lower === "monthly") {
+    const d = new Date(now);
+    d.setMonth(d.getMonth() + 1);
+    d.setHours(9, 0, 0, 0);
+    return { scheduledAt: d, recurrence: "monthly" };
+  }
+
+  if (!lower.startsWith("every ")) return null;
+  const rest = lower.slice(6).trim();
+
+  // "every X minutes/hours/days"
+  const intervalM = rest.match(/^(\d+)\s+(minute|minutes|hour|hours|day|days)$/);
+  if (intervalM) {
+    const n = parseInt(intervalM[1], 10);
+    const unit = intervalM[2].replace(/s$/, "");
+    const d = new Date(now);
+    if (unit === "minute") d.setMinutes(d.getMinutes() + n);
+    else if (unit === "hour") d.setTime(d.getTime() + n * 3600 * 1000);
+    else d.setDate(d.getDate() + n);
+    return { scheduledAt: d, recurrence: `every ${n} ${unit}${n !== 1 ? "s" : ""}` };
+  }
+
+  // "every day [at HH:MM]"
+  const everyDayM = rest.match(/^day(?:\s+at\s+(.+))?$/);
+  if (everyDayM) {
+    const t = everyDayM[1] ? parseTimeOfDay(everyDayM[1]) : null;
+    const d = new Date(now);
+    d.setDate(d.getDate() + 1);
+    d.setHours(t ? t.hours : 9, t ? t.minutes : 0, 0, 0);
+    return { scheduledAt: d, recurrence: t ? `daily at ${everyDayM[1]}` : "daily" };
+  }
+
+  // "every weekday[s] [at HH:MM]"
+  const everyWkdayM = rest.match(/^weekdays?(?:\s+at\s+(.+))?$/);
+  if (everyWkdayM) {
+    const t = everyWkdayM[1] ? parseTimeOfDay(everyWkdayM[1]) : null;
+    const d = new Date(now);
+    do { d.setDate(d.getDate() + 1); } while ([0, 6].includes(d.getDay()));
+    d.setHours(t ? t.hours : 9, t ? t.minutes : 0, 0, 0);
+    return { scheduledAt: d, recurrence: t ? `weekdays at ${everyWkdayM[1]}` : "weekdays" };
+  }
+
+  // "every weekend[s] [at HH:MM]"
+  const everyWkendM = rest.match(/^weekends?(?:\s+at\s+(.+))?$/);
+  if (everyWkendM) {
+    const t = everyWkendM[1] ? parseTimeOfDay(everyWkendM[1]) : null;
+    const d = new Date(now);
+    do { d.setDate(d.getDate() + 1); } while (![0, 6].includes(d.getDay()));
+    d.setHours(t ? t.hours : 10, t ? t.minutes : 0, 0, 0);
+    return { scheduledAt: d, recurrence: t ? `weekends at ${everyWkendM[1]}` : "weekends" };
+  }
+
+  // "every week [at HH:MM]"
+  const everyWeekM = rest.match(/^week(?:\s+at\s+(.+))?$/);
+  if (everyWeekM) {
+    const t = everyWeekM[1] ? parseTimeOfDay(everyWeekM[1]) : null;
+    const d = new Date(now);
+    d.setDate(d.getDate() + 7);
+    d.setHours(t ? t.hours : 9, t ? t.minutes : 0, 0, 0);
+    return { scheduledAt: d, recurrence: t ? `weekly at ${everyWeekM[1]}` : "weekly" };
+  }
+
+  // "every month [at HH:MM]"
+  const everyMonthM = rest.match(/^month(?:\s+at\s+(.+))?$/);
+  if (everyMonthM) {
+    const t = everyMonthM[1] ? parseTimeOfDay(everyMonthM[1]) : null;
+    const d = new Date(now);
+    d.setMonth(d.getMonth() + 1);
+    d.setHours(t ? t.hours : 9, t ? t.minutes : 0, 0, 0);
+    return { scheduledAt: d, recurrence: t ? `monthly at ${everyMonthM[1]}` : "monthly" };
+  }
+
+  // "every [weekday name] [at HH:MM]" — e.g. "every Monday at 9am"
+  const everyNamedM = rest.match(/^(\w+)(?:\s+at\s+(.+))?$/);
+  if (everyNamedM) {
+    const dayKey = everyNamedM[1];
+    const timeStr = everyNamedM[2];
+    const dayIndex = WEEKDAYS[dayKey];
+    if (dayIndex !== undefined) {
+      const scheduledAt = nextWeekday(dayIndex, timeStr);
+      const dayLabel = dayKey.charAt(0).toUpperCase() + dayKey.slice(1);
+      const rec = timeStr ? `every ${dayLabel} at ${timeStr}` : `every ${dayLabel}`;
+      return { scheduledAt, recurrence: rec };
+    }
+  }
+
+  return null;
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function formatWhen(d: Date): string {
@@ -171,17 +285,30 @@ export const cronCreateTool: AgentTool = {
   async execute(args, ctx) {
     const title = String(args.title || "").trim();
     const whenExpr = String(args.when || "").trim();
-    const recurrence = args.recurrence ? String(args.recurrence).trim() : null;
+    const explicitRecurrence = args.recurrence ? String(args.recurrence).trim() : null;
     const description = args.description ? String(args.description).trim() : null;
 
     if (!title) return { ok: false, content: "title is required.", label: "cron_create: no title" };
     if (!whenExpr) return { ok: false, content: "when is required.", label: "cron_create: no when" };
 
-    const scheduledAt = parseNaturalTime(whenExpr);
+    // Try recurring-expression parser first ("every Monday at 9am", "daily", etc.)
+    const recurring = parseRecurringExpr(whenExpr);
+    let scheduledAt: Date | null;
+    let recurrence: string | null;
+
+    if (recurring) {
+      scheduledAt = recurring.scheduledAt;
+      // Explicit recurrence arg overrides derived one (agent can be precise)
+      recurrence = explicitRecurrence ?? recurring.recurrence;
+    } else {
+      scheduledAt = parseNaturalTime(whenExpr);
+      recurrence = explicitRecurrence;
+    }
+
     if (!scheduledAt) {
       return {
         ok: false,
-        content: `Could not parse time expression: "${whenExpr}". Try "in 4 hours", "tomorrow at 9am", "next Monday", or an ISO date.`,
+        content: `Could not parse time expression: "${whenExpr}". Try "in 4 hours", "tomorrow at 9am", "next Monday", "every Monday at 9am", or an ISO date.`,
         label: "cron_create: unparseable time",
       };
     }
@@ -405,15 +532,25 @@ export const cronUpdateTool: AgentTool = {
 
       if (args.when) {
         const whenExpr = String(args.when).trim();
-        const newDate = parseNaturalTime(whenExpr);
-        if (!newDate) {
-          return {
-            ok: false,
-            content: `Could not parse time expression: "${whenExpr}". Try "in 4 hours", "next Monday", or an ISO date.`,
-            label: "cron_update: unparseable time",
-          };
+        // Try recurring-expression parser first, then one-off
+        const recurring = parseRecurringExpr(whenExpr);
+        if (recurring) {
+          patch.scheduledAt = recurring.scheduledAt;
+          // Only auto-update recurrence if caller didn't also pass an explicit one
+          if (args.recurrence === undefined) {
+            patch.recurrence = recurring.recurrence;
+          }
+        } else {
+          const newDate = parseNaturalTime(whenExpr);
+          if (!newDate) {
+            return {
+              ok: false,
+              content: `Could not parse time expression: "${whenExpr}". Try "in 4 hours", "next Monday", "every Monday at 9am", or an ISO date.`,
+              label: "cron_update: unparseable time",
+            };
+          }
+          patch.scheduledAt = newDate;
         }
-        patch.scheduledAt = newDate;
       }
 
       if (args.recurrence !== undefined) {
