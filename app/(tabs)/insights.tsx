@@ -2035,7 +2035,7 @@ export default function InsightsScreen() {
                 <View style={styles.discordStep}>
                   <Text style={styles.discordStepNum}>4</Text>
                   <Text style={styles.discordStepText}>
-                    To add the bot to your server, go to <Text style={styles.discordBold}>OAuth2 → URL Generator</Text>, check <Text style={styles.discordBold}>bot</Text>, then check <Text style={styles.discordBold}>Send Messages</Text> and <Text style={styles.discordBold}>Read Message History</Text>. Open the generated URL and invite the bot to your server.
+                    To add the bot to your server, go to <Text style={styles.discordBold}>OAuth2 → URL Generator</Text>, check <Text style={styles.discordBold}>bot</Text>, then check these permissions: <Text style={styles.discordBold}>View Channels</Text>, <Text style={styles.discordBold}>Send Messages</Text>, <Text style={styles.discordBold}>Read Message History</Text>, and <Text style={styles.discordBold}>Manage Channels</Text> (needed for Jarvis to create its own workspace channels). Open the generated URL and invite the bot to your server.
                   </Text>
                 </View>
                 <View style={styles.discordStep}>
