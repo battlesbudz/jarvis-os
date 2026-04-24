@@ -628,6 +628,60 @@ export async function postToDiscordChannelById(
   }
 }
 
+/**
+ * Post a single message to a channel by name or ID and return its Discord message ID.
+ * Used by the multi-script pipeline runner so each script can have its own approval registered.
+ * Returns null if the channel was not found or the send failed.
+ */
+export async function postMessageAndGetId(
+  userId: string,
+  channelName: string,
+  channelId: string | null,
+  text: string,
+): Promise<string | null> {
+  const client = botClients.get(userId);
+  if (!client || !client.isReady()) return null;
+
+  const { ChannelType } = await import("discord.js");
+
+  try {
+    let targetChannel: TextChannel | null = null;
+
+    if (channelId) {
+      try {
+        const ch = await client.channels.fetch(channelId);
+        if (ch && ch.isTextBased()) targetChannel = ch as TextChannel;
+      } catch { /* fall through */ }
+    }
+
+    if (!targetChannel && channelName) {
+      const slug = channelName.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+      for (const guild of client.guilds.cache.values()) {
+        const fetchedGuild = await guild.fetch().catch(() => null);
+        if (!fetchedGuild) continue;
+        const channels = await fetchedGuild.channels.fetch().catch(() => null);
+        if (!channels) continue;
+        const match = channels.find(
+          (ch) => ch && ch.type === ChannelType.GuildText && (ch as TextChannel).name === slug,
+        ) as TextChannel | undefined;
+        if (match) { targetChannel = match; break; }
+      }
+    }
+
+    if (!targetChannel) return null;
+
+    const chunks = splitIntoChunks(text, 1900);
+    const firstMsg = await targetChannel.send(chunks[0]);
+    for (let i = 1; i < chunks.length; i++) {
+      await targetChannel.send(chunks[i]).catch(() => {});
+    }
+    return firstMsg.id;
+  } catch (err) {
+    console.error("[DiscordManager] postMessageAndGetId failed:", err);
+    return null;
+  }
+}
+
 /** Post a message to a topic channel in the user's workspace. */
 export async function postToDiscordWorkspace(
   userId: string,

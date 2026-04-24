@@ -5,9 +5,11 @@
 
 import { db } from "../db";
 import { eq, and } from "drizzle-orm";
-import { discordChannelSchedules } from "@shared/schema";
+import { discordChannelSchedules, discordPendingApprovals } from "@shared/schema";
 import { runCoachAgent } from "../channels/coachAgent";
-import { postToDiscordChannel } from "./manager";
+import { postToDiscordChannel, postMessageAndGetId } from "./manager";
+
+const SCRIPT_DELIMITER = "---SCRIPT---";
 
 // ── Built-in prompt templates ─────────────────────────────────────────────────
 
@@ -155,17 +157,78 @@ export async function runSchedule(id: string, previousOutput?: string): Promise<
     result = `⚠️ Schedule run failed: ${err instanceof Error ? err.message : String(err)}`;
   }
 
-  // Post to the Discord channel
-  const header = `📊 **${schedule.label}**\n`;
-  const posted = await postToDiscordChannel(
-    schedule.userId,
-    schedule.channelName,
-    schedule.channelId ?? null,
-    header + result,
-  );
+  // ── Multi-script mode: split on ---SCRIPT--- and post each with approval ──
+  const isMultiScript = result.includes(SCRIPT_DELIMITER);
 
-  if (!posted) {
-    console.warn(`[DiscordSchedules] Failed to post schedule ${id} to channel ${schedule.channelName}`);
+  if (isMultiScript) {
+    const scripts = result
+      .split(SCRIPT_DELIMITER)
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    console.log(`[DiscordSchedules] Multi-script mode — posting ${scripts.length} scripts to #${schedule.channelName}`);
+
+    await postToDiscordChannel(
+      schedule.userId,
+      schedule.channelName,
+      schedule.channelId ?? null,
+      `✍️ **${schedule.label}** — ${scripts.length} script${scripts.length !== 1 ? "s" : ""} ready for review:`,
+    );
+
+    for (let i = 0; i < scripts.length; i++) {
+      const scriptText = scripts[i];
+      const postBody =
+        scriptText +
+        "\n\n" +
+        "_React ✅ to generate thumbnail concepts — ❌ to skip._";
+
+      const msgId = await postMessageAndGetId(
+        schedule.userId,
+        schedule.channelName,
+        schedule.channelId ?? null,
+        postBody,
+      );
+
+      if (msgId) {
+        await db.insert(discordPendingApprovals).values({
+          messageId: msgId,
+          userId: schedule.userId,
+          channelId: schedule.channelId ?? msgId,
+          type: "script",
+          content: scriptText,
+          onApprove: {
+            type: "run_prompt",
+            prompt:
+              "Generate 3 detailed thumbnail concepts for this YouTube script. For each concept: " +
+              "1. Background scene description, 2. Main text overlay (bold, short), " +
+              "3. Color palette (2-3 colors), 4. Composition notes (where the subject sits, camera angle). " +
+              "Script content:\n\n{{content}}",
+            channelName: "ideas",
+          },
+          onReject: { type: "notify_only" },
+          status: "pending",
+        }).onConflictDoNothing();
+        console.log(`[DiscordSchedules] Registered approval for script ${i + 1} (msgId=${msgId})`);
+      }
+
+      // Pace posts to avoid Discord rate limits
+      if (i < scripts.length - 1) {
+        await new Promise((r) => setTimeout(r, 1200));
+      }
+    }
+  } else {
+    // ── Standard single-post mode ────────────────────────────────────────────
+    const header = `📊 **${schedule.label}**\n`;
+    const posted = await postToDiscordChannel(
+      schedule.userId,
+      schedule.channelName,
+      schedule.channelId ?? null,
+      header + result,
+    );
+
+    if (!posted) {
+      console.warn(`[DiscordSchedules] Failed to post schedule ${id} to channel ${schedule.channelName}`);
+    }
   }
 
   // Update lastRun and lastOutput
