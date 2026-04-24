@@ -394,8 +394,9 @@ Return JSON: { "subject": "Re: ...", "body": "..." }`;
     const nudgeKey = `draft_nudge:${queued}`;
     if (!(await alreadyLogged(userId, nudgeKey, localKey))) {
       try {
-        await sendMessage(
-          chatId,
+        await notifyUser(
+          userId,
+          "email_alert",
           `✉️ ${queued} email draft${queued === 1 ? "" : "s"} waiting for your review in the Inbox tab.`,
         );
         await recordLog(userId, nudgeKey, localKey);

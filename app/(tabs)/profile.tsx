@@ -989,7 +989,7 @@ export default function ProfileScreen() {
 
   const handleTogglePreference = useCallback(async (notificationType: string, channel: string) => {
     if (!channelData) return;
-    const current = channelData.preferences[notificationType] || ['telegram'];
+    const current = channelData.preferences[notificationType] || ['telegram', 'in_app'];
     const next = current.includes(channel)
       ? current.filter(c => c !== channel)
       : [...current, channel];
@@ -2679,56 +2679,100 @@ export default function ProfileScreen() {
                   Notification routing
                 </Text>
                 <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, lineHeight: 17 }}>
-                  Pick which channels each notification type sends to. Empty rows fall back to Telegram.
+                  Choose which channels each notification type goes to. Types with no selection fall back to Telegram (if connected) or in-app.
                 </Text>
               </View>
               {channelData.notificationTypes.map((nt) => {
-                const selected = new Set(channelData.preferences[nt] || ['telegram']);
-                const NICE: Record<string, string> = {
-                  morning_briefing: 'Morning briefing',
-                  meeting_brief: 'Meeting brief',
-                  email_alert: 'Urgent email alert',
-                  evening_wrap: 'Evening wrap-up',
-                  commitment_check: 'Commitment check',
-                  weekly_planning: 'Weekly planning',
-                  approval_request: 'Approval request',
-                  general: 'General messages',
+                const prefChannels = channelData.preferences[nt] || [];
+                const selected = new Set(prefChannels.length > 0 ? prefChannels : ['telegram']);
+                const usingDefault = prefChannels.length === 0;
+
+                const NICE: Record<string, { label: string; desc: string }> = {
+                  morning_briefing: { label: 'Morning briefing', desc: 'Daily plan summary sent each morning' },
+                  meeting_brief:    { label: 'Meeting briefs',   desc: 'Pre-meeting research sent 30–60 min ahead' },
+                  email_alert:      { label: 'Email alerts',     desc: 'Urgent emails and draft queue nudges' },
+                  evening_wrap:     { label: 'Evening wrap-up',  desc: 'End-of-day summary and streak update' },
+                  commitment_check: { label: 'Commitment checks', desc: "Follow-ups on things you said you'd do" },
+                  weekly_planning:  { label: 'Weekly planning',  desc: 'Sunday pattern insights and week preview' },
+                  approval_request: { label: 'Approval requests', desc: 'Deliverables from Jarvis waiting for review' },
+                  general:          { label: 'General messages', desc: 'Curiosity questions and miscellaneous nudges' },
                 };
+
+                const info = NICE[nt] || { label: nt, desc: '' };
+
+                const hasNoActiveChannel = prefChannels.length > 0 &&
+                  !prefChannels.some(ch => ch === 'in_app' || channelData.connected[ch]);
+
                 return (
-                  <View key={nt} style={{ paddingHorizontal: 16, paddingVertical: 10, borderTopWidth: 1, borderTopColor: Colors.border }}>
-                    <Text style={{ fontSize: 13, fontFamily: 'Inter_500Medium', color: Colors.text, marginBottom: 8 }}>
-                      {NICE[nt] || nt}
-                    </Text>
-                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-                      {(['telegram', 'whatsapp', 'slack', 'daemon', 'discord'] as const).map((ch) => {
-                        const connected = channelData.connected[ch];
-                        const isSelected = selected.has(ch);
+                  <View key={nt} style={{ paddingHorizontal: 16, paddingVertical: 12, borderTopWidth: 1, borderTopColor: Colors.border }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: 8 }}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ fontSize: 13, fontFamily: 'Inter_500Medium', color: Colors.text }}>
+                          {info.label}
+                        </Text>
+                        {info.desc ? (
+                          <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: Colors.textTertiary, marginTop: 1 }}>
+                            {info.desc}
+                          </Text>
+                        ) : null}
+                      </View>
+                      {hasNoActiveChannel && (
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: '#FEF3C7', paddingHorizontal: 7, paddingVertical: 3, borderRadius: 10, marginLeft: 8 }}>
+                          <Ionicons name="warning-outline" size={11} color="#D97706" />
+                          <Text style={{ fontSize: 10, fontFamily: 'Inter_600SemiBold', color: '#D97706' }}>No channel</Text>
+                        </View>
+                      )}
+                      {usingDefault && (
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: Colors.border, paddingHorizontal: 7, paddingVertical: 3, borderRadius: 10, marginLeft: 8 }}>
+                          <Text style={{ fontSize: 10, fontFamily: 'Inter_400Regular', color: Colors.textTertiary }}>default</Text>
+                        </View>
+                      )}
+                    </View>
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                      {(['in_app', 'telegram', 'slack', 'discord', 'whatsapp', 'daemon'] as const).map((ch) => {
+                        const connected = ch === 'in_app' ? true : !!channelData.connected[ch];
+                        const isSelected = selected.has(ch) && !usingDefault;
+                        const isDefaultSelected = usingDefault && (ch === 'telegram' || ch === 'in_app');
+                        const LABELS: Record<string, string> = {
+                          in_app: 'In-App', telegram: 'Telegram', whatsapp: 'WhatsApp', slack: 'Slack',
+                          daemon: 'Desktop', discord: 'Discord',
+                        };
                         return (
                           <Pressable
                             key={ch}
-                            onPress={() => connected && handleTogglePreference(nt, ch)}
+                            onPress={() => {
+                              if (!connected) return;
+                              handleTogglePreference(nt, ch);
+                            }}
                             disabled={!connected}
                             style={{
                               paddingHorizontal: 10,
-                              paddingVertical: 6,
+                              paddingVertical: 5,
                               borderRadius: 14,
                               borderWidth: 1,
-                              borderColor: isSelected ? Colors.accent : Colors.border,
-                              backgroundColor: isSelected ? Colors.accent + '22' : 'transparent',
-                              opacity: connected ? 1 : 0.4,
+                              borderColor: isSelected ? Colors.accent : isDefaultSelected ? Colors.accent + '66' : Colors.border,
+                              backgroundColor: isSelected ? Colors.accent + '22' : isDefaultSelected ? Colors.accent + '11' : 'transparent',
+                              opacity: connected ? 1 : 0.35,
                               flexDirection: 'row',
                               alignItems: 'center',
                               gap: 4,
                             }}
                           >
-                            {isSelected && <Ionicons name="checkmark" size={12} color={Colors.accent} />}
-                            <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: isSelected ? Colors.accent : Colors.textSecondary, textTransform: 'capitalize' }}>
-                              {ch}
+                            {(isSelected || isDefaultSelected) && (
+                              <Ionicons name="checkmark" size={11} color={Colors.accent} />
+                            )}
+                            <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: isSelected || isDefaultSelected ? Colors.accent : Colors.textSecondary }}>
+                              {LABELS[ch] || ch}
                             </Text>
                           </Pressable>
                         );
                       })}
                     </View>
+                    {usingDefault && (
+                      <Text style={{ fontSize: 10, fontFamily: 'Inter_400Regular', color: Colors.textTertiary, marginTop: 6 }}>
+                        Tap a channel to set a custom preference
+                      </Text>
+                    )}
                   </View>
                 );
               })}
