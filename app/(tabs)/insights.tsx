@@ -620,6 +620,8 @@ export default function InsightsScreen() {
   const slackConnectedRef = useRef(false);
   const telegramMessagesRef = useRef<any[]>([]);
   const telegramConnectedRef = useRef(false);
+  // Polls for channel connection after Jarvis sends a connect link via the agent.
+  const channelConnectPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const calendarEventsRef = useRef<typeof calendarEvents>([]);
   const goalsRef = useRef<typeof goals>([]);
   const statsRef = useRef<typeof stats>({ streak: 0, totalCompleted: 0, bestStreak: 0 });
@@ -677,6 +679,10 @@ export default function InsightsScreen() {
       if (Platform.OS === 'web') {
         webAudioRef.current?.pause();
         webAudioRef.current = null;
+      }
+      if (channelConnectPollRef.current) {
+        clearInterval(channelConnectPollRef.current);
+        channelConnectPollRef.current = null;
       }
     };
   }, []);
@@ -1393,6 +1399,15 @@ export default function InsightsScreen() {
         return updated;
       });
 
+      // If Jarvis just sent a channel connect link, start polling for connection.
+      // When the channel connects, a confirmation message is injected into the chat.
+      const connectAction = finalActions.find(
+        a => a.tool === 'connect_channel' && a.result === 'success' && a.channel
+      );
+      if (connectAction?.channel) {
+        startChannelConnectPoll(connectAction.channel, assistantId);
+      }
+
       try {
         const suggestUrl = new URL('/api/coach/suggestions', getApiUrl());
         const suggestRes = await authFetch(suggestUrl.toString(), {
@@ -1584,6 +1599,59 @@ export default function InsightsScreen() {
     setCoachingMode(mode);
     coachingModeRef.current = mode;
     saveCoachingMode(mode);
+  }, []);
+
+  // After Jarvis sends a connect_channel link, poll /api/channels until the
+  // channel flips to connected, then inject a confirmation message in the chat.
+  const startChannelConnectPoll = useCallback((channelName: string, assistantMsgId: string) => {
+    if (channelConnectPollRef.current) clearInterval(channelConnectPollRef.current);
+    let attempts = 0;
+    const maxAttempts = 120; // 10 minutes at 5s intervals
+    const channelLabels: Record<string, string> = {
+      telegram: 'Telegram',
+      whatsapp: 'WhatsApp',
+      slack: 'Slack',
+      discord: 'Discord',
+    };
+    const displayName = channelLabels[channelName] ?? channelName;
+    channelConnectPollRef.current = setInterval(async () => {
+      attempts++;
+      if (attempts > maxAttempts) {
+        clearInterval(channelConnectPollRef.current!);
+        channelConnectPollRef.current = null;
+        return;
+      }
+      try {
+        const res = await authFetch(new URL('/api/channels', getApiUrl()).toString());
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.connected?.[channelName]) {
+          clearInterval(channelConnectPollRef.current!);
+          channelConnectPollRef.current = null;
+          // Inject a confirmation follow-up message right after the Jarvis message
+          // that contained the connect link.
+          const confirmId = `connect-confirm-${channelName}-${Date.now()}`;
+          const confirmMsg: ChatMessage = {
+            id: confirmId,
+            role: 'assistant',
+            content: `✅ ${displayName} is now connected! I can send you updates and reminders there going forward.`,
+          };
+          setMessages(prev => {
+            const idx = prev.findIndex(m => m.id === assistantMsgId);
+            // Insert confirmMsg BEFORE the connect-link message so it appears
+            // after it visually (the FlatList is inverted: index 0 = newest).
+            const updated = [...prev];
+            if (idx !== -1) {
+              updated.splice(idx, 0, confirmMsg);
+            } else {
+              updated.unshift(confirmMsg);
+            }
+            saveChatHistory(updated);
+            return updated;
+          });
+        }
+      } catch {}
+    }, 5000);
   }, []);
 
   const handleClearChat = useCallback(async () => {
