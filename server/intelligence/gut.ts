@@ -86,6 +86,28 @@ function getGateForType(baseline: GutBaseline, signalType: schema.GutSignalType)
   return Math.max(20, Math.min(90, globalGate + adj));
 }
 
+/**
+ * Convert a per-signal-type confirmation rate into a gate adjustment (confidence points).
+ * Uses a 5-step graduated scale so the detector sensitivity changes proportionally
+ * to how often a user finds that signal type useful.
+ *
+ *  rate > 0.75  → −15  (very confirmed → lower bar, be more sensitive)
+ *  rate 0.60–0.75 → −7
+ *  rate 0.40–0.60 → 0   (neutral)
+ *  rate 0.25–0.40 → +7
+ *  rate < 0.25  → +15  (very dismissed → raise bar significantly)
+ *
+ * Minimum 4 responded signals required before any adjustment is applied.
+ */
+function deriveGateAdjustment(confirmationRate: number, totalResponded: number): number {
+  if (totalResponded < 4) return 0;
+  if (confirmationRate > 0.75) return -15;
+  if (confirmationRate > 0.60) return -7;
+  if (confirmationRate >= 0.40) return 0;
+  if (confirmationRate >= 0.25) return +7;
+  return +15;
+}
+
 async function computeBaseline(userId: string, token: string | null): Promise<GutBaseline> {
   const cached = getCachedBaseline(userId);
   if (cached) return cached;
@@ -163,43 +185,68 @@ async function computeBaseline(userId: string, token: string | null): Promise<Gu
       if (accuracy < 0.3) baseline.dismissThreshold = Math.min(60, baseline.dismissThreshold + 10);
     }
 
-    // Per-signal-type learning: adjust the gate individually for each pattern
-    // so that heavy dismissal of one type doesn't tighten all detectors.
-    const allSignalTypes: schema.GutSignalType[] = [
-      "calendar_anomaly",
-      "deep_work_erosion",
-      "email_pattern",
-      "project_drift",
-      "relationship_anomaly",
-    ];
-    for (const st of allSignalTypes) {
-      const [tc] = await db
-        .select({ count: sql<number>`count(*)` })
-        .from(schema.gutSignals)
-        .where(and(
-          eq(schema.gutSignals.userId, userId),
-          eq(schema.gutSignals.signalType, st),
-          eq(schema.gutSignals.userResponse, "confirmed"),
-        ));
-      const [td] = await db
-        .select({ count: sql<number>`count(*)` })
-        .from(schema.gutSignals)
-        .where(and(
-          eq(schema.gutSignals.userId, userId),
-          eq(schema.gutSignals.signalType, st),
-          eq(schema.gutSignals.userResponse, "dismissed"),
-        ));
-      const tc_ = Number(tc?.count ?? 0);
-      const td_ = Number(td?.count ?? 0);
-      if (tc_ + td_ >= 4) {
-        const typeAccuracy = tc_ / (tc_ + td_);
-        // confirmThreshold high (good catch) → lower the bar for this type (−10)
-        // dismissThreshold high (not useful)  → raise the bar for this type (+10)
-        if (typeAccuracy > 0.7) baseline.typeGateAdjustments[st] = -10;
-        else if (typeAccuracy < 0.3) baseline.typeGateAdjustments[st] = +10;
-      }
-    }
   } catch {}
+
+  // Per-signal-type learning: prefer persisted calibration rows (written by
+  // the nightly job) so adjustments survive restarts and reflect the full
+  // history without re-scanning gutSignals on every baseline build.
+  // Each step is in its own try so a table-not-found error or any other DB
+  // failure falls back cleanly to the live-computation path.
+  let usedStoredCalibration = false;
+  try {
+    const storedCalibration = await db
+      .select()
+      .from(schema.gutCalibration)
+      .where(eq(schema.gutCalibration.userId, userId));
+
+    if (storedCalibration.length > 0) {
+      for (const row of storedCalibration) {
+        const st = row.signalType as schema.GutSignalType;
+        baseline.typeGateAdjustments[st] = row.gateAdjustment;
+      }
+      usedStoredCalibration = true;
+    }
+  } catch (err) {
+    console.warn(`[Gut] Could not read gutCalibration for user ${userId}, falling back to live computation:`, err);
+  }
+
+  if (!usedStoredCalibration) {
+    // Fallback: compute live from gutSignals when no calibration rows exist yet
+    // (e.g. before the first nightly run, or if table is missing).
+    try {
+      const allSignalTypes: schema.GutSignalType[] = [
+        "calendar_anomaly",
+        "deep_work_erosion",
+        "email_pattern",
+        "project_drift",
+        "relationship_anomaly",
+      ];
+      for (const st of allSignalTypes) {
+        const [tc] = await db
+          .select({ count: sql<number>`count(*)` })
+          .from(schema.gutSignals)
+          .where(and(
+            eq(schema.gutSignals.userId, userId),
+            eq(schema.gutSignals.signalType, st),
+            eq(schema.gutSignals.userResponse, "confirmed"),
+          ));
+        const [td] = await db
+          .select({ count: sql<number>`count(*)` })
+          .from(schema.gutSignals)
+          .where(and(
+            eq(schema.gutSignals.userId, userId),
+            eq(schema.gutSignals.signalType, st),
+            eq(schema.gutSignals.userResponse, "dismissed"),
+          ));
+        const tc_ = Number(tc?.count ?? 0);
+        const td_ = Number(td?.count ?? 0);
+        if (tc_ + td_ >= 4) {
+          const typeAccuracy = tc_ / (tc_ + td_);
+          baseline.typeGateAdjustments[st] = deriveGateAdjustment(typeAccuracy, tc_ + td_);
+        }
+      }
+    } catch {}
+  }
 
   setCachedBaseline(userId, baseline);
   return baseline;
@@ -339,11 +386,15 @@ async function detectDeepWorkErosion(
 
     if (drop > 0.2) {
       const pct = Math.round(drop * 100);
-      return {
-        signalType: "deep_work_erosion",
-        confidenceScore: Math.min(90, 50 + pct),
-        explanation: `Your deep work ratio this week is ${Math.round(focusRatio * 100)}% — down ${pct}pp from your usual ${Math.round(baseline.deepWorkRatio * 100)}%.`,
-      };
+      const confidence = Math.min(90, 50 + pct);
+      const erosionGate = getGateForType(baseline, "deep_work_erosion");
+      if (confidence >= erosionGate) {
+        return {
+          signalType: "deep_work_erosion",
+          confidenceScore: confidence,
+          explanation: `Your deep work ratio this week is ${Math.round(focusRatio * 100)}% — down ${pct}pp from your usual ${Math.round(baseline.deepWorkRatio * 100)}%.`,
+        };
+      }
     }
   } catch {}
   return null;
@@ -446,11 +497,15 @@ async function detectProjectDrift(userId: string, baseline: GutBaseline): Promis
     const taskAccumulation = totalOpenRecent > baseline.avgTaskVelocityPerDay * 3;
 
     if (velocityDrop > 1.5 || taskAccumulation) {
-      signals.push({
-        signalType: "project_drift",
-        confidenceScore: Math.min(85, 50 + Math.round(velocityDrop * 10) + (taskAccumulation ? 20 : 0)),
-        explanation: `Task completion has slowed to ${avgCompleted.toFixed(1)}/day (usual: ${baseline.avgTaskVelocityPerDay.toFixed(1)}). This pattern matches stalled projects.`,
-      });
+      const driftConfidence = Math.min(85, 50 + Math.round(velocityDrop * 10) + (taskAccumulation ? 20 : 0));
+      const driftGate = getGateForType(baseline, "project_drift");
+      if (driftConfidence >= driftGate) {
+        signals.push({
+          signalType: "project_drift",
+          confidenceScore: driftConfidence,
+          explanation: `Task completion has slowed to ${avgCompleted.toFixed(1)}/day (usual: ${baseline.avgTaskVelocityPerDay.toFixed(1)}). This pattern matches stalled projects.`,
+        });
+      }
     }
   } catch {}
 
@@ -462,6 +517,7 @@ async function detectProjectDrift(userId: string, baseline: GutBaseline): Promis
 async function detectRelationshipAnomalies(
   userId: string,
   inboxItems: { id: string; sender: string | null; subject: string | null; snippet: string | null }[],
+  baseline: GutBaseline,
 ): Promise<GutSignalCandidate[]> {
   const signals: GutSignalCandidate[] = [];
 
@@ -495,12 +551,16 @@ async function detectRelationshipAnomalies(
       if (person.lastInteractionAt > dormantCutoff) continue;
 
       const daysDormant = Math.round((Date.now() - person.lastInteractionAt.getTime()) / 86400000);
-      signals.push({
-        signalType: "relationship_anomaly",
-        itemRef: item.id,
-        confidenceScore: Math.min(75, 40 + Math.round(daysDormant / 10)),
-        explanation: `${person.name} hasn't reached out in ${daysDormant} days — their contact after a long silence is worth noting.`,
-      });
+      const relConfidence = Math.min(75, 40 + Math.round(daysDormant / 10));
+      const relGate = getGateForType(baseline, "relationship_anomaly");
+      if (relConfidence >= relGate) {
+        signals.push({
+          signalType: "relationship_anomaly",
+          itemRef: item.id,
+          confidenceScore: relConfidence,
+          explanation: `${person.name} hasn't reached out in ${daysDormant} days — their contact after a long silence is worth noting.`,
+        });
+      }
     }
   } catch {}
 
@@ -597,7 +657,7 @@ export async function runGutScanForUser(
     candidates.push(...emailSignals);
   }
 
-  const relSignals = await detectRelationshipAnomalies(userId, recentInboxItems);
+  const relSignals = await detectRelationshipAnomalies(userId, recentInboxItems, baseline);
   candidates.push(...relSignals);
 
   if (candidates.length === 0) return 0;
@@ -639,6 +699,9 @@ export async function getGutSignalsForUser(
 
 /**
  * Store a user's response to a gut signal (confirmed / dismissed).
+ * Also triggers an immediate recalibration for that user so the next
+ * heartbeat picks up the updated gate adjustments without waiting for
+ * the nightly job.
  */
 export async function respondToGutSignal(
   userId: string,
@@ -653,6 +716,11 @@ export async function respondToGutSignal(
   // on the very next heartbeat tick rather than waiting up to 6h for TTL expiry.
   baselineCache.delete(userId);
   console.log(`[Gut] user ${userId} responded ${response} to signal ${signalId}`);
+
+  // Trigger immediate recalibration so the updated rate is stored persistently.
+  calibrateGutForUser(userId).catch((err) =>
+    console.error(`[Gut] immediate recalibration failed for user ${userId}:`, err),
+  );
 }
 
 /**
@@ -685,4 +753,114 @@ export async function getAndMarkMorningBriefSignals(
     .where(inArray(schema.gutSignals.id, selectedIds));
 
   return highConf;
+}
+
+// ─── Calibration ──────────────────────────────────────────────────────────────
+
+/**
+ * Recalculate and persist per-signal-type confirmation rates for one user.
+ *
+ * For each signal type, we count confirmed + dismissed responses (ignoring
+ * "ignored" since those represent no opinion), compute the confirmation rate,
+ * and derive a graduated gate adjustment (see deriveGateAdjustment).
+ *
+ * The result is upserted into the gutCalibration table so it survives restarts
+ * and is loaded cheaply on the next baseline build without re-scanning all rows.
+ */
+export async function calibrateGutForUser(userId: string): Promise<void> {
+  const allSignalTypes: schema.GutSignalType[] = [
+    "calendar_anomaly",
+    "deep_work_erosion",
+    "email_pattern",
+    "project_drift",
+    "relationship_anomaly",
+  ];
+
+  for (const signalType of allSignalTypes) {
+    try {
+      const [tcRow] = await db
+        .select({ count: sql<number>`count(*)` })
+        .from(schema.gutSignals)
+        .where(and(
+          eq(schema.gutSignals.userId, userId),
+          eq(schema.gutSignals.signalType, signalType),
+          eq(schema.gutSignals.userResponse, "confirmed"),
+        ));
+      const [tdRow] = await db
+        .select({ count: sql<number>`count(*)` })
+        .from(schema.gutSignals)
+        .where(and(
+          eq(schema.gutSignals.userId, userId),
+          eq(schema.gutSignals.signalType, signalType),
+          eq(schema.gutSignals.userResponse, "dismissed"),
+        ));
+      const [tiRow] = await db
+        .select({ count: sql<number>`count(*)` })
+        .from(schema.gutSignals)
+        .where(and(
+          eq(schema.gutSignals.userId, userId),
+          eq(schema.gutSignals.signalType, signalType),
+          eq(schema.gutSignals.userResponse, "ignored"),
+        ));
+
+      const confirmedCount = Number(tcRow?.count ?? 0);
+      const dismissedCount = Number(tdRow?.count ?? 0);
+      const ignoredCount = Number(tiRow?.count ?? 0);
+      const totalResponded = confirmedCount + dismissedCount;
+      const confirmationRate = totalResponded > 0 ? confirmedCount / totalResponded : null;
+      const gateAdjustment = deriveGateAdjustment(
+        confirmationRate ?? 0.5,
+        totalResponded,
+      );
+
+      await db
+        .insert(schema.gutCalibration)
+        .values({
+          userId,
+          signalType,
+          confirmedCount,
+          dismissedCount,
+          ignoredCount,
+          confirmationRate,
+          gateAdjustment,
+          lastUpdatedAt: new Date(),
+        })
+        .onConflictDoUpdate({
+          target: [schema.gutCalibration.userId, schema.gutCalibration.signalType],
+          set: {
+            confirmedCount,
+            dismissedCount,
+            ignoredCount,
+            confirmationRate,
+            gateAdjustment,
+            lastUpdatedAt: new Date(),
+          },
+        });
+    } catch (err) {
+      console.error(`[Gut] calibration failed for user ${userId} type ${signalType}:`, err);
+    }
+  }
+
+  // Invalidate cached baseline so the next heartbeat uses the fresh calibration.
+  baselineCache.delete(userId);
+  console.log(`[Gut] calibration updated for user ${userId}`);
+}
+
+/**
+ * Run calibration for every user in the database.
+ * Called by the nightly scheduler job (02:00 UTC).
+ */
+export async function calibrateGutForAllUsers(): Promise<void> {
+  const allUsers = await db.select({ id: schema.users.id }).from(schema.users).catch(() => []);
+  console.log(`[Gut] nightly calibration starting for ${allUsers.length} user(s)`);
+  let calibrated = 0;
+  for (const user of allUsers) {
+    try {
+      await calibrateGutForUser(user.id);
+      calibrated++;
+    } catch (err) {
+      console.error(`[Gut] calibration failed for user ${user.id}:`, err);
+    }
+  }
+  console.log(`[Gut] nightly calibration complete — ${calibrated}/${allUsers.length} user(s) updated`);
 }

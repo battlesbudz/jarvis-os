@@ -729,6 +729,21 @@ export async function ensureTablesExist() {
         ON gut_signals (user_id, created_at DESC)
     `).catch(() => {});
 
+    // ── Gut Calibration — persisted per-user per-signal-type feedback rates ───
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS gut_calibration (
+        user_id          VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        signal_type      VARCHAR NOT NULL,
+        confirmed_count  INTEGER NOT NULL DEFAULT 0,
+        dismissed_count  INTEGER NOT NULL DEFAULT 0,
+        ignored_count    INTEGER NOT NULL DEFAULT 0,
+        confirmation_rate REAL,
+        gate_adjustment  INTEGER NOT NULL DEFAULT 0,
+        last_updated_at  TIMESTAMP NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (user_id, signal_type)
+      )
+    `);
+
     // ── Jarvis Ego — Action Log + Weekly Reports ──────────────────────────────
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS jarvis_action_log (

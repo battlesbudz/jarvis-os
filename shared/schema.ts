@@ -718,6 +718,27 @@ export const jarvisPredictions = pgTable("jarvis_predictions", {
 export type JarvisPrediction = typeof jarvisPredictions.$inferSelect;
 export type InsertJarvisPrediction = typeof jarvisPredictions.$inferInsert;
 
+// ── Gut Calibration — persisted per-user per-signal-type feedback rates ───────
+// Recomputed nightly (and on-feedback) so the detector sensitivity survives
+// process restarts without re-scanning the entire gutSignals history on every
+// baseline build.  Gate adjustment is in confidence-score points:
+//   positive → user dismisses this type often (raise the bar)
+//   negative → user confirms this type often (lower the bar / more sensitive)
+export const gutCalibration = pgTable("gut_calibration", {
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  signalType: varchar("signal_type").notNull(),
+  confirmedCount: integer("confirmed_count").notNull().default(0),
+  dismissedCount: integer("dismissed_count").notNull().default(0),
+  ignoredCount: integer("ignored_count").notNull().default(0),
+  confirmationRate: real("confirmation_rate"),
+  gateAdjustment: integer("gate_adjustment").notNull().default(0),
+  lastUpdatedAt: timestamp("last_updated_at").defaultNow().notNull(),
+}, (table) => [
+  primaryKey({ columns: [table.userId, table.signalType] }),
+]);
+
+export type GutCalibration = typeof gutCalibration.$inferSelect;
+
 // Dream Cycle — nightly deep synthesis insights.
 // Each row is one insight produced by a single dream run.
 export const dreamInsights = pgTable("dream_insights", {
