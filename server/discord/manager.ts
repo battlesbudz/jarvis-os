@@ -760,23 +760,58 @@ export { WORKSPACE_TOPICS, classifyTopic, type WorkspaceMeta } from "./workspace
 
 // ── Discord channel creation ────────────────────────────────────────────────
 
+/**
+ * Create a new text channel in the user's Discord server.
+ *
+ * Guild resolution order:
+ *   1. `linkMeta.workspace.guildId` — stored workspace metadata (primary)
+ *   2. `opts.ctxGuildId`            — guild ID from the incoming Discord message context
+ *                                     (fallback when workspace setup hasn't been run)
+ * Creation is refused when neither source yields a guild ID.
+ */
 export async function createDiscordChannel(
   userId: string,
-  opts: { channelName: string; topic?: string; categoryName?: string; pinMessage?: string; guildId?: string },
+  opts: { channelName: string; topic?: string; categoryName?: string; pinMessage?: string; guildId?: string; ctxGuildId?: string },
 ): Promise<{ ok: boolean; error?: string; channelId?: string }> {
   const client = botClients.get(userId);
   if (!client || !client.isReady()) {
     return { ok: false, error: "Discord bot is not running." };
   }
 
-  // Find the specified guild, or fall back to first guild
+  // Resolve linked guild from the user's channel_links row
+  const linkRow = await db
+    .select()
+    .from(channelLinks)
+    .where(and(eq(channelLinks.userId, userId), eq(channelLinks.channel, "discord")))
+    .limit(1);
+  const linkMeta = (linkRow[0]?.metadata as DiscordLinkMeta) ?? {};
+  const linkedGuildId = linkMeta.workspace?.guildId;
+
+  // Fall back to the guild ID surfaced from the incoming Discord message context
+  // (set when the user sends the request from within a Discord guild channel).
+  const resolvedGuildId = linkedGuildId ?? opts.ctxGuildId;
+
+  if (!resolvedGuildId) {
+    return { ok: false, error: "No linked Discord server found. Please message Jarvis from within your Discord server so it can identify which server to act on." };
+  }
+
+  // If an explicit guildId was provided by the agent, it must match the resolved guild
+  if (opts.guildId && opts.guildId !== resolvedGuildId) {
+    return {
+      ok: false,
+      error: `The requested server (${opts.guildId}) does not match your linked Jarvis server (${resolvedGuildId}). Channel creation is only allowed in your linked server.`,
+    };
+  }
+
   const guildsCache = client.guilds.cache;
   if (guildsCache.size === 0) {
     return { ok: false, error: "Bot is not in any Discord server." };
   }
-  const rawGuild = opts.guildId
-    ? (guildsCache.get(opts.guildId) ?? guildsCache.first()!)
-    : guildsCache.first()!;
+
+  const rawGuild = guildsCache.get(resolvedGuildId);
+  if (!rawGuild) {
+    return { ok: false, error: "Bot is not in the linked Discord server." };
+  }
   const guild = await rawGuild.fetch();
   // Populate channel cache so category lookups and duplicate checks work
   await guild.channels.fetch();

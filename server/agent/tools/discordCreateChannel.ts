@@ -35,6 +35,7 @@ export const discordCreateChannelTool: AgentTool = {
       topic: args.topic,
       categoryName: args.categoryName,
       pinMessage: args.pinMessage,
+      ctxGuildId: ctx.discordGuildId,
     });
 
     if (!result.ok) {
