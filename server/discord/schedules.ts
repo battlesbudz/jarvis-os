@@ -1,46 +1,13 @@
 /**
- * Discord OS — Phase 1: Scheduled Channel Reports
- *
- * Stores and runs recurring Jarvis research reports that post to specific
- * Discord channels on a cron-style schedule (hour + minute + days-of-week).
+ * Discord Channel Schedules — Phase 1
+ * Manages recurring automated research reports posted to Discord channels.
  */
 
 import { db } from "../db";
 import { eq, and } from "drizzle-orm";
 import { discordChannelSchedules } from "@shared/schema";
 import { runCoachAgent } from "../channels/coachAgent";
-import { postToDiscordChannelById } from "./manager";
-
-// ── Types ────────────────────────────────────────────────────────────────────
-
-export interface ScheduleParams {
-  guildId: string;
-  channelId: string;
-  channelName: string;
-  label: string;
-  cronHour: number;
-  cronMinute: number;
-  daysOfWeek?: string;
-  prompt: string;
-}
-
-export interface ScheduleRow {
-  id: string;
-  userId: string;
-  guildId: string;
-  channelId: string;
-  channelName: string;
-  label: string;
-  cronHour: number;
-  cronMinute: number;
-  daysOfWeek: string;
-  prompt: string;
-  pipelineNext: string | null;
-  lastRun: Date | null;
-  lastOutput: string | null;
-  enabled: boolean;
-  createdAt: Date;
-}
+import { postToDiscordChannel } from "./manager";
 
 // ── Built-in prompt templates ─────────────────────────────────────────────────
 
@@ -48,9 +15,7 @@ export const SCHEDULE_TEMPLATES = {
   stockResearch: {
     label: "AI Stock Research",
     channelName: "stock-research",
-    cronHour: 7,
-    cronMinute: 0,
-    daysOfWeek: "1,2,3,4,5",
+    cronExpression: "0 7 * * 1,2,3,4,5",
     prompt:
       "Research the top 8 AI infrastructure stocks with competitive moats — chips, energy, memory, GPUs, and supply chain companies that stand to benefit most from the AI buildout over the next decade. For each stock: company name, ticker symbol, 1-sentence investment thesis, and the single most important news item from the last 24 hours. Format clearly with sections per company. Keep the report concise and actionable.",
     triggerPhrases: ["stock research", "ai stocks", "stock report", "market research", "ai infrastructure stocks"],
@@ -58,9 +23,7 @@ export const SCHEDULE_TEMPLATES = {
   competitorYoutube: {
     label: "Competitor YouTube Research",
     channelName: "competitor-research",
-    cronHour: 8,
-    cronMinute: 0,
-    daysOfWeek: "0,1,2,3,4,5,6",
+    cronExpression: "0 8 * * *",
     prompt:
       "Search YouTube for [TOPIC] videos published in the last 5 days. Rank by total view count (highest first). List the top 15 results in a table: rank | title | channel | total views | days since posted. Add a brief note for any video standing out as unusually high-performing. Keep the report tight and scannable.",
     triggerPhrases: ["competitor youtube", "youtube research", "competitor research", "youtube competitor"],
@@ -69,7 +32,7 @@ export const SCHEDULE_TEMPLATES = {
 
 /**
  * Try to match a user's label/phrase against a built-in template.
- * Returns the template key if matched, or null.
+ * Returns the template if matched, or null.
  */
 export function detectTemplate(
   input: string,
@@ -83,137 +46,226 @@ export function detectTemplate(
   return null;
 }
 
-// ── CRUD ─────────────────────────────────────────────────────────────────────
+// ── CRUD ────────────────────────────────────────────────────────────────────
 
-export async function createSchedule(userId: string, params: ScheduleParams): Promise<ScheduleRow> {
+export async function createSchedule(
+  userId: string,
+  params: {
+    channelName: string;
+    label: string;
+    cronExpression: string;
+    prompt: string;
+    guildId?: string;
+    channelId?: string;
+    pipelineNext?: string;
+  },
+) {
   const [row] = await db
     .insert(discordChannelSchedules)
     .values({
       userId,
-      guildId: params.guildId,
-      channelId: params.channelId,
       channelName: params.channelName,
       label: params.label,
-      cronHour: params.cronHour,
-      cronMinute: params.cronMinute,
-      daysOfWeek: params.daysOfWeek ?? "0,1,2,3,4,5,6",
+      cronExpression: params.cronExpression,
       prompt: params.prompt,
-      enabled: true,
+      guildId: params.guildId,
+      channelId: params.channelId,
+      pipelineNext: params.pipelineNext,
+      enabled: 1,
     })
     .returning();
-  return row as ScheduleRow;
+  return row;
 }
 
-export async function listSchedules(userId: string): Promise<ScheduleRow[]> {
-  const rows = await db
+export async function listSchedules(userId: string) {
+  return db
     .select()
     .from(discordChannelSchedules)
     .where(eq(discordChannelSchedules.userId, userId));
-  return rows as ScheduleRow[];
 }
 
-export async function getSchedule(id: string): Promise<ScheduleRow | null> {
+export async function getSchedule(id: string) {
   const rows = await db
     .select()
     .from(discordChannelSchedules)
     .where(eq(discordChannelSchedules.id, id))
     .limit(1);
-  return (rows[0] as ScheduleRow) ?? null;
+  return rows[0] ?? null;
 }
 
-export async function deleteSchedule(userId: string, id: string): Promise<boolean> {
-  const result = await db
+export async function deleteSchedule(userId: string, id: string) {
+  await db
     .delete(discordChannelSchedules)
-    .where(and(eq(discordChannelSchedules.id, id), eq(discordChannelSchedules.userId, userId)));
-  return (result.rowCount ?? 0) > 0;
+    .where(
+      and(
+        eq(discordChannelSchedules.id, id),
+        eq(discordChannelSchedules.userId, userId),
+      ),
+    );
 }
 
-export async function updateScheduleEnabled(userId: string, id: string, enabled: boolean): Promise<void> {
+export async function toggleSchedule(userId: string, id: string, enabled: boolean) {
   await db
     .update(discordChannelSchedules)
-    .set({ enabled })
-    .where(and(eq(discordChannelSchedules.id, id), eq(discordChannelSchedules.userId, userId)));
+    .set({ enabled: enabled ? 1 : 0 })
+    .where(
+      and(
+        eq(discordChannelSchedules.id, id),
+        eq(discordChannelSchedules.userId, userId),
+      ),
+    );
 }
 
-export async function updateSchedulePrompt(userId: string, id: string, prompt: string): Promise<void> {
-  await db
-    .update(discordChannelSchedules)
-    .set({ prompt })
-    .where(and(eq(discordChannelSchedules.id, id), eq(discordChannelSchedules.userId, userId)));
-}
-
-export async function updateLastRun(id: string, output: string): Promise<void> {
-  await db
-    .update(discordChannelSchedules)
-    .set({ lastRun: new Date(), lastOutput: output })
-    .where(eq(discordChannelSchedules.id, id));
-}
-
-// ── Schedule runner ───────────────────────────────────────────────────────────
+// ── Runner ──────────────────────────────────────────────────────────────────
 
 /**
- * Execute a scheduled report: run the research prompt through the coach agent
- * and post the result to the configured Discord channel.
+ * Execute a schedule: run the prompt via the coach agent, post the result
+ * to the configured Discord channel, update lastRun/lastOutput, and trigger
+ * pipelineNext if set.
  */
-export async function runSchedule(id: string): Promise<void> {
+export async function runSchedule(id: string, previousOutput?: string): Promise<void> {
   const schedule = await getSchedule(id);
-  if (!schedule || !schedule.enabled) return;
+  if (!schedule) {
+    console.warn(`[DiscordSchedules] schedule ${id} not found`);
+    return;
+  }
+  if (!schedule.enabled) {
+    console.log(`[DiscordSchedules] schedule ${id} is disabled — skipping`);
+    return;
+  }
 
-  const channelLabel = `Discord #${schedule.channelName}`;
-  console.log(`[DiscordScheduler] Running schedule "${schedule.label}" for user ${schedule.userId}`);
+  console.log(`[DiscordSchedules] Running schedule "${schedule.label}" for user ${schedule.userId}`);
 
+  // Replace {{previousOutput}} placeholder with context from previous pipeline stage
+  let prompt = schedule.prompt;
+  if (previousOutput) {
+    prompt = prompt.replace(/\{\{previousOutput\}\}/g, previousOutput);
+  }
+
+  let result = "";
   try {
-    const result = await runCoachAgent({
+    const agentResult = await runCoachAgent({
       userId: schedule.userId,
-      userText: schedule.prompt,
-      channelName: channelLabel,
+      userText: prompt,
+      channelName: "Discord Schedule Runner",
     });
-
-    const reply = result.reply?.trim() || "(No output generated)";
-
-    const header = `**📊 ${schedule.label}**\n`;
-    const fullMessage = header + reply;
-
-    const posted = await postToDiscordChannelById(schedule.userId, schedule.channelId, fullMessage);
-    if (!posted) {
-      console.error(`[DiscordScheduler] Failed to post to channel ${schedule.channelId} for schedule ${id}`);
-    }
-
-    await updateLastRun(id, reply);
-    console.log(`[DiscordScheduler] Schedule "${schedule.label}" completed — posted ${fullMessage.length} chars`);
+    result = agentResult.reply || "";
   } catch (err) {
-    console.error(`[DiscordScheduler] Schedule "${schedule.label}" (${id}) failed:`, err);
+    console.error(`[DiscordSchedules] runCoachAgent failed for schedule ${id}:`, err);
+    result = `⚠️ Schedule run failed: ${err instanceof Error ? err.message : String(err)}`;
+  }
+
+  // Post to the Discord channel
+  const header = `📊 **${schedule.label}**\n`;
+  const posted = await postToDiscordChannel(
+    schedule.userId,
+    schedule.channelName,
+    schedule.channelId ?? null,
+    header + result,
+  );
+
+  if (!posted) {
+    console.warn(`[DiscordSchedules] Failed to post schedule ${id} to channel ${schedule.channelName}`);
+  }
+
+  // Update lastRun and lastOutput
+  await db
+    .update(discordChannelSchedules)
+    .set({ lastRun: new Date(), lastOutput: result.slice(0, 5000) })
+    .where(eq(discordChannelSchedules.id, id));
+
+  // Chain to next pipeline stage
+  if (schedule.pipelineNext) {
+    console.log(`[DiscordSchedules] Chaining to pipeline stage ${schedule.pipelineNext}`);
+    // Small delay to avoid rate limits
+    setTimeout(() => {
+      runSchedule(schedule.pipelineNext!, result).catch((err) => {
+        console.error(`[DiscordSchedules] Pipeline chain failed for ${schedule.pipelineNext}:`, err);
+      });
+    }, 500);
   }
 }
 
-// ── Due-schedule query ────────────────────────────────────────────────────────
+// ── Cron matching ────────────────────────────────────────────────────────────
 
 /**
- * Returns schedules that are due right now (matching hour + minute + day-of-week)
- * and haven't already run in the last 23 hours (idempotency guard).
+ * Minimal cron matcher. Supports standard 5-field cron:
+ *   minute hour day-of-month month day-of-week
+ * Wildcards (*) and exact values supported. No ranges or step values.
  */
-export async function getDueSchedules(h: number, m: number, dow: number): Promise<ScheduleRow[]> {
-  const rows = await db
-    .select()
-    .from(discordChannelSchedules)
-    .where(
-      and(
-        eq(discordChannelSchedules.enabled, true),
-        eq(discordChannelSchedules.cronHour, h),
-        eq(discordChannelSchedules.cronMinute, m),
-      ),
-    );
+export function matchesCron(cron: string, date: Date): boolean {
+  const parts = cron.trim().split(/\s+/);
+  if (parts.length !== 5) return false;
+  const [min, hr, dom, mon, dow] = parts;
 
-  const twentyThreeHoursAgo = new Date(Date.now() - 23 * 60 * 60 * 1000);
+  const matches = (field: string, value: number): boolean => {
+    if (field === "*") return true;
+    // Support comma-separated values
+    const options = field.split(",").map((s) => parseInt(s, 10));
+    return options.includes(value);
+  };
 
-  return (rows as ScheduleRow[]).filter((row) => {
-    // Check day-of-week filter
-    const days = row.daysOfWeek.split(",").map(Number);
-    if (!days.includes(dow)) return false;
+  return (
+    matches(min, date.getMinutes()) &&
+    matches(hr, date.getHours()) &&
+    matches(dom, date.getDate()) &&
+    matches(mon, date.getMonth() + 1) &&
+    matches(dow, date.getDay())
+  );
+}
 
-    // Idempotency: skip if ran recently
-    if (row.lastRun && row.lastRun > twentyThreeHoursAgo) return false;
+/**
+ * Convert natural language schedule to a cron expression.
+ * Examples: "every morning at 7am" → "0 7 * * *"
+ */
+export function parseCronExpression(natural: string): string {
+  const lower = natural.toLowerCase();
 
-    return true;
-  });
+  // Specific time patterns
+  const timeMatch = lower.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/);
+  let hour = 9;
+  let minute = 0;
+  if (timeMatch) {
+    hour = parseInt(timeMatch[1], 10);
+    minute = timeMatch[2] ? parseInt(timeMatch[2], 10) : 0;
+    if (timeMatch[3] === "pm" && hour < 12) hour += 12;
+    if (timeMatch[3] === "am" && hour === 12) hour = 0;
+  }
+
+  // Day-of-week patterns
+  if (lower.includes("monday")) return `${minute} ${hour} * * 1`;
+  if (lower.includes("tuesday")) return `${minute} ${hour} * * 2`;
+  if (lower.includes("wednesday")) return `${minute} ${hour} * * 3`;
+  if (lower.includes("thursday")) return `${minute} ${hour} * * 4`;
+  if (lower.includes("friday")) return `${minute} ${hour} * * 5`;
+  if (lower.includes("saturday")) return `${minute} ${hour} * * 6`;
+  if (lower.includes("sunday")) return `${minute} ${hour} * * 0`;
+  if (lower.includes("weekday")) return `${minute} ${hour} * * 1-5`;
+  if (lower.includes("weekend")) return `${minute} ${hour} * * 0,6`;
+
+  // "every hour" / "hourly"
+  if (lower.includes("every hour") || lower.includes("hourly")) return `${minute} * * * *`;
+
+  // "every day" / "daily" / "every morning" / "every evening" / "every night"
+  return `${minute} ${hour} * * *`;
+}
+
+// ── Next run calculator ──────────────────────────────────────────────────────
+
+/**
+ * Returns the next Date when the given cron expression will match,
+ * scanning up to 7 days ahead.
+ */
+export function nextRunTime(cron: string): Date | null {
+  const now = new Date();
+  const check = new Date(now);
+  // Start from the next minute
+  check.setSeconds(0, 0);
+  check.setMinutes(check.getMinutes() + 1);
+
+  for (let i = 0; i < 60 * 24 * 7; i++) {
+    if (matchesCron(cron, check)) return new Date(check);
+    check.setMinutes(check.getMinutes() + 1);
+  }
+  return null;
 }

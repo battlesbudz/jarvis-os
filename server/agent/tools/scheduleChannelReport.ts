@@ -7,48 +7,16 @@
  *   delete_channel_schedule  — cancel a schedule by label or id
  */
 
-import type { AgentTool, ToolContext, ToolArgs, ToolResult } from "../types";
+import type { AgentTool } from "../types";
 import {
   createSchedule,
+  parseCronExpression,
   listSchedules,
   deleteSchedule,
-  SCHEDULE_TEMPLATES,
   detectTemplate,
+  SCHEDULE_TEMPLATES,
 } from "../../discord/schedules";
-import { getGuildsForUser, getChannelsForGuild, createDiscordChannel } from "../../discord/manager";
-
-// ── Time parser ───────────────────────────────────────────────────────────────
-
-/**
- * Parse a natural language time string into { hour, minute }.
- * Handles: "7am", "7:30am", "8pm", "noon", "every morning at 9", "daily at 8:00".
- */
-function parseScheduleTime(raw: string): { hour: number; minute: number } | null {
-  const s = raw.toLowerCase().trim();
-
-  if (s.includes("noon")) return { hour: 12, minute: 0 };
-  if (s.includes("midnight")) return { hour: 0, minute: 0 };
-
-  const match = s.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/);
-  if (!match) return null;
-
-  let hour = parseInt(match[1], 10);
-  const minute = match[2] ? parseInt(match[2], 10) : 0;
-  const meridiem = match[3];
-
-  if (meridiem === "pm" && hour < 12) hour += 12;
-  if (meridiem === "am" && hour === 12) hour = 0;
-
-  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
-  return { hour, minute };
-}
-
-function formatTime(hour: number, minute: number): string {
-  const m = minute.toString().padStart(2, "0");
-  const suffix = hour >= 12 ? "pm" : "am";
-  const h = hour > 12 ? hour - 12 : hour === 0 ? 12 : hour;
-  return `${h}:${m}${suffix}`;
-}
+import { createDiscordChannel } from "../../discord/manager";
 
 // ── schedule_channel_report ───────────────────────────────────────────────────
 
@@ -60,6 +28,7 @@ export const scheduleChannelReportTool: AgentTool = {
     "'set up a daily stock research report at 7am' or 'every morning at 8am, post YouTube competitor research to #competitor-research'. " +
     "Jarvis will create the channel if it doesn't exist, then schedule the recurring report. " +
     "Built-in templates are available: say 'stock research' to use the AI stock template, or 'competitor YouTube' to use the YouTube research template. " +
+    "The schedule parameter accepts natural language (e.g. 'every morning at 7am', 'every Monday at 9am'). " +
     "IMPORTANT: Only use this for creating scheduled DISCORD channel reports. For general reminders, use schedule_jarvis_task instead.",
   parameters: {
     type: "object",
@@ -77,11 +46,11 @@ export const scheduleChannelReportTool: AgentTool = {
           "A short human-readable label for this schedule (e.g. 'AI Stock Research', 'Competitor YouTube Report'). " +
           "If omitted and a template is matched, the template's default label will be used.",
       },
-      scheduleTime: {
+      schedule: {
         type: "string",
         description:
-          "When to run the report, in natural language (e.g. '7am', '8:30am', 'every morning at 9'). " +
-          "If omitted and a template is matched, the template's default time will be used.",
+          "When to run the report, in natural language (e.g. 'every morning at 7am', 'daily at 8pm', 'every Monday at 9am'). " +
+          "If omitted and a template is matched, the template's default schedule will be used.",
       },
       prompt: {
         type: "string",
@@ -90,23 +59,9 @@ export const scheduleChannelReportTool: AgentTool = {
           "If omitted, Jarvis will try to detect a built-in template from the label or channel name. " +
           "Example: 'Research the top 8 AI infrastructure stocks. For each: ticker, thesis, latest news.'",
       },
-      daysOfWeek: {
+      pipelineNext: {
         type: "string",
-        description:
-          "Optional. Comma-separated day numbers (0=Sunday … 6=Saturday) for days to run. " +
-          "Default is '0,1,2,3,4,5,6' (every day). Use '1,2,3,4,5' for weekdays only.",
-      },
-      categoryName: {
-        type: "string",
-        description:
-          "Optional. Name of an existing Discord category to create the channel inside. " +
-          "If omitted, the channel is created at the top level.",
-      },
-      guildId: {
-        type: "string",
-        description:
-          "Optional. The Discord server (guild) ID to post to. " +
-          "If omitted, defaults to the first (or only) Discord server the bot is in.",
+        description: "Optional: the ID of another schedule to trigger after this one completes (for chained pipelines).",
       },
       topic: {
         type: "string",
@@ -119,18 +74,19 @@ export const scheduleChannelReportTool: AgentTool = {
     required: [],
   },
 
-  async execute(args: ToolArgs, ctx: ToolContext): Promise<ToolResult> {
+  async execute(args, ctx) {
     const { userId } = ctx;
 
     // Try template auto-detection from label or channelName
     const rawLabel = args.label ? String(args.label).trim() : "";
     const rawChannel = args.channelName ? String(args.channelName).trim() : "";
     const rawPrompt = args.prompt ? String(args.prompt).trim() : "";
+    const rawSchedule = args.schedule ? String(args.schedule).trim() : "";
+    const rawTopic = args.topic ? String(args.topic).trim() : "";
+    const pipelineNext = args.pipelineNext ? String(args.pipelineNext).trim() : undefined;
+
     const templateLookup = rawLabel || rawPrompt || rawChannel;
     const matchedTemplate = templateLookup ? detectTemplate(templateLookup) : null;
-
-    // Handle [TOPIC] substitution for YouTube research template
-    const rawTopic = args.topic ? String(args.topic).trim() : "";
 
     // Merge template defaults with explicit args
     const channelName = (rawChannel || matchedTemplate?.channelName || "")
@@ -143,7 +99,6 @@ export const scheduleChannelReportTool: AgentTool = {
     if (rawTopic && prompt.includes("[TOPIC]")) {
       prompt = prompt.replace(/\[TOPIC\]/g, rawTopic);
     } else if (prompt.includes("[TOPIC]") && !rawTopic) {
-      // Prompt user to provide the topic
       return {
         ok: false,
         content:
@@ -154,16 +109,15 @@ export const scheduleChannelReportTool: AgentTool = {
       };
     }
 
-    const daysOfWeek =
-      args.daysOfWeek
-        ? String(args.daysOfWeek).trim()
-        : matchedTemplate?.daysOfWeek ?? "0,1,2,3,4,5,6";
-    const categoryName = args.categoryName ? String(args.categoryName).trim() : undefined;
-    const requestedGuildId = args.guildId ? String(args.guildId).trim() : null;
-
     // Validate resolved fields
     if (!channelName) {
-      return { ok: false, content: "Please provide a channelName for the report (e.g. 'stock-research').", label: "Missing channelName" };
+      return {
+        ok: false,
+        content:
+          "Please provide a channelName for the report (e.g. 'stock-research').\n\n" +
+          "**Available templates:** say 'stock research' or 'competitor YouTube'.",
+        label: "Missing channelName",
+      };
     }
     if (!label) {
       return { ok: false, content: "Please provide a label for this schedule (e.g. 'AI Stock Research').", label: "Missing label" };
@@ -177,102 +131,39 @@ export const scheduleChannelReportTool: AgentTool = {
       };
     }
 
-    // Parse schedule time
-    const scheduleTimeRaw = args.scheduleTime
-      ? String(args.scheduleTime).trim()
-      : matchedTemplate
-        ? `${matchedTemplate.cronHour}:${String(matchedTemplate.cronMinute).padStart(2, "0")}`
-        : "";
+    // Build cron expression from schedule string or template default
+    const scheduleInput = rawSchedule || matchedTemplate?.cronExpression || "0 7 * * *";
+    // If it already looks like a cron expression (5 fields), use as-is; else parse natural language
+    const cronExpression = /^\S+ \S+ \S+ \S+ \S+$/.test(scheduleInput)
+      ? scheduleInput
+      : parseCronExpression(scheduleInput);
 
-    const parsed = scheduleTimeRaw ? parseScheduleTime(scheduleTimeRaw) : null;
-    if (!parsed) {
-      return {
-        ok: false,
-        content: `Couldn't determine a schedule time${scheduleTimeRaw ? ` from "${scheduleTimeRaw}"` : ""}. Try something like "7am", "8:30am", or "9pm".`,
-        label: "Invalid schedule time",
-      };
-    }
-    const { hour, minute } = parsed;
+    // Ensure channel exists
+    await createDiscordChannel(userId, {
+      channelName,
+      topic: `Automated reports: ${label}`,
+      categoryName: "🧠 Jarvis Workspace",
+    });
 
-    // Get guild — use requested guildId if provided, else first guild
-    const guilds = getGuildsForUser(userId);
-    if (guilds.length === 0) {
-      return {
-        ok: false,
-        content:
-          "The Discord bot isn't running or isn't in any server yet. " +
-          "Make sure the bot is set up and joined to your server.",
-        label: "No guild found",
-      };
-    }
-    const guild = requestedGuildId
-      ? (guilds.find((g) => g.id === requestedGuildId) ?? guilds[0])
-      : guilds[0];
+    const schedule = await createSchedule(userId, {
+      channelName,
+      label,
+      cronExpression,
+      prompt,
+      pipelineNext,
+    });
 
-    // Find or create the channel
-    const existingChannels = await getChannelsForGuild(userId, guild.id);
-    const targetChannel = existingChannels.find(
-      (ch) => ch.name.toLowerCase() === channelName.toLowerCase(),
-    );
+    const templateNote = matchedTemplate ? " (using built-in template)" : "";
 
-    let channelId: string;
-    let channelCreated = false;
-
-    if (targetChannel) {
-      channelId = targetChannel.id;
-    } else {
-      const created = await createDiscordChannel(userId, {
-        channelName,
-        topic: `Automated ${label} — posted by Jarvis`,
-        categoryName,
-        guildId: guild.id,
-      });
-      if (!created.ok || !created.channelId) {
-        return {
-          ok: false,
-          content: `Couldn't create the #${channelName} channel: ${created.error}`,
-          label: "Channel creation failed",
-        };
-      }
-      channelId = created.channelId;
-      channelCreated = true;
-    }
-
-    // Create the schedule
-    try {
-      const schedule = await createSchedule(userId, {
-        guildId: guild.id,
-        channelId,
-        channelName,
-        label,
-        cronHour: hour,
-        cronMinute: minute,
-        daysOfWeek,
-        prompt,
-      });
-
-      const timeStr = formatTime(hour, minute);
-      const daysLabel =
-        daysOfWeek === "0,1,2,3,4,5,6" ? "every day"
-        : daysOfWeek === "1,2,3,4,5" ? "weekdays"
-        : `days ${daysOfWeek}`;
-
-      const templateNote = matchedTemplate ? " (using built-in template)" : "";
-
-      return {
-        ok: true,
-        content:
-          `✅ Scheduled "${label}"${templateNote} — runs ${daysLabel} at ${timeStr} and posts to #${channelName} in **${guild.name}**.\n` +
-          (channelCreated ? `Created the #${channelName} channel.\n` : "") +
-          `Schedule ID: \`${schedule.id}\`\n` +
-          `To cancel: say "delete my ${label} schedule" or "cancel ${channelName} report".`,
-        label: `Schedule created: ${label}`,
-      };
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error("[schedule_channel_report] failed:", msg);
-      return { ok: false, content: `Failed to save schedule: ${msg}`, label: "Schedule save failed" };
-    }
+    return {
+      ok: true,
+      content:
+        `✅ Scheduled **${label}**${templateNote} — runs \`${cronExpression}\` and posts to #${channelName}.\n` +
+        `Schedule ID: \`${schedule.id}\`\n` +
+        `To cancel: say "delete my ${label} schedule" or "cancel ${channelName} report".`,
+      label: `Schedule created: ${label}`,
+      detail: schedule.id,
+    };
   },
 };
 
@@ -289,7 +180,7 @@ export const listChannelSchedulesTool: AgentTool = {
     required: [],
   },
 
-  async execute(_args: ToolArgs, ctx: ToolContext): Promise<ToolResult> {
+  async execute(_args, ctx) {
     const { userId } = ctx;
     try {
       const schedules = await listSchedules(userId);
@@ -301,28 +192,21 @@ export const listChannelSchedulesTool: AgentTool = {
             "No Discord channel schedules set up yet. " +
             "Ask me to set up a stock research report or any other recurring automation.\n\n" +
             "**Available templates:**\n" +
-            "• **AI Stock Research** — daily at 7am, posts to #stock-research\n" +
+            "• **AI Stock Research** — weekdays at 7am, posts to #stock-research\n" +
             "• **Competitor YouTube Research** — daily at 8am, posts to #competitor-research",
           label: "No schedules",
         };
       }
 
       const lines = schedules.map((s) => {
-        const timeStr = formatTime(s.cronHour, s.cronMinute);
-        const days =
-          s.daysOfWeek === "0,1,2,3,4,5,6" ? "daily"
-          : s.daysOfWeek === "1,2,3,4,5" ? "weekdays"
-          : `days ${s.daysOfWeek}`;
-        const status = s.enabled ? "✅" : "⏸️";
-        const lastRun = s.lastRun
-          ? `last ran ${new Date(s.lastRun).toLocaleDateString()}`
-          : "never run yet";
-        return `${status} **${s.label}** — #${s.channelName} at ${timeStr} ${days} (${lastRun}) | ID: \`${s.id}\``;
+        const status = s.enabled ? "✅ Active" : "⏸ Paused";
+        const lastRun = s.lastRun ? `Last run: ${new Date(s.lastRun).toLocaleString()}` : "Never run";
+        return `• **${s.label}** → #${s.channelName} | \`${s.cronExpression}\` | ${status} | ${lastRun} | ID: \`${s.id}\``;
       });
 
       return {
         ok: true,
-        content: `**Active Discord Schedules (${schedules.length}):**\n\n${lines.join("\n")}`,
+        content: `**Your Discord Channel Schedules (${schedules.length}):**\n\n${lines.join("\n")}`,
         label: `${schedules.length} schedule(s)`,
       };
     } catch (err) {
@@ -357,7 +241,7 @@ export const deleteChannelScheduleTool: AgentTool = {
     required: [],
   },
 
-  async execute(args: ToolArgs, ctx: ToolContext): Promise<ToolResult> {
+  async execute(args, ctx) {
     const { userId } = ctx;
     const labelQuery = args.label ? String(args.label).toLowerCase().trim() : null;
     const scheduleId = args.scheduleId ? String(args.scheduleId).trim() : null;
@@ -373,7 +257,7 @@ export const deleteChannelScheduleTool: AgentTool = {
     try {
       const all = await listSchedules(userId);
 
-      let target = null;
+      let target: (typeof all)[0] | null = null;
       if (scheduleId) {
         target = all.find((s) => s.id === scheduleId) ?? null;
       } else if (labelQuery) {

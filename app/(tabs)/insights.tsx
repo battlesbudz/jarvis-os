@@ -557,7 +557,7 @@ export default function InsightsScreen() {
   const [telegramConnected, setTelegramConnected] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
   const [discordConnectVisible, setDiscordConnectVisible] = useState(false);
-  const [discordPhase, setDiscordPhase] = useState<'loading' | 'setup_bot' | 'pair' | 'done'>('loading');
+  const [discordPhase, setDiscordPhase] = useState<'loading' | 'setup_bot' | 'pair' | 'done' | 'discord_os'>('loading');
   const [discordPairInput, setDiscordPairInput] = useState('');
   const [discordConnecting, setDiscordConnecting] = useState(false);
   const [discordConnectError, setDiscordConnectError] = useState('');
@@ -569,6 +569,13 @@ export default function InsightsScreen() {
   const [discordWorkspaceLoading, setDiscordWorkspaceLoading] = useState(false);
   const [discordWorkspaceDone, setDiscordWorkspaceDone] = useState(false);
   const [discordWorkspaceError, setDiscordWorkspaceError] = useState('');
+  // Discord OS Dashboard state
+  const [discordOsSchedules, setDiscordOsSchedules] = useState<any[]>([]);
+  const [discordOsApprovals, setDiscordOsApprovals] = useState<any[]>([]);
+  const [discordOsAgents, setDiscordOsAgents] = useState<any[]>([]);
+  const [discordOsActivity, setDiscordOsActivity] = useState<any[]>([]);
+  const [discordOsLoading, setDiscordOsLoading] = useState(false);
+  const [discordOsToggling, setDiscordOsToggling] = useState<Record<string, boolean>>({});
   const [emailSuggestions, setEmailSuggestions] = useState<EmailSuggestion[]>([]);
   const [scanLoading, setScanLoading] = useState(false);
   const [addedSuggestions, setAddedSuggestions] = useState<Record<number, boolean>>({});
@@ -1627,6 +1634,36 @@ export default function InsightsScreen() {
     }
   }, []);
 
+  const loadDiscordOsData = useCallback(async () => {
+    setDiscordOsLoading(true);
+    try {
+      const base = getApiUrl();
+      const [schedRes, approvalRes, agentRes, activityRes] = await Promise.allSettled([
+        authFetch(new URL('/api/discord/schedules', base).toString()),
+        authFetch(new URL('/api/discord/approvals', base).toString()),
+        authFetch(new URL('/api/discord/agents', base).toString()),
+        authFetch(new URL('/api/discord/activity', base).toString()),
+      ]);
+      if (schedRes.status === 'fulfilled') {
+        const d = await schedRes.value.json().catch(() => ({}));
+        setDiscordOsSchedules(d.schedules || []);
+      }
+      if (approvalRes.status === 'fulfilled') {
+        const d = await approvalRes.value.json().catch(() => ({}));
+        setDiscordOsApprovals(d.approvals || []);
+      }
+      if (agentRes.status === 'fulfilled') {
+        const d = await agentRes.value.json().catch(() => ({}));
+        setDiscordOsAgents(d.agents || []);
+      }
+      if (activityRes.status === 'fulfilled') {
+        const d = await activityRes.value.json().catch(() => ({}));
+        setDiscordOsActivity(d.activity || []);
+      }
+    } catch { }
+    setDiscordOsLoading(false);
+  }, []);
+
   useEffect(() => {
     if (discordPhase !== 'done' || !discordConnectVisible) return;
     (async () => {
@@ -2016,6 +2053,21 @@ export default function InsightsScreen() {
                   <Text style={styles.discordSuccessText}>Discord is linked. @mention Jarvis in any server channel to chat.</Text>
                 </View>
 
+                <Pressable
+                  style={[styles.discordGuildRow, { backgroundColor: '#5865F215', borderColor: '#5865F2', borderWidth: 1 }]}
+                  onPress={() => {
+                    setDiscordPhase('discord_os');
+                    loadDiscordOsData();
+                  }}
+                >
+                  <Ionicons name="grid-outline" size={18} color="#5865F2" />
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.discordGuildName, { color: '#5865F2', fontWeight: '600' }]}>Discord OS Dashboard</Text>
+                    <Text style={{ color: Colors.textSecondary, fontSize: 11, marginTop: 2 }}>Manage schedules, approvals, and agents</Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={16} color="#5865F2" />
+                </Pressable>
+
                 <View style={styles.discordSectionBox}>
                   <Text style={styles.discordSectionTitle}>🧠 Jarvis Workspace</Text>
                   <Text style={styles.discordSectionSub}>
@@ -2071,6 +2123,191 @@ export default function InsightsScreen() {
                     </>
                   )}
                 </View>
+              </View>
+            )}
+
+            {discordPhase === 'discord_os' && (
+              <View style={{ gap: 16 }}>
+                <Pressable
+                  style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 4 }}
+                  onPress={() => setDiscordPhase('done')}
+                >
+                  <Ionicons name="chevron-back" size={18} color="#5865F2" />
+                  <Text style={{ color: '#5865F2', fontSize: 14, fontWeight: '600' }}>Back to Discord Setup</Text>
+                </Pressable>
+
+                <Text style={[styles.discordModalTitle, { fontSize: 18 }]}>Discord OS Dashboard</Text>
+
+                {discordOsLoading ? (
+                  <ActivityIndicator size="large" color="#5865F2" />
+                ) : (
+                  <>
+                    {/* Active Schedules */}
+                    <View style={styles.discordSectionBox}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                        <Text style={styles.discordSectionTitle}>📅 Active Schedules</Text>
+                        <Text style={{ color: Colors.textSecondary, fontSize: 12 }}>{discordOsSchedules.length}</Text>
+                      </View>
+                      {discordOsSchedules.length === 0 ? (
+                        <Text style={styles.discordSectionSub}>No schedules yet. Ask Jarvis to set up automated reports.</Text>
+                      ) : discordOsSchedules.map((s: any) => (
+                        <View key={s.id} style={{ marginBottom: 10, paddingBottom: 10, borderBottomWidth: 1, borderBottomColor: Colors.border }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                            <Text style={{ color: Colors.text, fontWeight: '600', fontSize: 13, flex: 1 }}>{s.label}</Text>
+                            <Pressable
+                              style={{ backgroundColor: s.enabled ? '#5865F220' : '#FF000020', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 }}
+                              disabled={!!discordOsToggling[s.id]}
+                              onPress={async () => {
+                                setDiscordOsToggling(t => ({ ...t, [s.id]: true }));
+                                try {
+                                  await authFetch(new URL(`/api/discord/schedules/${s.id}/toggle`, getApiUrl()).toString(), {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ enabled: !s.enabled }),
+                                  });
+                                  setDiscordOsSchedules(prev => prev.map(x => x.id === s.id ? { ...x, enabled: !x.enabled } : x));
+                                } catch { }
+                                setDiscordOsToggling(t => ({ ...t, [s.id]: false }));
+                              }}
+                            >
+                              <Text style={{ color: s.enabled ? '#5865F2' : '#FF5555', fontSize: 11 }}>{s.enabled ? 'Active' : 'Paused'}</Text>
+                            </Pressable>
+                          </View>
+                          <Text style={{ color: Colors.textSecondary, fontSize: 11, marginTop: 2 }}>
+                            #{s.channelName} • {s.cronExpression}
+                          </Text>
+                          {s.nextRun && (
+                            <Text style={{ color: Colors.textSecondary, fontSize: 11 }}>
+                              Next: {new Date(s.nextRun).toLocaleString()}
+                            </Text>
+                          )}
+                          {s.lastOutput && (
+                            <Text style={{ color: Colors.textSecondary, fontSize: 11, marginTop: 2 }} numberOfLines={2}>
+                              Last: {s.lastOutput.slice(0, 80)}…
+                            </Text>
+                          )}
+                        </View>
+                      ))}
+                    </View>
+
+                    {/* Pending Approvals */}
+                    <View style={styles.discordSectionBox}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                        <Text style={styles.discordSectionTitle}>⏳ Pending Approvals</Text>
+                        <Text style={{ color: Colors.textSecondary, fontSize: 12 }}>{discordOsApprovals.length}</Text>
+                      </View>
+                      {discordOsApprovals.length === 0 ? (
+                        <Text style={styles.discordSectionSub}>Nothing pending right now.</Text>
+                      ) : discordOsApprovals.map((a: any) => (
+                        <View key={a.messageId} style={{ marginBottom: 10, paddingBottom: 10, borderBottomWidth: 1, borderBottomColor: Colors.border }}>
+                          <Text style={{ color: Colors.text, fontWeight: '600', fontSize: 13 }}>{a.type}</Text>
+                          <Text style={{ color: Colors.textSecondary, fontSize: 12, marginTop: 2 }} numberOfLines={3}>{a.content}</Text>
+                          <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+                            <Pressable
+                              style={{ backgroundColor: '#43B58120', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, flex: 1, alignItems: 'center' }}
+                              disabled={!!discordOsToggling[a.messageId]}
+                              onPress={async () => {
+                                setDiscordOsToggling(t => ({ ...t, [a.messageId]: true }));
+                                try {
+                                  await authFetch(new URL(`/api/discord/approvals/${a.messageId}/resolve`, getApiUrl()).toString(), {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ action: 'approve' }),
+                                  });
+                                  setDiscordOsApprovals(prev => prev.filter(x => x.messageId !== a.messageId));
+                                } catch { }
+                                setDiscordOsToggling(t => ({ ...t, [a.messageId]: false }));
+                              }}
+                            >
+                              <Text style={{ color: '#43B581', fontWeight: '600', fontSize: 13 }}>✅ Approve</Text>
+                            </Pressable>
+                            <Pressable
+                              style={{ backgroundColor: '#F04747'  + '20', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, flex: 1, alignItems: 'center' }}
+                              disabled={!!discordOsToggling[a.messageId]}
+                              onPress={async () => {
+                                setDiscordOsToggling(t => ({ ...t, [a.messageId]: true }));
+                                try {
+                                  await authFetch(new URL(`/api/discord/approvals/${a.messageId}/resolve`, getApiUrl()).toString(), {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ action: 'reject' }),
+                                  });
+                                  setDiscordOsApprovals(prev => prev.filter(x => x.messageId !== a.messageId));
+                                } catch { }
+                                setDiscordOsToggling(t => ({ ...t, [a.messageId]: false }));
+                              }}
+                            >
+                              <Text style={{ color: '#F04747', fontWeight: '600', fontSize: 13 }}>❌ Skip</Text>
+                            </Pressable>
+                          </View>
+                        </View>
+                      ))}
+                    </View>
+
+                    {/* Named Agents */}
+                    <View style={styles.discordSectionBox}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                        <Text style={styles.discordSectionTitle}>🤖 Agents</Text>
+                        <Text style={{ color: Colors.textSecondary, fontSize: 12 }}>{discordOsAgents.length}</Text>
+                      </View>
+                      {discordOsAgents.length === 0 ? (
+                        <Text style={styles.discordSectionSub}>No named agents yet. Ask Jarvis to set up Charlie, Echo, Quill, or Pixel.</Text>
+                      ) : discordOsAgents.map((ag: any) => (
+                        <View key={ag.id} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                          <View style={{ flex: 1 }}>
+                            <Text style={{ color: Colors.text, fontWeight: '600', fontSize: 13 }}>{ag.name} <Text style={{ color: Colors.textSecondary, fontWeight: '400' }}>({ag.role})</Text></Text>
+                            <Text style={{ color: Colors.textSecondary, fontSize: 11 }}>
+                              #{ag.channelName ?? 'no channel'} • {ag.loopEnabled ? `loop every ${ag.loopIntervalMinutes}min` : 'on-demand'}
+                            </Text>
+                          </View>
+                          <Pressable
+                            style={{ backgroundColor: ag.loopEnabled ? '#5865F220' : Colors.surface, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 10 }}
+                            disabled={!!discordOsToggling[ag.id]}
+                            onPress={async () => {
+                              setDiscordOsToggling(t => ({ ...t, [ag.id]: true }));
+                              try {
+                                await authFetch(new URL(`/api/discord/agents/${ag.id}/toggle`, getApiUrl()).toString(), {
+                                  method: 'POST',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ loopEnabled: !ag.loopEnabled }),
+                                });
+                                setDiscordOsAgents(prev => prev.map(x => x.id === ag.id ? { ...x, loopEnabled: !x.loopEnabled } : x));
+                              } catch { }
+                              setDiscordOsToggling(t => ({ ...t, [ag.id]: false }));
+                            }}
+                          >
+                            <Text style={{ color: ag.loopEnabled ? '#5865F2' : Colors.textSecondary, fontSize: 11 }}>
+                              {ag.loopEnabled ? 'Loop ON' : 'Loop OFF'}
+                            </Text>
+                          </Pressable>
+                        </View>
+                      ))}
+                    </View>
+
+                    {/* Recent Activity */}
+                    <View style={styles.discordSectionBox}>
+                      <Text style={[styles.discordSectionTitle, { marginBottom: 8 }]}>📡 Recent Activity</Text>
+                      {discordOsActivity.length === 0 ? (
+                        <Text style={styles.discordSectionSub}>No recent Discord activity.</Text>
+                      ) : discordOsActivity.slice(0, 10).map((item: any) => (
+                        <View key={item.id} style={{ marginBottom: 8 }}>
+                          <Text style={{ color: Colors.textSecondary, fontSize: 10 }}>
+                            {new Date(item.createdAt).toLocaleString()} • {item.direction}
+                          </Text>
+                          <Text style={{ color: Colors.text, fontSize: 12 }} numberOfLines={2}>{item.content}</Text>
+                        </View>
+                      ))}
+                    </View>
+
+                    <Pressable
+                      style={styles.discordGuildRow}
+                      onPress={loadDiscordOsData}
+                    >
+                      <Ionicons name="refresh-outline" size={16} color={Colors.textSecondary} />
+                      <Text style={{ color: Colors.textSecondary, fontSize: 13 }}>Refresh</Text>
+                    </Pressable>
+                  </>
+                )}
               </View>
             )}
 

@@ -4,7 +4,7 @@ import * as schema from '@shared/schema';
 import { buildPlanForUser } from './routes';
 import { getInjectableGoalTasks, markTasksInjected, type InjectableGoalTask } from './goalScheduler';
 import { enqueueWeeklyPatternJobs } from './memory/weeklyJob';
-import { getDueSchedules, runSchedule } from './discord/schedules';
+import { matchesCron, runSchedule } from './discord/schedules';
 
 let schedulerRunning = false;
 let lastWeeklyRunKey = '';
@@ -16,6 +16,83 @@ function sundayKey(d: Date): string {
   const day = start.getDay();
   start.setDate(start.getDate() - day);
   return `${start.getFullYear()}-${start.getMonth() + 1}-${start.getDate()}`;
+}
+
+/** Run any enabled Discord channel schedules whose cron expression matches right now. */
+async function runDiscordSchedules(now: Date): Promise<void> {
+  try {
+    const schedules = await db
+      .select()
+      .from(schema.discordChannelSchedules)
+      .where(eq(schema.discordChannelSchedules.enabled, 1));
+
+    for (const schedule of schedules) {
+      if (matchesCron(schedule.cronExpression, now)) {
+        console.log(`[Scheduler] Firing Discord schedule "${schedule.label}" (${schedule.id})`);
+        runSchedule(schedule.id).catch((err) => {
+          console.error(`[Scheduler] Discord schedule ${schedule.id} failed:`, err);
+        });
+      }
+    }
+  } catch (err) {
+    console.error('[Scheduler] runDiscordSchedules failed:', err);
+  }
+}
+
+/** Run autonomous agent loops for named agents that are due. */
+async function runAgentLoops(now: Date): Promise<void> {
+  try {
+    const agents = await db
+      .select()
+      .from(schema.discordAgents)
+      .where(and(
+        eq(schema.discordAgents.isActive, 1),
+        eq(schema.discordAgents.loopEnabled, 1),
+      ));
+
+    for (const agent of agents) {
+      const intervalMs = (agent.loopIntervalMinutes ?? 60) * 60 * 1000;
+      const lastRun = agent.lastLoopRun?.getTime() ?? 0;
+      if (now.getTime() - lastRun >= intervalMs) {
+        console.log(`[Scheduler] Firing agent loop for ${agent.name} (${agent.id})`);
+        runAgentLoop(agent).catch((err) => {
+          console.error(`[Scheduler] Agent loop ${agent.id} failed:`, err);
+        });
+      }
+    }
+  } catch (err) {
+    console.error('[Scheduler] runAgentLoops failed:', err);
+  }
+}
+
+async function runAgentLoop(agent: typeof schema.discordAgents.$inferSelect): Promise<void> {
+  const { runCoachAgent } = await import('./channels/coachAgent');
+  const { postToDiscordChannel } = await import('./discord/manager');
+
+  const prompt = agent.loopPrompt ||
+    `You are ${agent.name}, an autonomous ${agent.role} agent. Check the user's current goals and tasks. ` +
+    `Pick the next highest-priority task aligned with your ${agent.role} role. Do meaningful work on it. ` +
+    `Post a progress update to your channel: "🔨 Working on: [task]. Here's what I did: [summary]. Blockers: [any or none]."`;
+
+  let result = '';
+  try {
+    const agentResult = await runCoachAgent({
+      userId: agent.userId,
+      userText: `[You are ${agent.name}. ${agent.persona || ''}]\n\n${prompt}`,
+      channelName: `Discord #${(agent.channelName || agent.name).toLowerCase()}`,
+    });
+    result = agentResult.reply || '';
+  } catch (err) {
+    result = `⚠️ Agent loop error: ${err instanceof Error ? err.message : String(err)}`;
+  }
+
+  if (result && agent.channelName) {
+    await postToDiscordChannel(agent.userId, agent.channelName, agent.channelId, result);
+  }
+
+  await db.update(schema.discordAgents)
+    .set({ lastLoopRun: new Date() })
+    .where(eq(schema.discordAgents.id, agent.id));
 }
 
 export function startScheduler() {
@@ -31,19 +108,6 @@ export function startScheduler() {
     if (h === 7 && m === 0) {
       console.log('[Scheduler] Running morning plan build...');
       await runMorningPlanBuild();
-    }
-
-    // Discord OS — fire any scheduled channel reports due right now
-    try {
-      const dueSchedules = await getDueSchedules(h, m, dow);
-      for (const schedule of dueSchedules) {
-        console.log(`[DiscordScheduler] Firing: "${schedule.label}" for user ${schedule.userId}`);
-        runSchedule(schedule.id).catch((err) =>
-          console.error(`[DiscordScheduler] runSchedule failed for ${schedule.id}:`, err),
-        );
-      }
-    } catch (err) {
-      console.error('[DiscordScheduler] getDueSchedules failed:', err);
     }
 
     // Sunday 03:00 local — enqueue weekly pattern recognition jobs for
@@ -62,9 +126,16 @@ export function startScheduler() {
         }
       }
     }
+
+    // Discord channel schedules — check every minute
+    await runDiscordSchedules(now);
+
+    // Named agent autonomous loops — check every minute
+    await runAgentLoops(now);
+
   }, 60 * 1000);
 
-  console.log('[Scheduler] Started — morning plan 7:00 AM daily, weekly patterns Sunday 3:00 AM');
+  console.log('[Scheduler] Started — morning plan 7:00 AM daily, weekly patterns Sunday 3:00 AM, Discord schedules every minute');
 }
 
 export async function runMorningPlanBuild() {

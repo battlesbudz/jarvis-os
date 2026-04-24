@@ -522,3 +522,57 @@ export const interactionLog = pgTable("interaction_log", {
   label: varchar("label"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
+
+// ── Discord OS — Phase 1: Scheduled Channel Reports ──────────────────────────
+
+export const discordChannelSchedules = pgTable("discord_channel_schedules", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  guildId: varchar("guild_id"),
+  channelId: varchar("channel_id"),
+  channelName: varchar("channel_name").notNull(),
+  cronExpression: varchar("cron_expression").notNull(),
+  label: varchar("label").notNull(),
+  prompt: text("prompt").notNull(),
+  pipelineNext: varchar("pipeline_next"),
+  lastRun: timestamp("last_run"),
+  lastOutput: text("last_output"),
+  enabled: integer("enabled").notNull().default(1),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// ── Discord OS — Phase 3: Reaction-Based Approval System ─────────────────────
+
+export const discordPendingApprovals = pgTable("discord_pending_approvals", {
+  messageId: varchar("message_id").primaryKey(),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  channelId: varchar("channel_id").notNull(),
+  guildId: varchar("guild_id"),
+  type: varchar("type").notNull().default("custom"),
+  content: text("content").notNull(),
+  approveEmoji: varchar("approve_emoji").notNull().default("✅"),
+  rejectEmoji: varchar("reject_emoji").notNull().default("❌"),
+  onApprove: jsonb("on_approve").notNull(),
+  onReject: jsonb("on_reject"),
+  status: varchar("status").notNull().default("pending"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  resolvedAt: timestamp("resolved_at"),
+});
+
+// ── Discord OS — Phase 6: Named Sub-Agents ────────────────────────────────────
+
+export const discordAgents = pgTable("discord_agents", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  name: varchar("name").notNull(),
+  role: varchar("role").notNull().default("custom"),
+  persona: text("persona"),
+  channelId: varchar("channel_id"),
+  channelName: varchar("channel_name"),
+  isActive: integer("is_active").notNull().default(1),
+  loopEnabled: integer("loop_enabled").notNull().default(0),
+  loopIntervalMinutes: integer("loop_interval_minutes").default(60),
+  loopPrompt: text("loop_prompt"),
+  lastLoopRun: timestamp("last_loop_run"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
