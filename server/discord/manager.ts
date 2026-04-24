@@ -587,6 +587,34 @@ export async function setupDiscordWorkspace(
   return _setupWorkspace(client, userId, guildId);
 }
 
+/**
+ * Post a message to any Discord channel by its raw channel ID.
+ * Used by scheduled reports to deliver to non-workspace channels.
+ */
+export async function postToDiscordChannelById(
+  userId: string,
+  channelId: string,
+  text: string,
+): Promise<boolean> {
+  const client = botClients.get(userId);
+  if (!client || !client.isReady()) return false;
+
+  try {
+    const { TextChannel } = await import("discord.js");
+    const channel = await client.channels.fetch(channelId);
+    if (!channel || !channel.isTextBased()) return false;
+
+    const chunks = splitIntoChunks(text, 1900);
+    for (const chunk of chunks) {
+      await (channel as InstanceType<typeof TextChannel>).send(chunk);
+    }
+    return true;
+  } catch (err) {
+    console.error(`[DiscordManager] postToDiscordChannelById failed for channel ${channelId}:`, err);
+    return false;
+  }
+}
+
 /** Post a message to a topic channel in the user's workspace. */
 export async function postToDiscordWorkspace(
   userId: string,

@@ -18,6 +18,11 @@ import { connectChannelTool } from "./connectChannel";
 import { discordPostTool } from "./discordPost";
 import { discordCreateChannelTool } from "./discordCreateChannel";
 import { scheduleJarvisTaskTool } from "./scheduleJarvisTask";
+import {
+  scheduleChannelReportTool,
+  listChannelSchedulesTool,
+  deleteChannelScheduleTool,
+} from "./scheduleChannelReport";
 
 export const ALL_TOOLS: AgentTool[] = [
   webSearchTool,
@@ -43,6 +48,9 @@ export const ALL_TOOLS: AgentTool[] = [
   discordPostTool,
   discordCreateChannelTool,
   scheduleJarvisTaskTool,
+  scheduleChannelReportTool,
+  listChannelSchedulesTool,
+  deleteChannelScheduleTool,
 ];
 
 const TOOL_INDEX = new Map(ALL_TOOLS.map((t) => [t.name, t]));
@@ -71,6 +79,9 @@ export function telegramCoachTools(opts: { hasGoogle: boolean }): AgentTool[] {
     discordPostTool,
     discordCreateChannelTool,
     scheduleJarvisTaskTool,
+    scheduleChannelReportTool,
+    listChannelSchedulesTool,
+    deleteChannelScheduleTool,
   ];
   if (opts.hasGoogle) {
     base.push(gmailActionTool, gmailDraftTool, fetchCalendarTool, driveCreateFileTool, driveListFilesTool, driveReadFileTool);
@@ -102,4 +113,7 @@ export {
   discordPostTool,
   discordCreateChannelTool,
   scheduleJarvisTaskTool,
+  scheduleChannelReportTool,
+  listChannelSchedulesTool,
+  deleteChannelScheduleTool,
 };
