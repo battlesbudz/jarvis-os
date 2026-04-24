@@ -613,49 +613,88 @@ export async function createDiscordChannel(
 /**
  * Delete a text channel from the user's Discord server by name or ID.
  * Only text channels are eligible; categories and voice channels are excluded.
+ *
+ * The guild is resolved exclusively from the user's linked Discord workspace
+ * metadata — no silent fallback to a random guild.
+ *
+ * Returns { ambiguous: true, matches } when multiple channels share the same name
+ * so the caller can ask the user to specify a channelId.
  */
 export async function deleteDiscordChannel(
   userId: string,
   opts: { channelName?: string; channelId?: string; guildId?: string },
-): Promise<{ ok: boolean; error?: string; channelName?: string }> {
+): Promise<{
+  ok: boolean;
+  error?: string;
+  channelName?: string;
+  ambiguous?: boolean;
+  matches?: Array<{ id: string; name: string }>;
+}> {
   const client = botClients.get(userId);
   if (!client || !client.isReady()) {
     return { ok: false, error: "Discord bot is not running." };
   }
 
-  const guildsCache = client.guilds.cache;
-  if (guildsCache.size === 0) {
-    return { ok: false, error: "Bot is not in any Discord server." };
+  // Resolve linked guild from the user's channel_links row — no first-guild fallback
+  const linkRow = await db
+    .select()
+    .from(channelLinks)
+    .where(and(eq(channelLinks.userId, userId), eq(channelLinks.channel, "discord")))
+    .limit(1);
+  const linkMeta = (linkRow[0]?.metadata as DiscordLinkMeta) ?? {};
+  const linkedGuildId = linkMeta.workspace?.guildId;
+
+  // Determine the target guildId: explicit arg must match linked guild when both present
+  let resolvedGuildId: string | undefined;
+  if (opts.guildId) {
+    if (linkedGuildId && opts.guildId !== linkedGuildId) {
+      return {
+        ok: false,
+        error: `The requested server (${opts.guildId}) does not match your linked Jarvis server (${linkedGuildId}). Deletion is only allowed in your linked server.`,
+      };
+    }
+    resolvedGuildId = opts.guildId;
+  } else if (linkedGuildId) {
+    resolvedGuildId = linkedGuildId;
+  } else {
+    return { ok: false, error: "No linked Discord server found. Set up your workspace first." };
   }
 
-  const { ChannelType } = await import("discord.js");
-
-  // Determine which guild to search
-  const rawGuild = opts.guildId
-    ? (guildsCache.get(opts.guildId) ?? guildsCache.first()!)
-    : guildsCache.first()!;
+  const rawGuild = client.guilds.cache.get(resolvedGuildId);
+  if (!rawGuild) {
+    return { ok: false, error: `Bot is not in the linked server (${resolvedGuildId}).` };
+  }
   const guild = await rawGuild.fetch();
   await guild.channels.fetch();
 
-  // Resolve channel by ID first, then by name
+  const { ChannelType } = await import("discord.js");
+
+  // Resolve channel by ID first (unambiguous), then by name
   let target: TextChannel | undefined;
   if (opts.channelId) {
     const ch = guild.channels.cache.get(opts.channelId);
-    if (ch && ch.type === ChannelType.GuildText) target = ch as TextChannel;
-  }
-  if (!target && opts.channelName) {
+    if (!ch || ch.type !== ChannelType.GuildText) {
+      return { ok: false, error: `Channel ID ${opts.channelId} not found or is not a text channel in ${guild.name}.` };
+    }
+    target = ch as TextChannel;
+  } else if (opts.channelName) {
     const slug = opts.channelName.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
-    // If multiple channels share the same name, prefer the first one found
-    target = guild.channels.cache.find(
-      (ch) => ch.type === ChannelType.GuildText && ch.name === slug,
-    ) as TextChannel | undefined;
+    const allMatches = guild.channels.cache
+      .filter((ch) => ch.type === ChannelType.GuildText && ch.name === slug)
+      .map((ch) => ({ id: ch.id, name: ch.name }));
+
+    if (allMatches.length === 0) {
+      return { ok: false, error: `No text channel named "${opts.channelName}" found in ${guild.name}.` };
+    }
+    if (allMatches.length > 1) {
+      // Multiple channels share the same name — caller must disambiguate with channelId
+      return { ok: false, ambiguous: true, matches: allMatches };
+    }
+    target = guild.channels.cache.get(allMatches[0].id) as TextChannel;
   }
 
   if (!target) {
-    return {
-      ok: false,
-      error: `No text channel found matching ${opts.channelId ? `ID ${opts.channelId}` : `name "${opts.channelName}"`} in ${guild.name}.`,
-    };
+    return { ok: false, error: "Please provide either a channel name or channel ID." };
   }
 
   try {
