@@ -179,6 +179,33 @@ export async function deleteWebhook(): Promise<void> {
   }
 }
 
+/**
+ * Sends a voice message (round audio bubble) to a Telegram chat.
+ * Telegram requires OGG-OPUS format for voice bubbles.
+ */
+export async function sendVoice(
+  chatId: string,
+  audioBuffer: Buffer,
+  caption?: string,
+): Promise<boolean> {
+  if (!BOT_TOKEN) return false;
+  try {
+    const form = new FormData();
+    form.append("chat_id", chatId);
+    if (caption) form.append("caption", caption.slice(0, 1024));
+    form.append("voice", new Blob([audioBuffer], { type: "audio/ogg" }), "voice.ogg");
+    const res = await fetch(`${BASE}/sendVoice`, { method: "POST", body: form });
+    if (!res.ok) {
+      console.error("Telegram sendVoice error:", await res.text());
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.error("Telegram sendVoice threw:", String(e));
+    return false;
+  }
+}
+
 export async function downloadTelegramFile(fileId: string): Promise<string | null> {
   if (!BOT_TOKEN) return null;
   try {

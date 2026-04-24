@@ -69,7 +69,7 @@ This document tracks the 8 capability gaps between Jarvis and OpenClaw's tool ar
 
 ---
 
-## Gap 6 — Text-to-Speech Tool (tts)
+## Gap 6 — Text-to-Speech Tool (tts) ✅ DONE
 
 **OpenClaw tool:** `tts` — converts replies to voice notes (ElevenLabs, OpenAI TTS, Edge TTS); Telegram delivers as round audio bubbles; per-session toggle `/tts on`; auto-voice mode configurable globally
 
@@ -114,7 +114,7 @@ This document tracks the 8 capability gaps between Jarvis and OpenClaw's tool ar
 | Fetch a specific URL | `web_fetch` | `web_fetch` tool | ✅ CLOSED |
 | Browser automation | `browser` (always on) | Android daemon (optional) | PARTIAL |
 | Shell execution | `exec` / `bash` (always on) | Desktop daemon (optional) | PARTIAL |
-| Voice responses (TTS) | `tts` | None | YES |
+| Voice responses (TTS) | `tts` | `speak` tool + `/tts on\|off\|voice` | ✅ CLOSED |
 | Agent-defined cron jobs | `cron` tool | None (system-only) | YES |
 | Workflow engine | `lobster` | None | YES |
 | Sub-agent spawning | `sessions_spawn` | `spawnSubagent` | PARTIAL |
@@ -130,7 +130,7 @@ This document tracks the 8 capability gaps between Jarvis and OpenClaw's tool ar
 
 ## Remaining Gaps (Next Priorities)
 
-4. **TTS voice responses** — `tts` tool wrapping OpenAI TTS; Telegram voice bubble delivery; per-session `/tts on` toggle
+4. ✅ **TTS voice responses** — `speak` agent tool (MP3→OGG-Opus via ffmpeg, `sendVoice` Telegram round bubble); `/tts on|off|voice <name>` commands; auto-voice mode in `handleCoachReply`; 6 voices (alloy, echo, fable, onyx, nova, shimmer); graceful text fallback
 5. **Agent-defined cron jobs** — `cron` tool that writes to `jarvis_scheduled_tasks`; supports isolated, main, and named-session modes; agent can list/disable/delete its own jobs
 6. **Workflow engine (lobster)** — resumable multi-step plan graph the agent defines and can pause/resume across sessions; builds on `goalDecomposer` + `agentJobs`
 7. **Browser automation** — always-on headless browser for form fills, paywalled content, web app interactions (no daemon dependency)

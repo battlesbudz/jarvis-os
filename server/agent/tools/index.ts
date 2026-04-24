@@ -32,6 +32,7 @@ import { setupContentPipelineTool } from "./setupContentPipeline";
 import { memorySearchTool, memoryGetTool } from "./memorySearch";
 import { webFetchTool } from "./webFetch";
 import { sessionsListTool, sessionsHistoryTool, sessionsSendTool } from "./sessionTools";
+import { speakTool } from "./tts";
 
 export const ALL_TOOLS: AgentTool[] = [
   webSearchTool,
@@ -72,6 +73,7 @@ export const ALL_TOOLS: AgentTool[] = [
   sessionsListTool,
   sessionsHistoryTool,
   sessionsSendTool,
+  speakTool,
 ];
 
 const TOOL_INDEX = new Map(ALL_TOOLS.map((t) => [t.name, t]));
@@ -114,6 +116,7 @@ export function telegramCoachTools(opts: { hasGoogle: boolean }): AgentTool[] {
     sessionsListTool,
     sessionsHistoryTool,
     sessionsSendTool,
+    speakTool,
   ];
   if (opts.hasGoogle) {
     base.push(gmailActionTool, gmailDraftTool, fetchCalendarTool, driveCreateFileTool, driveListFilesTool, driveReadFileTool);
@@ -160,4 +163,5 @@ export {
   sessionsListTool,
   sessionsHistoryTool,
   sessionsSendTool,
+  speakTool,
 };

@@ -2,7 +2,8 @@ import type { Express, Request, Response } from "express";
 import { db } from "./db";
 import { eq, and, desc, sql, gte, lte } from "drizzle-orm";
 import * as schema from "@shared/schema";
-import { sendMessage, sendMessageWithButtons, sendTelegramDocument, answerCallbackQuery, isTelegramConfigured, getUpdates, downloadTelegramFile, downloadTelegramFileBuffer } from "./integrations/telegram";
+import { sendMessage, sendMessageWithButtons, sendTelegramDocument, sendVoice, answerCallbackQuery, isTelegramConfigured, getUpdates, downloadTelegramFile, downloadTelegramFileBuffer } from "./integrations/telegram";
+import { getUserTtsPrefs, setUserTtsPref, speakToUser } from "./agent/tools/tts";
 import { notifyUser } from "./channels/registry";
 import type { NotificationType } from "@shared/schema";
 import { startMomentumSession, handleMomentumDone, hasMomentumSessionToday, startMomentumExpiryScheduler } from "./momentumCoach";
@@ -42,12 +43,19 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
       imageUrl,
     });
 
+    // Check if user has TTS / voice mode enabled
+    const ttsPrefs = await getUserTtsPrefs(userId);
+
     let textReply = reply;
+
+    // Send any file attachments — always as text/documents regardless of TTS mode
     if (attachments.length > 0 && textReply && textReply.trim()) {
-      try { await sendMessage(chatId, textReply); } catch (sendErr) {
-        console.error("[Telegram] failed to send text before attachment:", sendErr);
+      if (!ttsPrefs.enabled) {
+        try { await sendMessage(chatId, textReply); } catch (sendErr) {
+          console.error("[Telegram] failed to send text before attachment:", sendErr);
+        }
+        logInteraction(userId, "telegram", "outbound", textReply).catch(() => {});
       }
-      logInteraction(userId, "telegram", "outbound", textReply).catch(() => {});
       textReply = "";
     }
 
@@ -59,8 +67,22 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
     }
 
     if (textReply && textReply.trim()) {
-      await sendMessage(chatId, textReply);
-      logInteraction(userId, "telegram", "outbound", textReply).catch(() => {});
+      if (ttsPrefs.enabled) {
+        // Auto-voice mode: send as round audio bubble, fall back to text if TTS fails
+        console.log(`[Telegram] TTS mode active — converting reply to voice for user=${userId}`);
+        const voiceResult = await speakToUser(userId, textReply, ttsPrefs.voice).catch((e) => ({
+          ok: false,
+          error: String(e),
+        }));
+        if (!voiceResult.ok) {
+          console.warn(`[Telegram] TTS failed (${voiceResult.error}), falling back to text`);
+          await sendMessage(chatId, textReply);
+        }
+        logInteraction(userId, "telegram", "outbound", textReply).catch(() => {});
+      } else {
+        await sendMessage(chatId, textReply);
+        logInteraction(userId, "telegram", "outbound", textReply).catch(() => {});
+      }
     }
 
     extractProfileFromTelegram(userId, userText).catch(err => {
@@ -336,6 +358,38 @@ async function processUpdate(update: any): Promise<void> {
           await sendMessage(chatId, `✅ Discord account linked${pairResult.discordUsername ? ` as ${pairResult.discordUsername}` : ""}! You can now chat with Jarvis directly from Discord.`);
         } else {
           await sendMessage(chatId, `❌ Discord pairing failed: ${pairResult.error || "Invalid or expired code — please DM your Discord bot to get a fresh code."}`);
+        }
+        return;
+      }
+
+      // ── /tts commands ─────────────────────────────────────────────────
+      // /tts on|off|status|voice <name>  — per-user TTS toggle
+      if (text.startsWith("/tts")) {
+        const userId = link[0].userId;
+        const parts = text.trim().split(/\s+/);
+        const sub = (parts[1] || "").toLowerCase();
+
+        if (sub === "on") {
+          await setUserTtsPref(userId, { enabled: true });
+          await sendMessage(chatId, "Voice mode is now ON — Jarvis will send voice notes instead of text. Send /tts off to switch back.");
+        } else if (sub === "off") {
+          await setUserTtsPref(userId, { enabled: false });
+          await sendMessage(chatId, "Voice mode is now OFF — back to text replies.");
+        } else if (sub === "voice" && parts[2]) {
+          const validVoices = ["alloy", "echo", "fable", "onyx", "nova", "shimmer"];
+          const v = parts[2].toLowerCase();
+          if (validVoices.includes(v)) {
+            await setUserTtsPref(userId, { voice: v as any });
+            await sendMessage(chatId, `Voice set to "${v}". Send /tts on to enable voice mode.`);
+          } else {
+            await sendMessage(chatId, `Unknown voice "${v}". Available voices: ${validVoices.join(", ")}`);
+          }
+        } else {
+          const prefs = await getUserTtsPrefs(userId);
+          await sendMessage(
+            chatId,
+            `Voice mode: ${prefs.enabled ? "ON" : "OFF"} | Voice: ${prefs.voice}\n\nCommands:\n/tts on — enable voice replies\n/tts off — disable voice replies\n/tts voice <name> — change voice (alloy, echo, fable, onyx, nova, shimmer)`,
+          );
         }
         return;
       }
