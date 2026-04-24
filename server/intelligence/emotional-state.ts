@@ -654,15 +654,14 @@ const PRUNE_RETENTION_DAYS = 90;
  */
 export async function pruneEmotionalStateHistory(): Promise<number> {
   try {
-    const result = await db.execute<{ id: number }>(sql`
+    // Use rowCount (not RETURNING) to avoid loading deleted IDs into memory,
+    // which matters when deleting large batches of old history rows.
+    const result = await db.execute(sql`
       DELETE FROM user_emotional_state_history
       WHERE recorded_at < NOW() - INTERVAL '${sql.raw(String(PRUNE_RETENTION_DAYS))} days'
-      RETURNING id
     `);
-    const deleted = result.rows?.length ?? 0;
-    if (deleted > 0) {
-      console.log(`[EmotionalState] pruned ${deleted} history row(s) older than ${PRUNE_RETENTION_DAYS} days`);
-    }
+    const deleted = (result as { rowCount?: number }).rowCount ?? 0;
+    console.log(`[EmotionalState] daily history prune: ${deleted} row(s) removed (retention: ${PRUNE_RETENTION_DAYS} days)`);
     return deleted;
   } catch (err) {
     console.error("[EmotionalState] history prune failed (non-fatal):", err);
@@ -679,11 +678,13 @@ function utcDayKey(d: Date): string {
 
 /**
  * Calls pruneEmotionalStateHistory() at most once per UTC calendar day.
+ * The day-key is set AFTER a successful run so that transient DB failures
+ * allow a same-day retry on the next heartbeat tick.
  * Safe to call on every heartbeat tick — the guard is a cheap in-memory check.
  */
 export async function maybeRunDailyHistoryPrune(): Promise<void> {
   const today = utcDayKey(new Date());
   if (lastPruneDayKey === today) return;
-  lastPruneDayKey = today;
   await pruneEmotionalStateHistory();
+  lastPruneDayKey = today; // set only on success path
 }
