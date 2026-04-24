@@ -8,12 +8,49 @@
 import type { AgentTool } from "../types";
 import { getOrCreateSession, touchSession, closeSession, hasSession } from "../browser/sessionManager";
 
-// ── Helpers ────────────────────────────────────────────────────────────────────
+// ── SSRF + URL validation ──────────────────────────────────────────────────────
+
+const BLOCKED_HOSTS = /^(localhost|0\.0\.0\.0|metadata\.google\.internal|169\.254\.169\.254)$/i;
+
+const PRIVATE_CIDR_PATTERNS = [
+  /^127\.\d+\.\d+\.\d+$/,           // 127.x.x.x loopback
+  /^10\.\d+\.\d+\.\d+$/,            // RFC1918 10/8
+  /^172\.(1[6-9]|2\d|3[01])\.\d+\.\d+$/, // RFC1918 172.16-31/12
+  /^192\.168\.\d+\.\d+$/,           // RFC1918 192.168/16
+  /^169\.254\.\d+\.\d+$/,           // link-local
+  /^::1$/,                           // IPv6 loopback
+  /^f[cd][0-9a-f]{2}:/i,            // IPv6 ULA fc/fd
+];
 
 function validateUrl(url: string): string | null {
   const u = url.trim();
   if (!u) return "No URL provided.";
   if (!u.startsWith("http://") && !u.startsWith("https://")) return `URL must start with http:// or https://. Got: ${u}`;
+
+  let parsed: URL;
+  try {
+    parsed = new URL(u);
+  } catch {
+    return `Invalid URL: ${u}`;
+  }
+
+  const host = parsed.hostname.toLowerCase();
+
+  // Block known dangerous hostnames
+  if (BLOCKED_HOSTS.test(host)) {
+    return `Blocked: "${host}" is a reserved or internal address.`;
+  }
+
+  // Block .local mDNS domains
+  if (host.endsWith(".local") || host.endsWith(".internal")) {
+    return `Blocked: "${host}" is a private/internal domain.`;
+  }
+
+  // Block bare IPs that fall in private CIDR ranges
+  if (PRIVATE_CIDR_PATTERNS.some((rx) => rx.test(host))) {
+    return `Blocked: "${host}" is a private/reserved IP address.`;
+  }
+
   return null;
 }
 
