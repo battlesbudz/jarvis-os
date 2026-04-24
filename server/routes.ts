@@ -534,16 +534,37 @@ export async function buildPlanForUser(userId: string): Promise<{
       }
     } catch {}
 
-    // Fetch today's predictions to steer task ordering toward energy windows.
+    // Fetch today's predictions and the user's energy peak hour to steer task
+    // ordering toward energy windows.
     let predictionContext: string | null = null;
     try {
-      const { getTodayPredictions } = await import("./intelligence/predictor");
-      const preds = await getTodayPredictions(userId, today, 55);
+      const [{ getTodayPredictions }, { analysePatterns }] = await Promise.all([
+        import("./intelligence/predictor"),
+        import("./intelligence/pattern-analyser"),
+      ]);
+      const [preds, analysis] = await Promise.all([
+        getTodayPredictions(userId, today, 55),
+        analysePatterns(userId, 60),
+      ]);
+
       if (preds.length > 0) {
-        predictionContext = preds
+        const peakHour = analysis.peakEnergyHour;
+        const dipHour = analysis.dipEnergyHour;
+
+        // Format a human-readable hour string (e.g. "10am", "3pm").
+        const fmtHour = (h: number) =>
+          h === 0 ? 'midnight' : h < 12 ? `${h}am` : h === 12 ? 'noon' : `${h - 12}pm`;
+
+        // Prepend explicit peak/dip anchor lines so the LLM has definitive
+        // hours to work with, regardless of what humanReadable contains.
+        const anchorLines = [
+          `- [peak_energy_window] Schedule deep/focus work at or before ${fmtHour(peakHour)} — this is your historically highest-energy hour.`,
+          `- [low_energy_window] Avoid cognitively demanding tasks around ${fmtHour(dipHour)} — this is your historically lowest-energy hour.`,
+        ].join('\n');
+
+        const predLines = preds
           .slice(0, 4)
           .map((p) => {
-            // Include the specific predicted time so the LLM can anchor tasks to exact hours.
             const predictedHour = p.targetDatetime
               ? new Date(p.targetDatetime).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
               : null;
@@ -551,6 +572,8 @@ export async function buildPlanForUser(userId: string): Promise<{
             return `- [${p.predictionType}${timeTag}] ${p.humanReadable}${p.actionSuggestion ? ` → ${p.actionSuggestion}` : ''}`;
           })
           .join('\n');
+
+        predictionContext = `${anchorLines}\n${predLines}`;
       }
     } catch {}
 
