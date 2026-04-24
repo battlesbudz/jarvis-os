@@ -275,6 +275,15 @@ function computeScores(signals: Signals): { stressScore: number; flowScore: numb
   return { stressScore: stress, flowScore: flow, label, explanation };
 }
 
+/** Re-derive a label from adjusted scores (same thresholds as computeScores). */
+function deriveLabel(stress: number, flow: number): string {
+  if (stress >= 7) return "overwhelmed";
+  if (stress >= 5) return "stressed";
+  if (flow >= 7) return "in flow";
+  if (flow >= 5) return "focused";
+  return "calm";
+}
+
 // ─── Baseline / Pattern Learning ─────────────────────────────────────────────
 
 const DOW_NAMES = ["Sundays", "Mondays", "Tuesdays", "Wednesdays", "Thursdays", "Fridays", "Saturdays"];
@@ -388,11 +397,11 @@ export async function computeAndStoreEmotionalState(
   const signals = await gatherSignals(userId, tz, now);
   const { stressScore, flowScore, label, explanation } = computeScores(signals);
 
-  // ── Baseline learning: append snapshot + compute rolling averages ───────────
-  // Append first (before computing baseline) so the current sample is included
-  // on the next cycle, not the current one (avoids self-reference).
-  await appendToHistory(userId, stressScore, flowScore, label, now, tz);
+  // ── Baseline learning: compute rolling averages then append this snapshot ────
+  // Baseline is computed BEFORE appending so the current reading is not
+  // included in its own adjustment (avoids self-reference).
   const baseline = await computeBaseline(userId, now, tz);
+  await appendToHistory(userId, stressScore, flowScore, label, now, tz);
 
   // Load existing state for consecutive-cycle tracking
   let prevState: typeof schema.userEmotionalState.$inferSelect | null = null;
@@ -417,10 +426,31 @@ export async function computeAndStoreEmotionalState(
     consecutiveHighStressCycles = 0;
   }
 
-  // Respect manual override for up to 3 hours
-  let effectiveLabel = label;
+  // ── Baseline-relative score adjustment ──────────────────────────────────────
+  // Blend the raw signal-based score with the user's personal deviation so that
+  // a raw stress of 5 "feels" different for someone whose typical stress is 2
+  // vs someone whose typical stress is 7.
+  // Formula: adjusted = raw + (raw − baseline) × 0.3, clamped to [1, 10].
+  // Only applied when we have enough historical samples.
   let effectiveStress = stressScore;
   let effectiveFlow = flowScore;
+  let effectiveLabel = label;
+
+  if (baseline.avgStress !== null && baseline.avgFlow !== null) {
+    effectiveStress = clamp(
+      Math.round(stressScore + (stressScore - baseline.avgStress) * 0.3),
+      1,
+      10,
+    );
+    effectiveFlow = clamp(
+      Math.round(flowScore + (flowScore - baseline.avgFlow) * 0.3),
+      1,
+      10,
+    );
+    effectiveLabel = deriveLabel(effectiveStress, effectiveFlow);
+  }
+
+  // Respect manual override for up to 3 hours (wins over baseline adjustment)
   if (prevState?.manualOverride && prevState.manualOverrideAt) {
     const overrideAge = now.getTime() - new Date(prevState.manualOverrideAt).getTime();
     if (overrideAge < 3 * 60 * 60 * 1000) {
