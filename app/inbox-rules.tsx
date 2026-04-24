@@ -23,10 +23,10 @@ interface InboxRule {
   type: string;
   scope: string;
   pattern: string;
-  matchHints: any;
+  matchHints: Record<string, unknown> | null;
   source: string;
-  matchCount: string;
-  active: string;
+  matchCount: number | null;
+  active: boolean | null;
   createdAt: string;
 }
 
@@ -86,7 +86,7 @@ export default function InboxRulesScreen() {
   const renderRule = ({ item }: { item: InboxRule }) => {
     const isSurface = item.type === 'surface';
     const isLearned = item.source === 'learned';
-    const matchCount = parseInt(item.matchCount || '0');
+    const matchCount = item.matchCount ?? 0;
 
     return (
       <View style={styles.ruleCard}>

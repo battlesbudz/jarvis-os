@@ -47,9 +47,10 @@ export async function executeInboxAction(
           learned: result.learned,
         };
       }
+      const newDismissCount = ((item.dismissCount as number) ?? 0) + 1;
       await db
         .update(schema.inboxItems)
-        .set({ status: "dismissed", actedAt: new Date() })
+        .set({ status: "dismissed", actedAt: new Date(), dismissCount: newDismissCount })
         .where(eq(schema.inboxItems.id, itemId));
       return { success: true, message: "Dismissed" };
     }

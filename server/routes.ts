@@ -3962,9 +3962,10 @@ Return ONLY the JSON object.`;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
       const { active } = req.body;
+      const isActive = active === true || active === "true" || active === 1;
       await db
         .update(schema.inboxRules)
-        .set({ active: active ? "true" : "false", updatedAt: new Date() })
+        .set({ active: isActive, updatedAt: new Date() })
         .where(and(eq(schema.inboxRules.id, id), eq(schema.inboxRules.userId, userId)));
       res.json({ success: true });
     } catch (error) {

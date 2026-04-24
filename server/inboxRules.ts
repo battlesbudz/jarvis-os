@@ -23,8 +23,8 @@ export interface InboxRule {
   pattern: string;
   matchHints: MatchHints | null;
   source: string;
-  matchCount: string | null;
-  active: string | null;
+  matchCount: number | null;
+  active: boolean | null;
   createdAt: Date | null;
   updatedAt: Date | null;
 }
@@ -97,7 +97,7 @@ function doesRuleMatch(
 function incrementMatchCount(rule: InboxRule): void {
   db.update(schema.inboxRules)
     .set({
-      matchCount: String(parseInt(rule.matchCount || "0") + 1),
+      matchCount: (rule.matchCount ?? 0) + 1,
       updatedAt: new Date(),
     })
     .where(eq(schema.inboxRules.id, rule.id))
@@ -116,7 +116,7 @@ export function matchItemAgainstRules(
   const allText = `${senderNorm} ${subjectNorm} ${snippetNorm} ${locationNorm}`;
 
   const activeRules = rules.filter(
-    (r) => r.active !== "false" && (r.scope === "both" || r.scope === item.sourceType)
+    (r) => r.active !== false && (r.scope === "both" || r.scope === item.sourceType)
   );
 
   const suppressRules = activeRules.filter((r) => r.type === "suppress");
@@ -158,7 +158,7 @@ export async function learnFromDismissal(
   if (!item) return { learned: false };
   if (item.sourceType !== "email") return { learned: false };
 
-  const newCount = String(parseInt((item.dismissCount as string) || "0") + 1);
+  const newCount = (item.dismissCount ?? 0) + 1;
   await db
     .update(schema.inboxItems)
     .set({ dismissCount: newCount, status: "dismissed", actedAt: new Date() })
@@ -235,7 +235,7 @@ export async function createRuleFromText(
 
   try {
     const response = await openai.chat.completions.create({
-      model: "gpt-5-mini",
+      model: "gpt-4o-mini",
       messages: [
         {
           role: "system",
