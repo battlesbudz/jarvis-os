@@ -108,6 +108,13 @@ export const scheduleChannelReportTool: AgentTool = {
           "Optional. The Discord server (guild) ID to post to. " +
           "If omitted, defaults to the first (or only) Discord server the bot is in.",
       },
+      topic: {
+        type: "string",
+        description:
+          "Optional. For competitor/niche YouTube research, the topic keywords to search for " +
+          "(e.g. 'ADHD productivity', 'AI tools for developers'). " +
+          "Replaces the [TOPIC] placeholder in the YouTube research template prompt.",
+      },
     },
     required: [],
   },
@@ -122,12 +129,31 @@ export const scheduleChannelReportTool: AgentTool = {
     const templateLookup = rawLabel || rawPrompt || rawChannel;
     const matchedTemplate = templateLookup ? detectTemplate(templateLookup) : null;
 
+    // Handle [TOPIC] substitution for YouTube research template
+    const rawTopic = args.topic ? String(args.topic).trim() : "";
+
     // Merge template defaults with explicit args
     const channelName = (rawChannel || matchedTemplate?.channelName || "")
       .toLowerCase()
       .replace(/\s+/g, "-");
     const label = rawLabel || matchedTemplate?.label || "";
-    const prompt = rawPrompt || matchedTemplate?.prompt || "";
+    let prompt = rawPrompt || matchedTemplate?.prompt || "";
+
+    // Substitute [TOPIC] placeholder if a topic was provided
+    if (rawTopic && prompt.includes("[TOPIC]")) {
+      prompt = prompt.replace(/\[TOPIC\]/g, rawTopic);
+    } else if (prompt.includes("[TOPIC]") && !rawTopic) {
+      // Prompt user to provide the topic
+      return {
+        ok: false,
+        content:
+          "The YouTube competitor research template needs a topic to search for. " +
+          "For example: 'Set up competitor YouTube research for ADHD productivity'. " +
+          "What topic or niche should I search YouTube for?",
+        label: "Missing topic for YouTube template",
+      };
+    }
+
     const daysOfWeek =
       args.daysOfWeek
         ? String(args.daysOfWeek).trim()
@@ -199,6 +225,7 @@ export const scheduleChannelReportTool: AgentTool = {
         channelName,
         topic: `Automated ${label} — posted by Jarvis`,
         categoryName,
+        guildId: guild.id,
       });
       if (!created.ok || !created.channelId) {
         return {
