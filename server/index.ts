@@ -358,6 +358,13 @@ function setupErrorHandler(app: express.Application) {
         console.error("Failed to start curiosity scanner:", err);
       });
       startHeartbeat();
+
+      // Verify Playwright/Chromium is usable on startup — logs a warning if not.
+      import("playwright").then(({ chromium }) => {
+        chromium.launch({ args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu", "--single-process"] })
+          .then((b) => b.close().then(() => log("[Browser] Chromium ready ✓")))
+          .catch((err: Error) => console.error("[Browser] Chromium unavailable — run `npx playwright install chromium`:", err.message.split("\n")[0]));
+      }).catch(() => { /* playwright not installed — silently skip */ });
     },
   );
 })();
