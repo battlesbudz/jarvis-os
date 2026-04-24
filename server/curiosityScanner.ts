@@ -5,7 +5,7 @@ import { sendMessage } from "./integrations/telegram";
 import { getGoogleCalendarEvents } from "./integrations/googleCalendar";
 import { getEmailsSince } from "./integrations/gmail";
 import { getValidGoogleTokens, getAllGoogleConnectedUserIds, getAllMicrosoftConnectedUserIds, getValidMicrosoftToken } from "./userTokenStore";
-import { getOutlookCalendarEvents } from "./integrations/outlook";
+import { getOutlookCalendarEvents, getRecentOutlookEmails } from "./integrations/outlook";
 import { logInteraction } from "./interactionLog";
 import OpenAI from "openai";
 
@@ -35,7 +35,7 @@ async function getUserMemories(
 }
 
 interface CuriosityItem {
-  sourceType: "google_calendar" | "outlook_calendar" | "gmail";
+  sourceType: "google_calendar" | "outlook_calendar" | "gmail" | "outlook_email";
   sourceId: string;
   summary: string;
 }
@@ -80,7 +80,7 @@ Rules:
 - For emails: ask about the backstory, whether it's something they've been thinking about, what they plan to do about it
 - Keep questions conversational and short (1-2 sentences)
 
-Return JSON: { "questions": [{ "sourceId": "string", "sourceType": "google_calendar"|"outlook_calendar"|"gmail", "question": "string" }] }
+Return JSON: { "questions": [{ "sourceId": "string", "sourceType": "google_calendar"|"outlook_calendar"|"gmail"|"outlook_email", "question": "string" }] }
 Return only items worth asking about. Return { "questions": [] } if nothing is interesting enough.`;
 
   const response = await openai.chat.completions.create({
@@ -177,6 +177,20 @@ export async function runCuriosityScan(): Promise<void> {
           }
         }
 
+        let recentOutlookEmails: any[] = [];
+        if (msToken) {
+          try {
+            recentOutlookEmails = await getRecentOutlookEmails(msToken, 25);
+            const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+            recentOutlookEmails = recentOutlookEmails.filter((m) => {
+              if (!m.date) return false;
+              return new Date(m.date).getTime() >= oneDayAgo.getTime();
+            });
+          } catch (err) {
+            console.error(`[Curiosity] Outlook email fetch failed for user ${userId}:`, err);
+          }
+        }
+
         const { getUserInboxRules, matchItemAgainstRules } = await import("./inboxRules");
         const userRules = await getUserInboxRules(userId);
 
@@ -269,6 +283,49 @@ export async function runCuriosityScan(): Promise<void> {
           });
         }
 
+        for (const email of recentOutlookEmails) {
+          const emailId = `outlook_email:${email.id || email.subject + ':' + (email.from || '')}`;
+          if (alreadyAsked.has(emailId)) continue;
+
+          const ruleResult = matchItemAgainstRules(
+            { sourceType: "email", sourceId: emailId, sender: email.from, subject: email.subject, snippet: email.snippet },
+            userRules
+          );
+          if (ruleResult.verdict === "suppress") continue;
+
+          if (ruleResult.verdict === "surface") {
+            try {
+              await db.insert(schema.inboxItems).values({
+                userId,
+                sourceType: "outlook_email",
+                sourceId: emailId,
+                subject: email.subject || "(no subject)",
+                sender: email.from || null,
+                snippet: email.snippet || null,
+                jarvisReason: "Matched your surface rule",
+                suggestedActions: [
+                  { label: "Reply", actionType: "reply" },
+                  { label: "Archive", actionType: "archive" },
+                  { label: "Dismiss", actionType: "dismiss" },
+                ],
+                matchedRuleId: ruleResult.matchedRuleId || null,
+              }).onConflictDoNothing();
+              console.log(`[Curiosity] Surfaced Outlook email for user ${userId}: ${email.subject}`);
+            } catch (err) {
+              console.error(`[Curiosity] inbox_items insert failed for Outlook email ${emailId}:`, err);
+            }
+            continue;
+          }
+
+          items.push({
+            sourceType: "outlook_email",
+            sourceId: emailId,
+            summary: `From: ${email.from || "unknown"} | Subject: "${
+              email.subject || "no subject"
+            }"${email.snippet ? " — " + email.snippet : ""}`,
+          });
+        }
+
         if (items.length === 0) continue;
 
         const candidateSourceIds = new Set(items.map(i => i.sourceId));
@@ -313,7 +370,7 @@ export async function runCuriosityScan(): Promise<void> {
           try {
             await db.insert(schema.inboxItems).values({
               userId,
-              sourceType: canonicalSourceType as "google_calendar" | "outlook_calendar" | "email" | "telegram" | "slack" | "discord" | "whatsapp" | "other",
+              sourceType: canonicalSourceType as "google_calendar" | "outlook_calendar" | "outlook_email" | "email" | "telegram" | "slack" | "discord" | "whatsapp" | "other",
               sourceId: q.sourceId,
               subject: srcItem?.summary?.slice(0, 200) ?? q.question.slice(0, 200),
               snippet: q.question,

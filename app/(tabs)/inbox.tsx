@@ -96,7 +96,8 @@ function getSourceConfig(sourceType: string): SourceConfig {
     case 'calendar':
       return { label: 'Calendar', icon: 'calendar', color: Colors.primary, bgColor: Colors.primary + '15' };
     case 'outlook':
-      return { label: 'Outlook', icon: 'mail', color: '#0078D4', bgColor: '#0078D415' };
+    case 'outlook_email':
+      return { label: 'Outlook Mail', icon: 'mail', color: '#0078D4', bgColor: '#0078D415' };
     case 'telegram':
       return { label: 'Telegram', icon: 'paper-plane', color: '#2AABEE', bgColor: '#2AABEE15' };
     default:

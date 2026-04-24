@@ -59,6 +59,7 @@ function getInboxSourceIcon(sourceType: string): { icon: keyof typeof Ionicons.g
     case 'calendar':
       return { icon: 'calendar', color: Colors.primary };
     case 'outlook':
+    case 'outlook_email':
       return { icon: 'mail', color: '#0078D4' };
     case 'telegram':
       return { icon: 'paper-plane', color: '#2AABEE' };
@@ -79,7 +80,8 @@ function getInboxSourceLabel(sourceType: string): string {
     case 'calendar':
       return 'Calendar';
     case 'outlook':
-      return 'Outlook';
+    case 'outlook_email':
+      return 'Outlook Mail';
     case 'telegram':
       return 'Telegram';
     default:
