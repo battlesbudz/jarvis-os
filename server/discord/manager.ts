@@ -284,8 +284,9 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
         onToken,
       });
 
-      // If streaming returned empty content, fall back to a non-streaming run
-      if (!result.reply) {
+      // If streaming returned empty content (rawReply is the unmasked value before
+      // the fallback string is applied), fall back to a non-streaming run
+      if (!result.rawReply) {
         console.warn("[DiscordManager] streaming reply was empty — retrying without streaming");
         result = await runCoachAgent({
           userId,
