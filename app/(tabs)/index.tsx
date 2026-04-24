@@ -100,6 +100,20 @@ interface Deliverable {
   createdAt: string;
 }
 
+interface Prediction {
+  id: string;
+  predictionType: 'energy_dip' | 'procrastination_risk' | 'email_overdue' | 'project_stall';
+  targetDatetime: string;
+  targetDate: string;
+  confidenceScore: number;
+  basisSummary: string;
+  humanReadable: string;
+  actionSuggestion: string | null;
+  observationCount: number;
+  validated: boolean | null;
+  createdAt: string;
+}
+
 interface Memory {
   id: string;
   content: string;
@@ -311,6 +325,47 @@ function FullModal({ visible, title, accent, onClose, children }: {
   );
 }
 
+// ── Prediction Card ────────────────────────────────────────────────────────
+const PREDICTION_TYPE_CONFIG = {
+  energy_dip: { icon: 'flash-outline' as const, color: '#f39c12', label: 'ENERGY DIP' },
+  procrastination_risk: { icon: 'warning-outline' as const, color: '#e74c3c', label: 'PROCRASTINATION RISK' },
+  email_overdue: { icon: 'mail-outline' as const, color: '#3498db', label: 'EMAIL OVERDUE' },
+  project_stall: { icon: 'trending-down-outline' as const, color: '#e67e22', label: 'PROJECT STALL' },
+} as const;
+
+function PredictionCard({ pred, compact = false }: { pred: Prediction; compact?: boolean }) {
+  const typeConfig = PREDICTION_TYPE_CONFIG[pred.predictionType]
+    ?? { icon: 'information-circle-outline' as const, color: '#9b59b6', label: 'PREDICTION' };
+  const obsText = pred.observationCount > 0
+    ? `${pred.observationCount} obs`
+    : null;
+  const dateLabel = compact ? ` · ${new Date(pred.targetDate + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}` : '';
+
+  return (
+    <View style={styles.predictionCard}>
+      <View style={[styles.predictionIconWrap, { backgroundColor: typeConfig.color + '20' }]}>
+        <Ionicons name={typeConfig.icon} size={14} color={typeConfig.color} />
+      </View>
+      <View style={styles.predictionContent}>
+        <Text style={[styles.predictionTypeLabel, { color: typeConfig.color }]}>
+          {typeConfig.label}{dateLabel}
+        </Text>
+        <Text style={styles.predictionText}>{pred.humanReadable}</Text>
+        {!compact && pred.actionSuggestion && (
+          <Text style={styles.predictionAction}>→ {pred.actionSuggestion}</Text>
+        )}
+        <View style={styles.predictionMeta}>
+          <View style={styles.predictionConfBar}>
+            <View style={[styles.predictionConfFill, { width: `${pred.confidenceScore}%`, backgroundColor: typeConfig.color }]} />
+          </View>
+          <Text style={styles.predictionConfText}>{pred.confidenceScore}%</Text>
+          {obsText && <Text style={styles.predictionObsText}>{obsText}</Text>}
+        </View>
+      </View>
+    </View>
+  );
+}
+
 // Main Screen
 
 export default function MissionControlScreen() {
@@ -372,6 +427,12 @@ export default function MissionControlScreen() {
   const [newRecurrence, setNewRecurrence] = useState('');
   const [savingTask, setSavingTask] = useState(false);
 
+  // ── Predictions (Jarvis Foresight) ──
+  const [predictions, setPredictions] = useState<Prediction[]>([]);
+  const [weekPredictions, setWeekPredictions] = useState<Prediction[]>([]);
+  const [predictionAccuracy, setPredictionAccuracy] = useState<{ validated: number; accuracyRate: number; autoSkipped: number } | null>(null);
+  const [predictionsLoading, setPredictionsLoading] = useState(true);
+
   // ── Emotional State ──
   const [emotionalState, setEmotionalState] = useState<{
     stressScore: number;
@@ -417,7 +478,7 @@ export default function MissionControlScreen() {
     const weekStart = new Date().toISOString();
     const weekEnd = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
     const calParams = `?startTime=${encodeURIComponent(weekStart)}&endTime=${encodeURIComponent(weekEnd)}`;
-    const [inboxRes, delRes, memRes, docRes, schedRes, gcalRes, ocalRes, sysSchedRes, esRes] = await Promise.allSettled([
+    const [inboxRes, delRes, memRes, docRes, schedRes, gcalRes, ocalRes, sysSchedRes, esRes, predsRes, weekPredsRes, predAccRes] = await Promise.allSettled([
       apiRequest('GET', '/api/inbox/items').then(r => r.json()),
       apiRequest('GET', '/api/deliverables').then(r => r.json()),
       authFetch(new URL('/api/memories', getApiUrl()).toString()).then(r => r.json()),
@@ -427,6 +488,9 @@ export default function MissionControlScreen() {
       apiRequest('GET', `/api/calendar/outlook/events${calParams}`).then(r => r.json()).catch(() => null),
       apiRequest('GET', '/api/jarvis/system-schedule').then(r => r.json()).catch(() => null),
       apiRequest('GET', '/api/jarvis/emotional-state').then(r => r.json()).catch(() => null),
+      apiRequest('GET', '/api/predictions').then(r => r.json()).catch(() => null),
+      apiRequest('GET', `/api/predictions/week?startDate=${new Date().toISOString().slice(0, 10)}`).then(r => r.json()).catch(() => null),
+      apiRequest('GET', '/api/predictions/accuracy').then(r => r.json()).catch(() => null),
     ]);
 
     if (inboxRes.status === 'fulfilled' && Array.isArray(inboxRes.value)) {
@@ -463,6 +527,21 @@ export default function MissionControlScreen() {
     if (esRes.status === 'fulfilled' && esRes.value && typeof esRes.value === 'object' && esRes.value.label) {
       setEmotionalState(esRes.value);
     }
+
+    if (predsRes.status === 'fulfilled' && predsRes.value?.predictions) {
+      setPredictions((predsRes.value.predictions as Prediction[]).filter((p: Prediction) => p.confidenceScore >= 55));
+    }
+    if (weekPredsRes.status === 'fulfilled' && weekPredsRes.value?.predictions) {
+      const todayStr = new Date().toISOString().slice(0, 10);
+      setWeekPredictions(
+        (weekPredsRes.value.predictions as Prediction[])
+          .filter((p: Prediction) => p.confidenceScore >= 55 && p.targetDate !== todayStr)
+      );
+    }
+    if (predAccRes.status === 'fulfilled' && predAccRes.value && typeof predAccRes.value.validated === 'number') {
+      setPredictionAccuracy({ validated: predAccRes.value.validated, accuracyRate: predAccRes.value.accuracyRate, autoSkipped: predAccRes.value.autoSkipped ?? 0 });
+    }
+    setPredictionsLoading(false);
 
     const merged: CalendarEvent[] = [];
     if (gcalRes.status === 'fulfilled' && gcalRes.value?.events) {
@@ -1013,6 +1092,45 @@ export default function MissionControlScreen() {
             )}
           </Panel>
         </Animated.View>
+
+        {/* FORESIGHT */}
+        {(predictionsLoading || predictions.length > 0 || weekPredictions.length > 0) && (
+          <Animated.View entering={FadeInDown.delay(40).duration(400)}>
+            <Panel
+              title="JARVIS FORESIGHT"
+              icon="telescope-outline"
+              accent="#9b59b6"
+              loading={predictionsLoading}
+            >
+              {predictions.length === 0 && weekPredictions.length === 0 && !predictionsLoading ? (
+                <Text style={styles.emptyText}>No predictions yet. Jarvis needs more historical data to build forecasts.</Text>
+              ) : (
+                <>
+                  {predictions.length > 0 && (
+                    <>
+                      <Text style={styles.predictionSectionLabel}>TODAY</Text>
+                      {predictions.slice(0, 4).map((pred) => <PredictionCard key={pred.id} pred={pred} />)}
+                    </>
+                  )}
+                  {weekPredictions.length > 0 && (
+                    <>
+                      <Text style={[styles.predictionSectionLabel, { marginTop: predictions.length > 0 ? 10 : 0 }]}>THIS WEEK</Text>
+                      {weekPredictions.slice(0, 3).map((pred) => <PredictionCard key={pred.id} pred={pred} compact />)}
+                    </>
+                  )}
+                  {predictionAccuracy && predictionAccuracy.validated >= 3 && (
+                    <View style={styles.predictionAccuracyRow}>
+                      <Ionicons name="analytics-outline" size={11} color="#9b59b6" />
+                      <Text style={styles.predictionAccuracyText}>
+                        {Math.round(predictionAccuracy.accuracyRate * 100)}% accurate over {predictionAccuracy.validated} auto-validated prediction{predictionAccuracy.validated === 1 ? '' : 's'}{predictionAccuracy.autoSkipped > 0 ? ` · ${predictionAccuracy.autoSkipped} pending manual review` : ''}
+                      </Text>
+                    </View>
+                  )}
+                </>
+              )}
+            </Panel>
+          </Animated.View>
+        )}
 
         {/* TODAY */}
         <Animated.View entering={FadeInDown.delay(60).duration(400)}>
@@ -2746,5 +2864,91 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 14,
     lineHeight: 18,
+  },
+  predictionSectionLabel: {
+    fontSize: 9,
+    fontFamily: 'Inter_700Bold',
+    letterSpacing: 1.5,
+    color: Colors.textTertiary,
+    marginBottom: 4,
+  },
+  predictionCard: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  predictionIconWrap: {
+    width: 30,
+    height: 30,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 1,
+  },
+  predictionContent: {
+    flex: 1,
+    gap: 3,
+  },
+  predictionTypeLabel: {
+    fontSize: 9,
+    fontFamily: 'Inter_700Bold',
+    letterSpacing: 1.2,
+  },
+  predictionText: {
+    fontSize: 13,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.text,
+    lineHeight: 18,
+  },
+  predictionAction: {
+    fontSize: 12,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.textSecondary,
+    lineHeight: 17,
+  },
+  predictionMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 4,
+  },
+  predictionConfBar: {
+    width: 60,
+    height: 3,
+    backgroundColor: Colors.border,
+    borderRadius: 2,
+    overflow: 'hidden',
+  },
+  predictionConfFill: {
+    height: 3,
+    borderRadius: 2,
+  },
+  predictionConfText: {
+    fontSize: 10,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.textTertiary,
+  },
+  predictionObsText: {
+    fontSize: 10,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textTertiary,
+    flex: 1,
+  },
+  predictionAccuracyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    marginTop: 10,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+  },
+  predictionAccuracyText: {
+    fontSize: 11,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textTertiary,
   },
 });

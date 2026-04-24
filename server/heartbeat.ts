@@ -742,6 +742,14 @@ export async function runHeartbeatTick(): Promise<void> {
       console.error(`[Heartbeat] gut scan failed for ${link.userId}:`, err);
     }
 
+    // Prediction Validation — validate expired predictions against actual data.
+    try {
+      const { validateExpiredPredictions } = await import("./intelligence/predictor");
+      await validateExpiredPredictions(link.userId, now);
+    } catch (err) {
+      console.error(`[Heartbeat] prediction validation failed for ${link.userId}:`, err);
+    }
+
     try {
       if (token && !await isActionSuppressed(link.userId, "meeting_brief"))
         actionsFired += await runMeetingBriefs(link.userId, link.chatId, token, memories, now, tz, userEmail);

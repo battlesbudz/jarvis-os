@@ -692,6 +692,32 @@ export const gutSignals = pgTable("gut_signals", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+// Prediction Engine — forward-looking predictions generated daily at plan-build time.
+// Each row represents one prediction for a specific future window.
+// Types: energy_dip, procrastination_risk, email_overdue, project_stall
+export const jarvisPredictions = pgTable("jarvis_predictions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  predictionType: varchar("prediction_type").notNull(),
+  targetDatetime: timestamp("target_datetime").notNull(),
+  targetDate: varchar("target_date").notNull(),
+  confidenceScore: integer("confidence_score").notNull().default(50),
+  basisSummary: text("basis_summary").notNull(),
+  humanReadable: text("human_readable").notNull(),
+  actionSuggestion: text("action_suggestion"),
+  observationCount: integer("observation_count").notNull().default(0),
+  validated: boolean("validated"),
+  validationNote: text("validation_note"),
+  validatedAt: timestamp("validated_at"),
+  deliveredAt: timestamp("delivered_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex("jarvis_predictions_user_type_date_idx").on(table.userId, table.predictionType, table.targetDate),
+]);
+
+export type JarvisPrediction = typeof jarvisPredictions.$inferSelect;
+export type InsertJarvisPrediction = typeof jarvisPredictions.$inferInsert;
+
 // Dream Cycle — nightly deep synthesis insights.
 // Each row is one insight produced by a single dream run.
 export const dreamInsights = pgTable("dream_insights", {

@@ -70,6 +70,13 @@ patterns, energy check-ins, and task completion history for each user:
 - Users can pause the Dream Cycle by setting `dreamEnabled=false` in
   preferences; the toggle is in the Profile screen under "Dream Cycle"
 
+### 6. Prediction Validation (every heartbeat tick, per user)
+After a predicted window has passed (> 2 hours), compare against what actually happened:
+- **energy_dip:** Pull today's energy check-in near the predicted hour. If energy ≤ 4/10, mark as confirmed. Store outcome in `jarvis_predictions.validated`.
+- **procrastination_risk:** At end of day, check completion rate of the predicted category in today's plan.
+- **email_overdue / project_stall:** Flagged for manual validation (auto-skip with note).
+This runs silently — no user messages — but feeds the accuracy tracking visible in the Foresight section.
+
 ---
 
 ## Operating rules
