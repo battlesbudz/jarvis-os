@@ -481,6 +481,10 @@ export function getBotStatus(userId: string): "running" | "stopped" {
 
 export async function bootAllBots(): Promise<void> {
   try {
+    // Seed dedup state FIRST — before any bot logs in — so that Discord
+    // cannot re-deliver a recent message between login and seed completion.
+    await seedSeenMessageIds();
+
     const { db: _db } = await import("../db");
     const { sql } = await import("drizzle-orm");
     const rows = await _db.execute(
@@ -499,9 +503,6 @@ export async function bootAllBots(): Promise<void> {
       }
     }
     console.log(`[DiscordManager] Booted ${started}/${items.length} Discord bot(s)`);
-    // Pre-populate the dedup map from DB so messages received in the last
-    // 5 minutes are still recognised as already-processed after a restart.
-    await seedSeenMessageIds();
   } catch (err) {
     console.error("[DiscordManager] bootAllBots failed:", err);
   }
