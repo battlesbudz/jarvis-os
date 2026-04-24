@@ -43,21 +43,57 @@ const pairingCodes = new Map<string, PairingRecord>();
 const seenMessageIds = new Map<string, number>();
 const SEEN_MESSAGE_TTL_MS = 5 * 60 * 1000;
 
+// Per-user async processing lock: userId → Promise chain
+// Ensures concurrent messages from the same user are queued, not raced.
+const userProcessingLocks = new Map<string, Promise<void>>();
+
 /**
- * Mark a Discord message ID as seen.
- * Updates the in-memory map immediately and persists to DB fire-and-forget
- * so that a server restart within the TTL window still drops re-deliveries.
+ * Atomically claim a Discord message ID for processing.
+ *
+ * Uses INSERT ... ON CONFLICT DO NOTHING RETURNING message_id as a single
+ * atomic DB operation — whichever server process inserts the row first wins
+ * ownership. Returns true when this process claimed the ID (safe to process),
+ * false when another process already owns it (drop the message).
+ *
+ * The in-memory map is updated on a successful claim so subsequent events for
+ * the same ID in the same process are caught instantly without another DB hit.
+ *
+ * Falls back to true (allow processing) only if the DB itself is unreachable,
+ * so a DB outage degrades gracefully to the previous in-memory-only behaviour.
  */
-function markMessageSeen(messageId: string): void {
+async function claimMessageId(messageId: string): Promise<boolean> {
   const seenAt = Date.now();
-  seenMessageIds.set(messageId, seenAt);
-  // Fire-and-forget: DB write adds ~1-2 ms (network-async) but never blocks
-  // the handler. Use ON CONFLICT DO NOTHING so duplicate calls are harmless.
-  db.execute(sql`
-    INSERT INTO discord_seen_messages (message_id, seen_at)
-    VALUES (${messageId}, ${seenAt})
-    ON CONFLICT (message_id) DO NOTHING
-  `).catch(() => {});
+  // Cap the DB call at 2 s so a hanging database never stalls message handling.
+  const timeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), 2000));
+  try {
+    const dbCall = db.execute(sql`
+      INSERT INTO discord_seen_messages (message_id, seen_at)
+      VALUES (${messageId}, ${seenAt})
+      ON CONFLICT (message_id) DO NOTHING
+      RETURNING message_id
+    `);
+    const result = await Promise.race([dbCall, timeout]);
+    if (result === null) {
+      // DB timed out — fall back to in-memory ownership and allow processing.
+      console.warn(`[DiscordManager] claimMessageId timed out (>2s) for id=${messageId} — falling back to in-memory`);
+      seenMessageIds.set(messageId, seenAt);
+      return true;
+    }
+    const rows = ((result as unknown as { rows?: unknown[] }).rows ??
+      (Array.isArray(result) ? result as unknown[] : []));
+    if (rows.length === 0) {
+      // Another process (or this process on a retry) already owns this ID.
+      return false;
+    }
+    // We won ownership — populate the fast-path in-memory cache.
+    seenMessageIds.set(messageId, seenAt);
+    return true;
+  } catch (err) {
+    // DB error — fall back to in-memory-only dedup and allow processing.
+    console.warn("[DiscordManager] claimMessageId DB error (falling back to in-memory):", err);
+    seenMessageIds.set(messageId, seenAt);
+    return true;
+  }
 }
 
 /**
@@ -160,11 +196,18 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
     if (client.user && message.author.id === client.user.id) return;
 
     // ── Deduplication: drop re-delivered events for the same message ID ────
+    // Fast path: in-memory map (same process, zero latency).
     if (seenMessageIds.has(message.id)) {
-      console.log(`[DiscordManager] duplicate message dropped (id=${message.id})`);
+      console.log(`[DiscordManager] duplicate message dropped (in-memory, id=${message.id})`);
       return;
     }
-    markMessageSeen(message.id);
+    // Atomic DB claim: INSERT ... RETURNING — only the first process to
+    // insert wins ownership; concurrent processes see zero rows and drop.
+    const claimed = await claimMessageId(message.id);
+    if (!claimed) {
+      console.log(`[DiscordManager] duplicate message dropped (db atomic claim, id=${message.id})`);
+      return;
+    }
 
     const isDM = message.channel.isDMBased();
     const discordUserId = message.author.id;
@@ -248,6 +291,24 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
 
     const userId = pairedUser.userId;
 
+    // ── Per-user async lock ────────────────────────────────────────────
+    // Queue messages from the same user so they are processed sequentially,
+    // preventing two near-simultaneous messages from racing each other and
+    // both editing the same placeholder at once.
+    const prevLock = userProcessingLocks.get(userId) ?? Promise.resolve();
+    let releaseLock!: () => void;
+    const thisLock = new Promise<void>((resolve) => { releaseLock = resolve; });
+    // Chain this message onto the previous one so they run sequentially.
+    const chainedLock = prevLock.then(() => thisLock).catch(() => thisLock);
+    userProcessingLocks.set(userId, chainedLock);
+
+    try {
+      await prevLock;
+    } catch {
+      // previous message errored — still safe to proceed
+    }
+
+    try {
     // ── Update last_seen_at ─────────────────────────────────────────────
     db.update(channelLinks)
       .set({ lastSeenAt: new Date() })
@@ -347,10 +408,9 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
 
     try {
       // First attempt: streaming (onToken drives live placeholder edits).
-      // If streaming throws or returns empty content, fall back to a non-streaming
-      // run so users always get a real reply.
-      // Note: the fallback re-runs the full pipeline; runCoachAgent uses an upsert
-      // for chat history so the second write overwrites the first with the real reply.
+      // Fall back to a non-streaming run only when streaming produced ZERO
+      // characters — if streamBuf is non-empty the placeholder was already
+      // edited and we must NOT run a second full agent call.
       let result: Awaited<ReturnType<typeof runCoachAgent>> | null = null;
       let streamingFailed = false;
       try {
@@ -360,13 +420,24 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
           channelName: namedAgent ? `Discord #${namedAgent.name.toLowerCase()}` : channelLabel,
           onToken,
         });
-        if (!result.rawReply) {
-          console.warn("[DiscordManager] streaming reply was empty — retrying without streaming");
+        // Only retry when streaming produced NO visible content at all.
+        // If streamBuf has content the placeholder was already edited; a
+        // second agent call would produce a duplicate response.
+        if (!result.rawReply && streamBuf.length === 0) {
+          console.warn("[DiscordManager] streaming reply was empty and no streamed tokens — retrying without streaming");
           streamingFailed = true;
+        } else if (!result.rawReply && streamBuf.length > 0) {
+          console.warn("[DiscordManager] rawReply empty but streaming produced content — skipping fallback to avoid double response");
         }
       } catch (streamErr) {
-        console.warn("[DiscordManager] streaming runCoachAgent threw — retrying without streaming:", streamErr);
-        streamingFailed = true;
+        if (streamBuf.length > 0) {
+          // Streaming produced visible output before throwing — finalise with
+          // what we have rather than running a second agent call.
+          console.warn("[DiscordManager] streaming runCoachAgent threw after producing content — finalising with streamed buffer");
+        } else {
+          console.warn("[DiscordManager] streaming runCoachAgent threw — retrying without streaming:", streamErr);
+          streamingFailed = true;
+        }
       }
 
       if (streamingFailed) {
@@ -378,7 +449,9 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
         });
       }
 
-      const reply = result!.reply || "Sorry, I couldn't generate a response right now.";
+      // Use streamed buffer as final reply when result is unavailable but
+      // streaming produced visible content (avoids second agent call).
+      const reply = result?.reply || (streamBuf.length > 0 ? streamBuf : "Sorry, I couldn't generate a response right now.");
 
       if (placeholder) {
         await editOrSendLong(placeholder, reply);
@@ -389,6 +462,14 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
       console.error("[DiscordManager] runCoachAgent failed:", err);
       if (placeholder) {
         await placeholder.edit("Sorry, something went wrong — please try again.").catch(() => {});
+      }
+    }
+    } finally {
+      releaseLock();
+      // Remove the map entry when no newer chain is attached to prevent
+      // the map from growing unboundedly over the lifetime of the process.
+      if (userProcessingLocks.get(userId) === chainedLock) {
+        userProcessingLocks.delete(userId);
       }
     }
   };
