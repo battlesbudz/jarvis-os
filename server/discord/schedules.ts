@@ -71,7 +71,7 @@ export async function createSchedule(
       guildId: params.guildId,
       channelId: params.channelId,
       pipelineNext: params.pipelineNext,
-      enabled: 1,
+      enabled: true,
     })
     .returning();
   return row;
@@ -107,7 +107,7 @@ export async function deleteSchedule(userId: string, id: string) {
 export async function toggleSchedule(userId: string, id: string, enabled: boolean) {
   await db
     .update(discordChannelSchedules)
-    .set({ enabled: enabled ? 1 : 0 })
+    .set({ enabled })
     .where(
       and(
         eq(discordChannelSchedules.id, id),

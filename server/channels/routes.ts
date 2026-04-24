@@ -7,7 +7,7 @@ import { getAllPreferences, setPreference, getChannel, listChannels } from "./re
 import { createDaemonPairingCode, isUserPaired, closeUserDaemon, getDaemonPermissions, setDaemonPermissions, isDaemonActionAllowed, DEFAULT_DAEMON_PERMISSIONS, getAndroidDaemonPermissions, setAndroidDaemonPermissions, DEFAULT_ANDROID_DAEMON_PERMISSIONS, isAndroidDaemonActive, type DaemonAction, type DaemonPermissions, type AndroidDaemonAction, type AndroidDaemonPermissions } from "../daemon/bridge";
 import { startUserBot, stopUserBot, getBotStatus, completePairing, getGuildsForUser, getChannelsForGuild, setupDiscordWorkspace, type AllowlistedGuild, type DiscordLinkMeta, WORKSPACE_TOPICS } from "../discord/manager";
 import { saveUserToken, getUserToken, deleteUserToken } from "../userTokenStore";
-import { createSchedule, listSchedules, deleteSchedule, updateScheduleEnabled, updateSchedulePrompt, SCHEDULE_TEMPLATES } from "../discord/schedules";
+import { createSchedule, listSchedules, deleteSchedule, toggleSchedule, parseCronExpression, SCHEDULE_TEMPLATES } from "../discord/schedules";
 
 function generateCode(len = 6): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -420,20 +420,22 @@ export function registerChannelRoutes(app: Express): void {
   // POST /api/discord/schedules — create a new schedule
   app.post("/api/discord/schedules", authMiddleware, async (req: Request, res: Response) => {
     const userId = (req as any).userId;
-    const { guildId, channelId, channelName, label, cronHour, cronMinute, daysOfWeek, prompt } = req.body || {};
-    if (!guildId || !channelId || !channelName || !label || cronHour == null || !prompt) {
-      return res.status(400).json({ error: "guildId, channelId, channelName, label, cronHour, and prompt are required" });
+    const { guildId, channelId, channelName, label, cronExpression, scheduleTime, prompt, pipelineNext } = req.body || {};
+    if (!channelName || !label || !prompt) {
+      return res.status(400).json({ error: "channelName, label, and prompt are required" });
     }
     try {
+      const resolvedCron = cronExpression
+        || (scheduleTime ? parseCronExpression(scheduleTime) : null)
+        || "0 7 * * *";
       const schedule = await createSchedule(userId, {
-        guildId,
-        channelId,
+        guildId: guildId ?? undefined,
+        channelId: channelId ?? undefined,
         channelName,
         label,
-        cronHour: Number(cronHour),
-        cronMinute: Number(cronMinute ?? 0),
-        daysOfWeek: daysOfWeek ?? "0,1,2,3,4,5,6",
+        cronExpression: resolvedCron,
         prompt,
+        pipelineNext: pipelineNext ?? undefined,
       });
       res.json({ ok: true, schedule });
     } catch (err) {
@@ -446,13 +448,24 @@ export function registerChannelRoutes(app: Express): void {
   app.patch("/api/discord/schedules/:id", authMiddleware, async (req: Request, res: Response) => {
     const userId = (req as any).userId;
     const { id } = req.params;
-    const { enabled, prompt } = req.body || {};
+    const { enabled, prompt, cronExpression } = req.body || {};
     try {
       if (enabled !== undefined) {
-        await updateScheduleEnabled(userId, id, enabled === true || enabled === "true");
+        await toggleSchedule(userId, id, enabled === true || enabled === "true");
       }
-      if (prompt !== undefined && typeof prompt === "string" && prompt.trim()) {
-        await updateSchedulePrompt(userId, id, prompt.trim());
+      if (prompt !== undefined || cronExpression !== undefined) {
+        const updates: Record<string, any> = {};
+        if (typeof prompt === "string" && prompt.trim()) updates.prompt = prompt.trim();
+        if (typeof cronExpression === "string" && cronExpression.trim()) updates.cronExpression = cronExpression.trim();
+        if (Object.keys(updates).length > 0) {
+          const { db } = await import("../db");
+          const { discordChannelSchedules } = await import("@shared/schema");
+          const { eq, and } = await import("drizzle-orm");
+          await db
+            .update(discordChannelSchedules)
+            .set(updates)
+            .where(and(eq(discordChannelSchedules.id, id), eq(discordChannelSchedules.userId, userId)));
+        }
       }
       const schedules = await listSchedules(userId);
       const updated = schedules.find((s) => s.id === id);

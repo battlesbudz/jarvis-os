@@ -498,13 +498,11 @@ export type ChannelName = typeof CHANNEL_NAMES[number];
 export const discordChannelSchedules = pgTable("discord_channel_schedules", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-  guildId: varchar("guild_id").notNull(),
-  channelId: varchar("channel_id").notNull(),
+  guildId: varchar("guild_id"),
+  channelId: varchar("channel_id"),
   channelName: varchar("channel_name").notNull(),
   label: varchar("label").notNull(),
-  cronHour: integer("cron_hour").notNull(),
-  cronMinute: integer("cron_minute").notNull().default(0),
-  daysOfWeek: varchar("days_of_week").notNull().default("0,1,2,3,4,5,6"),
+  cronExpression: varchar("cron_expression").notNull().default("0 7 * * *"),
   prompt: text("prompt").notNull(),
   pipelineNext: varchar("pipeline_next"),
   lastRun: timestamp("last_run"),
@@ -520,24 +518,6 @@ export const interactionLog = pgTable("interaction_log", {
   direction: varchar("direction").notNull(),
   content: text("content").notNull(),
   label: varchar("label"),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-});
-
-// ── Discord OS — Phase 1: Scheduled Channel Reports ──────────────────────────
-
-export const discordChannelSchedules = pgTable("discord_channel_schedules", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-  guildId: varchar("guild_id"),
-  channelId: varchar("channel_id"),
-  channelName: varchar("channel_name").notNull(),
-  cronExpression: varchar("cron_expression").notNull(),
-  label: varchar("label").notNull(),
-  prompt: text("prompt").notNull(),
-  pipelineNext: varchar("pipeline_next"),
-  lastRun: timestamp("last_run"),
-  lastOutput: text("last_output"),
-  enabled: integer("enabled").notNull().default(1),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 

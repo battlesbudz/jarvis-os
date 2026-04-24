@@ -24,7 +24,7 @@ async function runDiscordSchedules(now: Date): Promise<void> {
     const schedules = await db
       .select()
       .from(schema.discordChannelSchedules)
-      .where(eq(schema.discordChannelSchedules.enabled, 1));
+      .where(eq(schema.discordChannelSchedules.enabled, true));
 
     for (const schedule of schedules) {
       if (matchesCron(schedule.cronExpression, now)) {
