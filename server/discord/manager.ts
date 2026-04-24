@@ -277,12 +277,23 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
     const fullUserText = personaPrefix + (topicContext ? userText + topicContext : userText);
 
     try {
-      const result = await runCoachAgent({
+      let result = await runCoachAgent({
         userId,
         userText: fullUserText,
         channelName: namedAgent ? `Discord #${namedAgent.name.toLowerCase()}` : channelLabel,
         onToken,
       });
+
+      // If streaming returned empty content, fall back to a non-streaming run
+      if (!result.reply) {
+        console.warn("[DiscordManager] streaming reply was empty — retrying without streaming");
+        result = await runCoachAgent({
+          userId,
+          userText: fullUserText,
+          channelName: namedAgent ? `Discord #${namedAgent.name.toLowerCase()}` : channelLabel,
+          // no onToken → forces non-streaming path
+        });
+      }
 
       const reply = result.reply || "Sorry, I couldn't generate a response right now.";
 

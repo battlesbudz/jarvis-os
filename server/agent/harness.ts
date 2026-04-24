@@ -117,6 +117,10 @@ async function runStreamingTurn(params: {
         function: { name: acc.name, arguments: acc.args },
       }));
 
+  if (!textContent && toolCallList.length === 0) {
+    console.warn(`[harness] runStreamingTurn: stream completed with empty textContent and no tool calls (finishReason=${finishReason})`);
+  }
+
   return { textContent, textChunks, toolCallList, finishReason };
 }
 
