@@ -31,6 +31,7 @@ import { mobileAuthRouter } from "./mobileAuthRoutes";
 import { registerDataRoutes } from "./dataRoutes";
 import { registerTelegramRoutes } from "./telegramRoutes";
 import { registerChannelRoutes } from "./channels/routes";
+import { registerDiscordScheduleRoutes } from "./discord/schedulesRoutes";
 import { registerDownloadRoutes } from "./downloadRoutes";
 import { isIntegrationOwner, claimIntegrationOwnership } from "./integrationOwner";
 import { oauthRouter, oauthCallbackRouter } from "./oauthRoutes";
@@ -579,6 +580,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   registerDataRoutes(app);
   registerTelegramRoutes(app);
   registerChannelRoutes(app);
+  registerDiscordScheduleRoutes(app);
 
   app.get("/api/discord/status", async (req: Request, res: Response) => {
     try {
@@ -936,12 +938,14 @@ Rules:
       type: "function" as const,
       function: {
         name: "search_youtube",
-        description: "Search YouTube server-side and return structured results with title, channel name, view count, published date, duration, and video ID — without touching the phone. Use this BEFORE opening a video so you can intelligently pick the best result (reputable channel, high views, recent date). Returns up to 10 results. Then use fetch_youtube_transcript to get the transcript of the chosen video, and android_browse to open it on the phone.",
+        description: "Search YouTube server-side and return structured results with title, channel name, view count, published date, duration, and video ID — without touching the phone. Use this BEFORE opening a video so you can intelligently pick the best result (reputable channel, high views, recent date). Returns up to 10 results. Then use fetch_youtube_transcript to get the transcript of the chosen video, and android_browse to open it on the phone. Pass trending:true when the user asks for 'trending', 'viral', 'momentum', or 'views per hour' content — this sorts by views/hour instead of total views.",
         parameters: {
           type: "object",
           properties: {
             query: { type: "string", description: "Search query, e.g. 'how to improve focus ADHD'" },
             maxResults: { type: "number", description: "Number of results to return (1-10, default 8)" },
+            trending: { type: "boolean", description: "If true, sort by views-per-hour (velocity) instead of total views. Only use when user explicitly asks for trending/viral/momentum content." },
+            daysBack: { type: "number", description: "Only include videos published within this many days (default 5). Used with trending:true." },
           },
           required: ["query"],
         },
@@ -1613,9 +1617,59 @@ Rules:
           const query = String(args.query || '').trim();
           if (!query) return { result: 'error', label: 'query required', detail: 'Provide a search query.' };
           const maxResults = Math.min(Math.max(typeof args.maxResults === 'number' ? args.maxResults : 8, 1), 10);
+          const trendingMode = !!args.trending;
+          const daysBack = typeof args.daysBack === 'number' ? args.daysBack : 5;
           try {
             const searchResult = await ytSearch({ query, pageStart: 1, pageEnd: 1 });
-            const videos = (searchResult.videos || []).slice(0, maxResults);
+            let videos = (searchResult.videos || []) as any[];
+
+            if (trendingMode) {
+              // Compute views-per-hour for each video and sort by velocity
+              const now = Date.now();
+              const daysMs = daysBack * 24 * 60 * 60 * 1000;
+              videos = videos
+                .map((v: any) => {
+                  const viewCount = typeof v.views === 'number' ? v.views : parseInt(String(v.views).replace(/[^0-9]/g, ''), 10) || 0;
+                  // Parse "X days ago", "X hours ago", etc. from v.ago
+                  let ageMs = daysBack * 24 * 60 * 60 * 1000; // fallback
+                  if (v.ago) {
+                    const agoMatch = v.ago.match(/(\d+)\s*(second|minute|hour|day|week|month|year)/i);
+                    if (agoMatch) {
+                      const n = parseInt(agoMatch[1], 10);
+                      const unit = agoMatch[2].toLowerCase();
+                      const unitMs: Record<string, number> = {
+                        second: 1000, minute: 60000, hour: 3600000,
+                        day: 86400000, week: 604800000, month: 2592000000, year: 31536000000,
+                      };
+                      ageMs = n * (unitMs[unit] || 86400000);
+                    }
+                  }
+                  const ageHours = Math.max(ageMs / 3600000, 1);
+                  const viewsPerHour = Math.round(viewCount / ageHours);
+                  return { ...v, viewCount, ageMs, viewsPerHour };
+                })
+                .filter((v: any) => v.ageMs <= daysMs)
+                .sort((a: any, b: any) => b.viewsPerHour - a.viewsPerHour)
+                .slice(0, maxResults);
+
+              if (videos.length === 0) return { result: 'error', label: 'No trending results', detail: `No videos found in the last ${daysBack} days for: "${query}"` };
+
+              const formatted = videos.map((v: any, i: number) => {
+                const views = v.viewCount.toLocaleString();
+                const vph = v.viewsPerHour.toLocaleString();
+                const ago = v.ago || 'unknown date';
+                return `${i + 1}. "${v.title}"\n   Channel: ${v.author?.name || 'unknown'}\n   Views/hr: ${vph} | Total: ${views} | Posted: ${ago}\n   Video ID: ${v.videoId}\n   URL: ${v.url}`;
+              }).join('\n\n');
+
+              return {
+                result: 'success',
+                label: `YouTube trending: ${videos.length} results`,
+                detail: `Trending search (views/hour): "${query}" — last ${daysBack} days\n\n${formatted}`,
+              };
+            }
+
+            // Standard mode
+            videos = videos.slice(0, maxResults);
             if (videos.length === 0) return { result: 'error', label: 'No results', detail: `No YouTube videos found for: "${query}"` };
             const formatted = videos.map((v: any, i: number) => {
               const views = typeof v.views === 'number' ? v.views.toLocaleString() : (v.views || 'unknown');

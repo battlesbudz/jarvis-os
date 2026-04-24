@@ -1,7 +1,7 @@
-import { Client, GatewayIntentBits, Events, Partials, Message, DMChannel, type GuildBasedChannel } from "discord.js";
+import { Client, GatewayIntentBits, Events, Partials, Message, DMChannel, type GuildBasedChannel, type TextChannel, type MessageReaction, type PartialMessageReaction, type User as DiscordUser, type PartialUser } from "discord.js";
 import { db } from "../db";
 import { eq, and } from "drizzle-orm";
-import { channelLinks, users } from "@shared/schema";
+import { channelLinks, users, discordPendingApprovals, discordAgents } from "@shared/schema";
 import { getUserToken, saveUserToken, deleteUserToken } from "../userTokenStore";
 import { runCoachAgent } from "../channels/coachAgent";
 import { setupWorkspace as _setupWorkspace, postToTopicChannel as _postToTopicChannel, classifyTopic, getTopicForChannel, WORKSPACE_TOPICS, type WorkspaceMeta } from "./workspace";
@@ -234,6 +234,12 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
       ? `\n\n[Workspace channel: ${topicForChannel.emoji} ${topicForChannel.name.charAt(0).toUpperCase() + topicForChannel.name.slice(1)}. ${topicForChannel.description} Keep your response focused on this life area unless the user explicitly asks about something else.]`
       : "";
 
+    // ── Phase 6: Named agent persona injection ─────────────────────────
+    const namedAgent = !isDM ? await getNamedAgentForChannel(userId, message.channelId) : null;
+    const personaPrefix = namedAgent
+      ? `[You are ${namedAgent.name}. ${namedAgent.persona}]\n\n`
+      : "";
+
     // ── Route through coach pipeline with streaming edits ──────────────
     let placeholder: Message | null = null;
     try {
@@ -256,11 +262,13 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
       }
     };
 
+    const fullUserText = personaPrefix + (topicContext ? userText + topicContext : userText);
+
     try {
       const result = await runCoachAgent({
         userId,
-        userText: topicContext ? userText + topicContext : userText,
-        channelName: channelLabel,
+        userText: fullUserText,
+        channelName: namedAgent ? `Discord #${namedAgent.name.toLowerCase()}` : channelLabel,
         onToken,
       });
 
@@ -323,8 +331,9 @@ export async function startUserBot(userId: string, botToken: string): Promise<vo
       GatewayIntentBits.MessageContent,
       GatewayIntentBits.DirectMessages,
       GatewayIntentBits.DirectMessageReactions,
+      GatewayIntentBits.GuildMessageReactions,
     ],
-    partials: [Partials.Channel, Partials.Message],
+    partials: [Partials.Channel, Partials.Message, Partials.Reaction],
   });
 
   client.once(Events.ClientReady, (c) => {
@@ -332,6 +341,7 @@ export async function startUserBot(userId: string, botToken: string): Promise<vo
   });
 
   client.on(Events.MessageCreate, buildMessageHandler(userId, client));
+  client.on(Events.MessageReactionAdd, buildReactionHandler(userId));
 
   client.on(Events.Error, (err) => {
     console.error(`[DiscordManager] Client error for user ${userId}:`, err.message);
@@ -632,4 +642,220 @@ export async function postToDiscordWorkspace(
   if (!workspace) return false;
 
   return _postToTopicChannel(client, workspace, topicKey, text);
+}
+
+// ── Phase 1: Post to channel by name or ID ───────────────────────────────────
+
+/**
+ * Post a message to a Discord channel identified by ID or name.
+ * First tries to find the channel by ID, then by name across all guilds.
+ */
+export async function postToDiscordChannel(
+  userId: string,
+  channelName: string,
+  channelId: string | null,
+  text: string,
+): Promise<boolean> {
+  const client = botClients.get(userId);
+  if (!client || !client.isReady()) return false;
+
+  const { ChannelType } = await import("discord.js");
+
+  try {
+    let targetChannel: TextChannel | null = null;
+
+    // Try by channel ID first
+    if (channelId) {
+      try {
+        const ch = await client.channels.fetch(channelId);
+        if (ch && ch.isTextBased()) targetChannel = ch as TextChannel;
+      } catch {
+        // fall through to name lookup
+      }
+    }
+
+    // Fall back to name search across all guilds
+    if (!targetChannel && channelName) {
+      const slug = channelName.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+      for (const guild of client.guilds.cache.values()) {
+        const fetchedGuild = await guild.fetch().catch(() => null);
+        if (!fetchedGuild) continue;
+        const channels = await fetchedGuild.channels.fetch().catch(() => null);
+        if (!channels) continue;
+        const match = channels.find(
+          (ch) =>
+            ch &&
+            ch.type === ChannelType.GuildText &&
+            (ch as TextChannel).name === slug,
+        ) as TextChannel | undefined;
+        if (match) { targetChannel = match; break; }
+      }
+    }
+
+    if (!targetChannel) {
+      console.warn(`[DiscordManager] postToDiscordChannel: channel not found (name=${channelName}, id=${channelId})`);
+      return false;
+    }
+
+    const chunks = splitIntoChunks(text, 1900);
+    for (const chunk of chunks) {
+      await targetChannel.send(chunk);
+    }
+    return true;
+  } catch (err) {
+    console.error(`[DiscordManager] postToDiscordChannel failed:`, err);
+    return false;
+  }
+}
+
+// ── Phase 5: Pin message ─────────────────────────────────────────────────────
+
+/**
+ * Pin a message in a Discord channel.
+ */
+export async function pinDiscordMessage(
+  userId: string,
+  channelId: string,
+  messageId: string,
+): Promise<boolean> {
+  const client = botClients.get(userId);
+  if (!client || !client.isReady()) return false;
+
+  try {
+    const channel = await client.channels.fetch(channelId);
+    if (!channel || !channel.isTextBased()) return false;
+    const msg = await (channel as TextChannel).messages.fetch(messageId);
+    if (!msg) return false;
+    await msg.pin();
+    return true;
+  } catch (err) {
+    console.error(`[DiscordManager] pinDiscordMessage failed:`, err);
+    return false;
+  }
+}
+
+// ── Phase 3: Reaction handler ─────────────────────────────────────────────────
+
+function buildReactionHandler(botOwnerId: string) {
+  return async (reaction: MessageReaction | PartialMessageReaction, user: DiscordUser | PartialUser) => {
+    try {
+      // Ignore bot reactions
+      if (user.bot) return;
+
+      // Fetch partial reaction/message if needed
+      if (reaction.partial) {
+        try { await reaction.fetch(); } catch { return; }
+      }
+      if (reaction.message.partial) {
+        try { await reaction.message.fetch(); } catch { return; }
+      }
+
+      const messageId = reaction.message.id;
+      const emoji = reaction.emoji.name || "";
+
+      // Look up pending approval
+      const rows = await db
+        .select()
+        .from(discordPendingApprovals)
+        .where(
+          and(
+            eq(discordPendingApprovals.messageId, messageId),
+            eq(discordPendingApprovals.userId, botOwnerId),
+            eq(discordPendingApprovals.status, "pending"),
+          ),
+        )
+        .limit(1);
+
+      if (!rows[0]) return;
+      const approval = rows[0];
+
+      const isApprove = emoji === approval.approveEmoji;
+      const isReject = emoji === approval.rejectEmoji;
+      if (!isApprove && !isReject) return;
+
+      const newStatus = isApprove ? "approved" : "rejected";
+      await db
+        .update(discordPendingApprovals)
+        .set({ status: newStatus, resolvedAt: new Date() })
+        .where(eq(discordPendingApprovals.messageId, messageId));
+
+      console.log(`[DiscordManager] Approval ${messageId} ${newStatus} via reaction`);
+
+      // Execute action
+      const actionData = isApprove ? approval.onApprove : approval.onReject;
+      if (actionData) {
+        const { executeApprovalAction } = await import("./approvalActions");
+        executeApprovalAction(
+          botOwnerId,
+          actionData as any,
+          approval.content,
+          approval.channelId,
+        ).catch((err) => console.error("[DiscordManager] approval action failed:", err));
+      }
+
+      // Add confirmation reaction
+      try {
+        await reaction.message.react(isApprove ? "✅" : "❌");
+      } catch { }
+
+    } catch (err) {
+      console.error("[DiscordManager] buildReactionHandler error:", err);
+    }
+  };
+}
+
+// ── Phase 6: Named agent lookup ──────────────────────────────────────────────
+
+async function getNamedAgentForChannel(userId: string, channelId: string): Promise<{ name: string; persona: string } | null> {
+  try {
+    const rows = await db
+      .select()
+      .from(discordAgents)
+      .where(
+        and(
+          eq(discordAgents.userId, userId),
+          eq(discordAgents.channelId, channelId),
+          eq(discordAgents.isActive, 1),
+        ),
+      )
+      .limit(1);
+    const agent = rows[0];
+    if (!agent || !agent.persona) return null;
+    return { name: agent.name, persona: agent.persona };
+  } catch {
+    return null;
+  }
+}
+
+// ── Phase 6: Register or update a named agent in DB ─────────────────────────
+
+export async function registerNamedAgent(
+  userId: string,
+  params: {
+    name: string;
+    role: string;
+    persona?: string;
+    channelId?: string;
+    channelName?: string;
+    loopEnabled?: boolean;
+    loopIntervalMinutes?: number;
+    loopPrompt?: string;
+  },
+): Promise<string> {
+  const [row] = await db
+    .insert(discordAgents)
+    .values({
+      userId,
+      name: params.name,
+      role: params.role,
+      persona: params.persona,
+      channelId: params.channelId,
+      channelName: params.channelName,
+      isActive: 1,
+      loopEnabled: params.loopEnabled ? 1 : 0,
+      loopIntervalMinutes: params.loopIntervalMinutes ?? 60,
+      loopPrompt: params.loopPrompt,
+    })
+    .returning({ id: discordAgents.id });
+  return row.id;
 }
