@@ -518,6 +518,7 @@ export const NOTIFICATION_TYPES = [
   "approval_request",
   "nervous_system",
   "dream_insight",
+  "stress_checkin",
   "general",
 ] as const;
 export type NotificationType = typeof NOTIFICATION_TYPES[number];
@@ -620,6 +621,27 @@ export const nervousSystemSignals = pgTable("nervous_system_signals", {
 }, (table) => [
   uniqueIndex("nervous_system_signals_hash_idx").on(table.userId, table.contentHash),
 ]);
+
+// ── Emotional State Engine ────────────────────────────────────────────────────
+// Computed once per heartbeat cycle per user. Aggregates objective signals
+// (calendar density, energy check-ins, task completion rate, late-night
+// activity, message sentiment) into stress and flow scores (0–10).
+// Users can also set a manual override to correct Jarvis's perception.
+
+export const userEmotionalState = pgTable("user_emotional_state", {
+  userId: varchar("user_id").notNull().primaryKey().references(() => users.id, { onDelete: "cascade" }),
+  stressScore: integer("stress_score").notNull().default(0),
+  flowScore: integer("flow_score").notNull().default(0),
+  label: varchar("label").notNull().default("calm"),
+  explanation: text("explanation"),
+  signalSources: jsonb("signal_sources").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+  manualOverride: varchar("manual_override"),
+  manualOverrideAt: timestamp("manual_override_at"),
+  computedAt: timestamp("computed_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  consecutiveHighStressCycles: integer("consecutive_high_stress_cycles").notNull().default(0),
+  lastStressCheckinAt: timestamp("last_stress_checkin_at"),
+});
 
 // Dream Cycle — nightly deep synthesis insights.
 // Each row is one insight produced by a single dream run.

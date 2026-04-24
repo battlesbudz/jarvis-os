@@ -659,6 +659,7 @@ export async function runHeartbeatTick(): Promise<void> {
   }
 
   const checklist = readChecklist();
+
   if (!checklist) {
     console.warn("[Heartbeat] checklist file missing, skipping tick");
     return;
@@ -711,6 +712,14 @@ export async function runHeartbeatTick(): Promise<void> {
     } catch {}
 
     let actionsFired = 0;
+    // Emotional State Engine — recompute once per tick, per user.
+    try {
+      const { computeAndStoreEmotionalState } = await import("./intelligence/emotional-state");
+      await computeAndStoreEmotionalState(link.userId, tz, now);
+    } catch (err) {
+      console.error(`[Heartbeat] emotional state computation failed for ${link.userId}:`, err);
+    }
+
     try {
       if (token) actionsFired += await runMeetingBriefs(link.userId, link.chatId, token, memories, now, tz, userEmail);
     } catch (err) { console.error(`[Heartbeat] meeting briefs failed for ${link.userId}:`, err); }

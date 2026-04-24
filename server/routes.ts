@@ -158,7 +158,7 @@ async function getMorningNoteSummary(userId: string): Promise<string> {
   }
 }
 
-function buildCoachSystemPrompt(goals: any[], stats: any, history: any[], calendarEvents: any[] = [], lifeContext?: any, gmailItems?: any[], gmailConnected?: boolean, slackMessages?: any[], slackConnected?: boolean, commitmentsList?: any[], coachingMode?: string, memories?: { content: string; category: string }[], telegramMessages?: any[], telegramConnected?: boolean, morningNoteSummary?: string, documentsContext?: string, crossChannelContext?: string, soulBlock?: string, daemonSection?: string): string {
+function buildCoachSystemPrompt(goals: any[], stats: any, history: any[], calendarEvents: any[] = [], lifeContext?: any, gmailItems?: any[], gmailConnected?: boolean, slackMessages?: any[], slackConnected?: boolean, commitmentsList?: any[], coachingMode?: string, memories?: { content: string; category: string }[], telegramMessages?: any[], telegramConnected?: boolean, morningNoteSummary?: string, documentsContext?: string, crossChannelContext?: string, soulBlock?: string, daemonSection?: string, emotionalStateBlock?: string): string {
   const completedHistory = history.filter((h: any) => h.completed);
   const skippedHistory = history.filter((h: any) => !h.completed);
   const completionRate = history.length > 0
@@ -283,7 +283,7 @@ ${crossChannelContext || ''}
 ${COACHING_FRAMEWORKS}
 
 ${personaBlock}
-${soulBlock && soulBlock.trim() ? soulBlock : memoriesSection}
+${soulBlock && soulBlock.trim() ? soulBlock : memoriesSection}${emotionalStateBlock && emotionalStateBlock.trim() ? emotionalStateBlock : ''}
 
 ## User Profile
 - Current streak: ${stats.streak || 0} days
@@ -408,12 +408,12 @@ export async function buildPlanFromInputs(body: any): Promise<{
     ...(Array.isArray(goals) ? goals.slice(0, 3).map((g: any) => g?.title).filter(Boolean) : []),
     ...(Array.isArray(brainDump) ? brainDump.slice(0, 3).map((b: any) => b?.text || b).filter(Boolean) : []),
   ].join(" • ");
-  const { soulSection: planSoul, patternSection: planPatterns, memorySection: planMemories } =
+  const { soulSection: planSoul, patternSection: planPatterns, memorySection: planMemories, emotionalStateSection: planEmotionalState } =
     await buildAiContextSections(typeof userId === "string" ? userId : undefined, planSeed);
 
   const prompt = `You are Jarvis, an autonomous planning AI. Build a realistic, prioritized daily plan for this person.
 
-Today is ${dayOfWeek}, ${dateStr}.${planSoul}${planPatterns}${planMemories}
+Today is ${dayOfWeek}, ${dateStr}.${planSoul}${planPatterns}${planMemories}${planEmotionalState}
 
 ## Calendar
 ${calendarText}
@@ -1932,6 +1932,16 @@ Answer (yes/no):`,
       }
 
       const soulBlock = await getSoulPromptBlock(userId);
+
+      let emotionalStateBlock = '';
+      if (userId) {
+        try {
+          const { getEmotionalState, buildEmotionalStatePromptBlock } = await import("./intelligence/emotional-state");
+          const emotionalState = await getEmotionalState(userId);
+          if (emotionalState) emotionalStateBlock = buildEmotionalStatePromptBlock(emotionalState);
+        } catch {}
+      }
+
       const daemonPaired = userId ? isUserPaired(userId) : false;
       const [androidActive, daemonDeviceMeta] = daemonPaired && userId
         ? await Promise.all([isAndroidDaemonActive(userId), getDaemonDeviceMeta(userId)])
@@ -1953,7 +1963,7 @@ Answer (yes/no):`,
           ? `Android Device Daemon is ACTIVE and connected.\n${deviceHints}\nAvailable daemon actions: android_open_app, android_browse, android_screenshot, android_read_screen, android_tap, android_type, android_swipe, android_press_key, android_wait, android_file_list, android_file_read, android_notifications_list, notify. DO NOT use desktop shell/file actions.\nSEARCH SHORTCUTS — use android_browse with these deep links (opens native app directly to results): YouTube search → url='vnd.youtube://results?search_query=YOUR_QUERY', Google Maps → url='geo:0,0?q=YOUR_QUERY', Spotify → url='spotify:search:YOUR_QUERY'.\nUI SETTLING — use android_wait (ms: 1500–3000) after tapping interactive elements that trigger loading (videos, pages, navigation) before calling android_read_screen. This prevents read_screen from seeing a blank or transitioning state.\n\nYOUTUBE RESEARCH WORKFLOW — when the user asks to research something on YouTube, find a good video and summarize it:\n  1. Call search_youtube (server-side) with the query. This returns results with channel name, views, date, and video ID — use this to pick a reputable, high-view-count, recent video without touching the phone at all.\n  2. Call fetch_youtube_transcript with the chosen video ID — this fetches the COMPLETE transcript server-side with no truncation.\n  3. Call android_browse with url='vnd.youtube://watch?v=VIDEO_ID' to open the video on the phone so the user can watch it.\n  4. Summarize the transcript content for the user.\n  5. Call notify as the final step (see NOTIFICATIONS below).\n  NEVER navigate YouTube's transcript UI (3-dot menu, Show Transcript, scroll) — always use fetch_youtube_transcript.\n\nNOTIFICATION → YOUTUBE VIDEO WORKFLOW — when the user asks you to open a specific video from their notifications:\n  1. android_notifications_list → find the notification the user mentioned (match by channel name or partial title).\n  2. Extract the YouTube URL from the notification if present. YouTube notification bodies often contain 'youtube.com/watch?v=VIDEO_ID' or the URL is in the intent data. Use android_browse url='vnd.youtube://watch?v=VIDEO_ID' with the exact extracted ID.\n  3. If no URL in notification: use the EXACT video title from the notification as the query for search_youtube, pick the result whose title matches most closely, then open with android_browse url='vnd.youtube://watch?v=VIDEO_ID'.\n  4. android_wait(3000) → android_screenshot → VISUALLY VERIFY the correct video title is on screen before proceeding. If the wrong video loaded, go back (android_press_key: back) and retry with a more specific search query or the exact title.\n  5. NEVER open a search results page and assume the first result is the correct video — always verify the video title matches what the user asked for.\n\nYOUTUBE APP SPATIAL LAYOUT (Galaxy Z Fold 6 cover screen, portrait) — use this as your mental map when navigating:\n  SCREEN ZONES (top to bottom):\n  • Video Player (top ~0–40% of screen): The video plays here. Tapping it toggles play/pause controls.\n  • Title Zone (~40–50%): Video title text + view count + date.\n  • Channel Zone (~50–57%): Channel name + subscriber count + Subscribe/bell button.\n  • Action Row (~57–65%): Like (with count) | Dislike | Share | Ask | Save — horizontally arranged.\n  • Comments Section (~65–78%): IMMEDIATELY VISIBLE below the action row — NO SCROLLING NEEDED. Shows 'Comments [count]' header on the left, then the first comment text directly below it as a preview. This entire block is the tap target to open the full comment list.\n  • Recommended / Store content (below 78%): Sponsored sections, other videos.\n\n  READING COMMENTS STEP-BY-STEP:\n  1. After video opens: android_wait(2500), then android_screenshot to confirm the video loaded.\n  2. The comments section is ALREADY VISIBLE on screen — no scrolling required.\n  3. android_read_screen — the output will contain 'Comments [number]' and the first comment text right there in the page. You can read that first comment immediately.\n  4. To open the full comment list: android_tap at the comments block (~x=450, y=1450 on the Z Fold 6 cover screen — roughly 65% down). This opens a bottom sheet with all comments.\n  5. android_wait(1500), android_screenshot — the comment sheet should now be open.\n  6. android_read_screen to extract the comment text you need.\n  7. If tapping opened the video fullscreen instead: android_press_key(back) to exit fullscreen, then retry tapping the comments block lower on the screen.\n\n  IMPORTANT COORDINATE NOTES:\n  • The Z Fold 6 cover screen is approx 904px wide × 2316px tall. Tap x-coordinates: use x=450 (center). y=1450 targets the comments section.\n  • After every tap, ALWAYS android_wait(1000–1500) then android_screenshot before the next action. This prevents mis-taps on transitioning screens.\n  • The first comment text is readable directly from android_read_screen without tapping anything — use this to answer 'what is the first comment?' type questions instantly.\n\nACTION FLOW for multi-step tasks: Use as many tool-call turns as the task requires — there is no turn limit. For each step: (1) If unsure what is on screen, call android_read_screen first. (2) Act — call android_browse, android_tap, android_swipe, android_type, etc. as needed. (3) After acting, call android_read_screen to confirm the result, then decide the next step. Complete the FULL task end-to-end before responding — do NOT stop mid-task and ask the user to finish. NEVER re-open an app that is already on screen. NEVER describe app content without calling android_read_screen first. If an op returns result:error, tell the user what failed and what you tried.\n\n\nFLAG_SECURE APPS — android_screenshot WILL ALWAYS FAIL for these apps (OS-level block, cannot be bypassed):\n  Facebook (com.facebook.katana / .lite), Instagram (com.instagram.android), WhatsApp (com.whatsapp), Snapchat (com.snapchat.android), Netflix (com.netflix.mediaclient), Disney+ (com.disney.disneyplus), most banking apps, and camera apps.\n  For ANY of these apps, NEVER call android_screenshot — it will always fail. Use android_read_screen instead. android_read_screen reads the accessibility tree and IS available even in FLAG_SECURE apps — it gives you all visible text, button labels, and UI element positions. This is actually MORE useful for understanding content than a screenshot since it returns structured data.\n\nCAMERA TASKS — android_screenshot WILL FAIL inside camera apps (FLAG_SECURE). For any photo task: (1) android_open_app the camera package, (2) android_wait 2000ms to let it load, (3) android_read_screen to see the viewfinder UI and find the shutter button coordinates, (4) android_tap the shutter button, (5) android_wait 1500ms, (6) send notify success banner — do NOT call android_screenshot inside the camera, it will always fail. Trust the shutter tap succeeded and move on.\n\nNOTIFICATIONS — ALWAYS send a notify banner at the end of every multi-step task, success OR failure:\n- SUCCESS: notify with title:'Jarvis ✓', body: one-line summary of what was done (e.g. "Playing Lo-Fi Hip Hop — 2.1M views, posted 3 days ago")\n- FAILURE: notify with title:'Jarvis ✗', body: one-line summary of what went wrong (e.g. "Couldn't get transcript — captions disabled on this video")\nThis ensures the user always gets a phone banner and never waits silently for a task that already ended.\n\nRETURN TO JARVIS — REQUIRED FINAL STEP after every multi-step task:\nAfter calling notify, ALWAYS call android_return_to_jarvis as the very last step. This navigates the phone back to the Jarvis chat in the browser so the user can continue the conversation without having to manually switch apps. The full task loop is always: complete task → notify banner → android_return_to_jarvis. Never skip android_return_to_jarvis on multi-step tasks.\n\nSCREENSHOT DISPLAY — screenshots ARE shown inline in the Jarvis chat as viewable images:\nWhen android_screenshot succeeds, the screenshot is automatically stored and a preview URL is returned. Include a brief description of what the screenshot shows (e.g. "Here's the current Facebook screen:") before the tool result is displayed — the image will appear inline in the chat for the user to see directly.`
           : 'Desktop Daemon is ACTIVE. Use shell, notify, file_read, file_write, file_list actions. ALWAYS report errors immediately if a tool returns result:error. Use daemon_diagnostic (no args) to check daemon health before multi-step sequences or when ops are failing.'
         : '⚠️ NO DAEMON CONNECTED. Do NOT call daemon_action — it will fail with "daemon not connected". If the user asks to control their phone or computer, tell them exactly this: "Your phone daemon isn\'t connected. To fix it: (1) Open the Jarvis app → Profile → scroll to \'Android Device\' → tap \'Get Pairing Code\', (2) Open the Jarvis Daemon APK on your phone, (3) Make sure the Server URL is https://GameplanAI.replit.app, (4) Enter the 8-character pairing code, (5) Tap Pair. The status dot should turn green within a few seconds." Do not attempt daemon_action until they confirm it\'s connected.';
-      const systemPrompt = buildCoachSystemPrompt(goals || [], stats || {}, history || [], calendarEvents || [], lifeContext || null, resolvedGmailItems, resolvedGmailConnected, slackMessages || [], slackConnected ?? false, userCommitments, coachingMode, memories, telegramMessages || [], telegramConnected ?? false, morningNoteSummary, documentsContext, crossChannelContext, soulBlock, daemonSection);
+      const systemPrompt = buildCoachSystemPrompt(goals || [], stats || {}, history || [], calendarEvents || [], lifeContext || null, resolvedGmailItems, resolvedGmailConnected, slackMessages || [], slackConnected ?? false, userCommitments, coachingMode, memories, telegramMessages || [], telegramConnected ?? false, morningNoteSummary, documentsContext, crossChannelContext, soulBlock, daemonSection, emotionalStateBlock);
 
       // Detect if the user's current message is a device-control request so we can
       // force tool use rather than letting the model respond with plain text.
@@ -4015,6 +4025,39 @@ Return ONLY the JSON object.`;
       isSystem: true,
     }));
     res.json(recurring);
+  });
+
+  // ── Emotional State Engine ────────────────────────────────────────────────────
+
+  app.get("/api/jarvis/emotional-state", async (req: Request, res: Response) => {
+    const userId = req.userId;
+    if (!userId) return res.status(401).json({ error: "Not authenticated" });
+    try {
+      const { getEmotionalState } = await import("./intelligence/emotional-state");
+      const state = await getEmotionalState(userId);
+      res.json(state ?? null);
+    } catch (err) {
+      console.error("[emotional-state] GET failed:", err);
+      res.status(500).json({ error: "Failed to load emotional state" });
+    }
+  });
+
+  app.post("/api/jarvis/emotional-state/override", async (req: Request, res: Response) => {
+    const userId = req.userId;
+    if (!userId) return res.status(401).json({ error: "Not authenticated" });
+    const { override } = req.body;
+    const validOverrides = ["calm", "focused", "in flow", "stressed", "overwhelmed"];
+    if (!override || !validOverrides.includes(override)) {
+      return res.status(400).json({ error: `override must be one of: ${validOverrides.join(", ")}` });
+    }
+    try {
+      const { setManualStateOverride } = await import("./intelligence/emotional-state");
+      await setManualStateOverride(userId, override, new Date());
+      res.json({ ok: true, override });
+    } catch (err) {
+      console.error("[emotional-state] override failed:", err);
+      res.status(500).json({ error: "Failed to set override" });
+    }
   });
 
   app.post("/api/inbox/items/:id/action", async (req: Request, res: Response) => {

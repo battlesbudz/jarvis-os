@@ -193,6 +193,17 @@ function getCategoryColor(cat: string) {
   return map[cat?.toLowerCase()] ?? Colors.textSecondary;
 }
 
+function getEmotionalColor(label: string): string {
+  switch (label) {
+    case 'overwhelmed': return '#EF4444';
+    case 'stressed': return '#F97316';
+    case 'calm': return '#6B7280';
+    case 'focused': return '#8B5CF6';
+    case 'in flow': return '#06B6D4';
+    default: return '#6B7280';
+  }
+}
+
 // Panel Shell
 
 interface PanelProps {
@@ -360,6 +371,18 @@ export default function MissionControlScreen() {
   const [newRecurrence, setNewRecurrence] = useState('');
   const [savingTask, setSavingTask] = useState(false);
 
+  // ── Emotional State ──
+  const [emotionalState, setEmotionalState] = useState<{
+    stressScore: number;
+    flowScore: number;
+    label: string;
+    explanation: string | null;
+    signalSources: string[];
+    manualOverride: string | null;
+  } | null>(null);
+  const [emotionalStateModal, setEmotionalStateModal] = useState(false);
+  const [settingOverride, setSettingOverride] = useState(false);
+
   // ── Load local data ──
   const loadLocal = useCallback(async () => {
     setTasksLoading(true);
@@ -390,7 +413,7 @@ export default function MissionControlScreen() {
     const weekStart = new Date().toISOString();
     const weekEnd = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
     const calParams = `?startTime=${encodeURIComponent(weekStart)}&endTime=${encodeURIComponent(weekEnd)}`;
-    const [inboxRes, delRes, memRes, docRes, schedRes, gcalRes, ocalRes, sysSchedRes] = await Promise.allSettled([
+    const [inboxRes, delRes, memRes, docRes, schedRes, gcalRes, ocalRes, sysSchedRes, esRes] = await Promise.allSettled([
       apiRequest('GET', '/api/inbox/items').then(r => r.json()),
       apiRequest('GET', '/api/deliverables').then(r => r.json()),
       authFetch(new URL('/api/memories', getApiUrl()).toString()).then(r => r.json()),
@@ -399,6 +422,7 @@ export default function MissionControlScreen() {
       apiRequest('GET', `/api/calendar/google/events${calParams}`).then(r => r.json()).catch(() => null),
       apiRequest('GET', `/api/calendar/outlook/events${calParams}`).then(r => r.json()).catch(() => null),
       apiRequest('GET', '/api/jarvis/system-schedule').then(r => r.json()).catch(() => null),
+      apiRequest('GET', '/api/jarvis/emotional-state').then(r => r.json()).catch(() => null),
     ]);
 
     if (inboxRes.status === 'fulfilled' && Array.isArray(inboxRes.value)) {
@@ -430,6 +454,10 @@ export default function MissionControlScreen() {
 
     if (sysSchedRes.status === 'fulfilled' && Array.isArray(sysSchedRes.value)) {
       setSystemSchedule(sysSchedRes.value as SystemTask[]);
+    }
+
+    if (esRes.status === 'fulfilled' && esRes.value && typeof esRes.value === 'object' && esRes.value.label) {
+      setEmotionalState(esRes.value);
     }
 
     const merged: CalendarEvent[] = [];
@@ -623,6 +651,32 @@ export default function MissionControlScreen() {
     setBreakingDown(false);
   }, [editingTask]);
 
+  const handleOverrideEmotionalState = useCallback(async (override: string) => {
+    setSettingOverride(true);
+    const scoreMap: Record<string, { stressScore: number; flowScore: number }> = {
+      overwhelmed: { stressScore: 9, flowScore: 1 },
+      stressed:    { stressScore: 7, flowScore: 3 },
+      focused:     { stressScore: 3, flowScore: 7 },
+      'in flow':   { stressScore: 2, flowScore: 9 },
+      calm:        { stressScore: 2, flowScore: 5 },
+    };
+    const scores = scoreMap[override] ?? { stressScore: 2, flowScore: 5 };
+    try {
+      await apiRequest('POST', '/api/jarvis/emotional-state/override', { override });
+      setEmotionalState(prev => prev ? {
+        ...prev,
+        label: override,
+        stressScore: scores.stressScore,
+        flowScore: scores.flowScore,
+        explanation: `You self-reported as "${override}". Jarvis will adapt its tone for the next 3 hours.`,
+        manualOverride: override,
+      } : prev);
+      setEmotionalStateModal(false);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch {}
+    setSettingOverride(false);
+  }, []);
+
   // ── Computed ──
   const PRIORITY_ORDER: Record<string, number> = { high: 0, medium: 1, low: 2 };
   const rawTodayTasks = plan?.tasks ?? [];
@@ -702,7 +756,100 @@ export default function MissionControlScreen() {
           {inboxItems.length > 0 ? `  ·  ${inboxItems.length} inbox` : ''}
           {pendingScheduled.length > 0 ? `  ·  ${pendingScheduled.length} scheduled` : ''}
         </Text>
+        {emotionalState && (
+          <Pressable
+            onPress={() => setEmotionalStateModal(true)}
+            style={[styles.emotionalBadge, { backgroundColor: getEmotionalColor(emotionalState.label) + '25', borderColor: getEmotionalColor(emotionalState.label) + '60' }]}
+          >
+            <View style={[styles.emotionalDot, { backgroundColor: getEmotionalColor(emotionalState.label) }]} />
+            <Text style={[styles.emotionalBadgeText, { color: getEmotionalColor(emotionalState.label) }]}>
+              {emotionalState.label.toUpperCase()}
+            </Text>
+          </Pressable>
+        )}
       </View>
+
+      {/* ── Emotional State Override Modal ── */}
+      <Modal visible={emotionalStateModal} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setEmotionalStateModal(false)}>
+        <View style={[styles.modalContainer, { paddingTop: insets.top }]}>
+          <View style={[styles.modalHeader, { borderBottomColor: Colors.cyan + '30' }]}>
+            <Pressable onPress={() => setEmotionalStateModal(false)} style={styles.modalBackBtn}>
+              <Ionicons name="chevron-back" size={20} color={Colors.textSecondary} />
+              <Text style={styles.modalBackText}>Back</Text>
+            </Pressable>
+            <Text style={[styles.modalTitle, { color: Colors.cyan }]}>JARVIS STATE</Text>
+            <View style={styles.modalHeaderSpacer} />
+          </View>
+          <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: insets.bottom + 40 }}>
+            {emotionalState && (
+              <>
+                <View style={styles.esCurrentCard}>
+                  <View style={[styles.esCurrentDot, { backgroundColor: getEmotionalColor(emotionalState.label) }]} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.esCurrentLabel}>Jarvis perceives you as</Text>
+                    <Text style={[styles.esCurrentState, { color: getEmotionalColor(emotionalState.label) }]}>
+                      {emotionalState.label.toUpperCase()}
+                    </Text>
+                    <Text style={styles.esCurrentExplanation}>{emotionalState.explanation}</Text>
+                  </View>
+                </View>
+                <View style={styles.esScores}>
+                  <View style={styles.esScoreItem}>
+                    <Text style={styles.esScoreLabel}>Stress</Text>
+                    <Text style={[styles.esScoreValue, { color: emotionalState.stressScore >= 7 ? Colors.error : emotionalState.stressScore >= 5 ? Colors.warning : Colors.textSecondary }]}>
+                      {emotionalState.stressScore}/10
+                    </Text>
+                  </View>
+                  <View style={styles.esScoreItem}>
+                    <Text style={styles.esScoreLabel}>Flow</Text>
+                    <Text style={[styles.esScoreValue, { color: emotionalState.flowScore >= 7 ? Colors.cyan : emotionalState.flowScore >= 5 ? Colors.violet : Colors.textSecondary }]}>
+                      {emotionalState.flowScore}/10
+                    </Text>
+                  </View>
+                </View>
+                {emotionalState.signalSources.length > 0 && (
+                  <View style={styles.esSignals}>
+                    <Text style={styles.esSignalsTitle}>Signals used</Text>
+                    {emotionalState.signalSources.map((s, i) => (
+                      <Text key={i} style={styles.esSignalItem}>· {s}</Text>
+                    ))}
+                  </View>
+                )}
+                {emotionalState.manualOverride && (
+                  <View style={styles.esOverrideNote}>
+                    <Ionicons name="information-circle-outline" size={13} color={Colors.textTertiary} />
+                    <Text style={styles.esOverrideNoteText}>Manual override active (lasts 3h)</Text>
+                  </View>
+                )}
+              </>
+            )}
+
+            <Text style={styles.esOverrideTitle}>Correct Jarvis's perception</Text>
+            <Text style={styles.esOverrideSubtitle}>Tap to tell Jarvis how you actually feel. This adjusts its tone for the next 3 hours.</Text>
+
+            {(['calm', 'focused', 'in flow', 'stressed', 'overwhelmed'] as const).map(opt => (
+              <Pressable
+                key={opt}
+                onPress={() => handleOverrideEmotionalState(opt)}
+                disabled={settingOverride}
+                style={[
+                  styles.esOverrideBtn,
+                  { borderColor: getEmotionalColor(opt) + '60', backgroundColor: getEmotionalColor(opt) + '15' },
+                  emotionalState?.label === opt && { borderWidth: 1.5 },
+                ]}
+              >
+                <View style={[styles.emotionalDot, { backgroundColor: getEmotionalColor(opt) }]} />
+                <Text style={[styles.esOverrideBtnText, { color: getEmotionalColor(opt) }]}>
+                  {opt.charAt(0).toUpperCase() + opt.slice(1)}
+                </Text>
+                {emotionalState?.label === opt && (
+                  <Ionicons name="checkmark-circle" size={14} color={getEmotionalColor(opt)} style={{ marginLeft: 'auto' }} />
+                )}
+              </Pressable>
+            ))}
+          </ScrollView>
+        </View>
+      </Modal>
 
       {/* ── Panels ── */}
       <ScrollView
@@ -2062,11 +2209,157 @@ const styles = StyleSheet.create({
   statusLine: {
     paddingHorizontal: 16,
     paddingVertical: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
   statusLineText: {
     fontSize: 11,
     fontFamily: 'Inter_400Regular',
     color: Colors.textTertiary,
+    letterSpacing: 0.3,
+    flex: 1,
+  },
+  emotionalBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    borderRadius: 10,
+    borderWidth: 1,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    marginLeft: 8,
+  },
+  emotionalDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 3,
+  },
+  emotionalBadgeText: {
+    fontSize: 9,
+    fontFamily: 'Inter_700Bold',
+    letterSpacing: 0.8,
+  },
+  esCurrentCard: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 14,
+    backgroundColor: Colors.surface,
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  esCurrentDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    marginTop: 4,
+  },
+  esCurrentLabel: {
+    fontSize: 11,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textTertiary,
+    letterSpacing: 0.5,
+    marginBottom: 2,
+  },
+  esCurrentState: {
+    fontSize: 20,
+    fontFamily: 'Inter_700Bold',
+    letterSpacing: 1.5,
+    marginBottom: 6,
+  },
+  esCurrentExplanation: {
+    fontSize: 13,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+    lineHeight: 18,
+  },
+  esScores: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 16,
+  },
+  esScoreItem: {
+    flex: 1,
+    backgroundColor: Colors.surface,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    padding: 14,
+    alignItems: 'center',
+  },
+  esScoreLabel: {
+    fontSize: 10,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.textTertiary,
+    letterSpacing: 1,
+    marginBottom: 4,
+  },
+  esScoreValue: {
+    fontSize: 22,
+    fontFamily: 'Inter_700Bold',
+    letterSpacing: 0.5,
+  },
+  esSignals: {
+    backgroundColor: Colors.surface,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    padding: 14,
+    marginBottom: 16,
+  },
+  esSignalsTitle: {
+    fontSize: 10,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.textTertiary,
+    letterSpacing: 1,
+    marginBottom: 8,
+  },
+  esSignalItem: {
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+    marginBottom: 3,
+  },
+  esOverrideNote: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    marginBottom: 20,
+  },
+  esOverrideNoteText: {
+    fontSize: 11,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textTertiary,
+  },
+  esOverrideTitle: {
+    fontSize: 13,
+    fontFamily: 'Inter_700Bold',
+    color: Colors.text,
+    letterSpacing: 0.5,
+    marginBottom: 4,
+  },
+  esOverrideSubtitle: {
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+    lineHeight: 17,
+    marginBottom: 16,
+  },
+  esOverrideBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    padding: 14,
+    marginBottom: 10,
+  },
+  esOverrideBtnText: {
+    fontSize: 14,
+    fontFamily: 'Inter_600SemiBold',
     letterSpacing: 0.3,
   },
   inboxInlineActions: {
