@@ -132,6 +132,8 @@ export async function setupWorkspace(
 ): Promise<{ ok: boolean; error?: string; workspace?: WorkspaceMeta }> {
   try {
     const guild = await client.guilds.fetch(guildId) as Guild;
+    // Ensure channel cache is fully populated before any cache lookups
+    await guild.channels.fetch();
 
     // Create (or find) the Jarvis category
     const existingCat = guild.channels.cache.find(
