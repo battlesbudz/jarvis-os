@@ -526,6 +526,55 @@ export async function getChannelsForGuild(
 
 export { WORKSPACE_TOPICS, classifyTopic, type WorkspaceMeta } from "./workspace";
 
+// ── Discord channel creation ────────────────────────────────────────────────
+
+export async function createDiscordChannel(
+  userId: string,
+  opts: { channelName: string; topic?: string; categoryName?: string; pinMessage?: string },
+): Promise<{ ok: boolean; error?: string; channelId?: string }> {
+  const client = botClients.get(userId);
+  if (!client || !client.isReady()) {
+    return { ok: false, error: "Discord bot is not running." };
+  }
+
+  // Find the first guild the bot is in
+  const guilds = client.guilds.cache;
+  if (guilds.size === 0) {
+    return { ok: false, error: "Bot is not in any Discord server." };
+  }
+  const guild = await guilds.first()!.fetch();
+
+  const { ChannelType } = await import("discord.js");
+
+  let parentId: string | undefined;
+  if (opts.categoryName) {
+    const cat = guild.channels.cache.find(
+      (ch) => ch.type === ChannelType.GuildCategory && ch.name.toLowerCase() === opts.categoryName!.toLowerCase(),
+    );
+    if (cat) parentId = cat.id;
+  }
+
+  const slug = opts.channelName.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+
+  try {
+    const created = await guild.channels.create({
+      name: slug,
+      type: ChannelType.GuildText,
+      topic: opts.topic,
+      parent: parentId,
+    }) as import("discord.js").TextChannel;
+
+    if (opts.pinMessage) {
+      const msg = await created.send(opts.pinMessage).catch(() => null);
+      if (msg && msg.pin) await msg.pin().catch(() => {});
+    }
+
+    return { ok: true, channelId: created.id };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || "Failed to create channel." };
+  }
+}
+
 /** Set up the Jarvis Workspace category + topic channels in a guild. */
 export async function setupDiscordWorkspace(
   userId: string,

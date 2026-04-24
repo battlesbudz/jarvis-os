@@ -24,7 +24,7 @@ import {
 import { db } from "../db";
 import { channelLinks } from "@shared/schema";
 import { eq, and } from "drizzle-orm";
-import type { DiscordLinkMeta } from "./manager";
+import type { DiscordLinkMeta, AllowlistedGuild } from "./manager";
 
 // ── Topic definitions ────────────────────────────────────────────────────────
 
@@ -181,9 +181,26 @@ export async function setupWorkspace(
 
     if (rows.length > 0) {
       const existing = (rows[0].metadata as DiscordLinkMeta) || {};
+
+      // Build allowlist entries for every workspace channel (no @mention required)
+      const existingAllowlist: AllowlistedGuild[] = existing.allowlistedGuilds || [];
+      const workspaceEntries: AllowlistedGuild[] = WORKSPACE_TOPICS.map((topic) => ({
+        guildId,
+        guildName: guild.name,
+        channelId: channelIds[topic.key],
+        channelName: `${topic.emoji}${topic.name}`,
+        requireMention: false,
+      }));
+      // Merge: keep non-workspace entries, replace all workspace channel entries
+      const workspaceChannelIds = new Set(Object.values(channelIds));
+      const keptExisting = existingAllowlist.filter(
+        (g) => !(g.guildId === guildId && workspaceChannelIds.has(g.channelId)),
+      );
+      const mergedAllowlist: AllowlistedGuild[] = [...keptExisting, ...workspaceEntries];
+
       await db
         .update(channelLinks)
-        .set({ metadata: { ...existing, workspace } })
+        .set({ metadata: { ...existing, workspace, allowlistedGuilds: mergedAllowlist } })
         .where(and(eq(channelLinks.userId, userId), eq(channelLinks.channel, "discord")));
     }
 

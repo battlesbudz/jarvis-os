@@ -16,6 +16,7 @@ import { sendEmailTool } from "./sendEmail";
 import { fetchEmailsTool } from "./fetchEmails";
 import { connectChannelTool } from "./connectChannel";
 import { discordPostTool } from "./discordPost";
+import { discordCreateChannelTool } from "./discordCreateChannel";
 import { scheduleJarvisTaskTool } from "./scheduleJarvisTask";
 
 export const ALL_TOOLS: AgentTool[] = [
@@ -40,6 +41,7 @@ export const ALL_TOOLS: AgentTool[] = [
   fetchEmailsTool,
   connectChannelTool,
   discordPostTool,
+  discordCreateChannelTool,
   scheduleJarvisTaskTool,
 ];
 
@@ -67,6 +69,7 @@ export function telegramCoachTools(opts: { hasGoogle: boolean }): AgentTool[] {
     fetchEmailsTool,
     connectChannelTool,
     discordPostTool,
+    discordCreateChannelTool,
     scheduleJarvisTaskTool,
   ];
   if (opts.hasGoogle) {
@@ -97,5 +100,6 @@ export {
   fetchEmailsTool,
   connectChannelTool,
   discordPostTool,
+  discordCreateChannelTool,
   scheduleJarvisTaskTool,
 };
