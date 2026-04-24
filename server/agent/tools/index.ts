@@ -138,6 +138,7 @@ export function telegramCoachTools(opts: { hasGoogle: boolean }): AgentTool[] {
     connectChannelTool,
     discordPostTool,
     discordCreateChannelTool,
+    discordDeleteChannelTool,
     scheduleJarvisTaskTool,
     scheduleChannelReportTool,
     listChannelSchedulesTool,
