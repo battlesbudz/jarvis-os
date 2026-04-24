@@ -379,6 +379,9 @@ export default function MissionControlScreen() {
     explanation: string | null;
     signalSources: string[];
     manualOverride: string | null;
+    baselineStress: number | null;
+    baselineFlow: number | null;
+    patternNote: string | null;
   } | null>(null);
   const [emotionalStateModal, setEmotionalStateModal] = useState(false);
   const [settingOverride, setSettingOverride] = useState(false);
@@ -823,6 +826,79 @@ export default function MissionControlScreen() {
                 )}
               </>
             )}
+
+            {/* ── Your Patterns / Baseline Card ── */}
+            <View style={styles.esBaselineCard}>
+              <View style={styles.esBaselineHeader}>
+                <Ionicons name="stats-chart-outline" size={12} color={Colors.textTertiary} />
+                <Text style={styles.esBaselineSectionTitle}>YOUR PATTERNS</Text>
+              </View>
+              {emotionalState?.baselineStress !== null && emotionalState?.baselineStress !== undefined ? (
+                <>
+                  <Text style={styles.esBaselineSubtitle}>
+                    90-day avg — stress {emotionalState.baselineStress.toFixed(1)} · flow {(emotionalState.baselineFlow ?? 0).toFixed(1)}
+                  </Text>
+                  <View style={styles.esBaselineRow}>
+                    <Text style={styles.esBaselineDimLabel}>STRESS</Text>
+                    <View style={{ flex: 1 }}>
+                      <View style={styles.esBaselineTrackWrap}>
+                        <View style={styles.esBaselineTrack}>
+                          <View style={[styles.esBaselineFill, {
+                            width: `${(emotionalState.stressScore / 10) * 100}%` as any,
+                            backgroundColor: emotionalState.stressScore >= 7 ? Colors.error : emotionalState.stressScore >= 5 ? Colors.warning : Colors.textTertiary,
+                          }]} />
+                        </View>
+                        <View style={[styles.esBaselineMarker, {
+                          left: `${(emotionalState.baselineStress / 10) * 100}%` as any,
+                        }]} />
+                      </View>
+                      <Text style={styles.esBaselineCompare}>
+                        {emotionalState.stressScore}/10
+                        {emotionalState.stressScore > emotionalState.baselineStress + 1.5
+                          ? '  ↑ above usual'
+                          : emotionalState.stressScore < emotionalState.baselineStress - 1.5
+                          ? '  ↓ below usual'
+                          : '  · on track'}
+                      </Text>
+                    </View>
+                  </View>
+                  <View style={[styles.esBaselineRow, { marginBottom: 0 }]}>
+                    <Text style={styles.esBaselineDimLabel}>FLOW</Text>
+                    <View style={{ flex: 1 }}>
+                      <View style={styles.esBaselineTrackWrap}>
+                        <View style={styles.esBaselineTrack}>
+                          <View style={[styles.esBaselineFill, {
+                            width: `${((emotionalState.flowScore ?? 0) / 10) * 100}%` as any,
+                            backgroundColor: (emotionalState.flowScore ?? 0) >= 7 ? Colors.cyan : (emotionalState.flowScore ?? 0) >= 5 ? Colors.violet : Colors.textTertiary,
+                          }]} />
+                        </View>
+                        <View style={[styles.esBaselineMarker, {
+                          left: `${((emotionalState.baselineFlow ?? 0) / 10) * 100}%` as any,
+                        }]} />
+                      </View>
+                      <Text style={styles.esBaselineCompare}>
+                        {emotionalState.flowScore}/10
+                        {(emotionalState.flowScore ?? 0) > (emotionalState.baselineFlow ?? 5) + 1.5
+                          ? '  ↑ above usual'
+                          : (emotionalState.flowScore ?? 0) < (emotionalState.baselineFlow ?? 5) - 1.5
+                          ? '  ↓ below usual'
+                          : '  · on track'}
+                      </Text>
+                    </View>
+                  </View>
+                  {emotionalState.patternNote ? (
+                    <View style={styles.esPatternNote}>
+                      <Ionicons name="trending-up-outline" size={11} color={Colors.violet} />
+                      <Text style={styles.esPatternNoteText}>{emotionalState.patternNote}</Text>
+                    </View>
+                  ) : null}
+                </>
+              ) : (
+                <Text style={styles.esBaselineEmpty}>
+                  Keep using Jarvis — your personal baseline will appear after a week of check-ins.
+                </Text>
+              )}
+            </View>
 
             <Text style={styles.esOverrideTitle}>Correct Jarvis's perception</Text>
             <Text style={styles.esOverrideSubtitle}>Tap to tell Jarvis how you actually feel. This adjusts its tone for the next 3 hours.</Text>
@@ -2361,6 +2437,100 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontFamily: 'Inter_600SemiBold',
     letterSpacing: 0.3,
+  },
+  esBaselineCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    padding: 14,
+    marginBottom: 20,
+  },
+  esBaselineHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    marginBottom: 8,
+  },
+  esBaselineSectionTitle: {
+    fontSize: 10,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.textTertiary,
+    letterSpacing: 1,
+  },
+  esBaselineSubtitle: {
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+    marginBottom: 12,
+  },
+  esBaselineRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    marginBottom: 10,
+  },
+  esBaselineDimLabel: {
+    fontSize: 9,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.textTertiary,
+    letterSpacing: 0.8,
+    width: 34,
+    marginTop: 5,
+  },
+  esBaselineTrackWrap: {
+    height: 12,
+    position: 'relative',
+    justifyContent: 'center',
+    marginBottom: 4,
+  },
+  esBaselineTrack: {
+    height: 6,
+    backgroundColor: Colors.surfaceAlt,
+    borderRadius: 3,
+    overflow: 'hidden',
+  },
+  esBaselineFill: {
+    height: 6,
+    borderRadius: 3,
+    minWidth: 3,
+  },
+  esBaselineMarker: {
+    position: 'absolute',
+    top: 0,
+    width: 2,
+    height: 12,
+    backgroundColor: Colors.white,
+    opacity: 0.45,
+    borderRadius: 1,
+  },
+  esBaselineCompare: {
+    fontSize: 10,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textTertiary,
+  },
+  esPatternNote: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 5,
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+  },
+  esPatternNoteText: {
+    fontSize: 11,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+    flex: 1,
+    lineHeight: 16,
+  },
+  esBaselineEmpty: {
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textTertiary,
+    lineHeight: 17,
+    fontStyle: 'italic',
   },
   inboxInlineActions: {
     flexDirection: 'row',
