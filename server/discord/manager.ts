@@ -118,12 +118,10 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
         const mentioned = message.mentions.users.has(botId ?? "");
 
         if (allowed.length === 0) {
-          // No channels configured yet — respond to @mentions anywhere so the
-          // user can verify the integration works without extra setup.
-          if (!mentioned) {
-            console.log(`[DiscordManager] guild msg ignored — no allowlist and bot not @mentioned`);
-            return;
-          }
+          // No channels configured yet — respond to all messages from the
+          // paired user without requiring @mention (the sender identity check
+          // above is already the security gate).
+          console.log(`[DiscordManager] guild msg accepted — no allowlist, paired user, mention not required`);
         } else {
           // Channels have been configured — enforce the allowlist.
           const guildEntry = allowed.find((g) => g.guildId === guildId && g.channelId === channelId);
@@ -556,6 +554,8 @@ export async function createDiscordChannel(
     ? (guildsCache.get(opts.guildId) ?? guildsCache.first()!)
     : guildsCache.first()!;
   const guild = await rawGuild.fetch();
+  // Populate channel cache so category lookups and duplicate checks work
+  await guild.channels.fetch();
 
   const { ChannelType } = await import("discord.js");
 
@@ -568,6 +568,14 @@ export async function createDiscordChannel(
   }
 
   const slug = opts.channelName.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+
+  // Avoid creating a duplicate channel with the same name in the same parent
+  const duplicate = guild.channels.cache.find(
+    (ch) => ch.type === ChannelType.GuildText && ch.name === slug && (parentId ? (ch as import("discord.js").TextChannel).parentId === parentId : true),
+  );
+  if (duplicate) {
+    return { ok: true, channelId: duplicate.id };
+  }
 
   try {
     const created = await guild.channels.create({
