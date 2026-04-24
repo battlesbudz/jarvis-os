@@ -870,6 +870,14 @@ export async function ensureTablesExist() {
         ON jarvis_predictions (user_id, prediction_type, target_date)
     `).catch(() => {});
 
+    // Discord seen message IDs — persist dedup state across server restarts
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS discord_seen_messages (
+        message_id VARCHAR PRIMARY KEY,
+        seen_at BIGINT NOT NULL
+      )
+    `).catch(() => {});
+
     console.log("Database tables verified");
   } catch (error) {
     console.error("Failed to ensure database tables exist:", error);
