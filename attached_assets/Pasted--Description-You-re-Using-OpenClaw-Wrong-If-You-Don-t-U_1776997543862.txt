@@ -1,0 +1,387 @@
+
+
+
+
+
+Description
+
+You're Using OpenClaw Wrong If You Don't Use Discord
+
+Alex Finn
+2.3K
+Likes
+74,777
+Views
+Feb 24
+2026
+Setting up OpenClaw in Discord gives you a multi agent workflow that changes everything. Here's how to set it up.
+
+FULL OpenClaw bootcamp in the Vibe Coding Academy: https://vibecodingacad...
+Sign up for my free newsletter: https://www.alexfinn.a...
+Follow my X: https://x.com/AlexFinn
+My $300k/yr AI app: https://www.creatorbud...
+
+OpenClaw:
+https://openclaw.ai/
+
+PROMPTS:
+I want to set you up in a discord server so I can communicate with you there. Please walk me through getting you in as a bot in Discord so I can communicate with you
+
+Hey Openclaw I want channels for each one of my projects we are working on. please build out a channel in discord for every major project we are working on and make sure i can communicate with you from each
+
+Please build a new channel for me for stock research. Every morning at 7am please send me a research report that goes over important stocks involved with the AI buildout. These should be stocks that stand to benefit by AI being built out more. They should also have comptitive advantages and strong moats. These could be chips, energy, or any other part of the supply chain. Do this for 7am every morning
+
+Please create a competitive research channel for me that finds youtube videos from my competitors about vibe coding and openclaw. rank them by trending. I want to find the newest trending videos. Send it to me every morning at 8am
+
+I want to set up a multi agent workflow in this discord. I want one channel where veery morning an agent gets spun up that researches X posts for trending content on openclaw. A half hour after that I want another sub agent spun up that takes those tweets and researches the stories behind them and puts them in a research channel. then a half hour after that have another agent take those research stories and create scripts for each that I can approve that sends an indicator if I like the script or not
+
+Based on everything you know about me, my goals, my ambitions, and workflows we've done in the past, what are some advanced multi agent automations we can create in Discord?
+
+Timestamps:
+0:00 Intro
+1:25 My Discord setup
+9:39 How to set this up
+21:49 Models to use
+25:33 Devices you need
+26:46 Security
+28:02 Your own use cases
+30:34 Dashboard
+...more
+Alex Finn demonstrates how to utilize Discord as an operating system to manage autonomous AI agents for tasks like coding, market research, and content creation. This guide covers setting up specific channels, utilizing API keys, and selecting between cloud and local models for different workflows.
+
+Summary
+
+Ask
+Get answers, explore topics, and more
+
+Ask questions
+Chapters
+
+View all
+
+Intro
+0:00
+
+
+My Discord setup
+1:25
+
+
+How to set this up
+9:39
+
+
+Models to use
+21:49
+
+
+Devices you need
+25:33
+
+
+Security
+26:46
+
+
+Your own use cases
+28:02
+
+
+Dashboard
+30:34
+
+
+Alex Finn
+190K subscribers
+Videos
+About
+
+X
+
+
+In this video
+
+
+Timeline
+
+Chapters
+Chapter 1: Intro
+0:00What I'm about to show you is how I have an army of AI agents working for me in Discord 24 hours a day, seven days a week, all autonomously running my
+0:088 secondsbusiness and making me money. They're building me apps. They're writing me scripts. They're researching competitors. They're finding trending content. They're researching me stocks
+0:1717 secondsto invest in an AI all autonomously, all without any oversight needed, just producing value non-stop. In this video,
+0:2424 secondsI'm going to show you how to do the exact same thing. I have been using OpenClaw for over a 100 hours the last month and I promise you this is the most
+0:3232 secondscomprehensive multi- aent workflow you'll ever see. When you integrate OpenClaw into Discord, you're basically able to create a multi- aent operating
+0:4141 secondssystem that is constantly producing value for you autonomously. It's going to save you time and potentially even make you money. By the end of the video,
+0:4949 secondsyou'll have your entire multi- aent workflow set up for you. And I'll also answer all of these questions for you. How do you set up OpenClaw and Discord?
+0:5757 secondsHow do you create a six agent system that are all doing different things in parallel? Which model should you be using for each? Should you be using
+1:041 minute, 4 secondslocal models? Can you even use local models with your current device? How do you make the agents proactive? How do you set up a dashboard so you can monitor your agents? How much would this
+1:131 minute, 13 secondsall cost? How do you improve your security for your OpenC? And what use cases can you set up today to get maximum impact? That will all be answered by the end of this video. Now,
+1:241 minute, 24 secondslet's lock in and get into it. So, it turns out Discord has been the most powerful way to actually interface with OpenClaw out of all of them. The reason
+Chapter 2: My Discord setup
+1:311 minute, 31 secondsbeing is you can set up these really advanced workflows where you have multiple channels set up and agents in each channel doing different things for
+1:391 minute, 39 secondsyou. This is impossible in Telegram or iMessage or WhatsApp. It is only possible in Discord. And be quite honest with you, before this, I absolutely hated Discord. I thought it was the
+1:471 minute, 47 secondsworst app ever. But I'm going to be honest, I think Discord was built for OpenClaw. I think Discord was made with multi- aent setups in mind because this
+1:561 minute, 56 secondsis really amazing what I'm about to show you. What I'm going to go through first is my actual Discord setup, a bunch of the workflows going through this, and then I'm going to show you how to set it
+2:052 minutes, 5 secondsup all yourself. I'm going to talk about what's necessary, how to set it up, what the cost would be, which models you should use, all of that. So, let's first quickly go through my workflows. There's
+2:132 minutes, 13 secondsgoing to be a lot of different chapters down below, so feel free to skip around at any point and get to the parts you're interested in, but let me go through my workflow first. First, the structure my
+2:222 minutes, 22 secondsDiscord. There's a few different sections here that are really important.
+2:252 minutes, 25 secondsFirst is the normal text channels. These are kind of where the automated flows happen. When my agents do research, they will drop off information in one of
+2:342 minutes, 34 secondsthese channels and then that will kick off a workflow where another agent from another channel grabs something. So, for instance, check this out. In my alerts
+2:422 minutes, 42 secondschannel, I have an agent that every two hours goes and finds me tweets that are starting to trend. These are tweets
+2:492 minutes, 49 secondsspecifically in my niche. So, vibe coding, openclaw, AI. Anytime a tweet is made that is starting to trend and pick
+2:572 minutes, 57 secondsup, it brings me a list of those tweets that are starting to trend. This kicks off a really deep and complex workflow,
+3:033 minutes, 3 secondswhich I'll get into, but this is a really important piece of information,
+3:063 minutes, 6 secondsthese trending tweets. The number one way to go viral on X, is to talk about things that are trending, is to talk about the things that people care about.
+3:153 minutes, 15 secondsAnd the only way you're going to know what the people care about and what's trending is if you get alerted when things start to get on fire. The issue is is that the main feed on X can get
+3:233 minutes, 23 secondscrowded and busy and have a lot of political slop. So, I like having this alert system where the agent brings me trending tweets. And again, I'll go over
+3:313 minutes, 31 secondshow to set this up step by step by step so you can do the exact same thing. But just to show you how it all works, after I get the alerts, I have another agent
+3:383 minutes, 38 secondscome in and research the stories behind the tweet. So, it goes, "Okay,
+3:423 minutes, 42 secondsinteresting. someone's talking about a brand new anthropic model or a brand new open AI model. It researches the story,
+3:483 minutes, 48 secondstells me what's going on, and gives me different angles I can take on it. So,
+3:533 minutes, 53 secondswhat the interesting parts of each story might be. Once Henry drops in these research stories, I have another AI
+4:004 minutesagent, Quill, come in, take each one of those stories, and then write me scripts for each one of those stories. So,
+4:074 minutes, 7 secondsYouTube scripts, potentially be tweets,
+4:094 minutes, 9 secondsanything like that. It writes entire scripts in my own voice based on my other YouTube videos about those stories. Then from there I can go in,
+4:194 minutes, 19 secondsread the scripts and actually react. I can say yes, this looks good and leave a check mark or no, it doesn't look good and leave an X based on my feedback. It
+4:274 minutes, 27 secondsstarts to train the model on what I like and what I don't like. So the scripts I get moving forward are more relevant to me. Then from there, the moment I
+4:344 minutes, 34 secondsapprove a script, it actually spins up another AI agent that gives me thumbnail concepts for that video. So, I chose a
+4:414 minutes, 41 secondsscript I like and then another AI agent spins up and gives me the exact thumbnail concepts I could use. Now,
+4:474 minutes, 47 secondsthey're all in text. What I typically do from this point is feed it into Gemini,
+4:514 minutes, 51 secondsfeed it into Nano Banana Pro, and get the thumbnail made. Eventually, I'm going to have a system set up, which will be pretty easy, honestly, to hook
+4:584 minutes, 58 secondsthis into the Nano Banana API. So, it'll just create the thumbnails for me and drop them off here. But my other AI agent pixel goes in and gets me these
+5:065 minutes, 6 secondsthumbnails based on which scripts I approve of. And this reduced my entire content creation time from like 3 hours
+5:155 minutes, 15 secondsof research down to like 5 minutes. It's given me unbelievable leverage and freed up a ton of time where I can go and do other things I enjoy like tinkering and
+5:245 minutes, 24 secondsbuilding. But there's a whole lot of other things going on in this world. This isn't just for content creators.
+5:285 minutes, 28 secondsThere's a whole lot of other things going on here as well. For instance, I have a stock research channel. Every morning at 7:00 a.m., I have an AI agent
+5:355 minutes, 35 secondsspun up that goes and researches stocks I'm interested in. So, I gave it a description of what type of stocks I'm looking for. I'm looking for companies
+5:435 minutes, 43 secondsthat are going to be involved with the AI buildout over the next 10 years that are creating hardware that's going to be a bottleneck for the AI industry. So,
+5:515 minutes, 51 secondsthings like memory and GPUs and chips and things like that. And every morning I get a research report at 7:30 a.m.
+5:585 minutes, 58 secondsthat shows me the companies that are a part of these bottlenecks and part of the buildout and all the news on those companies. This is like my stock researcher agent and it's completely
+6:076 minutes, 7 secondsautomated. I used to spend hours a week doing this research completely freed up 100% automated. Now I'm all caught up on
+6:156 minutes, 15 secondsthe news and what companies I should be investing in. And this is totally customizable. Maybe you don't care about the AI buildout. That's totally fine.
+6:226 minutes, 22 secondsAnd you can say, "Hey, research me dividend stocks or research me financial stocks, whatever you want. Research meme stocks. It doesn't matter. You can customize this any way you want." So,
+6:316 minutes, 31 secondsyou get automated stock research every single morning. I have a competitor research channel. So, what this does is
+6:386 minutes, 38 secondsevery morning at 7 a.m. as well, it goes in, it finds me the top trending YouTube videos on OpenClaw. I want to know the
+6:466 minutes, 46 secondsmoment any OpenClaw video on YouTube goes viral. And this finds me every video posted over the last 5 days that are getting high amount of views per
+6:556 minutes, 55 secondshour. So we have 82 videos about OpenClaw that have been posted the last 5 days on YouTube. And it ranks it in
+7:017 minutes, 1 secondorder of views per hour. So I can go in and see what kind of content is starting to trend about Open Claw and Claude Code
+7:107 minutes, 10 secondsand Vibe Coding and I can stay on top of those trends and make sure I create videos that are relevant to my viewers.
+7:167 minutes, 16 secondsI even have an automated channel called Daily Digest where it tells me every single thing my agents have been doing that day. So, what they've been focused
+7:247 minutes, 24 secondson, what they've created, what they're waiting for me on, like what I have to approve when it comes to scripts or things to build out. It gives me an entire rundown of everything they
+7:337 minutes, 33 secondscompleted that day. So, I know what my agents are doing. And there's more to it. I have direct lines to all my agents. So, all my agents and sub
+7:427 minutes, 42 secondsagents, you can see here, direct lines to them. So I can open them up at any time and talk to them directly. Charlie is my coding agent. So this is my agent
+7:507 minutes, 50 secondsjust coding 24 hours a day. It is constantly updating me on everything it built. So it's in a Ralph loop,
+7:567 minutes, 56 secondsconstantly building things, creating different features and functionality for my SAS creator buddy, for different side projects, for experimental projects, for
+8:048 minutes, 4 secondsgames, just so I can have fun, things like that. It is constantly pinging me in Discord with everything it's building out so I can stay on top of it to make
+8:118 minutes, 11 secondssure it's productive. And then, and this part's really important, I have a section for all the major projects I'm working on at the moment. So, what
+8:198 minutes, 19 secondsyou're probably doing at the moment is you just have like one chat on Telegram or WhatsApp where you just talk about everything with your agent in that one
+8:278 minutes, 27 secondschat in that one channel. The issue with that is is everything you're talking about gets disorganized, right? Maybe it creates documents, maybe it creates
+8:348 minutes, 34 secondsartifacts, but now all those things are just lost in that single stream chat.
+8:388 minutes, 38 secondsMaybe you discuss an idea and then five minutes later you come up with a new idea and you jump over there and start talking about that other idea and all of a sudden everything you talked about before gets lost. Not anymore. Now,
+8:488 minutes, 48 secondsbecause I have channels for each project and focus I have in my business, I'm able to quickly go there and have a
+8:558 minutes, 55 secondscomplete history of everything I talked about for that specific project. And what it even does is it pins the documents and research reports it
+9:039 minutes, 3 secondscreates at the top of those channels. So if you ever do something like ask it to build an architecture diagram or come up with a plan for you or something like
+9:129 minutes, 12 secondsthat now it's able to pin and organize all those documents for you in one place. Discord is such an amazing
+9:199 minutes, 19 secondsoperating system for your entire life and it only becomes more powerful when you mix in a multi- aent openclaw
+9:279 minutes, 27 secondsworkflow inside of it. So now I'm more organized. I'm able to stay on top of my agents that are actually building things for me. And on top of it, I have all
+9:359 minutes, 35 secondsthese automated workflows that are constantly producing value for me and saving me tons of time. So, now that I gave you a glimpse of what is possible,
+Chapter 3: How to set this up
+9:439 minutes, 43 secondslet's talk about how to set this up. I'm going to show you how to set a bunch of the workflows I have that I just showed you, it should give you a glimpse into
+9:509 minutes, 50 secondshow you can set up any relevant workflows that you have in your life.
+9:549 minutes, 54 secondsThen, I'm going to answer a lot of the other questions we talked about earlier,
+9:579 minutes, 57 secondslike how much would this cost, what model should you be using, things like that. and then I'll go through some exercises with you so you can find super powerful workflows that are personal to
+10:0510 minutes, 5 secondsyou that will help solve your specific problems. So, let's go into the setup itself. First of all, make sure you have OpenClaw installed. I have entire videos walking through getting OpenC installed.
+10:1410 minutes, 14 secondsSo, if you don't have it installed,
+10:1610 minutes, 16 secondscheck out a link down below for the setup video. Once you do that, obviously you need Discord installed, too. Inside Discord, create your own private server.
+10:2410 minutes, 24 secondsSo, mine is called Alex Finn Global Enterprises. So, go in, create a new server. Over on the lefth hand side, if you scroll to the bottom, you just click the plus sign and it creates a new
+10:3310 minutes, 33 secondsserver for you. Give it a name. It's just for you. It's not for anyone else.
+10:3610 minutes, 36 secondsVery critical. You do not let anyone else come into your server. It is just for you. Once you do that, you should have a blank canvas inside your Discord.
+10:4410 minutes, 44 secondsNo channels or anything. Now, we're going to start setting this up with our OpenClaw. The beautiful part about this is your OpenClaw is able to handle a vast majority of this setup itself. So,
+10:5410 minutes, 54 secondsall you need to do is say, "I want to set you up in a Discord server so I can communicate with you there. Please walk me through getting you in as a bot in Discord so I can communicate with you."
+11:0411 minutes, 4 secondsYou hit enter on that and it's going to start the process of getting it in Discord. It's going to first add Discord to its own config. Then from there, it's
+11:1211 minutes, 12 secondsgoing to walk through adding it as a bot inside of Discord. This is the site it's going to take you to, which is the developer application site for Discord.
+11:2011 minutes, 20 secondsIt's going to have you first create a new application. This application is going to be your bot. So, you're basically going to be building a bot for
+11:2811 minutes, 28 secondsall your different AI agents. From there, it's going to have you configure different permissions. So, this will walk you through it in your chat in Telegram or WhatsApp or whatever you're
+11:3611 minutes, 36 secondsusing and tell you exactly what permissions to turn on. This should not be complicated at all as long as you follow precisely what your bot is saying
+11:4311 minutes, 43 secondsin Telegram step by step. So, it's going to tell you which permissions to turn on. It's going to tell you on this site how to generate the token and then when
+11:5111 minutes, 51 secondsyou generate the token on here, you give it back to your bot and it's going to initiate the bot for you inside of Discord. Anytime you get confused or
+11:5911 minutes, 59 secondsanytime you don't know what's going on or anytime it crashes, literally just go to your bot and say, "Hey, this didn't work for me or I'm not sure what to do
+12:0812 minutes, 8 secondshere. Where do I click?" It will tell you exactly what to do. Never get frustrated. Never get upset. anytime you don't know what's happening. Just go to
+12:1612 minutes, 16 secondsyour bot and say, "I don't know what's happening. Help me out." And it will tell you what to do. From there, your bot will be connected and you will be able to talk to it in Discord. So,
+12:2412 minutes, 24 secondsyou'll probably have a channel directly for your bot that you can talk to. Now,
+12:2712 minutes, 27 secondsyou're in good shape. Now, you can start setting up your different structure here and your different workflows. The first thing you probably want to set up that's
+12:3512 minutes, 35 secondsbeen the most helpful for me is the different project channels. So, these are a channel for every different project you have. These are a few of the things I'm focused on at the moment,
+12:4412 minutes, 44 secondsdifferent things I'm building out. And these are going to be projects where you have like specific context for it, where maybe you build a bunch of documents for
+12:5112 minutes, 51 secondsit or it's projects you come back to quite often. You want channels specifically for those projects. So,
+12:5812 minutes, 58 secondshere are some options for if you can't think of any right now. Maybe you have one for your career. Maybe you have one for your personal life. You can have one
+13:0513 minutes, 5 secondsspecifically for your Discord operating system. If you're vibe coding and you're building a ton of apps, make a channel for each one of the apps you're building
+13:1313 minutes, 13 secondsout so you can come back and talk about those things. What's incredible is in each one of those channels that your bot is in, it has full control over your
+13:2213 minutes, 22 secondscomputer just like it normally would if you're talking to it through WhatsApp or Telegram. So you can say from these channels, if you have like a vibe coding channel, build this out from here, do
+13:2913 minutes, 29 secondsthis for me. And it'll go and write code on your computer just like it normally would in Telegram. How do you set these channels up? Really, really easily. You
+13:3713 minutes, 37 secondscome in, you say, "Hey, open claw or whatever that your name is for your claw. I want channels for each one of my projects we are working on. Please build
+13:4413 minutes, 44 secondsout a channel in Discord for every major project we are working on and make sure I can communicate with you from each."
+13:5013 minutes, 50 secondsSo, you can do it this way where you kind of just lean on your OpenClaw to figure out what the major projects you're working on are. This is probably the easiest way to do it. If you want to
+13:5813 minutes, 58 secondsbe specific, you can do it that way as well. But, I actually recommend this.
+14:0214 minutes, 2 secondsI'm going to put this down below for you. that will set up your different project channels for you, which is really important. One of the core components to everything I'm doing in
+14:1014 minutes, 10 secondsthis Discord. It just allows you to be a lot more organized than your single stream chat that you have in Telegram or WhatsApp. By the way, if you've learned anything so far, make sure to leave a
+14:1914 minutes, 19 secondslike down below, subscribe, and turn on notifications cuz all I do is create amazing videos about AI and OpenClaw.
+14:2514 minutes, 25 secondsAnd make sure to check out the Vibe Coding Academy. I do a live boot camp every single week inside the Vibe Coding Academy. You can come in, ask me
+14:3314 minutes, 33 secondsquestions live, chat with me live. We also have a ton of video series in there as well. I go super in-depth on all this. So, link for the Vibe Coding Academy down below. Highly recommend it.
+14:4214 minutes, 42 secondsBut next, let's talk about setting up our advanced workflows like the ones I showed you earlier around content and research and all that. These can range
+14:4914 minutes, 49 secondsfrom simple to more advanced. I'll start out with a couple of simple ones and get your feet wet. Then, we'll get advanced like that multi-channel content pipeline
+14:5614 minutes, 56 secondsI showed you earlier. I'm going to start with the stock research automation. Even if you're not interested in stocks, you can use this to research stories or just
+15:0415 minutes, 4 secondsstay up to date on the news. So, this is pretty important for everybody. What you're going to want to do is go to your direct agent line that was probably
+15:1215 minutes, 12 secondsoriginally set up. And then you're going to want to describe what you want. So, here's another prompt you can steal.
+15:1615 minutes, 16 secondsI'll put this down below as well. Please build a new channel for me for stock research. Every morning at 7 a.m.,
+15:2215 minutes, 22 secondsplease build me a research report that goes over important stocks involved with the AI buildout. These should be stocks that stand to benefit by AI being built
+15:2915 minutes, 29 secondsout more. They should also have competitive advantages and strong modes.
+15:3315 minutes, 33 secondsThese could be chips, energy, or any other part of the supply chain. When you hit send on that, your agent will go and actually create these channels out. If
+15:4115 minutes, 41 secondsit doesn't have proper permissions for this, it will ask you to go in and change its permissioning so it can create channels for you. And this will do a few things. This will one create
+15:4915 minutes, 49 secondsthe channel, but this will also two set up a cron job for you. And basically what this is is a scheduled task for you
+15:5715 minutes, 57 secondsevery single morning. So I just added on the end here, do this for 7 a.m. every morning. And what's going to happen is it will schedule at 7 a.m. every single
+16:0416 minutes, 4 secondsmorning in perpetuity a sub agent that it will spin up that will go and then research online these exact
+16:1216 minutes, 12 secondsspecifications. We put you know AI companies that have modes and competitive advantages. If you're not interested in AI, that's fine. You can change this to anything you want. If you
+16:2016 minutes, 20 secondswant to make this different crypto coins, you can do that if you want. and it'll research crypto coins for you.
+16:2516 minutes, 25 secondsWhatever you're interested in, it can do that. If you're more just interested in stories and news and you don't care about stocks as much, you can say,
+16:3216 minutes, 32 seconds"Research all the latest news about sports or whatever you're into," and it will put it in here for you. And now you have an automated research channel set
+16:4016 minutes, 40 secondsup. This is probably the simplest use case you can set up. Let's get a little bit more advanced, though. Let's talk about doing content research or competitive insights. So, I have this
+16:4916 minutes, 49 secondscompetitor research channel that goes and finds what my competitors are posting about OpenCloth. And you can go in and you can very simply say into your
+16:5616 minutes, 56 secondschat in your main channel with your agent. Please create a competitive research channel for me that finds YouTube videos from my competitors about
+17:0417 minutes, 4 secondsVibe Coding and OpenClaw. Rank them by trending. I want to find the newest trending videos. Send it to me every morning at 8:00 a.m. And this doesn't
+17:1117 minutes, 11 secondseven necessarily need to be competitive research, right? This could just be if you want to see what the latest Open Claw videos are, you put that in there. Or if you're more interested in sports,
+17:2017 minutes, 20 secondsfind me the latest sports videos and put in there. The latest basketball highlights, whatever you need. This isn't just for the specific use case I'm showing. You can customize this any way
+17:2817 minutes, 28 secondsyou want. And now this gets a little bit more advanced because now what's going to happen is it's probably going to ask you for a YouTube API key. This is
+17:3517 minutes, 35 secondscompletely free. Anyone can get this quickly and put it in here. And what that'll do is allow OpenClaw to actually ping YouTube directly to get this video
+17:4417 minutes, 44 secondsinformation. It will walk you through exactly how to do that. All you have to do is go to a Google link, say generate key, and copy and paste that in and
+17:5217 minutes, 52 secondsyou'll be good to go. Your OpenClaw can walk you through that much better than I can because it'll know exactly what you're doing on your screen. So again,
+17:5917 minutes, 59 secondsif you get stuck or confused at any time, just say, "Hey, OpenClaw, I don't know what's happening. Please help me out." Don't be afraid to ask for help from your OpenClaw. Now, let's get more advanced. Let's talk about this multi-
+18:0918 minutes, 9 secondschannelannel workflow I got going on where tweets are coming in from one channel, then another channel is writing scripts for me, and then another channel is doing research. Let's build this out
+18:1718 minutes, 17 secondsstep by step. So, you're going to go back into your direct agent line with your main agent here. Again, this prompt will be down below. I want to set up a
+18:2518 minutes, 25 secondsmulti- aent workflow in the Discord. I want one channel where every morning an agent gets spun up that researches expost for trending content on OpenClaw.
+18:3318 minutes, 33 secondsAgain, can be whatever you want. A half hour after that, I want another sub agent spun up that takes those tweets and researches the stories behind them and puts them in a research channel.
+18:4318 minutes, 43 secondsThen a half hour after that, have another agent take those research stories and create scripts for each that I can approve that sends an indicator if
+18:5118 minutes, 51 secondsI like the script or not. This will have your agent go and set up this multi-channel system. It will set up multiple channels here and then it will
+18:5918 minutes, 59 secondsalso set up the cron jobs. What it's also going to need from you is probably a couple API keys. X is really locking
+19:0719 minutes, 7 secondsdown their platform from bots. They do not want bots crawling their site. And so what you're going to need for this is the X API key. If you're going to be
+19:1519 minutes, 15 secondsdoing this based on exposts, you can get an API key if you just search for X API.
+19:2019 minutes, 20 secondsIt's pay as you go and it's pretty cheap for every single tweet you pull. I'm not spending that much money on it and I think it's well worth it for the research you can get out of it with
+19:2819 minutes, 28 secondsOpenCL. You plug that in and it will set up its system where it will automatically pull posts for you every single morning. And your OpenClow will also go and set up in those other
+19:3619 minutes, 36 secondschannels and schedule those other sub agents to do each piece of this workflow for you. Now, every morning you're going to be woken up to pings of scripts being
+19:4419 minutes, 44 secondswritten for you and content being created for you. And even if you're not a content creator, even if you're not creating YouTube videos or posts or whatever, you can still do different
+19:5219 minutes, 52 secondsthings with this. One workflow I'm setting up right now where you can steal this from me and get a step ahead if you'd like is actually taking these research stories. So the same thing
+20:0120 minutes, 1 secondhappens. It takes the posts, then it researches the stories, but instead of writing YouTube scripts, it'll actually
+20:0720 minutes, 7 secondsbuild app prototypes for you. So imagine this, your AI agents finding trending stories and then finding challenges in those stories and then just
+20:1520 minutes, 15 secondsautomatically builds out prototypes for those stories for you. Maybe there's a trending tweet about Discord workflows.
+20:2220 minutes, 22 secondsNow, your agent will go and build a prototype app out that maybe sets this up automatically for people that you can then turn around and go sell it to them.
+20:3020 minutes, 30 secondsRight now, there's new business lines being set up for you. So, that's kind of a even more advanced workflow I'm currently setting up that you can steal
+20:3720 minutes, 37 secondsright now, which is doing research online, finding trending stories, and now you have a new channel where your AI agents actually going and writing code
+20:4620 minutes, 46 secondsand building prototypes based on those stories. That's my challenge to you to set that up as well. From here, you can do many things, right? You have a couple
+20:5320 minutes, 53 secondsautomated workflows set up. Now, we can do things like have direct agent lines.
+20:5820 minutes, 58 secondsI have a bunch of agents here. Some of these are sub agents of Henry. Some of these are actual full open claws. I actually run three open claws because I
+21:0621 minutes, 6 secondshave two Mac Studios in a Mac Mini, but you don't need to do that. But now you can talk directly to your sub agent. So,
+21:1221 minutes, 12 secondsso if one of these sub agents like your research sub agent like Echo for me, I can go in and ask about specific stories it wrote. Or maybe I have Quill who's
+21:2121 minutes, 21 secondswriting the scripts for me, I can go in and give feedback about specific scripts. You want to also set up direct agent lines to each one of your agents
+21:2921 minutes, 29 secondsand sub agents as well. Again, as you can guess, very easy. Go to your main agent, go in and say, "I want to build out direct agent line channels in this
+21:3721 minutes, 37 secondsDiscord." And it will just set it up for you. You will probably have to set up new applications in Discord to set up these individual bots. Again, it's gonna
+21:4621 minutes, 46 secondsbe the same process you did before where it walks you through the Discord site to set up those bots. So, which model should you be using for all this and how much is this going to cost you? So,
+Chapter 4: Models to use
+21:5421 minutes, 54 secondsthere's two things you need to think about. The muscles and the brains of this operation. The brain's going to be the orchestrator. This is the agent you're talking to to build all this out.
+22:0322 minutes, 3 secondsAnd the muscles are going to be the sub agents or the other agents that do the dirty work. The best brain to use for all this, the best orchestrator for
+22:1122 minutes, 11 secondseverything that's going on here is Anthropic. It just is. Even though they're doing a a few anti-consumer things lately, cutting people off,
+22:1922 minutes, 19 secondsbanning people, whatever it is, they have the best model for openclaw brain.
+22:2322 minutes, 23 secondsIt just is what it is. So, if you are still on anthropic oath, I would use that for the brain. I'm hearing from some people, they're not able to set up
+22:3122 minutes, 31 secondsthe OOTH anymore. It just simply does not let them. If that is the case for you, I'd highly recommend going to
+22:3722 minutes, 37 secondsChatGpt. The Chat GBT models are still crazy strong, crazy smart, not as personable and warm as the anthropic
+22:4522 minutes, 45 secondsones, but that's fine. They're still very, very smart. And on top of that,
+22:4822 minutes, 48 secondsOpenAI is being very proconsumer and encouraging you to use their OOTH with Open Claw. So, you can very easily just
+22:5522 minutes, 55 secondssign up for a $20 a month plan and use Chad GBT. And thrive is going to cost you $200 a month if you want full usage out of it. So, it's the most expensive,
+23:0323 minutes, 3 secondsbut it's the best. If you can't use it,
+23:0523 minutes, 5 secondsChad GBT, you could probably get away with the $20 plan, and if you need to upgrade from there, if you really want to save money, some of these cheaper
+23:1323 minutes, 13 secondsChinese models are very strong as well for a very good price. Kim K 2.5 is probably the smartest Chinese model, but you can also save a ton of money by
+23:2123 minutes, 21 secondsusing Miniax 2.5. Those are probably the two best Chinese models, and those are going to be your best brains. Then you're going to want to think about the
+23:2923 minutes, 29 secondsmuscles. So the models actually doing the work. From there, I would highly recommend going cheaper. So going with the cheaper Chinese models for that
+23:3723 minutes, 37 secondsbecause they're going to be doing a lot of the dirty work. And as long as there's a smart model overlooking it,
+23:4223 minutes, 42 secondsyou don't need to get genius level for the dirty work cuz the boss and the manager is going to make sure it does good work. The best option though and what I think is the future of all of
+23:5123 minutes, 51 secondsthis is local models. So, I have Anthropic as my brain orchestrating everything through the API, but then I
+23:5923 minutes, 59 secondshave local models doing all the dirty work. And for those unaware, local models are just AI models that don't run in the cloud. We don't use an API to
+24:0724 minutes, 7 secondstalk to them. They run locally on device on your own computer. I have three Mac Studios in a Mac Mini just running local
+24:1424 minutes, 14 secondsmodels all day. This allows me to do a lot more work basically for free just for the cost of the energy. And that's the advantage local models are going to
+24:2224 minutes, 22 secondsbe able to give you is that they can just run 247 365. No rate limits, no cost. They just keep going and going and going so you can get a lot of work done.
+24:3024 minutes, 30 secondsIt just requires the cost of the compute. So the cost of the Mac Studio.
+24:3524 minutes, 35 secondsYou don't need to do this though. I don't recommend just rushing into doing this. I recommend using cloud API,
+24:4224 minutes, 42 secondsgetting used to it, figuring out your workflows, and then when you're ready and want to make the jump to the local world, you can then buy a computer from
+24:4924 minutes, 49 secondsthere. You can still run local models even if you're on a Mac Mini. They're not going to be as smart, efficient, or fast, but it's still cool to jump into
+24:5624 minutes, 56 secondsand have a local model running. A lot of times, even if you're on the Mac Mini 16 GB, which is the cheapest one, you can download Gemma, which is like a really,
+25:0525 minutes, 5 secondsreally small cheap model that can manage your memory for you. So, there's still local models you can run even on Mac minis. I'd ask your open claw about
+25:1325 minutes, 13 secondsit'll tell you exactly which Gemma model to download and how to install it. So, I showed you the models, which ones are expensive, which ones are cheaper, and what I think the end state would be. I honestly think in the next 5 years,
+25:2325 minutes, 23 secondswe're all going to have compute on our desk running models locally. So, I'm preparing for that future now by buying all these Mac Studios, but I think it'll only get cheaper and easier over time.
+25:3225 minutes, 32 secondsAnd to be honest with you, you don't need to rush into it if you don't want to. Let's talk about devices you're going to need for this. First of all,
+Chapter 5: Devices you need
+25:3825 minutes, 38 secondsyou don't need to run out and buy a Mac Mini or a Mac Studio. Just use any device. Use anything except for a VPS. VPS's will make this very difficult.
+25:4725 minutes, 47 secondsVPS's you're going to have to pay a lot of money just to scale up to have the memory to run multiple agents at one time. I think VPS's are by far the worst
+25:5625 minutes, 56 secondsoption for running OpenClaw in any context or any capacity. Do not use a VPS. Just have any device. I don't care if it's an old crappy laptop you have.
+26:0526 minutes, 5 secondsJust take it out and run it. It's going to give you a much better experience of running OpenClaw. If you want to start scaling up, the Mac Mini, I think, is the best value in computing, bar none.
+26:1526 minutes, 15 secondsFor only $600, you get an incredible computer with one of the most powerful chips in the world, the M4 or the M5
+26:2226 minutes, 22 secondscoming soon. You get tons of memory and storage. You're in a really good spot.
+26:2526 minutes, 25 secondsIf you have the cheapest Mac Mini there is, you can do this entire workflow I showed you. And if you want to get really advanced, the Mac Studio, which
+26:3226 minutes, 32 secondsis what I have, allows you to run the local models. So you can combine the cloud models and the local models to do a whole bunch of really amazing
+26:4026 minutes, 40 secondsworkflows at once. These are my recommendations. Basically anything except for a VPS is what I recommend. So some security measures, basically the
+Chapter 6: Security
+26:4926 minutes, 49 secondscrux of all security advice I can give when it comes to this workflow is not letting anyone get involved with this
+26:5626 minutes, 56 secondsworkflow. What does that mean? Do not let anyone into your Discord server.
+27:0027 minutesDon't let friends, family, anything into this Discord server. Your agent has complete access to your entire digital life. If someone gets access to your
+27:0827 minutes, 8 secondsDiscord server, they basically have control over your entire digital life.
+27:1227 minutes, 12 secondsThey can do anything at all. Do not let anyone else into your Discord server.
+27:1527 minutes, 15 secondsDon't put these bots in other Discord servers. Don't give other people access.
+27:2027 minutes, 20 secondsKeep this completely private to yourself. And do not make workflows where these agents have any sort of right access to your digital
+27:2827 minutes, 28 secondscommunication channels. You don't want it spinning up emails on the fly automatically and autonomously. You don't want to have it sending text messages. There's a lot of risks with
+27:3727 minutes, 37 secondsthat. You just don't want to get that involved. So, keep it personal. Keep it private. Don't let anyone else get involved. Have it doing work locally on
+27:4527 minutes, 45 secondsyour computer. Don't have it autonomously sending out emails and messages just yet. These are going to be the biggest piece of security advice I can give. And also, always stay up
+27:5327 minutes, 53 secondstodate on your OpenClaw versions. They are constantly adding in new security features. So stay up to date on your
+28:0128 minutes, 1 secondOpenClaw. Next, let's talk about finding your own use cases. I showed you my use cases. I showed you how to set it up. I showed you everything you need to do for
+Chapter 7: Your own use cases
+28:1028 minutes, 10 secondsmy use cases. But this is the most important part. This is about finding custom use cases just for you. I make a lot of tutorial videos. I show you
+28:1828 minutes, 18 secondseverything I do. I show you how to set it all up. But the thing is, if you just copy everything I do, you're not going to get the most out of OpenClaw.
+28:2628 minutes, 26 secondsOpenClaw is the most incredible personal operating system in the entire world. And if all you do is just copy me,
+28:3328 minutes, 33 secondsyou're not going to get the most out of it. You want use cases that are custom for you. But how do you find use cases that are custom for you? Well, if you've seen a lot of my videos before, this
+28:4128 minutes, 41 secondswill not come as surprise to you, but it's still the most important thing in the world, and that is reverse prompting. Steal this reverse prompt.
+28:4928 minutes, 49 secondsbased on everything you know about me,
+28:5128 minutes, 51 secondsmy goals, my ambitions, and workflows we've done in the past. What are some advanced multi- aent automations we can create in Discord? You hit enter on
+28:5928 minutes, 59 secondsthat. That's a reverse prompt. That's you asking your AI what you can do.
+29:0329 minutes, 3 secondsThat's you asking your AI what is possible. That's going to come up with some incredible workflows for you to implement in Discord. You choose a
+29:1029 minutes, 10 secondscouple of those workflows. You have it implemented. It does it for you. You're all set up and you're good to go. Steal that reverse prompt. I put it down below. It's the most important part of
+29:1929 minutes, 19 secondsthe video. It's the most important thing you can do because it will find custom workflows for you. And that should get the spark going in your head of other
+29:2729 minutes, 27 secondsthings you can set up and do. Very critical. Do that immediately. As you do this and as you go, your bot's going to come up with different ways to set up
+29:3429 minutes, 34 secondsthese complex systems with multiple AI agents using different models, things like that. So for instance, even though
+29:4129 minutes, 41 secondsanthropic is my brain, it is spinning up codecs and the chat GPT API to do some of the advanced coding work. It's using
+29:4829 minutes, 48 secondsmy local models for other. So make sure when you do this, you ask, what are ways we can use multiple agents to do this?
+29:5629 minutes, 56 secondsWhat are some ways you can use sub agents and other agents to do a lot of these workflows we set up? And it will start spinning up these other agents
+30:0430 minutes, 4 secondsthat will be doing the work for you. It will create the channels, have you create the bots, and you will now have multiple agents doing a lot of this
+30:1130 minutes, 11 secondswork. It really is dependent though on the workflows you're doing, right? So,
+30:1630 minutes, 16 secondsQuill is my script writer. You might not need a script writing AI agent. It would be silly for you to set up a script writing AI agent if you're not writing YouTube scripts, right? So, depending on
+30:2530 minutes, 25 secondswhat workflows you come up with from that last reverse prompt, ask which sub agents would be helpful for your main agent to spin up to do this extra work.
+Chapter 8: Dashboard
+30:3430 minutes, 34 secondsThe next thing I want to talk about is mission control and your custom dashboard that you can make. So that again, this is a little bit more advanced. I'll also say this, I've been
+30:4230 minutes, 42 secondsteasing it for a while and people in the comments keep demanding it. I will do a full deep dive mission control video
+30:5030 minutes, 50 secondsnext. That will be my next video unless some breaking news happens. I have to talk about the breaking news. But my next openclaw deep dive video will be
+30:5730 minutes, 57 secondsmission control. You can also make an agent dashboard inside your mission control to monitor what all your agents
+31:0431 minutes, 4 secondsare doing in Discord. As you can see here, I see all my agents I have working at the moment. Most of them are idle.
+31:1031 minutes, 10 secondsViolet is working on doing some research on my Mac Mini off a local model, but you can see a live activity feed of everything going on here. And this is a
+31:1931 minutes, 19 secondsreally good way to track what your agents are doing, what they're up to,
+31:2331 minutes, 23 secondssee the amount of events going on, see who's the most active agent, understand the amount of tasks completed, so you understand their efficiency. This is all
+31:3031 minutes, 30 secondsin my mission control. All you need to do to set this up is you go to your open claw and you say, "Hey, I want a dashboard that you can build that shows
+31:3831 minutes, 38 secondsme every agent working inside of mission control. I want to see every agent in our Discord. I want to see the tasks they're doing, and I want an activity
+31:4631 minutes, 46 secondsfeed. please build this for me. Your agent will go and build this out. It will launch it for you and walk you through how to do it and you can
+31:5431 minutes, 54 secondscompletely customize it. You want to make it look different, go to your agent, say, "Make it look different." You want to add an activity feed, say,
+31:5931 minutes, 59 seconds"Hey, please build an activity feed." It will vibe code everything for you. This is not complicated. This is not complex.
+32:0432 minutes, 4 secondsIf you want something, ask your agent for it. Doesn't matter if you don't know how to do it. Your agent will figure it out. It's super intelligent. So,
+32:1132 minutes, 11 secondsbuilding an agent dashboard inside your mission control very, very cool as well.
+32:1632 minutes, 16 secondsIf you want the full mission control deep dive, make sure to subscribe and turn on notifications. So the moment I do it, it's available. I also did an
+32:2532 minutes, 25 secondsentire boot camp on mission control last week, a 2hour mission control boot camp inside the Vibe Coding Academy. You sign up now, you get instant access to that.
+32:3432 minutes, 34 secondsBut that was the my entire automated Discord workflow. I showed you all the channels. I showed you all the automated workflows. I showed you all the projects. Everything how it was set up.
+32:4432 minutes, 44 secondsIt is the most powerful way to build a multi- aent automated workflow in the entire game. It is incredible. And my entire workflow all goes through Discord
+32:5332 minutes, 53 secondsnow, which I never thought I'd be saying because before this, I literally hated Discord. I hope this was helpful. Let me know down below what you want my next video about OpenClaw to be about. It's
+33:0233 minutes, 2 secondsgoing to be mission control, but I'll read the comments and make the next one about whatever the most requested comment is. Hope this was helpful. I absolutely love making these videos for
+33:1033 minutes, 10 secondsyou guys. It is the most fun part of my week. Thank you for all your support and everything you've done for me.
+
+Sync to video time
