@@ -139,11 +139,14 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
         toolCallsCount: 0,
       });
       console.log(`[JobQueue] complete weekly_pattern job ${job.id} → ${result.patternCount} patterns`);
+      const weeklyMsg = result.driveLink
+        ? `${result.patternCount} pattern(s) identified, ${result.promotedMemories} promoted to long-term memory.\n${result.summary}\n\n📁 Saved to Google Drive: ${result.driveLink}`
+        : `${result.patternCount} pattern(s) identified, ${result.promotedMemories} promoted to long-term memory.\n${result.summary}`;
       await notifyJobComplete(
         job.userId,
         "weekly_pattern",
         `Weekly review (${result.weekOf})`,
-        `${result.patternCount} pattern(s) identified, ${result.promotedMemories} promoted to long-term memory.\n${result.summary}`,
+        weeklyMsg,
       );
       return;
     }

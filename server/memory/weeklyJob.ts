@@ -80,6 +80,7 @@ interface WeeklyJobResult {
   patternCount: number;
   promotedMemories: number;
   summary: string;
+  driveLink?: string | null;
 }
 
 export async function runWeeklyPatternJob(userId: string): Promise<WeeklyJobResult> {
@@ -231,7 +232,7 @@ ${energyText || "(none)"}`;
   const signalCount = recentCompletions.length + brainData.length + chatData.length + telegramData.length + energyData.length;
   if (signalCount < 5) {
     console.log(`[WeeklyPattern] user=${userId} week=${weekOf} skipped — only ${signalCount} signal(s) in 30-day window`);
-    return { weekOf, patterns: [], summary: "" };
+    return { weekOf, patternCount: 0, promotedMemories: 0, summary: "" };
   }
 
   // DB-backed dedupe via unique (user_id, week_of); restart-safe.
@@ -272,6 +273,29 @@ ${energyText || "(none)"}`;
     console.error("[WeeklyPattern] regenerateSoul failed:", err);
   }
 
+  const finalSummary = summary || (patterns.length === 0 ? "No notable patterns this week." : `${patterns.length} pattern(s) identified.`);
+
+  // Auto-save weekly review to Google Drive if enabled.
+  let driveLink: string | null = null;
+  try {
+    const { getUserDriveSettings } = await import("../driveRoutes");
+    const { createDriveTextFile } = await import("../integrations/googleDrive");
+    const drive = await getUserDriveSettings(userId);
+    if (drive.enabled && drive.autoSaveWeekly && drive.accessToken) {
+      const reviewText = buildWeeklyReviewMarkdown(weekOf, patterns, finalSummary);
+      const driveFile = await createDriveTextFile(
+        drive.accessToken,
+        `Weekly Review — ${weekOf}`,
+        reviewText,
+        { convertToDoc: true, folderId: drive.folderId || undefined }
+      );
+      driveLink = driveFile.webViewLink;
+      console.log(`[WeeklyPattern] Drive auto-save for user=${userId}: ${driveLink}`);
+    }
+  } catch (driveErr) {
+    console.error("[WeeklyPattern] Drive auto-save failed:", driveErr);
+  }
+
   console.log(
     `[WeeklyPattern] user=${userId} week=${weekOf} patterns=${patterns.length} promoted=${promoted}`,
   );
@@ -279,8 +303,29 @@ ${energyText || "(none)"}`;
     weekOf,
     patternCount: patterns.length,
     promotedMemories: promoted,
-    summary: summary || (patterns.length === 0 ? "No notable patterns this week." : `${patterns.length} pattern(s) identified.`),
+    summary: finalSummary,
+    driveLink,
   };
+}
+
+function buildWeeklyReviewMarkdown(weekOf: string, patterns: WeeklyPattern[], summary: string): string {
+  const lines: string[] = [`# Weekly Review — Week of ${weekOf}`, '', `> ${summary}`, ''];
+  if (patterns.length > 0) {
+    lines.push('## Patterns Identified', '');
+    for (const p of patterns) {
+      lines.push(`### ${p.observation} (confidence: ${p.confidence}%)`);
+      lines.push(`*Category: ${p.category}*`);
+      if (p.evidence.length > 0) {
+        lines.push('');
+        lines.push('**Evidence:**');
+        for (const e of p.evidence) {
+          lines.push(`- ${e}`);
+        }
+      }
+      lines.push('');
+    }
+  }
+  return lines.join('\n');
 }
 
 /** Enqueue weekly pattern jobs for every user with recent activity. */

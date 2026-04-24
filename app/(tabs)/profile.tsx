@@ -270,6 +270,16 @@ export default function ProfileScreen() {
   const [documentsLoading, setDocumentsLoading] = useState(false);
   const [documentUploading, setDocumentUploading] = useState(false);
   const documentPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [driveStatus, setDriveStatus] = useState<{
+    googleConnected: boolean;
+    hasDriveScope: boolean;
+    enabled: boolean;
+    autoSavePlans: boolean;
+    autoSaveWeekly: boolean;
+    folderLink: string | null;
+  } | null>(null);
+  const [driveLoading, setDriveLoading] = useState(false);
+  const [driveEnabling, setDriveEnabling] = useState(false);
 
   const loadChannels = useCallback(async () => {
     try {
@@ -474,6 +484,82 @@ export default function ProfileScreen() {
     };
   }, []);
 
+  const loadDriveStatus = useCallback(async () => {
+    setDriveLoading(true);
+    try {
+      const res = await apiRequest('GET', '/api/drive/status');
+      const data = await res.json();
+      setDriveStatus(data);
+    } catch {
+      setDriveStatus(null);
+    } finally {
+      setDriveLoading(false);
+    }
+  }, []);
+
+  const handleDriveEnable = useCallback(async () => {
+    setDriveEnabling(true);
+    try {
+      const res = await apiRequest('POST', '/api/drive/enable');
+      const data = await res.json();
+
+      if (data.needsConsent && data.authUrl) {
+        setDriveEnabling(false);
+        await WebBrowser.openAuthSessionAsync(data.authUrl, getApiUrl().toString());
+        setDriveEnabling(true);
+        const res2 = await apiRequest('POST', '/api/drive/enable');
+        const data2 = await res2.json();
+        if (data2.needsConsent || !res2.ok) {
+          Alert.alert('Drive Access Needed', 'Please grant Google Drive access in the browser and try again.');
+          return;
+        }
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        await loadDriveStatus();
+        return;
+      }
+
+      if (!res.ok) {
+        Alert.alert('Drive Setup Failed', data.error || 'Could not enable Google Drive.');
+        return;
+      }
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      await loadDriveStatus();
+    } catch {
+      Alert.alert('Error', 'Could not enable Google Drive. Please try again.');
+    } finally {
+      setDriveEnabling(false);
+    }
+  }, [loadDriveStatus]);
+
+  const handleDriveDisable = useCallback(async () => {
+    Alert.alert('Disconnect Drive', 'Stop auto-saving to Google Drive? Your existing files will not be deleted.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Disconnect',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await apiRequest('DELETE', '/api/drive/disable');
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            await loadDriveStatus();
+          } catch {
+            Alert.alert('Error', 'Could not disconnect Drive. Please try again.');
+          }
+        },
+      },
+    ]);
+  }, [loadDriveStatus]);
+
+  const handleDriveToggle = useCallback(async (key: 'autoSavePlans' | 'autoSaveWeekly', value: boolean) => {
+    setDriveStatus(prev => prev ? { ...prev, [key]: value } : prev);
+    try {
+      await apiRequest('PATCH', '/api/drive/settings', { [key]: value });
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    } catch {
+      await loadDriveStatus();
+    }
+  }, [loadDriveStatus]);
+
   const handleUploadDocument = useCallback(async () => {
     try {
       const DocumentPicker = await import('expo-document-picker');
@@ -561,7 +647,7 @@ export default function ProfileScreen() {
     setLifeContext(lc);
     setNotificationsEnabledState(notifications);
     setUserName(name);
-    await Promise.all([loadOAuthStatus(), loadMemories(), loadTelegramStatus(), loadMorningNotes(), loadDocuments(), loadSoul(), loadPeople(), loadChannels(), loadDaemonPerms(), loadAndroidDaemonPerms()]);
+    await Promise.all([loadOAuthStatus(), loadMemories(), loadTelegramStatus(), loadMorningNotes(), loadDocuments(), loadSoul(), loadPeople(), loadChannels(), loadDaemonPerms(), loadAndroidDaemonPerms(), loadDriveStatus()]);
     try {
       const importRes = await apiRequest('GET', '/api/chatgpt-import/status');
       const importData = await importRes.json();
@@ -577,7 +663,7 @@ export default function ProfileScreen() {
   // referentially stable and safe to omit from deps; including them causes a
   // temporal-dead-zone ReferenceError because they are declared after loadAll.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loadOAuthStatus, loadMemories, loadTelegramStatus, loadMorningNotes, loadDocuments, loadSoul, loadPeople, loadChannels]);
+  }, [loadOAuthStatus, loadMemories, loadTelegramStatus, loadMorningNotes, loadDocuments, loadSoul, loadPeople, loadChannels, loadDriveStatus]);
 
   const handleToggleEmailAlerts = useCallback(async () => {
     const newValue = !emailAlertsEnabled;
@@ -1831,6 +1917,72 @@ export default function ProfileScreen() {
               );
             })}
           </View>
+
+          {/* Google Drive */}
+          {driveStatus?.googleConnected && (
+            <View style={[styles.platformsList, { marginTop: 12 }]}>
+              <View style={[styles.platformRow, driveStatus.enabled ? styles.platformRowBorder : undefined]}>
+                <View style={[styles.platformIcon, { backgroundColor: '#34A85318' }]}>
+                  <Ionicons name="logo-google" size={20} color="#34A853" />
+                </View>
+                <View style={styles.platformInfo}>
+                  <Text style={styles.platformName}>Google Drive</Text>
+                  <Text style={styles.platformSubtitle}>
+                    {driveStatus.enabled ? 'Auto-saving to Jarvis Workspace' : 'Save plans & reviews to Drive'}
+                  </Text>
+                  {driveStatus.enabled && driveStatus.folderLink && (
+                    <Pressable onPress={() => WebBrowser.openBrowserAsync(driveStatus.folderLink!)}>
+                      <Text style={[styles.upgradePermText, { color: '#34A853' }]}>Open Jarvis Workspace ↗</Text>
+                    </Pressable>
+                  )}
+                </View>
+                {driveLoading || driveEnabling ? (
+                  <ActivityIndicator size="small" color="#34A853" />
+                ) : driveStatus.enabled ? (
+                  <Pressable style={styles.disconnectBtn} onPress={handleDriveDisable}>
+                    <Ionicons name="checkmark-circle" size={18} color={Colors.success} />
+                    <Text style={styles.disconnectBtnText}>Disconnect</Text>
+                  </Pressable>
+                ) : (
+                  <Pressable
+                    style={[styles.connectBtn, { borderColor: '#34A853' }]}
+                    onPress={handleDriveEnable}
+                  >
+                    <Text style={[styles.connectBtnText, { color: '#34A853' }]}>Enable</Text>
+                  </Pressable>
+                )}
+              </View>
+
+              {driveStatus.enabled && (
+                <>
+                  <View style={[styles.platformRow, styles.platformRowBorder]}>
+                    <View style={styles.platformInfo}>
+                      <Text style={styles.platformName}>Auto-save Daily Plans</Text>
+                      <Text style={styles.platformSubtitle}>Save each morning plan as a Google Doc</Text>
+                    </View>
+                    <Switch
+                      value={driveStatus.autoSavePlans}
+                      onValueChange={(v) => handleDriveToggle('autoSavePlans', v)}
+                      trackColor={{ false: Colors.border, true: '#34A853' }}
+                      thumbColor={Colors.white || '#fff'}
+                    />
+                  </View>
+                  <View style={styles.platformRow}>
+                    <View style={styles.platformInfo}>
+                      <Text style={styles.platformName}>Auto-save Weekly Reviews</Text>
+                      <Text style={styles.platformSubtitle}>Save each weekly pattern review as a Google Doc</Text>
+                    </View>
+                    <Switch
+                      value={driveStatus.autoSaveWeekly}
+                      onValueChange={(v) => handleDriveToggle('autoSaveWeekly', v)}
+                      trackColor={{ false: Colors.border, true: '#34A853' }}
+                      thumbColor={Colors.white || '#fff'}
+                    />
+                  </View>
+                </>
+              )}
+            </View>
+          )}
 
           <View style={[styles.platformsList, { marginTop: 12 }]}>
             <View style={styles.platformRow}>

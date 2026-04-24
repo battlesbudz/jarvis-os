@@ -5,6 +5,8 @@ import { buildPlanForUser } from './routes';
 import { getInjectableGoalTasks, markTasksInjected, type InjectableGoalTask } from './goalScheduler';
 import { enqueueWeeklyPatternJobs } from './memory/weeklyJob';
 import { matchesCron, runSchedule } from './discord/schedules';
+import { getUserDriveSettings } from './driveRoutes';
+import { createDriveTextFile } from './integrations/googleDrive';
 
 let schedulerRunning = false;
 let lastWeeklyRunKey = '';
@@ -252,10 +254,62 @@ export async function runMorningPlanBuild() {
 
       console.log(`[Scheduler] Auto-built ${newTasks.length} tasks for user ${user.id} (top: "${topTask.title}")`);
 
+      // Auto-save daily plan to Google Drive if the user has it enabled.
+      try {
+        const drive = await getUserDriveSettings(user.id);
+        if (drive.enabled && drive.autoSavePlans && drive.accessToken) {
+          const planText = buildPlanMarkdown(today, newTasks, result.reasoning);
+          const driveFile = await createDriveTextFile(
+            drive.accessToken,
+            `Daily Plan — ${today}`,
+            planText,
+            { convertToDoc: true, folderId: drive.folderId || undefined }
+          );
+          console.log(`[Scheduler] Drive auto-save for user ${user.id}: ${driveFile.webViewLink}`);
+
+          // Post Drive link alongside the plan via Telegram (if connected).
+          try {
+            const { sendMessage, isTelegramConfigured } = await import('./integrations/telegram');
+            const { db: tdb } = await import('./db');
+            const { telegramLinks } = await import('@shared/schema');
+            const { eq: teq } = await import('drizzle-orm');
+            if (isTelegramConfigured()) {
+              const links = await tdb.select().from(telegramLinks).where(teq(telegramLinks.userId, user.id)).limit(1);
+              if (links[0]?.chatId) {
+                await sendMessage(
+                  links[0].chatId,
+                  `📁 Your daily plan for ${today} has been saved to Google Drive:\n${driveFile.webViewLink}`
+                );
+              }
+            }
+          } catch (tgErr) {
+            console.error(`[Scheduler] Drive Telegram notification failed for ${user.id}:`, tgErr);
+          }
+        }
+      } catch (driveErr) {
+        console.error(`[Scheduler] Drive auto-save failed for user ${user.id}:`, driveErr);
+      }
+
     } catch (err) {
       console.error(`[Scheduler] Auto-plan build failed for user ${user.id}:`, err);
     }
   }
 
   console.log('[Scheduler] Morning plan build complete');
+}
+
+function buildPlanMarkdown(date: string, tasks: any[], reasoning?: string): string {
+  const lines: string[] = [`# Daily Plan — ${date}`, ''];
+  if (reasoning) {
+    lines.push(`> ${reasoning}`, '');
+  }
+  lines.push('## Tasks', '');
+  for (const task of tasks) {
+    const durationStr = task.duration ? ` (${task.duration} min)` : '';
+    const timeStr = task.time ? ` @ ${task.time}` : '';
+    const status = task.completed ? '✅' : '⬜';
+    lines.push(`${status} **${task.title}**${timeStr}${durationStr}`);
+    if (task.description) lines.push(`   ${task.description}`);
+  }
+  return lines.join('\n');
 }

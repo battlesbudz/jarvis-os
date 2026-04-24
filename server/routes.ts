@@ -35,6 +35,7 @@ import { registerDiscordScheduleRoutes } from "./discord/schedulesRoutes";
 import { registerDownloadRoutes } from "./downloadRoutes";
 import { isIntegrationOwner, claimIntegrationOwnership } from "./integrationOwner";
 import { oauthRouter, oauthCallbackRouter } from "./oauthRoutes";
+import { driveRouter } from "./driveRoutes";
 import { getValidGoogleTokens, getValidGoogleToken, getValidMicrosoftToken, getUserTokens, getUserToken, getUserOAuthStatus } from "./userTokenStore";
 import { tavilySearch, formatSearchResults } from "./integrations/search";
 import { logInteraction, getRecentInteractions, formatInteractionTimeline } from "./interactionLog";
@@ -581,6 +582,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   registerTelegramRoutes(app);
   registerChannelRoutes(app);
   registerDiscordScheduleRoutes(app);
+  app.use("/api/drive", driveRouter);
 
   app.get("/api/discord/status", async (req: Request, res: Response) => {
     try {
@@ -668,6 +670,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const result = await buildPlanFromInputs(req.body);
       res.json(result);
+
+      // Auto-save to Google Drive (non-fatal, fire-and-forget).
+      const userId = (req as any).userId as string | undefined;
+      if (userId && result && result.tasks.length > 0) {
+        (async () => {
+          try {
+            const { getUserDriveSettings } = await import('./driveRoutes');
+            const { createDriveTextFile } = await import('./integrations/googleDrive');
+            const drive = await getUserDriveSettings(userId);
+            if (drive.enabled && drive.autoSavePlans && drive.accessToken) {
+              const today = new Date().toISOString().slice(0, 10);
+              const lines: string[] = [`# Daily Plan — ${today}`, '', '## Tasks', ''];
+              for (const t of result.tasks) {
+                const dur = t.duration ? ` (${t.duration} min)` : '';
+                const tm = t.time ? ` @ ${t.time}` : '';
+                lines.push(`⬜ **${t.title}**${tm}${dur}`);
+                if (t.description) lines.push(`   ${t.description}`);
+              }
+              if (result.reasoning) lines.unshift(`> ${result.reasoning}`, '', lines.shift()!);
+              await createDriveTextFile(
+                drive.accessToken,
+                `Daily Plan — ${today}`,
+                lines.join('\n'),
+                { convertToDoc: true, folderId: drive.folderId || undefined }
+              );
+              console.log(`[Route] Drive auto-save (build-plan) for user ${userId}`);
+            }
+          } catch (driveErr) {
+            console.error('[Route] Drive auto-save (build-plan) failed:', driveErr);
+          }
+        })();
+      }
     } catch (error) {
       console.error("Error building plan:", error);
       res.status(500).json({ error: "Failed to build plan" });
