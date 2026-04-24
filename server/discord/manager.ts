@@ -639,6 +639,20 @@ export async function postMessageAndGetId(
   channelId: string | null,
   text: string,
 ): Promise<string | null> {
+  const info = await postMessageAndGetInfo(userId, channelName, channelId, text);
+  return info?.messageId ?? null;
+}
+
+/**
+ * Like postMessageAndGetId but also returns the real Discord channel ID.
+ * Useful when the caller needs to perform a follow-up action (e.g. pin) on the channel.
+ */
+export async function postMessageAndGetInfo(
+  userId: string,
+  channelName: string,
+  channelId: string | null,
+  text: string,
+): Promise<{ messageId: string; channelId: string } | null> {
   const client = botClients.get(userId);
   if (!client || !client.isReady()) return null;
 
@@ -675,9 +689,9 @@ export async function postMessageAndGetId(
     for (let i = 1; i < chunks.length; i++) {
       await targetChannel.send(chunks[i]).catch(() => {});
     }
-    return firstMsg.id;
+    return { messageId: firstMsg.id, channelId: targetChannel.id };
   } catch (err) {
-    console.error("[DiscordManager] postMessageAndGetId failed:", err);
+    console.error("[DiscordManager] postMessageAndGetInfo failed:", err);
     return null;
   }
 }
