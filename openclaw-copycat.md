@@ -95,13 +95,23 @@ This document tracks the 8 capability gaps between Jarvis and OpenClaw's tool ar
 
 ---
 
-## Gap 8 — Lobster Workflow Engine
+## Gap 8 — Lobster Workflow Engine ✅ DONE
 
 **OpenClaw tool:** `lobster` — built-in multi-step branching workflow primitive; agent defines, inspects, pauses, and resumes structured workflow graphs
 
-**Jarvis equivalent:** `goalDecomposer` + `spawnSubagent` chains. No structured workflow graph the agent can define, inspect, or resume across sessions.
+**Jarvis tools (Task #151):**
+- `workflow_create` — defines a named workflow with an ordered list of steps (title + prompt + optional agent_type per step); inserts into `agent_workflows`; returns workflow ID
+- `workflow_run` — starts the next pending step: builds enriched prompt (injects all prior step outputs), queues a background job, marks workflow `paused_waiting`; auto-advances on completion
+- `workflow_status` — returns all step statuses, job IDs, and full outputs of completed steps
+- `workflow_pause` — halts auto-advance after the current step finishes
+- `workflow_resume` — continues from the next pending step
+- `workflow_list` — lists all active/paused (or all including complete) workflows with IDs
 
-**Why it matters:** Long-running autonomous plans (multi-day research projects, phased task execution, project management workflows) need resumable structure — not just fire-and-forget sub-agent chains.
+**Auto-advance hook:** `server/agent/workflowEngine.ts::onWorkflowJobComplete` is called from `server/agent/jobQueue.ts::processJob` after every job completes; automatically queues the next step and notifies user when all steps are done.
+
+**Schema:** `agent_workflows` table (id, userId, title, description, steps JSONB, currentStepIndex, status, createdAt, updatedAt)
+
+**Files:** `server/agent/workflowEngine.ts`, `server/agent/tools/workflowTools.ts`, `shared/schema.ts`, `server/agent/jobQueue.ts`, `server/agent/tools/index.ts`
 
 ---
 
@@ -116,8 +126,8 @@ This document tracks the 8 capability gaps between Jarvis and OpenClaw's tool ar
 | Browser automation | `browser` (always on) | Android daemon (optional) | PARTIAL |
 | Shell execution | `exec` / `bash` (always on) | Desktop daemon (optional) | PARTIAL |
 | Voice responses (TTS) | `tts` | `speak` tool + `/tts on\|off\|voice` | ✅ CLOSED |
-| Agent-defined cron jobs | `cron` tool | None (system-only) | YES |
-| Workflow engine | `lobster` | None | YES |
+| Agent-defined cron jobs | `cron` tool | `cron_*` tools (4) | ✅ CLOSED |
+| Workflow engine | `lobster` | `workflow_*` tools (6) | ✅ CLOSED |
 | Sub-agent spawning | `sessions_spawn` | `spawnSubagent` | PARTIAL |
 | Image generation | `image_generate` | None | YES |
 

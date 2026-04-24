@@ -35,6 +35,14 @@ import { webFetchTool } from "./webFetch";
 import { sessionsListTool, sessionsHistoryTool, sessionsSendTool } from "./sessionTools";
 import { speakTool } from "./tts";
 import { cronCreateTool, cronListTool, cronDeleteTool, cronUpdateTool } from "./cronTools";
+import {
+  workflowCreateTool,
+  workflowRunTool,
+  workflowStatusTool,
+  workflowPauseTool,
+  workflowResumeTool,
+  workflowListTool,
+} from "./workflowTools";
 
 export const ALL_TOOLS: AgentTool[] = [
   webSearchTool,
@@ -81,6 +89,12 @@ export const ALL_TOOLS: AgentTool[] = [
   cronListTool,
   cronDeleteTool,
   cronUpdateTool,
+  workflowCreateTool,
+  workflowRunTool,
+  workflowStatusTool,
+  workflowPauseTool,
+  workflowResumeTool,
+  workflowListTool,
 ];
 
 const TOOL_INDEX = new Map(ALL_TOOLS.map((t) => [t.name, t]));
@@ -129,6 +143,12 @@ export function telegramCoachTools(opts: { hasGoogle: boolean }): AgentTool[] {
     cronListTool,
     cronDeleteTool,
     cronUpdateTool,
+    workflowCreateTool,
+    workflowRunTool,
+    workflowStatusTool,
+    workflowPauseTool,
+    workflowResumeTool,
+    workflowListTool,
   ];
   if (opts.hasGoogle) {
     base.push(gmailActionTool, gmailDraftTool, fetchCalendarTool, driveCreateFileTool, driveListFilesTool, driveReadFileTool);
@@ -181,4 +201,10 @@ export {
   cronListTool,
   cronDeleteTool,
   cronUpdateTool,
+  workflowCreateTool,
+  workflowRunTool,
+  workflowStatusTool,
+  workflowPauseTool,
+  workflowResumeTool,
+  workflowListTool,
 };
