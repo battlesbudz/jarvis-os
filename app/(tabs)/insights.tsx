@@ -565,6 +565,10 @@ export default function InsightsScreen() {
   const [discordBotTokenInput, setDiscordBotTokenInput] = useState('');
   const [discordTokenSaving, setDiscordTokenSaving] = useState(false);
   const [discordTokenError, setDiscordTokenError] = useState('');
+  const [discordGuilds, setDiscordGuilds] = useState<{ id: string; name: string; icon: string | null }[]>([]);
+  const [discordWorkspaceLoading, setDiscordWorkspaceLoading] = useState(false);
+  const [discordWorkspaceDone, setDiscordWorkspaceDone] = useState(false);
+  const [discordWorkspaceError, setDiscordWorkspaceError] = useState('');
   const [emailSuggestions, setEmailSuggestions] = useState<EmailSuggestion[]>([]);
   const [scanLoading, setScanLoading] = useState(false);
   const [addedSuggestions, setAddedSuggestions] = useState<Record<number, boolean>>({});
@@ -1623,6 +1627,18 @@ export default function InsightsScreen() {
     }
   }, []);
 
+  useEffect(() => {
+    if (discordPhase !== 'done' || !discordConnectVisible) return;
+    (async () => {
+      try {
+        const url = new URL('/api/channels/discord/guilds', getApiUrl());
+        const res = await authFetch(url.toString());
+        const data = await res.json();
+        setDiscordGuilds(data.guilds || []);
+      } catch {}
+    })();
+  }, [discordPhase, discordConnectVisible]);
+
   const renderItem = useCallback(({ item, index }: { item: ChatMessage | { type: 'divider'; id: string }; index: number }) => {
     if ('type' in item && item.type === 'divider') {
       return (
@@ -1994,9 +2010,67 @@ export default function InsightsScreen() {
             )}
 
             {discordPhase === 'done' && (
-              <View style={styles.discordSuccessBox}>
-                <Ionicons name="checkmark-circle" size={28} color={Colors.success} />
-                <Text style={styles.discordSuccessText}>Discord is already linked! Jarvis can message you there.</Text>
+              <View style={{ gap: 16 }}>
+                <View style={styles.discordSuccessBox}>
+                  <Ionicons name="checkmark-circle" size={28} color={Colors.success} />
+                  <Text style={styles.discordSuccessText}>Discord is linked. @mention Jarvis in any server channel to chat.</Text>
+                </View>
+
+                <View style={styles.discordSectionBox}>
+                  <Text style={styles.discordSectionTitle}>🧠 Jarvis Workspace</Text>
+                  <Text style={styles.discordSectionSub}>
+                    Let Jarvis create its own organised channels in your server — one for tasks, finance, ideas, business, personal, and thinking. Once set up, Jarvis will route conversations and updates into the right channel automatically.
+                  </Text>
+
+                  {discordWorkspaceDone ? (
+                    <View style={[styles.discordSuccessBox, { marginTop: 8 }]}>
+                      <Ionicons name="checkmark-circle" size={20} color={Colors.success} />
+                      <Text style={styles.discordSuccessText}>Workspace channels created! Check your server.</Text>
+                    </View>
+                  ) : (
+                    <>
+                      {discordGuilds.length === 0 ? (
+                        <Text style={styles.discordSectionSub}>No servers detected yet — make sure the bot has been invited to your server.</Text>
+                      ) : discordGuilds.map((guild) => (
+                        <Pressable
+                          key={guild.id}
+                          style={[styles.discordGuildRow, discordWorkspaceLoading && { opacity: 0.5 }]}
+                          disabled={discordWorkspaceLoading}
+                          onPress={async () => {
+                            setDiscordWorkspaceLoading(true);
+                            setDiscordWorkspaceError('');
+                            try {
+                              const url = new URL('/api/channels/discord/workspace/setup', getApiUrl());
+                              const res = await authFetch(url.toString(), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ guildId: guild.id }) });
+                              const data = await res.json();
+                              if (data.ok) {
+                                setDiscordWorkspaceDone(true);
+                              } else {
+                                setDiscordWorkspaceError(data.error || 'Setup failed — make sure the bot has Manage Channels permission.');
+                              }
+                            } catch {
+                              setDiscordWorkspaceError('Network error — please try again.');
+                            } finally {
+                              setDiscordWorkspaceLoading(false);
+                            }
+                          }}
+                        >
+                          {discordWorkspaceLoading ? (
+                            <ActivityIndicator size="small" color="#5865F2" />
+                          ) : (
+                            <Ionicons name="add-circle-outline" size={18} color="#5865F2" />
+                          )}
+                          <Text style={styles.discordGuildName}>
+                            {discordWorkspaceLoading ? 'Creating channels…' : `Set up in ${guild.name}`}
+                          </Text>
+                        </Pressable>
+                      ))}
+                      {!!discordWorkspaceError && (
+                        <Text style={styles.discordErrorText}>{discordWorkspaceError}</Text>
+                      )}
+                    </>
+                  )}
+                </View>
               </View>
             )}
 
@@ -3120,5 +3194,40 @@ const styles = StyleSheet.create({
     color: Colors.text,
     textAlign: 'center',
     lineHeight: 22,
+  },
+  discordSectionBox: {
+    backgroundColor: Colors.bg,
+    borderRadius: 14,
+    padding: 16,
+    gap: 10,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  discordSectionTitle: {
+    fontSize: 16,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.text,
+  },
+  discordSectionSub: {
+    fontSize: 13,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+    lineHeight: 19,
+  },
+  discordGuildRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: '#5865F220',
+    borderRadius: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    marginTop: 4,
+  },
+  discordGuildName: {
+    fontSize: 14,
+    fontFamily: 'Inter_600SemiBold',
+    color: '#5865F2',
+    flex: 1,
   },
 });
