@@ -202,8 +202,11 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
       (a) => a.contentType?.startsWith("audio/") || a.contentType?.startsWith("video/"),
     );
 
+    // typingMsg is kept in outer scope so we can reuse it as the agent
+    // placeholder instead of sending a second "Thinking…" message.
+    let typingMsg: Message | null = null;
+
     if (audioAtt && !userText) {
-      let typingMsg: Message | null = null;
       try {
         typingMsg = await message.channel.send("🎤 Transcribing voice message…");
         const resp = await fetch(audioAtt.url);
@@ -220,7 +223,10 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
         }
         userText = transcript.trim();
         const preview = userText.length > 100 ? userText.slice(0, 100) + "…" : userText;
-        await typingMsg.edit(`🎤 *"${preview}"*`);
+        // Show transcript briefly, then transition to thinking state in the
+        // same message so the user only ever sees ONE bot message per voice
+        // input (not a separate "Thinking…" message on top of the transcript).
+        await typingMsg.edit(`🎤 *"${preview}"* — _Thinking…_`);
       } catch (err) {
         console.error("[DiscordManager] voice transcription failed:", err);
         if (typingMsg) await typingMsg.edit("Sorry, transcription failed — please type your message.").catch(() => {});
@@ -253,11 +259,16 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
       : "";
 
     // ── Route through coach pipeline with streaming edits ──────────────
-    let placeholder: Message | null = null;
-    try {
-      placeholder = await message.channel.send("_Thinking…_");
-    } catch {
-      // ignore send failure for placeholder
+    // Reuse the voice-transcription message as the thinking placeholder so
+    // voice messages only ever produce ONE bot message.  For text messages
+    // (typingMsg is null) send a fresh placeholder as before.
+    let placeholder: Message | null = typingMsg;
+    if (!placeholder) {
+      try {
+        placeholder = await message.channel.send("_Thinking…_");
+      } catch {
+        // ignore send failure for placeholder
+      }
     }
 
     // Streaming: accumulate chunks and edit the placeholder at most once
