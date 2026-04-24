@@ -491,7 +491,7 @@ export const NOTIFICATION_TYPES = [
 ] as const;
 export type NotificationType = typeof NOTIFICATION_TYPES[number];
 
-export const CHANNEL_NAMES = ["telegram", "whatsapp", "slack", "daemon", "discord"] as const;
+export const CHANNEL_NAMES = ["telegram", "whatsapp", "slack", "daemon", "discord", "in_app"] as const;
 export type ChannelName = typeof CHANNEL_NAMES[number];
 
 // Discord OS — Phase 1: scheduled channel reports

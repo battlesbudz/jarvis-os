@@ -18,7 +18,7 @@ export function listChannels(): Channel[] {
   return Array.from(channels.values());
 }
 
-const DEFAULT_FALLBACK: ChannelName[] = ["telegram"];
+const DEFAULT_FALLBACK: ChannelName[] = ["telegram", "in_app"];
 
 export async function getActiveChannelsFor(
   userId: string,
@@ -110,7 +110,8 @@ export async function notifyUser(
   const tried = new Set<ChannelName>(targets);
   const fallbackOrder: ChannelName[] = [
     "telegram",
-    ...listChannels().map((c) => c.name).filter((n) => n !== "telegram"),
+    "in_app",
+    ...listChannels().map((c) => c.name).filter((n) => n !== "telegram" && n !== "in_app"),
   ];
   for (const name of fallbackOrder) {
     if (tried.has(name)) continue;
@@ -118,7 +119,24 @@ export async function notifyUser(
     const r = await trySendOnChannel(userId, name, text, opts, notificationType);
     results.push(r);
     if (r.result.ok) {
-      console.warn(`[channels] notifyUser fallback delivered via ${name} after preferred targets [${targets.join(",")}] failed for user ${userId}`);
+      const failedChannels = targets.join(", ");
+      console.warn(`[channels] notifyUser fallback delivered via ${name} after preferred targets [${failedChannels}] failed for user ${userId}`);
+      const inAppCh = channels.get("in_app");
+      if (inAppCh) {
+        if (name !== "in_app") {
+          inAppCh.sendMessage(
+            userId,
+            `Your preferred notification channels (${failedChannels}) were unavailable. This message was delivered via ${name} instead. Update your notification settings in Profile.`,
+            { notificationType: "general" },
+          ).catch(() => {});
+        } else {
+          inAppCh.sendMessage(
+            userId,
+            `Your preferred channels (${failedChannels}) were unavailable, so this notification was delivered here in-app. Update your notification settings in Profile if needed.`,
+            { notificationType: "general" },
+          ).catch(() => {});
+        }
+      }
       return results;
     }
   }

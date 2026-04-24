@@ -1,7 +1,7 @@
 import { db } from "./db";
 import { eq, and } from "drizzle-orm";
 import * as schema from "@shared/schema";
-import { sendMessage } from "./integrations/telegram";
+import { notifyUser } from "./channels/registry";
 import { getGoogleCalendarEvents } from "./integrations/googleCalendar";
 import { getEmailsSince } from "./integrations/gmail";
 import { getValidGoogleTokens, getAllGoogleConnectedUserIds, getAllMicrosoftConnectedUserIds, getValidMicrosoftToken } from "./userTokenStore";
@@ -103,7 +103,6 @@ Return only items worth asking about. Return { "questions": [] } if nothing is i
 export async function runCuriosityScan(): Promise<void> {
   try {
     const telegramLinks = await db.select().from(schema.telegramLinks);
-    const telegramByUserId = new Map(telegramLinks.map(l => [l.userId, l]));
 
     const googleUserIds = await getAllGoogleConnectedUserIds();
     const microsoftUserIds = await getAllMicrosoftConnectedUserIds();
@@ -123,7 +122,6 @@ export async function runCuriosityScan(): Promise<void> {
     if (userIds.length === 0) return;
 
     for (const userId of userIds) {
-      const link = telegramByUserId.get(userId) ?? null;
       try {
         const googleTokens = await getValidGoogleTokens(userId).catch(() => []);
         const googleToken = googleTokens[0] ?? null;
@@ -384,18 +382,19 @@ export async function runCuriosityScan(): Promise<void> {
             console.error(`[Curiosity] inbox_items insert failed for ${q.sourceId}:`, inboxErr);
           }
 
-          if (link) {
-            try {
-              await sendMessage(link.chatId, q.question);
-              sentCount++;
+          try {
+            const results = await notifyUser(userId, "general", q.question);
+            const delivered = results.some(r => r.result.ok);
+            sentCount++;
+            if (delivered) {
               logInteraction(userId, "notification", "outbound", q.question, "curiosity_question").catch(() => {});
               console.log(`[Curiosity] Sent question to user ${userId}: ${q.question.slice(0, 60)}...`);
-            } catch (sendErr) {
-              console.error(`[Curiosity] Telegram send failed for user ${userId}:`, sendErr);
+            } else {
+              console.log(`[Curiosity] Surfaced to inbox (no channel delivered) for user ${userId}: ${q.question.slice(0, 60)}...`);
             }
-          } else {
+          } catch (sendErr) {
+            console.error(`[Curiosity] notify failed for user ${userId}:`, sendErr);
             sentCount++;
-            console.log(`[Curiosity] Surfaced to inbox (no Telegram) for user ${userId}: ${q.question.slice(0, 60)}...`);
           }
         }
       } catch (userErr) {

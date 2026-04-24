@@ -34,6 +34,7 @@ export function registerChannelRoutes(app: Express): void {
         slack: false,
         daemon: false,
         discord: false,
+        in_app: true,
       };
       const meta: Record<string, unknown> = {};
 
@@ -109,6 +110,22 @@ export function registerChannelRoutes(app: Express): void {
       return res.status(400).json({ error: "invalid channels" });
     }
     try {
+      // Validate that all selected channels are actually connected for this user
+      const [tgRows, chRows] = await Promise.all([
+        db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq(telegramLinks.userId, userId)).limit(1).catch(() => []),
+        db.select({ channel: channelLinks.channel }).from(channelLinks).where(eq(channelLinks.userId, userId)).catch(() => []),
+      ]);
+      const connectedSet = new Set<ChannelName>(["in_app"]);
+      if (tgRows.length > 0) connectedSet.add("telegram");
+      for (const row of chRows) {
+        const ch = row.channel as ChannelName;
+        if (ch === "daemon") { if (isUserPaired(userId)) connectedSet.add("daemon"); }
+        else if (CHANNEL_NAMES.includes(ch)) connectedSet.add(ch);
+      }
+      const disconnected = channels.filter((c: string) => !connectedSet.has(c as ChannelName));
+      if (disconnected.length > 0) {
+        return res.status(400).json({ error: `channels not connected: ${disconnected.join(", ")} — connect them first in Profile` });
+      }
       const unique = [...new Set(channels)] as ChannelName[];
       await setPreference(userId, notificationType as NotificationType, unique);
       res.json({ ok: true, notificationType, channels: unique });
@@ -116,6 +133,69 @@ export function registerChannelRoutes(app: Express): void {
       console.error("[channels] preference update failed:", err);
       res.status(500).json({ error: "failed to update preference" });
     }
+  });
+
+  // GET /api/notification-routing — returns all current routing preferences
+  app.get("/api/notification-routing", authMiddleware, async (req: Request, res: Response) => {
+    const userId = (req as any).userId;
+    try {
+      const prefs = await getAllPreferences(userId);
+      res.json({ notificationTypes: NOTIFICATION_TYPES, channels: CHANNEL_NAMES, preferences: prefs });
+    } catch (err) {
+      console.error("[channels] GET /api/notification-routing failed:", err);
+      res.status(500).json({ error: "failed to load routing preferences" });
+    }
+  });
+
+  // PATCH /api/notification-routing — bulk update; body: { preferences: Record<NotificationType, ChannelName[]> }
+  app.patch("/api/notification-routing", authMiddleware, async (req: Request, res: Response) => {
+    const userId = (req as any).userId;
+    const incoming = (req.body?.preferences || {}) as Record<string, string[]>;
+    const errors: string[] = [];
+    const saved: Record<string, string[]> = {};
+
+    // Determine which channels are actually connected for this user
+    const [tgRows, chRows] = await Promise.all([
+      db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq(telegramLinks.userId, userId)).limit(1).catch(() => []),
+      db.select({ channel: channelLinks.channel }).from(channelLinks).where(eq(channelLinks.userId, userId)).catch(() => []),
+    ]);
+    const connectedSet = new Set<ChannelName>();
+    connectedSet.add("in_app"); // always available
+    if (tgRows.length > 0) connectedSet.add("telegram");
+    for (const row of chRows) {
+      const ch = row.channel as ChannelName;
+      if (ch === "daemon") {
+        if (isUserPaired(userId)) connectedSet.add("daemon");
+      } else if (CHANNEL_NAMES.includes(ch)) {
+        connectedSet.add(ch);
+      }
+    }
+
+    for (const [nt, chs] of Object.entries(incoming)) {
+      if (!NOTIFICATION_TYPES.includes(nt as typeof NOTIFICATION_TYPES[number])) {
+        errors.push(`unknown notificationType: ${nt}`);
+        continue;
+      }
+      if (!Array.isArray(chs) || chs.some((c) => !CHANNEL_NAMES.includes(c as typeof CHANNEL_NAMES[number]))) {
+        errors.push(`invalid channels for ${nt}`);
+        continue;
+      }
+      const disconnected = chs.filter((c) => !connectedSet.has(c as ChannelName));
+      if (disconnected.length > 0) {
+        errors.push(`channels not connected for ${nt}: ${disconnected.join(", ")} — connect them first in Profile`);
+        continue;
+      }
+      const unique = [...new Set(chs)] as ChannelName[];
+      try {
+        await setPreference(userId, nt as NotificationType, unique);
+        saved[nt] = unique;
+      } catch (err) {
+        errors.push(`failed to save ${nt}`);
+      }
+    }
+
+    const prefs = await getAllPreferences(userId).catch(() => ({}));
+    res.json({ ok: errors.length === 0, saved, errors, preferences: prefs });
   });
 
   // POST /api/channels/whatsapp/code — generate link code; user texts it from WhatsApp

@@ -4,6 +4,7 @@ import { whatsappChannel } from "./whatsappChannel";
 import { slackChannel } from "./slackChannel";
 import { daemonChannel } from "./daemonChannel";
 import { discordChannel } from "./discordChannel";
+import { inAppChannel } from "./inAppChannel";
 
 export function initChannels(): void {
   registerChannel(telegramChannel);
@@ -11,7 +12,8 @@ export function initChannels(): void {
   registerChannel(slackChannel);
   registerChannel(daemonChannel);
   registerChannel(discordChannel);
-  console.log("[channels] registered: telegram, whatsapp, slack, daemon, discord");
+  registerChannel(inAppChannel);
+  console.log("[channels] registered: telegram, whatsapp, slack, daemon, discord, in_app");
 }
 
 export { notifyUser, getActiveChannelsFor, getAllPreferences, setPreference, getChannel, listChannels } from "./registry";
