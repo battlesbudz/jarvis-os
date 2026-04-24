@@ -277,17 +277,30 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
     const fullUserText = personaPrefix + (topicContext ? userText + topicContext : userText);
 
     try {
-      let result = await runCoachAgent({
-        userId,
-        userText: fullUserText,
-        channelName: namedAgent ? `Discord #${namedAgent.name.toLowerCase()}` : channelLabel,
-        onToken,
-      });
+      // First attempt: streaming (onToken drives live placeholder edits).
+      // If streaming throws or returns empty content, fall back to a non-streaming
+      // run so users always get a real reply.
+      // Note: the fallback re-runs the full pipeline; runCoachAgent uses an upsert
+      // for chat history so the second write overwrites the first with the real reply.
+      let result: Awaited<ReturnType<typeof runCoachAgent>> | null = null;
+      let streamingFailed = false;
+      try {
+        result = await runCoachAgent({
+          userId,
+          userText: fullUserText,
+          channelName: namedAgent ? `Discord #${namedAgent.name.toLowerCase()}` : channelLabel,
+          onToken,
+        });
+        if (!result.rawReply) {
+          console.warn("[DiscordManager] streaming reply was empty — retrying without streaming");
+          streamingFailed = true;
+        }
+      } catch (streamErr) {
+        console.warn("[DiscordManager] streaming runCoachAgent threw — retrying without streaming:", streamErr);
+        streamingFailed = true;
+      }
 
-      // If streaming returned empty content (rawReply is the unmasked value before
-      // the fallback string is applied), fall back to a non-streaming run
-      if (!result.rawReply) {
-        console.warn("[DiscordManager] streaming reply was empty — retrying without streaming");
+      if (streamingFailed) {
         result = await runCoachAgent({
           userId,
           userText: fullUserText,
@@ -296,7 +309,7 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
         });
       }
 
-      const reply = result.reply || "Sorry, I couldn't generate a response right now.";
+      const reply = result!.reply || "Sorry, I couldn't generate a response right now.";
 
       if (placeholder) {
         await editOrSendLong(placeholder, reply);
