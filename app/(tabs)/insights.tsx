@@ -557,10 +557,14 @@ export default function InsightsScreen() {
   const [telegramConnected, setTelegramConnected] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
   const [discordConnectVisible, setDiscordConnectVisible] = useState(false);
+  const [discordPhase, setDiscordPhase] = useState<'loading' | 'setup_bot' | 'pair' | 'done'>('loading');
   const [discordPairInput, setDiscordPairInput] = useState('');
   const [discordConnecting, setDiscordConnecting] = useState(false);
   const [discordConnectError, setDiscordConnectError] = useState('');
   const [discordConnectDone, setDiscordConnectDone] = useState(false);
+  const [discordBotTokenInput, setDiscordBotTokenInput] = useState('');
+  const [discordTokenSaving, setDiscordTokenSaving] = useState(false);
+  const [discordTokenError, setDiscordTokenError] = useState('');
   const [emailSuggestions, setEmailSuggestions] = useState<EmailSuggestion[]>([]);
   const [scanLoading, setScanLoading] = useState(false);
   const [addedSuggestions, setAddedSuggestions] = useState<Record<number, boolean>>({});
@@ -1593,11 +1597,30 @@ export default function InsightsScreen() {
       ]
     : messages;
 
-  const handleDiscordConnect = useCallback(() => {
+  const handleDiscordConnect = useCallback(async () => {
     setDiscordPairInput('');
     setDiscordConnectError('');
     setDiscordConnectDone(false);
+    setDiscordBotTokenInput('');
+    setDiscordTokenError('');
+    setDiscordPhase('loading');
     setDiscordConnectVisible(true);
+    try {
+      const url = new URL('/api/channels', getApiUrl());
+      const res = await authFetch(url.toString());
+      const data = await res.json();
+      const discordMeta = data.meta?.discord as { hasBotToken?: boolean; isPaired?: boolean } | undefined;
+      if (data.connected?.discord) {
+        setDiscordPhase('done');
+        setDiscordConnectDone(true);
+      } else if (discordMeta?.hasBotToken) {
+        setDiscordPhase('pair');
+      } else {
+        setDiscordPhase('setup_bot');
+      }
+    } catch {
+      setDiscordPhase('setup_bot');
+    }
   }, []);
 
   const renderItem = useCallback(({ item, index }: { item: ChatMessage | { type: 'divider'; id: string }; index: number }) => {
@@ -1959,22 +1982,129 @@ export default function InsightsScreen() {
             <View style={{ minWidth: 64 }} />
           </View>
 
-          <ScrollView contentContainerStyle={styles.discordModalBody}>
+          <ScrollView contentContainerStyle={styles.discordModalBody} keyboardShouldPersistTaps="handled">
             <View style={styles.discordIconRow}>
               <Ionicons name="logo-discord" size={40} color="#5865F2" />
             </View>
 
-            {discordConnectDone ? (
+            {discordPhase === 'loading' && (
+              <View style={styles.discordSuccessBox}>
+                <ActivityIndicator size="large" color="#5865F2" />
+              </View>
+            )}
+
+            {discordPhase === 'done' && (
               <View style={styles.discordSuccessBox}>
                 <Ionicons name="checkmark-circle" size={28} color={Colors.success} />
-                <Text style={styles.discordSuccessText}>Discord linked! Jarvis can now message you there.</Text>
+                <Text style={styles.discordSuccessText}>Discord is already linked! Jarvis can message you there.</Text>
               </View>
-            ) : (
+            )}
+
+            {discordPhase === 'setup_bot' && (
               <>
-                <Text style={styles.discordInstructTitle}>How to connect</Text>
+                <View style={styles.discordPhasePill}>
+                  <Text style={styles.discordPhasePillText}>Step 1 of 2 — Create a Discord Bot</Text>
+                </View>
+                <Text style={styles.discordInstructTitle}>Set up your Jarvis bot</Text>
+                <Text style={styles.discordInstructSub}>
+                  Jarvis runs as your own private Discord bot. You'll create it once in about 2 minutes — no coding needed.
+                </Text>
+
                 <View style={styles.discordStep}>
                   <Text style={styles.discordStepNum}>1</Text>
-                  <Text style={styles.discordStepText}>Open Discord and send any message to the Jarvis bot (DM it or @mention it in your server).</Text>
+                  <Text style={styles.discordStepText}>
+                    Go to{' '}
+                    <Text style={styles.discordLink} onPress={() => Linking.openURL('https://discord.com/developers/applications')}>
+                      discord.com/developers/applications
+                    </Text>
+                    {' '}and tap <Text style={styles.discordBold}>New Application</Text>. Name it "Jarvis" (or whatever you like).
+                  </Text>
+                </View>
+                <View style={styles.discordStep}>
+                  <Text style={styles.discordStepNum}>2</Text>
+                  <Text style={styles.discordStepText}>
+                    Open the <Text style={styles.discordBold}>Bot</Text> tab on the left. Scroll down to <Text style={styles.discordBold}>Privileged Gateway Intents</Text> and enable both <Text style={styles.discordBold}>Server Members Intent</Text> and <Text style={styles.discordBold}>Message Content Intent</Text>.
+                  </Text>
+                </View>
+                <View style={styles.discordStep}>
+                  <Text style={styles.discordStepNum}>3</Text>
+                  <Text style={styles.discordStepText}>
+                    Still on the Bot tab, tap <Text style={styles.discordBold}>Reset Token</Text> → confirm → copy the token shown.
+                  </Text>
+                </View>
+                <View style={styles.discordStep}>
+                  <Text style={styles.discordStepNum}>4</Text>
+                  <Text style={styles.discordStepText}>
+                    To add the bot to your server, go to <Text style={styles.discordBold}>OAuth2 → URL Generator</Text>, check <Text style={styles.discordBold}>bot</Text>, then check <Text style={styles.discordBold}>Send Messages</Text> and <Text style={styles.discordBold}>Read Message History</Text>. Open the generated URL and invite the bot to your server.
+                  </Text>
+                </View>
+                <View style={styles.discordStep}>
+                  <Text style={styles.discordStepNum}>5</Text>
+                  <Text style={styles.discordStepText}>Paste the bot token below.</Text>
+                </View>
+
+                <TextInput
+                  style={styles.discordTokenInput}
+                  placeholder="Paste bot token here"
+                  placeholderTextColor={Colors.textSecondary}
+                  value={discordBotTokenInput}
+                  onChangeText={t => { setDiscordBotTokenInput(t); setDiscordTokenError(''); }}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  secureTextEntry
+                />
+
+                {discordTokenError ? (
+                  <Text style={styles.discordErrorText}>{discordTokenError}</Text>
+                ) : null}
+
+                <Pressable
+                  style={[styles.discordConnectBtn, (!discordBotTokenInput.trim() || discordTokenSaving) && { opacity: 0.5 }]}
+                  disabled={!discordBotTokenInput.trim() || discordTokenSaving}
+                  onPress={async () => {
+                    setDiscordTokenSaving(true);
+                    setDiscordTokenError('');
+                    try {
+                      const url = new URL('/api/channels/discord/token', getApiUrl());
+                      const res = await authFetch(url.toString(), {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ botToken: discordBotTokenInput.trim() }),
+                      });
+                      const data = await res.json();
+                      if (data.ok) {
+                        setDiscordBotTokenInput('');
+                        setDiscordPhase('pair');
+                      } else {
+                        setDiscordTokenError(data.error || 'Invalid token — make sure you copied it fully and enabled Message Content + Server Members intents.');
+                      }
+                    } catch {
+                      setDiscordTokenError('Connection error. Please try again.');
+                    } finally {
+                      setDiscordTokenSaving(false);
+                    }
+                  }}
+                >
+                  {discordTokenSaving ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <Text style={styles.discordConnectBtnText}>Save & Start Bot</Text>
+                  )}
+                </Pressable>
+              </>
+            )}
+
+            {discordPhase === 'pair' && (
+              <>
+                <View style={styles.discordPhasePill}>
+                  <Text style={styles.discordPhasePillText}>Step 2 of 2 — Link Your Account</Text>
+                </View>
+                <Text style={styles.discordInstructTitle}>Pair your Discord account</Text>
+                <Text style={styles.discordInstructSub}>Your bot is running. Now link your personal Discord account so Jarvis knows it's you.</Text>
+
+                <View style={styles.discordStep}>
+                  <Text style={styles.discordStepNum}>1</Text>
+                  <Text style={styles.discordStepText}>Open Discord and send any message to your Jarvis bot — DM it directly or @mention it in your server.</Text>
                 </View>
                 <View style={styles.discordStep}>
                   <Text style={styles.discordStepNum}>2</Text>
@@ -1982,7 +2112,7 @@ export default function InsightsScreen() {
                 </View>
                 <View style={styles.discordStep}>
                   <Text style={styles.discordStepNum}>3</Text>
-                  <Text style={styles.discordStepText}>Enter that code below to link your account.</Text>
+                  <Text style={styles.discordStepText}>Enter that code below.</Text>
                 </View>
 
                 <TextInput
@@ -2015,6 +2145,7 @@ export default function InsightsScreen() {
                       const data = await res.json();
                       if (data.ok) {
                         setDiscordConnectDone(true);
+                        setDiscordPhase('done');
                       } else {
                         setDiscordConnectError(data.error || 'Invalid code — make sure you copied it exactly from the bot.');
                       }
@@ -2030,6 +2161,10 @@ export default function InsightsScreen() {
                   ) : (
                     <Text style={styles.discordConnectBtnText}>Link Discord Account</Text>
                   )}
+                </Pressable>
+
+                <Pressable onPress={() => setDiscordPhase('setup_bot')} style={styles.discordSecondaryBtn}>
+                  <Text style={styles.discordSecondaryBtnText}>← Back to bot setup</Text>
                 </Pressable>
               </>
             )}
@@ -2861,11 +2996,50 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 8,
   },
+  discordPhasePill: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#5865F220',
+    borderRadius: 20,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    marginBottom: 4,
+  },
+  discordPhasePillText: {
+    fontSize: 12,
+    fontFamily: 'Inter_600SemiBold',
+    color: '#5865F2',
+  },
   discordInstructTitle: {
     fontSize: 17,
     fontFamily: 'Inter_600SemiBold',
     color: Colors.text,
     marginBottom: 4,
+  },
+  discordInstructSub: {
+    fontSize: 14,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+    lineHeight: 20,
+    marginBottom: 4,
+  },
+  discordLink: {
+    color: '#5865F2',
+    textDecorationLine: 'underline' as const,
+    fontFamily: 'Inter_500Medium',
+  },
+  discordBold: {
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.text,
+  },
+  discordSecondaryBtn: {
+    alignItems: 'center',
+    paddingVertical: 12,
+    marginTop: 4,
+  },
+  discordSecondaryBtnText: {
+    fontSize: 14,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.textSecondary,
   },
   discordStep: {
     flexDirection: 'row',
@@ -2903,6 +3077,18 @@ const styles = StyleSheet.create({
     color: Colors.text,
     textAlign: 'center',
     letterSpacing: 4,
+    marginTop: 8,
+  },
+  discordTokenInput: {
+    backgroundColor: Colors.card,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    fontSize: 14,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.text,
     marginTop: 8,
   },
   discordErrorText: {
