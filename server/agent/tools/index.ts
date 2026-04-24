@@ -34,6 +34,7 @@ import { memorySearchTool, memoryGetTool } from "./memorySearch";
 import { webFetchTool } from "./webFetch";
 import { sessionsListTool, sessionsHistoryTool, sessionsSendTool } from "./sessionTools";
 import { speakTool } from "./tts";
+import { cronCreateTool, cronListTool, cronDeleteTool, cronUpdateTool } from "./cronTools";
 
 export const ALL_TOOLS: AgentTool[] = [
   webSearchTool,
@@ -76,6 +77,10 @@ export const ALL_TOOLS: AgentTool[] = [
   sessionsHistoryTool,
   sessionsSendTool,
   speakTool,
+  cronCreateTool,
+  cronListTool,
+  cronDeleteTool,
+  cronUpdateTool,
 ];
 
 const TOOL_INDEX = new Map(ALL_TOOLS.map((t) => [t.name, t]));
@@ -120,6 +125,10 @@ export function telegramCoachTools(opts: { hasGoogle: boolean }): AgentTool[] {
     sessionsHistoryTool,
     sessionsSendTool,
     speakTool,
+    cronCreateTool,
+    cronListTool,
+    cronDeleteTool,
+    cronUpdateTool,
   ];
   if (opts.hasGoogle) {
     base.push(gmailActionTool, gmailDraftTool, fetchCalendarTool, driveCreateFileTool, driveListFilesTool, driveReadFileTool);
@@ -168,4 +177,8 @@ export {
   sessionsHistoryTool,
   sessionsSendTool,
   speakTool,
+  cronCreateTool,
+  cronListTool,
+  cronDeleteTool,
+  cronUpdateTool,
 };
