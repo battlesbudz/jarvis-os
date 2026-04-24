@@ -74,7 +74,11 @@ export async function buildDailyDigest(userId: string): Promise<string> {
   if (pendingApprovals.length > 0) {
     lines.push("⏳ **Waiting for your approval:**");
     for (const a of pendingApprovals) {
-      lines.push(`  • ${a.type} in #... (react ${a.approveEmoji} or ${a.rejectEmoji})`);
+      // Try to get a destination channel name from the onApprove action
+      const onApprove = a.onApprove as { channelName?: string } | null;
+      const dest = onApprove?.channelName ? ` → #${onApprove.channelName}` : "";
+      const preview = a.content.replace(/\n/g, " ").slice(0, 60) + (a.content.length > 60 ? "…" : "");
+      lines.push(`  • **${a.type}**${dest}: "${preview}" (react ${a.approveEmoji} or ${a.rejectEmoji})`);
     }
     lines.push("");
   } else {

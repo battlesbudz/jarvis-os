@@ -26,6 +26,18 @@ import { channelLinks } from "@shared/schema";
 import { eq, and } from "drizzle-orm";
 import type { DiscordLinkMeta, AllowlistedGuild } from "./manager";
 
+// ── Daily Digest channel ──────────────────────────────────────────────────────
+
+/** Key used in WorkspaceMeta.channels for the daily digest channel. */
+export const DIGEST_CHANNEL_KEY = "daily-digest";
+
+export const DIGEST_CHANNEL = {
+  key: DIGEST_CHANNEL_KEY,
+  name: "daily-digest",
+  emoji: "📰",
+  description: "Jarvis daily summary: completed automations, pending approvals, agent activity, and tomorrow's schedule.",
+};
+
 // ── Topic definitions ────────────────────────────────────────────────────────
 
 export interface WorkspaceTopic {
@@ -163,6 +175,30 @@ export async function setupWorkspace(
           `**${topic.emoji} ${topic.name.charAt(0).toUpperCase() + topic.name.slice(1)}**\n${topic.description}\n\n_Jarvis will post relevant updates here and you can ask me anything in this topic._`,
         ).catch(() => {});
       }
+    }
+
+    // Create (or find) the #daily-digest channel
+    const digestChannelName = `${DIGEST_CHANNEL.emoji}${DIGEST_CHANNEL.name}`;
+    const existingDigest = guild.channels.cache.find(
+      (ch) =>
+        ch.type === ChannelType.GuildText &&
+        (ch as TextChannel).parentId === category.id &&
+        ch.name === digestChannelName,
+    ) as TextChannel | undefined;
+
+    if (existingDigest) {
+      channelIds[DIGEST_CHANNEL_KEY] = existingDigest.id;
+    } else {
+      const created = await guild.channels.create({
+        name: digestChannelName,
+        type: ChannelType.GuildText,
+        parent: category.id,
+        topic: DIGEST_CHANNEL.description,
+      }) as TextChannel;
+      channelIds[DIGEST_CHANNEL_KEY] = created.id;
+      await created.send(
+        `**${DIGEST_CHANNEL.emoji} Daily Digest**\n${DIGEST_CHANNEL.description}\n\n_Jarvis will post your daily summary here every evening at 9pm._`,
+      ).catch(() => {});
     }
 
     const workspace: WorkspaceMeta = {

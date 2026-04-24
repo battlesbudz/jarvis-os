@@ -5,6 +5,9 @@ import { buildPlanForUser } from './routes';
 import { getInjectableGoalTasks, markTasksInjected, type InjectableGoalTask } from './goalScheduler';
 import { enqueueWeeklyPatternJobs } from './memory/weeklyJob';
 import { matchesCron, runSchedule } from './discord/schedules';
+import { buildDailyDigest } from './discord/digest';
+import { postToDiscordChannel } from './discord/manager';
+import { DIGEST_CHANNEL_KEY } from './discord/workspace';
 import { getUserDriveSettings } from './driveRoutes';
 import { createDriveTextFile } from './integrations/googleDrive';
 
@@ -97,6 +100,33 @@ async function runAgentLoop(agent: typeof schema.discordAgents.$inferSelect): Pr
     .where(eq(schema.discordAgents.id, agent.id));
 }
 
+/** Post daily digest to each active Discord-linked user's #daily-digest channel. */
+async function runDailyDigests(): Promise<void> {
+  try {
+    // Find all users with an active Discord channel link
+    const links = await db
+      .select()
+      .from(schema.channelLinks)
+      .where(eq(schema.channelLinks.channel, 'discord'));
+
+    for (const link of links) {
+      try {
+        const meta = link.metadata as { workspace?: { channels?: Record<string, string> } } | null;
+        const channelId = meta?.workspace?.channels?.[DIGEST_CHANNEL_KEY];
+        if (!channelId) continue;
+
+        const digest = await buildDailyDigest(link.userId);
+        await postToDiscordChannel(link.userId, 'daily-digest', channelId, digest);
+        console.log(`[Scheduler] Daily digest posted for user ${link.userId}`);
+      } catch (err) {
+        console.error(`[Scheduler] Daily digest failed for user ${link.userId}:`, err);
+      }
+    }
+  } catch (err) {
+    console.error('[Scheduler] runDailyDigests failed:', err);
+  }
+}
+
 export function startScheduler() {
   if (schedulerRunning) return;
   schedulerRunning = true;
@@ -127,6 +157,12 @@ export function startScheduler() {
           console.error('[Scheduler] enqueueWeeklyPatternJobs failed:', err);
         }
       }
+    }
+
+    // Daily digest — 9pm every day
+    if (h === 21 && m === 0) {
+      console.log('[Scheduler] Running daily digests...');
+      runDailyDigests().catch((err) => console.error('[Scheduler] runDailyDigests error:', err));
     }
 
     // Discord channel schedules — check every minute
