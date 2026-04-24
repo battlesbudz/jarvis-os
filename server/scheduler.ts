@@ -155,6 +155,20 @@ export function startScheduler() {
       console.error('[Scheduler] Dream delivery failed:', err),
     );
 
+    // Nightly 02:00 (server local time) — recalibrate the gut anomaly detector
+    // for all users. Reads all gutSignals feedback rows, computes per-user
+    // per-signal-type confirmation rates, and persists the derived gate
+    // adjustments to the gutCalibration table so detectors stay smart across
+    // process restarts. Note: h/m are in server-local time, not UTC.
+    if (h === 2 && m === 0) {
+      import('./intelligence/gut').then(({ calibrateGutForAllUsers }) => {
+        console.log('[Scheduler] Running nightly gut calibration...');
+        calibrateGutForAllUsers().catch((err) =>
+          console.error('[Scheduler] Gut calibration failed:', err),
+        );
+      }).catch((err) => console.error('[Scheduler] Gut calibration import failed:', err));
+    }
+
     // Sunday 03:00 local — enqueue weekly pattern recognition jobs for
     // every active user. Workers (jobQueue) pick them up over the next
     // few minutes, regenerate each user's SOUL, and deliver a Telegram
