@@ -7,6 +7,7 @@ import { getEmailsSince } from "./integrations/gmail";
 import { getValidGoogleTokens, getAllGoogleConnectedUserIds, getAllMicrosoftConnectedUserIds, getValidMicrosoftToken } from "./userTokenStore";
 import { getOutlookCalendarEvents, getRecentOutlookEmails } from "./integrations/outlook";
 import { logInteraction } from "./interactionLog";
+import { logAction, isActionSuppressed } from "./intelligence/actionLog";
 import OpenAI from "openai";
 
 const openai = new OpenAI({
@@ -365,8 +366,16 @@ export async function runCuriosityScan(): Promise<void> {
             }
           }
 
+          // Self-correction: skip surfacing if proactive_message is suppressed.
+          const isProactiveSuppressed = await isActionSuppressed(userId, "proactive_message").catch(() => false);
+          if (isProactiveSuppressed) {
+            console.log(`[Curiosity] proactive_message suppressed for user ${userId} (self-correction) — skipping inbox surface`);
+            continue;
+          }
+
+          let inboxInserted = false;
           try {
-            await db.insert(schema.inboxItems).values({
+            const result = await db.insert(schema.inboxItems).values({
               userId,
               sourceType: canonicalSourceType as "google_calendar" | "outlook_calendar" | "outlook_email" | "email" | "telegram" | "slack" | "discord" | "whatsapp" | "other",
               sourceId: q.sourceId,
@@ -377,9 +386,18 @@ export async function runCuriosityScan(): Promise<void> {
                 { label: "Reply", actionType: "reply" },
                 { label: "Dismiss", actionType: "dismiss" },
               ],
-            }).onConflictDoNothing();
+            }).onConflictDoNothing().returning({ id: schema.inboxItems.id });
+            // Drizzle onConflictDoNothing returns an empty array on conflict
+            inboxInserted = result.length > 0;
           } catch (inboxErr) {
             console.error(`[Curiosity] inbox_items insert failed for ${q.sourceId}:`, inboxErr);
+          }
+
+          // Log proactive_message only when the inbox item was newly inserted.
+          // Skips duplicates and failed inserts so Ego engagement metrics stay accurate.
+          // sourceId matches the inbox_items row for targeted outcome resolution.
+          if (inboxInserted) {
+            logAction(userId, "proactive_message", { type: "curiosity_question", sourceId: q.sourceId }).catch(() => {});
           }
 
           try {

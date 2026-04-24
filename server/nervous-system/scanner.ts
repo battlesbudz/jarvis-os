@@ -13,6 +13,7 @@ import * as schema from "@shared/schema";
 import { tavilySearch } from "../integrations/search";
 import { notifyUser } from "../channels/registry";
 import { logInteraction } from "../interactionLog";
+import { logAction, isActionSuppressed } from "../intelligence/actionLog";
 import OpenAI from "openai";
 
 const openai = new OpenAI({
@@ -178,23 +179,43 @@ async function scanWatchTopic(
 
     const msgText = `🔎 Signal for "${watch.label}"\n\n${hit.headline}\n${hit.relevanceExplanation}${hit.url ? `\n\n${hit.url}` : ""}`;
 
-    // Always surface in inbox regardless of channel delivery outcome.
+    // Self-correction: skip surfacing if proactive_message is suppressed.
+    const suppressed = await isActionSuppressed(userId, "proactive_message").catch(() => false);
+    if (suppressed) {
+      console.log(`[NervousSystem] proactive_message suppressed for user ${userId} (self-correction) — skipping inbox surface`);
+      continue;
+    }
+
+    // Surface in inbox regardless of channel delivery outcome.
     // suggestedActions follow the { label, actionType } contract; the signal
     // URL is visible in the snippet and channel delivery message.
-    await db.insert(schema.inboxItems).values({
-      userId,
-      sourceType: "nervous_system",
-      sourceId: `nervous_system:${hash}`,
-      subject: hit.headline,
-      sender: `Nervous System — ${watch.label}`,
-      snippet: hit.relevanceExplanation || hit.snippet?.slice(0, 200),
-      jarvisReason: hit.relevanceExplanation,
-      suggestedActions: [{ label: "Dismiss", actionType: "dismiss" }],
-      status: "pending",
-    }).catch((err: unknown) => {
+    const inboxSourceId = `nervous_system:${hash}`;
+    let inboxInserted = false;
+    try {
+      await db.insert(schema.inboxItems).values({
+        userId,
+        sourceType: "nervous_system",
+        sourceId: inboxSourceId,
+        subject: hit.headline,
+        sender: `Nervous System — ${watch.label}`,
+        snippet: hit.relevanceExplanation || hit.snippet?.slice(0, 200),
+        jarvisReason: hit.relevanceExplanation,
+        suggestedActions: [{ label: "Dismiss", actionType: "dismiss" }],
+        status: "pending",
+      });
+      inboxInserted = true;
+    } catch (err: unknown) {
       const code = (err as { code?: string })?.code;
       if (code !== "23505") console.error("[NervousSystem] inbox insert failed:", err);
-    });
+      // 23505 = duplicate — inbox item already exists, treat as already-surfaced
+    }
+
+    // Log the proactive_message action only when the inbox item was actually
+    // inserted (new surface event). Skips duplicates and failed inserts so
+    // Ego engagement metrics stay accurate.
+    if (inboxInserted) {
+      logAction(userId, "proactive_message", { type: "nervous_system_signal", sourceId: inboxSourceId, hash }).catch(() => {});
+    }
 
     // Attempt channel delivery; only mark deliveredAt when at least one
     // *external* channel succeeded. The in_app channel no-ops for nervous_system

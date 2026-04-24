@@ -729,6 +729,122 @@ export async function ensureTablesExist() {
         ON gut_signals (user_id, created_at DESC)
     `).catch(() => {});
 
+    // ── Jarvis Ego — Action Log + Weekly Reports ──────────────────────────────
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS jarvis_action_log (
+        id          VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id     VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        action_type VARCHAR NOT NULL,
+        outcome     VARCHAR NOT NULL DEFAULT 'pending',
+        metadata    JSONB   NOT NULL DEFAULT '{}',
+        created_at  TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at  TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS jarvis_action_log_user_created_idx
+        ON jarvis_action_log (user_id, created_at DESC)
+    `).catch(() => {});
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS ego_weekly_reports (
+        id          VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id     VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        week_of     VARCHAR NOT NULL,
+        analysis    JSONB   NOT NULL DEFAULT '{}',
+        report_text TEXT    NOT NULL DEFAULT '',
+        delivered_at TIMESTAMP,
+        created_at  TIMESTAMP NOT NULL DEFAULT NOW(),
+        CONSTRAINT ego_weekly_reports_user_week_idx UNIQUE (user_id, week_of)
+      )
+    `);
+
+    // Discord OS scheduled channel reports table
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS discord_channel_schedules (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        guild_id VARCHAR,
+        channel_id VARCHAR,
+        channel_name VARCHAR NOT NULL,
+        label VARCHAR NOT NULL,
+        cron_expression VARCHAR NOT NULL DEFAULT '0 7 * * *',
+        prompt TEXT NOT NULL,
+        pipeline_next VARCHAR,
+        last_run TIMESTAMP,
+        last_output TEXT,
+        enabled BOOLEAN NOT NULL DEFAULT true,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `).catch(() => {});
+
+    // Discord agents table
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS discord_agents (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        name VARCHAR NOT NULL,
+        role VARCHAR NOT NULL DEFAULT 'custom',
+        persona TEXT,
+        channel_id VARCHAR,
+        channel_name VARCHAR,
+        is_active INTEGER NOT NULL DEFAULT 1,
+        loop_enabled INTEGER NOT NULL DEFAULT 0,
+        loop_interval_minutes INTEGER DEFAULT 60,
+        loop_prompt TEXT,
+        last_loop_run TIMESTAMP,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `).catch(() => {});
+
+    // Discord pending approvals
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS discord_pending_approvals (
+        message_id VARCHAR PRIMARY KEY,
+        user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        channel_id VARCHAR NOT NULL,
+        guild_id VARCHAR,
+        type VARCHAR NOT NULL DEFAULT 'custom',
+        content TEXT NOT NULL,
+        approve_emoji VARCHAR NOT NULL DEFAULT '✅',
+        reject_emoji VARCHAR NOT NULL DEFAULT '❌',
+        on_approve JSONB NOT NULL,
+        on_reject JSONB,
+        status VARCHAR NOT NULL DEFAULT 'pending',
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        resolved_at TIMESTAMP
+      )
+    `).catch(() => {});
+
+    // Agent workflows
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS agent_workflows (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        title TEXT NOT NULL,
+        description TEXT,
+        steps JSONB NOT NULL DEFAULT '[]'::jsonb,
+        current_step_index INTEGER NOT NULL DEFAULT 0,
+        status VARCHAR NOT NULL DEFAULT 'active',
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `).catch(() => {});
+
+    // Jarvis scheduled tasks
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS jarvis_scheduled_tasks (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        title TEXT NOT NULL,
+        description TEXT,
+        scheduled_at TIMESTAMP NOT NULL,
+        recurrence VARCHAR,
+        completed_at TIMESTAMP,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `).catch(() => {});
+
     console.log("Database tables verified");
   } catch (error) {
     console.error("Failed to ensure database tables exist:", error);

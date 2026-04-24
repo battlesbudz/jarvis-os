@@ -99,6 +99,18 @@ A learnable, user-configurable rules engine for filtering emails and calendar ev
 - **Frontend**: Inbox tab with badge count, Rules editor accessible from Profile settings
 - **Key files**: `server/inboxRules.ts`, `server/inboxActions.ts`, `app/(tabs)/inbox.tsx`, `app/inbox-rules.tsx`
 
+## Jarvis Ego — Self-Awareness & Performance Tracking
+Jarvis now tracks its own performance and delivers weekly self-reports:
+- **Tables**: `jarvis_action_log` (every action Jarvis takes with outcome tracking), `ego_weekly_reports` (weekly analysis + natural-language self-report)
+- **Action types tracked**: email_drafted, task_suggested, plan_built, proactive_message, meeting_brief, evening_wrap, dream_insight, nervous_system_signal
+- **Ego analyser** (`server/intelligence/ego.ts`): computes completion rate, engagement rate, relationship health trend, most/least effective action types weekly
+- **Self-correction**: if an action type has <25% engagement over the last 2 weeks, Jarvis writes a suppression preference to `jarvisSuppressedActions` in user_preferences and scales back
+- **Weekly report**: generated every Sunday 18:00 UTC, delivered via the user's preferred channels + stored in-app
+- **Soul feedback loop**: after each weekly analysis, durable findings (e.g. "user rarely acts on Monday task suggestions") are written as memories tagged `jarvis_self_knowledge`, then Soul is marked stale for regeneration
+- **In-app dashboard**: "Jarvis Report" screen accessible from Settings → Jarvis Intelligence — shows action breakdown with engagement bar charts, most/least effective action types, relationship health, and all weekly self-reports
+- **API routes**: `GET /api/ego/dashboard`, `GET /api/ego/reports`, `POST /api/ego/trigger`
+- **Key files**: `server/intelligence/ego.ts`, `server/intelligence/actionLog.ts`, `app/jarvis-report.tsx`, `shared/schema.ts` (jarvisActionLog, egoWeeklyReports)
+
 ## Curiosity Scanner (Proactive Questions)
 A background service (`server/curiosityScanner.ts`) runs every 30 minutes to proactively learn about the user:
 - Fetches upcoming calendar events (today + tomorrow) and recent emails (last 24h)

@@ -3,6 +3,7 @@ import { eq, and } from 'drizzle-orm';
 import * as schema from '@shared/schema';
 import { notifyUser } from './channels/registry';
 import { logInteraction } from './interactionLog';
+import { isActionSuppressed } from './intelligence/actionLog';
 import { buildPlanForUser } from './routes';
 import { getInjectableGoalTasks, markTasksInjected, type InjectableGoalTask } from './goalScheduler';
 import { enqueueWeeklyPatternJobs } from './memory/weeklyJob';
@@ -171,6 +172,18 @@ export function startScheduler() {
       }
     }
 
+    // Sunday 18:00 UTC — run Ego weekly self-report for all users.
+    if (dow === 0 && h === 18 && m === 0) {
+      // weekOf is anchored to Monday-start so longitudinal history is consistent.
+      import('./intelligence/ego').then(({ runEgoForAllUsers, getISOWeekMonday }) => {
+        const weekOf = getISOWeekMonday(now);
+        console.log(`[Scheduler] Running Ego weekly reports (${weekOf})...`);
+        runEgoForAllUsers(now, weekOf).catch((err) =>
+          console.error('[Scheduler] Ego reports failed:', err),
+        );
+      }).catch((err) => console.error('[Scheduler] Ego import failed:', err));
+    }
+
     // Daily digest — 9pm every day
     if (h === 21 && m === 0) {
       console.log('[Scheduler] Running daily digests...');
@@ -207,27 +220,55 @@ export async function runMorningPlanBuild() {
         continue;
       }
 
-      const result = await buildPlanForUser(user.id);
-      if (!result || result.tasks.length === 0) {
-        console.log(`[Scheduler] No tasks generated for user ${user.id}, skipping`);
-        continue;
+      // Self-correction suppression: if plan_built or task_suggested is suppressed,
+      // skip buildPlanForUser (AI suggestions) but still run goal-tree injection
+      // so the user always gets their goal tasks for the day.
+      const [planSuppressedNow, taskSuppressedNow] = await Promise.all([
+        isActionSuppressed(user.id, "plan_built"),
+        isActionSuppressed(user.id, "task_suggested"),
+      ]);
+      const aiSuggestionsSuppressed = planSuppressedNow || taskSuppressedNow;
+      if (aiSuggestionsSuppressed) {
+        console.log(`[Scheduler] AI plan/task suggestions suppressed for user ${user.id} (self-correction) — using goal-tree injection only`);
       }
 
-      const newTasks = result.tasks.map(t => ({
-        id: `jarvis_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
-        title: t.title,
-        category: t.category,
-        priority: t.priority,
-        duration: t.duration,
-        time: t.time,
-        description: t.description,
-        completed: false,
-        createdAt: Date.now(),
-        fromJarvis: true,
-      }));
+      const newTasks: Array<{
+        id: string; title: string; category: string; priority: string;
+        duration: number; time: string | undefined; description: string | undefined;
+        completed: boolean; createdAt: number; fromJarvis: boolean;
+      }> = [];
 
-      // Inject next-ready tasks from active goal trees on top of the
-      // base plan. Pacing is enforced inside getInjectableGoalTasks.
+      let planReasoning = "";
+      // aiGeneratedTaskIds tracks only tasks from buildPlanForUser for Ego logging,
+      // so goal-injected tasks are not misattributed as AI suggestions.
+      const aiGeneratedTaskIds: string[] = [];
+      if (!aiSuggestionsSuppressed) {
+        const result = await buildPlanForUser(user.id);
+        if (result && result.tasks.length > 0) {
+          planReasoning = result.reasoning ?? "";
+          for (const t of result.tasks) {
+            const taskId = `jarvis_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+            aiGeneratedTaskIds.push(taskId);
+            newTasks.push({
+              id: taskId,
+              title: t.title,
+              category: t.category,
+              priority: t.priority,
+              duration: t.duration,
+              time: t.time,
+              description: t.description,
+              completed: false,
+              createdAt: Date.now(),
+              fromJarvis: true,
+            });
+          }
+        } else {
+          console.log(`[Scheduler] No AI tasks generated for user ${user.id}`);
+        }
+      }
+
+      // Always inject next-ready tasks from active goal trees regardless of suppression.
+      // Pacing is enforced inside getInjectableGoalTasks.
       let injected: InjectableGoalTask[] = [];
       try {
         injected = await getInjectableGoalTasks(user.id, today);
@@ -236,7 +277,7 @@ export async function runMorningPlanBuild() {
       }
       for (const pick of injected) {
         const minutes = Math.max(15, Math.round((pick.estimateHours || 1) * 60));
-        const goalTask: typeof newTasks[number] & { goalTreeId: string; goalTaskId: string } = {
+        (newTasks as Array<typeof newTasks[number] & { goalTreeId?: string; goalTaskId?: string }>).push({
           id: `goal_${pick.taskId}_${today}`,
           title: pick.title,
           category: 'goal',
@@ -251,8 +292,7 @@ export async function runMorningPlanBuild() {
           fromJarvis: true,
           goalTreeId: pick.goalTreeId,
           goalTaskId: pick.taskId,
-        };
-        newTasks.push(goalTask);
+        });
       }
       if (injected.length > 0) {
         try {
@@ -261,6 +301,11 @@ export async function runMorningPlanBuild() {
         } catch (e) {
           console.error(`[Scheduler] markTasksInjected failed for ${user.id}:`, e);
         }
+      }
+
+      if (newTasks.length === 0) {
+        console.log(`[Scheduler] No tasks at all for user ${user.id}, skipping plan write`);
+        continue;
       }
 
       await db.insert(schema.plans).values({
@@ -272,7 +317,26 @@ export async function runMorningPlanBuild() {
         set: { data: { date: today, tasks: newTasks }, updatedAt: new Date() },
       });
 
-      const topTask = result.tasks[0];
+      // Log Ego actions only when AI suggestions were generated (not suppressed).
+      // Uses aiGeneratedTaskIds so goal-injected tasks are not counted as AI suggestions.
+      if (!aiSuggestionsSuppressed && aiGeneratedTaskIds.length > 0) {
+        const aiTasks = newTasks.filter((t) => aiGeneratedTaskIds.includes(t.id));
+        import('./intelligence/actionLog').then(({ logAction }) => {
+          logAction(user.id, "plan_built", { date: today, aiTaskCount: aiTasks.length, totalTaskCount: newTasks.length }).catch(() => {});
+          if (aiTasks[0]) {
+            logAction(user.id, "prediction_made", {
+              prediction: `User will work on: "${aiTasks[0].title}"`,
+              taskId: aiTasks[0].id,
+              date: today,
+            }).catch(() => {});
+          }
+          for (const t of aiTasks) {
+            logAction(user.id, "task_suggested", { taskId: t.id, title: t.title, date: today, source: "ai" }).catch(() => {});
+          }
+        }).catch(() => {});
+      }
+
+      const topTask = newTasks[0];
       const existingPrefs = await db
         .select({ data: schema.userPreferences.data })
         .from(schema.userPreferences)
@@ -283,9 +347,9 @@ export async function runMorningPlanBuild() {
         ...currentPrefs,
         autoBuiltPlan: {
           date: today,
-          topTask: topTask.title,
-          reasoning: result.reasoning,
-          taskCount: result.tasks.length,
+          topTask: topTask?.title,
+          reasoning: planReasoning || undefined,
+          taskCount: newTasks.length,
         }
       };
 
@@ -300,7 +364,7 @@ export async function runMorningPlanBuild() {
         }
       });
 
-      console.log(`[Scheduler] Auto-built ${newTasks.length} tasks for user ${user.id} (top: "${topTask.title}")`);
+      console.log(`[Scheduler] Auto-built ${newTasks.length} tasks for user ${user.id}${topTask ? ` (top: "${topTask.title}")` : ""}`);
 
       // Gut signals — include high-confidence flags from the last 24 h as a
       // "Jarvis noticed" section appended to the morning brief.
@@ -346,7 +410,7 @@ export async function runMorningPlanBuild() {
       try {
         const drive = await getUserDriveSettings(user.id);
         if (drive.enabled && drive.autoSavePlans && drive.accessToken) {
-          const planText = buildPlanMarkdown(today, newTasks, result.reasoning);
+          const planText = buildPlanMarkdown(today, newTasks, planReasoning);
           const driveFile = await createDriveTextFile(
             drive.accessToken,
             `Daily Plan — ${today}`,
@@ -525,6 +589,10 @@ export async function runDreamDeliveryForAllUsers(now: Date): Promise<void> {
     }
 
     try {
+      if (await isActionSuppressed(user.id, "dream_insight")) {
+        console.log(`[Dream] skipping delivery for ${user.id} (self-correction: suppressed)`);
+        continue;
+      }
       const { getPendingDreamInsights, markDreamInsightsDelivered } = await import('./memory/dream');
       const pending = await getPendingDreamInsights(user.id);
       if (pending.length === 0) {
@@ -545,6 +613,9 @@ export async function runDreamDeliveryForAllUsers(now: Date): Promise<void> {
         userId: user.id, messageType, sentDate: localDate,
       }).catch(() => {});
       logInteraction(user.id, "notification", "outbound", msg, "dream_delivery").catch(() => {});
+      import('./intelligence/actionLog').then(({ logAction }) => {
+        logAction(user.id, "dream_insight", { count: pending.length, date: localDate }).catch(() => {});
+      }).catch(() => {});
       console.log(`[Dream] delivered ${pending.length} insight(s) to ${user.id} (${localDate})`);
     } catch (err) {
       console.error(`[Dream] delivery failed for user ${user.id}:`, err);

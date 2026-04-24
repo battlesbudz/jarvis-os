@@ -519,6 +519,7 @@ export const NOTIFICATION_TYPES = [
   "nervous_system",
   "dream_insight",
   "stress_checkin",
+  "ego_report",
   "general",
 ] as const;
 export type NotificationType = typeof NOTIFICATION_TYPES[number];
@@ -704,3 +705,42 @@ export const dreamInsights = pgTable("dream_insights", {
   deliveredAt: timestamp("delivered_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
+
+// ── Jarvis Ego — Action Log ───────────────────────────────────────────────────
+// Every significant action Jarvis takes is recorded here so the Ego analyser
+// can compute completion rates, engagement rates, and relationship health.
+//
+// actionType values (non-exhaustive, extensible):
+//   email_drafted, task_suggested, plan_built, proactive_message,
+//   prediction_made, meeting_brief, evening_wrap, dream_insight
+//
+// outcome values:
+//   pending   — user has not responded yet
+//   acted_on  — user took the suggested action
+//   ignored   — user dismissed or did not engage
+//   completed — task/commitment was completed
+//   dismissed — user explicitly dismissed
+export const jarvisActionLog = pgTable("jarvis_action_log", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  actionType: varchar("action_type").notNull(),
+  outcome: varchar("outcome").notNull().default("pending"),
+  metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+// ── Jarvis Ego — Weekly Reports ───────────────────────────────────────────────
+// Generated each Sunday; one row per user per week. Stores the full analysis
+// object and the natural-language report text that is delivered to the user.
+export const egoWeeklyReports = pgTable("ego_weekly_reports", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  weekOf: varchar("week_of").notNull(),
+  analysis: jsonb("analysis").notNull().default(sql`'{}'::jsonb`),
+  reportText: text("report_text").notNull().default(""),
+  deliveredAt: timestamp("delivered_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex("ego_weekly_reports_user_week_idx").on(table.userId, table.weekOf),
+]);
