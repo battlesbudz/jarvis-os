@@ -781,6 +781,17 @@ function buildReactionHandler(botOwnerId: string) {
 
       console.log(`[DiscordManager] Approval ${messageId} ${newStatus} via reaction`);
 
+      // Record preference signal for the feedback training loop
+      const { recordApprovalSignal } = await import("./approvalLearning");
+      recordApprovalSignal({
+        userId: botOwnerId,
+        approved: isApprove,
+        contentType: approval.type,
+        content: approval.content,
+        channelId: approval.channelId,
+        messageId,
+      }).catch(() => {});
+
       // Execute action
       const actionData = isApprove ? approval.onApprove : approval.onReject;
       if (actionData) {
