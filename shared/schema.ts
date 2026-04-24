@@ -516,6 +516,7 @@ export const NOTIFICATION_TYPES = [
   "commitment_check",
   "weekly_planning",
   "approval_request",
+  "nervous_system",
   "general",
 ] as const;
 export type NotificationType = typeof NOTIFICATION_TYPES[number];
@@ -585,3 +586,36 @@ export const discordAgents = pgTable("discord_agents", {
   lastLoopRun: timestamp("last_loop_run"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
+
+// ── Nervous System — Ambient Signal Monitoring ────────────────────────────────
+// Per-user watch topics (keywords, companies, people, industries) that the
+// nervous system scanner monitors every 30 minutes via web search.
+
+export const nervousSystemWatches = pgTable("nervous_system_watches", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  label: text("label").notNull(),
+  category: varchar("category").notNull().default("keyword"),
+  active: boolean("active").notNull().default(true),
+  lastCheckedAt: timestamp("last_checked_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// Fired signals log — each signal is a search hit scored as relevant.
+// contentHash deduplicates: the same story is never surfaced twice.
+export const nervousSystemSignals = pgTable("nervous_system_signals", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  watchId: varchar("watch_id").references(() => nervousSystemWatches.id, { onDelete: "set null" }),
+  watchLabel: text("watch_label").notNull(),
+  headline: text("headline").notNull(),
+  url: text("url"),
+  snippet: text("snippet"),
+  relevanceExplanation: text("relevance_explanation"),
+  relevanceScore: integer("relevance_score").notNull().default(0),
+  contentHash: varchar("content_hash").notNull(),
+  deliveredAt: timestamp("delivered_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex("nervous_system_signals_hash_idx").on(table.userId, table.contentHash),
+]);

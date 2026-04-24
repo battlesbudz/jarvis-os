@@ -605,6 +605,47 @@ export async function ensureTablesExist() {
       )
     `);
 
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS nervous_system_watches (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        label TEXT NOT NULL,
+        category VARCHAR NOT NULL DEFAULT 'keyword',
+        active BOOLEAN NOT NULL DEFAULT true,
+        last_checked_at TIMESTAMP,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS nervous_system_watches_user_idx
+        ON nervous_system_watches (user_id)
+    `).catch(() => {});
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS nervous_system_signals (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        watch_id VARCHAR REFERENCES nervous_system_watches(id) ON DELETE SET NULL,
+        watch_label TEXT NOT NULL,
+        headline TEXT NOT NULL,
+        url TEXT,
+        snippet TEXT,
+        relevance_explanation TEXT,
+        relevance_score INTEGER NOT NULL DEFAULT 0,
+        content_hash VARCHAR NOT NULL,
+        delivered_at TIMESTAMP,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS nervous_system_signals_hash_idx
+        ON nervous_system_signals (user_id, content_hash)
+    `).catch(() => {});
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS nervous_system_signals_user_idx
+        ON nervous_system_signals (user_id, created_at DESC)
+    `).catch(() => {});
+
     console.log("Database tables verified");
   } catch (error) {
     console.error("Failed to ensure database tables exist:", error);

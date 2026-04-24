@@ -13,6 +13,10 @@ const NOTIFICATION_SUBJECTS: Record<string, string> = {
   general: "Jarvis notification",
 };
 
+// Notification types that manage their own inbox insertions with rich
+// metadata. Skipping the generic in_app insert prevents duplicate items.
+const SELF_MANAGED_INBOX_TYPES = new Set(["nervous_system"]);
+
 export const inAppChannel: Channel = {
   name: "in_app",
   isConfigured: () => true,
@@ -20,6 +24,9 @@ export const inAppChannel: Channel = {
   async sendMessage(userId, text, opts: ChannelSendOpts = {}): Promise<ChannelSendResult> {
     try {
       const notifType = opts.notificationType ?? "general";
+      if (SELF_MANAGED_INBOX_TYPES.has(notifType)) {
+        return { ok: true };
+      }
       const sourceId = `in_app:${notifType}:${Date.now()}:${Math.random().toString(36).slice(2, 7)}`;
       const subject = NOTIFICATION_SUBJECTS[notifType] ?? "Jarvis notification";
       await db.insert(inboxItems).values({

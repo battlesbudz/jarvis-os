@@ -133,6 +133,69 @@ export default function SettingsScreen() {
   const [coachingMode, setCoachingModeState] = useState<CoachingMode>('sharp');
   const [timezone, setTimezone] = useState('America/New_York');
 
+  // ── Nervous System ──
+  interface WatchTopic {
+    id: string;
+    label: string;
+    category: string;
+    active: boolean;
+    lastCheckedAt: string | null;
+  }
+  interface NsSignal {
+    id: string;
+    watchLabel: string;
+    headline: string;
+    relevanceExplanation: string | null;
+    url: string | null;
+    createdAt: string;
+  }
+  const [watches, setWatches] = useState<WatchTopic[]>([]);
+  const [recentSignals, setRecentSignals] = useState<NsSignal[]>([]);
+  const [newWatchLabel, setNewWatchLabel] = useState('');
+  const [newWatchCategory, setNewWatchCategory] = useState('keyword');
+  const [nsAddingWatch, setNsAddingWatch] = useState(false);
+  const [nsLoading, setNsLoading] = useState(false);
+
+  const loadNervousSystem = useCallback(async () => {
+    setNsLoading(true);
+    try {
+      const [watchRes, signalRes] = await Promise.all([
+        apiRequest('GET', '/api/nervous-system/watches').then(r => r.json()).catch(() => []),
+        apiRequest('GET', '/api/nervous-system/signals?limit=5').then(r => r.json()).catch(() => []),
+      ]);
+      setWatches(Array.isArray(watchRes) ? watchRes : []);
+      setRecentSignals(Array.isArray(signalRes) ? signalRes : []);
+    } catch {}
+    setNsLoading(false);
+  }, []);
+
+  const handleAddWatch = useCallback(async () => {
+    const label = newWatchLabel.trim();
+    if (!label) return;
+    try {
+      const res = await apiRequest('POST', '/api/nervous-system/watches', { label, category: newWatchCategory });
+      const watch = await res.json();
+      setWatches(prev => [...prev, watch]);
+      setNewWatchLabel('');
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    } catch {}
+  }, [newWatchLabel, newWatchCategory]);
+
+  const handleToggleWatch = useCallback(async (id: string, active: boolean) => {
+    try {
+      await apiRequest('PATCH', `/api/nervous-system/watches/${id}`, { active: !active });
+      setWatches(prev => prev.map(w => w.id === id ? { ...w, active: !active } : w));
+    } catch {}
+  }, []);
+
+  const handleDeleteWatch = useCallback(async (id: string) => {
+    try {
+      await apiRequest('DELETE', `/api/nervous-system/watches/${id}`);
+      setWatches(prev => prev.filter(w => w.id !== id));
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    } catch {}
+  }, []);
+
   // ── Load everything ──
   const loadAll = useCallback(async () => {
     setLoadingStatus(true);
@@ -176,10 +239,11 @@ export default function SettingsScreen() {
 
   useFocusEffect(useCallback(() => {
     loadAll();
+    loadNervousSystem();
     return () => {
       if (telegramPollRef.current) clearInterval(telegramPollRef.current);
     };
-  }, [loadAll]));
+  }, [loadAll, loadNervousSystem]));
 
   // ── OAuth connect ──
   const handleConnect = useCallback(async (platform: string) => {
@@ -505,6 +569,112 @@ export default function SettingsScreen() {
               </View>
             </View>
           </View>
+        </View>
+
+        {/* ── NERVOUS SYSTEM ── */}
+        <SectionHeader label="NERVOUS SYSTEM" accent="#F59E0B" />
+        <View style={styles.card}>
+          {/* Watch Topics */}
+          <View style={nsStyles.header}>
+            <Ionicons name="radio-outline" size={14} color="#F59E0B" />
+            <Text style={nsStyles.headerText}>WATCH TOPICS</Text>
+            <Text style={nsStyles.headerSub}>Jarvis monitors these for new signals</Text>
+          </View>
+
+          {nsLoading ? (
+            <View style={nsStyles.loadingRow}>
+              <ActivityIndicator size="small" color="#F59E0B" />
+            </View>
+          ) : (
+            <>
+              {watches.length === 0 && (
+                <Text style={nsStyles.emptyText}>No watch topics yet. Add companies, keywords, or topics below.</Text>
+              )}
+              {watches.map((w, idx) => (
+                <View key={w.id} style={[nsStyles.watchRow, idx > 0 && styles.prefRowBorder]}>
+                  <View style={nsStyles.watchInfo}>
+                    <Text style={nsStyles.watchLabel} numberOfLines={1}>{w.label}</Text>
+                    <Text style={nsStyles.watchCat}>{w.category}{w.lastCheckedAt ? ` · checked ${new Date(w.lastCheckedAt).toLocaleDateString()}` : ''}</Text>
+                  </View>
+                  <Switch
+                    value={w.active}
+                    onValueChange={() => handleToggleWatch(w.id, w.active)}
+                    trackColor={{ false: Colors.border, true: '#F59E0B60' }}
+                    thumbColor={w.active ? '#F59E0B' : Colors.textTertiary}
+                    style={{ transform: [{ scaleX: 0.8 }, { scaleY: 0.8 }] }}
+                  />
+                  <Pressable onPress={() => handleDeleteWatch(w.id)} hitSlop={8}>
+                    <Ionicons name="close-circle-outline" size={18} color={Colors.textTertiary} />
+                  </Pressable>
+                </View>
+              ))}
+
+              {/* Add watch topic */}
+              {nsAddingWatch ? (
+                <View style={[nsStyles.addRow, styles.prefRowBorder]}>
+                  <TextInput
+                    style={nsStyles.addInput}
+                    value={newWatchLabel}
+                    onChangeText={setNewWatchLabel}
+                    placeholder="e.g. Acme Corp, AI regulation..."
+                    placeholderTextColor={Colors.textTertiary}
+                    autoFocus
+                    autoCapitalize="none"
+                    returnKeyType="done"
+                    onSubmitEditing={() => { handleAddWatch(); setNsAddingWatch(false); }}
+                  />
+                  <View style={nsStyles.catRow}>
+                    {(['keyword', 'company', 'person', 'industry'] as const).map(cat => (
+                      <Pressable
+                        key={cat}
+                        style={[nsStyles.catPill, newWatchCategory === cat && nsStyles.catPillActive]}
+                        onPress={() => setNewWatchCategory(cat)}
+                      >
+                        <Text style={[nsStyles.catPillText, newWatchCategory === cat && nsStyles.catPillTextActive]}>
+                          {cat}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                  <View style={nsStyles.addActions}>
+                    <Pressable onPress={() => setNsAddingWatch(false)} style={nsStyles.cancelBtn}>
+                      <Text style={nsStyles.cancelText}>Cancel</Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={() => { handleAddWatch(); setNsAddingWatch(false); }}
+                      style={nsStyles.addBtn}
+                    >
+                      <Text style={nsStyles.addBtnText}>Add</Text>
+                    </Pressable>
+                  </View>
+                </View>
+              ) : (
+                <Pressable style={[nsStyles.addTrigger, watches.length > 0 && styles.prefRowBorder]} onPress={() => setNsAddingWatch(true)}>
+                  <Ionicons name="add-circle-outline" size={16} color="#F59E0B" />
+                  <Text style={nsStyles.addTriggerText}>Add watch topic</Text>
+                </Pressable>
+              )}
+            </>
+          )}
+
+          {/* Recent signals */}
+          {recentSignals.length > 0 && (
+            <View style={[nsStyles.signalsBlock, styles.prefRowBorder]}>
+              <Text style={nsStyles.signalsTitle}>RECENT SIGNALS</Text>
+              {recentSignals.map(sig => (
+                <View key={sig.id} style={nsStyles.signalRow}>
+                  <View style={nsStyles.signalDot} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={nsStyles.signalHeadline} numberOfLines={2}>{sig.headline}</Text>
+                    {sig.relevanceExplanation ? (
+                      <Text style={nsStyles.signalExpl} numberOfLines={1}>{sig.relevanceExplanation}</Text>
+                    ) : null}
+                    <Text style={nsStyles.signalWatch}>{sig.watchLabel}</Text>
+                  </View>
+                </View>
+              ))}
+            </View>
+          )}
         </View>
 
         {/* ── ACHIEVEMENTS ── */}
@@ -945,5 +1115,183 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontFamily: 'Inter_400Regular',
     color: Colors.text,
+  },
+});
+
+const nsStyles = StyleSheet.create({
+  header: {
+    padding: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  headerText: {
+    fontSize: 10,
+    fontFamily: 'Inter_700Bold',
+    color: '#F59E0B',
+    letterSpacing: 1.5,
+  },
+  headerSub: {
+    fontSize: 11,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+    width: '100%',
+    marginTop: 2,
+  },
+  loadingRow: {
+    padding: 16,
+    alignItems: 'center',
+  },
+  emptyText: {
+    paddingHorizontal: 14,
+    paddingBottom: 12,
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textTertiary,
+  },
+  watchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    gap: 10,
+  },
+  watchInfo: {
+    flex: 1,
+    gap: 2,
+  },
+  watchLabel: {
+    fontSize: 14,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.text,
+  },
+  watchCat: {
+    fontSize: 10,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textTertiary,
+    textTransform: 'capitalize',
+  },
+  addTrigger: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    padding: 14,
+  },
+  addTriggerText: {
+    fontSize: 13,
+    fontFamily: 'Inter_500Medium',
+    color: '#F59E0B',
+  },
+  addRow: {
+    padding: 14,
+    gap: 10,
+  },
+  addInput: {
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    backgroundColor: Colors.surfaceAlt,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    fontSize: 14,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.text,
+  },
+  catRow: {
+    flexDirection: 'row',
+    gap: 6,
+    flexWrap: 'wrap',
+  },
+  catPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 20,
+    backgroundColor: Colors.surfaceAlt,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  catPillActive: {
+    backgroundColor: '#F59E0B20',
+    borderColor: '#F59E0B',
+  },
+  catPillText: {
+    fontSize: 11,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.textSecondary,
+    textTransform: 'capitalize',
+  },
+  catPillTextActive: {
+    color: '#F59E0B',
+  },
+  addActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 10,
+  },
+  cancelBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  cancelText: {
+    fontSize: 13,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.textSecondary,
+  },
+  addBtn: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: '#F59E0B20',
+    borderWidth: 1,
+    borderColor: '#F59E0B',
+  },
+  addBtnText: {
+    fontSize: 13,
+    fontFamily: 'Inter_600SemiBold',
+    color: '#F59E0B',
+  },
+  signalsBlock: {
+    padding: 14,
+    gap: 10,
+  },
+  signalsTitle: {
+    fontSize: 9,
+    fontFamily: 'Inter_700Bold',
+    color: Colors.textTertiary,
+    letterSpacing: 1.5,
+    marginBottom: 4,
+  },
+  signalRow: {
+    flexDirection: 'row',
+    gap: 10,
+    alignItems: 'flex-start',
+  },
+  signalDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#F59E0B',
+    marginTop: 5,
+  },
+  signalHeadline: {
+    fontSize: 12,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.text,
+    lineHeight: 17,
+  },
+  signalExpl: {
+    fontSize: 11,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+    marginTop: 2,
+  },
+  signalWatch: {
+    fontSize: 10,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textTertiary,
+    marginTop: 2,
+    textTransform: 'capitalize',
   },
 });
