@@ -56,10 +56,10 @@ export async function createDriveTextFile(
   accessToken: string,
   name: string,
   body: string,
-  options: { mimeType?: string; convertToDoc?: boolean } = {}
+  options: { mimeType?: string; convertToDoc?: boolean; folderId?: string } = {}
 ): Promise<CreatedDriveFile> {
   const drive = buildDriveClient(accessToken);
-  const folderId = await ensureJarvisFolder(accessToken);
+  const folderId = options.folderId || await ensureJarvisFolder(accessToken);
 
   const sourceMime = options.mimeType || "text/markdown";
   const targetMime = options.convertToDoc
