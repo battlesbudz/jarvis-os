@@ -2,7 +2,7 @@ import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "node:http";
 import OpenAI from "openai";
 import { db } from "./db";
-import { eq, and, desc, sql, gte } from "drizzle-orm";
+import { eq, and, desc, sql, gte, asc } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { userMemories, morningVoiceNotes, userPreferences, proactiveQuestionsSent, inboxItems, inboxRules, userDocuments } from "@shared/schema";
 import { processDocument, getUserDocumentContext, SUPPORTED_MIME_TYPES, SUPPORTED_EXTENSIONS, MAX_DOCS_PER_USER } from "./documentProcessor";
@@ -4183,6 +4183,57 @@ Return ONLY the JSON object.`;
     } catch (err) {
       console.error("Error listing agent jobs:", err);
       res.status(500).json({ error: "Failed to list jobs" });
+    }
+  });
+
+  app.get("/api/agent-jobs/active", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const jobs = await db
+        .select()
+        .from(schema.agentJobs)
+        .where(
+          and(
+            eq(schema.agentJobs.userId, userId),
+            sql`${schema.agentJobs.status} IN ('queued', 'running', 'cancelling')`,
+          ),
+        )
+        .orderBy(asc(schema.agentJobs.createdAt))
+        .limit(20);
+      res.json(jobs);
+    } catch (err) {
+      console.error("Error listing active agent jobs:", err);
+      res.status(500).json({ error: "Failed to list active jobs" });
+    }
+  });
+
+  app.post("/api/agent-jobs/:id/cancel", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const { id } = req.params;
+      const [job] = await db
+        .select()
+        .from(schema.agentJobs)
+        .where(and(eq(schema.agentJobs.id, id), eq(schema.agentJobs.userId, userId)))
+        .limit(1);
+      if (!job) return res.status(404).json({ error: "Job not found" });
+      if (job.status === "complete" || job.status === "failed") {
+        return res.status(400).json({ error: "Job is already finished" });
+      }
+      if (job.status === "cancelled" || job.status === "cancelling") {
+        return res.json({ ok: true, status: job.status });
+      }
+      const newStatus = job.status === "queued" ? "cancelled" : "cancelling";
+      await db
+        .update(schema.agentJobs)
+        .set({ status: newStatus, completedAt: newStatus === "cancelled" ? new Date() : undefined })
+        .where(eq(schema.agentJobs.id, id));
+      res.json({ ok: true, status: newStatus });
+    } catch (err) {
+      console.error("Error cancelling agent job:", err);
+      res.status(500).json({ error: "Failed to cancel job" });
     }
   });
 

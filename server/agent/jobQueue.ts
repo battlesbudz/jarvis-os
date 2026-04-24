@@ -71,7 +71,7 @@ async function claimNextJob(): Promise<typeof schema.agentJobs.$inferSelect | nu
   // mapped camelCase row.
   const claimed = await db.execute<{ id: string }>(sql`
     WITH busy_users AS (
-      SELECT DISTINCT user_id FROM agent_jobs WHERE status = 'running'
+      SELECT DISTINCT user_id FROM agent_jobs WHERE status IN ('running', 'cancelling')
     ),
     candidate AS (
       SELECT id FROM agent_jobs
@@ -240,13 +240,24 @@ async function tick(): Promise<void> {
  */
 async function recoverStaleJobs(): Promise<void> {
   try {
-    const result = await db
+    // Jobs stuck in 'running' when the process died — re-queue them.
+    const requeued = await db
       .update(schema.agentJobs)
       .set({ status: "queued", startedAt: null })
       .where(eq(schema.agentJobs.status, "running"))
       .returning({ id: schema.agentJobs.id });
-    if (result.length > 0) {
-      console.log(`[JobQueue] recovered ${result.length} stale running job(s) from previous process`);
+    if (requeued.length > 0) {
+      console.log(`[JobQueue] recovered ${requeued.length} stale running job(s) from previous process`);
+    }
+    // Jobs in 'cancelling' when the process died — mark them cancelled since
+    // the user already requested cancellation and the worker is gone.
+    const cancelled = await db
+      .update(schema.agentJobs)
+      .set({ status: "cancelled", completedAt: new Date() })
+      .where(eq(schema.agentJobs.status, "cancelling"))
+      .returning({ id: schema.agentJobs.id });
+    if (cancelled.length > 0) {
+      console.log(`[JobQueue] cancelled ${cancelled.length} stale cancelling job(s) from previous process`);
     }
   } catch (err) {
     console.error("[JobQueue] recoverStaleJobs failed:", err);

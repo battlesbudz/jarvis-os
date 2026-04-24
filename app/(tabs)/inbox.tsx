@@ -35,6 +35,15 @@ interface InboxItem {
   surfacedAt: string;
 }
 
+interface AgentJob {
+  id: string;
+  agentType: string;
+  title: string;
+  status: string;
+  createdAt: string;
+  startedAt: string | null;
+}
+
 interface Deliverable {
   id: string;
   agentType: string;
@@ -60,6 +69,33 @@ const DELIVERABLE_LABEL: Record<string, string> = {
   plan: 'Plan',
   email_draft: 'Email draft',
 };
+
+const JOB_ICON: Record<string, keyof typeof Ionicons.glyphMap> = {
+  research: 'search',
+  writing: 'create',
+  planning: 'list',
+  email: 'mail',
+  goal_decompose: 'git-branch',
+  weekly_pattern: 'analytics',
+};
+
+const JOB_LABEL: Record<string, string> = {
+  research: 'Research',
+  writing: 'Writing',
+  planning: 'Planning',
+  email: 'Email',
+  goal_decompose: 'Goal breakdown',
+  weekly_pattern: 'Weekly review',
+};
+
+function formatElapsed(from: string): string {
+  const ms = Date.now() - new Date(from).getTime();
+  const secs = Math.floor(ms / 1000);
+  if (secs < 60) return `${secs}s`;
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m`;
+  return `${Math.floor(mins / 60)}h ${mins % 60}m`;
+}
 
 interface EmailDraft {
   id: string;
@@ -121,6 +157,27 @@ export default function InboxScreen() {
   const { data: deliverables = [], refetch: refetchDeliverables } = useQuery<Deliverable[]>({
     queryKey: ['/api/deliverables'],
     refetchInterval: 30000,
+  });
+
+  const { data: activeJobs = [], refetch: refetchActiveJobs } = useQuery<AgentJob[]>({
+    queryKey: ['/api/agent-jobs/active'],
+    refetchInterval: (query) => {
+      const jobs = query.state.data ?? [];
+      return jobs.length > 0 ? 10000 : false;
+    },
+  });
+
+  const cancelJobMutation = useMutation({
+    mutationFn: async (jobId: string) => {
+      const res = await apiRequest('POST', `/api/agent-jobs/${jobId}/cancel`, {});
+      return res.json() as Promise<{ ok: boolean; status: string }>;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/agent-jobs/active'] });
+    },
+    onError: () => {
+      Alert.alert('Error', 'Could not cancel this job.');
+    },
   });
 
   const approveDeliverableMutation = useMutation({
@@ -251,7 +308,8 @@ export default function InboxScreen() {
       refetch();
       refetchDrafts();
       refetchDeliverables();
-    }, [refetch, refetchDrafts, refetchDeliverables])
+      refetchActiveJobs();
+    }, [refetch, refetchDrafts, refetchDeliverables, refetchActiveJobs])
   );
 
   const handleAction = (itemId: string, actionType: string) => {
@@ -419,8 +477,66 @@ export default function InboxScreen() {
     );
   };
 
+  const renderRunningJobs = () => {
+    if (activeJobs.length === 0) return null;
+    return (
+      <View style={styles.draftSection}>
+        <View style={styles.draftHeader}>
+          <ActivityIndicator size="small" color={Colors.primary} style={{ marginRight: 2 }} />
+          <Text style={styles.draftHeaderText}>
+            Running Jobs · {activeJobs.length} in progress
+          </Text>
+        </View>
+        {activeJobs.map((job, index) => {
+          const icon = JOB_ICON[job.agentType] || 'sparkles';
+          const label = JOB_LABEL[job.agentType] || job.agentType;
+          const isRunning = job.status === 'running';
+          const isCancelling = job.status === 'cancelling';
+          const elapsedFrom = isRunning && job.startedAt ? job.startedAt : job.createdAt;
+          const isCancelling_ = cancelJobMutation.isPending && cancelJobMutation.variables === job.id;
+          return (
+            <Animated.View key={job.id} entering={FadeInDown.duration(300).delay(index * 60)}>
+              <View style={styles.jobCard}>
+                <View style={styles.jobCardRow}>
+                  <View style={[styles.sourceIcon, { backgroundColor: Colors.primary + '15' }]}>
+                    <Ionicons name={icon} size={18} color={Colors.primary} />
+                  </View>
+                  <View style={styles.jobCardMeta}>
+                    <Text style={styles.jobTitle} numberOfLines={2}>{job.title}</Text>
+                    <View style={styles.jobStatusRow}>
+                      {(isRunning || isCancelling) ? (
+                        <ActivityIndicator size="small" color={isCancelling ? Colors.textSecondary : Colors.primary} style={{ marginRight: 4 }} />
+                      ) : (
+                        <Ionicons name="time-outline" size={13} color={Colors.textTertiary} style={{ marginRight: 3 }} />
+                      )}
+                      <Text style={[styles.jobStatusText, isCancelling && { color: Colors.textSecondary }]}>
+                        {isCancelling ? 'Cancelling…' : isRunning ? `Running · ${formatElapsed(elapsedFrom)}` : `Queued · ${formatElapsed(job.createdAt)}`}
+                      </Text>
+                      <View style={[styles.jobTypeBadge, { backgroundColor: Colors.primary + '18' }]}>
+                        <Text style={[styles.jobTypeBadgeText, { color: Colors.primary }]}>{label}</Text>
+                      </View>
+                    </View>
+                  </View>
+                  <Pressable
+                    style={styles.jobCancelBtn}
+                    onPress={() => cancelJobMutation.mutate(job.id)}
+                    disabled={isCancelling_ || isCancelling}
+                    testID={`job-cancel-${job.id}`}
+                  >
+                    <Ionicons name="close-circle-outline" size={22} color={Colors.textTertiary} />
+                  </Pressable>
+                </View>
+              </View>
+            </Animated.View>
+          );
+        })}
+      </View>
+    );
+  };
+
   const renderListHeader = () => (
     <View>
+      {renderRunningJobs()}
       {renderDeliverables()}
       {renderDraftQueue()}
     </View>
@@ -497,6 +613,7 @@ export default function InboxScreen() {
     if (isLoading) return null;
     if (drafts.length > 0) return null;
     if (deliverables.length > 0) return null;
+    if (activeJobs.length > 0) return null;
     return (
       <View style={styles.emptyContainer}>
         <View style={styles.emptyIcon}>
@@ -884,5 +1001,52 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
     textAlign: 'center' as const,
     lineHeight: 20,
+  },
+  jobCard: {
+    backgroundColor: '#fff',
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: Colors.primary + '30',
+  },
+  jobCardRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  jobCardMeta: {
+    flex: 1,
+    gap: 4,
+  },
+  jobTitle: {
+    fontSize: 14,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.text,
+  },
+  jobStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    flexWrap: 'wrap' as const,
+  },
+  jobStatusText: {
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.primary,
+  },
+  jobTypeBadge: {
+    borderRadius: 5,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    marginLeft: 4,
+  },
+  jobTypeBadgeText: {
+    fontSize: 10,
+    fontFamily: 'Inter_600SemiBold',
+    letterSpacing: 0.3,
+  },
+  jobCancelBtn: {
+    padding: 4,
   },
 });
