@@ -10,6 +10,7 @@ import {
   ActivityIndicator,
   Platform,
   Alert,
+  Modal,
 } from 'react-native';
 import { fetch as expoFetch } from 'expo/fetch';
 import { Ionicons } from '@expo/vector-icons';
@@ -232,9 +233,10 @@ interface MessageBubbleProps {
   isSpeaking?: boolean;
   isStreaming?: boolean;
   onConfirmAction?: (msgId: string, confirmed: boolean) => void;
+  onDiscordConnect?: () => void;
 }
 
-function MessageBubble({ message, isFirst, isLastAssistant, goals, onFollowup, onSpeak, isSpeaking, isStreaming, onConfirmAction }: MessageBubbleProps) {
+function MessageBubble({ message, isFirst, isLastAssistant, goals, onFollowup, onSpeak, isSpeaking, isStreaming, onConfirmAction, onDiscordConnect }: MessageBubbleProps) {
   const isUser = message.role === 'user';
   const router = useRouter();
   const [addedMap, setAddedMap] = useState<Record<string, boolean>>({});
@@ -291,7 +293,9 @@ function MessageBubble({ message, isFirst, isLastAssistant, goals, onFollowup, o
     if (addedMap[key]) return;
     if (action.type === 'link') {
       if (action.url) {
-        if (action.url.startsWith('profile://')) {
+        if (action.url === 'profile://discord') {
+          onDiscordConnect?.();
+        } else if (action.url.startsWith('profile://')) {
           router.push('/(tabs)/profile');
         } else {
           Linking.openURL(action.url);
@@ -330,7 +334,7 @@ function MessageBubble({ message, isFirst, isLastAssistant, goals, onFollowup, o
         await saveGoal(newGoal);
       }
     } catch {}
-  }, [addedMap]);
+  }, [addedMap, onDiscordConnect]);
 
   return (
     <View style={[styles.messageRow, isUser ? styles.messageRowUser : styles.messageRowAssistant]}>
@@ -367,7 +371,9 @@ function MessageBubble({ message, isFirst, isLastAssistant, goals, onFollowup, o
                 <Pressable
                   style={({ pressed }) => [styles.executedActionButton, pressed && { opacity: 0.8 }]}
                   onPress={() => {
-                    if (ea.url!.startsWith('profile://')) {
+                    if (ea.url === 'profile://discord') {
+                      onDiscordConnect?.();
+                    } else if (ea.url!.startsWith('profile://')) {
                       router.push('/(tabs)/profile');
                     } else {
                       Linking.openURL(ea.url!);
@@ -550,6 +556,11 @@ export default function InsightsScreen() {
   const [telegramMessages, setTelegramMessages] = useState<any[]>([]);
   const [telegramConnected, setTelegramConnected] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
+  const [discordConnectVisible, setDiscordConnectVisible] = useState(false);
+  const [discordPairInput, setDiscordPairInput] = useState('');
+  const [discordConnecting, setDiscordConnecting] = useState(false);
+  const [discordConnectError, setDiscordConnectError] = useState('');
+  const [discordConnectDone, setDiscordConnectDone] = useState(false);
   const [emailSuggestions, setEmailSuggestions] = useState<EmailSuggestion[]>([]);
   const [scanLoading, setScanLoading] = useState(false);
   const [addedSuggestions, setAddedSuggestions] = useState<Record<number, boolean>>({});
@@ -1582,6 +1593,13 @@ export default function InsightsScreen() {
       ]
     : messages;
 
+  const handleDiscordConnect = useCallback(() => {
+    setDiscordPairInput('');
+    setDiscordConnectError('');
+    setDiscordConnectDone(false);
+    setDiscordConnectVisible(true);
+  }, []);
+
   const renderItem = useCallback(({ item, index }: { item: ChatMessage | { type: 'divider'; id: string }; index: number }) => {
     if ('type' in item && item.type === 'divider') {
       return (
@@ -1607,9 +1625,10 @@ export default function InsightsScreen() {
         isSpeaking={isSpeaking}
         isStreaming={isStreaming}
         onConfirmAction={handleConfirmAction}
+        onDiscordConnect={handleDiscordConnect}
       />
     );
-  }, [listData, lastAssistantId, goals, sendMessage, speakText, isSpeaking, isStreaming, handleConfirmAction]);
+  }, [listData, lastAssistantId, goals, sendMessage, speakText, isSpeaking, isStreaming, handleConfirmAction, handleDiscordConnect]);
 
   const isEmpty = messages.length === 0 && !isStreaming;
 
@@ -1924,6 +1943,99 @@ export default function InsightsScreen() {
           )}
         </Pressable>
       </View>
+      <Modal
+        visible={discordConnectVisible}
+        animationType="slide"
+        presentationStyle="formSheet"
+        onRequestClose={() => setDiscordConnectVisible(false)}
+      >
+        <View style={styles.discordModal}>
+          <View style={styles.discordModalHeader}>
+            <Pressable onPress={() => setDiscordConnectVisible(false)} style={styles.discordModalBack}>
+              <Ionicons name="chevron-back" size={20} color={Colors.text} />
+              <Text style={styles.discordModalBackText}>Back</Text>
+            </Pressable>
+            <Text style={styles.discordModalTitle}>Connect Discord</Text>
+            <View style={{ minWidth: 64 }} />
+          </View>
+
+          <ScrollView contentContainerStyle={styles.discordModalBody}>
+            <View style={styles.discordIconRow}>
+              <Ionicons name="logo-discord" size={40} color="#5865F2" />
+            </View>
+
+            {discordConnectDone ? (
+              <View style={styles.discordSuccessBox}>
+                <Ionicons name="checkmark-circle" size={28} color={Colors.success} />
+                <Text style={styles.discordSuccessText}>Discord linked! Jarvis can now message you there.</Text>
+              </View>
+            ) : (
+              <>
+                <Text style={styles.discordInstructTitle}>How to connect</Text>
+                <View style={styles.discordStep}>
+                  <Text style={styles.discordStepNum}>1</Text>
+                  <Text style={styles.discordStepText}>Open Discord and send any message to the Jarvis bot (DM it or @mention it in your server).</Text>
+                </View>
+                <View style={styles.discordStep}>
+                  <Text style={styles.discordStepNum}>2</Text>
+                  <Text style={styles.discordStepText}>The bot will reply with a 6-character pairing code.</Text>
+                </View>
+                <View style={styles.discordStep}>
+                  <Text style={styles.discordStepNum}>3</Text>
+                  <Text style={styles.discordStepText}>Enter that code below to link your account.</Text>
+                </View>
+
+                <TextInput
+                  style={styles.discordCodeInput}
+                  placeholder="Enter pairing code (e.g. ABC123)"
+                  placeholderTextColor={Colors.textSecondary}
+                  value={discordPairInput}
+                  onChangeText={t => { setDiscordPairInput(t.toUpperCase()); setDiscordConnectError(''); }}
+                  autoCapitalize="characters"
+                  maxLength={8}
+                />
+
+                {discordConnectError ? (
+                  <Text style={styles.discordErrorText}>{discordConnectError}</Text>
+                ) : null}
+
+                <Pressable
+                  style={[styles.discordConnectBtn, (!discordPairInput.trim() || discordConnecting) && { opacity: 0.5 }]}
+                  disabled={!discordPairInput.trim() || discordConnecting}
+                  onPress={async () => {
+                    setDiscordConnecting(true);
+                    setDiscordConnectError('');
+                    try {
+                      const url = new URL('/api/channels/discord/pair', getApiUrl());
+                      const res = await authFetch(url.toString(), {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ code: discordPairInput.trim() }),
+                      });
+                      const data = await res.json();
+                      if (data.ok) {
+                        setDiscordConnectDone(true);
+                      } else {
+                        setDiscordConnectError(data.error || 'Invalid code — make sure you copied it exactly from the bot.');
+                      }
+                    } catch {
+                      setDiscordConnectError('Connection error. Please try again.');
+                    } finally {
+                      setDiscordConnecting(false);
+                    }
+                  }}
+                >
+                  {discordConnecting ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <Text style={styles.discordConnectBtnText}>Link Discord Account</Text>
+                  )}
+                </Pressable>
+              </>
+            )}
+          </ScrollView>
+        </View>
+      </Modal>
     </KeyboardAvoidingView>
   );
 }
@@ -2708,5 +2820,119 @@ const styles = StyleSheet.create({
   commitmentDismiss: {
     padding: 4,
     marginLeft: 4,
+  },
+  discordModal: {
+    flex: 1,
+    backgroundColor: Colors.bg,
+  },
+  discordModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingTop: 20,
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  discordModalBack: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    minWidth: 64,
+  },
+  discordModalBackText: {
+    fontSize: 16,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.text,
+  },
+  discordModalTitle: {
+    flex: 1,
+    textAlign: 'center',
+    fontSize: 17,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.text,
+  },
+  discordModalBody: {
+    padding: 24,
+    gap: 16,
+  },
+  discordIconRow: {
+    alignItems: 'center',
+    paddingVertical: 8,
+  },
+  discordInstructTitle: {
+    fontSize: 17,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.text,
+    marginBottom: 4,
+  },
+  discordStep: {
+    flexDirection: 'row',
+    gap: 12,
+    alignItems: 'flex-start',
+  },
+  discordStepNum: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: '#5865F2',
+    textAlign: 'center',
+    lineHeight: 24,
+    fontSize: 13,
+    fontFamily: 'Inter_700Bold',
+    color: '#fff',
+    overflow: 'hidden',
+  },
+  discordStepText: {
+    flex: 1,
+    fontSize: 14,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+    lineHeight: 20,
+  },
+  discordCodeInput: {
+    backgroundColor: Colors.card,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    fontSize: 20,
+    fontFamily: 'Inter_700Bold',
+    color: Colors.text,
+    textAlign: 'center',
+    letterSpacing: 4,
+    marginTop: 8,
+  },
+  discordErrorText: {
+    fontSize: 13,
+    fontFamily: 'Inter_500Medium',
+    color: '#EF4444',
+    textAlign: 'center',
+  },
+  discordConnectBtn: {
+    backgroundColor: '#5865F2',
+    borderRadius: 14,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  discordConnectBtnText: {
+    fontSize: 15,
+    fontFamily: 'Inter_600SemiBold',
+    color: '#fff',
+  },
+  discordSuccessBox: {
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 24,
+  },
+  discordSuccessText: {
+    fontSize: 15,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.text,
+    textAlign: 'center',
+    lineHeight: 22,
   },
 });

@@ -129,18 +129,18 @@ export const connectChannelTool: AgentTool = {
       }
 
       if (channel === "discord") {
-        const url = "profile://connections";
+        const url = "profile://discord";
         return {
           ok: true,
           content: JSON.stringify({
             url,
-            buttonLabel: "Open Discord Setup",
+            buttonLabel: "Connect Discord",
             channel: "discord",
           }),
-          label: "Open Discord Setup",
+          label: "Connect Discord",
           detail: JSON.stringify({
             url,
-            buttonLabel: "Open Discord Setup",
+            buttonLabel: "Connect Discord",
             channel: "discord",
           }),
         };
