@@ -2340,7 +2340,9 @@ export default function ProfileScreen() {
                       : 'Connected — DM Jarvis anytime'
                     : (channelData?.meta?.discord as any)?.hasBotToken
                       ? 'Bot saved — DM it to get your pairing code'
-                      : 'Chat with Jarvis via Discord'}
+                      : (channelData?.meta?.discord as any)?.sharedBotAvailable
+                        ? 'Add to Discord and start chatting'
+                        : 'Chat with Jarvis via Discord'}
                 </Text>
               </View>
               {channelBusy === 'discord' ? (
@@ -2360,14 +2362,25 @@ export default function ProfileScreen() {
             {!channelData?.connected.discord && (
               <View style={{ paddingHorizontal: 16, paddingVertical: 12, backgroundColor: Colors.background, borderTopWidth: 1, borderTopColor: Colors.border }}>
                 {/* Pairing instructions — always visible */}
-                <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: Colors.text, marginBottom: 4 }}>
-                  {(channelData?.meta?.discord as any)?.hasBotToken ? 'Pair your Discord account' : 'Connect Discord'}
-                </Text>
-                <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, lineHeight: 17, marginBottom: 10 }}>
-                  {(channelData?.meta?.discord as any)?.hasBotToken
-                    ? 'Send any message to your bot on Discord. It will reply with a 6-character code — enter it below.'
-                    : 'Add the Jarvis bot to your server (or DM it directly), send any message, and enter the 6-character code it replies with.'}
-                </Text>
+                {(() => {
+                  const dm = channelData?.meta?.discord as any;
+                  const hasShared = !!dm?.sharedBotAvailable;
+                  const hasTok = !!dm?.hasBotToken;
+                  return (
+                    <>
+                      <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: Colors.text, marginBottom: 4 }}>
+                        {hasTok ? 'Pair your Discord account' : 'Connect Discord'}
+                      </Text>
+                      <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, lineHeight: 17, marginBottom: 10 }}>
+                        {hasTok
+                          ? 'Send any message to your bot on Discord. It will reply with a 6-character code — enter it below.'
+                          : hasShared
+                            ? 'Add the Jarvis bot to your server (or DM it directly), send any message, and enter the 6-character code it replies with.'
+                            : 'Set up your own Discord bot token below, then DM it to get a pairing code.'}
+                      </Text>
+                    </>
+                  );
+                })()}
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                   <TextInput
                     value={discordPairCode}

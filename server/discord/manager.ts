@@ -441,7 +441,9 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
     console.log(`[DiscordManager] processing message: "${userText.slice(0, 80)}…"`);
 
     // ── Detect workspace topic channel ─────────────────────────────────
-    const link2 = await lookupLink(botOwnerId);
+    // Use the resolved per-user userId (not botOwnerId which may be '__shared__')
+    // so workspace metadata is always fetched from the correct channel_links row.
+    const link2 = await lookupLink(userId);
     const workspace = link2?.meta.workspace;
     const topicForChannel = getTopicForChannel(workspace, message.channelId);
     const channelLabel = topicForChannel

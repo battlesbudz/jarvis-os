@@ -59,6 +59,7 @@ export function registerChannelRoutes(app: Express): void {
             botRunning: botStatus === "running",
             isPaired: true,
             hasBotToken: !!discordTok,
+            sharedBotAvailable: !!process.env.DISCORD_BOT_TOKEN,
             lastSeenAt: row.lastSeenAt,
             allowlistedGuilds: discordMeta?.allowlistedGuilds ?? [],
           };
@@ -78,7 +79,14 @@ export function registerChannelRoutes(app: Express): void {
           botStatus,
           botRunning: botStatus === "running",
           isPaired: false,
+          sharedBotAvailable: !!process.env.DISCORD_BOT_TOKEN,
         };
+      }
+
+      // No per-user token saved, but shared bot is running — still expose the flag
+      // so the profile UI can show the correct "Add to Discord" instructions.
+      if (!discordTok && !connected.discord && process.env.DISCORD_BOT_TOKEN) {
+        meta.discord = { hasBotToken: false, isPaired: false, sharedBotAvailable: true };
       }
 
       const channels = listChannels().map((c) => ({
