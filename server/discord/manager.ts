@@ -1,6 +1,6 @@
 import { Client, GatewayIntentBits, Events, Partials, Message, DMChannel, type GuildBasedChannel, type TextChannel, type MessageReaction, type PartialMessageReaction, type User as DiscordUser, type PartialUser } from "discord.js";
 import { db } from "../db";
-import { eq, and } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { channelLinks, users, discordPendingApprovals, discordAgents } from "@shared/schema";
 import { getUserToken, saveUserToken, deleteUserToken } from "../userTokenStore";
 import { runCoachAgent } from "../channels/coachAgent";
@@ -38,8 +38,56 @@ const botClients = new Map<string, Client>();
 const pairingCodes = new Map<string, PairingRecord>();
 
 // message-id deduplication: messageId → seenAt timestamp (5-minute TTL)
+// The in-memory map is the fast path (zero latency per message).
+// DB is the persistence layer that survives server restarts.
 const seenMessageIds = new Map<string, number>();
 const SEEN_MESSAGE_TTL_MS = 5 * 60 * 1000;
+
+/**
+ * Mark a Discord message ID as seen.
+ * Updates the in-memory map immediately and persists to DB fire-and-forget
+ * so that a server restart within the TTL window still drops re-deliveries.
+ */
+function markMessageSeen(messageId: string): void {
+  const seenAt = Date.now();
+  seenMessageIds.set(messageId, seenAt);
+  // Fire-and-forget: DB write adds ~1-2 ms (network-async) but never blocks
+  // the handler. Use ON CONFLICT DO NOTHING so duplicate calls are harmless.
+  db.execute(sql`
+    INSERT INTO discord_seen_messages (message_id, seen_at)
+    VALUES (${messageId}, ${seenAt})
+    ON CONFLICT (message_id) DO NOTHING
+  `).catch(() => {});
+}
+
+/**
+ * Seed the in-memory dedup map from the DB on server startup.
+ * Called once after bootAllBots so the first messages after a restart
+ * are still recognised as already-processed if they were seen recently.
+ */
+export async function seedSeenMessageIds(): Promise<void> {
+  try {
+    const cutoff = Date.now() - SEEN_MESSAGE_TTL_MS;
+    const rows = await db.execute(sql`
+      SELECT message_id, seen_at FROM discord_seen_messages
+      WHERE seen_at > ${cutoff}
+    `);
+    const items: { message_id: string; seen_at: string }[] =
+      ((rows as unknown as { rows?: { message_id: string; seen_at: string }[] }).rows ??
+        (Array.isArray(rows) ? rows as { message_id: string; seen_at: string }[] : []));
+    let count = 0;
+    for (const row of items) {
+      seenMessageIds.set(row.message_id, Number(row.seen_at));
+      count++;
+    }
+    if (count > 0) {
+      console.log(`[DiscordManager] Seeded ${count} recent message ID(s) from DB`);
+    }
+  } catch (err) {
+    // Non-fatal — in-memory map starts empty, worst case is a re-delivery
+    console.warn("[DiscordManager] seedSeenMessageIds failed (non-fatal):", err);
+  }
+}
 
 function generateCode(len = 6): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -54,9 +102,14 @@ setInterval(() => {
   for (const [code, rec] of pairingCodes) {
     if (rec.expiresAt < now) pairingCodes.delete(code);
   }
+  const cutoff = now - SEEN_MESSAGE_TTL_MS;
   for (const [id, seenAt] of seenMessageIds) {
-    if (now - seenAt > SEEN_MESSAGE_TTL_MS) seenMessageIds.delete(id);
+    if (seenAt < cutoff) seenMessageIds.delete(id);
   }
+  // Also prune old rows from DB (fire-and-forget)
+  db.execute(sql`
+    DELETE FROM discord_seen_messages WHERE seen_at < ${cutoff}
+  `).catch(() => {});
 }, 5 * 60 * 1000);
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -111,7 +164,7 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
       console.log(`[DiscordManager] duplicate message dropped (id=${message.id})`);
       return;
     }
-    seenMessageIds.set(message.id, Date.now());
+    markMessageSeen(message.id);
 
     const isDM = message.channel.isDMBased();
     const discordUserId = message.author.id;
@@ -446,6 +499,9 @@ export async function bootAllBots(): Promise<void> {
       }
     }
     console.log(`[DiscordManager] Booted ${started}/${items.length} Discord bot(s)`);
+    // Pre-populate the dedup map from DB so messages received in the last
+    // 5 minutes are still recognised as already-processed after a restart.
+    await seedSeenMessageIds();
   } catch (err) {
     console.error("[DiscordManager] bootAllBots failed:", err);
   }
