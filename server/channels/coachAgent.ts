@@ -32,8 +32,14 @@ const FORMAT_HINTS: Record<string, string> = {
   WhatsApp: "You're responding via WhatsApp. Keep messages SHORT (2-4 sentences). Plain text. WhatsApp supports *bold*, _italic_, `code` only — no markdown headers.",
   Slack: "You're responding via Slack DM. Keep messages SHORT (2-4 sentences). Use Slack mrkdwn (*bold*, _italic_, `code`, > quote). No markdown headers.",
   Daemon: "You're responding to a desktop daemon. Plain text only. The user sees the reply as a desktop notification — keep it under 2 sentences when possible.",
-  Discord: "You're responding via Discord DM. Keep messages SHORT (2-4 sentences). Discord renders standard markdown: **bold**, _italic_, `code`, ```blocks```. No oversized headers.",
+  Discord: "You're responding via Discord. Keep responses SHORT — 2-4 sentences max. Your total response MUST be under 1800 characters. Discord renders **bold**, _italic_, `code`, ```blocks```. No headers. If a task needs many steps, pick the single most important next action and say it clearly.",
 };
+
+function getMaxTokensForChannel(channelName: string): number {
+  if (channelName.startsWith("Discord")) return 400;
+  if (channelName === "Daemon") return 200;
+  return 2000;
+}
 
 // Channel-agnostic coach pipeline shared by Telegram / WhatsApp / Slack /
 // daemon adapters. Returns { reply, attachments } — the caller is
@@ -140,7 +146,8 @@ export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyR
   const crossChannelSection = formatInteractionTimeline(recentInteractions);
 
   const soulBlock = await getSoulPromptBlock(userId);
-  const formatHint = FORMAT_HINTS[channelName] || FORMAT_HINTS.Telegram;
+  const formatHintKey = Object.keys(FORMAT_HINTS).find((k) => channelName.startsWith(k)) ?? "Telegram";
+  const formatHint = FORMAT_HINTS[formatHintKey];
 
   const daemonPaired = isUserPaired(userId);
   const androidActive = daemonPaired ? await isAndroidDaemonActive(userId) : false;
@@ -207,7 +214,7 @@ You can manage tasks, commitments, and analyze patterns via the manage_tasks too
     tools: telegramCoachTools({ hasGoogle: !!googleAccessToken }),
     context: agentCtx,
     maxTurns: 6,
-    maxCompletionTokens: 2000,
+    maxCompletionTokens: getMaxTokensForChannel(channelName),
     onToken,
   });
 
