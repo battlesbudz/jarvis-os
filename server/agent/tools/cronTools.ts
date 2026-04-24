@@ -1,6 +1,6 @@
 import type { AgentTool } from "../types";
 import { db } from "../../db";
-import { eq, and, desc, gte } from "drizzle-orm";
+import { eq, and, or, desc, gte, isNotNull } from "drizzle-orm";
 import * as schema from "@shared/schema";
 
 // ─── Natural-language time parser ────────────────────────────────────────────
@@ -359,6 +359,11 @@ export const cronListTool: AgentTool = {
 
     try {
       const now = new Date();
+      // Default: upcoming jobs + recently completed (within 24h) so the agent
+      // can see what just ran alongside what is next. Pass include_completed=true
+      // for the full historical log.
+      const recentWindow = new Date(now.getTime() - 24 * 3600 * 1000);
+
       const rows = includeCompleted
         ? await db
             .select()
@@ -372,7 +377,13 @@ export const cronListTool: AgentTool = {
             .where(
               and(
                 eq(schema.jarvisScheduledTasks.userId, ctx.userId),
-                gte(schema.jarvisScheduledTasks.scheduledAt, now),
+                or(
+                  gte(schema.jarvisScheduledTasks.scheduledAt, now),
+                  and(
+                    isNotNull(schema.jarvisScheduledTasks.completedAt),
+                    gte(schema.jarvisScheduledTasks.completedAt, recentWindow),
+                  ),
+                ),
               ),
             )
             .orderBy(schema.jarvisScheduledTasks.scheduledAt)
@@ -381,7 +392,7 @@ export const cronListTool: AgentTool = {
       if (rows.length === 0) {
         return {
           ok: true,
-          content: includeCompleted ? "No scheduled jobs found." : "No upcoming scheduled jobs.",
+          content: includeCompleted ? "No scheduled jobs found." : "No upcoming or recently completed jobs.",
           label: "cron_list: empty",
         };
       }
@@ -528,7 +539,11 @@ export const cronUpdateTool: AgentTool = {
       const patch: Partial<typeof schema.jarvisScheduledTasks.$inferInsert> = {};
 
       if (args.title) patch.title = String(args.title).trim();
-      if (args.description) patch.description = String(args.description).trim();
+      // Allow explicit clear: description: "" → null; description: "text" → "text"
+      if (args.description !== undefined) {
+        const d = String(args.description).trim();
+        patch.description = d === "" ? null : d;
+      }
 
       if (args.when) {
         const whenExpr = String(args.when).trim();
