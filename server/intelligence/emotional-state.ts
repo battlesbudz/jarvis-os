@@ -416,15 +416,7 @@ export async function computeAndStoreEmotionalState(
     // first run
   }
 
-  const isHighStress = stressScore >= HIGH_STRESS_THRESHOLD;
-  let consecutiveHighStressCycles = prevState?.consecutiveHighStressCycles ?? 0;
   let lastStressCheckinAt = prevState?.lastStressCheckinAt ?? null;
-
-  if (isHighStress) {
-    consecutiveHighStressCycles += 1;
-  } else {
-    consecutiveHighStressCycles = 0;
-  }
 
   // ── Baseline-relative score adjustment ──────────────────────────────────────
   // Blend the raw signal-based score with the user's personal deviation so that
@@ -462,6 +454,16 @@ export async function computeAndStoreEmotionalState(
       else if (prevState.manualOverride === "focused") { effectiveStress = 3; effectiveFlow = 7; }
       else if (prevState.manualOverride === "in flow") { effectiveStress = 2; effectiveFlow = 9; }
     }
+  }
+
+  // ── Consecutive high-stress tracking (uses final effective score) ────────────
+  const isHighStress = effectiveStress >= HIGH_STRESS_THRESHOLD;
+  let consecutiveHighStressCycles = prevState?.consecutiveHighStressCycles ?? 0;
+
+  if (isHighStress) {
+    consecutiveHighStressCycles += 1;
+  } else {
+    consecutiveHighStressCycles = 0;
   }
 
   // Upsert
@@ -626,15 +628,15 @@ export function buildEmotionalStatePromptBlock(state: typeof schema.userEmotiona
     const stressDiff = stressScore - baselineStress;
     const flowDiff = flowScore - baselineFlow;
 
-    const stressCtx = Math.abs(stressDiff) >= 2
-      ? ` (${stressDiff > 0 ? "↑" : "↓"} ${Math.abs(stressDiff).toFixed(1)} vs your usual ${baselineStress.toFixed(1)})`
-      : ` (near your typical ${baselineStress.toFixed(1)})`;
-    const flowCtx = Math.abs(flowDiff) >= 2
-      ? ` (${flowDiff > 0 ? "↑" : "↓"} ${Math.abs(flowDiff).toFixed(1)} vs your usual ${baselineFlow.toFixed(1)})`
-      : ` (near your typical ${baselineFlow.toFixed(1)})`;
+    const stressComparison = Math.abs(stressDiff) >= 2
+      ? `current ${stressScore}/10 (${stressDiff > 0 ? "↑" : "↓"}${Math.abs(stressDiff).toFixed(1)} above baseline)`
+      : `current ${stressScore}/10 (near baseline)`;
+    const flowComparison = Math.abs(flowDiff) >= 2
+      ? `current ${flowScore}/10 (${flowDiff > 0 ? "↑" : "↓"}${Math.abs(flowDiff).toFixed(1)} above baseline)`
+      : `current ${flowScore}/10 (near baseline)`;
 
-    baselineContext = `\nPersonal baseline: stress ${stressScore}/10${stressCtx}, flow ${flowScore}/10${flowCtx}.`;
-    if (patternNote) baselineContext += ` Pattern: ${patternNote}.`;
+    baselineContext = `\nPersonal baseline (90-day avg): stress ${baselineStress.toFixed(1)}, flow ${baselineFlow.toFixed(1)}. Today: stress ${stressComparison}, flow ${flowComparison}.`;
+    if (patternNote) baselineContext += ` Pattern insight: ${patternNote}.`;
   }
 
   return `\n\n## Jarvis Perceived Emotional State\nCurrent state: **${label}** (stress ${stressScore}/10, flow ${flowScore}/10)\n${explanation}${baselineContext}\n\nCoaching instruction: ${guidance}\n`;
