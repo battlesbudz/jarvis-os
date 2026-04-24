@@ -27,6 +27,7 @@ import { youtubeSearchTool } from "./youtubeSearch";
 import { registerApprovalTool } from "./registerApproval";
 import { discordPinMessageTool } from "./discordPinMessage";
 import { setupNamedAgentTool } from "./setupNamedAgent";
+import { queueBackgroundJobTool } from "./queueBackgroundJob";
 
 export const ALL_TOOLS: AgentTool[] = [
   webSearchTool,
@@ -59,6 +60,7 @@ export const ALL_TOOLS: AgentTool[] = [
   discordPinMessageTool,
   setupNamedAgentTool,
   youtubeSearchTool,
+  queueBackgroundJobTool,
 ];
 
 const TOOL_INDEX = new Map(ALL_TOOLS.map((t) => [t.name, t]));
@@ -76,7 +78,7 @@ export function telegramCoachTools(opts: { hasGoogle: boolean }): AgentTool[] {
     createDocumentTool,
     listDocumentsTool,
     readDocumentTool,
-    spawnSubagentTool,
+    queueBackgroundJobTool,
     daemonActionTool,
     checkConnectionsTool,
     generateReconnectLinkTool,
@@ -132,4 +134,5 @@ export {
   discordPinMessageTool,
   setupNamedAgentTool,
   youtubeSearchTool,
+  queueBackgroundJobTool,
 };
