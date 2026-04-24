@@ -100,20 +100,25 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
 
     // ── Determine if we should respond ──────────────────────────────────
     if (!isDM) {
-      // Guild channel — only respond if allowlisted
+      // Guild channel — allow pairing flow if the bot owner isn't linked yet;
+      // otherwise only respond in allowlisted channels for the paired user.
       const link = await lookupLink(botOwnerId);
-      if (!link) return;
-      if (link.address !== discordUserId) return; // only the paired user
-      const allowed = link.meta.allowlistedGuilds || [];
-      const guildId = (message.guild?.id) ?? "";
-      const channelId = message.channelId;
-      const guildEntry = allowed.find((g) => g.guildId === guildId && g.channelId === channelId);
-      if (!guildEntry) return;
-      if (guildEntry.requireMention) {
-        const botId = client.user?.id;
-        const mentioned = message.mentions.users.has(botId ?? "");
-        if (!mentioned) return;
+      if (link) {
+        // Already paired — apply the normal allowlist / mention guards.
+        if (link.address !== discordUserId) return; // only the paired user
+        const allowed = link.meta.allowlistedGuilds || [];
+        const guildId = (message.guild?.id) ?? "";
+        const channelId = message.channelId;
+        const guildEntry = allowed.find((g) => g.guildId === guildId && g.channelId === channelId);
+        if (!guildEntry) return;
+        if (guildEntry.requireMention) {
+          const botId = client.user?.id;
+          const mentioned = message.mentions.users.has(botId ?? "");
+          if (!mentioned) return;
+        }
       }
+      // If !link: bot owner isn't paired yet — fall through so the pairing
+      // code gets sent to whoever messaged the bot in the guild.
     }
 
     // ── DM path: check if user is paired to this bot ───────────────────
@@ -142,10 +147,9 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
       await message
         .reply(
           `👋 Hey! I'm Jarvis, your AI productivity coach.\n\n` +
-            `To link this Discord account, use **either** of these:\n\n` +
-            `**Option A — in the app:** Profile → Connected Channels → Discord → enter code\n` +
-            `**Option B — via Telegram:** Send \`approve ${code}\` to your Jarvis Telegram bot\n\n` +
-            `Your pairing code: \`\`\`${code}\`\`\`\nValid for 1 hour. Message me again once linked!`,
+            `To link this Discord account, open the Jarvis app → Coach tab → tap the **Connect Discord** button → enter this code:\n\n` +
+            `\`\`\`${code}\`\`\`\n` +
+            `*(Valid for 1 hour. Message me again after linking!)*`,
         )
         .catch((err) => console.error("[DiscordManager] reply failed:", err));
       return;
