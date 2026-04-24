@@ -709,6 +709,26 @@ export async function ensureTablesExist() {
         ON user_emotional_state_history (user_id, recorded_at DESC)
     `);
 
+    // ── Jarvis Gut — Reflexive Anomaly Detection ──────────────────────────────
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS gut_signals (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        signal_type VARCHAR NOT NULL,
+        item_ref VARCHAR,
+        confidence_score INTEGER NOT NULL DEFAULT 50,
+        explanation TEXT NOT NULL,
+        user_response VARCHAR,
+        responded_at TIMESTAMP,
+        delivered_in_morning_brief BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS gut_signals_user_created_idx
+        ON gut_signals (user_id, created_at DESC)
+    `).catch(() => {});
+
     console.log("Database tables verified");
   } catch (error) {
     console.error("Failed to ensure database tables exist:", error);

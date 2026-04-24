@@ -729,6 +729,15 @@ export async function runHeartbeatTick(): Promise<void> {
       console.error(`[Heartbeat] emotional state computation failed for ${link.userId}:`, err);
     }
 
+    // Gut — reflexive anomaly detection. Runs on every tick; detectors
+    // have their own internal deduplication windows (24–72 h per type).
+    try {
+      const { runGutScanForUser } = await import("./intelligence/gut");
+      await runGutScanForUser(link.userId, userEmail, now);
+    } catch (err) {
+      console.error(`[Heartbeat] gut scan failed for ${link.userId}:`, err);
+    }
+
     try {
       if (token) actionsFired += await runMeetingBriefs(link.userId, link.chatId, token, memories, now, tz, userEmail);
     } catch (err) { console.error(`[Heartbeat] meeting briefs failed for ${link.userId}:`, err); }

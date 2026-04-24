@@ -9,11 +9,19 @@ import MorningNoteRecorder from '@/components/MorningNoteRecorder';
 import { getApiUrl } from '@/lib/query-client';
 import { authFetch } from '@/lib/auth-context';
 
+interface GutFlag {
+  id: string;
+  signalType: string;
+  confidenceScore: number;
+  explanation: string;
+}
+
 interface AutoBuiltPlan {
   date: string;
   topTask: string;
   reasoning: string;
   taskCount: number;
+  gutFlags?: GutFlag[];
 }
 
 interface MorningBriefCardProps {
@@ -183,6 +191,20 @@ export default function MorningBriefCard({
               </Text>
             </View>
           )}
+
+          {autoBuiltPlan?.gutFlags && autoBuiltPlan.gutFlags.length > 0 && (
+            <View style={styles.gutSection}>
+              <View style={styles.gutSectionHeader}>
+                <Ionicons name="eye-outline" size={12} color="#F59E0B" />
+                <Text style={styles.gutSectionTitle}>Jarvis noticed</Text>
+              </View>
+              {autoBuiltPlan.gutFlags.slice(0, 3).map((flag) => (
+                <View key={flag.id} style={styles.gutFlagItem}>
+                  <Text style={styles.gutFlagText} numberOfLines={2}>{flag.explanation}</Text>
+                </View>
+              ))}
+            </View>
+          )}
         </>
       )}
     </Animated.View>
@@ -344,5 +366,36 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontFamily: 'Inter_500Medium',
     color: Colors.success,
+  },
+  gutSection: {
+    marginTop: 10,
+    backgroundColor: '#F59E0B08',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#F59E0B25',
+    padding: 10,
+    gap: 6,
+  },
+  gutSectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    marginBottom: 2,
+  },
+  gutSectionTitle: {
+    fontSize: 10,
+    fontFamily: 'Inter_700Bold',
+    color: '#D97706',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+  },
+  gutFlagItem: {
+    paddingLeft: 4,
+  },
+  gutFlagText: {
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    color: '#92400E',
+    lineHeight: 17,
   },
 });

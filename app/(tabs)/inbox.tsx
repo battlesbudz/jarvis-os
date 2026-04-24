@@ -35,6 +35,16 @@ interface InboxItem {
   surfacedAt: string;
 }
 
+interface GutSignal {
+  id: string;
+  signalType: string;
+  itemRef: string | null;
+  confidenceScore: number;
+  explanation: string;
+  userResponse: string | null;
+  createdAt: string;
+}
+
 interface AgentJob {
   id: string;
   agentType: string;
@@ -141,6 +151,14 @@ function getSourceConfig(sourceType: string): SourceConfig {
   }
 }
 
+const GUT_TYPE_LABEL: Record<string, string> = {
+  calendar_anomaly: 'Calendar flag',
+  email_pattern: 'Email pattern',
+  deep_work_erosion: 'Focus erosion',
+  project_drift: 'Project drift',
+  relationship_anomaly: 'Relationship flag',
+};
+
 export default function InboxScreen() {
   const insets = useSafeAreaInsets();
   const isWeb = Platform.OS === 'web';
@@ -148,6 +166,43 @@ export default function InboxScreen() {
 
   const { data: items = [], isLoading, refetch } = useQuery<InboxItem[]>({
     queryKey: ['/api/inbox/items'],
+  });
+
+  const { data: gutSignals = [], refetch: refetchGut } = useQuery<GutSignal[]>({
+    queryKey: ['/api/gut/signals'],
+  });
+
+  // Build a set of all inbox item refs so we can detect "orphaned" signals
+  // (e.g. calendar_anomaly signals whose itemRef is a Google Calendar event ID
+  //  not imported as an inbox row) and route them to the global Jarvis noticed section.
+  const inboxRefSet = React.useMemo(() => {
+    const s = new Set<string>();
+    for (const item of items) {
+      s.add(item.id);
+      if (item.sourceId) s.add(item.sourceId);
+    }
+    return s;
+  }, [items]);
+
+  const gutByItemRef = React.useMemo(() => {
+    const map = new Map<string, GutSignal>();
+    for (const g of gutSignals) {
+      if (g.itemRef && !g.userResponse) map.set(g.itemRef, g);
+    }
+    return map;
+  }, [gutSignals]);
+
+  const [gutModalSignal, setGutModalSignal] = useState<GutSignal | null>(null);
+
+  const respondGutMutation = useMutation({
+    mutationFn: async ({ id, response }: { id: string; response: string }) => {
+      const res = await apiRequest('POST', `/api/gut/signals/${id}/respond`, { response });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/gut/signals'] });
+      setGutModalSignal(null);
+    },
   });
 
   const { data: drafts = [], refetch: refetchDrafts } = useQuery<EmailDraft[]>({
@@ -309,7 +364,8 @@ export default function InboxScreen() {
       refetchDrafts();
       refetchDeliverables();
       refetchActiveJobs();
-    }, [refetch, refetchDrafts, refetchDeliverables, refetchActiveJobs])
+      refetchGut();
+    }, [refetch, refetchDrafts, refetchDeliverables, refetchActiveJobs, refetchGut])
   );
 
   const handleAction = (itemId: string, actionType: string) => {
@@ -331,6 +387,7 @@ export default function InboxScreen() {
     const senderName = getSenderName(item.sender);
     const src = getSourceConfig(item.sourceType);
     const actions = item.suggestedActions || [];
+    const gutSignal = gutByItemRef.get(item.id) ?? gutByItemRef.get(item.sourceId);
 
     return (
       <Animated.View entering={FadeInDown.duration(300).delay(index * 60)}>
@@ -363,6 +420,14 @@ export default function InboxScreen() {
               <Ionicons name="sparkles" size={12} color={Colors.primary} />
               <Text style={styles.reasonText}>{item.jarvisReason}</Text>
             </View>
+          )}
+
+          {gutSignal && (
+            <Pressable style={styles.gutFlagRow} onPress={() => setGutModalSignal(gutSignal)}>
+              <Ionicons name="eye-outline" size={12} color="#F59E0B" />
+              <Text style={styles.gutFlagText} numberOfLines={2}>{gutSignal.explanation}</Text>
+              <Ionicons name="chevron-forward" size={12} color="#F59E0B" />
+            </Pressable>
           )}
 
           <View style={styles.actionsRow}>
@@ -534,8 +599,41 @@ export default function InboxScreen() {
     );
   };
 
+  // Global "Jarvis noticed" signals: either no itemRef, OR orphaned signals whose
+  // itemRef is not an inbox item (e.g. calendar anomalies for events not in inbox).
+  // Both cases open the same modal so the user can respond "Good catch" / "This one's fine".
+  const globalGutSignals = React.useMemo(
+    () => gutSignals.filter(
+      (g) => !g.userResponse && (!g.itemRef || !inboxRefSet.has(g.itemRef))
+    ),
+    [gutSignals, inboxRefSet]
+  );
+
+  const renderGutNoticed = () => {
+    if (globalGutSignals.length === 0) return null;
+    return (
+      <View style={styles.gutNoticedSection}>
+        <View style={styles.gutNoticedHeader}>
+          <Ionicons name="eye-outline" size={14} color="#F59E0B" />
+          <Text style={styles.gutNoticedTitle}>Jarvis noticed</Text>
+        </View>
+        {globalGutSignals.slice(0, 3).map((sig) => (
+          <Pressable
+            key={sig.id}
+            style={styles.gutNoticedRow}
+            onPress={() => setGutModalSignal(sig)}
+          >
+            <Text style={styles.gutNoticedLabel}>{GUT_TYPE_LABEL[sig.signalType] || sig.signalType}</Text>
+            <Text style={styles.gutNoticedText} numberOfLines={2}>{sig.explanation}</Text>
+          </Pressable>
+        ))}
+      </View>
+    );
+  };
+
   const renderListHeader = () => (
     <View>
+      {renderGutNoticed()}
       {renderRunningJobs()}
       {renderDeliverables()}
       {renderDraftQueue()}
@@ -745,6 +843,41 @@ export default function InboxScreen() {
             </View>
           </View>
         </KeyboardAvoidingView>
+      </Modal>
+
+      <Modal
+        visible={!!gutModalSignal}
+        animationType="fade"
+        transparent
+        onRequestClose={() => setGutModalSignal(null)}
+      >
+        <Pressable style={styles.gutModalOverlay} onPress={() => setGutModalSignal(null)}>
+          <View style={styles.gutModalCard}>
+            <View style={styles.gutModalHeader}>
+              <Ionicons name="eye" size={18} color="#F59E0B" />
+              <Text style={styles.gutModalTitle}>
+                {gutModalSignal ? (GUT_TYPE_LABEL[gutModalSignal.signalType] || 'Jarvis flagged this') : ''}
+              </Text>
+            </View>
+            <Text style={styles.gutModalExplanation}>{gutModalSignal?.explanation}</Text>
+            <View style={styles.gutModalActions}>
+              <Pressable
+                style={[styles.gutModalBtn, styles.gutModalBtnConfirm]}
+                onPress={() => gutModalSignal && respondGutMutation.mutate({ id: gutModalSignal.id, response: 'confirmed' })}
+                disabled={respondGutMutation.isPending}
+              >
+                <Text style={styles.gutModalBtnConfirmText}>Good catch</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.gutModalBtn, styles.gutModalBtnDismiss]}
+                onPress={() => gutModalSignal && respondGutMutation.mutate({ id: gutModalSignal.id, response: 'dismissed' })}
+                disabled={respondGutMutation.isPending}
+              >
+                <Text style={styles.gutModalBtnDismissText}>This one's fine</Text>
+              </Pressable>
+            </View>
+          </View>
+        </Pressable>
       </Modal>
     </View>
   );
@@ -1048,5 +1181,126 @@ const styles = StyleSheet.create({
   },
   jobCancelBtn: {
     padding: 4,
+  },
+  gutNoticedSection: {
+    backgroundColor: '#F59E0B08',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#F59E0B25',
+    padding: 12,
+    marginHorizontal: 16,
+    marginTop: 8,
+    marginBottom: 4,
+    gap: 6,
+  },
+  gutNoticedHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 4,
+  },
+  gutNoticedTitle: {
+    fontSize: 10,
+    fontFamily: 'Inter_700Bold',
+    color: '#D97706',
+    letterSpacing: 1.5,
+    textTransform: 'uppercase',
+  },
+  gutNoticedRow: {
+    paddingVertical: 4,
+    gap: 2,
+  },
+  gutNoticedLabel: {
+    fontSize: 11,
+    fontFamily: 'Inter_600SemiBold',
+    color: '#92400E',
+  },
+  gutNoticedText: {
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    color: '#92400E',
+    lineHeight: 17,
+    opacity: 0.8,
+  },
+  gutFlagRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#F59E0B10',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#F59E0B30',
+  },
+  gutFlagText: {
+    flex: 1,
+    fontSize: 12,
+    fontFamily: 'Inter_500Medium',
+    color: '#92400E',
+    lineHeight: 17,
+  },
+  gutModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+  },
+  gutModalCard: {
+    backgroundColor: Colors.background,
+    borderRadius: 18,
+    padding: 22,
+    width: '100%',
+    maxWidth: 420,
+    gap: 14,
+  },
+  gutModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  gutModalTitle: {
+    fontSize: 16,
+    fontFamily: 'Inter_700Bold',
+    color: Colors.text,
+  },
+  gutModalExplanation: {
+    fontSize: 14,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+    lineHeight: 21,
+  },
+  gutModalActions: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 4,
+  },
+  gutModalBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  gutModalBtnConfirm: {
+    backgroundColor: '#F59E0B20',
+    borderWidth: 1,
+    borderColor: '#F59E0B',
+  },
+  gutModalBtnConfirmText: {
+    fontSize: 14,
+    fontFamily: 'Inter_600SemiBold',
+    color: '#D97706',
+  },
+  gutModalBtnDismiss: {
+    backgroundColor: Colors.surface,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  gutModalBtnDismissText: {
+    fontSize: 14,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.textSecondary,
   },
 });

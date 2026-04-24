@@ -302,6 +302,46 @@ export async function runMorningPlanBuild() {
 
       console.log(`[Scheduler] Auto-built ${newTasks.length} tasks for user ${user.id} (top: "${topTask.title}")`);
 
+      // Gut signals — include high-confidence flags from the last 24 h as a
+      // "Jarvis noticed" section appended to the morning brief.
+      // Flags are embedded into the stored plan prefs so the app can render
+      // them inside the morning brief card, and also sent as a channel
+      // notification for users with Telegram/Discord configured.
+      try {
+        const { getAndMarkMorningBriefSignals } = await import('./intelligence/gut');
+        const gutFlags = await getAndMarkMorningBriefSignals(user.id);
+        if (gutFlags.length > 0) {
+          const flagLines = gutFlags.map((g) => `• ${g.explanation}`).join('\n');
+          // Embed into the stored brief prefs so the inbox card can render them
+          const prefsWithGut = {
+            ...updatedPrefs,
+            autoBuiltPlan: {
+              ...updatedPrefs.autoBuiltPlan,
+              gutFlags: gutFlags.map((g) => ({
+                id: g.id,
+                signalType: g.signalType,
+                confidenceScore: g.confidenceScore,
+                explanation: g.explanation,
+              })),
+            },
+          };
+          await db.insert(schema.userPreferences).values({
+            userId: user.id,
+            data: prefsWithGut,
+          }).onConflictDoUpdate({
+            target: [schema.userPreferences.userId],
+            set: { data: prefsWithGut, updatedAt: new Date() },
+          });
+          // Also send as a channel notification for Telegram/Discord users
+          const gutMsg = `👁 Jarvis noticed:\n${flagLines}`;
+          const { notifyUser: notifyGut } = await import('./channels/registry');
+          await notifyGut(user.id, 'morning_briefing', gutMsg);
+          console.log(`[Scheduler] ${gutFlags.length} gut flag(s) embedded in morning brief for ${user.id}`);
+        }
+      } catch (gutErr) {
+        console.error(`[Scheduler] gut morning brief failed for ${user.id}:`, gutErr);
+      }
+
       // Auto-save daily plan to Google Drive if the user has it enabled.
       try {
         const drive = await getUserDriveSettings(user.id);
