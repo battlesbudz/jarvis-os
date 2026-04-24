@@ -88,4 +88,4 @@ EXPO_PUBLIC_DOMAIN = "GameplanAI.replit.app"
 
 [postMerge]
 path = "scripts/post-merge.sh"
-timeoutMs = 120000
+timeoutMs = 240000

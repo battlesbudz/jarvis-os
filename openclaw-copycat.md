@@ -49,11 +49,23 @@ This document tracks the 8 capability gaps between Jarvis and OpenClaw's tool ar
 
 ---
 
-## Gap 4 — Browser Automation / Computer Use
+## Gap 4 — Browser Automation / Computer Use ✅ DONE
 
 **OpenClaw tool:** `browser` — full computer-use capability; navigates pages, clicks elements, fills forms, takes screenshots, interacts with any web app
 
-**Jarvis equivalent:** Android daemon (screenshot + tap simulation) — optional, only when daemon is connected. No general-purpose browser tool.
+**Jarvis tools (Task #152):**
+- `browser_navigate` — opens a URL in a per-user headless Chromium session (Playwright); returns page title + first 3000 chars of visible text
+- `browser_click` — clicks an element by visible text label or CSS selector; returns updated page title + URL
+- `browser_type` — locates a field by label / placeholder / selector, clears it, types text, optionally presses Enter
+- `browser_screenshot` — captures viewport or full-page PNG, returns as base64 (agent can inspect visually)
+- `browser_extract` — extracts all visible text stripped of scripts/styles; handles JS-rendered SPAs that web_fetch cannot read
+- `browser_close` — explicitly closes the session (auto-closes after 5 min inactivity)
+
+**Session manager:** `server/agent/browser/sessionManager.ts` — one Chromium browser + page per user; idle sessions reaped every 60s; launched with `--no-sandbox --disable-gpu` for server environments
+
+**System deps installed:** glib, nss, nspr, atk, at-spi2-atk, libdrm, libxcb, libxkbcommon, libX11, libXcomposite, libXdamage, libXext, libXfixes, libXrandr, mesa, alsa-lib, pango, cairo, expat
+
+**Post-merge:** `scripts/post-merge.sh` includes `npx playwright install chromium` (idempotent)
 
 **Why it matters:** Unlocks web tasks that have no API — restaurant bookings, form submissions, reading paywalled content, web app interactions.
 
@@ -123,7 +135,7 @@ This document tracks the 8 capability gaps between Jarvis and OpenClaw's tool ar
 | Message another session | `sessions_send` | `sessions_send` tool | ✅ CLOSED |
 | List / inspect active sessions | `sessions_list` / `sessions_history` | `sessions_list`, `sessions_history` tools | ✅ CLOSED |
 | Fetch a specific URL | `web_fetch` | `web_fetch` tool | ✅ CLOSED |
-| Browser automation | `browser` (always on) | Android daemon (optional) | PARTIAL |
+| Browser automation | `browser` (always on) | `browser_*` tools (6, Playwright/Chromium) | ✅ CLOSED |
 | Shell execution | `exec` / `bash` (always on) | Desktop daemon (optional) | PARTIAL |
 | Voice responses (TTS) | `tts` | `speak` tool + `/tts on\|off\|voice` | ✅ CLOSED |
 | Agent-defined cron jobs | `cron` tool | `cron_*` tools (4) | ✅ CLOSED |

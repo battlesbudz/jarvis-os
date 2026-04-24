@@ -63,6 +63,7 @@
     "p-retry": "^7.1.1",
     "pdf-parse": "^2.4.5",
     "pg": "^8.16.3",
+    "playwright": "^1.59.1",
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "react-native": "0.81.5",
