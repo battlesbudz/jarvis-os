@@ -408,6 +408,35 @@ export const jarvisScheduledTasks = pgTable("jarvis_scheduled_tasks", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+// ── Workflow Engine ────────────────────────────────────────────────────────────
+// Lightweight resumable multi-step plan graph. Each workflow is an ordered
+// list of steps; each step maps 1-to-1 with an agentJobs row when running.
+
+export interface WorkflowStep {
+  id: string;
+  title: string;
+  prompt: string;
+  agentType?: string;
+  status: "pending" | "running" | "complete" | "failed";
+  jobId?: string;
+  output?: string;
+  startedAt?: string;
+  completedAt?: string;
+}
+
+export const agentWorkflows = pgTable("agent_workflows", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  title: text("title").notNull(),
+  description: text("description"),
+  steps: jsonb("steps").$type<WorkflowStep[]>().notNull().default(sql`'[]'::jsonb`),
+  currentStepIndex: integer("current_step_index").notNull().default(0),
+  // active | paused_waiting | paused | complete | failed
+  status: varchar("status").notNull().default("active"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
 export const agentJobs = pgTable("agent_jobs", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
