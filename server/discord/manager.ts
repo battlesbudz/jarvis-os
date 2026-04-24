@@ -37,6 +37,10 @@ const botClients = new Map<string, Client>();
 // code → pairing record (1-hour TTL)
 const pairingCodes = new Map<string, PairingRecord>();
 
+// message-id deduplication: messageId → seenAt timestamp (5-minute TTL)
+const seenMessageIds = new Map<string, number>();
+const SEEN_MESSAGE_TTL_MS = 5 * 60 * 1000;
+
 function generateCode(len = 6): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let code = "";
@@ -44,11 +48,14 @@ function generateCode(len = 6): string {
   return code;
 }
 
-// Prune expired pairing codes every 5 min
+// Prune expired pairing codes and seen message IDs every 5 min
 setInterval(() => {
   const now = Date.now();
   for (const [code, rec] of pairingCodes) {
     if (rec.expiresAt < now) pairingCodes.delete(code);
+  }
+  for (const [id, seenAt] of seenMessageIds) {
+    if (now - seenAt > SEEN_MESSAGE_TTL_MS) seenMessageIds.delete(id);
   }
 }, 5 * 60 * 1000);
 
@@ -93,6 +100,13 @@ async function lookupUserByDiscordId(
 function buildMessageHandler(botOwnerId: string, client: Client) {
   return async (message: Message) => {
     if (message.author.bot) return;
+
+    // ── Deduplication: drop re-delivered events for the same message ID ────
+    if (seenMessageIds.has(message.id)) {
+      console.log(`[DiscordManager] duplicate message dropped (id=${message.id})`);
+      return;
+    }
+    seenMessageIds.set(message.id, Date.now());
 
     const isDM = message.channel.isDMBased();
     const discordUserId = message.author.id;
@@ -593,6 +607,64 @@ export async function createDiscordChannel(
     return { ok: true, channelId: created.id };
   } catch (err: any) {
     return { ok: false, error: err?.message || "Failed to create channel." };
+  }
+}
+
+/**
+ * Delete a text channel from the user's Discord server by name or ID.
+ * Only text channels are eligible; categories and voice channels are excluded.
+ */
+export async function deleteDiscordChannel(
+  userId: string,
+  opts: { channelName?: string; channelId?: string; guildId?: string },
+): Promise<{ ok: boolean; error?: string; channelName?: string }> {
+  const client = botClients.get(userId);
+  if (!client || !client.isReady()) {
+    return { ok: false, error: "Discord bot is not running." };
+  }
+
+  const guildsCache = client.guilds.cache;
+  if (guildsCache.size === 0) {
+    return { ok: false, error: "Bot is not in any Discord server." };
+  }
+
+  const { ChannelType } = await import("discord.js");
+
+  // Determine which guild to search
+  const rawGuild = opts.guildId
+    ? (guildsCache.get(opts.guildId) ?? guildsCache.first()!)
+    : guildsCache.first()!;
+  const guild = await rawGuild.fetch();
+  await guild.channels.fetch();
+
+  // Resolve channel by ID first, then by name
+  let target: TextChannel | undefined;
+  if (opts.channelId) {
+    const ch = guild.channels.cache.get(opts.channelId);
+    if (ch && ch.type === ChannelType.GuildText) target = ch as TextChannel;
+  }
+  if (!target && opts.channelName) {
+    const slug = opts.channelName.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+    // If multiple channels share the same name, prefer the first one found
+    target = guild.channels.cache.find(
+      (ch) => ch.type === ChannelType.GuildText && ch.name === slug,
+    ) as TextChannel | undefined;
+  }
+
+  if (!target) {
+    return {
+      ok: false,
+      error: `No text channel found matching ${opts.channelId ? `ID ${opts.channelId}` : `name "${opts.channelName}"`} in ${guild.name}.`,
+    };
+  }
+
+  try {
+    const deletedName = target.name;
+    await target.delete("Deleted by Jarvis on user request");
+    console.log(`[DiscordManager] deleted channel #${deletedName} (${target.id}) in guild ${guild.id}`);
+    return { ok: true, channelName: deletedName };
+  } catch (err: unknown) {
+    return { ok: false, error: err instanceof Error ? err.message : "Failed to delete channel." };
   }
 }
 

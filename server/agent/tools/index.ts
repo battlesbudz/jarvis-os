@@ -17,6 +17,7 @@ import { fetchEmailsTool } from "./fetchEmails";
 import { connectChannelTool } from "./connectChannel";
 import { discordPostTool } from "./discordPost";
 import { discordCreateChannelTool } from "./discordCreateChannel";
+import { discordDeleteChannelTool } from "./discordDeleteChannel";
 import { scheduleJarvisTaskTool } from "./scheduleJarvisTask";
 import {
   scheduleChannelReportTool,
@@ -75,6 +76,7 @@ export const ALL_TOOLS: AgentTool[] = [
   connectChannelTool,
   discordPostTool,
   discordCreateChannelTool,
+  discordDeleteChannelTool,
   scheduleJarvisTaskTool,
   scheduleChannelReportTool,
   listChannelSchedulesTool,
@@ -199,6 +201,7 @@ export {
   connectChannelTool,
   discordPostTool,
   discordCreateChannelTool,
+  discordDeleteChannelTool,
   scheduleJarvisTaskTool,
   scheduleChannelReportTool,
   listChannelSchedulesTool,

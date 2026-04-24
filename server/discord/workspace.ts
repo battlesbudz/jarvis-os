@@ -125,11 +125,19 @@ export function classifyTopic(text: string): string {
 
 // ── Workspace setup ──────────────────────────────────────────────────────────
 
+// Per-guild in-flight lock — prevents concurrent setup races that create duplicate channels
+const setupInProgress = new Set<string>();
+
 export async function setupWorkspace(
   client: Client,
   userId: string,
   guildId: string,
 ): Promise<{ ok: boolean; error?: string; workspace?: WorkspaceMeta }> {
+  if (setupInProgress.has(guildId)) {
+    console.log(`[Workspace] setup already in progress for guild ${guildId} — skipping concurrent call`);
+    return { ok: false, error: "workspace setup already in progress for this server" };
+  }
+  setupInProgress.add(guildId);
   try {
     const guild = await client.guilds.fetch(guildId) as Guild;
     // Ensure channel cache is fully populated before any cache lookups
@@ -246,6 +254,8 @@ export async function setupWorkspace(
   } catch (err: unknown) {
     console.error("[Workspace] setup failed:", err);
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  } finally {
+    setupInProgress.delete(guildId);
   }
 }
 
