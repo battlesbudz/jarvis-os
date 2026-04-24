@@ -64,6 +64,17 @@ Inspired by OpenClaw (MIT licensed, © 2025 Peter Steinberger). Located in `serv
 - Google scopes now include `drive.file` and `gmail.modify`; existing users must reconnect Google to grant them.
 - **Google Drive integration** — `server/driveRoutes.ts` exposes `/api/drive/status|enable|settings|disable`; Drive settings stored in `user_preferences.data` (driveEnabled, driveAutoSavePlans, driveAutoSaveWeekly, driveFolderId, driveFolderLink). Daily plans auto-saved in `scheduler.ts`; weekly reviews auto-saved in `memory/weeklyJob.ts`. Drive section in `app/(tabs)/profile.tsx` shows connection status, Jarvis Workspace folder link, and auto-save toggles.
 
+## Prediction Engine (Jarvis Foresight)
+Jarvis is now anticipatory — it generates forward-looking predictions daily from 60 days of historical data:
+- **Pattern Analyser** (`server/intelligence/pattern-analyser.ts`) — Analyses energy check-ins by hour/day-of-week, task completion rates by category, email response latency by sender, and project stall risk from goal trees.
+- **Predictor** (`server/intelligence/predictor.ts`) — Builds raw predictions with confidence scores, runs an LLM pass to translate them into human-readable, actionable predictions. Types: `energy_dip`, `procrastination_risk`, `email_overdue`, `project_stall`.
+- **Schema** (`jarvis_predictions` table) — Stores each prediction with type, target datetime, confidence score, basis summary, human-readable text, action suggestion, and validation outcome.
+- **Daily plan integration** — `scheduler.ts` runs the prediction engine before each morning plan build (`runPredictionEngineForAllUsers`). Predictions with confidence ≥ 65% are appended to the morning briefing notification.
+- **Validation loop** — The heartbeat (`server/heartbeat.ts`) calls `validateExpiredPredictions` every tick. Energy dips and procrastination risks are auto-validated against actual check-ins and plan completions.
+- **API** — `GET /api/predictions?date=`, `GET /api/predictions/week?startDate=`, `GET /api/predictions/accuracy`, `POST /api/predictions/run`.
+- **App UI** — "JARVIS FORESIGHT" panel in the Today tab (`app/(tabs)/index.tsx`) shows today's predictions with confidence bars and observation counts. Only shown when predictions exist or are loading.
+- **Confidence threshold** — Only predictions ≥ 55% are surfaced (configurable). Morning briefings only include ≥ 65%.
+
 ## External Dependencies
 -   **AI Services:** OpenAI (gpt-5-mini, Whisper, TTS "alloy")
 -   **Database:** PostgreSQL

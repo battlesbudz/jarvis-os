@@ -201,8 +201,47 @@ export function startScheduler() {
   console.log('[Scheduler] Started — morning plan 7:00 AM daily, weekly patterns Sunday 3:00 AM, Discord schedules every minute');
 }
 
+/**
+ * Run the Prediction Engine for every active user.
+ * Called at 7am as part of the morning plan build — before plans are generated
+ * so predictions can influence task ordering and are ready for delivery.
+ */
+export async function runPredictionEngineForAllUsers(startDate: string): Promise<void> {
+  const allUsers = await db.select({ id: schema.users.id }).from(schema.users).catch(() => []);
+  console.log(`[Predictor] Running for ${allUsers.length} user(s), 7-day horizon from ${startDate}`);
+
+  // Build a 7-day date list starting from startDate.
+  const datesToRun: string[] = [];
+  const base = new Date(startDate + "T00:00:00");
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(base);
+    d.setDate(base.getDate() + i);
+    datesToRun.push(d.toISOString().slice(0, 10));
+  }
+
+  for (const user of allUsers) {
+    try {
+      const { analysePatterns } = await import("./intelligence/pattern-analyser");
+      const { generateAndStorePredictions } = await import("./intelligence/predictor");
+
+      // Single pattern analysis per user — reused across all 7 dates.
+      const analysis = await analysePatterns(user.id, 60);
+      let totalInserted = 0;
+      for (const targetDate of datesToRun) {
+        totalInserted += await generateAndStorePredictions(user.id, targetDate, analysis);
+      }
+      if (totalInserted > 0) {
+        console.log(`[Predictor] ${totalInserted} new prediction(s) for user ${user.id}`);
+      }
+    } catch (err) {
+      console.error(`[Predictor] failed for user ${user.id}:`, err);
+    }
+  }
+}
+
 export async function runMorningPlanBuild() {
   const today = new Date().toISOString().slice(0, 10);
+  await runPredictionEngineForAllUsers(today);
 
   const allUsers = await db.select({ id: schema.users.id }).from(schema.users);
   console.log(`[Scheduler] Processing ${allUsers.length} user(s) for auto-plan build`);
@@ -336,6 +375,16 @@ export async function runMorningPlanBuild() {
         }).catch(() => {});
       }
 
+      // Fetch today's predictions to inform the morning briefing
+      let predictionText = "";
+      try {
+        const { getTodayPredictions, formatPredictionsForBriefing } = await import("./intelligence/predictor");
+        const preds = await getTodayPredictions(user.id, today);
+        predictionText = formatPredictionsForBriefing(preds);
+      } catch (predErr) {
+        console.error(`[Scheduler] prediction fetch failed for ${user.id}:`, predErr);
+      }
+
       const topTask = newTasks[0];
       const existingPrefs = await db
         .select({ data: schema.userPreferences.data })
@@ -350,6 +399,7 @@ export async function runMorningPlanBuild() {
           topTask: topTask?.title,
           reasoning: planReasoning || undefined,
           taskCount: newTasks.length,
+          predictionText: predictionText || null,
         }
       };
 
@@ -404,6 +454,15 @@ export async function runMorningPlanBuild() {
         }
       } catch (gutErr) {
         console.error(`[Scheduler] gut morning brief failed for ${user.id}:`, gutErr);
+      }
+
+      // Send the morning briefing notification via the user's preferred channel.
+      try {
+        const taskListLines = newTasks.slice(0, 5).map((t, i) => `${i + 1}. ${t.title}`).join('\n');
+        const morningMsg = `☀️ Good morning! Your plan for today:\n\n${taskListLines}${newTasks.length > 5 ? `\n…and ${newTasks.length - 5} more` : ''}\n\n📌 Focus first: ${topTask.title}${predictionText ? `\n${predictionText}` : ''}`;
+        await notifyUser(user.id, 'morning_briefing', morningMsg);
+      } catch (notifyErr) {
+        console.error(`[Scheduler] Morning notification failed for ${user.id}:`, notifyErr);
       }
 
       // Auto-save daily plan to Google Drive if the user has it enabled.
