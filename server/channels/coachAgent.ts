@@ -40,7 +40,7 @@ const FORMAT_HINTS: Record<string, string> = {
 };
 
 function getMaxTokensForChannel(channelName: string): number {
-  if (channelName.startsWith("Discord")) return 400;
+  if (channelName.startsWith("Discord")) return 1200;
   if (channelName === "Daemon") return 200;
   return 2000;
 }
