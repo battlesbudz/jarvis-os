@@ -82,10 +82,19 @@ export const workflowCreateTool: AgentTool = {
     if (rawSteps.length === 0) return { ok: false, content: "At least one step is required.", label: "workflow_create: no steps" };
     if (rawSteps.length > 20) return { ok: false, content: "Max 20 steps per workflow.", label: "workflow_create: too many steps" };
 
+    // Validate each step has a non-empty title and prompt.
+    for (let i = 0; i < rawSteps.length; i++) {
+      const s = rawSteps[i] as Record<string, unknown>;
+      const stepTitle = String(s.title || "").trim();
+      const stepPrompt = String(s.prompt || "").trim();
+      if (!stepTitle) return { ok: false, content: `Step ${i + 1}: "title" is required and cannot be empty.`, label: "workflow_create: missing step title" };
+      if (!stepPrompt) return { ok: false, content: `Step ${i + 1} ("${stepTitle}"): "prompt" is required and cannot be empty.`, label: "workflow_create: missing step prompt" };
+    }
+
     const steps: WorkflowStep[] = rawSteps.map((s: Record<string, unknown>, i: number) => ({
       id: `step_${i + 1}`,
-      title: String(s.title || `Step ${i + 1}`).trim(),
-      prompt: String(s.prompt || "").trim(),
+      title: String(s.title).trim(),
+      prompt: String(s.prompt).trim(),
       agentType: SUB_AGENT_TYPES.includes(String(s.agent_type) as typeof SUB_AGENT_TYPES[number])
         ? String(s.agent_type)
         : "research",

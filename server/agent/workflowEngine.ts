@@ -1,15 +1,15 @@
 /**
  * Workflow Engine — persistence layer and auto-advance logic.
  *
- * Intentionally does NOT import from jobQueue.ts to avoid circular deps.
- * It directly inserts into agentJobs to queue the next step.
+ * Imports from jobClient.ts (not jobQueue.ts) to avoid circular deps:
+ *   jobQueue.ts → workflowEngine.ts → jobClient.ts ✓
  */
 import { db } from "../db";
-import { eq, and, desc } from "drizzle-orm";
-import { sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import type { WorkflowStep } from "@shared/schema";
 import { notifyUser } from "../channels/registry";
+import { submitAgentJob } from "./jobClient";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -46,27 +46,6 @@ export function buildStepPrompt(
   return lines.join("\n");
 }
 
-/** Insert a queued agentJobs row directly (avoids circular import with jobQueue). */
-async function queueWorkflowStep(
-  userId: string,
-  workflowId: string,
-  stepIdx: number,
-  step: WorkflowStep,
-  enrichedPrompt: string,
-): Promise<string> {
-  const [inserted] = await db
-    .insert(schema.agentJobs)
-    .values({
-      userId,
-      agentType: (step.agentType || DEFAULT_AGENT_TYPE) as string,
-      title: step.title.slice(0, 200),
-      prompt: enrichedPrompt,
-      input: { workflowId, workflowStepIndex: stepIdx },
-      status: "queued",
-    })
-    .returning({ id: schema.agentJobs.id });
-  return inserted.id;
-}
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
@@ -86,13 +65,14 @@ export async function executeWorkflowStep(
   );
 
   const enrichedPrompt = buildStepPrompt({ ...workflow, steps }, stepIdx);
-  const jobId = await queueWorkflowStep(
-    workflow.userId,
-    workflow.id,
-    stepIdx,
-    steps[stepIdx],
-    enrichedPrompt,
-  );
+  const step = steps[stepIdx];
+  const jobId = await submitAgentJob({
+    userId: workflow.userId,
+    agentType: (step.agentType || DEFAULT_AGENT_TYPE) as Parameters<typeof submitAgentJob>[0]["agentType"],
+    title: step.title,
+    prompt: enrichedPrompt,
+    input: { workflowId: workflow.id, workflowStepIndex: stepIdx },
+  });
 
   steps[stepIdx] = { ...steps[stepIdx], jobId };
 
