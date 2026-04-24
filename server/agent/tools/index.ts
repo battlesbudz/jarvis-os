@@ -29,6 +29,7 @@ import { discordPinMessageTool } from "./discordPinMessage";
 import { setupNamedAgentTool } from "./setupNamedAgent";
 import { queueBackgroundJobTool } from "./queueBackgroundJob";
 import { setupContentPipelineTool } from "./setupContentPipeline";
+import { setupDiscordWorkspaceTool } from "./setupDiscordWorkspace";
 import { memorySearchTool, memoryGetTool } from "./memorySearch";
 import { webFetchTool } from "./webFetch";
 import { sessionsListTool, sessionsHistoryTool, sessionsSendTool } from "./sessionTools";
@@ -67,6 +68,7 @@ export const ALL_TOOLS: AgentTool[] = [
   youtubeSearchTool,
   queueBackgroundJobTool,
   setupContentPipelineTool,
+  setupDiscordWorkspaceTool,
   memorySearchTool,
   memoryGetTool,
   webFetchTool,
@@ -110,6 +112,7 @@ export function telegramCoachTools(opts: { hasGoogle: boolean }): AgentTool[] {
     setupNamedAgentTool,
     youtubeSearchTool,
     setupContentPipelineTool,
+    setupDiscordWorkspaceTool,
     memorySearchTool,
     memoryGetTool,
     webFetchTool,
@@ -157,6 +160,7 @@ export {
   youtubeSearchTool,
   queueBackgroundJobTool,
   setupContentPipelineTool,
+  setupDiscordWorkspaceTool,
   memorySearchTool,
   memoryGetTool,
   webFetchTool,
