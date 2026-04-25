@@ -398,15 +398,24 @@ async function processUpdate(update: any): Promise<void> {
       const userId = link[0].userId;
 
       // ── OpenClaw delegation intercept ──────────────────────────────────────
-      // If this message comes from the user's configured OpenClaw Telegram chat,
-      // and there's a pending delegation for this user, resolve it instead of
-      // routing to the coach pipeline.
+      // Resolves a pending delegation ONLY when:
+      //   1. The message originates from the configured OpenClaw chat ID.
+      //   2. The reply starts with the correlated nonce: "[OC:{NONCE}]"
+      // This prevents unrelated user messages to the same chat from triggering
+      // a false resolution.
       const pending = pendingOpenClawDelegations.get(userId);
       if (pending && pending.chatId === chatId && text) {
-        console.log(`[OpenClaw] Resolving pending delegation for user ${userId} from chat ${chatId}`);
-        pendingOpenClawDelegations.delete(userId);
-        pending.resolve(text);
-        return;
+        const noncePattern = new RegExp(`^\\[OC:${pending.nonce}\\]`);
+        if (noncePattern.test(text)) {
+          console.log(`[OpenClaw] Resolving delegation for user ${userId} (nonce=${pending.nonce})`);
+          pendingOpenClawDelegations.delete(userId);
+          // Strip the nonce prefix before passing the result back to Jarvis
+          const resultText = text.replace(noncePattern, "").trim();
+          pending.resolve(resultText || text);
+          return;
+        }
+        // Message from the right chat but without the expected nonce token —
+        // fall through to normal coach pipeline so user messages are not lost.
       }
 
       await handleCoachReply(userId, chatId, text, imageUrl);
