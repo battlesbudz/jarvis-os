@@ -182,24 +182,10 @@ export default function SettingsScreen() {
     setOpenclawOnline(null);
     try {
       await saveOpenClawConfig();
-      const res = await apiRequest('POST', '/api/chat', {
-        message: 'openclaw_status_check',
-        _internal_tool: 'openclaw_status',
-      }).catch(() => null);
-      // We parse status from the bridge endpoint instead
-      const cfgRes = await apiRequest('GET', '/api/openclaw/config');
-      const cfgData = await cfgRes.json();
-      const cfg = cfgData.config ?? {};
-      if (cfg.mode === 'gateway' && cfg.gatewayUrl) {
-        const checkUrl = `${cfg.gatewayUrl.replace(/\/$/, '')}/api/v1/check`;
-        const pingRes = await fetch(checkUrl, {
-          method: 'GET',
-          headers: cfg.gatewayToken ? { Authorization: `Bearer ${cfg.gatewayToken}` } : {},
-          signal: AbortSignal.timeout(5000),
-        }).catch(() => null);
-        setOpenclawOnline(!!pingRes?.ok);
-      } else if (cfg.mode === 'telegram' && cfg.telegramChatId) {
-        setOpenclawOnline(true);
+      const statusRes = await apiRequest('GET', '/api/openclaw/status').catch(() => null);
+      if (statusRes && statusRes.ok) {
+        const data = await statusRes.json().catch(() => null);
+        setOpenclawOnline(!!(data?.online));
       } else {
         setOpenclawOnline(false);
       }
