@@ -113,6 +113,10 @@ export default function SettingsScreen() {
   const [telegramPolling, setTelegramPolling] = useState(false);
   const telegramPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [discordConnected, setDiscordConnected] = useState(false);
+  const [discordUsername, setDiscordUsername] = useState<string | null>(null);
+  const [discordPairExpanded, setDiscordPairExpanded] = useState(false);
+  const [discordPairCode, setDiscordPairCode] = useState('');
+  const [discordLinking, setDiscordLinking] = useState(false);
   const [loadingStatus, setLoadingStatus] = useState(true);
   const [connectingId, setConnectingId] = useState<string | null>(null);
   const [androidDaemonCode, setAndroidDaemonCode] = useState<string | null>(null);
@@ -246,6 +250,7 @@ export default function SettingsScreen() {
         configured: telegramRes.configured ?? false,
       });
       setDiscordConnected(discordRes?.connected ?? false);
+      setDiscordUsername(discordRes?.discordUsername ?? null);
     } catch {}
     setLoadingStatus(false);
 
@@ -355,6 +360,31 @@ export default function SettingsScreen() {
       setAndroidDaemonCode(data.code ?? null);
     } catch {}
   }, [androidDaemonCode]);
+
+  const handleDiscordPairSubmit = useCallback(async () => {
+    const code = discordPairCode.trim().toUpperCase();
+    if (code.length !== 6) {
+      Alert.alert('Invalid Code', 'Please enter the 6-character code from Discord.');
+      return;
+    }
+    setDiscordLinking(true);
+    try {
+      const res = await apiRequest('POST', '/api/discord/link', { code });
+      const data = await res.json();
+      if (res.ok && data.ok) {
+        setDiscordConnected(true);
+        setDiscordUsername(data.discordUsername ?? null);
+        setDiscordPairExpanded(false);
+        setDiscordPairCode('');
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      } else {
+        Alert.alert('Pairing Failed', data.error ?? 'Could not link Discord. Please try again.');
+      }
+    } catch {
+      Alert.alert('Error', 'Could not connect. Check your network and try again.');
+    }
+    setDiscordLinking(false);
+  }, [discordPairCode]);
 
   // ── Reward claim ──
   const handleClaimReward = useCallback(async (reward: Reward) => {
@@ -472,22 +502,62 @@ export default function SettingsScreen() {
           )}
 
           {/* Discord */}
-          <View style={[styles.connRow, styles.connRowBorder]}>
+          <Pressable
+            style={[styles.connRow, styles.connRowBorder]}
+            onPress={() => {
+              if (!discordConnected) setDiscordPairExpanded(v => !v);
+            }}
+          >
             <View style={[styles.connIconWrap, { backgroundColor: '#5865F220' }]}>
               <Ionicons name="logo-discord" size={18} color="#5865F2" />
             </View>
             <View style={styles.connInfo}>
               <Text style={styles.connName}>Discord</Text>
               <Text style={styles.connSub}>
-                {discordConnected ? 'Connected' : 'Ask Jarvis to connect Discord'}
+                {discordConnected
+                  ? (discordUsername ? `@${discordUsername}` : 'Connected')
+                  : 'Tap to link your Discord account'}
               </Text>
             </View>
             <View style={[styles.connBtn, discordConnected ? styles.connBtnConnected : styles.connBtnDisconnected]}>
               <Text style={[styles.connBtnText, discordConnected && styles.connBtnTextConnected]}>
-                {discordConnected ? 'Connected' : 'Via Chat'}
+                {discordConnected ? 'Connected' : 'Connect'}
               </Text>
             </View>
-          </View>
+          </Pressable>
+          {discordPairExpanded && !discordConnected && (
+            <View style={styles.linkCodeBlock}>
+              <Text style={styles.linkCodeLabel}>How to link Discord:</Text>
+              <Text style={[styles.connSub, { marginBottom: 6 }]}>
+                1. Open Discord and DM your Jarvis bot{'\n'}
+                2. The bot replies with a 6-character code{'\n'}
+                3. Enter that code below
+              </Text>
+              <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+                <TextInput
+                  style={[styles.linkCodeInput]}
+                  placeholder="ABC123"
+                  placeholderTextColor={Colors.textTertiary}
+                  value={discordPairCode}
+                  onChangeText={t => setDiscordPairCode(t.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6))}
+                  autoCapitalize="characters"
+                  maxLength={6}
+                  returnKeyType="done"
+                  onSubmitEditing={handleDiscordPairSubmit}
+                />
+                <Pressable
+                  style={[styles.connBtn, styles.connBtnDisconnected, { paddingHorizontal: 16 }]}
+                  onPress={handleDiscordPairSubmit}
+                  disabled={discordLinking}
+                >
+                  {discordLinking
+                    ? <ActivityIndicator size="small" color={Colors.cyan} />
+                    : <Text style={styles.connBtnText}>Link</Text>
+                  }
+                </Pressable>
+              </View>
+            </View>
+          )}
 
           {/* Android Daemon */}
           <View style={[styles.connRow, styles.connRowBorder]}>
@@ -1035,6 +1105,20 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontFamily: 'Inter_400Regular',
     color: Colors.textSecondary,
+  },
+  linkCodeInput: {
+    flex: 1,
+    height: 40,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.cyan + '60',
+    backgroundColor: Colors.surface,
+    color: Colors.text,
+    paddingHorizontal: 12,
+    fontSize: 18,
+    fontFamily: 'Inter_700Bold',
+    letterSpacing: 3,
+    textAlign: 'center',
   },
   // Preferences
   prefRow: {

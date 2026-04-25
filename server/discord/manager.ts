@@ -324,9 +324,12 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
       await message
         .reply(
           `👋 Hey! I'm Jarvis, your AI productivity coach.\n\n` +
-            `To link this Discord account, open the Jarvis app → Coach tab → tap the **Connect Discord** button → enter this code:\n\n` +
+            `To link this Discord account:\n` +
+            `1. Open the Jarvis app\n` +
+            `2. Go to **Settings** → scroll to **Channels** → tap **Discord**\n` +
+            `3. Enter this code:\n\n` +
             `\`\`\`${code}\`\`\`\n` +
-            `*(Valid for 1 hour. Message me again after linking!)*`,
+            `*(Valid for 1 hour. Message me again if it expires.)*`,
         )
         .catch((err) => console.error("[DiscordManager] reply failed:", err));
       return;
