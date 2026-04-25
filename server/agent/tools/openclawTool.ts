@@ -147,6 +147,14 @@ export async function getOpenClawConfig(userId: string): Promise<OpenClawBridgeC
   }
 }
 
+// ── Tool resolver injection ───────────────────────────────────────────────────
+// Populated by index.ts after all tools are registered to avoid circular imports.
+// Used by openclawTestTool to look up live registered tools by name.
+let _toolResolver: ((name: string) => AgentTool | undefined) | null = null;
+export function initOpenClawToolResolver(resolver: (name: string) => AgentTool | undefined): void {
+  _toolResolver = resolver;
+}
+
 // ── Result helpers ───────────────────────────────────────────────────────────
 function ok(content: string, label?: string, detail?: string): ToolResult {
   return { ok: true, content, label, detail };
@@ -613,11 +621,131 @@ ${repoStructure}
       return delegateResult;
     }
 
+    // Attempt an immediate smoke test if the tool is already in the live registry.
+    // This happens when OpenClaw wrote the files and the server hot-reloaded them.
+    // If not registered yet (the normal case until task #218 auto-applies code),
+    // append a clear instruction so Jarvis tells the user what to do next.
+    let smokeNote = "";
+    if (_toolResolver) {
+      const registeredTool = _toolResolver(featureName);
+      if (registeredTool) {
+        console.log(`[OpenClaw] Tool "${featureName}" is already registered — running immediate smoke test`);
+        const smokeResult = await openclawTestTool.execute(
+          { tool_name: featureName, test_args: "{}" },
+          ctx
+        );
+        smokeNote = smokeResult.ok
+          ? `\n\n---\nSmoke test: PASSED — the tool ran successfully with empty args.`
+          : `\n\n---\nSmoke test: FAILED — ${smokeResult.content}`;
+      } else {
+        smokeNote =
+          `\n\n---\nNext step: apply the code above to the codebase ` +
+          `(save the tool file and add the index.ts registration lines), ` +
+          `then call openclaw_test_tool with tool_name="${featureName}" and safe dummy args ` +
+          `to verify it works before using it.`;
+      }
+    }
+
     return {
       ok: true,
-      content: delegateResult.content,
+      content: delegateResult.content + smokeNote,
       label: "openclaw_build_feature",
       detail: `Built tool: ${featureName}`,
+    };
+  },
+};
+
+// ── openclaw_test_tool ───────────────────────────────────────────────────────
+// Executes a registered tool by name with caller-supplied test args.
+// Used as the final step of the self-improvement loop: after OpenClaw delivers
+// new tool code and it has been applied to the codebase, call this to verify
+// the tool runs without errors before telling the user it's ready.
+export const openclawTestTool: AgentTool = {
+  name: "openclaw_test_tool",
+  description:
+    "Run a smoke test against a registered Jarvis tool. Invokes the tool with the provided test arguments and reports whether it passed or failed. Use this after openclaw_build_feature to verify the new tool works before confirming to the user. If the tool is not yet registered (code hasn't been applied to the codebase), the test will report that clearly.",
+  parameters: {
+    type: "object",
+    properties: {
+      tool_name: {
+        type: "string",
+        description: "Exact name of the tool to test (the tool.name value, e.g. 'weather_lookup').",
+      },
+      test_args: {
+        type: "string",
+        description:
+          "JSON object string of arguments to pass to the tool. Use safe, non-destructive dummy values. If omitted, an empty object is used.",
+      },
+    },
+    required: ["tool_name"],
+  },
+  async execute(args, ctx): Promise<ToolResult> {
+    const toolName = String(args.tool_name ?? "").trim();
+    if (!toolName) return fail("tool_name is required.");
+
+    const testArgsRaw = String(args.test_args ?? "{}").trim();
+    let testArgs: Record<string, unknown> = {};
+    try {
+      const parsed = JSON.parse(testArgsRaw);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        testArgs = parsed as Record<string, unknown>;
+      }
+    } catch {
+      return fail(`test_args is not valid JSON: ${testArgsRaw}`);
+    }
+
+    if (!_toolResolver) {
+      return fail(
+        "Tool resolver not initialized — server may be starting up. Try again in a moment.",
+        "openclaw_test_tool"
+      );
+    }
+    const tool = _toolResolver(toolName);
+    if (!tool) {
+      return fail(
+        `Tool "${toolName}" is not registered in the live server. ` +
+          "Apply the code that OpenClaw built to the codebase (add the tool file and register it in index.ts), " +
+          "then restart the server so it appears in the registry.",
+        "openclaw_test_tool"
+      );
+    }
+
+    const SMOKE_TIMEOUT_MS = 30_000;
+    let result: ToolResult;
+    try {
+      const resultPromise = tool.execute(testArgs, ctx);
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error(`smoke test timed out after ${SMOKE_TIMEOUT_MS / 1000}s`)), SMOKE_TIMEOUT_MS)
+      );
+      result = await Promise.race([resultPromise, timeoutPromise]);
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      return {
+        ok: false,
+        content:
+          `Tool "${toolName}" threw an exception during the smoke test: ${detail}\n\n` +
+          "Ask OpenClaw to fix it by calling openclaw_build_feature again with the error details included in the description.",
+        label: "openclaw_test_tool",
+        detail: `throw: ${toolName} — ${detail}`,
+      };
+    }
+
+    if (result.ok) {
+      return {
+        ok: true,
+        content:
+          `Smoke test PASSED for tool "${toolName}".\n\nOutput: ${result.content}`,
+        label: "openclaw_test_tool",
+        detail: `pass: ${toolName}`,
+      };
+    }
+    return {
+      ok: false,
+      content:
+        `Smoke test FAILED for tool "${toolName}".\n\nError: ${result.content}\n\n` +
+        "Ask OpenClaw to fix it by calling openclaw_build_feature again, including this error in the description.",
+      label: "openclaw_test_tool",
+      detail: `fail: ${toolName} — ${result.content}`,
     };
   },
 };
