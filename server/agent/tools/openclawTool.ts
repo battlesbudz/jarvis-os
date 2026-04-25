@@ -1,8 +1,9 @@
-import type { AgentTool } from "../types";
+import type { AgentTool, ToolResult } from "../types";
 import { db } from "../../db";
 import { eq } from "drizzle-orm";
 import { userPreferences } from "@shared/schema";
 import { sendMessage } from "../../integrations/telegram";
+import { promises as dns } from "dns";
 
 export interface OpenClawBridgeConfig {
   mode: "telegram" | "gateway";
@@ -14,9 +15,10 @@ export interface OpenClawBridgeConfig {
 
 // ── Pending delegation store ─────────────────────────────────────────────────
 // Keyed by userId. The Telegram message handler resolves these when a reply
-// arrives from the configured OpenClaw chat ID.
+// arrives from the configured OpenClaw chat ID that contains the expected nonce.
 export interface PendingDelegation {
   chatId: string;
+  nonce: string;
   resolve: (text: string) => void;
   reject: (err: Error) => void;
   timer: ReturnType<typeof setTimeout>;
@@ -25,28 +27,28 @@ export interface PendingDelegation {
 export const pendingOpenClawDelegations = new Map<string, PendingDelegation>();
 
 // ── SSRF protection ──────────────────────────────────────────────────────────
-// Block private/loopback/link-local addresses to prevent server-side request
-// forgery from user-supplied gateway URLs.
-const PRIVATE_RANGES = [
+// Two-layer check: (1) literal hostname/IP patterns, (2) DNS resolution to
+// catch public hostnames that resolve to private/internal IPs.
+const PRIVATE_IP_RANGES = [
   /^127\./,
   /^10\./,
   /^172\.(1[6-9]|2\d|3[01])\./,
   /^192\.168\./,
   /^169\.254\./,
   /^::1$/,
-  /^fc00:/i,
+  /^fc[0-9a-f]{2}:/i,
   /^fe80:/i,
   /^0\.0\.0\.0$/,
-  /^localhost$/i,
 ];
+const PRIVATE_HOSTNAMES = /^(localhost|.*\.local|.*\.internal|.*\.corp|.*\.intranet)$/i;
 
-function isPrivateHost(host: string): boolean {
-  // Strip port
-  const bareHost = host.replace(/:\d+$/, "");
-  return PRIVATE_RANGES.some((re) => re.test(bareHost));
+function isPrivateIp(ip: string): boolean {
+  return PRIVATE_IP_RANGES.some((re) => re.test(ip));
 }
 
-function validateGatewayUrl(raw: string): { ok: true; url: URL } | { ok: false; error: string } {
+async function validateGatewayUrl(
+  raw: string
+): Promise<{ ok: true; url: URL } | { ok: false; error: string }> {
   let parsed: URL;
   try {
     parsed = new URL(raw);
@@ -56,14 +58,44 @@ function validateGatewayUrl(raw: string): { ok: true; url: URL } | { ok: false; 
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     return { ok: false, error: "Gateway URL must use http or https." };
   }
-  if (isPrivateHost(parsed.hostname)) {
+  const host = parsed.hostname;
+
+  // Layer 1: literal hostname/IP check
+  if (isPrivateIp(host) || PRIVATE_HOSTNAMES.test(host)) {
     return {
       ok: false,
       error:
-        "Gateway URL points to a private/loopback address. Use a public tunnel URL (ngrok, Cloudflare, Tailscale funnel).",
+        "Gateway URL points to a private/loopback address. Use a public tunnel URL (ngrok, Cloudflare Tunnel, Tailscale funnel).",
     };
   }
+
+  // Layer 2: DNS resolution — resolve and check each returned address
+  try {
+    const addresses = await dns.resolve(host).catch(async () => {
+      // Try resolve4 / resolve6 individually as fallback
+      const v4 = await dns.resolve4(host).catch(() => [] as string[]);
+      const v6 = await dns.resolve6(host).catch(() => [] as string[]);
+      return [...v4, ...v6];
+    });
+    for (const addr of addresses) {
+      if (isPrivateIp(addr)) {
+        return {
+          ok: false,
+          error: `Gateway hostname "${host}" resolves to a private IP address (${addr}). SSRF protection requires a public gateway address.`,
+        };
+      }
+    }
+  } catch {
+    // DNS lookup failed — treat as unresolvable; block it
+    return { ok: false, error: `Cannot resolve gateway hostname "${host}". Ensure the tunnel is active.` };
+  }
+
   return { ok: true, url: parsed };
+}
+
+// ── Nonce generation ─────────────────────────────────────────────────────────
+function generateNonce(): string {
+  return Math.random().toString(36).slice(2, 8).toUpperCase();
 }
 
 // ── Config helper ────────────────────────────────────────────────────────────
@@ -81,6 +113,14 @@ export async function getOpenClawConfig(userId: string): Promise<OpenClawBridgeC
   } catch {
     return null;
   }
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+function ok(content: string, label?: string, detail?: string): ToolResult {
+  return { ok: true, content, label, detail };
+}
+function fail(content: string, label?: string): ToolResult {
+  return { ok: false, content, label };
 }
 
 // ── openclaw_delegate tool ───────────────────────────────────────────────────
@@ -104,47 +144,51 @@ export const openclawDelegateTool: AgentTool = {
     },
     required: ["task"],
   },
-  async execute(args, ctx) {
+  async execute(args, ctx): Promise<ToolResult> {
     const task = String(args.task || "").trim();
-    if (!task) return JSON.stringify({ error: "task is required" });
+    if (!task) return fail("task argument is required.");
 
     const userId = ctx.userId;
     const cfg = await getOpenClawConfig(userId);
 
     if (!cfg) {
-      return JSON.stringify({
-        error:
-          "OpenClaw bridge is not configured. Go to Settings → OpenClaw Brain to set up the connection.",
-        hint: "Connect via Telegram (enter your OpenClaw Telegram chat ID) or via Gateway URL if you have a tunnel (ngrok/Cloudflare/Tailscale).",
-      });
+      return fail(
+        "OpenClaw bridge is not configured or disabled. Go to Settings → OpenClaw Brain to set up the connection.",
+        "openclaw_not_configured"
+      );
     }
 
     const timeoutMs = Math.min((Number(args.timeout_minutes) || 10), 15) * 60 * 1000;
 
-    // ── Telegram mode ─────────────────────────────────────────────────────────
+    // ── Telegram mode ──────────────────────────────────────────────────────
     if (cfg.mode === "telegram") {
       const chatId = cfg.telegramChatId?.trim();
       if (!chatId) {
-        return JSON.stringify({
-          error: "Telegram chat ID is not set. Configure it in Settings → OpenClaw Brain.",
-        });
+        return fail(
+          "Telegram chat ID is not set. Configure it in Settings → OpenClaw Brain.",
+          "openclaw_telegram_no_chatid"
+        );
       }
 
-      const prefix = "[JARVIS → OPENCLAW]\n";
-      let sentMessageId: number | undefined;
+      // Generate a nonce so we can correlate the reply exactly to this request.
+      // Sent message: "[JARVIS→OC:{nonce}]\n{task}"
+      // Expected reply prefix: "[OC:{nonce}]"
+      const nonce = generateNonce();
+      const sentText = `[JARVIS→OC:${nonce}]\n${task}`;
 
-      // Send the task message
       try {
-        const res = await sendMessageWithId(chatId, prefix + task);
-        sentMessageId = res?.message_id;
+        await sendMessageWithId(chatId, sentText);
       } catch (err) {
-        return JSON.stringify({
-          error: `Failed to send task to OpenClaw via Telegram: ${err instanceof Error ? err.message : String(err)}`,
-        });
+        return fail(
+          `Failed to send task to OpenClaw via Telegram: ${err instanceof Error ? err.message : String(err)}`,
+          "openclaw_telegram_send_failed"
+        );
       }
 
-      // Register a pending delegation and wait for the reply
-      const result = await new Promise<string>((resolve, reject) => {
+      // Register a pending delegation and wait for a correlated reply.
+      // The telegramRoutes.ts intercept only resolves this promise when it
+      // receives a message from the same chatId that starts with "[OC:{nonce}]".
+      const replyText = await new Promise<string>((resolve, reject) => {
         const timer = setTimeout(() => {
           pendingOpenClawDelegations.delete(userId);
           reject(new Error("OpenClaw did not reply within the timeout window."));
@@ -152,6 +196,7 @@ export const openclawDelegateTool: AgentTool = {
 
         pendingOpenClawDelegations.set(userId, {
           chatId,
+          nonce,
           resolve: (text: string) => {
             clearTimeout(timer);
             resolve(text);
@@ -162,32 +207,39 @@ export const openclawDelegateTool: AgentTool = {
           },
           timer,
         });
-      }).catch((err) => {
-        // Timeout or explicit rejection — return graceful message
-        return `[timeout] OpenClaw did not reply within ${Math.round(timeoutMs / 60000)} minutes. The task was sent (message sent to chat ${chatId}${sentMessageId ? ` as message #${sentMessageId}` : ""}). Check your Telegram chat for any partial output from OpenClaw, or try again with a shorter task.`;
+      }).catch((err: Error) => {
+        return `[timeout] ${err.message} The task was sent to chat ${chatId}. Check your Telegram chat for any partial output from OpenClaw, or try again.`;
       });
 
-      return JSON.stringify({ status: "complete", mode: "telegram", result });
+      return ok(
+        replyText,
+        "openclaw_delegate",
+        `Task delegated via Telegram (nonce: ${nonce})`
+      );
     }
 
-    // ── Gateway mode ──────────────────────────────────────────────────────────
+    // ── Gateway mode ───────────────────────────────────────────────────────
     if (cfg.mode === "gateway") {
       const rawUrl = cfg.gatewayUrl?.trim();
       if (!rawUrl) {
-        return JSON.stringify({
-          error: "Gateway URL is not set. Configure it in Settings → OpenClaw Brain.",
-        });
+        return fail(
+          "Gateway URL is not set. Configure it in Settings → OpenClaw Brain.",
+          "openclaw_gateway_no_url"
+        );
       }
 
-      const urlCheck = validateGatewayUrl(rawUrl);
+      const urlCheck = await validateGatewayUrl(rawUrl);
       if (!urlCheck.ok) {
-        return JSON.stringify({ error: urlCheck.error });
+        return fail(`Gateway URL rejected: ${urlCheck.error}`, "openclaw_ssrf_blocked");
       }
       const gatewayBase = rawUrl.replace(/\/$/, "");
 
+      // Send token in both Authorization header AND request body per spec.
       const authHeaders: Record<string, string> = cfg.gatewayToken
         ? { Authorization: `Bearer ${cfg.gatewayToken}` }
         : {};
+      const bodyPayload: Record<string, string> = { message: task };
+      if (cfg.gatewayToken) bodyPayload.token = cfg.gatewayToken;
 
       const messageUrl = `${gatewayBase}/api/v1/message`;
       let response: Response;
@@ -195,21 +247,22 @@ export const openclawDelegateTool: AgentTool = {
         response = await fetch(messageUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json", ...authHeaders },
-          body: JSON.stringify({ message: task }),
-          signal: AbortSignal.timeout(30_000), // 30s for initial response
+          body: JSON.stringify(bodyPayload),
+          signal: AbortSignal.timeout(30_000),
         });
       } catch (err) {
-        return JSON.stringify({
-          error: `Could not reach OpenClaw gateway at ${rawUrl}: ${err instanceof Error ? err.message : String(err)}`,
-          hint: "Make sure your tunnel (ngrok/Cloudflare/Tailscale) is active and the gateway URL is correct.",
-        });
+        return fail(
+          `Could not reach OpenClaw gateway at ${rawUrl}: ${err instanceof Error ? err.message : String(err)}. Make sure your tunnel (ngrok/Cloudflare/Tailscale) is active.`,
+          "openclaw_gateway_unreachable"
+        );
       }
 
       if (!response.ok) {
         const body = await response.text().catch(() => "");
-        return JSON.stringify({
-          error: `OpenClaw gateway returned HTTP ${response.status}: ${body.slice(0, 300)}`,
-        });
+        return fail(
+          `OpenClaw gateway returned HTTP ${response.status}: ${body.slice(0, 300)}`,
+          "openclaw_gateway_error"
+        );
       }
 
       const contentType = response.headers.get("content-type") ?? "";
@@ -218,7 +271,7 @@ export const openclawDelegateTool: AgentTool = {
       if (contentType.includes("text/event-stream")) {
         const reader = response.body?.getReader();
         if (!reader) {
-          return JSON.stringify({ error: "Gateway returned SSE stream but body is unreadable." });
+          return fail("Gateway returned SSE stream but body is unreadable.", "openclaw_sse_error");
         }
         const decoder = new TextDecoder();
         const chunks: string[] = [];
@@ -239,13 +292,14 @@ export const openclawDelegateTool: AgentTool = {
           }
         }
         reader.cancel().catch(() => {});
-        return JSON.stringify({ status: "complete", mode: "gateway", result: chunks.join("") });
+        const result = chunks.join("");
+        return ok(result || "(empty SSE stream)", "openclaw_delegate", "gateway/sse");
       }
 
       // JSON response — may be immediate result or async job stub
       const data = await response.json().catch(() => null);
 
-      // If the response is an async job (has job_id / id / task_id), poll for completion
+      // If the response is an async job (has job_id / id / task_id), poll every 15s
       const jobId =
         (data as any)?.job_id ??
         (data as any)?.task_id ??
@@ -254,13 +308,12 @@ export const openclawDelegateTool: AgentTool = {
           : undefined);
 
       if (jobId) {
-        // Poll /api/v1/jobs/{jobId} until done or timeout
         const pollUrl = `${gatewayBase}/api/v1/jobs/${jobId}`;
         const deadline = Date.now() + timeoutMs;
         let lastData = data;
 
         while (Date.now() < deadline) {
-          await new Promise((r) => setTimeout(r, 10_000)); // wait 10s between polls
+          await new Promise((r) => setTimeout(r, 15_000));
           try {
             const pollRes = await fetch(pollUrl, {
               method: "GET",
@@ -270,30 +323,47 @@ export const openclawDelegateTool: AgentTool = {
             if (!pollRes.ok) break;
             lastData = await pollRes.json();
             const status = (lastData as any)?.status;
-            if (status === "complete" || status === "done" || status === "finished" || (lastData as any)?.result) {
-              return JSON.stringify({ status: "complete", mode: "gateway", result: (lastData as any)?.result ?? lastData });
+            if (
+              status === "complete" ||
+              status === "done" ||
+              status === "finished" ||
+              (lastData as any)?.result
+            ) {
+              const result = (lastData as any)?.result ?? JSON.stringify(lastData);
+              return ok(
+                typeof result === "string" ? result : JSON.stringify(result),
+                "openclaw_delegate",
+                `gateway/job/${jobId}`
+              );
             }
             if (status === "error" || status === "failed") {
-              return JSON.stringify({ status: "error", mode: "gateway", result: (lastData as any)?.error ?? lastData });
+              const errBody = (lastData as any)?.error ?? JSON.stringify(lastData);
+              return fail(
+                typeof errBody === "string" ? errBody : JSON.stringify(errBody),
+                "openclaw_job_failed"
+              );
             }
           } catch {
             break;
           }
         }
 
-        return JSON.stringify({
-          status: "timeout",
-          mode: "gateway",
-          jobId,
-          result: `OpenClaw job ${jobId} did not complete within ${Math.round(timeoutMs / 60000)} minutes. Last status: ${JSON.stringify(lastData)}`,
-        });
+        return fail(
+          `OpenClaw job ${jobId} did not complete within ${Math.round(timeoutMs / 60000)} minutes. Last status: ${JSON.stringify(lastData)}`,
+          "openclaw_job_timeout"
+        );
       }
 
       // Immediate result
-      return JSON.stringify({ status: "complete", mode: "gateway", result: data ?? "(empty response from OpenClaw)" });
+      const result = data ?? "(empty response from OpenClaw)";
+      return ok(
+        typeof result === "string" ? result : JSON.stringify(result),
+        "openclaw_delegate",
+        "gateway/immediate"
+      );
     }
 
-    return JSON.stringify({ error: `Unknown bridge mode: ${(cfg as any).mode}` });
+    return fail(`Unknown bridge mode: ${(cfg as any).mode}`);
   },
 };
 
@@ -307,10 +377,19 @@ export const openclawStatusTool: AgentTool = {
     properties: {},
     required: [],
   },
-  execute: (_args, ctx) => checkOpenClawStatus(ctx.userId),
+  async execute(_args, ctx): Promise<ToolResult> {
+    const statusJson = await checkOpenClawStatus(ctx.userId);
+    const data = JSON.parse(statusJson);
+    return {
+      ok: !!(data.online),
+      content: statusJson,
+      label: "openclaw_status",
+      detail: data.message,
+    };
+  },
 };
 
-// Shared status check logic — used by both the agent tool and the REST endpoint
+// ── Shared status check — used by tool + REST endpoint ───────────────────────
 export async function checkOpenClawStatus(userId: string): Promise<string> {
   let rawPrefs: Record<string, any> = {};
   try {
@@ -369,7 +448,7 @@ export async function checkOpenClawStatus(userId: string): Promise<string> {
       });
     }
 
-    const urlCheck = validateGatewayUrl(rawUrl);
+    const urlCheck = await validateGatewayUrl(rawUrl);
     if (!urlCheck.ok) {
       return JSON.stringify({
         configured: true,
@@ -380,11 +459,14 @@ export async function checkOpenClawStatus(userId: string): Promise<string> {
     }
 
     const checkUrl = `${rawUrl.replace(/\/$/, "")}/api/v1/check`;
+    const authHeaders: Record<string, string> = cfg.gatewayToken
+      ? { Authorization: `Bearer ${cfg.gatewayToken}` }
+      : {};
     const t0 = Date.now();
     try {
       const res = await fetch(checkUrl, {
         method: "GET",
-        headers: cfg.gatewayToken ? { Authorization: `Bearer ${cfg.gatewayToken}` } : {},
+        headers: authHeaders,
         signal: AbortSignal.timeout(5000),
       });
       const latencyMs = Date.now() - t0;
@@ -419,10 +501,14 @@ export async function checkOpenClawStatus(userId: string): Promise<string> {
     }
   }
 
-  return JSON.stringify({ configured: true, online: false, message: `Unknown mode: ${(cfg as any).mode}` });
+  return JSON.stringify({
+    configured: true,
+    online: false,
+    message: `Unknown mode: ${(cfg as any).mode}`,
+  });
 }
 
-// ── Helper: sendMessage and capture message_id ────────────────────────────────
+// ── Helper: send message and capture message_id ───────────────────────────────
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 async function sendMessageWithId(
   chatId: string,
@@ -436,7 +522,7 @@ async function sendMessageWithId(
       body: JSON.stringify({ chat_id: chatId, text }),
     });
     if (!res.ok) return null;
-    const data = await res.json() as { ok: boolean; result?: { message_id: number } };
+    const data = (await res.json()) as { ok: boolean; result?: { message_id: number } };
     return data.ok && data.result ? { message_id: data.result.message_id } : null;
   } catch {
     return null;
