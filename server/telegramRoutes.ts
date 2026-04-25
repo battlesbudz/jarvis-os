@@ -398,24 +398,32 @@ async function processUpdate(update: any): Promise<void> {
       const userId = link[0].userId;
 
       // ── OpenClaw delegation intercept ──────────────────────────────────────
-      // Resolves a pending delegation ONLY when:
-      //   1. The message originates from the configured OpenClaw chat ID.
-      //   2. The reply starts with the correlated nonce: "[OC:{NONCE}]"
-      // This prevents unrelated user messages to the same chat from triggering
-      // a false resolution.
+      // Resolves a pending delegation when a message arrives from the configured
+      // OpenClaw chat ID.  Correlation strategy (in priority order):
+      //   1. PRIMARY: The incoming message is a Telegram reply to the specific
+      //      message_id we sent (reply_to_message.message_id === pending.sentMessageId).
+      //   2. FALLBACK: Any non-task message from the configured chat if we did not
+      //      capture a sentMessageId (e.g. send returned null but bot was set up).
+      // Messages that don't match either condition fall through to the normal coach
+      // pipeline so that regular user messages are never silently dropped.
       const pending = pendingOpenClawDelegations.get(userId);
       if (pending && pending.chatId === chatId && text) {
-        const noncePattern = new RegExp(`^\\[OC:${pending.nonce}\\]`);
-        if (noncePattern.test(text)) {
-          console.log(`[OpenClaw] Resolving delegation for user ${userId} (nonce=${pending.nonce})`);
+        const replyToId: number | undefined = message.reply_to_message?.message_id;
+        const matchesByReply =
+          pending.sentMessageId !== null && replyToId === pending.sentMessageId;
+        const matchesByFallback =
+          pending.sentMessageId === null && !text.startsWith("[JARVIS→OPENCLAW]");
+
+        if (matchesByReply || matchesByFallback) {
+          console.log(
+            `[OpenClaw] Resolving delegation for user ${userId} from chat ${chatId}` +
+              (matchesByReply ? ` (reply_to=${replyToId})` : " (fallback)")
+          );
           pendingOpenClawDelegations.delete(userId);
-          // Strip the nonce prefix before passing the result back to Jarvis
-          const resultText = text.replace(noncePattern, "").trim();
-          pending.resolve(resultText || text);
+          pending.resolve(text);
           return;
         }
-        // Message from the right chat but without the expected nonce token —
-        // fall through to normal coach pipeline so user messages are not lost.
+        // Message from the right chat but not a correlated reply — fall through.
       }
 
       await handleCoachReply(userId, chatId, text, imageUrl);

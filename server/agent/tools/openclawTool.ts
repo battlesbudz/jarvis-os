@@ -2,7 +2,6 @@ import type { AgentTool, ToolResult } from "../types";
 import { db } from "../../db";
 import { eq } from "drizzle-orm";
 import { userPreferences } from "@shared/schema";
-import { sendMessage } from "../../integrations/telegram";
 import { promises as dns } from "dns";
 
 export interface OpenClawBridgeConfig {
@@ -14,11 +13,11 @@ export interface OpenClawBridgeConfig {
 }
 
 // ── Pending delegation store ─────────────────────────────────────────────────
-// Keyed by userId. The Telegram message handler resolves these when a reply
-// arrives from the configured OpenClaw chat ID that contains the expected nonce.
+// Keyed by userId.  Resolved by telegramRoutes.ts when a message arrives
+// from the configured OpenClaw chat that is a Telegram reply to sentMessageId.
 export interface PendingDelegation {
   chatId: string;
-  nonce: string;
+  sentMessageId: number | null; // message_id we sent — used for reply_to correlation
   resolve: (text: string) => void;
   reject: (err: Error) => void;
   timer: ReturnType<typeof setTimeout>;
@@ -26,9 +25,27 @@ export interface PendingDelegation {
 
 export const pendingOpenClawDelegations = new Map<string, PendingDelegation>();
 
+// ── Gateway response types ───────────────────────────────────────────────────
+interface GatewayImmediateResponse {
+  result?: string;
+  output?: string;
+  content?: string;
+  message?: string;
+  status?: string;
+}
+
+interface GatewayJobResponse {
+  id?: string;
+  job_id?: string;
+  task_id?: string;
+  status?: "queued" | "running" | "complete" | "done" | "finished" | "error" | "failed" | string;
+  result?: string | object;
+  error?: string | object;
+}
+
 // ── SSRF protection ──────────────────────────────────────────────────────────
-// Two-layer check: (1) literal hostname/IP patterns, (2) DNS resolution to
-// catch public hostnames that resolve to private/internal IPs.
+// Two-layer: (1) literal IP/hostname patterns, (2) DNS resolution to catch
+// public hostnames resolving to private/internal IPs.
 const PRIVATE_IP_RANGES = [
   /^127\./,
   /^10\./,
@@ -69,33 +86,38 @@ async function validateGatewayUrl(
     };
   }
 
-  // Layer 2: DNS resolution — resolve and check each returned address
+  // Layer 2: DNS resolution — resolve and block if any address is private
   try {
-    const addresses = await dns.resolve(host).catch(async () => {
-      // Try resolve4 / resolve6 individually as fallback
+    let addresses: string[] = [];
+    try {
+      addresses = await dns.resolve(host);
+    } catch {
       const v4 = await dns.resolve4(host).catch(() => [] as string[]);
       const v6 = await dns.resolve6(host).catch(() => [] as string[]);
-      return [...v4, ...v6];
-    });
+      addresses = [...v4, ...v6];
+    }
+    if (addresses.length === 0) {
+      return {
+        ok: false,
+        error: `Cannot resolve gateway hostname "${host}". Ensure the tunnel is active.`,
+      };
+    }
     for (const addr of addresses) {
       if (isPrivateIp(addr)) {
         return {
           ok: false,
-          error: `Gateway hostname "${host}" resolves to a private IP address (${addr}). SSRF protection requires a public gateway address.`,
+          error: `Gateway hostname "${host}" resolves to a private IP (${addr}). SSRF protection requires a public gateway address.`,
         };
       }
     }
   } catch {
-    // DNS lookup failed — treat as unresolvable; block it
-    return { ok: false, error: `Cannot resolve gateway hostname "${host}". Ensure the tunnel is active.` };
+    return {
+      ok: false,
+      error: `Cannot resolve gateway hostname "${host}". Ensure the tunnel is active.`,
+    };
   }
 
   return { ok: true, url: parsed };
-}
-
-// ── Nonce generation ─────────────────────────────────────────────────────────
-function generateNonce(): string {
-  return Math.random().toString(36).slice(2, 8).toUpperCase();
 }
 
 // ── Config helper ────────────────────────────────────────────────────────────
@@ -106,7 +128,7 @@ export async function getOpenClawConfig(userId: string): Promise<OpenClawBridgeC
       .from(userPreferences)
       .where(eq(userPreferences.userId, userId))
       .limit(1);
-    const prefs = (rows[0]?.data as Record<string, any>) ?? {};
+    const prefs = (rows[0]?.data as Record<string, unknown>) ?? {};
     const cfg = prefs.openclawBridge as OpenClawBridgeConfig | undefined;
     if (!cfg || !cfg.enabled) return null;
     return cfg;
@@ -115,7 +137,7 @@ export async function getOpenClawConfig(userId: string): Promise<OpenClawBridgeC
   }
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// ── Result helpers ───────────────────────────────────────────────────────────
 function ok(content: string, label?: string, detail?: string): ToolResult {
   return { ok: true, content, label, detail };
 }
@@ -145,7 +167,7 @@ export const openclawDelegateTool: AgentTool = {
     required: ["task"],
   },
   async execute(args, ctx): Promise<ToolResult> {
-    const task = String(args.task || "").trim();
+    const task = String(args.task ?? "").trim();
     if (!task) return fail("task argument is required.");
 
     const userId = ctx.userId;
@@ -158,9 +180,9 @@ export const openclawDelegateTool: AgentTool = {
       );
     }
 
-    const timeoutMs = Math.min((Number(args.timeout_minutes) || 10), 15) * 60 * 1000;
+    const timeoutMs = Math.min(Number(args.timeout_minutes) || 10, 15) * 60 * 1000;
 
-    // ── Telegram mode ──────────────────────────────────────────────────────
+    // ── Telegram mode ─────────────────────────────────────────────────────
     if (cfg.mode === "telegram") {
       const chatId = cfg.telegramChatId?.trim();
       if (!chatId) {
@@ -170,33 +192,31 @@ export const openclawDelegateTool: AgentTool = {
         );
       }
 
-      // Generate a nonce so we can correlate the reply exactly to this request.
-      // Sent message: "[JARVIS→OC:{nonce}]\n{task}"
-      // Expected reply prefix: "[OC:{nonce}]"
-      const nonce = generateNonce();
-      const sentText = `[JARVIS→OC:${nonce}]\n${task}`;
-
-      try {
-        await sendMessageWithId(chatId, sentText);
-      } catch (err) {
+      const sentResult = await sendMessageWithId(chatId, `[JARVIS→OPENCLAW]\n${task}`);
+      if (!sentResult) {
         return fail(
-          `Failed to send task to OpenClaw via Telegram: ${err instanceof Error ? err.message : String(err)}`,
+          "Failed to send task to OpenClaw via Telegram — bot token may be missing or chat ID is incorrect. Check Settings → OpenClaw Brain.",
           "openclaw_telegram_send_failed"
         );
       }
 
-      // Register a pending delegation and wait for a correlated reply.
-      // The telegramRoutes.ts intercept only resolves this promise when it
-      // receives a message from the same chatId that starts with "[OC:{nonce}]".
+      // Await a reply from OpenClaw.  telegramRoutes.ts resolves this promise
+      // when it receives a message from chatId whose reply_to_message.message_id
+      // matches sentResult.message_id (primary), or any message from the chat
+      // that is not a Jarvis→OpenClaw task itself (fallback).
       const replyText = await new Promise<string>((resolve, reject) => {
         const timer = setTimeout(() => {
           pendingOpenClawDelegations.delete(userId);
-          reject(new Error("OpenClaw did not reply within the timeout window."));
+          reject(
+            new Error(
+              `OpenClaw did not reply within ${Math.round(timeoutMs / 60000)} minutes. The task was sent (message_id=${sentResult.message_id}). Check your Telegram chat for partial output.`
+            )
+          );
         }, timeoutMs);
 
         pendingOpenClawDelegations.set(userId, {
           chatId,
-          nonce,
+          sentMessageId: sentResult.message_id,
           resolve: (text: string) => {
             clearTimeout(timer);
             resolve(text);
@@ -207,18 +227,12 @@ export const openclawDelegateTool: AgentTool = {
           },
           timer,
         });
-      }).catch((err: Error) => {
-        return `[timeout] ${err.message} The task was sent to chat ${chatId}. Check your Telegram chat for any partial output from OpenClaw, or try again.`;
-      });
+      }).catch((err: Error) => `[timeout] ${err.message}`);
 
-      return ok(
-        replyText,
-        "openclaw_delegate",
-        `Task delegated via Telegram (nonce: ${nonce})`
-      );
+      return ok(replyText, "openclaw_delegate", `telegram/message_id=${sentResult.message_id}`);
     }
 
-    // ── Gateway mode ───────────────────────────────────────────────────────
+    // ── Gateway mode ──────────────────────────────────────────────────────
     if (cfg.mode === "gateway") {
       const rawUrl = cfg.gatewayUrl?.trim();
       if (!rawUrl) {
@@ -234,17 +248,16 @@ export const openclawDelegateTool: AgentTool = {
       }
       const gatewayBase = rawUrl.replace(/\/$/, "");
 
-      // Send token in both Authorization header AND request body per spec.
+      // Send token in both Authorization header AND body per spec ({ message, token })
       const authHeaders: Record<string, string> = cfg.gatewayToken
         ? { Authorization: `Bearer ${cfg.gatewayToken}` }
         : {};
       const bodyPayload: Record<string, string> = { message: task };
       if (cfg.gatewayToken) bodyPayload.token = cfg.gatewayToken;
 
-      const messageUrl = `${gatewayBase}/api/v1/message`;
       let response: Response;
       try {
-        response = await fetch(messageUrl, {
+        response = await fetch(`${gatewayBase}/api/v1/message`, {
           method: "POST",
           headers: { "Content-Type": "application/json", ...authHeaders },
           body: JSON.stringify(bodyPayload),
@@ -261,17 +274,20 @@ export const openclawDelegateTool: AgentTool = {
         const body = await response.text().catch(() => "");
         return fail(
           `OpenClaw gateway returned HTTP ${response.status}: ${body.slice(0, 300)}`,
-          "openclaw_gateway_error"
+          "openclaw_gateway_http_error"
         );
       }
 
       const contentType = response.headers.get("content-type") ?? "";
 
-      // SSE streaming response
+      // SSE streaming
       if (contentType.includes("text/event-stream")) {
         const reader = response.body?.getReader();
         if (!reader) {
-          return fail("Gateway returned SSE stream but body is unreadable.", "openclaw_sse_error");
+          return fail(
+            "Gateway returned SSE stream but body is unreadable.",
+            "openclaw_sse_error"
+          );
         }
         const decoder = new TextDecoder();
         const chunks: string[] = [];
@@ -282,8 +298,8 @@ export const openclawDelegateTool: AgentTool = {
             .catch(() => ({ done: true as const, value: undefined }));
           if (done) break;
           if (value) {
-            const text = decoder.decode(value);
-            for (const line of text.split("\n")) {
+            const chunk = decoder.decode(value);
+            for (const line of chunk.split("\n")) {
               if (line.startsWith("data:")) {
                 const payload = line.slice(5).trim();
                 if (payload && payload !== "[DONE]") chunks.push(payload);
@@ -293,27 +309,31 @@ export const openclawDelegateTool: AgentTool = {
         }
         reader.cancel().catch(() => {});
         const result = chunks.join("");
-        return ok(result || "(empty SSE stream)", "openclaw_delegate", "gateway/sse");
+        return ok(result || "(empty SSE stream from OpenClaw)", "openclaw_delegate", "gateway/sse");
       }
 
-      // JSON response — may be immediate result or async job stub
-      const data = await response.json().catch(() => null);
+      // JSON — either immediate result or async job stub
+      const data = (await response.json().catch(() => null)) as
+        | GatewayImmediateResponse
+        | GatewayJobResponse
+        | null;
 
-      // If the response is an async job (has job_id / id / task_id), poll every 15s
+      // Detect async job
+      const jobData = data as GatewayJobResponse | null;
       const jobId =
-        (data as any)?.job_id ??
-        (data as any)?.task_id ??
-        ((data as any)?.status === "queued" || (data as any)?.status === "running"
-          ? (data as any)?.id
+        jobData?.job_id ??
+        jobData?.task_id ??
+        ((jobData?.status === "queued" || jobData?.status === "running")
+          ? jobData?.id
           : undefined);
 
       if (jobId) {
         const pollUrl = `${gatewayBase}/api/v1/jobs/${jobId}`;
         const deadline = Date.now() + timeoutMs;
-        let lastData = data;
+        let lastData: GatewayJobResponse | null = data as GatewayJobResponse;
 
         while (Date.now() < deadline) {
-          await new Promise((r) => setTimeout(r, 15_000));
+          await new Promise<void>((r) => setTimeout(r, 15_000)); // poll every 15s per spec
           try {
             const pollRes = await fetch(pollUrl, {
               method: "GET",
@@ -321,27 +341,22 @@ export const openclawDelegateTool: AgentTool = {
               signal: AbortSignal.timeout(15_000),
             });
             if (!pollRes.ok) break;
-            lastData = await pollRes.json();
-            const status = (lastData as any)?.status;
+            lastData = (await pollRes.json()) as GatewayJobResponse;
+            const status = lastData?.status;
             if (
               status === "complete" ||
               status === "done" ||
               status === "finished" ||
-              (lastData as any)?.result
+              lastData?.result !== undefined
             ) {
-              const result = (lastData as any)?.result ?? JSON.stringify(lastData);
-              return ok(
-                typeof result === "string" ? result : JSON.stringify(result),
-                "openclaw_delegate",
-                `gateway/job/${jobId}`
-              );
+              const raw = lastData?.result;
+              const resultStr = typeof raw === "string" ? raw : JSON.stringify(raw);
+              return ok(resultStr, "openclaw_delegate", `gateway/job/${jobId}`);
             }
             if (status === "error" || status === "failed") {
-              const errBody = (lastData as any)?.error ?? JSON.stringify(lastData);
-              return fail(
-                typeof errBody === "string" ? errBody : JSON.stringify(errBody),
-                "openclaw_job_failed"
-              );
+              const raw = lastData?.error;
+              const errStr = typeof raw === "string" ? raw : JSON.stringify(raw);
+              return fail(errStr, "openclaw_job_failed");
             }
           } catch {
             break;
@@ -355,15 +370,21 @@ export const openclawDelegateTool: AgentTool = {
       }
 
       // Immediate result
-      const result = data ?? "(empty response from OpenClaw)";
+      const immData = data as GatewayImmediateResponse | null;
+      const immediateResult =
+        immData?.result ??
+        immData?.output ??
+        immData?.content ??
+        immData?.message ??
+        (data !== null ? JSON.stringify(data) : "(empty response from OpenClaw)");
       return ok(
-        typeof result === "string" ? result : JSON.stringify(result),
+        typeof immediateResult === "string" ? immediateResult : JSON.stringify(immediateResult),
         "openclaw_delegate",
         "gateway/immediate"
       );
     }
 
-    return fail(`Unknown bridge mode: ${(cfg as any).mode}`);
+    return fail(`Unknown bridge mode: ${String((cfg as OpenClawBridgeConfig).mode)}`);
   },
 };
 
@@ -379,9 +400,9 @@ export const openclawStatusTool: AgentTool = {
   },
   async execute(_args, ctx): Promise<ToolResult> {
     const statusJson = await checkOpenClawStatus(ctx.userId);
-    const data = JSON.parse(statusJson);
+    const data = JSON.parse(statusJson) as { online: boolean; message?: string };
     return {
-      ok: !!(data.online),
+      ok: !!data.online,
       content: statusJson,
       label: "openclaw_status",
       detail: data.message,
@@ -391,14 +412,14 @@ export const openclawStatusTool: AgentTool = {
 
 // ── Shared status check — used by tool + REST endpoint ───────────────────────
 export async function checkOpenClawStatus(userId: string): Promise<string> {
-  let rawPrefs: Record<string, any> = {};
+  let rawPrefs: Record<string, unknown> = {};
   try {
     const rows = await db
       .select({ data: userPreferences.data })
       .from(userPreferences)
       .where(eq(userPreferences.userId, userId))
       .limit(1);
-    rawPrefs = (rows[0]?.data as Record<string, any>) ?? {};
+    rawPrefs = (rows[0]?.data as Record<string, unknown>) ?? {};
   } catch {}
 
   const cfg = rawPrefs.openclawBridge as OpenClawBridgeConfig | undefined;
@@ -416,25 +437,67 @@ export async function checkOpenClawStatus(userId: string): Promise<string> {
       configured: true,
       online: false,
       mode: cfg.mode,
-      message: "OpenClaw bridge is configured but currently disabled. Enable it in Settings → OpenClaw Brain.",
+      message:
+        "OpenClaw bridge is configured but currently disabled. Enable it in Settings → OpenClaw Brain.",
     });
   }
 
   if (cfg.mode === "telegram") {
-    const hasChatId = !!(cfg.telegramChatId?.trim());
+    const chatId = cfg.telegramChatId?.trim();
     const hasBotToken = !!process.env.TELEGRAM_BOT_TOKEN;
-    const online = hasChatId && hasBotToken;
-    return JSON.stringify({
-      configured: true,
-      online,
-      mode: "telegram",
-      chatId: cfg.telegramChatId ?? null,
-      message: online
-        ? "OpenClaw Telegram bridge is active. Tasks will be sent to the configured chat and replies forwarded back to Jarvis."
-        : !hasBotToken
-        ? "Telegram bot token is not set — configure TELEGRAM_BOT_TOKEN."
-        : "Telegram chat ID is not set. Enter it in Settings → OpenClaw Brain.",
-    });
+
+    if (!chatId) {
+      return JSON.stringify({
+        configured: true,
+        online: false,
+        mode: "telegram",
+        message: "Telegram chat ID is not set. Enter it in Settings → OpenClaw Brain.",
+      });
+    }
+    if (!hasBotToken) {
+      return JSON.stringify({
+        configured: true,
+        online: false,
+        mode: "telegram",
+        message: "Telegram bot token is not set — configure TELEGRAM_BOT_TOKEN.",
+      });
+    }
+
+    // Liveness probe: call Telegram getChat API to verify bot can reach the chat
+    try {
+      const res = await fetch(
+        `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/getChat?chat_id=${encodeURIComponent(chatId)}`,
+        { signal: AbortSignal.timeout(5000) }
+      );
+      const body = (await res.json()) as { ok: boolean; result?: { type?: string; title?: string } };
+      if (!res.ok || !body.ok) {
+        return JSON.stringify({
+          configured: true,
+          online: false,
+          mode: "telegram",
+          chatId,
+          message:
+            "Bot cannot reach the configured Telegram chat. Verify the chat ID in Settings → OpenClaw Brain and ensure the bot is a member of that chat.",
+        });
+      }
+      return JSON.stringify({
+        configured: true,
+        online: true,
+        mode: "telegram",
+        chatId,
+        chatType: body.result?.type ?? "unknown",
+        message:
+          "OpenClaw Telegram bridge is active. Tasks will be sent to the configured chat and replies forwarded back to Jarvis.",
+      });
+    } catch {
+      return JSON.stringify({
+        configured: true,
+        online: false,
+        mode: "telegram",
+        chatId,
+        message: "Could not verify Telegram chat reachability — check your connection.",
+      });
+    }
   }
 
   if (cfg.mode === "gateway") {
@@ -504,19 +567,23 @@ export async function checkOpenClawStatus(userId: string): Promise<string> {
   return JSON.stringify({
     configured: true,
     online: false,
-    message: `Unknown mode: ${(cfg as any).mode}`,
+    message: `Unknown mode: ${String((cfg as OpenClawBridgeConfig).mode)}`,
   });
 }
 
-// ── Helper: send message and capture message_id ───────────────────────────────
-const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+// ── Telegram send helper — captures message_id ───────────────────────────────
+interface TelegramSendResult {
+  message_id: number;
+}
+
 async function sendMessageWithId(
   chatId: string,
   text: string
-): Promise<{ message_id: number } | null> {
-  if (!BOT_TOKEN) return null;
+): Promise<TelegramSendResult | null> {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token) return null;
   try {
-    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+    const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ chat_id: chatId, text }),
