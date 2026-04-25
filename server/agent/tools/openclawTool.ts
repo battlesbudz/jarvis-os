@@ -472,6 +472,149 @@ export const openclawDelegateTool: AgentTool = {
   },
 };
 
+// ── openclaw_build_feature tool ──────────────────────────────────────────────
+export const openclawBuildFeatureTool: AgentTool = {
+  name: "openclaw_build_feature",
+  description:
+    "Ask OpenClaw to autonomously build a new Jarvis tool and integrate it into the codebase. Use this when the user wants to add a new capability to Jarvis itself — OpenClaw will write the TypeScript tool file, register it in the tool index, add any required API endpoint, and send the resulting code back. This is Jarvis's self-improvement loop.",
+  parameters: {
+    type: "object",
+    properties: {
+      feature_name: {
+        type: "string",
+        description:
+          "Short snake_case name for the new tool, e.g. 'weather_lookup' or 'notion_create_page'. This becomes the tool filename and tool.name value.",
+      },
+      description: {
+        type: "string",
+        description:
+          "Plain-English description of what the new tool should do, when Jarvis should use it, what inputs it accepts, and what it returns. Be specific — OpenClaw will implement exactly this.",
+      },
+      parameters_schema: {
+        type: "string",
+        description:
+          "Optional JSON Schema (as a JSON string) describing the tool's parameters object. If omitted, OpenClaw will infer a sensible schema from the description.",
+      },
+      needs_api_endpoint: {
+        type: "boolean",
+        description:
+          "Set to true if the tool requires a new Express REST endpoint on the Jarvis server (e.g. to expose data to the frontend). Defaults to false — most tools call external APIs directly.",
+      },
+      timeout_minutes: {
+        type: "number",
+        description: "Max minutes to wait for OpenClaw to finish building (default 15, max 15).",
+      },
+    },
+    required: ["feature_name", "description"],
+  },
+  async execute(args, ctx): Promise<ToolResult> {
+    const rawFeatureName = String(args.feature_name ?? "").trim().replace(/\s+/g, "_");
+    const featureName = rawFeatureName.toLowerCase().replace(/[^a-z0-9_]/g, "_").replace(/_+/g, "_").replace(/^_|_$/g, "");
+    const description = String(args.description ?? "").trim();
+
+    if (!featureName) return fail("feature_name must be a non-empty snake_case identifier (letters, digits, underscores only).");
+    if (!description) return fail("description argument is required.");
+
+    const parametersSchema = args.parameters_schema ? String(args.parameters_schema).trim() : null;
+    const needsApiEndpoint = Boolean(args.needs_api_endpoint ?? false);
+    const timeoutMinutes = Math.max(1, Math.min(Number(args.timeout_minutes) || 15, 15));
+
+    const toolSchemaExample = `
+import type { AgentTool, ToolResult } from "../types";
+
+export const exampleTool: AgentTool = {
+  name: "example_tool",
+  description: "What this tool does and when Jarvis should call it.",
+  parameters: {
+    type: "object",
+    properties: {
+      input: {
+        type: "string",
+        description: "The main input for the tool.",
+      },
+    },
+    required: ["input"],
+  },
+  async execute(args, ctx): Promise<ToolResult> {
+    const input = String(args.input ?? "").trim();
+    if (!input) return { ok: false, content: "input is required." };
+
+    // Implementation here
+    return { ok: true, content: "Result from tool", label: "example_tool" };
+  },
+};
+`.trim();
+
+    const repoStructure = `
+Jarvis repo key paths:
+- server/agent/tools/<toolName>.ts         — one file per tool, exports a const of type AgentTool
+- server/agent/tools/index.ts              — imports all tools and registers them in ALL_TOOLS array and telegramCoachTools()
+- server/routes/                           — Express route files (add new endpoint here if needed)
+- server/index.ts                          — mounts route files (register new router here if needed)
+- shared/schema.ts                         — Drizzle ORM schema (add new DB table here if needed)
+`.trim();
+
+    const parametersSectionLines: string[] = [];
+    if (parametersSchema) {
+      parametersSectionLines.push(`\n## Requested Parameters Schema\n\`\`\`json\n${parametersSchema}\n\`\`\``);
+    }
+
+    const apiEndpointSection = needsApiEndpoint
+      ? `\n## API Endpoint Required\nThis tool also needs a new Express REST endpoint. Create a route file at server/routes/${featureName}.ts, mount it in server/index.ts under /api/${featureName.replace(/_/g, "-")}, and document the endpoint in your response.`
+      : "";
+
+    const task = `[JARVIS SELF-IMPROVEMENT] Build a new Jarvis agent tool.
+
+## Tool to build: \`${featureName}\`
+
+## Description / behaviour
+${description}
+${parametersSectionLines.join("\n")}${apiEndpointSection}
+
+## AgentTool TypeScript interface (must match exactly)
+\`\`\`typescript
+${toolSchemaExample}
+\`\`\`
+
+## Repo structure
+${repoStructure}
+
+## Your tasks — complete ALL of these:
+1. Write the complete TypeScript source for \`server/agent/tools/${featureName}.ts\`. Export the tool as \`${featureName}Tool\` (camelCase). The file must compile without errors.
+2. Show the exact line(s) to add to \`server/agent/tools/index.ts\`:
+   a. The import statement at the top.
+   b. The entry to add to the \`ALL_TOOLS\` array.
+   c. The entry to add inside \`telegramCoachTools()\`.
+   d. The re-export at the bottom of the file.
+3. If an API endpoint is required, write the Express route file and the mount line for server/index.ts.
+4. Reply with ALL file contents in clearly labelled code blocks so the code can be applied directly.
+
+## Important constraints
+- Do NOT use the uuid package (no crypto.getRandomValues in Node without polyfill). Use Math.random().toString(36) for IDs if needed.
+- Keep the tool focused — do one thing well.
+- Use async/await. Handle errors with \`return { ok: false, content: "..." }\` — never throw.
+- The \`ctx\` parameter has shape \`{ userId: string; ... }\`.
+- Do not add comments unless they explain non-obvious logic.`;
+
+    // Delegate to openclaw_delegate with the structured prompt
+    const delegateResult = await openclawDelegateTool.execute(
+      { task, timeout_minutes: timeoutMinutes },
+      ctx
+    );
+
+    if (!delegateResult.ok) {
+      return delegateResult;
+    }
+
+    return {
+      ok: true,
+      content: delegateResult.content,
+      label: "openclaw_build_feature",
+      detail: `Built tool: ${featureName}`,
+    };
+  },
+};
+
 // ── openclaw_status tool ─────────────────────────────────────────────────────
 export const openclawStatusTool: AgentTool = {
   name: "openclaw_status",
