@@ -77,7 +77,6 @@ ensurePreviewReachable = "/status"
 [userenv]
 
 [userenv.shared]
-JWT_SECRET = "c3aaf26170d2204b7c3d8b5b578c2d50eaa3aed43dec0100eeed0684f55704dfd573c68ff92b8345fa033d2323b751e9"
 EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID = "464052645678-au43qstbkio1gc6foomqo1a40c9f5vpk.apps.googleusercontent.com"
 GOOGLE_WEB_CLIENT_ID = "464052645678-au43qstbkio1gc6foomqo1a40c9f5vpk.apps.googleusercontent.com"
 GOOGLE_CLIENT_SECRET = "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"
