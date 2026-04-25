@@ -648,11 +648,14 @@ ${repoStructure}
       ? `\n\n---\nSmoke test: PASSED\nOutput: ${smokeResult.content}`
       : `\n\n---\nSmoke test: ${smokeResult.content}`;
 
+    // ok reflects the smoke-test outcome so callers get a machine-readable
+    // red/green signal. "Not yet registered" counts as non-fatal (smokeResult.ok
+    // is false but the build itself succeeded — the content explains what to do next).
     return {
-      ok: true,
+      ok: smokeResult.ok,
       content: delegateResult.content + smokeNote,
       label: "openclaw_build_feature",
-      detail: `Built tool: ${featureName}`,
+      detail: smokeResult.ok ? `Built and verified: ${featureName}` : `Built (test pending): ${featureName}`,
     };
   },
 };
