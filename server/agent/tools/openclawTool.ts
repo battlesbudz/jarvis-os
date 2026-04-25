@@ -1,7 +1,7 @@
 import type { AgentTool, ToolResult } from "../types";
 import { db } from "../../db";
 import { eq } from "drizzle-orm";
-import { userPreferences } from "@shared/schema";
+import { userPreferences, openclawBuildLog } from "@shared/schema";
 import { promises as dns } from "dns";
 
 export interface OpenClawBridgeConfig {
@@ -854,6 +854,26 @@ ${repoStructure}
 - The \`ctx\` parameter has shape \`{ userId: string; ... }\`.
 - Do not add comments unless they explain non-obvious logic.`;
 
+    // Helper: write a build log row, swallowing errors so logging never breaks the tool.
+    const writeBuildLog = async (
+      outputCode: string,
+      success: boolean,
+      smokeTestPassed: boolean | null
+    ) => {
+      try {
+        await db.insert(openclawBuildLog).values({
+          userId: ctx.userId,
+          featureName,
+          description,
+          outputCode,
+          success,
+          smokeTestPassed,
+        });
+      } catch (logErr) {
+        console.error("[OpenClaw] Failed to write build log:", logErr);
+      }
+    };
+
     // Delegate to openclaw_delegate with the structured prompt
     const delegateResult = await openclawDelegateTool.execute(
       { task, timeout_minutes: timeoutMinutes },
@@ -861,6 +881,8 @@ ${repoStructure}
     );
 
     if (!delegateResult.ok) {
+      // Log the failed attempt before returning so every call is recorded.
+      await writeBuildLog(delegateResult.content, false, null);
       return delegateResult;
     }
 
@@ -916,6 +938,10 @@ ${repoStructure}
     const smokeNote = smokeResult.ok
       ? `\n\n---\nSmoke test: PASSED\nOutput: ${smokeResult.content}`
       : `\n\n---\nSmoke test: ${smokeResult.content}`;
+
+    // Persist a build log entry. success=true means OpenClaw produced code and
+    // it was applied; smokeTestPassed tracks whether the tool passed the smoke test.
+    await writeBuildLog(delegateResult.content, true, smokeResult.ok);
 
     // ok reflects the smoke-test outcome so callers get a machine-readable
     // red/green signal. "Not yet registered" counts as non-fatal (smokeResult.ok

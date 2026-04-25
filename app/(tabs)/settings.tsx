@@ -53,6 +53,16 @@ interface OAuthProviderStatus {
   accounts?: { email: string; scopes?: string }[];
 }
 
+interface BuildLogEntry {
+  id: string;
+  featureName: string;
+  description: string;
+  outputCode: string;
+  success: boolean;
+  smokeTestPassed: boolean | null;
+  createdAt: string;
+}
+
 interface OAuthStatus {
   google: OAuthProviderStatus;
   microsoft: OAuthProviderStatus;
@@ -151,6 +161,9 @@ export default function SettingsScreen() {
   const [openclawTesting, setOpenclawTesting] = useState(false);
   const [openclawOnline, setOpenclawOnline] = useState<boolean | null>(null);
   const openclawPulse = useRef(new Animated.Value(1)).current;
+  const [openclawBuilds, setOpenclawBuilds] = useState<BuildLogEntry[]>([]);
+  const [buildHistoryExpanded, setBuildHistoryExpanded] = useState(false);
+  const [expandedBuildId, setExpandedBuildId] = useState<string | null>(null);
   useEffect(() => {
     if (openclawOnline !== true) {
       openclawPulse.setValue(1);
@@ -177,6 +190,14 @@ export default function SettingsScreen() {
       setOpenclawGatewayUrl(cfg.gatewayUrl ?? '');
       setOpenclawGatewayToken(cfg.gatewayToken ?? '');
       setOpenclawTimeoutMinutes(Number(cfg.timeoutMinutes) > 0 ? Number(cfg.timeoutMinutes) : 10);
+    } catch {}
+  }, []);
+
+  const loadOpenClawBuilds = useCallback(async () => {
+    try {
+      const res = await apiRequest('GET', '/api/openclaw/builds');
+      const data = await res.json();
+      setOpenclawBuilds(data.builds ?? []);
     } catch {}
   }, []);
 
@@ -354,10 +375,11 @@ export default function SettingsScreen() {
     loadNervousSystem();
     loadThreatLog();
     loadOpenClawConfig();
+    loadOpenClawBuilds();
     return () => {
       if (telegramPollRef.current) clearInterval(telegramPollRef.current);
     };
-  }, [loadAll, loadNervousSystem, loadThreatLog, loadOpenClawConfig]));
+  }, [loadAll, loadNervousSystem, loadThreatLog, loadOpenClawConfig, loadOpenClawBuilds]));
 
   // ── OAuth connect ──
   const handleConnect = useCallback(async (platform: string) => {
@@ -703,6 +725,79 @@ export default function SettingsScreen() {
               />
             </View>
           </Pressable>
+
+          {/* Build history */}
+          {openclawBuilds.length > 0 && (
+            <View style={[styles.connRowBorder, { paddingHorizontal: 14, paddingVertical: 10 }]}>
+              <Pressable
+                style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}
+                onPress={() => setBuildHistoryExpanded(v => !v)}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Ionicons name="code-slash-outline" size={14} color="#8B5CF6" />
+                  <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: Colors.text }}>
+                    Build History
+                  </Text>
+                  <View style={{ backgroundColor: '#8B5CF620', borderRadius: 10, paddingHorizontal: 6, paddingVertical: 1 }}>
+                    <Text style={{ fontSize: 11, color: '#8B5CF6', fontFamily: 'Inter_600SemiBold' }}>
+                      {openclawBuilds.length}
+                    </Text>
+                  </View>
+                </View>
+                <Ionicons
+                  name={buildHistoryExpanded ? 'chevron-up' : 'chevron-down'}
+                  size={14}
+                  color={Colors.textTertiary}
+                />
+              </Pressable>
+              {buildHistoryExpanded && (
+                <View style={{ marginTop: 10, gap: 8 }}>
+                  {openclawBuilds.map(build => (
+                    <View key={build.id} style={ocStyles.buildCard}>
+                      <Pressable
+                        style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}
+                        onPress={() => setExpandedBuildId(expandedBuildId === build.id ? null : build.id)}
+                      >
+                        <View style={{ flex: 1, gap: 2 }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                            <Ionicons
+                              name={!build.success ? 'close-circle' : build.smokeTestPassed ? 'checkmark-circle' : 'alert-circle'}
+                              size={12}
+                              color={!build.success ? Colors.error : build.smokeTestPassed ? '#10B981' : '#F59E0B'}
+                            />
+                            <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: Colors.text }}>
+                              {build.featureName}
+                            </Text>
+                          </View>
+                          <Text style={{ fontSize: 10, fontFamily: 'Inter_500Medium', color: !build.success ? Colors.error : build.smokeTestPassed ? '#10B981' : '#F59E0B', marginBottom: 2 }}>
+                            {!build.success ? 'Build failed' : build.smokeTestPassed ? 'Built and verified' : build.smokeTestPassed === false ? 'Built — smoke test pending' : 'Built'}
+                          </Text>
+                          <Text style={{ fontSize: 11, color: Colors.textTertiary, fontFamily: 'Inter_400Regular' }} numberOfLines={2}>
+                            {build.description}
+                          </Text>
+                          <Text style={{ fontSize: 10, color: Colors.textTertiary, fontFamily: 'Inter_400Regular', marginTop: 2 }}>
+                            {new Date(build.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                          </Text>
+                        </View>
+                        <Ionicons
+                          name={expandedBuildId === build.id ? 'chevron-up' : 'chevron-down'}
+                          size={12}
+                          color={Colors.textTertiary}
+                        />
+                      </Pressable>
+                      {expandedBuildId === build.id && (
+                        <ScrollView style={ocStyles.buildCodeBlock} nestedScrollEnabled>
+                          <Text style={ocStyles.buildCodeText} selectable>
+                            {build.outputCode || '(no code recorded)'}
+                          </Text>
+                        </ScrollView>
+                      )}
+                    </View>
+                  ))}
+                </View>
+              )}
+            </View>
+          )}
 
           {/* Expanded config */}
           {openclawExpanded && (
@@ -1929,5 +2024,26 @@ const ocStyles = StyleSheet.create({
   btnText: {
     fontSize: 13,
     fontFamily: 'Inter_600SemiBold',
+  },
+  buildCard: {
+    backgroundColor: Colors.surfaceAlt,
+    borderRadius: 8,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    gap: 4,
+  },
+  buildCodeBlock: {
+    marginTop: 8,
+    backgroundColor: Colors.surface,
+    borderRadius: 6,
+    padding: 10,
+    maxHeight: 300,
+  },
+  buildCodeText: {
+    fontSize: 11,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    color: Colors.textSecondary,
+    lineHeight: 16,
   },
 });

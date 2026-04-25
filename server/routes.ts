@@ -5119,6 +5119,23 @@ Extract up to 8 memories per batch.`;
     }
   });
 
+  app.get("/api/openclaw/builds", async (req: Request, res: Response) => {
+    const userId = req.userId;
+    if (!userId) return res.status(401).json({ error: "Not authenticated" });
+    try {
+      const rows = await db
+        .select()
+        .from(schema.openclawBuildLog)
+        .where(eq(schema.openclawBuildLog.userId, userId))
+        .orderBy(desc(schema.openclawBuildLog.createdAt))
+        .limit(50);
+      res.json({ builds: rows });
+    } catch (err) {
+      console.error("[openclaw] GET builds failed:", err);
+      res.status(500).json({ error: "Failed to load build log" });
+    }
+  });
+
   // ── Nervous System — Watch Topics ────────────────────────────────────────
 
   app.get("/api/nervous-system/watches", async (req: Request, res: Response) => {
