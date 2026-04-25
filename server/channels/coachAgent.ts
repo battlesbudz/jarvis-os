@@ -1,5 +1,5 @@
 import { db } from "../db";
-import { eq, and, desc, sql } from "drizzle-orm";
+import { eq, and, desc, sql, gte } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { runAgent } from "../agent/harness";
 import { telegramCoachTools } from "../agent/tools";
@@ -65,8 +65,11 @@ export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyR
   let calendarEvents: any[] = [];
   let gmailConnected = false;
   let googleAccessToken: string | null = null;
+  let recentlySurfacedItems: any[] = [];
 
-  const [goalsRow, statsRow, lcRow, chatRow, commitmentsRows, googleTokens, prefsRow, recentInteractionsResult] = await Promise.allSettled([
+  const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+  const [goalsRow, statsRow, lcRow, chatRow, commitmentsRows, googleTokens, prefsRow, recentInteractionsResult, surfacedItemsResult] = await Promise.allSettled([
     db.select().from(schema.goals).where(eq(schema.goals.userId, userId)).limit(1),
     db.select().from(schema.stats).where(eq(schema.stats.userId, userId)).limit(1),
     db.select().from(schema.lifeContext).where(eq(schema.lifeContext.userId, userId)).limit(1),
@@ -77,6 +80,21 @@ export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyR
     getValidGoogleTokens(userId),
     db.select().from(schema.userPreferences).where(eq(schema.userPreferences.userId, userId)).limit(1),
     getRecentInteractions(userId, 20),
+    db.select({
+      sourceType: schema.inboxItems.sourceType,
+      subject: schema.inboxItems.subject,
+      sender: schema.inboxItems.sender,
+      snippet: schema.inboxItems.snippet,
+      jarvisReason: schema.inboxItems.jarvisReason,
+      surfacedAt: schema.inboxItems.surfacedAt,
+    })
+      .from(schema.inboxItems)
+      .where(and(
+        eq(schema.inboxItems.userId, userId),
+        gte(schema.inboxItems.surfacedAt, twentyFourHoursAgo),
+      ))
+      .orderBy(desc(schema.inboxItems.surfacedAt))
+      .limit(5),
   ]);
 
   logInteraction(userId, channelLower as any, "inbound", userText || "[image]").catch(() => {});
@@ -90,6 +108,9 @@ export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyR
   if (prefsRow.status === "fulfilled") {
     const prefs = (prefsRow.value[0]?.data as any) || {};
     if (prefs.timezone) userTimezone = prefs.timezone;
+  }
+  if (surfacedItemsResult.status === "fulfilled") {
+    recentlySurfacedItems = surfacedItemsResult.value;
   }
 
   const localForDateKey = new Date(new Date().toLocaleString("en-US", { timeZone: userTimezone }));
@@ -153,6 +174,19 @@ export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyR
   const recentInteractions = recentInteractionsResult.status === "fulfilled" ? recentInteractionsResult.value : [];
   const crossChannelSection = formatInteractionTimeline(recentInteractions);
 
+  const recentlySurfacedSection = recentlySurfacedItems.length > 0
+    ? `## Items You Already Surfaced to the User (last 24h)\nThese were found and sent to the user earlier — you already have this data. Reference it directly when the user asks about it instead of claiming you don't have it or asking them to repeat it.\n` +
+      recentlySurfacedItems.map((item: any) => {
+        const time = item.surfacedAt ? new Date(item.surfacedAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true }) : "";
+        const parts: string[] = [];
+        if (item.subject) parts.push(`Subject: "${item.subject}"`);
+        if (item.sender) parts.push(`From: ${item.sender}`);
+        if (item.snippet) parts.push(`Content: ${item.snippet}`);
+        if (item.jarvisReason) parts.push(`Why surfaced: ${item.jarvisReason}`);
+        return `- [${item.sourceType || "item"}${time ? ` @ ${time}` : ""}] ${parts.join(" | ")}`;
+      }).join("\n")
+    : "";
+
   const soulBlock = await getSoulPromptBlock(userId);
   const formatHintKey = Object.keys(FORMAT_HINTS).find((k) => channelName.startsWith(k)) ?? "Telegram";
   const formatHint = FORMAT_HINTS[formatHintKey];
@@ -185,6 +219,7 @@ ${commitmentsText ? `\n## Open Commitments\n${commitmentsText}` : ""}
 ${calendarText ? `\n## Today's Calendar\n${calendarText}` : ""}
 
 ${gmailSection}
+${recentlySurfacedSection ? `\n${recentlySurfacedSection}` : ""}
 ${userLifeContext?.priorityGoal ? `\n## Context\n- Priority: ${userLifeContext.priorityGoal}` : ""}
 ${daemonSection ? `\n${daemonSection}` : ""}
 
