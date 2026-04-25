@@ -933,7 +933,7 @@ ${repoStructure}
 
     console.log(`[OpenClaw] Running smoke test for tool "${featureName}" after build`);
     const smokeResult = await openclawTestTool.execute(
-      { tool_name: featureName, test_args: "{}" },
+      { tool_name: featureName },
       ctxForSmokeTest
     );
 
@@ -956,6 +956,47 @@ ${repoStructure}
     };
   },
 };
+
+// ── Smart dummy arg generator ────────────────────────────────────────────────
+// Inspects a tool's JSON Schema and produces minimal safe dummy values for all
+// required fields so the smoke test is more meaningful than calling with `{}`.
+function generateSmartTestArgs(schema: import("../types").JsonSchema): Record<string, unknown> {
+  const properties = schema.properties ?? {};
+  const required = new Set(schema.required ?? []);
+  const result: Record<string, unknown> = {};
+
+  for (const [key, prop] of Object.entries(properties)) {
+    if (!required.has(key)) continue;
+
+    if (prop.enum && prop.enum.length > 0) {
+      result[key] = prop.enum[0];
+      continue;
+    }
+
+    switch (prop.type) {
+      case "string":
+        result[key] = "test";
+        break;
+      case "number":
+      case "integer":
+        result[key] = 1;
+        break;
+      case "boolean":
+        result[key] = false;
+        break;
+      case "array":
+        result[key] = [];
+        break;
+      case "object":
+        result[key] = {};
+        break;
+      default:
+        result[key] = "";
+    }
+  }
+
+  return result;
+}
 
 // ── openclaw_test_tool ───────────────────────────────────────────────────────
 // Executes a registered tool by name with caller-supplied test args.
@@ -1016,15 +1057,19 @@ export const openclawTestTool: AgentTool = {
       );
     }
 
-    const testArgsRaw = String(args.test_args ?? "{}").trim();
-    let testArgs: Record<string, unknown> = {};
-    try {
-      const parsed = JSON.parse(testArgsRaw);
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        testArgs = parsed as Record<string, unknown>;
+    // Parse explicitly-provided test_args (fail fast before tool lookup).
+    const hasExplicitArgs = args.test_args !== undefined;
+    const testArgsRaw = hasExplicitArgs ? String(args.test_args).trim() : "";
+    let callerArgs: Record<string, unknown> | null = null;
+    if (hasExplicitArgs && testArgsRaw) {
+      try {
+        const parsed = JSON.parse(testArgsRaw);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          callerArgs = parsed as Record<string, unknown>;
+        }
+      } catch {
+        return fail(`test_args is not valid JSON: ${testArgsRaw}`);
       }
-    } catch {
-      return fail(`test_args is not valid JSON: ${testArgsRaw}`);
     }
 
     if (!_toolResolver) {
@@ -1043,6 +1088,15 @@ export const openclawTestTool: AgentTool = {
       );
     }
 
+    // If no args were explicitly provided, auto-generate safe dummy values from
+    // the tool's JSON Schema so required fields are populated and the smoke test
+    // is more meaningful than calling with an empty object.
+    const testArgs: Record<string, unknown> = callerArgs ?? generateSmartTestArgs(tool.parameters);
+    const argsNote =
+      callerArgs !== null
+        ? `args: ${JSON.stringify(testArgs)}`
+        : `auto-generated args: ${JSON.stringify(testArgs)}`;
+
     const SMOKE_TIMEOUT_MS = 30_000;
     let result: ToolResult;
     try {
@@ -1056,7 +1110,7 @@ export const openclawTestTool: AgentTool = {
       return {
         ok: false,
         content:
-          `Tool "${toolName}" threw an exception during the smoke test: ${detail}\n\n` +
+          `Tool "${toolName}" threw an exception during the smoke test (${argsNote}): ${detail}\n\n` +
           "Ask OpenClaw to fix it by calling openclaw_build_feature again with the error details included in the description.",
         label: "openclaw_test_tool",
         detail: `throw: ${toolName} — ${detail}`,
@@ -1067,7 +1121,7 @@ export const openclawTestTool: AgentTool = {
       return {
         ok: true,
         content:
-          `Smoke test PASSED for tool "${toolName}".\n\nOutput: ${result.content}`,
+          `Smoke test PASSED for tool "${toolName}" (${argsNote}).\n\nOutput: ${result.content}`,
         label: "openclaw_test_tool",
         detail: `pass: ${toolName}`,
       };
@@ -1075,7 +1129,7 @@ export const openclawTestTool: AgentTool = {
     return {
       ok: false,
       content:
-        `Smoke test FAILED for tool "${toolName}".\n\nError: ${result.content}\n\n` +
+        `Smoke test FAILED for tool "${toolName}" (${argsNote}).\n\nError: ${result.content}\n\n` +
         "Ask OpenClaw to fix it by calling openclaw_build_feature again, including this error in the description.",
       label: "openclaw_test_tool",
       detail: `fail: ${toolName} — ${result.content}`,
