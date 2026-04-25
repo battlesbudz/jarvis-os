@@ -859,7 +859,6 @@ export default function SettingsScreen() {
             </Pressable>
           </Link>
         </View>
-        </View>
 
         {/* ── ACCOUNT ── */}
         <SectionHeader label="ACCOUNT" accent={Colors.textTertiary} />
