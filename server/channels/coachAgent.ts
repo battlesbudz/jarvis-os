@@ -177,13 +177,21 @@ export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyR
   const recentlySurfacedSection = recentlySurfacedItems.length > 0
     ? `## Items You Already Surfaced to the User (last 24h)\nThese were found and sent to the user earlier — you already have this data. Reference it directly when the user asks about it instead of claiming you don't have it or asking them to repeat it.\n` +
       recentlySurfacedItems.map((item: any) => {
-        const time = item.surfacedAt ? new Date(item.surfacedAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true }) : "";
+        let timestamp = "";
+        if (item.surfacedAt) {
+          const d = new Date(item.surfacedAt);
+          timestamp = d.toLocaleString("en-US", {
+            timeZone: userTimezone,
+            month: "short", day: "numeric",
+            hour: "numeric", minute: "2-digit", hour12: true,
+          });
+        }
         const parts: string[] = [];
         if (item.subject) parts.push(`Subject: "${item.subject}"`);
         if (item.sender) parts.push(`From: ${item.sender}`);
         if (item.snippet) parts.push(`Content: ${item.snippet}`);
         if (item.jarvisReason) parts.push(`Why surfaced: ${item.jarvisReason}`);
-        return `- [${item.sourceType || "item"}${time ? ` @ ${time}` : ""}] ${parts.join(" | ")}`;
+        return `- [${item.sourceType || "item"}${timestamp ? ` @ ${timestamp}` : ""}] ${parts.join(" | ")}`;
       }).join("\n")
     : "";
 
