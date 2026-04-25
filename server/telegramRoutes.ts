@@ -398,25 +398,36 @@ async function processUpdate(update: any): Promise<void> {
       const userId = link[0].userId;
 
       // ── OpenClaw delegation intercept ──────────────────────────────────────
-      // Resolves a pending delegation when a message arrives from the configured
-      // OpenClaw chat ID.  Any message that isn't the task echo itself is treated
-      // as OpenClaw's reply (supports both threaded Telegram replies and plain
-      // free-form responses).  Primary correlation uses reply_to_message.message_id
-      // for strict matching; fallback accepts any non-task message from the chat.
+      // When a pending delegation exists for this user, attempt to correlate
+      // the incoming message using two explicit keys (both deterministic):
+      //   (A) reply_to_message.message_id === pending.sentMessageId  [Telegram reply]
+      //   (B) message text contains the "[OC:{nonce}]" tag we embedded in the task
+      // If neither key matches, the message falls through to the normal coach pipeline.
       const pending = pendingOpenClawDelegations.get(userId);
-      if (pending && pending.chatId === chatId && text && !text.startsWith("[JARVIS→OPENCLAW]")) {
-        // Accept any response from the configured OpenClaw chat — supports both
-        // threaded Telegram replies and free-form messages from OpenClaw.
-        // Log the correlation method used for observability.
+      if (pending && pending.chatId === chatId && text) {
+        // Two explicit correlation mechanisms — both deterministic, no arbitrary fallback:
+        //   (A) PRIMARY:   Incoming Telegram reply references the message_id we sent.
+        //   (B) SECONDARY: Incoming message text contains "[OC:{nonce}]" tag we embedded.
+        // Arbitrary messages from the chat (no correlation key) fall through to the
+        // normal coach pipeline so they are never silently dropped.
         const replyToId: number | undefined = message.reply_to_message?.message_id;
-        const byReply = pending.sentMessageId !== null && replyToId === pending.sentMessageId;
-        console.log(
-          `[OpenClaw] Resolving delegation for user ${userId} from chat ${chatId}` +
-            (byReply ? ` (reply_to=${replyToId})` : " (any message from chat)")
-        );
-        pendingOpenClawDelegations.delete(userId);
-        pending.resolve(text);
-        return;
+        const matchesReplyTo =
+          pending.sentMessageId !== null && replyToId === pending.sentMessageId;
+        const nonceTag = `[OC:${pending.nonce}]`;
+        const matchesNonce = text.includes(nonceTag);
+
+        if (matchesReplyTo || matchesNonce) {
+          const method = matchesReplyTo ? `reply_to=${replyToId}` : `nonce=${pending.nonce}`;
+          console.log(`[OpenClaw] Resolving delegation for user ${userId} (${method})`);
+          pendingOpenClawDelegations.delete(userId);
+          // Strip the nonce tag from the resolved text if present
+          const resolvedText = matchesNonce
+            ? text.replace(nonceTag, "").trim() || text
+            : text;
+          pending.resolve(resolvedText);
+          return;
+        }
+        // Message from the chat with no correlation key — route to coach normally.
       }
 
       await handleCoachReply(userId, chatId, text, imageUrl);

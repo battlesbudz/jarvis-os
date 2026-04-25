@@ -17,7 +17,8 @@ export interface OpenClawBridgeConfig {
 // from the configured OpenClaw chat that is a Telegram reply to sentMessageId.
 export interface PendingDelegation {
   chatId: string;
-  sentMessageId: number | null; // message_id we sent — used for reply_to correlation
+  sentMessageId: number | null; // message_id we sent — primary reply_to correlation
+  nonce: string;                // embedded nonce — secondary correlation if no reply_to
   resolve: (text: string) => void;
   reject: (err: Error) => void;
   timer: ReturnType<typeof setTimeout>;
@@ -120,6 +121,14 @@ async function validateGatewayUrl(
   return { ok: true, url: parsed };
 }
 
+// ── Nonce ────────────────────────────────────────────────────────────────────
+// Short random ID embedded in the sent task message so OpenClaw can echo it
+// back as a deterministic secondary correlation key (in case it doesn't
+// reply as a Telegram threaded reply to the original message_id).
+function generateNonce(): string {
+  return Math.random().toString(36).slice(2, 9).toUpperCase();
+}
+
 // ── Config helper ────────────────────────────────────────────────────────────
 export async function getOpenClawConfig(userId: string): Promise<OpenClawBridgeConfig | null> {
   try {
@@ -192,7 +201,18 @@ export const openclawDelegateTool: AgentTool = {
         );
       }
 
-      const sentResult = await sendMessageWithId(chatId, `[JARVIS→OPENCLAW]\n${task}`);
+      // Generate a per-request nonce and embed it in the task message.
+      // telegramRoutes.ts resolves the pending delegation when it receives a
+      // message from the same chatId that satisfies EITHER:
+      //   (A) reply_to_message.message_id === sentMessageId  [primary — standard reply]
+      //   (B) text contains the embedded correlation tag [OC:{nonce}]  [secondary]
+      // Both are explicit correlation keys; arbitrary unrelated messages are rejected.
+      const nonce = generateNonce();
+      const sentText =
+        `[JARVIS→OPENCLAW] ref:${nonce}\n${task}\n\n` +
+        `(Reply to this message, or start your response with [OC:${nonce}])`;
+
+      const sentResult = await sendMessageWithId(chatId, sentText);
       if (!sentResult) {
         return fail(
           "Failed to send task to OpenClaw via Telegram — bot token may be missing or chat ID is incorrect. Check Settings → OpenClaw Brain.",
@@ -200,12 +220,9 @@ export const openclawDelegateTool: AgentTool = {
         );
       }
 
-      // Await a reply from OpenClaw.  telegramRoutes.ts drives the polling:
-      // the existing Telegram poller (processUpdate) fires every few seconds and
-      // resolves this promise when it receives any message from chatId that is
-      // not the task itself (primary: reply_to_message_id match; fallback: any
-      // non-task message from the same chat).  This covers both threaded replies
-      // and free-form responses from OpenClaw.
+      // Await a correlated reply.  The existing Telegram poller (processUpdate)
+      // checks every incoming message against pendingOpenClawDelegations and
+      // resolves this Promise when a matching message arrives.
       let replyText: string;
       try {
         replyText = await new Promise<string>((resolve, reject) => {
@@ -214,7 +231,7 @@ export const openclawDelegateTool: AgentTool = {
             reject(
               new Error(
                 `OpenClaw did not reply within ${Math.round(timeoutMs / 60000)} minutes. ` +
-                  `The task was sent (message_id=${sentResult.message_id}). ` +
+                  `The task was sent (message_id=${sentResult.message_id}, nonce=${nonce}). ` +
                   `Check your Telegram chat for partial output.`
               )
             );
@@ -223,6 +240,7 @@ export const openclawDelegateTool: AgentTool = {
           pendingOpenClawDelegations.set(userId, {
             chatId,
             sentMessageId: sentResult.message_id,
+            nonce,
             resolve: (text: string) => {
               clearTimeout(timer);
               resolve(text);
