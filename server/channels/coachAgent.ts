@@ -227,6 +227,8 @@ What OpenClaw can do (you cannot do these without it):
 
 **How to delegate**: Call \`openclaw_delegate\` with a complete, specific task description. For Telegram mode, the result will arrive in the user's Telegram chat. For Gateway mode, the result is returned immediately in this conversation.
 
+**Self-improvement**: Use \`openclaw_build_feature\` when the user wants to add a new capability to Jarvis itself. Provide the tool name and a detailed description — OpenClaw will write the TypeScript tool file, register it in the codebase, and return the code. This is how Jarvis builds himself.
+
 Check status first if unsure: use \`openclaw_status\` to verify the bridge is reachable.`;
     }
   } catch {}
