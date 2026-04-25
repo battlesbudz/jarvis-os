@@ -302,7 +302,8 @@ async function processUpdate(update: any): Promise<void> {
           pending.resolve(resolvedText);
           return;
         }
-        break; // Found the pending for this chatId but no correlation key matched
+        // No correlation key matched for this pending entry — continue scanning
+        // in case another pending entry for a different user shares this chatId.
       }
     }
 
