@@ -10,6 +10,7 @@ export interface OpenClawBridgeConfig {
   gatewayUrl?: string;
   gatewayToken?: string;
   enabled: boolean;
+  timeoutMinutes?: number;
 }
 
 // ── Pending delegation store ─────────────────────────────────────────────────
@@ -170,7 +171,7 @@ export const openclawDelegateTool: AgentTool = {
       timeout_minutes: {
         type: "number",
         description:
-          "Max minutes to wait for a result (default 10, max 15). For long build tasks use 15.",
+          "Max minutes to wait for a result. Defaults to the user's configured timeout (or 10 if not set). Max 30. For long build tasks, use a higher value.",
       },
     },
     required: ["task"],
@@ -189,7 +190,13 @@ export const openclawDelegateTool: AgentTool = {
       );
     }
 
-    const timeoutMs = Math.min(Number(args.timeout_minutes) || 10, 15) * 60 * 1000;
+    const SERVER_MAX_TIMEOUT_MINUTES = 30;
+    const userDefaultTimeout = Math.max(1, Math.min(Number(cfg.timeoutMinutes) || 10, SERVER_MAX_TIMEOUT_MINUTES));
+    const rawOverride = Number(args.timeout_minutes);
+    const effectiveMinutes = rawOverride > 0
+      ? Math.max(1, Math.min(rawOverride, SERVER_MAX_TIMEOUT_MINUTES))
+      : userDefaultTimeout;
+    const timeoutMs = effectiveMinutes * 60 * 1000;
 
     // Guard: reject if there's already a pending delegation for this user.
     if (pendingOpenClawDelegations.has(userId)) {

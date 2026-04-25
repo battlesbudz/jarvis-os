@@ -5086,19 +5086,24 @@ Extract up to 8 memories per batch.`;
     const userId = req.userId;
     if (!userId) return res.status(401).json({ error: "Not authenticated" });
     try {
-      const { mode, telegramChatId, gatewayUrl, gatewayToken, enabled } = req.body as Record<string, any>;
+      const { mode, telegramChatId, gatewayUrl, gatewayToken, enabled, timeoutMinutes } = req.body as Record<string, any>;
       const rows = await db
         .select({ data: schema.userPreferences.data })
         .from(schema.userPreferences)
         .where(eq(schema.userPreferences.userId, userId))
         .limit(1);
       const prefs = (rows[0]?.data as Record<string, any>) ?? {};
+      const parsedTimeout = Number(timeoutMinutes);
+      const validatedTimeout = !isNaN(parsedTimeout) && parsedTimeout > 0
+        ? Math.max(1, Math.min(parsedTimeout, 30))
+        : (prefs.openclawBridge?.timeoutMinutes ?? 10);
       prefs.openclawBridge = {
         mode: mode ?? "telegram",
         telegramChatId: telegramChatId ?? prefs.openclawBridge?.telegramChatId ?? "",
         gatewayUrl: gatewayUrl ?? prefs.openclawBridge?.gatewayUrl ?? "",
         gatewayToken: gatewayToken ?? prefs.openclawBridge?.gatewayToken ?? "",
         enabled: enabled ?? false,
+        timeoutMinutes: validatedTimeout,
       };
       await db
         .insert(schema.userPreferences)
