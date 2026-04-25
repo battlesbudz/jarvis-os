@@ -5,7 +5,10 @@ import { eq } from "drizzle-orm";
 const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
 
 function isExpoPushToken(token: string): boolean {
-  return typeof token === "string" && token.startsWith("ExponentPushToken[");
+  return (
+    typeof token === "string" &&
+    (token.startsWith("ExponentPushToken[") || token.startsWith("ExpoPushToken["))
+  );
 }
 
 export async function sendExpoPushNotification(
