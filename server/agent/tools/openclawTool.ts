@@ -255,7 +255,8 @@ export const openclawDelegateTool: AgentTool = {
               new Error(
                 `OpenClaw did not reply within ${Math.round(timeoutMs / 60000)} minutes. ` +
                   `The task was sent (message_id=${sentResult.message_id}, nonce=${nonce}). ` +
-                  `Check your Telegram chat for partial output.`
+                  `Check your Telegram chat for partial output. ` +
+                  `If your task needs more time, raise the timeout (currently ${effectiveMinutes} min) in Settings → OpenClaw Brain.`
               )
             );
           }, timeoutMs);
@@ -463,7 +464,8 @@ export const openclawDelegateTool: AgentTool = {
         }
 
         return fail(
-          `OpenClaw job ${jobId} did not complete within ${Math.round(timeoutMs / 60000)} minutes. Last status: ${JSON.stringify(lastData)}`,
+          `OpenClaw job ${jobId} did not complete within ${Math.round(timeoutMs / 60000)} minutes. Last status: ${JSON.stringify(lastData)}. ` +
+            `If your task needs more time, raise the timeout (currently ${effectiveMinutes} min) in Settings → OpenClaw Brain.`,
           "openclaw_job_timeout"
         );
       }
