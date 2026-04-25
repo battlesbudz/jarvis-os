@@ -279,6 +279,33 @@ async function processUpdate(update: any): Promise<void> {
 
     if (!text && !imageUrl) return;
 
+    // ── OpenClaw delegation intercept (pre-DB) ─────────────────────────────
+    // Check pending delegations keyed by chatId BEFORE the telegramLinks lookup.
+    // This allows OpenClaw replies from a chat that is NOT the user's linked
+    // Jarvis chat to still resolve the pending delegation correctly.
+    // Two explicit correlation keys are required (arbitrary messages rejected):
+    //   (A) reply_to_message.message_id === pending.sentMessageId
+    //   (B) message text contains the embedded [OC:{nonce}] tag
+    if (text) {
+      for (const [ocUserId, pending] of pendingOpenClawDelegations) {
+        if (pending.chatId !== chatId) continue;
+        const replyToId: number | undefined = message.reply_to_message?.message_id;
+        const matchesReplyTo =
+          pending.sentMessageId !== null && replyToId === pending.sentMessageId;
+        const nonceTag = `[OC:${pending.nonce}]`;
+        const matchesNonce = text.includes(nonceTag);
+        if (matchesReplyTo || matchesNonce) {
+          const method = matchesReplyTo ? `reply_to=${replyToId}` : `nonce=${pending.nonce}`;
+          console.log(`[OpenClaw] Resolving delegation for user ${ocUserId} (${method})`);
+          pendingOpenClawDelegations.delete(ocUserId);
+          const resolvedText = matchesNonce ? text.replace(nonceTag, "").trim() || text : text;
+          pending.resolve(resolvedText);
+          return;
+        }
+        break; // Found the pending for this chatId but no correlation key matched
+      }
+    }
+
     if (chatType === 'group' || chatType === 'supergroup') {
       if (!text) return;
       try {
@@ -396,39 +423,6 @@ async function processUpdate(update: any): Promise<void> {
       }
 
       const userId = link[0].userId;
-
-      // ── OpenClaw delegation intercept ──────────────────────────────────────
-      // When a pending delegation exists for this user, attempt to correlate
-      // the incoming message using two explicit keys (both deterministic):
-      //   (A) reply_to_message.message_id === pending.sentMessageId  [Telegram reply]
-      //   (B) message text contains the "[OC:{nonce}]" tag we embedded in the task
-      // If neither key matches, the message falls through to the normal coach pipeline.
-      const pending = pendingOpenClawDelegations.get(userId);
-      if (pending && pending.chatId === chatId && text) {
-        // Two explicit correlation mechanisms — both deterministic, no arbitrary fallback:
-        //   (A) PRIMARY:   Incoming Telegram reply references the message_id we sent.
-        //   (B) SECONDARY: Incoming message text contains "[OC:{nonce}]" tag we embedded.
-        // Arbitrary messages from the chat (no correlation key) fall through to the
-        // normal coach pipeline so they are never silently dropped.
-        const replyToId: number | undefined = message.reply_to_message?.message_id;
-        const matchesReplyTo =
-          pending.sentMessageId !== null && replyToId === pending.sentMessageId;
-        const nonceTag = `[OC:${pending.nonce}]`;
-        const matchesNonce = text.includes(nonceTag);
-
-        if (matchesReplyTo || matchesNonce) {
-          const method = matchesReplyTo ? `reply_to=${replyToId}` : `nonce=${pending.nonce}`;
-          console.log(`[OpenClaw] Resolving delegation for user ${userId} (${method})`);
-          pendingOpenClawDelegations.delete(userId);
-          // Strip the nonce tag from the resolved text if present
-          const resolvedText = matchesNonce
-            ? text.replace(nonceTag, "").trim() || text
-            : text;
-          pending.resolve(resolvedText);
-          return;
-        }
-        // Message from the chat with no correlation key — route to coach normally.
-      }
 
       await handleCoachReply(userId, chatId, text, imageUrl);
     } catch (err) {
