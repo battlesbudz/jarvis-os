@@ -487,6 +487,249 @@ export const openclawDelegateTool: AgentTool = {
   },
 };
 
+// ── Code application helpers ──────────────────────────────────────────────────
+
+function toCamelCase(snake: string): string {
+  return snake.replace(/_([a-z0-9])/g, (_, c: string) => c.toUpperCase());
+}
+
+/**
+ * Scans OpenClaw's response for labelled code blocks.
+ * Returns a map of normalised file path → file content.
+ * Looks for headings / bold text mentioning a file path immediately preceding each block.
+ */
+function extractNamedCodeBlocks(text: string): Map<string, string> {
+  const result = new Map<string, string>();
+  const codeBlockRe = /```(?:\w+)?\n([\s\S]*?)```/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = codeBlockRe.exec(text)) !== null) {
+    const code = match[1];
+    const blockStart = match.index;
+    const preceding = text.slice(Math.max(0, blockStart - 700), blockStart);
+
+    // Patterns: "File: path", "**`path`**", "## path", "`path`:"
+    const filePathRe =
+      /(?:(?:file|path|filename)[:\s`*_]+([a-zA-Z0-9_\-./]+\.(?:ts|js|json)))|`([a-zA-Z0-9_\-./]+\.(?:ts|js|json))`|#{1,4}\s+`?([a-zA-Z0-9_\-./]+\.(?:ts|js|json))`?/gi;
+    let lastFilePath: string | null = null;
+    let fm: RegExpExecArray | null;
+    while ((fm = filePathRe.exec(preceding)) !== null) {
+      lastFilePath = fm[1] ?? fm[2] ?? fm[3];
+    }
+
+    if (lastFilePath) {
+      result.set(lastFilePath.replace(/^\.\//, ""), code);
+    }
+  }
+
+  return result;
+}
+
+interface ApplyResult {
+  applied: string[];
+  warnings: string[];
+}
+
+/**
+ * Applies OpenClaw-built code directly to the codebase:
+ *   1. Writes the new tool file (and optional route file) to disk.
+ *   2. Programmatically patches server/agent/tools/index.ts:
+ *      - adds the import at the top
+ *      - adds the tool to ALL_TOOLS[]
+ *      - adds the tool to telegramCoachTools()
+ *      - adds the re-export at the bottom
+ */
+async function applyOpenClawBuildResult(
+  featureName: string,
+  openClawResponse: string,
+  needsApiEndpoint: boolean
+): Promise<ApplyResult> {
+  const { promises: fs } = await import("fs");
+  const path = await import("path");
+
+  const applied: string[] = [];
+  const warnings: string[] = [];
+
+  const toolExportName = `${toCamelCase(featureName)}Tool`;
+  const toolFilePath = `server/agent/tools/${featureName}.ts`;
+  // Route files live at server/<featureName>Routes.ts — matching repo convention
+  // (server/dataRoutes.ts, server/telegramRoutes.ts, etc.)
+  const routeFilePath = `server/${featureName}Routes.ts`;
+
+  const codeBlocks = extractNamedCodeBlocks(openClawResponse);
+
+  // ── 1. Write tool file (independent step) ──────────────────────────────
+  try {
+    const toolCode = codeBlocks.get(toolFilePath);
+    if (toolCode) {
+      await fs.mkdir(path.resolve(process.cwd(), "server/agent/tools"), { recursive: true });
+      await fs.writeFile(path.resolve(process.cwd(), toolFilePath), toolCode, "utf8");
+      applied.push(toolFilePath);
+    } else {
+      warnings.push(
+        `No code block found for ${toolFilePath}. Create the file manually from OpenClaw's output above.`
+      );
+    }
+  } catch (err) {
+    warnings.push(
+      `Failed to write ${toolFilePath}: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
+
+  // ── 2. Write route file if requested (independent step) ─────────────────
+  if (needsApiEndpoint) {
+    try {
+      // Accept either the canonical path or legacy "server/routes/<name>.ts"
+      const routeCode =
+        codeBlocks.get(routeFilePath) ??
+        codeBlocks.get(`server/routes/${featureName}.ts`);
+      if (routeCode) {
+        await fs.mkdir(path.resolve(process.cwd(), "server"), { recursive: true });
+        await fs.writeFile(path.resolve(process.cwd(), routeFilePath), routeCode, "utf8");
+        applied.push(routeFilePath);
+      } else {
+        warnings.push(
+          `No code block found for ${routeFilePath}. Add the Express route file manually and mount it in server/index.ts.`
+        );
+      }
+    } catch (err) {
+      warnings.push(
+        `Failed to write ${routeFilePath}: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  }
+
+  // ── 3. Patch index.ts (independent step) ───────────────────────────────
+  // Only patch index.ts if the tool file was actually written; patching index.ts
+  // to import a file that does not exist would break the server on restart.
+  const toolFileWritten = applied.includes(toolFilePath);
+  if (!toolFileWritten) {
+    warnings.push(
+      `Skipping index.ts patch because ${toolFilePath} was not written — add registrations manually once the file exists.`
+    );
+  } else {
+    try {
+      const indexAbsPath = path.resolve(process.cwd(), "server/agent/tools/index.ts");
+      let idx = await fs.readFile(indexAbsPath, "utf8");
+      let indexModified = false;
+
+      // Determine the actual exported constant name from the written tool file.
+      // OpenClaw may use a slightly different casing; parse the real symbol first.
+      // Falls back to the convention-derived name if parsing fails.
+      let actualExportName = toolExportName;
+      try {
+        const writtenCode = await fs.readFile(
+          path.resolve(process.cwd(), toolFilePath),
+          "utf8"
+        );
+        const exportMatch = writtenCode.match(/^export const (\w+)\s*:\s*AgentTool/m);
+        if (exportMatch?.[1]) {
+          actualExportName = exportMatch[1];
+          if (actualExportName !== toolExportName) {
+            warnings.push(
+              `OpenClaw used export name \`${actualExportName}\` (expected \`${toolExportName}\`). Registering with actual name.`
+            );
+          }
+        }
+      } catch {
+        // Non-fatal: fall back to convention-derived name
+      }
+
+      // a) Import — idempotent: only add if not already present
+      const importLine = `import { ${actualExportName} } from "./${featureName}";`;
+      if (!idx.includes(`from "./${featureName}"`)) {
+        const lastImportPos = idx.lastIndexOf("\nimport ");
+        if (lastImportPos !== -1) {
+          const lineEnd = idx.indexOf("\n", lastImportPos + 1);
+          if (lineEnd !== -1) {
+            idx = idx.slice(0, lineEnd) + "\n" + importLine + idx.slice(lineEnd);
+            indexModified = true;
+          }
+        } else {
+          warnings.push("Could not locate last import line in index.ts — add the import manually.");
+        }
+      }
+
+      // b) ALL_TOOLS array — anchored to the `export const ALL_TOOLS` declaration
+      // to avoid mis-targeting other arrays or closing brackets in the file.
+      if (!idx.includes(`${actualExportName},`) && !idx.includes(`${actualExportName}\n`)) {
+        const allToolsDecl = idx.indexOf("export const ALL_TOOLS");
+        if (allToolsDecl !== -1) {
+          const allToolsClose = idx.indexOf("\n];", allToolsDecl);
+          if (allToolsClose !== -1) {
+            idx =
+              idx.slice(0, allToolsClose) +
+              `\n  ${actualExportName},` +
+              idx.slice(allToolsClose);
+            indexModified = true;
+          } else {
+            warnings.push(
+              `Could not find ALL_TOOLS closing ]; in index.ts — add \`${actualExportName},\` manually.`
+            );
+          }
+        } else {
+          warnings.push(
+            `Could not find ALL_TOOLS declaration in index.ts — add \`${actualExportName},\` manually.`
+          );
+        }
+      }
+
+      // c) telegramCoachTools() base array — scoped search after function declaration
+      const tcFnIdx = idx.indexOf("telegramCoachTools(");
+      if (tcFnIdx !== -1) {
+        const tcClose = idx.indexOf("\n  ];", tcFnIdx);
+        if (tcClose !== -1) {
+          const tcSection = idx.slice(tcFnIdx, tcClose);
+          if (!tcSection.includes(`${actualExportName},`) && !tcSection.includes(`${actualExportName}\n`)) {
+            idx =
+              idx.slice(0, tcClose) +
+              `\n    ${actualExportName},` +
+              idx.slice(tcClose);
+            indexModified = true;
+          }
+        } else {
+          warnings.push(
+            `Could not find telegramCoachTools base array in index.ts — add \`${actualExportName},\` there manually.`
+          );
+        }
+      }
+
+      // d) Re-export block — anchored to the last `export {` block in the file
+      const exportBlockStart = idx.lastIndexOf("export {");
+      if (exportBlockStart !== -1) {
+        const exportBlockClose = idx.indexOf("\n};", exportBlockStart);
+        if (exportBlockClose !== -1) {
+          const exportSection = idx.slice(exportBlockStart, exportBlockClose);
+          if (!exportSection.includes(`${actualExportName},`) && !exportSection.includes(`${actualExportName}\n`)) {
+            idx =
+              idx.slice(0, exportBlockClose) +
+              `\n  ${actualExportName},` +
+              idx.slice(exportBlockClose);
+            indexModified = true;
+          }
+        } else {
+          warnings.push(
+            `Could not find export block closing in index.ts — add \`${actualExportName},\` to the exports manually.`
+          );
+        }
+      }
+
+      if (indexModified) {
+        await fs.writeFile(indexAbsPath, idx, "utf8");
+        applied.push("server/agent/tools/index.ts");
+      } else {
+        warnings.push(`index.ts already contains ${actualExportName} entries — no changes made.`);
+      }
+    } catch (err) {
+      warnings.push(
+        `Failed to patch index.ts: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  }
+
+  return { applied, warnings };
+}
+
 // ── openclaw_build_feature tool ──────────────────────────────────────────────
 export const openclawBuildFeatureTool: AgentTool = {
   name: "openclaw_build_feature",
@@ -564,7 +807,7 @@ export const exampleTool: AgentTool = {
 Jarvis repo key paths:
 - server/agent/tools/<toolName>.ts         — one file per tool, exports a const of type AgentTool
 - server/agent/tools/index.ts              — imports all tools and registers them in ALL_TOOLS array and telegramCoachTools()
-- server/routes/                           — Express route files (add new endpoint here if needed)
+- server/<featureName>Routes.ts            — Express route files live directly under server/ (e.g. server/dataRoutes.ts, server/telegramRoutes.ts)
 - server/index.ts                          — mounts route files (register new router here if needed)
 - shared/schema.ts                         — Drizzle ORM schema (add new DB table here if needed)
 `.trim();
@@ -575,7 +818,7 @@ Jarvis repo key paths:
     }
 
     const apiEndpointSection = needsApiEndpoint
-      ? `\n## API Endpoint Required\nThis tool also needs a new Express REST endpoint. Create a route file at server/routes/${featureName}.ts, mount it in server/index.ts under /api/${featureName.replace(/_/g, "-")}, and document the endpoint in your response.`
+      ? `\n## API Endpoint Required\nThis tool also needs a new Express REST endpoint. Create a route file at server/${featureName}Routes.ts (following the repo convention: server/dataRoutes.ts, server/telegramRoutes.ts, etc.), mount it in server/index.ts under /api/${featureName.replace(/_/g, "-")}, and label the code block with the file path \`server/${featureName}Routes.ts\`.`
       : "";
 
     const task = `[JARVIS SELF-IMPROVEMENT] Build a new Jarvis agent tool.
@@ -621,8 +864,34 @@ ${repoStructure}
       return delegateResult;
     }
 
-    // Always attempt a deterministic smoke test.
-    // - If the tool is registered (OpenClaw hot-applied the code): executes it and
+    // ── Auto-apply: write files & patch index.ts ─────────────────────────
+    let applyReport = "";
+    try {
+      const { applied, warnings } = await applyOpenClawBuildResult(
+        featureName,
+        delegateResult.content,
+        needsApiEndpoint
+      );
+
+      const appliedLines =
+        applied.length > 0
+          ? `\n\n**Files written automatically:**\n${applied.map((f) => `- \`${f}\``).join("\n")}`
+          : "";
+      const warnLines =
+        warnings.length > 0
+          ? `\n\n**Warnings (manual action needed):**\n${warnings.map((w) => `- ${w}`).join("\n")}`
+          : "";
+
+      applyReport =
+        applied.length > 0 || warnings.length > 0
+          ? `${appliedLines}${warnLines}\n\n${applied.length > 0 ? "Restart the server for the new tool to become active." : ""}`
+          : "";
+    } catch (applyErr) {
+      applyReport = `\n\n**Auto-apply failed:** ${applyErr instanceof Error ? applyErr.message : String(applyErr)}. Apply the code from OpenClaw's output above manually.`;
+    }
+
+    // Always attempt a deterministic smoke test after auto-apply.
+    // - If the tool is registered (auto-applied successfully): executes it and
     //   returns the actual output.
     // - If not yet registered (code returned as text, not yet applied):
     //   openclawTestTool returns a clear "not registered" message with instructions.
@@ -653,7 +922,7 @@ ${repoStructure}
     // is false but the build itself succeeded — the content explains what to do next).
     return {
       ok: smokeResult.ok,
-      content: delegateResult.content + smokeNote,
+      content: delegateResult.content + applyReport + smokeNote,
       label: "openclaw_build_feature",
       detail: smokeResult.ok ? `Built and verified: ${featureName}` : `Built (test pending): ${featureName}`,
     };
