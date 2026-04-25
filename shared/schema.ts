@@ -777,6 +777,21 @@ export const jarvisActionLog = pgTable("jarvis_action_log", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
+// ── OpenClaw Build Log ────────────────────────────────────────────────────────
+// Persisted record of every openclaw_build_feature call. Lets users review
+// past self-improvement attempts, re-apply previous tools, or see when a
+// capability was added.
+export const openclawBuildLog = pgTable("openclaw_build_log", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  featureName: varchar("feature_name").notNull(),
+  description: text("description").notNull(),
+  outputCode: text("output_code").notNull().default(""),
+  success: boolean("success").notNull().default(false),
+  smokeTestPassed: boolean("smoke_test_passed"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
 // ── Jarvis Ego — Weekly Reports ───────────────────────────────────────────────
 // Generated each Sunday; one row per user per week. Stores the full analysis
 // object and the natural-language report text that is delivered to the user.
