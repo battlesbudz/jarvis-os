@@ -4,7 +4,7 @@ import { eq, and, desc, sql, gte, lte } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { sendMessage, sendMessageWithButtons, sendTelegramDocument, sendVoice, answerCallbackQuery, isTelegramConfigured, getUpdates, downloadTelegramFile, downloadTelegramFileBuffer } from "./integrations/telegram";
 import { getUserTtsPrefs, setUserTtsPref, speakToUser } from "./agent/tools/tts";
-import { notifyUser } from "./channels/registry";
+import { notifyUser, getChannel } from "./channels/registry";
 import type { NotificationType } from "@shared/schema";
 import { startMomentumSession, handleMomentumDone, hasMomentumSessionToday, startMomentumExpiryScheduler } from "./momentumCoach";
 import { getRecentEmailCommitments, getEmailsSince, getStarredFollowUpEmails, gmailModifyMessage } from "./integrations/gmail";
@@ -353,6 +353,21 @@ async function processUpdate(update: any): Promise<void> {
           `[OpenClaw result] ${text}`,
           imageUrl
         );
+        // Also push the raw OpenClaw result to the in-app channel so the user
+        // sees it without needing to open Telegram.
+        const inAppCh = getChannel("in_app");
+        if (inAppCh) {
+          const inAppText = imageUrl
+            ? `OpenClaw result: ${text}\n[Image: ${imageUrl}]`
+            : `OpenClaw result: ${text}`;
+          inAppCh.sendMessage(
+            ocUserLink.userId,
+            inAppText,
+            { notificationType: "general" }
+          ).catch((err: unknown) => {
+            console.error("[OpenClaw] failed to push result to in-app channel:", err);
+          });
+        }
         return;
       }
     }
