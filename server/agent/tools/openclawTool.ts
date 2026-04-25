@@ -191,6 +191,14 @@ export const openclawDelegateTool: AgentTool = {
 
     const timeoutMs = Math.min(Number(args.timeout_minutes) || 10, 15) * 60 * 1000;
 
+    // Guard: reject if there's already a pending delegation for this user.
+    if (pendingOpenClawDelegations.has(userId)) {
+      return fail(
+        "A delegation to OpenClaw is already in progress for your account. Wait for it to complete (or timeout) before sending another task.",
+        "openclaw_delegation_in_progress"
+      );
+    }
+
     // ── Telegram mode ─────────────────────────────────────────────────────
     if (cfg.mode === "telegram") {
       const chatId = cfg.telegramChatId?.trim();

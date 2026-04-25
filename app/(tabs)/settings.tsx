@@ -1,5 +1,6 @@
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  Animated,
   StyleSheet,
   View,
   Text,
@@ -148,6 +149,21 @@ export default function SettingsScreen() {
   const [openclawSaving, setOpenclawSaving] = useState(false);
   const [openclawTesting, setOpenclawTesting] = useState(false);
   const [openclawOnline, setOpenclawOnline] = useState<boolean | null>(null);
+  const openclawPulse = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    if (openclawOnline !== true) {
+      openclawPulse.setValue(1);
+      return;
+    }
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(openclawPulse, { toValue: 1.5, duration: 800, useNativeDriver: true }),
+        Animated.timing(openclawPulse, { toValue: 1, duration: 800, useNativeDriver: true }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [openclawOnline, openclawPulse]);
 
   const loadOpenClawConfig = useCallback(async () => {
     try {
@@ -665,9 +681,12 @@ export default function SettingsScreen() {
             </View>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
               {openclawOnline !== null && (
-                <View style={[
+                <Animated.View style={[
                   ocStyles.statusDot,
-                  { backgroundColor: openclawOnline ? '#10B981' : Colors.textTertiary }
+                  {
+                    backgroundColor: openclawOnline ? '#10B981' : Colors.textTertiary,
+                    transform: openclawOnline ? [{ scale: openclawPulse }] : [],
+                  }
                 ]} />
               )}
               <Switch
