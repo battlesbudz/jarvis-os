@@ -146,6 +146,7 @@ export default function SettingsScreen() {
   const [openclawTelegramChatId, setOpenclawTelegramChatId] = useState('');
   const [openclawGatewayUrl, setOpenclawGatewayUrl] = useState('');
   const [openclawGatewayToken, setOpenclawGatewayToken] = useState('');
+  const [openclawTimeoutMinutes, setOpenclawTimeoutMinutes] = useState(10);
   const [openclawSaving, setOpenclawSaving] = useState(false);
   const [openclawTesting, setOpenclawTesting] = useState(false);
   const [openclawOnline, setOpenclawOnline] = useState<boolean | null>(null);
@@ -175,10 +176,11 @@ export default function SettingsScreen() {
       setOpenclawTelegramChatId(cfg.telegramChatId ?? '');
       setOpenclawGatewayUrl(cfg.gatewayUrl ?? '');
       setOpenclawGatewayToken(cfg.gatewayToken ?? '');
+      setOpenclawTimeoutMinutes(Number(cfg.timeoutMinutes) > 0 ? Number(cfg.timeoutMinutes) : 10);
     } catch {}
   }, []);
 
-  const saveOpenClawConfig = useCallback(async (patch?: Partial<{ mode: OpenClawMode; enabled: boolean; telegramChatId: string; gatewayUrl: string; gatewayToken: string }>) => {
+  const saveOpenClawConfig = useCallback(async (patch?: Partial<{ mode: OpenClawMode; enabled: boolean; telegramChatId: string; gatewayUrl: string; gatewayToken: string; timeoutMinutes: number }>) => {
     setOpenclawSaving(true);
     try {
       await apiRequest('POST', '/api/openclaw/config', {
@@ -187,11 +189,12 @@ export default function SettingsScreen() {
         telegramChatId: patch?.telegramChatId ?? openclawTelegramChatId,
         gatewayUrl: patch?.gatewayUrl ?? openclawGatewayUrl,
         gatewayToken: patch?.gatewayToken ?? openclawGatewayToken,
+        timeoutMinutes: patch?.timeoutMinutes ?? openclawTimeoutMinutes,
       });
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     } catch {}
     setOpenclawSaving(false);
-  }, [openclawMode, openclawEnabled, openclawTelegramChatId, openclawGatewayUrl, openclawGatewayToken]);
+  }, [openclawMode, openclawEnabled, openclawTelegramChatId, openclawGatewayUrl, openclawGatewayToken, openclawTimeoutMinutes]);
 
   const testOpenClawConnection = useCallback(async () => {
     setOpenclawTesting(true);
@@ -775,6 +778,25 @@ export default function SettingsScreen() {
                   />
                 </>
               )}
+
+              {/* Timeout selector */}
+              <Text style={[ocStyles.label, { marginTop: 14 }]}>Wait Timeout</Text>
+              <Text style={ocStyles.hint}>
+                How long Jarvis waits for OpenClaw to finish before giving up.
+              </Text>
+              <View style={ocStyles.modeRow}>
+                {([5, 10, 15, 30] as const).map(mins => (
+                  <Pressable
+                    key={mins}
+                    style={[ocStyles.modePill, openclawTimeoutMinutes === mins && ocStyles.modePillActive]}
+                    onPress={() => setOpenclawTimeoutMinutes(mins)}
+                  >
+                    <Text style={[ocStyles.modePillText, openclawTimeoutMinutes === mins && ocStyles.modePillTextActive]}>
+                      {mins} min
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
 
               {/* Status result */}
               {openclawOnline !== null && (
