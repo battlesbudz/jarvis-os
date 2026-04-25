@@ -366,10 +366,56 @@ export const openclawDelegateTool: AgentTool = {
           : undefined);
 
       if (jobId) {
-        const pollUrl = `${gatewayBase}/api/v1/jobs/${jobId}`;
         const deadline = Date.now() + timeoutMs;
-        let lastData: GatewayJobResponse | null = data as GatewayJobResponse;
 
+        // Per spec: first try /api/v1/events SSE stream for real-time results.
+        // Fall back to polling /api/v1/jobs/{jobId} every 15s if events unavailable.
+        const eventsUrl = `${gatewayBase}/api/v1/events?job_id=${encodeURIComponent(String(jobId))}`;
+        let usedSse = false;
+        try {
+          const eventsRes = await fetch(eventsUrl, {
+            method: "GET",
+            headers: { Accept: "text/event-stream", ...authHeaders },
+            signal: AbortSignal.timeout(8_000), // 8s to establish the SSE stream
+          });
+          if (eventsRes.ok && eventsRes.headers.get("content-type")?.includes("text/event-stream")) {
+            usedSse = true;
+            const evReader = eventsRes.body?.getReader();
+            if (evReader) {
+              const decoder = new TextDecoder();
+              const chunks: string[] = [];
+              while (Date.now() < deadline) {
+                const { done, value } = await evReader
+                  .read()
+                  .catch(() => ({ done: true as const, value: undefined }));
+                if (done) break;
+                if (value) {
+                  const chunk = decoder.decode(value);
+                  for (const line of chunk.split("\n")) {
+                    if (line.startsWith("data:")) {
+                      const payload = line.slice(5).trim();
+                      if (payload === "[DONE]") {
+                        evReader.cancel().catch(() => {});
+                        return ok(chunks.join(""), "openclaw_delegate", `gateway/events/${jobId}`);
+                      }
+                      if (payload) chunks.push(payload);
+                    }
+                  }
+                }
+              }
+              evReader.cancel().catch(() => {});
+              if (chunks.length > 0) {
+                return ok(chunks.join(""), "openclaw_delegate", `gateway/events/${jobId}`);
+              }
+            }
+          }
+        } catch {
+          // Events endpoint not available — fall through to polling
+        }
+
+        // Polling fallback: check /api/v1/jobs/{jobId} every 15s
+        const pollUrl = `${gatewayBase}/api/v1/jobs/${jobId}`;
+        let lastData: GatewayJobResponse | null = data as GatewayJobResponse;
         while (Date.now() < deadline) {
           await new Promise<void>((r) => setTimeout(r, 15_000)); // poll every 15s per spec
           try {
@@ -389,7 +435,7 @@ export const openclawDelegateTool: AgentTool = {
             ) {
               const raw = lastData?.result;
               const resultStr = typeof raw === "string" ? raw : JSON.stringify(raw);
-              return ok(resultStr, "openclaw_delegate", `gateway/job/${jobId}`);
+              return ok(resultStr, "openclaw_delegate", `gateway/${usedSse ? "events-fallback" : "job"}/${jobId}`);
             }
             if (status === "error" || status === "failed") {
               const raw = lastData?.error;
