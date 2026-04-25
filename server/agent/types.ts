@@ -35,6 +35,12 @@ export interface ToolContext {
   channel?: string;
   /** Discord guild (server) ID — set when the message originates from a Discord guild channel */
   discordGuildId?: string;
+  /**
+   * Set of tool names that are active in the current agent run.
+   * Populated by the harness at run start. Tools that need to invoke other tools
+   * (e.g. openclaw_test_tool) MUST check this set to prevent surface-escaping.
+   */
+  allowedToolNames?: ReadonlySet<string>;
 }
 
 export interface ToolResult {

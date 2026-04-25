@@ -683,6 +683,37 @@ export const openclawTestTool: AgentTool = {
     const toolName = String(args.tool_name ?? "").trim();
     if (!toolName) return fail("tool_name is required.");
 
+    // Guard: prevent self-invocation (infinite recursion).
+    if (toolName === "openclaw_test_tool") {
+      return fail("openclaw_test_tool cannot test itself.", "openclaw_test_tool");
+    }
+
+    // Guard: block meta/orchestration tools that must not be invoked indirectly
+    // to prevent unintended side effects or prompt-injection escalation paths.
+    const META_TOOLS = new Set([
+      "openclaw_delegate",
+      "openclaw_build_feature",
+      "spawn_subagent",
+      "queue_background_job",
+    ]);
+    if (META_TOOLS.has(toolName)) {
+      return fail(
+        `"${toolName}" is an orchestration tool and cannot be invoked via the smoke-test path.`,
+        "openclaw_test_tool"
+      );
+    }
+
+    // Guard: enforce per-surface access control.
+    // ctx.allowedToolNames is populated by the harness to contain only the tools
+    // visible in the current agent run. Anything outside that set cannot be tested
+    // here, even if it exists in ALL_TOOLS, preventing surface-escaping.
+    if (ctx.allowedToolNames && !ctx.allowedToolNames.has(toolName)) {
+      return fail(
+        `Tool "${toolName}" is not in the allowed tool set for this agent surface and cannot be tested here.`,
+        "openclaw_test_tool"
+      );
+    }
+
     const testArgsRaw = String(args.test_args ?? "{}").trim();
     let testArgs: Record<string, unknown> = {};
     try {
