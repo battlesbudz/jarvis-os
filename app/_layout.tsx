@@ -10,12 +10,13 @@ import { Stack, router, useSegments } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import * as Notifications from "expo-notifications";
 import * as Linking from "expo-linking";
+import Constants from "expo-constants";
 import React, { useCallback, useEffect, useRef } from "react";
 import { ActivityIndicator, Platform, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
-import { queryClient } from "@/lib/query-client";
+import { queryClient, apiRequest } from "@/lib/query-client";
 import { runMigrations, isOnboardingComplete } from "@/lib/storage";
 import { AuthProvider, useAuth } from "@/lib/auth-context";
 
@@ -99,9 +100,53 @@ function useDeepLinkAuth() {
   }, [handleAuthUrl]);
 }
 
+async function registerExpoPushToken(): Promise<string | undefined> {
+  if (Platform.OS === 'web') return undefined;
+  try {
+    const { status: existingStatus } = await Notifications.getPermissionsAsync();
+    let finalStatus = existingStatus;
+    if (existingStatus !== 'granted') {
+      const { status } = await Notifications.requestPermissionsAsync();
+      finalStatus = status;
+    }
+    if (finalStatus !== 'granted') return undefined;
+
+    const projectId =
+      (Constants.expoConfig?.extra as Record<string, any> | undefined)?.eas?.projectId ??
+      (Constants as any).easConfig?.projectId;
+
+    const tokenData = projectId
+      ? await Notifications.getExpoPushTokenAsync({ projectId })
+      : await Notifications.getExpoPushTokenAsync();
+    return tokenData.data;
+  } catch (err) {
+    console.warn('[pushToken] Could not get Expo push token:', err);
+    return undefined;
+  }
+}
+
+function useExpoPushTokenRegistration() {
+  const { isAuthenticated } = useAuth();
+
+  useEffect(() => {
+    if (!isAuthenticated || Platform.OS === 'web') return;
+    let cancelled = false;
+
+    registerExpoPushToken().then((token) => {
+      if (!token || cancelled) return;
+      apiRequest('PATCH', '/api/preferences', { expoPushToken: token }).catch((err: unknown) => {
+        console.warn('[pushToken] Failed to save push token:', err);
+      });
+    });
+
+    return () => { cancelled = true; };
+  }, [isAuthenticated]);
+}
+
 function AppNavigator() {
   const { isLoading } = useProtectedRoute();
   useDeepLinkAuth();
+  useExpoPushTokenRegistration();
 
   useEffect(() => {
     if (Platform.OS === 'web') return;
@@ -110,6 +155,7 @@ function AppNavigator() {
       if (screen === 'goals') router.push('/(tabs)/goals' as any);
       else if (screen === 'today') router.push('/(tabs)' as any);
       else if (screen === 'coach') router.push('/(tabs)/insights' as any);
+      else if (screen === 'inbox') router.push('/(tabs)/inbox' as any);
     });
     return () => subscription.remove();
   }, []);

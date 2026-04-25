@@ -13,6 +13,7 @@ import { getValidGoogleTokens } from "./userTokenStore";
 import { tavilySearch, formatSearchResults } from "./integrations/search";
 import { logInteraction, getRecentInteractions, formatInteractionTimeline } from "./interactionLog";
 import { extractAndStore } from "./memory/extractor";
+import { sendExpoPushNotification } from "./expoPush";
 import { getSoulPromptBlock } from "./memory/soul";
 import { runAgent } from "./agent/harness";
 import { telegramCoachTools } from "./agent/tools";
@@ -368,6 +369,17 @@ async function processUpdate(update: any): Promise<void> {
             console.error("[OpenClaw] failed to push result to in-app channel:", err);
           });
         }
+        // Send a push notification so the user is alerted even when the app
+        // is backgrounded or the phone is locked.
+        const pushBody = text.slice(0, 80) + (text.length > 80 ? "…" : "");
+        sendExpoPushNotification(
+          ocUserLink.userId,
+          "Jarvis — OpenClaw result",
+          pushBody,
+          { screen: "inbox" }
+        ).catch((err: unknown) => {
+          console.error("[OpenClaw] failed to send push notification:", err);
+        });
         return;
       }
     }
