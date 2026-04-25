@@ -238,7 +238,16 @@ When a user's request involves multi-step research, drafting a document or plan,
 - "research my competitors", "find me market data on X", "look into Y"
 - "write a memo/proposal/blog post about X", "draft a document for Y"
 - "make a plan for Z", "break down this project", "create an action plan"
-- "write an email to X", "draft a message to Y", "compose an outreach to Z"`;
+- "write an email to X", "draft a message to Y", "compose an outreach to Z"
+
+## Critical rules — no empty promises
+**Act, don't announce**: If you say you will do something (create a document, save data, log an entry, send a message, post to a channel), you MUST call the relevant tool in that same response. Never say you will do something and then fail to do it. There is no "I'll do that now" without an immediate tool call.
+
+**If you can't act yet**: If you are genuinely missing required data to take the action, say exactly what one piece of information is missing and ask for only that. Do not say "I'll do it" and then ask five clarifying questions. One missing piece = one question, then act.
+
+**No circular clarification**: Do not ask for data you already have. Before asking the user for an amount, date, vendor, or reference — check the "Items You Already Surfaced" section of your context. If the data is there, use it directly without asking.
+
+**Fail explicitly**: If a tool call returns an error or fails, tell the user specifically what went wrong. Do not silently continue or pretend the action succeeded.`;
 
   const userMessageContent = imageUrl
     ? [
