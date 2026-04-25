@@ -53,7 +53,13 @@ import {
   browserExtractTool,
   browserCloseTool,
 } from "./browserTools";
-import { openclawDelegateTool, openclawStatusTool, openclawBuildFeatureTool } from "./openclawTool";
+import {
+  openclawDelegateTool,
+  openclawStatusTool,
+  openclawBuildFeatureTool,
+  openclawTestTool,
+  initOpenClawToolResolver,
+} from "./openclawTool";
 
 export const ALL_TOOLS: AgentTool[] = [
   webSearchTool,
@@ -117,9 +123,13 @@ export const ALL_TOOLS: AgentTool[] = [
   openclawDelegateTool,
   openclawStatusTool,
   openclawBuildFeatureTool,
+  openclawTestTool,
 ];
 
 const TOOL_INDEX = new Map(ALL_TOOLS.map((t) => [t.name, t]));
+
+// Wire the resolver so openclawTestTool can look up tools without a circular import.
+initOpenClawToolResolver((name) => TOOL_INDEX.get(name));
 
 export function getTool(name: string): AgentTool | undefined {
   return TOOL_INDEX.get(name);
@@ -182,6 +192,7 @@ export function telegramCoachTools(opts: { hasGoogle: boolean }): AgentTool[] {
     openclawDelegateTool,
     openclawStatusTool,
     openclawBuildFeatureTool,
+    openclawTestTool,
   ];
   if (opts.hasGoogle) {
     base.push(gmailActionTool, gmailDraftTool, fetchCalendarTool, driveCreateFileTool, driveListFilesTool, driveReadFileTool);
@@ -251,4 +262,5 @@ export {
   openclawDelegateTool,
   openclawStatusTool,
   openclawBuildFeatureTool,
+  openclawTestTool,
 };
