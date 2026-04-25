@@ -137,6 +137,78 @@ export default function SettingsScreen() {
   const [coachingMode, setCoachingModeState] = useState<CoachingMode>('sharp');
   const [timezone, setTimezone] = useState('America/New_York');
 
+  // ── OpenClaw Brain ──
+  type OpenClawMode = 'telegram' | 'gateway';
+  const [openclawExpanded, setOpenclawExpanded] = useState(false);
+  const [openclawEnabled, setOpenclawEnabled] = useState(false);
+  const [openclawMode, setOpenclawMode] = useState<OpenClawMode>('telegram');
+  const [openclawTelegramChatId, setOpenclawTelegramChatId] = useState('');
+  const [openclawGatewayUrl, setOpenclawGatewayUrl] = useState('');
+  const [openclawGatewayToken, setOpenclawGatewayToken] = useState('');
+  const [openclawSaving, setOpenclawSaving] = useState(false);
+  const [openclawTesting, setOpenclawTesting] = useState(false);
+  const [openclawOnline, setOpenclawOnline] = useState<boolean | null>(null);
+
+  const loadOpenClawConfig = useCallback(async () => {
+    try {
+      const res = await apiRequest('GET', '/api/openclaw/config');
+      const data = await res.json();
+      const cfg = data.config ?? {};
+      setOpenclawEnabled(!!cfg.enabled);
+      setOpenclawMode(cfg.mode === 'gateway' ? 'gateway' : 'telegram');
+      setOpenclawTelegramChatId(cfg.telegramChatId ?? '');
+      setOpenclawGatewayUrl(cfg.gatewayUrl ?? '');
+      setOpenclawGatewayToken(cfg.gatewayToken ?? '');
+    } catch {}
+  }, []);
+
+  const saveOpenClawConfig = useCallback(async (patch?: Partial<{ mode: OpenClawMode; enabled: boolean; telegramChatId: string; gatewayUrl: string; gatewayToken: string }>) => {
+    setOpenclawSaving(true);
+    try {
+      await apiRequest('POST', '/api/openclaw/config', {
+        mode: patch?.mode ?? openclawMode,
+        enabled: patch?.enabled ?? openclawEnabled,
+        telegramChatId: patch?.telegramChatId ?? openclawTelegramChatId,
+        gatewayUrl: patch?.gatewayUrl ?? openclawGatewayUrl,
+        gatewayToken: patch?.gatewayToken ?? openclawGatewayToken,
+      });
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    } catch {}
+    setOpenclawSaving(false);
+  }, [openclawMode, openclawEnabled, openclawTelegramChatId, openclawGatewayUrl, openclawGatewayToken]);
+
+  const testOpenClawConnection = useCallback(async () => {
+    setOpenclawTesting(true);
+    setOpenclawOnline(null);
+    try {
+      await saveOpenClawConfig();
+      const res = await apiRequest('POST', '/api/chat', {
+        message: 'openclaw_status_check',
+        _internal_tool: 'openclaw_status',
+      }).catch(() => null);
+      // We parse status from the bridge endpoint instead
+      const cfgRes = await apiRequest('GET', '/api/openclaw/config');
+      const cfgData = await cfgRes.json();
+      const cfg = cfgData.config ?? {};
+      if (cfg.mode === 'gateway' && cfg.gatewayUrl) {
+        const checkUrl = `${cfg.gatewayUrl.replace(/\/$/, '')}/api/v1/check`;
+        const pingRes = await fetch(checkUrl, {
+          method: 'GET',
+          headers: cfg.gatewayToken ? { Authorization: `Bearer ${cfg.gatewayToken}` } : {},
+          signal: AbortSignal.timeout(5000),
+        }).catch(() => null);
+        setOpenclawOnline(!!pingRes?.ok);
+      } else if (cfg.mode === 'telegram' && cfg.telegramChatId) {
+        setOpenclawOnline(true);
+      } else {
+        setOpenclawOnline(false);
+      }
+    } catch {
+      setOpenclawOnline(false);
+    }
+    setOpenclawTesting(false);
+  }, [saveOpenClawConfig]);
+
   // ── Nervous System ──
   interface WatchTopic {
     id: string;
@@ -276,10 +348,11 @@ export default function SettingsScreen() {
     loadAll();
     loadNervousSystem();
     loadThreatLog();
+    loadOpenClawConfig();
     return () => {
       if (telegramPollRef.current) clearInterval(telegramPollRef.current);
     };
-  }, [loadAll, loadNervousSystem, loadThreatLog]));
+  }, [loadAll, loadNervousSystem, loadThreatLog, loadOpenClawConfig]));
 
   // ── OAuth connect ──
   const handleConnect = useCallback(async (platform: string) => {
@@ -581,6 +654,160 @@ export default function SettingsScreen() {
             <View style={styles.linkCodeBlock}>
               <Text style={styles.linkCodeLabel}>Enter this code in the GamePlan Daemon app:</Text>
               <Text style={styles.linkCode}>{androidDaemonCode}</Text>
+            </View>
+          )}
+        </View>
+
+        {/* ── OPENCLAW BRAIN ── */}
+        <SectionHeader label="OPENCLAW BRAIN" accent="#8B5CF6" />
+        <View style={styles.card}>
+          {/* Header row */}
+          <Pressable
+            style={styles.connRow}
+            onPress={() => setOpenclawExpanded(v => !v)}
+          >
+            <View style={[styles.connIconWrap, { backgroundColor: '#8B5CF620' }]}>
+              <Ionicons name="hardware-chip-outline" size={18} color="#8B5CF6" />
+            </View>
+            <View style={styles.connInfo}>
+              <Text style={styles.connName}>OpenClaw</Text>
+              <Text style={styles.connSub}>
+                {openclawEnabled
+                  ? openclawMode === 'telegram' ? 'Active via Telegram' : 'Active via Gateway'
+                  : 'Connect Jarvis to your local AI compute'}
+              </Text>
+            </View>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              {openclawOnline !== null && (
+                <View style={[
+                  ocStyles.statusDot,
+                  { backgroundColor: openclawOnline ? '#10B981' : Colors.textTertiary }
+                ]} />
+              )}
+              <Switch
+                value={openclawEnabled}
+                onValueChange={async v => {
+                  setOpenclawEnabled(v);
+                  await saveOpenClawConfig({ enabled: v });
+                }}
+                trackColor={{ false: Colors.border, true: '#8B5CF660' }}
+                thumbColor={openclawEnabled ? '#8B5CF6' : Colors.textTertiary}
+              />
+            </View>
+          </Pressable>
+
+          {/* Expanded config */}
+          {openclawExpanded && (
+            <View style={[ocStyles.configBlock, styles.connRowBorder]}>
+              {/* Mode selector */}
+              <Text style={ocStyles.label}>Connection Mode</Text>
+              <View style={ocStyles.modeRow}>
+                {(['telegram', 'gateway'] as OpenClawMode[]).map(m => (
+                  <Pressable
+                    key={m}
+                    style={[ocStyles.modePill, openclawMode === m && ocStyles.modePillActive]}
+                    onPress={() => setOpenclawMode(m)}
+                  >
+                    <Ionicons
+                      name={m === 'telegram' ? 'paper-plane-outline' : 'server-outline'}
+                      size={12}
+                      color={openclawMode === m ? '#8B5CF6' : Colors.textTertiary}
+                    />
+                    <Text style={[ocStyles.modePillText, openclawMode === m && ocStyles.modePillTextActive]}>
+                      {m === 'telegram' ? 'Telegram' : 'Gateway'}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+
+              {/* Telegram mode fields */}
+              {openclawMode === 'telegram' && (
+                <>
+                  <Text style={ocStyles.label}>Telegram Chat ID</Text>
+                  <Text style={ocStyles.hint}>
+                    Your Telegram chat ID where OpenClaw listens. OpenClaw will receive tasks as Telegram messages and reply in that chat.
+                  </Text>
+                  <TextInput
+                    style={ocStyles.input}
+                    value={openclawTelegramChatId}
+                    onChangeText={setOpenclawTelegramChatId}
+                    placeholder="e.g. -100123456789"
+                    placeholderTextColor={Colors.textTertiary}
+                    keyboardType="numbers-and-punctuation"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                  />
+                </>
+              )}
+
+              {/* Gateway mode fields */}
+              {openclawMode === 'gateway' && (
+                <>
+                  <Text style={ocStyles.label}>Gateway URL</Text>
+                  <Text style={ocStyles.hint}>
+                    Your OpenClaw server URL exposed via a tunnel (ngrok, Cloudflare, Tailscale). E.g. https://xyz.ngrok.app
+                  </Text>
+                  <TextInput
+                    style={ocStyles.input}
+                    value={openclawGatewayUrl}
+                    onChangeText={setOpenclawGatewayUrl}
+                    placeholder="https://your-tunnel.ngrok.app"
+                    placeholderTextColor={Colors.textTertiary}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    keyboardType="url"
+                  />
+                  <Text style={[ocStyles.label, { marginTop: 10 }]}>API Token (optional)</Text>
+                  <TextInput
+                    style={ocStyles.input}
+                    value={openclawGatewayToken}
+                    onChangeText={setOpenclawGatewayToken}
+                    placeholder="Bearer token if your gateway requires auth"
+                    placeholderTextColor={Colors.textTertiary}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    secureTextEntry
+                  />
+                </>
+              )}
+
+              {/* Status result */}
+              {openclawOnline !== null && (
+                <View style={[ocStyles.statusRow, { backgroundColor: openclawOnline ? '#10B98120' : Colors.errorDim ?? '#FF000020' }]}>
+                  <Ionicons
+                    name={openclawOnline ? 'checkmark-circle' : 'close-circle'}
+                    size={14}
+                    color={openclawOnline ? '#10B981' : Colors.error}
+                  />
+                  <Text style={[ocStyles.statusText, { color: openclawOnline ? '#10B981' : Colors.error }]}>
+                    {openclawOnline ? 'OpenClaw is reachable' : 'Could not reach OpenClaw'}
+                  </Text>
+                </View>
+              )}
+
+              {/* Actions */}
+              <View style={ocStyles.actionRow}>
+                <Pressable
+                  style={[ocStyles.btn, ocStyles.btnSecondary]}
+                  onPress={testOpenClawConnection}
+                  disabled={openclawTesting || openclawSaving}
+                >
+                  {openclawTesting
+                    ? <ActivityIndicator size="small" color="#8B5CF6" />
+                    : <Text style={[ocStyles.btnText, { color: '#8B5CF6' }]}>Test Connection</Text>
+                  }
+                </Pressable>
+                <Pressable
+                  style={[ocStyles.btn, ocStyles.btnPrimary]}
+                  onPress={() => saveOpenClawConfig()}
+                  disabled={openclawSaving}
+                >
+                  {openclawSaving
+                    ? <ActivityIndicator size="small" color="#fff" />
+                    : <Text style={[ocStyles.btnText, { color: '#fff' }]}>Save</Text>
+                  }
+                </Pressable>
+              </View>
             </View>
           )}
         </View>
@@ -1572,5 +1799,108 @@ const tlStyles = StyleSheet.create({
     fontSize: 10,
     fontFamily: 'Inter_400Regular',
     color: Colors.textTertiary,
+  },
+});
+
+const ocStyles = StyleSheet.create({
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  configBlock: {
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    gap: 6,
+  },
+  label: {
+    fontSize: 11,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.textSecondary,
+    letterSpacing: 0.5,
+    marginBottom: 2,
+  },
+  hint: {
+    fontSize: 11,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textTertiary,
+    lineHeight: 15,
+    marginBottom: 4,
+  },
+  input: {
+    backgroundColor: Colors.surfaceAlt,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    fontSize: 13,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.text,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  modeRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 10,
+  },
+  modePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surfaceAlt,
+  },
+  modePillActive: {
+    borderColor: '#8B5CF6',
+    backgroundColor: '#8B5CF620',
+  },
+  modePillText: {
+    fontSize: 12,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.textTertiary,
+  },
+  modePillTextActive: {
+    color: '#8B5CF6',
+  },
+  statusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 8,
+    marginTop: 8,
+  },
+  statusText: {
+    fontSize: 12,
+    fontFamily: 'Inter_500Medium',
+  },
+  actionRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 12,
+  },
+  btn: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  btnPrimary: {
+    backgroundColor: '#8B5CF6',
+  },
+  btnSecondary: {
+    backgroundColor: 'transparent',
+    borderWidth: 1,
+    borderColor: '#8B5CF6',
+  },
+  btnText: {
+    fontSize: 13,
+    fontFamily: 'Inter_600SemiBold',
   },
 });

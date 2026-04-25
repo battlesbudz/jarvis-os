@@ -199,6 +199,39 @@ export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyR
   const formatHintKey = Object.keys(FORMAT_HINTS).find((k) => channelName.startsWith(k)) ?? "Telegram";
   const formatHint = FORMAT_HINTS[formatHintKey];
 
+  // OpenClaw bridge config
+  let openclawSection = "";
+  try {
+    const openclawPrefs = (prefsRow.status === "fulfilled" ? (prefsRow.value[0]?.data as any) : null) ?? {};
+    const ocCfg = openclawPrefs.openclawBridge;
+    if (ocCfg?.enabled) {
+      openclawSection = `\n## OpenClaw Compute Bridge (ACTIVE — mode: ${ocCfg.mode})
+OpenClaw is a locally-running AI agent on the user's machine with FULL computer-use capabilities. You have access to it right now via the \`openclaw_delegate\` tool.
+
+What OpenClaw can do (you cannot do these without it):
+- Execute shell commands and run scripts locally
+- Control the user's browser (click, type, navigate, extract content)
+- Read and write files on the user's computer
+- Run and test code in any language
+- Build complete apps using vibe coding (Claude-based sub-agents that write entire Replit projects)
+- Spawn and coordinate multiple sub-agents for complex multi-step builds
+- Access the user's local file system and installed applications
+- Self-improvement: build new Jarvis features and push them to the codebase
+
+**When to delegate to OpenClaw** (use \`openclaw_delegate\` immediately, don't describe what you'd do):
+- User asks to "build", "create", "code", or "write" an app or script
+- User asks to "run", "execute", or "test" code
+- User asks to control their browser or computer
+- User asks to "open" or interact with local apps/files
+- Any task requiring local compute, shell access, or code execution
+
+**How to delegate**: Call \`openclaw_delegate\` with a complete, specific task description. For Telegram mode, the result will arrive in the user's Telegram chat. For Gateway mode, the result is returned immediately in this conversation.
+
+Check status first if unsure: use \`openclaw_status\` to verify the bridge is reachable.`;
+    }
+  } catch {}
+
+
   const androidActive = isAndroidDaemonActive(userId);
   const desktopActive = isDesktopDaemonActive(userId);
   const daemonPaired = isUserPaired(userId);
@@ -231,7 +264,7 @@ ${recentlySurfacedSection ? `\n${recentlySurfacedSection}` : ""}
 ${userLifeContext?.priorityGoal ? `\n## Context\n- Priority: ${userLifeContext.priorityGoal}` : ""}
 ${daemonSection ? `\n${daemonSection}` : ""}
 
-You can manage tasks, commitments, and analyze patterns via the manage_tasks tool. You can act on emails via the gmail_action tool. You can run safe shell commands, send desktop notifications, or read/write files in the user's workspace via the daemon_action tool when a desktop daemon is paired. When an Android device daemon is paired, use android_* actions to control the phone — open apps, browse, screenshot, read the screen, and access files. Always confirm with the user before tap/type/swipe actions. Use these proactively when the user asks to do something — don't just describe what you'd do. Respond in the same language the user writes in.
+You can manage tasks, commitments, and analyze patterns via the manage_tasks tool. You can act on emails via the gmail_action tool. You can run safe shell commands, send desktop notifications, or read/write files in the user's workspace via the daemon_action tool when a desktop daemon is paired. When an Android device daemon is paired, use android_* actions to control the phone — open apps, browse, screenshot, read the screen, and access files. Always confirm with the user before tap/type/swipe actions. Use these proactively when the user asks to do something — don't just describe what you'd do. Respond in the same language the user writes in.${openclawSection}
 
 ## Autonomous background jobs
 When a user's request involves multi-step research, drafting a document or plan, or composing an email — anything that would take more than a quick lookup — call the queue_background_job tool immediately instead of answering inline. This queues the work for a background sub-agent and lets you reply instantly. After calling the tool, tell the user: "I've queued that — you'll get a notification when it's done." Do not attempt to do the research or drafting yourself in the same turn. Examples of requests that MUST use queue_background_job:

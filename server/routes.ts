@@ -5020,6 +5020,58 @@ Extract up to 8 memories per batch.`;
     }
   });
 
+  // ── OpenClaw Compute Brain — Config ──────────────────────────────────────
+
+  app.get("/api/openclaw/config", async (req: Request, res: Response) => {
+    const userId = req.userId;
+    if (!userId) return res.status(401).json({ error: "Not authenticated" });
+    try {
+      const rows = await db
+        .select({ data: schema.userPreferences.data })
+        .from(schema.userPreferences)
+        .where(eq(schema.userPreferences.userId, userId))
+        .limit(1);
+      const prefs = (rows[0]?.data as Record<string, any>) ?? {};
+      const cfg = prefs.openclawBridge ?? { mode: "telegram", enabled: false };
+      res.json({ config: cfg });
+    } catch (err) {
+      console.error("[openclaw] GET config failed:", err);
+      res.status(500).json({ error: "Failed to load config" });
+    }
+  });
+
+  app.post("/api/openclaw/config", async (req: Request, res: Response) => {
+    const userId = req.userId;
+    if (!userId) return res.status(401).json({ error: "Not authenticated" });
+    try {
+      const { mode, telegramChatId, gatewayUrl, gatewayToken, enabled } = req.body as Record<string, any>;
+      const rows = await db
+        .select({ data: schema.userPreferences.data })
+        .from(schema.userPreferences)
+        .where(eq(schema.userPreferences.userId, userId))
+        .limit(1);
+      const prefs = (rows[0]?.data as Record<string, any>) ?? {};
+      prefs.openclawBridge = {
+        mode: mode ?? "telegram",
+        telegramChatId: telegramChatId ?? prefs.openclawBridge?.telegramChatId ?? "",
+        gatewayUrl: gatewayUrl ?? prefs.openclawBridge?.gatewayUrl ?? "",
+        gatewayToken: gatewayToken ?? prefs.openclawBridge?.gatewayToken ?? "",
+        enabled: enabled ?? false,
+      };
+      await db
+        .insert(schema.userPreferences)
+        .values({ userId, data: prefs })
+        .onConflictDoUpdate({
+          target: schema.userPreferences.userId,
+          set: { data: prefs, updatedAt: new Date() },
+        });
+      res.json({ ok: true, config: prefs.openclawBridge });
+    } catch (err) {
+      console.error("[openclaw] POST config failed:", err);
+      res.status(500).json({ error: "Failed to save config" });
+    }
+  });
+
   // ── Nervous System — Watch Topics ────────────────────────────────────────
 
   app.get("/api/nervous-system/watches", async (req: Request, res: Response) => {

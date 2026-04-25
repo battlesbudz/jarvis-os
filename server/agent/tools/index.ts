@@ -53,6 +53,7 @@ import {
   browserExtractTool,
   browserCloseTool,
 } from "./browserTools";
+import { openclawDelegateTool, openclawStatusTool } from "./openclawTool";
 
 export const ALL_TOOLS: AgentTool[] = [
   webSearchTool,
@@ -113,6 +114,8 @@ export const ALL_TOOLS: AgentTool[] = [
   browserScreenshotTool,
   browserExtractTool,
   browserCloseTool,
+  openclawDelegateTool,
+  openclawStatusTool,
 ];
 
 const TOOL_INDEX = new Map(ALL_TOOLS.map((t) => [t.name, t]));
@@ -175,6 +178,8 @@ export function telegramCoachTools(opts: { hasGoogle: boolean }): AgentTool[] {
     browserScreenshotTool,
     browserExtractTool,
     browserCloseTool,
+    openclawDelegateTool,
+    openclawStatusTool,
   ];
   if (opts.hasGoogle) {
     base.push(gmailActionTool, gmailDraftTool, fetchCalendarTool, driveCreateFileTool, driveListFilesTool, driveReadFileTool);
@@ -241,4 +246,6 @@ export {
   browserScreenshotTool,
   browserExtractTool,
   browserCloseTool,
+  openclawDelegateTool,
+  openclawStatusTool,
 };
