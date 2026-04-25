@@ -27,7 +27,7 @@ Choose agent_type based on the request:
 - planning: phased project plans, goal breakdowns, action plans
 - email: composing an outbound email on the user's behalf
 
-Do NOT use for: quick one-sentence answers, reading today's tasks, or anything already answered by another tool.`,
+Do NOT use for: quick one-sentence answers, reading today's tasks, anything answered by another tool, or any Discord server action (listing/deleting channels — use discord_list_channels and discord_delete_channel instead).`,
   parameters: {
     type: "object",
     properties: {
@@ -79,7 +79,7 @@ Do NOT use for: quick one-sentence answers, reading today's tasks, or anything a
       );
       return {
         ok: true,
-        content: `Queued a ${agentType} job (id=${jobId}). The user will be notified when it is ready. Tell the user: "I've queued that — you'll get a notification when it's done."`,
+        content: `Background job queued successfully (type=${agentType}, id=${jobId}). The user will receive an inbox notification when it finishes.`,
         label: `Queued ${agentType} job`,
         detail: jobId,
       };

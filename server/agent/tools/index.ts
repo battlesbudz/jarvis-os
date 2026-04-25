@@ -18,6 +18,7 @@ import { connectChannelTool } from "./connectChannel";
 import { discordPostTool } from "./discordPost";
 import { discordCreateChannelTool } from "./discordCreateChannel";
 import { discordDeleteChannelTool } from "./discordDeleteChannel";
+import { discordListChannelsTool } from "./discordListChannels";
 import { scheduleJarvisTaskTool } from "./scheduleJarvisTask";
 import {
   scheduleChannelReportTool,
@@ -77,6 +78,7 @@ export const ALL_TOOLS: AgentTool[] = [
   discordPostTool,
   discordCreateChannelTool,
   discordDeleteChannelTool,
+  discordListChannelsTool,
   scheduleJarvisTaskTool,
   scheduleChannelReportTool,
   listChannelSchedulesTool,
@@ -139,6 +141,7 @@ export function telegramCoachTools(opts: { hasGoogle: boolean }): AgentTool[] {
     discordPostTool,
     discordCreateChannelTool,
     discordDeleteChannelTool,
+    discordListChannelsTool,
     scheduleJarvisTaskTool,
     scheduleChannelReportTool,
     listChannelSchedulesTool,
@@ -203,6 +206,7 @@ export {
   discordPostTool,
   discordCreateChannelTool,
   discordDeleteChannelTool,
+  discordListChannelsTool,
   scheduleJarvisTaskTool,
   scheduleChannelReportTool,
   listChannelSchedulesTool,
