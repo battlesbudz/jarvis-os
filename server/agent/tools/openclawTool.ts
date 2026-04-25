@@ -621,30 +621,32 @@ ${repoStructure}
       return delegateResult;
     }
 
-    // Attempt an immediate smoke test if the tool is already in the live registry.
-    // This happens when OpenClaw wrote the files and the server hot-reloaded them.
-    // If not registered yet (the normal case until task #218 auto-applies code),
-    // append a clear instruction so Jarvis tells the user what to do next.
-    let smokeNote = "";
-    if (_toolResolver) {
-      const registeredTool = _toolResolver(featureName);
-      if (registeredTool) {
-        console.log(`[OpenClaw] Tool "${featureName}" is already registered — running immediate smoke test`);
-        const smokeResult = await openclawTestTool.execute(
-          { tool_name: featureName, test_args: "{}" },
-          ctx
-        );
-        smokeNote = smokeResult.ok
-          ? `\n\n---\nSmoke test: PASSED — the tool ran successfully with empty args.`
-          : `\n\n---\nSmoke test: FAILED — ${smokeResult.content}`;
-      } else {
-        smokeNote =
-          `\n\n---\nNext step: apply the code above to the codebase ` +
-          `(save the tool file and add the index.ts registration lines), ` +
-          `then call openclaw_test_tool with tool_name="${featureName}" and safe dummy args ` +
-          `to verify it works before using it.`;
-      }
-    }
+    // Always attempt a deterministic smoke test.
+    // - If the tool is registered (OpenClaw hot-applied the code): executes it and
+    //   returns the actual output.
+    // - If not yet registered (code returned as text, not yet applied):
+    //   openclawTestTool returns a clear "not registered" message with instructions.
+    // Either way, the result is always included in the same response turn.
+    //
+    // We extend ctx.allowedToolNames to include the just-built tool name so the
+    // per-surface access control check inside openclawTestTool does not block this
+    // internal invocation — the test is explicitly scoped to what was just built.
+    const ctxForSmokeTest = {
+      ...ctx,
+      allowedToolNames: ctx.allowedToolNames
+        ? new Set([...ctx.allowedToolNames, featureName])
+        : undefined,
+    };
+
+    console.log(`[OpenClaw] Running smoke test for tool "${featureName}" after build`);
+    const smokeResult = await openclawTestTool.execute(
+      { tool_name: featureName, test_args: "{}" },
+      ctxForSmokeTest
+    );
+
+    const smokeNote = smokeResult.ok
+      ? `\n\n---\nSmoke test: PASSED\nOutput: ${smokeResult.content}`
+      : `\n\n---\nSmoke test: ${smokeResult.content}`;
 
     return {
       ok: true,
