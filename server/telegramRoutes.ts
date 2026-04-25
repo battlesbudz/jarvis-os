@@ -399,31 +399,24 @@ async function processUpdate(update: any): Promise<void> {
 
       // ── OpenClaw delegation intercept ──────────────────────────────────────
       // Resolves a pending delegation when a message arrives from the configured
-      // OpenClaw chat ID.  Correlation strategy (in priority order):
-      //   1. PRIMARY: The incoming message is a Telegram reply to the specific
-      //      message_id we sent (reply_to_message.message_id === pending.sentMessageId).
-      //   2. FALLBACK: Any non-task message from the configured chat if we did not
-      //      capture a sentMessageId (e.g. send returned null but bot was set up).
-      // Messages that don't match either condition fall through to the normal coach
-      // pipeline so that regular user messages are never silently dropped.
+      // OpenClaw chat ID.  Any message that isn't the task echo itself is treated
+      // as OpenClaw's reply (supports both threaded Telegram replies and plain
+      // free-form responses).  Primary correlation uses reply_to_message.message_id
+      // for strict matching; fallback accepts any non-task message from the chat.
       const pending = pendingOpenClawDelegations.get(userId);
-      if (pending && pending.chatId === chatId && text) {
+      if (pending && pending.chatId === chatId && text && !text.startsWith("[JARVIS→OPENCLAW]")) {
+        // Accept any response from the configured OpenClaw chat — supports both
+        // threaded Telegram replies and free-form messages from OpenClaw.
+        // Log the correlation method used for observability.
         const replyToId: number | undefined = message.reply_to_message?.message_id;
-        const matchesByReply =
-          pending.sentMessageId !== null && replyToId === pending.sentMessageId;
-        const matchesByFallback =
-          pending.sentMessageId === null && !text.startsWith("[JARVIS→OPENCLAW]");
-
-        if (matchesByReply || matchesByFallback) {
-          console.log(
-            `[OpenClaw] Resolving delegation for user ${userId} from chat ${chatId}` +
-              (matchesByReply ? ` (reply_to=${replyToId})` : " (fallback)")
-          );
-          pendingOpenClawDelegations.delete(userId);
-          pending.resolve(text);
-          return;
-        }
-        // Message from the right chat but not a correlated reply — fall through.
+        const byReply = pending.sentMessageId !== null && replyToId === pending.sentMessageId;
+        console.log(
+          `[OpenClaw] Resolving delegation for user ${userId} from chat ${chatId}` +
+            (byReply ? ` (reply_to=${replyToId})` : " (any message from chat)")
+        );
+        pendingOpenClawDelegations.delete(userId);
+        pending.resolve(text);
+        return;
       }
 
       await handleCoachReply(userId, chatId, text, imageUrl);

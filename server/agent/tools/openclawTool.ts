@@ -200,34 +200,46 @@ export const openclawDelegateTool: AgentTool = {
         );
       }
 
-      // Await a reply from OpenClaw.  telegramRoutes.ts resolves this promise
-      // when it receives a message from chatId whose reply_to_message.message_id
-      // matches sentResult.message_id (primary), or any message from the chat
-      // that is not a Jarvis→OpenClaw task itself (fallback).
-      const replyText = await new Promise<string>((resolve, reject) => {
-        const timer = setTimeout(() => {
-          pendingOpenClawDelegations.delete(userId);
-          reject(
-            new Error(
-              `OpenClaw did not reply within ${Math.round(timeoutMs / 60000)} minutes. The task was sent (message_id=${sentResult.message_id}). Check your Telegram chat for partial output.`
-            )
-          );
-        }, timeoutMs);
+      // Await a reply from OpenClaw.  telegramRoutes.ts drives the polling:
+      // the existing Telegram poller (processUpdate) fires every few seconds and
+      // resolves this promise when it receives any message from chatId that is
+      // not the task itself (primary: reply_to_message_id match; fallback: any
+      // non-task message from the same chat).  This covers both threaded replies
+      // and free-form responses from OpenClaw.
+      let replyText: string;
+      try {
+        replyText = await new Promise<string>((resolve, reject) => {
+          const timer = setTimeout(() => {
+            pendingOpenClawDelegations.delete(userId);
+            reject(
+              new Error(
+                `OpenClaw did not reply within ${Math.round(timeoutMs / 60000)} minutes. ` +
+                  `The task was sent (message_id=${sentResult.message_id}). ` +
+                  `Check your Telegram chat for partial output.`
+              )
+            );
+          }, timeoutMs);
 
-        pendingOpenClawDelegations.set(userId, {
-          chatId,
-          sentMessageId: sentResult.message_id,
-          resolve: (text: string) => {
-            clearTimeout(timer);
-            resolve(text);
-          },
-          reject: (err: Error) => {
-            clearTimeout(timer);
-            reject(err);
-          },
-          timer,
+          pendingOpenClawDelegations.set(userId, {
+            chatId,
+            sentMessageId: sentResult.message_id,
+            resolve: (text: string) => {
+              clearTimeout(timer);
+              resolve(text);
+            },
+            reject: (err: Error) => {
+              clearTimeout(timer);
+              reject(err);
+            },
+            timer,
+          });
         });
-      }).catch((err: Error) => `[timeout] ${err.message}`);
+      } catch (err) {
+        return fail(
+          err instanceof Error ? err.message : String(err),
+          "openclaw_telegram_timeout"
+        );
+      }
 
       return ok(replyText, "openclaw_delegate", `telegram/message_id=${sentResult.message_id}`);
     }
