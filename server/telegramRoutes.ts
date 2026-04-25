@@ -35,6 +35,36 @@ function generateLinkCode(): string {
   return code;
 }
 
+// ── OpenClaw fallback helper ──────────────────────────────────────────────────
+// Finds the userId whose openclawBridge.telegramChatId equals the given chatId
+// (and bridge is enabled), then returns that user's linked Telegram chatId so we
+// can send the fallback coaching reply to the right place.
+async function findUserByOpenClawChatId(
+  openclawChatId: string
+): Promise<{ userId: string; userChatId: string } | null> {
+  try {
+    const prefRows = await db
+      .select({ userId: schema.userPreferences.userId, data: schema.userPreferences.data })
+      .from(schema.userPreferences)
+      .where(
+        sql`${schema.userPreferences.data}->'openclawBridge'->>'telegramChatId' = ${openclawChatId} AND ${schema.userPreferences.data}->'openclawBridge'->>'enabled' = 'true'`
+      )
+      .limit(1);
+    if (prefRows.length === 0) return null;
+    const { userId } = prefRows[0];
+    const linkRows = await db
+      .select({ chatId: schema.telegramLinks.chatId })
+      .from(schema.telegramLinks)
+      .where(eq(schema.telegramLinks.userId, userId))
+      .limit(1);
+    if (linkRows.length === 0) return null;
+    return { userId, userChatId: linkRows[0].chatId };
+  } catch (err) {
+    console.error("[OpenClaw] findUserByOpenClawChatId DB error:", err);
+    return null;
+  }
+}
+
 async function handleCoachReply(userId: string, chatId: string, userText: string, imageUrl?: string): Promise<void> {
   try {
     const { reply, attachments } = await runCoachAgent({
@@ -304,6 +334,26 @@ async function processUpdate(update: any): Promise<void> {
         }
         // No correlation key matched for this pending entry — continue scanning
         // in case another pending entry for a different user shares this chatId.
+      }
+
+      // ── OpenClaw fallback ────────────────────────────────────────────────
+      // No pending delegation matched this chatId. Check whether the chatId is a
+      // configured OpenClaw bridge chat for any user (e.g. OpenClaw sent an
+      // unsolicited status update, or the delegation timed out and this is a
+      // late reply). If so, forward the message to that user's Jarvis coaching
+      // pipeline so the result still surfaces in their conversation.
+      const ocUserLink = await findUserByOpenClawChatId(chatId);
+      if (ocUserLink) {
+        console.log(
+          `[OpenClaw] Fallback: no pending delegation matched; routing message from OpenClaw chat ${chatId} to user ${ocUserLink.userId} coaching pipeline`
+        );
+        await handleCoachReply(
+          ocUserLink.userId,
+          ocUserLink.userChatId,
+          `[OpenClaw result] ${text}`,
+          imageUrl
+        );
+        return;
       }
     }
 
