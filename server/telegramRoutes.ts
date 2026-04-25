@@ -18,6 +18,7 @@ import { runAgent } from "./agent/harness";
 import { telegramCoachTools } from "./agent/tools";
 import { runCoachAgent } from "./channels/coachAgent";
 import { completePairing as completeDiscordPairing } from "./discord/manager";
+import { pendingOpenClawDelegations } from "./agent/tools/openclawTool";
 import OpenAI from "openai";
 
 const openai = new OpenAI({
@@ -394,7 +395,21 @@ async function processUpdate(update: any): Promise<void> {
         return;
       }
 
-      await handleCoachReply(link[0].userId, chatId, text, imageUrl);
+      const userId = link[0].userId;
+
+      // ── OpenClaw delegation intercept ──────────────────────────────────────
+      // If this message comes from the user's configured OpenClaw Telegram chat,
+      // and there's a pending delegation for this user, resolve it instead of
+      // routing to the coach pipeline.
+      const pending = pendingOpenClawDelegations.get(userId);
+      if (pending && pending.chatId === chatId && text) {
+        console.log(`[OpenClaw] Resolving pending delegation for user ${userId} from chat ${chatId}`);
+        pendingOpenClawDelegations.delete(userId);
+        pending.resolve(text);
+        return;
+      }
+
+      await handleCoachReply(userId, chatId, text, imageUrl);
     } catch (err) {
       console.error("Error handling Telegram message:", err);
       await sendMessage(chatId, "Sorry, something went wrong. Please try again.");
