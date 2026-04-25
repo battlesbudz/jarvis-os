@@ -111,9 +111,11 @@ async function registerExpoPushToken(): Promise<string | undefined> {
     }
     if (finalStatus !== 'granted') return undefined;
 
-    const projectId =
-      (Constants.expoConfig?.extra as Record<string, any> | undefined)?.eas?.projectId ??
-      (Constants as any).easConfig?.projectId;
+    const easExtra = Constants.expoConfig?.extra?.eas;
+    const extraEasProjectId: string | undefined =
+      easExtra && typeof easExtra.projectId === 'string' ? easExtra.projectId : undefined;
+    const projectId: string | undefined =
+      extraEasProjectId ?? Constants.easConfig?.projectId ?? undefined;
 
     const tokenData = projectId
       ? await Notifications.getExpoPushTokenAsync({ projectId })
