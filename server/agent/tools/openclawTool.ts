@@ -1017,7 +1017,7 @@ export const openclawTestTool: AgentTool = {
       test_args: {
         type: "string",
         description:
-          "JSON object string of arguments to pass to the tool. Use safe, non-destructive dummy values. If omitted, an empty object is used.",
+          "JSON object string of arguments to pass to the tool. Use safe, non-destructive dummy values. If omitted, safe dummy values are auto-generated from the tool's JSON Schema (required fields only).",
       },
     },
     required: ["tool_name"],
@@ -1062,14 +1062,16 @@ export const openclawTestTool: AgentTool = {
     const testArgsRaw = hasExplicitArgs ? String(args.test_args).trim() : "";
     let callerArgs: Record<string, unknown> | null = null;
     if (hasExplicitArgs && testArgsRaw) {
+      let parsed: unknown;
       try {
-        const parsed = JSON.parse(testArgsRaw);
-        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-          callerArgs = parsed as Record<string, unknown>;
-        }
+        parsed = JSON.parse(testArgsRaw);
       } catch {
         return fail(`test_args is not valid JSON: ${testArgsRaw}`);
       }
+      if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+        return fail(`test_args must be a JSON object, got: ${testArgsRaw}`);
+      }
+      callerArgs = parsed as Record<string, unknown>;
     }
 
     if (!_toolResolver) {
