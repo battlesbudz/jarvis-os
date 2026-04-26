@@ -5567,12 +5567,22 @@ Extract up to 8 memories per batch.`;
         .from(integrationStatus)
         .where(eq(integrationStatus.userId, userId));
 
+      // All integrations the app supports — returned as unconfigured by default
+      // so the UI always has a complete picture even before the first validator pass.
+      const KNOWN_INTEGRATIONS = [
+        "google", "outlook", "telegram", "discord", "slack", "whatsapp",
+      ] as const;
+
+      const now = new Date().toISOString();
       const result: Record<string, {
         status: string;
         errorMessage: string | null;
         expiresAt: string | null;
         lastCheckedAt: string;
       }> = {};
+      for (const key of KNOWN_INTEGRATIONS) {
+        result[key] = { status: "unconfigured", errorMessage: null, expiresAt: null, lastCheckedAt: now };
+      }
       for (const row of rows) {
         result[row.integration] = {
           status: row.status,
