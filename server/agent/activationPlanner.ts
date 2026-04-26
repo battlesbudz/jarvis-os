@@ -324,6 +324,7 @@ export class ActivationPlanner {
     const isChannelSession = source === "channel";
 
     // ── Rule 1: Night-time with no urgent signals → skip model session ─────
+    // "night" bucket = local hours 22:00–04:59 (22 inclusive through 4 inclusive).
     // Channel sessions always run (user explicitly sent a message).
     if (timeOfDay === "night" && !hasUrgentSignals && !isChannelSession) {
       return {
@@ -335,7 +336,7 @@ export class ActivationPlanner {
         sessionContext,
         shouldRun: false,
         reason:
-          "Night-time hours (0–4am local) with no urgent signals — skipping model session to reduce idle cost",
+          "Night-time hours (10pm–5am local) with no urgent signals — skipping model session to reduce idle cost",
       };
     }
 
