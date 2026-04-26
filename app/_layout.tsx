@@ -19,6 +19,7 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { queryClient, apiRequest } from "@/lib/query-client";
 import { runMigrations, isOnboardingComplete } from "@/lib/storage";
 import { AuthProvider, useAuth } from "@/lib/auth-context";
+import { WakeWordProvider } from "@/lib/wake-word-context";
 
 SplashScreen.preventAutoHideAsync();
 
@@ -205,11 +206,13 @@ export default function RootLayout() {
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>
         <AuthProvider>
-          <GestureHandlerRootView>
-            <KeyboardProvider>
-              <AppNavigator />
-            </KeyboardProvider>
-          </GestureHandlerRootView>
+          <WakeWordProvider>
+            <GestureHandlerRootView>
+              <KeyboardProvider>
+                <AppNavigator />
+              </KeyboardProvider>
+            </GestureHandlerRootView>
+          </WakeWordProvider>
         </AuthProvider>
       </QueryClientProvider>
     </ErrorBoundary>

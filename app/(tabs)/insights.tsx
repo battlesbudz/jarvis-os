@@ -56,6 +56,7 @@ import {
 } from '@/lib/notifications';
 import { getApiUrl, queryClient, apiRequest } from '@/lib/query-client';
 import { authFetch, getAuthToken } from '@/lib/auth-context';
+import { useWakeWord } from '@/lib/wake-word-context';
 import { Linking, Image } from 'react-native';
 
 interface EmailSuggestion {
@@ -820,6 +821,14 @@ export default function InsightsScreen() {
   useEffect(() => { talkModeRef.current = talkModeEnabled; }, [talkModeEnabled]);
   useEffect(() => { isRecordingRef.current = isRecording; }, [isRecording]);
 
+  // App-level wake word events — fired by WakeWordContext even when insights is not focused
+  const { pendingWakeEvent, clearWakeEvent } = useWakeWord();
+  useEffect(() => {
+    if (!pendingWakeEvent) return;
+    clearWakeEvent();
+    startRecordingRef.current();
+  }, [pendingWakeEvent, clearWakeEvent]);
+
   const stopSpeaking = useCallback(() => {
     speakAbortRef.current?.abort();
     speakAbortRef.current = null;
@@ -1282,47 +1291,8 @@ export default function InsightsScreen() {
       talkModeRef.current = enabled;
     }).catch(() => {});
 
-    // Subscribe to wake word trigger events via SSE
-    let sseAborted = false;
-    const connectWakeSSE = () => {
-      if (sseAborted) return;
-      getAuthToken().then(token => {
-        if (sseAborted || !token) return;
-        const url = new URL('/api/voice/wake-events', getApiUrl()).toString();
-        expoFetch(url, { headers: { Authorization: `Bearer ${token}` } })
-          .then(res => {
-            if (sseAborted || !res.body) return;
-            const reader = res.body.getReader();
-            const decode = new TextDecoder();
-            const pump = (): void => {
-              reader.read().then(({ done, value }) => {
-                if (done || sseAborted) return;
-                const text = decode.decode(value, { stream: true });
-                const lines = text.split('\n');
-                for (const line of lines) {
-                  if (line.startsWith('data:')) {
-                    try {
-                      const ev = JSON.parse(line.slice(5).trim());
-                      if (ev.phrase) {
-                        // Wake word fired — auto-start recording (Talk Mode only affects post-TTS re-arming)
-                        startRecordingRef.current();
-                      }
-                    } catch { /* malformed line */ }
-                  }
-                }
-                pump();
-              }).catch(() => { if (!sseAborted) setTimeout(connectWakeSSE, 3000); });
-            };
-            pump();
-          })
-          .catch(() => { if (!sseAborted) setTimeout(connectWakeSSE, 5000); });
-      }).catch(() => {});
-    };
-    connectWakeSSE();
-
     // Cleanup on blur: stop recording if Talk Mode was active and mic is open
     return () => {
-      sseAborted = true;
       if (talkModeRef.current && isRecordingRef.current) {
         // Cancel the in-progress recording without sending it (user navigated away)
         setIsRecording(false);
@@ -2120,14 +2090,33 @@ export default function InsightsScreen() {
       </View>
 
       <View style={[styles.inputContainer, { paddingBottom: tabBarHeight + 8 }]}>
-        {talkModeEnabled && (
-          <View style={{ position: 'absolute', top: -22, left: 14, flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-            <Ionicons name="chatbubbles" size={10} color={Colors.success} />
-            <Text style={{ fontSize: 10, color: Colors.success, fontFamily: 'Inter_500Medium', letterSpacing: 0.3 }}>
-              Talk Mode
-            </Text>
-          </View>
-        )}
+        <Pressable
+          style={{ position: 'absolute', top: -24, left: 12, flexDirection: 'row', alignItems: 'center', gap: 5, paddingVertical: 3, paddingHorizontal: 8, borderRadius: 10, backgroundColor: talkModeEnabled ? 'rgba(34,197,94,0.12)' : 'transparent' }}
+          onPress={() => {
+            const next = !talkModeEnabled;
+            setTalkModeEnabled(next);
+            talkModeRef.current = next;
+            if (!next && isRecordingRef.current) {
+              // Immediately disarm the active loop
+              setIsRecording(false);
+              if (Platform.OS !== 'web') {
+                recordingRef.current?.stopAndUnloadAsync().catch(() => {});
+                recordingRef.current = null;
+                Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true }).catch(() => {});
+              } else {
+                webRecorderRef.current?.stop();
+                webRecorderRef.current = null;
+              }
+            }
+            apiRequest('PUT', '/api/voice/wake-settings', { talkModeEnabled: next }).catch(() => {});
+          }}
+        >
+          <Ionicons name="chatbubbles" size={10} color={talkModeEnabled ? Colors.success : Colors.textSecondary} />
+          <Text style={{ fontSize: 10, color: talkModeEnabled ? Colors.success : Colors.textSecondary, fontFamily: 'Inter_500Medium', letterSpacing: 0.3 }}>
+            Talk Mode
+          </Text>
+          <Ionicons name={talkModeEnabled ? 'toggle' : 'toggle-outline'} size={14} color={talkModeEnabled ? Colors.success : Colors.textSecondary} />
+        </Pressable>
         <Pressable
           style={[styles.micBtn, isRecording && styles.micBtnRecording, isBaseLoading && { opacity: 0.4 }]}
           onPress={isSpeaking ? stopSpeaking : isRecording ? stopRecordingAndSend : startRecording}
