@@ -750,6 +750,15 @@ export default function ProfileScreen() {
     }
   }, [discordSlashConfig]);
 
+  const handleRefreshSlashConfig = useCallback(async () => {
+    try {
+      const res = await apiRequest('GET', '/api/channels/discord/interactions-config');
+      const data = await res.json();
+      setDiscordSlashConfig(data);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    } catch {}
+  }, []);
+
   const handleCopyInteractionsUrl = useCallback(async () => {
     if (!discordSlashConfig?.interactionsUrl) return;
     await Clipboard.setStringAsync(discordSlashConfig.interactionsUrl);
@@ -2701,32 +2710,39 @@ export default function ProfileScreen() {
 
                 {/* Slash commands setup */}
                 <View style={{ borderTopWidth: 1, borderTopColor: Colors.border, marginTop: 6 }}>
-                  <Pressable
-                    onPress={handleToggleSlashSetup}
-                    style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 10 }}
-                  >
-                    <View style={{ flex: 1 }}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                        <Text style={{ fontSize: 13, fontFamily: 'Inter_500Medium', color: Colors.text }}>Slash commands</Text>
-                        {discordSlashConfig && !discordSlashConfig.publicKeyConfigured && (
-                          <View style={{ paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, backgroundColor: 'rgba(245,158,11,0.15)' }}>
-                            <Text style={{ fontSize: 10, fontFamily: 'Inter_600SemiBold', color: '#F59E0B' }}>Setup needed</Text>
-                          </View>
-                        )}
-                        {discordSlashConfig?.publicKeyConfigured && (
-                          <Ionicons name="checkmark-circle" size={14} color="#22C55E" />
-                        )}
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <Pressable
+                      onPress={handleToggleSlashSetup}
+                      style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 10 }}
+                    >
+                      <View style={{ flex: 1 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <Text style={{ fontSize: 13, fontFamily: 'Inter_500Medium', color: Colors.text }}>Slash commands</Text>
+                          {discordSlashConfig && !discordSlashConfig.publicKeyConfigured && (
+                            <View style={{ paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, backgroundColor: 'rgba(245,158,11,0.15)' }}>
+                              <Text style={{ fontSize: 10, fontFamily: 'Inter_600SemiBold', color: '#F59E0B' }}>Setup needed</Text>
+                            </View>
+                          )}
+                          {discordSlashConfig?.publicKeyConfigured && (
+                            <Ionicons name="checkmark-circle" size={14} color="#22C55E" />
+                          )}
+                        </View>
+                        <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, marginTop: 1 }}>
+                          Enable /jarvis commands in your server
+                        </Text>
                       </View>
-                      <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, marginTop: 1 }}>
-                        Enable /jarvis commands in your server
-                      </Text>
-                    </View>
-                    <Ionicons
-                      name={discordShowSlashSetup ? 'chevron-up' : 'chevron-down'}
-                      size={16}
-                      color={Colors.textSecondary}
-                    />
-                  </Pressable>
+                      <Ionicons
+                        name={discordShowSlashSetup ? 'chevron-up' : 'chevron-down'}
+                        size={16}
+                        color={Colors.textSecondary}
+                      />
+                    </Pressable>
+                    {discordShowSlashSetup && (
+                      <Pressable onPress={handleRefreshSlashConfig} style={{ paddingLeft: 8, paddingVertical: 10 }} hitSlop={8}>
+                        <Ionicons name="refresh-outline" size={16} color={Colors.textSecondary} />
+                      </Pressable>
+                    )}
+                  </View>
 
                   {discordShowSlashSetup && (
                     <View style={{ paddingBottom: 12, gap: 12 }}>
