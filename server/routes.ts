@@ -5525,9 +5525,12 @@ Extract up to 8 memories per batch.`;
     const userId = (req as any).userId as string | undefined;
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
     try {
-      const { listUserSkills } = await import("./intelligence/skillWriter");
-      const skills = await listUserSkills(userId);
-      res.json({ skills });
+      const { listUserSkills, getUserSkillSignals } = await import("./intelligence/skillWriter");
+      const [skills, signals] = await Promise.all([
+        listUserSkills(userId),
+        Promise.resolve(getUserSkillSignals(userId)),
+      ]);
+      res.json({ skills, signals });
     } catch (err) {
       console.error("[Skills] GET /api/skills failed:", err);
       res.status(500).json({ error: "Failed to list skills" });

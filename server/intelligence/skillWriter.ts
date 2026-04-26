@@ -39,7 +39,7 @@ export interface SkillFile {
   version: number;
 }
 
-interface SkillSignalState {
+export interface SkillSignalState {
   count: number;
   lastSeen: string;
   example: string;
@@ -294,24 +294,84 @@ Reply with ONLY valid JSON.`;
 // ── Hot-reload watcher ───────────────────────────────────────────────────────
 
 /**
+ * Active per-user directory watchers (used by the portable watcher path).
+ */
+const activeUserWatchers = new Map<string, ReturnType<typeof watch>>();
+
+/**
+ * Start watching a specific user skill directory. No-op if already watching.
+ */
+function watchUserDir(userId: string, dir: string): void {
+  if (activeUserWatchers.has(userId)) return;
+  try {
+    const w = watch(dir, (_event, filename) => {
+      if (!filename || !filename.endsWith(".skill.json")) return;
+      invalidateSkillCache(userId);
+      console.log(`[SkillWriter] hot-reload: cache invalidated for user ${userId}`);
+    });
+    activeUserWatchers.set(userId, w);
+  } catch {
+    // Non-fatal — polling fallback will still invalidate on TTL expiry.
+  }
+}
+
+/**
+ * Poll the skills root every 60 s, registering per-user dir watchers for any
+ * new user directories found. This is the portable alternative to recursive
+ * fs.watch (which is not reliably supported on Linux/NixOS).
+ */
+async function pollForNewUserDirs(): Promise<void> {
+  try {
+    const entries = await fs.readdir(SKILLS_DIR, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isDirectory() && !activeUserWatchers.has(entry.name)) {
+        const userDir = path.join(SKILLS_DIR, entry.name);
+        watchUserDir(entry.name, userDir);
+      }
+    }
+  } catch {
+    // Skills root may not exist yet — ignore until first skill is written.
+  }
+}
+
+/**
  * Watch the skills root directory for new/deleted files and invalidate the
  * cache for the affected user. Call once at server startup.
+ *
+ * Strategy: per-user non-recursive dir watchers (portable on Linux/macOS).
+ * A 60-second poll discovers new user directories and registers watchers.
+ * The 5-minute cache TTL acts as a final safety net.
  */
 export function startSkillWatcher(): void {
-  // Ensure the root skills directory exists before watching
   fs.mkdir(SKILLS_DIR, { recursive: true })
-    .then(() => {
-      watch(SKILLS_DIR, { recursive: true }, (_event, filename) => {
-        if (!filename || !filename.endsWith(".skill.json")) return;
-        // filename is "<userId>/<timestamp>-<slug>.skill.json" on most platforms
-        const parts = filename.split(path.sep);
-        const userId = parts[0];
-        if (userId) {
-          invalidateSkillCache(userId);
-          console.log(`[SkillWriter] hot-reload: cache invalidated for user ${userId}`);
-        }
-      });
+    .then(async () => {
+      // Initial scan for existing user dirs.
+      await pollForNewUserDirs();
+      // Periodic discovery of newly created user dirs.
+      setInterval(pollForNewUserDirs, 60_000);
       console.log("[SkillWriter] hot-reload watcher started on", SKILLS_DIR);
     })
     .catch((err) => console.error("[SkillWriter] watcher setup failed:", err));
+}
+
+// ── Signal observability ──────────────────────────────────────────────────────
+
+/**
+ * Return the raw signal state map for a user so the /api/skills endpoint
+ * can include signal counts alongside the skill file list.
+ */
+export async function getUserSkillSignals(
+  userId: string,
+): Promise<Record<string, SkillSignalState>> {
+  try {
+    const rows = await db
+      .select({ data: userPreferences.data })
+      .from(userPreferences)
+      .where(eq(userPreferences.userId, userId))
+      .limit(1);
+    const data = (rows[0]?.data ?? {}) as Record<string, unknown>;
+    return (data.skillSignals ?? {}) as Record<string, SkillSignalState>;
+  } catch {
+    return {};
+  }
 }
