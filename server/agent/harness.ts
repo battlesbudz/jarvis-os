@@ -192,7 +192,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
   // Channel integrations (telegram/discord/slack/whatsapp) have no agent tools to gate,
   // but are still tracked here so the proactive prompt note covers them.
   const INTEGRATION_TOOL_DEPS: Record<string, { label: string; tools: string[] }> = {
-    google:    { label: "Google (Gmail + Calendar + Drive)", tools: ["gmail_action", "gmail_draft", "fetch_calendar", "drive_create_file", "drive_list_files", "drive_read_file"] },
+    google:    { label: "Google (Gmail + Calendar + Drive)", tools: ["gmail_action", "create_gmail_draft", "fetch_calendar", "drive_create_file", "drive_list_files", "drive_read_file"] },
     outlook:   { label: "Microsoft Outlook",                tools: [] },
     telegram:  { label: "Telegram",                         tools: [] },
     discord:   { label: "Discord",                          tools: [] },

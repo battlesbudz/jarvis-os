@@ -257,23 +257,26 @@ async function checkTelegramWebhookState(): Promise<boolean> {
 
 async function checkTelegram(userId: string): Promise<CheckResult> {
   try {
-    // Step 1: verify system bot token is valid (getMe ping)
-    const botOk = await checkSystemCredential("telegram_bot", pingTelegramBot);
-    if (!botOk) {
-      return { status: "broken", errorMessage: "Telegram bot token missing or invalid" };
-    }
-    // Step 2: verify webhook (or polling) is healthy — no recent delivery errors
-    const webhookOk = await checkSystemCredential("telegram_webhook", checkTelegramWebhookState);
-    if (!webhookOk) {
-      return { status: "broken", errorMessage: "Telegram webhook has recent delivery errors" };
-    }
-    // Step 3: verify user has linked their account
+    // Step 1: verify user has linked their account — if not linked, short-circuit
+    // to unconfigured regardless of system credential state.
     const rows = await db
       .select({ chatId: schema.telegramLinks.chatId })
       .from(schema.telegramLinks)
       .where(eq(schema.telegramLinks.userId, userId))
       .limit(1);
-    return rows.length > 0 ? { status: "healthy" } : { status: "unconfigured" };
+    if (rows.length === 0) return { status: "unconfigured" };
+
+    // Step 2: user IS linked — now verify system bot token is valid (getMe ping).
+    const botOk = await checkSystemCredential("telegram_bot", pingTelegramBot);
+    if (!botOk) {
+      return { status: "broken", errorMessage: "Telegram bot token missing or invalid" };
+    }
+    // Step 3: verify webhook (or polling) is healthy — no recent delivery errors.
+    const webhookOk = await checkSystemCredential("telegram_webhook", checkTelegramWebhookState);
+    if (!webhookOk) {
+      return { status: "broken", errorMessage: "Telegram webhook has recent delivery errors" };
+    }
+    return { status: "healthy" };
   } catch {
     return { status: "unconfigured" };
   }
@@ -295,17 +298,8 @@ async function pingDiscordBotGuilds(): Promise<boolean> {
 
 async function checkDiscord(userId: string): Promise<CheckResult> {
   try {
-    // Step 1: verify system Discord bot token is valid
-    const botOk = await checkSystemCredential("discord_bot", pingDiscordBot);
-    if (!botOk) {
-      return { status: "broken", errorMessage: "Discord bot token missing or invalid" };
-    }
-    // Step 2: verify bot has guild membership (i.e. has been added with correct permissions)
-    const inGuild = await checkSystemCredential("discord_guilds", pingDiscordBotGuilds);
-    if (!inGuild) {
-      return { status: "broken", errorMessage: "Discord bot has no guild access — bot may lack required permissions" };
-    }
-    // Step 3: check user-level link
+    // Step 1: verify user has linked their account — if not linked, short-circuit
+    // to unconfigured regardless of system credential state.
     const rows = await db
       .select({ id: schema.channelLinks.id })
       .from(schema.channelLinks)
@@ -314,7 +308,19 @@ async function checkDiscord(userId: string): Promise<CheckResult> {
         eq(schema.channelLinks.channel, "discord"),
       ))
       .limit(1);
-    return rows.length > 0 ? { status: "healthy" } : { status: "unconfigured" };
+    if (rows.length === 0) return { status: "unconfigured" };
+
+    // Step 2: user IS linked — now verify system Discord bot token is valid.
+    const botOk = await checkSystemCredential("discord_bot", pingDiscordBot);
+    if (!botOk) {
+      return { status: "broken", errorMessage: "Discord bot token missing or invalid" };
+    }
+    // Step 3: verify bot has guild membership (i.e. has been added with correct permissions).
+    const inGuild = await checkSystemCredential("discord_guilds", pingDiscordBotGuilds);
+    if (!inGuild) {
+      return { status: "broken", errorMessage: "Discord bot has no guild access — bot may lack required permissions" };
+    }
+    return { status: "healthy" };
   } catch {
     return { status: "unconfigured" };
   }

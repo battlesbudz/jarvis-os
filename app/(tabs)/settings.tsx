@@ -375,16 +375,26 @@ export default function SettingsScreen() {
     };
   }, [loadAll, loadNervousSystem, loadThreatLog, loadBuildHistory]));
 
+  // ── Helpers ──
+  // Triggers an immediate server-side re-validation for the current user so
+  // the DB integration_status rows are fresh before loadAll() re-reads them.
+  const refreshIntegrationHealth = useCallback(async () => {
+    try {
+      await apiRequest('POST', '/api/integrations/refresh');
+    } catch {}
+  }, []);
+
   // ── OAuth connect ──
   const handleConnect = useCallback(async (platform: string) => {
     setConnectingId(platform);
     try {
       const url = new URL(`/api/oauth/${platform}/connect`, getApiUrl()).toString();
       await WebBrowser.openAuthSessionAsync(url, getApiUrl().toString());
+      await refreshIntegrationHealth();
       await loadAll();
     } catch {}
     setConnectingId(null);
-  }, [loadAll]);
+  }, [loadAll, refreshIntegrationHealth]);
 
   const handleDisconnect = useCallback(async (platform: string) => {
     Alert.alert('Disconnect', `Disconnect ${platform}?`, [
@@ -393,12 +403,13 @@ export default function SettingsScreen() {
         text: 'Disconnect', style: 'destructive', onPress: async () => {
           try {
             await apiRequest('DELETE', `/api/oauth/disconnect/${platform}`);
+            await refreshIntegrationHealth();
             await loadAll();
           } catch {}
         },
       },
     ]);
-  }, [loadAll]);
+  }, [loadAll, refreshIntegrationHealth]);
 
   // ── Telegram link ──
   const handleTelegramLink = useCallback(async () => {
@@ -424,12 +435,26 @@ export default function SettingsScreen() {
               setTelegramPolling(false);
               setTelegramLinkCode(null);
               setTelegramStatus({ connected: true, username: status.username ?? null, configured: true });
+              // Refresh validator so health badge updates immediately after link
+              await refreshIntegrationHealth();
+              const healthRes = await apiRequest('GET', '/api/integrations/status').then(r => r.json()).catch(() => null);
+              if (healthRes && typeof healthRes === 'object') {
+                const health: Record<string, string> = {};
+                const errors: Record<string, string | null> = {};
+                for (const [k, v] of Object.entries(healthRes)) {
+                  const entry = v as { status?: string; errorMessage?: string | null } | null;
+                  health[k] = entry?.status ?? 'unconfigured';
+                  errors[k] = entry?.errorMessage ?? null;
+                }
+                setIntegrationHealth(health);
+                setIntegrationErrors(errors);
+              }
             }
           } catch {}
         }, 5000);
       }
     } catch {}
-  }, []);
+  }, [refreshIntegrationHealth]);
 
   const handleTelegramDisconnect = useCallback(async () => {
     Alert.alert('Disconnect Telegram', 'Disconnect Telegram?', [
@@ -438,12 +463,15 @@ export default function SettingsScreen() {
         text: 'Disconnect', style: 'destructive', onPress: async () => {
           try {
             await apiRequest('DELETE', '/api/telegram/disconnect');
+            await refreshIntegrationHealth();
             setTelegramStatus({ connected: false, username: null, configured: false });
+            setIntegrationHealth(prev => ({ ...prev, telegram: 'unconfigured' }));
+            setIntegrationErrors(prev => ({ ...prev, telegram: null }));
           } catch {}
         },
       },
     ]);
-  }, []);
+  }, [refreshIntegrationHealth]);
 
   // ── Android Daemon ──
   const handleAndroidDaemon = useCallback(async () => {
@@ -528,6 +556,20 @@ export default function SettingsScreen() {
         setDiscordPairExpanded(false);
         setDiscordPairCode('');
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        // Refresh validator so health badge updates immediately after link
+        await refreshIntegrationHealth();
+        const healthRes = await apiRequest('GET', '/api/integrations/status').then(r => r.json()).catch(() => null);
+        if (healthRes && typeof healthRes === 'object') {
+          const health: Record<string, string> = {};
+          const errors: Record<string, string | null> = {};
+          for (const [k, v] of Object.entries(healthRes)) {
+            const entry = v as { status?: string; errorMessage?: string | null } | null;
+            health[k] = entry?.status ?? 'unconfigured';
+            errors[k] = entry?.errorMessage ?? null;
+          }
+          setIntegrationHealth(health);
+          setIntegrationErrors(errors);
+        }
       } else {
         Alert.alert('Pairing Failed', data.error ?? 'Could not link Discord. Please try again.');
       }
@@ -535,7 +577,7 @@ export default function SettingsScreen() {
       Alert.alert('Error', 'Could not connect. Check your network and try again.');
     }
     setDiscordLinking(false);
-  }, [discordPairCode]);
+  }, [discordPairCode, refreshIntegrationHealth]);
 
   // ── Reward claim ──
   const handleClaimReward = useCallback(async (reward: Reward) => {
