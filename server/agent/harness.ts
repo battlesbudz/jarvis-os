@@ -481,26 +481,6 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
         }
       }
 
-      // Step 2.5: Skill-pack BOOSTS — add tools for capabilities requested by active packs.
-      // Applied after manifest activations so pack preferences supplement (not replace) session context.
-      if (packBoostCapIds.length > 0) {
-        let boosted = 0;
-        for (const capId of packBoostCapIds) {
-          const cap = capabilityRegistry.getById(capId);
-          if (cap) {
-            for (const tool of cap.tools) {
-              if (!allowedToolNames.has(tool.name)) { allowedToolNames.add(tool.name); boosted++; }
-            }
-          }
-        }
-        if (boosted > 0) {
-          hasAnyScope = true;
-          console.log(
-            `[${channel}/Harness] pack boosts: +${boosted} tools for capabilities: [${[...new Set(packBoostCapIds)].join(", ")}]`,
-          );
-        }
-      }
-
       // Step 2b: Suppression-only heartbeat fallback.
       // When a plan has ONLY suppressions (no active capabilities) and there is no
       // channel scope, the allowed set is empty so suppressions would be a no-op.
@@ -538,25 +518,6 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
         }
       }
 
-      // Step 3.5: Skill-pack SUPPRESSIONS — remove tools for capabilities suppressed by active packs.
-      // Applied after manifest suppressions; pack preferences win over boosts from the same pack.
-      if (packSuppressCapIds.length > 0) {
-        let removed = 0;
-        for (const capId of packSuppressCapIds) {
-          const cap = capabilityRegistry.getById(capId);
-          if (cap) {
-            for (const tool of cap.tools) {
-              if (allowedToolNames.has(tool.name)) { allowedToolNames.delete(tool.name); removed++; }
-            }
-          }
-        }
-        if (removed > 0) {
-          console.log(
-            `[${channel}/Harness] pack suppressions: -${removed} tools for capabilities: [${[...new Set(packSuppressCapIds)].join(", ")}]`,
-          );
-        }
-      }
-
       // Step 4: Apply the allowed set to the tool list.
       if (hasAnyScope) {
         const before = tools.length;
@@ -565,6 +526,60 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
         console.log(
           `[${channel}/Harness] effective tool set: ${tools.length}/${initialTools.length} (${reduction}% reduction from initial)`,
         );
+      }
+    } catch {
+      // Best-effort — never block an agent run
+    }
+  }
+
+  // ── Step 5: Skill-pack tool-group overrides ────────────────────────────────
+  // Always applied, regardless of whether a channel or activation plan is
+  // present. This ensures user-activated pack preferences are honored in
+  // every session type: channel, heartbeat, and direct (no plan).
+  //
+  //   Pack boosts  → union capability tools into the active set (from initialTools)
+  //   Pack suppressions → difference: remove capability tools (wins over boosts)
+  if (packBoostCapIds.length > 0 || packSuppressCapIds.length > 0) {
+    try {
+      const { capabilityRegistry } = await import("../capabilities/index");
+
+      if (packBoostCapIds.length > 0) {
+        const currentNames = new Set(tools.map((t: AgentTool) => t.name));
+        let boosted = 0;
+        for (const capId of packBoostCapIds) {
+          const cap = capabilityRegistry.getById(capId);
+          if (cap) {
+            for (const tool of cap.tools) {
+              if (!currentNames.has(tool.name)) {
+                const src = (initialTools as AgentTool[]).find((it) => it.name === tool.name);
+                if (src) { tools = [...tools, src]; currentNames.add(src.name); boosted++; }
+              }
+            }
+          }
+        }
+        if (boosted > 0) {
+          console.log(
+            `[${channel}/Harness] pack boosts: +${boosted} tools for capabilities: [${[...new Set(packBoostCapIds)].join(", ")}]`,
+          );
+        }
+      }
+
+      if (packSuppressCapIds.length > 0) {
+        const suppressNames = new Set<string>();
+        for (const capId of packSuppressCapIds) {
+          const cap = capabilityRegistry.getById(capId);
+          if (cap) {
+            for (const tool of cap.tools) suppressNames.add(tool.name);
+          }
+        }
+        const before = tools.length;
+        tools = tools.filter((t: AgentTool) => !suppressNames.has(t.name));
+        const removed = before - tools.length;
+        if (removed > 0) {
+          console.log(
+            `[${channel}/Harness] pack suppressions: -${removed} tools for capabilities: [${[...new Set(packSuppressCapIds)].join(", ")}]`,
+          );
+        }
       }
     } catch {
       // Best-effort — never block an agent run

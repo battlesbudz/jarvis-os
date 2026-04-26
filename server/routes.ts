@@ -711,16 +711,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
     if (!requireAdminSecret(req, res)) return;
     try {
       const { publishSkillPack } = await import("./intelligence/behaviorStore");
-      const { packId, name, instructions, changeNote, description, isStoreVisible, heartbeatRules, toolGroups } = req.body as {
+      const body = req.body as {
         packId?: string;
         name?: string;
         instructions?: string;
         changeNote?: string;
         description?: string;
         isStoreVisible?: boolean;
-        heartbeatRules?: Record<string, unknown>;
-        toolGroups?: Record<string, unknown>;
+        heartbeatRules?: schema.PackHeartbeatRules;
+        toolGroups?: schema.PackToolGroups;
       };
+      const { packId, name, instructions, changeNote, description, isStoreVisible, heartbeatRules, toolGroups } = body;
       if (!name || !instructions || !changeNote) {
         return res.status(400).json({ error: "name, instructions, and changeNote are required" });
       }
@@ -731,8 +732,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         changeNote,
         description,
         isStoreVisible,
-        heartbeatRules: heartbeatRules as any,
-        toolGroups: toolGroups as any,
+        heartbeatRules,
+        toolGroups,
       });
       console.log(`[Admin/Skills] published pack "${pack.name}" v${pack.version}`);
       res.json({ ok: true, pack });
@@ -5675,7 +5676,9 @@ Extract up to 8 memories per batch.`;
       await setUserPackActive(userId, packId, true);
       res.json({ ok: true });
     } catch (err: any) {
-      if (err?.message?.includes("not found")) return res.status(404).json({ error: err.message });
+      const msg: string = err?.message ?? "";
+      if (msg.includes("not found")) return res.status(404).json({ error: msg });
+      if (msg.includes("not a store-visible")) return res.status(400).json({ error: msg });
       console.error("[SkillStore] activate failed:", err);
       res.status(500).json({ error: "Failed to activate pack" });
     }
@@ -5694,7 +5697,9 @@ Extract up to 8 memories per batch.`;
       await setUserPackActive(userId, packId, false);
       res.json({ ok: true });
     } catch (err: any) {
-      if (err?.message?.includes("not found")) return res.status(404).json({ error: err.message });
+      const msg: string = err?.message ?? "";
+      if (msg.includes("not found")) return res.status(404).json({ error: msg });
+      if (msg.includes("not a store-visible")) return res.status(400).json({ error: msg });
       console.error("[SkillStore] deactivate failed:", err);
       res.status(500).json({ error: "Failed to deactivate pack" });
     }
