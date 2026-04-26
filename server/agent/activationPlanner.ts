@@ -11,7 +11,7 @@
  */
 
 import { db } from "../db";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, and } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { getTodayPredictions } from "../intelligence/predictor";
 import type { EmotionalState } from "../intelligence/emotional-state";
@@ -173,10 +173,11 @@ export class ActivationPlanner {
     const timeOfDay = hourToTimeOfDay(hour);
 
     // ── 1. Gather signals in parallel ─────────────────────────────────────
-    const [emotionalStateRow, predictions, skillCount] = await Promise.all([
+    const [emotionalStateRow, predictions, skillCount, hasDeclaredFocusBlock] = await Promise.all([
       this.fetchEmotionalState(userId),
       this.fetchPredictions(userId, dateKey),
       this.fetchSkillCount(userId),
+      this.fetchFocusBlock(userId, dateKey),
     ]);
 
     // ── 2. Build session context ───────────────────────────────────────────
@@ -198,6 +199,7 @@ export class ActivationPlanner {
       channel,
       queryText,
       upcomingMeetingMinutes,
+      hasDeclaredFocusBlock,
     });
   }
 
@@ -250,6 +252,38 @@ export class ActivationPlanner {
       return skills.length;
     } catch {
       return 0;
+    }
+  }
+
+  /**
+   * Check whether the user has a declared focus block for the given date.
+   * Queries today's plan and looks for any non-completed task whose title or
+   * type declares it as a focus block (case-insensitive match on "focus").
+   * Returns false on error or no plan — never throws.
+   */
+  private async fetchFocusBlock(userId: string, dateKey: string): Promise<boolean> {
+    try {
+      const rows = await db
+        .select({ data: schema.plans.data })
+        .from(schema.plans)
+        .where(and(eq(schema.plans.userId, userId), eq(schema.plans.date, dateKey)))
+        .limit(1);
+      const data = rows[0]?.data as {
+        tasks?: Array<{ title?: string; label?: string; type?: string; completed?: boolean }>;
+      } | null;
+      if (!data?.tasks || !Array.isArray(data.tasks)) return false;
+      return data.tasks.some((task) => {
+        if (task.completed === true) return false;
+        const title = (task.title ?? task.label ?? "").toLowerCase();
+        const type = (task.type ?? "").toLowerCase();
+        return (
+          title.includes("focus") ||
+          type === "focus_block" ||
+          type === "focus"
+        );
+      });
+    } catch {
+      return false;
     }
   }
 
@@ -351,8 +385,9 @@ export class ActivationPlanner {
     channel?: string;
     queryText?: string;
     upcomingMeetingMinutes?: number;
+    hasDeclaredFocusBlock?: boolean;
   }): ActivationPlan {
-    const { sessionContext, timeOfDay, predictions, emotionalStateRow, source, channel, queryText, upcomingMeetingMinutes } = opts;
+    const { sessionContext, timeOfDay, predictions, emotionalStateRow, source, channel, queryText, upcomingMeetingMinutes, hasDeclaredFocusBlock = false } = opts;
 
     const reasons: Record<string, string> = {};
     const activeCapabilityIds: string[] = [];
@@ -459,19 +494,27 @@ export class ActivationPlanner {
       }
     }
 
-    // ── Rule 8b: Focus / flow state — suppress notification-generating tools
-    // When the user is in a high-flow state (flowScore ≥ 7) and NOT stressed,
-    // suppress Discord and other notification-generating capabilities so the
-    // model doesn't interrupt a productive work session with async comms.
-    if (
-      emotionalStateRow &&
+    // ── Rule 8b: Declared focus block — suppress notification-generating tools
+    // Primary signal: user has a non-completed focus-block task in today's plan
+    // (detected by fetchFocusBlock via the plans table).
+    // Secondary signal: user's emotional state shows deep flow (flowScore ≥ 7,
+    // stress < 7) when no plan data is available — proxy for undeclared focus.
+    // In both cases, suppress Discord (async comms) to protect the session.
+    const inFocusBlock = hasDeclaredFocusBlock || (
+      !hasDeclaredFocusBlock &&
+      emotionalStateRow !== null &&
       emotionalStateRow.flowScore >= 7 &&
       emotionalStateRow.stressScore < 7
-    ) {
+    );
+    if (inFocusBlock) {
       if (!suppressedCapabilityIds.includes("discord")) suppressedCapabilityIds.push("discord");
-      reasons["discord"] =
-        reasons["discord"] ||
-        `Suppressed: user is in flow state (flow=${emotionalStateRow.flowScore}/10) — protecting focus`;
+      const focusReason = hasDeclaredFocusBlock
+        ? "Suppressed: declared focus block in today's plan — protecting focus session"
+        : `Suppressed: user in deep flow state (flow=${emotionalStateRow!.flowScore}/10, no stress) — protecting focus`;
+      reasons["discord"] = reasons["discord"] || focusReason;
+      if (hasDeclaredFocusBlock && !sessionContext.focusAreas.includes("focus block active")) {
+        sessionContext.focusAreas.push("focus block active");
+      }
     }
 
     // ── Rule 8c: Chat-channel research gating ─────────────────────────────

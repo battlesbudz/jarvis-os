@@ -370,18 +370,30 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
   //
   // When the caller supplies an ActivationPlan with non-empty activeCapabilityIds,
   // keep ONLY the tools that belong to those capabilities. This is the primary
-  // token-reduction mechanism: instead of sending all tool schemas to the model
-  // every tick, we send only the schemas for contextually relevant capabilities.
+  // token-reduction mechanism for HEARTBEAT sessions: instead of sending all
+  // tool schemas to the model, we send only contextually relevant capabilities.
   //
-  // Filter order (all compose; channel-scope remains authoritative last):
+  // IMPORTANT: This filter is intentionally skipped when context.channel is set.
+  // Channel sessions (Telegram, Discord, etc.) have an authoritative channel-scope
+  // filter applied later; applying the positive filter on top of that would
+  // over-prune because planner rules (Rules 6/7) activate coaching/calendar which
+  // may not intersect with the channel's declared scope (e.g. Discord uses
+  // research/discord/memory). For channel sessions, suppression (Rule 8c) handles
+  // the token reduction while preserving the channel's baseline tool set.
+  //
+  // Filter order:
   //   broken-integration exclusions
-  //   → manifest positive filter   ← THIS BLOCK (lazy capability loading)
-  //   → manifest suppression       ← belt-and-suspenders for explicit suppressions
+  //   → manifest positive filter   ← THIS BLOCK (heartbeat only, no channel scope)
+  //   → manifest suppression       ← belt-and-suspenders / channel research gating
   //   → channel scope              ← authoritative per-channel allowlist
   //
-  // When activeCapabilityIds is EMPTY the filter is a no-op so existing
-  // callers that do not configure capability rules are unaffected.
-  if (opts.activationPlan && opts.activationPlan.capabilityManifest.activeCapabilityIds.length > 0) {
+  // When activeCapabilityIds is EMPTY the filter is a no-op (backward compat).
+  const hasChannelScope = !!context.channel;
+  if (
+    !hasChannelScope &&
+    opts.activationPlan &&
+    opts.activationPlan.capabilityManifest.activeCapabilityIds.length > 0
+  ) {
     try {
       const { capabilityRegistry } = await import("../capabilities/index");
       const activeToolNames = new Set<string>();

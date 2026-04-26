@@ -304,50 +304,120 @@ function computeHasSomethingToDo(opts: {
   console.log("✓ G: planner hasSomethingToDo correctly gates only quiet nights; all active hours run");
 }
 
-// ─── Test H: Positive filter — only active capability tools pass ──────────────
-// Mirrors the harness lazy-load block. When activeCapabilityIds is non-empty,
-// only tools belonging to those capabilities should be kept.
+// ─── Test H: Positive filter — only active capability tools pass (heartbeat) ──
+// The positive filter only applies when there is NO channel scope (heartbeat).
+// Mirrors the harness condition: !hasChannelScope && activeCapabilityIds.length > 0.
 
-function applyPositiveFilter(
+function applyFullFilterChain(
   tools: AgentTool[],
-  activeCapabilityIds: string[],
+  plan: ActivationPlan | undefined,
   capabilityToolMap: Record<string, string[]>,
-): { tools: AgentTool[]; keptCount: number; reduction: number } {
-  if (activeCapabilityIds.length === 0) {
-    return { tools, keptCount: tools.length, reduction: 0 };
-  }
-  const activeToolNames = new Set<string>();
-  for (const capId of activeCapabilityIds) {
-    for (const name of capabilityToolMap[capId] ?? []) {
-      activeToolNames.add(name);
+  channelScopeNames: string[] | null, // null = no channel scope (heartbeat)
+): { tools: AgentTool[]; reduction: number } {
+  let result = tools;
+
+  // 1. Positive filter — heartbeat only (no channel scope)
+  if (channelScopeNames === null && plan && plan.capabilityManifest.activeCapabilityIds.length > 0) {
+    const activeToolNames = new Set<string>();
+    for (const capId of plan.capabilityManifest.activeCapabilityIds) {
+      for (const name of capabilityToolMap[capId] ?? []) {
+        activeToolNames.add(name);
+      }
+    }
+    if (activeToolNames.size > 0) {
+      result = result.filter((t) => activeToolNames.has(t.name));
     }
   }
-  const filtered = tools.filter((t) => activeToolNames.has(t.name));
-  const reduction = tools.length > 0 ? Math.round((1 - filtered.length / tools.length) * 100) : 0;
-  return { tools: filtered, keptCount: filtered.length, reduction };
+
+  // 2. Suppression filter (always applies)
+  if (plan && plan.capabilityManifest.suppressedCapabilityIds.length > 0) {
+    const suppressedToolNames = new Set<string>();
+    for (const capId of plan.capabilityManifest.suppressedCapabilityIds) {
+      for (const name of capabilityToolMap[capId] ?? []) {
+        suppressedToolNames.add(name);
+      }
+    }
+    result = result.filter((t) => !suppressedToolNames.has(t.name));
+  }
+
+  // 3. Channel scope filter (authoritative last)
+  if (channelScopeNames !== null) {
+    const scopeSet = new Set(channelScopeNames);
+    result = result.filter((t) => scopeSet.has(t.name));
+  }
+
+  const reduction = tools.length > 0 ? Math.round((1 - result.length / tools.length) * 100) : 0;
+  return { tools: result, reduction };
 }
 
+// H1: Heartbeat — positive filter activates only coaching; research/browser excluded
 {
-  const { tools, reduction } = applyPositiveFilter(
-    ALL_TOOLS,
-    ["coaching"],
-    CAP_TOOL_MAP,
-  );
+  const plan: ActivationPlan = {
+    capabilityManifest: {
+      activeCapabilityIds: ["coaching"],
+      suppressedCapabilityIds: [],
+      activatedToolGroups: [],
+      reasons: { coaching: "Activated: morning planning" },
+    },
+    sessionContext: makeSessionContext("morning"),
+    shouldRun: true,
+    reason: "morning heartbeat",
+  };
+
+  const { tools, reduction } = applyFullFilterChain(ALL_TOOLS, plan, CAP_TOOL_MAP, null);
   const toolNames = tools.map((t) => t.name);
   for (const name of COACHING_TOOLS) {
-    assert.equal(toolNames.includes(name), true, `H: coaching tool "${name}" must be kept`);
+    assert.equal(toolNames.includes(name), true, `H1: coaching tool "${name}" present on heartbeat`);
   }
   for (const name of [...BROWSER_TOOLS, ...EMAIL_TOOLS]) {
-    assert.equal(toolNames.includes(name), false, `H: non-active tool "${name}" must be removed`);
+    assert.equal(toolNames.includes(name), false, `H1: non-active "${name}" excluded on heartbeat`);
   }
-  assert.ok(reduction >= 60, `H: reduction should be ≥60% (got ${reduction}%)`);
-  console.log(`✓ H: positive filter keeps only coaching tools (${reduction}% reduction)`);
+  assert.ok(reduction >= 60, `H1: ≥60% reduction on heartbeat (got ${reduction}%)`);
+  console.log(`✓ H1: heartbeat positive filter: ${tools.length}/${ALL_TOOLS.length} tools (${reduction}% reduction)`);
+}
+
+// H2: Channel session (Discord scope) — positive filter IS SKIPPED; only suppression + scope apply
+{
+  const discordScopeNames = ["browse_web", "browser_click", "set_reminder"]; // Discord scope example
+  const plan: ActivationPlan = {
+    capabilityManifest: {
+      activeCapabilityIds: ["coaching", "calendar"], // planner activates coaching/calendar
+      suppressedCapabilityIds: ["browser"],          // but suppresses browser for stressed user
+      activatedToolGroups: [],
+      reasons: { coaching: "Activated: morning", browser: "Suppressed: high stress" },
+    },
+    sessionContext: makeSessionContext("morning"),
+    shouldRun: true,
+    reason: "channel session",
+  };
+
+  const { tools } = applyFullFilterChain(ALL_TOOLS, plan, CAP_TOOL_MAP, discordScopeNames);
+  const toolNames = tools.map((t) => t.name);
+
+  // browse_web is in Discord scope but also in suppressed browser capability → excluded
+  assert.equal(toolNames.includes("browse_web"), false, "H2: browse_web excluded by suppression even though in Discord scope");
+  // set_reminder is in Discord scope and not suppressed → included
+  assert.equal(toolNames.includes("set_reminder"), true, "H2: set_reminder kept — in Discord scope and not suppressed");
+  // send_email is NOT in Discord scope → excluded (channel scope is authoritative)
+  assert.equal(toolNames.includes("send_email"), false, "H2: send_email excluded by channel scope");
+  console.log(`✓ H2: channel session: positive filter skipped, only suppression + channel scope compose (${tools.length} tools)`);
 }
 
 // ─── Test I: Positive filter is a no-op when activeCapabilityIds is empty ─────
 
 {
-  const { tools, reduction } = applyPositiveFilter(ALL_TOOLS, [], CAP_TOOL_MAP);
+  const plan: ActivationPlan = {
+    capabilityManifest: {
+      activeCapabilityIds: [], // empty — no positive filter
+      suppressedCapabilityIds: [],
+      activatedToolGroups: [],
+      reasons: {},
+    },
+    sessionContext: makeSessionContext("morning"),
+    shouldRun: true,
+    reason: "no active capabilities",
+  };
+  const { tools, reduction } = applyFullFilterChain(ALL_TOOLS, plan, CAP_TOOL_MAP, null);
   assert.equal(tools.length, ALL_TOOLS.length, "I: tool list unchanged when no activeCapabilityIds");
   assert.equal(reduction, 0, "I: 0% reduction when no activeCapabilityIds");
   console.log("✓ I: positive filter is a no-op when activeCapabilityIds is empty");
