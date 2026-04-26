@@ -308,63 +308,76 @@ function computeHasSomethingToDo(opts: {
 // The positive filter only applies when there is NO channel scope (heartbeat).
 // Mirrors the harness condition: !hasChannelScope && activeCapabilityIds.length > 0.
 
-function applyFullFilterChain(
+/**
+ * Pure replica of the unified harness filter:
+ *   effective = (channel_baseline ∪ activeCapability_tools) − suppressed_tools
+ *
+ * Mirrors the harness block exactly so integration-level composition is
+ * testable without a live registry or OpenAI connection.
+ *
+ * @param tools           Full tool pool (before any filtering).
+ * @param plan            Activation plan (may be undefined = backward compat).
+ * @param capToolMap      Maps capability ID → tool name list.
+ * @param channelScope    Channel-scoped tool names (null = heartbeat / no channel).
+ */
+function applyUnifiedFilter(
   tools: AgentTool[],
   plan: ActivationPlan | undefined,
-  capabilityToolMap: Record<string, string[]>,
-  channelScopeNames: string[] | null, // null = no channel scope (heartbeat)
+  capToolMap: Record<string, string[]>,
+  channelScope: string[] | null,
 ): { tools: AgentTool[]; reduction: number } {
-  let result = tools;
+  if (!channelScope && !plan) {
+    return { tools, reduction: 0 }; // no filter at all — backward compat
+  }
 
-  // 1. Positive filter — heartbeat only (no channel scope)
-  if (channelScopeNames === null && plan && plan.capabilityManifest.activeCapabilityIds.length > 0) {
-    const activeToolNames = new Set<string>();
+  const allowed = new Set<string>();
+  let hasAnyScope = false;
+
+  // Step 1: Seed from channel scope.
+  if (channelScope) {
+    hasAnyScope = true;
+    for (const name of channelScope) allowed.add(name);
+  }
+
+  // Step 2: UNION in activated capability tools.
+  if (plan?.capabilityManifest.activeCapabilityIds.length) {
+    hasAnyScope = true;
     for (const capId of plan.capabilityManifest.activeCapabilityIds) {
-      for (const name of capabilityToolMap[capId] ?? []) {
-        activeToolNames.add(name);
-      }
-    }
-    if (activeToolNames.size > 0) {
-      result = result.filter((t) => activeToolNames.has(t.name));
+      for (const name of capToolMap[capId] ?? []) allowed.add(name);
     }
   }
 
-  // 2. Suppression filter (always applies)
-  if (plan && plan.capabilityManifest.suppressedCapabilityIds.length > 0) {
-    const suppressedToolNames = new Set<string>();
+  // Step 3: REMOVE suppressed capability tools (wins over both scope and activations).
+  if (plan?.capabilityManifest.suppressedCapabilityIds.length) {
     for (const capId of plan.capabilityManifest.suppressedCapabilityIds) {
-      for (const name of capabilityToolMap[capId] ?? []) {
-        suppressedToolNames.add(name);
-      }
+      for (const name of capToolMap[capId] ?? []) allowed.delete(name);
     }
-    result = result.filter((t) => !suppressedToolNames.has(t.name));
   }
 
-  // 3. Channel scope filter (authoritative last)
-  if (channelScopeNames !== null) {
-    const scopeSet = new Set(channelScopeNames);
-    result = result.filter((t) => scopeSet.has(t.name));
-  }
+  if (!hasAnyScope) return { tools, reduction: 0 };
 
-  const reduction = tools.length > 0 ? Math.round((1 - result.length / tools.length) * 100) : 0;
-  return { tools: result, reduction };
+  const filtered = tools.filter((t) => allowed.has(t.name));
+  const reduction = tools.length > 0 ? Math.round((1 - filtered.length / tools.length) * 100) : 0;
+  return { tools: filtered, reduction };
 }
 
-// H1: Heartbeat — positive filter activates only coaching; research/browser excluded
+// ── H1: Heartbeat (no channel) — active capabilities only ─────────────────────
+// Heartbeat has no channel scope; active capabilities provide the only seed.
+// coaching = set_reminder, log_reflection; browser + email excluded.
 {
   const plan: ActivationPlan = {
     capabilityManifest: {
       activeCapabilityIds: ["coaching"],
       suppressedCapabilityIds: [],
       activatedToolGroups: [],
-      reasons: { coaching: "Activated: morning planning" },
+      reasons: { coaching: "morning planning" },
     },
     sessionContext: makeSessionContext("morning"),
     shouldRun: true,
     reason: "morning heartbeat",
   };
 
-  const { tools, reduction } = applyFullFilterChain(ALL_TOOLS, plan, CAP_TOOL_MAP, null);
+  const { tools, reduction } = applyUnifiedFilter(ALL_TOOLS, plan, CAP_TOOL_MAP, null);
   const toolNames = tools.map((t) => t.name);
   for (const name of COACHING_TOOLS) {
     assert.equal(toolNames.includes(name), true, `H1: coaching tool "${name}" present on heartbeat`);
@@ -373,54 +386,84 @@ function applyFullFilterChain(
     assert.equal(toolNames.includes(name), false, `H1: non-active "${name}" excluded on heartbeat`);
   }
   assert.ok(reduction >= 60, `H1: ≥60% reduction on heartbeat (got ${reduction}%)`);
-  console.log(`✓ H1: heartbeat positive filter: ${tools.length}/${ALL_TOOLS.length} tools (${reduction}% reduction)`);
+  console.log(`✓ H1: heartbeat — only coaching tools (${reduction}% reduction)`);
 }
 
-// H2: Channel session (Discord scope) — positive filter IS SKIPPED; only suppression + scope apply
+// ── H2: Channel session + meeting proximity — activations ADD calendar/email ──
+// Discord scope normally excludes email tools. But when a meeting is 30min away
+// the planner activates "email" → union policy adds email tools to Discord scope.
 {
-  const discordScopeNames = ["browse_web", "browser_click", "set_reminder"]; // Discord scope example
+  const discordScope = ["browse_web", "browser_click", "set_reminder"]; // normal Discord scope
   const plan: ActivationPlan = {
     capabilityManifest: {
-      activeCapabilityIds: ["coaching", "calendar"], // planner activates coaching/calendar
-      suppressedCapabilityIds: ["browser"],          // but suppresses browser for stressed user
-      activatedToolGroups: [],
-      reasons: { coaching: "Activated: morning", browser: "Suppressed: high stress" },
-    },
-    sessionContext: makeSessionContext("morning"),
-    shouldRun: true,
-    reason: "channel session",
-  };
-
-  const { tools } = applyFullFilterChain(ALL_TOOLS, plan, CAP_TOOL_MAP, discordScopeNames);
-  const toolNames = tools.map((t) => t.name);
-
-  // browse_web is in Discord scope but also in suppressed browser capability → excluded
-  assert.equal(toolNames.includes("browse_web"), false, "H2: browse_web excluded by suppression even though in Discord scope");
-  // set_reminder is in Discord scope and not suppressed → included
-  assert.equal(toolNames.includes("set_reminder"), true, "H2: set_reminder kept — in Discord scope and not suppressed");
-  // send_email is NOT in Discord scope → excluded (channel scope is authoritative)
-  assert.equal(toolNames.includes("send_email"), false, "H2: send_email excluded by channel scope");
-  console.log(`✓ H2: channel session: positive filter skipped, only suppression + channel scope compose (${tools.length} tools)`);
-}
-
-// ─── Test I: Positive filter is a no-op when activeCapabilityIds is empty ─────
-
-{
-  const plan: ActivationPlan = {
-    capabilityManifest: {
-      activeCapabilityIds: [], // empty — no positive filter
+      // Meeting in 30min → planner activates calendar + email (Rule 8a)
+      activeCapabilityIds: ["calendar", "email"],
       suppressedCapabilityIds: [],
       activatedToolGroups: [],
-      reasons: {},
+      reasons: {
+        calendar: "Activated: meeting in 15 min",
+        email: "Activated: email for upcoming meeting",
+      },
     },
     sessionContext: makeSessionContext("morning"),
     shouldRun: true,
-    reason: "no active capabilities",
+    reason: "Discord channel — meeting in 15 min",
   };
-  const { tools, reduction } = applyFullFilterChain(ALL_TOOLS, plan, CAP_TOOL_MAP, null);
-  assert.equal(tools.length, ALL_TOOLS.length, "I: tool list unchanged when no activeCapabilityIds");
-  assert.equal(reduction, 0, "I: 0% reduction when no activeCapabilityIds");
-  console.log("✓ I: positive filter is a no-op when activeCapabilityIds is empty");
+
+  const { tools } = applyUnifiedFilter(ALL_TOOLS, plan, CAP_TOOL_MAP, discordScope);
+  const toolNames = tools.map((t) => t.name);
+
+  // set_reminder is in Discord baseline scope → preserved
+  assert.equal(toolNames.includes("set_reminder"), true, "H2: Discord baseline tool set_reminder preserved");
+  // send_email is normally NOT in Discord scope, but planner activated email → present via union
+  assert.equal(toolNames.includes("send_email"), true, "H2: send_email added via meeting-proximity activation (union override)");
+  // browse_web is in Discord scope, not suppressed → present
+  assert.equal(toolNames.includes("browse_web"), true, "H2: browse_web present (in Discord scope, not suppressed)");
+  // log_reflection is neither in Discord scope nor activated → excluded
+  assert.equal(toolNames.includes("log_reflection"), false, "H2: log_reflection absent (not in scope or activations)");
+  console.log(`✓ H2: Discord session with meeting in 30min: ${tools.length} tools (scope ∪ calendar+email activations)`);
+}
+
+// ── H3: Channel session + research suppression — browser excluded from scope ──
+// For a general query on Telegram, the planner suppresses research + browser.
+// browser tools in Telegram's scope should be removed by the suppression step.
+{
+  const telegramScope = ["browse_web", "browser_click", "set_reminder", "send_email"];
+  const plan: ActivationPlan = {
+    capabilityManifest: {
+      activeCapabilityIds: ["coaching", "email"], // coaching + email activated
+      suppressedCapabilityIds: ["browser", "research"], // browser + research suppressed (Rule 8c)
+      activatedToolGroups: [],
+      reasons: {
+        coaching: "morning context",
+        browser: "Suppressed: general query on Telegram",
+      },
+    },
+    sessionContext: makeSessionContext("morning"),
+    shouldRun: true,
+    reason: "Telegram — general query",
+  };
+
+  const { tools } = applyUnifiedFilter(ALL_TOOLS, plan, CAP_TOOL_MAP, telegramScope);
+  const toolNames = tools.map((t) => t.name);
+
+  // Browser tools in Telegram scope → removed by suppression (Step 3 wins)
+  assert.equal(toolNames.includes("browse_web"), false, "H3: browse_web removed by suppression despite being in Telegram scope");
+  assert.equal(toolNames.includes("browser_click"), false, "H3: browser_click removed by suppression");
+  // send_email is in both Telegram scope and email activation → present
+  assert.equal(toolNames.includes("send_email"), true, "H3: send_email present (Telegram scope ∪ email activation)");
+  // set_reminder is in Telegram scope, not suppressed → present
+  assert.equal(toolNames.includes("set_reminder"), true, "H3: set_reminder from Telegram scope preserved");
+  console.log(`✓ H3: Telegram general query: ${tools.length} tools (browser suppressed by Rule 8c)`);
+}
+
+// ─── Test I: Backward compat — no plan, no channel → all tools pass ───────────
+
+{
+  const { tools, reduction } = applyUnifiedFilter(ALL_TOOLS, undefined, CAP_TOOL_MAP, null);
+  assert.equal(tools.length, ALL_TOOLS.length, "I: all tools pass when no plan and no channel");
+  assert.equal(reduction, 0, "I: 0% reduction without plan or channel");
+  console.log("✓ I: no plan + no channel → all tools pass (backward compat)");
 }
 
 // ─── Test J: Research intent classifier ───────────────────────────────────────

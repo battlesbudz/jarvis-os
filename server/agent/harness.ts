@@ -365,120 +365,97 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
     }
   }
 
-  // ── Activation-plan: lazy positive capability filter ──────────────────────
-  // Core of Task #281 — lazy capability loading.
+  // ── Unified tool-set filter: (channel_baseline ∪ activations) − suppressions ──
   //
-  // When the caller supplies an ActivationPlan with non-empty activeCapabilityIds,
-  // keep ONLY the tools that belong to those capabilities. This is the primary
-  // token-reduction mechanism for HEARTBEAT sessions: instead of sending all
-  // tool schemas to the model, we send only contextually relevant capabilities.
+  // Task #281 lazy capability loading — unified filter replacing the former
+  // separate positive-filter / suppression / channel-scope blocks.
   //
-  // IMPORTANT: This filter is intentionally skipped when context.channel is set.
-  // Channel sessions (Telegram, Discord, etc.) have an authoritative channel-scope
-  // filter applied later; applying the positive filter on top of that would
-  // over-prune because planner rules (Rules 6/7) activate coaching/calendar which
-  // may not intersect with the channel's declared scope (e.g. Discord uses
-  // research/discord/memory). For channel sessions, suppression (Rule 8c) handles
-  // the token reduction while preserving the channel's baseline tool set.
+  // Policy (in priority order):
+  //   1. Channel baseline  — resolveChannelTools seeds the allowed set
+  //      (backward-compat: channel sessions without a plan work as before).
+  //   2. Manifest activations — activeCapabilityIds UNION their tools into the
+  //      set, so high-priority rules (e.g. "meeting in 30 min → activate
+  //      calendar + email") can ADD tools beyond the channel's normal scope.
+  //   3. Manifest suppressions — suppressedCapabilityIds DELETE their tools from
+  //      the allowed set, overriding both baseline and activations.
   //
-  // Filter order:
-  //   broken-integration exclusions
-  //   → manifest positive filter   ← THIS BLOCK (heartbeat only, no channel scope)
-  //   → manifest suppression       ← belt-and-suspenders / channel research gating
-  //   → channel scope              ← authoritative per-channel allowlist
+  // Effective set = (channel_baseline ∪ activeCapability_tools) − suppressed_tools
   //
-  // When activeCapabilityIds is EMPTY the filter is a no-op (backward compat).
-  const hasChannelScope = !!context.channel;
-  if (
-    !hasChannelScope &&
-    opts.activationPlan &&
-    opts.activationPlan.capabilityManifest.activeCapabilityIds.length > 0
-  ) {
+  // Without an activationPlan:
+  //   • channel sessions → pure channel scope (unchanged from before).
+  //   • heartbeat/subagent (no channel) → no filter, all tools pass.
+  // Without a channel (heartbeat):
+  //   • effective set = activeCapability_tools − suppressed_tools.
+  //   • If activeCapabilityIds empty and no channel → no filter (backward compat).
+  if (context.channel || opts.activationPlan) {
     try {
       const { capabilityRegistry } = await import("../capabilities/index");
-      const activeToolNames = new Set<string>();
-      for (const capId of opts.activationPlan.capabilityManifest.activeCapabilityIds) {
-        const cap = capabilityRegistry.getById(capId);
-        if (cap) {
-          for (const tool of cap.tools) {
-            activeToolNames.add(tool.name);
-          }
-        }
-      }
-      if (activeToolNames.size > 0) {
-        const before = tools.length;
-        tools = tools.filter((t: AgentTool) => activeToolNames.has(t.name));
-        const reduction = before > 0 ? Math.round((1 - tools.length / before) * 100) : 0;
-        console.log(
-          `[${channel}/Harness] lazy-load: ${tools.length}/${before} tools (${reduction}% reduction) for capabilities: [${opts.activationPlan.capabilityManifest.activeCapabilityIds.join(", ")}]`,
-        );
-      }
-    } catch {
-      // Best-effort — never block an agent run
-    }
-  }
+      const allowedToolNames = new Set<string>();
+      let hasAnyScope = false;
 
-  // ── Activation-plan manifest suppression filter ────────────────────────────
-  // Belt-and-suspenders: remove suppressed capabilities' tools even after the
-  // positive filter (handles edge cases where a suppressed cap slipped through).
-  // Applied AFTER the positive filter and BEFORE the channel-scope filter.
-  if (opts.activationPlan && opts.activationPlan.capabilityManifest.suppressedCapabilityIds.length > 0) {
-    try {
-      const { capabilityRegistry } = await import("../capabilities/index");
-      const suppressedToolNames = new Set<string>();
-      for (const capId of opts.activationPlan.capabilityManifest.suppressedCapabilityIds) {
-        const cap = capabilityRegistry.getById(capId);
-        if (cap) {
-          for (const tool of cap.tools) {
-            suppressedToolNames.add(tool.name);
-          }
+      // Step 1: Seed from channel scope (backward-compatible baseline).
+      if (context.channel) {
+        const { resolveChannelTools } = await import("./tools/channelTools");
+        const hasGoogle = !!context.googleAccessToken;
+        const scoped = await resolveChannelTools(context.channel, hasGoogle);
+        if (scoped.length > 0) {
+          hasAnyScope = true;
+          for (const t of scoped) allowedToolNames.add(t.name);
+          console.log(`[${channel}/Harness] channel-scope baseline: ${scoped.length} tools`);
         }
       }
-      if (suppressedToolNames.size > 0) {
-        const before = tools.length;
-        tools = tools.filter((t: AgentTool) => !suppressedToolNames.has(t.name));
-        if (before > tools.length) {
+
+      // Step 2: UNION in activated capability tools.
+      // Allows planner rules to add tools beyond the channel's normal scope
+      // (e.g. calendar + email for upcoming meeting on a Discord channel).
+      if (opts.activationPlan?.capabilityManifest.activeCapabilityIds.length) {
+        let added = 0;
+        for (const capId of opts.activationPlan.capabilityManifest.activeCapabilityIds) {
+          const cap = capabilityRegistry.getById(capId);
+          if (cap) {
+            for (const tool of cap.tools) {
+              if (!allowedToolNames.has(tool.name)) added++;
+              allowedToolNames.add(tool.name);
+            }
+          }
+        }
+        hasAnyScope = true;
+        if (added > 0) {
           console.log(
-            `[${channel}/Harness] manifest-suppressed ${before - tools.length} tools for capabilities: [${opts.activationPlan.capabilityManifest.suppressedCapabilityIds.join(", ")}]`,
+            `[${channel}/Harness] manifest activations: +${added} tools for capabilities: [${opts.activationPlan.capabilityManifest.activeCapabilityIds.join(", ")}]`,
           );
         }
       }
-    } catch {
-      // Best-effort — never block an agent run
-    }
-  }
 
-  // ── Authoritative channel-scope tool filter ────────────────────────────────
-  // The harness is the canonical enforcement point for per-channel tool scoping.
-  // Even if a caller passes a broad tool list, the harness narrows it to the
-  // tools declared by the channel (keyed on context.channel).  This ensures
-  // every agent entrypoint — coachAgent, telegramRoutes, subagents — obeys the
-  // same allowlist without each needing to repeat the filter logic.
-  //
-  // Subagents that already pass a pre-scoped tool list benefit from this too:
-  // the intersection is a no-op when the caller's list is already narrow enough.
-  //
-  // resolveChannelTools is best-effort — if it throws (e.g. during boot before
-  // registry is populated), the original tool list is used unchanged.
-  if (context.channel) {
-    try {
-      const { resolveChannelTools } = await import("./tools/channelTools");
-      const hasGoogle = !!context.googleAccessToken;
-      const scoped = await resolveChannelTools(context.channel, hasGoogle);
-      if (scoped.length > 0) {
-        // For a *known* channel the scope is authoritative — always apply the
-        // intersection, even when it reduces the list to zero tools. This fails
-        // closed for misconfigured callers rather than leaking extra tools.
-        // (If scoped.length === 0 the channel was unrecognised and we leave tools
-        // unchanged to preserve resiliency for unnamed internal sub-agents.)
-        const scopedNames = new Set(scoped.map((t: AgentTool) => t.name));
-        tools = tools.filter((t: AgentTool) => scopedNames.has(t.name));
+      // Step 3: REMOVE suppressed capability tools (highest priority — wins over activations).
+      if (opts.activationPlan?.capabilityManifest.suppressedCapabilityIds.length) {
+        let removed = 0;
+        for (const capId of opts.activationPlan.capabilityManifest.suppressedCapabilityIds) {
+          const cap = capabilityRegistry.getById(capId);
+          if (cap) {
+            for (const tool of cap.tools) {
+              if (allowedToolNames.has(tool.name)) { allowedToolNames.delete(tool.name); removed++; }
+            }
+          }
+        }
+        if (removed > 0) {
+          console.log(
+            `[${channel}/Harness] manifest suppressions: -${removed} tools for capabilities: [${opts.activationPlan.capabilityManifest.suppressedCapabilityIds.join(", ")}]`,
+          );
+        }
+      }
+
+      // Step 4: Apply the allowed set to the tool list.
+      if (hasAnyScope) {
+        const before = tools.length;
+        tools = tools.filter((t: AgentTool) => allowedToolNames.has(t.name));
+        const reduction = before > 0 ? Math.round((1 - tools.length / before) * 100) : 0;
         console.log(
-          `[${channel}/Harness] channel-scope: ${tools.length} tools (from ${initialTools.length})`,
+          `[${channel}/Harness] effective tool set: ${tools.length}/${initialTools.length} (${reduction}% reduction from initial)`,
         );
       }
     } catch {
-      // scoping is best-effort — never block an agent run
+      // Best-effort — never block an agent run
     }
   }
 
