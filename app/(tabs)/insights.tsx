@@ -587,6 +587,7 @@ export default function InsightsScreen() {
   const [talkModeEnabled, setTalkModeEnabled] = useState(false);
   const talkModeRef = useRef(false);
   const startRecordingRef = useRef<() => Promise<void>>(() => Promise.resolve());
+  const stopRecordingRef = useRef<() => Promise<void>>(() => Promise.resolve());
   const [isTTSLoading, setIsTTSLoading] = useState(false);
   const speakingTextRef = useRef<string | null>(null);
   const [isTranscribing, setIsTranscribing] = useState(false);
@@ -757,7 +758,6 @@ export default function InsightsScreen() {
 
   startRecordingRef.current = startRecording;
 
-  useEffect(() => { talkModeRef.current = talkModeEnabled; }, [talkModeEnabled]);
 
   const stopRecordingAndSend = useCallback(async () => {
     setIsRecording(false);
@@ -814,6 +814,9 @@ export default function InsightsScreen() {
       }
     }
   }, [transcribeAndSend]);
+
+  stopRecordingRef.current = stopRecordingAndSend;
+  useEffect(() => { talkModeRef.current = talkModeEnabled; }, [talkModeEnabled]);
 
   const stopSpeaking = useCallback(() => {
     speakAbortRef.current?.abort();
@@ -1274,6 +1277,52 @@ export default function InsightsScreen() {
       setTalkModeEnabled(enabled);
       talkModeRef.current = enabled;
     }).catch(() => {});
+
+    // Subscribe to wake word trigger events via SSE
+    let sseAborted = false;
+    const connectWakeSSE = () => {
+      if (sseAborted) return;
+      getAuthToken().then(token => {
+        if (sseAborted || !token) return;
+        const url = new URL('/api/voice/wake-events', getApiUrl()).toString();
+        expoFetch(url, { headers: { Authorization: `Bearer ${token}` } })
+          .then(res => {
+            if (sseAborted || !res.body) return;
+            const reader = res.body.getReader();
+            const decode = new TextDecoder();
+            const pump = (): void => {
+              reader.read().then(({ done, value }) => {
+                if (done || sseAborted) return;
+                const text = decode.decode(value, { stream: true });
+                const lines = text.split('\n');
+                for (const line of lines) {
+                  if (line.startsWith('data:')) {
+                    try {
+                      const ev = JSON.parse(line.slice(5).trim());
+                      if (ev.phrase && !talkModeRef.current) {
+                        // Wake word fired — auto-start recording
+                        startRecordingRef.current();
+                      }
+                    } catch { /* malformed line */ }
+                  }
+                }
+                pump();
+              }).catch(() => { if (!sseAborted) setTimeout(connectWakeSSE, 3000); });
+            };
+            pump();
+          })
+          .catch(() => { if (!sseAborted) setTimeout(connectWakeSSE, 5000); });
+      }).catch(() => {});
+    };
+    connectWakeSSE();
+
+    // Cleanup on blur: stop recording/speaking if Talk Mode was active
+    return () => {
+      sseAborted = true;
+      if (talkModeRef.current) {
+        stopRecordingRef.current().catch(() => {});
+      }
+    };
   }, []));
 
   const sendMessage = useCallback(async (text: string) => {
