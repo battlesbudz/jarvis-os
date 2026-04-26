@@ -11,7 +11,7 @@ import type { AgentTool } from "../types";
 import {
   callBrowserTool,
   closeMcpSession,
-  hasMcpSession,
+  hasActiveBrowserContext,
   popLatestScreenshot,
 } from "../mcp/playwrightMcpClient";
 
@@ -119,7 +119,7 @@ export const browserClickTool: AgentTool = {
     },
   },
   async execute(args, ctx) {
-    if (!hasMcpSession(ctx.userId)) {
+    if (!await hasActiveBrowserContext(ctx.userId)) {
       return { ok: false, content: "No active browser session. Call browser_navigate first.", label: "browser_click: no session" };
     }
     const text = args.text ? String(args.text).trim() : "";
@@ -169,7 +169,7 @@ export const browserTypeTool: AgentTool = {
     required: ["text"],
   },
   async execute(args, ctx) {
-    if (!hasMcpSession(ctx.userId)) {
+    if (!await hasActiveBrowserContext(ctx.userId)) {
       return { ok: false, content: "No active browser session. Call browser_navigate first.", label: "browser_type: no session" };
     }
     const textToType = String(args.text || "").trim();
@@ -215,7 +215,7 @@ export const browserScreenshotTool: AgentTool = {
     },
   },
   async execute(args, ctx) {
-    if (!hasMcpSession(ctx.userId)) {
+    if (!await hasActiveBrowserContext(ctx.userId)) {
       return { ok: false, content: "No active browser session. Call browser_navigate first.", label: "browser_screenshot: no session" };
     }
     try {
@@ -260,7 +260,7 @@ export const browserExtractTool: AgentTool = {
     },
   },
   async execute(args, ctx) {
-    if (!hasMcpSession(ctx.userId)) {
+    if (!await hasActiveBrowserContext(ctx.userId)) {
       return { ok: false, content: "No active browser session. Call browser_navigate first.", label: "browser_extract: no session" };
     }
     try {
@@ -301,7 +301,7 @@ export const browserSnapshotTool: AgentTool = {
     },
   },
   async execute(args, ctx) {
-    if (!hasMcpSession(ctx.userId)) {
+    if (!await hasActiveBrowserContext(ctx.userId)) {
       return { ok: false, content: "No active browser session. Call browser_navigate first.", label: "browser_snapshot: no session" };
     }
     try {
@@ -342,7 +342,7 @@ export const browserWaitForTool: AgentTool = {
     },
   },
   async execute(args, ctx) {
-    if (!hasMcpSession(ctx.userId)) {
+    if (!await hasActiveBrowserContext(ctx.userId)) {
       return { ok: false, content: "No active browser session. Call browser_navigate first.", label: "browser_wait_for: no session" };
     }
     const mcpArgs: Record<string, unknown> = {};
@@ -388,7 +388,7 @@ export const browserSelectTool: AgentTool = {
     required: ["element", "values"],
   },
   async execute(args, ctx) {
-    if (!hasMcpSession(ctx.userId)) {
+    if (!await hasActiveBrowserContext(ctx.userId)) {
       return { ok: false, content: "No active browser session. Call browser_navigate first.", label: "browser_select: no session" };
     }
     const element = String(args.element || "").trim();
@@ -421,8 +421,8 @@ export const browserClearSessionTool: AgentTool = {
     "Use this to log out of sites or start fresh. A new session will be created on the next browser call.",
   parameters: { type: "object", properties: {} },
   async execute(_args, ctx) {
-    closeMcpSession(ctx.userId);
-    return { ok: true, content: "Browser session cleared. Cookies and login state have been reset.", label: "Session cleared" };
+    closeMcpSession(ctx.userId, true /* wipeProfile */);
+    return { ok: true, content: "Browser session cleared. Cookies, login state, and persisted storage have been reset.", label: "Session cleared" };
   },
 };
 
@@ -435,7 +435,7 @@ export const browserCloseTool: AgentTool = {
     "Sessions close automatically after 5 minutes of inactivity.",
   parameters: { type: "object", properties: {} },
   async execute(_args, ctx) {
-    if (!hasMcpSession(ctx.userId)) {
+    if (!await hasActiveBrowserContext(ctx.userId)) {
       return { ok: true, content: "No active browser session to close.", label: "browser_close: no session" };
     }
     closeMcpSession(ctx.userId);
