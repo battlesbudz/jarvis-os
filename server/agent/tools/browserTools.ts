@@ -112,6 +112,10 @@ export const browserNavigateTool: AgentTool = {
         type: "string",
         description: "Full URL to navigate to (must start with http:// or https://)",
       },
+      wait_until: {
+        type: "string",
+        description: "Navigation wait condition: 'load', 'domcontentloaded', 'networkidle' (informational — MCP handles wait internally)",
+      },
     },
     required: ["url"],
   },
@@ -164,6 +168,10 @@ export const browserClickTool: AgentTool = {
         type: "string",
         description: "Visible text or description of the element to click (e.g. 'Submit', 'Next link'). Used when ref is not provided.",
       },
+      selector: {
+        type: "string",
+        description: "CSS selector or aria-label description (alias for text, used when text is not provided).",
+      },
     },
   },
   async execute(args, ctx) {
@@ -172,7 +180,7 @@ export const browserClickTool: AgentTool = {
     }
 
     let ref = args.ref ? String(args.ref).trim() : "";
-    const description = args.text ? String(args.text).trim() : ref;
+    const description = (args.text ? String(args.text) : args.selector ? String(args.selector) : ref).trim();
 
     if (!ref) {
       if (!description) {
@@ -219,7 +227,9 @@ export const browserTypeTool: AgentTool = {
     properties: {
       text: { type: "string", description: "The text to type into the field" },
       ref: { type: "string", description: "Element ref from browser_snapshot (e.g. 'e2'). Preferred." },
-      label: { type: "string", description: "Label text, placeholder, or description of the input field. Used when ref is not provided." },
+      label: { type: "string", description: "Label text or description of the input field. Used when ref is not provided." },
+      placeholder: { type: "string", description: "Placeholder text of the input field (alias for label)." },
+      selector: { type: "string", description: "CSS selector or aria-label (alias for label)." },
       submit: { type: "boolean", description: "Press Enter after typing (default: false)" },
     },
     required: ["text"],
@@ -232,7 +242,7 @@ export const browserTypeTool: AgentTool = {
     if (!textToType) return { ok: false, content: "`text` is required.", label: "browser_type: no text" };
 
     let ref = args.ref ? String(args.ref).trim() : "";
-    const description = args.label ? String(args.label).trim() : ref;
+    const description = (args.label ? String(args.label) : args.placeholder ? String(args.placeholder) : args.selector ? String(args.selector) : ref).trim();
     const submit = Boolean(args.submit);
 
     if (!ref) {
@@ -488,6 +498,58 @@ export const browserSelectTool: AgentTool = {
     } catch (err) {
       const msg = err instanceof Error ? err.message.split("\n")[0] : String(err);
       return { ok: false, content: `browser_select failed: ${msg}`, label: "browser_select: error" };
+    }
+  },
+};
+
+// ── browser_tabs ──────────────────────────────────────────────────────────────
+
+export const browserTabsTool: AgentTool = {
+  name: "browser_tabs",
+  description:
+    "Manage browser tabs in the current session. " +
+    "Actions: `list` — return titles/URLs of all open tabs; " +
+    "`new` — open a new blank tab; " +
+    "`select` — switch to a tab by its index (0-based); " +
+    "`close` — close a tab by index, or the current tab if index is omitted.",
+  parameters: {
+    type: "object",
+    properties: {
+      action: {
+        type: "string",
+        enum: ["list", "new", "close", "select"],
+        description: "Operation to perform on tabs",
+      },
+      index: {
+        type: "number",
+        description: "Tab index (0-based). Required for `select`; optional for `close` (omit to close current tab).",
+      },
+    },
+    required: ["action"],
+  },
+  async execute(args, ctx) {
+    if (!await hasActiveBrowserContext(ctx.userId)) {
+      return { ok: false, content: "No active browser session. Call browser_navigate first.", label: "browser_tabs: no session" };
+    }
+    const action = String(args.action || "").trim();
+    if (!["list", "new", "close", "select"].includes(action)) {
+      return { ok: false, content: "action must be one of: list, new, close, select", label: "browser_tabs: bad action" };
+    }
+    const mcpArgs: Record<string, unknown> = { action };
+    if (args.index != null) mcpArgs.index = Number(args.index);
+
+    try {
+      const result = await callBrowserTool(ctx.userId, "browser_tabs", mcpArgs);
+      const text = mcpText(result.content);
+      console.log(`[${ctx.channel || "Agent"}] browser_tabs action=${action} index=${args.index ?? "–"}`);
+      return {
+        ok: !result.isError,
+        content: text || `Tab action '${action}' completed.`,
+        label: `Tabs: ${action}`,
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message.split("\n")[0] : String(err);
+      return { ok: false, content: `browser_tabs failed: ${msg}`, label: "browser_tabs: error" };
     }
   },
 };

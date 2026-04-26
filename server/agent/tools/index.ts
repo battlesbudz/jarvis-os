@@ -55,6 +55,7 @@ import {
   browserSnapshotTool,
   browserWaitForTool,
   browserSelectTool,
+  browserTabsTool,
   browserClearSessionTool,
 } from "./browserTools";
 import {
@@ -125,6 +126,7 @@ export const ALL_TOOLS: AgentTool[] = [
   browserSnapshotTool,
   browserWaitForTool,
   browserSelectTool,
+  browserTabsTool,
   browserClearSessionTool,
   buildFeatureTool,
   testToolTool,
@@ -196,6 +198,7 @@ export function telegramCoachTools(opts: { hasGoogle: boolean }): AgentTool[] {
     browserSnapshotTool,
     browserWaitForTool,
     browserSelectTool,
+    browserTabsTool,
     browserClearSessionTool,
     buildFeatureTool,
     testToolTool,
@@ -268,6 +271,7 @@ export {
   browserSnapshotTool,
   browserWaitForTool,
   browserSelectTool,
+  browserTabsTool,
   browserClearSessionTool,
   buildFeatureTool,
   testToolTool,
