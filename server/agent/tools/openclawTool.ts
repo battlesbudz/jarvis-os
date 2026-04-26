@@ -823,13 +823,17 @@ Jarvis repo key paths:
       ? `\n## API Endpoint Required\nThis tool also needs a new Express REST endpoint. Create a route file at server/${featureName}Routes.ts (following the repo convention: server/dataRoutes.ts, server/telegramRoutes.ts, etc.), mount it in server/index.ts under /api/${featureName.replace(/_/g, "-")}, and label the code block with the file path \`server/${featureName}Routes.ts\`.`
       : "";
 
-    const task = `[JARVIS SELF-IMPROVEMENT] Build a new Jarvis agent tool.
+    const buildTask = (currentDescription: string, priorError?: string) => {
+      const fixSection = priorError
+        ? `\n\n## Fix required — previous attempt failed\nThe tool was built and applied but its smoke test failed with the following error. Your task is to fix this specific error:\n\`\`\`\n${priorError}\n\`\`\``
+        : "";
+      return `[JARVIS SELF-IMPROVEMENT] Build a new Jarvis agent tool.
 
 ## Tool to build: \`${featureName}\`
 
 ## Description / behaviour
-${description}
-${parametersSectionLines.join("\n")}${apiEndpointSection}
+${currentDescription}
+${parametersSectionLines.join("\n")}${apiEndpointSection}${fixSection}
 
 ## AgentTool TypeScript interface (must match exactly)
 \`\`\`typescript
@@ -855,6 +859,7 @@ ${repoStructure}
 - Use async/await. Handle errors with \`return { ok: false, content: "..." }\` — never throw.
 - The \`ctx\` parameter has shape \`{ userId: string; ... }\`.
 - Do not add comments unless they explain non-obvious logic.`;
+    };
 
     // Helper: write a build log row, swallowing errors so logging never breaks the tool.
     const writeBuildLog = async (
@@ -876,51 +881,6 @@ ${repoStructure}
       }
     };
 
-    // Delegate to openclaw_delegate with the structured prompt
-    const delegateResult = await openclawDelegateTool.execute(
-      { task, timeout_minutes: timeoutMinutes },
-      ctx
-    );
-
-    if (!delegateResult.ok) {
-      // Log the failed attempt before returning so every call is recorded.
-      await writeBuildLog(delegateResult.content, false, null);
-      return delegateResult;
-    }
-
-    // ── Auto-apply: write files & patch index.ts ─────────────────────────
-    let applyReport = "";
-    try {
-      const { applied, warnings } = await applyOpenClawBuildResult(
-        featureName,
-        delegateResult.content,
-        needsApiEndpoint
-      );
-
-      const appliedLines =
-        applied.length > 0
-          ? `\n\n**Files written automatically:**\n${applied.map((f) => `- \`${f}\``).join("\n")}`
-          : "";
-      const warnLines =
-        warnings.length > 0
-          ? `\n\n**Warnings (manual action needed):**\n${warnings.map((w) => `- ${w}`).join("\n")}`
-          : "";
-
-      applyReport =
-        applied.length > 0 || warnings.length > 0
-          ? `${appliedLines}${warnLines}\n\n${applied.length > 0 ? "Restart the server for the new tool to become active." : ""}`
-          : "";
-    } catch (applyErr) {
-      applyReport = `\n\n**Auto-apply failed:** ${applyErr instanceof Error ? applyErr.message : String(applyErr)}. Apply the code from OpenClaw's output above manually.`;
-    }
-
-    // Always attempt a deterministic smoke test after auto-apply.
-    // - If the tool is registered (auto-applied successfully): executes it and
-    //   returns the actual output.
-    // - If not yet registered (code returned as text, not yet applied):
-    //   openclawTestTool returns a clear "not registered" message with instructions.
-    // Either way, the result is always included in the same response turn.
-    //
     // We extend ctx.allowedToolNames to include the just-built tool name so the
     // per-surface access control check inside openclawTestTool does not block this
     // internal invocation — the test is explicitly scoped to what was just built.
@@ -931,28 +891,110 @@ ${repoStructure}
         : undefined,
     };
 
-    console.log(`[OpenClaw] Running smoke test for tool "${featureName}" after build`);
-    const smokeResult = await openclawTestTool.execute(
-      { tool_name: featureName },
-      ctxForSmokeTest
+    // ── Retry loop ────────────────────────────────────────────────────────
+    // Attempt to build, apply, and smoke-test the tool. If the smoke test
+    // fails, automatically ask OpenClaw to fix the specific error — up to
+    // MAX_BUILD_RETRIES additional times — before giving up.
+    // Override via OPENCLAW_BUILD_MAX_RETRIES env var (default: 2, max: 5).
+    const MAX_BUILD_RETRIES = Math.min(
+      Math.max(0, parseInt(process.env.OPENCLAW_BUILD_MAX_RETRIES ?? "2", 10) || 2),
+      5
     );
+    let priorError: string | undefined;
+    let lastDelegateContent = "";
+    let lastApplyReport = "";
+    let lastSmokeResult: ToolResult | null = null;
+    const retryLog: string[] = [];
 
-    const smokeNote = smokeResult.ok
-      ? `\n\n---\nSmoke test: PASSED\nOutput: ${smokeResult.content}`
-      : `\n\n---\nSmoke test: ${smokeResult.content}`;
+    for (let attempt = 0; attempt <= MAX_BUILD_RETRIES; attempt++) {
+      const isRetry = attempt > 0;
+      const task = buildTask(description, priorError);
 
-    // Persist a build log entry. success=true means OpenClaw produced code and
-    // it was applied; smokeTestPassed tracks whether the tool passed the smoke test.
-    await writeBuildLog(delegateResult.content, true, smokeResult.ok);
+      if (isRetry) {
+        const retryMsg = `Retrying fix (attempt ${attempt} of ${MAX_BUILD_RETRIES}) — asking OpenClaw to address the smoke-test error…`;
+        console.log(`[OpenClaw] ${retryMsg}`);
+        retryLog.push(`\n\n---\n**${retryMsg}**`);
+      }
 
-    // ok reflects the smoke-test outcome so callers get a machine-readable
-    // red/green signal. "Not yet registered" counts as non-fatal (smokeResult.ok
-    // is false but the build itself succeeded — the content explains what to do next).
+      // Delegate to openclaw_delegate with the structured prompt
+      const delegateResult = await openclawDelegateTool.execute(
+        { task, timeout_minutes: timeoutMinutes },
+        ctx
+      );
+
+      if (!delegateResult.ok) {
+        await writeBuildLog(delegateResult.content, false, null);
+        return delegateResult;
+      }
+
+      lastDelegateContent = delegateResult.content;
+
+      // ── Auto-apply: write files & patch index.ts ───────────────────────
+      let applyReport = "";
+      try {
+        const { applied, warnings } = await applyOpenClawBuildResult(
+          featureName,
+          delegateResult.content,
+          needsApiEndpoint
+        );
+
+        const appliedLines =
+          applied.length > 0
+            ? `\n\n**Files written automatically:**\n${applied.map((f) => `- \`${f}\``).join("\n")}`
+            : "";
+        const warnLines =
+          warnings.length > 0
+            ? `\n\n**Warnings (manual action needed):**\n${warnings.map((w) => `- ${w}`).join("\n")}`
+            : "";
+
+        applyReport =
+          applied.length > 0 || warnings.length > 0
+            ? `${appliedLines}${warnLines}\n\n${applied.length > 0 ? "Restart the server for the new tool to become active." : ""}`
+            : "";
+      } catch (applyErr) {
+        applyReport = `\n\n**Auto-apply failed:** ${applyErr instanceof Error ? applyErr.message : String(applyErr)}. Apply the code from OpenClaw's output above manually.`;
+      }
+
+      lastApplyReport = applyReport;
+
+      // ── Smoke test ─────────────────────────────────────────────────────
+      console.log(`[OpenClaw] Running smoke test for tool "${featureName}" (attempt ${attempt + 1})`);
+      const smokeResult = await openclawTestTool.execute(
+        { tool_name: featureName, test_args: "{}" },
+        ctxForSmokeTest
+      );
+
+      lastSmokeResult = smokeResult;
+
+      await writeBuildLog(delegateResult.content, true, smokeResult.ok);
+
+      if (smokeResult.ok) {
+        const smokeNote = `\n\n---\nSmoke test: PASSED\nOutput: ${smokeResult.content}`;
+        const retryContext = retryLog.length > 0 ? retryLog.join("") : "";
+        return {
+          ok: true,
+          content: lastDelegateContent + lastApplyReport + retryContext + smokeNote,
+          label: "openclaw_build_feature",
+          detail: `Built and verified: ${featureName}${attempt > 0 ? ` (fixed after ${attempt} retry)` : ""}`,
+        };
+      }
+
+      // Smoke test failed — prepare for retry if attempts remain
+      if (attempt < MAX_BUILD_RETRIES) {
+        priorError = smokeResult.content;
+      }
+    }
+
+    // All attempts exhausted — report the final failure
+    const smokeNote = `\n\n---\nSmoke test: ${lastSmokeResult!.content}`;
+    const giveUpNote = `\n\n**Jarvis gave up after ${MAX_BUILD_RETRIES} automatic fix attempt(s).** The tool file has been written but the smoke test still fails. Review the error above and ask Jarvis to try again with a more specific description.`;
+    const retryContext = retryLog.length > 0 ? retryLog.join("") : "";
+
     return {
-      ok: smokeResult.ok,
-      content: delegateResult.content + applyReport + smokeNote,
+      ok: false,
+      content: lastDelegateContent + lastApplyReport + retryContext + smokeNote + giveUpNote,
       label: "openclaw_build_feature",
-      detail: smokeResult.ok ? `Built and verified: ${featureName}` : `Built (test pending): ${featureName}`,
+      detail: `Built (smoke test failed after ${MAX_BUILD_RETRIES} retries): ${featureName}`,
     };
   },
 };
@@ -1113,7 +1155,7 @@ export const openclawTestTool: AgentTool = {
         ok: false,
         content:
           `Tool "${toolName}" threw an exception during the smoke test (${argsNote}): ${detail}\n\n` +
-          "Ask OpenClaw to fix it by calling openclaw_build_feature again with the error details included in the description.",
+          "If this was called from openclaw_build_feature the retry loop will handle it automatically. Otherwise call openclaw_build_feature again with this error included in the description.",
         label: "openclaw_test_tool",
         detail: `throw: ${toolName} — ${detail}`,
       };
@@ -1132,7 +1174,7 @@ export const openclawTestTool: AgentTool = {
       ok: false,
       content:
         `Smoke test FAILED for tool "${toolName}" (${argsNote}).\n\nError: ${result.content}\n\n` +
-        "Ask OpenClaw to fix it by calling openclaw_build_feature again, including this error in the description.",
+        "If this was called from openclaw_build_feature the retry loop will handle it automatically. Otherwise call openclaw_build_feature again with this error included in the description.",
       label: "openclaw_test_tool",
       detail: `fail: ${toolName} — ${result.content}`,
     };
