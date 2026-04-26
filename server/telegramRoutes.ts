@@ -3,6 +3,7 @@ import { db } from "./db";
 import { eq, and, desc, sql, gte, lte } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { sendMessage, sendMessageWithButtons, sendTelegramDocument, sendVoice, answerCallbackQuery, isTelegramConfigured, getUpdates, downloadTelegramFile, downloadTelegramFileBuffer } from "./integrations/telegram";
+import { isIngestableDocument, extractTelegramDocument, buildDocumentContextBlock } from "./telegramDocumentExtractor";
 import { getUserTtsPrefs, setUserTtsPref, speakToUser } from "./agent/tools/tts";
 import { notifyUser, getChannel } from "./channels/registry";
 import type { NotificationType } from "@shared/schema";
@@ -275,6 +276,26 @@ async function processUpdate(update: any): Promise<void> {
         await sendMessage(chatId, "Sorry, I couldn't understand that voice message. Could you try again or type it out?");
         return;
       }
+    }
+
+    if (message.document && isIngestableDocument(message.document.mime_type, message.document.file_name)) {
+      const doc = message.document;
+      const filename = doc.file_name || 'document';
+      await sendMessage(chatId, `Got it — reading "${filename}" now...`);
+      const result = await extractTelegramDocument(
+        doc.file_id,
+        doc.mime_type || 'text/plain',
+        filename,
+        doc.file_size,
+      );
+      if ('error' in result) {
+        await sendMessage(chatId, result.error);
+        return;
+      }
+      const contextBlock = buildDocumentContextBlock(result);
+      text = text
+        ? `${contextBlock}\n\n${text}`
+        : contextBlock;
     }
 
     if (!text && !imageUrl) return;

@@ -12,9 +12,12 @@ var __export = (target, all) => {
 var schema_exports = {};
 __export(schema_exports, {
   CHANNEL_NAMES: () => CHANNEL_NAMES,
+  GUT_SIGNAL_TYPES: () => GUT_SIGNAL_TYPES,
+  GUT_USER_RESPONSES: () => GUT_USER_RESPONSES,
   MEMORY_CATEGORIES: () => MEMORY_CATEGORIES,
   NOTIFICATION_TYPES: () => NOTIFICATION_TYPES,
   agentJobs: () => agentJobs,
+  agentWorkflows: () => agentWorkflows,
   blockedTasks: () => blockedTasks,
   brainDumpInbox: () => brainDumpInbox,
   channelLinkCodes: () => channelLinkCodes,
@@ -26,20 +29,32 @@ __export(schema_exports, {
   completedCalendarIds: () => completedCalendarIds,
   completionHistory: () => completionHistory,
   deliverables: () => deliverables,
+  discordAgents: () => discordAgents,
+  discordChannelSchedules: () => discordChannelSchedules,
+  discordPendingApprovals: () => discordPendingApprovals,
+  dreamInsights: () => dreamInsights,
+  egoWeeklyReports: () => egoWeeklyReports,
   emailDrafts: () => emailDrafts,
   energyCheckins: () => energyCheckins,
   goalTrees: () => goalTrees,
   goals: () => goals,
+  gutCalibration: () => gutCalibration,
+  gutSignals: () => gutSignals,
   inboxItems: () => inboxItems,
   inboxRules: () => inboxRules,
   insertUserSchema: () => insertUserSchema,
   interactionLog: () => interactionLog,
+  jarvisActionLog: () => jarvisActionLog,
+  jarvisPredictions: () => jarvisPredictions,
   jarvisScheduledTasks: () => jarvisScheduledTasks,
   jarvisSouls: () => jarvisSouls,
   lifeContext: () => lifeContext,
   mobileAuthSessions: () => mobileAuthSessions,
   momentumSessions: () => momentumSessions,
   morningVoiceNotes: () => morningVoiceNotes,
+  nervousSystemSignals: () => nervousSystemSignals,
+  nervousSystemWatches: () => nervousSystemWatches,
+  openclawBuildLog: () => openclawBuildLog,
   people: () => people,
   planSnapshots: () => planSnapshots,
   plans: () => plans,
@@ -51,15 +66,17 @@ __export(schema_exports, {
   telegramLinks: () => telegramLinks,
   timerSettings: () => timerSettings,
   userDocuments: () => userDocuments,
+  userEmotionalState: () => userEmotionalState,
+  userEmotionalStateHistory: () => userEmotionalStateHistory,
   userMemories: () => userMemories,
   userPreferences: () => userPreferences,
   users: () => users,
   weeklyInsights: () => weeklyInsights
 });
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, jsonb, timestamp, date, primaryKey, integer, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, jsonb, timestamp, date, primaryKey, integer, uniqueIndex, boolean, serial, real } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
-var users, insertUserSchema, plans, goals, stats, brainDumpInbox, energyCheckins, chatHistory, lifeContext, timerSettings, userPreferences, completionHistory, blockedTasks, completedCalendarIds, planSnapshots, telegramLinks, telegramLinkCodes, telegramGroupMessages, commitments, userMemories, MEMORY_CATEGORIES, people, jarvisSouls, weeklyInsights, proactiveQuestionsSent, inboxRules, inboxItems, mobileAuthSessions, userDocuments, chatgptImports, proactiveScheduleLog, momentumSessions, morningVoiceNotes, emailDrafts, goalTrees, jarvisScheduledTasks, agentJobs, deliverables, channelLinks, channelLinkCodes, channelPreferences, NOTIFICATION_TYPES, CHANNEL_NAMES, interactionLog;
+var users, insertUserSchema, plans, goals, stats, brainDumpInbox, energyCheckins, chatHistory, lifeContext, timerSettings, userPreferences, completionHistory, blockedTasks, completedCalendarIds, planSnapshots, telegramLinks, telegramLinkCodes, telegramGroupMessages, commitments, userMemories, MEMORY_CATEGORIES, people, jarvisSouls, weeklyInsights, proactiveQuestionsSent, inboxRules, inboxItems, mobileAuthSessions, userDocuments, chatgptImports, proactiveScheduleLog, momentumSessions, morningVoiceNotes, emailDrafts, goalTrees, jarvisScheduledTasks, agentWorkflows, agentJobs, deliverables, channelLinks, channelLinkCodes, channelPreferences, NOTIFICATION_TYPES, CHANNEL_NAMES, discordChannelSchedules, interactionLog, discordPendingApprovals, discordAgents, nervousSystemWatches, nervousSystemSignals, userEmotionalState, userEmotionalStateHistory, GUT_SIGNAL_TYPES, GUT_USER_RESPONSES, gutSignals, jarvisPredictions, gutCalibration, dreamInsights, jarvisActionLog, openclawBuildLog, egoWeeklyReports;
 var init_schema = __esm({
   "shared/schema.ts"() {
     "use strict";
@@ -259,8 +276,8 @@ var init_schema = __esm({
       pattern: text("pattern").notNull(),
       matchHints: jsonb("match_hints"),
       source: varchar("source").notNull(),
-      matchCount: varchar("match_count").default("0"),
-      active: varchar("active").default("true"),
+      matchCount: integer("match_count").default(0),
+      active: boolean("active").default(true),
       createdAt: timestamp("created_at").defaultNow(),
       updatedAt: timestamp("updated_at").defaultNow()
     });
@@ -275,11 +292,11 @@ var init_schema = __esm({
       jarvisReason: text("jarvis_reason"),
       suggestedActions: jsonb("suggested_actions"),
       status: varchar("status").default("pending"),
-      dismissCount: varchar("dismiss_count").default("0"),
+      dismissCount: integer("dismiss_count").default(0),
       matchedRuleId: varchar("matched_rule_id"),
       surfacedAt: timestamp("surfaced_at").defaultNow(),
       actedAt: timestamp("acted_at")
-    });
+    }, (t) => [uniqueIndex("inbox_items_user_source_idx").on(t.userId, t.sourceId)]);
     mobileAuthSessions = pgTable("mobile_auth_sessions", {
       sessionId: text("session_id").primaryKey(),
       token: text("token").notNull(),
@@ -364,6 +381,18 @@ var init_schema = __esm({
       completedAt: timestamp("completed_at"),
       createdAt: timestamp("created_at").defaultNow().notNull()
     });
+    agentWorkflows = pgTable("agent_workflows", {
+      id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+      userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+      title: text("title").notNull(),
+      description: text("description"),
+      steps: jsonb("steps").$type().notNull().default(sql`'[]'::jsonb`),
+      currentStepIndex: integer("current_step_index").notNull().default(0),
+      // active | paused_waiting | paused | complete | failed
+      status: varchar("status").notNull().default("active"),
+      createdAt: timestamp("created_at").defaultNow().notNull(),
+      updatedAt: timestamp("updated_at").defaultNow().notNull()
+    });
     agentJobs = pgTable("agent_jobs", {
       id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
       userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
@@ -429,9 +458,28 @@ var init_schema = __esm({
       "commitment_check",
       "weekly_planning",
       "approval_request",
+      "nervous_system",
+      "dream_insight",
+      "stress_checkin",
+      "ego_report",
       "general"
     ];
-    CHANNEL_NAMES = ["telegram", "whatsapp", "slack", "daemon", "discord"];
+    CHANNEL_NAMES = ["telegram", "whatsapp", "slack", "daemon", "discord", "in_app"];
+    discordChannelSchedules = pgTable("discord_channel_schedules", {
+      id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+      userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+      guildId: varchar("guild_id"),
+      channelId: varchar("channel_id"),
+      channelName: varchar("channel_name").notNull(),
+      label: varchar("label").notNull(),
+      cronExpression: varchar("cron_expression").notNull().default("0 7 * * *"),
+      prompt: text("prompt").notNull(),
+      pipelineNext: varchar("pipeline_next"),
+      lastRun: timestamp("last_run"),
+      lastOutput: text("last_output"),
+      enabled: boolean("enabled").notNull().default(true),
+      createdAt: timestamp("created_at").defaultNow().notNull()
+    });
     interactionLog = pgTable("interaction_log", {
       id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
       userId: varchar("user_id").notNull().references(() => users.id),
@@ -441,6 +489,184 @@ var init_schema = __esm({
       label: varchar("label"),
       createdAt: timestamp("created_at").defaultNow().notNull()
     });
+    discordPendingApprovals = pgTable("discord_pending_approvals", {
+      messageId: varchar("message_id").primaryKey(),
+      userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+      channelId: varchar("channel_id").notNull(),
+      guildId: varchar("guild_id"),
+      type: varchar("type").notNull().default("custom"),
+      content: text("content").notNull(),
+      approveEmoji: varchar("approve_emoji").notNull().default("\u2705"),
+      rejectEmoji: varchar("reject_emoji").notNull().default("\u274C"),
+      onApprove: jsonb("on_approve").notNull(),
+      onReject: jsonb("on_reject"),
+      status: varchar("status").notNull().default("pending"),
+      createdAt: timestamp("created_at").defaultNow().notNull(),
+      resolvedAt: timestamp("resolved_at")
+    });
+    discordAgents = pgTable("discord_agents", {
+      id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+      userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+      name: varchar("name").notNull(),
+      role: varchar("role").notNull().default("custom"),
+      persona: text("persona"),
+      channelId: varchar("channel_id"),
+      channelName: varchar("channel_name"),
+      isActive: integer("is_active").notNull().default(1),
+      loopEnabled: integer("loop_enabled").notNull().default(0),
+      loopIntervalMinutes: integer("loop_interval_minutes").default(60),
+      loopPrompt: text("loop_prompt"),
+      lastLoopRun: timestamp("last_loop_run"),
+      createdAt: timestamp("created_at").defaultNow().notNull()
+    });
+    nervousSystemWatches = pgTable("nervous_system_watches", {
+      id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+      userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+      label: text("label").notNull(),
+      category: varchar("category").notNull().default("keyword"),
+      active: boolean("active").notNull().default(true),
+      lastCheckedAt: timestamp("last_checked_at"),
+      createdAt: timestamp("created_at").defaultNow().notNull()
+    });
+    nervousSystemSignals = pgTable("nervous_system_signals", {
+      id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+      userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+      watchId: varchar("watch_id").references(() => nervousSystemWatches.id, { onDelete: "set null" }),
+      watchLabel: text("watch_label").notNull(),
+      headline: text("headline").notNull(),
+      url: text("url"),
+      snippet: text("snippet"),
+      relevanceExplanation: text("relevance_explanation"),
+      relevanceScore: integer("relevance_score").notNull().default(0),
+      contentHash: varchar("content_hash").notNull(),
+      deliveredAt: timestamp("delivered_at"),
+      createdAt: timestamp("created_at").defaultNow().notNull()
+    }, (table) => [
+      uniqueIndex("nervous_system_signals_hash_idx").on(table.userId, table.contentHash)
+    ]);
+    userEmotionalState = pgTable("user_emotional_state", {
+      userId: varchar("user_id").notNull().primaryKey().references(() => users.id, { onDelete: "cascade" }),
+      stressScore: integer("stress_score").notNull().default(0),
+      flowScore: integer("flow_score").notNull().default(0),
+      label: varchar("label").notNull().default("calm"),
+      explanation: text("explanation"),
+      signalSources: jsonb("signal_sources").$type().notNull().default(sql`'[]'::jsonb`),
+      manualOverride: varchar("manual_override"),
+      manualOverrideAt: timestamp("manual_override_at"),
+      computedAt: timestamp("computed_at").defaultNow().notNull(),
+      updatedAt: timestamp("updated_at").defaultNow().notNull(),
+      consecutiveHighStressCycles: integer("consecutive_high_stress_cycles").notNull().default(0),
+      lastStressCheckinAt: timestamp("last_stress_checkin_at"),
+      // Rolling baseline fields — populated from userEmotionalStateHistory
+      baselineStress: real("baseline_stress"),
+      baselineFlow: real("baseline_flow"),
+      patternNote: text("pattern_note")
+    });
+    userEmotionalStateHistory = pgTable("user_emotional_state_history", {
+      id: serial("id").primaryKey(),
+      userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+      stressScore: integer("stress_score").notNull(),
+      flowScore: integer("flow_score").notNull(),
+      label: varchar("label").notNull(),
+      dayOfWeek: integer("day_of_week").notNull(),
+      // 0 = Sunday … 6 = Saturday (in user TZ)
+      hourOfDay: integer("hour_of_day").notNull(),
+      // 0–23 (in user TZ)
+      recordedAt: timestamp("recorded_at").notNull().defaultNow()
+    });
+    GUT_SIGNAL_TYPES = [
+      "calendar_anomaly",
+      "email_pattern",
+      "deep_work_erosion",
+      "project_drift",
+      "relationship_anomaly"
+    ];
+    GUT_USER_RESPONSES = ["confirmed", "dismissed", "ignored"];
+    gutSignals = pgTable("gut_signals", {
+      id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+      userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+      signalType: varchar("signal_type").notNull(),
+      itemRef: varchar("item_ref"),
+      confidenceScore: integer("confidence_score").notNull().default(50),
+      explanation: text("explanation").notNull(),
+      userResponse: varchar("user_response"),
+      respondedAt: timestamp("responded_at"),
+      deliveredInMorningBrief: boolean("delivered_in_morning_brief").notNull().default(false),
+      createdAt: timestamp("created_at").defaultNow().notNull()
+    });
+    jarvisPredictions = pgTable("jarvis_predictions", {
+      id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+      userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+      predictionType: varchar("prediction_type").notNull(),
+      targetDatetime: timestamp("target_datetime").notNull(),
+      targetDate: varchar("target_date").notNull(),
+      confidenceScore: integer("confidence_score").notNull().default(50),
+      basisSummary: text("basis_summary").notNull(),
+      humanReadable: text("human_readable").notNull(),
+      actionSuggestion: text("action_suggestion"),
+      observationCount: integer("observation_count").notNull().default(0),
+      validated: boolean("validated"),
+      validationNote: text("validation_note"),
+      validatedAt: timestamp("validated_at"),
+      deliveredAt: timestamp("delivered_at"),
+      createdAt: timestamp("created_at").defaultNow().notNull()
+    }, (table) => [
+      uniqueIndex("jarvis_predictions_user_type_date_idx").on(table.userId, table.predictionType, table.targetDate)
+    ]);
+    gutCalibration = pgTable("gut_calibration", {
+      userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+      signalType: varchar("signal_type").notNull(),
+      confirmedCount: integer("confirmed_count").notNull().default(0),
+      dismissedCount: integer("dismissed_count").notNull().default(0),
+      ignoredCount: integer("ignored_count").notNull().default(0),
+      confirmationRate: real("confirmation_rate"),
+      gateAdjustment: integer("gate_adjustment").notNull().default(0),
+      lastUpdatedAt: timestamp("last_updated_at").defaultNow().notNull()
+    }, (table) => [
+      primaryKey({ columns: [table.userId, table.signalType] })
+    ]);
+    dreamInsights = pgTable("dream_insights", {
+      id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+      userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+      dreamDate: varchar("dream_date").notNull(),
+      insightText: text("insight_text").notNull(),
+      confidenceScore: integer("confidence_score").notNull().default(70),
+      sourceMemoryIds: jsonb("source_memory_ids").$type().notNull().default(sql`'[]'::jsonb`),
+      shownToUser: boolean("shown_to_user").notNull().default(false),
+      deliveredAt: timestamp("delivered_at"),
+      createdAt: timestamp("created_at").defaultNow().notNull()
+    });
+    jarvisActionLog = pgTable("jarvis_action_log", {
+      id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+      userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+      actionType: varchar("action_type").notNull(),
+      outcome: varchar("outcome").notNull().default("pending"),
+      metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+      createdAt: timestamp("created_at").defaultNow().notNull(),
+      updatedAt: timestamp("updated_at").defaultNow().notNull()
+    });
+    openclawBuildLog = pgTable("openclaw_build_log", {
+      id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+      userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+      featureName: varchar("feature_name").notNull(),
+      description: text("description").notNull(),
+      outputCode: text("output_code").notNull().default(""),
+      success: boolean("success").notNull().default(false),
+      smokeTestPassed: boolean("smoke_test_passed"),
+      smokeTestArgs: jsonb("smoke_test_args"),
+      createdAt: timestamp("created_at").defaultNow().notNull()
+    });
+    egoWeeklyReports = pgTable("ego_weekly_reports", {
+      id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+      userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+      weekOf: varchar("week_of").notNull(),
+      analysis: jsonb("analysis").notNull().default(sql`'{}'::jsonb`),
+      reportText: text("report_text").notNull().default(""),
+      deliveredAt: timestamp("delivered_at"),
+      createdAt: timestamp("created_at").defaultNow().notNull()
+    }, (table) => [
+      uniqueIndex("ego_weekly_reports_user_week_idx").on(table.userId, table.weekOf)
+    ]);
   }
 });
 
@@ -1026,6 +1252,304 @@ async function ensureTablesExist() {
         PRIMARY KEY (user_id, notification_type)
       )
     `);
+    await db.execute(sql2`
+      CREATE TABLE IF NOT EXISTS nervous_system_watches (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        label TEXT NOT NULL,
+        category VARCHAR NOT NULL DEFAULT 'keyword',
+        active BOOLEAN NOT NULL DEFAULT true,
+        last_checked_at TIMESTAMP,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql2`
+      CREATE INDEX IF NOT EXISTS nervous_system_watches_user_idx
+        ON nervous_system_watches (user_id)
+    `).catch(() => {
+    });
+    await db.execute(sql2`
+      CREATE TABLE IF NOT EXISTS nervous_system_signals (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        watch_id VARCHAR REFERENCES nervous_system_watches(id) ON DELETE SET NULL,
+        watch_label TEXT NOT NULL,
+        headline TEXT NOT NULL,
+        url TEXT,
+        snippet TEXT,
+        relevance_explanation TEXT,
+        relevance_score INTEGER NOT NULL DEFAULT 0,
+        content_hash VARCHAR NOT NULL,
+        delivered_at TIMESTAMP,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql2`
+      CREATE UNIQUE INDEX IF NOT EXISTS nervous_system_signals_hash_idx
+        ON nervous_system_signals (user_id, content_hash)
+    `).catch(() => {
+    });
+    await db.execute(sql2`
+      CREATE INDEX IF NOT EXISTS nervous_system_signals_user_idx
+        ON nervous_system_signals (user_id, created_at DESC)
+    `).catch(() => {
+    });
+    await db.execute(sql2`
+      CREATE TABLE IF NOT EXISTS dream_insights (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        dream_date VARCHAR NOT NULL,
+        insight_text TEXT NOT NULL,
+        confidence_score INTEGER NOT NULL DEFAULT 70,
+        source_memory_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+        shown_to_user BOOLEAN NOT NULL DEFAULT FALSE,
+        delivered_at TIMESTAMP,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql2`
+      CREATE INDEX IF NOT EXISTS dream_insights_user_date_idx
+        ON dream_insights (user_id, dream_date DESC)
+    `).catch(() => {
+    });
+    await db.execute(sql2`
+      CREATE INDEX IF NOT EXISTS dream_insights_pending_idx
+        ON dream_insights (user_id, shown_to_user)
+        WHERE shown_to_user = FALSE
+    `).catch(() => {
+    });
+    await db.execute(sql2`
+      CREATE TABLE IF NOT EXISTS user_emotional_state (
+        user_id VARCHAR NOT NULL PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        stress_score INTEGER NOT NULL DEFAULT 0,
+        flow_score INTEGER NOT NULL DEFAULT 0,
+        label VARCHAR NOT NULL DEFAULT 'calm',
+        explanation TEXT,
+        signal_sources JSONB NOT NULL DEFAULT '[]'::jsonb,
+        manual_override VARCHAR,
+        manual_override_at TIMESTAMP,
+        computed_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        consecutive_high_stress_cycles INTEGER NOT NULL DEFAULT 0,
+        last_stress_checkin_at TIMESTAMP
+      )
+    `);
+    await db.execute(sql2`ALTER TABLE user_emotional_state ADD COLUMN IF NOT EXISTS baseline_stress REAL`);
+    await db.execute(sql2`ALTER TABLE user_emotional_state ADD COLUMN IF NOT EXISTS baseline_flow REAL`);
+    await db.execute(sql2`ALTER TABLE user_emotional_state ADD COLUMN IF NOT EXISTS pattern_note TEXT`);
+    await db.execute(sql2`
+      CREATE TABLE IF NOT EXISTS user_emotional_state_history (
+        id SERIAL PRIMARY KEY,
+        user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        stress_score INTEGER NOT NULL,
+        flow_score INTEGER NOT NULL,
+        label VARCHAR NOT NULL,
+        day_of_week INTEGER NOT NULL,
+        hour_of_day INTEGER NOT NULL,
+        recorded_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql2`
+      CREATE INDEX IF NOT EXISTS idx_ues_history_user_recorded
+        ON user_emotional_state_history (user_id, recorded_at DESC)
+    `);
+    await db.execute(sql2`
+      CREATE TABLE IF NOT EXISTS gut_signals (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        signal_type VARCHAR NOT NULL,
+        item_ref VARCHAR,
+        confidence_score INTEGER NOT NULL DEFAULT 50,
+        explanation TEXT NOT NULL,
+        user_response VARCHAR,
+        responded_at TIMESTAMP,
+        delivered_in_morning_brief BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql2`
+      CREATE INDEX IF NOT EXISTS gut_signals_user_created_idx
+        ON gut_signals (user_id, created_at DESC)
+    `).catch(() => {
+    });
+    await db.execute(sql2`
+      CREATE TABLE IF NOT EXISTS gut_calibration (
+        user_id          VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        signal_type      VARCHAR NOT NULL,
+        confirmed_count  INTEGER NOT NULL DEFAULT 0,
+        dismissed_count  INTEGER NOT NULL DEFAULT 0,
+        ignored_count    INTEGER NOT NULL DEFAULT 0,
+        confirmation_rate REAL,
+        gate_adjustment  INTEGER NOT NULL DEFAULT 0,
+        last_updated_at  TIMESTAMP NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (user_id, signal_type)
+      )
+    `);
+    await db.execute(sql2`
+      CREATE TABLE IF NOT EXISTS jarvis_action_log (
+        id          VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id     VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        action_type VARCHAR NOT NULL,
+        outcome     VARCHAR NOT NULL DEFAULT 'pending',
+        metadata    JSONB   NOT NULL DEFAULT '{}',
+        created_at  TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at  TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql2`
+      CREATE INDEX IF NOT EXISTS jarvis_action_log_user_created_idx
+        ON jarvis_action_log (user_id, created_at DESC)
+    `).catch(() => {
+    });
+    await db.execute(sql2`
+      CREATE TABLE IF NOT EXISTS ego_weekly_reports (
+        id          VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id     VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        week_of     VARCHAR NOT NULL,
+        analysis    JSONB   NOT NULL DEFAULT '{}',
+        report_text TEXT    NOT NULL DEFAULT '',
+        delivered_at TIMESTAMP,
+        created_at  TIMESTAMP NOT NULL DEFAULT NOW(),
+        CONSTRAINT ego_weekly_reports_user_week_idx UNIQUE (user_id, week_of)
+      )
+    `);
+    await db.execute(sql2`
+      CREATE TABLE IF NOT EXISTS discord_channel_schedules (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        guild_id VARCHAR,
+        channel_id VARCHAR,
+        channel_name VARCHAR NOT NULL,
+        label VARCHAR NOT NULL,
+        cron_expression VARCHAR NOT NULL DEFAULT '0 7 * * *',
+        prompt TEXT NOT NULL,
+        pipeline_next VARCHAR,
+        last_run TIMESTAMP,
+        last_output TEXT,
+        enabled BOOLEAN NOT NULL DEFAULT true,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `).catch(() => {
+    });
+    await db.execute(sql2`
+      CREATE TABLE IF NOT EXISTS discord_agents (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        name VARCHAR NOT NULL,
+        role VARCHAR NOT NULL DEFAULT 'custom',
+        persona TEXT,
+        channel_id VARCHAR,
+        channel_name VARCHAR,
+        is_active INTEGER NOT NULL DEFAULT 1,
+        loop_enabled INTEGER NOT NULL DEFAULT 0,
+        loop_interval_minutes INTEGER DEFAULT 60,
+        loop_prompt TEXT,
+        last_loop_run TIMESTAMP,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `).catch(() => {
+    });
+    await db.execute(sql2`
+      CREATE TABLE IF NOT EXISTS discord_pending_approvals (
+        message_id VARCHAR PRIMARY KEY,
+        user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        channel_id VARCHAR NOT NULL,
+        guild_id VARCHAR,
+        type VARCHAR NOT NULL DEFAULT 'custom',
+        content TEXT NOT NULL,
+        approve_emoji VARCHAR NOT NULL DEFAULT '✅',
+        reject_emoji VARCHAR NOT NULL DEFAULT '❌',
+        on_approve JSONB NOT NULL,
+        on_reject JSONB,
+        status VARCHAR NOT NULL DEFAULT 'pending',
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        resolved_at TIMESTAMP
+      )
+    `);
+    await db.execute(sql2`
+      CREATE TABLE IF NOT EXISTS agent_workflows (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        title TEXT NOT NULL,
+        description TEXT,
+        steps JSONB NOT NULL DEFAULT '[]'::jsonb,
+        current_step_index INTEGER NOT NULL DEFAULT 0,
+        status VARCHAR NOT NULL DEFAULT 'active',
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `).catch(() => {
+    });
+    await db.execute(sql2`
+      CREATE TABLE IF NOT EXISTS jarvis_scheduled_tasks (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        title TEXT NOT NULL,
+        description TEXT,
+        scheduled_at TIMESTAMP NOT NULL,
+        recurrence VARCHAR,
+        completed_at TIMESTAMP,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql2`
+      CREATE TABLE IF NOT EXISTS jarvis_predictions (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        prediction_type VARCHAR NOT NULL,
+        target_datetime TIMESTAMP NOT NULL,
+        target_date VARCHAR NOT NULL,
+        confidence_score INTEGER NOT NULL DEFAULT 50,
+        basis_summary TEXT NOT NULL DEFAULT '',
+        human_readable TEXT NOT NULL DEFAULT '',
+        action_suggestion TEXT,
+        observation_count INTEGER NOT NULL DEFAULT 0,
+        validated BOOLEAN,
+        validation_note TEXT,
+        validated_at TIMESTAMP,
+        delivered_at TIMESTAMP,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql2`
+      CREATE UNIQUE INDEX IF NOT EXISTS jarvis_predictions_user_type_date_idx
+        ON jarvis_predictions (user_id, prediction_type, target_date)
+    `).catch(() => {
+    });
+    await db.execute(sql2`
+      CREATE TABLE IF NOT EXISTS discord_seen_messages (
+        message_id VARCHAR PRIMARY KEY,
+        seen_at BIGINT NOT NULL
+      )
+    `).catch(() => {
+    });
+    await db.execute(sql2`
+      CREATE INDEX IF NOT EXISTS discord_seen_messages_seen_at_idx
+        ON discord_seen_messages (seen_at)
+    `).catch(() => {
+    });
+    await db.execute(sql2`
+      CREATE TABLE IF NOT EXISTS openclaw_build_log (
+        id              VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id         VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        feature_name    VARCHAR NOT NULL,
+        description     TEXT    NOT NULL,
+        output_code     TEXT    NOT NULL DEFAULT '',
+        success         BOOLEAN NOT NULL DEFAULT FALSE,
+        smoke_test_passed BOOLEAN,
+        created_at      TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `).catch(() => {
+    });
+    await db.execute(sql2`
+      CREATE INDEX IF NOT EXISTS openclaw_build_log_user_created_idx
+        ON openclaw_build_log (user_id, created_at DESC)
+    `).catch(() => {
+    });
+    await db.execute(sql2`
+      ALTER TABLE openclaw_build_log ADD COLUMN IF NOT EXISTS smoke_test_args JSONB
+    `).catch(() => {
+    });
     console.log("Database tables verified");
   } catch (error) {
     console.error("Failed to ensure database tables exist:", error);
@@ -1532,13 +2056,1002 @@ var init_retrieve = __esm({
   }
 });
 
+// server/userTokenStore.ts
+var userTokenStore_exports = {};
+__export(userTokenStore_exports, {
+  deleteUserToken: () => deleteUserToken,
+  getAllGoogleConnectedUserIds: () => getAllGoogleConnectedUserIds,
+  getAllMicrosoftConnectedUserIds: () => getAllMicrosoftConnectedUserIds,
+  getUserOAuthStatus: () => getUserOAuthStatus,
+  getUserToken: () => getUserToken,
+  getUserTokens: () => getUserTokens,
+  getValidGoogleToken: () => getValidGoogleToken,
+  getValidGoogleTokens: () => getValidGoogleTokens,
+  getValidMicrosoftToken: () => getValidMicrosoftToken,
+  refreshGoogleToken: () => refreshGoogleToken,
+  refreshMicrosoftToken: () => refreshMicrosoftToken,
+  saveUserToken: () => saveUserToken
+});
+import { sql as sql4 } from "drizzle-orm";
+async function saveUserToken(token) {
+  await db.execute(sql4`
+    INSERT INTO user_oauth_tokens
+      (user_id, provider, access_token, refresh_token, expires_at, scopes, account_email, updated_at)
+    VALUES
+      (${token.userId}, ${token.provider}, ${token.accessToken},
+       ${token.refreshToken ?? null}, ${token.expiresAt ?? null},
+       ${token.scopes ?? null}, ${token.accountEmail}, NOW())
+    ON CONFLICT (user_id, provider, account_email) DO UPDATE SET
+      access_token = EXCLUDED.access_token,
+      refresh_token = COALESCE(EXCLUDED.refresh_token, user_oauth_tokens.refresh_token),
+      expires_at = EXCLUDED.expires_at,
+      scopes = EXCLUDED.scopes,
+      updated_at = NOW()
+  `);
+}
+async function getUserToken(userId2, provider) {
+  const rows = await db.execute(sql4`
+    SELECT user_id, provider, access_token, refresh_token, expires_at, scopes, account_email
+    FROM user_oauth_tokens
+    WHERE user_id = ${userId2} AND provider = ${provider}
+    LIMIT 1
+  `);
+  const row = rows.rows?.[0] ?? (Array.isArray(rows) ? rows[0] : null);
+  if (!row) return null;
+  return {
+    userId: row.user_id,
+    provider: row.provider,
+    accessToken: row.access_token,
+    refreshToken: row.refresh_token,
+    expiresAt: row.expires_at ? new Date(row.expires_at) : null,
+    scopes: row.scopes,
+    accountEmail: row.account_email ?? ""
+  };
+}
+async function getUserTokens(userId2, provider) {
+  const rows = await db.execute(sql4`
+    SELECT user_id, provider, access_token, refresh_token, expires_at, scopes, account_email
+    FROM user_oauth_tokens
+    WHERE user_id = ${userId2} AND provider = ${provider}
+  `);
+  const items = rows.rows ?? (Array.isArray(rows) ? rows : []);
+  return items.map((row) => ({
+    userId: row.user_id,
+    provider: row.provider,
+    accessToken: row.access_token,
+    refreshToken: row.refresh_token,
+    expiresAt: row.expires_at ? new Date(row.expires_at) : null,
+    scopes: row.scopes,
+    accountEmail: row.account_email ?? ""
+  }));
+}
+async function getAllGoogleConnectedUserIds() {
+  const rows = await db.execute(sql4`
+    SELECT DISTINCT user_id FROM user_oauth_tokens WHERE provider = 'google'
+  `);
+  const items = rows.rows ?? (Array.isArray(rows) ? rows : []);
+  return items.map((row) => String(row.user_id));
+}
+async function getAllMicrosoftConnectedUserIds() {
+  const rows = await db.execute(sql4`
+    SELECT DISTINCT user_id FROM user_oauth_tokens WHERE provider = 'microsoft'
+  `);
+  const items = rows.rows ?? (Array.isArray(rows) ? rows : []);
+  return items.map((row) => String(row.user_id));
+}
+async function deleteUserToken(userId2, provider, accountEmail) {
+  if (accountEmail) {
+    await db.execute(sql4`
+      DELETE FROM user_oauth_tokens WHERE user_id = ${userId2} AND provider = ${provider} AND account_email = ${accountEmail}
+    `);
+  } else {
+    await db.execute(sql4`
+      DELETE FROM user_oauth_tokens WHERE user_id = ${userId2} AND provider = ${provider}
+    `);
+  }
+}
+async function getUserOAuthStatus(userId2) {
+  const rows = await db.execute(sql4`
+    SELECT provider, account_email, expires_at, scopes FROM user_oauth_tokens WHERE user_id = ${userId2}
+  `);
+  const result = {
+    google: { connected: false, accounts: [] },
+    microsoft: { connected: false, accounts: [] },
+    slack: { connected: false, accounts: [] }
+  };
+  const items = rows.rows ?? (Array.isArray(rows) ? rows : []);
+  for (const row of items) {
+    if (!result[row.provider]) {
+      result[row.provider] = { connected: false, accounts: [] };
+    }
+    result[row.provider].connected = true;
+    result[row.provider].email = row.account_email || void 0;
+    result[row.provider].accounts.push({ email: row.account_email || "", scopes: row.scopes || void 0 });
+  }
+  return result;
+}
+async function refreshGoogleToken(token) {
+  if (!token.refreshToken) return null;
+  const clientId = process.env.GOOGLE_WEB_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+  if (!clientId || !clientSecret) return null;
+  try {
+    const res = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        client_id: clientId,
+        client_secret: clientSecret,
+        refresh_token: token.refreshToken,
+        grant_type: "refresh_token"
+      })
+    });
+    const data = await res.json();
+    if (!data.access_token) return null;
+    const expiresAt = data.expires_in ? new Date(Date.now() + data.expires_in * 1e3) : null;
+    const updated = {
+      ...token,
+      accessToken: data.access_token,
+      expiresAt
+    };
+    await saveUserToken(updated);
+    return updated;
+  } catch {
+    return null;
+  }
+}
+async function getValidGoogleToken(userId2) {
+  const token = await getUserToken(userId2, "google");
+  if (!token) return null;
+  if (token.expiresAt && token.expiresAt.getTime() < Date.now() + 6e4) {
+    const refreshed = await refreshGoogleToken(token);
+    return refreshed?.accessToken ?? null;
+  }
+  return token.accessToken;
+}
+async function getValidGoogleTokens(userId2) {
+  const tokens = await getUserTokens(userId2, "google");
+  const accessTokens = [];
+  for (const token of tokens) {
+    if (token.expiresAt && token.expiresAt.getTime() < Date.now() + 6e4) {
+      const refreshed = await refreshGoogleToken(token);
+      if (refreshed?.accessToken) accessTokens.push(refreshed.accessToken);
+    } else {
+      accessTokens.push(token.accessToken);
+    }
+  }
+  return accessTokens;
+}
+async function refreshMicrosoftToken(token) {
+  if (!token.refreshToken) return null;
+  const clientId = process.env.MICROSOFT_CLIENT_ID;
+  const clientSecret = process.env.MICROSOFT_CLIENT_SECRET;
+  if (!clientId || !clientSecret) return null;
+  try {
+    const res = await fetch("https://login.microsoftonline.com/common/oauth2/v2.0/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        client_id: clientId,
+        client_secret: clientSecret,
+        refresh_token: token.refreshToken,
+        grant_type: "refresh_token",
+        scope: "offline_access Calendars.ReadWrite Mail.ReadWrite Mail.Send User.Read"
+      })
+    });
+    const data = await res.json();
+    if (!data.access_token) return null;
+    const expiresAt = data.expires_in ? new Date(Date.now() + data.expires_in * 1e3) : null;
+    const updated = {
+      ...token,
+      accessToken: data.access_token,
+      refreshToken: data.refresh_token ?? token.refreshToken,
+      expiresAt
+    };
+    await saveUserToken(updated);
+    return updated;
+  } catch {
+    return null;
+  }
+}
+async function getValidMicrosoftToken(userId2) {
+  const token = await getUserToken(userId2, "microsoft");
+  if (!token) return null;
+  if (token.expiresAt && token.expiresAt.getTime() < Date.now() + 6e4) {
+    const refreshed = await refreshMicrosoftToken(token);
+    return refreshed?.accessToken ?? null;
+  }
+  return token.accessToken;
+}
+var init_userTokenStore = __esm({
+  "server/userTokenStore.ts"() {
+    "use strict";
+    init_db();
+  }
+});
+
+// server/integrations/googleCalendar.ts
+import { google } from "googleapis";
+async function getProjectAccessToken() {
+  const hostname = process.env.REPLIT_CONNECTORS_HOSTNAME;
+  const xReplitToken = process.env.REPL_IDENTITY ? "repl " + process.env.REPL_IDENTITY : process.env.WEB_REPL_RENEWAL ? "depl " + process.env.WEB_REPL_RENEWAL : null;
+  if (!xReplitToken) throw new Error("X-Replit-Token not available");
+  const connectionSettings = await fetch(
+    "https://" + hostname + "/api/v2/connection?include_secrets=true&connector_names=google-calendar",
+    { headers: { Accept: "application/json", "X-Replit-Token": xReplitToken } }
+  ).then((res) => res.json()).then((data) => data.items?.[0]);
+  const accessToken = connectionSettings?.settings?.access_token || connectionSettings?.settings?.oauth?.credentials?.access_token;
+  if (!accessToken) throw new Error("Google Calendar not connected");
+  return accessToken;
+}
+function buildCalendarClient(accessToken) {
+  const oauth2Client = new google.auth.OAuth2();
+  oauth2Client.setCredentials({ access_token: accessToken });
+  return google.calendar({ version: "v3", auth: oauth2Client });
+}
+async function getGoogleCalendarEvents(date2, startTime, endTime, userAccessToken) {
+  const accessToken = userAccessToken ?? await getProjectAccessToken();
+  const calendar = buildCalendarClient(accessToken);
+  const startOfDay = startTime ? new Date(startTime) : /* @__PURE__ */ new Date(date2 + "T00:00:00Z");
+  const endOfDay = endTime ? new Date(endTime) : /* @__PURE__ */ new Date(date2 + "T23:59:59Z");
+  const calList = await calendar.calendarList.list({ minAccessRole: "reader" });
+  const calendarIds = (calList.data.items || []).filter((c) => !c.deleted).map((c) => c.id).filter(Boolean);
+  console.log(`[Calendar] Found ${calendarIds.length} calendar(s) for token. Querying ${startOfDay.toISOString()} \u2192 ${endOfDay.toISOString()}`);
+  const allEvents = [];
+  const seenIds = /* @__PURE__ */ new Set();
+  await Promise.all(
+    calendarIds.map(async (calId) => {
+      try {
+        const res = await calendar.events.list({
+          calendarId: calId,
+          timeMin: startOfDay.toISOString(),
+          timeMax: endOfDay.toISOString(),
+          singleEvents: true,
+          orderBy: "startTime",
+          maxResults: 20
+        });
+        const items = res.data.items || [];
+        console.log(`[Calendar] Cal "${calId}": ${items.length} event(s)`);
+        items.filter((e) => e.summary && !seenIds.has(e.id || "")).forEach((e) => {
+          seenIds.add(e.id || "");
+          const attendees = (e.attendees || []).filter((a) => a.email).map((a) => ({
+            email: String(a.email),
+            displayName: a.displayName || void 0,
+            organizer: !!a.organizer,
+            self: !!a.self
+          }));
+          allEvents.push({
+            id: e.id || String(Math.random()),
+            title: e.summary || "Event",
+            start: e.start?.dateTime || e.start?.date || date2,
+            end: e.end?.dateTime || e.end?.date || date2,
+            description: e.description || void 0,
+            location: e.location || void 0,
+            attendees: attendees.length > 0 ? attendees : void 0
+          });
+        });
+      } catch (err) {
+        console.error(`[Calendar] Error fetching events for cal "${calId}":`, err?.message || err);
+      }
+    })
+  );
+  allEvents.sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime());
+  return allEvents;
+}
+async function checkGoogleCalendarConnection(userAccessToken) {
+  try {
+    if (userAccessToken) return true;
+    await getProjectAccessToken();
+    return true;
+  } catch {
+    return false;
+  }
+}
+async function createGoogleCalendarEvent(accessToken, event) {
+  const calendar = buildCalendarClient(accessToken);
+  const startDt = event.start.includes("T") ? event.start : event.start + "T00:00:00Z";
+  const endDt = event.end.includes("T") ? event.end : event.end + "T01:00:00Z";
+  const res = await calendar.events.insert({
+    calendarId: "primary",
+    requestBody: {
+      summary: event.title,
+      description: event.description || void 0,
+      location: event.location || void 0,
+      start: { dateTime: startDt },
+      end: { dateTime: endDt }
+    }
+  });
+  return { id: res.data.id || "", htmlLink: res.data.htmlLink || "" };
+}
+var init_googleCalendar = __esm({
+  "server/integrations/googleCalendar.ts"() {
+    "use strict";
+  }
+});
+
+// server/interactionLog.ts
+import { eq as eq3, desc as desc3, gte, and as and2 } from "drizzle-orm";
+async function logInteraction(userId2, channel, direction, content, label) {
+  try {
+    await db.insert(interactionLog).values({
+      userId: userId2,
+      channel,
+      direction,
+      content,
+      label: label || null
+    });
+  } catch (err) {
+    console.error("[InteractionLog] Failed to log interaction:", err);
+  }
+}
+async function getRecentInteractions(userId2, limit = 20, withinHours = 48) {
+  try {
+    const since = new Date(Date.now() - withinHours * 60 * 60 * 1e3);
+    return await db.select().from(interactionLog).where(
+      and2(
+        eq3(interactionLog.userId, userId2),
+        gte(interactionLog.createdAt, since)
+      )
+    ).orderBy(desc3(interactionLog.createdAt)).limit(limit);
+  } catch (err) {
+    console.error("[InteractionLog] Failed to fetch interactions:", err);
+    return [];
+  }
+}
+function formatInteractionTimeline(interactions) {
+  if (interactions.length === 0) return "";
+  const sorted = [...interactions].sort(
+    (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+  );
+  const lines = sorted.map((row) => {
+    const ts = new Date(row.createdAt).toLocaleTimeString("en-US", {
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true
+    });
+    const date2 = new Date(row.createdAt).toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric"
+    });
+    let channelLabel;
+    if (row.channel === "app_chat") {
+      channelLabel = "App";
+    } else if (row.channel === "telegram") {
+      channelLabel = "Telegram";
+    } else {
+      channelLabel = row.label ? `Notification \u2013 ${row.label}` : "Notification";
+    }
+    const who = row.direction === "inbound" ? "User" : `Jarvis (${channelLabel})`;
+    const labelTag = row.channel !== "notification" && row.label ? ` [${row.label}]` : "";
+    const displayContent = row.content.length > DISPLAY_TRUNCATE_LENGTH ? row.content.slice(0, DISPLAY_TRUNCATE_LENGTH) + "\u2026" : row.content;
+    return `[${date2} ${ts}] ${who}${labelTag}: ${displayContent}`;
+  });
+  return `
+## Recent Cross-Channel Activity (last 48 hours)
+This shows everything that happened between you and the user across all channels \u2014 app conversations, Telegram messages, and any notifications you sent. Use this to understand the full context before responding.
+${lines.join("\n")}`;
+}
+var DISPLAY_TRUNCATE_LENGTH;
+var init_interactionLog = __esm({
+  "server/interactionLog.ts"() {
+    "use strict";
+    init_db();
+    init_schema();
+    DISPLAY_TRUNCATE_LENGTH = 1200;
+  }
+});
+
+// server/channels/registry.ts
+var registry_exports = {};
+__export(registry_exports, {
+  getActiveChannelsFor: () => getActiveChannelsFor,
+  getAllPreferences: () => getAllPreferences,
+  getChannel: () => getChannel,
+  listChannels: () => listChannels,
+  notifyUser: () => notifyUser,
+  registerChannel: () => registerChannel,
+  setPreference: () => setPreference
+});
+import { eq as eq4, and as and3 } from "drizzle-orm";
+function registerChannel(channel) {
+  channels.set(channel.name, channel);
+}
+function getChannel(name) {
+  return channels.get(name);
+}
+function listChannels() {
+  return Array.from(channels.values());
+}
+async function getActiveChannelsFor(userId2, notificationType) {
+  try {
+    const rows = await db.select().from(channelPreferences).where(and3(
+      eq4(channelPreferences.userId, userId2),
+      eq4(channelPreferences.notificationType, notificationType)
+    )).limit(1);
+    const prefs = rows[0]?.channels;
+    if (prefs && prefs.length > 0) return prefs;
+  } catch (err) {
+    console.error("[channels] preference lookup failed:", err);
+  }
+  return DEFAULT_FALLBACK;
+}
+async function getAllPreferences(userId2) {
+  const out = {};
+  try {
+    const rows = await db.select().from(channelPreferences).where(eq4(channelPreferences.userId, userId2));
+    for (const r of rows) {
+      out[r.notificationType] = r.channels || [];
+    }
+  } catch (err) {
+    console.error("[channels] getAllPreferences failed:", err);
+  }
+  return out;
+}
+async function setPreference(userId2, notificationType, selected) {
+  await db.insert(channelPreferences).values({ userId: userId2, notificationType, channels: selected, updatedAt: /* @__PURE__ */ new Date() }).onConflictDoUpdate({
+    target: [channelPreferences.userId, channelPreferences.notificationType],
+    set: { channels: selected, updatedAt: /* @__PURE__ */ new Date() }
+  });
+}
+async function trySendOnChannel(userId2, name, text2, opts, notificationType) {
+  const ch = channels.get(name);
+  if (!ch) return { channel: name, result: { ok: false, error: "channel not registered" } };
+  if (!ch.isConfigured()) return { channel: name, result: { ok: false, error: "channel not configured" } };
+  if (!await ch.isLinkedFor(userId2)) return { channel: name, result: { ok: false, error: "user not linked" } };
+  try {
+    const result = await ch.sendMessage(userId2, text2, { ...opts, notificationType });
+    if (result.ok) logInteraction(userId2, name, "outbound", text2).catch(() => {
+    });
+    return { channel: name, result };
+  } catch (err) {
+    console.error(`[channels] ${name} send failed:`, err);
+    return { channel: name, result: { ok: false, error: String(err) } };
+  }
+}
+async function notifyUser(userId2, notificationType, text2, opts = {}) {
+  const targets = await getActiveChannelsFor(userId2, notificationType);
+  const results = await Promise.all(
+    targets.map((name) => trySendOnChannel(userId2, name, text2, opts, notificationType))
+  );
+  if (results.some((r) => r.result.ok)) return results;
+  const tried = new Set(targets);
+  const fallbackOrder = [
+    "telegram",
+    "in_app",
+    ...listChannels().map((c) => c.name).filter((n) => n !== "telegram" && n !== "in_app")
+  ];
+  for (const name of fallbackOrder) {
+    if (tried.has(name)) continue;
+    tried.add(name);
+    const r = await trySendOnChannel(userId2, name, text2, opts, notificationType);
+    results.push(r);
+    if (r.result.ok) {
+      const failedChannels = targets.join(", ");
+      console.warn(`[channels] notifyUser fallback delivered via ${name} after preferred targets [${failedChannels}] failed for user ${userId2}`);
+      const inAppCh = channels.get("in_app");
+      if (inAppCh) {
+        if (name !== "in_app") {
+          inAppCh.sendMessage(
+            userId2,
+            `Your preferred notification channels (${failedChannels}) were unavailable. This message was delivered via ${name} instead. Update your notification settings in Profile.`,
+            { notificationType: "general" }
+          ).catch(() => {
+          });
+        } else {
+          inAppCh.sendMessage(
+            userId2,
+            `Your preferred channels (${failedChannels}) were unavailable, so this notification was delivered here in-app. Update your notification settings in Profile if needed.`,
+            { notificationType: "general" }
+          ).catch(() => {
+          });
+        }
+      }
+      return results;
+    }
+  }
+  return results;
+}
+var channels, DEFAULT_FALLBACK;
+var init_registry = __esm({
+  "server/channels/registry.ts"() {
+    "use strict";
+    init_db();
+    init_schema();
+    init_interactionLog();
+    channels = /* @__PURE__ */ new Map();
+    DEFAULT_FALLBACK = ["telegram", "in_app"];
+  }
+});
+
+// server/intelligence/emotional-state.ts
+var emotional_state_exports = {};
+__export(emotional_state_exports, {
+  buildEmotionalStatePromptBlock: () => buildEmotionalStatePromptBlock,
+  computeAndStoreEmotionalState: () => computeAndStoreEmotionalState,
+  getEmotionalState: () => getEmotionalState,
+  maybeRunDailyHistoryPrune: () => maybeRunDailyHistoryPrune,
+  pruneEmotionalStateHistory: () => pruneEmotionalStateHistory,
+  setManualStateOverride: () => setManualStateOverride
+});
+import { eq as eq5, desc as desc4, and as and4, gte as gte2, sql as sql5 } from "drizzle-orm";
+function clamp(n, min, max) {
+  return Math.max(min, Math.min(max, n));
+}
+function localHour(now, tz) {
+  return new Date(now.toLocaleString("en-US", { timeZone: tz })).getHours();
+}
+function localDateKey(now, tz) {
+  const d = new Date(now.toLocaleString("en-US", { timeZone: tz }));
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function localDayOfWeek(now, tz) {
+  return new Date(now.toLocaleString("en-US", { timeZone: tz })).getDay();
+}
+function sentimentScore(text2) {
+  const neg = (text2.match(NEGATIVE_WORDS) || []).length;
+  const pos = (text2.match(POSITIVE_WORDS) || []).length;
+  if (neg + pos === 0) return 0;
+  return clamp((neg - pos) / (neg + pos), -1, 1);
+}
+async function gatherSignals(userId2, tz, now) {
+  const signals = {
+    calendarDensity: 0,
+    avgEnergyScore: null,
+    taskCompletionRate: null,
+    lateNightFlag: false,
+    messageSentiment: 0,
+    sources: []
+  };
+  try {
+    const tokens = await getValidGoogleTokens(userId2);
+    const token = tokens?.[0];
+    if (token) {
+      const dateKey = localDateKey(now, tz);
+      const events = await getGoogleCalendarEvents(dateKey, void 0, void 0, token);
+      const next24h = new Date(now.getTime() + 24 * 60 * 60 * 1e3);
+      const upcoming = events.filter((e) => {
+        const start = new Date(e.start);
+        return start >= now && start <= next24h;
+      });
+      signals.calendarDensity = upcoming.length;
+      signals.sources.push(`calendar (${upcoming.length} events in 24h)`);
+    }
+  } catch {
+  }
+  try {
+    const rows = await db.select().from(energyCheckins).where(eq5(energyCheckins.userId, userId2)).orderBy(desc4(energyCheckins.updatedAt)).limit(3);
+    if (rows.length > 0) {
+      const scores = [];
+      for (const row of rows) {
+        const data = row.data;
+        const score = data?.energy ?? data?.mood ?? data?.score;
+        if (typeof score === "number" && score >= 1 && score <= 10) scores.push(score);
+      }
+      if (scores.length > 0) {
+        signals.avgEnergyScore = scores.reduce((a, b) => a + b, 0) / scores.length;
+        signals.sources.push(`energy check-ins (avg ${signals.avgEnergyScore.toFixed(1)}/10)`);
+      }
+    }
+  } catch {
+  }
+  try {
+    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1e3);
+    const recentPlans = await db.select().from(plans).where(eq5(plans.userId, userId2)).orderBy(desc4(plans.updatedAt)).limit(7);
+    let totalTasks = 0;
+    let completedTasks = 0;
+    for (const plan of recentPlans) {
+      const data = plan.data;
+      const tasks = Array.isArray(data?.tasks) ? data.tasks : [];
+      totalTasks += tasks.length;
+      completedTasks += tasks.filter((t) => t.completed).length;
+    }
+    if (totalTasks > 0) {
+      signals.taskCompletionRate = completedTasks / totalTasks;
+      signals.sources.push(`task completion (${Math.round(signals.taskCompletionRate * 100)}% in 7d)`);
+    }
+  } catch {
+  }
+  try {
+    const hour = localHour(now, tz);
+    if (hour >= 23 || hour < 4) {
+      signals.lateNightFlag = true;
+      signals.sources.push("late-night activity detected");
+    } else {
+      const windowStart = new Date(now.getTime() - 16 * 60 * 60 * 1e3);
+      const recentActivity = await db.select({ createdAt: interactionLog.createdAt }).from(interactionLog).where(
+        and4(
+          eq5(interactionLog.userId, userId2),
+          gte2(interactionLog.createdAt, windowStart)
+        )
+      ).orderBy(desc4(interactionLog.createdAt)).limit(20);
+      for (const row of recentActivity) {
+        const actHour = localHour(new Date(row.createdAt), tz);
+        if (actHour >= 23 || actHour < 4) {
+          signals.lateNightFlag = true;
+          signals.sources.push("late-night activity detected");
+          break;
+        }
+      }
+    }
+  } catch {
+  }
+  try {
+    const recent = await db.select({ content: interactionLog.content }).from(interactionLog).where(
+      and4(
+        eq5(interactionLog.userId, userId2),
+        eq5(interactionLog.direction, "inbound")
+      )
+    ).orderBy(desc4(interactionLog.createdAt)).limit(10);
+    if (recent.length > 0) {
+      const combinedText = recent.map((r) => r.content).join(" ");
+      signals.messageSentiment = sentimentScore(combinedText);
+      if (Math.abs(signals.messageSentiment) > 0.1) {
+        signals.sources.push(`message sentiment (${signals.messageSentiment > 0 ? "negative" : "positive"} trend)`);
+      }
+    }
+  } catch {
+  }
+  return signals;
+}
+function computeScores(signals) {
+  let stress = 3;
+  let flow = 5;
+  const notes = [];
+  const calStress = clamp(signals.calendarDensity * 0.7, 0, 6);
+  stress += calStress;
+  if (signals.calendarDensity >= 5) notes.push("packed calendar");
+  else if (signals.calendarDensity >= 3) notes.push("busy calendar");
+  if (signals.avgEnergyScore !== null) {
+    const e = signals.avgEnergyScore;
+    stress += clamp((5 - e) * 0.6, -3, 3);
+    flow += clamp((e - 5) * 0.8, -4, 4);
+    if (e >= 7) notes.push("high energy");
+    else if (e <= 3) notes.push("low energy");
+  }
+  if (signals.taskCompletionRate !== null) {
+    const r = signals.taskCompletionRate;
+    stress += clamp((0.5 - r) * 3, -2, 2);
+    flow += clamp((r - 0.5) * 4, -3, 3);
+    if (r >= 0.7) notes.push("strong task completion");
+    else if (r < 0.3) notes.push("low task completion");
+  }
+  if (signals.lateNightFlag) {
+    stress += 2;
+    flow -= 2;
+    notes.push("late-night pattern");
+  }
+  stress += clamp(signals.messageSentiment * 3, -2, 2);
+  flow -= clamp(signals.messageSentiment * 2, -2, 2);
+  stress = clamp(Math.round(stress), 0, 10);
+  flow = clamp(Math.round(flow), 0, 10);
+  let label;
+  if (stress >= 7) label = "overwhelmed";
+  else if (stress >= 5) label = "stressed";
+  else if (flow >= 7) label = "in flow";
+  else if (flow >= 5) label = "focused";
+  else label = "calm";
+  const explanation = notes.length > 0 ? `Based on: ${notes.join(", ")}.` : "No strong signals detected \u2014 baseline state.";
+  return { stressScore: stress, flowScore: flow, label, explanation };
+}
+function deriveLabel(stress, flow) {
+  if (stress >= 7) return "overwhelmed";
+  if (stress >= 5) return "stressed";
+  if (flow >= 7) return "in flow";
+  if (flow >= 5) return "focused";
+  return "calm";
+}
+async function appendToHistory(userId2, stressScore, flowScore, label, now, tz) {
+  try {
+    await db.insert(userEmotionalStateHistory).values({
+      userId: userId2,
+      stressScore,
+      flowScore,
+      label,
+      dayOfWeek: localDayOfWeek(now, tz),
+      hourOfDay: localHour(now, tz),
+      recordedAt: now
+    });
+  } catch {
+  }
+}
+async function computeBaseline(userId2, now, tz) {
+  const windowStart = new Date(now.getTime() - HISTORY_WINDOW_DAYS * 24 * 60 * 60 * 1e3);
+  try {
+    const rows = await db.select({
+      stressScore: userEmotionalStateHistory.stressScore,
+      flowScore: userEmotionalStateHistory.flowScore,
+      dayOfWeek: userEmotionalStateHistory.dayOfWeek
+    }).from(userEmotionalStateHistory).where(
+      and4(
+        eq5(userEmotionalStateHistory.userId, userId2),
+        gte2(userEmotionalStateHistory.recordedAt, windowStart)
+      )
+    ).orderBy(desc4(userEmotionalStateHistory.recordedAt)).limit(500);
+    if (rows.length < MIN_BASELINE_SAMPLES) {
+      return { avgStress: null, avgFlow: null, sampleCount: rows.length, patternNote: null };
+    }
+    const avgStress = rows.reduce((acc, r) => acc + r.stressScore, 0) / rows.length;
+    const avgFlow = rows.reduce((acc, r) => acc + r.flowScore, 0) / rows.length;
+    const currentDow = localDayOfWeek(now, tz);
+    const dowRows = rows.filter((r) => r.dayOfWeek === currentDow);
+    let patternNote = null;
+    if (dowRows.length >= 3) {
+      const dowAvgStress = dowRows.reduce((acc, r) => acc + r.stressScore, 0) / dowRows.length;
+      const dowAvgFlow = dowRows.reduce((acc, r) => acc + r.flowScore, 0) / dowRows.length;
+      const dayName = DOW_NAMES[currentDow];
+      const notes = [];
+      if (dowAvgStress >= avgStress + 1) {
+        notes.push(`${dayName} tend to be high-stress for you (avg ${dowAvgStress.toFixed(1)} vs usual ${avgStress.toFixed(1)})`);
+      } else if (dowAvgStress <= avgStress - 1) {
+        notes.push(`${dayName} tend to be low-stress for you (avg ${dowAvgStress.toFixed(1)})`);
+      }
+      if (dowAvgFlow >= avgFlow + 1) {
+        notes.push(`your flow is typically higher on ${dayName} (avg ${dowAvgFlow.toFixed(1)})`);
+      } else if (dowAvgFlow <= avgFlow - 1) {
+        notes.push(`your flow tends to dip on ${dayName} (avg ${dowAvgFlow.toFixed(1)})`);
+      }
+      if (notes.length > 0) patternNote = notes.join("; ");
+    }
+    return { avgStress, avgFlow, sampleCount: rows.length, patternNote };
+  } catch {
+    return { avgStress: null, avgFlow: null, sampleCount: 0, patternNote: null };
+  }
+}
+async function computeAndStoreEmotionalState(userId2, tz, now) {
+  const signals = await gatherSignals(userId2, tz, now);
+  const { stressScore, flowScore, label, explanation } = computeScores(signals);
+  const baseline = await computeBaseline(userId2, now, tz);
+  await appendToHistory(userId2, stressScore, flowScore, label, now, tz);
+  let prevState = null;
+  try {
+    const rows = await db.select().from(userEmotionalState).where(eq5(userEmotionalState.userId, userId2)).limit(1);
+    prevState = rows[0] ?? null;
+  } catch {
+  }
+  let lastStressCheckinAt = prevState?.lastStressCheckinAt ?? null;
+  let effectiveStress = stressScore;
+  let effectiveFlow = flowScore;
+  let effectiveLabel = label;
+  if (baseline.avgStress !== null && baseline.avgFlow !== null) {
+    effectiveStress = clamp(
+      Math.round(stressScore + (stressScore - baseline.avgStress) * 0.3),
+      1,
+      10
+    );
+    effectiveFlow = clamp(
+      Math.round(flowScore + (flowScore - baseline.avgFlow) * 0.3),
+      1,
+      10
+    );
+    effectiveLabel = deriveLabel(effectiveStress, effectiveFlow);
+  }
+  if (prevState?.manualOverride && prevState.manualOverrideAt) {
+    const overrideAge = now.getTime() - new Date(prevState.manualOverrideAt).getTime();
+    if (overrideAge < 3 * 60 * 60 * 1e3) {
+      effectiveLabel = prevState.manualOverride;
+      if (prevState.manualOverride === "overwhelmed") {
+        effectiveStress = 8;
+        effectiveFlow = 2;
+      } else if (prevState.manualOverride === "stressed") {
+        effectiveStress = 6;
+        effectiveFlow = 3;
+      } else if (prevState.manualOverride === "calm") {
+        effectiveStress = 2;
+        effectiveFlow = 5;
+      } else if (prevState.manualOverride === "focused") {
+        effectiveStress = 3;
+        effectiveFlow = 7;
+      } else if (prevState.manualOverride === "in flow") {
+        effectiveStress = 2;
+        effectiveFlow = 9;
+      }
+    }
+  }
+  const isHighStress = effectiveStress >= HIGH_STRESS_THRESHOLD;
+  let consecutiveHighStressCycles = prevState?.consecutiveHighStressCycles ?? 0;
+  if (isHighStress) {
+    consecutiveHighStressCycles += 1;
+  } else {
+    consecutiveHighStressCycles = 0;
+  }
+  try {
+    await db.insert(userEmotionalState).values({
+      userId: userId2,
+      stressScore: effectiveStress,
+      flowScore: effectiveFlow,
+      label: effectiveLabel,
+      explanation,
+      signalSources: signals.sources,
+      consecutiveHighStressCycles,
+      lastStressCheckinAt,
+      computedAt: now,
+      updatedAt: now,
+      baselineStress: baseline.avgStress,
+      baselineFlow: baseline.avgFlow,
+      patternNote: baseline.patternNote
+    }).onConflictDoUpdate({
+      target: userEmotionalState.userId,
+      set: {
+        stressScore: effectiveStress,
+        flowScore: effectiveFlow,
+        label: effectiveLabel,
+        explanation,
+        signalSources: signals.sources,
+        consecutiveHighStressCycles,
+        computedAt: now,
+        updatedAt: now,
+        baselineStress: baseline.avgStress,
+        baselineFlow: baseline.avgFlow,
+        patternNote: baseline.patternNote
+      }
+    });
+  } catch (err) {
+    console.error("[EmotionalState] upsert failed:", err);
+  }
+  if (consecutiveHighStressCycles >= SUSTAINED_STRESS_CYCLES) {
+    const lastCheckin = lastStressCheckinAt ? new Date(lastStressCheckinAt).getTime() : 0;
+    if (now.getTime() - lastCheckin >= CHECKIN_COOLDOWN_MS) {
+      try {
+        const msg = `Hey \u2014 I've noticed you seem to be under a lot of pressure lately. ${explanation} Is there anything I can do to help lighten the load? You can tell me to reschedule tasks, simplify your plan, or just vent if you need to.`;
+        await notifyUser(userId2, "stress_checkin", msg);
+        logInteraction(userId2, "notification", "outbound", msg, "stress_checkin").catch(() => {
+        });
+        await db.update(userEmotionalState).set({ lastStressCheckinAt: now, updatedAt: now }).where(eq5(userEmotionalState.userId, userId2));
+        console.log(`[EmotionalState] stress check-in sent to ${userId2}`);
+      } catch (err) {
+        console.error("[EmotionalState] stress check-in send failed:", err);
+      }
+    }
+  }
+  return {
+    stressScore: effectiveStress,
+    flowScore: effectiveFlow,
+    label: effectiveLabel,
+    explanation,
+    signalSources: signals.sources
+  };
+}
+async function getEmotionalState(userId2) {
+  try {
+    const rows = await db.select().from(userEmotionalState).where(eq5(userEmotionalState.userId, userId2)).limit(1);
+    return rows[0] ?? null;
+  } catch {
+    return null;
+  }
+}
+function overrideScores(label) {
+  switch (label) {
+    case "overwhelmed":
+      return { stressScore: 9, flowScore: 1 };
+    case "stressed":
+      return { stressScore: 7, flowScore: 3 };
+    case "focused":
+      return { stressScore: 3, flowScore: 7 };
+    case "in flow":
+      return { stressScore: 2, flowScore: 9 };
+    case "calm":
+    default:
+      return { stressScore: 2, flowScore: 5 };
+  }
+}
+async function setManualStateOverride(userId2, override, now) {
+  const { stressScore, flowScore } = overrideScores(override);
+  const explanation = `User self-reported as "${override}". Jarvis will adapt its tone accordingly for the next 3 hours.`;
+  const signalSources = ["manual override"];
+  await db.insert(userEmotionalState).values({
+    userId: userId2,
+    stressScore,
+    flowScore,
+    label: override,
+    explanation,
+    signalSources,
+    manualOverride: override,
+    manualOverrideAt: now,
+    consecutiveHighStressCycles: 0,
+    computedAt: now,
+    updatedAt: now
+  }).onConflictDoUpdate({
+    target: userEmotionalState.userId,
+    set: {
+      stressScore,
+      flowScore,
+      label: override,
+      explanation,
+      signalSources,
+      manualOverride: override,
+      manualOverrideAt: now,
+      consecutiveHighStressCycles: 0,
+      computedAt: now,
+      updatedAt: now
+    }
+  });
+}
+function buildEmotionalStatePromptBlock(state) {
+  const { stressScore, flowScore, label, explanation, baselineStress, baselineFlow, patternNote } = state;
+  let guidance = "";
+  if (stressScore >= 7) {
+    guidance = "The user is in HIGH STRESS. Keep your responses SHORT and SIMPLE. Prioritize reducing cognitive load \u2014 fewer options, more reassurance, protective tone. Avoid adding tasks or complexity. Focus on what can be removed or deferred.";
+  } else if (stressScore >= 5) {
+    guidance = "The user is under moderate stress. Keep responses concise and supportive. Gently prioritize and avoid overwhelming them with too much at once.";
+  } else if (flowScore >= 7) {
+    guidance = "The user is IN FLOW \u2014 high focus, high output. Minimise interruptions and proactive nudges. Match their momentum. Be terse and efficient in replies.";
+  } else if (flowScore >= 5) {
+    guidance = "The user is focused and doing well. Normal coaching style applies.";
+  } else {
+    guidance = "The user is in a calm, baseline state. Normal coaching style applies.";
+  }
+  let baselineContext = "";
+  if (baselineStress !== null && baselineStress !== void 0 && baselineFlow !== null && baselineFlow !== void 0) {
+    const stressDiff = stressScore - baselineStress;
+    const flowDiff = flowScore - baselineFlow;
+    const stressComparison = Math.abs(stressDiff) >= 2 ? `current ${stressScore}/10 (${stressDiff > 0 ? "\u2191" : "\u2193"}${Math.abs(stressDiff).toFixed(1)} above baseline)` : `current ${stressScore}/10 (near baseline)`;
+    const flowComparison = Math.abs(flowDiff) >= 2 ? `current ${flowScore}/10 (${flowDiff > 0 ? "\u2191" : "\u2193"}${Math.abs(flowDiff).toFixed(1)} above baseline)` : `current ${flowScore}/10 (near baseline)`;
+    baselineContext = `
+Personal baseline (90-day avg): stress ${baselineStress.toFixed(1)}, flow ${baselineFlow.toFixed(1)}. Today: stress ${stressComparison}, flow ${flowComparison}.`;
+    if (patternNote) baselineContext += ` Pattern insight: ${patternNote}.`;
+  }
+  return `
+
+## Jarvis Perceived Emotional State
+Current state: **${label}** (stress ${stressScore}/10, flow ${flowScore}/10)
+${explanation}${baselineContext}
+
+Coaching instruction: ${guidance}
+`;
+}
+async function pruneEmotionalStateHistory() {
+  try {
+    const result = await db.execute(sql5`
+      DELETE FROM user_emotional_state_history
+      WHERE recorded_at < NOW() - INTERVAL '${sql5.raw(String(PRUNE_RETENTION_DAYS))} days'
+    `);
+    const deleted = result.rowCount ?? 0;
+    console.log(`[EmotionalState] daily history prune: ${deleted} row(s) removed (retention: ${PRUNE_RETENTION_DAYS} days)`);
+    return deleted;
+  } catch (err) {
+    console.error("[EmotionalState] history prune failed (non-fatal):", err);
+    return 0;
+  }
+}
+function utcDayKey(d) {
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
+}
+async function maybeRunDailyHistoryPrune() {
+  const today = utcDayKey(/* @__PURE__ */ new Date());
+  if (lastPruneDayKey === today) return;
+  await pruneEmotionalStateHistory();
+  lastPruneDayKey = today;
+}
+var NEGATIVE_WORDS, POSITIVE_WORDS, DOW_NAMES, MIN_BASELINE_SAMPLES, HISTORY_WINDOW_DAYS, HIGH_STRESS_THRESHOLD, SUSTAINED_STRESS_CYCLES, CHECKIN_COOLDOWN_MS, PRUNE_RETENTION_DAYS, lastPruneDayKey;
+var init_emotional_state = __esm({
+  "server/intelligence/emotional-state.ts"() {
+    "use strict";
+    init_db();
+    init_schema();
+    init_userTokenStore();
+    init_googleCalendar();
+    init_registry();
+    init_interactionLog();
+    NEGATIVE_WORDS = /overwhelm|stressed|anxious|exhaust|stuck|behind|panic|crisis|urgent|deadline|overload|can'?t|fail/gi;
+    POSITIVE_WORDS = /great|crush|flow|focus|win|done|finish|accomplish|energiz|excited|nail|ahead|confident|progress/gi;
+    DOW_NAMES = ["Sundays", "Mondays", "Tuesdays", "Wednesdays", "Thursdays", "Fridays", "Saturdays"];
+    MIN_BASELINE_SAMPLES = 7;
+    HISTORY_WINDOW_DAYS = 90;
+    HIGH_STRESS_THRESHOLD = 7;
+    SUSTAINED_STRESS_CYCLES = 3;
+    CHECKIN_COOLDOWN_MS = 24 * 60 * 60 * 1e3;
+    PRUNE_RETENTION_DAYS = 90;
+    lastPruneDayKey = "";
+  }
+});
+
 // server/memory/promptContext.ts
 var promptContext_exports = {};
 __export(promptContext_exports, {
   EMPTY_AI_CONTEXT: () => EMPTY_AI_CONTEXT,
   buildAiContextSections: () => buildAiContextSections
 });
-import { sql as sql4 } from "drizzle-orm";
+import { sql as sql6 } from "drizzle-orm";
 async function buildAiContextSections(userId2, seedQuery) {
   if (!userId2) return EMPTY_AI_CONTEXT;
   const out = { ...EMPTY_AI_CONTEXT };
@@ -1555,7 +3068,7 @@ ${soulText.trim()}
     console.error("[promptContext] soul load failed", err);
   }
   try {
-    const rows = await db.execute(sql4`
+    const rows = await db.execute(sql6`
       SELECT patterns, summary FROM weekly_insights
       WHERE user_id = ${userId2}
       ORDER BY created_at DESC LIMIT 1
@@ -1590,6 +3103,14 @@ Relevant memories:
   } catch (err) {
     console.error("[promptContext] retrieve failed", err);
   }
+  try {
+    const state = await getEmotionalState(userId2);
+    if (state) {
+      out.emotionalStateSection = buildEmotionalStatePromptBlock(state);
+    }
+  } catch (err) {
+    console.error("[promptContext] emotional state load failed", err);
+  }
   return out;
 }
 var EMPTY_AI_CONTEXT;
@@ -1599,10 +3120,12 @@ var init_promptContext = __esm({
     init_db();
     init_soul();
     init_retrieve();
+    init_emotional_state();
     EMPTY_AI_CONTEXT = {
       soulSection: "",
       patternSection: "",
-      memorySection: ""
+      memorySection: "",
+      emotionalStateSection: ""
     };
   }
 });
@@ -1737,8 +3260,8 @@ Chronically stuck tasks (skipped 2+ days in a row \u2014 do NOT just repeat them
     lifeContext2?.improvementArea,
     ...goals2.slice(0, 3).map((g) => g.title)
   ].filter(Boolean).join(" \u2022 ");
-  const { soulSection, patternSection, memorySection } = await buildAiContextSections2(req.userId, seedQuery);
-  const prompt = `You create personalized daily task plans for people. Today is ${dayOfWeek}.${soulSection}${patternSection}${memorySection}
+  const { soulSection, patternSection, memorySection, emotionalStateSection } = await buildAiContextSections2(req.userId, seedQuery);
+  const prompt = `You create personalized daily task plans for people. Today is ${dayOfWeek}.${soulSection}${patternSection}${memorySection}${emotionalStateSection}
 
 User's goals:
 ${goalsText}
@@ -1790,105 +3313,6 @@ var init_ai = __esm({
       apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
       baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL
     });
-  }
-});
-
-// server/integrations/googleCalendar.ts
-import { google } from "googleapis";
-async function getProjectAccessToken() {
-  const hostname = process.env.REPLIT_CONNECTORS_HOSTNAME;
-  const xReplitToken = process.env.REPL_IDENTITY ? "repl " + process.env.REPL_IDENTITY : process.env.WEB_REPL_RENEWAL ? "depl " + process.env.WEB_REPL_RENEWAL : null;
-  if (!xReplitToken) throw new Error("X-Replit-Token not available");
-  const connectionSettings = await fetch(
-    "https://" + hostname + "/api/v2/connection?include_secrets=true&connector_names=google-calendar",
-    { headers: { Accept: "application/json", "X-Replit-Token": xReplitToken } }
-  ).then((res) => res.json()).then((data) => data.items?.[0]);
-  const accessToken = connectionSettings?.settings?.access_token || connectionSettings?.settings?.oauth?.credentials?.access_token;
-  if (!accessToken) throw new Error("Google Calendar not connected");
-  return accessToken;
-}
-function buildCalendarClient(accessToken) {
-  const oauth2Client = new google.auth.OAuth2();
-  oauth2Client.setCredentials({ access_token: accessToken });
-  return google.calendar({ version: "v3", auth: oauth2Client });
-}
-async function getGoogleCalendarEvents(date2, startTime, endTime, userAccessToken) {
-  const accessToken = userAccessToken ?? await getProjectAccessToken();
-  const calendar = buildCalendarClient(accessToken);
-  const startOfDay = startTime ? new Date(startTime) : /* @__PURE__ */ new Date(date2 + "T00:00:00Z");
-  const endOfDay = endTime ? new Date(endTime) : /* @__PURE__ */ new Date(date2 + "T23:59:59Z");
-  const calList = await calendar.calendarList.list({ minAccessRole: "reader" });
-  const calendarIds = (calList.data.items || []).filter((c) => !c.deleted).map((c) => c.id).filter(Boolean);
-  console.log(`[Calendar] Found ${calendarIds.length} calendar(s) for token. Querying ${startOfDay.toISOString()} \u2192 ${endOfDay.toISOString()}`);
-  const allEvents = [];
-  const seenIds = /* @__PURE__ */ new Set();
-  await Promise.all(
-    calendarIds.map(async (calId) => {
-      try {
-        const res = await calendar.events.list({
-          calendarId: calId,
-          timeMin: startOfDay.toISOString(),
-          timeMax: endOfDay.toISOString(),
-          singleEvents: true,
-          orderBy: "startTime",
-          maxResults: 20
-        });
-        const items = res.data.items || [];
-        console.log(`[Calendar] Cal "${calId}": ${items.length} event(s)`);
-        items.filter((e) => e.summary && !seenIds.has(e.id || "")).forEach((e) => {
-          seenIds.add(e.id || "");
-          const attendees = (e.attendees || []).filter((a) => a.email).map((a) => ({
-            email: String(a.email),
-            displayName: a.displayName || void 0,
-            organizer: !!a.organizer,
-            self: !!a.self
-          }));
-          allEvents.push({
-            id: e.id || String(Math.random()),
-            title: e.summary || "Event",
-            start: e.start?.dateTime || e.start?.date || date2,
-            end: e.end?.dateTime || e.end?.date || date2,
-            description: e.description || void 0,
-            location: e.location || void 0,
-            attendees: attendees.length > 0 ? attendees : void 0
-          });
-        });
-      } catch (err) {
-        console.error(`[Calendar] Error fetching events for cal "${calId}":`, err?.message || err);
-      }
-    })
-  );
-  allEvents.sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime());
-  return allEvents;
-}
-async function checkGoogleCalendarConnection(userAccessToken) {
-  try {
-    if (userAccessToken) return true;
-    await getProjectAccessToken();
-    return true;
-  } catch {
-    return false;
-  }
-}
-async function createGoogleCalendarEvent(accessToken, event) {
-  const calendar = buildCalendarClient(accessToken);
-  const startDt = event.start.includes("T") ? event.start : event.start + "T00:00:00Z";
-  const endDt = event.end.includes("T") ? event.end : event.end + "T01:00:00Z";
-  const res = await calendar.events.insert({
-    calendarId: "primary",
-    requestBody: {
-      summary: event.title,
-      description: event.description || void 0,
-      location: event.location || void 0,
-      start: { dateTime: startDt },
-      end: { dateTime: endDt }
-    }
-  });
-  return { id: res.data.id || "", htmlLink: res.data.htmlLink || "" };
-}
-var init_googleCalendar = __esm({
-  "server/integrations/googleCalendar.ts"() {
-    "use strict";
   }
 });
 
@@ -2353,7 +3777,7 @@ var init_slack = __esm({
 import { Router } from "express";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import { eq as eq3 } from "drizzle-orm";
+import { eq as eq6 } from "drizzle-orm";
 import crypto from "crypto";
 function getJwtSecret() {
   if (process.env.JWT_SECRET) {
@@ -2411,7 +3835,7 @@ var init_auth = __esm({
         if (password.length < 6) {
           return res.status(400).json({ error: "Password must be at least 6 characters" });
         }
-        const existing = await db.select().from(users).where(eq3(users.username, username)).limit(1);
+        const existing = await db.select().from(users).where(eq6(users.username, username)).limit(1);
         if (existing.length > 0) {
           return res.status(409).json({ error: "Username already taken" });
         }
@@ -2437,7 +3861,7 @@ var init_auth = __esm({
         if (!username || !password) {
           return res.status(400).json({ error: "Username and password are required" });
         }
-        const [user] = await db.select().from(users).where(eq3(users.username, username)).limit(1);
+        const [user] = await db.select().from(users).where(eq6(users.username, username)).limit(1);
         if (!user) {
           return res.status(401).json({ error: "Invalid username or password" });
         }
@@ -2506,18 +3930,18 @@ var init_auth = __esm({
         if (!googleUser.id) {
           return res.status(401).json({ error: "Could not retrieve Google user info" });
         }
-        const existing = await db.select().from(users).where(eq3(users.googleId, googleUser.id)).limit(1);
+        const existing = await db.select().from(users).where(eq6(users.googleId, googleUser.id)).limit(1);
         let user;
         if (existing.length > 0) {
           user = existing[0];
           if (googleUser.name && googleUser.name !== user.displayName) {
-            await db.update(users).set({ displayName: googleUser.name }).where(eq3(users.id, user.id));
+            await db.update(users).set({ displayName: googleUser.name }).where(eq6(users.id, user.id));
             user = { ...user, displayName: googleUser.name };
           }
         } else {
           const username = googleUser.email ? googleUser.email.split("@")[0] : `google_${googleUser.id.slice(0, 8)}`;
           let uniqueUsername = username;
-          const existingUsername = await db.select().from(users).where(eq3(users.username, username)).limit(1);
+          const existingUsername = await db.select().from(users).where(eq6(users.username, username)).limit(1);
           if (existingUsername.length > 0) {
             uniqueUsername = `${username}_${Date.now().toString(36)}`;
           }
@@ -2552,7 +3976,7 @@ var init_auth = __esm({
           username: users.username,
           displayName: users.displayName,
           createdAt: users.createdAt
-        }).from(users).where(eq3(users.id, payload.userId)).limit(1);
+        }).from(users).where(eq6(users.id, payload.userId)).limit(1);
         if (!user) {
           return res.status(401).json({ error: "User not found" });
         }
@@ -2569,7 +3993,7 @@ var init_auth = __esm({
 
 // server/mobileAuthRoutes.ts
 import { Router as Router2 } from "express";
-import { eq as eq4, lt } from "drizzle-orm";
+import { eq as eq7, lt } from "drizzle-orm";
 function getCallbackUrl(req) {
   const proto = req.headers["x-forwarded-proto"] || req.protocol;
   const host = req.headers["x-forwarded-host"] || req.get("host") || "";
@@ -2713,14 +4137,14 @@ var init_mobileAuthRoutes = __esm({
           if (!info.id) return res.send(errorHtml("Could not retrieve Google user info."));
           googleUser = { id: info.id, name: info.name, email: info.email };
         }
-        const existing = await db.select().from(users).where(eq4(users.googleId, googleUser.id)).limit(1);
+        const existing = await db.select().from(users).where(eq7(users.googleId, googleUser.id)).limit(1);
         let user;
         if (existing.length > 0) {
           user = existing[0];
         } else {
           const base = googleUser.email ? googleUser.email.split("@")[0] : `google_${googleUser.id.slice(0, 8)}`;
           let uniqueUsername = base;
-          const existingUsername = await db.select().from(users).where(eq4(users.username, base)).limit(1);
+          const existingUsername = await db.select().from(users).where(eq7(users.username, base)).limit(1);
           if (existingUsername.length > 0) uniqueUsername = `${base}_${Date.now().toString(36)}`;
           const [newUser] = await db.insert(users).values({
             username: uniqueUsername,
@@ -2750,12 +4174,12 @@ var init_mobileAuthRoutes = __esm({
       if (!session_id) return res.status(400).json({ error: "session_id required" });
       try {
         await db.delete(mobileAuthSessions).where(lt(mobileAuthSessions.expiresAt, /* @__PURE__ */ new Date()));
-        const rows = await db.select().from(mobileAuthSessions).where(eq4(mobileAuthSessions.sessionId, session_id)).limit(1);
+        const rows = await db.select().from(mobileAuthSessions).where(eq7(mobileAuthSessions.sessionId, session_id)).limit(1);
         if (rows.length === 0) {
           return res.status(404).json({ ready: false });
         }
         const session = rows[0];
-        await db.delete(mobileAuthSessions).where(eq4(mobileAuthSessions.sessionId, session_id));
+        await db.delete(mobileAuthSessions).where(eq7(mobileAuthSessions.sessionId, session_id));
         return res.json({ ready: true, token: session.token });
       } catch (err) {
         console.error("Mobile auth poll error:", err);
@@ -2772,7 +4196,7 @@ __export(goalScheduler_exports, {
   markTasksInjected: () => markTasksInjected,
   markTreeTaskComplete: () => markTreeTaskComplete
 });
-import { eq as eq5, and as and2 } from "drizzle-orm";
+import { eq as eq8, and as and5 } from "drizzle-orm";
 function isTaskActionable(t) {
   return t.status === "ready" || t.status === "in_progress";
 }
@@ -2796,7 +4220,7 @@ function nextActionableTasksFromTree(tree) {
 }
 async function recentCompletionRate(userId2) {
   try {
-    const [row] = await db.select({ data: completionHistory.data }).from(completionHistory).where(eq5(completionHistory.userId, userId2)).limit(1);
+    const [row] = await db.select({ data: completionHistory.data }).from(completionHistory).where(eq8(completionHistory.userId, userId2)).limit(1);
     const arr = row?.data || [];
     if (arr.length === 0) return 1;
     const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1e3;
@@ -2812,7 +4236,7 @@ async function recentCompletionRate(userId2) {
   }
 }
 async function getInjectableGoalTasks(userId2, dateKey) {
-  const trees = await db.select().from(goalTrees).where(and2(eq5(goalTrees.userId, userId2), eq5(goalTrees.status, "active")));
+  const trees = await db.select().from(goalTrees).where(and5(eq8(goalTrees.userId, userId2), eq8(goalTrees.status, "active")));
   if (trees.length === 0) return [];
   const rate = await recentCompletionRate(userId2);
   const dailyCap = rate < 0.5 ? 1 : 3;
@@ -2857,7 +4281,7 @@ async function markTasksInjected(userId2, picks, dateKey) {
     byTree.set(p.goalTreeId, list);
   }
   for (const [treeId, items] of byTree.entries()) {
-    const [row] = await db.select().from(goalTrees).where(and2(eq5(goalTrees.id, treeId), eq5(goalTrees.userId, userId2))).limit(1);
+    const [row] = await db.select().from(goalTrees).where(and5(eq8(goalTrees.id, treeId), eq8(goalTrees.userId, userId2))).limit(1);
     if (!row) continue;
     const tree = row.tree || { phases: [] };
     const ids = new Set(items.map((i) => i.taskId));
@@ -2880,12 +4304,12 @@ async function markTasksInjected(userId2, picks, dateKey) {
       }
     }
     if (mutated) {
-      await db.update(goalTrees).set({ tree, updatedAt: /* @__PURE__ */ new Date() }).where(eq5(goalTrees.id, treeId));
+      await db.update(goalTrees).set({ tree, updatedAt: /* @__PURE__ */ new Date() }).where(eq8(goalTrees.id, treeId));
     }
   }
 }
 async function markTreeTaskComplete(userId2, goalTreeId, taskId) {
-  const [row] = await db.select().from(goalTrees).where(and2(eq5(goalTrees.id, goalTreeId), eq5(goalTrees.userId, userId2))).limit(1);
+  const [row] = await db.select().from(goalTrees).where(and5(eq8(goalTrees.id, goalTreeId), eq8(goalTrees.userId, userId2))).limit(1);
   if (!row) return;
   const tree = row.tree || { phases: [] };
   let mutated = false;
@@ -2933,7 +4357,7 @@ async function markTreeTaskComplete(userId2, goalTreeId, taskId) {
     }
   }
   if (mutated) {
-    await db.update(goalTrees).set({ tree, updatedAt: /* @__PURE__ */ new Date() }).where(eq5(goalTrees.id, goalTreeId));
+    await db.update(goalTrees).set({ tree, updatedAt: /* @__PURE__ */ new Date() }).where(eq8(goalTrees.id, goalTreeId));
   }
 }
 var init_goalScheduler = __esm({
@@ -2995,6 +4419,9 @@ async function runStreamingTurn(params) {
     type: "function",
     function: { name: acc.name, arguments: acc.args }
   }));
+  if (!textContent && toolCallList.length === 0) {
+    console.warn(`[harness] runStreamingTurn: stream completed with empty textContent and no tool calls (finishReason=${finishReason})`);
+  }
   return { textContent, textChunks, toolCallList, finishReason };
 }
 async function runAgent(opts) {
@@ -3010,6 +4437,7 @@ async function runAgent(opts) {
   const channel = context.channel || "Agent";
   const toolMap = new Map(tools.map((t) => [t.name, t]));
   const openAITools = tools.length > 0 ? tools.map(toOpenAITool) : void 0;
+  context.allowedToolNames = new Set(tools.map((t) => t.name));
   const messages = [
     ...opts.messages
   ];
@@ -3442,6 +4870,7 @@ __export(telegram_exports, {
   sendMessage: () => sendMessage,
   sendMessageWithButtons: () => sendMessageWithButtons,
   sendTelegramDocument: () => sendTelegramDocument,
+  sendVoice: () => sendVoice,
   setWebhook: () => setWebhook,
   verifyWebhookSecret: () => verifyWebhookSecret
 });
@@ -3541,6 +4970,24 @@ async function deleteWebhook() {
   } catch {
   }
 }
+async function sendVoice(chatId, audioBuffer, caption) {
+  if (!BOT_TOKEN) return false;
+  try {
+    const form = new FormData();
+    form.append("chat_id", chatId);
+    if (caption) form.append("caption", caption.slice(0, 1024));
+    form.append("voice", new Blob([audioBuffer], { type: "audio/ogg" }), "voice.ogg");
+    const res = await fetch(`${BASE}/sendVoice`, { method: "POST", body: form });
+    if (!res.ok) {
+      console.error("Telegram sendVoice error:", await res.text());
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.error("Telegram sendVoice threw:", String(e));
+    return false;
+  }
+}
 async function downloadTelegramFile(fileId) {
   if (!BOT_TOKEN) return null;
   try {
@@ -3624,1596 +5071,185 @@ var init_telegram = __esm({
   }
 });
 
-// server/interactionLog.ts
-import { eq as eq6, desc as desc3, gte, and as and3 } from "drizzle-orm";
-async function logInteraction(userId2, channel, direction, content, label) {
+// server/telegramDocumentExtractor.ts
+function isIngestableDocument(mimeType, filename) {
+  if (mimeType && INGESTABLE_MIME_TYPES.has(mimeType)) return true;
+  if (filename) {
+    const ext = filename.toLowerCase().match(/\.[^.]+$/)?.[0];
+    if (ext && INGESTABLE_EXTENSIONS.has(ext)) return true;
+  }
+  return false;
+}
+async function extractPdf(buffer) {
+  const { pathToFileURL } = await import("url");
+  const { resolve: resolve4 } = await import("path");
+  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  const workerPath = resolve4("./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs");
+  pdfjs.GlobalWorkerOptions.workerSrc = pathToFileURL(workerPath).href;
+  const uint8 = new Uint8Array(buffer);
+  const loadingTask = pdfjs.getDocument({ data: uint8, useSystemFonts: true });
+  const pdf = await loadingTask.promise;
+  const pageCount = pdf.numPages;
+  let fullText = "";
+  for (let i = 1; i <= pageCount; i++) {
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    const pageText = content.items.filter((item) => typeof item.str === "string").map((item) => item.str).join(" ");
+    fullText += pageText + "\n";
+  }
+  return { text: fullText.trim(), pageCount };
+}
+async function extractDocx(buffer, mimeType) {
   try {
-    await db.insert(interactionLog).values({
-      userId: userId2,
-      channel,
-      direction,
-      content,
-      label: label || null
-    });
+    const mammoth = await import("mammoth");
+    const result = await mammoth.extractRawText({ buffer });
+    if (result.value) return result.value;
   } catch (err) {
-    console.error("[InteractionLog] Failed to log interaction:", err);
-  }
-}
-async function getRecentInteractions(userId2, limit = 20, withinHours = 48) {
-  try {
-    const since = new Date(Date.now() - withinHours * 60 * 60 * 1e3);
-    return await db.select().from(interactionLog).where(
-      and3(
-        eq6(interactionLog.userId, userId2),
-        gte(interactionLog.createdAt, since)
-      )
-    ).orderBy(desc3(interactionLog.createdAt)).limit(limit);
-  } catch (err) {
-    console.error("[InteractionLog] Failed to fetch interactions:", err);
-    return [];
-  }
-}
-function formatInteractionTimeline(interactions) {
-  if (interactions.length === 0) return "";
-  const sorted = [...interactions].sort(
-    (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
-  );
-  const lines = sorted.map((row) => {
-    const ts = new Date(row.createdAt).toLocaleTimeString("en-US", {
-      hour: "numeric",
-      minute: "2-digit",
-      hour12: true
-    });
-    const date2 = new Date(row.createdAt).toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric"
-    });
-    let channelLabel;
-    if (row.channel === "app_chat") {
-      channelLabel = "App";
-    } else if (row.channel === "telegram") {
-      channelLabel = "Telegram";
-    } else {
-      channelLabel = row.label ? `Notification \u2013 ${row.label}` : "Notification";
-    }
-    const who = row.direction === "inbound" ? "User" : `Jarvis (${channelLabel})`;
-    const labelTag = row.channel !== "notification" && row.label ? ` [${row.label}]` : "";
-    const displayContent = row.content.length > DISPLAY_TRUNCATE_LENGTH ? row.content.slice(0, DISPLAY_TRUNCATE_LENGTH) + "\u2026" : row.content;
-    return `[${date2} ${ts}] ${who}${labelTag}: ${displayContent}`;
-  });
-  return `
-## Recent Cross-Channel Activity (last 48 hours)
-This shows everything that happened between you and the user across all channels \u2014 app conversations, Telegram messages, and any notifications you sent. Use this to understand the full context before responding.
-${lines.join("\n")}`;
-}
-var DISPLAY_TRUNCATE_LENGTH;
-var init_interactionLog = __esm({
-  "server/interactionLog.ts"() {
-    "use strict";
-    init_db();
-    init_schema();
-    DISPLAY_TRUNCATE_LENGTH = 1200;
-  }
-});
-
-// server/channels/registry.ts
-import { eq as eq7, and as and4 } from "drizzle-orm";
-function registerChannel(channel) {
-  channels.set(channel.name, channel);
-}
-function listChannels() {
-  return Array.from(channels.values());
-}
-async function getActiveChannelsFor(userId2, notificationType) {
-  try {
-    const rows = await db.select().from(channelPreferences).where(and4(
-      eq7(channelPreferences.userId, userId2),
-      eq7(channelPreferences.notificationType, notificationType)
-    )).limit(1);
-    const prefs = rows[0]?.channels;
-    if (prefs && prefs.length > 0) return prefs;
-  } catch (err) {
-    console.error("[channels] preference lookup failed:", err);
-  }
-  return DEFAULT_FALLBACK;
-}
-async function getAllPreferences(userId2) {
-  const out = {};
-  try {
-    const rows = await db.select().from(channelPreferences).where(eq7(channelPreferences.userId, userId2));
-    for (const r of rows) {
-      out[r.notificationType] = r.channels || [];
-    }
-  } catch (err) {
-    console.error("[channels] getAllPreferences failed:", err);
-  }
-  return out;
-}
-async function setPreference(userId2, notificationType, selected) {
-  await db.insert(channelPreferences).values({ userId: userId2, notificationType, channels: selected, updatedAt: /* @__PURE__ */ new Date() }).onConflictDoUpdate({
-    target: [channelPreferences.userId, channelPreferences.notificationType],
-    set: { channels: selected, updatedAt: /* @__PURE__ */ new Date() }
-  });
-}
-async function trySendOnChannel(userId2, name, text2, opts, notificationType) {
-  const ch = channels.get(name);
-  if (!ch) return { channel: name, result: { ok: false, error: "channel not registered" } };
-  if (!ch.isConfigured()) return { channel: name, result: { ok: false, error: "channel not configured" } };
-  if (!await ch.isLinkedFor(userId2)) return { channel: name, result: { ok: false, error: "user not linked" } };
-  try {
-    const result = await ch.sendMessage(userId2, text2, { ...opts, notificationType });
-    if (result.ok) logInteraction(userId2, name, "outbound", text2).catch(() => {
-    });
-    return { channel: name, result };
-  } catch (err) {
-    console.error(`[channels] ${name} send failed:`, err);
-    return { channel: name, result: { ok: false, error: String(err) } };
-  }
-}
-async function notifyUser(userId2, notificationType, text2, opts = {}) {
-  const targets = await getActiveChannelsFor(userId2, notificationType);
-  const results = await Promise.all(
-    targets.map((name) => trySendOnChannel(userId2, name, text2, opts, notificationType))
-  );
-  if (results.some((r) => r.result.ok)) return results;
-  const tried = new Set(targets);
-  const fallbackOrder = [
-    "telegram",
-    ...listChannels().map((c) => c.name).filter((n) => n !== "telegram")
-  ];
-  for (const name of fallbackOrder) {
-    if (tried.has(name)) continue;
-    tried.add(name);
-    const r = await trySendOnChannel(userId2, name, text2, opts, notificationType);
-    results.push(r);
-    if (r.result.ok) {
-      console.warn(`[channels] notifyUser fallback delivered via ${name} after preferred targets [${targets.join(",")}] failed for user ${userId2}`);
-      return results;
-    }
-  }
-  return results;
-}
-var channels, DEFAULT_FALLBACK;
-var init_registry = __esm({
-  "server/channels/registry.ts"() {
-    "use strict";
-    init_db();
-    init_schema();
-    init_interactionLog();
-    channels = /* @__PURE__ */ new Map();
-    DEFAULT_FALLBACK = ["telegram"];
-  }
-});
-
-// server/momentumCoach.ts
-import { eq as eq8, and as and5, lt as lt2 } from "drizzle-orm";
-import OpenAI5 from "openai";
-async function generateMomentumSteps(_userId, context) {
-  const incompleteTasks = (context.tasks || []).filter((t) => !t.completed);
-  const taskList = incompleteTasks.slice(0, 5).map((t) => t.title).join(", ") || "no specific tasks planned";
-  const goalsText = (context.goals || []).slice(0, 3).map((g) => `${g.title} (${g.current || 0}/${g.target})`).join(", ") || "none set";
-  const streak = context.stats?.streak || 0;
-  const completedToday = (context.tasks || []).filter((t) => t.completed).length;
-  const prompt = `You are designing a 4-step momentum sequence for someone with ADHD who has task aversion right now.
-
-Their situation:
-- Today's tasks: ${taskList}
-- Goals: ${goalsText}
-- Streak: ${streak} days
-- Completed today: ${completedToday} tasks
-- Date: ${context.dateKey}
-
-Design 4 escalating micro-tasks. Step 1 must be TINY \u2014 a single physical action that takes under 60 seconds and removes all friction (e.g., "Just open your email and glance at the subject lines \u2014 don't reply to anything"). Each step is slightly larger than the last.
-
-Each step must use a specific ADHD tactic:
-- Step 1: Implementation intention ("When you sit down, just... [specific physical action]")
-- Step 2: Identity framing ("You're someone who... one quick thing to prove it")
-- Step 3: Social contrast or streak leverage ("Yesterday/this week you did X... let's match it with one thing")
-- Step 4: Momentum statement ("You're already rolling \u2014 just one more and you can call it a win")
-
-Respond with a JSON array of 4 objects: [{ "text": "message to send", "tactic": "implementation_intention|identity_framing|social_contrast|momentum" }, ...]
-Keep each text under 2 sentences. Plain text only \u2014 no markdown, no asterisks.`;
-  try {
-    const resp = await openai5.chat.completions.create({
-      model: "gpt-5-mini",
-      messages: [
-        { role: "system", content: "You are an ADHD productivity coach. Respond with valid JSON only." },
-        { role: "user", content: prompt }
-      ],
-      max_completion_tokens: 800
-    });
-    const raw = resp.choices[0]?.message?.content || "[]";
-    const cleaned = raw.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
-    const parsed = JSON.parse(cleaned);
-    if (!Array.isArray(parsed) || parsed.length < 4) throw new Error("bad shape");
-    const xpPerStep = [5, 10, 15, 20];
-    return parsed.slice(0, 4).map((s, i) => ({
-      text: typeof s.text === "string" ? s.text : String(s.text),
-      tactic: typeof s.tactic === "string" ? s.tactic : "momentum",
-      xp: xpPerStep[i]
-    }));
-  } catch (err) {
-    console.error("[Momentum] Failed to generate steps:", err);
-    return [
-      { text: "When you sit down right now, just open your task list \u2014 don't do anything yet, just look.", tactic: "implementation_intention", xp: 5 },
-      { text: "You're someone who follows through. Pick the smallest task on that list and spend just 5 minutes on it.", tactic: "identity_framing", xp: 10 },
-      { text: "You've already done 2 things \u2014 that's momentum. One more task and you'll have a real streak going.", tactic: "social_contrast", xp: 15 },
-      { text: "You're rolling now. One final thing and you can close your laptop knowing today counted.", tactic: "momentum", xp: 20 }
-    ];
-  }
-}
-async function startMomentumSession(userId2, chatId, context) {
-  const steps = await generateMomentumSteps(userId2, context);
-  await db.insert(momentumSessions).values({
-    userId: userId2,
-    currentStep: 0,
-    sessionDate: context.dateKey,
-    completedSteps: 0,
-    steps,
-    status: "active",
-    lastStepAt: /* @__PURE__ */ new Date()
-  }).onConflictDoUpdate({
-    target: momentumSessions.userId,
-    set: {
-      currentStep: 0,
-      sessionDate: context.dateKey,
-      completedSteps: 0,
-      steps,
-      status: "active",
-      lastStepAt: /* @__PURE__ */ new Date()
-    }
-  });
-  const step = steps[0];
-  await sendMessageWithButtons(chatId, `Jarvis here. ${step.text}`, [
-    { text: "\u2705 Done", callback_data: `momentum_done:${userId2}:0` }
-  ]);
-  console.log(`[Momentum] Session started for user ${userId2}, step 0`);
-}
-async function handleMomentumDone(userId2, chatId, stepIndex) {
-  const rows = await db.select().from(momentumSessions).where(eq8(momentumSessions.userId, userId2)).limit(1);
-  if (rows.length === 0) return;
-  const session = rows[0];
-  if (session.status === "expired") {
-    await sendMessage(chatId, "That session already expired \u2014 start fresh tomorrow.");
-    return;
-  }
-  const steps = session.steps;
-  if (stepIndex >= steps.length) return;
-  if (session.currentStep !== stepIndex) return;
-  const completedStep = steps[stepIndex];
-  const xpEarned = completedStep.xp;
-  await awardXp(userId2, xpEarned);
-  const nextStep = stepIndex + 1;
-  const newCompletedSteps = (session.completedSteps || 0) + 1;
-  const isFinished = nextStep >= steps.length;
-  await db.update(momentumSessions).set({
-    currentStep: nextStep,
-    completedSteps: newCompletedSteps,
-    status: isFinished ? "completed" : "active",
-    lastStepAt: /* @__PURE__ */ new Date()
-  }).where(eq8(momentumSessions.userId, userId2));
-  const ackMessages = {
-    implementation_intention: `Done \u2014 +${xpEarned} XP. That first step is always the hardest.`,
-    identity_framing: `Locked in \u2014 +${xpEarned} XP. That's exactly who you are.`,
-    social_contrast: `Nice \u2014 +${xpEarned} XP. Momentum is real now.`,
-    momentum: `That's it \u2014 +${xpEarned} XP. Today counts.`
-  };
-  const ack = ackMessages[completedStep.tactic] ?? `+${xpEarned} XP. Keep going.`;
-  await sendMessage(chatId, ack);
-  if (isFinished) {
-    const totalXp = steps.reduce((sum, s) => sum + s.xp, 0);
-    await sendMessage(chatId, `Full sequence complete \u2014 ${totalXp} XP earned today. That's a win.`);
-    return;
-  }
-  setTimeout(async () => {
-    try {
-      const freshRows = await db.select().from(momentumSessions).where(eq8(momentumSessions.userId, userId2)).limit(1);
-      if (freshRows.length === 0 || freshRows[0].currentStep !== nextStep) return;
-      const freshSession = freshRows[0];
-      if (freshSession.status !== "active") return;
-      const lastStepTime = freshSession.lastStepAt ? new Date(freshSession.lastStepAt) : /* @__PURE__ */ new Date();
-      if (Date.now() - lastStepTime.getTime() > SESSION_TIMEOUT_MS) {
-        await expireSession(userId2, chatId);
-        return;
-      }
-      const nextStepData = freshSession.steps[nextStep];
-      await sendMessageWithButtons(chatId, nextStepData.text, [
-        { text: "\u2705 Done", callback_data: `momentum_done:${userId2}:${nextStep}` }
-      ]);
-      console.log(`[Momentum] Sent step ${nextStep} to user ${userId2}`);
-    } catch (err) {
-      console.error("[Momentum] Error sending next step:", err);
-    }
-  }, STEP_DELAY_MS);
-}
-async function expireSession(userId2, chatId) {
-  await db.update(momentumSessions).set({ status: "expired" }).where(eq8(momentumSessions.userId, userId2));
-  await sendMessage(chatId, "No worries \u2014 we'll pick it back up tomorrow.");
-  console.log(`[Momentum] Session expired for user ${userId2}`);
-}
-async function awardXp(userId2, amount) {
-  try {
-    const rows = await db.select().from(stats).where(eq8(stats.userId, userId2)).limit(1);
-    if (rows.length === 0) return;
-    const data = rows[0].data ?? {};
-    const currentXp = Number(data.xp ?? 0);
-    await db.update(stats).set({ data: { ...data, xp: currentXp + amount }, updatedAt: /* @__PURE__ */ new Date() }).where(eq8(stats.userId, userId2));
-  } catch (err) {
-    console.error("[Momentum] Failed to award XP:", err);
-  }
-}
-async function hasMomentumSessionToday(userId2, dateKey) {
-  const rows = await db.select({ sessionDate: momentumSessions.sessionDate }).from(momentumSessions).where(eq8(momentumSessions.userId, userId2)).limit(1);
-  return rows.length > 0 && rows[0].sessionDate === dateKey;
-}
-async function expireStaleMomentumSessions() {
-  try {
-    const cutoff = new Date(Date.now() - SESSION_TIMEOUT_MS);
-    const staleSessions = await db.select().from(momentumSessions).where(
-      and5(
-        eq8(momentumSessions.status, "active"),
-        lt2(momentumSessions.lastStepAt, cutoff)
-      )
-    );
-    for (const session of staleSessions) {
-      const links = await db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq8(telegramLinks.userId, session.userId)).limit(1);
-      await db.update(momentumSessions).set({ status: "expired" }).where(eq8(momentumSessions.userId, session.userId));
-      if (links.length > 0) {
-        await sendMessage(links[0].chatId, "No worries \u2014 we'll pick it back up tomorrow.").catch(() => {
-        });
-      }
-      console.log(`[Momentum] Sweep expired session for user ${session.userId}`);
-    }
-  } catch (err) {
-    console.error("[Momentum] Error in expiry sweep:", err);
-  }
-}
-function startMomentumExpiryScheduler() {
-  setInterval(() => {
-    expireStaleMomentumSessions().catch(
-      (err) => console.error("[Momentum] Expiry scheduler error:", err)
-    );
-  }, 5 * 60 * 1e3);
-  console.log("[Momentum] Expiry scheduler started (5-min interval)");
-}
-var openai5, SESSION_TIMEOUT_MS, STEP_DELAY_MS;
-var init_momentumCoach = __esm({
-  "server/momentumCoach.ts"() {
-    "use strict";
-    init_db();
-    init_schema();
-    init_telegram();
-    openai5 = new OpenAI5({
-      apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-      baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL
-    });
-    SESSION_TIMEOUT_MS = 30 * 60 * 1e3;
-    STEP_DELAY_MS = 3 * 60 * 1e3;
-  }
-});
-
-// server/userTokenStore.ts
-var userTokenStore_exports = {};
-__export(userTokenStore_exports, {
-  deleteUserToken: () => deleteUserToken,
-  getUserOAuthStatus: () => getUserOAuthStatus,
-  getUserToken: () => getUserToken,
-  getUserTokens: () => getUserTokens,
-  getValidGoogleToken: () => getValidGoogleToken,
-  getValidGoogleTokens: () => getValidGoogleTokens,
-  getValidMicrosoftToken: () => getValidMicrosoftToken,
-  refreshGoogleToken: () => refreshGoogleToken,
-  refreshMicrosoftToken: () => refreshMicrosoftToken,
-  saveUserToken: () => saveUserToken
-});
-import { sql as sql5 } from "drizzle-orm";
-async function saveUserToken(token) {
-  await db.execute(sql5`
-    INSERT INTO user_oauth_tokens
-      (user_id, provider, access_token, refresh_token, expires_at, scopes, account_email, updated_at)
-    VALUES
-      (${token.userId}, ${token.provider}, ${token.accessToken},
-       ${token.refreshToken ?? null}, ${token.expiresAt ?? null},
-       ${token.scopes ?? null}, ${token.accountEmail}, NOW())
-    ON CONFLICT (user_id, provider, account_email) DO UPDATE SET
-      access_token = EXCLUDED.access_token,
-      refresh_token = COALESCE(EXCLUDED.refresh_token, user_oauth_tokens.refresh_token),
-      expires_at = EXCLUDED.expires_at,
-      scopes = EXCLUDED.scopes,
-      updated_at = NOW()
-  `);
-}
-async function getUserToken(userId2, provider) {
-  const rows = await db.execute(sql5`
-    SELECT user_id, provider, access_token, refresh_token, expires_at, scopes, account_email
-    FROM user_oauth_tokens
-    WHERE user_id = ${userId2} AND provider = ${provider}
-    LIMIT 1
-  `);
-  const row = rows.rows?.[0] ?? (Array.isArray(rows) ? rows[0] : null);
-  if (!row) return null;
-  return {
-    userId: row.user_id,
-    provider: row.provider,
-    accessToken: row.access_token,
-    refreshToken: row.refresh_token,
-    expiresAt: row.expires_at ? new Date(row.expires_at) : null,
-    scopes: row.scopes,
-    accountEmail: row.account_email ?? ""
-  };
-}
-async function getUserTokens(userId2, provider) {
-  const rows = await db.execute(sql5`
-    SELECT user_id, provider, access_token, refresh_token, expires_at, scopes, account_email
-    FROM user_oauth_tokens
-    WHERE user_id = ${userId2} AND provider = ${provider}
-  `);
-  const items = rows.rows ?? (Array.isArray(rows) ? rows : []);
-  return items.map((row) => ({
-    userId: row.user_id,
-    provider: row.provider,
-    accessToken: row.access_token,
-    refreshToken: row.refresh_token,
-    expiresAt: row.expires_at ? new Date(row.expires_at) : null,
-    scopes: row.scopes,
-    accountEmail: row.account_email ?? ""
-  }));
-}
-async function deleteUserToken(userId2, provider, accountEmail) {
-  if (accountEmail) {
-    await db.execute(sql5`
-      DELETE FROM user_oauth_tokens WHERE user_id = ${userId2} AND provider = ${provider} AND account_email = ${accountEmail}
-    `);
-  } else {
-    await db.execute(sql5`
-      DELETE FROM user_oauth_tokens WHERE user_id = ${userId2} AND provider = ${provider}
-    `);
-  }
-}
-async function getUserOAuthStatus(userId2) {
-  const rows = await db.execute(sql5`
-    SELECT provider, account_email, expires_at, scopes FROM user_oauth_tokens WHERE user_id = ${userId2}
-  `);
-  const result = {
-    google: { connected: false, accounts: [] },
-    microsoft: { connected: false, accounts: [] },
-    slack: { connected: false, accounts: [] }
-  };
-  const items = rows.rows ?? (Array.isArray(rows) ? rows : []);
-  for (const row of items) {
-    if (!result[row.provider]) {
-      result[row.provider] = { connected: false, accounts: [] };
-    }
-    result[row.provider].connected = true;
-    result[row.provider].email = row.account_email || void 0;
-    result[row.provider].accounts.push({ email: row.account_email || "", scopes: row.scopes || void 0 });
-  }
-  return result;
-}
-async function refreshGoogleToken(token) {
-  if (!token.refreshToken) return null;
-  const clientId = process.env.GOOGLE_WEB_CLIENT_ID;
-  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-  if (!clientId || !clientSecret) return null;
-  try {
-    const res = await fetch("https://oauth2.googleapis.com/token", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        client_id: clientId,
-        client_secret: clientSecret,
-        refresh_token: token.refreshToken,
-        grant_type: "refresh_token"
-      })
-    });
-    const data = await res.json();
-    if (!data.access_token) return null;
-    const expiresAt = data.expires_in ? new Date(Date.now() + data.expires_in * 1e3) : null;
-    const updated = {
-      ...token,
-      accessToken: data.access_token,
-      expiresAt
-    };
-    await saveUserToken(updated);
-    return updated;
-  } catch {
-    return null;
-  }
-}
-async function getValidGoogleToken(userId2) {
-  const token = await getUserToken(userId2, "google");
-  if (!token) return null;
-  if (token.expiresAt && token.expiresAt.getTime() < Date.now() + 6e4) {
-    const refreshed = await refreshGoogleToken(token);
-    return refreshed?.accessToken ?? null;
-  }
-  return token.accessToken;
-}
-async function getValidGoogleTokens(userId2) {
-  const tokens = await getUserTokens(userId2, "google");
-  const accessTokens = [];
-  for (const token of tokens) {
-    if (token.expiresAt && token.expiresAt.getTime() < Date.now() + 6e4) {
-      const refreshed = await refreshGoogleToken(token);
-      if (refreshed?.accessToken) accessTokens.push(refreshed.accessToken);
-    } else {
-      accessTokens.push(token.accessToken);
-    }
-  }
-  return accessTokens;
-}
-async function refreshMicrosoftToken(token) {
-  if (!token.refreshToken) return null;
-  const clientId = process.env.MICROSOFT_CLIENT_ID;
-  const clientSecret = process.env.MICROSOFT_CLIENT_SECRET;
-  if (!clientId || !clientSecret) return null;
-  try {
-    const res = await fetch("https://login.microsoftonline.com/common/oauth2/v2.0/token", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        client_id: clientId,
-        client_secret: clientSecret,
-        refresh_token: token.refreshToken,
-        grant_type: "refresh_token",
-        scope: "offline_access Calendars.ReadWrite Mail.ReadWrite Mail.Send User.Read"
-      })
-    });
-    const data = await res.json();
-    if (!data.access_token) return null;
-    const expiresAt = data.expires_in ? new Date(Date.now() + data.expires_in * 1e3) : null;
-    const updated = {
-      ...token,
-      accessToken: data.access_token,
-      refreshToken: data.refresh_token ?? token.refreshToken,
-      expiresAt
-    };
-    await saveUserToken(updated);
-    return updated;
-  } catch {
-    return null;
-  }
-}
-async function getValidMicrosoftToken(userId2) {
-  const token = await getUserToken(userId2, "microsoft");
-  if (!token) return null;
-  if (token.expiresAt && token.expiresAt.getTime() < Date.now() + 6e4) {
-    const refreshed = await refreshMicrosoftToken(token);
-    return refreshed?.accessToken ?? null;
-  }
-  return token.accessToken;
-}
-var init_userTokenStore = __esm({
-  "server/userTokenStore.ts"() {
-    "use strict";
-    init_db();
-  }
-});
-
-// server/memory/extractor.ts
-var extractor_exports = {};
-__export(extractor_exports, {
-  MEMORY_CATEGORIES: () => MEMORY_CATEGORIES,
-  extractAndStore: () => extractAndStore
-});
-import { eq as eq9, desc as desc4 } from "drizzle-orm";
-import OpenAI6 from "openai";
-function normalizeForDedup(s) {
-  return s.trim().toLowerCase().replace(/[^\w\s]/g, "").replace(/\s+/g, " ");
-}
-function clampInt(value, min, max, fallback) {
-  const n = typeof value === "number" ? value : Number(value);
-  if (!Number.isFinite(n)) return fallback;
-  return Math.max(min, Math.min(max, Math.round(n)));
-}
-function parseExtraction(raw) {
-  try {
-    const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === "object" && "memories" in parsed) {
-      const m = parsed.memories;
-      if (Array.isArray(m)) return m;
-    }
-    if (Array.isArray(parsed)) return parsed;
-  } catch {
-  }
-  return [];
-}
-async function extractAndStore(input) {
-  const { userId: userId2, source, sourceType, sourceRef, contextHint, maxNew = 3 } = input;
-  if (!source.trim()) return [];
-  let stored = [];
-  try {
-    const existingRows = await db.select({ content: userMemories.content }).from(userMemories).where(eq9(userMemories.userId, userId2)).orderBy(desc4(userMemories.extractedAt)).limit(150);
-    const existingMemories = existingRows.map((r) => r.content);
-    const seen = new Set(existingMemories.map(normalizeForDedup));
-    const existingList = existingMemories.length > 0 ? `
-Existing memories (DO NOT duplicate or rephrase these):
-${existingMemories.slice(0, 80).map((m) => `- ${m}`).join("\n")}` : "";
-    const contextNote = contextHint ? `
-Context: ${contextHint}` : "";
-    const prompt = `You extract durable profile facts about a single user from one source.
-Output JSON: { "memories": [{"content": string, "category": one-of-categories, "confidence": 0-100}] }
-
-Categories (pick ONE per memory):
-- work_patterns       \u2014 when/how they focus, schedule habits, tools, deep-work timing
-- communication_style \u2014 humor, energy, decision style, message length preference
-- energy_rhythms      \u2014 peak/low hours, sleep, exercise timing, recovery rituals
-- goals_history       \u2014 goals stated or inferred over time, including past goals
-- relationships       \u2014 specific named people (family, teammates, partners)
-- values              \u2014 what they care about deeply, what motivates them
-- blockers            \u2014 recurring frictions, fears, procrastination triggers
-- accomplishments     \u2014 concrete wins, milestones reached
-- preferences         \u2014 explicit preferences (meeting times, channels)
-- fact                \u2014 anything else durable and specific
-
-Rules:
-- Only extract facts that are SPECIFIC, DURABLE, and not already captured.
-- Skip emotional venting, one-off events, or generic statements.
-- Confidence: 90+ user stated explicitly; 70-89 strongly implied; 50-69 plausible inference.
-- Skip anything below 50.
-- Return at most ${maxNew} new memories.${contextNote}
-${existingList}
-
-Source (${sourceType}):
-${source.slice(0, 6e3)}
-
-Return { "memories": [] } if nothing new and high-confidence was learned.`;
-    const response = await openai6.chat.completions.create({
-      model: "gpt-5-mini",
-      messages: [{ role: "user", content: prompt }],
-      response_format: { type: "json_object" },
-      max_completion_tokens: 500
-    });
-    const content = response.choices[0]?.message?.content || '{"memories":[]}';
-    const raw = parseExtraction(content).slice(0, maxNew);
-    for (const r of raw) {
-      if (typeof r.content !== "string") continue;
-      const text2 = r.content.trim();
-      if (!text2) continue;
-      const norm = normalizeForDedup(text2);
-      if (seen.has(norm)) continue;
-      const category = normalizeCategory(typeof r.category === "string" ? r.category : null);
-      const confidence = clampInt(r.confidence, 0, 100, 70);
-      if (confidence < 50) continue;
-      let embedding = null;
-      try {
-        const { embedText: embedText2 } = await Promise.resolve().then(() => (init_retrieve(), retrieve_exports));
-        embedding = await embedText2(text2);
-      } catch (embedErr) {
-        console.error("[Memory] embed on insert failed:", embedErr);
-      }
-      await db.insert(userMemories).values({
-        userId: userId2,
-        content: text2,
-        category,
-        confidence,
-        relevanceScore: 50,
-        sourceType,
-        sourceRef: sourceRef || null,
-        embedding: embedding ?? void 0
-      });
-      seen.add(norm);
-      stored.push({ content: text2, category, confidence });
-      console.log(`[Memory] +${sourceType} [${category} c=${confidence}${embedding ? " e" : ""}] ${text2.slice(0, 70)}`);
-    }
-  } catch (err) {
-    console.error("[Memory] extract failed:", err);
-  }
-  if (stored.length > 0) {
-    markSoulStale(userId2).catch((err) => console.error("[Memory] markSoulStale:", err));
-  }
-  return stored;
-}
-var openai6;
-var init_extractor = __esm({
-  "server/memory/extractor.ts"() {
-    "use strict";
-    init_db();
-    init_schema();
-    init_categories();
-    init_soul();
-    openai6 = new OpenAI6({
-      apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-      baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL
-    });
-  }
-});
-
-// server/daemon/bridge.ts
-var bridge_exports = {};
-__export(bridge_exports, {
-  DEFAULT_ANDROID_DAEMON_PERMISSIONS: () => DEFAULT_ANDROID_DAEMON_PERMISSIONS,
-  DEFAULT_DAEMON_PERMISSIONS: () => DEFAULT_DAEMON_PERMISSIONS,
-  closeUserDaemon: () => closeUserDaemon,
-  createDaemonPairingCode: () => createDaemonPairingCode,
-  generatePairingCode: () => generatePairingCode,
-  getAndroidDaemonPermissions: () => getAndroidDaemonPermissions,
-  getDaemonDeviceMeta: () => getDaemonDeviceMeta,
-  getDaemonPermissions: () => getDaemonPermissions,
-  getOpAuditLog: () => getOpAuditLog,
-  getRecentPhoneNotifications: () => getRecentPhoneNotifications,
-  isAndroidDaemonActionAllowed: () => isAndroidDaemonActionAllowed,
-  isAndroidDaemonActive: () => isAndroidDaemonActive,
-  isDaemonActionAllowed: () => isDaemonActionAllowed,
-  isUserPaired: () => isUserPaired,
-  listPairedUsers: () => listPairedUsers,
-  pingDaemon: () => pingDaemon,
-  sendDaemonOp: () => sendDaemonOp,
-  setAndroidDaemonPermissions: () => setAndroidDaemonPermissions,
-  setDaemonPermissions: () => setDaemonPermissions,
-  startDaemonBridge: () => startDaemonBridge
-});
-import { WebSocketServer, WebSocket } from "ws";
-import { eq as eq10, and as and6, sql as sql6 } from "drizzle-orm";
-import { randomBytes, createHash } from "crypto";
-function getRecentPhoneNotifications(userId2, limit = 20) {
-  const arr = userNotifications.get(userId2) || [];
-  return arr.slice(0, limit);
-}
-function nextOpId() {
-  opCounter += 1;
-  return `op_${Date.now().toString(36)}_${opCounter}`;
-}
-function isUserPaired(userId2) {
-  const sock = userSockets.get(userId2);
-  return !!(sock && sock.readyState === WebSocket.OPEN);
-}
-function listPairedUsers() {
-  return [...userSockets.keys()];
-}
-function closeUserDaemon(userId2) {
-  const sock = userSockets.get(userId2);
-  if (!sock) return false;
-  try {
-    sock.close(4004, "unlinked by user");
-  } catch {
-  }
-  userSockets.delete(userId2);
-  const pending = pendingByUser.get(userId2);
-  if (pending) {
-    for (const [id, p] of pending) {
-      clearTimeout(p.timer);
-      p.resolve({ ok: false, error: "daemon unlinked" });
-      pending.delete(id);
-    }
-  }
-  return true;
-}
-async function findUserDaemonRow(userId2) {
-  const rows = await db.select().from(channelLinks).where(and6(eq10(channelLinks.userId, userId2), eq10(channelLinks.channel, "daemon")));
-  if (rows.length === 0) return null;
-  const real = rows.find((r) => !r.address.startsWith("pending_"));
-  return real || rows[0];
-}
-async function getDaemonDeviceMeta(userId2) {
-  try {
-    const row = await findUserDaemonRow(userId2);
-    const meta = row?.metadata || null;
-    return {
-      hostname: meta?.hostname || null,
-      platform: meta?.platform || null
-    };
-  } catch {
-    return { hostname: null, platform: null };
-  }
-}
-async function getDaemonPermissions(userId2) {
-  try {
-    const row = await findUserDaemonRow(userId2);
-    const meta = row?.metadata || null;
-    const stored = meta?.permissions;
-    if (stored && typeof stored === "object") {
-      return { ...DEFAULT_DAEMON_PERMISSIONS, ...stored };
-    }
-  } catch (err) {
-    console.error("[daemon] getDaemonPermissions failed:", err);
-  }
-  return { ...DEFAULT_DAEMON_PERMISSIONS };
-}
-async function setDaemonPermissions(userId2, perms) {
-  const merged = { ...DEFAULT_DAEMON_PERMISSIONS, ...perms };
-  try {
-    const row = await findUserDaemonRow(userId2);
-    const meta = row?.metadata || {};
-    meta.permissions = merged;
-    if (row) {
-      await db.update(channelLinks).set({ metadata: meta }).where(eq10(channelLinks.id, row.id));
-    } else {
-      await db.insert(channelLinks).values({
-        userId: userId2,
-        channel: "daemon",
-        address: `pending_${userId2}`,
-        metadata: meta,
-        lastSeenAt: /* @__PURE__ */ new Date()
-      }).onConflictDoNothing();
-    }
-  } catch (err) {
-    console.error("[daemon] setDaemonPermissions failed:", err);
-  }
-  return merged;
-}
-async function isDaemonActionAllowed(userId2, action) {
-  const perms = await getDaemonPermissions(userId2);
-  return !!perms[action];
-}
-async function getAndroidDaemonPermissions(userId2) {
-  try {
-    const row = await findUserDaemonRow(userId2);
-    const meta = row?.metadata || null;
-    const stored = meta?.android_permissions;
-    if (stored && typeof stored === "object") {
-      return { ...DEFAULT_ANDROID_DAEMON_PERMISSIONS, ...stored };
-    }
-  } catch (err) {
-    console.error("[daemon] getAndroidDaemonPermissions failed:", err);
-  }
-  return { ...DEFAULT_ANDROID_DAEMON_PERMISSIONS };
-}
-async function setAndroidDaemonPermissions(userId2, perms) {
-  const merged = { ...DEFAULT_ANDROID_DAEMON_PERMISSIONS, ...perms };
-  try {
-    const row = await findUserDaemonRow(userId2);
-    const meta = row?.metadata || {};
-    meta.android_permissions = merged;
-    if (row) {
-      await db.update(channelLinks).set({ metadata: meta }).where(eq10(channelLinks.id, row.id));
-    } else {
-      await db.insert(channelLinks).values({
-        userId: userId2,
-        channel: "daemon",
-        address: `pending_android_${userId2}`,
-        metadata: meta,
-        lastSeenAt: /* @__PURE__ */ new Date()
-      }).onConflictDoNothing();
-    }
-  } catch (err) {
-    console.error("[daemon] setAndroidDaemonPermissions failed:", err);
-  }
-  return merged;
-}
-async function isAndroidDaemonActionAllowed(userId2, action) {
-  const perms = await getAndroidDaemonPermissions(userId2);
-  return !!perms[action];
-}
-async function isAndroidDaemonActive(userId2) {
-  if (!isUserPaired(userId2)) return false;
-  try {
-    const row = await findUserDaemonRow(userId2);
-    const meta = row?.metadata || null;
-    return meta?.platform === "android";
-  } catch {
-    return false;
-  }
-}
-function recordAuditEntry(userId2, entry) {
-  let arr = opAuditLog.get(userId2);
-  if (!arr) {
-    arr = [];
-    opAuditLog.set(userId2, arr);
-  }
-  arr.push(entry);
-  if (arr.length > MAX_AUDIT_ENTRIES) arr.splice(0, arr.length - MAX_AUDIT_ENTRIES);
-}
-function getOpAuditLog(userId2) {
-  return opAuditLog.get(userId2) || [];
-}
-async function pingDaemon(userId2, timeoutMs = 5e3) {
-  return sendDaemonOp(userId2, { type: "ping" }, timeoutMs);
-}
-async function validateOpForPlatform(userId2, op) {
-  if (op.type === "ping") return null;
-  const isAndroid = await isAndroidDaemonActive(userId2);
-  const isAndroidOp = op.type.startsWith("android_");
-  if (isAndroidOp && !isAndroid) {
-    return { ok: false, error: `Op '${op.type}' requires an Android daemon, but the connected daemon is a desktop daemon.` };
-  }
-  if (!isAndroidOp && isAndroid && op.type !== "notify") {
-    return { ok: false, error: `Op '${op.type}' is a desktop-only op, but the connected daemon is Android. Use android_* ops instead.` };
-  }
-  return null;
-}
-async function sendDaemonOp(userId2, op, timeoutMs = 15e3) {
-  const sock = userSockets.get(userId2);
-  if (!sock || sock.readyState !== WebSocket.OPEN) {
-    console.log(`[daemon] op SKIPPED \u2014 daemon not connected userId=${userId2} op=${op.type}`);
-    return { ok: false, error: "daemon not connected" };
-  }
-  const platformErr = await validateOpForPlatform(userId2, op);
-  if (platformErr) return platformErr;
-  console.log(`[daemon] op SENT userId=${userId2} op=${op.type}`, "packageName" in op ? `pkg=${op.packageName}` : "");
-  const sentAt = Date.now();
-  return new Promise((resolve4) => {
-    const id = nextOpId();
-    const timer = setTimeout(() => {
-      const map = pendingByUser.get(userId2);
-      map?.delete(id);
-      console.log(`[daemon] op TIMEOUT userId=${userId2} op=${op.type}`);
-      const durationMs = Date.now() - sentAt;
-      recordAuditEntry(userId2, { ts: sentAt, type: op.type, ok: false, error: "timeout", durationMs });
-      resolve4({ ok: false, error: "daemon timeout" });
-    }, timeoutMs);
-    let userMap = pendingByUser.get(userId2);
-    if (!userMap) {
-      userMap = /* @__PURE__ */ new Map();
-      pendingByUser.set(userId2, userMap);
-    }
-    userMap.set(id, {
-      resolve: (result) => {
-        const durationMs = Date.now() - sentAt;
-        if (op.type === "ping") {
-          console.log(`[daemon] ping RTT ${durationMs}ms userId=${userId2} ok=${result.ok}`, result.ok ? "" : `err=${result.error}`);
-        } else {
-          console.log(`[daemon] op RESULT userId=${userId2} op=${op.type} ok=${result.ok}`, result.ok ? "" : `err=${result.error}`);
-        }
-        recordAuditEntry(userId2, { ts: sentAt, type: op.type, ok: result.ok, error: result.error, durationMs });
-        resolve4(result);
-      },
-      timer
-    });
-    try {
-      sock.send(JSON.stringify({ type: "op", id, op }));
-    } catch (err) {
-      clearTimeout(timer);
-      userMap.delete(id);
-      const durationMs = Date.now() - sentAt;
-      recordAuditEntry(userId2, { ts: sentAt, type: op.type, ok: false, error: String(err), durationMs });
-      resolve4({ ok: false, error: String(err) });
-    }
-  });
-}
-function generatePairingCode() {
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  let code = "";
-  for (let i = 0; i < 8; i++) code += chars[Math.floor(Math.random() * chars.length)];
-  return code;
-}
-async function createDaemonPairingCode(userId2) {
-  const code = generatePairingCode();
-  const expiresAt = new Date(Date.now() + 15 * 60 * 1e3);
-  await db.insert(channelLinkCodes).values({
-    code,
-    userId: userId2,
-    channel: "daemon",
-    expiresAt
-  });
-  return code;
-}
-async function consumePairingCode(code) {
-  try {
-    const rows = await db.select().from(channelLinkCodes).where(and6(eq10(channelLinkCodes.code, code), eq10(channelLinkCodes.channel, "daemon"))).limit(1);
-    const row = rows[0];
-    if (!row) return null;
-    if (row.expiresAt && row.expiresAt.getTime() < Date.now()) {
-      await db.delete(channelLinkCodes).where(eq10(channelLinkCodes.code, code));
-      return null;
-    }
-    await db.delete(channelLinkCodes).where(eq10(channelLinkCodes.code, code));
-    return row.userId;
-  } catch (err) {
-    console.error("[daemon] consumePairingCode failed:", err);
-    return null;
-  }
-}
-async function recordDaemonLink(userId2, daemonId, meta) {
-  try {
-    const existing = await db.select().from(channelLinks).where(and6(eq10(channelLinks.userId, userId2), eq10(channelLinks.channel, "daemon")));
-    const mergedMeta = { ...meta };
-    for (const row of existing) {
-      const prior = row.metadata || {};
-      if (prior.permissions && !mergedMeta.permissions) {
-        mergedMeta.permissions = prior.permissions;
-      }
-      if (prior.android_permissions && !mergedMeta.android_permissions) {
-        mergedMeta.android_permissions = prior.android_permissions;
-      }
-    }
-    if (existing.length > 0) {
-      await db.delete(channelLinks).where(and6(eq10(channelLinks.userId, userId2), eq10(channelLinks.channel, "daemon")));
-    }
-    await db.insert(channelLinks).values({
-      userId: userId2,
-      channel: "daemon",
-      address: daemonId,
-      metadata: mergedMeta,
-      lastSeenAt: /* @__PURE__ */ new Date()
-    }).onConflictDoUpdate({
-      target: [channelLinks.channel, channelLinks.address],
-      set: { userId: userId2, metadata: mergedMeta, lastSeenAt: /* @__PURE__ */ new Date() }
-    });
-  } catch (err) {
-    console.error("[daemon] recordDaemonLink failed:", err);
-  }
-}
-function startDaemonBridge(server) {
-  const wss = new WebSocketServer({ noServer: true });
-  server.on("upgrade", (req, socket, head) => {
-    if (!req.url || !req.url.startsWith("/api/daemon/ws")) {
-      socket.destroy();
-      return;
-    }
-    wss.handleUpgrade(req, socket, head, (ws) => wss.emit("connection", ws, req));
-  });
-  wss.on("connection", (ws) => {
-    let pairedUserId = null;
-    let pairTimeout = setTimeout(() => {
-      if (!pairedUserId) {
-        try {
-          ws.close(4001, "pairing timeout");
-        } catch {
-        }
-      }
-    }, 3e4);
-    ws.on("message", async (raw) => {
-      let msg;
-      try {
-        msg = JSON.parse(raw.toString());
-      } catch {
-        try {
-          ws.send(JSON.stringify({ type: "error", error: "invalid json" }));
-        } catch {
-        }
-        return;
-      }
-      const m = msg;
-      if (m.type === "reconnect") {
-        const rm = m;
-        if (!rm.daemonId || !rm.reconnectSecret) {
-          try {
-            ws.send(JSON.stringify({ type: "hello", ok: false, error: "daemonId and reconnectSecret are required" }));
-          } catch {
-          }
-          return;
-        }
-        try {
-          const rows = await db.select().from(channelLinks).where(and6(eq10(channelLinks.address, rm.daemonId), eq10(channelLinks.channel, "daemon"))).limit(1);
-          const row = rows[0];
-          if (!row) {
-            try {
-              ws.send(JSON.stringify({ type: "hello", ok: false, error: "unknown daemonId \u2014 please re-pair" }));
-            } catch {
-            }
-            ws.close(4002, "unknown daemonId");
-            return;
-          }
-          const storedMeta = row.metadata || {};
-          const storedHash = storedMeta.reconnectSecretHash;
-          if (!storedHash) {
-            try {
-              ws.send(JSON.stringify({ type: "hello", ok: false, error: "legacy pair record \u2014 please re-pair" }));
-            } catch {
-            }
-            ws.close(4002, "legacy record");
-            return;
-          }
-          const providedHash = createHash("sha256").update(rm.reconnectSecret).digest("hex");
-          if (providedHash !== storedHash) {
-            try {
-              ws.send(JSON.stringify({ type: "hello", ok: false, error: "invalid reconnect secret \u2014 please re-pair" }));
-            } catch {
-            }
-            ws.close(4001, "bad secret");
-            return;
-          }
-          pairedUserId = row.userId;
-          if (pairTimeout) {
-            clearTimeout(pairTimeout);
-            pairTimeout = null;
-          }
-          if (rm.hostname) storedMeta.hostname = rm.hostname;
-          if (rm.platform) storedMeta.platform = rm.platform;
-          await db.update(channelLinks).set({ metadata: storedMeta, lastSeenAt: /* @__PURE__ */ new Date() }).where(eq10(channelLinks.id, row.id));
-          const prior = userSockets.get(pairedUserId);
-          if (prior && prior !== ws) {
-            try {
-              prior.close(4003, "replaced by new daemon");
-            } catch {
-            }
-          }
-          userSockets.set(pairedUserId, ws);
-          const hello = { type: "hello", ok: true, userId: pairedUserId };
-          try {
-            ws.send(JSON.stringify(hello));
-          } catch {
-          }
-          console.log(`[daemon] reconnected userId=${pairedUserId} daemonId=${rm.daemonId}`);
-        } catch (err) {
-          console.error("[daemon] reconnect lookup failed:", err);
-          try {
-            ws.send(JSON.stringify({ type: "hello", ok: false, error: "reconnect failed" }));
-          } catch {
-          }
-        }
-        return;
-      }
-      if (m.type === "pair") {
-        const userId2 = await consumePairingCode(m.code);
-        if (!userId2) {
-          const reply = { type: "hello", ok: false, error: "invalid or expired code" };
-          try {
-            ws.send(JSON.stringify(reply));
-          } catch {
-          }
-          ws.close(4002, "invalid code");
-          return;
-        }
-        pairedUserId = userId2;
-        if (pairTimeout) {
-          clearTimeout(pairTimeout);
-          pairTimeout = null;
-        }
-        const daemonId = randomBytes(16).toString("hex");
-        const reconnectSecret = randomBytes(32).toString("hex");
-        const reconnectSecretHash = createHash("sha256").update(reconnectSecret).digest("hex");
-        await recordDaemonLink(userId2, daemonId, {
-          hostname: m.hostname || "unknown",
-          platform: m.platform || "desktop",
-          reconnectSecretHash
-        });
-        const prior = userSockets.get(userId2);
-        if (prior && prior !== ws) {
-          try {
-            prior.close(4003, "replaced by new daemon");
-          } catch {
-          }
-        }
-        userSockets.set(userId2, ws);
-        const hello = { type: "hello", ok: true, userId: userId2, daemonId, reconnectSecret };
-        try {
-          ws.send(JSON.stringify(hello));
-        } catch {
-        }
-        console.log(`[daemon] paired userId=${userId2} hostname=${m.hostname || "unknown"} platform=${m.platform || "desktop"}`);
-        return;
-      }
-      if (m.type === "ping") {
-        try {
-          ws.send(JSON.stringify({ type: "pong" }));
-        } catch {
-        }
-        return;
-      }
-      if (m.type === "notification_event" && pairedUserId) {
-        const ne = m;
-        if (ne.notification && typeof ne.notification === "object") {
-          const arr = userNotifications.get(pairedUserId) || [];
-          arr.unshift(ne.notification);
-          while (arr.length > MAX_NOTIFS_PER_USER) arr.pop();
-          userNotifications.set(pairedUserId, arr);
-        }
-        return;
-      }
-      if (m.type === "result" && pairedUserId) {
-        const userMap = pendingByUser.get(pairedUserId);
-        const pending = userMap?.get(m.id);
-        if (pending) {
-          clearTimeout(pending.timer);
-          userMap.delete(m.id);
-          pending.resolve({ ok: m.ok, data: m.data, error: m.error });
-        }
-        db.update(channelLinks).set({ lastSeenAt: /* @__PURE__ */ new Date() }).where(and6(eq10(channelLinks.userId, pairedUserId), eq10(channelLinks.channel, "daemon"))).catch((err) => console.error("[daemon] last_seen update failed:", err));
-      }
-    });
-    const keepalive = setInterval(() => {
-      if (ws.readyState === WebSocket.OPEN) {
-        try {
-          ws.ping();
-        } catch {
-        }
-      }
-    }, 2e4);
-    ws.on("close", () => {
-      clearInterval(keepalive);
-      if (pairedUserId && userSockets.get(pairedUserId) === ws) {
-        userSockets.delete(pairedUserId);
-        console.log(`[daemon] disconnected userId=${pairedUserId}`);
-      }
-      if (pairTimeout) {
-        clearTimeout(pairTimeout);
-        pairTimeout = null;
-      }
-      if (pairedUserId) {
-        const userMap = pendingByUser.get(pairedUserId);
-        if (userMap) {
-          for (const [id, pending] of userMap) {
-            clearTimeout(pending.timer);
-            pending.resolve({ ok: false, error: "daemon disconnected" });
-            userMap.delete(id);
-          }
-        }
-      }
-    });
-    ws.on("error", (err) => {
-      console.error("[daemon] socket error:", err);
-    });
-  });
-  console.log("[daemon] WebSocket bridge mounted at /api/daemon/ws");
-  const cleanup = setInterval(() => {
-    db.delete(channelLinkCodes).where(and6(eq10(channelLinkCodes.channel, "daemon"), sql6`${channelLinkCodes.expiresAt} < NOW()`)).catch((err) => console.error("[daemon] code cleanup failed:", err));
-  }, 5 * 60 * 1e3);
-  cleanup.unref();
-}
-var userNotifications, MAX_NOTIFS_PER_USER, userSockets, pendingByUser, opCounter, DEFAULT_DAEMON_PERMISSIONS, DEFAULT_ANDROID_DAEMON_PERMISSIONS, opAuditLog, MAX_AUDIT_ENTRIES;
-var init_bridge = __esm({
-  "server/daemon/bridge.ts"() {
-    "use strict";
-    init_db();
-    init_schema();
-    userNotifications = /* @__PURE__ */ new Map();
-    MAX_NOTIFS_PER_USER = 60;
-    userSockets = /* @__PURE__ */ new Map();
-    pendingByUser = /* @__PURE__ */ new Map();
-    opCounter = 0;
-    DEFAULT_DAEMON_PERMISSIONS = {
-      shell: false,
-      file_write: false,
-      notify: true,
-      file_read: true,
-      file_list: true
-    };
-    DEFAULT_ANDROID_DAEMON_PERMISSIONS = {
-      android_screenshot: true,
-      android_read_screen: true,
-      android_open_app: true,
-      android_browse: true,
-      android_file_list: true,
-      android_file_read: false,
-      android_tap_type: false
-    };
-    opAuditLog = /* @__PURE__ */ new Map();
-    MAX_AUDIT_ENTRIES = 20;
-  }
-});
-
-// server/channels/coachAgent.ts
-import { eq as eq11, and as and7, desc as desc5 } from "drizzle-orm";
-async function runCoachAgent(input) {
-  const { userId: userId2, userText, channelName, imageUrl, onToken } = input;
-  const channelLower = channelName.toLowerCase();
-  let userGoals = [];
-  let userStats = {};
-  let userLifeContext = null;
-  let userCommitments = [];
-  let chatMessages = [];
-  let gmailItems = [];
-  let calendarEvents = [];
-  let gmailConnected = false;
-  let googleAccessToken = null;
-  const [goalsRow, statsRow, lcRow, chatRow, commitmentsRows, googleTokens, prefsRow, recentInteractionsResult] = await Promise.allSettled([
-    db.select().from(goals).where(eq11(goals.userId, userId2)).limit(1),
-    db.select().from(stats).where(eq11(stats.userId, userId2)).limit(1),
-    db.select().from(lifeContext).where(eq11(lifeContext.userId, userId2)).limit(1),
-    db.select().from(chatHistory).where(eq11(chatHistory.userId, userId2)).limit(1),
-    db.select().from(commitments).where(and7(eq11(commitments.userId, userId2), eq11(commitments.status, "pending"))).orderBy(desc5(commitments.extractedAt)).limit(10),
-    getValidGoogleTokens(userId2),
-    db.select().from(userPreferences).where(eq11(userPreferences.userId, userId2)).limit(1),
-    getRecentInteractions(userId2, 20)
-  ]);
-  logInteraction(userId2, channelLower, "inbound", userText || "[image]").catch(() => {
-  });
-  let userTimezone = "America/New_York";
-  if (goalsRow.status === "fulfilled") userGoals = goalsRow.value[0]?.data || [];
-  if (statsRow.status === "fulfilled") userStats = statsRow.value[0]?.data || {};
-  if (lcRow.status === "fulfilled") userLifeContext = lcRow.value[0]?.data || null;
-  if (chatRow.status === "fulfilled") chatMessages = chatRow.value[0]?.data || [];
-  if (commitmentsRows.status === "fulfilled") userCommitments = commitmentsRows.value;
-  if (prefsRow.status === "fulfilled") {
-    const prefs = prefsRow.value[0]?.data || {};
-    if (prefs.timezone) userTimezone = prefs.timezone;
-  }
-  const localForDateKey = new Date((/* @__PURE__ */ new Date()).toLocaleString("en-US", { timeZone: userTimezone }));
-  const dateKey = `${localForDateKey.getFullYear()}-${String(localForDateKey.getMonth() + 1).padStart(2, "0")}-${String(localForDateKey.getDate()).padStart(2, "0")}`;
-  let todayPlan = null;
-  try {
-    const planRows = await db.select().from(plans).where(and7(eq11(plans.userId, userId2), eq11(plans.date, dateKey))).limit(1);
-    todayPlan = planRows[0]?.data || null;
-  } catch (err) {
-    console.error("[coach] plan fetch failed:", err);
-  }
-  if (googleTokens.status === "fulfilled" && googleTokens.value.length > 0) {
-    gmailConnected = true;
-    const tokens = googleTokens.value;
-    googleAccessToken = tokens[0];
-    const [emailResult, ...calResults] = await Promise.allSettled([
-      getRecentEmailCommitments(14, tokens[0]),
-      ...tokens.map((t) => getGoogleCalendarEvents(dateKey, void 0, void 0, t))
-    ]);
-    if (emailResult.status === "fulfilled") gmailItems = emailResult.value;
-    const seenEventIds = /* @__PURE__ */ new Set();
-    for (const calResult of calResults) {
-      if (calResult.status === "fulfilled") {
-        for (const ev of calResult.value) {
-          if (!seenEventIds.has(ev.id)) {
-            seenEventIds.add(ev.id);
-            calendarEvents.push(ev);
-          }
-        }
-      }
-    }
-  }
-  const recentMessages = chatMessages.slice(0, 10).reverse();
-  const now = /* @__PURE__ */ new Date();
-  const dayOfWeek = now.toLocaleDateString("en-US", { weekday: "long" });
-  const dateStr = now.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
-  const goalsText = userGoals.length > 0 ? userGoals.map((g) => `- ${g.title} (${g.category}): ${g.current}/${g.target} ${g.unit}`).join("\n") : "No goals set";
-  const commitmentsText = userCommitments.length > 0 ? userCommitments.map((c) => `- [id:${c.id}] "${c.content}"${c.dueDate ? ` (due ${c.dueDate})` : ""}`).join("\n") : "";
-  const calendarText = calendarEvents.length > 0 ? calendarEvents.slice(0, 8).map((e) => `- ${e.time ? e.time + ": " : ""}${e.title}`).join("\n") : "";
-  const gmailSection = gmailItems.length > 0 ? `## Recent Emails (last 14 days)
-` + gmailItems.slice(0, 100).map((i) => `- [id:${i.id}] From: ${i.from || "unknown"} | "${i.subject}" \u2014 ${i.snippet}`).join("\n") : gmailConnected ? `## Recent Emails
-Gmail is connected but no emails found.` : `## Recent Emails
-Gmail not connected.`;
-  const recentInteractions = recentInteractionsResult.status === "fulfilled" ? recentInteractionsResult.value : [];
-  const crossChannelSection = formatInteractionTimeline(recentInteractions);
-  const soulBlock = await getSoulPromptBlock(userId2);
-  const formatHint = FORMAT_HINTS[channelName] || FORMAT_HINTS.Telegram;
-  const daemonPaired = isUserPaired(userId2);
-  const androidActive = daemonPaired ? await isAndroidDaemonActive(userId2) : false;
-  const daemonSection = daemonPaired ? androidActive ? "## Connected Devices\n- Android device daemon is ACTIVE. You can open apps (android_open_app), take screenshots (android_screenshot), read the screen (android_read_screen), browse URLs (android_browse), list/read files on the device (android_file_list/android_file_read). Tap/type/swipe actions are available when user enables them. Proactively mention Android capabilities when relevant." : "## Connected Devices\n- Desktop daemon is ACTIVE. You can run shell commands, send desktop notifications, and read/write files in the user's workspace." : "## Android Daemon Setup Guidance (no daemon paired)\nIf the user asks how to install or set up the Android daemon, give them these steps:\n1. In the Jarvis app \u2192 Profile \u2192 Connected Channels \u2192 Android Device \u2192 tap Pair to get an 8-character code.\n2. Build the APK: open android-daemon/ in Android Studio \u2192 Build \u2192 Generate Signed Bundle/APK \u2192 APK \u2192 debug. Or run `gradle wrapper --gradle-version 8.4` then `./gradlew assembleDebug` from the android-daemon/ directory.\n3. Transfer the APK to the Android phone and install it (Settings \u2192 Apps \u2192 Special app access \u2192 Install unknown apps \u2192 allow your file manager).\n4. Open the app \u2192 enter the server URL + the 8-character code \u2192 tap Connect.\n5. Grant the two permissions the app requests: Accessibility Service (Settings \u2192 Accessibility \u2192 Jarvis Daemon \u2192 enable) and All Files Access.\n6. The app stays connected in the background and reconnects automatically after reboots or Wi-Fi drops.";
-  const systemPrompt = `You are GamePlan Coach Jarvis \u2014 a sharp, supportive personal productivity coach. ${formatHint}
-
-Today is ${dayOfWeek}, ${dateStr}. User's timezone: ${userTimezone}.
-${crossChannelSection}
-
-${soulBlock}
-
-## User Profile
-- Streak: ${userStats.streak || 0} days
-- Total completed: ${userStats.totalCompleted || 0}
-- XP: ${userStats.xp || 0}
-
-## Active Goals
-${goalsText}
-${commitmentsText ? `
-## Open Commitments
-${commitmentsText}` : ""}
-${calendarText ? `
-## Today's Calendar
-${calendarText}` : ""}
-
-${gmailSection}
-${userLifeContext?.priorityGoal ? `
-## Context
-- Priority: ${userLifeContext.priorityGoal}` : ""}
-${daemonSection ? `
-${daemonSection}` : ""}
-
-You can manage tasks, commitments, and analyze patterns via the manage_tasks tool. You can act on emails via the gmail_action tool. You can run safe shell commands, send desktop notifications, or read/write files in the user's workspace via the daemon_action tool when a desktop daemon is paired. When an Android device daemon is paired, use android_* actions to control the phone \u2014 open apps, browse, screenshot, read the screen, and access files. Always confirm with the user before tap/type/swipe actions. Use these proactively when the user asks to do something \u2014 don't just describe what you'd do. Respond in the same language the user writes in.`;
-  const userMessageContent = imageUrl ? [
-    { type: "text", text: userText || "What do you see in this image?" },
-    { type: "image_url", image_url: { url: imageUrl } }
-  ] : userText;
-  const baseMessages = [
-    { role: "system", content: systemPrompt },
-    ...recentMessages.map((m) => ({
-      role: m.role === "assistant" ? "assistant" : "user",
-      content: m.content
-    })),
-    { role: "user", content: userMessageContent }
-  ];
-  const agentCtx = {
-    userId: userId2,
-    channel: channelName,
-    googleAccessToken: googleAccessToken || void 0,
-    state: {
-      dateKey,
-      todayPlan,
-      gmailMessageIds: gmailItems.map((i) => i.id).filter((id) => !!id),
-      pendingAttachments: []
-    }
-  };
-  const agentResult = await runAgent({
-    model: "gpt-5-mini",
-    messages: baseMessages,
-    tools: telegramCoachTools({ hasGoogle: !!googleAccessToken }),
-    context: agentCtx,
-    maxTurns: 6,
-    maxCompletionTokens: 2e3,
-    onToken
-  });
-  console.log(`[${channelName}] coach agent \u2014 turns=${agentResult.turns}, tools=${agentResult.toolCalls.length}, finish=${agentResult.finishReason}`);
-  const reply = agentResult.reply || "Sorry, I couldn't generate a response right now.";
-  const attachments = agentCtx.state.pendingAttachments || [];
-  const userMsg = { id: Date.now().toString(), role: "user", content: userText };
-  const assistantMsg = { id: (Date.now() + 1).toString(), role: "assistant", content: reply };
-  const updatedChat = [assistantMsg, userMsg, ...chatMessages].slice(0, 100);
-  try {
-    await db.insert(chatHistory).values({ userId: userId2, data: updatedChat }).onConflictDoUpdate({
-      target: chatHistory.userId,
-      set: { data: updatedChat, updatedAt: /* @__PURE__ */ new Date() }
-    });
-  } catch (err) {
-    console.error("[coach] chat history persist failed:", err);
-  }
-  return { reply, attachments };
-}
-var FORMAT_HINTS;
-var init_coachAgent = __esm({
-  "server/channels/coachAgent.ts"() {
-    "use strict";
-    init_db();
-    init_schema();
-    init_harness();
-    init_tools();
-    init_userTokenStore();
-    init_gmail();
-    init_googleCalendar();
-    init_interactionLog();
-    init_soul();
-    init_bridge();
-    FORMAT_HINTS = {
-      Telegram: "You're responding via Telegram. Keep messages SHORT (2-4 sentences). Plain text, no markdown headers.",
-      WhatsApp: "You're responding via WhatsApp. Keep messages SHORT (2-4 sentences). Plain text. WhatsApp supports *bold*, _italic_, `code` only \u2014 no markdown headers.",
-      Slack: "You're responding via Slack DM. Keep messages SHORT (2-4 sentences). Use Slack mrkdwn (*bold*, _italic_, `code`, > quote). No markdown headers.",
-      Daemon: "You're responding to a desktop daemon. Plain text only. The user sees the reply as a desktop notification \u2014 keep it under 2 sentences when possible.",
-      Discord: "You're responding via Discord DM. Keep messages SHORT (2-4 sentences). Discord renders standard markdown: **bold**, _italic_, `code`, ```blocks```. No oversized headers."
-    };
-  }
-});
-
-// server/discord/workspace.ts
-import {
-  ChannelType
-} from "discord.js";
-import { eq as eq12, and as and8 } from "drizzle-orm";
-function classifyTopic(text2) {
-  const lower = text2.toLowerCase();
-  let best = { key: "thinking", score: 0 };
-  for (const topic of WORKSPACE_TOPICS) {
-    let score = 0;
-    for (const kw of topic.keywords) {
-      if (lower.includes(kw)) score++;
-    }
-    if (score > best.score) {
-      best = { key: topic.key, score };
-    }
-  }
-  return best.key;
-}
-async function setupWorkspace(client, userId2, guildId) {
-  try {
-    const guild = await client.guilds.fetch(guildId);
-    const existingCat = guild.channels.cache.find(
-      (ch) => ch.type === ChannelType.GuildCategory && ch.name === "\u{1F9E0} Jarvis Workspace"
-    );
-    let category;
-    if (existingCat) {
-      category = existingCat;
-    } else {
-      category = await guild.channels.create({
-        name: "\u{1F9E0} Jarvis Workspace",
-        type: ChannelType.GuildCategory
-      });
-    }
-    const channelIds = {};
-    for (const topic of WORKSPACE_TOPICS) {
-      const channelName = `${topic.emoji}${topic.name}`;
-      const existing = guild.channels.cache.find(
-        (ch) => ch.type === ChannelType.GuildText && ch.parentId === category.id && ch.name === `${topic.emoji}${topic.name}`
+    if (mimeType === "application/msword") {
+      throw new Error(
+        "Legacy .doc files (Word 97-2003) aren't fully supported. Please save the file as .docx and resend."
       );
-      if (existing) {
-        channelIds[topic.key] = existing.id;
+    }
+    throw err;
+  }
+  if (mimeType === "application/msword") {
+    throw new Error(
+      "Legacy .doc files (Word 97-2003) aren't fully supported. Please save the file as .docx and resend."
+    );
+  }
+  return "";
+}
+function csvToTable(raw) {
+  const lines = raw.split(/\r?\n/).filter((l) => l.trim().length > 0);
+  if (lines.length === 0) return raw;
+  const rows = lines.map((line) => {
+    const cells = [];
+    let current = "";
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"') {
+        if (inQuotes && line[i + 1] === '"') {
+          current += '"';
+          i++;
+        } else {
+          inQuotes = !inQuotes;
+        }
+      } else if (ch === "," && !inQuotes) {
+        cells.push(current.trim());
+        current = "";
       } else {
-        const created = await guild.channels.create({
-          name: channelName,
-          type: ChannelType.GuildText,
-          parent: category.id,
-          topic: topic.description
-        });
-        channelIds[topic.key] = created.id;
-        await created.send(
-          `**${topic.emoji} ${topic.name.charAt(0).toUpperCase() + topic.name.slice(1)}**
-${topic.description}
-
-_Jarvis will post relevant updates here and you can ask me anything in this topic._`
-        ).catch(() => {
-        });
+        current += ch;
       }
     }
-    const workspace = {
-      guildId,
-      guildName: guild.name,
-      categoryId: category.id,
-      channels: channelIds
+    cells.push(current.trim());
+    return cells;
+  });
+  if (rows.length === 0) return raw;
+  const colCount = Math.max(...rows.map((r) => r.length));
+  const padded = rows.map((r) => {
+    while (r.length < colCount) r.push("");
+    return r;
+  });
+  const colWidths = Array.from(
+    { length: colCount },
+    (_, ci) => Math.min(40, Math.max(...padded.map((r) => r[ci]?.length ?? 0)))
+  );
+  const formatRow = (cells) => "| " + cells.map((c, i) => c.slice(0, colWidths[i]).padEnd(colWidths[i])).join(" | ") + " |";
+  const separator = "|-" + colWidths.map((w) => "-".repeat(w)).join("-|-") + "-|";
+  const tableLines = [formatRow(padded[0]), separator, ...padded.slice(1).map(formatRow)];
+  return tableLines.join("\n");
+}
+async function extractTelegramDocument(fileId, mimeType, filename, fileSizeBytes) {
+  if (fileSizeBytes !== void 0 && fileSizeBytes > MAX_FILE_BYTES) {
+    const mb = (fileSizeBytes / 1024 / 1024).toFixed(1);
+    return {
+      error: `That file is ${mb} MB \u2014 Jarvis can only read documents up to 20 MB. Try splitting it or pasting the key sections as text.`
     };
-    const rows = await db.select().from(channelLinks).where(and8(eq12(channelLinks.userId, userId2), eq12(channelLinks.channel, "discord"))).limit(1);
-    if (rows.length > 0) {
-      const existing = rows[0].metadata || {};
-      await db.update(channelLinks).set({ metadata: { ...existing, workspace } }).where(and8(eq12(channelLinks.userId, userId2), eq12(channelLinks.channel, "discord")));
-    }
-    return { ok: true, workspace };
-  } catch (err) {
-    console.error("[Workspace] setup failed:", err);
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
-}
-async function postToTopicChannel(client, workspace, topicKey, text2) {
-  const channelId = workspace.channels[topicKey] ?? workspace.channels["thinking"];
-  if (!channelId) return false;
+  const downloaded = await downloadTelegramFileBuffer(fileId);
+  if (!downloaded) {
+    return { error: "Sorry, I couldn't download that file. Please try again." };
+  }
+  const { buffer } = downloaded;
+  const actualBytes = buffer.length;
+  if (actualBytes > MAX_FILE_BYTES) {
+    return {
+      error: "That file is over 20 MB \u2014 Jarvis can only read documents up to 20 MB. Try splitting it or pasting the key sections as text."
+    };
+  }
+  let rawText = "";
+  let pageCount;
+  const lowerFilename = filename.toLowerCase();
+  const isPdf = mimeType === "application/pdf" || lowerFilename.endsWith(".pdf");
+  const isDocx = mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" || lowerFilename.endsWith(".docx");
+  const isDoc = mimeType === "application/msword" || lowerFilename.endsWith(".doc");
+  const isCsv = CSV_MIMES.has(mimeType) || lowerFilename.endsWith(".csv");
   try {
-    const channel = await client.channels.fetch(channelId);
-    if (!channel || !channel.isTextBased()) return false;
-    const chunks = splitIntoChunks(text2, 1900);
-    for (const chunk of chunks) {
-      await channel.send(chunk);
+    if (isPdf) {
+      const result = await extractPdf(buffer);
+      rawText = result.text;
+      pageCount = result.pageCount;
+    } else if (isDocx || isDoc) {
+      rawText = await extractDocx(buffer, isDoc ? "application/msword" : mimeType);
+    } else if (isCsv) {
+      rawText = csvToTable(buffer.toString("utf-8"));
+    } else {
+      rawText = buffer.toString("utf-8");
     }
-    return true;
   } catch (err) {
-    console.error("[Workspace] postToTopicChannel failed:", err);
-    return false;
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[TelegramDocs] extraction failed for "${filename}":`, msg);
+    return { error: msg.length < 200 ? msg : "I ran into a problem reading that file. It might be encrypted, password-protected, or in an unsupported format." };
   }
-}
-function splitIntoChunks(text2, maxLen) {
-  if (text2.length <= maxLen) return [text2];
-  const chunks = [];
-  while (text2.length > 0) {
-    let cut = maxLen;
-    if (text2.length > maxLen) {
-      const nl = text2.lastIndexOf("\n", maxLen);
-      if (nl > maxLen * 0.5) cut = nl + 1;
-    }
-    chunks.push(text2.slice(0, cut));
-    text2 = text2.slice(cut);
+  rawText = rawText.replace(/\r\n/g, "\n").replace(/\n{4,}/g, "\n\n\n").trim();
+  if (!rawText) {
+    return { error: "I couldn't extract any text from that file. It may be image-only, encrypted, or empty." };
   }
-  return chunks;
+  const truncated = rawText.length > MAX_EXTRACTED_CHARS2;
+  const text2 = truncated ? rawText.slice(0, MAX_EXTRACTED_CHARS2) : rawText;
+  return {
+    text: text2,
+    filename,
+    fileSizeBytes: actualBytes,
+    pageCount,
+    charCount: text2.length,
+    truncated
+  };
 }
-function getTopicForChannel(workspace, channelId) {
-  if (!workspace) return null;
-  for (const [key, id] of Object.entries(workspace.channels)) {
-    if (id === channelId) {
-      return WORKSPACE_TOPICS.find((t) => t.key === key) ?? null;
-    }
-  }
-  return null;
+function buildDocumentContextBlock(result) {
+  const kb = (result.fileSizeBytes / 1024).toFixed(0);
+  const sizePart = ` (${kb} KB)`;
+  const pagePart = result.pageCount ? `, ${result.pageCount} page${result.pageCount !== 1 ? "s" : ""}` : "";
+  const truncNote = result.truncated ? ", truncated to first 20 000 chars" : "";
+  const header = `[Document: "${result.filename}"${sizePart}${pagePart}${truncNote}]`;
+  return `${header}
+
+${result.text}`;
 }
-var WORKSPACE_TOPICS;
-var init_workspace = __esm({
-  "server/discord/workspace.ts"() {
+var MAX_FILE_BYTES, MAX_EXTRACTED_CHARS2, INGESTABLE_MIME_TYPES, CSV_MIMES, INGESTABLE_EXTENSIONS;
+var init_telegramDocumentExtractor = __esm({
+  "server/telegramDocumentExtractor.ts"() {
     "use strict";
-    init_db();
-    init_schema();
-    WORKSPACE_TOPICS = [
-      {
-        key: "tasks",
-        emoji: "\u{1F4CB}",
-        name: "tasks",
-        description: "Daily plans, tasks, morning briefings, and to-do tracking.",
-        keywords: ["task", "todo", "plan", "morning", "schedule", "reminder", "deadline", "priority", "checklist", "habit"]
-      },
-      {
-        key: "finance",
-        emoji: "\u{1F4B0}",
-        name: "finance",
-        description: "Money, budgets, expenses, investments, and financial goals.",
-        keywords: ["money", "finance", "budget", "expense", "income", "invest", "savings", "cost", "revenue", "profit", "debt", "credit", "bank", "tax", "salary", "payment"]
-      },
-      {
-        key: "ideas",
-        emoji: "\u{1F4A1}",
-        name: "ideas",
-        description: "App ideas, product concepts, creative sparks, and feature brainstorms.",
-        keywords: ["idea", "app", "product", "feature", "build", "startup", "prototype", "design", "concept", "innovation", "saas", "tool", "software"]
-      },
-      {
-        key: "business",
-        emoji: "\u{1F4BC}",
-        name: "business",
-        description: "Work, clients, business strategy, goals, and professional growth.",
-        keywords: ["business", "client", "work", "project", "meeting", "strategy", "goal", "company", "sales", "marketing", "partnership", "pitch", "contract", "team"]
-      },
-      {
-        key: "personal",
-        emoji: "\u{1F331}",
-        name: "personal",
-        description: "Health, relationships, personal growth, and life balance.",
-        keywords: ["health", "sleep", "exercise", "workout", "relationship", "family", "friend", "personal", "mindset", "stress", "energy", "mental", "wellness", "habit", "life"]
-      },
-      {
-        key: "thinking",
-        emoji: "\u{1F9E0}",
-        name: "thinking",
-        description: "Jarvis reflections, long-form planning, and strategic thinking logs.",
-        keywords: ["reflect", "think", "insight", "analysis", "review", "retrospective", "learn", "pattern", "observation"]
-      }
-    ];
+    init_telegram();
+    MAX_FILE_BYTES = 20 * 1024 * 1024;
+    MAX_EXTRACTED_CHARS2 = 2e4;
+    INGESTABLE_MIME_TYPES = /* @__PURE__ */ new Set([
+      "application/pdf",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "application/msword",
+      "text/plain",
+      "text/markdown",
+      "text/csv",
+      "application/csv",
+      "application/vnd.ms-excel"
+    ]);
+    CSV_MIMES = /* @__PURE__ */ new Set([
+      "text/csv",
+      "application/csv",
+      "application/vnd.ms-excel"
+    ]);
+    INGESTABLE_EXTENSIONS = /* @__PURE__ */ new Set([".pdf", ".docx", ".doc", ".txt", ".md", ".csv"]);
   }
 });
 
@@ -5223,7 +5259,7 @@ __export(client_exports, {
   convertToWav: () => convertToWav,
   detectAudioFormat: () => detectAudioFormat,
   ensureCompatibleFormat: () => ensureCompatibleFormat,
-  openai: () => openai7,
+  openai: () => openai5,
   speechToText: () => speechToText,
   speechToTextStream: () => speechToTextStream,
   textToSpeech: () => textToSpeech,
@@ -5231,7 +5267,7 @@ __export(client_exports, {
   voiceChat: () => voiceChat,
   voiceChatStream: () => voiceChatStream
 });
-import OpenAI7, { toFile } from "openai";
+import OpenAI5, { toFile } from "openai";
 import { Buffer as Buffer3 } from "node:buffer";
 import { spawn } from "child_process";
 import { writeFile, unlink, readFile } from "fs/promises";
@@ -5307,7 +5343,7 @@ async function ensureCompatibleFormat(audioBuffer) {
 }
 async function voiceChat(audioBuffer, voice = "alloy", inputFormat = "wav", outputFormat = "mp3") {
   const audioBase64 = audioBuffer.toString("base64");
-  const response = await openai7.chat.completions.create({
+  const response = await openai5.chat.completions.create({
     model: "gpt-audio",
     modalities: ["text", "audio"],
     audio: { voice, format: outputFormat },
@@ -5328,7 +5364,7 @@ async function voiceChat(audioBuffer, voice = "alloy", inputFormat = "wav", outp
 }
 async function voiceChatStream(audioBuffer, voice = "alloy", inputFormat = "wav") {
   const audioBase64 = audioBuffer.toString("base64");
-  const stream = await openai7.chat.completions.create({
+  const stream = await openai5.chat.completions.create({
     model: "gpt-audio",
     modalities: ["text", "audio"],
     audio: { voice, format: "pcm16" },
@@ -5354,7 +5390,7 @@ async function voiceChatStream(audioBuffer, voice = "alloy", inputFormat = "wav"
   })();
 }
 async function textToSpeech(text2, voice = "alloy", format = "mp3") {
-  const response = await openai7.chat.completions.create({
+  const response = await openai5.chat.completions.create({
     model: "gpt-audio",
     modalities: ["text", "audio"],
     audio: { voice, format },
@@ -5367,7 +5403,7 @@ async function textToSpeech(text2, voice = "alloy", format = "mp3") {
   return Buffer3.from(audioData, "base64");
 }
 async function textToSpeechStream(text2, voice = "alloy") {
-  const stream = await openai7.chat.completions.create({
+  const stream = await openai5.chat.completions.create({
     model: "gpt-audio",
     modalities: ["text", "audio"],
     audio: { voice, format: "pcm16" },
@@ -5390,7 +5426,7 @@ async function textToSpeechStream(text2, voice = "alloy") {
 async function speechToText(audioBuffer, format = "wav") {
   const ext = format === "unknown" ? "wav" : format;
   const file = await toFile(audioBuffer, `audio.${ext}`);
-  const response = await openai7.audio.transcriptions.create({
+  const response = await openai5.audio.transcriptions.create({
     file,
     model: "gpt-4o-mini-transcribe"
   });
@@ -5399,7 +5435,7 @@ async function speechToText(audioBuffer, format = "wav") {
 async function speechToTextStream(audioBuffer, format = "wav") {
   const ext = format === "unknown" ? "wav" : format;
   const file = await toFile(audioBuffer, `audio.${ext}`);
-  const stream = await openai7.audio.transcriptions.create({
+  const stream = await openai5.audio.transcriptions.create({
     file,
     model: "gpt-4o-mini-transcribe",
     stream: true
@@ -5412,10 +5448,490 @@ async function speechToTextStream(audioBuffer, format = "wav") {
     }
   })();
 }
-var openai7;
+var openai5;
 var init_client = __esm({
   "server/replit_integrations/audio/client.ts"() {
     "use strict";
+    openai5 = new OpenAI5({
+      apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
+      baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL
+    });
+  }
+});
+
+// server/agent/tools/tts.ts
+import { spawn as spawn2 } from "child_process";
+import { writeFile as writeFile2, unlink as unlink2, readFile as readFile2 } from "fs/promises";
+import { randomUUID as randomUUID2 } from "crypto";
+import { tmpdir as tmpdir2 } from "os";
+import { join as join2 } from "path";
+import { eq as eq9 } from "drizzle-orm";
+async function mp3ToOggOpus(mp3Buffer) {
+  const inputPath = join2(tmpdir2(), `tts-in-${randomUUID2()}.mp3`);
+  const outputPath = join2(tmpdir2(), `tts-out-${randomUUID2()}.ogg`);
+  try {
+    await writeFile2(inputPath, mp3Buffer);
+    await new Promise((resolve4, reject) => {
+      const ff = spawn2("ffmpeg", [
+        "-i",
+        inputPath,
+        "-c:a",
+        "libopus",
+        "-b:a",
+        "64k",
+        "-vbr",
+        "on",
+        "-application",
+        "voip",
+        "-y",
+        outputPath
+      ]);
+      ff.stderr.on("data", () => {
+      });
+      ff.on("close", (code) => code === 0 ? resolve4() : reject(new Error(`ffmpeg exited ${code}`)));
+      ff.on("error", reject);
+    });
+    return await readFile2(outputPath);
+  } finally {
+    await unlink2(inputPath).catch(() => {
+    });
+    await unlink2(outputPath).catch(() => {
+    });
+  }
+}
+async function getTelegramChatId(userId2) {
+  try {
+    const rows = await db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq9(telegramLinks.userId, userId2)).limit(1);
+    return rows[0]?.chatId ?? null;
+  } catch {
+    return null;
+  }
+}
+async function getUserTtsPrefs(userId2) {
+  try {
+    const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq9(userPreferences.userId, userId2)).limit(1);
+    const data = rows[0]?.data || {};
+    return {
+      enabled: data.ttsEnabled === true,
+      voice: data.ttsVoice || "nova"
+    };
+  } catch {
+    return { enabled: false, voice: "nova" };
+  }
+}
+async function setUserTtsPref(userId2, patch) {
+  const existing = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq9(userPreferences.userId, userId2)).limit(1);
+  const current = existing[0]?.data || {};
+  const updated = { ...current };
+  if (patch.enabled !== void 0) updated.ttsEnabled = patch.enabled;
+  if (patch.voice !== void 0) updated.ttsVoice = patch.voice;
+  await db.insert(userPreferences).values({ userId: userId2, data: updated }).onConflictDoUpdate({ target: userPreferences.userId, set: { data: updated } });
+}
+async function speakToUser(userId2, text2, voice = "nova") {
+  const chatId = await getTelegramChatId(userId2);
+  if (!chatId) {
+    return { ok: false, error: "User has no linked Telegram account" };
+  }
+  const snippedText = text2.slice(0, 4e3);
+  const mp3 = await textToSpeech(snippedText, voice, "mp3");
+  const ogg = await mp3ToOggOpus(mp3);
+  const sent = await sendVoice(chatId, ogg);
+  if (!sent) {
+    return { ok: false, error: "Failed to deliver voice note via Telegram" };
+  }
+  return { ok: true };
+}
+var VALID_VOICES, speakTool;
+var init_tts = __esm({
+  "server/agent/tools/tts.ts"() {
+    "use strict";
+    init_db();
+    init_schema();
+    init_schema();
+    init_telegram();
+    init_client();
+    VALID_VOICES = ["alloy", "echo", "fable", "onyx", "nova", "shimmer"];
+    speakTool = {
+      name: "speak",
+      description: "Convert text to a voice note and send it to the user's Telegram as a round audio bubble. Use for morning plans, coaching messages, or any content the user would benefit from hearing rather than reading. The user must have Telegram linked. Text is trimmed to 4000 chars.",
+      parameters: {
+        type: "object",
+        properties: {
+          text: {
+            type: "string",
+            description: "The text to speak aloud \u2014 will be converted to audio verbatim"
+          },
+          voice: {
+            type: "string",
+            description: "Voice style: alloy (neutral), echo (male), fable (expressive), onyx (deep), nova (warm female, default), shimmer (gentle female)"
+          }
+        },
+        required: ["text"]
+      },
+      async execute(args, ctx) {
+        const text2 = String(args.text || "").trim();
+        if (!text2) {
+          return { ok: false, content: "No text provided.", label: "speak: no text" };
+        }
+        const rawVoice = String(args.voice || "nova").toLowerCase().trim();
+        const voice = VALID_VOICES.includes(rawVoice) ? rawVoice : "nova";
+        try {
+          const result = await speakToUser(ctx.userId, text2, voice);
+          if (!result.ok) {
+            return {
+              ok: false,
+              content: `Voice delivery failed: ${result.error}`,
+              label: "speak: delivery failed"
+            };
+          }
+          console.log(
+            `[${ctx.channel || "Agent"}] speak \u2014 ${text2.length} chars, voice=${voice}, user=${ctx.userId}`
+          );
+          return {
+            ok: true,
+            content: `Voice note delivered to Telegram (${text2.length} chars, voice: ${voice}).`,
+            label: `Voice note sent (${voice})`,
+            detail: `${text2.slice(0, 60)}\u2026`
+          };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error("[speak tool] error:", err);
+          return { ok: false, content: `speak failed: ${msg}`, label: "speak: error", detail: msg };
+        }
+      }
+    };
+  }
+});
+
+// server/momentumCoach.ts
+import { eq as eq10, and as and6, lt as lt2 } from "drizzle-orm";
+import OpenAI6 from "openai";
+async function generateMomentumSteps(_userId, context) {
+  const incompleteTasks = (context.tasks || []).filter((t) => !t.completed);
+  const taskList = incompleteTasks.slice(0, 5).map((t) => t.title).join(", ") || "no specific tasks planned";
+  const goalsText = (context.goals || []).slice(0, 3).map((g) => `${g.title} (${g.current || 0}/${g.target})`).join(", ") || "none set";
+  const streak = context.stats?.streak || 0;
+  const completedToday = (context.tasks || []).filter((t) => t.completed).length;
+  const prompt = `You are designing a 4-step momentum sequence for someone with ADHD who has task aversion right now.
+
+Their situation:
+- Today's tasks: ${taskList}
+- Goals: ${goalsText}
+- Streak: ${streak} days
+- Completed today: ${completedToday} tasks
+- Date: ${context.dateKey}
+
+Design 4 escalating micro-tasks. Step 1 must be TINY \u2014 a single physical action that takes under 60 seconds and removes all friction (e.g., "Just open your email and glance at the subject lines \u2014 don't reply to anything"). Each step is slightly larger than the last.
+
+Each step must use a specific ADHD tactic:
+- Step 1: Implementation intention ("When you sit down, just... [specific physical action]")
+- Step 2: Identity framing ("You're someone who... one quick thing to prove it")
+- Step 3: Social contrast or streak leverage ("Yesterday/this week you did X... let's match it with one thing")
+- Step 4: Momentum statement ("You're already rolling \u2014 just one more and you can call it a win")
+
+Respond with a JSON array of 4 objects: [{ "text": "message to send", "tactic": "implementation_intention|identity_framing|social_contrast|momentum" }, ...]
+Keep each text under 2 sentences. Plain text only \u2014 no markdown, no asterisks.`;
+  try {
+    const resp = await openai6.chat.completions.create({
+      model: "gpt-5-mini",
+      messages: [
+        { role: "system", content: "You are an ADHD productivity coach. Respond with valid JSON only." },
+        { role: "user", content: prompt }
+      ],
+      max_completion_tokens: 800
+    });
+    const raw = resp.choices[0]?.message?.content || "[]";
+    const cleaned = raw.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+    const parsed = JSON.parse(cleaned);
+    if (!Array.isArray(parsed) || parsed.length < 4) throw new Error("bad shape");
+    const xpPerStep = [5, 10, 15, 20];
+    return parsed.slice(0, 4).map((s, i) => ({
+      text: typeof s.text === "string" ? s.text : String(s.text),
+      tactic: typeof s.tactic === "string" ? s.tactic : "momentum",
+      xp: xpPerStep[i]
+    }));
+  } catch (err) {
+    console.error("[Momentum] Failed to generate steps:", err);
+    return [
+      { text: "When you sit down right now, just open your task list \u2014 don't do anything yet, just look.", tactic: "implementation_intention", xp: 5 },
+      { text: "You're someone who follows through. Pick the smallest task on that list and spend just 5 minutes on it.", tactic: "identity_framing", xp: 10 },
+      { text: "You've already done 2 things \u2014 that's momentum. One more task and you'll have a real streak going.", tactic: "social_contrast", xp: 15 },
+      { text: "You're rolling now. One final thing and you can close your laptop knowing today counted.", tactic: "momentum", xp: 20 }
+    ];
+  }
+}
+async function startMomentumSession(userId2, chatId, context) {
+  const steps = await generateMomentumSteps(userId2, context);
+  await db.insert(momentumSessions).values({
+    userId: userId2,
+    currentStep: 0,
+    sessionDate: context.dateKey,
+    completedSteps: 0,
+    steps,
+    status: "active",
+    lastStepAt: /* @__PURE__ */ new Date()
+  }).onConflictDoUpdate({
+    target: momentumSessions.userId,
+    set: {
+      currentStep: 0,
+      sessionDate: context.dateKey,
+      completedSteps: 0,
+      steps,
+      status: "active",
+      lastStepAt: /* @__PURE__ */ new Date()
+    }
+  });
+  const step = steps[0];
+  await sendMessageWithButtons(chatId, `Jarvis here. ${step.text}`, [
+    { text: "\u2705 Done", callback_data: `momentum_done:${userId2}:0` }
+  ]);
+  console.log(`[Momentum] Session started for user ${userId2}, step 0`);
+}
+async function handleMomentumDone(userId2, chatId, stepIndex) {
+  const rows = await db.select().from(momentumSessions).where(eq10(momentumSessions.userId, userId2)).limit(1);
+  if (rows.length === 0) return;
+  const session = rows[0];
+  if (session.status === "expired") {
+    await sendMessage(chatId, "That session already expired \u2014 start fresh tomorrow.");
+    return;
+  }
+  const steps = session.steps;
+  if (stepIndex >= steps.length) return;
+  if (session.currentStep !== stepIndex) return;
+  const completedStep = steps[stepIndex];
+  const xpEarned = completedStep.xp;
+  await awardXp(userId2, xpEarned);
+  const nextStep = stepIndex + 1;
+  const newCompletedSteps = (session.completedSteps || 0) + 1;
+  const isFinished = nextStep >= steps.length;
+  await db.update(momentumSessions).set({
+    currentStep: nextStep,
+    completedSteps: newCompletedSteps,
+    status: isFinished ? "completed" : "active",
+    lastStepAt: /* @__PURE__ */ new Date()
+  }).where(eq10(momentumSessions.userId, userId2));
+  const ackMessages = {
+    implementation_intention: `Done \u2014 +${xpEarned} XP. That first step is always the hardest.`,
+    identity_framing: `Locked in \u2014 +${xpEarned} XP. That's exactly who you are.`,
+    social_contrast: `Nice \u2014 +${xpEarned} XP. Momentum is real now.`,
+    momentum: `That's it \u2014 +${xpEarned} XP. Today counts.`
+  };
+  const ack = ackMessages[completedStep.tactic] ?? `+${xpEarned} XP. Keep going.`;
+  await sendMessage(chatId, ack);
+  if (isFinished) {
+    const totalXp = steps.reduce((sum, s) => sum + s.xp, 0);
+    await sendMessage(chatId, `Full sequence complete \u2014 ${totalXp} XP earned today. That's a win.`);
+    return;
+  }
+  setTimeout(async () => {
+    try {
+      const freshRows = await db.select().from(momentumSessions).where(eq10(momentumSessions.userId, userId2)).limit(1);
+      if (freshRows.length === 0 || freshRows[0].currentStep !== nextStep) return;
+      const freshSession = freshRows[0];
+      if (freshSession.status !== "active") return;
+      const lastStepTime = freshSession.lastStepAt ? new Date(freshSession.lastStepAt) : /* @__PURE__ */ new Date();
+      if (Date.now() - lastStepTime.getTime() > SESSION_TIMEOUT_MS) {
+        await expireSession(userId2, chatId);
+        return;
+      }
+      const nextStepData = freshSession.steps[nextStep];
+      await sendMessageWithButtons(chatId, nextStepData.text, [
+        { text: "\u2705 Done", callback_data: `momentum_done:${userId2}:${nextStep}` }
+      ]);
+      console.log(`[Momentum] Sent step ${nextStep} to user ${userId2}`);
+    } catch (err) {
+      console.error("[Momentum] Error sending next step:", err);
+    }
+  }, STEP_DELAY_MS);
+}
+async function expireSession(userId2, chatId) {
+  await db.update(momentumSessions).set({ status: "expired" }).where(eq10(momentumSessions.userId, userId2));
+  await sendMessage(chatId, "No worries \u2014 we'll pick it back up tomorrow.");
+  console.log(`[Momentum] Session expired for user ${userId2}`);
+}
+async function awardXp(userId2, amount) {
+  try {
+    const rows = await db.select().from(stats).where(eq10(stats.userId, userId2)).limit(1);
+    if (rows.length === 0) return;
+    const data = rows[0].data ?? {};
+    const currentXp = Number(data.xp ?? 0);
+    await db.update(stats).set({ data: { ...data, xp: currentXp + amount }, updatedAt: /* @__PURE__ */ new Date() }).where(eq10(stats.userId, userId2));
+  } catch (err) {
+    console.error("[Momentum] Failed to award XP:", err);
+  }
+}
+async function hasMomentumSessionToday(userId2, dateKey) {
+  const rows = await db.select({ sessionDate: momentumSessions.sessionDate }).from(momentumSessions).where(eq10(momentumSessions.userId, userId2)).limit(1);
+  return rows.length > 0 && rows[0].sessionDate === dateKey;
+}
+async function expireStaleMomentumSessions() {
+  try {
+    const cutoff = new Date(Date.now() - SESSION_TIMEOUT_MS);
+    const staleSessions = await db.select().from(momentumSessions).where(
+      and6(
+        eq10(momentumSessions.status, "active"),
+        lt2(momentumSessions.lastStepAt, cutoff)
+      )
+    );
+    for (const session of staleSessions) {
+      const links = await db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq10(telegramLinks.userId, session.userId)).limit(1);
+      await db.update(momentumSessions).set({ status: "expired" }).where(eq10(momentumSessions.userId, session.userId));
+      if (links.length > 0) {
+        await sendMessage(links[0].chatId, "No worries \u2014 we'll pick it back up tomorrow.").catch(() => {
+        });
+      }
+      console.log(`[Momentum] Sweep expired session for user ${session.userId}`);
+    }
+  } catch (err) {
+    console.error("[Momentum] Error in expiry sweep:", err);
+  }
+}
+function startMomentumExpiryScheduler() {
+  setInterval(() => {
+    expireStaleMomentumSessions().catch(
+      (err) => console.error("[Momentum] Expiry scheduler error:", err)
+    );
+  }, 5 * 60 * 1e3);
+  console.log("[Momentum] Expiry scheduler started (5-min interval)");
+}
+var openai6, SESSION_TIMEOUT_MS, STEP_DELAY_MS;
+var init_momentumCoach = __esm({
+  "server/momentumCoach.ts"() {
+    "use strict";
+    init_db();
+    init_schema();
+    init_telegram();
+    openai6 = new OpenAI6({
+      apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
+      baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL
+    });
+    SESSION_TIMEOUT_MS = 30 * 60 * 1e3;
+    STEP_DELAY_MS = 3 * 60 * 1e3;
+  }
+});
+
+// server/memory/extractor.ts
+var extractor_exports = {};
+__export(extractor_exports, {
+  MEMORY_CATEGORIES: () => MEMORY_CATEGORIES,
+  extractAndStore: () => extractAndStore
+});
+import { eq as eq11, desc as desc5 } from "drizzle-orm";
+import OpenAI7 from "openai";
+function normalizeForDedup(s) {
+  return s.trim().toLowerCase().replace(/[^\w\s]/g, "").replace(/\s+/g, " ");
+}
+function clampInt(value, min, max, fallback) {
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(min, Math.min(max, Math.round(n)));
+}
+function parseExtraction(raw) {
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && "memories" in parsed) {
+      const m = parsed.memories;
+      if (Array.isArray(m)) return m;
+    }
+    if (Array.isArray(parsed)) return parsed;
+  } catch {
+  }
+  return [];
+}
+async function extractAndStore(input) {
+  const { userId: userId2, source, sourceType, sourceRef, contextHint, maxNew = 3 } = input;
+  if (!source.trim()) return [];
+  let stored = [];
+  try {
+    const existingRows = await db.select({ content: userMemories.content }).from(userMemories).where(eq11(userMemories.userId, userId2)).orderBy(desc5(userMemories.extractedAt)).limit(150);
+    const existingMemories = existingRows.map((r) => r.content);
+    const seen = new Set(existingMemories.map(normalizeForDedup));
+    const existingList = existingMemories.length > 0 ? `
+Existing memories (DO NOT duplicate or rephrase these):
+${existingMemories.slice(0, 80).map((m) => `- ${m}`).join("\n")}` : "";
+    const contextNote = contextHint ? `
+Context: ${contextHint}` : "";
+    const prompt = `You extract durable profile facts about a single user from one source.
+Output JSON: { "memories": [{"content": string, "category": one-of-categories, "confidence": 0-100}] }
+
+Categories (pick ONE per memory):
+- work_patterns       \u2014 when/how they focus, schedule habits, tools, deep-work timing
+- communication_style \u2014 humor, energy, decision style, message length preference
+- energy_rhythms      \u2014 peak/low hours, sleep, exercise timing, recovery rituals
+- goals_history       \u2014 goals stated or inferred over time, including past goals
+- relationships       \u2014 specific named people (family, teammates, partners)
+- values              \u2014 what they care about deeply, what motivates them
+- blockers            \u2014 recurring frictions, fears, procrastination triggers
+- accomplishments     \u2014 concrete wins, milestones reached
+- preferences         \u2014 explicit preferences (meeting times, channels)
+- fact                \u2014 anything else durable and specific
+
+Rules:
+- Only extract facts that are SPECIFIC, DURABLE, and not already captured.
+- Skip emotional venting, one-off events, or generic statements.
+- Confidence: 90+ user stated explicitly; 70-89 strongly implied; 50-69 plausible inference.
+- Skip anything below 50.
+- Return at most ${maxNew} new memories.${contextNote}
+${existingList}
+
+Source (${sourceType}):
+${source.slice(0, 6e3)}
+
+Return { "memories": [] } if nothing new and high-confidence was learned.`;
+    const response = await openai7.chat.completions.create({
+      model: "gpt-5-mini",
+      messages: [{ role: "user", content: prompt }],
+      response_format: { type: "json_object" },
+      max_completion_tokens: 500
+    });
+    const content = response.choices[0]?.message?.content || '{"memories":[]}';
+    const raw = parseExtraction(content).slice(0, maxNew);
+    for (const r of raw) {
+      if (typeof r.content !== "string") continue;
+      const text2 = r.content.trim();
+      if (!text2) continue;
+      const norm = normalizeForDedup(text2);
+      if (seen.has(norm)) continue;
+      const category = normalizeCategory(typeof r.category === "string" ? r.category : null);
+      const confidence = clampInt(r.confidence, 0, 100, 70);
+      if (confidence < 50) continue;
+      let embedding = null;
+      try {
+        const { embedText: embedText2 } = await Promise.resolve().then(() => (init_retrieve(), retrieve_exports));
+        embedding = await embedText2(text2);
+      } catch (embedErr) {
+        console.error("[Memory] embed on insert failed:", embedErr);
+      }
+      await db.insert(userMemories).values({
+        userId: userId2,
+        content: text2,
+        category,
+        confidence,
+        relevanceScore: 50,
+        sourceType,
+        sourceRef: sourceRef || null,
+        embedding: embedding ?? void 0
+      });
+      seen.add(norm);
+      stored.push({ content: text2, category, confidence });
+      console.log(`[Memory] +${sourceType} [${category} c=${confidence}${embedding ? " e" : ""}] ${text2.slice(0, 70)}`);
+    }
+  } catch (err) {
+    console.error("[Memory] extract failed:", err);
+  }
+  if (stored.length > 0) {
+    markSoulStale(userId2).catch((err) => console.error("[Memory] markSoulStale:", err));
+  }
+  return stored;
+}
+var openai7;
+var init_extractor = __esm({
+  "server/memory/extractor.ts"() {
+    "use strict";
+    init_db();
+    init_schema();
+    init_categories();
+    init_soul();
     openai7 = new OpenAI7({
       apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
       baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL
@@ -5423,9 +5939,1513 @@ var init_client = __esm({
   }
 });
 
+// server/daemon/bridge.ts
+var bridge_exports = {};
+__export(bridge_exports, {
+  DEFAULT_ANDROID_DAEMON_PERMISSIONS: () => DEFAULT_ANDROID_DAEMON_PERMISSIONS,
+  DEFAULT_DAEMON_PERMISSIONS: () => DEFAULT_DAEMON_PERMISSIONS,
+  closeUserDaemon: () => closeUserDaemon,
+  createDaemonPairingCode: () => createDaemonPairingCode,
+  generatePairingCode: () => generatePairingCode,
+  getAndroidDaemonPermissions: () => getAndroidDaemonPermissions,
+  getDaemonDeviceMeta: () => getDaemonDeviceMeta,
+  getDaemonPermissions: () => getDaemonPermissions,
+  getOpAuditLog: () => getOpAuditLog,
+  getRecentPhoneNotifications: () => getRecentPhoneNotifications,
+  isAndroidDaemonActionAllowed: () => isAndroidDaemonActionAllowed,
+  isAndroidDaemonActive: () => isAndroidDaemonActive,
+  isDaemonActionAllowed: () => isDaemonActionAllowed,
+  isDesktopDaemonActive: () => isDesktopDaemonActive,
+  isUserPaired: () => isUserPaired,
+  listPairedUsers: () => listPairedUsers,
+  pingDaemon: () => pingDaemon,
+  sendDaemonOp: () => sendDaemonOp,
+  setAndroidDaemonPermissions: () => setAndroidDaemonPermissions,
+  setDaemonPermissions: () => setDaemonPermissions,
+  startDaemonBridge: () => startDaemonBridge
+});
+import { WebSocketServer, WebSocket } from "ws";
+import { eq as eq12, and as and7, sql as sql7 } from "drizzle-orm";
+import { randomBytes, createHash } from "crypto";
+function getRecentPhoneNotifications(userId2, limit = 20) {
+  const arr = userNotifications.get(userId2) || [];
+  return arr.slice(0, limit);
+}
+function nextOpId() {
+  opCounter += 1;
+  return `op_${Date.now().toString(36)}_${opCounter}`;
+}
+function socketKey(userId2, platform) {
+  return `${userId2}:${platform}`;
+}
+function isUserPaired(userId2) {
+  const desktop = userSockets.get(socketKey(userId2, "desktop"));
+  if (desktop && desktop.readyState === WebSocket.OPEN) return true;
+  const android = userSockets.get(socketKey(userId2, "android"));
+  return !!(android && android.readyState === WebSocket.OPEN);
+}
+function isDesktopDaemonActive(userId2) {
+  const sock = userSockets.get(socketKey(userId2, "desktop"));
+  return !!(sock && sock.readyState === WebSocket.OPEN);
+}
+function listPairedUsers() {
+  const userIds = /* @__PURE__ */ new Set();
+  for (const key of userSockets.keys()) {
+    const colonIdx = key.indexOf(":");
+    if (colonIdx > -1) userIds.add(key.slice(0, colonIdx));
+  }
+  return [...userIds];
+}
+function closeUserDaemon(userId2, platform) {
+  const platforms = platform ? [platform] : ["desktop", "android"];
+  let closed = false;
+  for (const p of platforms) {
+    const key = socketKey(userId2, p);
+    const sock = userSockets.get(key);
+    if (sock) {
+      try {
+        sock.close(4004, "unlinked by user");
+      } catch {
+      }
+      userSockets.delete(key);
+      closed = true;
+    }
+  }
+  for (const p of platforms) {
+    const pKey = socketKey(userId2, p);
+    const pendingMap = pendingByUser.get(pKey);
+    if (pendingMap) {
+      for (const [, op] of pendingMap) {
+        clearTimeout(op.timer);
+        op.resolve({ ok: false, error: "daemon unlinked" });
+      }
+      pendingByUser.delete(pKey);
+    }
+  }
+  return closed;
+}
+async function findUserDaemonRow(userId2, platform) {
+  const rows = await db.select().from(channelLinks).where(and7(eq12(channelLinks.userId, userId2), eq12(channelLinks.channel, "daemon")));
+  if (rows.length === 0) return null;
+  let candidates = rows;
+  if (platform) {
+    const filtered = rows.filter((r) => {
+      const meta = r.metadata || {};
+      const p = meta.platform || "desktop";
+      return p === platform;
+    });
+    if (filtered.length === 0) return null;
+    candidates = filtered;
+  }
+  const real2 = candidates.find((r) => !r.address.startsWith("pending_"));
+  return real2 || candidates[0];
+}
+async function getDaemonDeviceMeta(userId2, platform) {
+  try {
+    const row = await findUserDaemonRow(userId2, platform);
+    const meta = row?.metadata || null;
+    return {
+      hostname: meta?.hostname || null,
+      platform: meta?.platform || null
+    };
+  } catch {
+    return { hostname: null, platform: null };
+  }
+}
+async function getDaemonPermissions(userId2) {
+  try {
+    const row = await findUserDaemonRow(userId2, "desktop");
+    const meta = row?.metadata || null;
+    const stored = meta?.permissions;
+    if (stored && typeof stored === "object") {
+      return { ...DEFAULT_DAEMON_PERMISSIONS, ...stored };
+    }
+  } catch (err) {
+    console.error("[daemon] getDaemonPermissions failed:", err);
+  }
+  return { ...DEFAULT_DAEMON_PERMISSIONS };
+}
+async function setDaemonPermissions(userId2, perms) {
+  const merged = { ...DEFAULT_DAEMON_PERMISSIONS, ...perms };
+  try {
+    const row = await findUserDaemonRow(userId2, "desktop");
+    const meta = row?.metadata || {};
+    meta.permissions = merged;
+    if (row) {
+      await db.update(channelLinks).set({ metadata: meta }).where(eq12(channelLinks.id, row.id));
+    } else {
+      await db.insert(channelLinks).values({
+        userId: userId2,
+        channel: "daemon",
+        address: `pending_${userId2}`,
+        metadata: { ...meta, platform: "desktop" },
+        lastSeenAt: /* @__PURE__ */ new Date()
+      }).onConflictDoNothing();
+    }
+  } catch (err) {
+    console.error("[daemon] setDaemonPermissions failed:", err);
+  }
+  return merged;
+}
+async function isDaemonActionAllowed(userId2, action) {
+  const perms = await getDaemonPermissions(userId2);
+  return !!perms[action];
+}
+async function getAndroidDaemonPermissions(userId2) {
+  try {
+    const row = await findUserDaemonRow(userId2, "android");
+    const meta = row?.metadata || null;
+    const stored = meta?.android_permissions;
+    if (stored && typeof stored === "object") {
+      return { ...DEFAULT_ANDROID_DAEMON_PERMISSIONS, ...stored };
+    }
+  } catch (err) {
+    console.error("[daemon] getAndroidDaemonPermissions failed:", err);
+  }
+  return { ...DEFAULT_ANDROID_DAEMON_PERMISSIONS };
+}
+async function setAndroidDaemonPermissions(userId2, perms) {
+  const merged = { ...DEFAULT_ANDROID_DAEMON_PERMISSIONS, ...perms };
+  try {
+    const row = await findUserDaemonRow(userId2, "android");
+    const meta = row?.metadata || {};
+    meta.android_permissions = merged;
+    if (row) {
+      await db.update(channelLinks).set({ metadata: meta }).where(eq12(channelLinks.id, row.id));
+    } else {
+      await db.insert(channelLinks).values({
+        userId: userId2,
+        channel: "daemon",
+        address: `pending_android_${userId2}`,
+        metadata: { ...meta, platform: "android" },
+        lastSeenAt: /* @__PURE__ */ new Date()
+      }).onConflictDoNothing();
+    }
+  } catch (err) {
+    console.error("[daemon] setAndroidDaemonPermissions failed:", err);
+  }
+  return merged;
+}
+async function isAndroidDaemonActionAllowed(userId2, action) {
+  const perms = await getAndroidDaemonPermissions(userId2);
+  return !!perms[action];
+}
+function isAndroidDaemonActive(userId2) {
+  const sock = userSockets.get(socketKey(userId2, "android"));
+  return !!(sock && sock.readyState === WebSocket.OPEN);
+}
+function recordAuditEntry(userId2, entry) {
+  let arr = opAuditLog.get(userId2);
+  if (!arr) {
+    arr = [];
+    opAuditLog.set(userId2, arr);
+  }
+  arr.push(entry);
+  if (arr.length > MAX_AUDIT_ENTRIES) arr.splice(0, arr.length - MAX_AUDIT_ENTRIES);
+}
+function getOpAuditLog(userId2) {
+  return opAuditLog.get(userId2) || [];
+}
+async function pingDaemon(userId2, timeoutMs = 5e3) {
+  return sendDaemonOp(userId2, { type: "ping" }, timeoutMs);
+}
+async function sendDaemonOp(userId2, op, timeoutMs = 15e3) {
+  const isAndroidOp = op.type.startsWith("android_");
+  const isPlatformNeutral = op.type === "ping" || op.type === "notify";
+  let sock;
+  if (isPlatformNeutral) {
+    sock = userSockets.get(socketKey(userId2, "desktop")) || userSockets.get(socketKey(userId2, "android"));
+  } else if (isAndroidOp) {
+    sock = userSockets.get(socketKey(userId2, "android"));
+  } else {
+    sock = userSockets.get(socketKey(userId2, "desktop"));
+  }
+  if (!sock || sock.readyState !== WebSocket.OPEN) {
+    const missing = isPlatformNeutral ? "daemon" : isAndroidOp ? "android daemon" : "desktop daemon";
+    console.log(`[daemon] op SKIPPED \u2014 ${missing} not connected userId=${userId2} op=${op.type}`);
+    if (isAndroidOp) {
+      return { ok: false, error: "Android daemon not connected. Ask the user to install the Jarvis Android APK and pair it." };
+    }
+    if (!isPlatformNeutral) {
+      return { ok: false, error: "Desktop daemon not connected. Ask the user to install and pair the desktop daemon." };
+    }
+    return { ok: false, error: "No daemon connected. Install and pair the desktop daemon or the Android APK from Profile \u2192 Connected Channels." };
+  }
+  let actualPlatform;
+  if (isPlatformNeutral) {
+    const deskSock = userSockets.get(socketKey(userId2, "desktop"));
+    actualPlatform = sock === deskSock ? "desktop" : "android";
+  } else {
+    actualPlatform = isAndroidOp ? "android" : "desktop";
+  }
+  const pendingKey = socketKey(userId2, actualPlatform);
+  console.log(`[daemon] op SENT userId=${userId2} op=${op.type}`, "packageName" in op ? `pkg=${op.packageName}` : "");
+  const sentAt = Date.now();
+  return new Promise((resolve4) => {
+    const id = nextOpId();
+    const timer = setTimeout(() => {
+      const map = pendingByUser.get(pendingKey);
+      map?.delete(id);
+      console.log(`[daemon] op TIMEOUT userId=${userId2} op=${op.type}`);
+      const durationMs = Date.now() - sentAt;
+      recordAuditEntry(userId2, { ts: sentAt, type: op.type, ok: false, error: "timeout", durationMs });
+      resolve4({ ok: false, error: "daemon timeout" });
+    }, timeoutMs);
+    let userMap = pendingByUser.get(pendingKey);
+    if (!userMap) {
+      userMap = /* @__PURE__ */ new Map();
+      pendingByUser.set(pendingKey, userMap);
+    }
+    userMap.set(id, {
+      resolve: (result) => {
+        const durationMs = Date.now() - sentAt;
+        if (op.type === "ping") {
+          console.log(`[daemon] ping RTT ${durationMs}ms userId=${userId2} ok=${result.ok}`, result.ok ? "" : `err=${result.error}`);
+        } else {
+          console.log(`[daemon] op RESULT userId=${userId2} op=${op.type} ok=${result.ok}`, result.ok ? "" : `err=${result.error}`);
+        }
+        recordAuditEntry(userId2, { ts: sentAt, type: op.type, ok: result.ok, error: result.error, durationMs });
+        resolve4(result);
+      },
+      timer
+    });
+    try {
+      sock.send(JSON.stringify({ type: "op", id, op }));
+    } catch (err) {
+      clearTimeout(timer);
+      userMap.delete(id);
+      const durationMs = Date.now() - sentAt;
+      recordAuditEntry(userId2, { ts: sentAt, type: op.type, ok: false, error: String(err), durationMs });
+      resolve4({ ok: false, error: String(err) });
+    }
+  });
+}
+function generatePairingCode() {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let code = "";
+  for (let i = 0; i < 8; i++) code += chars[Math.floor(Math.random() * chars.length)];
+  return code;
+}
+async function createDaemonPairingCode(userId2) {
+  const code = generatePairingCode();
+  const expiresAt = new Date(Date.now() + 15 * 60 * 1e3);
+  await db.insert(channelLinkCodes).values({
+    code,
+    userId: userId2,
+    channel: "daemon",
+    expiresAt
+  });
+  return code;
+}
+async function consumePairingCode(code) {
+  try {
+    const rows = await db.select().from(channelLinkCodes).where(and7(eq12(channelLinkCodes.code, code), eq12(channelLinkCodes.channel, "daemon"))).limit(1);
+    const row = rows[0];
+    if (!row) return null;
+    if (row.expiresAt && row.expiresAt.getTime() < Date.now()) {
+      await db.delete(channelLinkCodes).where(eq12(channelLinkCodes.code, code));
+      return null;
+    }
+    await db.delete(channelLinkCodes).where(eq12(channelLinkCodes.code, code));
+    return row.userId;
+  } catch (err) {
+    console.error("[daemon] consumePairingCode failed:", err);
+    return null;
+  }
+}
+async function recordDaemonLink(userId2, daemonId, meta) {
+  try {
+    const platform = meta.platform || "desktop";
+    const existing = await db.select().from(channelLinks).where(and7(eq12(channelLinks.userId, userId2), eq12(channelLinks.channel, "daemon")));
+    const mergedMeta = { ...meta };
+    for (const row of existing) {
+      const prior = row.metadata || {};
+      const priorPlatform = prior.platform || "desktop";
+      if (priorPlatform === platform) {
+        if (prior.permissions && !mergedMeta.permissions) {
+          mergedMeta.permissions = prior.permissions;
+        }
+        if (prior.android_permissions && !mergedMeta.android_permissions) {
+          mergedMeta.android_permissions = prior.android_permissions;
+        }
+      }
+    }
+    for (const row of existing) {
+      const priorMeta = row.metadata || {};
+      const priorPlatform = priorMeta.platform || "desktop";
+      if (priorPlatform === platform) {
+        await db.delete(channelLinks).where(eq12(channelLinks.id, row.id));
+      }
+    }
+    await db.insert(channelLinks).values({
+      userId: userId2,
+      channel: "daemon",
+      address: daemonId,
+      metadata: mergedMeta,
+      lastSeenAt: /* @__PURE__ */ new Date()
+    }).onConflictDoUpdate({
+      target: [channelLinks.channel, channelLinks.address],
+      set: { userId: userId2, metadata: mergedMeta, lastSeenAt: /* @__PURE__ */ new Date() }
+    });
+  } catch (err) {
+    console.error("[daemon] recordDaemonLink failed:", err);
+  }
+}
+function startDaemonBridge(server) {
+  const wss = new WebSocketServer({ noServer: true });
+  server.on("upgrade", (req, socket, head) => {
+    if (!req.url || !req.url.startsWith("/api/daemon/ws")) {
+      socket.destroy();
+      return;
+    }
+    wss.handleUpgrade(req, socket, head, (ws) => wss.emit("connection", ws, req));
+  });
+  wss.on("connection", (ws) => {
+    let pairedUserId = null;
+    let pairedPlatform = "desktop";
+    let pairTimeout = setTimeout(() => {
+      if (!pairedUserId) {
+        try {
+          ws.close(4001, "pairing timeout");
+        } catch {
+        }
+      }
+    }, 3e4);
+    ws.on("message", async (raw) => {
+      let msg;
+      try {
+        msg = JSON.parse(raw.toString());
+      } catch {
+        try {
+          ws.send(JSON.stringify({ type: "error", error: "invalid json" }));
+        } catch {
+        }
+        return;
+      }
+      const m = msg;
+      if (m.type === "reconnect") {
+        const rm = m;
+        if (!rm.daemonId || !rm.reconnectSecret) {
+          try {
+            ws.send(JSON.stringify({ type: "hello", ok: false, error: "daemonId and reconnectSecret are required" }));
+          } catch {
+          }
+          return;
+        }
+        try {
+          const rows = await db.select().from(channelLinks).where(and7(eq12(channelLinks.address, rm.daemonId), eq12(channelLinks.channel, "daemon"))).limit(1);
+          const row = rows[0];
+          if (!row) {
+            try {
+              ws.send(JSON.stringify({ type: "hello", ok: false, error: "unknown daemonId \u2014 please re-pair" }));
+            } catch {
+            }
+            ws.close(4002, "unknown daemonId");
+            return;
+          }
+          const storedMeta = row.metadata || {};
+          const storedHash = storedMeta.reconnectSecretHash;
+          if (!storedHash) {
+            try {
+              ws.send(JSON.stringify({ type: "hello", ok: false, error: "legacy pair record \u2014 please re-pair" }));
+            } catch {
+            }
+            ws.close(4002, "legacy record");
+            return;
+          }
+          const providedHash = createHash("sha256").update(rm.reconnectSecret).digest("hex");
+          if (providedHash !== storedHash) {
+            try {
+              ws.send(JSON.stringify({ type: "hello", ok: false, error: "invalid reconnect secret \u2014 please re-pair" }));
+            } catch {
+            }
+            ws.close(4001, "bad secret");
+            return;
+          }
+          pairedUserId = row.userId;
+          if (pairTimeout) {
+            clearTimeout(pairTimeout);
+            pairTimeout = null;
+          }
+          if (rm.hostname) storedMeta.hostname = rm.hostname;
+          if (rm.platform) storedMeta.platform = rm.platform;
+          await db.update(channelLinks).set({ metadata: storedMeta, lastSeenAt: /* @__PURE__ */ new Date() }).where(eq12(channelLinks.id, row.id));
+          const reconnPlatform = storedMeta.platform || "desktop";
+          pairedPlatform = reconnPlatform;
+          const reconnKey = socketKey(pairedUserId, reconnPlatform);
+          const prior = userSockets.get(reconnKey);
+          if (prior && prior !== ws) {
+            try {
+              prior.close(4003, "replaced by new daemon");
+            } catch {
+            }
+          }
+          userSockets.set(reconnKey, ws);
+          const hello = { type: "hello", ok: true, userId: pairedUserId };
+          try {
+            ws.send(JSON.stringify(hello));
+          } catch {
+          }
+          console.log(`[daemon] reconnected userId=${pairedUserId} platform=${reconnPlatform} daemonId=${rm.daemonId}`);
+        } catch (err) {
+          console.error("[daemon] reconnect lookup failed:", err);
+          try {
+            ws.send(JSON.stringify({ type: "hello", ok: false, error: "reconnect failed" }));
+          } catch {
+          }
+        }
+        return;
+      }
+      if (m.type === "pair") {
+        const userId2 = await consumePairingCode(m.code);
+        if (!userId2) {
+          const reply = { type: "hello", ok: false, error: "invalid or expired code" };
+          try {
+            ws.send(JSON.stringify(reply));
+          } catch {
+          }
+          ws.close(4002, "invalid code");
+          return;
+        }
+        pairedUserId = userId2;
+        if (pairTimeout) {
+          clearTimeout(pairTimeout);
+          pairTimeout = null;
+        }
+        const daemonId = randomBytes(16).toString("hex");
+        const reconnectSecret = randomBytes(32).toString("hex");
+        const reconnectSecretHash = createHash("sha256").update(reconnectSecret).digest("hex");
+        const pairPlatform = m.platform || "desktop";
+        pairedPlatform = pairPlatform;
+        await recordDaemonLink(userId2, daemonId, {
+          hostname: m.hostname || "unknown",
+          platform: pairPlatform,
+          reconnectSecretHash
+        });
+        const pairKey = socketKey(userId2, pairPlatform);
+        const prior = userSockets.get(pairKey);
+        if (prior && prior !== ws) {
+          try {
+            prior.close(4003, "replaced by new daemon");
+          } catch {
+          }
+        }
+        userSockets.set(pairKey, ws);
+        const hello = { type: "hello", ok: true, userId: userId2, daemonId, reconnectSecret };
+        try {
+          ws.send(JSON.stringify(hello));
+        } catch {
+        }
+        console.log(`[daemon] paired userId=${userId2} hostname=${m.hostname || "unknown"} platform=${pairPlatform}`);
+        return;
+      }
+      if (m.type === "ping") {
+        try {
+          ws.send(JSON.stringify({ type: "pong" }));
+        } catch {
+        }
+        return;
+      }
+      if (m.type === "notification_event" && pairedUserId) {
+        const ne = m;
+        if (ne.notification && typeof ne.notification === "object") {
+          const arr = userNotifications.get(pairedUserId) || [];
+          arr.unshift(ne.notification);
+          while (arr.length > MAX_NOTIFS_PER_USER) arr.pop();
+          userNotifications.set(pairedUserId, arr);
+        }
+        return;
+      }
+      if (m.type === "result" && pairedUserId) {
+        const userMap = pendingByUser.get(socketKey(pairedUserId, pairedPlatform));
+        const pending = userMap?.get(m.id);
+        if (pending) {
+          clearTimeout(pending.timer);
+          userMap.delete(m.id);
+          pending.resolve({ ok: m.ok, data: m.data, error: m.error });
+        }
+        db.update(channelLinks).set({ lastSeenAt: /* @__PURE__ */ new Date() }).where(and7(eq12(channelLinks.userId, pairedUserId), eq12(channelLinks.channel, "daemon"))).catch((err) => console.error("[daemon] last_seen update failed:", err));
+      }
+    });
+    const keepalive = setInterval(() => {
+      if (ws.readyState === WebSocket.OPEN) {
+        try {
+          ws.ping();
+        } catch {
+        }
+      }
+    }, 2e4);
+    ws.on("close", () => {
+      clearInterval(keepalive);
+      if (pairedUserId) {
+        const key = socketKey(pairedUserId, pairedPlatform);
+        if (userSockets.get(key) === ws) {
+          userSockets.delete(key);
+          console.log(`[daemon] disconnected userId=${pairedUserId} platform=${pairedPlatform}`);
+        }
+        const pendingKey = socketKey(pairedUserId, pairedPlatform);
+        const userMap = pendingByUser.get(pendingKey);
+        if (userMap) {
+          for (const [id, pending] of userMap) {
+            clearTimeout(pending.timer);
+            pending.resolve({ ok: false, error: "daemon disconnected" });
+            userMap.delete(id);
+          }
+          pendingByUser.delete(pendingKey);
+        }
+      }
+      if (pairTimeout) {
+        clearTimeout(pairTimeout);
+        pairTimeout = null;
+      }
+    });
+    ws.on("error", (err) => {
+      console.error("[daemon] socket error:", err);
+    });
+  });
+  console.log("[daemon] WebSocket bridge mounted at /api/daemon/ws");
+  const cleanup = setInterval(() => {
+    db.delete(channelLinkCodes).where(and7(eq12(channelLinkCodes.channel, "daemon"), sql7`${channelLinkCodes.expiresAt} < NOW()`)).catch((err) => console.error("[daemon] code cleanup failed:", err));
+  }, 5 * 60 * 1e3);
+  cleanup.unref();
+}
+var userNotifications, MAX_NOTIFS_PER_USER, userSockets, pendingByUser, opCounter, DEFAULT_DAEMON_PERMISSIONS, DEFAULT_ANDROID_DAEMON_PERMISSIONS, opAuditLog, MAX_AUDIT_ENTRIES;
+var init_bridge = __esm({
+  "server/daemon/bridge.ts"() {
+    "use strict";
+    init_db();
+    init_schema();
+    userNotifications = /* @__PURE__ */ new Map();
+    MAX_NOTIFS_PER_USER = 60;
+    userSockets = /* @__PURE__ */ new Map();
+    pendingByUser = /* @__PURE__ */ new Map();
+    opCounter = 0;
+    DEFAULT_DAEMON_PERMISSIONS = {
+      shell: false,
+      file_write: false,
+      notify: true,
+      file_read: true,
+      file_list: true,
+      desktop_screenshot: true,
+      desktop_read_screen: true
+    };
+    DEFAULT_ANDROID_DAEMON_PERMISSIONS = {
+      android_screenshot: true,
+      android_read_screen: true,
+      android_open_app: true,
+      android_browse: true,
+      android_file_list: true,
+      android_file_read: false,
+      android_tap_type: false
+    };
+    opAuditLog = /* @__PURE__ */ new Map();
+    MAX_AUDIT_ENTRIES = 20;
+  }
+});
+
+// server/channels/coachAgent.ts
+var coachAgent_exports = {};
+__export(coachAgent_exports, {
+  runCoachAgent: () => runCoachAgent
+});
+import { eq as eq13, and as and8, desc as desc6, gte as gte3 } from "drizzle-orm";
+function getMaxTokensForChannel(channelName) {
+  if (channelName.startsWith("Discord")) return 1200;
+  if (channelName === "Daemon") return 200;
+  return 2e3;
+}
+async function runCoachAgent(input) {
+  const { userId: userId2, userText, channelName, imageUrl, onToken, discordGuildId } = input;
+  const channelLower = channelName.toLowerCase();
+  let userGoals = [];
+  let userStats = {};
+  let userLifeContext = null;
+  let userCommitments = [];
+  let chatMessages = [];
+  let gmailItems = [];
+  let calendarEvents = [];
+  let gmailConnected = false;
+  let googleAccessToken = null;
+  let recentlySurfacedItems = [];
+  const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1e3);
+  const [goalsRow, statsRow, lcRow, chatRow, commitmentsRows, googleTokens, prefsRow, recentInteractionsResult, surfacedItemsResult] = await Promise.allSettled([
+    db.select().from(goals).where(eq13(goals.userId, userId2)).limit(1),
+    db.select().from(stats).where(eq13(stats.userId, userId2)).limit(1),
+    db.select().from(lifeContext).where(eq13(lifeContext.userId, userId2)).limit(1),
+    db.select().from(chatHistory).where(eq13(chatHistory.userId, userId2)).limit(1),
+    db.select().from(commitments).where(and8(eq13(commitments.userId, userId2), eq13(commitments.status, "pending"))).orderBy(desc6(commitments.extractedAt)).limit(10),
+    getValidGoogleTokens(userId2),
+    db.select().from(userPreferences).where(eq13(userPreferences.userId, userId2)).limit(1),
+    getRecentInteractions(userId2, 20),
+    db.select({
+      sourceType: inboxItems.sourceType,
+      subject: inboxItems.subject,
+      sender: inboxItems.sender,
+      snippet: inboxItems.snippet,
+      jarvisReason: inboxItems.jarvisReason,
+      surfacedAt: inboxItems.surfacedAt
+    }).from(inboxItems).where(and8(
+      eq13(inboxItems.userId, userId2),
+      gte3(inboxItems.surfacedAt, twentyFourHoursAgo)
+    )).orderBy(desc6(inboxItems.surfacedAt)).limit(5)
+  ]);
+  logInteraction(userId2, channelLower, "inbound", userText || "[image]").catch(() => {
+  });
+  let userTimezone = "America/New_York";
+  if (goalsRow.status === "fulfilled") userGoals = goalsRow.value[0]?.data || [];
+  if (statsRow.status === "fulfilled") userStats = statsRow.value[0]?.data || {};
+  if (lcRow.status === "fulfilled") userLifeContext = lcRow.value[0]?.data || null;
+  if (chatRow.status === "fulfilled") chatMessages = chatRow.value[0]?.data || [];
+  if (commitmentsRows.status === "fulfilled") userCommitments = commitmentsRows.value;
+  if (prefsRow.status === "fulfilled") {
+    const prefs = prefsRow.value[0]?.data || {};
+    if (prefs.timezone) userTimezone = prefs.timezone;
+  }
+  if (surfacedItemsResult.status === "fulfilled") {
+    recentlySurfacedItems = surfacedItemsResult.value;
+  }
+  const localForDateKey = new Date((/* @__PURE__ */ new Date()).toLocaleString("en-US", { timeZone: userTimezone }));
+  const dateKey = `${localForDateKey.getFullYear()}-${String(localForDateKey.getMonth() + 1).padStart(2, "0")}-${String(localForDateKey.getDate()).padStart(2, "0")}`;
+  let todayPlan = null;
+  try {
+    const planRows = await db.select().from(plans).where(and8(eq13(plans.userId, userId2), eq13(plans.date, dateKey))).limit(1);
+    todayPlan = planRows[0]?.data || null;
+  } catch (err) {
+    console.error("[coach] plan fetch failed:", err);
+  }
+  if (googleTokens.status === "fulfilled" && googleTokens.value.length > 0) {
+    gmailConnected = true;
+    const tokens = googleTokens.value;
+    googleAccessToken = tokens[0];
+    const [emailResult, ...calResults] = await Promise.allSettled([
+      getRecentEmailCommitments(14, tokens[0]),
+      ...tokens.map((t) => getGoogleCalendarEvents(dateKey, void 0, void 0, t))
+    ]);
+    if (emailResult.status === "fulfilled") gmailItems = emailResult.value;
+    const seenEventIds = /* @__PURE__ */ new Set();
+    for (const calResult of calResults) {
+      if (calResult.status === "fulfilled") {
+        for (const ev of calResult.value) {
+          if (!seenEventIds.has(ev.id)) {
+            seenEventIds.add(ev.id);
+            calendarEvents.push(ev);
+          }
+        }
+      }
+    }
+  }
+  const recentMessages = chatMessages.slice(0, 10).reverse();
+  const now = /* @__PURE__ */ new Date();
+  const dayOfWeek = now.toLocaleDateString("en-US", { weekday: "long" });
+  const dateStr = now.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
+  const goalsText = userGoals.length > 0 ? userGoals.map((g) => `- ${g.title} (${g.category}): ${g.current}/${g.target} ${g.unit}`).join("\n") : "No goals set";
+  const commitmentsText = userCommitments.length > 0 ? userCommitments.map((c) => `- [id:${c.id}] "${c.content}"${c.dueDate ? ` (due ${c.dueDate})` : ""}`).join("\n") : "";
+  const calendarText = calendarEvents.length > 0 ? calendarEvents.slice(0, 8).map((e) => `- ${e.time ? e.time + ": " : ""}${e.title}`).join("\n") : "";
+  const gmailSection = gmailItems.length > 0 ? `## Recent Emails (last 14 days)
+` + gmailItems.slice(0, 100).map((i) => `- [id:${i.id}] From: ${i.from || "unknown"} | "${i.subject}" \u2014 ${i.snippet}`).join("\n") : gmailConnected ? `## Recent Emails
+Gmail is connected but no emails found.` : `## Recent Emails
+Gmail not connected.`;
+  const recentInteractions = recentInteractionsResult.status === "fulfilled" ? recentInteractionsResult.value : [];
+  const crossChannelSection = formatInteractionTimeline(recentInteractions);
+  const recentlySurfacedSection = recentlySurfacedItems.length > 0 ? `## Items You Already Surfaced to the User (last 24h)
+These were found and sent to the user earlier \u2014 you already have this data. Reference it directly when the user asks about it instead of claiming you don't have it or asking them to repeat it.
+` + recentlySurfacedItems.map((item) => {
+    let timestamp2 = "";
+    if (item.surfacedAt) {
+      const d = new Date(item.surfacedAt);
+      timestamp2 = d.toLocaleString("en-US", {
+        timeZone: userTimezone,
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+        hour12: true
+      });
+    }
+    const parts = [];
+    if (item.subject) parts.push(`Subject: "${item.subject}"`);
+    if (item.sender) parts.push(`From: ${item.sender}`);
+    if (item.snippet) parts.push(`Content: ${item.snippet}`);
+    if (item.jarvisReason) parts.push(`Why surfaced: ${item.jarvisReason}`);
+    return `- [${item.sourceType || "item"}${timestamp2 ? ` @ ${timestamp2}` : ""}] ${parts.join(" | ")}`;
+  }).join("\n") : "";
+  const soulBlock = await getSoulPromptBlock(userId2);
+  const formatHintKey = Object.keys(FORMAT_HINTS).find((k) => channelName.startsWith(k)) ?? "Telegram";
+  const formatHint = FORMAT_HINTS[formatHintKey];
+  const selfImprovementSection = `
+## Self-Improvement: Building New Jarvis Tools
+You can extend yourself by building new tools directly. Generate the complete TypeScript code for the tool yourself and call \`build_feature\` to write it to disk, register it in the tool index, and run a smoke test \u2014 all in one step.
+
+**When to build a new tool**: The user asks for a new Jarvis capability that doesn't exist yet (e.g. "add a tool to check stock prices", "build a Notion integration", "add a command to summarize my day").
+
+**How to build**: Think through what the tool needs to do, write the full TypeScript code following the AgentTool pattern, then call \`build_feature\` with feature_name, description, and tool_code (the complete file content). The tool must export a const of type AgentTool.
+
+**After building**: The tool is written to disk and smoke tested automatically. The server restarts automatically so the new tool is active in a few seconds. Report the outcome to the user \u2014 success means the tool is now active, failure means the code needs fixing (call \`build_feature\` again with corrected tool_code).
+
+**Manual re-testing**: Use \`test_tool\` to re-run the smoke test on any built tool by name without rebuilding it.
+
+**Build history**: All builds are logged and viewable in Settings \u2192 Build History.`;
+  const androidActive = isAndroidDaemonActive(userId2);
+  const desktopActive = isDesktopDaemonActive(userId2);
+  const daemonPaired = isUserPaired(userId2);
+  const daemonLines = [];
+  if (desktopActive) daemonLines.push("- Desktop daemon is ACTIVE. You can run shell commands, send desktop notifications, and read/write files in the user's workspace.");
+  if (androidActive) daemonLines.push("- Android device daemon is ACTIVE. You can open apps (android_open_app), take screenshots (android_screenshot), read the screen (android_read_screen), browse URLs (android_browse), list/read files on the device (android_file_list/android_file_read). Tap/type/swipe actions are available when user enables them. Proactively mention Android capabilities when relevant.");
+  const daemonSection = daemonPaired ? `## Connected Devices
+${daemonLines.join("\n")}` : "## Android Daemon Setup Guidance (no daemon paired)\nIf the user asks how to install or set up the Android daemon, give them these steps:\n1. In the Jarvis app \u2192 Profile \u2192 Connected Channels \u2192 Android Device \u2192 tap Pair to get an 8-character code.\n2. Build the APK: open android-daemon/ in Android Studio \u2192 Build \u2192 Generate Signed Bundle/APK \u2192 APK \u2192 debug. Or run `gradle wrapper --gradle-version 8.4` then `./gradlew assembleDebug` from the android-daemon/ directory.\n3. Transfer the APK to the Android phone and install it (Settings \u2192 Apps \u2192 Special app access \u2192 Install unknown apps \u2192 allow your file manager).\n4. Open the app \u2192 enter the server URL + the 8-character code \u2192 tap Connect.\n5. Grant the two permissions the app requests: Accessibility Service (Settings \u2192 Accessibility \u2192 Jarvis Daemon \u2192 enable) and All Files Access.\n6. The app stays connected in the background and reconnects automatically after reboots or Wi-Fi drops.";
+  const systemPrompt = `You are GamePlan Coach Jarvis \u2014 a sharp, supportive personal productivity coach. ${formatHint}
+
+Today is ${dayOfWeek}, ${dateStr}. User's timezone: ${userTimezone}.
+${crossChannelSection}
+
+${soulBlock}
+
+## User Profile
+- Streak: ${userStats.streak || 0} days
+- Total completed: ${userStats.totalCompleted || 0}
+- XP: ${userStats.xp || 0}
+
+## Active Goals
+${goalsText}
+${commitmentsText ? `
+## Open Commitments
+${commitmentsText}` : ""}
+${calendarText ? `
+## Today's Calendar
+${calendarText}` : ""}
+
+${gmailSection}
+${recentlySurfacedSection ? `
+${recentlySurfacedSection}` : ""}
+${userLifeContext?.priorityGoal ? `
+## Context
+- Priority: ${userLifeContext.priorityGoal}` : ""}
+${daemonSection ? `
+${daemonSection}` : ""}
+
+You can manage tasks, commitments, and analyze patterns via the manage_tasks tool. You can act on emails via the gmail_action tool. You can run safe shell commands, send desktop notifications, or read/write files in the user's workspace via the daemon_action tool when a desktop daemon is paired. When an Android device daemon is paired, use android_* actions to control the phone \u2014 open apps, browse, screenshot, read the screen, and access files. Always confirm with the user before tap/type/swipe actions. Use these proactively when the user asks to do something \u2014 don't just describe what you'd do. Respond in the same language the user writes in.${selfImprovementSection}
+
+## Autonomous background jobs
+When a user's request involves multi-step research, drafting a document or plan, or composing an email \u2014 anything that would take more than a quick lookup \u2014 call the queue_background_job tool immediately instead of answering inline. This queues the work for a background sub-agent and lets you reply instantly. After calling the tool, tell the user: "I've queued that \u2014 you'll get a notification when it's done." Do not attempt to do the research or drafting yourself in the same turn. Examples of requests that MUST use queue_background_job:
+- "research my competitors", "find me market data on X", "look into Y"
+- "write a memo/proposal/blog post about X", "draft a document for Y"
+- "make a plan for Z", "break down this project", "create an action plan"
+- "write an email to X", "draft a message to Y", "compose an outreach to Z"
+
+## Critical rules \u2014 no empty promises
+**Act, don't announce**: If you say you will do something (create a document, save data, log an entry, send a message, post to a channel), you MUST call the relevant tool in that same response. Never say you will do something and then fail to do it. There is no "I'll do that now" without an immediate tool call.
+
+**If you can't act yet**: If you are genuinely missing required data to take the action, say exactly what one piece of information is missing and ask for only that. Do not say "I'll do it" and then ask five clarifying questions. One missing piece = one question, then act.
+
+**No circular clarification**: Do not ask for data you already have. Before asking the user for an amount, date, vendor, or reference \u2014 check the "Items You Already Surfaced" section of your context. If the data is there, use it directly without asking.
+
+**Fail explicitly**: If a tool call returns an error or fails, tell the user specifically what went wrong. Do not silently continue or pretend the action succeeded.`;
+  const userMessageContent = imageUrl ? [
+    { type: "text", text: userText || "What do you see in this image?" },
+    { type: "image_url", image_url: { url: imageUrl } }
+  ] : userText;
+  const baseMessages = [
+    { role: "system", content: systemPrompt },
+    ...recentMessages.map((m) => ({
+      role: m.role === "assistant" ? "assistant" : "user",
+      content: m.content
+    })),
+    { role: "user", content: userMessageContent }
+  ];
+  const agentCtx = {
+    userId: userId2,
+    channel: channelName,
+    googleAccessToken: googleAccessToken || void 0,
+    discordGuildId: discordGuildId || void 0,
+    state: {
+      dateKey,
+      todayPlan,
+      gmailMessageIds: gmailItems.map((i) => i.id).filter((id) => !!id),
+      pendingAttachments: []
+    }
+  };
+  const agentResult = await runAgent({
+    model: "gpt-5-mini",
+    messages: baseMessages,
+    tools: telegramCoachTools({ hasGoogle: !!googleAccessToken }),
+    context: agentCtx,
+    maxTurns: 6,
+    maxCompletionTokens: getMaxTokensForChannel(channelName),
+    onToken
+  });
+  console.log(`[${channelName}] coach agent \u2014 turns=${agentResult.turns}, tools=${agentResult.toolCalls.length}, finish=${agentResult.finishReason}`);
+  const rawReply = agentResult.reply;
+  const reply = rawReply || "Sorry, I couldn't generate a response right now.";
+  const attachments = agentCtx.state.pendingAttachments || [];
+  const userMsg = { id: Date.now().toString(), role: "user", content: userText };
+  const assistantMsg = { id: (Date.now() + 1).toString(), role: "assistant", content: reply };
+  const updatedChat = [assistantMsg, userMsg, ...chatMessages].slice(0, 100);
+  try {
+    await db.insert(chatHistory).values({ userId: userId2, data: updatedChat }).onConflictDoUpdate({
+      target: chatHistory.userId,
+      set: { data: updatedChat, updatedAt: /* @__PURE__ */ new Date() }
+    });
+  } catch (err) {
+    console.error("[coach] chat history persist failed:", err);
+  }
+  return { reply, rawReply, attachments };
+}
+var FORMAT_HINTS;
+var init_coachAgent = __esm({
+  "server/channels/coachAgent.ts"() {
+    "use strict";
+    init_db();
+    init_schema();
+    init_harness();
+    init_tools();
+    init_userTokenStore();
+    init_gmail();
+    init_googleCalendar();
+    init_interactionLog();
+    init_soul();
+    init_bridge();
+    FORMAT_HINTS = {
+      Telegram: "You're responding via Telegram. Keep messages SHORT (2-4 sentences). Plain text, no markdown headers.",
+      WhatsApp: "You're responding via WhatsApp. Keep messages SHORT (2-4 sentences). Plain text. WhatsApp supports *bold*, _italic_, `code` only \u2014 no markdown headers.",
+      Slack: "You're responding via Slack DM. Keep messages SHORT (2-4 sentences). Use Slack mrkdwn (*bold*, _italic_, `code`, > quote). No markdown headers.",
+      Daemon: "You're responding to a desktop daemon. Plain text only. The user sees the reply as a desktop notification \u2014 keep it under 2 sentences when possible.",
+      Discord: "You're responding via Discord. Keep responses SHORT \u2014 2-4 sentences max. Your total response MUST be under 1800 characters. Discord renders **bold**, _italic_, `code`, ```blocks```. No headers. If a task needs many steps, pick the single most important next action and say it clearly."
+    };
+  }
+});
+
+// server/discord/workspace.ts
+import {
+  ChannelType
+} from "discord.js";
+import { eq as eq14, and as and9 } from "drizzle-orm";
+function classifyTopic(text2) {
+  const lower = text2.toLowerCase();
+  let best = { key: "thinking", score: 0 };
+  for (const topic of WORKSPACE_TOPICS) {
+    let score = 0;
+    for (const kw of topic.keywords) {
+      if (lower.includes(kw)) score++;
+    }
+    if (score > best.score) {
+      best = { key: topic.key, score };
+    }
+  }
+  return best.key;
+}
+async function setupWorkspace(client, userId2, guildId) {
+  if (setupInProgress.has(guildId)) {
+    console.log(`[Workspace] setup already in progress for guild ${guildId} \u2014 skipping concurrent call`);
+    return { ok: false, error: "workspace setup already in progress for this server" };
+  }
+  setupInProgress.add(guildId);
+  try {
+    const guild = await client.guilds.fetch(guildId);
+    await guild.channels.fetch();
+    const existingCat = guild.channels.cache.find(
+      (ch) => ch.type === ChannelType.GuildCategory && ch.name === "\u{1F9E0} Jarvis Workspace"
+    );
+    let category;
+    if (existingCat) {
+      category = existingCat;
+    } else {
+      category = await guild.channels.create({
+        name: "\u{1F9E0} Jarvis Workspace",
+        type: ChannelType.GuildCategory
+      });
+    }
+    const channelIds = {};
+    for (const topic of WORKSPACE_TOPICS) {
+      const channelName = `${topic.emoji}${topic.name}`;
+      const existing = guild.channels.cache.find(
+        (ch) => ch.type === ChannelType.GuildText && ch.parentId === category.id && ch.name === `${topic.emoji}${topic.name}`
+      );
+      if (existing) {
+        channelIds[topic.key] = existing.id;
+      } else {
+        const created = await guild.channels.create({
+          name: channelName,
+          type: ChannelType.GuildText,
+          parent: category.id,
+          topic: topic.description
+        });
+        channelIds[topic.key] = created.id;
+        await created.send(
+          `**${topic.emoji} ${topic.name.charAt(0).toUpperCase() + topic.name.slice(1)}**
+${topic.description}
+
+_Jarvis will post relevant updates here and you can ask me anything in this topic._`
+        ).catch(() => {
+        });
+      }
+    }
+    const digestChannelName = `${DIGEST_CHANNEL.emoji}${DIGEST_CHANNEL.name}`;
+    const existingDigest = guild.channels.cache.find(
+      (ch) => ch.type === ChannelType.GuildText && ch.parentId === category.id && ch.name === digestChannelName
+    );
+    if (existingDigest) {
+      channelIds[DIGEST_CHANNEL_KEY] = existingDigest.id;
+    } else {
+      const created = await guild.channels.create({
+        name: digestChannelName,
+        type: ChannelType.GuildText,
+        parent: category.id,
+        topic: DIGEST_CHANNEL.description
+      });
+      channelIds[DIGEST_CHANNEL_KEY] = created.id;
+      await created.send(
+        `**${DIGEST_CHANNEL.emoji} Daily Digest**
+${DIGEST_CHANNEL.description}
+
+_Jarvis will post your daily summary here every evening at 9pm._`
+      ).catch(() => {
+      });
+    }
+    const workspace = {
+      guildId,
+      guildName: guild.name,
+      categoryId: category.id,
+      channels: channelIds
+    };
+    const rows = await db.select().from(channelLinks).where(and9(eq14(channelLinks.userId, userId2), eq14(channelLinks.channel, "discord"))).limit(1);
+    if (rows.length > 0) {
+      const existing = rows[0].metadata || {};
+      const existingAllowlist = existing.allowlistedGuilds || [];
+      const workspaceEntries = WORKSPACE_TOPICS.map((topic) => ({
+        guildId,
+        guildName: guild.name,
+        channelId: channelIds[topic.key],
+        channelName: `${topic.emoji}${topic.name}`,
+        requireMention: false
+      }));
+      const workspaceChannelIds = new Set(Object.values(channelIds));
+      const keptExisting = existingAllowlist.filter(
+        (g) => !(g.guildId === guildId && workspaceChannelIds.has(g.channelId))
+      );
+      const mergedAllowlist = [...keptExisting, ...workspaceEntries];
+      await db.update(channelLinks).set({ metadata: { ...existing, workspace, allowlistedGuilds: mergedAllowlist } }).where(and9(eq14(channelLinks.userId, userId2), eq14(channelLinks.channel, "discord")));
+    }
+    return { ok: true, workspace };
+  } catch (err) {
+    console.error("[Workspace] setup failed:", err);
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  } finally {
+    setupInProgress.delete(guildId);
+  }
+}
+async function postToTopicChannel(client, workspace, topicKey, text2) {
+  const channelId = workspace.channels[topicKey] ?? workspace.channels["thinking"];
+  if (!channelId) return false;
+  try {
+    const channel = await client.channels.fetch(channelId);
+    if (!channel || !channel.isTextBased()) return false;
+    const chunks = splitIntoChunks(text2, 1900);
+    for (const chunk of chunks) {
+      await channel.send(chunk);
+    }
+    return true;
+  } catch (err) {
+    console.error("[Workspace] postToTopicChannel failed:", err);
+    return false;
+  }
+}
+function splitIntoChunks(text2, maxLen) {
+  if (text2.length <= maxLen) return [text2];
+  const chunks = [];
+  while (text2.length > 0) {
+    let cut = maxLen;
+    if (text2.length > maxLen) {
+      const nl = text2.lastIndexOf("\n", maxLen);
+      if (nl > maxLen * 0.5) cut = nl + 1;
+    }
+    chunks.push(text2.slice(0, cut));
+    text2 = text2.slice(cut);
+  }
+  return chunks;
+}
+function getTopicForChannel(workspace, channelId) {
+  if (!workspace) return null;
+  for (const [key, id] of Object.entries(workspace.channels)) {
+    if (id === channelId) {
+      return WORKSPACE_TOPICS.find((t) => t.key === key) ?? null;
+    }
+  }
+  return null;
+}
+var DIGEST_CHANNEL_KEY, DIGEST_CHANNEL, WORKSPACE_TOPICS, setupInProgress;
+var init_workspace = __esm({
+  "server/discord/workspace.ts"() {
+    "use strict";
+    init_db();
+    init_schema();
+    DIGEST_CHANNEL_KEY = "daily-digest";
+    DIGEST_CHANNEL = {
+      key: DIGEST_CHANNEL_KEY,
+      name: "daily-digest",
+      emoji: "\u{1F4F0}",
+      description: "Jarvis daily summary: completed automations, pending approvals, agent activity, and tomorrow's schedule."
+    };
+    WORKSPACE_TOPICS = [
+      {
+        key: "tasks",
+        emoji: "\u{1F4CB}",
+        name: "tasks",
+        description: "Daily plans, tasks, morning briefings, and to-do tracking.",
+        keywords: ["task", "todo", "plan", "morning", "schedule", "reminder", "deadline", "priority", "checklist", "habit"]
+      },
+      {
+        key: "finance",
+        emoji: "\u{1F4B0}",
+        name: "finance",
+        description: "Money, budgets, expenses, investments, and financial goals.",
+        keywords: ["money", "finance", "budget", "expense", "income", "invest", "savings", "cost", "revenue", "profit", "debt", "credit", "bank", "tax", "salary", "payment"]
+      },
+      {
+        key: "ideas",
+        emoji: "\u{1F4A1}",
+        name: "ideas",
+        description: "App ideas, product concepts, creative sparks, and feature brainstorms.",
+        keywords: ["idea", "app", "product", "feature", "build", "startup", "prototype", "design", "concept", "innovation", "saas", "tool", "software"]
+      },
+      {
+        key: "business",
+        emoji: "\u{1F4BC}",
+        name: "business",
+        description: "Work, clients, business strategy, goals, and professional growth.",
+        keywords: ["business", "client", "work", "project", "meeting", "strategy", "goal", "company", "sales", "marketing", "partnership", "pitch", "contract", "team"]
+      },
+      {
+        key: "personal",
+        emoji: "\u{1F331}",
+        name: "personal",
+        description: "Health, relationships, personal growth, and life balance.",
+        keywords: ["health", "sleep", "exercise", "workout", "relationship", "family", "friend", "personal", "mindset", "stress", "energy", "mental", "wellness", "habit", "life"]
+      },
+      {
+        key: "thinking",
+        emoji: "\u{1F9E0}",
+        name: "thinking",
+        description: "Jarvis reflections, long-form planning, and strategic thinking logs.",
+        keywords: ["reflect", "think", "insight", "analysis", "review", "retrospective", "learn", "pattern", "observation"]
+      }
+    ];
+    setupInProgress = /* @__PURE__ */ new Set();
+  }
+});
+
+// server/discord/approvalLearning.ts
+var approvalLearning_exports = {};
+__export(approvalLearning_exports, {
+  recordApprovalSignal: () => recordApprovalSignal
+});
+function wordCount(text2) {
+  return text2.trim().split(/\s+/).filter(Boolean).length;
+}
+function approximateTone(text2) {
+  const lower = text2.toLowerCase();
+  if (lower.includes("bullet") || /^[-•*]/m.test(text2)) return "bullet-point";
+  if (lower.includes("\n\n") && text2.split("\n\n").length > 3) return "multi-section";
+  if (wordCount(text2) < 200) return "short";
+  if (wordCount(text2) > 600) return "long";
+  return "medium-length";
+}
+async function recordApprovalSignal(signal) {
+  try {
+    const wc = wordCount(signal.content);
+    const tone = approximateTone(signal.content);
+    const verdict = signal.approved ? "approved" : "rejected";
+    const typeLabel = signal.contentType || "content";
+    const memoryContent = `User ${verdict} a Discord ${typeLabel} that was ${wc} words and ${tone} in format. Content preview: "${signal.content.slice(0, 120).replace(/\n/g, " ")}${signal.content.length > 120 ? "\u2026" : ""}"`;
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    await db.insert(userMemories).values({
+      id,
+      userId: signal.userId,
+      content: memoryContent,
+      category: "preferences",
+      relevanceScore: signal.approved ? 60 : 55,
+      confidence: 65,
+      sourceType: "discord_approval",
+      sourceRef: signal.messageId
+    });
+    console.log(
+      `[ApprovalLearning] Stored ${verdict} signal for user ${signal.userId}: ${wc} words, ${tone}, type=${typeLabel}`
+    );
+  } catch (err) {
+    console.error("[ApprovalLearning] Failed to record signal:", err);
+  }
+}
+var init_approvalLearning = __esm({
+  "server/discord/approvalLearning.ts"() {
+    "use strict";
+    init_db();
+    init_schema();
+  }
+});
+
+// server/discord/schedules.ts
+import { eq as eq15, and as and10 } from "drizzle-orm";
+function detectTemplate(input) {
+  const lower = input.toLowerCase();
+  for (const tpl of Object.values(SCHEDULE_TEMPLATES)) {
+    if (tpl.triggerPhrases.some((p) => lower.includes(p))) {
+      return tpl;
+    }
+  }
+  return null;
+}
+async function createSchedule(userId2, params) {
+  const [row] = await db.insert(discordChannelSchedules).values({
+    userId: userId2,
+    channelName: params.channelName,
+    label: params.label,
+    cronExpression: params.cronExpression,
+    prompt: params.prompt,
+    guildId: params.guildId,
+    channelId: params.channelId,
+    pipelineNext: params.pipelineNext,
+    enabled: true
+  }).returning();
+  return row;
+}
+async function listSchedules(userId2) {
+  return db.select().from(discordChannelSchedules).where(eq15(discordChannelSchedules.userId, userId2));
+}
+async function getSchedule(id) {
+  const rows = await db.select().from(discordChannelSchedules).where(eq15(discordChannelSchedules.id, id)).limit(1);
+  return rows[0] ?? null;
+}
+async function deleteSchedule(userId2, id) {
+  await db.delete(discordChannelSchedules).where(
+    and10(
+      eq15(discordChannelSchedules.id, id),
+      eq15(discordChannelSchedules.userId, userId2)
+    )
+  );
+}
+async function toggleSchedule(userId2, id, enabled) {
+  await db.update(discordChannelSchedules).set({ enabled }).where(
+    and10(
+      eq15(discordChannelSchedules.id, id),
+      eq15(discordChannelSchedules.userId, userId2)
+    )
+  );
+}
+async function runSchedule(id, previousOutput) {
+  const schedule = await getSchedule(id);
+  if (!schedule) {
+    console.warn(`[DiscordSchedules] schedule ${id} not found`);
+    return;
+  }
+  if (!schedule.enabled) {
+    console.log(`[DiscordSchedules] schedule ${id} is disabled \u2014 skipping`);
+    return;
+  }
+  console.log(`[DiscordSchedules] Running schedule "${schedule.label}" for user ${schedule.userId}`);
+  let prompt = schedule.prompt;
+  if (previousOutput) {
+    prompt = prompt.replace(/\{\{previousOutput\}\}/g, previousOutput);
+  }
+  let result = "";
+  try {
+    const agentResult = await runCoachAgent({
+      userId: schedule.userId,
+      userText: prompt,
+      channelName: "Discord Schedule Runner"
+    });
+    result = agentResult.reply || "";
+  } catch (err) {
+    console.error(`[DiscordSchedules] runCoachAgent failed for schedule ${id}:`, err);
+    result = `\u26A0\uFE0F Schedule run failed: ${err instanceof Error ? err.message : String(err)}`;
+  }
+  const isMultiScript = result.includes(SCRIPT_DELIMITER);
+  if (isMultiScript) {
+    const scripts = result.split(SCRIPT_DELIMITER).map((s) => s.trim()).filter(Boolean);
+    console.log(`[DiscordSchedules] Multi-script mode \u2014 posting ${scripts.length} scripts to #${schedule.channelName}`);
+    await postToDiscordChannel(
+      schedule.userId,
+      schedule.channelName,
+      schedule.channelId ?? null,
+      `\u270D\uFE0F **${schedule.label}** \u2014 ${scripts.length} script${scripts.length !== 1 ? "s" : ""} ready for review:`
+    );
+    for (let i = 0; i < scripts.length; i++) {
+      const scriptText = scripts[i];
+      const postBody = scriptText + "\n\n_React \u2705 to generate thumbnail concepts \u2014 \u274C to skip._";
+      const msgId = await postMessageAndGetId(
+        schedule.userId,
+        schedule.channelName,
+        schedule.channelId ?? null,
+        postBody
+      );
+      if (msgId) {
+        await db.insert(discordPendingApprovals).values({
+          messageId: msgId,
+          userId: schedule.userId,
+          channelId: schedule.channelId ?? msgId,
+          type: "script",
+          content: scriptText,
+          onApprove: {
+            type: "run_prompt",
+            prompt: "Generate 3 detailed thumbnail concepts for this YouTube script. For each concept: 1. Background scene description, 2. Main text overlay (bold, short), 3. Color palette (2-3 colors), 4. Composition notes (where the subject sits, camera angle). Script content:\n\n{{content}}",
+            channelName: "ideas"
+          },
+          onReject: { type: "notify_only" },
+          status: "pending"
+        }).onConflictDoNothing();
+        console.log(`[DiscordSchedules] Registered approval for script ${i + 1} (msgId=${msgId})`);
+      }
+      if (i < scripts.length - 1) {
+        await new Promise((r) => setTimeout(r, 1200));
+      }
+    }
+  } else {
+    const header = `\u{1F4CA} **${schedule.label}**
+`;
+    const fullText = header + result;
+    const postInfo = await postMessageAndGetInfo(
+      schedule.userId,
+      schedule.channelName,
+      schedule.channelId ?? null,
+      fullText
+    );
+    if (!postInfo) {
+      console.warn(`[DiscordSchedules] Failed to post schedule ${id} to channel ${schedule.channelName}`);
+    } else {
+      const isDeliverable = result.length > 600 || result.match(/^#{1,3}\s/m) !== null || result.match(/^\*\*[^*]+\*\*/m) !== null && result.length > 300 || result.match(/^\d+\.\s/m) !== null && result.split("\n").length > 8;
+      if (isDeliverable) {
+        const pinned = await pinDiscordMessage(
+          schedule.userId,
+          postInfo.channelId,
+          postInfo.messageId
+        ).catch(() => false);
+        if (pinned) {
+          console.log(`[DiscordSchedules] Auto-pinned report (schedule=${id}, msg=${postInfo.messageId})`);
+        }
+      }
+    }
+  }
+  await db.update(discordChannelSchedules).set({ lastRun: /* @__PURE__ */ new Date(), lastOutput: result.slice(0, 5e3) }).where(eq15(discordChannelSchedules.id, id));
+  if (schedule.pipelineNext) {
+    console.log(`[DiscordSchedules] Chaining to pipeline stage ${schedule.pipelineNext}`);
+    setTimeout(() => {
+      runSchedule(schedule.pipelineNext, result).catch((err) => {
+        console.error(`[DiscordSchedules] Pipeline chain failed for ${schedule.pipelineNext}:`, err);
+      });
+    }, 500);
+  }
+}
+function matchesCron(cron, date2) {
+  const parts = cron.trim().split(/\s+/);
+  if (parts.length !== 5) return false;
+  const [min, hr, dom, mon, dow] = parts;
+  const matches = (field, value) => {
+    if (field === "*") return true;
+    const options = field.split(",").map((s) => parseInt(s, 10));
+    return options.includes(value);
+  };
+  return matches(min, date2.getMinutes()) && matches(hr, date2.getHours()) && matches(dom, date2.getDate()) && matches(mon, date2.getMonth() + 1) && matches(dow, date2.getDay());
+}
+function parseCronExpression(natural) {
+  const lower = natural.toLowerCase();
+  const timeMatch = lower.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/);
+  let hour = 9;
+  let minute = 0;
+  if (timeMatch) {
+    hour = parseInt(timeMatch[1], 10);
+    minute = timeMatch[2] ? parseInt(timeMatch[2], 10) : 0;
+    if (timeMatch[3] === "pm" && hour < 12) hour += 12;
+    if (timeMatch[3] === "am" && hour === 12) hour = 0;
+  }
+  if (lower.includes("monday")) return `${minute} ${hour} * * 1`;
+  if (lower.includes("tuesday")) return `${minute} ${hour} * * 2`;
+  if (lower.includes("wednesday")) return `${minute} ${hour} * * 3`;
+  if (lower.includes("thursday")) return `${minute} ${hour} * * 4`;
+  if (lower.includes("friday")) return `${minute} ${hour} * * 5`;
+  if (lower.includes("saturday")) return `${minute} ${hour} * * 6`;
+  if (lower.includes("sunday")) return `${minute} ${hour} * * 0`;
+  if (lower.includes("weekday")) return `${minute} ${hour} * * 1-5`;
+  if (lower.includes("weekend")) return `${minute} ${hour} * * 0,6`;
+  if (lower.includes("every hour") || lower.includes("hourly")) return `${minute} * * * *`;
+  return `${minute} ${hour} * * *`;
+}
+function nextRunTime(cron) {
+  const now = /* @__PURE__ */ new Date();
+  const check = new Date(now);
+  check.setSeconds(0, 0);
+  check.setMinutes(check.getMinutes() + 1);
+  for (let i = 0; i < 60 * 24 * 7; i++) {
+    if (matchesCron(cron, check)) return new Date(check);
+    check.setMinutes(check.getMinutes() + 1);
+  }
+  return null;
+}
+var SCRIPT_DELIMITER, SCHEDULE_TEMPLATES;
+var init_schedules = __esm({
+  "server/discord/schedules.ts"() {
+    "use strict";
+    init_db();
+    init_schema();
+    init_coachAgent();
+    init_manager();
+    SCRIPT_DELIMITER = "---SCRIPT---";
+    SCHEDULE_TEMPLATES = {
+      stockResearch: {
+        label: "AI Stock Research",
+        channelName: "stock-research",
+        cronExpression: "0 7 * * 1,2,3,4,5",
+        prompt: "Research the top 8 AI infrastructure stocks with competitive moats \u2014 chips, energy, memory, GPUs, and supply chain companies that stand to benefit most from the AI buildout over the next decade. For each stock: company name, ticker symbol, 1-sentence investment thesis, and the single most important news item from the last 24 hours. Format clearly with sections per company. Keep the report concise and actionable.",
+        triggerPhrases: ["stock research", "ai stocks", "stock report", "market research", "ai infrastructure stocks"]
+      },
+      competitorYoutube: {
+        label: "Competitor YouTube Research",
+        channelName: "competitor-research",
+        cronExpression: "0 8 * * *",
+        prompt: "Search YouTube for [TOPIC] videos published in the last 5 days. Rank by total view count (highest first). List the top 15 results in a table: rank | title | channel | total views | days since posted. Add a brief note for any video standing out as unusually high-performing. Keep the report tight and scannable.",
+        triggerPhrases: ["competitor youtube", "youtube research", "competitor research", "youtube competitor"]
+      }
+    };
+  }
+});
+
+// server/discord/approvalActions.ts
+var approvalActions_exports = {};
+__export(approvalActions_exports, {
+  executeApprovalAction: () => executeApprovalAction
+});
+async function executeApprovalAction(userId2, action, content, channelId) {
+  switch (action.type) {
+    case "run_prompt": {
+      const prompt = (action.prompt || "").replace(/\{\{content\}\}/g, content);
+      if (!prompt) return;
+      console.log(`[ApprovalActions] Running prompt for user ${userId2}`);
+      let result = "";
+      try {
+        const agentResult = await runCoachAgent({
+          userId: userId2,
+          userText: prompt,
+          channelName: "Discord Approval"
+        });
+        result = agentResult.reply || "";
+      } catch (err) {
+        console.error("[ApprovalActions] runCoachAgent failed:", err);
+        result = `\u26A0\uFE0F Action failed: ${err instanceof Error ? err.message : String(err)}`;
+      }
+      if (result) {
+        const targetChannelName = action.channelName || null;
+        await postToDiscordChannel(userId2, targetChannelName || "", channelId, result);
+      }
+      break;
+    }
+    case "run_schedule": {
+      if (!action.scheduleId) return;
+      await runSchedule(action.scheduleId);
+      break;
+    }
+    case "spawn_subagent": {
+      const prompt = (action.prompt || "").replace(/\{\{content\}\}/g, content);
+      if (!prompt) return;
+      await submitAgentJob({
+        userId: userId2,
+        agentType: action.agentType || "research",
+        title: action.title || "Discord approval task",
+        prompt
+      });
+      break;
+    }
+    case "notify_only":
+    default:
+      break;
+  }
+}
+var init_approvalActions = __esm({
+  "server/discord/approvalActions.ts"() {
+    "use strict";
+    init_coachAgent();
+    init_manager();
+    init_schedules();
+    init_jobQueue();
+  }
+});
+
 // server/discord/manager.ts
-import { Client as Client3, GatewayIntentBits, Events, Partials } from "discord.js";
-import { eq as eq13, and as and9 } from "drizzle-orm";
+var manager_exports = {};
+__export(manager_exports, {
+  WORKSPACE_TOPICS: () => WORKSPACE_TOPICS,
+  bootAllBots: () => bootAllBots,
+  bootSharedBot: () => bootSharedBot,
+  classifyTopic: () => classifyTopic,
+  completePairing: () => completePairing,
+  createDiscordChannel: () => createDiscordChannel,
+  deleteDiscordChannel: () => deleteDiscordChannel,
+  getBotStatus: () => getBotStatus,
+  getChannelsForGuild: () => getChannelsForGuild,
+  getGuildsForUser: () => getGuildsForUser,
+  getPairingCodeFor: () => getPairingCodeFor,
+  pinDiscordMessage: () => pinDiscordMessage,
+  postMessageAndGetId: () => postMessageAndGetId,
+  postMessageAndGetInfo: () => postMessageAndGetInfo,
+  postToDiscordChannel: () => postToDiscordChannel,
+  postToDiscordChannelById: () => postToDiscordChannelById,
+  postToDiscordWorkspace: () => postToDiscordWorkspace,
+  registerNamedAgent: () => registerNamedAgent,
+  seedSeenMessageIds: () => seedSeenMessageIds,
+  sendToDiscordUser: () => sendToDiscordUser,
+  setupDiscordWorkspace: () => setupDiscordWorkspace,
+  startUserBot: () => startUserBot,
+  stopUserBot: () => stopUserBot
+});
+import { Client as Client3, GatewayIntentBits, Events, Partials, DMChannel } from "discord.js";
+import { eq as eq16, and as and11, sql as sql9 } from "drizzle-orm";
+function getClientForUser(userId2) {
+  return botClients.get(userId2) ?? botClients.get(SHARED_BOT_KEY);
+}
+async function claimMessageId(messageId) {
+  const seenAt = Date.now();
+  seenMessageIds.set(messageId, seenAt);
+  const timeout = new Promise((resolve4) => setTimeout(() => resolve4(null), 2e3));
+  try {
+    const dbCall = db.execute(sql9`
+      INSERT INTO discord_seen_messages (message_id, seen_at)
+      VALUES (${messageId}, ${seenAt})
+      ON CONFLICT (message_id) DO NOTHING
+      RETURNING message_id
+    `);
+    const result = await Promise.race([dbCall, timeout]);
+    if (result === null) {
+      console.warn(`[DiscordManager] claimMessageId timed out (>2s) for id=${messageId} \u2014 allowing (in-memory claim)`);
+      return true;
+    }
+    const rows = result.rows ?? (Array.isArray(result) ? result : []);
+    if (rows.length === 0) {
+      seenMessageIds.delete(messageId);
+      console.log(`[DiscordManager] claimMessageId lost DB race for id=${messageId} \u2014 dropping`);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.warn("[DiscordManager] claimMessageId DB error (allowing via in-memory):", err);
+    return true;
+  }
+}
+async function seedSeenMessageIds() {
+  try {
+    const cutoff = Date.now() - SEEN_MESSAGE_TTL_MS;
+    const rows = await db.execute(sql9`
+      SELECT message_id, seen_at FROM discord_seen_messages
+      WHERE seen_at > ${cutoff}
+    `);
+    const items = rows.rows ?? (Array.isArray(rows) ? rows : []);
+    let count = 0;
+    for (const row of items) {
+      seenMessageIds.set(row.message_id, Number(row.seen_at));
+      count++;
+    }
+    if (count > 0) {
+      console.log(`[DiscordManager] Seeded ${count} recent message ID(s) from DB`);
+    }
+  } catch (err) {
+    console.warn("[DiscordManager] seedSeenMessageIds failed (non-fatal):", err);
+  }
+}
 function generateCode(len = 6) {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let code = "";
@@ -5434,7 +7454,7 @@ function generateCode(len = 6) {
 }
 async function lookupLink(userId2) {
   try {
-    const rows = await db.select().from(channelLinks).where(and9(eq13(channelLinks.userId, userId2), eq13(channelLinks.channel, "discord"))).limit(1);
+    const rows = await db.select().from(channelLinks).where(and11(eq16(channelLinks.userId, userId2), eq16(channelLinks.channel, "discord"))).limit(1);
     const row = rows[0];
     if (!row) return null;
     return { address: row.address, meta: row.metadata || {} };
@@ -5445,7 +7465,7 @@ async function lookupLink(userId2) {
 }
 async function lookupUserByDiscordId(discordUserId) {
   try {
-    const rows = await db.select().from(channelLinks).where(and9(eq13(channelLinks.channel, "discord"), eq13(channelLinks.address, discordUserId))).limit(1);
+    const rows = await db.select().from(channelLinks).where(and11(eq16(channelLinks.channel, "discord"), eq16(channelLinks.address, discordUserId))).limit(1);
     const row = rows[0];
     if (!row) return null;
     return { userId: row.userId, meta: row.metadata || {} };
@@ -5457,26 +7477,74 @@ async function lookupUserByDiscordId(discordUserId) {
 function buildMessageHandler(botOwnerId, client) {
   return async (message) => {
     if (message.author.bot) return;
+    if (client.user && message.author.id === client.user.id) return;
+    if (seenMessageIds.has(message.id)) {
+      console.log(`[DiscordManager] duplicate message dropped (in-memory, id=${message.id})`);
+      return;
+    }
+    const claimed = await claimMessageId(message.id);
+    if (!claimed) {
+      console.log(`[DiscordManager] duplicate message dropped (db atomic claim, id=${message.id})`);
+      return;
+    }
     const isDM = message.channel.isDMBased();
     const discordUserId = message.author.id;
     const discordUsername = message.author.tag || message.author.username;
+    console.log(`[DiscordManager] message from ${discordUsername} (${discordUserId}) isDM=${isDM} contentLen=${message.content?.length ?? 0} mentionsBot=${message.mentions.users.has(client.user?.id ?? "")}`);
     if (!isDM) {
-      const link = await lookupLink(botOwnerId);
-      if (!link) return;
-      if (link.address !== discordUserId) return;
-      const allowed = link.meta.allowlistedGuilds || [];
-      const guildId = message.guild?.id ?? "";
-      const channelId = message.channelId;
-      const guildEntry = allowed.find((g) => g.guildId === guildId && g.channelId === channelId);
-      if (!guildEntry) return;
-      if (guildEntry.requireMention) {
-        const botId = client.user?.id;
-        const mentioned = message.mentions.users.has(botId ?? "");
-        if (!mentioned) return;
+      if (botOwnerId === SHARED_BOT_KEY) {
+        const sharedPaired = await lookupUserByDiscordId(discordUserId);
+        if (sharedPaired) {
+          const allowed = sharedPaired.meta.allowlistedGuilds || [];
+          const guildId = message.guild?.id ?? "";
+          const channelId = message.channelId;
+          const botId = client.user?.id;
+          const mentioned = message.mentions.users.has(botId ?? "");
+          if (allowed.length === 0) {
+            console.log(`[DiscordManager] shared guild msg accepted \u2014 no allowlist, paired user`);
+          } else {
+            const guildEntry = allowed.find((g) => g.guildId === guildId && g.channelId === channelId);
+            if (!guildEntry) {
+              console.log(`[DiscordManager] shared guild msg ignored \u2014 channel ${channelId} not in allowlist`);
+              return;
+            }
+            if (guildEntry.requireMention && !mentioned) {
+              console.log(`[DiscordManager] shared guild msg ignored \u2014 requireMention=true but bot not @mentioned`);
+              return;
+            }
+          }
+        }
+      } else {
+        const link = await lookupLink(botOwnerId);
+        if (link) {
+          if (link.address !== discordUserId) {
+            console.log(`[DiscordManager] guild msg ignored \u2014 sender ${discordUserId} != paired ${link.address}`);
+            return;
+          }
+          const allowed = link.meta.allowlistedGuilds || [];
+          const guildId = message.guild?.id ?? "";
+          const channelId = message.channelId;
+          const botId = client.user?.id;
+          const mentioned = message.mentions.users.has(botId ?? "");
+          if (allowed.length === 0) {
+            console.log(`[DiscordManager] guild msg accepted \u2014 no allowlist, paired user, mention not required`);
+          } else {
+            const guildEntry = allowed.find((g) => g.guildId === guildId && g.channelId === channelId);
+            if (!guildEntry) {
+              console.log(`[DiscordManager] guild msg ignored \u2014 channel ${channelId} not in allowlist`);
+              return;
+            }
+            if (guildEntry.requireMention && !mentioned) {
+              console.log(`[DiscordManager] guild msg ignored \u2014 requireMention=true but bot not @mentioned`);
+              return;
+            }
+          }
+        }
       }
     }
     const pairedUser = await lookupUserByDiscordId(discordUserId);
-    if (!pairedUser || pairedUser.userId !== botOwnerId) {
+    console.log(`[DiscordManager] pairedUser lookup for ${discordUserId}: ${pairedUser ? `userId=${pairedUser.userId}` : "not found"}`);
+    if (!pairedUser || botOwnerId !== SHARED_BOT_KEY && pairedUser.userId !== botOwnerId) {
       let code = null;
       for (const [c, rec] of pairingCodes) {
         if (rec.botOwnerId === botOwnerId && rec.discordUserId === discordUserId && rec.expiresAt > Date.now()) {
@@ -5497,90 +7565,178 @@ function buildMessageHandler(botOwnerId, client) {
       await message.reply(
         `\u{1F44B} Hey! I'm Jarvis, your AI productivity coach.
 
-To link this Discord account, use **either** of these:
+To link this Discord account:
+1. Open the Jarvis app
+2. Go to **Settings** \u2192 scroll to **Channels** \u2192 tap **Discord**
+3. Enter this code:
 
-**Option A \u2014 in the app:** Profile \u2192 Connected Channels \u2192 Discord \u2192 enter code
-**Option B \u2014 via Telegram:** Send \`approve ${code}\` to your Jarvis Telegram bot
-
-Your pairing code: \`\`\`${code}\`\`\`
-Valid for 1 hour. Message me again once linked!`
+\`\`\`${code}\`\`\`
+*(Valid for 1 hour. Message me again if it expires.)*`
       ).catch((err) => console.error("[DiscordManager] reply failed:", err));
       return;
     }
     const userId2 = pairedUser.userId;
-    db.update(channelLinks).set({ lastSeenAt: /* @__PURE__ */ new Date() }).where(and9(eq13(channelLinks.userId, userId2), eq13(channelLinks.channel, "discord"))).catch(() => {
+    const prevLock = userProcessingLocks.get(userId2) ?? Promise.resolve();
+    let releaseLock;
+    const thisLock = new Promise((resolve4) => {
+      releaseLock = resolve4;
     });
-    let userText = message.content?.trim() || "";
-    const audioAtt = [...message.attachments.values()].find(
-      (a) => a.contentType?.startsWith("audio/") || a.contentType?.startsWith("video/")
-    );
-    if (audioAtt && !userText) {
-      let typingMsg = null;
-      try {
-        typingMsg = await message.channel.send("\u{1F3A4} Transcribing voice message\u2026");
-        const resp = await fetch(audioAtt.url);
-        const arrBuf = await resp.arrayBuffer();
-        const buf = Buffer.from(arrBuf);
-        const { speechToText: speechToText2, detectAudioFormat: detectAudioFormat2 } = await Promise.resolve().then(() => (init_client(), client_exports));
-        const format = detectAudioFormat2(buf);
-        const transcript = await speechToText2(buf, format);
-        if (!transcript?.trim()) {
-          await typingMsg.edit("Sorry, I couldn't make out that voice message \u2014 could you type it out?");
-          return;
-        }
-        userText = transcript.trim();
-        const preview = userText.length > 100 ? userText.slice(0, 100) + "\u2026" : userText;
-        await typingMsg.edit(`\u{1F3A4} *"${preview}"*`);
-      } catch (err) {
-        console.error("[DiscordManager] voice transcription failed:", err);
-        if (typingMsg) await typingMsg.edit("Sorry, transcription failed \u2014 please type your message.").catch(() => {
-        });
-        return;
-      }
-    }
-    if (!userText) return;
-    const link2 = await lookupLink(botOwnerId);
-    const workspace = link2?.meta.workspace;
-    const topicForChannel = getTopicForChannel(workspace, message.channelId);
-    const channelLabel = topicForChannel ? `Discord #${topicForChannel.emoji}${topicForChannel.name}` : "Discord";
-    const topicContext = topicForChannel ? `
-
-[Workspace channel: ${topicForChannel.emoji} ${topicForChannel.name.charAt(0).toUpperCase() + topicForChannel.name.slice(1)}. ${topicForChannel.description} Keep your response focused on this life area unless the user explicitly asks about something else.]` : "";
-    let placeholder = null;
+    const chainedLock = prevLock.then(() => thisLock).catch(() => thisLock);
+    userProcessingLocks.set(userId2, chainedLock);
     try {
-      placeholder = await message.channel.send("_Thinking\u2026_");
+      await prevLock;
     } catch {
     }
-    let streamBuf = "";
-    let lastEditAt = 0;
-    const STREAM_INTERVAL = 900;
-    const onToken = (chunk) => {
-      streamBuf += chunk;
-      const now = Date.now();
-      if (placeholder && now - lastEditAt >= STREAM_INTERVAL && streamBuf.length > 0) {
-        placeholder.edit(streamBuf + " \u258C").catch(() => {
-        });
-        lastEditAt = now;
-      }
-    };
     try {
-      const result = await runCoachAgent({
-        userId: userId2,
-        userText: topicContext ? userText + topicContext : userText,
-        channelName: channelLabel,
-        onToken
+      db.update(channelLinks).set({ lastSeenAt: /* @__PURE__ */ new Date() }).where(and11(eq16(channelLinks.userId, userId2), eq16(channelLinks.channel, "discord"))).catch(() => {
       });
-      const reply = result.reply || "Sorry, I couldn't generate a response right now.";
-      if (placeholder) {
-        await editOrSendLong(placeholder, reply);
-      } else {
-        await sendLong(message.channel, reply);
+      const incomingGuildId = message.guild?.id;
+      if (!isDM && incomingGuildId && !pairedUser.meta.workspace?.guildId) {
+        const updatedMeta = {
+          ...pairedUser.meta,
+          workspace: {
+            guildId: incomingGuildId,
+            guildName: message.guild?.name ?? "",
+            // Preserve any existing categoryId/channels from a prior partial
+            // or full workspace setup; use empty defaults if absent.
+            categoryId: pairedUser.meta.workspace?.categoryId ?? "",
+            channels: pairedUser.meta.workspace?.channels ?? {}
+          }
+        };
+        await db.update(channelLinks).set({ metadata: updatedMeta }).where(and11(eq16(channelLinks.userId, userId2), eq16(channelLinks.channel, "discord"))).then(async () => {
+          console.log(`[DiscordManager] auto-saved guildId=${incomingGuildId} for user ${userId2}`);
+          const dmChannelId = pairedUser.meta.dmChannelId;
+          if (dmChannelId) {
+            try {
+              const dmChannel = await client.channels.fetch(dmChannelId);
+              if (dmChannel instanceof DMChannel) {
+                const guildName = updatedMeta.workspace?.guildName || incomingGuildId;
+                await dmChannel.send(
+                  `\u2705 I've linked to your **${guildName}** server \u2014 you can now ask me to create or delete channels there.`
+                );
+              }
+            } catch (dmErr) {
+              console.warn("[DiscordManager] auto-link DM failed (non-fatal):", dmErr);
+            }
+          }
+        }).catch((err) => console.error("[DiscordManager] auto-save guild ID failed:", err));
       }
-    } catch (err) {
-      console.error("[DiscordManager] runCoachAgent failed:", err);
-      if (placeholder) {
-        await placeholder.edit("Sorry, something went wrong \u2014 please try again.").catch(() => {
-        });
+      let userText = message.content?.trim() || "";
+      const audioAtt = [...message.attachments.values()].find(
+        (a) => a.contentType?.startsWith("audio/") || a.contentType?.startsWith("video/")
+      );
+      let typingMsg = null;
+      if (audioAtt && !userText) {
+        try {
+          typingMsg = await message.channel.send("\u{1F3A4} Transcribing voice message\u2026");
+          const resp = await fetch(audioAtt.url);
+          const arrBuf = await resp.arrayBuffer();
+          const buf = Buffer.from(arrBuf);
+          const { speechToText: speechToText2, detectAudioFormat: detectAudioFormat2 } = await Promise.resolve().then(() => (init_client(), client_exports));
+          const format = detectAudioFormat2(buf);
+          const transcript = await speechToText2(buf, format);
+          if (!transcript?.trim()) {
+            await typingMsg.edit("Sorry, I couldn't make out that voice message \u2014 could you type it out?");
+            return;
+          }
+          userText = transcript.trim();
+          const preview = userText.length > 100 ? userText.slice(0, 100) + "\u2026" : userText;
+          await typingMsg.edit(`\u{1F3A4} *"${preview}"* \u2014 _Thinking\u2026_`);
+        } catch (err) {
+          console.error("[DiscordManager] voice transcription failed:", err);
+          if (typingMsg) await typingMsg.edit("Sorry, transcription failed \u2014 please type your message.").catch(() => {
+          });
+          return;
+        }
+      }
+      if (!userText) {
+        console.log(`[DiscordManager] msg dropped \u2014 empty content (MessageContent intent may not be enabled in Discord Developer Portal for guild messages)`);
+        return;
+      }
+      console.log(`[DiscordManager] processing message: "${userText.slice(0, 80)}\u2026"`);
+      const link2 = await lookupLink(userId2);
+      const workspace = link2?.meta.workspace;
+      const topicForChannel = getTopicForChannel(workspace, message.channelId);
+      const channelLabel = topicForChannel ? `Discord #${topicForChannel.emoji}${topicForChannel.name}` : "Discord";
+      const topicContext = topicForChannel ? `
+
+[Workspace channel: ${topicForChannel.emoji} ${topicForChannel.name.charAt(0).toUpperCase() + topicForChannel.name.slice(1)}. ${topicForChannel.description} Keep your response focused on this life area unless the user explicitly asks about something else.]` : "";
+      const namedAgent = !isDM ? await getNamedAgentForChannel(userId2, message.channelId) : null;
+      const personaPrefix = namedAgent ? `[You are ${namedAgent.name}. ${namedAgent.persona}]
+
+` : "";
+      let placeholder = typingMsg;
+      if (!placeholder) {
+        try {
+          placeholder = await message.channel.send("_Thinking\u2026_");
+        } catch {
+        }
+      }
+      let streamBuf = "";
+      let lastEditAt = 0;
+      const STREAM_INTERVAL = 900;
+      const onToken = (chunk) => {
+        streamBuf += chunk;
+        const now = Date.now();
+        if (placeholder && now - lastEditAt >= STREAM_INTERVAL && streamBuf.length > 0) {
+          placeholder.edit(streamBuf + " \u258C").catch(() => {
+          });
+          lastEditAt = now;
+        }
+      };
+      const fullUserText = personaPrefix + (topicContext ? userText + topicContext : userText);
+      try {
+        const discordGuildId = message.guild?.id || void 0;
+        let result = null;
+        let streamingFailed = false;
+        try {
+          result = await runCoachAgent({
+            userId: userId2,
+            userText: fullUserText,
+            channelName: namedAgent ? `Discord #${namedAgent.name.toLowerCase()}` : channelLabel,
+            onToken,
+            discordGuildId
+          });
+          if (!result.rawReply && streamBuf.length === 0) {
+            console.warn("[DiscordManager] streaming reply was empty and no streamed tokens \u2014 retrying without streaming");
+            streamingFailed = true;
+          } else if (!result.rawReply && streamBuf.length > 0) {
+            console.warn("[DiscordManager] rawReply empty but streaming produced content \u2014 skipping fallback to avoid double response");
+          }
+        } catch (streamErr) {
+          if (streamBuf.length > 0) {
+            console.warn("[DiscordManager] streaming runCoachAgent threw after producing content \u2014 finalising with streamed buffer");
+          } else {
+            console.warn("[DiscordManager] streaming runCoachAgent threw \u2014 retrying without streaming:", streamErr);
+            streamingFailed = true;
+          }
+        }
+        if (streamingFailed) {
+          result = await runCoachAgent({
+            userId: userId2,
+            userText: fullUserText,
+            channelName: namedAgent ? `Discord #${namedAgent.name.toLowerCase()}` : channelLabel,
+            discordGuildId
+            // no onToken → forces non-streaming path
+          });
+        }
+        const reply = result?.reply || (streamBuf.length > 0 ? streamBuf : "Sorry, I couldn't generate a response right now.");
+        if (placeholder) {
+          await editOrSendLong(placeholder, reply);
+        } else {
+          await sendLong(message.channel, reply);
+        }
+      } catch (err) {
+        console.error("[DiscordManager] runCoachAgent failed:", err);
+        if (placeholder) {
+          await placeholder.edit("Sorry, something went wrong \u2014 please try again.").catch(() => {
+          });
+        }
+      }
+    } finally {
+      releaseLock();
+      if (userProcessingLocks.get(userId2) === chainedLock) {
+        userProcessingLocks.delete(userId2);
       }
     }
   };
@@ -5623,14 +7779,16 @@ async function startUserBot(userId2, botToken) {
       GatewayIntentBits.GuildMessages,
       GatewayIntentBits.MessageContent,
       GatewayIntentBits.DirectMessages,
-      GatewayIntentBits.DirectMessageReactions
+      GatewayIntentBits.DirectMessageReactions,
+      GatewayIntentBits.GuildMessageReactions
     ],
-    partials: [Partials.Channel, Partials.Message]
+    partials: [Partials.Channel, Partials.Message, Partials.Reaction]
   });
   client.once(Events.ClientReady, (c) => {
     console.log(`[DiscordManager] Bot ready for user ${userId2}: ${c.user.tag}`);
   });
   client.on(Events.MessageCreate, buildMessageHandler(userId2, client));
+  client.on(Events.MessageReactionAdd, buildReactionHandler(userId2));
   client.on(Events.Error, (err) => {
     console.error(`[DiscordManager] Client error for user ${userId2}:`, err.message);
   });
@@ -5652,16 +7810,17 @@ function stopUserBot(userId2) {
   }
 }
 function getBotStatus(userId2) {
-  const client = botClients.get(userId2);
+  const client = getClientForUser(userId2);
   if (!client) return "stopped";
   return client.isReady() ? "running" : "stopped";
 }
 async function bootAllBots() {
   try {
+    await seedSeenMessageIds();
     const { db: _db } = await Promise.resolve().then(() => (init_db(), db_exports));
-    const { sql: sql20 } = await import("drizzle-orm");
+    const { sql: sql31 } = await import("drizzle-orm");
     const rows = await _db.execute(
-      sql20`SELECT user_id, access_token FROM user_oauth_tokens WHERE provider = 'discord_bot'`
+      sql31`SELECT user_id, access_token FROM user_oauth_tokens WHERE provider = 'discord_bot'`
     );
     const items = rows.rows ?? (Array.isArray(rows) ? rows : []);
     let started = 0;
@@ -5677,6 +7836,14 @@ async function bootAllBots() {
     console.error("[DiscordManager] bootAllBots failed:", err);
   }
 }
+function getPairingCodeFor(botOwnerId, discordUserId) {
+  for (const [code, rec] of pairingCodes) {
+    if (rec.botOwnerId === botOwnerId && rec.discordUserId === discordUserId && rec.expiresAt > Date.now()) {
+      return code;
+    }
+  }
+  return null;
+}
 async function completePairing(userId2, code) {
   const rec = pairingCodes.get(code.toUpperCase());
   if (!rec) return { ok: false, error: "Invalid or expired pairing code." };
@@ -5684,7 +7851,7 @@ async function completePairing(userId2, code) {
     pairingCodes.delete(code.toUpperCase());
     return { ok: false, error: "Pairing code has expired." };
   }
-  if (rec.botOwnerId !== userId2) {
+  if (rec.botOwnerId !== SHARED_BOT_KEY && rec.botOwnerId !== userId2) {
     return { ok: false, error: "This pairing code belongs to a different account." };
   }
   try {
@@ -5694,10 +7861,10 @@ async function completePairing(userId2, code) {
       allowlistedGuilds: []
     };
     await db.delete(channelLinks).where(
-      and9(eq13(channelLinks.userId, userId2), eq13(channelLinks.channel, "discord"))
+      and11(eq16(channelLinks.userId, userId2), eq16(channelLinks.channel, "discord"))
     );
     await db.delete(channelLinks).where(
-      and9(eq13(channelLinks.channel, "discord"), eq13(channelLinks.address, rec.discordUserId))
+      and11(eq16(channelLinks.channel, "discord"), eq16(channelLinks.address, rec.discordUserId))
     );
     await db.insert(channelLinks).values({
       userId: userId2,
@@ -5711,7 +7878,7 @@ async function completePairing(userId2, code) {
     return { ok: false, error: "Database error \u2014 please try again." };
   }
   pairingCodes.delete(code.toUpperCase());
-  const client = botClients.get(userId2);
+  const client = getClientForUser(userId2);
   if (client) {
     try {
       const dmChannel = await client.channels.fetch(rec.discordDmChannelId);
@@ -5726,7 +7893,7 @@ async function completePairing(userId2, code) {
   return { ok: true, discordUsername: rec.discordUsername };
 }
 async function sendToDiscordUser(userId2, text2) {
-  const client = botClients.get(userId2);
+  const client = getClientForUser(userId2);
   if (!client || !client.isReady()) return false;
   const link = await lookupLink(userId2);
   if (!link) return false;
@@ -5737,7 +7904,7 @@ async function sendToDiscordUser(userId2, text2) {
       const discordUser = await client.users.fetch(discordUserId);
       const dm = await discordUser.createDM();
       dmChannelId = dm.id;
-      await db.update(channelLinks).set({ metadata: { ...link.meta, dmChannelId } }).where(and9(eq13(channelLinks.userId, userId2), eq13(channelLinks.channel, "discord")));
+      await db.update(channelLinks).set({ metadata: { ...link.meta, dmChannelId } }).where(and11(eq16(channelLinks.userId, userId2), eq16(channelLinks.channel, "discord")));
     }
     const channel = await client.channels.fetch(dmChannelId);
     if (!channel) return false;
@@ -5752,12 +7919,12 @@ async function sendToDiscordUser(userId2, text2) {
   }
 }
 function getGuildsForUser(userId2) {
-  const client = botClients.get(userId2);
+  const client = getClientForUser(userId2);
   if (!client || !client.isReady()) return [];
   return client.guilds.cache.map((g) => ({ id: g.id, name: g.name, icon: g.iconURL() }));
 }
 async function getChannelsForGuild(userId2, guildId) {
-  const client = botClients.get(userId2);
+  const client = getClientForUser(userId2);
   if (!client || !client.isReady()) return [];
   try {
     const guild = await client.guilds.fetch(guildId);
@@ -5767,22 +7934,403 @@ async function getChannelsForGuild(userId2, guildId) {
     return [];
   }
 }
-async function setupDiscordWorkspace(userId2, guildId) {
-  const client = botClients.get(userId2);
+async function createDiscordChannel(userId2, opts) {
+  const client = getClientForUser(userId2);
   if (!client || !client.isReady()) {
-    return { ok: false, error: "Discord bot is not running. Make sure your bot token is saved and the bot is in the server." };
+    return { ok: false, error: "Discord bot is not running." };
+  }
+  const linkRow = await db.select().from(channelLinks).where(and11(eq16(channelLinks.userId, userId2), eq16(channelLinks.channel, "discord"))).limit(1);
+  const linkMeta = linkRow[0]?.metadata ?? {};
+  const linkedGuildId = linkMeta.workspace?.guildId;
+  const resolvedGuildId = linkedGuildId ?? opts.ctxGuildId;
+  if (!resolvedGuildId) {
+    return { ok: false, error: "No linked Discord server found. Please message Jarvis from within your Discord server so it can identify which server to act on." };
+  }
+  if (opts.guildId && opts.guildId !== resolvedGuildId) {
+    return {
+      ok: false,
+      error: `The requested server (${opts.guildId}) does not match your linked Jarvis server (${resolvedGuildId}). Channel creation is only allowed in your linked server.`
+    };
+  }
+  const guildsCache = client.guilds.cache;
+  if (guildsCache.size === 0) {
+    return { ok: false, error: "Bot is not in any Discord server." };
+  }
+  const rawGuild = guildsCache.get(resolvedGuildId);
+  if (!rawGuild) {
+    return { ok: false, error: "Bot is not in the linked Discord server." };
+  }
+  const guild = await rawGuild.fetch();
+  await guild.channels.fetch();
+  const { ChannelType: ChannelType2 } = await import("discord.js");
+  let parentId;
+  if (opts.categoryName) {
+    const cat = guild.channels.cache.find(
+      (ch) => ch.type === ChannelType2.GuildCategory && ch.name.toLowerCase() === opts.categoryName.toLowerCase()
+    );
+    if (cat) parentId = cat.id;
+  }
+  const slug = opts.channelName.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+  const duplicate = guild.channels.cache.find(
+    (ch) => ch.type === ChannelType2.GuildText && ch.name === slug && (parentId ? ch.parentId === parentId : true)
+  );
+  if (duplicate) {
+    return { ok: true, channelId: duplicate.id };
+  }
+  try {
+    const created = await guild.channels.create({
+      name: slug,
+      type: ChannelType2.GuildText,
+      topic: opts.topic,
+      parent: parentId
+    });
+    if (opts.pinMessage) {
+      const msg = await created.send(opts.pinMessage).catch(() => null);
+      if (msg && msg.pin) await msg.pin().catch(() => {
+      });
+    }
+    return { ok: true, channelId: created.id };
+  } catch (err) {
+    return { ok: false, error: err?.message || "Failed to create channel." };
+  }
+}
+async function deleteDiscordChannel(userId2, opts) {
+  const client = getClientForUser(userId2);
+  if (!client || !client.isReady()) {
+    return { ok: false, error: "Discord bot is not running." };
+  }
+  const linkRow = await db.select().from(channelLinks).where(and11(eq16(channelLinks.userId, userId2), eq16(channelLinks.channel, "discord"))).limit(1);
+  const linkMeta = linkRow[0]?.metadata ?? {};
+  const linkedGuildId = linkMeta.workspace?.guildId;
+  const resolvedGuildId = linkedGuildId ?? opts.ctxGuildId;
+  if (!resolvedGuildId) {
+    return { ok: false, error: "No linked Discord server found. Please message Jarvis from within your Discord server so it can identify which server to act on." };
+  }
+  if (opts.guildId && opts.guildId !== resolvedGuildId) {
+    return {
+      ok: false,
+      error: `The requested server (${opts.guildId}) does not match your linked Jarvis server (${resolvedGuildId}). Deletion is only allowed in your linked server.`
+    };
+  }
+  const rawGuild = client.guilds.cache.get(resolvedGuildId);
+  if (!rawGuild) {
+    return { ok: false, error: `Bot is not in the linked server (${resolvedGuildId}).` };
+  }
+  const guild = await rawGuild.fetch();
+  await guild.channels.fetch();
+  const { ChannelType: ChannelType2 } = await import("discord.js");
+  let target;
+  if (opts.channelId) {
+    const ch = guild.channels.cache.get(opts.channelId);
+    if (!ch || ch.type !== ChannelType2.GuildText) {
+      return { ok: false, error: `Channel ID ${opts.channelId} not found or is not a text channel in ${guild.name}.` };
+    }
+    target = ch;
+  } else if (opts.channelName) {
+    const inputLower = opts.channelName.toLowerCase().trim().replace(/^#/, "");
+    const inputSlug = inputLower.replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+    const allMatches = guild.channels.cache.filter((ch) => {
+      if (ch.type !== ChannelType2.GuildText) return false;
+      const chName = ch.name;
+      const chSlug = chName.replace(/[^a-z0-9-]/g, "");
+      return chName === inputLower || chName === inputSlug || chSlug === inputSlug;
+    }).map((ch) => ({ id: ch.id, name: ch.name }));
+    if (allMatches.length === 0) {
+      return { ok: false, error: `No text channel named "${opts.channelName}" found in ${guild.name}.` };
+    }
+    if (allMatches.length > 1) {
+      return { ok: false, ambiguous: true, matches: allMatches };
+    }
+    target = guild.channels.cache.get(allMatches[0].id);
+  }
+  if (!target) {
+    return { ok: false, error: "Please provide either a channel name or channel ID." };
+  }
+  try {
+    const deletedName = target.name;
+    await target.delete("Deleted by Jarvis on user request");
+    console.log(`[DiscordManager] deleted channel #${deletedName} (${target.id}) in guild ${guild.id}`);
+    return { ok: true, channelName: deletedName };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : "Failed to delete channel." };
+  }
+}
+async function setupDiscordWorkspace(userId2, guildId) {
+  const client = getClientForUser(userId2);
+  if (!client || !client.isReady()) {
+    return { ok: false, error: "Discord bot is not running. Make sure the bot is in the server." };
   }
   return setupWorkspace(client, userId2, guildId);
 }
+async function postToDiscordChannelById(userId2, channelId, text2) {
+  const client = getClientForUser(userId2);
+  if (!client || !client.isReady()) return false;
+  try {
+    const { TextChannel } = await import("discord.js");
+    const channel = await client.channels.fetch(channelId);
+    if (!channel || !channel.isTextBased()) return false;
+    const chunks = splitIntoChunks2(text2, 1900);
+    for (const chunk of chunks) {
+      await channel.send(chunk);
+    }
+    return true;
+  } catch (err) {
+    console.error(`[DiscordManager] postToDiscordChannelById failed for channel ${channelId}:`, err);
+    return false;
+  }
+}
+async function postMessageAndGetId(userId2, channelName, channelId, text2) {
+  const info = await postMessageAndGetInfo(userId2, channelName, channelId, text2);
+  return info?.messageId ?? null;
+}
+async function postMessageAndGetInfo(userId2, channelName, channelId, text2) {
+  const client = getClientForUser(userId2);
+  if (!client || !client.isReady()) return null;
+  const { ChannelType: ChannelType2 } = await import("discord.js");
+  try {
+    let targetChannel = null;
+    if (channelId) {
+      try {
+        const ch = await client.channels.fetch(channelId);
+        if (ch && ch.isTextBased()) targetChannel = ch;
+      } catch {
+      }
+    }
+    if (!targetChannel && channelName) {
+      const slug = channelName.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+      for (const guild of client.guilds.cache.values()) {
+        const fetchedGuild = await guild.fetch().catch(() => null);
+        if (!fetchedGuild) continue;
+        const channels2 = await fetchedGuild.channels.fetch().catch(() => null);
+        if (!channels2) continue;
+        const match = channels2.find(
+          (ch) => ch && ch.type === ChannelType2.GuildText && ch.name === slug
+        );
+        if (match) {
+          targetChannel = match;
+          break;
+        }
+      }
+    }
+    if (!targetChannel) return null;
+    const chunks = splitIntoChunks2(text2, 1900);
+    const firstMsg = await targetChannel.send(chunks[0]);
+    for (let i = 1; i < chunks.length; i++) {
+      await targetChannel.send(chunks[i]).catch(() => {
+      });
+    }
+    return { messageId: firstMsg.id, channelId: targetChannel.id };
+  } catch (err) {
+    console.error("[DiscordManager] postMessageAndGetInfo failed:", err);
+    return null;
+  }
+}
 async function postToDiscordWorkspace(userId2, topicKey, text2) {
-  const client = botClients.get(userId2);
+  const client = getClientForUser(userId2);
   if (!client || !client.isReady()) return false;
   const link = await lookupLink(userId2);
   const workspace = link?.meta.workspace;
   if (!workspace) return false;
   return postToTopicChannel(client, workspace, topicKey, text2);
 }
-var botClients, pairingCodes;
+async function postToDiscordChannel(userId2, channelName, channelId, text2) {
+  const client = getClientForUser(userId2);
+  if (!client || !client.isReady()) return false;
+  const { ChannelType: ChannelType2 } = await import("discord.js");
+  try {
+    let targetChannel = null;
+    if (channelId) {
+      try {
+        const ch = await client.channels.fetch(channelId);
+        if (ch && ch.isTextBased()) targetChannel = ch;
+      } catch {
+      }
+    }
+    if (!targetChannel && channelName) {
+      const slug = channelName.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+      for (const guild of client.guilds.cache.values()) {
+        const fetchedGuild = await guild.fetch().catch(() => null);
+        if (!fetchedGuild) continue;
+        const channels2 = await fetchedGuild.channels.fetch().catch(() => null);
+        if (!channels2) continue;
+        const match = channels2.find(
+          (ch) => ch && ch.type === ChannelType2.GuildText && ch.name === slug
+        );
+        if (match) {
+          targetChannel = match;
+          break;
+        }
+      }
+    }
+    if (!targetChannel) {
+      console.warn(`[DiscordManager] postToDiscordChannel: channel not found (name=${channelName}, id=${channelId})`);
+      return false;
+    }
+    const chunks = splitIntoChunks2(text2, 1900);
+    for (const chunk of chunks) {
+      await targetChannel.send(chunk);
+    }
+    return true;
+  } catch (err) {
+    console.error(`[DiscordManager] postToDiscordChannel failed:`, err);
+    return false;
+  }
+}
+async function pinDiscordMessage(userId2, channelId, messageId) {
+  const client = getClientForUser(userId2);
+  if (!client || !client.isReady()) return false;
+  try {
+    const channel = await client.channels.fetch(channelId);
+    if (!channel || !channel.isTextBased()) return false;
+    const msg = await channel.messages.fetch(messageId);
+    if (!msg) return false;
+    await msg.pin();
+    return true;
+  } catch (err) {
+    console.error(`[DiscordManager] pinDiscordMessage failed:`, err);
+    return false;
+  }
+}
+function buildReactionHandler(botOwnerId) {
+  return async (reaction, user) => {
+    try {
+      if (user.bot) return;
+      if (reaction.partial) {
+        try {
+          await reaction.fetch();
+        } catch {
+          return;
+        }
+      }
+      if (reaction.message.partial) {
+        try {
+          await reaction.message.fetch();
+        } catch {
+          return;
+        }
+      }
+      const messageId = reaction.message.id;
+      const emoji = reaction.emoji.name || "";
+      let effectiveUserId = botOwnerId;
+      if (botOwnerId === SHARED_BOT_KEY) {
+        const reactorPaired = await lookupUserByDiscordId(user.id);
+        if (!reactorPaired) return;
+        effectiveUserId = reactorPaired.userId;
+      }
+      const rows = await db.select().from(discordPendingApprovals).where(
+        and11(
+          eq16(discordPendingApprovals.messageId, messageId),
+          eq16(discordPendingApprovals.userId, effectiveUserId),
+          eq16(discordPendingApprovals.status, "pending")
+        )
+      ).limit(1);
+      if (!rows[0]) return;
+      const approval = rows[0];
+      const isApprove = emoji === approval.approveEmoji;
+      const isReject = emoji === approval.rejectEmoji;
+      if (!isApprove && !isReject) return;
+      const newStatus = isApprove ? "approved" : "rejected";
+      await db.update(discordPendingApprovals).set({ status: newStatus, resolvedAt: /* @__PURE__ */ new Date() }).where(eq16(discordPendingApprovals.messageId, messageId));
+      console.log(`[DiscordManager] Approval ${messageId} ${newStatus} via reaction`);
+      const { recordApprovalSignal: recordApprovalSignal2 } = await Promise.resolve().then(() => (init_approvalLearning(), approvalLearning_exports));
+      recordApprovalSignal2({
+        userId: effectiveUserId,
+        approved: isApprove,
+        contentType: approval.type,
+        content: approval.content,
+        channelId: approval.channelId,
+        messageId
+      }).catch(() => {
+      });
+      const actionData = isApprove ? approval.onApprove : approval.onReject;
+      if (actionData) {
+        const { executeApprovalAction: executeApprovalAction2 } = await Promise.resolve().then(() => (init_approvalActions(), approvalActions_exports));
+        executeApprovalAction2(
+          effectiveUserId,
+          actionData,
+          approval.content,
+          approval.channelId
+        ).catch((err) => console.error("[DiscordManager] approval action failed:", err));
+      }
+      try {
+        await reaction.message.react(isApprove ? "\u2705" : "\u274C");
+      } catch {
+      }
+    } catch (err) {
+      console.error("[DiscordManager] buildReactionHandler error:", err);
+    }
+  };
+}
+async function getNamedAgentForChannel(userId2, channelId) {
+  try {
+    const rows = await db.select().from(discordAgents).where(
+      and11(
+        eq16(discordAgents.userId, userId2),
+        eq16(discordAgents.channelId, channelId),
+        eq16(discordAgents.isActive, 1)
+      )
+    ).limit(1);
+    const agent = rows[0];
+    if (!agent || !agent.persona) return null;
+    return { name: agent.name, persona: agent.persona };
+  } catch {
+    return null;
+  }
+}
+async function registerNamedAgent(userId2, params) {
+  const [row] = await db.insert(discordAgents).values({
+    userId: userId2,
+    name: params.name,
+    role: params.role,
+    persona: params.persona,
+    channelId: params.channelId,
+    channelName: params.channelName,
+    isActive: 1,
+    loopEnabled: params.loopEnabled ? 1 : 0,
+    loopIntervalMinutes: params.loopIntervalMinutes ?? 60,
+    loopPrompt: params.loopPrompt
+  }).returning({ id: discordAgents.id });
+  return row.id;
+}
+async function bootSharedBot() {
+  const token = process.env.DISCORD_BOT_TOKEN;
+  if (!token) {
+    console.log("[DiscordManager] DISCORD_BOT_TOKEN not set \u2014 shared bot disabled.");
+    return;
+  }
+  const existing = botClients.get(SHARED_BOT_KEY);
+  if (existing && existing.isReady()) {
+    console.log("[DiscordManager] Shared bot already running \u2014 skipping boot.");
+    return;
+  }
+  const client = new Client3({
+    intents: [
+      GatewayIntentBits.Guilds,
+      GatewayIntentBits.GuildMessages,
+      GatewayIntentBits.MessageContent,
+      GatewayIntentBits.DirectMessages,
+      GatewayIntentBits.DirectMessageReactions,
+      GatewayIntentBits.GuildMessageReactions
+    ],
+    partials: [Partials.Channel, Partials.Message, Partials.Reaction]
+  });
+  client.once(Events.ClientReady, (c) => {
+    console.log(`[DiscordManager] Shared bot ready: ${c.user.tag}`);
+  });
+  client.on(Events.MessageCreate, buildMessageHandler(SHARED_BOT_KEY, client));
+  client.on(Events.MessageReactionAdd, buildReactionHandler(SHARED_BOT_KEY));
+  client.on(Events.Error, (err) => {
+    console.error("[DiscordManager] Shared bot error:", err.message);
+  });
+  botClients.set(SHARED_BOT_KEY, client);
+  try {
+    await client.login(token);
+  } catch (err) {
+    console.error("[DiscordManager] Shared bot login failed:", err);
+    botClients.delete(SHARED_BOT_KEY);
+  }
+}
+var botClients, pairingCodes, SHARED_BOT_KEY, seenMessageIds, SEEN_MESSAGE_TTL_MS, userProcessingLocks;
 var init_manager = __esm({
   "server/discord/manager.ts"() {
     "use strict";
@@ -5793,11 +8341,23 @@ var init_manager = __esm({
     init_workspace();
     botClients = /* @__PURE__ */ new Map();
     pairingCodes = /* @__PURE__ */ new Map();
+    SHARED_BOT_KEY = "__shared__";
+    seenMessageIds = /* @__PURE__ */ new Map();
+    SEEN_MESSAGE_TTL_MS = 5 * 60 * 1e3;
+    userProcessingLocks = /* @__PURE__ */ new Map();
     setInterval(() => {
       const now = Date.now();
       for (const [code, rec] of pairingCodes) {
         if (rec.expiresAt < now) pairingCodes.delete(code);
       }
+      const cutoff = now - SEEN_MESSAGE_TTL_MS;
+      for (const [id, seenAt] of seenMessageIds) {
+        if (seenAt < cutoff) seenMessageIds.delete(id);
+      }
+      db.execute(sql9`
+    DELETE FROM discord_seen_messages WHERE seen_at < ${cutoff}
+  `).catch(() => {
+      });
     }, 5 * 60 * 1e3);
   }
 });
@@ -5810,7 +8370,7 @@ __export(inboxRules_exports, {
   learnFromDismissal: () => learnFromDismissal,
   matchItemAgainstRules: () => matchItemAgainstRules
 });
-import { eq as eq14, and as and10 } from "drizzle-orm";
+import { eq as eq17, and as and12 } from "drizzle-orm";
 import OpenAI8 from "openai";
 function normalizeForMatch(text2) {
   return (text2 || "").toLowerCase().trim();
@@ -5850,9 +8410,9 @@ function doesRuleMatch(rule, senderNorm, senderDomain, subjectNorm, snippetNorm,
 }
 function incrementMatchCount(rule) {
   db.update(inboxRules).set({
-    matchCount: String(parseInt(rule.matchCount || "0") + 1),
+    matchCount: (rule.matchCount ?? 0) + 1,
     updatedAt: /* @__PURE__ */ new Date()
-  }).where(eq14(inboxRules.id, rule.id)).catch(() => {
+  }).where(eq17(inboxRules.id, rule.id)).catch(() => {
   });
 }
 function matchItemAgainstRules(item, rules) {
@@ -5863,7 +8423,7 @@ function matchItemAgainstRules(item, rules) {
   const senderDomain = item.sender ? extractDomain(item.sender) : "";
   const allText = `${senderNorm} ${subjectNorm} ${snippetNorm} ${locationNorm}`;
   const activeRules = rules.filter(
-    (r) => r.active !== "false" && (r.scope === "both" || r.scope === item.sourceType)
+    (r) => r.active !== false && (r.scope === "both" || r.scope === item.sourceType)
   );
   const suppressRules = activeRules.filter((r) => r.type === "suppress");
   const surfaceRules = activeRules.filter((r) => r.type === "surface");
@@ -5882,20 +8442,20 @@ function matchItemAgainstRules(item, rules) {
   return { verdict: "default" };
 }
 async function getUserInboxRules(userId2) {
-  return db.select().from(inboxRules).where(eq14(inboxRules.userId, userId2));
+  return db.select().from(inboxRules).where(eq17(inboxRules.userId, userId2));
 }
 async function learnFromDismissal(userId2, itemId, telegramChatId) {
-  const [item] = await db.select().from(inboxItems).where(and10(eq14(inboxItems.id, itemId), eq14(inboxItems.userId, userId2)));
+  const [item] = await db.select().from(inboxItems).where(and12(eq17(inboxItems.id, itemId), eq17(inboxItems.userId, userId2)));
   if (!item) return { learned: false };
   if (item.sourceType !== "email") return { learned: false };
-  const newCount = String(parseInt(item.dismissCount || "0") + 1);
-  await db.update(inboxItems).set({ dismissCount: newCount, status: "dismissed", actedAt: /* @__PURE__ */ new Date() }).where(eq14(inboxItems.id, itemId));
+  const newCount = (item.dismissCount ?? 0) + 1;
+  await db.update(inboxItems).set({ dismissCount: newCount, status: "dismissed", actedAt: /* @__PURE__ */ new Date() }).where(eq17(inboxItems.id, itemId));
   const senderDomain = item.sender ? extractDomain(item.sender) : "";
   if (!senderDomain) return { learned: false };
   const dismissed = await db.select().from(inboxItems).where(
-    and10(
-      eq14(inboxItems.userId, userId2),
-      eq14(inboxItems.status, "dismissed")
+    and12(
+      eq17(inboxItems.userId, userId2),
+      eq17(inboxItems.status, "dismissed")
     )
   );
   const domainDismissals = dismissed.filter(
@@ -5903,10 +8463,10 @@ async function learnFromDismissal(userId2, itemId, telegramChatId) {
   ).length;
   if (domainDismissals >= 3) {
     const existing = await db.select().from(inboxRules).where(
-      and10(
-        eq14(inboxRules.userId, userId2),
-        eq14(inboxRules.type, "suppress"),
-        eq14(inboxRules.source, "learned")
+      and12(
+        eq17(inboxRules.userId, userId2),
+        eq17(inboxRules.type, "suppress"),
+        eq17(inboxRules.source, "learned")
       )
     );
     const alreadyHas = existing.some((r) => {
@@ -5926,8 +8486,8 @@ async function learnFromDismissal(userId2, itemId, telegramChatId) {
       console.log(`[InboxRules] Learned suppress rule for ${senderDomain} (user ${userId2})`);
       if (telegramChatId) {
         try {
-          const { sendMessage: sendMessage2 } = await Promise.resolve().then(() => (init_telegram(), telegram_exports));
-          await sendMessage2(
+          const { sendMessage: sendMessage3 } = await Promise.resolve().then(() => (init_telegram(), telegram_exports));
+          await sendMessage3(
             telegramChatId,
             `\u{1F9E0} I've learned to stop surfacing emails from ${senderDomain} \u2014 you've dismissed them ${domainDismissals} times. You can review or remove this rule in your Inbox Rules settings.`
           );
@@ -5943,7 +8503,7 @@ async function createRuleFromText(userId2, text2, type, scope) {
   let matchHints = {};
   try {
     const response = await openai8.chat.completions.create({
-      model: "gpt-5-mini",
+      model: "gpt-4o-mini",
       messages: [
         {
           role: "system",
@@ -6001,7 +8561,7 @@ __export(telegramRoutes_exports, {
   startProactiveScheduler: () => startProactiveScheduler,
   startTelegramPolling: () => startTelegramPolling
 });
-import { eq as eq15, and as and11, desc as desc6, sql as sql9, gte as gte2, lte } from "drizzle-orm";
+import { eq as eq18, and as and13, desc as desc7, sql as sql11, gte as gte4, lte } from "drizzle-orm";
 import OpenAI9 from "openai";
 function generateLinkCode() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -6019,27 +8579,44 @@ async function handleCoachReply(userId2, chatId, userText, imageUrl) {
       channelName: "Telegram",
       imageUrl
     });
+    const ttsPrefs = await getUserTtsPrefs(userId2);
     let textReply = reply;
     if (attachments.length > 0 && textReply && textReply.trim()) {
-      try {
-        await sendMessage(chatId, textReply);
-      } catch (sendErr) {
-        console.error("[Telegram] failed to send text before attachment:", sendErr);
+      if (!ttsPrefs.enabled) {
+        try {
+          await sendMessage(chatId, textReply);
+        } catch (sendErr) {
+          console.error("[Telegram] failed to send text before attachment:", sendErr);
+        }
+        logInteraction(userId2, "telegram", "outbound", textReply).catch(() => {
+        });
       }
-      logInteraction(userId2, "telegram", "outbound", textReply).catch(() => {
-      });
       textReply = "";
     }
     for (const att of attachments) {
       if (att.kind === "document") {
-        const ok = await sendTelegramDocument(chatId, att.filename, att.content, att.caption, att.mimeType);
-        console.log(`[Telegram] Delivered attachment ${att.filename} ok=${ok}`);
+        const ok2 = await sendTelegramDocument(chatId, att.filename, att.content, att.caption, att.mimeType);
+        console.log(`[Telegram] Delivered attachment ${att.filename} ok=${ok2}`);
       }
     }
     if (textReply && textReply.trim()) {
-      await sendMessage(chatId, textReply);
-      logInteraction(userId2, "telegram", "outbound", textReply).catch(() => {
-      });
+      if (ttsPrefs.enabled) {
+        console.log(`[Telegram] TTS mode active \u2014 converting reply to voice for user=${userId2}`);
+        const voiceResult = await speakToUser(userId2, textReply, ttsPrefs.voice).catch((e) => ({
+          ok: false,
+          error: String(e)
+        }));
+        if (!voiceResult.ok) {
+          console.warn(`[Telegram] TTS failed (${voiceResult.error}), falling back to text`);
+          await sendMessage(chatId, textReply);
+        }
+        logInteraction(userId2, "telegram", "outbound", textReply).catch(() => {
+        });
+      } else {
+        await sendMessage(chatId, textReply);
+        logInteraction(userId2, "telegram", "outbound", textReply).catch(() => {
+        });
+      }
     }
     extractProfileFromTelegram(userId2, userText).catch((err) => {
       console.error("[Profile] Telegram extraction error:", err);
@@ -6076,18 +8653,18 @@ async function extractProfileFromTelegram(userId2, userText) {
   try {
     const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1e3);
     const unanswered = await db.select().from(proactiveQuestionsSent).where(
-      and11(
-        eq15(proactiveQuestionsSent.userId, userId2),
-        sql9`${proactiveQuestionsSent.answeredAt} IS NULL`,
-        sql9`${proactiveQuestionsSent.sentAt} > ${twentyFourHoursAgo}`
+      and13(
+        eq18(proactiveQuestionsSent.userId, userId2),
+        sql11`${proactiveQuestionsSent.answeredAt} IS NULL`,
+        sql11`${proactiveQuestionsSent.sentAt} > ${twentyFourHoursAgo}`
       )
-    ).orderBy(desc6(proactiveQuestionsSent.sentAt)).limit(1);
+    ).orderBy(desc7(proactiveQuestionsSent.sentAt)).limit(1);
     let contextHint;
     if (unanswered.length > 0) {
       const mostRecent = unanswered[0];
       const isReply = await isReplyToProactiveQuestion(userText, mostRecent.question);
       if (isReply) {
-        await db.update(proactiveQuestionsSent).set({ answeredAt: /* @__PURE__ */ new Date() }).where(eq15(proactiveQuestionsSent.id, mostRecent.id));
+        await db.update(proactiveQuestionsSent).set({ answeredAt: /* @__PURE__ */ new Date() }).where(eq18(proactiveQuestionsSent.id, mostRecent.id));
         contextHint = `User is answering proactive question: "${mostRecent.question}"`;
         console.log(`[Profile] Marked proactive question as answered: ${mostRecent.id}`);
       }
@@ -6114,7 +8691,7 @@ async function handleCallbackQuery(callbackQuery) {
     const parts = data.split(":");
     const claimedUserId = parts[1] ?? "";
     const stepIndex = parseInt(parts[2] ?? "0", 10);
-    const links = await db.select({ userId: telegramLinks.userId }).from(telegramLinks).where(eq15(telegramLinks.chatId, chatId)).limit(1);
+    const links = await db.select({ userId: telegramLinks.userId }).from(telegramLinks).where(eq18(telegramLinks.chatId, chatId)).limit(1);
     if (links.length === 0 || links[0].userId !== claimedUserId) {
       await answerCallbackQuery(queryId, "Session not found \u2014 please re-link your account.");
       console.warn(`[Momentum] Ownership mismatch: claimed=${claimedUserId}, actual=${links[0]?.userId ?? "none"}, chatId=${chatId}`);
@@ -6143,14 +8720,14 @@ async function processUpdate(update) {
         if (fromUserId) {
           try {
             const link = await db.select().from(telegramLinks).where(
-              sql9`${telegramLinks.chatId} = ${fromUserId}`
+              sql11`${telegramLinks.chatId} = ${fromUserId}`
             ).limit(1);
             if (link[0]) {
               const currentGroups = link[0].groupChatIds || [];
               const chatIdStr = chat.id.toString();
               if (!currentGroups.includes(chatIdStr)) {
                 currentGroups.push(chatIdStr);
-                await db.update(telegramLinks).set({ groupChatIds: currentGroups }).where(eq15(telegramLinks.userId, link[0].userId));
+                await db.update(telegramLinks).set({ groupChatIds: currentGroups }).where(eq18(telegramLinks.userId, link[0].userId));
               }
             }
           } catch (err) {
@@ -6202,12 +8779,31 @@ async function processUpdate(update) {
         return;
       }
     }
+    if (message.document && isIngestableDocument(message.document.mime_type, message.document.file_name)) {
+      const doc = message.document;
+      const filename = doc.file_name || "document";
+      await sendMessage(chatId, `Got it \u2014 reading "${filename}" now...`);
+      const result = await extractTelegramDocument(
+        doc.file_id,
+        doc.mime_type || "text/plain",
+        filename,
+        doc.file_size
+      );
+      if ("error" in result) {
+        await sendMessage(chatId, result.error);
+        return;
+      }
+      const contextBlock = buildDocumentContextBlock(result);
+      text2 = text2 ? `${text2}
+
+${contextBlock}` : contextBlock;
+    }
     if (!text2 && !imageUrl) return;
     if (chatType === "group" || chatType === "supergroup") {
       if (!text2) return;
       try {
         const links = await db.select().from(telegramLinks).where(
-          sql9`${telegramLinks.groupChatIds}::jsonb @> ${JSON.stringify([chatId])}::jsonb`
+          sql11`${telegramLinks.groupChatIds}::jsonb @> ${JSON.stringify([chatId])}::jsonb`
         );
         for (const link of links) {
           await db.insert(telegramGroupMessages).values({
@@ -6227,7 +8823,7 @@ async function processUpdate(update) {
     if (text2.startsWith("/start ") || text2.length === 6 && /^[A-Z0-9]+$/.test(text2)) {
       const code = text2.startsWith("/start ") ? text2.slice(7).trim() : text2;
       try {
-        const codeRows = await db.select().from(telegramLinkCodes).where(eq15(telegramLinkCodes.code, code));
+        const codeRows = await db.select().from(telegramLinkCodes).where(eq18(telegramLinkCodes.code, code));
         if (codeRows.length === 0) {
           await sendMessage(chatId, "Invalid or expired link code. Please generate a new one from the app.");
           return;
@@ -6235,18 +8831,18 @@ async function processUpdate(update) {
         const { userId: userId2 } = codeRows[0];
         const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1e3);
         if (codeRows[0].createdAt < thirtyMinAgo) {
-          await db.delete(telegramLinkCodes).where(eq15(telegramLinkCodes.code, code));
+          await db.delete(telegramLinkCodes).where(eq18(telegramLinkCodes.code, code));
           await sendMessage(chatId, "This link code has expired. Please ask Jarvis to connect Telegram again or use Profile \u2192 Connections to get a new one.");
           return;
         }
         await db.delete(telegramLinks).where(
-          and11(eq15(telegramLinks.chatId, chatId), sql9`${telegramLinks.userId} != ${userId2}`)
+          and13(eq18(telegramLinks.chatId, chatId), sql11`${telegramLinks.userId} != ${userId2}`)
         );
         await db.insert(telegramLinks).values({ userId: userId2, chatId, username: message.from?.username || message.from?.first_name || null }).onConflictDoUpdate({
           target: telegramLinks.userId,
           set: { chatId, username: message.from?.username || message.from?.first_name || null, linkedAt: /* @__PURE__ */ new Date() }
         });
-        await db.delete(telegramLinkCodes).where(eq15(telegramLinkCodes.code, code));
+        await db.delete(telegramLinkCodes).where(eq18(telegramLinkCodes.code, code));
         await sendMessage(chatId, "\u2705 You're connected to GamePlan! Jarvis will send you morning check-ins and you can chat anytime right here.");
         console.log(`[Telegram] Linked user ${userId2} to chat ${chatId}`);
       } catch (err) {
@@ -6260,7 +8856,7 @@ async function processUpdate(update) {
       return;
     }
     try {
-      const link = await db.select().from(telegramLinks).where(eq15(telegramLinks.chatId, chatId)).limit(1);
+      const link = await db.select().from(telegramLinks).where(eq18(telegramLinks.chatId, chatId)).limit(1);
       if (link.length === 0) {
         await sendMessage(chatId, "Your Telegram isn't linked to a GamePlan account yet. Open the app, go to Profile > Connected Apps > Telegram, and send the link code here.");
         return;
@@ -6276,7 +8872,41 @@ async function processUpdate(update) {
         }
         return;
       }
-      await handleCoachReply(link[0].userId, chatId, text2, imageUrl);
+      if (text2.startsWith("/tts")) {
+        const userId3 = link[0].userId;
+        const parts = text2.trim().split(/\s+/);
+        const sub = (parts[1] || "").toLowerCase();
+        if (sub === "on") {
+          await setUserTtsPref(userId3, { enabled: true });
+          await sendMessage(chatId, "Voice mode is now ON \u2014 Jarvis will send voice notes instead of text. Send /tts off to switch back.");
+        } else if (sub === "off") {
+          await setUserTtsPref(userId3, { enabled: false });
+          await sendMessage(chatId, "Voice mode is now OFF \u2014 back to text replies.");
+        } else if (sub === "voice" && parts[2]) {
+          const validVoices = ["alloy", "echo", "fable", "onyx", "nova", "shimmer"];
+          const v = parts[2].toLowerCase();
+          if (validVoices.includes(v)) {
+            await setUserTtsPref(userId3, { voice: v });
+            await sendMessage(chatId, `Voice set to "${v}". Send /tts on to enable voice mode.`);
+          } else {
+            await sendMessage(chatId, `Unknown voice "${v}". Available voices: ${validVoices.join(", ")}`);
+          }
+        } else {
+          const prefs = await getUserTtsPrefs(userId3);
+          await sendMessage(
+            chatId,
+            `Voice mode: ${prefs.enabled ? "ON" : "OFF"} | Voice: ${prefs.voice}
+
+Commands:
+/tts on \u2014 enable voice replies
+/tts off \u2014 disable voice replies
+/tts voice <name> \u2014 change voice (alloy, echo, fable, onyx, nova, shimmer)`
+          );
+        }
+        return;
+      }
+      const userId2 = link[0].userId;
+      await handleCoachReply(userId2, chatId, text2, imageUrl);
     } catch (err) {
       console.error("Error handling Telegram message:", err);
       await sendMessage(chatId, "Sorry, something went wrong. Please try again.");
@@ -6331,7 +8961,7 @@ function registerTelegramRoutes(app2) {
     try {
       const userId2 = req.userId;
       if (!userId2) return res.status(401).json({ error: "Not authenticated" });
-      const link = await db.select().from(telegramLinks).where(eq15(telegramLinks.userId, userId2)).limit(1);
+      const link = await db.select().from(telegramLinks).where(eq18(telegramLinks.userId, userId2)).limit(1);
       if (link.length === 0) {
         return res.json({ connected: false, username: null, configured: isTelegramConfigured() });
       }
@@ -6349,7 +8979,7 @@ function registerTelegramRoutes(app2) {
     try {
       const userId2 = req.userId;
       if (!userId2) return res.status(401).json({ error: "Not authenticated" });
-      await db.delete(telegramLinks).where(eq15(telegramLinks.userId, userId2));
+      await db.delete(telegramLinks).where(eq18(telegramLinks.userId, userId2));
       res.json({ success: true });
     } catch (error) {
       console.error("Error disconnecting Telegram:", error);
@@ -6360,15 +8990,15 @@ function registerTelegramRoutes(app2) {
     try {
       const userId2 = req.userId;
       if (!userId2) return res.status(401).json({ error: "Not authenticated" });
-      const link = await db.select().from(telegramLinks).where(eq15(telegramLinks.userId, userId2)).limit(1);
+      const link = await db.select().from(telegramLinks).where(eq18(telegramLinks.userId, userId2)).limit(1);
       if (link.length === 0) {
         return res.json({ connected: false, messages: [] });
       }
       const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1e3);
-      const messages = await db.select().from(telegramGroupMessages).where(and11(
-        eq15(telegramGroupMessages.userId, userId2),
-        gte2(telegramGroupMessages.messageDate, sevenDaysAgo)
-      )).orderBy(desc6(telegramGroupMessages.messageDate)).limit(50);
+      const messages = await db.select().from(telegramGroupMessages).where(and13(
+        eq18(telegramGroupMessages.userId, userId2),
+        gte4(telegramGroupMessages.messageDate, sevenDaysAgo)
+      )).orderBy(desc7(telegramGroupMessages.messageDate)).limit(50);
       res.json({
         connected: true,
         messages: messages.map((m) => ({
@@ -6389,7 +9019,7 @@ function registerTelegramRoutes(app2) {
       if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       const { type, message: msgText } = req.body;
       if (!msgText) return res.status(400).json({ error: "message is required" });
-      const link = await db.select().from(telegramLinks).where(eq15(telegramLinks.userId, userId2)).limit(1);
+      const link = await db.select().from(telegramLinks).where(eq18(telegramLinks.userId, userId2)).limit(1);
       if (link.length === 0) {
         return res.json({ sent: false, reason: "Not linked" });
       }
@@ -6403,16 +9033,16 @@ function registerTelegramRoutes(app2) {
 }
 async function getCommitmentsForUser(userId2) {
   try {
-    return await db.select().from(commitments).where(and11(eq15(commitments.userId, userId2), eq15(commitments.status, "pending"))).orderBy(desc6(commitments.extractedAt)).limit(20);
+    return await db.select().from(commitments).where(and13(eq18(commitments.userId, userId2), eq18(commitments.status, "pending"))).orderBy(desc7(commitments.extractedAt)).limit(20);
   } catch {
     return [];
   }
 }
 async function getPlansForDateRange(userId2, startDate, endDate) {
   try {
-    const rows = await db.select().from(plans).where(and11(
-      eq15(plans.userId, userId2),
-      gte2(plans.date, startDate),
+    const rows = await db.select().from(plans).where(and13(
+      eq18(plans.userId, userId2),
+      gte4(plans.date, startDate),
       lte(plans.date, endDate)
     ));
     return rows.map((r) => ({
@@ -6621,7 +9251,7 @@ Write a concise evening recap (3-4 sentences). Acknowledge what was done, note w
       const catSummary = Object.entries(categoryBreakdown).map(([cat, v]) => `  ${cat}: ${v.done}/${v.total} (${Math.round(v.done / v.total * 100)}%)`).join("\n");
       const droppedTypeEntries = Object.entries(droppedCategories).sort((a, b) => b[1] - a[1]);
       const droppedSummary = droppedTypeEntries.length > 0 ? `Top dropped task types: ${droppedTypeEntries.slice(0, 5).map(([cat, count]) => `${cat} (${count})`).join(", ")}` : "No incomplete tasks this week";
-      const allWeekCommitments = await db.select().from(commitments).where(eq15(commitments.userId, userId2)).limit(200);
+      const allWeekCommitments = await db.select().from(commitments).where(eq18(commitments.userId, userId2)).limit(200);
       const weekDueCommitments = allWeekCommitments.filter(
         (c) => c.dueDate && c.dueDate >= startDate && c.dueDate <= endDate
       );
@@ -6658,7 +9288,7 @@ Write a concise evening recap (3-4 sentences). Acknowledge what was done, note w
         thirtyDaysAgoDate.setDate(thirtyDaysAgoDate.getDate() - 30);
         const thirtyDayStart = thirtyDaysAgoDate.toISOString().slice(0, 10);
         const allPlans = await getPlansForDateRange(userId2, thirtyDayStart, endDate);
-        const allCommitmentsRaw = await db.select().from(commitments).where(eq15(commitments.userId, userId2)).limit(200);
+        const allCommitmentsRaw = await db.select().from(commitments).where(eq18(commitments.userId, userId2)).limit(200);
         const scopedCommitments30d = allCommitmentsRaw.filter(
           (c) => c.dueDate && c.dueDate >= thirtyDayStart && c.dueDate <= endDate || c.extractedAt && c.extractedAt >= new Date(thirtyDayStart) && c.extractedAt <= /* @__PURE__ */ new Date(endDate + "T23:59:59") || c.resolvedAt && c.resolvedAt >= new Date(thirtyDayStart) && c.resolvedAt <= /* @__PURE__ */ new Date(endDate + "T23:59:59")
         );
@@ -6725,10 +9355,10 @@ Write a sharp weekly summary (3-4 sentences). What's the trend? What needs focus
 async function hasAlreadySent(userId2, messageType, dateKey) {
   try {
     const rows = await db.select({ id: proactiveScheduleLog.id }).from(proactiveScheduleLog).where(
-      and11(
-        eq15(proactiveScheduleLog.userId, userId2),
-        eq15(proactiveScheduleLog.messageType, messageType),
-        eq15(proactiveScheduleLog.sentDate, dateKey)
+      and13(
+        eq18(proactiveScheduleLog.userId, userId2),
+        eq18(proactiveScheduleLog.messageType, messageType),
+        eq18(proactiveScheduleLog.sentDate, dateKey)
       )
     ).limit(1);
     return rows.length > 0;
@@ -6780,9 +9410,9 @@ Still relevant? Reply, archive, or unstar anything you've handled.`;
     return;
   }
   const [goalsRow, planRow, statsRow] = await Promise.allSettled([
-    db.select().from(goals).where(eq15(goals.userId, link.userId)).limit(1),
-    db.select().from(plans).where(and11(eq15(plans.userId, link.userId), eq15(plans.date, dateKey))).limit(1),
-    db.select().from(stats).where(eq15(stats.userId, link.userId)).limit(1)
+    db.select().from(goals).where(eq18(goals.userId, link.userId)).limit(1),
+    db.select().from(plans).where(and13(eq18(plans.userId, link.userId), eq18(plans.date, dateKey))).limit(1),
+    db.select().from(stats).where(eq18(stats.userId, link.userId)).limit(1)
   ]);
   const userGoals = goalsRow.status === "fulfilled" ? goalsRow.value[0]?.data || [] : [];
   const todayPlan = planRow.status === "fulfilled" ? planRow.value[0]?.data : null;
@@ -6816,7 +9446,7 @@ Still relevant? Reply, archive, or unstar anything you've handled.`;
     console.log(`[Proactive] Sending ${schedule.type} to user ${link.userId} (${timezone})`);
     if (schedule.type === "morning") {
       try {
-        const existingPrefs = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq15(userPreferences.userId, link.userId));
+        const existingPrefs = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq18(userPreferences.userId, link.userId));
         const currentPrefs = existingPrefs[0]?.data || {};
         await db.insert(userPreferences).values({
           userId: link.userId,
@@ -6853,7 +9483,7 @@ async function runProactiveStartupCatchup() {
     for (const link of links) {
       const timezone = prefsMap[link.userId]?.timezone || "America/New_York";
       const localDate = new Date(now.toLocaleString("en-US", { timeZone: timezone }));
-      const localHour2 = localDate.getHours();
+      const localHour3 = localDate.getHours();
       const localDay = localDate.getDay();
       const yr = localDate.getFullYear();
       const mo = String(localDate.getMonth() + 1).padStart(2, "0");
@@ -6862,7 +9492,7 @@ async function runProactiveStartupCatchup() {
       for (const schedule of PROACTIVE_SCHEDULE) {
         if (schedule.type === "weekly_planning" && localDay !== (schedule.dayOfWeek ?? -1)) continue;
         const scheduleMinutesFromMidnight = schedule.hour * 60 + schedule.minute;
-        const currentMinutesFromMidnight = localHour2 * 60 + localDate.getMinutes();
+        const currentMinutesFromMidnight = localHour3 * 60 + localDate.getMinutes();
         const minutesSinceScheduled = currentMinutesFromMidnight - scheduleMinutesFromMidnight;
         if (minutesSinceScheduled < 0 || minutesSinceScheduled > 120) continue;
         const alreadySent = await hasAlreadySent(link.userId, schedule.type, dateKey);
@@ -6892,7 +9522,7 @@ async function startProactiveScheduler() {
       for (const link of links) {
         const timezone = prefsMap[link.userId]?.timezone || "America/New_York";
         const localDate = new Date(now.toLocaleString("en-US", { timeZone: timezone }));
-        const localHour2 = localDate.getHours();
+        const localHour3 = localDate.getHours();
         const localMinute = localDate.getMinutes();
         const localDay = localDate.getDay();
         const yr = localDate.getFullYear();
@@ -6900,7 +9530,7 @@ async function startProactiveScheduler() {
         const dy = String(localDate.getDate()).padStart(2, "0");
         const dateKey = `${yr}-${mo}-${dy}`;
         for (const schedule of PROACTIVE_SCHEDULE) {
-          if (localHour2 !== schedule.hour || localMinute !== schedule.minute) continue;
+          if (localHour3 !== schedule.hour || localMinute !== schedule.minute) continue;
           if (schedule.type === "weekly_planning" && localDay !== (schedule.dayOfWeek ?? -1)) continue;
           const alreadySent = await hasAlreadySent(link.userId, schedule.type, dateKey);
           if (alreadySent) continue;
@@ -6920,7 +9550,7 @@ async function startProactiveScheduler() {
 }
 async function startMeetingBriefScanner() {
   if (!isTelegramConfigured()) return;
-  const SCAN_INTERVAL_MS = 5 * 60 * 1e3;
+  const SCAN_INTERVAL_MS2 = 5 * 60 * 1e3;
   const sentBriefs = /* @__PURE__ */ new Set();
   const runScan = async () => {
     try {
@@ -7018,11 +9648,11 @@ ${briefMessage}`;
     }
   };
   setTimeout(runScan, 10 * 1e3);
-  setInterval(runScan, SCAN_INTERVAL_MS);
+  setInterval(runScan, SCAN_INTERVAL_MS2);
   console.log("Meeting brief scanner started (5-min interval)");
 }
 async function startEmailAlertScanner() {
-  const SCAN_INTERVAL_MS = 30 * 60 * 1e3;
+  const SCAN_INTERVAL_MS2 = 30 * 60 * 1e3;
   const runScan = async () => {
     try {
       const links = await getProactiveEligibleUsers();
@@ -7036,7 +9666,7 @@ async function startEmailAlertScanner() {
         const tokens = await getValidGoogleTokens(link.userId).catch(() => []);
         if (!tokens || tokens.length === 0) continue;
         const token = tokens[0];
-        const sinceMs = prefs.lastEmailScanAt ? Number(prefs.lastEmailScanAt) : Date.now() - SCAN_INTERVAL_MS;
+        const sinceMs = prefs.lastEmailScanAt ? Number(prefs.lastEmailScanAt) : Date.now() - SCAN_INTERVAL_MS2;
         const nowMs = Date.now();
         const newPrefs = { ...prefs, lastEmailScanAt: nowMs };
         await db.insert(userPreferences).values({ userId: link.userId, data: newPrefs }).onConflictDoUpdate({
@@ -7196,7 +9826,7 @@ Jarvis: ${flag.reason}`;
       console.error("[EmailAlert] Scanner error:", err);
     }
   };
-  setInterval(runScan, SCAN_INTERVAL_MS);
+  setInterval(runScan, SCAN_INTERVAL_MS2);
   console.log("Email alert scanner started (30-min interval)");
 }
 var openai9, pollingOffset, pollingActive, PROACTIVE_SCHEDULE;
@@ -7206,6 +9836,8 @@ var init_telegramRoutes = __esm({
     init_db();
     init_schema();
     init_telegram();
+    init_telegramDocumentExtractor();
+    init_tts();
     init_registry();
     init_momentumCoach();
     init_gmail();
@@ -7232,7 +9864,7 @@ var init_telegramRoutes = __esm({
 });
 
 // server/agent/tools/manageTasks.ts
-import { and as and12, eq as eq16, desc as desc7 } from "drizzle-orm";
+import { and as and14, eq as eq19, desc as desc8 } from "drizzle-orm";
 async function loadPatternHelpers() {
   const mod = await Promise.resolve().then(() => (init_telegramRoutes(), telegramRoutes_exports));
   return {
@@ -7322,10 +9954,10 @@ var init_manageTasks = __esm({
                 return { ok: false, content: "Error: commitment_id is required for complete_commitment", label: "Missing id" };
               }
               const updated = await db.update(commitments).set({ status: "done", resolvedAt: /* @__PURE__ */ new Date() }).where(
-                and12(
-                  eq16(commitments.id, a.commitment_id),
-                  eq16(commitments.userId, userId2),
-                  eq16(commitments.status, "pending")
+                and14(
+                  eq19(commitments.id, a.commitment_id),
+                  eq19(commitments.userId, userId2),
+                  eq19(commitments.status, "pending")
                 )
               ).returning({ id: commitments.id });
               if (updated.length === 0) {
@@ -7345,7 +9977,7 @@ var init_manageTasks = __esm({
             case "list_tasks": {
               const todayPlan = ctx.state?.todayPlan ?? null;
               const planTasks = todayPlan?.tasks ?? [];
-              const pendingCommitments = await db.select().from(commitments).where(and12(eq16(commitments.userId, userId2), eq16(commitments.status, "pending"))).orderBy(desc7(commitments.extractedAt)).limit(10);
+              const pendingCommitments = await db.select().from(commitments).where(and14(eq19(commitments.userId, userId2), eq19(commitments.status, "pending"))).orderBy(desc8(commitments.extractedAt)).limit(10);
               let listing = "";
               listing += planTasks.length > 0 ? "Today's Plan:\n" + planTasks.map((t) => `- ${t.completed ? "\u2705" : "\u2B1C"} ${t.title}`).join("\n") : "Today's Plan: No tasks yet.";
               listing += "\n\n";
@@ -7366,7 +9998,7 @@ var init_manageTasks = __esm({
               if (plans2.length < 3) {
                 return { ok: true, content: "Not enough data yet for pattern analysis (need at least a few days).", label: "Not enough data" };
               }
-              const allCommitments = await db.select().from(commitments).where(eq16(commitments.userId, userId2)).limit(200);
+              const allCommitments = await db.select().from(commitments).where(eq19(commitments.userId, userId2)).limit(200);
               const startDt = new Date(start);
               const endDt = /* @__PURE__ */ new Date(end + "T23:59:59");
               const scopedCommitments = allCommitments.filter(
@@ -7399,7 +10031,7 @@ ${patternData}`,
 });
 
 // server/agent/tools/documents.ts
-import { eq as eq17, and as and13, desc as desc8 } from "drizzle-orm";
+import { eq as eq20, and as and15, desc as desc9 } from "drizzle-orm";
 var createDocumentTool, listDocumentsTool, readDocumentTool;
 var init_documents = __esm({
   "server/agent/tools/documents.ts"() {
@@ -7478,7 +10110,7 @@ var init_documents = __esm({
             uploadedAt: userDocuments.uploadedAt,
             status: userDocuments.status,
             sizeBytes: userDocuments.sizeBytes
-          }).from(userDocuments).where(eq17(userDocuments.userId, ctx.userId)).orderBy(desc8(userDocuments.uploadedAt)).limit(limit);
+          }).from(userDocuments).where(eq20(userDocuments.userId, ctx.userId)).orderBy(desc9(userDocuments.uploadedAt)).limit(limit);
           if (rows.length === 0) {
             return { ok: true, content: "The user has no documents yet.", label: "No documents" };
           }
@@ -7511,7 +10143,7 @@ ${formatted}`,
           return { ok: false, content: "document_id is required.", label: "Missing id" };
         }
         try {
-          const rows = await db.select().from(userDocuments).where(and13(eq17(userDocuments.userId, ctx.userId), eq17(userDocuments.id, documentId))).limit(1);
+          const rows = await db.select().from(userDocuments).where(and15(eq20(userDocuments.userId, ctx.userId), eq20(userDocuments.id, documentId))).limit(1);
           if (rows.length === 0) {
             return { ok: false, content: `No document found with id "${documentId}".`, label: "Document not found" };
           }
@@ -7534,6 +10166,14 @@ ${body}`,
 });
 
 // server/integrations/googleDrive.ts
+var googleDrive_exports = {};
+__export(googleDrive_exports, {
+  checkDriveScope: () => checkDriveScope,
+  createDriveTextFile: () => createDriveTextFile,
+  ensureJarvisFolder: () => ensureJarvisFolder,
+  listJarvisDriveFiles: () => listJarvisDriveFiles,
+  readDriveFile: () => readDriveFile
+});
 import { google as google3 } from "googleapis";
 import { Readable } from "node:stream";
 function buildDriveClient(accessToken) {
@@ -7563,7 +10203,7 @@ async function ensureJarvisFolder(accessToken) {
 }
 async function createDriveTextFile(accessToken, name, body, options = {}) {
   const drive = buildDriveClient(accessToken);
-  const folderId = await ensureJarvisFolder(accessToken);
+  const folderId = options.folderId || await ensureJarvisFolder(accessToken);
   const sourceMime = options.mimeType || "text/markdown";
   const targetMime = options.convertToDoc ? "application/vnd.google-apps.document" : sourceMime;
   const res = await drive.files.create({
@@ -7625,6 +10265,15 @@ async function readDriveFile(accessToken, fileId) {
     { responseType: "text" }
   );
   return { name, mimeType, content: String(res.data || "") };
+}
+async function checkDriveScope(accessToken) {
+  try {
+    const drive = buildDriveClient(accessToken);
+    await drive.about.get({ fields: "user" });
+    return true;
+  } catch {
+    return false;
+  }
 }
 var JARVIS_FOLDER_NAME;
 var init_googleDrive = __esm({
@@ -7949,7 +10598,7 @@ var init_daemon = __esm({
   "server/agent/tools/daemon.ts"() {
     "use strict";
     init_bridge();
-    DESKTOP_ACTIONS = ["shell", "notify", "file_read", "file_write", "file_list"];
+    DESKTOP_ACTIONS = ["shell", "notify", "file_read", "file_write", "file_list", "desktop_screenshot", "desktop_read_screen"];
     ANDROID_ACTIONS = [
       "android_open_app",
       "android_browse",
@@ -7975,6 +10624,8 @@ DESKTOP actions (available when a desktop daemon is paired):
 - file_read: read a text file under the workspace root
 - file_write: write a text file under the workspace root
 - file_list: list files in a directory under the workspace root
+- desktop_screenshot: capture the primary display as a base64-encoded PNG; use this to see what is currently on screen
+- desktop_read_screen: capture the screen and extract all visible text via OCR (Tesseract); returns raw text if Tesseract is available, otherwise returns the base64 screenshot only
 
 ANDROID actions (available when an Android device daemon is paired):
 - android_open_app: launch an Android app by package name (e.g. "com.google.android.youtube") \u2014 confirm with user before launching
@@ -8003,6 +10654,8 @@ Always confirm with the user before tap/type/swipe actions. Use android_read_scr
               "file_read",
               "file_write",
               "file_list",
+              "desktop_screenshot",
+              "desktop_read_screen",
               "android_open_app",
               "android_browse",
               "android_screenshot",
@@ -8044,14 +10697,15 @@ Always confirm with the user before tap/type/swipe actions. Use android_read_scr
         required: ["action"]
       },
       async execute(args, ctx) {
+        const rawAction = String(args.action || "");
+        const androidActive = isAndroidDaemonActive(ctx.userId);
+        const desktopActive = isDesktopDaemonActive(ctx.userId);
         if (!isUserPaired(ctx.userId)) {
           return { ok: false, content: JSON.stringify({ ok: false, error: "No daemon paired. Ask the user to install and pair either the desktop daemon (Profile \u2192 Connected Channels \u2192 Desktop Daemon) or the Android daemon APK (Profile \u2192 Connected Channels \u2192 Android Device)." }) };
         }
-        const rawAction = String(args.action || "");
-        const androidActive = await isAndroidDaemonActive(ctx.userId);
         if (isAndroidAction(rawAction)) {
           if (!androidActive) {
-            return { ok: false, content: JSON.stringify({ ok: false, error: "No Android daemon connected. The currently-paired daemon is a desktop daemon. Ask the user to install the Jarvis Android APK and pair it." }) };
+            return { ok: false, content: JSON.stringify({ ok: false, error: "No Android daemon connected. Ask the user to install the Jarvis Android APK and pair it (Profile \u2192 Connected Channels \u2192 Android Device)." }) };
           }
           const permKey = androidPermKey(rawAction);
           if (permKey && !await isAndroidDaemonActionAllowed(ctx.userId, permKey)) {
@@ -8115,8 +10769,8 @@ Always confirm with the user before tap/type/swipe actions. Use android_read_scr
         if (!isDesktopAction(rawAction)) {
           return { ok: false, content: JSON.stringify({ ok: false, error: `unknown action ${rawAction}` }) };
         }
-        if (androidActive) {
-          return { ok: false, content: JSON.stringify({ ok: false, error: `Action '${rawAction}' is a desktop-only action but the connected daemon is Android. Use android_* actions instead.` }) };
+        if (!desktopActive) {
+          return { ok: false, content: JSON.stringify({ ok: false, error: `Action '${rawAction}' requires the Desktop Daemon, which is not connected. Ask the user to install and pair the desktop daemon (Profile \u2192 Connected Channels \u2192 Desktop Daemon).` }) };
         }
         const action = rawAction;
         if (!await isDaemonActionAllowed(ctx.userId, action)) {
@@ -8137,18 +10791,25 @@ Always confirm with the user before tap/type/swipe actions. Use android_read_scr
         } else if (action === "file_list") {
           if (!args.path) return { ok: false, content: JSON.stringify({ ok: false, error: "path required" }) };
           op = { type: "file_list", path: String(args.path) };
+        } else if (action === "desktop_screenshot") {
+          op = { type: "desktop_screenshot" };
+        } else if (action === "desktop_read_screen") {
+          op = { type: "desktop_read_screen" };
         } else {
           return { ok: false, content: JSON.stringify({ ok: false, error: `unknown action ${action}` }) };
         }
-        const result = await sendDaemonOp(ctx.userId, op, action === "shell" ? 3e4 : 1e4);
-        return { ok: !!result.ok, content: JSON.stringify(result).slice(0, 8e3) };
+        const isScreenOp = action === "desktop_screenshot" || action === "desktop_read_screen";
+        const screenTimeout = action === "desktop_read_screen" ? 4e4 : 2e4;
+        const result = await sendDaemonOp(ctx.userId, op, action === "shell" ? 3e4 : isScreenOp ? screenTimeout : 1e4);
+        const serialised = JSON.stringify(result);
+        return { ok: !!result.ok, content: isScreenOp ? serialised : serialised.slice(0, 8e3) };
       }
     };
   }
 });
 
 // server/agent/tools/connections.ts
-import { eq as eq18 } from "drizzle-orm";
+import { eq as eq21 } from "drizzle-orm";
 function getServerBaseUrl() {
   const domain = process.env.REPLIT_DOMAINS?.split(",")[0];
   if (domain) {
@@ -8178,14 +10839,18 @@ var init_connections = __esm({
             getValidGoogleToken(ctx.userId).catch(() => null),
             getValidMicrosoftToken(ctx.userId).catch(() => null),
             getUserOAuthStatus(ctx.userId).catch(() => ({})),
-            db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq18(telegramLinks.userId, ctx.userId)).limit(1),
-            db.select().from(channelLinks).where(eq18(channelLinks.userId, ctx.userId))
+            db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq21(telegramLinks.userId, ctx.userId)).limit(1),
+            db.select().from(channelLinks).where(eq21(channelLinks.userId, ctx.userId))
           ]);
           const daemonConnected = isUserPaired(ctx.userId);
-          const androidActive = daemonConnected ? await isAndroidDaemonActive(ctx.userId) : false;
+          const androidActive = isAndroidDaemonActive(ctx.userId);
           const googleEmail = oauthStatus?.google?.email || oauthStatus?.google?.accounts?.[0]?.email || "unknown";
           const msEmail = oauthStatus?.microsoft?.email || oauthStatus?.microsoft?.accounts?.[0]?.email || "unknown";
-          const daemonLabel = daemonConnected ? androidActive ? `Android Device Daemon: \u2713 online \u2014 use android_* actions (android_open_app, android_browse, android_screenshot, android_read_screen, android_tap, android_type, android_swipe, android_press_key, android_file_list, android_file_read). DO NOT use desktop shell/notify/file_read/file_write actions.` : `Desktop Daemon: \u2713 online \u2014 use shell, notify, file_read, file_write, file_list actions.` : `Android/Desktop Daemon: \u2717 not connected`;
+          const desktopActive = isDesktopDaemonActive(ctx.userId);
+          const daemonParts = [];
+          if (desktopActive) daemonParts.push("Desktop Daemon: \u2713 online \u2014 use shell, notify, file_read, file_write, file_list actions.");
+          if (androidActive) daemonParts.push("Android Device Daemon: \u2713 online \u2014 use android_* actions (android_open_app, android_browse, android_screenshot, android_read_screen, android_tap, android_type, android_swipe, android_press_key, android_file_list, android_file_read).");
+          const daemonLabel = daemonConnected ? daemonParts.join(" | ") : `Android/Desktop Daemon: \u2717 not connected`;
           const lines = [
             `Google (Gmail + Calendar): ${googleToken ? `\u2713 token valid \u2014 ${googleEmail}` : "\u2717 not connected or token expired (reconnect needed)"}`,
             `Microsoft (Outlook + Calendar): ${msToken ? `\u2713 token valid \u2014 ${msEmail}` : "\u2717 not connected or token expired (reconnect needed)"}`,
@@ -8530,7 +11195,7 @@ ${lines}`,
 });
 
 // server/channels/slackChannel.ts
-import { eq as eq19, and as and14 } from "drizzle-orm";
+import { eq as eq22, and as and16 } from "drizzle-orm";
 async function postSlackMessage(botToken, channel, text2) {
   try {
     const res = await fetch("https://slack.com/api/chat.postMessage", {
@@ -8571,7 +11236,7 @@ async function openSlackDm(botToken, slackUserId) {
 }
 async function lookupLink2(userId2) {
   try {
-    const rows = await db.select().from(channelLinks).where(and14(eq19(channelLinks.userId, userId2), eq19(channelLinks.channel, "slack"))).limit(1);
+    const rows = await db.select().from(channelLinks).where(and16(eq22(channelLinks.userId, userId2), eq22(channelLinks.channel, "slack"))).limit(1);
     const row = rows[0];
     if (!row) return null;
     return { address: row.address, meta: row.metadata || {} };
@@ -8610,7 +11275,7 @@ var init_slackChannel = __esm({
         if (!target && link.meta.slackUserId) {
           target = await openSlackDm(botToken, link.meta.slackUserId) || void 0;
           if (target) {
-            await db.update(channelLinks).set({ metadata: { ...link.meta, imChannelId: target } }).where(and14(eq19(channelLinks.userId, userId2), eq19(channelLinks.channel, "slack")));
+            await db.update(channelLinks).set({ metadata: { ...link.meta, imChannelId: target } }).where(and16(eq22(channelLinks.userId, userId2), eq22(channelLinks.channel, "slack")));
           }
         }
         if (!target) target = link.address;
@@ -8635,7 +11300,7 @@ __export(slackWebhook_exports, {
 });
 import express from "express";
 import * as crypto3 from "crypto";
-import { eq as eq20, and as and15 } from "drizzle-orm";
+import { eq as eq23, and as and17 } from "drizzle-orm";
 function verifySlackSignature(req) {
   if (!SLACK_SIGNING_SECRET) {
     console.error("[slack] rejecting request: SLACK_SIGNING_SECRET is not configured");
@@ -8656,7 +11321,7 @@ function verifySlackSignature(req) {
 }
 async function findUserBySlackId(teamId, slackUserId) {
   try {
-    const rows = await db.select().from(channelLinks).where(and15(eq20(channelLinks.channel, "slack"), eq20(channelLinks.address, `${teamId}:${slackUserId}`))).limit(1);
+    const rows = await db.select().from(channelLinks).where(and17(eq23(channelLinks.channel, "slack"), eq23(channelLinks.address, `${teamId}:${slackUserId}`))).limit(1);
     return rows[0]?.userId ?? null;
   } catch (err) {
     console.error("[slack] user lookup failed:", err);
@@ -8701,7 +11366,7 @@ function registerSlackWebhook(app2) {
       const userId2 = await findUserBySlackId(teamId, slackUserId);
       const text2 = String(ev.text || "").replace(/<@[A-Z0-9]+>/g, "").trim();
       if (!userId2) {
-        const tok = await db.select().from(channelLinks).where(and15(eq20(channelLinks.channel, "slack"))).limit(1);
+        const tok = await db.select().from(channelLinks).where(and17(eq23(channelLinks.channel, "slack"))).limit(1);
         const replyToken = tok[0] ? await getSlackBotToken(tok[0].userId) : null;
         if (replyToken) {
           await postSlackMessage(replyToken, ev.channel, "I don't recognize this Slack account. Open the GamePlan app and reconnect Slack from Profile \u2192 Connected Apps.");
@@ -9160,7 +11825,7 @@ var init_oauthRoutes = __esm({
 });
 
 // server/agent/tools/connectChannel.ts
-import { eq as eq21, and as and16 } from "drizzle-orm";
+import { eq as eq24, and as and18 } from "drizzle-orm";
 function generateCode2(length) {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let out = "";
@@ -9240,7 +11905,7 @@ var init_connectChannel = __esm({
             const phone = twilioRaw.replace(/^whatsapp:/i, "").replace(/\s+/g, "");
             const code = generateCode2(6);
             const expiresAt = new Date(Date.now() + 15 * 60 * 1e3);
-            await db.delete(channelLinkCodes).where(and16(eq21(channelLinkCodes.userId, userId2), eq21(channelLinkCodes.channel, "whatsapp")));
+            await db.delete(channelLinkCodes).where(and18(eq24(channelLinkCodes.userId, userId2), eq24(channelLinkCodes.channel, "whatsapp")));
             await db.insert(channelLinkCodes).values({ code, userId: userId2, channel: "whatsapp", expiresAt });
             const body = encodeURIComponent(`CONNECT ${code}`);
             const url = `https://wa.me/${phone.replace("+", "")}?text=${body}`;
@@ -9274,20 +11939,14 @@ var init_connectChannel = __esm({
             };
           }
           if (channel === "discord") {
-            const url = "profile://connections";
+            const clientId = process.env.DISCORD_CLIENT_ID;
+            const url = clientId ? `https://discord.com/oauth2/authorize?client_id=${clientId}&scope=bot&permissions=68608` : "profile://discord";
+            const buttonLabel = clientId ? "Add to Discord" : "Connect Discord";
             return {
               ok: true,
-              content: JSON.stringify({
-                url,
-                buttonLabel: "Open Discord Setup",
-                channel: "discord"
-              }),
-              label: "Open Discord Setup",
-              detail: JSON.stringify({
-                url,
-                buttonLabel: "Open Discord Setup",
-                channel: "discord"
-              })
+              content: JSON.stringify({ url, buttonLabel, channel: "discord" }),
+              label: buttonLabel,
+              detail: JSON.stringify({ url, buttonLabel, channel: "discord" })
             };
           }
           return { ok: false, content: "Unexpected channel.", label: "Error" };
@@ -9347,6 +12006,233 @@ var init_discordPost = __esm({
           ok: true,
           content: `Posted to ${topicMeta ? `${topicMeta.emoji} #${topicMeta.name}` : `#${topicKey}`} in your Discord workspace.`,
           label: `Discord \u2192 #${topicKey}`
+        };
+      }
+    };
+  }
+});
+
+// server/agent/tools/discordCreateChannel.ts
+var discordCreateChannelTool;
+var init_discordCreateChannel = __esm({
+  "server/agent/tools/discordCreateChannel.ts"() {
+    "use strict";
+    init_manager();
+    discordCreateChannelTool = {
+      name: "discord_create_channel",
+      description: "Create a new text channel in the user's Discord server. Use this when the user asks Jarvis to create a Discord channel. You must provide a channel name (lowercase, hyphens instead of spaces). Optionally set a topic/description and a category name to nest it under.",
+      parameters: {
+        type: "object",
+        properties: {
+          channelName: {
+            type: "string",
+            description: "The channel name. Use lowercase letters, numbers, and hyphens only (e.g. 'welcome', 'daily-tasks', 'project-alpha')."
+          },
+          topic: {
+            type: "string",
+            description: "Optional channel topic/description shown at the top of the channel."
+          },
+          categoryName: {
+            type: "string",
+            description: "Optional name of an existing category to put this channel in."
+          },
+          pinMessage: {
+            type: "string",
+            description: "Optional message to send and pin in the new channel."
+          }
+        },
+        required: ["channelName"]
+      },
+      async execute(args, ctx) {
+        const { userId: userId2 } = ctx;
+        const result = await createDiscordChannel(userId2, {
+          channelName: args.channelName,
+          topic: args.topic,
+          categoryName: args.categoryName,
+          pinMessage: args.pinMessage,
+          ctxGuildId: ctx.discordGuildId
+        });
+        if (!result.ok) {
+          return {
+            ok: false,
+            content: `Couldn't create the channel: ${result.error}`,
+            label: "Discord channel creation failed"
+          };
+        }
+        return {
+          ok: true,
+          content: `Created #${args.channelName} in your Discord server.${args.pinMessage ? " Pinned the intro message." : ""}`,
+          label: `Discord: created #${args.channelName}`
+        };
+      }
+    };
+  }
+});
+
+// server/agent/tools/discordDeleteChannel.ts
+var discordDeleteChannelTool;
+var init_discordDeleteChannel = __esm({
+  "server/agent/tools/discordDeleteChannel.ts"() {
+    "use strict";
+    init_manager();
+    discordDeleteChannelTool = {
+      name: "discord_delete_channel",
+      description: "Delete a text channel from the user's Discord server by name or ID. IMPORTANT: You MUST first tell the user the exact channel name and server you will delete, then wait for them to explicitly say yes/confirm before calling this tool with confirmed=true. Only call with confirmed=true after the user has given explicit approval in this conversation. If channelId is not known, pass channelName first \u2014 if there are duplicates, the tool will return all matching channel IDs so you can ask the user which copy to remove. Only text channels can be deleted; categories and voice channels are not supported.",
+      parameters: {
+        type: "object",
+        properties: {
+          confirmed: {
+            type: "boolean",
+            description: "REQUIRED. Must be true. Only pass true after the user has explicitly confirmed the deletion (channel name + server) in this conversation. Never pass true speculatively."
+          },
+          channelName: {
+            type: "string",
+            description: "The channel name to delete (e.g. 'thinking', '\u{1F9E0}thinking'). Omit if channelId is provided. If multiple channels share this name the tool will return a disambiguation list instead of deleting."
+          },
+          channelId: {
+            type: "string",
+            description: "The exact Discord channel ID to delete. Preferred over channelName when targeting one specific channel among duplicates."
+          },
+          guildId: {
+            type: "string",
+            description: "Optional Discord server (guild) ID. Must match the user's linked Jarvis server \u2014 deletion in any other server is refused."
+          }
+        },
+        required: ["confirmed"]
+      },
+      async execute(args, ctx) {
+        const { userId: userId2 } = ctx;
+        if (!args.confirmed) {
+          return {
+            ok: false,
+            content: "I need you to confirm the deletion first. Please tell me the channel name and server you'd like to delete, and I'll ask for your approval before proceeding.",
+            label: "discord_delete_channel: confirmation required"
+          };
+        }
+        if (!args.channelName && !args.channelId) {
+          return {
+            ok: false,
+            content: "Please specify either a channel name or a channel ID to delete.",
+            label: "discord_delete_channel: missing channel identifier"
+          };
+        }
+        const result = await deleteDiscordChannel(userId2, {
+          channelName: args.channelName,
+          channelId: args.channelId,
+          guildId: args.guildId,
+          ctxGuildId: ctx.discordGuildId
+        });
+        if (result.ambiguous && result.matches) {
+          const list = result.matches.map((m, i) => `${i + 1}. #${m.name} (ID: \`${m.id}\`)`).join("\n");
+          return {
+            ok: false,
+            content: `There are ${result.matches.length} channels named **#${args.channelName}**:
+${list}
+
+Which one should I delete? Please confirm the channel ID and I'll remove it.`,
+            label: `discord_delete_channel: ambiguous \u2014 ${result.matches.length} matches for "${args.channelName}"`
+          };
+        }
+        if (!result.ok) {
+          return {
+            ok: false,
+            content: `Couldn't delete the channel: ${result.error}`,
+            label: "Discord channel deletion failed"
+          };
+        }
+        return {
+          ok: true,
+          content: `\u2705 Deleted #${result.channelName} from your Discord server.`,
+          label: `Discord: deleted #${result.channelName}`
+        };
+      }
+    };
+  }
+});
+
+// server/agent/tools/discordListChannels.ts
+import { eq as eq25, and as and19 } from "drizzle-orm";
+var discordListChannelsTool;
+var init_discordListChannels = __esm({
+  "server/agent/tools/discordListChannels.ts"() {
+    "use strict";
+    init_manager();
+    init_db();
+    init_schema();
+    discordListChannelsTool = {
+      name: "discord_list_channels",
+      description: "List all text channels in the user's linked Discord server and identify any duplicate channel names. Use this FIRST whenever the user asks to scan for duplicates, clean up channels, or wants to know what channels exist. Returns the full channel list plus a clearly-marked list of duplicate names so you can ask the user which ones to delete. Do NOT use web search or background jobs for this \u2014 it reads directly from the Discord server.",
+      parameters: {
+        type: "object",
+        properties: {
+          guildId: {
+            type: "string",
+            description: "Optional Discord server ID to scan. If omitted, the user's linked Jarvis workspace server is used automatically."
+          }
+        },
+        required: []
+      },
+      async execute(args, ctx) {
+        const { userId: userId2 } = ctx;
+        let resolvedGuildId = args.guildId;
+        if (!resolvedGuildId) {
+          const linkRow = await db.select().from(channelLinks).where(and19(eq25(channelLinks.userId, userId2), eq25(channelLinks.channel, "discord"))).limit(1);
+          const linkMeta = linkRow[0]?.metadata ?? {};
+          resolvedGuildId = linkMeta.workspace?.guildId;
+        }
+        if (!resolvedGuildId && ctx.discordGuildId) {
+          resolvedGuildId = ctx.discordGuildId;
+        }
+        if (!resolvedGuildId) {
+          return {
+            ok: false,
+            content: "No linked Discord server found. Message Jarvis from inside your Discord server first so it can identify which server to scan.",
+            label: "discord_list_channels: no guild"
+          };
+        }
+        const channels2 = await getChannelsForGuild(userId2, resolvedGuildId);
+        if (channels2.length === 0) {
+          return {
+            ok: false,
+            content: "Could not fetch channels \u2014 the bot may not be in that server, or it may be offline. Check that the bot is running and has been added to the server.",
+            label: "discord_list_channels: fetch failed"
+          };
+        }
+        function slugify(name) {
+          return name.toLowerCase().replace(/[^\w\s-]/g, "").replace(/[\s_]+/g, "-").replace(/-+/g, "-").trim();
+        }
+        const bySlug = /* @__PURE__ */ new Map();
+        for (const ch of channels2) {
+          const slug = slugify(ch.name);
+          const existing = bySlug.get(slug) ?? [];
+          existing.push(ch);
+          bySlug.set(slug, existing);
+        }
+        const duplicateGroups = [...bySlug.values()].filter((group) => group.length > 1);
+        const totalCount = channels2.length;
+        const duplicateCount = duplicateGroups.reduce((s, g) => s + g.length, 0);
+        const allLines = channels2.map((ch) => `#${ch.name} (ID: ${ch.id})`).join("\n");
+        let duplicateSection = "";
+        if (duplicateGroups.length === 0) {
+          duplicateSection = "No duplicate channel names found.";
+        } else {
+          duplicateSection = duplicateGroups.map((group) => {
+            const header = `Duplicate: "${group[0].name}" \u2014 ${group.length} copies`;
+            const entries = group.map((ch) => `  \u2022 #${ch.name} (ID: \`${ch.id}\`)`).join("\n");
+            return `${header}
+${entries}`;
+          }).join("\n\n");
+        }
+        return {
+          ok: true,
+          content: `Found ${totalCount} text channel(s) in the server.
+
+--- DUPLICATES (${duplicateCount} channels across ${duplicateGroups.length} duplicate name(s)) ---
+${duplicateSection}
+
+--- ALL CHANNELS ---
+${allLines}`,
+          label: `discord_list_channels: ${totalCount} channels, ${duplicateGroups.length} duplicate name(s)`
         };
       }
     };
@@ -9430,6 +12316,3266 @@ var init_scheduleJarvisTask = __esm({
   }
 });
 
+// server/agent/tools/scheduleChannelReport.ts
+var scheduleChannelReportTool, listChannelSchedulesTool, deleteChannelScheduleTool;
+var init_scheduleChannelReport = __esm({
+  "server/agent/tools/scheduleChannelReport.ts"() {
+    "use strict";
+    init_schedules();
+    init_manager();
+    scheduleChannelReportTool = {
+      name: "schedule_channel_report",
+      description: "Create a recurring automated research report that Jarvis runs at a scheduled time and posts to a specific Discord channel. Use this when the user asks to set up a daily/recurring automated report in Discord \u2014 for example 'set up a daily stock research report at 7am' or 'every morning at 8am, post YouTube competitor research to #competitor-research'. Jarvis will create the channel if it doesn't exist, then schedule the recurring report. Built-in templates are available: say 'stock research' to use the AI stock template, or 'competitor YouTube' to use the YouTube research template. The schedule parameter accepts natural language (e.g. 'every morning at 7am', 'every Monday at 9am'). IMPORTANT: Only use this for creating scheduled DISCORD channel reports. For general reminders, use schedule_jarvis_task instead.",
+      parameters: {
+        type: "object",
+        properties: {
+          channelName: {
+            type: "string",
+            description: "The Discord channel name to post to (e.g. 'stock-research', 'competitor-research'). Use lowercase with hyphens. The channel will be created if it doesn't exist. If omitted and a template is matched, the template's default channel name will be used."
+          },
+          label: {
+            type: "string",
+            description: "A short human-readable label for this schedule (e.g. 'AI Stock Research', 'Competitor YouTube Report'). If omitted and a template is matched, the template's default label will be used."
+          },
+          schedule: {
+            type: "string",
+            description: "When to run the report, in natural language (e.g. 'every morning at 7am', 'daily at 8pm', 'every Monday at 9am'). If omitted and a template is matched, the template's default schedule will be used."
+          },
+          prompt: {
+            type: "string",
+            description: "The research instructions Jarvis will execute when the schedule fires. Be specific. If omitted, Jarvis will try to detect a built-in template from the label or channel name. Example: 'Research the top 8 AI infrastructure stocks. For each: ticker, thesis, latest news.'"
+          },
+          pipelineNext: {
+            type: "string",
+            description: "Optional: the ID of another schedule to trigger after this one completes (for chained pipelines)."
+          },
+          topic: {
+            type: "string",
+            description: "Optional. For competitor/niche YouTube research, the topic keywords to search for (e.g. 'ADHD productivity', 'AI tools for developers'). Replaces the [TOPIC] placeholder in the YouTube research template prompt."
+          }
+        },
+        required: []
+      },
+      async execute(args, ctx) {
+        const { userId: userId2 } = ctx;
+        const rawLabel = args.label ? String(args.label).trim() : "";
+        const rawChannel = args.channelName ? String(args.channelName).trim() : "";
+        const rawPrompt = args.prompt ? String(args.prompt).trim() : "";
+        const rawSchedule = args.schedule ? String(args.schedule).trim() : "";
+        const rawTopic = args.topic ? String(args.topic).trim() : "";
+        const pipelineNext = args.pipelineNext ? String(args.pipelineNext).trim() : void 0;
+        const templateLookup = rawLabel || rawPrompt || rawChannel;
+        const matchedTemplate = templateLookup ? detectTemplate(templateLookup) : null;
+        const channelName = (rawChannel || matchedTemplate?.channelName || "").toLowerCase().replace(/\s+/g, "-");
+        const label = rawLabel || matchedTemplate?.label || "";
+        let prompt = rawPrompt || matchedTemplate?.prompt || "";
+        if (rawTopic && prompt.includes("[TOPIC]")) {
+          prompt = prompt.replace(/\[TOPIC\]/g, rawTopic);
+        } else if (prompt.includes("[TOPIC]") && !rawTopic) {
+          return {
+            ok: false,
+            content: "The YouTube competitor research template needs a topic to search for. For example: 'Set up competitor YouTube research for ADHD productivity'. What topic or niche should I search YouTube for?",
+            label: "Missing topic for YouTube template"
+          };
+        }
+        if (!channelName) {
+          return {
+            ok: false,
+            content: "Please provide a channelName for the report (e.g. 'stock-research').\n\n**Available templates:** say 'stock research' or 'competitor YouTube'.",
+            label: "Missing channelName"
+          };
+        }
+        if (!label) {
+          return { ok: false, content: "Please provide a label for this schedule (e.g. 'AI Stock Research').", label: "Missing label" };
+        }
+        if (!prompt) {
+          return {
+            ok: false,
+            content: "Please provide the research prompt for this schedule, or say something like 'stock research' or 'competitor YouTube' to use a built-in template.",
+            label: "Missing prompt"
+          };
+        }
+        const scheduleInput = rawSchedule || matchedTemplate?.cronExpression || "0 7 * * *";
+        const cronExpression = /^\S+ \S+ \S+ \S+ \S+$/.test(scheduleInput) ? scheduleInput : parseCronExpression(scheduleInput);
+        await createDiscordChannel(userId2, {
+          channelName,
+          topic: `Automated reports: ${label}`,
+          categoryName: "\u{1F9E0} Jarvis Workspace"
+        });
+        const schedule = await createSchedule(userId2, {
+          channelName,
+          label,
+          cronExpression,
+          prompt,
+          pipelineNext
+        });
+        const templateNote = matchedTemplate ? " (using built-in template)" : "";
+        return {
+          ok: true,
+          content: `\u2705 Scheduled **${label}**${templateNote} \u2014 runs \`${cronExpression}\` and posts to #${channelName}.
+Schedule ID: \`${schedule.id}\`
+To cancel: say "delete my ${label} schedule" or "cancel ${channelName} report".`,
+          label: `Schedule created: ${label}`,
+          detail: schedule.id
+        };
+      }
+    };
+    listChannelSchedulesTool = {
+      name: "list_channel_schedules",
+      description: "List all active Discord channel report schedules for the user. Use when the user asks 'what automations do I have?', 'what schedules are running?', or 'show my Discord reports'.",
+      parameters: {
+        type: "object",
+        properties: {},
+        required: []
+      },
+      async execute(_args, ctx) {
+        const { userId: userId2 } = ctx;
+        try {
+          const schedules = await listSchedules(userId2);
+          if (schedules.length === 0) {
+            return {
+              ok: true,
+              content: "No Discord channel schedules set up yet. Ask me to set up a stock research report or any other recurring automation.\n\n**Available templates:**\n\u2022 **AI Stock Research** \u2014 weekdays at 7am, posts to #stock-research\n\u2022 **Competitor YouTube Research** \u2014 daily at 8am, posts to #competitor-research",
+              label: "No schedules"
+            };
+          }
+          const lines = schedules.map((s) => {
+            const status = s.enabled ? "\u2705 Active" : "\u23F8 Paused";
+            const lastRun = s.lastRun ? `Last run: ${new Date(s.lastRun).toLocaleString()}` : "Never run";
+            return `\u2022 **${s.label}** \u2192 #${s.channelName} | \`${s.cronExpression}\` | ${status} | ${lastRun} | ID: \`${s.id}\``;
+          });
+          return {
+            ok: true,
+            content: `**Your Discord Channel Schedules (${schedules.length}):**
+
+${lines.join("\n")}`,
+            label: `${schedules.length} schedule(s)`
+          };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          return { ok: false, content: `Failed to list schedules: ${msg}`, label: "List failed" };
+        }
+      }
+    };
+    deleteChannelScheduleTool = {
+      name: "delete_channel_schedule",
+      description: "Cancel and delete a Discord channel report schedule. Use when the user says 'cancel my stock report', 'stop the YouTube research', 'delete schedule X', or any request to remove an automated Discord report. You can match by label (partial, case-insensitive) or by the exact schedule ID.",
+      parameters: {
+        type: "object",
+        properties: {
+          label: {
+            type: "string",
+            description: "The label (or partial label) of the schedule to delete. Case-insensitive match. Example: 'stock research' will match 'AI Stock Research'."
+          },
+          scheduleId: {
+            type: "string",
+            description: "The exact schedule ID (UUID) to delete. Use when the user specifies it directly."
+          }
+        },
+        required: []
+      },
+      async execute(args, ctx) {
+        const { userId: userId2 } = ctx;
+        const labelQuery = args.label ? String(args.label).toLowerCase().trim() : null;
+        const scheduleId = args.scheduleId ? String(args.scheduleId).trim() : null;
+        if (!labelQuery && !scheduleId) {
+          return {
+            ok: false,
+            content: "Please provide either a label or a schedule ID to delete.",
+            label: "Missing identifier"
+          };
+        }
+        try {
+          const all = await listSchedules(userId2);
+          let target = null;
+          if (scheduleId) {
+            target = all.find((s) => s.id === scheduleId) ?? null;
+          } else if (labelQuery) {
+            target = all.find((s) => s.label.toLowerCase().includes(labelQuery)) ?? null;
+          }
+          if (!target) {
+            const names = all.map((s) => `"${s.label}"`).join(", ");
+            return {
+              ok: false,
+              content: `No schedule found matching "${labelQuery ?? scheduleId}". ` + (all.length > 0 ? `Your schedules: ${names}` : "You have no schedules set up."),
+              label: "Schedule not found"
+            };
+          }
+          await deleteSchedule(userId2, target.id);
+          return {
+            ok: true,
+            content: `Cancelled "${target.label}" \u2014 it will no longer post to #${target.channelName}.`,
+            label: `Deleted: ${target.label}`
+          };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          return { ok: false, content: `Failed to delete schedule: ${msg}`, label: "Delete failed" };
+        }
+      }
+    };
+  }
+});
+
+// server/agent/tools/youtubeSearch.ts
+function parseAgoToMs(ago, fallbackMs) {
+  const m = ago.match(/(\d+)\s*(second|minute|hour|day|week|month|year)/i);
+  if (!m) return fallbackMs;
+  const n = parseInt(m[1], 10);
+  const unit = m[2].toLowerCase();
+  const unitMs = {
+    second: 1e3,
+    minute: 6e4,
+    hour: 36e5,
+    day: 864e5,
+    week: 6048e5,
+    month: 2592e6,
+    year: 31536e6
+  };
+  return n * (unitMs[unit] ?? 864e5);
+}
+var DAYS_BACK_DEFAULT, MAX_RESULTS_DEFAULT, youtubeSearchTool;
+var init_youtubeSearch = __esm({
+  "server/agent/tools/youtubeSearch.ts"() {
+    "use strict";
+    DAYS_BACK_DEFAULT = 5;
+    MAX_RESULTS_DEFAULT = 15;
+    youtubeSearchTool = {
+      name: "search_youtube",
+      description: "Search YouTube server-side and return structured results: title, channel, view count, published date, video ID, and URL. Use this for YouTube video research, competitor analysis, and finding content in any niche. Pass trending:true ONLY when the user explicitly asks for 'trending', 'viral', 'gaining momentum', or 'views per hour' \u2014 this sorts by views-per-hour velocity instead of total views, and filters to videos published within daysBack days. For general YouTube search (without trending language), use standard mode (trending:false or omitted).",
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description: "YouTube search query, e.g. 'ADHD productivity tools 2024' or 'AI video editing tutorials'"
+          },
+          trending: {
+            type: "boolean",
+            description: "If true, sort by views-per-hour (velocity) instead of total views. ONLY use when the user explicitly says 'trending', 'viral', 'momentum', or 'views per hour'."
+          },
+          daysBack: {
+            type: "number",
+            description: "When trending:true, only include videos published within this many days (default 5). Use 1 for last 24h, 7 for last week."
+          },
+          maxResults: {
+            type: "number",
+            description: "Maximum results to return (1\u201315, default 15)."
+          }
+        },
+        required: ["query"]
+      },
+      async execute(args, ctx) {
+        const query = String(args.query || "").trim();
+        if (!query) {
+          return { ok: false, content: "Please provide a search query.", label: "Missing query" };
+        }
+        const trendingMode = !!args.trending;
+        const daysBack = typeof args.daysBack === "number" ? Math.max(args.daysBack, 1) : DAYS_BACK_DEFAULT;
+        const maxResults = typeof args.maxResults === "number" ? Math.min(Math.max(args.maxResults, 1), MAX_RESULTS_DEFAULT) : MAX_RESULTS_DEFAULT;
+        const daysMs = daysBack * 24 * 60 * 60 * 1e3;
+        console.log(
+          `[search_youtube] query="${query}" trending=${trendingMode} daysBack=${daysBack} max=${maxResults} (user=${ctx.userId})`
+        );
+        try {
+          const ytSearch2 = (await import("yt-search")).default;
+          const searchResult = await ytSearch2({ query, pageStart: 1, pageEnd: 1 });
+          let rawVideos = searchResult.videos || [];
+          let videos = rawVideos.map((v) => {
+            const viewCount = typeof v.views === "number" ? v.views : parseInt(String(v.views || "0").replace(/[^0-9]/g, ""), 10) || 0;
+            const ago = v.ago || "";
+            const fallbackMs = daysBack * 24 * 60 * 60 * 1e3;
+            const ageMs = ago ? parseAgoToMs(ago, fallbackMs) : fallbackMs;
+            const ageHours = Math.max(ageMs / 36e5, 1);
+            const viewsPerHour = Math.round(viewCount / ageHours);
+            return {
+              title: v.title || "(no title)",
+              channelName: v.author?.name || v.channel?.name || "unknown",
+              viewCount,
+              viewsPerHour,
+              ago: ago || "unknown date",
+              ageHours,
+              videoId: v.videoId || "",
+              url: v.url || `https://youtube.com/watch?v=${v.videoId}`
+            };
+          });
+          if (trendingMode) {
+            videos = videos.filter((v) => {
+              const ageMs = v.ageHours * 36e5;
+              return ageMs <= daysMs;
+            }).sort((a, b) => b.viewsPerHour - a.viewsPerHour).slice(0, maxResults);
+            if (videos.length === 0) {
+              return {
+                ok: false,
+                content: `No trending videos found in the last ${daysBack} days for: "${query}". Try increasing daysBack or use a broader query.`,
+                label: "No trending results"
+              };
+            }
+            const tableHeader2 = `Rank | Title | Channel | Views/hr | Total Views | Published
+${"\u2500".repeat(80)}`;
+            const rows2 = videos.map((v, i) => {
+              const views = v.viewCount.toLocaleString();
+              const vph = v.viewsPerHour.toLocaleString();
+              return `${String(i + 1).padStart(2)}. **${v.title}**
+    Channel: ${v.channelName} | Views/hr: ${vph} | Total: ${views} | Posted: ${v.ago}
+    URL: ${v.url}`;
+            });
+            const content2 = `**YouTube Trending: "${query}"** (last ${daysBack} days, sorted by views/hour)
+
+${tableHeader2}
+
+${rows2.join("\n\n")}`;
+            return {
+              ok: true,
+              content: content2,
+              label: `YouTube trending (${videos.length} results): ${query}`
+            };
+          }
+          videos = [...videos].sort((a, b) => b.viewCount - a.viewCount).slice(0, maxResults);
+          if (videos.length === 0) {
+            return {
+              ok: false,
+              content: `No YouTube videos found for: "${query}".`,
+              label: "No results"
+            };
+          }
+          const tableHeader = `Rank | Title | Channel | Total Views | Published
+${"\u2500".repeat(70)}`;
+          const rows = videos.map((v, i) => {
+            const views = v.viewCount.toLocaleString();
+            return `${String(i + 1).padStart(2)}. **${v.title}**
+    Channel: ${v.channelName} | Views: ${views} | Posted: ${v.ago}
+    URL: ${v.url}`;
+          });
+          const content = `**YouTube Search: "${query}"** (sorted by total views)
+
+${tableHeader}
+
+${rows.join("\n\n")}`;
+          return {
+            ok: true,
+            content,
+            label: `YouTube search (${videos.length} results): ${query}`
+          };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(`[search_youtube] failed: ${msg}`);
+          return {
+            ok: false,
+            content: `YouTube search failed: ${msg}`,
+            label: "YouTube search error"
+          };
+        }
+      }
+    };
+  }
+});
+
+// server/agent/tools/registerApproval.ts
+var registerApprovalTool;
+var init_registerApproval = __esm({
+  "server/agent/tools/registerApproval.ts"() {
+    "use strict";
+    init_db();
+    init_schema();
+    registerApprovalTool = {
+      name: "register_approval",
+      description: "Register a Discord message as requiring user approval via emoji reaction (\u2705 or \u274C). Use this AFTER posting a script, plan, draft, or other item to Discord that needs the user's sign-off. When the user reacts with \u2705, the onApprove action fires automatically; \u274C fires onReject. The onApprove/onReject actions define what happens next: run_prompt, run_schedule, spawn_subagent, or notify_only.",
+      parameters: {
+        type: "object",
+        properties: {
+          messageId: {
+            type: "string",
+            description: "The Discord message ID of the posted item awaiting approval."
+          },
+          channelId: {
+            type: "string",
+            description: "The Discord channel ID where the message was posted."
+          },
+          guildId: {
+            type: "string",
+            description: "Optional: the Discord guild/server ID."
+          },
+          type: {
+            type: "string",
+            enum: ["script", "task", "plan", "custom"],
+            description: "The type of item awaiting approval."
+          },
+          content: {
+            type: "string",
+            description: "The text content of the posted item (used as context for the approval action)."
+          },
+          onApprove: {
+            type: "object",
+            description: "Action to execute when the user reacts with \u2705. Types: run_prompt, run_schedule, spawn_subagent, notify_only.",
+            properties: {
+              type: { type: "string" },
+              prompt: { type: "string" },
+              scheduleId: { type: "string" },
+              agentType: { type: "string" },
+              title: { type: "string" }
+            }
+          },
+          onReject: {
+            type: "object",
+            description: "Optional: action to execute when the user reacts with \u274C.",
+            properties: {
+              type: { type: "string" },
+              prompt: { type: "string" }
+            }
+          }
+        },
+        required: ["messageId", "channelId", "type", "content", "onApprove"]
+      },
+      async execute(args, ctx) {
+        const { userId: userId2 } = ctx;
+        try {
+          await db.insert(discordPendingApprovals).values({
+            messageId: args.messageId,
+            userId: userId2,
+            channelId: args.channelId,
+            guildId: args.guildId,
+            type: args.type,
+            content: args.content,
+            onApprove: args.onApprove,
+            onReject: args.onReject ?? null,
+            status: "pending"
+          }).onConflictDoNothing();
+          return {
+            ok: true,
+            content: `Approval registered for message ${args.messageId}. The user can react with \u2705 to approve or \u274C to skip.`,
+            label: "Approval registered"
+          };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          return { ok: false, content: `Failed to register approval: ${msg}`, label: "Approval registration failed" };
+        }
+      }
+    };
+  }
+});
+
+// server/agent/tools/discordPinMessage.ts
+var discordPinMessageTool;
+var init_discordPinMessage = __esm({
+  "server/agent/tools/discordPinMessage.ts"() {
+    "use strict";
+    init_manager();
+    discordPinMessageTool = {
+      name: "discord_pin_message",
+      description: "Pin a message in a Discord channel so it appears at the top for easy reference. Use this when the user says 'pin that', when Jarvis creates a formal deliverable (architecture document, research report, project plan), or when posting something that should be permanently accessible in the channel.",
+      parameters: {
+        type: "object",
+        properties: {
+          channelId: {
+            type: "string",
+            description: "The Discord channel ID where the message was posted."
+          },
+          messageId: {
+            type: "string",
+            description: "The Discord message ID to pin."
+          }
+        },
+        required: ["channelId", "messageId"]
+      },
+      async execute(args, ctx) {
+        const { userId: userId2 } = ctx;
+        const pinned = await pinDiscordMessage(userId2, args.channelId, args.messageId);
+        if (!pinned) {
+          return {
+            ok: false,
+            content: "Couldn't pin the message \u2014 the bot may not have the Manage Messages permission, or the message wasn't found.",
+            label: "Pin failed"
+          };
+        }
+        return {
+          ok: true,
+          content: `Message ${args.messageId} has been pinned in the channel.`,
+          label: "Message pinned"
+        };
+      }
+    };
+  }
+});
+
+// server/agent/tools/setupNamedAgent.ts
+var DEFAULT_PERSONAS, DEFAULT_NAMES, setupNamedAgentTool;
+var init_setupNamedAgent = __esm({
+  "server/agent/tools/setupNamedAgent.ts"() {
+    "use strict";
+    init_manager();
+    DEFAULT_PERSONAS = {
+      coder: "You are a focused software engineer. You implement features, write clean code, and provide detailed progress updates. Always summarize what you just built and what you're working on next.",
+      researcher: "You are a deep research specialist. You find information, synthesize stories, and produce structured briefings. Always cite sources and provide multiple angles on each story.",
+      writer: "You are a content writing agent. You write scripts, posts, and articles in the user's established voice and style. Always match the tone of prior approved content.",
+      visual: "You are a visual concepts specialist. You generate detailed thumbnail concepts, design briefs, and visual direction notes with specific color palettes, layouts, and text overlay suggestions.",
+      custom: "You are a specialized assistant. Focus on the task at hand and provide high-quality, actionable outputs."
+    };
+    DEFAULT_NAMES = {
+      coder: "Charlie",
+      researcher: "Echo",
+      writer: "Quill",
+      visual: "Pixel"
+    };
+    setupNamedAgentTool = {
+      name: "setup_named_agent",
+      description: "Create a named AI sub-agent with a distinct persona that lives in its own dedicated Discord channel. Built-in roles: coder (Charlie), researcher (Echo), writer (Quill), visual (Pixel). Use when the user asks to 'set up a coding agent', 'create a research assistant in Discord', etc. Each agent gets its own channel and responds with a focused persona when messaged there. Optionally enable an autonomous loop where the agent proactively works on tasks at a set interval.",
+      parameters: {
+        type: "object",
+        properties: {
+          name: {
+            type: "string",
+            description: "The agent's name (e.g. 'Charlie', 'Echo'). Defaults to the role's default name if omitted."
+          },
+          role: {
+            type: "string",
+            enum: ["coder", "researcher", "writer", "visual", "custom"],
+            description: "The agent's role. Determines the default persona and channel name."
+          },
+          persona: {
+            type: "string",
+            description: "Optional custom persona text. Defaults to the built-in persona for the role."
+          },
+          loopEnabled: {
+            type: "boolean",
+            description: "Set to true to enable autonomous operation \u2014 the agent will proactively work on tasks at the set interval."
+          },
+          loopIntervalMinutes: {
+            type: "number",
+            description: "How often the autonomous loop fires in minutes. Default: 60."
+          },
+          loopPrompt: {
+            type: "string",
+            description: "What the looping agent does each cycle (e.g. 'Check the goal list and work on the next highest-priority task')."
+          }
+        },
+        required: ["role"]
+      },
+      async execute(args, ctx) {
+        const { userId: userId2 } = ctx;
+        const role = args.role || "custom";
+        const name = args.name || DEFAULT_NAMES[role] || "Agent";
+        const persona = args.persona || DEFAULT_PERSONAS[role] || DEFAULT_PERSONAS.custom;
+        const channelName = `${name.toLowerCase()}-${role}`;
+        const channelResult = await createDiscordChannel(userId2, {
+          channelName,
+          topic: `${name} \u2014 ${role} agent. ${persona.slice(0, 100)}`,
+          categoryName: "\u{1F9E0} Jarvis Workspace",
+          pinMessage: `**${name} \u2014 ${role.charAt(0).toUpperCase() + role.slice(1)} Agent**
+
+${persona}
+
+_Message ${name} here to get started. ${args.loopEnabled ? `I'll also proactively post updates every ${args.loopIntervalMinutes ?? 60} minutes.` : "I respond to your messages."}_`
+        });
+        const channelId = channelResult.channelId;
+        const agentId = await registerNamedAgent(userId2, {
+          name,
+          role,
+          persona,
+          channelId,
+          channelName,
+          loopEnabled: args.loopEnabled,
+          loopIntervalMinutes: args.loopIntervalMinutes,
+          loopPrompt: args.loopPrompt
+        });
+        const loopInfo = args.loopEnabled ? ` The loop is enabled \u2014 ${name} will proactively post updates every ${args.loopIntervalMinutes ?? 60} minutes.` : "";
+        return {
+          ok: true,
+          content: `Created **${name}** (${role} agent) with a dedicated #${channelName} channel.${loopInfo} Message ${name} in that channel to get started. Agent ID: \`${agentId}\`.`,
+          label: `Agent created: ${name} (${role})`,
+          detail: agentId
+        };
+      }
+    };
+  }
+});
+
+// server/agent/tools/queueBackgroundJob.ts
+function deriveTitle(agentType, prompt) {
+  const prefixes = {
+    research: "Research:",
+    writing: "Draft:",
+    planning: "Plan:",
+    email: "Email:"
+  };
+  const prefix = prefixes[agentType] || "Task:";
+  const snippet = prompt.slice(0, 60).replace(/\s+/g, " ").trim();
+  return `${prefix} ${snippet}${prompt.length > 60 ? "\u2026" : ""}`;
+}
+var queueBackgroundJobTool;
+var init_queueBackgroundJob = __esm({
+  "server/agent/tools/queueBackgroundJob.ts"() {
+    "use strict";
+    init_jobQueue();
+    init_subagents();
+    queueBackgroundJobTool = {
+      name: "queue_background_job",
+      description: `Queue a background sub-agent to handle tasks that require multiple steps, deep research, document drafting, structured planning, or composing emails \u2014 anything that takes longer than a quick lookup. Use this whenever the user's request would take more than 10-15 seconds to answer inline. The user receives an immediate acknowledgement ("I've queued that \u2014 you'll get a notification when it's done") and sees the result in their Inbox when complete.
+
+Choose agent_type based on the request:
+- research: competitive analysis, market research, fact-finding briefs
+- writing: drafting memos, notes, blog posts, documents, reports
+- planning: phased project plans, goal breakdowns, action plans
+- email: composing an outbound email on the user's behalf
+
+Do NOT use for: quick one-sentence answers, reading today's tasks, anything answered by another tool, or any Discord server action (listing/deleting channels \u2014 use discord_list_channels and discord_delete_channel instead).`,
+      parameters: {
+        type: "object",
+        properties: {
+          agent_type: {
+            type: "string",
+            enum: SUB_AGENT_TYPES,
+            description: "The type of sub-agent to run."
+          },
+          prompt: {
+            type: "string",
+            description: "Complete instructions for the sub-agent. Include all context the sub-agent needs to work autonomously \u2014 the user is not in this conversation. For email type, name the recipient and purpose."
+          },
+          title: {
+            type: "string",
+            description: "Short label for the Inbox card (\u226480 chars). If omitted, a title will be derived from the prompt."
+          }
+        },
+        required: ["agent_type", "prompt"]
+      },
+      async execute(args, ctx) {
+        const a = args;
+        const agentType = String(a.agent_type || "").trim();
+        const prompt = String(a.prompt || "").trim();
+        if (!SUB_AGENT_TYPES.includes(agentType)) {
+          return {
+            ok: false,
+            content: `Invalid agent_type "${agentType}". Must be one of: ${SUB_AGENT_TYPES.join(", ")}.`,
+            label: "Invalid agent_type"
+          };
+        }
+        if (!prompt) {
+          return { ok: false, content: "prompt is required.", label: "Missing prompt" };
+        }
+        const title = String(a.title || "").trim() || deriveTitle(agentType, prompt);
+        try {
+          const jobId = await submitAgentJob({
+            userId: ctx.userId,
+            agentType,
+            title,
+            prompt
+          });
+          console.log(
+            `[${ctx.channel || "Coach"}] queue_background_job type=${agentType} job=${jobId} title="${title.slice(0, 60)}"`
+          );
+          return {
+            ok: true,
+            content: `Background job queued successfully (type=${agentType}, id=${jobId}). The user will receive an inbox notification when it finishes.`,
+            label: `Queued ${agentType} job`,
+            detail: jobId
+          };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(`[queue_background_job] submit failed:`, err);
+          return {
+            ok: false,
+            content: `Failed to queue the job: ${msg}`,
+            label: "Queue failed",
+            detail: msg
+          };
+        }
+      }
+    };
+  }
+});
+
+// server/agent/tools/setupContentPipeline.ts
+var NEVER_FIRES_CRON, setupContentPipelineTool;
+var init_setupContentPipeline = __esm({
+  "server/agent/tools/setupContentPipeline.ts"() {
+    "use strict";
+    init_schedules();
+    init_manager();
+    NEVER_FIRES_CRON = "0 0 31 2 *";
+    setupContentPipelineTool = {
+      name: "setup_content_pipeline",
+      description: "Set up the full multi-stage Discord content pipeline for the user's niche. Creates four Discord channels (#alerts, #research, #scripts, #ideas) and wires up three chained schedule stages that run automatically every day:\n  1. #alerts \u2014 searches YouTube trending + web for top stories in the user's niche\n  2. #research \u2014 deep-dives each alert story with angles and supporting data\n  3. #scripts \u2014 writes a short script per story; each is posted separately with      \u2705/\u274C reactions; approving a script auto-generates thumbnail concepts in #ideas\nUse this when the user says 'set up my content pipeline', 'create a content workflow', 'set up automated content creation', or similar.",
+      parameters: {
+        type: "object",
+        properties: {
+          niche: {
+            type: "string",
+            description: "The topic or niche for content research. Examples: 'ADHD productivity', 'AI tools for developers', 'crypto trading'. Used in all stage prompts to focus research."
+          },
+          alertTime: {
+            type: "string",
+            description: "Natural language time for the daily alerts run. Default: '7am'. Examples: '7am', '8:30am', '6pm'. The pipeline runs once per day at this time."
+          }
+        },
+        required: ["niche"]
+      },
+      async execute(args, ctx) {
+        const { userId: userId2 } = ctx;
+        const niche = String(args.niche || "").trim();
+        const alertTimeRaw = args.alertTime ? String(args.alertTime).trim() : "7am";
+        if (!niche) {
+          return {
+            ok: false,
+            content: "Please provide a niche or topic so I know what to research (e.g. 'ADHD productivity', 'AI tools').",
+            label: "Missing niche"
+          };
+        }
+        const alertCron = parseCronExpression(`every day at ${alertTimeRaw}`);
+        const CHANNELS = ["alerts", "research", "scripts", "ideas"];
+        const channelDescriptions = {
+          alerts: "Daily trending topic alerts for your niche",
+          research: "Deep-dive research briefs from today's alerts",
+          scripts: "AI-written scripts for each research story \u2014 react \u2705 to approve",
+          ideas: "Thumbnail concept briefs for approved scripts"
+        };
+        for (const ch of CHANNELS) {
+          await createDiscordChannel(userId2, {
+            channelName: ch,
+            topic: channelDescriptions[ch],
+            categoryName: "\u{1F9E0} Jarvis Workspace"
+          }).catch(
+            (err) => console.warn(`[ContentPipeline] Channel creation warning for #${ch}:`, err)
+          );
+        }
+        const stage3 = await createSchedule(userId2, {
+          channelName: "scripts",
+          label: `${niche} \u2014 Scripts`,
+          cronExpression: NEVER_FIRES_CRON,
+          prompt: `Here is the research brief for today's trending topics in ${niche}:
+
+{{previousOutput}}
+
+For each topic, write a short YouTube script in a direct, engaging, first-person style. Keep each script under 500 words. Open with a strong hook (a surprising fact or bold claim). Close with a clear call to action ("Follow for more", "Comment below", etc.).
+
+IMPORTANT: Separate each script with exactly this delimiter on its own line (no spaces before or after):
+---SCRIPT---
+
+Do not include any text before the first script or after the last one. Start each script with the topic title as the first line.`
+        });
+        const stage2 = await createSchedule(userId2, {
+          channelName: "research",
+          label: `${niche} \u2014 Research`,
+          cronExpression: NEVER_FIRES_CRON,
+          prompt: `Here are today's trending alerts for ${niche}:
+
+{{previousOutput}}
+
+For each topic, research the story more deeply: what happened, why audiences in the ${niche} space care about this, and 2-3 concrete content angles a creator could take. Include any relevant stats, quotes, or context you can find. Keep each entry to 4-6 focused bullet points. Use a clear header for each topic.`,
+          pipelineNext: stage3.id
+        });
+        const stage1 = await createSchedule(userId2, {
+          channelName: "alerts",
+          label: `${niche} \u2014 Daily Alerts`,
+          cronExpression: alertCron,
+          prompt: `Search YouTube for trending videos about "${niche}" published in the last 3 days, sorted by views per hour (use trending mode). Also search the web for the most discussed topics and stories in the ${niche} space right now. Combine both sources into a ranked list of the top 5-8 trending topics or stories. For each: title, why it's trending, key metric (views/hour or engagement signal), and a 1-sentence content angle. Format as a numbered list with clear headers.`,
+          pipelineNext: stage2.id
+        });
+        const summary = [
+          `\u2705 Content pipeline created for **${niche}**!`,
+          ``,
+          `**Daily schedule:** Stage 1 fires at \`${alertCron}\` then the chain runs automatically.`,
+          ``,
+          `**Channels created:**`,
+          `\u2022 #alerts \u2014 trending topics (fires at ${alertTimeRaw})`,
+          `\u2022 #research \u2014 deep-dive research briefs`,
+          `\u2022 #scripts \u2014 scripts per story (react \u2705 to approve, \u274C to skip)`,
+          `\u2022 #ideas \u2014 thumbnail concepts (auto-triggered on \u2705)`,
+          ``,
+          `**Pipeline IDs:** stage1=\`${stage1.id}\`, stage2=\`${stage2.id}\`, stage3=\`${stage3.id}\``,
+          ``,
+          `To test it now: say "run my ${niche} alerts pipeline" and I'll trigger Stage 1 immediately.`
+        ].join("\n");
+        return {
+          ok: true,
+          content: summary,
+          label: `Content pipeline created: ${niche}`,
+          detail: JSON.stringify({ stage1: stage1.id, stage2: stage2.id, stage3: stage3.id })
+        };
+      }
+    };
+  }
+});
+
+// server/agent/tools/setupDiscordWorkspace.ts
+import { eq as eq26, and as and20 } from "drizzle-orm";
+var ALL_CHANNELS, channelList, setupDiscordWorkspaceTool;
+var init_setupDiscordWorkspace = __esm({
+  "server/agent/tools/setupDiscordWorkspace.ts"() {
+    "use strict";
+    init_manager();
+    init_workspace();
+    init_db();
+    init_schema();
+    ALL_CHANNELS = [
+      ...WORKSPACE_TOPICS.map((t) => `${t.emoji}${t.name}`),
+      `${DIGEST_CHANNEL.emoji}${DIGEST_CHANNEL.name}`
+    ];
+    channelList = ALL_CHANNELS.map((ch) => `\u2022 #${ch}`).join("\n");
+    setupDiscordWorkspaceTool = {
+      name: "setup_discord_workspace",
+      description: "Create the Jarvis Workspace in the user's Discord server. This sets up a '\u{1F9E0} Jarvis Workspace' category containing 7 organised topic channels: \u{1F4CB}tasks, \u{1F4B0}finance, \u{1F4A1}ideas, \u{1F4BC}business, \u{1F331}personal, \u{1F9E0}thinking, and \u{1F4F0}daily-digest. Use this when the user asks to 'set up my workspace', 'create the Jarvis channels', 'set up Discord', 'create my workspace', or anything similar. If the workspace already exists it is detected gracefully and the user is told so.",
+      parameters: {
+        type: "object",
+        properties: {
+          guildId: {
+            type: "string",
+            description: "Optional Discord server (guild) ID. If omitted, the bot's first connected server is used."
+          }
+        },
+        required: []
+      },
+      async execute(args, ctx) {
+        const { userId: userId2 } = ctx;
+        let guildId = args.guildId ?? "";
+        if (!guildId) {
+          const guilds = getGuildsForUser(userId2);
+          if (guilds.length === 0) {
+            return {
+              ok: false,
+              content: "Your Discord bot isn't running or isn't in any server yet. Make sure you've added the bot to your server and that your bot token is saved.",
+              label: "Discord workspace setup failed \u2014 bot not in any server"
+            };
+          }
+          guildId = guilds[0].id;
+        }
+        const rows = await db.select().from(channelLinks).where(and20(eq26(channelLinks.userId, userId2), eq26(channelLinks.channel, "discord"))).limit(1);
+        const existingMeta = rows[0]?.metadata ?? {};
+        const existingWorkspace = existingMeta.workspace;
+        if (existingWorkspace && existingWorkspace.guildId === guildId) {
+          const count = Object.keys(existingWorkspace.channels).length;
+          return {
+            ok: true,
+            content: [
+              `\u2139\uFE0F Your Jarvis Workspace is already set up in **${existingWorkspace.guildName}**!`,
+              ``,
+              `**Category:** \u{1F9E0} Jarvis Workspace`,
+              `**Channels (${count}):**`,
+              channelList,
+              ``,
+              `Everything is ready \u2014 you can ask me to post to any of these channels anytime.`
+            ].join("\n"),
+            label: `Discord workspace already exists in ${existingWorkspace.guildName}`,
+            detail: JSON.stringify({
+              alreadyExisted: true,
+              guildId: existingWorkspace.guildId,
+              categoryId: existingWorkspace.categoryId
+            })
+          };
+        }
+        const result = await setupDiscordWorkspace(userId2, guildId);
+        if (!result.ok) {
+          if (result.error?.includes("already in progress")) {
+            return {
+              ok: true,
+              content: "Workspace setup is already in progress \u2014 give it a moment and it will be ready!",
+              label: "Discord workspace setup already in progress"
+            };
+          }
+          return {
+            ok: false,
+            content: `Couldn't set up the workspace: ${result.error}`,
+            label: "Discord workspace setup failed"
+          };
+        }
+        const workspace = result.workspace;
+        const createdCount = Object.keys(workspace.channels).length;
+        return {
+          ok: true,
+          content: [
+            `\u2705 Your Jarvis Workspace has been created in **${workspace.guildName}**!`,
+            ``,
+            `**Category:** \u{1F9E0} Jarvis Workspace`,
+            `**Channels created (${createdCount}):**`,
+            channelList,
+            ``,
+            `Each channel has a welcome message and is ready to use. You can now ask me to post notes, plans, or updates to any of these channels.`
+          ].join("\n"),
+          label: `Discord workspace created in ${workspace.guildName}`,
+          detail: JSON.stringify({
+            alreadyExisted: false,
+            guildId: workspace.guildId,
+            categoryId: workspace.categoryId
+          })
+        };
+      }
+    };
+  }
+});
+
+// server/agent/tools/memorySearch.ts
+import { sql as sql13 } from "drizzle-orm";
+var memorySearchTool, memoryGetTool;
+var init_memorySearch = __esm({
+  "server/agent/tools/memorySearch.ts"() {
+    "use strict";
+    init_retrieve();
+    init_db();
+    memorySearchTool = {
+      name: "memory_search",
+      description: "Search your long-term memory for facts, preferences, and context about this user. Use this mid-task to look up specific things ('what are their preferred work hours?', 'what did they say about their goals?') without loading everything. Returns the most relevant memories ranked by semantic + keyword match.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description: "What you want to recall \u2014 a question or topic phrase"
+          },
+          category: {
+            type: "string",
+            description: "Optional \u2014 filter to a specific category: work_patterns, values, blockers, goals, relationships, preferences, health, communication_style, or any other label"
+          },
+          limit: {
+            type: "number",
+            description: "Max memories to return (default 10, max 25)"
+          }
+        },
+        required: ["query"]
+      },
+      async execute(args, ctx) {
+        const query = String(args.query || "").trim();
+        if (!query) {
+          return { ok: false, content: "No query provided.", label: "Memory search failed" };
+        }
+        const limit = Math.min(25, Math.max(1, Number(args.limit) || 10));
+        const category = args.category ? String(args.category).trim() : null;
+        try {
+          let memories = await retrieveRelevantMemories(ctx.userId, query, limit * 2);
+          if (category) {
+            memories = memories.filter(
+              (m) => m.category.toLowerCase() === category.toLowerCase()
+            );
+          }
+          const top = memories.slice(0, limit);
+          if (top.length === 0) {
+            return {
+              ok: true,
+              content: `No memories found for query: "${query}"${category ? ` (category: ${category})` : ""}.`,
+              label: "Memory search: no results"
+            };
+          }
+          const formatted = top.map((m, i) => `[${i + 1}] (${m.category}, confidence: ${m.confidence}%) ${m.content}`).join("\n");
+          const content = `Found ${top.length} relevant memories for: "${query}"
+
+${formatted}`;
+          console.log(
+            `[${ctx.channel || "Agent"}] memory_search "${query}" \u2192 ${top.length} result(s)`
+          );
+          return {
+            ok: true,
+            content,
+            label: `Memory search: ${query}`,
+            detail: `${top.length} memories retrieved`
+          };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          return { ok: false, content: `Memory search failed: ${msg}`, label: "Memory search error" };
+        }
+      }
+    };
+    memoryGetTool = {
+      name: "memory_get",
+      description: "Retrieve memories from a specific category (e.g. 'work_patterns', 'values', 'goals', 'blockers', 'preferences'). Use when you need all context in a category rather than a semantic search. Returns up to 20 entries sorted by confidence.",
+      parameters: {
+        type: "object",
+        properties: {
+          category: {
+            type: "string",
+            description: "The memory category to read: work_patterns, values, blockers, goals, relationships, preferences, health, communication_style, etc."
+          },
+          limit: {
+            type: "number",
+            description: "Max entries to return (default 20, max 40)"
+          }
+        },
+        required: ["category"]
+      },
+      async execute(args, ctx) {
+        const category = String(args.category || "").trim();
+        if (!category) {
+          return { ok: false, content: "No category provided.", label: "Memory get failed" };
+        }
+        const limit = Math.min(40, Math.max(1, Number(args.limit) || 20));
+        try {
+          const rows = await db.execute(sql13`
+        SELECT id, content, category, relevance_score, confidence
+        FROM user_memories
+        WHERE user_id = ${ctx.userId}
+          AND LOWER(category) = LOWER(${category})
+        ORDER BY confidence DESC, relevance_score DESC
+        LIMIT ${limit}
+      `);
+          const memories = rows.rows ?? [];
+          if (memories.length === 0) {
+            return {
+              ok: true,
+              content: `No memories found in category "${category}".`,
+              label: `Memory get: ${category} (empty)`
+            };
+          }
+          const formatted = memories.map((m, i) => `[${i + 1}] (${m.confidence}% confidence) ${m.content}`).join("\n");
+          const content = `${memories.length} memories in category "${category}":
+
+${formatted}`;
+          console.log(
+            `[${ctx.channel || "Agent"}] memory_get category="${category}" \u2192 ${memories.length} row(s)`
+          );
+          return {
+            ok: true,
+            content,
+            label: `Memory get: ${category}`,
+            detail: `${memories.length} entries`
+          };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          return { ok: false, content: `Memory get failed: ${msg}`, label: "Memory get error" };
+        }
+      }
+    };
+  }
+});
+
+// server/agent/tools/webFetch.ts
+import * as cheerio from "cheerio";
+function cleanExpiredCache() {
+  const now = Date.now();
+  for (const [key, entry] of cache.entries()) {
+    if (now - entry.fetchedAt > CACHE_TTL_MS) {
+      cache.delete(key);
+    }
+  }
+}
+function htmlToReadableText(html) {
+  const $ = cheerio.load(html);
+  $("script, style, nav, footer, iframe, noscript, svg, [aria-hidden='true']").remove();
+  $("[class*='menu'], [class*='nav'], [class*='sidebar'], [class*='cookie'], [id*='nav'], [id*='menu']").remove();
+  const title = $("title").text().trim();
+  const metaDesc = $("meta[name='description']").attr("content") || "";
+  let mainContent = $("article, main, [role='main'], .content, #content, .post, #post").text();
+  if (!mainContent.trim()) {
+    mainContent = $("body").text();
+  }
+  const cleaned = mainContent.replace(/\t/g, " ").replace(/[ \t]{2,}/g, " ").replace(/\n{3,}/g, "\n\n").trim();
+  const parts = [];
+  if (title) parts.push(`# ${title}`);
+  if (metaDesc) parts.push(`*${metaDesc}*`);
+  if (cleaned) parts.push(cleaned);
+  return parts.join("\n\n");
+}
+var CACHE_TTL_MS, cache, webFetchTool;
+var init_webFetch = __esm({
+  "server/agent/tools/webFetch.ts"() {
+    "use strict";
+    CACHE_TTL_MS = 15 * 60 * 1e3;
+    cache = /* @__PURE__ */ new Map();
+    webFetchTool = {
+      name: "web_fetch",
+      description: "Fetch and read the content of any URL \u2014 news articles, documentation, shared links, web pages. Converts HTML to clean readable text. Results are cached for 15 minutes. Use this when the user shares a link, or when you already know a URL from research and want to read its contents directly.",
+      parameters: {
+        type: "object",
+        properties: {
+          url: {
+            type: "string",
+            description: "The full URL to fetch (must start with https:// or http://)"
+          },
+          max_chars: {
+            type: "number",
+            description: "Maximum characters of content to return (default 8000, max 20000). Use a lower value for a quick summary."
+          }
+        },
+        required: ["url"]
+      },
+      async execute(args, ctx) {
+        const url = String(args.url || "").trim();
+        const maxChars = Math.min(2e4, Math.max(500, Number(args.max_chars) || 8e3));
+        if (!url) {
+          return { ok: false, content: "No URL provided.", label: "web_fetch: no URL" };
+        }
+        if (!url.startsWith("http://") && !url.startsWith("https://")) {
+          return {
+            ok: false,
+            content: `Invalid URL \u2014 must start with http:// or https://. Got: ${url}`,
+            label: "web_fetch: invalid URL"
+          };
+        }
+        cleanExpiredCache();
+        const cached = cache.get(url);
+        if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
+          const truncated = cached.text.slice(0, maxChars);
+          const wasCut = cached.text.length > maxChars;
+          console.log(`[${ctx.channel || "Agent"}] web_fetch cache hit \u2192 ${url}`);
+          return {
+            ok: true,
+            content: truncated + (wasCut ? `
+
+[\u2026content truncated at ${maxChars} chars]` : ""),
+            label: `Fetched (cached): ${url}`,
+            detail: `${truncated.length} chars (cached)`
+          };
+        }
+        try {
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 15e3);
+          const response = await fetch(url, {
+            signal: controller.signal,
+            headers: {
+              "User-Agent": "Mozilla/5.0 (compatible; Jarvis/1.0; +https://jarvis.ai)",
+              Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+              "Accept-Language": "en-US,en;q=0.9"
+            }
+          });
+          clearTimeout(timeout);
+          if (!response.ok) {
+            return {
+              ok: false,
+              content: `HTTP ${response.status} ${response.statusText} for URL: ${url}`,
+              label: `web_fetch: HTTP ${response.status}`
+            };
+          }
+          const contentType = response.headers.get("content-type") || "";
+          let text2;
+          if (contentType.includes("text/html") || contentType.includes("application/xhtml")) {
+            const html = await response.text();
+            text2 = htmlToReadableText(html);
+          } else if (contentType.includes("text/") || contentType.includes("application/json")) {
+            text2 = await response.text();
+          } else {
+            return {
+              ok: false,
+              content: `Unsupported content type "${contentType}" \u2014 can only read HTML and text pages.`,
+              label: "web_fetch: unsupported type"
+            };
+          }
+          if (!text2.trim()) {
+            return {
+              ok: false,
+              content: `URL returned empty content: ${url}`,
+              label: "web_fetch: empty response"
+            };
+          }
+          cache.set(url, { text: text2, fetchedAt: Date.now() });
+          const truncated = text2.slice(0, maxChars);
+          const wasCut = text2.length > maxChars;
+          console.log(
+            `[${ctx.channel || "Agent"}] web_fetch ${url} \u2192 ${text2.length} chars${wasCut ? ` (truncated to ${maxChars})` : ""}`
+          );
+          return {
+            ok: true,
+            content: truncated + (wasCut ? `
+
+[\u2026content truncated at ${maxChars} chars]` : ""),
+            label: `Fetched: ${url}`,
+            detail: `${truncated.length} chars read`
+          };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          const label = msg.includes("abort") || msg.includes("timeout") ? "web_fetch: timed out" : msg.includes("ENOTFOUND") || msg.includes("EAI_AGAIN") ? "web_fetch: domain not found" : "web_fetch: failed";
+          return { ok: false, content: `${label}: ${msg}`, label, detail: msg };
+        }
+      }
+    };
+  }
+});
+
+// server/agent/tools/sessionTools.ts
+import { eq as eq27, and as and21, desc as desc10 } from "drizzle-orm";
+function formatAge(date2) {
+  if (!date2) return "unknown";
+  const diffMs = Date.now() - new Date(date2).getTime();
+  const diffMins = Math.floor(diffMs / 6e4);
+  if (diffMins < 2) return "just now";
+  if (diffMins < 60) return `${diffMins}m ago`;
+  const diffHours = Math.floor(diffMins / 60);
+  if (diffHours < 24) return `${diffHours}h ago`;
+  const diffDays = Math.floor(diffHours / 24);
+  return `${diffDays}d ago`;
+}
+function formatDate(date2) {
+  if (!date2) return "unknown";
+  return new Date(date2).toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
+var sessionsListTool, sessionsHistoryTool, sessionsSendTool;
+var init_sessionTools = __esm({
+  "server/agent/tools/sessionTools.ts"() {
+    "use strict";
+    init_db();
+    init_schema();
+    init_jobQueue();
+    sessionsListTool = {
+      name: "sessions_list",
+      description: "List the user's recent background agent sessions (jobs) \u2014 research tasks, goal decompositions, writing tasks, etc. Shows job ID, type, title, status, and when it was created. Use to check on active or recent work before spawning duplicate tasks.",
+      parameters: {
+        type: "object",
+        properties: {
+          status: {
+            type: "string",
+            description: "Optional filter by status: queued, running, complete, failed, cancelled. Omit to see all recent jobs."
+          },
+          limit: {
+            type: "number",
+            description: "Max jobs to return (default 10, max 30)"
+          }
+        },
+        required: []
+      },
+      async execute(args, ctx) {
+        const statusFilter = args.status ? String(args.status).trim() : null;
+        const limit = Math.min(30, Math.max(1, Number(args.limit) || 10));
+        try {
+          const rows = statusFilter ? await db.select({
+            id: agentJobs.id,
+            agentType: agentJobs.agentType,
+            title: agentJobs.title,
+            status: agentJobs.status,
+            createdAt: agentJobs.createdAt,
+            completedAt: agentJobs.completedAt,
+            turns: agentJobs.turns,
+            toolCallsCount: agentJobs.toolCallsCount
+          }).from(agentJobs).where(
+            and21(
+              eq27(agentJobs.userId, ctx.userId),
+              eq27(agentJobs.status, statusFilter)
+            )
+          ).orderBy(desc10(agentJobs.createdAt)).limit(limit) : await db.select({
+            id: agentJobs.id,
+            agentType: agentJobs.agentType,
+            title: agentJobs.title,
+            status: agentJobs.status,
+            createdAt: agentJobs.createdAt,
+            completedAt: agentJobs.completedAt,
+            turns: agentJobs.turns,
+            toolCallsCount: agentJobs.toolCallsCount
+          }).from(agentJobs).where(eq27(agentJobs.userId, ctx.userId)).orderBy(desc10(agentJobs.createdAt)).limit(limit);
+          if (rows.length === 0) {
+            return {
+              ok: true,
+              content: statusFilter ? `No ${statusFilter} jobs found.` : "No background jobs found.",
+              label: "Sessions: none"
+            };
+          }
+          const lines = rows.map((r) => {
+            const age = r.completedAt ? `completed ${formatAge(r.completedAt)}` : r.createdAt ? `created ${formatAge(r.createdAt)}` : "";
+            const stats2 = r.status === "complete" && r.turns ? ` (${r.turns} turn${r.turns === 1 ? "" : "s"}, ${r.toolCallsCount || 0} tools)` : "";
+            return `\u2022 [${r.id}] ${r.status.toUpperCase()} | ${r.agentType} | "${r.title}" | ${age}${stats2}`;
+          });
+          const content = `${rows.length} session(s)${statusFilter ? ` (${statusFilter})` : ""}:
+
+${lines.join("\n")}`;
+          console.log(
+            `[${ctx.channel || "Agent"}] sessions_list user=${ctx.userId} \u2192 ${rows.length} rows`
+          );
+          return {
+            ok: true,
+            content,
+            label: `Sessions list (${rows.length})`,
+            detail: `${rows.length} jobs`
+          };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          return { ok: false, content: `sessions_list failed: ${msg}`, label: "Sessions list error" };
+        }
+      }
+    };
+    sessionsHistoryTool = {
+      name: "sessions_history",
+      description: "Fetch the full output of a background session (job) by its ID. Returns the job details, result summary, and any deliverable body text that was produced. Use after sessions_list to read what a completed job produced.",
+      parameters: {
+        type: "object",
+        properties: {
+          job_id: {
+            type: "string",
+            description: "The job ID returned by sessions_list or spawn_subagent"
+          }
+        },
+        required: ["job_id"]
+      },
+      async execute(args, ctx) {
+        const jobId = String(args.job_id || "").trim();
+        if (!jobId) {
+          return { ok: false, content: "No job_id provided.", label: "sessions_history: no ID" };
+        }
+        try {
+          const [job] = await db.select().from(agentJobs).where(
+            and21(
+              eq27(agentJobs.id, jobId),
+              eq27(agentJobs.userId, ctx.userId)
+            )
+          ).limit(1);
+          if (!job) {
+            return {
+              ok: false,
+              content: `No job found with ID "${jobId}" for this user.`,
+              label: "sessions_history: not found"
+            };
+          }
+          const parts = [
+            `**Job:** ${job.id}`,
+            `**Type:** ${job.agentType}`,
+            `**Title:** ${job.title}`,
+            `**Status:** ${job.status}`,
+            `**Created:** ${job.createdAt ? formatDate(job.createdAt) : "unknown"}`,
+            job.completedAt ? `**Completed:** ${formatDate(job.completedAt)}` : "",
+            job.turns ? `**Turns:** ${job.turns}` : "",
+            job.toolCallsCount ? `**Tool calls:** ${job.toolCallsCount}` : "",
+            `
+**Original prompt:**
+${job.prompt}`
+          ].filter(Boolean);
+          if (job.error) {
+            parts.push(`
+**Error:**
+${job.error}`);
+          }
+          if (job.result && typeof job.result === "object") {
+            const r = job.result;
+            parts.push(`
+**Result metadata:**
+${JSON.stringify(r, null, 2)}`);
+          }
+          const deliverables2 = await db.select({
+            type: deliverables.type,
+            title: deliverables.title,
+            summary: deliverables.summary,
+            body: deliverables.body,
+            status: deliverables.status
+          }).from(deliverables).where(eq27(deliverables.jobId, jobId)).limit(1);
+          const del = deliverables2[0];
+          if (del) {
+            parts.push(
+              `
+**Deliverable (${del.type} \u2014 ${del.status}):** ${del.title}`,
+              del.summary ? `*${del.summary}*` : "",
+              `
+${del.body}`
+            );
+          }
+          const content = parts.filter(Boolean).join("\n");
+          console.log(
+            `[${ctx.channel || "Agent"}] sessions_history job=${jobId} status=${job.status}`
+          );
+          return {
+            ok: true,
+            content,
+            label: `Session history: ${job.title}`,
+            detail: `${job.status} job`
+          };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          return {
+            ok: false,
+            content: `sessions_history failed: ${msg}`,
+            label: "sessions_history error"
+          };
+        }
+      }
+    };
+    sessionsSendTool = {
+      name: "sessions_send",
+      description: "Start a new background agent session (sub-task) and return its job ID. Use this to delegate work to a background agent \u2014 research, writing, planning, goal decomposition \u2014 without blocking the current conversation. The user will be notified when it completes via their configured channel.",
+      parameters: {
+        type: "object",
+        properties: {
+          agent_type: {
+            type: "string",
+            description: "Type of agent session to start: research, writing, planning, goal_decompose, weekly_pattern"
+          },
+          title: {
+            type: "string",
+            description: "Short descriptive title for this session (shown in the inbox)"
+          },
+          prompt: {
+            type: "string",
+            description: "Full instructions for the background agent \u2014 what it should do and produce"
+          }
+        },
+        required: ["agent_type", "title", "prompt"]
+      },
+      async execute(args, ctx) {
+        const agentType = String(args.agent_type || "").trim();
+        const title = String(args.title || "").trim();
+        const prompt = String(args.prompt || "").trim();
+        if (!agentType || !title || !prompt) {
+          return {
+            ok: false,
+            content: "agent_type, title, and prompt are all required.",
+            label: "sessions_send: missing params"
+          };
+        }
+        const validTypes = [
+          "research",
+          "writing",
+          "planning",
+          "goal_decompose",
+          "weekly_pattern"
+        ];
+        if (!validTypes.includes(agentType)) {
+          return {
+            ok: false,
+            content: `Unknown agent_type "${agentType}". Valid types: ${validTypes.join(", ")}`,
+            label: "sessions_send: invalid type"
+          };
+        }
+        try {
+          const jobId = await submitAgentJob({
+            userId: ctx.userId,
+            agentType,
+            title,
+            prompt,
+            input: { source: "sessions_send", channel: ctx.channel || "agent" }
+          });
+          console.log(
+            `[${ctx.channel || "Agent"}] sessions_send spawned ${agentType} job ${jobId} title="${title}"`
+          );
+          return {
+            ok: true,
+            content: `Background session started \u2014 job ID: ${jobId}
+Type: ${agentType}
+Title: ${title}
+
+The agent is now running. You can check its status with sessions_list or read its output with sessions_history once it completes. The user will be notified via their preferred channel when done.`,
+            label: `Session started: ${title}`,
+            detail: `Job ID: ${jobId}`
+          };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          return { ok: false, content: `sessions_send failed: ${msg}`, label: "sessions_send error" };
+        }
+      }
+    };
+  }
+});
+
+// server/agent/tools/cronTools.ts
+import { eq as eq28, and as and22, or, desc as desc11, gte as gte5, isNotNull } from "drizzle-orm";
+function parseTimeOfDay(str) {
+  const m = str.match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/i);
+  if (!m) return null;
+  let hours = parseInt(m[1], 10);
+  const minutes = m[2] ? parseInt(m[2], 10) : 0;
+  const meridiem = (m[3] || "").toLowerCase();
+  if (meridiem === "pm" && hours !== 12) hours += 12;
+  if (meridiem === "am" && hours === 12) hours = 0;
+  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return null;
+  return { hours, minutes };
+}
+function nextWeekday(dayIndex, timeStr) {
+  const now = /* @__PURE__ */ new Date();
+  const result = new Date(now);
+  const currentDay = now.getDay();
+  let daysUntil = (dayIndex - currentDay + 7) % 7;
+  if (daysUntil === 0) daysUntil = 7;
+  result.setDate(now.getDate() + daysUntil);
+  if (timeStr) {
+    const t = parseTimeOfDay(timeStr);
+    if (t) {
+      result.setHours(t.hours, t.minutes, 0, 0);
+    } else {
+      result.setHours(9, 0, 0, 0);
+    }
+  } else {
+    result.setHours(9, 0, 0, 0);
+  }
+  return result;
+}
+function parseNaturalTime(expr) {
+  const s = expr.trim();
+  if (!s) return null;
+  const direct = new Date(s);
+  if (!isNaN(direct.getTime()) && s.includes("-")) return direct;
+  const lower = s.toLowerCase();
+  const now = /* @__PURE__ */ new Date();
+  const relM = lower.match(/^in\s+(\d+(?:\.\d+)?)\s+(minute|minutes|hour|hours|day|days|week|weeks)$/);
+  if (relM) {
+    const n = parseFloat(relM[1]);
+    const unit = relM[2];
+    const result = new Date(now);
+    if (unit.startsWith("minute")) result.setMinutes(now.getMinutes() + n);
+    else if (unit.startsWith("hour")) result.setTime(now.getTime() + n * 3600 * 1e3);
+    else if (unit.startsWith("day")) result.setDate(now.getDate() + n);
+    else if (unit.startsWith("week")) result.setDate(now.getDate() + n * 7);
+    return result;
+  }
+  if (lower.startsWith("tomorrow")) {
+    const timeStr = lower.replace(/^tomorrow\s*(at\s*)?/, "").trim();
+    const result = new Date(now);
+    result.setDate(now.getDate() + 1);
+    const t = timeStr ? parseTimeOfDay(timeStr) : null;
+    result.setHours(t ? t.hours : 9, t ? t.minutes : 0, 0, 0);
+    return result;
+  }
+  if (lower.startsWith("today")) {
+    const timeStr = lower.replace(/^today\s*(at\s*)?/, "").trim();
+    const result = new Date(now);
+    const t = timeStr ? parseTimeOfDay(timeStr) : null;
+    result.setHours(t ? t.hours : now.getHours() + 1, t ? t.minutes : 0, 0, 0);
+    return result;
+  }
+  const weekdayM = lower.match(/^(?:next\s+)?(\w+)(?:\s+at\s+(.+))?$/);
+  if (weekdayM) {
+    const dayKey = weekdayM[1];
+    const timeStr = weekdayM[2];
+    const dayIndex = WEEKDAYS[dayKey];
+    if (dayIndex !== void 0) {
+      return nextWeekday(dayIndex, timeStr);
+    }
+  }
+  const justTime = parseTimeOfDay(lower);
+  if (justTime) {
+    const result = new Date(now);
+    result.setHours(justTime.hours, justTime.minutes, 0, 0);
+    if (result <= now) result.setDate(result.getDate() + 1);
+    return result;
+  }
+  return null;
+}
+function parseRecurringExpr(expr) {
+  const s = expr.trim();
+  if (!s) return null;
+  const lower = s.toLowerCase();
+  const now = /* @__PURE__ */ new Date();
+  if (lower === "daily") {
+    const d = new Date(now);
+    d.setDate(d.getDate() + 1);
+    d.setHours(9, 0, 0, 0);
+    return { scheduledAt: d, recurrence: "daily" };
+  }
+  if (lower === "weekly") {
+    const d = new Date(now);
+    d.setDate(d.getDate() + 7);
+    d.setHours(9, 0, 0, 0);
+    return { scheduledAt: d, recurrence: "weekly" };
+  }
+  if (lower === "monthly") {
+    const d = new Date(now);
+    d.setMonth(d.getMonth() + 1);
+    d.setHours(9, 0, 0, 0);
+    return { scheduledAt: d, recurrence: "monthly" };
+  }
+  if (!lower.startsWith("every ")) return null;
+  const rest = lower.slice(6).trim();
+  const intervalM = rest.match(/^(\d+)\s+(minute|minutes|hour|hours|day|days)$/);
+  if (intervalM) {
+    const n = parseInt(intervalM[1], 10);
+    const unit = intervalM[2].replace(/s$/, "");
+    const d = new Date(now);
+    if (unit === "minute") d.setMinutes(d.getMinutes() + n);
+    else if (unit === "hour") d.setTime(d.getTime() + n * 3600 * 1e3);
+    else d.setDate(d.getDate() + n);
+    return { scheduledAt: d, recurrence: `every ${n} ${unit}${n !== 1 ? "s" : ""}` };
+  }
+  const everyDayM = rest.match(/^day(?:\s+at\s+(.+))?$/);
+  if (everyDayM) {
+    const t = everyDayM[1] ? parseTimeOfDay(everyDayM[1]) : null;
+    const d = new Date(now);
+    d.setDate(d.getDate() + 1);
+    d.setHours(t ? t.hours : 9, t ? t.minutes : 0, 0, 0);
+    return { scheduledAt: d, recurrence: t ? `daily at ${everyDayM[1]}` : "daily" };
+  }
+  const everyWkdayM = rest.match(/^weekdays?(?:\s+at\s+(.+))?$/);
+  if (everyWkdayM) {
+    const t = everyWkdayM[1] ? parseTimeOfDay(everyWkdayM[1]) : null;
+    const d = new Date(now);
+    do {
+      d.setDate(d.getDate() + 1);
+    } while ([0, 6].includes(d.getDay()));
+    d.setHours(t ? t.hours : 9, t ? t.minutes : 0, 0, 0);
+    return { scheduledAt: d, recurrence: t ? `weekdays at ${everyWkdayM[1]}` : "weekdays" };
+  }
+  const everyWkendM = rest.match(/^weekends?(?:\s+at\s+(.+))?$/);
+  if (everyWkendM) {
+    const t = everyWkendM[1] ? parseTimeOfDay(everyWkendM[1]) : null;
+    const d = new Date(now);
+    do {
+      d.setDate(d.getDate() + 1);
+    } while (![0, 6].includes(d.getDay()));
+    d.setHours(t ? t.hours : 10, t ? t.minutes : 0, 0, 0);
+    return { scheduledAt: d, recurrence: t ? `weekends at ${everyWkendM[1]}` : "weekends" };
+  }
+  const everyWeekM = rest.match(/^week(?:\s+at\s+(.+))?$/);
+  if (everyWeekM) {
+    const t = everyWeekM[1] ? parseTimeOfDay(everyWeekM[1]) : null;
+    const d = new Date(now);
+    d.setDate(d.getDate() + 7);
+    d.setHours(t ? t.hours : 9, t ? t.minutes : 0, 0, 0);
+    return { scheduledAt: d, recurrence: t ? `weekly at ${everyWeekM[1]}` : "weekly" };
+  }
+  const everyMonthM = rest.match(/^month(?:\s+at\s+(.+))?$/);
+  if (everyMonthM) {
+    const t = everyMonthM[1] ? parseTimeOfDay(everyMonthM[1]) : null;
+    const d = new Date(now);
+    d.setMonth(d.getMonth() + 1);
+    d.setHours(t ? t.hours : 9, t ? t.minutes : 0, 0, 0);
+    return { scheduledAt: d, recurrence: t ? `monthly at ${everyMonthM[1]}` : "monthly" };
+  }
+  const everyNamedM = rest.match(/^(\w+)(?:\s+at\s+(.+))?$/);
+  if (everyNamedM) {
+    const dayKey = everyNamedM[1];
+    const timeStr = everyNamedM[2];
+    const dayIndex = WEEKDAYS[dayKey];
+    if (dayIndex !== void 0) {
+      const scheduledAt = nextWeekday(dayIndex, timeStr);
+      const dayLabel = dayKey.charAt(0).toUpperCase() + dayKey.slice(1);
+      const rec = timeStr ? `every ${dayLabel} at ${timeStr}` : `every ${dayLabel}`;
+      return { scheduledAt, recurrence: rec };
+    }
+  }
+  return null;
+}
+function formatWhen(d) {
+  return d.toLocaleString("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZoneName: "short"
+  });
+}
+function formatAge2(d) {
+  const diffMs = Date.now() - d.getTime();
+  const diffMins = Math.floor(diffMs / 6e4);
+  if (diffMins < 2) return "just now";
+  if (diffMins < 60) return `${diffMins}m ago`;
+  const diffHours = Math.floor(diffMins / 60);
+  if (diffHours < 24) return `${diffHours}h ago`;
+  return `${Math.floor(diffHours / 24)}d ago`;
+}
+var WEEKDAYS, cronCreateTool, cronListTool, cronDeleteTool, cronUpdateTool;
+var init_cronTools = __esm({
+  "server/agent/tools/cronTools.ts"() {
+    "use strict";
+    init_db();
+    init_schema();
+    WEEKDAYS = {
+      sunday: 0,
+      sun: 0,
+      monday: 1,
+      mon: 1,
+      tuesday: 2,
+      tue: 2,
+      wednesday: 3,
+      wed: 3,
+      thursday: 4,
+      thu: 4,
+      friday: 5,
+      fri: 5,
+      saturday: 6,
+      sat: 6
+    };
+    cronCreateTool = {
+      name: "cron_create",
+      description: "Schedule a one-off or recurring job for Jarvis to run at a specific time. Accepts natural-language time expressions ('in 4 hours', 'tomorrow at 9am', 'next Monday', 'every Friday at 6pm') or ISO 8601 dates. Jobs appear in the user's Mission Control schedule. Returns the job ID which you can use with cron_delete or cron_update.",
+      parameters: {
+        type: "object",
+        properties: {
+          title: {
+            type: "string",
+            description: "Short label for the job (e.g. 'Follow up on proposal', 'Weekly inbox review')"
+          },
+          description: {
+            type: "string",
+            description: "What Jarvis should do when this job fires \u2014 be specific about the action."
+          },
+          when: {
+            type: "string",
+            description: "When to run \u2014 natural language ('in 4 hours', 'tomorrow at 9am', 'next Monday at 10am') or ISO 8601 datetime. For recurring jobs, this sets the first occurrence."
+          },
+          recurrence: {
+            type: "string",
+            description: "Optional: how often to repeat ('daily', 'every Monday', 'weekdays at 9am', 'weekly'). Omit for one-off jobs."
+          }
+        },
+        required: ["title", "when"]
+      },
+      async execute(args, ctx) {
+        const title = String(args.title || "").trim();
+        const whenExpr = String(args.when || "").trim();
+        const explicitRecurrence = args.recurrence ? String(args.recurrence).trim() : null;
+        const description = args.description ? String(args.description).trim() : null;
+        if (!title) return { ok: false, content: "title is required.", label: "cron_create: no title" };
+        if (!whenExpr) return { ok: false, content: "when is required.", label: "cron_create: no when" };
+        const recurring = parseRecurringExpr(whenExpr);
+        let scheduledAt;
+        let recurrence;
+        if (recurring) {
+          scheduledAt = recurring.scheduledAt;
+          recurrence = explicitRecurrence ?? recurring.recurrence;
+        } else {
+          scheduledAt = parseNaturalTime(whenExpr);
+          recurrence = explicitRecurrence;
+        }
+        if (!scheduledAt) {
+          return {
+            ok: false,
+            content: `Could not parse time expression: "${whenExpr}". Try "in 4 hours", "tomorrow at 9am", "next Monday", "every Monday at 9am", or an ISO date.`,
+            label: "cron_create: unparseable time"
+          };
+        }
+        try {
+          const [task] = await db.insert(jarvisScheduledTasks).values({ userId: ctx.userId, title, description, scheduledAt, recurrence }).returning();
+          const when = formatWhen(scheduledAt);
+          console.log(`[${ctx.channel || "Agent"}] cron_create id=${task.id} title="${title}" scheduledAt=${scheduledAt.toISOString()}`);
+          return {
+            ok: true,
+            content: `Scheduled "${title}" for ${when}${recurrence ? ` (repeats: ${recurrence})` : ""}.
+Job ID: ${task.id}`,
+            label: `Scheduled: ${title}`,
+            detail: JSON.stringify({ id: task.id, scheduledAt: task.scheduledAt })
+          };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          return { ok: false, content: `cron_create failed: ${msg}`, label: "cron_create: error" };
+        }
+      }
+    };
+    cronListTool = {
+      name: "cron_list",
+      description: "List scheduled Jarvis jobs for this user \u2014 upcoming one-offs and recurring tasks. Shows job IDs (needed for cron_delete/cron_update), titles, next-run times, and whether they're complete. Use to check what's already scheduled before creating duplicates.",
+      parameters: {
+        type: "object",
+        properties: {
+          include_completed: {
+            type: "boolean",
+            description: "Set true to include jobs that have already run (default: false \u2014 only shows upcoming)"
+          },
+          limit: {
+            type: "number",
+            description: "Max jobs to return (default 15, max 40)"
+          }
+        },
+        required: []
+      },
+      async execute(args, ctx) {
+        const includeCompleted = args.include_completed === true;
+        const limit = Math.min(40, Math.max(1, Number(args.limit) || 15));
+        try {
+          const now = /* @__PURE__ */ new Date();
+          const recentWindow = new Date(now.getTime() - 24 * 3600 * 1e3);
+          const rows = includeCompleted ? await db.select().from(jarvisScheduledTasks).where(eq28(jarvisScheduledTasks.userId, ctx.userId)).orderBy(desc11(jarvisScheduledTasks.scheduledAt)).limit(limit) : await db.select().from(jarvisScheduledTasks).where(
+            and22(
+              eq28(jarvisScheduledTasks.userId, ctx.userId),
+              or(
+                gte5(jarvisScheduledTasks.scheduledAt, now),
+                and22(
+                  isNotNull(jarvisScheduledTasks.completedAt),
+                  gte5(jarvisScheduledTasks.completedAt, recentWindow)
+                )
+              )
+            )
+          ).orderBy(jarvisScheduledTasks.scheduledAt).limit(limit);
+          if (rows.length === 0) {
+            return {
+              ok: true,
+              content: includeCompleted ? "No scheduled jobs found." : "No upcoming or recently completed jobs.",
+              label: "cron_list: empty"
+            };
+          }
+          const lines = rows.map((r) => {
+            const when = formatWhen(new Date(r.scheduledAt));
+            const completed = r.completedAt ? ` \u2713 ran ${formatAge2(new Date(r.completedAt))}` : "";
+            const recurring = r.recurrence ? ` [${r.recurrence}]` : "";
+            return `\u2022 [${r.id}] "${r.title}"${recurring} \u2014 ${when}${completed}`;
+          });
+          const content = `${rows.length} scheduled job(s):
+
+${lines.join("\n")}`;
+          console.log(`[${ctx.channel || "Agent"}] cron_list user=${ctx.userId} \u2192 ${rows.length} rows`);
+          return {
+            ok: true,
+            content,
+            label: `Cron list (${rows.length})`,
+            detail: `${rows.length} job(s)`
+          };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          return { ok: false, content: `cron_list failed: ${msg}`, label: "cron_list: error" };
+        }
+      }
+    };
+    cronDeleteTool = {
+      name: "cron_delete",
+      description: "Cancel and delete a scheduled Jarvis job by its ID. Use cron_list to get IDs. Only deletes jobs belonging to the current user.",
+      parameters: {
+        type: "object",
+        properties: {
+          job_id: {
+            type: "string",
+            description: "The job ID to delete (from cron_list or cron_create output)"
+          }
+        },
+        required: ["job_id"]
+      },
+      async execute(args, ctx) {
+        const jobId = String(args.job_id || "").trim();
+        if (!jobId) return { ok: false, content: "job_id is required.", label: "cron_delete: no ID" };
+        try {
+          const existing = await db.select({ id: jarvisScheduledTasks.id, title: jarvisScheduledTasks.title }).from(jarvisScheduledTasks).where(
+            and22(
+              eq28(jarvisScheduledTasks.id, jobId),
+              eq28(jarvisScheduledTasks.userId, ctx.userId)
+            )
+          ).limit(1);
+          if (existing.length === 0) {
+            return {
+              ok: false,
+              content: `No scheduled job found with ID "${jobId}" for this user.`,
+              label: "cron_delete: not found"
+            };
+          }
+          await db.delete(jarvisScheduledTasks).where(
+            and22(
+              eq28(jarvisScheduledTasks.id, jobId),
+              eq28(jarvisScheduledTasks.userId, ctx.userId)
+            )
+          );
+          console.log(`[${ctx.channel || "Agent"}] cron_delete id=${jobId} title="${existing[0].title}"`);
+          return {
+            ok: true,
+            content: `Deleted scheduled job "${existing[0].title}" (ID: ${jobId}).`,
+            label: `Deleted: ${existing[0].title}`
+          };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          return { ok: false, content: `cron_delete failed: ${msg}`, label: "cron_delete: error" };
+        }
+      }
+    };
+    cronUpdateTool = {
+      name: "cron_update",
+      description: "Update an existing scheduled Jarvis job \u2014 change its title, description, next-run time, or recurrence. Use cron_list to get IDs. Only updates jobs belonging to the current user.",
+      parameters: {
+        type: "object",
+        properties: {
+          job_id: {
+            type: "string",
+            description: "The job ID to update (from cron_list or cron_create output)"
+          },
+          title: {
+            type: "string",
+            description: "New title (omit to keep existing)"
+          },
+          description: {
+            type: "string",
+            description: "New description of what Jarvis should do (omit to keep existing)"
+          },
+          when: {
+            type: "string",
+            description: "New scheduled time \u2014 natural language ('in 4 hours', 'next Monday at 9am') or ISO 8601 (omit to keep existing)"
+          },
+          recurrence: {
+            type: "string",
+            description: "New recurrence rule ('daily', 'every Monday', etc.). Pass 'none' to make it a one-off."
+          }
+        },
+        required: ["job_id"]
+      },
+      async execute(args, ctx) {
+        const jobId = String(args.job_id || "").trim();
+        if (!jobId) return { ok: false, content: "job_id is required.", label: "cron_update: no ID" };
+        try {
+          const existing = await db.select().from(jarvisScheduledTasks).where(
+            and22(
+              eq28(jarvisScheduledTasks.id, jobId),
+              eq28(jarvisScheduledTasks.userId, ctx.userId)
+            )
+          ).limit(1);
+          if (existing.length === 0) {
+            return {
+              ok: false,
+              content: `No scheduled job found with ID "${jobId}" for this user.`,
+              label: "cron_update: not found"
+            };
+          }
+          const patch = {};
+          if (args.title) patch.title = String(args.title).trim();
+          if (args.description !== void 0) {
+            const d = String(args.description).trim();
+            patch.description = d === "" ? null : d;
+          }
+          if (args.when) {
+            const whenExpr = String(args.when).trim();
+            const recurring = parseRecurringExpr(whenExpr);
+            if (recurring) {
+              patch.scheduledAt = recurring.scheduledAt;
+              if (args.recurrence === void 0) {
+                patch.recurrence = recurring.recurrence;
+              }
+            } else {
+              const newDate = parseNaturalTime(whenExpr);
+              if (!newDate) {
+                return {
+                  ok: false,
+                  content: `Could not parse time expression: "${whenExpr}". Try "in 4 hours", "next Monday", "every Monday at 9am", or an ISO date.`,
+                  label: "cron_update: unparseable time"
+                };
+              }
+              patch.scheduledAt = newDate;
+            }
+          }
+          if (args.recurrence !== void 0) {
+            const rec = String(args.recurrence).trim().toLowerCase();
+            patch.recurrence = rec === "none" || rec === "" ? null : rec;
+          }
+          if (Object.keys(patch).length === 0) {
+            return {
+              ok: false,
+              content: "No fields to update \u2014 provide at least one of: title, description, when, recurrence.",
+              label: "cron_update: nothing to change"
+            };
+          }
+          const [updated] = await db.update(jarvisScheduledTasks).set(patch).where(
+            and22(
+              eq28(jarvisScheduledTasks.id, jobId),
+              eq28(jarvisScheduledTasks.userId, ctx.userId)
+            )
+          ).returning();
+          const title = updated.title;
+          const when = formatWhen(new Date(updated.scheduledAt));
+          console.log(`[${ctx.channel || "Agent"}] cron_update id=${jobId} title="${title}"`);
+          return {
+            ok: true,
+            content: `Updated "${title}" \u2014 next run: ${when}${updated.recurrence ? ` (${updated.recurrence})` : ""}.`,
+            label: `Updated: ${title}`,
+            detail: JSON.stringify({ id: updated.id, scheduledAt: updated.scheduledAt })
+          };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          return { ok: false, content: `cron_update failed: ${msg}`, label: "cron_update: error" };
+        }
+      }
+    };
+  }
+});
+
+// server/agent/jobClient.ts
+async function submitAgentJob2(input) {
+  const inserted = await db.insert(agentJobs).values({
+    userId: input.userId,
+    agentType: input.agentType,
+    title: input.title.slice(0, 200),
+    prompt: input.prompt,
+    input: input.input || {},
+    status: "queued"
+  }).returning({ id: agentJobs.id });
+  const id = inserted[0]?.id || "";
+  console.log(
+    `[JobQueue] queued job ${id} type=${input.agentType} user=${input.userId} title="${input.title.slice(0, 60)}"`
+  );
+  return id;
+}
+var init_jobClient = __esm({
+  "server/agent/jobClient.ts"() {
+    "use strict";
+    init_db();
+    init_schema();
+  }
+});
+
+// server/agent/workflowEngine.ts
+import { eq as eq29 } from "drizzle-orm";
+function buildStepPrompt(workflow, stepIdx) {
+  const steps = workflow.steps;
+  const step = steps[stepIdx];
+  const completedBefore = steps.slice(0, stepIdx).filter((s) => s.status === "complete");
+  const lines = [];
+  lines.push(`=== WORKFLOW: "${workflow.title}" ===`);
+  if (workflow.description) lines.push(`Context: ${workflow.description}`);
+  lines.push(`You are executing Step ${stepIdx + 1} of ${steps.length}: "${step.title}"`);
+  lines.push("");
+  if (completedBefore.length > 0) {
+    lines.push("Prior completed steps (use as context):");
+    for (const s of completedBefore) {
+      const out = s.output ? `
+${s.output.slice(0, 1500)}` : " (no output captured)";
+      lines.push(`\u2014 "${s.title}":${out}`);
+    }
+    lines.push("");
+  }
+  lines.push("=== YOUR TASK ===");
+  lines.push(step.prompt);
+  return lines.join("\n");
+}
+async function executeWorkflowStep(workflow, stepIdx) {
+  const steps = workflow.steps.map(
+    (s, i) => i === stepIdx ? { ...s, status: "running", startedAt: (/* @__PURE__ */ new Date()).toISOString() } : s
+  );
+  const enrichedPrompt = buildStepPrompt({ ...workflow, steps }, stepIdx);
+  const step = steps[stepIdx];
+  const jobId = await submitAgentJob2({
+    userId: workflow.userId,
+    agentType: step.agentType || DEFAULT_AGENT_TYPE,
+    title: step.title,
+    prompt: enrichedPrompt,
+    input: { workflowId: workflow.id, workflowStepIndex: stepIdx }
+  });
+  steps[stepIdx] = { ...steps[stepIdx], jobId };
+  await db.update(agentWorkflows).set({
+    steps,
+    currentStepIndex: stepIdx,
+    status: "paused_waiting",
+    updatedAt: /* @__PURE__ */ new Date()
+  }).where(eq29(agentWorkflows.id, workflow.id));
+  console.log(
+    `[Workflow] queued step ${stepIdx + 1}/${workflow.steps.length} workflow="${workflow.title}" job=${jobId}`
+  );
+  return jobId;
+}
+async function onWorkflowJobComplete(workflowId, stepIndex, _jobId, output) {
+  const [workflow] = await db.select().from(agentWorkflows).where(eq29(agentWorkflows.id, workflowId)).limit(1);
+  if (!workflow) {
+    console.warn(`[Workflow] onJobComplete: workflow ${workflowId} not found`);
+    return;
+  }
+  const steps = workflow.steps.map(
+    (s, i) => i === stepIndex ? { ...s, status: "complete", output, completedAt: (/* @__PURE__ */ new Date()).toISOString() } : s
+  );
+  const nextPendingIdx = steps.findIndex((s) => s.status === "pending");
+  if (workflow.status !== "paused_waiting") {
+    await db.update(agentWorkflows).set({ steps, updatedAt: /* @__PURE__ */ new Date() }).where(eq29(agentWorkflows.id, workflowId));
+    console.log(
+      `[Workflow] step ${stepIndex + 1} complete (workflow paused \u2014 not advancing)`
+    );
+    return;
+  }
+  if (nextPendingIdx === -1) {
+    await db.update(agentWorkflows).set({ steps, status: "complete", updatedAt: /* @__PURE__ */ new Date() }).where(eq29(agentWorkflows.id, workflowId));
+    console.log(`[Workflow] "${workflow.title}" complete \u2014 all steps done`);
+    await notifyUser(
+      workflow.userId,
+      "approval_request",
+      `\u2705 Workflow complete: "${workflow.title}"
+All ${steps.length} step(s) finished.`
+    ).catch(() => {
+    });
+    return;
+  }
+  const updatedWorkflow = { ...workflow, steps };
+  await db.update(agentWorkflows).set({ steps, updatedAt: /* @__PURE__ */ new Date() }).where(eq29(agentWorkflows.id, workflowId));
+  const nextJobId = await executeWorkflowStep(updatedWorkflow, nextPendingIdx);
+  console.log(
+    `[Workflow] "${workflow.title}" auto-advanced \u2192 step ${nextPendingIdx + 1} job=${nextJobId}`
+  );
+}
+async function onWorkflowJobFail(workflowId, stepIndex, error) {
+  const [workflow] = await db.select().from(agentWorkflows).where(eq29(agentWorkflows.id, workflowId)).limit(1);
+  if (!workflow) return;
+  const steps = workflow.steps.map(
+    (s, i) => i === stepIndex ? { ...s, status: "failed", output: `Error: ${error}`, completedAt: (/* @__PURE__ */ new Date()).toISOString() } : s
+  );
+  await db.update(agentWorkflows).set({ steps, status: "failed", updatedAt: /* @__PURE__ */ new Date() }).where(eq29(agentWorkflows.id, workflowId));
+  await notifyUser(
+    workflow.userId,
+    "approval_request",
+    `\u274C Workflow failed: "${workflow.title}" \u2014 Step ${stepIndex + 1} error: ${error.slice(0, 300)}`
+  ).catch(() => {
+  });
+}
+var DEFAULT_AGENT_TYPE;
+var init_workflowEngine = __esm({
+  "server/agent/workflowEngine.ts"() {
+    "use strict";
+    init_db();
+    init_schema();
+    init_registry();
+    init_jobClient();
+    DEFAULT_AGENT_TYPE = "research";
+  }
+});
+
+// server/agent/tools/workflowTools.ts
+import { eq as eq30, and as and23, desc as desc12 } from "drizzle-orm";
+function stepStatusIcon(s) {
+  switch (s.status) {
+    case "complete":
+      return "\u2705";
+    case "running":
+      return "\u23F3";
+    case "failed":
+      return "\u274C";
+    default:
+      return "\u2B1C";
+  }
+}
+function workflowSummary(w) {
+  const steps = w.steps;
+  const done = steps.filter((s) => s.status === "complete").length;
+  const lines = [
+    `**${w.title}** [${w.status}] \u2014 Step ${w.currentStepIndex + 1}/${steps.length} (${done} complete)`
+  ];
+  steps.forEach((s, i) => {
+    const out = s.output ? ` \u2192 ${s.output.slice(0, 120)}\u2026` : "";
+    lines.push(`  ${stepStatusIcon(s)} Step ${i + 1}: ${s.title}${s.jobId ? ` (job ${s.jobId})` : ""}${out}`);
+  });
+  return lines.join("\n");
+}
+async function loadWorkflow(workflowId, userId2) {
+  const [row] = await db.select().from(agentWorkflows).where(and23(eq30(agentWorkflows.id, workflowId), eq30(agentWorkflows.userId, userId2))).limit(1);
+  return row || null;
+}
+var workflowCreateTool, workflowRunTool, workflowStatusTool, workflowPauseTool, workflowResumeTool, workflowListTool;
+var init_workflowTools = __esm({
+  "server/agent/tools/workflowTools.ts"() {
+    "use strict";
+    init_db();
+    init_schema();
+    init_workflowEngine();
+    init_subagents();
+    workflowCreateTool = {
+      name: "workflow_create",
+      description: "Define a named multi-step workflow that Jarvis will execute sequentially. Each step runs as a background agent job and its output is automatically injected into the next step's context. Returns a workflow ID. Use workflow_run to start execution, workflow_status to inspect progress, workflow_pause/resume to control it.",
+      parameters: {
+        type: "object",
+        properties: {
+          title: { type: "string", description: "Short name for the workflow (e.g. 'Competitor research sprint')" },
+          description: { type: "string", description: "Optional context injected into every step prompt so the agent understands the big picture." },
+          steps: {
+            type: "array",
+            description: "Ordered list of steps. Each step becomes a background agent job.",
+            items: {
+              type: "object",
+              properties: {
+                title: { type: "string", description: "Step name (shown in status)" },
+                prompt: { type: "string", description: "Full instruction for this step. Be specific \u2014 prior step outputs are automatically prepended as context." },
+                agent_type: { type: "string", enum: SUB_AGENT_TYPES, description: "Agent type for this step (default: research)" }
+              },
+              required: ["title", "prompt"]
+            }
+          }
+        },
+        required: ["title", "steps"]
+      },
+      async execute(args, ctx) {
+        const title = String(args.title || "").trim();
+        const description = args.description ? String(args.description).trim() : null;
+        const rawSteps = Array.isArray(args.steps) ? args.steps : [];
+        if (!title) return { ok: false, content: "title is required.", label: "workflow_create: no title" };
+        if (rawSteps.length === 0) return { ok: false, content: "At least one step is required.", label: "workflow_create: no steps" };
+        if (rawSteps.length > 20) return { ok: false, content: "Max 20 steps per workflow.", label: "workflow_create: too many steps" };
+        for (let i = 0; i < rawSteps.length; i++) {
+          const s = rawSteps[i];
+          const stepTitle = String(s.title || "").trim();
+          const stepPrompt = String(s.prompt || "").trim();
+          if (!stepTitle) return { ok: false, content: `Step ${i + 1}: "title" is required and cannot be empty.`, label: "workflow_create: missing step title" };
+          if (!stepPrompt) return { ok: false, content: `Step ${i + 1} ("${stepTitle}"): "prompt" is required and cannot be empty.`, label: "workflow_create: missing step prompt" };
+        }
+        const steps = rawSteps.map((s, i) => ({
+          id: `step_${i + 1}`,
+          title: String(s.title).trim(),
+          prompt: String(s.prompt).trim(),
+          agentType: SUB_AGENT_TYPES.includes(String(s.agent_type)) ? String(s.agent_type) : "research",
+          status: "pending"
+        }));
+        try {
+          const [wf] = await db.insert(agentWorkflows).values({ userId: ctx.userId, title, description, steps, status: "active" }).returning();
+          console.log(`[${ctx.channel || "Agent"}] workflow_create id=${wf.id} steps=${steps.length}`);
+          return {
+            ok: true,
+            content: `Created workflow "${title}" with ${steps.length} step(s).
+Workflow ID: ${wf.id}
+
+Steps:
+${steps.map((s, i) => `  ${i + 1}. ${s.title}`).join("\n")}
+
+Call workflow_run with this ID to start execution.`,
+            label: `Workflow created: ${title}`,
+            detail: wf.id
+          };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          return { ok: false, content: `workflow_create failed: ${msg}`, label: "workflow_create: error" };
+        }
+      }
+    };
+    workflowRunTool = {
+      name: "workflow_run",
+      description: "Start or resume a workflow from its current pending step. Queues a background job for that step and auto-advances through remaining steps as each finishes. Use workflow_status to check progress. Returns immediately with the queued job ID.",
+      parameters: {
+        type: "object",
+        properties: {
+          workflow_id: { type: "string", description: "Workflow ID from workflow_create or workflow_list" }
+        },
+        required: ["workflow_id"]
+      },
+      async execute(args, ctx) {
+        const workflowId = String(args.workflow_id || "").trim();
+        if (!workflowId) return { ok: false, content: "workflow_id is required.", label: "workflow_run: no ID" };
+        const wf = await loadWorkflow(workflowId, ctx.userId);
+        if (!wf) return { ok: false, content: `Workflow "${workflowId}" not found.`, label: "workflow_run: not found" };
+        if (wf.status === "complete") return { ok: false, content: "Workflow is already complete.", label: "workflow_run: done" };
+        if (wf.status === "failed") return { ok: false, content: "Workflow failed. Create a new one.", label: "workflow_run: failed" };
+        if (wf.status === "paused_waiting") {
+          return {
+            ok: false,
+            content: `Workflow is already running step ${wf.currentStepIndex + 1}. Use workflow_status to check progress.`,
+            label: "workflow_run: already running"
+          };
+        }
+        const steps = wf.steps;
+        const nextIdx = steps.findIndex((s) => s.status === "pending");
+        if (nextIdx === -1) {
+          await db.update(agentWorkflows).set({ status: "complete", updatedAt: /* @__PURE__ */ new Date() }).where(eq30(agentWorkflows.id, wf.id));
+          return { ok: true, content: "All steps were already complete. Workflow marked done.", label: "workflow_run: already done" };
+        }
+        try {
+          const jobId = await executeWorkflowStep(wf, nextIdx);
+          console.log(`[${ctx.channel || "Agent"}] workflow_run wf=${workflowId} step=${nextIdx + 1} job=${jobId}`);
+          return {
+            ok: true,
+            content: `Started step ${nextIdx + 1}/${steps.length}: "${steps[nextIdx].title}"
+Background job queued: ${jobId}
+The workflow will auto-advance through remaining steps as each finishes.
+Use workflow_status to check progress.`,
+            label: `Workflow running: step ${nextIdx + 1}`,
+            detail: jobId
+          };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          return { ok: false, content: `workflow_run failed: ${msg}`, label: "workflow_run: error" };
+        }
+      }
+    };
+    workflowStatusTool = {
+      name: "workflow_status",
+      description: "Inspect the full state of a workflow: which step is running, which are complete, and the output of each completed step. Use this to monitor progress or to retrieve outputs before starting the next step.",
+      parameters: {
+        type: "object",
+        properties: {
+          workflow_id: { type: "string", description: "Workflow ID" }
+        },
+        required: ["workflow_id"]
+      },
+      async execute(args, ctx) {
+        const workflowId = String(args.workflow_id || "").trim();
+        if (!workflowId) return { ok: false, content: "workflow_id is required.", label: "workflow_status: no ID" };
+        const wf = await loadWorkflow(workflowId, ctx.userId);
+        if (!wf) return { ok: false, content: `Workflow "${workflowId}" not found.`, label: "workflow_status: not found" };
+        const summary = workflowSummary(wf);
+        const steps = wf.steps;
+        const outputLines = [];
+        steps.forEach((s, i) => {
+          if (s.status === "complete" && s.output) {
+            outputLines.push(`
+--- Step ${i + 1} Output: "${s.title}" ---
+${s.output.slice(0, 2e3)}`);
+          }
+        });
+        const content = summary + (outputLines.length > 0 ? "\n\n" + outputLines.join("\n") : "");
+        return {
+          ok: true,
+          content,
+          label: `Workflow status: ${wf.title}`,
+          detail: `status=${wf.status} step=${wf.currentStepIndex + 1}/${steps.length}`
+        };
+      }
+    };
+    workflowPauseTool = {
+      name: "workflow_pause",
+      description: "Pause a workflow. The currently-running step job will finish, but Jarvis will not auto-advance to the next step. Use workflow_resume to continue.",
+      parameters: {
+        type: "object",
+        properties: {
+          workflow_id: { type: "string", description: "Workflow ID to pause" }
+        },
+        required: ["workflow_id"]
+      },
+      async execute(args, ctx) {
+        const workflowId = String(args.workflow_id || "").trim();
+        if (!workflowId) return { ok: false, content: "workflow_id is required.", label: "workflow_pause: no ID" };
+        const wf = await loadWorkflow(workflowId, ctx.userId);
+        if (!wf) return { ok: false, content: `Workflow "${workflowId}" not found.`, label: "workflow_pause: not found" };
+        if (wf.status === "complete" || wf.status === "failed") {
+          return { ok: false, content: `Workflow is already ${wf.status}.`, label: "workflow_pause: terminal" };
+        }
+        if (wf.status === "paused") {
+          return { ok: true, content: "Workflow is already paused.", label: "workflow_pause: already paused" };
+        }
+        await db.update(agentWorkflows).set({ status: "paused", updatedAt: /* @__PURE__ */ new Date() }).where(and23(eq30(agentWorkflows.id, workflowId), eq30(agentWorkflows.userId, ctx.userId)));
+        console.log(`[${ctx.channel || "Agent"}] workflow_pause wf=${workflowId}`);
+        return {
+          ok: true,
+          content: `Workflow "${wf.title}" paused. Use workflow_resume to continue.`,
+          label: `Workflow paused: ${wf.title}`
+        };
+      }
+    };
+    workflowResumeTool = {
+      name: "workflow_resume",
+      description: "Resume a paused workflow from the next pending step. Triggers immediate execution of that step.",
+      parameters: {
+        type: "object",
+        properties: {
+          workflow_id: { type: "string", description: "Workflow ID to resume" }
+        },
+        required: ["workflow_id"]
+      },
+      async execute(args, ctx) {
+        const workflowId = String(args.workflow_id || "").trim();
+        if (!workflowId) return { ok: false, content: "workflow_id is required.", label: "workflow_resume: no ID" };
+        const wf = await loadWorkflow(workflowId, ctx.userId);
+        if (!wf) return { ok: false, content: `Workflow "${workflowId}" not found.`, label: "workflow_resume: not found" };
+        if (wf.status !== "paused") {
+          return {
+            ok: false,
+            content: `Workflow is "${wf.status}" \u2014 only paused workflows can be resumed. ${wf.status === "paused_waiting" ? "A step is already running." : ""}`,
+            label: "workflow_resume: not paused"
+          };
+        }
+        const steps = wf.steps;
+        const nextIdx = steps.findIndex((s) => s.status === "pending");
+        if (nextIdx === -1) {
+          await db.update(agentWorkflows).set({ status: "complete", updatedAt: /* @__PURE__ */ new Date() }).where(eq30(agentWorkflows.id, wf.id));
+          return { ok: true, content: "All steps were already complete. Workflow marked done.", label: "workflow_resume: done" };
+        }
+        await db.update(agentWorkflows).set({ status: "active", updatedAt: /* @__PURE__ */ new Date() }).where(eq30(agentWorkflows.id, wf.id));
+        try {
+          const jobId = await executeWorkflowStep({ ...wf, status: "active" }, nextIdx);
+          console.log(`[${ctx.channel || "Agent"}] workflow_resume wf=${workflowId} step=${nextIdx + 1} job=${jobId}`);
+          return {
+            ok: true,
+            content: `Resumed workflow "${wf.title}" \u2014 starting step ${nextIdx + 1}/${steps.length}: "${steps[nextIdx].title}"
+Background job queued: ${jobId}`,
+            label: `Workflow resumed: ${wf.title}`,
+            detail: jobId
+          };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          return { ok: false, content: `workflow_resume failed: ${msg}`, label: "workflow_resume: error" };
+        }
+      }
+    };
+    workflowListTool = {
+      name: "workflow_list",
+      description: "List all workflows for this user \u2014 active, paused, and recently completed. Returns IDs, titles, and current status so you can call workflow_status, workflow_run, or workflow_pause on them.",
+      parameters: {
+        type: "object",
+        properties: {
+          include_complete: { type: "boolean", description: "Include completed/failed workflows (default: false)" }
+        },
+        required: []
+      },
+      async execute(args, ctx) {
+        const includeComplete = args.include_complete === true;
+        const rows = await db.select().from(agentWorkflows).where(eq30(agentWorkflows.userId, ctx.userId)).orderBy(desc12(agentWorkflows.updatedAt)).limit(20);
+        const filtered = includeComplete ? rows : rows.filter((w) => !["complete", "failed"].includes(w.status));
+        if (filtered.length === 0) {
+          return {
+            ok: true,
+            content: includeComplete ? "No workflows found." : "No active workflows. Use workflow_create to define one.",
+            label: "workflow_list: empty"
+          };
+        }
+        const lines = filtered.map((w) => {
+          const steps = w.steps;
+          const done = steps.filter((s) => s.status === "complete").length;
+          return `\u2022 [${w.id}] "${w.title}" \u2014 ${w.status} (${done}/${steps.length} steps done)`;
+        });
+        return {
+          ok: true,
+          content: `${filtered.length} workflow(s):
+
+${lines.join("\n")}`,
+          label: `Workflows (${filtered.length})`
+        };
+      }
+    };
+  }
+});
+
+// server/agent/browser/sessionManager.ts
+import { chromium } from "playwright";
+async function launchSession(userId2) {
+  const browser = await chromium.launch({ args: LAUNCH_ARGS });
+  const ctx = await browser.newContext({
+    userAgent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    viewport: { width: 1280, height: 800 }
+  });
+  const page = await ctx.newPage();
+  const session = { browser, page, lastActive: Date.now() };
+  sessions.set(userId2, session);
+  console.log(`[Browser] session opened for user ${userId2}`);
+  return session;
+}
+async function getOrCreateSession(userId2) {
+  const existing = sessions.get(userId2);
+  if (existing) {
+    existing.lastActive = Date.now();
+    return existing.page;
+  }
+  const session = await launchSession(userId2);
+  return session.page;
+}
+function touchSession(userId2) {
+  const s = sessions.get(userId2);
+  if (s) s.lastActive = Date.now();
+}
+async function closeSession(userId2) {
+  const s = sessions.get(userId2);
+  if (!s) return;
+  sessions.delete(userId2);
+  try {
+    await s.browser.close();
+    console.log(`[Browser] session closed for user ${userId2}`);
+  } catch {
+  }
+}
+function hasSession(userId2) {
+  return sessions.has(userId2);
+}
+var IDLE_TIMEOUT_MS, CLEANUP_INTERVAL_MS, sessions, LAUNCH_ARGS, cleanupInterval;
+var init_sessionManager = __esm({
+  "server/agent/browser/sessionManager.ts"() {
+    "use strict";
+    IDLE_TIMEOUT_MS = 5 * 60 * 1e3;
+    CLEANUP_INTERVAL_MS = 60 * 1e3;
+    sessions = /* @__PURE__ */ new Map();
+    LAUNCH_ARGS = [
+      "--no-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-gpu",
+      "--single-process"
+    ];
+    cleanupInterval = setInterval(async () => {
+      const now = Date.now();
+      for (const [userId2, session] of sessions.entries()) {
+        if (now - session.lastActive > IDLE_TIMEOUT_MS) {
+          console.log(`[Browser] closing idle session for user ${userId2}`);
+          await closeSession(userId2);
+        }
+      }
+    }, CLEANUP_INTERVAL_MS);
+    if (cleanupInterval.unref) cleanupInterval.unref();
+  }
+});
+
+// server/agent/tools/browserTools.ts
+function validateUrl(url) {
+  const u = url.trim();
+  if (!u) return "No URL provided.";
+  if (!u.startsWith("http://") && !u.startsWith("https://")) return `URL must start with http:// or https://. Got: ${u}`;
+  let parsed;
+  try {
+    parsed = new URL(u);
+  } catch {
+    return `Invalid URL: ${u}`;
+  }
+  const host = parsed.hostname.toLowerCase();
+  if (BLOCKED_HOSTS.test(host)) {
+    return `Blocked: "${host}" is a reserved or internal address.`;
+  }
+  if (host.endsWith(".local") || host.endsWith(".internal")) {
+    return `Blocked: "${host}" is a private/internal domain.`;
+  }
+  if (PRIVATE_CIDR_PATTERNS.some((rx) => rx.test(host))) {
+    return `Blocked: "${host}" is a private/reserved IP address.`;
+  }
+  return null;
+}
+async function safePageText(page, maxChars = 3e3) {
+  try {
+    const text2 = await page.evaluate(() => {
+      const clone = document.cloneNode(true);
+      clone.querySelectorAll("script,style,noscript,svg,iframe").forEach((el) => el.remove());
+      return (clone.body?.innerText || clone.body?.textContent || "").replace(/\s{3,}/g, "\n\n").trim();
+    });
+    return text2.slice(0, maxChars);
+  } catch {
+    return "";
+  }
+}
+var BLOCKED_HOSTS, PRIVATE_CIDR_PATTERNS, browserNavigateTool, browserClickTool, browserTypeTool, browserScreenshotTool, browserExtractTool, browserCloseTool;
+var init_browserTools = __esm({
+  "server/agent/tools/browserTools.ts"() {
+    "use strict";
+    init_sessionManager();
+    BLOCKED_HOSTS = /^(localhost|0\.0\.0\.0|metadata\.google\.internal|169\.254\.169\.254)$/i;
+    PRIVATE_CIDR_PATTERNS = [
+      /^127\.\d+\.\d+\.\d+$/,
+      // 127.x.x.x loopback
+      /^10\.\d+\.\d+\.\d+$/,
+      // RFC1918 10/8
+      /^172\.(1[6-9]|2\d|3[01])\.\d+\.\d+$/,
+      // RFC1918 172.16-31/12
+      /^192\.168\.\d+\.\d+$/,
+      // RFC1918 192.168/16
+      /^169\.254\.\d+\.\d+$/,
+      // link-local
+      /^::1$/,
+      // IPv6 loopback
+      /^f[cd][0-9a-f]{2}:/i
+      // IPv6 ULA fc/fd
+    ];
+    browserNavigateTool = {
+      name: "browser_navigate",
+      description: "Open a URL in a headless browser and return the page title plus a text summary of the visible content. Use this for JS-rendered pages that web_fetch cannot read, or when you need to interact with the page afterwards (click, type, etc.). Each user has one persistent browser session that times out after 5 minutes of inactivity.",
+      parameters: {
+        type: "object",
+        properties: {
+          url: {
+            type: "string",
+            description: "Full URL to navigate to (must start with http:// or https://)"
+          },
+          wait_until: {
+            type: "string",
+            enum: ["load", "domcontentloaded", "networkidle"],
+            description: "When to consider navigation complete (default: load)"
+          }
+        },
+        required: ["url"]
+      },
+      async execute(args, ctx) {
+        const url = String(args.url || "").trim();
+        const urlError = validateUrl(url);
+        if (urlError) return { ok: false, content: urlError, label: "browser_navigate: bad URL" };
+        const waitUntil = ["load", "domcontentloaded", "networkidle"].includes(
+          args.wait_until
+        ) ? args.wait_until : "load";
+        try {
+          const page = await getOrCreateSession(ctx.userId);
+          await page.goto(url, { waitUntil, timeout: 3e4 });
+          touchSession(ctx.userId);
+          const title = await page.title();
+          const text2 = await safePageText(page, 3e3);
+          const currentUrl = page.url();
+          console.log(`[${ctx.channel || "Agent"}] browser_navigate \u2192 ${currentUrl} title="${title}"`);
+          return {
+            ok: true,
+            content: `**Page:** ${title}
+**URL:** ${currentUrl}
+
+${text2 || "(No readable text found)"}`,
+            label: `Navigated: ${title || url}`,
+            detail: currentUrl
+          };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message.split("\n")[0] : String(err);
+          return { ok: false, content: `browser_navigate failed: ${msg}`, label: "browser_navigate: error" };
+        }
+      }
+    };
+    browserClickTool = {
+      name: "browser_click",
+      description: "Click an element on the current browser page. Specify either visible text (e.g. a button label) or a CSS selector. Returns success/failure and the updated page title.",
+      parameters: {
+        type: "object",
+        properties: {
+          text: {
+            type: "string",
+            description: "Visible text of the element to click (e.g. button label, link text)"
+          },
+          selector: {
+            type: "string",
+            description: "CSS selector of the element to click (used if text is not provided)"
+          }
+        }
+      },
+      async execute(args, ctx) {
+        if (!hasSession(ctx.userId)) {
+          return { ok: false, content: "No active browser session. Call browser_navigate first.", label: "browser_click: no session" };
+        }
+        const text2 = args.text ? String(args.text).trim() : "";
+        const selector = args.selector ? String(args.selector).trim() : "";
+        if (!text2 && !selector) {
+          return { ok: false, content: "Provide either `text` or `selector`.", label: "browser_click: no target" };
+        }
+        try {
+          const page = await getOrCreateSession(ctx.userId);
+          if (text2) {
+            await page.getByText(text2, { exact: false }).first().click({ timeout: 1e4 });
+          } else {
+            await page.locator(selector).first().click({ timeout: 1e4 });
+          }
+          await page.waitForLoadState("domcontentloaded", { timeout: 1e4 }).catch(() => {
+          });
+          touchSession(ctx.userId);
+          const title = await page.title();
+          const currentUrl = page.url();
+          console.log(`[${ctx.channel || "Agent"}] browser_click "${text2 || selector}" \u2192 ${currentUrl}`);
+          return {
+            ok: true,
+            content: `Clicked "${text2 || selector}". Page is now: ${title} (${currentUrl})`,
+            label: `Clicked: ${text2 || selector}`,
+            detail: currentUrl
+          };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message.split("\n")[0] : String(err);
+          return { ok: false, content: `browser_click failed: ${msg}`, label: "browser_click: error" };
+        }
+      }
+    };
+    browserTypeTool = {
+      name: "browser_type",
+      description: "Find an input field on the current browser page and type text into it. Locate by label text, placeholder text, or CSS selector. Set submit=true to press Enter after typing (useful for search forms).",
+      parameters: {
+        type: "object",
+        properties: {
+          text: {
+            type: "string",
+            description: "The text to type into the field"
+          },
+          label: {
+            type: "string",
+            description: "Label text associated with the input field"
+          },
+          placeholder: {
+            type: "string",
+            description: "Placeholder text of the input field"
+          },
+          selector: {
+            type: "string",
+            description: "CSS selector of the input field (fallback if label/placeholder not found)"
+          },
+          submit: {
+            type: "boolean",
+            description: "Press Enter after typing (default: false)"
+          }
+        },
+        required: ["text"]
+      },
+      async execute(args, ctx) {
+        if (!hasSession(ctx.userId)) {
+          return { ok: false, content: "No active browser session. Call browser_navigate first.", label: "browser_type: no session" };
+        }
+        const textToType = String(args.text || "").trim();
+        if (!textToType) return { ok: false, content: "`text` is required.", label: "browser_type: no text" };
+        const label = args.label ? String(args.label).trim() : "";
+        const placeholder = args.placeholder ? String(args.placeholder).trim() : "";
+        const selector = args.selector ? String(args.selector).trim() : "";
+        const submit = Boolean(args.submit);
+        if (!label && !placeholder && !selector) {
+          return { ok: false, content: "Provide at least one of: label, placeholder, selector.", label: "browser_type: no locator" };
+        }
+        try {
+          const page = await getOrCreateSession(ctx.userId);
+          let locator;
+          if (label) {
+            locator = page.getByLabel(label, { exact: false });
+          } else if (placeholder) {
+            locator = page.getByPlaceholder(placeholder, { exact: false });
+          } else {
+            locator = page.locator(selector);
+          }
+          await locator.first().clear({ timeout: 1e4 });
+          await locator.first().type(textToType, { delay: 30 });
+          if (submit) {
+            await locator.first().press("Enter");
+            await page.waitForLoadState("domcontentloaded", { timeout: 1e4 }).catch(() => {
+            });
+          }
+          touchSession(ctx.userId);
+          const title = await page.title();
+          console.log(`[${ctx.channel || "Agent"}] browser_type into "${label || placeholder || selector}" submit=${submit}`);
+          return {
+            ok: true,
+            content: `Typed "${textToType}" into field. Page: ${title}${submit ? " (submitted)" : ""}`,
+            label: `Typed into: ${label || placeholder || selector}`
+          };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message.split("\n")[0] : String(err);
+          return { ok: false, content: `browser_type failed: ${msg}`, label: "browser_type: error" };
+        }
+      }
+    };
+    browserScreenshotTool = {
+      name: "browser_screenshot",
+      description: "Capture a screenshot of the current browser page and return it as a base64-encoded PNG image. Use this to visually inspect the current page state, verify a form was filled correctly, or read content that isn't accessible as text.",
+      parameters: {
+        type: "object",
+        properties: {
+          full_page: {
+            type: "boolean",
+            description: "Capture the full scrollable page (default: false = viewport only)"
+          }
+        }
+      },
+      async execute(args, ctx) {
+        if (!hasSession(ctx.userId)) {
+          return { ok: false, content: "No active browser session. Call browser_navigate first.", label: "browser_screenshot: no session" };
+        }
+        try {
+          const page = await getOrCreateSession(ctx.userId);
+          const fullPage = Boolean(args.full_page);
+          const buffer = await page.screenshot({ type: "png", fullPage });
+          const base64 = buffer.toString("base64");
+          touchSession(ctx.userId);
+          const title = await page.title();
+          const currentUrl = page.url();
+          console.log(`[${ctx.channel || "Agent"}] browser_screenshot "${title}" full=${fullPage} size=${buffer.length}B`);
+          return {
+            ok: true,
+            content: `Screenshot captured for page: ${title} (${currentUrl})
+
+[image/png;base64,${base64}]`,
+            label: `Screenshot: ${title || currentUrl}`,
+            detail: `${buffer.length} bytes`
+          };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message.split("\n")[0] : String(err);
+          return { ok: false, content: `browser_screenshot failed: ${msg}`, label: "browser_screenshot: error" };
+        }
+      }
+    };
+    browserExtractTool = {
+      name: "browser_extract",
+      description: "Extract all visible text from the current browser page, cleaned of scripts and styles. More thorough than web_fetch for JavaScript-rendered pages (SPAs, dashboards, etc.).",
+      parameters: {
+        type: "object",
+        properties: {
+          max_chars: {
+            type: "number",
+            description: "Maximum characters to return (default 8000, max 30000)"
+          },
+          selector: {
+            type: "string",
+            description: "Optional CSS selector to extract text from a specific section of the page"
+          }
+        }
+      },
+      async execute(args, ctx) {
+        if (!hasSession(ctx.userId)) {
+          return { ok: false, content: "No active browser session. Call browser_navigate first.", label: "browser_extract: no session" };
+        }
+        try {
+          const page = await getOrCreateSession(ctx.userId);
+          const maxChars = Math.min(3e4, Math.max(500, Number(args.max_chars) || 8e3));
+          const selector = args.selector ? String(args.selector).trim() : "";
+          let text2;
+          if (selector) {
+            text2 = await page.evaluate((sel) => {
+              const el = document.querySelector(sel);
+              if (!el) return "";
+              return el.innerText || el.textContent || "";
+            }, selector);
+          } else {
+            text2 = await safePageText(page, maxChars);
+          }
+          const result = text2.trim().slice(0, maxChars);
+          const wasCut = text2.length > maxChars;
+          touchSession(ctx.userId);
+          const title = await page.title();
+          const currentUrl = page.url();
+          console.log(`[${ctx.channel || "Agent"}] browser_extract "${title}" \u2192 ${result.length} chars`);
+          return {
+            ok: true,
+            content: `**${title}** \u2014 ${currentUrl}
+
+${result || "(No visible text found)"}` + (wasCut ? `
+
+[\u2026truncated at ${maxChars} chars]` : ""),
+            label: `Extracted: ${title || currentUrl}`,
+            detail: `${result.length} chars`
+          };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message.split("\n")[0] : String(err);
+          return { ok: false, content: `browser_extract failed: ${msg}`, label: "browser_extract: error" };
+        }
+      }
+    };
+    browserCloseTool = {
+      name: "browser_close",
+      description: "Close the current browser session. Call this when you are done with browser tasks to free resources. Sessions close automatically after 5 minutes of inactivity.",
+      parameters: {
+        type: "object",
+        properties: {}
+      },
+      async execute(_args, ctx) {
+        if (!hasSession(ctx.userId)) {
+          return { ok: true, content: "No active browser session to close.", label: "browser_close: no session" };
+        }
+        await closeSession(ctx.userId);
+        return { ok: true, content: "Browser session closed.", label: "browser_close: closed" };
+      }
+    };
+  }
+});
+
+// server/agent/tools/openclawTool.ts
+import { and as and24, desc as desc13, eq as eq31, isNotNull as isNotNull2 } from "drizzle-orm";
+function initToolResolver(resolver) {
+  _toolResolver = resolver;
+}
+function ok(content, label, detail) {
+  return { ok: true, content, label, detail };
+}
+function fail(content, label) {
+  return { ok: false, content, label };
+}
+function toCamelCase(snake) {
+  return snake.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+}
+async function applyToolCode(featureName, toolCode, routeCode) {
+  const { promises: fs4 } = await import("fs");
+  const path4 = await import("path");
+  const applied = [];
+  const warnings = [];
+  const toolFilePath = `server/agent/tools/${featureName}.ts`;
+  const routeFilePath = `server/${featureName}Routes.ts`;
+  try {
+    await fs4.mkdir(path4.resolve(process.cwd(), "server/agent/tools"), { recursive: true });
+    await fs4.writeFile(path4.resolve(process.cwd(), toolFilePath), toolCode, "utf8");
+    applied.push(toolFilePath);
+  } catch (err) {
+    warnings.push(
+      `Failed to write ${toolFilePath}: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
+  if (routeCode) {
+    try {
+      await fs4.mkdir(path4.resolve(process.cwd(), "server"), { recursive: true });
+      await fs4.writeFile(path4.resolve(process.cwd(), routeFilePath), routeCode, "utf8");
+      applied.push(routeFilePath);
+    } catch (err) {
+      warnings.push(
+        `Failed to write ${routeFilePath}: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  }
+  const toolFileWritten = applied.includes(toolFilePath);
+  if (!toolFileWritten) {
+    warnings.push(`Skipping index.ts patch because ${toolFilePath} was not written.`);
+    return { applied, warnings };
+  }
+  try {
+    const toolExportName = `${toCamelCase(featureName)}Tool`;
+    let actualExportName = toolExportName;
+    const exportMatch = toolCode.match(/^export const (\w+)\s*:\s*AgentTool/m);
+    if (exportMatch?.[1]) {
+      actualExportName = exportMatch[1];
+      if (actualExportName !== toolExportName) {
+        warnings.push(
+          `Tool uses export name \`${actualExportName}\` (expected \`${toolExportName}\`). Registering with actual name.`
+        );
+      }
+    }
+    const indexAbsPath = path4.resolve(process.cwd(), "server/agent/tools/index.ts");
+    let idx = await fs4.readFile(indexAbsPath, "utf8");
+    let modified = false;
+    const importLine = `import { ${actualExportName} } from "./${featureName}";`;
+    if (!idx.includes(`from "./${featureName}"`)) {
+      const lastImportPos = idx.lastIndexOf("\nimport ");
+      if (lastImportPos !== -1) {
+        const lineEnd = idx.indexOf("\n", lastImportPos + 1);
+        if (lineEnd !== -1) {
+          idx = idx.slice(0, lineEnd) + "\n" + importLine + idx.slice(lineEnd);
+          modified = true;
+        }
+      } else {
+        warnings.push("Could not locate last import in index.ts \u2014 add the import manually.");
+      }
+    }
+    if (!idx.includes(`${actualExportName},`) && !idx.includes(`${actualExportName}
+`)) {
+      const allToolsDecl = idx.indexOf("export const ALL_TOOLS");
+      if (allToolsDecl !== -1) {
+        const close = idx.indexOf("\n];", allToolsDecl);
+        if (close !== -1) {
+          idx = idx.slice(0, close) + `
+  ${actualExportName},` + idx.slice(close);
+          modified = true;
+        } else {
+          warnings.push(
+            `Could not find ALL_TOOLS closing \`];\` in index.ts \u2014 add \`${actualExportName},\` manually.`
+          );
+        }
+      } else {
+        warnings.push(
+          `Could not find ALL_TOOLS in index.ts \u2014 add \`${actualExportName},\` manually.`
+        );
+      }
+    }
+    const tcFnIdx = idx.indexOf("telegramCoachTools(");
+    if (tcFnIdx !== -1) {
+      const tcClose = idx.indexOf("\n  ];", tcFnIdx);
+      if (tcClose !== -1) {
+        const tcSection = idx.slice(tcFnIdx, tcClose);
+        if (!tcSection.includes(`${actualExportName},`) && !tcSection.includes(`${actualExportName}
+`)) {
+          idx = idx.slice(0, tcClose) + `
+    ${actualExportName},` + idx.slice(tcClose);
+          modified = true;
+        }
+      } else {
+        warnings.push(
+          `Could not find telegramCoachTools closing in index.ts \u2014 add \`${actualExportName},\` there manually.`
+        );
+      }
+    }
+    const exportBlockStart = idx.lastIndexOf("export {");
+    if (exportBlockStart !== -1) {
+      const exportBlockClose = idx.indexOf("\n};", exportBlockStart);
+      if (exportBlockClose !== -1) {
+        const exportSection = idx.slice(exportBlockStart, exportBlockClose);
+        if (!exportSection.includes(`${actualExportName},`) && !exportSection.includes(`${actualExportName}
+`)) {
+          idx = idx.slice(0, exportBlockClose) + `
+  ${actualExportName},` + idx.slice(exportBlockClose);
+          modified = true;
+        }
+      } else {
+        warnings.push(
+          `Could not find export block closing in index.ts \u2014 add \`${actualExportName},\` to exports manually.`
+        );
+      }
+    }
+    if (modified) {
+      await fs4.writeFile(indexAbsPath, idx, "utf8");
+      applied.push("server/agent/tools/index.ts");
+    } else {
+      warnings.push(`index.ts already contains ${actualExportName} entries \u2014 no changes made.`);
+    }
+  } catch (err) {
+    warnings.push(
+      `Failed to patch index.ts: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
+  return { applied, warnings };
+}
+function generateSmartTestArgs(schema) {
+  const properties = schema.properties ?? {};
+  const required = new Set(schema.required ?? []);
+  const result = {};
+  for (const [key, prop] of Object.entries(properties)) {
+    if (!required.has(key)) continue;
+    if (prop.enum && prop.enum.length > 0) {
+      result[key] = prop.enum[0];
+      continue;
+    }
+    switch (prop.type) {
+      case "string":
+        result[key] = "test";
+        break;
+      case "number":
+      case "integer":
+        result[key] = 1;
+        break;
+      case "boolean":
+        result[key] = false;
+        break;
+      case "array":
+        result[key] = [];
+        break;
+      case "object":
+        result[key] = {};
+        break;
+      default:
+        result[key] = "";
+    }
+  }
+  return result;
+}
+var _toolResolver, TOOL_CODE_TEMPLATE, buildFeatureTool, testToolTool;
+var init_openclawTool = __esm({
+  "server/agent/tools/openclawTool.ts"() {
+    "use strict";
+    init_db();
+    init_schema();
+    _toolResolver = null;
+    TOOL_CODE_TEMPLATE = `
+import type { AgentTool, ToolResult } from "../types";
+
+export const exampleTool: AgentTool = {
+  name: "example_tool",
+  description: "What this tool does and when Jarvis should call it.",
+  parameters: {
+    type: "object",
+    properties: {
+      input: { type: "string", description: "The main input for the tool." },
+    },
+    required: ["input"],
+  },
+  async execute(args, ctx): Promise<ToolResult> {
+    const input = String(args.input ?? "").trim();
+    if (!input) return { ok: false, content: "input is required." };
+    return { ok: true, content: "Result from tool", label: "example_tool" };
+  },
+};`.trim();
+    buildFeatureTool = {
+      name: "build_feature",
+      description: "Write a new Jarvis tool to the codebase. Generate the complete TypeScript code yourself and pass it in tool_code \u2014 Jarvis writes the file, registers it in index.ts, and runs a smoke test. After a successful build the server restarts automatically so the new tool becomes immediately active. Use this when the user wants a new Jarvis capability or you need to add a new tool to yourself.",
+      parameters: {
+        type: "object",
+        properties: {
+          feature_name: {
+            type: "string",
+            description: "Short snake_case name for the new tool, e.g. 'weather_lookup'. Becomes the filename (server/agent/tools/<feature_name>.ts) and the tool.name value."
+          },
+          description: {
+            type: "string",
+            description: "Plain-English description of what the tool does (stored in the build log)."
+          },
+          tool_code: {
+            type: "string",
+            description: `Complete TypeScript source for server/agent/tools/<feature_name>.ts. Must export a const of type AgentTool. Follow this pattern exactly:
+
+${TOOL_CODE_TEMPLATE}
+
+Repo key paths:
+- server/agent/tools/<toolName>.ts \u2014 one file per tool
+- server/agent/tools/index.ts \u2014 auto-patched by build_feature
+- server/<featureName>Routes.ts \u2014 Express routes if needed
+- server/index.ts \u2014 mount new routers here
+- shared/schema.ts \u2014 Drizzle ORM schema
+
+Constraints: no uuid package; use Math.random().toString(36) for IDs; handle errors with return {ok:false}; never throw; use async/await.`
+          },
+          route_code: {
+            type: "string",
+            description: "Optional Express route file code for server/<feature_name>Routes.ts. Only needed when the tool requires a new REST endpoint. You must also add the mount line to server/index.ts manually after the build."
+          },
+          needs_api_endpoint: {
+            type: "boolean",
+            description: "Set to true if the tool requires a new Express REST endpoint. Provide route_code when true."
+          }
+        },
+        required: ["feature_name", "description", "tool_code"]
+      },
+      async execute(args, ctx) {
+        const rawFeatureName = String(args.feature_name ?? "").trim().replace(/\s+/g, "_");
+        const featureName = rawFeatureName.toLowerCase().replace(/[^a-z0-9_]/g, "_").replace(/_+/g, "_").replace(/^_|_$/g, "");
+        const description = String(args.description ?? "").trim();
+        const toolCode = String(args.tool_code ?? "").trim();
+        const routeCode = args.route_code ? String(args.route_code).trim() : null;
+        const needsApiEndpoint = Boolean(args.needs_api_endpoint ?? false);
+        if (!featureName)
+          return fail("feature_name must be a non-empty snake_case identifier (letters, digits, underscores).");
+        if (!description) return fail("description is required.");
+        if (!toolCode) return fail("tool_code is required.");
+        const writeBuildLog = async (outputCode, success, smokeTestPassed, smokeTestArgs) => {
+          try {
+            await db.insert(openclawBuildLog).values({
+              userId: ctx.userId,
+              featureName,
+              description,
+              outputCode,
+              success,
+              smokeTestPassed,
+              smokeTestArgs: smokeTestArgs ?? null
+            });
+          } catch (logErr) {
+            console.error("[build_feature] Failed to write build log:", logErr);
+          }
+        };
+        const ctxForSmokeTest = {
+          ...ctx,
+          allowedToolNames: ctx.allowedToolNames ? /* @__PURE__ */ new Set([...ctx.allowedToolNames, featureName]) : void 0
+        };
+        let priorPassingArgs = null;
+        try {
+          const priorRows = await db.select({ smokeTestArgs: openclawBuildLog.smokeTestArgs }).from(openclawBuildLog).where(
+            and24(
+              eq31(openclawBuildLog.userId, ctx.userId),
+              eq31(openclawBuildLog.featureName, featureName),
+              eq31(openclawBuildLog.smokeTestPassed, true)
+            )
+          ).orderBy(desc13(openclawBuildLog.createdAt)).limit(1);
+          const stored = priorRows[0]?.smokeTestArgs;
+          if (stored && typeof stored === "object" && !Array.isArray(stored)) {
+            priorPassingArgs = stored;
+          }
+        } catch {
+        }
+        const { applied, warnings } = await applyToolCode(
+          featureName,
+          toolCode,
+          needsApiEndpoint ? routeCode : null
+        );
+        const appliedNote = applied.length > 0 ? `
+
+Files written:
+${applied.map((f) => `- \`${f}\``).join("\n")}` : "";
+        const warnNote = warnings.length > 0 ? `
+
+Warnings (manual action may be needed):
+${warnings.map((w) => `- ${w}`).join("\n")}` : "";
+        if (!applied.includes(`server/agent/tools/${featureName}.ts`)) {
+          const errMsg = `Failed to write tool file.${warnNote}`;
+          await writeBuildLog(toolCode, false, null);
+          return fail(errMsg, "build_feature");
+        }
+        const resolvedTool = _toolResolver?.(featureName);
+        const smokeTestArgsToUse = priorPassingArgs !== null ? priorPassingArgs : resolvedTool ? generateSmartTestArgs(resolvedTool.parameters) : {};
+        console.log(`[build_feature] Running smoke test for "${featureName}"`);
+        const smokeResult = await testToolTool.execute(
+          { tool_name: featureName, test_args: JSON.stringify(smokeTestArgsToUse), _internal: true },
+          ctxForSmokeTest
+        );
+        await writeBuildLog(
+          toolCode,
+          smokeResult.ok,
+          smokeResult.ok,
+          smokeResult.ok ? smokeTestArgsToUse : null
+        );
+        const fullNote = `${appliedNote}${warnNote}`;
+        if (smokeResult.ok) {
+          setTimeout(() => process.kill(process.pid, "SIGTERM"), 1500);
+          return ok(
+            `Tool "${featureName}" built and smoke tested successfully.${fullNote}
+
+Smoke test output: ${smokeResult.content}
+
+The server is restarting now \u2014 the new tool will be active in a few seconds.`,
+            "build_feature",
+            `pass: ${featureName}`
+          );
+        }
+        return {
+          ok: false,
+          content: `Tool "${featureName}" written but smoke test failed.${fullNote}
+
+Smoke test error: ${smokeResult.content}
+
+Fix the tool_code and call build_feature again with the corrected code.`,
+          label: "build_feature",
+          detail: `fail: ${featureName}`
+        };
+      }
+    };
+    testToolTool = {
+      name: "test_tool",
+      description: "Run a smoke test against a registered Jarvis tool by name. Invokes the tool with the provided test arguments (or auto-generated safe values from its schema) and reports whether it passed or failed. Use after build_feature to verify a new tool works before confirming to the user. If the tool is not yet registered, the test will report that clearly.",
+      parameters: {
+        type: "object",
+        properties: {
+          tool_name: {
+            type: "string",
+            description: "Exact name of the tool to test (the tool.name value, e.g. 'weather_lookup')."
+          },
+          test_args: {
+            type: "string",
+            description: "JSON object string of arguments to pass to the tool. Use safe, non-destructive dummy values. If omitted, safe dummy values are auto-generated from the tool's JSON Schema (required fields only)."
+          }
+        },
+        required: ["tool_name"]
+      },
+      async execute(args, ctx) {
+        const toolName = String(args.tool_name ?? "").trim();
+        if (!toolName) return fail("tool_name is required.");
+        if (toolName === "test_tool") {
+          return fail("test_tool cannot test itself.", "test_tool");
+        }
+        const META_TOOLS = /* @__PURE__ */ new Set(["build_feature", "spawn_subagent", "queue_background_job"]);
+        if (META_TOOLS.has(toolName)) {
+          return fail(
+            `"${toolName}" is an orchestration tool and cannot be invoked via smoke test.`,
+            "test_tool"
+          );
+        }
+        if (ctx.allowedToolNames && !ctx.allowedToolNames.has(toolName)) {
+          return fail(
+            `Tool "${toolName}" is not in the allowed tool set for this agent surface.`,
+            "test_tool"
+          );
+        }
+        const hasExplicitArgs = args.test_args !== void 0;
+        const testArgsRaw = hasExplicitArgs ? String(args.test_args).trim() : "";
+        let callerArgs = null;
+        if (hasExplicitArgs && testArgsRaw) {
+          let parsed;
+          try {
+            parsed = JSON.parse(testArgsRaw);
+          } catch {
+            return fail(`test_args is not valid JSON: ${testArgsRaw}`);
+          }
+          if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+            return fail(`test_args must be a JSON object, got: ${testArgsRaw}`);
+          }
+          callerArgs = parsed;
+        }
+        if (!_toolResolver) {
+          return fail(
+            "Tool resolver not initialized \u2014 server may still be starting up. Try again in a moment.",
+            "test_tool"
+          );
+        }
+        const tool = _toolResolver(toolName);
+        if (!tool) {
+          return fail(
+            `Tool "${toolName}" is not registered in the live server. Apply the code (add the tool file and register it in index.ts), then restart the server so it appears in the registry.`,
+            "test_tool"
+          );
+        }
+        let priorPassingArgs = null;
+        try {
+          const priorRows = await db.select({ smokeTestArgs: openclawBuildLog.smokeTestArgs }).from(openclawBuildLog).where(
+            and24(
+              eq31(openclawBuildLog.userId, ctx.userId),
+              eq31(openclawBuildLog.featureName, toolName),
+              eq31(openclawBuildLog.smokeTestPassed, true),
+              isNotNull2(openclawBuildLog.smokeTestArgs)
+            )
+          ).orderBy(desc13(openclawBuildLog.createdAt)).limit(1);
+          const stored = priorRows[0]?.smokeTestArgs;
+          if (stored && typeof stored === "object" && !Array.isArray(stored)) {
+            priorPassingArgs = stored;
+          }
+        } catch {
+        }
+        const testArgs = callerArgs !== null ? callerArgs : priorPassingArgs !== null ? priorPassingArgs : generateSmartTestArgs(tool.parameters);
+        const argsNote = callerArgs !== null ? `args: ${JSON.stringify(testArgs)}` : priorPassingArgs !== null ? `using previously-passing args: ${JSON.stringify(testArgs)}` : `auto-generated args: ${JSON.stringify(testArgs)}`;
+        const SMOKE_TIMEOUT_MS = 3e4;
+        let result;
+        try {
+          const resultPromise = tool.execute(testArgs, ctx);
+          const timeoutPromise = new Promise(
+            (_, reject) => setTimeout(
+              () => reject(new Error(`smoke test timed out after ${SMOKE_TIMEOUT_MS / 1e3}s`)),
+              SMOKE_TIMEOUT_MS
+            )
+          );
+          result = await Promise.race([resultPromise, timeoutPromise]);
+        } catch (err) {
+          const detail = err instanceof Error ? err.message : String(err);
+          return {
+            ok: false,
+            content: `Tool "${toolName}" threw an exception during the smoke test (${argsNote}): ${detail}
+
+Fix the code in the tool file and call build_feature again with the corrected tool_code.`,
+            label: "test_tool",
+            detail: `throw: ${toolName} \u2014 ${detail}`
+          };
+        }
+        if (result.ok) {
+          const isInternalCall = Boolean(args._internal);
+          if (callerArgs !== null && !isInternalCall) {
+            try {
+              await db.insert(openclawBuildLog).values({
+                userId: ctx.userId,
+                featureName: toolName,
+                description: "manual test",
+                outputCode: "",
+                success: true,
+                smokeTestPassed: true,
+                smokeTestArgs: callerArgs
+              });
+            } catch {
+            }
+          }
+          return {
+            ok: true,
+            content: `Smoke test PASSED for "${toolName}" (${argsNote}).
+
+Output: ${result.content}`,
+            label: "test_tool",
+            detail: `pass: ${toolName}`
+          };
+        }
+        return {
+          ok: false,
+          content: `Smoke test FAILED for "${toolName}" (${argsNote}).
+
+Error: ${result.content}
+
+Fix the code and call build_feature again with the corrected tool_code.`,
+          label: "test_tool",
+          detail: `fail: ${toolName} \u2014 ${result.content}`
+        };
+      }
+    };
+  }
+});
+
 // server/agent/tools/index.ts
 function telegramCoachTools(opts) {
   const base = [
@@ -9439,7 +15585,7 @@ function telegramCoachTools(opts) {
     createDocumentTool,
     listDocumentsTool,
     readDocumentTool,
-    spawnSubagentTool,
+    queueBackgroundJobTool,
     daemonActionTool,
     checkConnectionsTool,
     generateReconnectLinkTool,
@@ -9447,7 +15593,45 @@ function telegramCoachTools(opts) {
     sendEmailTool,
     fetchEmailsTool,
     connectChannelTool,
-    discordPostTool
+    discordPostTool,
+    discordCreateChannelTool,
+    discordDeleteChannelTool,
+    discordListChannelsTool,
+    scheduleJarvisTaskTool,
+    scheduleChannelReportTool,
+    listChannelSchedulesTool,
+    deleteChannelScheduleTool,
+    registerApprovalTool,
+    discordPinMessageTool,
+    setupNamedAgentTool,
+    youtubeSearchTool,
+    setupContentPipelineTool,
+    setupDiscordWorkspaceTool,
+    memorySearchTool,
+    memoryGetTool,
+    webFetchTool,
+    sessionsListTool,
+    sessionsHistoryTool,
+    sessionsSendTool,
+    speakTool,
+    cronCreateTool,
+    cronListTool,
+    cronDeleteTool,
+    cronUpdateTool,
+    workflowCreateTool,
+    workflowRunTool,
+    workflowStatusTool,
+    workflowPauseTool,
+    workflowResumeTool,
+    workflowListTool,
+    browserNavigateTool,
+    browserClickTool,
+    browserTypeTool,
+    browserScreenshotTool,
+    browserExtractTool,
+    browserCloseTool,
+    buildFeatureTool,
+    testToolTool
   ];
   if (opts.hasGoogle) {
     base.push(gmailActionTool, gmailDraftTool, fetchCalendarTool, driveCreateFileTool, driveListFilesTool, driveReadFileTool);
@@ -9472,7 +15656,26 @@ var init_tools = __esm({
     init_fetchEmails();
     init_connectChannel();
     init_discordPost();
+    init_discordCreateChannel();
+    init_discordDeleteChannel();
+    init_discordListChannels();
     init_scheduleJarvisTask();
+    init_scheduleChannelReport();
+    init_youtubeSearch();
+    init_registerApproval();
+    init_discordPinMessage();
+    init_setupNamedAgent();
+    init_queueBackgroundJob();
+    init_setupContentPipeline();
+    init_setupDiscordWorkspace();
+    init_memorySearch();
+    init_webFetch();
+    init_sessionTools();
+    init_tts();
+    init_cronTools();
+    init_workflowTools();
+    init_browserTools();
+    init_openclawTool();
     ALL_TOOLS = [
       webSearchTool,
       researchTopicTool,
@@ -9495,14 +15698,53 @@ var init_tools = __esm({
       fetchEmailsTool,
       connectChannelTool,
       discordPostTool,
-      scheduleJarvisTaskTool
+      discordCreateChannelTool,
+      discordDeleteChannelTool,
+      discordListChannelsTool,
+      scheduleJarvisTaskTool,
+      scheduleChannelReportTool,
+      listChannelSchedulesTool,
+      deleteChannelScheduleTool,
+      registerApprovalTool,
+      discordPinMessageTool,
+      setupNamedAgentTool,
+      youtubeSearchTool,
+      queueBackgroundJobTool,
+      setupContentPipelineTool,
+      setupDiscordWorkspaceTool,
+      memorySearchTool,
+      memoryGetTool,
+      webFetchTool,
+      sessionsListTool,
+      sessionsHistoryTool,
+      sessionsSendTool,
+      speakTool,
+      cronCreateTool,
+      cronListTool,
+      cronDeleteTool,
+      cronUpdateTool,
+      workflowCreateTool,
+      workflowRunTool,
+      workflowStatusTool,
+      workflowPauseTool,
+      workflowResumeTool,
+      workflowListTool,
+      browserNavigateTool,
+      browserClickTool,
+      browserTypeTool,
+      browserScreenshotTool,
+      browserExtractTool,
+      browserCloseTool,
+      buildFeatureTool,
+      testToolTool
     ];
     TOOL_INDEX = new Map(ALL_TOOLS.map((t) => [t.name, t]));
+    initToolResolver((name) => TOOL_INDEX.get(name));
   }
 });
 
 // server/agent/subagents.ts
-import { and as and17, eq as eq22, sql as sql11 } from "drizzle-orm";
+import { and as and25, eq as eq32, sql as sql15 } from "drizzle-orm";
 function summarize(body, fallback, max = 240) {
   const stripped = body.replace(/^#.*$/gm, "").replace(/^---EMAIL DRAFT---[\s\S]*?Body:\s*/m, "").replace(/^---END DRAFT---/m, "").replace(/\n+/g, " ").replace(/\s+/g, " ").trim();
   if (!stripped) return fallback;
@@ -9555,7 +15797,7 @@ ${soulText.trim()}`);
     try {
       const emailMatches = Array.from(opts.prompt.matchAll(/[\w.+-]+@[\w-]+\.[\w.-]+/g)).map((m) => m[0].toLowerCase());
       if (emailMatches.length > 0) {
-        const peopleRows = await db.select().from(people).where(and17(eq22(people.userId, opts.context.userId), sql11`lower(${people.email}) = ANY(${emailMatches})`));
+        const peopleRows = await db.select().from(people).where(and25(eq32(people.userId, opts.context.userId), sql15`lower(${people.email}) = ANY(${emailMatches})`));
         if (peopleRows.length > 0) {
           const lines = peopleRows.map((p) => {
             const bits = [`${p.name}${p.email ? ` <${p.email}>` : ""}`];
@@ -9729,8 +15971,184 @@ ${SHARED_RULES}`,
   }
 });
 
+// server/driveRoutes.ts
+var driveRoutes_exports = {};
+__export(driveRoutes_exports, {
+  driveRouter: () => driveRouter,
+  getUserDriveSettings: () => getUserDriveSettings
+});
+import { Router as Router4 } from "express";
+import { eq as eq33 } from "drizzle-orm";
+function getBaseUrl2(req) {
+  const domain = process.env.REPLIT_DOMAINS?.split(",")[0];
+  if (domain) {
+    const isDev = process.env.REPLIT_DEV_DOMAIN === domain;
+    return isDev ? `https://${domain}:5000` : `https://${domain}`;
+  }
+  return `${req.protocol}://${req.get("host")}`;
+}
+async function getUserDrivePrefs(userId2) {
+  const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq33(userPreferences.userId, userId2)).limit(1);
+  const data = rows[0]?.data || {};
+  return {
+    driveEnabled: !!data.driveEnabled,
+    driveAutoSavePlans: data.driveAutoSavePlans !== false,
+    driveAutoSaveWeekly: data.driveAutoSaveWeekly !== false,
+    driveFolderId: typeof data.driveFolderId === "string" ? data.driveFolderId : void 0,
+    driveFolderLink: typeof data.driveFolderLink === "string" ? data.driveFolderLink : void 0
+  };
+}
+async function patchUserPrefs(userId2, patch) {
+  const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq33(userPreferences.userId, userId2)).limit(1);
+  const current = rows[0]?.data || {};
+  const updated = { ...current, ...patch };
+  await db.insert(userPreferences).values({ userId: userId2, data: updated }).onConflictDoUpdate({
+    target: [userPreferences.userId],
+    set: { data: updated, updatedAt: /* @__PURE__ */ new Date() }
+  });
+}
+async function getUserDriveSettings(userId2) {
+  const prefs = await getUserDrivePrefs(userId2);
+  if (!prefs.driveEnabled) {
+    return { enabled: false, autoSavePlans: false, autoSaveWeekly: false, accessToken: null, folderId: null, folderLink: null };
+  }
+  const accessToken = await getValidGoogleToken(userId2);
+  if (!accessToken) {
+    return { enabled: false, autoSavePlans: false, autoSaveWeekly: false, accessToken: null, folderId: null, folderLink: null };
+  }
+  let hasScope = false;
+  try {
+    hasScope = await checkDriveScope(accessToken);
+  } catch {
+    hasScope = true;
+  }
+  if (!hasScope) {
+    return { enabled: false, autoSavePlans: false, autoSaveWeekly: false, accessToken: null, folderId: null, folderLink: null };
+  }
+  return {
+    enabled: true,
+    autoSavePlans: prefs.driveAutoSavePlans !== false,
+    autoSaveWeekly: prefs.driveAutoSaveWeekly !== false,
+    accessToken,
+    folderId: prefs.driveFolderId || null,
+    folderLink: prefs.driveFolderLink || null
+  };
+}
+var driveRouter;
+var init_driveRoutes = __esm({
+  "server/driveRoutes.ts"() {
+    "use strict";
+    init_db();
+    init_schema();
+    init_userTokenStore();
+    init_googleDrive();
+    driveRouter = Router4();
+    driveRouter.get("/status", async (req, res) => {
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
+      try {
+        const accessToken = await getValidGoogleToken(userId2);
+        if (!accessToken) {
+          return res.json({
+            googleConnected: false,
+            hasDriveScope: false,
+            enabled: false,
+            autoSavePlans: true,
+            autoSaveWeekly: true,
+            folderLink: null
+          });
+        }
+        const hasDriveScope = await checkDriveScope(accessToken);
+        const prefs = await getUserDrivePrefs(userId2);
+        res.json({
+          googleConnected: true,
+          hasDriveScope,
+          enabled: prefs.driveEnabled && hasDriveScope,
+          autoSavePlans: prefs.driveAutoSavePlans !== false,
+          autoSaveWeekly: prefs.driveAutoSaveWeekly !== false,
+          folderLink: prefs.driveFolderLink || null
+        });
+      } catch (err) {
+        console.error("[Drive] status error:", err);
+        res.status(500).json({ error: "Failed to fetch Drive status" });
+      }
+    });
+    driveRouter.post("/enable", async (req, res) => {
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
+      try {
+        const accessToken = await getValidGoogleToken(userId2);
+        if (!accessToken) {
+          return res.status(400).json({ error: "Google account not connected. Connect Google first." });
+        }
+        const hasDriveScope = await checkDriveScope(accessToken);
+        if (!hasDriveScope) {
+          const clientId = process.env.GOOGLE_WEB_CLIENT_ID;
+          if (!clientId) return res.status(500).json({ error: "Google OAuth not configured" });
+          const baseUrl = getBaseUrl2(req);
+          const redirectUri = `${baseUrl}/api/oauth/google/callback`;
+          const params = new URLSearchParams({
+            client_id: clientId,
+            redirect_uri: redirectUri,
+            response_type: "code",
+            scope: "https://www.googleapis.com/auth/drive.file",
+            access_type: "offline",
+            include_granted_scopes: "true",
+            prompt: "consent",
+            state: userId2
+          });
+          const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
+          return res.json({ needsConsent: true, authUrl });
+        }
+        const folderId = await ensureJarvisFolder(accessToken);
+        const folderLink = `https://drive.google.com/drive/folders/${folderId}`;
+        await patchUserPrefs(userId2, {
+          driveEnabled: true,
+          driveFolderId: folderId,
+          driveFolderLink: folderLink
+        });
+        console.log(`[Drive] Enabled for user ${userId2}, folder ${folderId}`);
+        res.json({ success: true, folderId, folderLink });
+      } catch (err) {
+        console.error("[Drive] enable error:", err);
+        res.status(500).json({ error: "Failed to enable Drive integration" });
+      }
+    });
+    driveRouter.patch("/settings", async (req, res) => {
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
+      const { autoSavePlans, autoSaveWeekly } = req.body;
+      try {
+        const patch = {};
+        if (typeof autoSavePlans === "boolean") patch.driveAutoSavePlans = autoSavePlans;
+        if (typeof autoSaveWeekly === "boolean") patch.driveAutoSaveWeekly = autoSaveWeekly;
+        await patchUserPrefs(userId2, patch);
+        res.json({ success: true });
+      } catch (err) {
+        console.error("[Drive] settings error:", err);
+        res.status(500).json({ error: "Failed to update Drive settings" });
+      }
+    });
+    driveRouter.delete("/disable", async (req, res) => {
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
+      try {
+        await patchUserPrefs(userId2, {
+          driveEnabled: false,
+          driveFolderId: void 0,
+          driveFolderLink: void 0
+        });
+        res.json({ success: true });
+      } catch (err) {
+        console.error("[Drive] disable error:", err);
+        res.status(500).json({ error: "Failed to disable Drive" });
+      }
+    });
+  }
+});
+
 // server/memory/weeklyJob.ts
-import { eq as eq23, and as and18, gte as gte3, desc as desc9, sql as sql12 } from "drizzle-orm";
+import { eq as eq34, and as and26, gte as gte6, desc as desc14, sql as sql16 } from "drizzle-orm";
 import OpenAI10 from "openai";
 function asArray(value) {
   return Array.isArray(value) ? value : [];
@@ -9772,11 +16190,11 @@ async function runWeeklyPatternJob(userId2) {
   const sevenDaysAgo = windowStart;
   const weekOf = weekOfKey(now);
   const [completionRow, brainRow, chatRow, telegramRows, energyRows] = await Promise.allSettled([
-    db.select().from(completionHistory).where(eq23(completionHistory.userId, userId2)).limit(1),
-    db.select().from(brainDumpInbox).where(eq23(brainDumpInbox.userId, userId2)).limit(1),
-    db.select().from(chatHistory).where(eq23(chatHistory.userId, userId2)).limit(1),
-    db.select().from(telegramGroupMessages).where(and18(eq23(telegramGroupMessages.userId, userId2), gte3(telegramGroupMessages.messageDate, sevenDaysAgo))).orderBy(desc9(telegramGroupMessages.messageDate)).limit(50),
-    db.select().from(energyCheckins).where(and18(eq23(energyCheckins.userId, userId2), gte3(energyCheckins.date, sevenDaysAgo.toISOString().slice(0, 10)))).orderBy(desc9(energyCheckins.date)).limit(60)
+    db.select().from(completionHistory).where(eq34(completionHistory.userId, userId2)).limit(1),
+    db.select().from(brainDumpInbox).where(eq34(brainDumpInbox.userId, userId2)).limit(1),
+    db.select().from(chatHistory).where(eq34(chatHistory.userId, userId2)).limit(1),
+    db.select().from(telegramGroupMessages).where(and26(eq34(telegramGroupMessages.userId, userId2), gte6(telegramGroupMessages.messageDate, sevenDaysAgo))).orderBy(desc14(telegramGroupMessages.messageDate)).limit(50),
+    db.select().from(energyCheckins).where(and26(eq34(energyCheckins.userId, userId2), gte6(energyCheckins.date, sevenDaysAgo.toISOString().slice(0, 10)))).orderBy(desc14(energyCheckins.date)).limit(60)
   ]);
   const completionData = completionRow.status === "fulfilled" ? asArray(completionRow.value[0]?.data) : [];
   const brainData = brainRow.status === "fulfilled" ? asArray(brainRow.value[0]?.data) : [];
@@ -9871,7 +16289,7 @@ ${energyText || "(none)"}`;
   const signalCount = recentCompletions.length + brainData.length + chatData.length + telegramData.length + energyData.length;
   if (signalCount < 5) {
     console.log(`[WeeklyPattern] user=${userId2} week=${weekOf} skipped \u2014 only ${signalCount} signal(s) in 30-day window`);
-    return { weekOf, patterns: [], summary: "" };
+    return { weekOf, patternCount: 0, promotedMemories: 0, summary: "" };
   }
   await db.insert(weeklyInsights).values({ userId: userId2, weekOf, patterns, summary: summary || null }).onConflictDoUpdate({
     target: [weeklyInsights.userId, weeklyInsights.weekOf],
@@ -9901,6 +16319,26 @@ ${energyText || "(none)"}`;
   } catch (err) {
     console.error("[WeeklyPattern] regenerateSoul failed:", err);
   }
+  const finalSummary = summary || (patterns.length === 0 ? "No notable patterns this week." : `${patterns.length} pattern(s) identified.`);
+  let driveLink = null;
+  try {
+    const { getUserDriveSettings: getUserDriveSettings2 } = await Promise.resolve().then(() => (init_driveRoutes(), driveRoutes_exports));
+    const { createDriveTextFile: createDriveTextFile2 } = await Promise.resolve().then(() => (init_googleDrive(), googleDrive_exports));
+    const drive = await getUserDriveSettings2(userId2);
+    if (drive.enabled && drive.autoSaveWeekly && drive.accessToken) {
+      const reviewText = buildWeeklyReviewMarkdown(weekOf, patterns, finalSummary);
+      const driveFile = await createDriveTextFile2(
+        drive.accessToken,
+        `Weekly Review \u2014 ${weekOf}`,
+        reviewText,
+        { convertToDoc: true, folderId: drive.folderId || void 0 }
+      );
+      driveLink = driveFile.webViewLink;
+      console.log(`[WeeklyPattern] Drive auto-save for user=${userId2}: ${driveLink}`);
+    }
+  } catch (driveErr) {
+    console.error("[WeeklyPattern] Drive auto-save failed:", driveErr);
+  }
   console.log(
     `[WeeklyPattern] user=${userId2} week=${weekOf} patterns=${patterns.length} promoted=${promoted}`
   );
@@ -9908,12 +16346,32 @@ ${energyText || "(none)"}`;
     weekOf,
     patternCount: patterns.length,
     promotedMemories: promoted,
-    summary: summary || (patterns.length === 0 ? "No notable patterns this week." : `${patterns.length} pattern(s) identified.`)
+    summary: finalSummary,
+    driveLink
   };
 }
+function buildWeeklyReviewMarkdown(weekOf, patterns, summary) {
+  const lines = [`# Weekly Review \u2014 Week of ${weekOf}`, "", `> ${summary}`, ""];
+  if (patterns.length > 0) {
+    lines.push("## Patterns Identified", "");
+    for (const p of patterns) {
+      lines.push(`### ${p.observation} (confidence: ${p.confidence}%)`);
+      lines.push(`*Category: ${p.category}*`);
+      if (p.evidence.length > 0) {
+        lines.push("");
+        lines.push("**Evidence:**");
+        for (const e of p.evidence) {
+          lines.push(`- ${e}`);
+        }
+      }
+      lines.push("");
+    }
+  }
+  return lines.join("\n");
+}
 async function enqueueWeeklyPatternJobs() {
-  const { submitAgentJob: submitAgentJob2 } = await Promise.resolve().then(() => (init_jobQueue(), jobQueue_exports));
-  const rows = await db.execute(sql12`
+  const { submitAgentJob: submitAgentJob3 } = await Promise.resolve().then(() => (init_jobQueue(), jobQueue_exports));
+  const rows = await db.execute(sql16`
     SELECT DISTINCT user_id FROM chat_history
     WHERE updated_at > NOW() - INTERVAL '14 days'
   `);
@@ -9921,7 +16379,7 @@ async function enqueueWeeklyPatternJobs() {
   for (const r of rows.rows ?? []) {
     if (!r.user_id) continue;
     try {
-      await submitAgentJob2({
+      await submitAgentJob3({
         userId: r.user_id,
         agentType: "weekly_pattern",
         title: "Weekly pattern review",
@@ -9957,7 +16415,7 @@ __export(jobQueue_exports, {
   stopJobQueueWorker: () => stopJobQueueWorker,
   submitAgentJob: () => submitAgentJob
 });
-import { eq as eq24, sql as sql13 } from "drizzle-orm";
+import { eq as eq35, sql as sql17 } from "drizzle-orm";
 async function notifyJobComplete(userId2, agentType, title, body) {
   try {
     await notifyUser(
@@ -9971,23 +16429,10 @@ ${body}`.slice(0, 3500)
     console.error("[JobQueue] notify failed:", err);
   }
 }
-async function submitAgentJob(input) {
-  const inserted = await db.insert(agentJobs).values({
-    userId: input.userId,
-    agentType: input.agentType,
-    title: input.title.slice(0, 200),
-    prompt: input.prompt,
-    input: input.input || {},
-    status: "queued"
-  }).returning({ id: agentJobs.id });
-  const id = inserted[0]?.id || "";
-  console.log(`[JobQueue] queued job ${id} type=${input.agentType} user=${input.userId} title="${input.title.slice(0, 60)}"`);
-  return id;
-}
 async function claimNextJob() {
-  const claimed = await db.execute(sql13`
+  const claimed = await db.execute(sql17`
     WITH busy_users AS (
-      SELECT DISTINCT user_id FROM agent_jobs WHERE status = 'running'
+      SELECT DISTINCT user_id FROM agent_jobs WHERE status IN ('running', 'cancelling')
     ),
     candidate AS (
       SELECT id FROM agent_jobs
@@ -10003,12 +16448,12 @@ async function claimNextJob() {
   `);
   const claimedId = claimed.rows?.[0]?.id;
   if (!claimedId) return null;
-  const [row] = await db.select().from(agentJobs).where(eq24(agentJobs.id, claimedId)).limit(1);
+  const [row] = await db.select().from(agentJobs).where(eq35(agentJobs.id, claimedId)).limit(1);
   return row || null;
 }
 async function failJob(jobId, message) {
   try {
-    await db.update(agentJobs).set({ status: "failed", error: message.slice(0, 2e3), completedAt: /* @__PURE__ */ new Date() }).where(eq24(agentJobs.id, jobId));
+    await db.update(agentJobs).set({ status: "failed", error: message.slice(0, 2e3), completedAt: /* @__PURE__ */ new Date() }).where(eq35(agentJobs.id, jobId));
   } catch (err) {
     console.error(`[JobQueue] failJob ${jobId} write failed:`, err);
   }
@@ -10020,7 +16465,7 @@ async function completeJob(jobId, payload) {
     turns: payload.turns,
     toolCallsCount: payload.toolCallsCount,
     completedAt: /* @__PURE__ */ new Date()
-  }).where(eq24(agentJobs.id, jobId));
+  }).where(eq35(agentJobs.id, jobId));
 }
 async function processJob(job) {
   console.log(`[JobQueue] running job ${job.id} type=${job.agentType} user=${job.userId}`);
@@ -10028,6 +16473,9 @@ async function processJob(job) {
     console.warn(`[JobQueue] job ${job.id} exceeded ${MAX_JOB_DURATION_MS}ms (still running)`);
   }, MAX_JOB_DURATION_MS);
   try {
+    const wfId = job.input?.workflowId;
+    const wfStep = job.input?.workflowStepIndex;
+    const hasWorkflow = !!wfId && wfStep !== void 0;
     if (job.agentType === "weekly_pattern") {
       const result = await runWeeklyPatternJob(job.userId);
       await completeJob(job.id, {
@@ -10036,13 +16484,22 @@ async function processJob(job) {
         toolCallsCount: 0
       });
       console.log(`[JobQueue] complete weekly_pattern job ${job.id} \u2192 ${result.patternCount} patterns`);
+      const weeklyMsg = result.driveLink ? `${result.patternCount} pattern(s) identified, ${result.promotedMemories} promoted to long-term memory.
+${result.summary}
+
+\u{1F4C1} Saved to Google Drive: ${result.driveLink}` : `${result.patternCount} pattern(s) identified, ${result.promotedMemories} promoted to long-term memory.
+${result.summary}`;
       await notifyJobComplete(
         job.userId,
         "weekly_pattern",
         `Weekly review (${result.weekOf})`,
-        `${result.patternCount} pattern(s) identified, ${result.promotedMemories} promoted to long-term memory.
-${result.summary}`
+        weeklyMsg
       );
+      if (hasWorkflow) {
+        await onWorkflowJobComplete(wfId, wfStep, job.id, result.summary || weeklyMsg).catch(
+          (e) => console.error("[JobQueue] workflow hook failed:", e)
+        );
+      }
       return;
     }
     if (job.agentType === "goal_decompose") {
@@ -10053,12 +16510,13 @@ ${result.summary}`
         toolCallsCount: result.toolCallsCount
       });
       console.log(`[JobQueue] complete goal_decompose job ${job.id} \u2192 tree ${result.goalTreeId}`);
-      await notifyJobComplete(
-        job.userId,
-        "goal_decompose",
-        job.title,
-        `Goal broken into ${result.phaseCount} phase(s). Open the Goals tab to review.`
-      );
+      const goalMsg = `Goal broken into ${result.phaseCount} phase(s). Open the Goals tab to review.`;
+      await notifyJobComplete(job.userId, "goal_decompose", job.title, goalMsg);
+      if (hasWorkflow) {
+        await onWorkflowJobComplete(wfId, wfStep, job.id, goalMsg).catch(
+          (e) => console.error("[JobQueue] workflow hook failed:", e)
+        );
+      }
       return;
     }
     const tokens = await getValidGoogleTokens(job.userId).catch(() => []);
@@ -10092,16 +16550,34 @@ ${result.summary}`
       toolCallsCount: sub.toolCallsCount
     });
     console.log(`[JobQueue] complete ${job.agentType} job ${job.id} \u2192 deliverable ${deliverableId}`);
+    const subNotifyMsg = `${sub.summary || "Ready for review"} \u2014 open Inbox to approve, edit, or discard.`;
     await notifyJobComplete(
       job.userId,
       job.agentType,
       sub.title,
-      `${sub.summary || "Ready for review"} \u2014 open Inbox to approve, edit, or discard.`
+      subNotifyMsg
     );
+    if (hasWorkflow) {
+      const wfOutput = `${sub.title}
+
+${sub.summary || ""}
+
+${sub.body?.slice(0, 1200) || ""}`.trim();
+      await onWorkflowJobComplete(wfId, wfStep, job.id, wfOutput).catch(
+        (e) => console.error("[JobQueue] workflow hook failed:", e)
+      );
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[JobQueue] job ${job.id} failed:`, err);
     await failJob(job.id, msg);
+    const wfId2 = job.input?.workflowId;
+    const wfStep2 = job.input?.workflowStepIndex;
+    if (wfId2 && wfStep2 !== void 0) {
+      await onWorkflowJobFail(wfId2, wfStep2, msg).catch(
+        (e) => console.error("[JobQueue] workflow fail hook failed:", e)
+      );
+    }
   } finally {
     clearTimeout(watchdog);
   }
@@ -10117,9 +16593,13 @@ async function tick() {
 }
 async function recoverStaleJobs() {
   try {
-    const result = await db.update(agentJobs).set({ status: "queued", startedAt: null }).where(eq24(agentJobs.status, "running")).returning({ id: agentJobs.id });
-    if (result.length > 0) {
-      console.log(`[JobQueue] recovered ${result.length} stale running job(s) from previous process`);
+    const requeued = await db.update(agentJobs).set({ status: "queued", startedAt: null }).where(eq35(agentJobs.status, "running")).returning({ id: agentJobs.id });
+    if (requeued.length > 0) {
+      console.log(`[JobQueue] recovered ${requeued.length} stale running job(s) from previous process`);
+    }
+    const cancelled = await db.update(agentJobs).set({ status: "cancelled", completedAt: /* @__PURE__ */ new Date() }).where(eq35(agentJobs.status, "cancelling")).returning({ id: agentJobs.id });
+    if (cancelled.length > 0) {
+      console.log(`[JobQueue] cancelled ${cancelled.length} stale cancelling job(s) from previous process`);
     }
   } catch (err) {
     console.error("[JobQueue] recoverStaleJobs failed:", err);
@@ -10152,7 +16632,7 @@ function startJobQueueWorker() {
 function stopJobQueueWorker() {
   stopRequested = true;
 }
-var TICK_MS, MAX_JOB_DURATION_MS, workerRunning, workerStarted, stopRequested;
+var submitAgentJob, TICK_MS, MAX_JOB_DURATION_MS, workerRunning, workerStarted, stopRequested;
 var init_jobQueue = __esm({
   "server/agent/jobQueue.ts"() {
     "use strict";
@@ -10163,6 +16643,9 @@ var init_jobQueue = __esm({
     init_weeklyJob();
     init_userTokenStore();
     init_registry();
+    init_workflowEngine();
+    init_jobClient();
+    submitAgentJob = submitAgentJob2;
     TICK_MS = 15 * 1e3;
     MAX_JOB_DURATION_MS = 5 * 60 * 1e3;
     workerRunning = false;
@@ -10178,7 +16661,7 @@ __export(goalDecomposer_exports, {
   runGoalDecomposition: () => runGoalDecomposition
 });
 import OpenAI11 from "openai";
-import { eq as eq25, and as and20 } from "drizzle-orm";
+import { eq as eq36, and as and28 } from "drizzle-orm";
 function newId(prefix) {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -10233,7 +16716,7 @@ function normaliseTree(raw, fallbackTitle) {
   };
 }
 async function loadGoal(userId2, goalId) {
-  const [row] = await db.select({ data: goals.data }).from(goals).where(eq25(goals.userId, userId2)).limit(1);
+  const [row] = await db.select({ data: goals.data }).from(goals).where(eq36(goals.userId, userId2)).limit(1);
   const list = row?.data || [];
   return list.find((g) => g.id === goalId) || null;
 }
@@ -10314,11 +16797,11 @@ async function runGoalDecomposition(job) {
   if (tree.phases.length === 0) {
     throw new Error("Decomposition returned no phases");
   }
-  const existing = await db.select({ id: goalTrees.id }).from(goalTrees).where(and20(eq25(goalTrees.userId, job.userId), eq25(goalTrees.goalId, goalId))).limit(1);
+  const existing = await db.select({ id: goalTrees.id }).from(goalTrees).where(and28(eq36(goalTrees.userId, job.userId), eq36(goalTrees.goalId, goalId))).limit(1);
   let goalTreeId;
   if (existing.length > 0) {
     goalTreeId = existing[0].id;
-    await db.update(goalTrees).set({ tree, title: goal.title, status: "active", updatedAt: /* @__PURE__ */ new Date() }).where(eq25(goalTrees.id, goalTreeId));
+    await db.update(goalTrees).set({ tree, title: goal.title, status: "active", updatedAt: /* @__PURE__ */ new Date() }).where(eq36(goalTrees.id, goalTreeId));
   } else {
     const inserted = await db.insert(goalTrees).values({
       userId: job.userId,
@@ -10337,8 +16820,8 @@ async function runGoalDecomposition(job) {
   };
 }
 async function enqueueGoalDecomposition(userId2, goal) {
-  const { submitAgentJob: submitAgentJob2 } = await Promise.resolve().then(() => (init_jobQueue(), jobQueue_exports));
-  return submitAgentJob2({
+  const { submitAgentJob: submitAgentJob3 } = await Promise.resolve().then(() => (init_jobQueue(), jobQueue_exports));
+  return submitAgentJob3({
     userId: userId2,
     agentType: "goal_decompose",
     title: `Decompose: ${goal.title}`,
@@ -10360,7 +16843,7 @@ var init_goalDecomposer = __esm({
 });
 
 // server/dataRoutes.ts
-import { eq as eq26, and as and21 } from "drizzle-orm";
+import { eq as eq37, and as and29 } from "drizzle-orm";
 function requireUserId(req, res) {
   const userId2 = req.userId;
   if (!userId2) {
@@ -10374,7 +16857,7 @@ function registerSimpleJsonCrud(app2, path4, table) {
     try {
       const userId2 = requireUserId(req, res);
       if (!userId2) return;
-      const result = await db.select({ data: table.data }).from(table).where(eq26(table.userId, userId2));
+      const result = await db.select({ data: table.data }).from(table).where(eq37(table.userId, userId2));
       if (result.length === 0) return res.json({ data: null });
       res.json({ data: result[0].data });
     } catch (e) {
@@ -10401,7 +16884,7 @@ function registerSimpleJsonCrud(app2, path4, table) {
     try {
       const userId2 = requireUserId(req, res);
       if (!userId2) return;
-      await db.delete(table).where(eq26(table.userId, userId2));
+      await db.delete(table).where(eq37(table.userId, userId2));
       res.json({ ok: true });
     } catch (e) {
       console.error(`Error deleting ${path4}:`, e);
@@ -10415,7 +16898,7 @@ function registerDataRoutes(app2) {
       const userId2 = requireUserId(req, res);
       if (!userId2) return;
       const { date: date2 } = req.params;
-      const result = await db.select().from(plans).where(and21(eq26(plans.userId, userId2), eq26(plans.date, date2)));
+      const result = await db.select().from(plans).where(and29(eq37(plans.userId, userId2), eq37(plans.date, date2)));
       if (result.length === 0) return res.json({ data: null });
       res.json({ data: result[0].data });
     } catch (e) {
@@ -10427,7 +16910,7 @@ function registerDataRoutes(app2) {
     try {
       const userId2 = requireUserId(req, res);
       if (!userId2) return;
-      const result = await db.select().from(plans).where(eq26(plans.userId, userId2));
+      const result = await db.select().from(plans).where(eq37(plans.userId, userId2));
       const plansMap = {};
       for (const row of result) {
         plansMap[row.date] = row.data;
@@ -10445,7 +16928,7 @@ function registerDataRoutes(app2) {
       const { date: date2 } = req.params;
       const { data } = req.body;
       try {
-        const [prev] = await db.select({ data: plans.data }).from(plans).where(and21(eq26(plans.userId, userId2), eq26(plans.date, date2))).limit(1);
+        const [prev] = await db.select({ data: plans.data }).from(plans).where(and29(eq37(plans.userId, userId2), eq37(plans.date, date2))).limit(1);
         const prevTasks = prev?.data?.tasks || [];
         const newTasks = data?.tasks || [];
         const prevById = new Map(prevTasks.map((t) => [t.id, t]));
@@ -10478,7 +16961,7 @@ function registerDataRoutes(app2) {
     try {
       const userId2 = requireUserId(req, res);
       if (!userId2) return;
-      const result = await db.select({ data: goals.data }).from(goals).where(eq26(goals.userId, userId2));
+      const result = await db.select({ data: goals.data }).from(goals).where(eq37(goals.userId, userId2));
       if (result.length === 0) return res.json({ data: null });
       res.json({ data: result[0].data });
     } catch (e) {
@@ -10490,7 +16973,7 @@ function registerDataRoutes(app2) {
     try {
       const userId2 = requireUserId(req, res);
       if (!userId2) return;
-      await db.delete(goals).where(eq26(goals.userId, userId2));
+      await db.delete(goals).where(eq37(goals.userId, userId2));
       res.json({ ok: true });
     } catch (e) {
       console.error("Error deleting goals:", e);
@@ -10503,7 +16986,7 @@ function registerDataRoutes(app2) {
       if (!userId2) return;
       const { data } = req.body;
       const incoming = Array.isArray(data) ? data : [];
-      const [prev] = await db.select({ data: goals.data }).from(goals).where(eq26(goals.userId, userId2)).limit(1);
+      const [prev] = await db.select({ data: goals.data }).from(goals).where(eq37(goals.userId, userId2)).limit(1);
       const prevList = prev?.data || [];
       const prevById = new Map(prevList.map((g) => [g.id, g]));
       const incomingTyped = incoming;
@@ -10527,7 +17010,7 @@ function registerDataRoutes(app2) {
       if (removedIds.length > 0) {
         try {
           for (const removedId of removedIds) {
-            await db.delete(goalTrees).where(and21(eq26(goalTrees.userId, userId2), eq26(goalTrees.goalId, removedId)));
+            await db.delete(goalTrees).where(and29(eq37(goalTrees.userId, userId2), eq37(goalTrees.goalId, removedId)));
           }
           console.log(`[Goals] removed ${removedIds.length} stale goal tree(s) user=${userId2}`);
         } catch (e) {
@@ -10561,7 +17044,7 @@ function registerDataRoutes(app2) {
     try {
       const userId2 = requireUserId(req, res);
       if (!userId2) return;
-      const result = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq26(userPreferences.userId, userId2));
+      const result = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq37(userPreferences.userId, userId2));
       const currentPrefs = result[0]?.data || {};
       if (currentPrefs.autoBuiltPlan) {
         currentPrefs.autoBuiltPlan.dismissed = true;
@@ -10584,7 +17067,7 @@ function registerDataRoutes(app2) {
       const userId2 = requireUserId(req, res);
       if (!userId2) return;
       const { date: date2 } = req.params;
-      const result = await db.select().from(energyCheckins).where(and21(eq26(energyCheckins.userId, userId2), eq26(energyCheckins.date, date2)));
+      const result = await db.select().from(energyCheckins).where(and29(eq37(energyCheckins.userId, userId2), eq37(energyCheckins.date, date2)));
       if (result.length === 0) return res.json({ data: null });
       res.json({ data: result[0].data });
     } catch (e) {
@@ -10613,7 +17096,7 @@ function registerDataRoutes(app2) {
       const userId2 = requireUserId(req, res);
       if (!userId2) return;
       const { date: date2 } = req.params;
-      const result = await db.select().from(completedCalendarIds).where(and21(eq26(completedCalendarIds.userId, userId2), eq26(completedCalendarIds.date, date2)));
+      const result = await db.select().from(completedCalendarIds).where(and29(eq37(completedCalendarIds.userId, userId2), eq37(completedCalendarIds.date, date2)));
       if (result.length === 0) return res.json({ data: [] });
       res.json({ data: result[0].data });
     } catch (e) {
@@ -10641,27 +17124,27 @@ function registerDataRoutes(app2) {
     try {
       const userId2 = requireUserId(req, res);
       if (!userId2) return;
-      const [goalsRow] = await db.select({ data: goals.data }).from(goals).where(eq26(goals.userId, userId2));
-      const [statsRow] = await db.select({ data: stats.data }).from(stats).where(eq26(stats.userId, userId2));
-      const [lifeContextRow] = await db.select({ data: lifeContext.data }).from(lifeContext).where(eq26(lifeContext.userId, userId2));
-      const [userPrefsRow] = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq26(userPreferences.userId, userId2));
-      const [chatHistoryRow] = await db.select({ data: chatHistory.data }).from(chatHistory).where(eq26(chatHistory.userId, userId2));
-      const [timerSettingsRow] = await db.select({ data: timerSettings.data }).from(timerSettings).where(eq26(timerSettings.userId, userId2));
-      const [brainDumpRow] = await db.select({ data: brainDumpInbox.data }).from(brainDumpInbox).where(eq26(brainDumpInbox.userId, userId2));
-      const [completionHistoryRow] = await db.select({ data: completionHistory.data }).from(completionHistory).where(eq26(completionHistory.userId, userId2));
-      const [blockedTasksRow] = await db.select({ data: blockedTasks.data }).from(blockedTasks).where(eq26(blockedTasks.userId, userId2));
-      const [planSnapshotsRow] = await db.select({ data: planSnapshots.data }).from(planSnapshots).where(eq26(planSnapshots.userId, userId2));
-      const plansRows = await db.select().from(plans).where(eq26(plans.userId, userId2));
+      const [goalsRow] = await db.select({ data: goals.data }).from(goals).where(eq37(goals.userId, userId2));
+      const [statsRow] = await db.select({ data: stats.data }).from(stats).where(eq37(stats.userId, userId2));
+      const [lifeContextRow] = await db.select({ data: lifeContext.data }).from(lifeContext).where(eq37(lifeContext.userId, userId2));
+      const [userPrefsRow] = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq37(userPreferences.userId, userId2));
+      const [chatHistoryRow] = await db.select({ data: chatHistory.data }).from(chatHistory).where(eq37(chatHistory.userId, userId2));
+      const [timerSettingsRow] = await db.select({ data: timerSettings.data }).from(timerSettings).where(eq37(timerSettings.userId, userId2));
+      const [brainDumpRow] = await db.select({ data: brainDumpInbox.data }).from(brainDumpInbox).where(eq37(brainDumpInbox.userId, userId2));
+      const [completionHistoryRow] = await db.select({ data: completionHistory.data }).from(completionHistory).where(eq37(completionHistory.userId, userId2));
+      const [blockedTasksRow] = await db.select({ data: blockedTasks.data }).from(blockedTasks).where(eq37(blockedTasks.userId, userId2));
+      const [planSnapshotsRow] = await db.select({ data: planSnapshots.data }).from(planSnapshots).where(eq37(planSnapshots.userId, userId2));
+      const plansRows = await db.select().from(plans).where(eq37(plans.userId, userId2));
       const plans2 = {};
       for (const row of plansRows) {
         plans2[row.date] = row.data;
       }
-      const energyRows = await db.select().from(energyCheckins).where(eq26(energyCheckins.userId, userId2));
+      const energyRows = await db.select().from(energyCheckins).where(eq37(energyCheckins.userId, userId2));
       const energyCheckins2 = {};
       for (const row of energyRows) {
         energyCheckins2[row.date] = row.data;
       }
-      const calendarIdRows = await db.select().from(completedCalendarIds).where(eq26(completedCalendarIds.userId, userId2));
+      const calendarIdRows = await db.select().from(completedCalendarIds).where(eq37(completedCalendarIds.userId, userId2));
       const completedCalendarIds2 = {};
       for (const row of calendarIdRows) {
         completedCalendarIds2[row.date] = row.data;
@@ -10700,7 +17183,7 @@ function registerDataRoutes(app2) {
       await db.transaction(async (tx) => {
         const replaceSimple = async (table, value) => {
           if (value === null || value === void 0) {
-            await tx.delete(table).where(eq26(table.userId, userId2));
+            await tx.delete(table).where(eq37(table.userId, userId2));
             return;
           }
           await tx.insert(table).values({ userId: userId2, data: value, updatedAt: now }).onConflictDoUpdate({ target: [table.userId], set: { data: value, updatedAt: now } });
@@ -10716,19 +17199,19 @@ function registerDataRoutes(app2) {
         await replaceSimple(planSnapshots, data.planSnapshots);
         await replaceSimple(userPreferences, data.userPreferences);
         if (data.plans && typeof data.plans === "object") {
-          await tx.delete(plans).where(eq26(plans.userId, userId2));
+          await tx.delete(plans).where(eq37(plans.userId, userId2));
           for (const [date2, planData] of Object.entries(data.plans)) {
             await tx.insert(plans).values({ userId: userId2, date: date2, data: planData, updatedAt: now });
           }
         }
         if (data.energyCheckins && typeof data.energyCheckins === "object") {
-          await tx.delete(energyCheckins).where(eq26(energyCheckins.userId, userId2));
+          await tx.delete(energyCheckins).where(eq37(energyCheckins.userId, userId2));
           for (const [date2, checkinData] of Object.entries(data.energyCheckins)) {
             await tx.insert(energyCheckins).values({ userId: userId2, date: date2, data: checkinData, updatedAt: now });
           }
         }
         if (data.completedCalendarIds && typeof data.completedCalendarIds === "object") {
-          await tx.delete(completedCalendarIds).where(eq26(completedCalendarIds.userId, userId2));
+          await tx.delete(completedCalendarIds).where(eq37(completedCalendarIds.userId, userId2));
           for (const [date2, idsData] of Object.entries(data.completedCalendarIds)) {
             await tx.insert(completedCalendarIds).values({ userId: userId2, date: date2, data: idsData, updatedAt: now });
           }
@@ -10750,7 +17233,7 @@ var init_dataRoutes = __esm({
 });
 
 // server/channels/routes.ts
-import { eq as eq27, and as and22 } from "drizzle-orm";
+import { eq as eq38, and as and30 } from "drizzle-orm";
 function generateCode3(len = 6) {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let code = "";
@@ -10762,8 +17245,8 @@ function registerChannelRoutes(app2) {
     const userId2 = req.userId;
     try {
       const [tgRows, channelRows, prefs] = await Promise.all([
-        db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq27(telegramLinks.userId, userId2)).limit(1),
-        db.select().from(channelLinks).where(eq27(channelLinks.userId, userId2)),
+        db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq38(telegramLinks.userId, userId2)).limit(1),
+        db.select().from(channelLinks).where(eq38(channelLinks.userId, userId2)),
         getAllPreferences(userId2)
       ]);
       const discordTok = await getUserToken(userId2, "discord_bot").catch(() => null);
@@ -10772,16 +17255,30 @@ function registerChannelRoutes(app2) {
         whatsapp: false,
         slack: false,
         daemon: false,
-        discord: false
+        discord: false,
+        in_app: true
       };
       const meta = {};
+      const desktopDaemonConnected = isDesktopDaemonActive(userId2);
+      const androidDaemonConnected = isAndroidDaemonActive(userId2);
       for (const row of channelRows) {
         const ch = row.channel;
         if (ch === "daemon") {
           const daemonMeta = row.metadata;
           const platform = daemonMeta?.platform || "desktop";
           connected.daemon = isUserPaired(userId2);
-          meta.daemon = { hostname: daemonMeta?.hostname, lastSeenAt: row.lastSeenAt, connected: connected.daemon, platform };
+          if (platform === "android") {
+            if (!meta.android_daemon) {
+              meta.android_daemon = { hostname: daemonMeta?.hostname, lastSeenAt: row.lastSeenAt, connected: androidDaemonConnected };
+            }
+          } else {
+            if (!meta.desktop_daemon) {
+              meta.desktop_daemon = { hostname: daemonMeta?.hostname, lastSeenAt: row.lastSeenAt, connected: desktopDaemonConnected };
+            }
+          }
+          if (!meta.daemon) {
+            meta.daemon = { hostname: daemonMeta?.hostname, lastSeenAt: row.lastSeenAt, connected: connected.daemon, platform };
+          }
         } else if (ch === "discord") {
           connected.discord = true;
           const discordMeta = row.metadata;
@@ -10792,6 +17289,7 @@ function registerChannelRoutes(app2) {
             botRunning: botStatus === "running",
             isPaired: true,
             hasBotToken: !!discordTok,
+            sharedBotAvailable: !!process.env.DISCORD_BOT_TOKEN,
             lastSeenAt: row.lastSeenAt,
             allowlistedGuilds: discordMeta?.allowlistedGuilds ?? []
           };
@@ -10807,8 +17305,12 @@ function registerChannelRoutes(app2) {
           hasBotToken: true,
           botStatus,
           botRunning: botStatus === "running",
-          isPaired: false
+          isPaired: false,
+          sharedBotAvailable: !!process.env.DISCORD_BOT_TOKEN
         };
+      }
+      if (!discordTok && !connected.discord && process.env.DISCORD_BOT_TOKEN) {
+        meta.discord = { hasBotToken: false, isPaired: false, sharedBotAvailable: true };
       }
       const channels2 = listChannels().map((c) => ({
         name: c.name,
@@ -10820,7 +17322,9 @@ function registerChannelRoutes(app2) {
         connected,
         meta,
         notificationTypes: NOTIFICATION_TYPES,
-        preferences: prefs
+        preferences: prefs,
+        desktop_daemon_connected: desktopDaemonConnected,
+        android_daemon_connected: androidDaemonConnected
       });
     } catch (err) {
       console.error("[channels] GET /api/channels failed:", err);
@@ -10837,6 +17341,22 @@ function registerChannelRoutes(app2) {
       return res.status(400).json({ error: "invalid channels" });
     }
     try {
+      const [tgRows, chRows] = await Promise.all([
+        db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq38(telegramLinks.userId, userId2)).limit(1).catch(() => []),
+        db.select({ channel: channelLinks.channel }).from(channelLinks).where(eq38(channelLinks.userId, userId2)).catch(() => [])
+      ]);
+      const connectedSet = /* @__PURE__ */ new Set(["in_app"]);
+      if (tgRows.length > 0) connectedSet.add("telegram");
+      for (const row of chRows) {
+        const ch = row.channel;
+        if (ch === "daemon") {
+          if (isUserPaired(userId2)) connectedSet.add("daemon");
+        } else if (CHANNEL_NAMES.includes(ch)) connectedSet.add(ch);
+      }
+      const disconnected = channels2.filter((c) => !connectedSet.has(c));
+      if (disconnected.length > 0) {
+        return res.status(400).json({ error: `channels not connected: ${disconnected.join(", ")} \u2014 connect them first in Profile` });
+      }
       const unique = [...new Set(channels2)];
       await setPreference(userId2, notificationType, unique);
       res.json({ ok: true, notificationType, channels: unique });
@@ -10844,6 +17364,61 @@ function registerChannelRoutes(app2) {
       console.error("[channels] preference update failed:", err);
       res.status(500).json({ error: "failed to update preference" });
     }
+  });
+  app2.get("/api/notification-routing", authMiddleware, async (req, res) => {
+    const userId2 = req.userId;
+    try {
+      const prefs = await getAllPreferences(userId2);
+      res.json({ notificationTypes: NOTIFICATION_TYPES, channels: CHANNEL_NAMES, preferences: prefs });
+    } catch (err) {
+      console.error("[channels] GET /api/notification-routing failed:", err);
+      res.status(500).json({ error: "failed to load routing preferences" });
+    }
+  });
+  app2.patch("/api/notification-routing", authMiddleware, async (req, res) => {
+    const userId2 = req.userId;
+    const incoming = req.body?.preferences || {};
+    const errors = [];
+    const saved = {};
+    const [tgRows, chRows] = await Promise.all([
+      db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq38(telegramLinks.userId, userId2)).limit(1).catch(() => []),
+      db.select({ channel: channelLinks.channel }).from(channelLinks).where(eq38(channelLinks.userId, userId2)).catch(() => [])
+    ]);
+    const connectedSet = /* @__PURE__ */ new Set();
+    connectedSet.add("in_app");
+    if (tgRows.length > 0) connectedSet.add("telegram");
+    for (const row of chRows) {
+      const ch = row.channel;
+      if (ch === "daemon") {
+        if (isUserPaired(userId2)) connectedSet.add("daemon");
+      } else if (CHANNEL_NAMES.includes(ch)) {
+        connectedSet.add(ch);
+      }
+    }
+    for (const [nt, chs] of Object.entries(incoming)) {
+      if (!NOTIFICATION_TYPES.includes(nt)) {
+        errors.push(`unknown notificationType: ${nt}`);
+        continue;
+      }
+      if (!Array.isArray(chs) || chs.some((c) => !CHANNEL_NAMES.includes(c))) {
+        errors.push(`invalid channels for ${nt}`);
+        continue;
+      }
+      const disconnected = chs.filter((c) => !connectedSet.has(c));
+      if (disconnected.length > 0) {
+        errors.push(`channels not connected for ${nt}: ${disconnected.join(", ")} \u2014 connect them first in Profile`);
+        continue;
+      }
+      const unique = [...new Set(chs)];
+      try {
+        await setPreference(userId2, nt, unique);
+        saved[nt] = unique;
+      } catch (err) {
+        errors.push(`failed to save ${nt}`);
+      }
+    }
+    const prefs = await getAllPreferences(userId2).catch(() => ({}));
+    res.json({ ok: errors.length === 0, saved, errors, preferences: prefs });
   });
   app2.post("/api/channels/whatsapp/code", authMiddleware, async (req, res) => {
     const userId2 = req.userId;
@@ -10855,6 +17430,42 @@ function registerChannelRoutes(app2) {
     } catch (err) {
       console.error("[channels] whatsapp code failed:", err);
       res.status(500).json({ error: "failed to generate code" });
+    }
+  });
+  app2.delete("/api/channels/desktop-daemon", authMiddleware, async (req, res) => {
+    const userId2 = req.userId;
+    try {
+      closeUserDaemon(userId2, "desktop");
+      const rows = await db.select().from(channelLinks).where(and30(eq38(channelLinks.userId, userId2), eq38(channelLinks.channel, "daemon")));
+      for (const row of rows) {
+        const meta = row.metadata || {};
+        const p = meta.platform || "desktop";
+        if (p === "desktop") {
+          await db.delete(channelLinks).where(eq38(channelLinks.id, row.id));
+        }
+      }
+      res.json({ ok: true });
+    } catch (err) {
+      console.error("[channels] desktop-daemon unlink failed:", err);
+      res.status(500).json({ error: "failed to unlink desktop daemon" });
+    }
+  });
+  app2.delete("/api/channels/android-daemon", authMiddleware, async (req, res) => {
+    const userId2 = req.userId;
+    try {
+      closeUserDaemon(userId2, "android");
+      const rows = await db.select().from(channelLinks).where(and30(eq38(channelLinks.userId, userId2), eq38(channelLinks.channel, "daemon")));
+      for (const row of rows) {
+        const meta = row.metadata || {};
+        const p = meta.platform || "desktop";
+        if (p === "android") {
+          await db.delete(channelLinks).where(eq38(channelLinks.id, row.id));
+        }
+      }
+      res.json({ ok: true });
+    } catch (err) {
+      console.error("[channels] android-daemon unlink failed:", err);
+      res.status(500).json({ error: "failed to unlink android daemon" });
     }
   });
   app2.delete("/api/channels/:channel", authMiddleware, async (req, res) => {
@@ -10871,10 +17482,10 @@ function registerChannelRoutes(app2) {
         stopUserBot(userId2);
         await deleteUserToken(userId2, "discord_bot").catch(() => {
         });
-        await db.delete(channelLinkCodes).where(and22(eq27(channelLinkCodes.userId, userId2), eq27(channelLinkCodes.channel, "discord"))).catch(() => {
+        await db.delete(channelLinkCodes).where(and30(eq38(channelLinkCodes.userId, userId2), eq38(channelLinkCodes.channel, "discord"))).catch(() => {
         });
       }
-      await db.delete(channelLinks).where(and22(eq27(channelLinks.userId, userId2), eq27(channelLinks.channel, channel)));
+      await db.delete(channelLinks).where(and30(eq38(channelLinks.userId, userId2), eq38(channelLinks.channel, channel)));
       res.json({ ok: true });
     } catch (err) {
       console.error("[channels] unlink failed:", err);
@@ -11020,7 +17631,7 @@ function registerChannelRoutes(app2) {
       return res.status(400).json({ error: "guildId and channelId required" });
     }
     try {
-      const rows = await db.select().from(channelLinks).where(and22(eq27(channelLinks.userId, userId2), eq27(channelLinks.channel, "discord"))).limit(1);
+      const rows = await db.select().from(channelLinks).where(and30(eq38(channelLinks.userId, userId2), eq38(channelLinks.channel, "discord"))).limit(1);
       if (!rows[0]) return res.status(404).json({ error: "Discord account not linked" });
       const meta = rows[0].metadata || {};
       const guilds = meta.allowlistedGuilds || [];
@@ -11037,7 +17648,7 @@ function registerChannelRoutes(app2) {
       } else {
         guilds.push(entry);
       }
-      await db.update(channelLinks).set({ metadata: { ...meta, allowlistedGuilds: guilds } }).where(and22(eq27(channelLinks.userId, userId2), eq27(channelLinks.channel, "discord")));
+      await db.update(channelLinks).set({ metadata: { ...meta, allowlistedGuilds: guilds } }).where(and30(eq38(channelLinks.userId, userId2), eq38(channelLinks.channel, "discord")));
       res.json({ ok: true, allowlistedGuilds: guilds });
     } catch (err) {
       console.error("[channels] discord allowlist update failed:", err);
@@ -11048,13 +17659,13 @@ function registerChannelRoutes(app2) {
     const userId2 = req.userId;
     const { guildId, channelId } = req.params;
     try {
-      const rows = await db.select().from(channelLinks).where(and22(eq27(channelLinks.userId, userId2), eq27(channelLinks.channel, "discord"))).limit(1);
+      const rows = await db.select().from(channelLinks).where(and30(eq38(channelLinks.userId, userId2), eq38(channelLinks.channel, "discord"))).limit(1);
       if (!rows[0]) return res.status(404).json({ error: "Discord account not linked" });
       const meta = rows[0].metadata || {};
       const guilds = (meta.allowlistedGuilds || []).filter(
         (g) => !(g.guildId === guildId && g.channelId === channelId)
       );
-      await db.update(channelLinks).set({ metadata: { ...meta, allowlistedGuilds: guilds } }).where(and22(eq27(channelLinks.userId, userId2), eq27(channelLinks.channel, "discord")));
+      await db.update(channelLinks).set({ metadata: { ...meta, allowlistedGuilds: guilds } }).where(and30(eq38(channelLinks.userId, userId2), eq38(channelLinks.channel, "discord")));
       res.json({ ok: true, allowlistedGuilds: guilds });
     } catch (err) {
       console.error("[channels] discord allowlist delete failed:", err);
@@ -11077,6 +17688,213 @@ function registerChannelRoutes(app2) {
   app2.get("/api/channels/discord/workspace/topics", authMiddleware, (_req, res) => {
     res.json({ topics: WORKSPACE_TOPICS });
   });
+  app2.get("/api/discord/schedules", authMiddleware, async (req, res) => {
+    const userId2 = req.userId;
+    try {
+      const raw = await listSchedules(userId2);
+      const schedules = raw.map((s) => ({
+        ...s,
+        nextRun: nextRunTime(s.cronExpression) ?? null
+      }));
+      res.json({ schedules, templates: SCHEDULE_TEMPLATES });
+    } catch (err) {
+      console.error("[channels] discord schedules list failed:", err);
+      res.status(500).json({ error: "Failed to list schedules" });
+    }
+  });
+  app2.post("/api/discord/schedules", authMiddleware, async (req, res) => {
+    const userId2 = req.userId;
+    const { guildId, channelId, channelName, label, cronExpression, scheduleTime, prompt, pipelineNext } = req.body || {};
+    if (!channelName || !label || !prompt) {
+      return res.status(400).json({ error: "channelName, label, and prompt are required" });
+    }
+    try {
+      const resolvedCron = cronExpression || (scheduleTime ? parseCronExpression(scheduleTime) : null) || "0 7 * * *";
+      const schedule = await createSchedule(userId2, {
+        guildId: guildId ?? void 0,
+        channelId: channelId ?? void 0,
+        channelName,
+        label,
+        cronExpression: resolvedCron,
+        prompt,
+        pipelineNext: pipelineNext ?? void 0
+      });
+      res.json({ ok: true, schedule });
+    } catch (err) {
+      console.error("[channels] discord schedule create failed:", err);
+      res.status(500).json({ error: "Failed to create schedule" });
+    }
+  });
+  app2.patch("/api/discord/schedules/:id", authMiddleware, async (req, res) => {
+    const userId2 = req.userId;
+    const { id } = req.params;
+    const { enabled, prompt, cronExpression } = req.body || {};
+    try {
+      if (enabled !== void 0) {
+        await toggleSchedule(userId2, id, enabled === true || enabled === "true");
+      }
+      if (prompt !== void 0 || cronExpression !== void 0) {
+        const updates = {};
+        if (typeof prompt === "string" && prompt.trim()) updates.prompt = prompt.trim();
+        if (typeof cronExpression === "string" && cronExpression.trim()) updates.cronExpression = cronExpression.trim();
+        if (Object.keys(updates).length > 0) {
+          const { db: db2 } = await Promise.resolve().then(() => (init_db(), db_exports));
+          const { discordChannelSchedules: discordChannelSchedules2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
+          const { eq: eq61, and: and52 } = await import("drizzle-orm");
+          await db2.update(discordChannelSchedules2).set(updates).where(and52(eq61(discordChannelSchedules2.id, id), eq61(discordChannelSchedules2.userId, userId2)));
+        }
+      }
+      const schedules = await listSchedules(userId2);
+      const updated = schedules.find((s) => s.id === id);
+      res.json({ ok: true, schedule: updated ?? null });
+    } catch (err) {
+      console.error("[channels] discord schedule update failed:", err);
+      res.status(500).json({ error: "Failed to update schedule" });
+    }
+  });
+  app2.delete("/api/discord/schedules/:id", authMiddleware, async (req, res) => {
+    const userId2 = req.userId;
+    const { id } = req.params;
+    try {
+      const deleted = await deleteSchedule(userId2, id);
+      res.json({ ok: deleted });
+    } catch (err) {
+      console.error("[channels] discord schedule delete failed:", err);
+      res.status(500).json({ error: "Failed to delete schedule" });
+    }
+  });
+  app2.post("/api/discord/schedules/:id/toggle", authMiddleware, async (req, res) => {
+    const userId2 = req.userId;
+    const { id } = req.params;
+    const { enabled } = req.body || {};
+    try {
+      await toggleSchedule(userId2, id, enabled === true || enabled === "true");
+      const schedules = await listSchedules(userId2);
+      const updated = schedules.find((s) => s.id === id);
+      res.json({ ok: true, schedule: updated ? { ...updated, nextRun: nextRunTime(updated.cronExpression) } : null });
+    } catch (err) {
+      console.error("[channels] discord schedule toggle failed:", err);
+      res.status(500).json({ error: "Failed to toggle schedule" });
+    }
+  });
+  app2.get("/api/discord/approvals", authMiddleware, async (req, res) => {
+    const userId2 = req.userId;
+    try {
+      const approvals = await db.select().from(discordPendingApprovals).where(
+        and30(
+          eq38(discordPendingApprovals.userId, userId2),
+          eq38(discordPendingApprovals.status, "pending")
+        )
+      );
+      res.json({ approvals });
+    } catch (err) {
+      console.error("[channels] discord approvals list failed:", err);
+      res.status(500).json({ error: "Failed to list approvals" });
+    }
+  });
+  app2.post("/api/discord/approvals/:messageId/resolve", authMiddleware, async (req, res) => {
+    const userId2 = req.userId;
+    const { messageId } = req.params;
+    const { action } = req.body || {};
+    if (action !== "approve" && action !== "reject") {
+      return res.status(400).json({ error: "action must be 'approve' or 'reject'" });
+    }
+    try {
+      const rows = await db.select().from(discordPendingApprovals).where(
+        and30(
+          eq38(discordPendingApprovals.messageId, messageId),
+          eq38(discordPendingApprovals.userId, userId2),
+          eq38(discordPendingApprovals.status, "pending")
+        )
+      ).limit(1);
+      if (!rows[0]) return res.status(404).json({ error: "Approval not found or already resolved" });
+      const approval = rows[0];
+      const newStatus = action === "approve" ? "approved" : "rejected";
+      await db.update(discordPendingApprovals).set({ status: newStatus, resolvedAt: /* @__PURE__ */ new Date() }).where(eq38(discordPendingApprovals.messageId, messageId));
+      const { recordApprovalSignal: recordApprovalSignal2 } = await Promise.resolve().then(() => (init_approvalLearning(), approvalLearning_exports));
+      recordApprovalSignal2({
+        userId: userId2,
+        approved: action === "approve",
+        contentType: approval.type,
+        content: approval.content,
+        channelId: approval.channelId,
+        messageId
+      }).catch(() => {
+      });
+      const actionData = action === "approve" ? approval.onApprove : approval.onReject;
+      if (actionData) {
+        const { executeApprovalAction: executeApprovalAction2 } = await Promise.resolve().then(() => (init_approvalActions(), approvalActions_exports));
+        executeApprovalAction2(
+          userId2,
+          actionData,
+          approval.content,
+          approval.channelId
+        ).catch((err) => console.error("[channels] approval action failed:", err));
+      }
+      res.json({ ok: true, status: newStatus });
+    } catch (err) {
+      console.error("[channels] discord approval resolve failed:", err);
+      res.status(500).json({ error: "Failed to resolve approval" });
+    }
+  });
+  app2.get("/api/discord/agents", authMiddleware, async (req, res) => {
+    const userId2 = req.userId;
+    try {
+      const agents = await db.select().from(discordAgents).where(eq38(discordAgents.userId, userId2));
+      res.json({ agents });
+    } catch (err) {
+      console.error("[channels] discord agents list failed:", err);
+      res.status(500).json({ error: "Failed to list agents" });
+    }
+  });
+  app2.post("/api/discord/agents/:id/toggle", authMiddleware, async (req, res) => {
+    const userId2 = req.userId;
+    const { id } = req.params;
+    const { loopEnabled } = req.body || {};
+    try {
+      await db.update(discordAgents).set({ loopEnabled: loopEnabled ? 1 : 0 }).where(and30(eq38(discordAgents.id, id), eq38(discordAgents.userId, userId2)));
+      const rows = await db.select().from(discordAgents).where(eq38(discordAgents.id, id)).limit(1);
+      res.json({ ok: true, agent: rows[0] ?? null });
+    } catch (err) {
+      console.error("[channels] discord agent toggle failed:", err);
+      res.status(500).json({ error: "Failed to toggle agent loop" });
+    }
+  });
+  app2.get("/api/discord/activity", authMiddleware, async (req, res) => {
+    const userId2 = req.userId;
+    try {
+      const [schedules, agents] = await Promise.all([
+        db.select().from(discordChannelSchedules).where(eq38(discordChannelSchedules.userId, userId2)),
+        db.select().from(discordAgents).where(eq38(discordAgents.userId, userId2))
+      ]);
+      const items = [];
+      for (const s of schedules) {
+        if (s.lastRun && s.lastOutput) {
+          items.push({
+            id: `sched-${s.id}`,
+            createdAt: s.lastRun,
+            content: `\u{1F4C5} ${s.label}: ${s.lastOutput.slice(0, 120)}${s.lastOutput.length > 120 ? "\u2026" : ""}`,
+            direction: `#${s.channelName}`
+          });
+        }
+      }
+      for (const a of agents) {
+        if (a.lastLoopRun) {
+          items.push({
+            id: `agent-${a.id}`,
+            createdAt: a.lastLoopRun,
+            content: `\u{1F916} ${a.name} (${a.role}) loop ran`,
+            direction: `#${a.channelName ?? a.name.toLowerCase()}`
+          });
+        }
+      }
+      items.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+      res.json({ activity: items.slice(0, 20) });
+    } catch (err) {
+      console.error("[channels] discord activity failed:", err);
+      res.status(500).json({ error: "Failed to get activity" });
+    }
+  });
 }
 var init_routes = __esm({
   "server/channels/routes.ts"() {
@@ -11088,6 +17906,182 @@ var init_routes = __esm({
     init_bridge();
     init_manager();
     init_userTokenStore();
+    init_schedules();
+    init_schema();
+  }
+});
+
+// server/discord/schedulesRoutes.ts
+import { eq as eq39, and as and31, desc as desc15 } from "drizzle-orm";
+function registerDiscordScheduleRoutes(app2) {
+  app2.get("/api/discord/schedules", authMiddleware, async (req, res) => {
+    const userId2 = req.userId;
+    try {
+      const schedules = await listSchedules(userId2);
+      const withNext = schedules.map((s) => ({
+        ...s,
+        nextRun: nextRunTime(s.cronExpression)
+      }));
+      res.json({ schedules: withNext });
+    } catch (err) {
+      console.error("[DiscordSchedules] GET /api/discord/schedules failed:", err);
+      res.status(500).json({ error: "Failed to load schedules" });
+    }
+  });
+  app2.post("/api/discord/schedules", authMiddleware, async (req, res) => {
+    const userId2 = req.userId;
+    const { channelName, label, cronExpression, prompt, guildId, channelId, pipelineNext } = req.body;
+    if (!channelName || !label || !cronExpression || !prompt) {
+      return res.status(400).json({ error: "channelName, label, cronExpression, prompt are required" });
+    }
+    try {
+      const schedule = await createSchedule(userId2, {
+        channelName,
+        label,
+        cronExpression,
+        prompt,
+        guildId,
+        channelId,
+        pipelineNext
+      });
+      res.json({ ok: true, schedule });
+    } catch (err) {
+      console.error("[DiscordSchedules] POST /api/discord/schedules failed:", err);
+      res.status(500).json({ error: "Failed to create schedule" });
+    }
+  });
+  app2.delete("/api/discord/schedules/:id", authMiddleware, async (req, res) => {
+    const userId2 = req.userId;
+    const { id } = req.params;
+    try {
+      await deleteSchedule(userId2, id);
+      res.json({ ok: true });
+    } catch (err) {
+      console.error("[DiscordSchedules] DELETE /api/discord/schedules/:id failed:", err);
+      res.status(500).json({ error: "Failed to delete schedule" });
+    }
+  });
+  app2.post("/api/discord/schedules/:id/toggle", authMiddleware, async (req, res) => {
+    const userId2 = req.userId;
+    const { id } = req.params;
+    const { enabled } = req.body;
+    try {
+      await toggleSchedule(userId2, id, !!enabled);
+      res.json({ ok: true });
+    } catch (err) {
+      console.error("[DiscordSchedules] toggle failed:", err);
+      res.status(500).json({ error: "Failed to toggle schedule" });
+    }
+  });
+  app2.post("/api/discord/schedules/:id/run", authMiddleware, async (req, res) => {
+    const userId2 = req.userId;
+    const { id } = req.params;
+    try {
+      const rows = await db.select().from(discordChannelSchedules).where(and31(eq39(discordChannelSchedules.id, id), eq39(discordChannelSchedules.userId, userId2))).limit(1);
+      if (!rows[0]) return res.status(404).json({ error: "Schedule not found" });
+      res.json({ ok: true, message: "Schedule run started" });
+      runSchedule(id).catch((err) => console.error("[DiscordSchedules] manual run failed:", err));
+    } catch (err) {
+      console.error("[DiscordSchedules] manual run failed:", err);
+      res.status(500).json({ error: "Failed to run schedule" });
+    }
+  });
+  app2.get("/api/discord/approvals", authMiddleware, async (req, res) => {
+    const userId2 = req.userId;
+    try {
+      const approvals = await db.select().from(discordPendingApprovals).where(
+        and31(
+          eq39(discordPendingApprovals.userId, userId2),
+          eq39(discordPendingApprovals.status, "pending")
+        )
+      );
+      res.json({ approvals });
+    } catch (err) {
+      console.error("[DiscordSchedules] GET /api/discord/approvals failed:", err);
+      res.status(500).json({ error: "Failed to load approvals" });
+    }
+  });
+  app2.post("/api/discord/approvals/:messageId/resolve", authMiddleware, async (req, res) => {
+    const userId2 = req.userId;
+    const { messageId } = req.params;
+    const { action } = req.body;
+    try {
+      const rows = await db.select().from(discordPendingApprovals).where(
+        and31(
+          eq39(discordPendingApprovals.messageId, messageId),
+          eq39(discordPendingApprovals.userId, userId2)
+        )
+      ).limit(1);
+      if (!rows[0]) return res.status(404).json({ error: "Approval not found" });
+      const approval = rows[0];
+      if (approval.status !== "pending") {
+        return res.status(400).json({ error: "Approval already resolved" });
+      }
+      await db.update(discordPendingApprovals).set({
+        status: action === "approve" ? "approved" : "rejected",
+        resolvedAt: /* @__PURE__ */ new Date()
+      }).where(eq39(discordPendingApprovals.messageId, messageId));
+      res.json({ ok: true });
+      const actionData = action === "approve" ? approval.onApprove : approval.onReject;
+      if (actionData) {
+        executeApprovalAction(userId2, actionData, approval.content, approval.channelId).catch((err) => {
+          console.error("[DiscordSchedules] approval action failed:", err);
+        });
+      }
+    } catch (err) {
+      console.error("[DiscordSchedules] resolve approval failed:", err);
+      res.status(500).json({ error: "Failed to resolve approval" });
+    }
+  });
+  app2.get("/api/discord/agents", authMiddleware, async (req, res) => {
+    const userId2 = req.userId;
+    try {
+      const agents = await db.select().from(discordAgents).where(eq39(discordAgents.userId, userId2));
+      res.json({ agents });
+    } catch (err) {
+      console.error("[DiscordSchedules] GET /api/discord/agents failed:", err);
+      res.status(500).json({ error: "Failed to load agents" });
+    }
+  });
+  app2.post("/api/discord/agents/:id/toggle", authMiddleware, async (req, res) => {
+    const userId2 = req.userId;
+    const { id } = req.params;
+    const { loopEnabled } = req.body;
+    try {
+      const rows = await db.select().from(discordAgents).where(and31(eq39(discordAgents.id, id), eq39(discordAgents.userId, userId2))).limit(1);
+      if (!rows[0]) return res.status(404).json({ error: "Agent not found" });
+      await db.update(discordAgents).set({ loopEnabled: loopEnabled ? 1 : 0 }).where(eq39(discordAgents.id, id));
+      res.json({ ok: true });
+    } catch (err) {
+      console.error("[DiscordSchedules] toggle agent failed:", err);
+      res.status(500).json({ error: "Failed to toggle agent" });
+    }
+  });
+  app2.get("/api/discord/activity", authMiddleware, async (req, res) => {
+    const userId2 = req.userId;
+    try {
+      const since = new Date(Date.now() - 24 * 60 * 60 * 1e3);
+      const logs = await db.select().from(interactionLog).where(
+        and31(
+          eq39(interactionLog.userId, userId2),
+          eq39(interactionLog.channel, "discord")
+        )
+      ).orderBy(desc15(interactionLog.createdAt)).limit(50);
+      res.json({ activity: logs });
+    } catch (err) {
+      console.error("[DiscordSchedules] GET /api/discord/activity failed:", err);
+      res.status(500).json({ error: "Failed to load activity" });
+    }
+  });
+}
+var init_schedulesRoutes = __esm({
+  "server/discord/schedulesRoutes.ts"() {
+    "use strict";
+    init_db();
+    init_schema();
+    init_auth();
+    init_schedules();
+    init_approvalActions();
   }
 });
 
@@ -11144,11 +18138,11 @@ var init_downloadRoutes = __esm({
 });
 
 // server/integrationOwner.ts
-import { sql as sql14 } from "drizzle-orm";
+import { sql as sql18 } from "drizzle-orm";
 async function getIntegrationOwnerId() {
   if (cachedOwnerId) return cachedOwnerId;
   try {
-    const result = await db.execute(sql14`SELECT owner_user_id FROM integration_owner LIMIT 1`);
+    const result = await db.execute(sql18`SELECT owner_user_id FROM integration_owner LIMIT 1`);
     const row = result.rows?.[0];
     if (row?.owner_user_id) {
       cachedOwnerId = row.owner_user_id;
@@ -11163,7 +18157,7 @@ async function claimIntegrationOwnership(userId2) {
   try {
     const existing = await getIntegrationOwnerId();
     if (existing) return existing === userId2;
-    await db.execute(sql14`INSERT INTO integration_owner (owner_user_id) VALUES (${userId2})`);
+    await db.execute(sql18`INSERT INTO integration_owner (owner_user_id) VALUES (${userId2})`);
     cachedOwnerId = userId2;
     return true;
   } catch {
@@ -11185,12 +18179,12 @@ var init_integrationOwner = __esm({
 });
 
 // server/memory/people.ts
-import { eq as eq28, and as and23, sql as sql15 } from "drizzle-orm";
+import { eq as eq40, and as and32, sql as sql19 } from "drizzle-orm";
 async function listPeople(userId2) {
-  return db.select().from(people).where(eq28(people.userId, userId2)).orderBy(sql15`COALESCE(${people.lastInteractionAt}, ${people.createdAt}) DESC`);
+  return db.select().from(people).where(eq40(people.userId, userId2)).orderBy(sql19`COALESCE(${people.lastInteractionAt}, ${people.createdAt}) DESC`);
 }
 async function deletePerson(userId2, id) {
-  await db.delete(people).where(and23(eq28(people.userId, userId2), eq28(people.id, id)));
+  await db.delete(people).where(and32(eq40(people.userId, userId2), eq40(people.id, id)));
 }
 var init_people = __esm({
   "server/memory/people.ts"() {
@@ -11200,12 +18194,1293 @@ var init_people = __esm({
   }
 });
 
+// server/intelligence/predictor.ts
+var predictor_exports = {};
+__export(predictor_exports, {
+  formatPredictionsForBriefing: () => formatPredictionsForBriefing,
+  generateAndStorePredictions: () => generateAndStorePredictions,
+  getPredictionAccuracy: () => getPredictionAccuracy,
+  getTodayPredictions: () => getTodayPredictions,
+  getWeekPredictions: () => getWeekPredictions,
+  validateExpiredPredictions: () => validateExpiredPredictions
+});
+import { eq as eq41, and as and33, desc as desc16, gte as gte7, isNull, sql as sql20 } from "drizzle-orm";
+import OpenAI12 from "openai";
+function formatHour(hour) {
+  if (hour === 0) return "midnight";
+  if (hour < 12) return `${hour}am`;
+  if (hour === 12) return "noon";
+  return `${hour - 12}pm`;
+}
+function buildRawPredictions(analysis, targetDate) {
+  const predictions = [];
+  const today = /* @__PURE__ */ new Date(targetDate + "T00:00:00");
+  if (analysis.energyPatterns.length >= 3) {
+    const dipHour = analysis.dipEnergyHour;
+    const dipPatterns = analysis.energyPatterns.filter(
+      (p) => Math.abs(p.hourOfDay - dipHour) <= 1
+    );
+    const obsCount = dipPatterns.reduce((s, p) => s + p.observationCount, 0);
+    if (obsCount >= 3) {
+      const dipTime = new Date(today);
+      dipTime.setHours(dipHour, 0, 0, 0);
+      const avgDipLevel = dipPatterns.reduce((s, p) => s + p.avgEnergyLevel * p.observationCount, 0) / Math.max(1, obsCount);
+      const confidence = Math.min(90, 40 + obsCount * 4 + (avgDipLevel < 2.5 ? 10 : 0));
+      predictions.push({
+        type: "energy_dip",
+        targetDatetime: dipTime,
+        confidenceScore: Math.round(confidence),
+        basisSummary: `Energy dip pattern at ${formatHour(dipHour)} observed across ${obsCount} check-ins (avg level ${avgDipLevel.toFixed(1)}/5)`,
+        observationCount: obsCount,
+        extraContext: `Peak energy is typically at ${formatHour(analysis.peakEnergyHour)}`
+      });
+    }
+  }
+  const lowCompletionCats = analysis.taskCompletionPatterns.filter((p) => p.completionRate < 0.45 && p.observationCount >= 4).sort((a, b) => a.completionRate - b.completionRate).slice(0, 1);
+  for (const cat of lowCompletionCats) {
+    const confidence = Math.min(85, 30 + cat.observationCount * 3 + (1 - cat.completionRate) * 20);
+    const procrastTime = new Date(today);
+    procrastTime.setHours(10, 0, 0, 0);
+    predictions.push({
+      type: "procrastination_risk",
+      targetDatetime: procrastTime,
+      confidenceScore: Math.round(confidence),
+      basisSummary: `"${cat.category}" tasks completed only ${Math.round(cat.completionRate * 100)}% of the time across ${cat.observationCount} observations`,
+      observationCount: cat.observationCount,
+      extraContext: `Category: ${cat.category}`
+    });
+  }
+  const now = /* @__PURE__ */ new Date();
+  for (const ep of analysis.emailResponsePatterns) {
+    if (!ep.lastResponseAt) continue;
+    const hoursSinceLast = (now.getTime() - ep.lastResponseAt.getTime()) / (1e3 * 60 * 60);
+    if (hoursSinceLast > ep.avgResponseHours * 1.8 && hoursSinceLast > 24) {
+      const confidence = Math.min(80, 40 + Math.min(30, (hoursSinceLast - ep.avgResponseHours) / ep.avgResponseHours * 20));
+      const overdueTime = new Date(today);
+      overdueTime.setHours(9, 0, 0, 0);
+      predictions.push({
+        type: "email_overdue",
+        targetDatetime: overdueTime,
+        confidenceScore: Math.round(confidence),
+        basisSummary: `${ep.senderName} usually gets a reply within ${Math.round(ep.avgResponseHours)}h \u2014 last interaction was ${Math.round(hoursSinceLast)}h ago`,
+        observationCount: ep.observationCount,
+        extraContext: `Sender domain: ${ep.senderDomain}`
+      });
+      break;
+    }
+  }
+  const highStallRisk = analysis.projectStallPatterns.filter((p) => p.stallRiskScore >= 70).slice(0, 1);
+  for (const stall of highStallRisk) {
+    const stallTime = new Date(today);
+    stallTime.setHours(11, 0, 0, 0);
+    predictions.push({
+      type: "project_stall",
+      targetDatetime: stallTime,
+      confidenceScore: Math.round(stall.stallRiskScore),
+      basisSummary: `"${stall.goalTitle}" has had no progress in ${stall.daysSinceProgress} days`,
+      observationCount: stall.daysSinceProgress,
+      extraContext: `Goal tree ID: ${stall.goalTreeId}`
+    });
+  }
+  return predictions.filter((p) => p.confidenceScore >= CONFIDENCE_THRESHOLD);
+}
+async function translatePredictions(rawPredictions, analysis) {
+  if (rawPredictions.length === 0) return [];
+  const predictionsDesc = rawPredictions.map((p, i) => {
+    const time = `${p.targetDatetime.getHours()}:00 on ${DAY_NAMES[p.targetDatetime.getDay()]}`;
+    return `${i + 1}. Type: ${p.type} | Time: ${time} | Confidence: ${p.confidenceScore}% | Basis: ${p.basisSummary}${p.extraContext ? ` | Context: ${p.extraContext}` : ""}`;
+  }).join("\n");
+  const prompt = `You are Jarvis, a highly personal AI assistant. Based on pattern analysis of this user's historical data, generate human-readable predictions and concrete action suggestions.
+
+Peak energy hour: ${formatHour(analysis.peakEnergyHour)}
+Low energy hour: ${formatHour(analysis.dipEnergyHour)}
+Overall task completion rate: ${Math.round(analysis.overallCompletionRate * 100)}%
+
+Predictions to translate:
+${predictionsDesc}
+
+Return a JSON array where each item has:
+- "type": the prediction type (same as input)
+- "human_readable": a conversational 1-sentence prediction (mention the time/day, be specific, no hedging)
+- "action_suggestion": a concrete 1-sentence recommendation Jarvis should act on (e.g. "Move your deep work block to 10am", "Chase the reply from X", "Schedule 20 min on Y today")
+
+Be direct, personal, and specific. Use "you" not "the user". Plain text, no markdown.
+
+JSON array only, no preamble.`;
+  try {
+    const resp = await openai12.chat.completions.create({
+      model: "gpt-5-mini",
+      messages: [{ role: "user", content: prompt }],
+      response_format: { type: "json_object" },
+      max_completion_tokens: 800
+    });
+    const raw = resp.choices[0]?.message?.content || "{}";
+    const parsed = JSON.parse(raw);
+    const items = Array.isArray(parsed) ? parsed : parsed.predictions ?? [];
+    return items.map((item) => ({
+      type: item.type,
+      humanReadable: item.human_readable || "",
+      actionSuggestion: item.action_suggestion || ""
+    }));
+  } catch (err) {
+    console.error("[Predictor] LLM translation failed:", err);
+    return rawPredictions.map((p) => ({
+      type: p.type,
+      humanReadable: p.basisSummary,
+      actionSuggestion: ""
+    }));
+  }
+}
+async function generateAndStorePredictions(userId2, targetDate, analysis) {
+  const rawPredictions = buildRawPredictions(analysis, targetDate);
+  if (rawPredictions.length === 0) return 0;
+  let newPredictions = rawPredictions;
+  try {
+    const existing = await db.select({ predictionType: jarvisPredictions.predictionType }).from(jarvisPredictions).where(
+      and33(
+        eq41(jarvisPredictions.userId, userId2),
+        eq41(jarvisPredictions.targetDate, targetDate)
+      )
+    );
+    if (existing.length > 0) {
+      const existingTypes = new Set(existing.map((r) => r.predictionType));
+      newPredictions = rawPredictions.filter((p) => !existingTypes.has(p.type));
+    }
+  } catch {
+  }
+  if (newPredictions.length === 0) return 0;
+  const translations = await translatePredictions(newPredictions, analysis);
+  const translationMap = new Map(translations.map((t) => [t.type, t]));
+  let inserted = 0;
+  for (const raw of newPredictions) {
+    const translation = translationMap.get(raw.type);
+    const humanReadable = translation?.humanReadable || raw.basisSummary;
+    const actionSuggestion = translation?.actionSuggestion || null;
+    try {
+      const result = await db.insert(jarvisPredictions).values({
+        userId: userId2,
+        predictionType: raw.type,
+        targetDatetime: raw.targetDatetime,
+        targetDate,
+        confidenceScore: raw.confidenceScore,
+        basisSummary: raw.basisSummary,
+        humanReadable,
+        actionSuggestion,
+        observationCount: raw.observationCount
+      }).onConflictDoNothing().returning({ id: jarvisPredictions.id });
+      if (result.length > 0) inserted++;
+    } catch (err) {
+      console.error("[Predictor] insert failed:", err);
+    }
+  }
+  console.log(`[Predictor] ${inserted} prediction(s) stored for user ${userId2} (${targetDate})`);
+  return inserted;
+}
+async function getTodayPredictions(userId2, targetDate, minConfidence = CONFIDENCE_THRESHOLD) {
+  try {
+    const rows = await db.select().from(jarvisPredictions).where(
+      and33(
+        eq41(jarvisPredictions.userId, userId2),
+        eq41(jarvisPredictions.targetDate, targetDate),
+        gte7(jarvisPredictions.confidenceScore, minConfidence)
+      )
+    ).orderBy(desc16(jarvisPredictions.confidenceScore)).limit(10);
+    return rows;
+  } catch (err) {
+    console.error("[Predictor] getTodayPredictions failed:", err);
+    return [];
+  }
+}
+async function getWeekPredictions(userId2, startDate, minConfidence = CONFIDENCE_THRESHOLD) {
+  const start = /* @__PURE__ */ new Date(startDate + "T00:00:00");
+  const end = new Date(start.getTime() + 7 * 24 * 60 * 60 * 1e3);
+  const endDate = end.toISOString().slice(0, 10);
+  try {
+    const rows = await db.select().from(jarvisPredictions).where(
+      and33(
+        eq41(jarvisPredictions.userId, userId2),
+        gte7(jarvisPredictions.targetDate, startDate),
+        sql20`${jarvisPredictions.targetDate} <= ${endDate}`,
+        minConfidence > 0 ? gte7(jarvisPredictions.confidenceScore, minConfidence) : void 0
+      )
+    ).orderBy(jarvisPredictions.targetDate, desc16(jarvisPredictions.confidenceScore)).limit(30);
+    return rows;
+  } catch (err) {
+    console.error("[Predictor] getWeekPredictions failed:", err);
+    return [];
+  }
+}
+function formatPredictionsForBriefing(predictions) {
+  const top = predictions.filter((p) => p.confidenceScore >= 65).slice(0, 2);
+  if (top.length === 0) return "";
+  const lines = top.map((p) => {
+    const icon = p.predictionType === "energy_dip" ? "\u26A1" : p.predictionType === "procrastination_risk" ? "\u26A0\uFE0F" : p.predictionType === "email_overdue" ? "\u{1F4EC}" : "\u{1F4CA}";
+    return `${icon} ${p.humanReadable}${p.actionSuggestion ? ` \u2192 ${p.actionSuggestion}` : ""}`;
+  });
+  return `
+\u{1F52E} Jarvis Foresight:
+${lines.join("\n")}`;
+}
+async function getPredictionAccuracy(userId2) {
+  try {
+    const rows = await db.select().from(jarvisPredictions).where(
+      and33(
+        eq41(jarvisPredictions.userId, userId2),
+        sql20`${jarvisPredictions.validated} IS NOT NULL`
+      )
+    ).limit(200);
+    const skippedRows = await db.select({ id: jarvisPredictions.id }).from(jarvisPredictions).where(
+      and33(
+        eq41(jarvisPredictions.userId, userId2),
+        isNull(jarvisPredictions.validated),
+        sql20`${jarvisPredictions.validationNote} LIKE 'auto_skipped%'`
+      )
+    ).limit(200);
+    const byType = {};
+    let totalValidated = 0;
+    let totalAccurate = 0;
+    for (const row of rows) {
+      if (!byType[row.predictionType]) byType[row.predictionType] = { total: 0, accurate: 0 };
+      byType[row.predictionType].total++;
+      totalValidated++;
+      if (row.validated === true && row.validationNote?.startsWith("confirmed")) {
+        byType[row.predictionType].accurate++;
+        totalAccurate++;
+      }
+    }
+    return {
+      total: rows.length,
+      validated: totalValidated,
+      accurate: totalAccurate,
+      accuracyRate: totalValidated > 0 ? totalAccurate / totalValidated : 0,
+      autoSkipped: skippedRows.length,
+      byType
+    };
+  } catch (err) {
+    console.error("[Predictor] getPredictionAccuracy failed:", err);
+    return { total: 0, validated: 0, accurate: 0, accuracyRate: 0, autoSkipped: 0, byType: {} };
+  }
+}
+async function validateExpiredPredictions(userId2, now) {
+  const cutoff = new Date(now.getTime() - 2 * 60 * 60 * 1e3);
+  const oneWeekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1e3).toISOString().slice(0, 10);
+  try {
+    const expired = await db.select().from(jarvisPredictions).where(
+      and33(
+        eq41(jarvisPredictions.userId, userId2),
+        isNull(jarvisPredictions.validated),
+        isNull(jarvisPredictions.validationNote),
+        gte7(jarvisPredictions.targetDate, oneWeekAgo)
+      )
+    ).orderBy(jarvisPredictions.targetDatetime).limit(20);
+    for (const pred of expired) {
+      if (pred.targetDatetime > cutoff) continue;
+      let validated = null;
+      let validationNote = null;
+      if (pred.predictionType === "energy_dip") {
+        const dateKey = pred.targetDate;
+        try {
+          const checkinRows = await db.select().from(energyCheckins).where(and33(eq41(energyCheckins.userId, userId2), eq41(energyCheckins.date, dateKey))).limit(1);
+          if (checkinRows.length > 0) {
+            const data = checkinRows[0].data;
+            const level = data.level ?? data.energy ?? null;
+            if (level !== null) {
+              const predictedHour = pred.targetDatetime.getHours();
+              const checkInHour = new Date(checkinRows[0].updatedAt || Date.now()).getHours();
+              const hourDiff = Math.abs(checkInHour - predictedHour);
+              if (hourDiff <= 2) {
+                validated = level <= 2;
+                validationNote = validated ? `confirmed: energy was ${level}/5 at predicted dip time` : `not_confirmed: energy was ${level}/5 (expected dip, level was not low)`;
+              }
+            }
+          }
+        } catch {
+        }
+      } else if (pred.predictionType === "procrastination_risk") {
+        const dateKey = pred.targetDate;
+        try {
+          const planRows = await db.select().from(plans).where(and33(eq41(plans.userId, userId2), eq41(plans.date, dateKey))).limit(1);
+          if (planRows.length > 0) {
+            const data = planRows[0].data;
+            const tasks = data.tasks || [];
+            const basisLine = pred.basisSummary;
+            const catMatch = basisLine.match(/"([^"]+)"/);
+            const cat = catMatch?.[1];
+            if (cat) {
+              const catTasks = tasks.filter((t) => t.category === cat);
+              const catCompleted = catTasks.filter((t) => t.completed).length;
+              const rate = catTasks.length > 0 ? catCompleted / catTasks.length : null;
+              if (rate !== null) {
+                validated = rate < 0.5;
+                validationNote = validated ? `confirmed: completed ${catCompleted}/${catTasks.length} ${cat} tasks` : `not_confirmed: completed ${catCompleted}/${catTasks.length} ${cat} tasks`;
+              }
+            }
+          }
+        } catch {
+        }
+      } else {
+        validationNote = "auto_skipped: manual validation required for this type";
+      }
+      if (validated !== null || validationNote !== null) {
+        try {
+          await db.update(jarvisPredictions).set({ validated, validationNote, validatedAt: validated !== null ? now : null }).where(eq41(jarvisPredictions.id, pred.id));
+        } catch (err) {
+          console.error("[Predictor] validation update failed:", err);
+        }
+      }
+    }
+  } catch (err) {
+    console.error("[Predictor] validateExpiredPredictions failed:", err);
+  }
+}
+var openai12, CONFIDENCE_THRESHOLD, DAY_NAMES;
+var init_predictor = __esm({
+  "server/intelligence/predictor.ts"() {
+    "use strict";
+    init_db();
+    init_schema();
+    openai12 = new OpenAI12({
+      apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
+      baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL
+    });
+    CONFIDENCE_THRESHOLD = 55;
+    DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  }
+});
+
+// server/intelligence/pattern-analyser.ts
+var pattern_analyser_exports = {};
+__export(pattern_analyser_exports, {
+  analysePatterns: () => analysePatterns
+});
+import { eq as eq42, and as and34, gte as gte8, desc as desc17 } from "drizzle-orm";
+async function analysePatterns(userId2, windowDays = 60) {
+  const cutoff = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1e3);
+  const analysedAt = /* @__PURE__ */ new Date();
+  const [energyRows, planRows, goalTreeRows, inboxItemRows] = await Promise.all([
+    db.select().from(energyCheckins).where(and34(
+      eq42(energyCheckins.userId, userId2),
+      gte8(energyCheckins.date, cutoff.toISOString().slice(0, 10))
+    )).orderBy(desc17(energyCheckins.date)).limit(200),
+    db.select().from(plans).where(and34(
+      eq42(plans.userId, userId2),
+      gte8(plans.date, cutoff.toISOString().slice(0, 10))
+    )).orderBy(desc17(plans.date)).limit(120),
+    db.select().from(goalTrees).where(and34(
+      eq42(goalTrees.userId, userId2),
+      eq42(goalTrees.status, "active")
+    )).limit(20),
+    db.select().from(inboxItems).where(and34(
+      eq42(inboxItems.userId, userId2),
+      eq42(inboxItems.sourceType, "email"),
+      gte8(inboxItems.surfacedAt, cutoff)
+    )).orderBy(desc17(inboxItems.surfacedAt)).limit(200)
+  ]);
+  const energyPatterns = buildEnergyPatterns(energyRows);
+  const { peakHour, dipHour, peakDay } = findEnergyPeakAndDip(energyPatterns);
+  const { taskCompletionPatterns, overallCompletionRate, averageDailyCompletions } = buildTaskCompletionPatterns(planRows, windowDays);
+  const emailResponsePatterns = buildEmailResponsePatterns(inboxItemRows);
+  const projectStallPatterns = buildProjectStallPatterns(goalTreeRows, planRows);
+  const brainDumpActivityPattern = buildBrainDumpPattern(planRows);
+  return {
+    userId: userId2,
+    analysedAt,
+    observationWindowDays: windowDays,
+    energyPatterns,
+    peakEnergyHour: peakHour,
+    dipEnergyHour: dipHour,
+    peakDayOfWeek: peakDay,
+    taskCompletionPatterns,
+    emailResponsePatterns,
+    projectStallPatterns,
+    overallCompletionRate,
+    averageDailyCompletions,
+    brainDumpActivityPattern
+  };
+}
+function buildEnergyPatterns(energyRows) {
+  const buckets = {};
+  for (const row of energyRows) {
+    const data = row.data;
+    const level = typeof data.level === "number" ? data.level : typeof data.energy === "number" ? data.energy : typeof data.mood === "number" ? data.mood : typeof data.score === "number" ? data.score : null;
+    if (level === null) continue;
+    const d = new Date(row.date);
+    const dow = d.getDay();
+    const updatedAt = row.updatedAt ? new Date(row.updatedAt) : d;
+    const hour = updatedAt.getHours();
+    const key = `${dow}_${hour}`;
+    if (!buckets[key]) buckets[key] = { total: 0, count: 0 };
+    buckets[key].total += level;
+    buckets[key].count += 1;
+  }
+  return Object.entries(buckets).map(([key, val]) => {
+    const [dow, hour] = key.split("_").map(Number);
+    return {
+      hourOfDay: hour,
+      dayOfWeek: dow,
+      avgEnergyLevel: val.total / val.count,
+      observationCount: val.count
+    };
+  });
+}
+function findEnergyPeakAndDip(patterns) {
+  if (patterns.length === 0) return { peakHour: 9, dipHour: 15, peakDay: 1 };
+  const hourBuckets = {};
+  const dayBuckets = {};
+  for (const p of patterns) {
+    if (!hourBuckets[p.hourOfDay]) hourBuckets[p.hourOfDay] = { total: 0, count: 0 };
+    hourBuckets[p.hourOfDay].total += p.avgEnergyLevel * p.observationCount;
+    hourBuckets[p.hourOfDay].count += p.observationCount;
+    if (!dayBuckets[p.dayOfWeek]) dayBuckets[p.dayOfWeek] = { total: 0, count: 0 };
+    dayBuckets[p.dayOfWeek].total += p.avgEnergyLevel * p.observationCount;
+    dayBuckets[p.dayOfWeek].count += p.observationCount;
+  }
+  const hourAvgs = Object.entries(hourBuckets).filter(([, v]) => v.count >= 1).map(([h, v]) => ({ hour: Number(h), avg: v.total / v.count }));
+  const dayAvgs = Object.entries(dayBuckets).filter(([, v]) => v.count >= 1).map(([d, v]) => ({ day: Number(d), avg: v.total / v.count }));
+  hourAvgs.sort((a, b) => b.avg - a.avg);
+  dayAvgs.sort((a, b) => b.avg - a.avg);
+  const peakHour = hourAvgs[0]?.hour ?? 9;
+  const dipHour = hourAvgs[hourAvgs.length - 1]?.hour ?? 15;
+  const peakDay = dayAvgs[0]?.day ?? 1;
+  return { peakHour, dipHour, peakDay };
+}
+function buildTaskCompletionPatterns(planRows, windowDays) {
+  let totalTasks = 0;
+  let totalCompleted = 0;
+  let totalDaysWithTasks = 0;
+  const catBuckets = {};
+  for (const row of planRows) {
+    const data = row.data;
+    const tasks = Array.isArray(data.tasks) ? data.tasks : [];
+    if (tasks.length === 0) continue;
+    totalDaysWithTasks++;
+    totalTasks += tasks.length;
+    const dayCompleted = tasks.filter((t) => t.completed).length;
+    totalCompleted += dayCompleted;
+    for (const task of tasks) {
+      const cat = task.category || "general";
+      if (!catBuckets[cat]) catBuckets[cat] = { completed: 0, total: 0 };
+      catBuckets[cat].total++;
+      if (task.completed) catBuckets[cat].completed++;
+    }
+  }
+  const taskCompletionPatterns = Object.entries(catBuckets).filter(([, v]) => v.total >= 3).map(([cat, v]) => ({
+    category: cat,
+    hourOfDay: 9,
+    completionRate: v.total > 0 ? v.completed / v.total : 0,
+    observationCount: v.total
+  }));
+  const overallCompletionRate = totalTasks > 0 ? totalCompleted / totalTasks : 0;
+  const averageDailyCompletions = totalDaysWithTasks > 0 ? totalCompleted / totalDaysWithTasks : 0;
+  return { taskCompletionPatterns, overallCompletionRate, averageDailyCompletions };
+}
+function buildEmailResponsePatterns(inboxItemRows) {
+  const domainBuckets = {};
+  for (const item of inboxItemRows) {
+    if (!item.sender) continue;
+    const emailMatch = item.sender.match(/<([^>]+)>/) || item.sender.match(/([^\s]+@[^\s]+)/);
+    if (!emailMatch) continue;
+    const email = emailMatch[1];
+    const parts = email.split("@");
+    if (parts.length < 2) continue;
+    const domain = parts[1].toLowerCase();
+    const displayName = item.sender.replace(/<[^>]+>/, "").trim() || email;
+    if (!domainBuckets[domain]) {
+      domainBuckets[domain] = { name: displayName, responseTimes: [], lastResponseAt: null };
+    }
+    if (item.actedAt && item.surfacedAt) {
+      const hours = (item.actedAt.getTime() - item.surfacedAt.getTime()) / (1e3 * 60 * 60);
+      if (hours > 0 && hours < 168) {
+        domainBuckets[domain].responseTimes.push(hours);
+      }
+    }
+    if (item.surfacedAt && (!domainBuckets[domain].lastResponseAt || item.surfacedAt > domainBuckets[domain].lastResponseAt)) {
+      domainBuckets[domain].lastResponseAt = item.surfacedAt;
+    }
+  }
+  return Object.entries(domainBuckets).filter(([, v]) => v.responseTimes.length >= 2).map(([domain, v]) => ({
+    senderDomain: domain,
+    senderName: v.name,
+    avgResponseHours: v.responseTimes.reduce((a, b) => a + b, 0) / v.responseTimes.length,
+    observationCount: v.responseTimes.length,
+    lastResponseAt: v.lastResponseAt
+  }));
+}
+function buildProjectStallPatterns(goalTreeRows, planRows) {
+  const result = [];
+  const completedGoalTaskIds = /* @__PURE__ */ new Set();
+  for (const row of planRows) {
+    const data = row.data;
+    const tasks = Array.isArray(data.tasks) ? data.tasks : [];
+    for (const t of tasks) {
+      if (t.completed && t["goalTaskId"]) {
+        completedGoalTaskIds.add(String(t["goalTaskId"]));
+      }
+    }
+  }
+  for (const tree of goalTreeRows) {
+    const treeData = tree.tree;
+    if (!treeData?.phases) continue;
+    let lastProgressAt = null;
+    let totalTasks = 0;
+    let completedTasks = 0;
+    for (const phase of treeData.phases) {
+      for (const milestone of phase.milestones || []) {
+        for (const task of milestone.tasks || []) {
+          totalTasks++;
+          if (task.status === "complete" || task.completedAt || completedGoalTaskIds.has(task.id)) {
+            completedTasks++;
+            const completedDate = task.completedAt ? new Date(task.completedAt) : null;
+            if (completedDate && (!lastProgressAt || completedDate > lastProgressAt)) {
+              lastProgressAt = completedDate;
+            }
+          }
+        }
+      }
+    }
+    if (totalTasks === 0) continue;
+    const completionRate = completedTasks / totalTasks;
+    if (completionRate >= 1) continue;
+    const daysSinceProgress = lastProgressAt ? Math.floor((Date.now() - lastProgressAt.getTime()) / (1e3 * 60 * 60 * 24)) : 30;
+    let stallRiskScore = 0;
+    if (daysSinceProgress > 14) stallRiskScore = 90;
+    else if (daysSinceProgress > 7) stallRiskScore = 70;
+    else if (daysSinceProgress > 4) stallRiskScore = 50;
+    else if (daysSinceProgress > 2) stallRiskScore = 30;
+    if (stallRiskScore >= 50) {
+      result.push({
+        goalTreeId: tree.id,
+        goalTitle: tree.title,
+        daysSinceProgress,
+        stallRiskScore,
+        similarPastStalls: 0
+      });
+    }
+  }
+  return result.sort((a, b) => b.stallRiskScore - a.stallRiskScore);
+}
+function buildBrainDumpPattern(planRows) {
+  let totalItems = 0;
+  const hourBuckets = {};
+  const dayBuckets = {};
+  for (const row of planRows) {
+    const data = row.data;
+    const tasks = Array.isArray(data.tasks) ? data.tasks : [];
+    const brainTasks = tasks.filter((t) => t.category === "capture" || t.category === "brain_dump");
+    totalItems += brainTasks.length;
+    const d = /* @__PURE__ */ new Date(row.date + "T12:00:00");
+    const dow = d.getDay();
+    dayBuckets[dow] = (dayBuckets[dow] || 0) + brainTasks.length;
+    for (const bt of brainTasks) {
+      const ts = bt.createdAt;
+      if (ts) {
+        const hour = new Date(typeof ts === "number" ? ts : String(ts)).getHours();
+        if (hour >= 0 && hour < 24) {
+          hourBuckets[hour] = (hourBuckets[hour] || 0) + 1;
+        }
+      }
+    }
+  }
+  const mostActiveDayOfWeek = Object.entries(dayBuckets).sort(([, a], [, b]) => b - a)[0] ? Number(Object.entries(dayBuckets).sort(([, a], [, b]) => b - a)[0][0]) : 1;
+  return {
+    mostActiveHour: Object.entries(hourBuckets).sort(([, a], [, b]) => b - a)[0] ? Number(Object.entries(hourBuckets).sort(([, a], [, b]) => b - a)[0][0]) : 9,
+    mostActiveDayOfWeek,
+    avgItemsPerDay: planRows.length > 0 ? totalItems / planRows.length : 0
+  };
+}
+var init_pattern_analyser = __esm({
+  "server/intelligence/pattern-analyser.ts"() {
+    "use strict";
+    init_db();
+    init_schema();
+  }
+});
+
+// server/intelligence/ego.ts
+var ego_exports = {};
+__export(ego_exports, {
+  analyseEgo: () => analyseEgo,
+  getISOWeekMonday: () => getISOWeekMonday,
+  runEgoForAllUsers: () => runEgoForAllUsers,
+  runEgoForUser: () => runEgoForUser
+});
+import { eq as eq43, and as and35, gte as gte9, lt as lt3 } from "drizzle-orm";
+import OpenAI13 from "openai";
+function getISOWeekMonday(date2 = /* @__PURE__ */ new Date()) {
+  const d = new Date(Date.UTC(date2.getUTCFullYear(), date2.getUTCMonth(), date2.getUTCDate()));
+  const dayOfWeek = (d.getUTCDay() + 6) % 7;
+  d.setUTCDate(d.getUTCDate() - dayOfWeek);
+  return d.toISOString().slice(0, 10);
+}
+async function analyseEgo(userId2, weekOf) {
+  const weekStart = /* @__PURE__ */ new Date(`${weekOf}T00:00:00.000Z`);
+  const weekEnd = new Date(weekStart.getTime() + ONE_WEEK_MS);
+  const prevWeekStart = new Date(weekStart.getTime() - ONE_WEEK_MS);
+  const actions = await db.select().from(jarvisActionLog).where(
+    and35(
+      eq43(jarvisActionLog.userId, userId2),
+      gte9(jarvisActionLog.createdAt, weekStart),
+      lt3(jarvisActionLog.createdAt, weekEnd)
+    )
+  );
+  const allTwoWeekActions = await db.select().from(jarvisActionLog).where(
+    and35(
+      eq43(jarvisActionLog.userId, userId2),
+      gte9(jarvisActionLog.createdAt, prevWeekStart),
+      lt3(jarvisActionLog.createdAt, weekEnd)
+    )
+  );
+  const breakdown = {};
+  for (const a of actions) {
+    const t = a.actionType;
+    if (!breakdown[t]) breakdown[t] = { total: 0, actedOn: 0, pending: 0, ignored: 0 };
+    breakdown[t].total++;
+    if (a.outcome === "acted_on" || a.outcome === "completed") breakdown[t].actedOn++;
+    else if (a.outcome === "pending") breakdown[t].pending++;
+    else if (a.outcome === "ignored" || a.outcome === "dismissed") breakdown[t].ignored++;
+  }
+  const twoWeekBreakdown = {};
+  for (const a of allTwoWeekActions) {
+    const t = a.actionType;
+    if (!twoWeekBreakdown[t]) twoWeekBreakdown[t] = { total: 0, actedOn: 0 };
+    twoWeekBreakdown[t].total++;
+    if (a.outcome === "acted_on" || a.outcome === "completed") twoWeekBreakdown[t].actedOn++;
+  }
+  const totalActions = actions.length;
+  const decided = actions.filter((a) => a.outcome !== "pending");
+  const actedOn = decided.filter((a) => a.outcome === "acted_on" || a.outcome === "completed").length;
+  const completionRate = decided.length > 0 ? actedOn / decided.length : 0;
+  const engagementRate = totalActions > 0 ? actedOn / totalActions : 0;
+  const predictionActions = allTwoWeekActions.filter((a) => a.actionType === "prediction_made" && a.outcome !== "pending");
+  const predictionHits = predictionActions.filter((a) => a.outcome === "completed" || a.outcome === "acted_on").length;
+  const predictionAccuracy = predictionActions.length > 0 ? predictionHits / predictionActions.length : 0;
+  const mostEffective = Object.entries(breakdown).filter(([, v]) => v.total >= 2 && v.actedOn / v.total >= 0.6).sort(([, a], [, b]) => b.actedOn / b.total - a.actedOn / a.total).slice(0, 3).map(([k]) => k);
+  const leastEffective = Object.entries(twoWeekBreakdown).filter(([, v]) => v.total >= 3 && v.actedOn / v.total < SELF_CORRECTION_THRESHOLD).sort(([, a], [, b]) => a.actedOn / a.total - b.actedOn / b.total).slice(0, 3).map(([k]) => k);
+  const recentInteractions = await db.select({ createdAt: interactionLog.createdAt }).from(interactionLog).where(
+    and35(
+      eq43(interactionLog.userId, userId2),
+      gte9(interactionLog.createdAt, weekStart),
+      lt3(interactionLog.createdAt, weekEnd)
+    )
+  );
+  const prevWeekInteractions = await db.select({ createdAt: interactionLog.createdAt }).from(interactionLog).where(
+    and35(
+      eq43(interactionLog.userId, userId2),
+      gte9(interactionLog.createdAt, prevWeekStart),
+      lt3(interactionLog.createdAt, weekStart)
+    )
+  );
+  const messageFrequency = recentInteractions.length;
+  const prevMessageFrequency = prevWeekInteractions.length;
+  const resolvedWithTimes = actions.filter(
+    (a) => a.outcome !== "pending" && a.updatedAt && a.createdAt
+  );
+  let avgResponseLatencyMs = 0;
+  if (resolvedWithTimes.length > 0) {
+    const totalLatency = resolvedWithTimes.reduce(
+      (sum, a) => sum + (new Date(a.updatedAt).getTime() - new Date(a.createdAt).getTime()),
+      0
+    );
+    avgResponseLatencyMs = totalLatency / resolvedWithTimes.length;
+  }
+  const prevWeekActions = allTwoWeekActions.filter((a) => a.createdAt < weekStart);
+  const prevDecided = prevWeekActions.filter((a) => a.outcome !== "pending");
+  const prevActed = prevDecided.filter((a) => a.outcome === "acted_on" || a.outcome === "completed").length;
+  const prevRate = prevDecided.length > 0 ? prevActed / prevDecided.length : 0;
+  const prevResolved = prevWeekActions.filter(
+    (a) => a.outcome !== "pending" && a.updatedAt && a.createdAt
+  );
+  const prevAvgLatency = prevResolved.length > 0 ? prevResolved.reduce((sum, a) => sum + (new Date(a.updatedAt).getTime() - new Date(a.createdAt).getTime()), 0) / prevResolved.length : 0;
+  let improvingFactors = 0;
+  let decliningFactors = 0;
+  if (prevDecided.length >= 3) {
+    if (completionRate > prevRate + 0.08) improvingFactors++;
+    else if (completionRate < prevRate - 0.08) decliningFactors++;
+  }
+  if (prevMessageFrequency > 0) {
+    if (messageFrequency > prevMessageFrequency * 1.15) improvingFactors++;
+    else if (messageFrequency < prevMessageFrequency * 0.85) decliningFactors++;
+  }
+  if (prevAvgLatency > 0 && avgResponseLatencyMs > 0) {
+    if (avgResponseLatencyMs < prevAvgLatency * 0.85) improvingFactors++;
+    else if (avgResponseLatencyMs > prevAvgLatency * 1.25) decliningFactors++;
+  }
+  let relationshipHealth = "stable";
+  if (improvingFactors >= 2) relationshipHealth = "improving";
+  else if (decliningFactors >= 2) relationshipHealth = "declining";
+  const selfCorrectionSignals = [];
+  for (const actionType of leastEffective) {
+    const tw = twoWeekBreakdown[actionType];
+    const rate = tw ? tw.actedOn / tw.total : 0;
+    selfCorrectionSignals.push(`${actionType}: ${Math.round(rate * 100)}% engagement over last 2 weeks`);
+  }
+  return {
+    weekOf,
+    totalActions,
+    completionRate,
+    engagementRate,
+    predictionAccuracy,
+    actionBreakdown: breakdown,
+    twoWeekBreakdown,
+    mostEffective,
+    leastEffective,
+    relationshipHealth,
+    avgResponseLatencyMs,
+    messageFrequency,
+    selfCorrectionSignals
+  };
+}
+async function applySelfCorrections(userId2, leastEffective, actionBreakdown) {
+  if (leastEffective.length === 0 && Object.keys(actionBreakdown).length === 0) return;
+  try {
+    const prefRows = await db.select().from(userPreferences).where(eq43(userPreferences.userId, userId2)).limit(1);
+    const prefData = prefRows[0]?.data || {};
+    let suppressedActions = prefData.jarvisSuppressedActions || [];
+    for (const actionType of leastEffective) {
+      if (!suppressedActions.includes(actionType)) {
+        suppressedActions.push(actionType);
+        console.log(`[Ego] self-correction: suppressing ${actionType} for user ${userId2}`);
+      }
+    }
+    suppressedActions = suppressedActions.filter((actionType) => {
+      const bd = actionBreakdown[actionType];
+      if (!bd || bd.total < 3) return true;
+      const rate = bd.actedOn / bd.total;
+      if (rate > SELF_CORRECTION_THRESHOLD) {
+        console.log(`[Ego] self-correction: recovering ${actionType} for user ${userId2} (rate ${(rate * 100).toFixed(0)}%)`);
+        return false;
+      }
+      return true;
+    });
+    await db.insert(userPreferences).values({ userId: userId2, data: { ...prefData, jarvisSuppressedActions: suppressedActions }, updatedAt: /* @__PURE__ */ new Date() }).onConflictDoUpdate({
+      target: userPreferences.userId,
+      set: { data: { ...prefData, jarvisSuppressedActions: suppressedActions }, updatedAt: /* @__PURE__ */ new Date() }
+    });
+  } catch (err) {
+    console.error("[Ego] applySelfCorrections failed:", err);
+  }
+}
+async function generateReportText(analysis) {
+  const breakdownLines = Object.entries(analysis.actionBreakdown).map(([type, v]) => {
+    const rate = v.total > 0 ? Math.round(v.actedOn / v.total * 100) : 0;
+    return `- ${type}: ${v.total} actions, ${rate}% engagement`;
+  }).join("\n");
+  const avgLatencyHours = analysis.avgResponseLatencyMs > 0 ? (analysis.avgResponseLatencyMs / 36e5).toFixed(1) + "h" : "unknown";
+  const prompt = `You are Jarvis, an AI assistant writing your own weekly self-evaluation report. Be candid, honest, and direct. Do not be falsely modest or excessively self-congratulatory. Refer to yourself as "I" or "Jarvis".
+
+Weekly performance data:
+- Total actions taken: ${analysis.totalActions}
+- Completion rate (of resolved actions): ${Math.round(analysis.completionRate * 100)}%
+- Engagement rate (of all actions): ${Math.round(analysis.engagementRate * 100)}%
+- Prediction accuracy (2-week window): ${analysis.predictionAccuracy > 0 ? Math.round(analysis.predictionAccuracy * 100) + "%" : "insufficient data"}
+- Avg time before user responds to my actions: ${avgLatencyHours}
+- Relationship health trend: ${analysis.relationshipHealth}
+- Messages exchanged this week: ${analysis.messageFrequency}
+
+Action breakdown:
+${breakdownLines || "No actions recorded this week."}
+
+Most effective action types: ${analysis.mostEffective.join(", ") || "insufficient data"}
+Least effective action types: ${analysis.leastEffective.join(", ") || "none identified"}
+
+Write a concise weekly self-report with these sections:
+1. **This week at a glance** \u2014 2-3 sentences summarising what I did and the headline numbers
+2. **What I did well** \u2014 1-2 specific things with honest evidence
+3. **Where I can do better** \u2014 2-3 candid self-observations about where I fell short or over-reached. Be honest even if it's uncomfortable.
+4. **What I'm adjusting** \u2014 1-2 concrete changes I'm making next week based on this data
+
+Tone: direct, self-aware, honest. Not corporate, not sycophantic. Under 250 words total. Plain text, no markdown headers.`;
+  try {
+    const resp = await openai13.chat.completions.create({
+      model: "gpt-5-mini",
+      messages: [{ role: "user", content: prompt }],
+      max_completion_tokens: 600
+    });
+    return resp.choices[0]?.message?.content?.trim() || "";
+  } catch (err) {
+    console.error("[Ego] report generation failed:", err);
+    return "";
+  }
+}
+async function writeSelfKnowledgeMemories(userId2, analysis) {
+  const findings = [];
+  if (analysis.leastEffective.length > 0) {
+    findings.push(
+      `Jarvis has low engagement on ${analysis.leastEffective.join(", ")} \u2014 user rarely acts on these suggestions`
+    );
+  }
+  if (analysis.mostEffective.length > 0) {
+    findings.push(
+      `Jarvis is most effective with ${analysis.mostEffective.join(", ")} \u2014 user consistently acts on these`
+    );
+  }
+  if (analysis.relationshipHealth === "improving") {
+    findings.push("User engagement with Jarvis is trending upward week-over-week");
+  } else if (analysis.relationshipHealth === "declining") {
+    findings.push("User engagement with Jarvis is declining \u2014 may need to reduce frequency or change approach");
+  }
+  for (const finding of findings) {
+    try {
+      await db.insert(userMemories).values({
+        userId: userId2,
+        content: finding,
+        category: "fact",
+        confidence: 80,
+        relevanceScore: 60,
+        sourceType: "jarvis_self_knowledge",
+        sourceRef: `ego_${analysis.weekOf}`
+      });
+    } catch (err) {
+      console.error("[Ego] self-knowledge memory insert failed:", err);
+    }
+  }
+  if (findings.length > 0) {
+    markSoulStale(userId2).catch(() => {
+    });
+  }
+}
+async function runEgoForUser(userId2, weekOf) {
+  try {
+    const existing = await db.select({ id: egoWeeklyReports.id, deliveredAt: egoWeeklyReports.deliveredAt, reportText: egoWeeklyReports.reportText }).from(egoWeeklyReports).where(and35(eq43(egoWeeklyReports.userId, userId2), eq43(egoWeeklyReports.weekOf, weekOf))).limit(1);
+    if (existing.length > 0) {
+      if (existing[0].deliveredAt) return false;
+      const storedText = existing[0].reportText;
+      if (storedText) {
+        const msg2 = `\u{1F4CA} Jarvis Weekly Self-Report (week of ${weekOf})
+
+${storedText}`;
+        const retryResults = await notifyUser(userId2, "ego_report", msg2).catch(() => []);
+        const anyDelivered = retryResults.some((r) => r.result.ok);
+        if (anyDelivered) {
+          await db.update(egoWeeklyReports).set({ deliveredAt: /* @__PURE__ */ new Date() }).where(eq43(egoWeeklyReports.id, existing[0].id));
+          logInteraction(userId2, "notification", "outbound", msg2, "ego_report").catch(() => {
+          });
+          console.log(`[Ego] retry delivery succeeded for user ${userId2} (${weekOf})`);
+        } else {
+          console.log(`[Ego] retry delivery: no channel confirmed for user ${userId2} (${weekOf}) \u2014 will retry next run`);
+        }
+        return anyDelivered;
+      }
+      return false;
+    }
+  } catch {
+  }
+  const analysis = await analyseEgo(userId2, weekOf);
+  if (analysis.totalActions === 0) {
+    console.log(`[Ego] no actions recorded for user ${userId2} (${weekOf}), skipping report`);
+    return false;
+  }
+  const reportText = await generateReportText(analysis);
+  if (!reportText) return false;
+  try {
+    await db.insert(egoWeeklyReports).values({
+      userId: userId2,
+      weekOf,
+      analysis,
+      reportText
+    });
+  } catch (err) {
+    console.error("[Ego] report insert failed:", err);
+    return false;
+  }
+  await applySelfCorrections(userId2, analysis.leastEffective, analysis.actionBreakdown);
+  await writeSelfKnowledgeMemories(userId2, analysis);
+  const msg = `\u{1F4CA} Jarvis Weekly Self-Report (week of ${weekOf})
+
+${reportText}`;
+  let delivered = false;
+  try {
+    const deliveryResults = await notifyUser(userId2, "ego_report", msg);
+    delivered = deliveryResults.some((r) => r.result.ok);
+    if (delivered) {
+      await db.update(egoWeeklyReports).set({ deliveredAt: /* @__PURE__ */ new Date() }).where(and35(eq43(egoWeeklyReports.userId, userId2), eq43(egoWeeklyReports.weekOf, weekOf)));
+      logInteraction(userId2, "notification", "outbound", msg, "ego_report").catch(() => {
+      });
+      console.log(`[Ego] report delivered for user ${userId2} (${weekOf})`);
+    } else {
+      console.log(`[Ego] report generated but no channel delivered for user ${userId2} (${weekOf}) \u2014 will retry next run`);
+    }
+  } catch (err) {
+    console.error("[Ego] report delivery failed:", err);
+  }
+  return delivered;
+}
+async function runEgoForAllUsers(now, weekOf) {
+  const allUsers = await db.select({ id: users.id }).from(users).catch(() => []);
+  let count = 0;
+  for (const user of allUsers) {
+    try {
+      const delivered = await runEgoForUser(user.id, weekOf);
+      if (delivered) count++;
+    } catch (err) {
+      console.error(`[Ego] failed for user ${user.id}:`, err);
+    }
+  }
+  if (count > 0) console.log(`[Ego] Weekly ego reports delivered to ${count} user(s)`);
+}
+var openai13, SELF_CORRECTION_THRESHOLD, TWO_WEEKS_MS, ONE_WEEK_MS;
+var init_ego = __esm({
+  "server/intelligence/ego.ts"() {
+    "use strict";
+    init_db();
+    init_schema();
+    init_schema();
+    init_registry();
+    init_interactionLog();
+    init_soul();
+    openai13 = new OpenAI13({
+      apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
+      baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL
+    });
+    SELF_CORRECTION_THRESHOLD = 0.25;
+    TWO_WEEKS_MS = 14 * 24 * 60 * 60 * 1e3;
+    ONE_WEEK_MS = 7 * 24 * 60 * 60 * 1e3;
+  }
+});
+
+// server/intelligence/actionLog.ts
+var actionLog_exports = {};
+__export(actionLog_exports, {
+  isActionSuppressed: () => isActionSuppressed,
+  logAction: () => logAction,
+  resolveAction: () => resolveAction,
+  resolveActionByMetadataKey: () => resolveActionByMetadataKey,
+  resolveActionByTaskId: () => resolveActionByTaskId,
+  resolvePendingActions: () => resolvePendingActions
+});
+import { eq as eq44, and as and36, gte as gte10, sql as sql23 } from "drizzle-orm";
+async function logAction(userId2, actionType, metadata = {}) {
+  try {
+    const rows = await db.insert(jarvisActionLog).values({ userId: userId2, actionType, outcome: "pending", metadata }).returning({ id: jarvisActionLog.id });
+    return rows[0]?.id ?? null;
+  } catch (err) {
+    console.error("[Ego] logAction failed:", err);
+    return null;
+  }
+}
+async function resolveAction(actionId, outcome) {
+  try {
+    await db.update(jarvisActionLog).set({ outcome, updatedAt: /* @__PURE__ */ new Date() }).where(eq44(jarvisActionLog.id, actionId));
+  } catch (err) {
+    console.error("[Ego] resolveAction failed:", err);
+  }
+}
+async function resolvePendingActions(userId2, actionType, outcome, withinMs = 7 * 24 * 60 * 60 * 1e3) {
+  try {
+    const cutoff = new Date(Date.now() - withinMs);
+    await db.update(jarvisActionLog).set({ outcome, updatedAt: /* @__PURE__ */ new Date() }).where(
+      and36(
+        eq44(jarvisActionLog.userId, userId2),
+        eq44(jarvisActionLog.actionType, actionType),
+        eq44(jarvisActionLog.outcome, "pending"),
+        gte10(jarvisActionLog.createdAt, cutoff)
+      )
+    );
+  } catch (err) {
+    console.error("[Ego] resolvePendingActions failed:", err);
+  }
+}
+async function resolveActionByMetadataKey(userId2, actionType, metadataKey, metadataValue, outcome, withinMs = 7 * 24 * 60 * 60 * 1e3) {
+  try {
+    const cutoff = new Date(Date.now() - withinMs);
+    await db.update(jarvisActionLog).set({ outcome, updatedAt: /* @__PURE__ */ new Date() }).where(
+      and36(
+        eq44(jarvisActionLog.userId, userId2),
+        eq44(jarvisActionLog.actionType, actionType),
+        eq44(jarvisActionLog.outcome, "pending"),
+        gte10(jarvisActionLog.createdAt, cutoff),
+        sql23`${jarvisActionLog.metadata}->>${metadataKey} = ${metadataValue}`
+      )
+    );
+  } catch (err) {
+    console.error("[Ego] resolveActionByMetadataKey failed:", err);
+  }
+}
+async function resolveActionByTaskId(userId2, actionType, taskId, outcome, withinMs = 7 * 24 * 60 * 60 * 1e3) {
+  return resolveActionByMetadataKey(userId2, actionType, "taskId", taskId, outcome, withinMs);
+}
+async function isActionSuppressed(userId2, actionType) {
+  try {
+    const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq44(userPreferences.userId, userId2)).limit(1);
+    if (!rows[0]) return false;
+    const suppressed = rows[0].data?.jarvisSuppressedActions;
+    if (!Array.isArray(suppressed)) return false;
+    return suppressed.includes(actionType);
+  } catch {
+    return false;
+  }
+}
+var init_actionLog = __esm({
+  "server/intelligence/actionLog.ts"() {
+    "use strict";
+    init_db();
+    init_schema();
+    init_schema();
+  }
+});
+
+// server/memory/dream.ts
+var dream_exports = {};
+__export(dream_exports, {
+  getPendingDreamInsights: () => getPendingDreamInsights,
+  markDreamInsightsDelivered: () => markDreamInsightsDelivered,
+  runDreamForUser: () => runDreamForUser
+});
+import { eq as eq45, desc as desc19, and as and37, gte as gte11, sql as sql24, inArray as inArray2 } from "drizzle-orm";
+import OpenAI14 from "openai";
+async function hasEnoughData(userId2) {
+  const cutoff = new Date(Date.now() - MINIMUM_MEMORY_AGE_DAYS * 24 * 60 * 60 * 1e3);
+  const rows = await db.select({ id: userMemories.id }).from(userMemories).where(
+    and37(
+      eq45(userMemories.userId, userId2),
+      sql24`${userMemories.extractedAt} < ${cutoff}`
+    )
+  ).limit(1);
+  return rows.length > 0;
+}
+async function buildCorpus(userId2) {
+  const now = /* @__PURE__ */ new Date();
+  const since90 = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1e3);
+  const since30 = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1e3);
+  const since30Key = since30.toISOString().slice(0, 10);
+  const [memoriesRows, insightRows, energyRows, planRows] = await Promise.all([
+    db.select({
+      id: userMemories.id,
+      content: userMemories.content,
+      category: userMemories.category,
+      confidence: userMemories.confidence,
+      extractedAt: userMemories.extractedAt
+    }).from(userMemories).where(
+      and37(
+        eq45(userMemories.userId, userId2),
+        gte11(userMemories.extractedAt, since90)
+      )
+    ).orderBy(desc19(userMemories.extractedAt)).limit(200),
+    db.select().from(weeklyInsights).where(eq45(weeklyInsights.userId, userId2)).orderBy(desc19(weeklyInsights.createdAt)).limit(4),
+    db.select().from(energyCheckins).where(
+      and37(
+        eq45(energyCheckins.userId, userId2),
+        sql24`${energyCheckins.date} >= ${since30Key}`
+      )
+    ).orderBy(desc19(energyCheckins.date)).limit(30),
+    db.select({ date: plans.date, data: plans.data }).from(plans).where(
+      and37(
+        eq45(plans.userId, userId2),
+        sql24`${plans.date} >= ${since30Key}`
+      )
+    ).orderBy(desc19(plans.date)).limit(30)
+  ]);
+  const memoryIds = memoriesRows.map((m) => m.id);
+  const sections = [];
+  if (memoriesRows.length > 0) {
+    const grouped = /* @__PURE__ */ new Map();
+    for (const m of memoriesRows) {
+      const arr = grouped.get(m.category) || [];
+      arr.push(`[c=${m.confidence}] ${m.content}`);
+      grouped.set(m.category, arr);
+    }
+    sections.push("## Memories by category (last 90 days)");
+    for (const [cat, items] of grouped) {
+      sections.push(`### ${cat}`);
+      items.slice(0, 20).forEach((i) => sections.push(`- ${i}`));
+    }
+  }
+  if (insightRows.length > 0) {
+    sections.push("\n## Weekly pattern observations (last 4 weeks)");
+    for (const row of insightRows) {
+      const patterns = Array.isArray(row.patterns) ? row.patterns : [];
+      sections.push(`### Week of ${row.weekOf}`);
+      if (row.summary) sections.push(`Summary: ${row.summary}`);
+      for (const p of patterns) {
+        sections.push(`- [${p.category} c=${p.confidence}] ${p.observation}`);
+      }
+    }
+  }
+  if (energyRows.length > 0) {
+    sections.push("\n## Energy check-ins (last 30 days)");
+    for (const row of energyRows) {
+      const data = row.data;
+      const level = data.level ?? data.energy ?? "?";
+      const mood = typeof data.mood === "string" ? data.mood : typeof data.moodNote === "string" ? data.moodNote : "";
+      sections.push(`- ${row.date}: energy=${level}${mood ? ` \u2014 "${mood}"` : ""}`);
+    }
+  }
+  if (planRows.length > 0) {
+    const completionDays = [];
+    for (const row of planRows) {
+      const planData = row.data;
+      const tasks = Array.isArray(planData.tasks) ? planData.tasks : [];
+      const total = tasks.length;
+      const completed = tasks.filter((t) => t.completed).length;
+      if (total > 0) {
+        completionDays.push({ date: row.date, completed, total });
+      }
+    }
+    if (completionDays.length > 0) {
+      sections.push("\n## Task completion history (last 30 days)");
+      for (const day of completionDays) {
+        const pct = Math.round(day.completed / day.total * 100);
+        sections.push(`- ${day.date}: ${day.completed}/${day.total} tasks completed (${pct}%)`);
+      }
+    }
+  }
+  return { text: sections.join("\n"), memoryIds };
+}
+function parseDreamResponse(raw) {
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object") {
+      const obj = parsed;
+      if (Array.isArray(obj.insights)) {
+        return obj.insights.filter(
+          (i) => typeof i.insight === "string" && i.insight.trim().length > 0
+        );
+      }
+    }
+  } catch {
+  }
+  return [];
+}
+async function runDreamForUser(userId2, dreamDate) {
+  const enough = await hasEnoughData(userId2);
+  if (!enough) {
+    console.log(`[Dream] user ${userId2} has insufficient data (<${MINIMUM_MEMORY_AGE_DAYS} days) \u2014 skipping`);
+    return 0;
+  }
+  const corpus = await buildCorpus(userId2);
+  if (!corpus.text.trim()) {
+    console.log(`[Dream] empty corpus for user ${userId2} \u2014 skipping`);
+    return 0;
+  }
+  const prompt = `You are Jarvis's deep synthesis engine running a nightly dream cycle.
+
+Your job: analyse the user's memories, energy patterns, weekly observations, and task completion history from the past 3 months and surface 1\u20133 non-obvious, SPECIFIC insights that cross categories \u2014 insights the user would not have noticed themselves.
+
+Good insights:
+- Cross-category correlations: "Every time X happens, Y follows within 2\u20133 days"
+- Hidden loops: "You mention blocker B every time goal G makes progress \u2014 they might be related"
+- Energy\u2013behaviour links: "Your low-energy days correlate with lower task completion rates the following day"
+- Completion pattern surprises: "You complete 40%+ more tasks on days following a recorded energy level of 8+, compared to any other energy level"
+- Surprising absences: "You have many work-pattern memories but almost none about rest/recovery \u2014 your system may be missing a recovery loop"
+
+Bad insights (do NOT generate):
+- Obvious rephrasing of individual memories
+- Generic motivational statements
+- Anything that could apply to anyone
+- Predictions about future events (that is the Prediction Engine's job)
+
+Output JSON:
+{
+  "insights": [
+    {
+      "insight": "<specific, non-obvious observation \u2014 1\u20133 sentences, plain English, no markdown>",
+      "confidence": <50-100 integer \u2014 how strongly supported by the data>,
+      "sourceHints": ["<short phrase describing evidence 1>", "<evidence 2>"]
+    }
+  ]
+}
+
+Return { "insights": [] } if you cannot find anything genuinely non-obvious and cross-category.
+
+---
+
+${corpus.text.slice(0, 12e3)}`;
+  let rawInsights = [];
+  try {
+    const resp = await openai14.chat.completions.create({
+      model: "gpt-4o",
+      messages: [{ role: "user", content: prompt }],
+      response_format: { type: "json_object" },
+      max_completion_tokens: 1200
+    });
+    const raw = resp.choices[0]?.message?.content || '{"insights":[]}';
+    rawInsights = parseDreamResponse(raw).slice(0, 3);
+  } catch (err) {
+    console.error(`[Dream] LLM synthesis failed for ${userId2}:`, err);
+    return 0;
+  }
+  if (rawInsights.length === 0) {
+    console.log(`[Dream] no insights generated for ${userId2} on ${dreamDate}`);
+    return 0;
+  }
+  const sourceIds = corpus.memoryIds.slice(0, 50);
+  let stored = 0;
+  for (const raw of rawInsights) {
+    const text2 = raw.insight.trim();
+    if (!text2) continue;
+    const confidence = Math.max(50, Math.min(100, Math.round(raw.confidence || 70)));
+    try {
+      await db.insert(dreamInsights).values({
+        userId: userId2,
+        dreamDate,
+        insightText: text2,
+        confidenceScore: confidence,
+        sourceMemoryIds: sourceIds,
+        shownToUser: false
+      });
+      stored++;
+      console.log(`[Dream] +insight [c=${confidence}] ${text2.slice(0, 80)}`);
+    } catch (err) {
+      console.error(`[Dream] insert failed:`, err);
+    }
+  }
+  if (stored > 0) {
+    await seedSoulFromDream(userId2, rawInsights);
+  }
+  return stored;
+}
+async function seedSoulFromDream(userId2, insights) {
+  try {
+    const combined = insights.filter((i) => (i.confidence || 0) >= 70).map((i) => i.insight).join("\n");
+    if (!combined.trim()) return;
+    await extractAndStore({
+      userId: userId2,
+      source: combined,
+      sourceType: "dream_cycle",
+      sourceRef: (/* @__PURE__ */ new Date()).toISOString().slice(0, 10),
+      contextHint: "Durable cross-category finding from nightly dream synthesis",
+      maxNew: 3
+    });
+    await markSoulStale(userId2);
+    console.log(`[Dream] soul seeded and marked stale for ${userId2}`);
+  } catch (err) {
+    console.error(`[Dream] soul seeding failed:`, err);
+  }
+}
+async function getPendingDreamInsights(userId2) {
+  return db.select().from(dreamInsights).where(
+    and37(
+      eq45(dreamInsights.userId, userId2),
+      eq45(dreamInsights.shownToUser, false)
+    )
+  ).orderBy(desc19(dreamInsights.createdAt)).limit(3);
+}
+async function markDreamInsightsDelivered(ids) {
+  if (ids.length === 0) return;
+  await db.update(dreamInsights).set({ shownToUser: true, deliveredAt: /* @__PURE__ */ new Date() }).where(inArray2(dreamInsights.id, ids));
+}
+var openai14, MINIMUM_MEMORY_AGE_DAYS;
+var init_dream = __esm({
+  "server/memory/dream.ts"() {
+    "use strict";
+    init_db();
+    init_schema();
+    init_extractor();
+    init_soul();
+    openai14 = new OpenAI14({
+      apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
+      baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL
+    });
+    MINIMUM_MEMORY_AGE_DAYS = 14;
+  }
+});
+
 // server/inboxActions.ts
 var inboxActions_exports = {};
 __export(inboxActions_exports, {
   executeInboxAction: () => executeInboxAction
 });
-import { eq as eq29, and as and24 } from "drizzle-orm";
+import { eq as eq46, and as and38 } from "drizzle-orm";
 async function getGoogleToken(userId2) {
   try {
     const tokens = await getValidGoogleTokens(userId2);
@@ -11215,7 +19490,7 @@ async function getGoogleToken(userId2) {
   }
 }
 async function executeInboxAction(userId2, itemId, actionType, telegramChatId) {
-  const [item] = await db.select().from(inboxItems).where(and24(eq29(inboxItems.id, itemId), eq29(inboxItems.userId, userId2)));
+  const [item] = await db.select().from(inboxItems).where(and38(eq46(inboxItems.id, itemId), eq46(inboxItems.userId, userId2)));
   if (!item) {
     return { success: false, message: "Item not found" };
   }
@@ -11229,22 +19504,24 @@ async function executeInboxAction(userId2, itemId, actionType, telegramChatId) {
           learned: result.learned
         };
       }
-      await db.update(inboxItems).set({ status: "dismissed", actedAt: /* @__PURE__ */ new Date() }).where(eq29(inboxItems.id, itemId));
+      const newDismissCount = (item.dismissCount ?? 0) + 1;
+      await db.update(inboxItems).set({ status: "dismissed", actedAt: /* @__PURE__ */ new Date(), dismissCount: newDismissCount }).where(eq46(inboxItems.id, itemId));
       return { success: true, message: "Dismissed" };
     }
     case "never_again": {
       const senderDomain = item.sender ? (item.sender.match(/@([a-zA-Z0-9.-]+)/)?.[1] || "").toLowerCase() : "";
       const pattern = senderDomain ? `Auto: suppress ${senderDomain}` : `Auto: suppress "${item.subject || item.sender}"`;
       const matchHints = senderDomain ? { domains: [senderDomain] } : { subjectKeywords: [(item.subject || "").toLowerCase()] };
+      const isCalendar = item.sourceType === "calendar" || item.sourceType === "google_calendar" || item.sourceType === "outlook_calendar";
       await db.insert(inboxRules).values({
         userId: userId2,
         type: "suppress",
-        scope: item.sourceType === "calendar" ? "calendar" : "email",
+        scope: isCalendar ? "calendar" : "email",
         pattern,
         matchHints,
         source: "user"
       });
-      await db.update(inboxItems).set({ status: "dismissed", actedAt: /* @__PURE__ */ new Date() }).where(eq29(inboxItems.id, itemId));
+      await db.update(inboxItems).set({ status: "dismissed", actedAt: /* @__PURE__ */ new Date() }).where(eq46(inboxItems.id, itemId));
       return { success: true, message: "Rule created \u2014 you'll never see these again" };
     }
     case "archive": {
@@ -11258,7 +19535,7 @@ async function executeInboxAction(userId2, itemId, actionType, telegramChatId) {
       }
       try {
         await gmailModifyMessage(rawId, [], ["INBOX"], token);
-        await db.update(inboxItems).set({ status: "approved", actedAt: /* @__PURE__ */ new Date() }).where(eq29(inboxItems.id, itemId));
+        await db.update(inboxItems).set({ status: "approved", actedAt: /* @__PURE__ */ new Date() }).where(eq46(inboxItems.id, itemId));
         return { success: true, message: "Email archived" };
       } catch (err) {
         return { success: false, message: `Archive failed: ${err.message || "unknown error"}` };
@@ -11275,7 +19552,7 @@ async function executeInboxAction(userId2, itemId, actionType, telegramChatId) {
       }
       try {
         await gmailModifyMessage(rawId, ["STARRED"], [], token);
-        await db.update(inboxItems).set({ status: "approved", actedAt: /* @__PURE__ */ new Date() }).where(eq29(inboxItems.id, itemId));
+        await db.update(inboxItems).set({ status: "approved", actedAt: /* @__PURE__ */ new Date() }).where(eq46(inboxItems.id, itemId));
         return { success: true, message: "Email starred" };
       } catch (err) {
         return { success: false, message: `Star failed: ${err.message || "unknown error"}` };
@@ -11283,7 +19560,7 @@ async function executeInboxAction(userId2, itemId, actionType, telegramChatId) {
     }
     case "save_as_task": {
       const taskTitle = item.subject || item.snippet || "Untitled task";
-      const plans2 = await db.select().from(plans).where(eq29(plans.userId, userId2));
+      const plans2 = await db.select().from(plans).where(eq46(plans.userId, userId2));
       const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
       const existingPlan = plans2.find((p) => p.date === today);
       const planData = existingPlan?.data || { tasks: [] };
@@ -11302,16 +19579,17 @@ async function executeInboxAction(userId2, itemId, actionType, telegramChatId) {
         target: [plans.userId, plans.date],
         set: { data: planData, updatedAt: /* @__PURE__ */ new Date() }
       });
-      await db.update(inboxItems).set({ status: "approved", actedAt: /* @__PURE__ */ new Date() }).where(eq29(inboxItems.id, itemId));
+      await db.update(inboxItems).set({ status: "approved", actedAt: /* @__PURE__ */ new Date() }).where(eq46(inboxItems.id, itemId));
       return { success: true, message: `Task added: "${taskTitle}"` };
     }
     case "add_prep_time": {
-      if (item.sourceType !== "calendar") {
+      const isCalendarItem = item.sourceType === "calendar" || item.sourceType === "google_calendar" || item.sourceType === "outlook_calendar";
+      if (!isCalendarItem) {
         return { success: false, message: "Only works for calendar events" };
       }
       const prepTitle = `Prep: ${item.subject || "upcoming meeting"}`;
       const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
-      const plans2 = await db.select().from(plans).where(eq29(plans.userId, userId2));
+      const plans2 = await db.select().from(plans).where(eq46(plans.userId, userId2));
       const existingPlan = plans2.find((p) => p.date === today);
       const planData = existingPlan?.data || { tasks: [] };
       const tasks = Array.isArray(planData.tasks) ? planData.tasks : [];
@@ -11329,12 +19607,12 @@ async function executeInboxAction(userId2, itemId, actionType, telegramChatId) {
         target: [plans.userId, plans.date],
         set: { data: planData, updatedAt: /* @__PURE__ */ new Date() }
       });
-      await db.update(inboxItems).set({ status: "approved", actedAt: /* @__PURE__ */ new Date() }).where(eq29(inboxItems.id, itemId));
+      await db.update(inboxItems).set({ status: "approved", actedAt: /* @__PURE__ */ new Date() }).where(eq46(inboxItems.id, itemId));
       return { success: true, message: `Prep task added: "${prepTitle}"` };
     }
     case "save_to_focus": {
       const contextText = `${item.subject || ""} \u2014 ${item.snippet || ""}`.trim();
-      const [existing] = await db.select().from(lifeContext).where(eq29(lifeContext.userId, userId2));
+      const [existing] = await db.select().from(lifeContext).where(eq46(lifeContext.userId, userId2));
       const data = existing?.data || {};
       const freeText = (data.freeText || "") + `
 [From ${item.sourceType}] ${contextText}`;
@@ -11343,7 +19621,7 @@ async function executeInboxAction(userId2, itemId, actionType, telegramChatId) {
         target: lifeContext.userId,
         set: { data, updatedAt: /* @__PURE__ */ new Date() }
       });
-      await db.update(inboxItems).set({ status: "approved", actedAt: /* @__PURE__ */ new Date() }).where(eq29(inboxItems.id, itemId));
+      await db.update(inboxItems).set({ status: "approved", actedAt: /* @__PURE__ */ new Date() }).where(eq46(inboxItems.id, itemId));
       return { success: true, message: "Saved to your life context" };
     }
     default:
@@ -11361,10 +19639,570 @@ var init_inboxActions = __esm({
   }
 });
 
+// server/intelligence/gut.ts
+var gut_exports = {};
+__export(gut_exports, {
+  calibrateGutForAllUsers: () => calibrateGutForAllUsers,
+  calibrateGutForUser: () => calibrateGutForUser,
+  getAndMarkMorningBriefSignals: () => getAndMarkMorningBriefSignals,
+  getGutSignalsForUser: () => getGutSignalsForUser,
+  respondToGutSignal: () => respondToGutSignal,
+  runGutScanForUser: () => runGutScanForUser
+});
+import { eq as eq47, and as and39, desc as desc20, gte as gte12, sql as sql25, inArray as inArray3 } from "drizzle-orm";
+function getCachedBaseline(userId2) {
+  const entry = baselineCache.get(userId2);
+  if (!entry || Date.now() > entry.expiresAt) return null;
+  return entry.baseline;
+}
+function setCachedBaseline(userId2, baseline) {
+  baselineCache.set(userId2, { baseline, expiresAt: Date.now() + BASELINE_TTL_MS });
+}
+function getGateForType(baseline, signalType) {
+  const globalGate = Math.max(baseline.confirmThreshold - 10, baseline.dismissThreshold);
+  const adj = baseline.typeGateAdjustments[signalType] ?? 0;
+  return Math.max(20, Math.min(90, globalGate + adj));
+}
+function deriveGateAdjustment(confirmationRate, totalResponded) {
+  if (totalResponded < 4) return 0;
+  if (confirmationRate > 0.75) return -15;
+  if (confirmationRate > 0.6) return -7;
+  if (confirmationRate >= 0.4) return 0;
+  if (confirmationRate >= 0.25) return 7;
+  return 15;
+}
+async function computeBaseline2(userId2, token) {
+  const cached = getCachedBaseline(userId2);
+  if (cached) return cached;
+  const baseline = { ...DEFAULT_BASELINE };
+  try {
+    const past = await db.select({ content: userMemories.content, category: userMemories.category }).from(userMemories).where(and39(
+      eq47(userMemories.userId, userId2),
+      eq47(userMemories.category, "work_patterns")
+    )).limit(30);
+    const workText = past.map((m) => m.content).join(" ").toLowerCase();
+    if (/deep work|focus block|protected time/.test(workText)) {
+      baseline.deepWorkRatio = 0.5;
+    }
+    if (/short meeting|15.?min|30.?min/.test(workText)) {
+      baseline.avgMeetingDurationMins = 30;
+    }
+  } catch {
+  }
+  try {
+    const historicPlans = await db.select({ data: plans.data }).from(plans).where(eq47(plans.userId, userId2)).orderBy(desc20(plans.date)).limit(14);
+    const totalTasks = historicPlans.reduce((sum, p) => {
+      const tasks = p.data?.tasks || [];
+      return sum + tasks.filter((t) => t.completed).length;
+    }, 0);
+    if (historicPlans.length > 0) {
+      baseline.avgTaskVelocityPerDay = Math.max(1, totalTasks / historicPlans.length);
+    }
+  } catch {
+  }
+  try {
+    if (token) {
+      const pastEmails = await getEmailsSince(Date.now() - 30 * 24 * 60 * 60 * 1e3, token);
+      const domains = /* @__PURE__ */ new Set();
+      for (const e of pastEmails.slice(0, 100)) {
+        const match = e.from.match(/@([\w.-]+)/);
+        if (match) domains.add(match[1].toLowerCase());
+      }
+      baseline.knownSenderDomains = Array.from(domains);
+    }
+  } catch {
+  }
+  try {
+    const confirmed = await db.select({ count: sql25`count(*)` }).from(gutSignals).where(and39(
+      eq47(gutSignals.userId, userId2),
+      eq47(gutSignals.userResponse, "confirmed")
+    ));
+    const dismissed = await db.select({ count: sql25`count(*)` }).from(gutSignals).where(and39(
+      eq47(gutSignals.userId, userId2),
+      eq47(gutSignals.userResponse, "dismissed")
+    ));
+    const c = Number(confirmed[0]?.count ?? 0);
+    const d = Number(dismissed[0]?.count ?? 0);
+    if (c + d > 5) {
+      const accuracy = c / (c + d);
+      if (accuracy > 0.7) baseline.confirmThreshold = Math.min(90, baseline.confirmThreshold + 10);
+      if (accuracy < 0.3) baseline.dismissThreshold = Math.min(60, baseline.dismissThreshold + 10);
+    }
+  } catch {
+  }
+  let usedStoredCalibration = false;
+  try {
+    const storedCalibration = await db.select().from(gutCalibration).where(eq47(gutCalibration.userId, userId2));
+    if (storedCalibration.length > 0) {
+      for (const row of storedCalibration) {
+        const st = row.signalType;
+        baseline.typeGateAdjustments[st] = row.gateAdjustment;
+      }
+      usedStoredCalibration = true;
+    }
+  } catch (err) {
+    console.warn(`[Gut] Could not read gutCalibration for user ${userId2}, falling back to live computation:`, err);
+  }
+  if (!usedStoredCalibration) {
+    try {
+      const allSignalTypes = [
+        "calendar_anomaly",
+        "deep_work_erosion",
+        "email_pattern",
+        "project_drift",
+        "relationship_anomaly"
+      ];
+      for (const st of allSignalTypes) {
+        const [tc] = await db.select({ count: sql25`count(*)` }).from(gutSignals).where(and39(
+          eq47(gutSignals.userId, userId2),
+          eq47(gutSignals.signalType, st),
+          eq47(gutSignals.userResponse, "confirmed")
+        ));
+        const [td] = await db.select({ count: sql25`count(*)` }).from(gutSignals).where(and39(
+          eq47(gutSignals.userId, userId2),
+          eq47(gutSignals.signalType, st),
+          eq47(gutSignals.userResponse, "dismissed")
+        ));
+        const tc_ = Number(tc?.count ?? 0);
+        const td_ = Number(td?.count ?? 0);
+        if (tc_ + td_ >= 4) {
+          const typeAccuracy = tc_ / (tc_ + td_);
+          baseline.typeGateAdjustments[st] = deriveGateAdjustment(typeAccuracy, tc_ + td_);
+        }
+      }
+    } catch {
+    }
+  }
+  setCachedBaseline(userId2, baseline);
+  return baseline;
+}
+async function detectCalendarAnomalies(userId2, events, baseline, userEmail) {
+  const signals = [];
+  const now = /* @__PURE__ */ new Date();
+  const sevenDaysMs = 7 * 24 * 60 * 60 * 1e3;
+  const existing = await db.select({ itemRef: gutSignals.itemRef }).from(gutSignals).where(and39(
+    eq47(gutSignals.userId, userId2),
+    eq47(gutSignals.signalType, "calendar_anomaly"),
+    gte12(gutSignals.createdAt, new Date(Date.now() - 48 * 60 * 60 * 1e3))
+  )).limit(100);
+  const flaggedRefs = new Set(existing.map((r) => r.itemRef).filter(Boolean));
+  for (const event of events) {
+    if (flaggedRefs.has(event.id)) continue;
+    const startMs = new Date(event.start).getTime();
+    if (startMs < now.getTime() || startMs > now.getTime() + sevenDaysMs) continue;
+    const durationMins = Math.round(
+      (new Date(event.end || event.start).getTime() - startMs) / 6e4
+    );
+    const anomalies = [];
+    let confidence = 0;
+    if (durationMins > baseline.avgMeetingDurationMins * 2) {
+      anomalies.push(`${durationMins} min \u2014 ${Math.round(durationMins / baseline.avgMeetingDurationMins)}\xD7 your usual length`);
+      confidence += 25;
+    }
+    if (!event.description || event.description.trim().length < 10) {
+      anomalies.push("no agenda");
+      confidence += 20;
+    }
+    if (userEmail) {
+      const userDomain = userEmail.split("@")[1]?.toLowerCase();
+      const externalUnknown = (event.attendees || []).filter((a) => {
+        if (!a.email) return false;
+        const domain = a.email.split("@")[1]?.toLowerCase();
+        if (!domain || domain === userDomain) return false;
+        return !baseline.knownSenderDomains.includes(domain);
+      });
+      if (externalUnknown.length > 0) {
+        anomalies.push(`unknown external attendee (${externalUnknown[0].email})`);
+        confidence += 20;
+      }
+    }
+    if (baseline.deepWorkRatio >= 0.4 && durationMins >= 30) {
+      const eventHour = new Date(event.start).getHours();
+      if (eventHour < 10 || eventHour >= 16) {
+        const window = eventHour < 10 ? "morning focus block (before 10am)" : "afternoon focus window (after 4pm)";
+        anomalies.push(`intrudes on protected ${window}`);
+        confidence += 30;
+      }
+    }
+    const calGate = getGateForType(baseline, "calendar_anomaly");
+    if (anomalies.length > 0 && confidence >= calGate) {
+      signals.push({
+        signalType: "calendar_anomaly",
+        itemRef: event.id,
+        confidenceScore: Math.min(99, confidence),
+        explanation: `"${event.title}" \u2014 ${anomalies.join(", ")}.`
+      });
+    }
+  }
+  return signals;
+}
+async function detectDeepWorkErosion(userId2, events, baseline) {
+  try {
+    const already = await db.select({ id: gutSignals.id }).from(gutSignals).where(and39(
+      eq47(gutSignals.userId, userId2),
+      eq47(gutSignals.signalType, "deep_work_erosion"),
+      gte12(gutSignals.createdAt, new Date(Date.now() - 48 * 60 * 60 * 1e3))
+    )).limit(1);
+    if (already.length > 0) return null;
+    const sevenDaysMs = 7 * 24 * 60 * 60 * 1e3;
+    const now = Date.now();
+    const week = events.filter((e) => {
+      const t = new Date(e.start).getTime();
+      return t >= now - sevenDaysMs && t <= now;
+    });
+    let totalMins = 0;
+    let meetingMins = 0;
+    for (const e of week) {
+      const startMs = new Date(e.start).getTime();
+      const endMs = new Date(e.end || e.start).getTime();
+      const dur = Math.max(0, (endMs - startMs) / 6e4);
+      if (dur < 8 * 60) {
+        totalMins += dur;
+        if (e.attendees && e.attendees.length > 0) {
+          meetingMins += dur;
+        }
+      }
+    }
+    if (totalMins < 60) return null;
+    const focusRatio = (totalMins - meetingMins) / totalMins;
+    const drop = baseline.deepWorkRatio - focusRatio;
+    if (drop > 0.2) {
+      const pct = Math.round(drop * 100);
+      const confidence = Math.min(90, 50 + pct);
+      const erosionGate = getGateForType(baseline, "deep_work_erosion");
+      if (confidence >= erosionGate) {
+        return {
+          signalType: "deep_work_erosion",
+          confidenceScore: confidence,
+          explanation: `Your deep work ratio this week is ${Math.round(focusRatio * 100)}% \u2014 down ${pct}pp from your usual ${Math.round(baseline.deepWorkRatio * 100)}%.`
+        };
+      }
+    }
+  } catch {
+  }
+  return null;
+}
+async function detectEmailPatterns(userId2, baseline, inboxItems3) {
+  const signals = [];
+  const existing = await db.select({ itemRef: gutSignals.itemRef }).from(gutSignals).where(and39(
+    eq47(gutSignals.userId, userId2),
+    eq47(gutSignals.signalType, "email_pattern"),
+    gte12(gutSignals.createdAt, new Date(Date.now() - 48 * 60 * 60 * 1e3))
+  )).limit(100);
+  const flagged = new Set(existing.map((r) => r.itemRef).filter(Boolean));
+  for (const item of inboxItems3.slice(0, 20)) {
+    if (flagged.has(item.id)) continue;
+    const text2 = `${item.subject || ""} ${item.snippet || ""}`;
+    const hasUrgency = URGENCY_SIGNALS.test(text2);
+    const hasManipulation = MANIPULATION_SIGNALS.test(text2);
+    if (!hasUrgency && !hasManipulation) continue;
+    let confidence = 0;
+    const reasons = [];
+    if (hasUrgency) {
+      confidence += 35;
+      reasons.push("urgency pressure");
+    }
+    if (hasManipulation) {
+      confidence += 45;
+      reasons.push("manipulation signal");
+    }
+    const emailGate = getGateForType(baseline, "email_pattern");
+    if (confidence >= emailGate) {
+      signals.push({
+        signalType: "email_pattern",
+        itemRef: item.id,
+        confidenceScore: Math.min(95, confidence),
+        explanation: `${getSenderName(item.sender)} \u2014 ${reasons.join(" + ")} detected.`
+      });
+    }
+  }
+  return signals;
+}
+function getSenderName(sender) {
+  if (!sender) return "Unknown sender";
+  return sender.replace(/<.*>/, "").trim() || sender;
+}
+async function detectProjectDrift(userId2, baseline) {
+  const signals = [];
+  try {
+    const existing = await db.select({ id: gutSignals.id }).from(gutSignals).where(and39(
+      eq47(gutSignals.userId, userId2),
+      eq47(gutSignals.signalType, "project_drift"),
+      gte12(gutSignals.createdAt, new Date(Date.now() - 72 * 60 * 60 * 1e3))
+    )).limit(1);
+    if (existing.length > 0) return signals;
+    const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1e3).toISOString().slice(0, 10);
+    const recentPlans = await db.select({ data: plans.data, date: plans.date }).from(plans).where(and39(eq47(plans.userId, userId2), gte12(plans.date, sevenDaysAgo))).orderBy(desc20(plans.date)).limit(7);
+    if (recentPlans.length < 3) return signals;
+    const completedPerDay = recentPlans.map((p) => {
+      const tasks = p.data?.tasks || [];
+      return tasks.filter((t) => t.completed).length;
+    });
+    const avgCompleted = completedPerDay.reduce((s, n) => s + n, 0) / completedPerDay.length;
+    const totalOpenRecent = recentPlans.slice(0, 3).reduce((sum, p) => {
+      const tasks = p.data?.tasks || [];
+      return sum + tasks.filter((t) => !t.completed).length;
+    }, 0);
+    const velocityDrop = baseline.avgTaskVelocityPerDay - avgCompleted;
+    const taskAccumulation = totalOpenRecent > baseline.avgTaskVelocityPerDay * 3;
+    if (velocityDrop > 1.5 || taskAccumulation) {
+      const driftConfidence = Math.min(85, 50 + Math.round(velocityDrop * 10) + (taskAccumulation ? 20 : 0));
+      const driftGate = getGateForType(baseline, "project_drift");
+      if (driftConfidence >= driftGate) {
+        signals.push({
+          signalType: "project_drift",
+          confidenceScore: driftConfidence,
+          explanation: `Task completion has slowed to ${avgCompleted.toFixed(1)}/day (usual: ${baseline.avgTaskVelocityPerDay.toFixed(1)}). This pattern matches stalled projects.`
+        });
+      }
+    }
+  } catch {
+  }
+  return signals;
+}
+async function detectRelationshipAnomalies(userId2, inboxItems3, baseline) {
+  const signals = [];
+  try {
+    const existing = await db.select({ itemRef: gutSignals.itemRef }).from(gutSignals).where(and39(
+      eq47(gutSignals.userId, userId2),
+      eq47(gutSignals.signalType, "relationship_anomaly"),
+      gte12(gutSignals.createdAt, new Date(Date.now() - 24 * 60 * 60 * 1e3))
+    )).limit(50);
+    const flagged = new Set(existing.map((r) => r.itemRef).filter(Boolean));
+    const people2 = await db.select().from(people).where(eq47(people.userId, userId2));
+    const dormantCutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1e3);
+    for (const item of inboxItems3.slice(0, 10)) {
+      if (flagged.has(item.id) || !item.sender) continue;
+      const emailMatch = item.sender.match(/<([^>]+)>/) || [null, item.sender.trim()];
+      const senderEmail = emailMatch[1]?.toLowerCase();
+      if (!senderEmail) continue;
+      const person = people2.find((p) => p.email?.toLowerCase() === senderEmail);
+      if (!person) continue;
+      if (!person.lastInteractionAt) continue;
+      if (person.lastInteractionAt > dormantCutoff) continue;
+      const daysDormant = Math.round((Date.now() - person.lastInteractionAt.getTime()) / 864e5);
+      const relConfidence = Math.min(75, 40 + Math.round(daysDormant / 10));
+      const relGate = getGateForType(baseline, "relationship_anomaly");
+      if (relConfidence >= relGate) {
+        signals.push({
+          signalType: "relationship_anomaly",
+          itemRef: item.id,
+          confidenceScore: relConfidence,
+          explanation: `${person.name} hasn't reached out in ${daysDormant} days \u2014 their contact after a long silence is worth noting.`
+        });
+      }
+    }
+  } catch {
+  }
+  return signals;
+}
+async function persistSignals(userId2, candidates) {
+  const saved = [];
+  for (const c of candidates) {
+    try {
+      const [row] = await db.insert(gutSignals).values({
+        userId: userId2,
+        signalType: c.signalType,
+        itemRef: c.itemRef ?? null,
+        confidenceScore: c.confidenceScore,
+        explanation: c.explanation
+      }).returning();
+      if (row) saved.push(row);
+    } catch (err) {
+      const code = err?.code;
+      if (code !== "23505") console.error("[Gut] signal insert failed:", err);
+    }
+  }
+  return saved;
+}
+async function runGutScanForUser(userId2, userEmail, now) {
+  let token = null;
+  try {
+    const tokens = await getValidGoogleTokens(userId2);
+    token = tokens?.[0] ?? null;
+  } catch {
+  }
+  const baseline = await computeBaseline2(userId2, token);
+  const candidates = [];
+  let events = [];
+  if (token) {
+    try {
+      const today = now.toISOString().slice(0, 10);
+      const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1e3).toISOString();
+      const sevenDaysAhead = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1e3).toISOString();
+      events = await getGoogleCalendarEvents(today, sevenDaysAgo, sevenDaysAhead, token);
+    } catch {
+    }
+  }
+  const calAnomalies = await detectCalendarAnomalies(userId2, events, baseline, userEmail);
+  candidates.push(...calAnomalies);
+  const erosion = await detectDeepWorkErosion(userId2, events, baseline);
+  if (erosion) candidates.push(erosion);
+  const driftSignals = await detectProjectDrift(userId2, baseline);
+  candidates.push(...driftSignals);
+  let recentInboxItems = [];
+  try {
+    recentInboxItems = await db.select({ id: inboxItems.id, sourceId: inboxItems.sourceId, sender: inboxItems.sender, snippet: inboxItems.snippet, subject: inboxItems.subject }).from(inboxItems).where(and39(
+      eq47(inboxItems.userId, userId2),
+      eq47(inboxItems.status, "pending"),
+      gte12(inboxItems.surfacedAt, new Date(now.getTime() - 24 * 60 * 60 * 1e3))
+    )).orderBy(desc20(inboxItems.surfacedAt)).limit(30);
+  } catch {
+  }
+  if (recentInboxItems.length > 0) {
+    const emailSignals = await detectEmailPatterns(userId2, baseline, recentInboxItems);
+    candidates.push(...emailSignals);
+  }
+  const relSignals = await detectRelationshipAnomalies(userId2, recentInboxItems, baseline);
+  candidates.push(...relSignals);
+  if (candidates.length === 0) return 0;
+  const saved = await persistSignals(userId2, candidates);
+  if (saved.length > 0) {
+    console.log(`[Gut] ${saved.length} new signal(s) for user ${userId2}`);
+  }
+  return saved.length;
+}
+async function getGutSignalsForUser(userId2, opts) {
+  const limit = opts?.limit ?? 50;
+  const conditions = [eq47(gutSignals.userId, userId2)];
+  if (opts?.itemRef) {
+    conditions.push(eq47(gutSignals.itemRef, opts.itemRef));
+  }
+  if (!opts?.includeResponded) {
+    conditions.push(
+      sql25`(${gutSignals.userResponse} is null or ${gutSignals.userResponse} = 'ignored')`
+    );
+  }
+  const rows = await db.select().from(gutSignals).where(and39(...conditions)).orderBy(desc20(gutSignals.createdAt)).limit(limit);
+  return rows;
+}
+async function respondToGutSignal(userId2, signalId, response) {
+  await db.update(gutSignals).set({ userResponse: response, respondedAt: /* @__PURE__ */ new Date() }).where(and39(eq47(gutSignals.id, signalId), eq47(gutSignals.userId, userId2)));
+  baselineCache.delete(userId2);
+  console.log(`[Gut] user ${userId2} responded ${response} to signal ${signalId}`);
+  calibrateGutForUser(userId2).catch(
+    (err) => console.error(`[Gut] immediate recalibration failed for user ${userId2}:`, err)
+  );
+}
+async function getAndMarkMorningBriefSignals(userId2) {
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1e3);
+  const rows = await db.select().from(gutSignals).where(and39(
+    eq47(gutSignals.userId, userId2),
+    eq47(gutSignals.deliveredInMorningBrief, false),
+    gte12(gutSignals.createdAt, since),
+    sql25`${gutSignals.userResponse} IS NULL`
+  )).orderBy(desc20(gutSignals.confidenceScore)).limit(3);
+  const highConf = rows.filter((r) => r.confidenceScore >= 60);
+  if (highConf.length === 0) return [];
+  const selectedIds = highConf.map((r) => r.id);
+  await db.update(gutSignals).set({ deliveredInMorningBrief: true }).where(inArray3(gutSignals.id, selectedIds));
+  return highConf;
+}
+async function calibrateGutForUser(userId2) {
+  const allSignalTypes = [
+    "calendar_anomaly",
+    "deep_work_erosion",
+    "email_pattern",
+    "project_drift",
+    "relationship_anomaly"
+  ];
+  for (const signalType of allSignalTypes) {
+    try {
+      const [tcRow] = await db.select({ count: sql25`count(*)` }).from(gutSignals).where(and39(
+        eq47(gutSignals.userId, userId2),
+        eq47(gutSignals.signalType, signalType),
+        eq47(gutSignals.userResponse, "confirmed")
+      ));
+      const [tdRow] = await db.select({ count: sql25`count(*)` }).from(gutSignals).where(and39(
+        eq47(gutSignals.userId, userId2),
+        eq47(gutSignals.signalType, signalType),
+        eq47(gutSignals.userResponse, "dismissed")
+      ));
+      const [tiRow] = await db.select({ count: sql25`count(*)` }).from(gutSignals).where(and39(
+        eq47(gutSignals.userId, userId2),
+        eq47(gutSignals.signalType, signalType),
+        eq47(gutSignals.userResponse, "ignored")
+      ));
+      const confirmedCount = Number(tcRow?.count ?? 0);
+      const dismissedCount = Number(tdRow?.count ?? 0);
+      const ignoredCount = Number(tiRow?.count ?? 0);
+      const totalResponded = confirmedCount + dismissedCount;
+      const confirmationRate = totalResponded > 0 ? confirmedCount / totalResponded : null;
+      const gateAdjustment = deriveGateAdjustment(
+        confirmationRate ?? 0.5,
+        totalResponded
+      );
+      await db.insert(gutCalibration).values({
+        userId: userId2,
+        signalType,
+        confirmedCount,
+        dismissedCount,
+        ignoredCount,
+        confirmationRate,
+        gateAdjustment,
+        lastUpdatedAt: /* @__PURE__ */ new Date()
+      }).onConflictDoUpdate({
+        target: [gutCalibration.userId, gutCalibration.signalType],
+        set: {
+          confirmedCount,
+          dismissedCount,
+          ignoredCount,
+          confirmationRate,
+          gateAdjustment,
+          lastUpdatedAt: /* @__PURE__ */ new Date()
+        }
+      });
+    } catch (err) {
+      console.error(`[Gut] calibration failed for user ${userId2} type ${signalType}:`, err);
+    }
+  }
+  baselineCache.delete(userId2);
+  console.log(`[Gut] calibration updated for user ${userId2}`);
+}
+async function calibrateGutForAllUsers() {
+  const allUsers = await db.select({ id: users.id }).from(users).catch(() => []);
+  console.log(`[Gut] nightly calibration starting for ${allUsers.length} user(s)`);
+  let calibrated = 0;
+  for (const user of allUsers) {
+    try {
+      await calibrateGutForUser(user.id);
+      calibrated++;
+    } catch (err) {
+      console.error(`[Gut] calibration failed for user ${user.id}:`, err);
+    }
+  }
+  console.log(`[Gut] nightly calibration complete \u2014 ${calibrated}/${allUsers.length} user(s) updated`);
+}
+var baselineCache, BASELINE_TTL_MS, DEFAULT_BASELINE, URGENCY_SIGNALS, MANIPULATION_SIGNALS;
+var init_gut = __esm({
+  "server/intelligence/gut.ts"() {
+    "use strict";
+    init_db();
+    init_schema();
+    init_userTokenStore();
+    init_googleCalendar();
+    init_gmail();
+    baselineCache = /* @__PURE__ */ new Map();
+    BASELINE_TTL_MS = 6 * 60 * 60 * 1e3;
+    DEFAULT_BASELINE = {
+      avgMeetingDurationMins: 45,
+      knownSenderDomains: [],
+      deepWorkRatio: 0.4,
+      avgTaskVelocityPerDay: 3,
+      confirmThreshold: 70,
+      dismissThreshold: 30,
+      typeGateAdjustments: {}
+    };
+    URGENCY_SIGNALS = /\b(URGENT|ASAP|immediately|right away|as soon as possible|today|by EOD|by end of day|time.?sensitive)\b/i;
+    MANIPULATION_SIGNALS = /\b(I.?ve been waiting|you promised|as discussed|per my last|you said|you told me|you never|why haven.?t you)\b/i;
+  }
+});
+
 // server/routes.ts
 import { createServer } from "node:http";
-import OpenAI12 from "openai";
-import { eq as eq30, and as and25, desc as desc10, sql as sql16, gte as gte4 } from "drizzle-orm";
+import OpenAI15 from "openai";
+import { eq as eq48, and as and40, desc as desc21, sql as sql26, gte as gte13, asc as asc2 } from "drizzle-orm";
 import { YoutubeTranscript } from "youtube-transcript/dist/youtube-transcript.esm.js";
 import ytSearch from "yt-search";
 function getPersonaBlock(coachingMode) {
@@ -11372,7 +20210,7 @@ function getPersonaBlock(coachingMode) {
 }
 async function getUserLocalDate(userId2) {
   try {
-    const prefs = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq30(userPreferences.userId, userId2)).limit(1);
+    const prefs = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq48(userPreferences.userId, userId2)).limit(1);
     const tz = prefs[0]?.data?.timezone || "America/New_York";
     return (/* @__PURE__ */ new Date()).toLocaleDateString("en-CA", { timeZone: tz });
   } catch {
@@ -11387,10 +20225,10 @@ async function getMorningNoteSummary(userId2) {
     const thirtyDaysAgo = /* @__PURE__ */ new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
     const cutoffDate = thirtyDaysAgo.toISOString().slice(0, 10);
-    const notes = await db.select().from(morningVoiceNotes).where(and25(
-      eq30(morningVoiceNotes.userId, userId2),
-      gte4(morningVoiceNotes.recordedAt, cutoffDate)
-    )).orderBy(desc10(morningVoiceNotes.recordedAt)).limit(30);
+    const notes = await db.select().from(morningVoiceNotes).where(and40(
+      eq48(morningVoiceNotes.userId, userId2),
+      gte13(morningVoiceNotes.recordedAt, cutoffDate)
+    )).orderBy(desc21(morningVoiceNotes.recordedAt)).limit(30);
     if (notes.length === 0) return "";
     const moodCounts = {};
     const allThemes = {};
@@ -11425,7 +20263,7 @@ async function getMorningNoteSummary(userId2) {
     return "";
   }
 }
-function buildCoachSystemPrompt(goals2, stats2, history, calendarEvents = [], lifeContext2, gmailItems, gmailConnected, slackMessages, slackConnected, commitmentsList, coachingMode, memories, telegramMessages, telegramConnected, morningNoteSummary, documentsContext, crossChannelContext, soulBlock, daemonSection) {
+function buildCoachSystemPrompt(goals2, stats2, history, calendarEvents = [], lifeContext2, gmailItems, gmailConnected, slackMessages, slackConnected, commitmentsList, coachingMode, memories, telegramMessages, telegramConnected, morningNoteSummary, documentsContext, crossChannelContext, soulBlock, daemonSection, emotionalStateBlock, selfImprovementSection) {
   const completedHistory = history.filter((h) => h.completed);
   const skippedHistory = history.filter((h) => !h.completed);
   const completionRate = history.length > 0 ? Math.round(completedHistory.length / history.length * 100) : 0;
@@ -11524,7 +20362,7 @@ ${crossChannelContext || ""}
 ${COACHING_FRAMEWORKS}
 
 ${personaBlock}
-${soulBlock && soulBlock.trim() ? soulBlock : memoriesSection}
+${soulBlock && soulBlock.trim() ? soulBlock : memoriesSection}${emotionalStateBlock && emotionalStateBlock.trim() ? emotionalStateBlock : ""}
 
 ## User Profile
 - Current streak: ${stats2.streak || 0} days
@@ -11580,8 +20418,10 @@ You can take real actions on connected services. Use these tools proactively whe
 - **create_calendar_event** \u2014 When the user says "block time", "schedule a meeting", "add to my calendar" \u2014 call this to actually create the event. Don't describe what you'd do, do it.
 - **fetch_emails** \u2014 Fetch inbox emails on demand beyond the ambient context.
 - **send_email** \u2014 When the user explicitly confirms they want to send an email (not just draft), call this. Always confirm before sending.
+- **schedule_jarvis_task** \u2014 Schedule a future task for Jarvis to act on at a specific time. Use when the user says "remind me to...", "schedule...", "do X at Y time", or asks Jarvis to take an action later. Always confirm the scheduled time before calling. Supports recurrence (daily, weekly, weekdays, every Monday, etc.).
 - **daemon_action** \u2014 Execute actions on the user's paired daemon (desktop or Android). ${daemonSection || "Call check_connections first to determine which daemon type is paired and which actions are available."}
-
+${selfImprovementSection ? `
+${selfImprovementSection}` : ""}
 **Critical rule**: Never claim you can or cannot access a service without first calling check_connections. Never promise to send an email, create a calendar event, or run a daemon command if you haven't verified the service is connected. When a user asks to connect any channel, always call connect_channel rather than giving manual instructions.`;
 }
 async function buildPlanFromInputs(body) {
@@ -11605,6 +20445,7 @@ Left undone recently: ${skipped.map((h) => h.title).join(", ") || "none"}`;
     5: "On Fire \u2014 peak capacity, front-load the hard stuff"
   };
   const energyText = typeof energyLevel === "number" && energyLevel >= 1 && energyLevel <= 5 ? `${energyLevel}/5 \u2014 ${energyDescriptions[energyLevel]}` : "Not checked in";
+  const predictionContext = typeof body.predictionContext === "string" ? body.predictionContext : null;
   const modeInstructions = {
     mentor: "Coaching style: Mentor mode \u2014 include Deep Work blocks, be supportive, suggest learning and growth tasks.",
     drill: "Coaching style: Drill Sergeant mode \u2014 aggressive prioritization, no fluff, only the tasks that move the needle.",
@@ -11619,10 +20460,10 @@ Left undone recently: ${skipped.map((h) => h.title).join(", ") || "none"}`;
     ...Array.isArray(goals2) ? goals2.slice(0, 3).map((g) => g?.title).filter(Boolean) : [],
     ...Array.isArray(brainDump) ? brainDump.slice(0, 3).map((b) => b?.text || b).filter(Boolean) : []
   ].join(" \u2022 ");
-  const { soulSection: planSoul, patternSection: planPatterns, memorySection: planMemories } = await buildAiContextSections2(typeof userId2 === "string" ? userId2 : void 0, planSeed);
+  const { soulSection: planSoul, patternSection: planPatterns, memorySection: planMemories, emotionalStateSection: planEmotionalState } = await buildAiContextSections2(typeof userId2 === "string" ? userId2 : void 0, planSeed);
   const prompt = `You are Jarvis, an autonomous planning AI. Build a realistic, prioritized daily plan for this person.
 
-Today is ${dayOfWeek}, ${dateStr}.${planSoul}${planPatterns}${planMemories}
+Today is ${dayOfWeek}, ${dateStr}.${planSoul}${planPatterns}${planMemories}${planEmotionalState}
 
 ## Calendar
 ${calendarText}
@@ -11644,7 +20485,15 @@ ${existingText}
 
 ## Energy Level
 ${energyText}
-
+${predictionContext ? `
+## Jarvis Foresight (pattern-based predictions)
+${predictionContext}
+Scheduling rules based on these predictions:
+1. Place demanding/deep-focus tasks BEFORE the predicted dip hour and AT the predicted peak hour (if humanReadable mentions one).
+2. Move routine, low-effort, or administrative tasks INTO the predicted dip window.
+3. If a procrastination risk is flagged for a category, put a small "starter" version of that task first thing in the morning to build momentum.
+4. Assign a specific time (the "time" field in each task JSON) to at least one task that was explicitly positioned due to a Foresight prediction.
+` : ""}
 ${modeText}
 
 ## Rules
@@ -11659,9 +20508,9 @@ ${modeText}
 - Do NOT duplicate calendar events as tasks
 - Each task needs: title, category (one of: fitness, finance, career, personal, social), priority (high, medium, low), and optionally: duration (minutes), time (e.g. "9:30 AM"), description
 
-Return JSON: { "reasoning": "2-3 sentences on your planning logic, referencing specific data points", "tasks": [{ "title": "...", "category": "...", "priority": "...", "duration": 60, "time": "9:30 AM", "description": "..." }] }
+Return JSON: { "reasoning": "2-3 sentences on your planning logic \u2014 always name at least one concrete data point (goal, email, brain dump item). If Jarvis Foresight predictions are present, explicitly call out a task that was timed around a prediction (e.g. 'Deep work block at 9 AM \u2014 your predicted peak energy window' or 'Admin tasks slotted at 3 PM to avoid your energy dip').", "tasks": [{ "title": "...", "category": "...", "priority": "...", "duration": 60, "time": "9:30 AM", "description": "..." }] }
 Return ONLY the JSON object.`;
-  const response = await openai12.chat.completions.create({
+  const response = await openai15.chat.completions.create({
     model: "gpt-5-mini",
     messages: [{ role: "user", content: prompt }],
     response_format: { type: "json_object" },
@@ -11692,12 +20541,12 @@ async function buildPlanForUser(userId2) {
   try {
     const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
     const [goalsRow, historyRow, brainDumpRow, lifeContextRow, prefsRow, energyRow] = await Promise.all([
-      db.select({ data: goals.data }).from(goals).where(eq30(goals.userId, userId2)),
-      db.select({ data: completionHistory.data }).from(completionHistory).where(eq30(completionHistory.userId, userId2)),
-      db.select({ data: brainDumpInbox.data }).from(brainDumpInbox).where(eq30(brainDumpInbox.userId, userId2)),
-      db.select({ data: lifeContext.data }).from(lifeContext).where(eq30(lifeContext.userId, userId2)),
-      db.select({ data: userPreferences.data }).from(userPreferences).where(eq30(userPreferences.userId, userId2)),
-      db.select({ data: energyCheckins.data }).from(energyCheckins).where(and25(eq30(energyCheckins.userId, userId2), eq30(energyCheckins.date, today)))
+      db.select({ data: goals.data }).from(goals).where(eq48(goals.userId, userId2)),
+      db.select({ data: completionHistory.data }).from(completionHistory).where(eq48(completionHistory.userId, userId2)),
+      db.select({ data: brainDumpInbox.data }).from(brainDumpInbox).where(eq48(brainDumpInbox.userId, userId2)),
+      db.select({ data: lifeContext.data }).from(lifeContext).where(eq48(lifeContext.userId, userId2)),
+      db.select({ data: userPreferences.data }).from(userPreferences).where(eq48(userPreferences.userId, userId2)),
+      db.select({ data: energyCheckins.data }).from(energyCheckins).where(and40(eq48(energyCheckins.userId, userId2), eq48(energyCheckins.date, today)))
     ]);
     const goals2 = goalsRow[0]?.data || [];
     const completionHistory2 = historyRow[0]?.data || [];
@@ -11729,6 +20578,34 @@ async function buildPlanForUser(userId2) {
       }
     } catch {
     }
+    let predictionContext = null;
+    try {
+      const [{ getTodayPredictions: getTodayPredictions2 }, { analysePatterns: analysePatterns2 }] = await Promise.all([
+        Promise.resolve().then(() => (init_predictor(), predictor_exports)),
+        Promise.resolve().then(() => (init_pattern_analyser(), pattern_analyser_exports))
+      ]);
+      const [preds, analysis] = await Promise.all([
+        getTodayPredictions2(userId2, today, 55),
+        analysePatterns2(userId2, 60)
+      ]);
+      if (preds.length > 0) {
+        const peakHour = analysis.peakEnergyHour;
+        const dipHour = analysis.dipEnergyHour;
+        const fmtHour = (h) => h === 0 ? "midnight" : h < 12 ? `${h}am` : h === 12 ? "noon" : `${h - 12}pm`;
+        const anchorLines = [
+          `- [peak_energy_window] Schedule deep/focus work at or before ${fmtHour(peakHour)} \u2014 this is your historically highest-energy hour.`,
+          `- [low_energy_window] Avoid cognitively demanding tasks around ${fmtHour(dipHour)} \u2014 this is your historically lowest-energy hour.`
+        ].join("\n");
+        const predLines = preds.slice(0, 4).map((p) => {
+          const predictedHour = p.targetDatetime ? new Date(p.targetDatetime).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : null;
+          const timeTag = predictedHour ? ` @ ${predictedHour}` : "";
+          return `- [${p.predictionType}${timeTag}] ${p.humanReadable}${p.actionSuggestion ? ` \u2192 ${p.actionSuggestion}` : ""}`;
+        }).join("\n");
+        predictionContext = `${anchorLines}
+${predLines}`;
+      }
+    } catch {
+    }
     const result = await buildPlanFromInputs({
       goals: goals2.map((g) => ({
         title: g.title,
@@ -11744,7 +20621,8 @@ async function buildPlanForUser(userId2) {
       energyLevel: energyLevel ?? 3,
       coachingMode,
       existingTasks: [],
-      userId: userId2
+      userId: userId2,
+      predictionContext
     });
     if (!result || result.tasks.length === 0) return null;
     return result;
@@ -11772,6 +20650,89 @@ async function registerRoutes(app2) {
   registerDataRoutes(app2);
   registerTelegramRoutes(app2);
   registerChannelRoutes(app2);
+  registerDiscordScheduleRoutes(app2);
+  app2.use("/api/drive", driveRouter);
+  app2.get("/api/ego/dashboard", async (req, res) => {
+    try {
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
+      const { analyseEgo: analyseEgo2, getISOWeekMonday: getISOWeekMonday2 } = await Promise.resolve().then(() => (init_ego(), ego_exports));
+      const weekOf = getISOWeekMonday2(/* @__PURE__ */ new Date());
+      const analysis = await analyseEgo2(userId2, weekOf);
+      const latestReport = await db.select().from(egoWeeklyReports).where(eq48(egoWeeklyReports.userId, userId2)).orderBy(desc21(egoWeeklyReports.createdAt)).limit(1);
+      res.json({
+        analysis,
+        latestReport: latestReport[0] ?? null
+      });
+    } catch (err) {
+      console.error("[Ego] dashboard failed:", err);
+      res.status(500).json({ error: "Failed to load ego dashboard" });
+    }
+  });
+  app2.get("/api/ego/reports", async (req, res) => {
+    try {
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
+      const reports = await db.select().from(egoWeeklyReports).where(eq48(egoWeeklyReports.userId, userId2)).orderBy(desc21(egoWeeklyReports.createdAt)).limit(12);
+      res.json({ reports });
+    } catch (err) {
+      console.error("[Ego] reports failed:", err);
+      res.status(500).json({ error: "Failed to load reports" });
+    }
+  });
+  app2.post("/api/ego/trigger", async (req, res) => {
+    try {
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
+      const isDev = process.env.NODE_ENV !== "production";
+      const forceOverride = req.query.force === "true";
+      if (!isDev && !forceOverride) {
+        return res.status(403).json({ error: "Manual trigger not available in production (pass ?force=true to override)" });
+      }
+      const { runEgoForUser: runEgoForUser2, getISOWeekMonday: getISOWeekMonday2 } = await Promise.resolve().then(() => (init_ego(), ego_exports));
+      const weekOf = getISOWeekMonday2(/* @__PURE__ */ new Date());
+      const delivered = await runEgoForUser2(userId2, weekOf);
+      res.json({ ok: true, delivered, weekOf });
+    } catch (err) {
+      console.error("[Ego] trigger failed:", err);
+      res.status(500).json({ error: "Failed to trigger ego report" });
+    }
+  });
+  app2.get("/api/discord/status", async (req, res) => {
+    try {
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
+      const links = await db.select().from(channelLinks).where(and40(eq48(channelLinks.userId, userId2), eq48(channelLinks.channel, "discord")));
+      const link = links[0];
+      const meta = link?.metadata;
+      res.json({
+        connected: links.length > 0,
+        discordUsername: meta?.discordUsername ?? null
+      });
+    } catch (error) {
+      console.error("Error getting Discord status:", error);
+      res.status(500).json({ error: "Failed to get Discord status" });
+    }
+  });
+  app2.post("/api/discord/link", async (req, res) => {
+    try {
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
+      const { code } = req.body;
+      if (!code || code.trim().length === 0) {
+        return res.status(400).json({ error: "Pairing code is required." });
+      }
+      const { completePairing: completePairing2 } = await Promise.resolve().then(() => (init_manager(), manager_exports));
+      const result = await completePairing2(userId2, code.trim().toUpperCase());
+      if (!result.ok) {
+        return res.status(400).json({ error: result.error ?? "Pairing failed." });
+      }
+      res.json({ ok: true, discordUsername: result.discordUsername });
+    } catch (error) {
+      console.error("Error completing Discord pairing:", error);
+      res.status(500).json({ error: "Failed to complete Discord pairing." });
+    }
+  });
   app2.post("/api/ai/resize-task", async (req, res) => {
     try {
       const { taskTitle, taskDescription, detailLevel, direction, history } = req.body;
@@ -11835,9 +20796,75 @@ async function registerRoutes(app2) {
     try {
       const result = await buildPlanFromInputs(req.body);
       res.json(result);
+      const userId2 = req.userId;
+      if (userId2 && result && result.tasks.length > 0) {
+        (async () => {
+          try {
+            const { getUserDriveSettings: getUserDriveSettings2 } = await Promise.resolve().then(() => (init_driveRoutes(), driveRoutes_exports));
+            const { createDriveTextFile: createDriveTextFile2 } = await Promise.resolve().then(() => (init_googleDrive(), googleDrive_exports));
+            const drive = await getUserDriveSettings2(userId2);
+            if (drive.enabled && drive.autoSavePlans && drive.accessToken) {
+              const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+              const lines = [`# Daily Plan \u2014 ${today}`, "", "## Tasks", ""];
+              for (const t of result.tasks) {
+                const dur = t.duration ? ` (${t.duration} min)` : "";
+                const tm = t.time ? ` @ ${t.time}` : "";
+                lines.push(`\u2B1C **${t.title}**${tm}${dur}`);
+                if (t.description) lines.push(`   ${t.description}`);
+              }
+              if (result.reasoning) lines.unshift(`> ${result.reasoning}`, "", lines.shift());
+              await createDriveTextFile2(
+                drive.accessToken,
+                `Daily Plan \u2014 ${today}`,
+                lines.join("\n"),
+                { convertToDoc: true, folderId: drive.folderId || void 0 }
+              );
+              console.log(`[Route] Drive auto-save (build-plan) for user ${userId2}`);
+            }
+          } catch (driveErr) {
+            console.error("[Route] Drive auto-save (build-plan) failed:", driveErr);
+          }
+        })();
+      }
     } catch (error) {
       console.error("Error building plan:", error);
       res.status(500).json({ error: "Failed to build plan" });
+    }
+  });
+  app2.post("/api/coach/break-down-task", async (req, res) => {
+    try {
+      const { title, description } = req.body;
+      if (!title) return res.status(400).json({ error: "title is required" });
+      const prompt = `Break down the following task into exactly 3-5 clear, actionable sub-steps that can each be completed independently.
+
+Task: "${title}"${description ? `
+Context: ${description}` : ""}
+
+Return JSON only \u2014 no markdown, no explanation:
+{
+  "subtasks": [
+    { "title": "concise action-verb sub-task", "category": "work|personal|health|finance|social|learning", "priority": "high|medium|low" }
+  ]
+}
+
+Rules:
+- Each sub-task title should start with a verb (e.g. "Write", "Review", "Send", "Schedule")
+- Keep each title under 60 characters
+- Choose category that best fits the subtask
+- Assign priority based on urgency/importance relative to the overall task`;
+      const response = await openai15.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [{ role: "user", content: prompt }],
+        response_format: { type: "json_object" },
+        max_completion_tokens: 600
+      });
+      const content = response.choices[0]?.message?.content || '{"subtasks":[]}';
+      const parsed = JSON.parse(content);
+      const subtasks = Array.isArray(parsed.subtasks) ? parsed.subtasks.slice(0, 5) : [];
+      res.json({ subtasks });
+    } catch (error) {
+      console.error("Error breaking down task:", error);
+      res.status(500).json({ error: "Failed to break down task" });
     }
   });
   const coachTools = [
@@ -12065,12 +21092,14 @@ async function registerRoutes(app2) {
       type: "function",
       function: {
         name: "search_youtube",
-        description: "Search YouTube server-side and return structured results with title, channel name, view count, published date, duration, and video ID \u2014 without touching the phone. Use this BEFORE opening a video so you can intelligently pick the best result (reputable channel, high views, recent date). Returns up to 10 results. Then use fetch_youtube_transcript to get the transcript of the chosen video, and android_browse to open it on the phone.",
+        description: "Search YouTube server-side and return structured results with title, channel name, view count, published date, duration, and video ID \u2014 without touching the phone. Use this BEFORE opening a video so you can intelligently pick the best result (reputable channel, high views, recent date). Returns up to 10 results. Then use fetch_youtube_transcript to get the transcript of the chosen video, and android_browse to open it on the phone. Pass trending:true when the user asks for 'trending', 'viral', 'momentum', or 'views per hour' content \u2014 this sorts by views/hour instead of total views.",
         parameters: {
           type: "object",
           properties: {
             query: { type: "string", description: "Search query, e.g. 'how to improve focus ADHD'" },
-            maxResults: { type: "number", description: "Number of results to return (1-10, default 8)" }
+            maxResults: { type: "number", description: "Number of results to return (1-10, default 8)" },
+            trending: { type: "boolean", description: "If true, sort by views-per-hour (velocity) instead of total views. Only use when user explicitly asks for trending/viral/momentum content." },
+            daysBack: { type: "number", description: "Only include videos published within this many days (default 5). Used with trending:true." }
           },
           required: ["query"]
         }
@@ -12107,6 +21136,23 @@ async function registerRoutes(app2) {
           required: ["channel"]
         }
       }
+    },
+    {
+      type: "function",
+      function: {
+        name: "schedule_jarvis_task",
+        description: "Schedule a future task for Jarvis to act on at a specific time. Use when the user says 'remind me to...', 'schedule...', 'do X at Y time', or asks Jarvis to take an action later. Always confirm the scheduled time before calling.",
+        parameters: {
+          type: "object",
+          properties: {
+            title: { type: "string", description: "Short title for the scheduled task (e.g. 'Review inbox', 'Send weekly update')" },
+            description: { type: "string", description: "Optional details about what Jarvis should do when the time arrives" },
+            scheduledAt: { type: "string", description: "ISO 8601 datetime when to execute the task (e.g. '2025-04-23T09:00:00Z')" },
+            recurrence: { type: "string", description: "Optional recurrence pattern: 'daily', 'weekly', 'weekdays', 'every Monday', 'every Sunday', etc. Omit for one-time tasks." }
+          },
+          required: ["title", "scheduledAt"]
+        }
+      }
     }
   ];
   function fuzzyMatch(needle, haystack) {
@@ -12126,7 +21172,7 @@ async function registerRoutes(app2) {
     try {
       switch (toolName) {
         case "add_task": {
-          const planResult = await db.select({ data: plans.data }).from(plans).where(and25(eq30(plans.userId, userId2), eq30(plans.date, todayKey)));
+          const planResult = await db.select({ data: plans.data }).from(plans).where(and40(eq48(plans.userId, userId2), eq48(plans.date, todayKey)));
           const plan = planResult.length > 0 ? planResult[0].data : { date: todayKey, tasks: [], greeting: "", insight: "" };
           const tasks = Array.isArray(plan.tasks) ? plan.tasks : [];
           const catMap = { health: "fitness", work: "career", learning: "personal" };
@@ -12147,7 +21193,7 @@ async function registerRoutes(app2) {
           return { result: "success", label: `Task added to today`, detail: `Added "${args.title}"` };
         }
         case "add_to_brain_dump": {
-          const bdResult = await db.select({ data: brainDumpInbox.data }).from(brainDumpInbox).where(eq30(brainDumpInbox.userId, userId2));
+          const bdResult = await db.select({ data: brainDumpInbox.data }).from(brainDumpInbox).where(eq48(brainDumpInbox.userId, userId2));
           const items = bdResult.length > 0 ? Array.isArray(bdResult[0].data) ? bdResult[0].data : [] : [];
           items.unshift({
             id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
@@ -12161,7 +21207,7 @@ async function registerRoutes(app2) {
           return { result: "success", label: `Added to brain dump`, detail: `Added "${args.text}"` };
         }
         case "log_goal_progress": {
-          const goalsResult = await db.select({ data: goals.data }).from(goals).where(eq30(goals.userId, userId2));
+          const goalsResult = await db.select({ data: goals.data }).from(goals).where(eq48(goals.userId, userId2));
           if (goalsResult.length === 0) return { result: "error", label: "No goals found", detail: "User has no goals set" };
           const goalsList = Array.isArray(goalsResult[0].data) ? goalsResult[0].data : [];
           const matched = goalsList.find((g) => fuzzyMatch(args.goalTitle, g.title));
@@ -12175,7 +21221,7 @@ async function registerRoutes(app2) {
           return { result: "success", label: `Progress logged`, detail: `Added ${args.amount} to "${matched.title}"` };
         }
         case "update_life_context": {
-          const lcResult = await db.select({ data: lifeContext.data }).from(lifeContext).where(eq30(lifeContext.userId, userId2));
+          const lcResult = await db.select({ data: lifeContext.data }).from(lifeContext).where(eq48(lifeContext.userId, userId2));
           const existing = lcResult.length > 0 ? lcResult[0].data : {};
           const merged = { ...existing };
           if (args.priorityGoal) merged.priorityGoal = args.priorityGoal;
@@ -12192,7 +21238,7 @@ async function registerRoutes(app2) {
           return { result: "success", label: `Context updated`, detail: `Updated: ${updatedFields}` };
         }
         case "complete_task": {
-          const planResult = await db.select({ data: plans.data }).from(plans).where(and25(eq30(plans.userId, userId2), eq30(plans.date, todayKey)));
+          const planResult = await db.select({ data: plans.data }).from(plans).where(and40(eq48(plans.userId, userId2), eq48(plans.date, todayKey)));
           if (planResult.length === 0) return { result: "error", label: "No plan today", detail: "No plan found for today" };
           const plan = planResult[0].data;
           const tasks = Array.isArray(plan.tasks) ? plan.tasks : [];
@@ -12217,6 +21263,12 @@ async function registerRoutes(app2) {
               await markSoulStale2(userId2);
             } catch (extractErr) {
               console.error("[Phase4] plan-completion extract failed:", extractErr);
+            }
+            try {
+              const { resolveActionByTaskId: resolveActionByTaskId2 } = await Promise.resolve().then(() => (init_actionLog(), actionLog_exports));
+              await resolveActionByTaskId2(userId2, "task_suggested", matched.id, "completed");
+              await resolveActionByTaskId2(userId2, "prediction_made", matched.id, "completed");
+            } catch {
             }
           })();
           return { result: "success", label: `Task completed`, detail: `Marked "${matched.title}" as done` };
@@ -12245,15 +21297,19 @@ async function registerRoutes(app2) {
             getValidGoogleToken(userId2).catch(() => null),
             getValidMicrosoftToken(userId2).catch(() => null),
             getUserOAuthStatus(userId2).catch(() => ({})),
-            db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq30(telegramLinks.userId, userId2)).limit(1),
-            db.select().from(channelLinks).where(eq30(channelLinks.userId, userId2))
+            db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq48(telegramLinks.userId, userId2)).limit(1),
+            db.select().from(channelLinks).where(eq48(channelLinks.userId, userId2))
           ]);
           const daemonOnline = isUserPaired(userId2);
-          const isAndroid = daemonOnline ? await isAndroidDaemonActive(userId2) : false;
+          const isAndroid = isAndroidDaemonActive(userId2);
           const googleEmail = oauthStatus?.google?.email || oauthStatus?.google?.accounts?.[0]?.email || "unknown";
           const msEmail = oauthStatus?.microsoft?.email || oauthStatus?.microsoft?.accounts?.[0]?.email || "unknown";
           const slackConnectedCheck = oauthStatus?.slack?.connected ?? false;
-          const daemonLabel = daemonOnline ? isAndroid ? `Android Device Daemon: \u2713 online \u2014 use android_open_app, android_browse, android_screenshot, android_read_screen, android_tap, android_type, android_swipe, android_press_key, android_file_list, android_file_read, android_notifications_list, notify, android_return_to_jarvis. DO NOT use desktop shell/file actions. After completing a multi-step phone task: (1) call notify (title:'Jarvis \u2713', body: one-line summary), then (2) call android_return_to_jarvis to navigate the phone back to the Jarvis chat. If a tool returns result:error, stop and report the error immediately \u2014 do NOT fabricate success. After android_open_app or android_browse succeeds, ALWAYS call android_read_screen before describing screen content. For app searches use deep links: YouTube='vnd.youtube://results?search_query=QUERY', Maps='geo:0,0?q=QUERY', Spotify='spotify:search:QUERY'.` : `Desktop Daemon: \u2713 online \u2014 use shell, notify, file_read, file_write, file_list actions.` : `Android/Desktop Daemon: \u2717 not connected \u2014 user must open Jarvis app \u2192 Profile \u2192 Android Device \u2192 Get Pairing Code, then open the Jarvis Daemon APK, enter server URL https://GameplanAI.replit.app and the 8-character code, tap Pair`;
+          const isDesktop = isDesktopDaemonActive(userId2);
+          const daemonParts = [];
+          if (isDesktop) daemonParts.push(`Desktop Daemon: \u2713 online \u2014 use shell, notify, file_read, file_write, file_list actions.`);
+          if (isAndroid) daemonParts.push(`Android Device Daemon: \u2713 online \u2014 use android_open_app, android_browse, android_screenshot, android_read_screen, android_tap, android_type, android_swipe, android_press_key, android_file_list, android_file_read, android_notifications_list, notify, android_return_to_jarvis. After completing a multi-step phone task: (1) call notify (title:'Jarvis \u2713', body: one-line summary), then (2) call android_return_to_jarvis to navigate the phone back to the Jarvis chat. If a tool returns result:error, stop and report the error immediately \u2014 do NOT fabricate success. After android_open_app or android_browse succeeds, ALWAYS call android_read_screen before describing screen content. For app searches use deep links: YouTube='vnd.youtube://results?search_query=QUERY', Maps='geo:0,0?q=QUERY', Spotify='spotify:search:QUERY'.`);
+          const daemonLabel = daemonOnline ? daemonParts.join(" | ") : `Android/Desktop Daemon: \u2717 not connected \u2014 user must open Jarvis app \u2192 Profile \u2192 Android Device \u2192 Get Pairing Code, then open the Jarvis Daemon APK, enter server URL https://GameplanAI.replit.app and the 8-character code, tap Pair`;
           const lines = [
             `Google (Gmail + Calendar): ${googleToken ? `\u2713 token valid \u2014 ${googleEmail}` : "\u2717 not connected or token expired (reconnect needed)"}`,
             `Microsoft (Outlook + Calendar): ${msToken ? `\u2713 token valid \u2014 ${msEmail}` : "\u2717 not connected or token expired (reconnect needed)"}`,
@@ -12412,11 +21468,13 @@ ${lines.join("\n")}`);
           if (!isUserPaired(userId2)) {
             return { result: "error", label: "Daemon not connected", detail: "No daemon paired. Install and pair either the desktop daemon or the Android APK from Profile \u2192 Connected Channels." };
           }
-          const isAndroidDaemon = await isAndroidDaemonActive(userId2);
-          const androidActions = ["android_open_app", "android_browse", "android_return_to_jarvis", "android_screenshot", "android_read_screen", "android_tap", "android_type", "android_swipe", "android_press_key", "android_file_list", "android_file_read", "android_notifications_list", "android_wait", "notify"];
-          const desktopActions = ["shell", "notify", "file_read", "file_write", "file_list"];
+          const isAndroidDaemon = isAndroidDaemonActive(userId2);
+          const androidActions = ["android_open_app", "android_browse", "android_return_to_jarvis", "android_screenshot", "android_read_screen", "android_tap", "android_type", "android_swipe", "android_press_key", "android_file_list", "android_file_read", "android_notifications_list", "android_wait"];
+          const desktopActions = ["shell", "file_read", "file_write", "file_list"];
           let op;
-          if (androidActions.includes(action)) {
+          if (action === "notify") {
+            op = { type: "notify", title: String(args.title || "Jarvis"), body: String(args.body || "") };
+          } else if (androidActions.includes(action)) {
             if (!isAndroidDaemon) return { result: "error", label: "Android daemon required", detail: "This action requires an Android daemon. The paired daemon is a desktop daemon." };
             const permMap = {
               android_screenshot: "android_screenshot",
@@ -12566,15 +21624,13 @@ ${shadeText}`
               op = { type: "android_file_read", path: String(args.path) };
             }
           } else if (desktopActions.includes(action)) {
-            if (isAndroidDaemon) return { result: "error", label: "Wrong daemon type", detail: `Action '${action}' is desktop-only. Use android_* actions for the connected Android daemon.` };
+            if (!isDesktopDaemonActive(userId2)) return { result: "error", label: "Desktop daemon required", detail: `Action '${action}' requires the Desktop Daemon. Connect it from Profile \u2192 Connected Channels.` };
             if (!await isDaemonActionAllowed(userId2, action)) {
               return { result: "error", label: `Action '${action}' not permitted`, detail: `Enable '${action}' in Profile \u2192 Connected Channels \u2192 Desktop Daemon \u2192 Permissions.` };
             }
             if (action === "shell") {
               if (!args.cmd) return { result: "error", label: "cmd required", detail: "Provide cmd for shell action." };
               op = { type: "shell", cmd: String(args.cmd), cwd: args.cwd ? String(args.cwd) : void 0 };
-            } else if (action === "notify") {
-              op = { type: "notify", title: String(args.title || "Jarvis"), body: String(args.body || "") };
             } else if (action === "file_read") {
               if (!args.path) return { result: "error", label: "path required", detail: "Provide path for file_read." };
               op = { type: "file_read", path: String(args.path) };
@@ -12657,9 +21713,58 @@ ${recentStr}`
           const query = String(args.query || "").trim();
           if (!query) return { result: "error", label: "query required", detail: "Provide a search query." };
           const maxResults = Math.min(Math.max(typeof args.maxResults === "number" ? args.maxResults : 8, 1), 10);
+          const trendingMode = !!args.trending;
+          const daysBack = typeof args.daysBack === "number" ? args.daysBack : 5;
           try {
             const searchResult = await ytSearch({ query, pageStart: 1, pageEnd: 1 });
-            const videos = (searchResult.videos || []).slice(0, maxResults);
+            let videos = searchResult.videos || [];
+            if (trendingMode) {
+              const now = Date.now();
+              const daysMs = daysBack * 24 * 60 * 60 * 1e3;
+              videos = videos.map((v) => {
+                const viewCount = typeof v.views === "number" ? v.views : parseInt(String(v.views).replace(/[^0-9]/g, ""), 10) || 0;
+                let ageMs = daysBack * 24 * 60 * 60 * 1e3;
+                if (v.ago) {
+                  const agoMatch = v.ago.match(/(\d+)\s*(second|minute|hour|day|week|month|year)/i);
+                  if (agoMatch) {
+                    const n = parseInt(agoMatch[1], 10);
+                    const unit = agoMatch[2].toLowerCase();
+                    const unitMs = {
+                      second: 1e3,
+                      minute: 6e4,
+                      hour: 36e5,
+                      day: 864e5,
+                      week: 6048e5,
+                      month: 2592e6,
+                      year: 31536e6
+                    };
+                    ageMs = n * (unitMs[unit] || 864e5);
+                  }
+                }
+                const ageHours = Math.max(ageMs / 36e5, 1);
+                const viewsPerHour = Math.round(viewCount / ageHours);
+                return { ...v, viewCount, ageMs, viewsPerHour };
+              }).filter((v) => v.ageMs <= daysMs).sort((a, b) => b.viewsPerHour - a.viewsPerHour).slice(0, maxResults);
+              if (videos.length === 0) return { result: "error", label: "No trending results", detail: `No videos found in the last ${daysBack} days for: "${query}"` };
+              const formatted2 = videos.map((v, i) => {
+                const views = v.viewCount.toLocaleString();
+                const vph = v.viewsPerHour.toLocaleString();
+                const ago = v.ago || "unknown date";
+                return `${i + 1}. "${v.title}"
+   Channel: ${v.author?.name || "unknown"}
+   Views/hr: ${vph} | Total: ${views} | Posted: ${ago}
+   Video ID: ${v.videoId}
+   URL: ${v.url}`;
+              }).join("\n\n");
+              return {
+                result: "success",
+                label: `YouTube trending: ${videos.length} results`,
+                detail: `Trending search (views/hour): "${query}" \u2014 last ${daysBack} days
+
+${formatted2}`
+              };
+            }
+            videos = videos.slice(0, maxResults);
             if (videos.length === 0) return { result: "error", label: "No results", detail: `No YouTube videos found for: "${query}"` };
             const formatted = videos.map((v, i) => {
               const views = typeof v.views === "number" ? v.views.toLocaleString() : v.views || "unknown";
@@ -12718,6 +21823,25 @@ ${fullText}` };
           }
           return { result: "success", label: toolResult.label || "Connect channel", detail: toolResult.detail || toolResult.content };
         }
+        case "schedule_jarvis_task": {
+          if (!args.title || !args.scheduledAt) {
+            return { result: "error", label: "Missing required fields", detail: "title and scheduledAt are required" };
+          }
+          const scheduledDate = new Date(args.scheduledAt);
+          if (isNaN(scheduledDate.getTime())) {
+            return { result: "error", label: "Invalid date", detail: `scheduledAt "${args.scheduledAt}" is not a valid ISO 8601 datetime` };
+          }
+          await db.insert(jarvisScheduledTasks).values({
+            userId: userId2,
+            title: String(args.title),
+            description: args.description ? String(args.description) : null,
+            scheduledAt: scheduledDate,
+            recurrence: args.recurrence ? String(args.recurrence) : null
+          });
+          const timeLabel = scheduledDate.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+          const recurrenceLabel = args.recurrence ? ` (${args.recurrence})` : "";
+          return { result: "success", label: "Task scheduled", detail: `"${args.title}" scheduled for ${timeLabel}${recurrenceLabel}` };
+        }
         default:
           return { result: "error", label: "Unknown action", detail: `Unknown tool: ${toolName}` };
       }
@@ -12743,16 +21867,16 @@ ${fullText}` };
     try {
       const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1e3);
       const unanswered = await db.select().from(proactiveQuestionsSent).where(
-        and25(
-          eq30(proactiveQuestionsSent.userId, userId2),
-          sql16`${proactiveQuestionsSent.answeredAt} IS NULL`,
-          sql16`${proactiveQuestionsSent.sentAt} > ${twentyFourHoursAgo}`
+        and40(
+          eq48(proactiveQuestionsSent.userId, userId2),
+          sql26`${proactiveQuestionsSent.answeredAt} IS NULL`,
+          sql26`${proactiveQuestionsSent.sentAt} > ${twentyFourHoursAgo}`
         )
-      ).orderBy(desc10(proactiveQuestionsSent.sentAt)).limit(1);
+      ).orderBy(desc21(proactiveQuestionsSent.sentAt)).limit(1);
       if (unanswered.length > 0) {
         const lastUserMessage = messages.filter((m) => m.role === "user").pop();
         if (!lastUserMessage?.content) return;
-        const checkResponse = await openai12.chat.completions.create({
+        const checkResponse = await openai15.chat.completions.create({
           model: "gpt-5-mini",
           messages: [{
             role: "user",
@@ -12767,7 +21891,7 @@ Answer (yes/no):`
         });
         const answer = (checkResponse.choices[0]?.message?.content || "").trim().toLowerCase();
         if (answer.startsWith("yes")) {
-          await db.update(proactiveQuestionsSent).set({ answeredAt: /* @__PURE__ */ new Date() }).where(eq30(proactiveQuestionsSent.id, unanswered[0].id));
+          await db.update(proactiveQuestionsSent).set({ answeredAt: /* @__PURE__ */ new Date() }).where(eq48(proactiveQuestionsSent.id, unanswered[0].id));
           console.log(`[Profile] Marked proactive question as answered via coach chat: ${unanswered[0].id}`);
         }
       }
@@ -12803,7 +21927,7 @@ Answer (yes/no):`
       let userCommitments = [];
       if (userId2) {
         try {
-          userCommitments = await db.select().from(commitments).where(and25(eq30(commitments.userId, userId2), eq30(commitments.status, "pending"))).orderBy(desc10(commitments.extractedAt)).limit(20);
+          userCommitments = await db.select().from(commitments).where(and40(eq48(commitments.userId, userId2), eq48(commitments.status, "pending"))).orderBy(desc21(commitments.extractedAt)).limit(20);
         } catch {
         }
       }
@@ -12813,7 +21937,7 @@ Answer (yes/no):`
       if (userId2) {
         try {
           const [rows, noteSummary, docsCtx] = await Promise.all([
-            db.select({ content: userMemories.content, category: userMemories.category }).from(userMemories).where(eq30(userMemories.userId, userId2)).orderBy(desc10(userMemories.extractedAt)).limit(50),
+            db.select({ content: userMemories.content, category: userMemories.category }).from(userMemories).where(eq48(userMemories.userId, userId2)).orderBy(desc21(userMemories.extractedAt)).limit(50),
             getMorningNoteSummary(userId2),
             getUserDocumentContext(userId2)
           ]);
@@ -12828,12 +21952,12 @@ Answer (yes/no):`
         try {
           const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1e3);
           const recentUnanswered = await db.select().from(proactiveQuestionsSent).where(
-            and25(
-              eq30(proactiveQuestionsSent.userId, userId2),
-              sql16`${proactiveQuestionsSent.answeredAt} IS NULL`,
-              sql16`${proactiveQuestionsSent.sentAt} > ${twentyFourHoursAgo}`
+            and40(
+              eq48(proactiveQuestionsSent.userId, userId2),
+              sql26`${proactiveQuestionsSent.answeredAt} IS NULL`,
+              sql26`${proactiveQuestionsSent.sentAt} > ${twentyFourHoursAgo}`
             )
-          ).orderBy(desc10(proactiveQuestionsSent.sentAt)).limit(3);
+          ).orderBy(desc21(proactiveQuestionsSent.sentAt)).limit(3);
           if (recentUnanswered.length > 0) {
             proactiveQuestionContext = `
 ## Recent Proactive Questions You Asked (unanswered)
@@ -12852,8 +21976,18 @@ You recently sent these curiosity-driven questions via Telegram. If the user's m
         }
       }
       const soulBlock = await getSoulPromptBlock(userId2);
+      let emotionalStateBlock = "";
+      if (userId2) {
+        try {
+          const { getEmotionalState: getEmotionalState2, buildEmotionalStatePromptBlock: buildEmotionalStatePromptBlock2 } = await Promise.resolve().then(() => (init_emotional_state(), emotional_state_exports));
+          const emotionalState = await getEmotionalState2(userId2);
+          if (emotionalState) emotionalStateBlock = buildEmotionalStatePromptBlock2(emotionalState);
+        } catch {
+        }
+      }
       const daemonPaired = userId2 ? isUserPaired(userId2) : false;
-      const [androidActive, daemonDeviceMeta] = daemonPaired && userId2 ? await Promise.all([isAndroidDaemonActive(userId2), getDaemonDeviceMeta(userId2)]) : [false, { hostname: null, platform: null }];
+      const androidActive = userId2 ? isAndroidDaemonActive(userId2) : false;
+      const daemonDeviceMeta = daemonPaired && userId2 ? await getDaemonDeviceMeta(userId2, androidActive ? "android" : "desktop") : { hostname: null, platform: null };
       const hostname = daemonDeviceMeta.hostname || "";
       const isSamsung = hostname.startsWith("SM-") || hostname.toLowerCase().includes("samsung");
       const deviceHints = androidActive ? [
@@ -12926,7 +22060,15 @@ After calling notify, ALWAYS call android_return_to_jarvis as the very last step
 
 SCREENSHOT DISPLAY \u2014 screenshots ARE shown inline in the Jarvis chat as viewable images:
 When android_screenshot succeeds, the screenshot is automatically stored and a preview URL is returned. Include a brief description of what the screenshot shows (e.g. "Here's the current Facebook screen:") before the tool result is displayed \u2014 the image will appear inline in the chat for the user to see directly.` : "Desktop Daemon is ACTIVE. Use shell, notify, file_read, file_write, file_list actions. ALWAYS report errors immediately if a tool returns result:error. Use daemon_diagnostic (no args) to check daemon health before multi-step sequences or when ops are failing." : `\u26A0\uFE0F NO DAEMON CONNECTED. Do NOT call daemon_action \u2014 it will fail with "daemon not connected". If the user asks to control their phone or computer, tell them exactly this: "Your phone daemon isn't connected. To fix it: (1) Open the Jarvis app \u2192 Profile \u2192 scroll to 'Android Device' \u2192 tap 'Get Pairing Code', (2) Open the Jarvis Daemon APK on your phone, (3) Make sure the Server URL is https://GameplanAI.replit.app, (4) Enter the 8-character pairing code, (5) Tap Pair. The status dot should turn green within a few seconds." Do not attempt daemon_action until they confirm it's connected.`;
-      const systemPrompt = buildCoachSystemPrompt(goals2 || [], stats2 || {}, history || [], calendarEvents || [], lifeContext2 || null, resolvedGmailItems, resolvedGmailConnected, slackMessages || [], slackConnected ?? false, userCommitments, coachingMode, memories, telegramMessages || [], telegramConnected ?? false, morningNoteSummary, documentsContext, crossChannelContext, soulBlock, daemonSection);
+      const selfImprovementSection = `## Self-Improvement: Building New Jarvis Tools
+You can extend yourself by building new tools directly. Generate the complete TypeScript code for the tool yourself and call \`build_feature\` to write it to disk, register it in the tool index, and run a smoke test \u2014 all in one step.
+
+**When to build a new tool**: The user asks for a new Jarvis capability that doesn't exist yet (e.g. "add a tool to check stock prices", "build a Notion integration").
+
+**How to build**: Think through what the tool needs to do, write the full TypeScript code following the AgentTool pattern, then call \`build_feature\` with feature_name, description, and tool_code (the complete file content). The tool must export a const of type AgentTool.
+
+**After building**: The server restarts automatically so the new tool becomes active. Use \`test_tool\` to manually re-test any built tool. All builds are logged in Settings \u2192 Build History.`;
+      const systemPrompt = buildCoachSystemPrompt(goals2 || [], stats2 || {}, history || [], calendarEvents || [], lifeContext2 || null, resolvedGmailItems, resolvedGmailConnected, slackMessages || [], slackConnected ?? false, userCommitments, coachingMode, memories, telegramMessages || [], telegramConnected ?? false, morningNoteSummary, documentsContext, crossChannelContext, soulBlock, daemonSection, emotionalStateBlock, selfImprovementSection);
       const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
       const lastUserContent = typeof lastUserMsg?.content === "string" ? lastUserMsg.content.toLowerCase() : "";
       const deviceControlKeywords = [
@@ -13037,7 +22179,7 @@ When android_screenshot succeeds, the screenshot is automatically stored and a p
             ...chatMessages,
             ...toolMessages
           ];
-          const phase1 = await openai12.chat.completions.create({
+          const phase1 = await openai15.chat.completions.create({
             model: "gpt-5-mini",
             messages: currentMessages,
             tools: coachTools,
@@ -13296,7 +22438,7 @@ ${failedDaemonActions.map((a) => `- ${a.label}: ${a.result}`).join("\n")}`
         });
       }
       const streamMessages = toolMessages.length > 0 ? [...chatMessages, ...toolMessages] : chatMessages;
-      const stream = await openai12.chat.completions.create({
+      const stream = await openai15.chat.completions.create({
         model: "gpt-5-mini",
         messages: streamMessages,
         stream: true,
@@ -13398,7 +22540,7 @@ ${failedDaemonActions.map((a) => `- ${a.label}: ${a.result}`).join("\n")}`
       }
       const toolLabel = tool === "send_email" ? `sending an email to ${preview.to || "the recipient"}` : `running a terminal command (${preview.cmd || preview.action || "shell"})`;
       const prompt = `The user has just declined an action you proposed. You were about to ${toolLabel} but they cancelled. Acknowledge briefly and naturally in one sentence \u2014 do not re-propose the action. Stay in your coaching persona.`;
-      const resp = await openai12.chat.completions.create({
+      const resp = await openai15.chat.completions.create({
         model: "gpt-5-mini",
         messages: [{ role: "user", content: prompt }],
         max_completion_tokens: 80
@@ -13433,7 +22575,7 @@ Return a JSON object with:
 2. "followups": array of exactly 3 short follow-up questions (max 7 words each) the user would naturally ask next.
 
 Return ONLY the JSON object.`;
-      const response = await openai12.chat.completions.create({
+      const response = await openai15.chat.completions.create({
         model: "gpt-5-mini",
         messages: [{ role: "user", content: prompt }],
         response_format: { type: "json_object" },
@@ -13474,7 +22616,7 @@ For each task provide:
 - subtasks: array of short action strings (empty array if not needed)
 
 Return ONLY a JSON object with a "tasks" array. No other text.`;
-      const response = await openai12.chat.completions.create({
+      const response = await openai15.chat.completions.create({
         model: "gpt-5-mini",
         messages: [{ role: "user", content: prompt }],
         response_format: { type: "json_object" },
@@ -13508,7 +22650,7 @@ Return ONLY a JSON object with a "tasks" array. No other text.`;
       let commitmentText = "";
       if (userId2) {
         try {
-          const pendingCommitments = await db.select().from(commitments).where(and25(eq30(commitments.userId, userId2), eq30(commitments.status, "pending"))).limit(5);
+          const pendingCommitments = await db.select().from(commitments).where(and40(eq48(commitments.userId, userId2), eq48(commitments.status, "pending"))).limit(5);
           if (pendingCommitments.length > 0) {
             commitmentText = `
 - Open commitments: ${pendingCommitments.map((c) => `"${c.content}"${c.dueDate ? ` (due ${c.dueDate})` : ""}`).join(", ")}`;
@@ -13530,7 +22672,7 @@ Their profile:
 Write ONE short, specific coaching observation. Be direct \u2014 name what's working or what to fix. If they have a clear priority or blocker, reference it specifically. If they have open commitments, call out specific ones by name. No greeting, no sign-off.
 
 Return JSON: { "note": "your 1-2 sentence note here" }`;
-      const response = await openai12.chat.completions.create({
+      const response = await openai15.chat.completions.create({
         model: "gpt-5-mini",
         messages: [{ role: "user", content: prompt }],
         response_format: { type: "json_object" },
@@ -13698,10 +22840,11 @@ Return JSON: { "note": "your 1-2 sentence note here" }`;
         return res.json({ suggestions: [] });
       }
       const goalsText = goals2.map((g) => `- ${g.title} (${g.category}): ${g.current}/${g.target} ${g.unit}`).join("\n");
-      const emailsText = allEmails.slice(0, 30).map((e) => {
+      const emailsText = allEmails.slice(0, 30).map((e, idx) => {
         const acct = e.accountEmail ? ` [Account: ${e.accountEmail}]` : "";
         const labels = e.labels ? ` [Labels: ${e.labels.join(", ")}]` : "";
-        return `- From: ${e.from || "unknown"}${acct}${labels} | Subject: "${e.subject}" | Snippet: ${e.snippet}`;
+        const msgId = e.messageId ? ` [id:${e.messageId}]` : "";
+        return `${idx + 1}.${msgId} From: ${e.from || "unknown"}${acct}${labels} | Subject: "${e.subject}" | Snippet: ${e.snippet}`;
       }).join("\n");
       const prompt = `You are a productivity assistant. Given the user's goals and recent emails, identify 3\u20135 specific tasks they should do. Prioritise emails that are Starred, Important, or from real people (not newsletters/promotions).
 
@@ -13717,13 +22860,14 @@ Return JSON:
     "title": "action-verb task title (concise)",
     "emailSubject": "email that triggered this",
     "emailFrom": "sender",
+    "emailMessageId": "the exact id: value from the email, if present",
     "accountEmail": "which Gmail account",
     "goalTitle": "which goal this serves (or 'General' if no specific goal)",
     "reason": "one sentence why this task matters"
   }
 ]}
 Only return the JSON object, no extra text.`;
-      const response = await openai12.chat.completions.create({
+      const response = await openai15.chat.completions.create({
         model: "gpt-5-mini",
         messages: [{ role: "user", content: prompt }],
         response_format: { type: "json_object" },
@@ -13733,6 +22877,36 @@ Only return the JSON object, no extra text.`;
       try {
         const parsed = JSON.parse(content);
         const suggestions = Array.isArray(parsed.suggestions) ? parsed.suggestions.slice(0, 5) : [];
+        for (const suggestion of suggestions) {
+          const matchedEmail = allEmails.find((e) => {
+            if (suggestion.emailMessageId && e.messageId) {
+              return e.messageId === suggestion.emailMessageId;
+            }
+            if (suggestion.emailSubject && e.subject === suggestion.emailSubject) return true;
+            if (suggestion.emailFrom && e.from && e.from.includes(suggestion.emailFrom)) return true;
+            return false;
+          });
+          if (!matchedEmail) continue;
+          const emailId = matchedEmail.messageId ? `gmail:${matchedEmail.messageId}` : `gmail:${matchedEmail.subject}:${matchedEmail.from || ""}`;
+          try {
+            await db.insert(inboxItems).values({
+              userId: userId2,
+              sourceType: "email",
+              sourceId: emailId,
+              subject: matchedEmail.subject || suggestion.emailSubject || "(no subject)",
+              sender: matchedEmail.from || suggestion.emailFrom || null,
+              snippet: matchedEmail.snippet || null,
+              jarvisReason: "Jarvis created a task from this email",
+              suggestedActions: [
+                { label: "Reply", actionType: "reply" },
+                { label: "Archive", actionType: "archive" },
+                { label: "Dismiss", actionType: "dismiss" }
+              ]
+            }).onConflictDoNothing();
+          } catch (inboxErr) {
+            console.error("[GmailScan] inbox_items insert failed:", inboxErr);
+          }
+        }
         res.json({ suggestions });
       } catch {
         res.json({ suggestions: [] });
@@ -13855,7 +23029,7 @@ Return JSON with:
 taskOrder: Return up to 3 task IDs from the task list above, reordered optimally for this energy level. Only include IDs that appear in the task list. Prioritise momentum-building.
 
 Return ONLY the JSON object.`;
-      const response = await openai12.chat.completions.create({
+      const response = await openai15.chat.completions.create({
         model: "gpt-5-mini",
         messages: [{ role: "user", content: prompt }],
         response_format: { type: "json_object" },
@@ -13934,7 +23108,7 @@ Return ONLY the JSON object.`;
     try {
       const userId2 = req.userId;
       if (!userId2) return res.status(401).json({ error: "Not authenticated" });
-      const rows = await db.select().from(commitments).where(and25(eq30(commitments.userId, userId2), eq30(commitments.status, "pending"))).orderBy(desc10(commitments.extractedAt));
+      const rows = await db.select().from(commitments).where(and40(eq48(commitments.userId, userId2), eq48(commitments.status, "pending"))).orderBy(desc21(commitments.extractedAt));
       res.json({ commitments: rows });
     } catch (error) {
       console.error("Error fetching commitments:", error);
@@ -13950,7 +23124,7 @@ Return ONLY the JSON object.`;
       if (!status || !["done", "skipped", "pending"].includes(status)) {
         return res.status(400).json({ error: "status must be 'done', 'skipped', or 'pending'" });
       }
-      await db.update(commitments).set({ status, resolvedAt: status !== "pending" ? /* @__PURE__ */ new Date() : null }).where(and25(eq30(commitments.id, id), eq30(commitments.userId, userId2)));
+      await db.update(commitments).set({ status, resolvedAt: status !== "pending" ? /* @__PURE__ */ new Date() : null }).where(and40(eq48(commitments.id, id), eq48(commitments.userId, userId2)));
       res.json({ ok: true });
     } catch (error) {
       console.error("Error updating commitment:", error);
@@ -13962,7 +23136,7 @@ Return ONLY the JSON object.`;
       const userId2 = req.userId;
       if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
-      await db.delete(commitments).where(and25(eq30(commitments.id, id), eq30(commitments.userId, userId2)));
+      await db.delete(commitments).where(and40(eq48(commitments.id, id), eq48(commitments.userId, userId2)));
       res.json({ ok: true });
     } catch (error) {
       console.error("Error deleting commitment:", error);
@@ -13982,7 +23156,7 @@ Return ONLY the JSON object.`;
 User message: "${message}"
 
 Return ONLY JSON: { "hasCommitment": boolean, "commitment": "the thing they committed to" or null, "dueDate": "YYYY-MM-DD" or null }`;
-      const response = await openai12.chat.completions.create({
+      const response = await openai15.chat.completions.create({
         model: "gpt-5-mini",
         messages: [{ role: "user", content: prompt }],
         response_format: { type: "json_object" },
@@ -14014,7 +23188,7 @@ Return ONLY JSON: { "hasCommitment": boolean, "commitment": "the thing they comm
       if (!context) return res.status(400).json({ error: "context is required" });
       let userCommitments = [];
       try {
-        userCommitments = await db.select().from(commitments).where(and25(eq30(commitments.userId, userId2), eq30(commitments.status, "pending"))).orderBy(desc10(commitments.extractedAt)).limit(10);
+        userCommitments = await db.select().from(commitments).where(and40(eq48(commitments.userId, userId2), eq48(commitments.status, "pending"))).orderBy(desc21(commitments.extractedAt)).limit(10);
       } catch {
       }
       const soulBlock = await getSoulPromptBlock(userId2);
@@ -14024,7 +23198,7 @@ Return ONLY JSON: { "hasCommitment": boolean, "commitment": "the thing they comm
       res.setHeader("X-Accel-Buffering", "no");
       res.setHeader("Access-Control-Allow-Origin", "*");
       res.flushHeaders();
-      const stream = await openai12.chat.completions.create({
+      const stream = await openai15.chat.completions.create({
         model: "gpt-5-mini",
         messages: [
           { role: "system", content: systemPrompt + `
@@ -14062,7 +23236,7 @@ ${context}` },
       const userId2 = req.userId;
       if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
-      const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq30(userPreferences.userId, userId2));
+      const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq48(userPreferences.userId, userId2));
       const prefs = rows[0]?.data || {};
       const brief = prefs.morningBrief;
       if (brief && brief.date === today && brief.text) {
@@ -14076,7 +23250,7 @@ ${context}` },
   });
   async function savePendingResponse(userId2, text2, screenshotUrl) {
     const id = `pr-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq30(userPreferences.userId, userId2));
+    const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq48(userPreferences.userId, userId2));
     const prefs = rows[0]?.data || {};
     const payload = { id, text: text2, createdAt: Date.now() };
     if (screenshotUrl) payload.screenshotUrl = screenshotUrl;
@@ -14086,13 +23260,13 @@ ${context}` },
     try {
       const userId2 = req.userId;
       if (!userId2) return res.status(401).json({ error: "Not authenticated" });
-      const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq30(userPreferences.userId, userId2));
+      const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq48(userPreferences.userId, userId2));
       const prefs = rows[0]?.data || {};
       const pending = prefs.pendingResponse;
       const ONE_HOUR = 60 * 60 * 1e3;
       if (pending && pending.createdAt && Date.now() - pending.createdAt < ONE_HOUR && pending.text) {
         const updated = { ...prefs, pendingResponse: null };
-        await db.update(userPreferences).set({ data: updated }).where(eq30(userPreferences.userId, userId2));
+        await db.update(userPreferences).set({ data: updated }).where(eq48(userPreferences.userId, userId2));
         return res.json({ id: pending.id, text: pending.text, screenshotUrl: pending.screenshotUrl || null });
       }
       return res.json({ text: null });
@@ -14110,7 +23284,7 @@ ${context}` },
       try {
         const sevenDaysAgo = /* @__PURE__ */ new Date();
         sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-        weekCommitments = await db.select().from(commitments).where(eq30(commitments.userId, userId2)).orderBy(desc10(commitments.extractedAt)).limit(30);
+        weekCommitments = await db.select().from(commitments).where(eq48(commitments.userId, userId2)).orderBy(desc21(commitments.extractedAt)).limit(30);
         weekCommitments = weekCommitments.filter(
           (c) => new Date(c.extractedAt).getTime() >= sevenDaysAgo.getTime()
         );
@@ -14141,7 +23315,7 @@ Return JSON:
 }
 
 Return ONLY the JSON object.`;
-      const response = await openai12.chat.completions.create({
+      const response = await openai15.chat.completions.create({
         model: "gpt-5-mini",
         messages: [{ role: "user", content: prompt }],
         response_format: { type: "json_object" },
@@ -14169,7 +23343,7 @@ Return ONLY the JSON object.`;
     try {
       const userId2 = req.userId;
       if (!userId2) return res.status(401).json({ error: "Not authenticated" });
-      const rows = await db.select().from(userMemories).where(eq30(userMemories.userId, userId2)).orderBy(desc10(userMemories.extractedAt));
+      const rows = await db.select().from(userMemories).where(eq48(userMemories.userId, userId2)).orderBy(desc21(userMemories.extractedAt));
       res.json({ memories: rows });
     } catch (error) {
       console.error("Error fetching memories:", error);
@@ -14181,7 +23355,7 @@ Return ONLY the JSON object.`;
       const userId2 = req.userId;
       if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
-      await db.delete(userMemories).where(sql16`${userMemories.id} = ${id} AND ${userMemories.userId} = ${userId2}`);
+      await db.delete(userMemories).where(sql26`${userMemories.id} = ${id} AND ${userMemories.userId} = ${userId2}`);
       res.json({ ok: true });
     } catch (error) {
       console.error("Error deleting memory:", error);
@@ -14284,18 +23458,155 @@ Return ONLY the JSON object.`;
     try {
       const userId2 = req.userId;
       if (!userId2) return res.status(401).json({ error: "Not authenticated" });
-      const rows = await db.select().from(weeklyInsights).where(eq30(weeklyInsights.userId, userId2)).orderBy(desc10(weeklyInsights.createdAt)).limit(4);
+      const rows = await db.select().from(weeklyInsights).where(eq48(weeklyInsights.userId, userId2)).orderBy(desc21(weeklyInsights.createdAt)).limit(4);
       return res.json({ insights: rows });
     } catch (error) {
       console.error("Error getting weekly insights:", error);
       return res.status(500).json({ error: "Failed to get weekly insights" });
     }
   });
+  app2.get("/api/dream-insights", async (req, res) => {
+    try {
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
+      const rows = await db.select().from(dreamInsights).where(eq48(dreamInsights.userId, userId2)).orderBy(desc21(dreamInsights.createdAt)).limit(50);
+      return res.json({ insights: rows });
+    } catch (error) {
+      console.error("Error getting dream insights:", error);
+      return res.status(500).json({ error: "Failed to get dream insights" });
+    }
+  });
+  app2.post("/api/dream-insights/run", async (req, res) => {
+    try {
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
+      const dreamDate = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+      const manualKey = `dream_manual:${dreamDate}`;
+      const existing = await db.select({ id: proactiveScheduleLog.id }).from(proactiveScheduleLog).where(
+        and40(
+          eq48(proactiveScheduleLog.userId, userId2),
+          eq48(proactiveScheduleLog.messageType, manualKey),
+          eq48(proactiveScheduleLog.sentDate, dreamDate)
+        )
+      ).limit(1);
+      if (existing.length > 0) {
+        return res.status(429).json({ error: "Dream cycle already run today. Try again tomorrow." });
+      }
+      const { runDreamForUser: runDreamForUser2 } = await Promise.resolve().then(() => (init_dream(), dream_exports));
+      const count = await runDreamForUser2(userId2, dreamDate);
+      await db.insert(proactiveScheduleLog).values({
+        userId: userId2,
+        messageType: manualKey,
+        sentDate: dreamDate
+      }).catch(() => {
+      });
+      return res.json({ count, dreamDate });
+    } catch (error) {
+      console.error("Error running dream cycle:", error);
+      return res.status(500).json({ error: "Failed to run dream cycle" });
+    }
+  });
+  app2.get("/api/dream-insights/:insightId/memories", async (req, res) => {
+    try {
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
+      const { insightId } = req.params;
+      const insightRows = await db.select({ sourceMemoryIds: dreamInsights.sourceMemoryIds }).from(dreamInsights).where(
+        and40(
+          eq48(dreamInsights.id, insightId),
+          eq48(dreamInsights.userId, userId2)
+        )
+      ).limit(1);
+      if (insightRows.length === 0) return res.status(404).json({ error: "Not found" });
+      const ids = insightRows[0].sourceMemoryIds || [];
+      if (ids.length === 0) return res.json({ memories: [] });
+      const { inArray: inArray4 } = await import("drizzle-orm");
+      const memories = await db.select({
+        id: userMemories.id,
+        content: userMemories.content,
+        category: userMemories.category,
+        confidence: userMemories.confidence,
+        extractedAt: userMemories.extractedAt
+      }).from(userMemories).where(
+        and40(
+          eq48(userMemories.userId, userId2),
+          inArray4(userMemories.id, ids.slice(0, 50))
+        )
+      ).limit(10);
+      return res.json({ memories });
+    } catch (error) {
+      console.error("Error getting dream source memories:", error);
+      return res.status(500).json({ error: "Failed to get source memories" });
+    }
+  });
+  app2.get("/api/predictions", async (req, res) => {
+    try {
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
+      const date2 = req.query.date || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+      const { getTodayPredictions: getTodayPredictions2 } = await Promise.resolve().then(() => (init_predictor(), predictor_exports));
+      const predictions = await getTodayPredictions2(userId2, date2, 0);
+      return res.json({ predictions });
+    } catch (error) {
+      console.error("Error getting predictions:", error);
+      return res.status(500).json({ error: "Failed to get predictions" });
+    }
+  });
+  app2.get("/api/predictions/week", async (req, res) => {
+    try {
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
+      const startDate = req.query.startDate || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+      const { getWeekPredictions: getWeekPredictions2 } = await Promise.resolve().then(() => (init_predictor(), predictor_exports));
+      const predictions = await getWeekPredictions2(userId2, startDate, 0);
+      return res.json({ predictions });
+    } catch (error) {
+      console.error("Error getting week predictions:", error);
+      return res.status(500).json({ error: "Failed to get week predictions" });
+    }
+  });
+  app2.get("/api/predictions/accuracy", async (req, res) => {
+    try {
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
+      const { getPredictionAccuracy: getPredictionAccuracy2 } = await Promise.resolve().then(() => (init_predictor(), predictor_exports));
+      const accuracy = await getPredictionAccuracy2(userId2);
+      return res.json(accuracy);
+    } catch (error) {
+      console.error("Error getting prediction accuracy:", error);
+      return res.status(500).json({ error: "Failed to get accuracy" });
+    }
+  });
+  const _predRunLastAt = /* @__PURE__ */ new Map();
+  const PRED_RUN_COOLDOWN_MS = 30 * 60 * 1e3;
+  app2.post("/api/predictions/run", async (req, res) => {
+    try {
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
+      const lastRun = _predRunLastAt.get(userId2) ?? 0;
+      const msSinceLast = Date.now() - lastRun;
+      if (msSinceLast < PRED_RUN_COOLDOWN_MS) {
+        const retryAfterSec = Math.ceil((PRED_RUN_COOLDOWN_MS - msSinceLast) / 1e3);
+        res.setHeader("Retry-After", String(retryAfterSec));
+        return res.status(429).json({ error: "Rate limit \u2014 predictions were just generated", retryAfterSec });
+      }
+      _predRunLastAt.set(userId2, Date.now());
+      const targetDate = req.body?.date || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+      const { analysePatterns: analysePatterns2 } = await Promise.resolve().then(() => (init_pattern_analyser(), pattern_analyser_exports));
+      const { generateAndStorePredictions: generateAndStorePredictions2 } = await Promise.resolve().then(() => (init_predictor(), predictor_exports));
+      const analysis = await analysePatterns2(userId2, 60);
+      const count = await generateAndStorePredictions2(userId2, targetDate, analysis);
+      return res.json({ generated: count, date: targetDate });
+    } catch (error) {
+      console.error("Error running prediction engine:", error);
+      return res.status(500).json({ error: "Failed to run predictions" });
+    }
+  });
   app2.get("/api/preferences", async (req, res) => {
     try {
       const userId2 = req.userId;
       if (!userId2) return res.status(401).json({ error: "Not authenticated" });
-      const row = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq30(userPreferences.userId, userId2)).limit(1);
+      const row = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq48(userPreferences.userId, userId2)).limit(1);
       return res.json(row[0]?.data || {});
     } catch (error) {
       console.error("Error getting preferences:", error);
@@ -14307,7 +23618,7 @@ Return ONLY the JSON object.`;
       const userId2 = req.userId;
       if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       const updates = req.body;
-      const existing = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq30(userPreferences.userId, userId2)).limit(1);
+      const existing = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq48(userPreferences.userId, userId2)).limit(1);
       const current = existing[0]?.data || {};
       const merged = { ...current, ...updates };
       await db.insert(userPreferences).values({ userId: userId2, data: merged }).onConflictDoUpdate({
@@ -14325,7 +23636,7 @@ Return ONLY the JSON object.`;
       const userId2 = req.userId;
       if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       const limit = parseInt(req.query.limit) || 30;
-      const notes = await db.select().from(morningVoiceNotes).where(eq30(morningVoiceNotes.userId, userId2)).orderBy(desc10(morningVoiceNotes.recordedAt)).limit(limit);
+      const notes = await db.select().from(morningVoiceNotes).where(eq48(morningVoiceNotes.userId, userId2)).orderBy(desc21(morningVoiceNotes.recordedAt)).limit(limit);
       res.json({ notes });
     } catch (error) {
       console.error("Error fetching morning voice notes:", error);
@@ -14337,7 +23648,7 @@ Return ONLY the JSON object.`;
       const userId2 = req.userId;
       if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       const today = await getUserLocalDate(userId2);
-      const notes = await db.select().from(morningVoiceNotes).where(and25(eq30(morningVoiceNotes.userId, userId2), eq30(morningVoiceNotes.recordedAt, today))).limit(1);
+      const notes = await db.select().from(morningVoiceNotes).where(and40(eq48(morningVoiceNotes.userId, userId2), eq48(morningVoiceNotes.recordedAt, today))).limit(1);
       res.json({ note: notes[0] || null });
     } catch (error) {
       console.error("Error fetching today's morning voice note:", error);
@@ -14358,7 +23669,7 @@ Extract:
 
 Return JSON: { "moodSignal": "...", "themes": [...], "blockers": [...], "wins": [...], "intention": "..." }
 Return ONLY the JSON object.`;
-    const extraction = await openai12.chat.completions.create({
+    const extraction = await openai15.chat.completions.create({
       model: "gpt-5-mini",
       messages: [{ role: "user", content: extractionPrompt }],
       response_format: { type: "json_object" },
@@ -14402,7 +23713,7 @@ Return ONLY the JSON object.`;
         return res.status(400).json({ error: "transcript is required" });
       }
       const today = await getUserLocalDate(userId2);
-      const existing = await db.select({ id: morningVoiceNotes.id }).from(morningVoiceNotes).where(and25(eq30(morningVoiceNotes.userId, userId2), eq30(morningVoiceNotes.recordedAt, today))).limit(1);
+      const existing = await db.select({ id: morningVoiceNotes.id }).from(morningVoiceNotes).where(and40(eq48(morningVoiceNotes.userId, userId2), eq48(morningVoiceNotes.recordedAt, today))).limit(1);
       if (existing.length > 0) {
         return res.status(409).json({ error: "Morning note already recorded today" });
       }
@@ -14453,7 +23764,7 @@ Return ONLY the JSON object.`;
       const buffer = Buffer.from(audioBase64, "base64");
       const ext = (mimeType || "audio/webm").includes("mp4") ? "mp4" : "webm";
       const file = new File([buffer], `recording.${ext}`, { type: mimeType || "audio/webm" });
-      const transcription = await openai12.audio.transcriptions.create({
+      const transcription = await openai15.audio.transcriptions.create({
         model: "whisper-1",
         file
       });
@@ -14467,18 +23778,72 @@ Return ONLY the JSON object.`;
     try {
       const userId2 = req.userId;
       if (!userId2) return res.status(401).json({ error: "Not authenticated" });
-      const items = await db.select().from(inboxItems).where(and25(eq30(inboxItems.userId, userId2), eq30(inboxItems.status, "pending"))).orderBy(desc10(inboxItems.surfacedAt));
+      const items = await db.select().from(inboxItems).where(and40(eq48(inboxItems.userId, userId2), eq48(inboxItems.status, "pending"))).orderBy(desc21(inboxItems.surfacedAt));
       res.json(items);
     } catch (error) {
       console.error("Error fetching inbox items:", error);
       res.status(500).json({ error: "Failed to fetch inbox items" });
     }
   });
+  app2.post("/api/inbox/items/:id/important", async (req, res) => {
+    try {
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
+      const { id } = req.params;
+      const [item] = await db.select().from(inboxItems).where(and40(eq48(inboxItems.id, id), eq48(inboxItems.userId, userId2)));
+      if (!item) return res.status(404).json({ error: "Item not found" });
+      if (item.sourceType === "email" || item.sourceType === "gmail") {
+        const senderPart = item.sender ? `emails from ${item.sender}` : item.subject ? `emails with subject "${item.subject}"` : "this type of email";
+        const memoryContent = `User marked as important: ${senderPart}${item.snippet ? ` \u2014 "${item.snippet.slice(0, 120)}"` : ""}. Always surface similar emails.`;
+        await db.insert(userMemories).values({
+          userId: userId2,
+          content: memoryContent,
+          category: "Email Pattern",
+          confidence: 95,
+          relevanceScore: 80,
+          sourceType: "email_pattern",
+          sourceRef: item.sourceId || null
+        });
+        const senderDomain = item.sender ? (item.sender.match(/@([a-zA-Z0-9.-]+)/)?.[1] || "").toLowerCase() : "";
+        const senderEmail = item.sender ? item.sender.toLowerCase() : "";
+        const subjectKw = (item.subject || "").toLowerCase().trim().slice(0, 60);
+        const canCreateRule = senderDomain || subjectKw.length > 0;
+        if (canCreateRule) {
+          const matchHints = senderDomain ? { domains: [senderDomain], senders: senderEmail ? [senderEmail] : [] } : { subjectKeywords: [subjectKw] };
+          const pattern = senderDomain ? `Always surface emails from ${senderDomain}` : `Always surface: "${item.subject}"`;
+          const { getUserInboxRules: getUserInboxRules2 } = await Promise.resolve().then(() => (init_inboxRules(), inboxRules_exports));
+          const existingRules = await getUserInboxRules2(userId2);
+          const alreadyExists = existingRules.some((r) => {
+            if (r.type !== "surface" || r.scope !== "email") return false;
+            const hints = r.matchHints || {};
+            if (senderDomain && hints.domains?.includes(senderDomain)) return true;
+            if (!senderDomain && subjectKw && hints.subjectKeywords?.includes(subjectKw)) return true;
+            return false;
+          });
+          if (!alreadyExists) {
+            await db.insert(inboxRules).values({
+              userId: userId2,
+              type: "surface",
+              scope: "email",
+              pattern,
+              matchHints,
+              source: "user"
+            });
+          }
+        }
+      }
+      await db.update(inboxItems).set({ status: "important", actedAt: /* @__PURE__ */ new Date() }).where(and40(eq48(inboxItems.id, id), eq48(inboxItems.userId, userId2)));
+      res.json({ success: true, message: "Saved to Jarvis memory" });
+    } catch (error) {
+      console.error("Error marking inbox item as important:", error);
+      res.status(500).json({ error: "Failed to mark as important" });
+    }
+  });
   app2.get("/api/jarvis/scheduled-tasks", async (req, res) => {
     try {
       const userId2 = req.userId;
       if (!userId2) return res.status(401).json({ error: "Not authenticated" });
-      const tasks = await db.select().from(jarvisScheduledTasks).where(eq30(jarvisScheduledTasks.userId, userId2)).orderBy(jarvisScheduledTasks.scheduledAt);
+      const tasks = await db.select().from(jarvisScheduledTasks).where(eq48(jarvisScheduledTasks.userId, userId2)).orderBy(jarvisScheduledTasks.scheduledAt);
       res.json(tasks);
     } catch (err) {
       console.error("Error fetching jarvis scheduled tasks:", err);
@@ -14503,7 +23868,7 @@ Return ONLY the JSON object.`;
       const userId2 = req.userId;
       if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
-      await db.update(jarvisScheduledTasks).set({ completedAt: /* @__PURE__ */ new Date() }).where(and25(eq30(jarvisScheduledTasks.id, id), eq30(jarvisScheduledTasks.userId, userId2)));
+      await db.update(jarvisScheduledTasks).set({ completedAt: /* @__PURE__ */ new Date() }).where(and40(eq48(jarvisScheduledTasks.id, id), eq48(jarvisScheduledTasks.userId, userId2)));
       res.json({ ok: true });
     } catch (err) {
       console.error("Error completing jarvis scheduled task:", err);
@@ -14515,11 +23880,83 @@ Return ONLY the JSON object.`;
       const userId2 = req.userId;
       if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
-      await db.delete(jarvisScheduledTasks).where(and25(eq30(jarvisScheduledTasks.id, id), eq30(jarvisScheduledTasks.userId, userId2)));
+      await db.delete(jarvisScheduledTasks).where(and40(eq48(jarvisScheduledTasks.id, id), eq48(jarvisScheduledTasks.userId, userId2)));
       res.json({ ok: true });
     } catch (err) {
       console.error("Error deleting jarvis scheduled task:", err);
       res.status(500).json({ error: "Failed to delete task" });
+    }
+  });
+  app2.get("/api/jarvis/system-schedule", async (req, res) => {
+    const userId2 = req.userId;
+    if (!userId2) return res.status(401).json({ error: "Not authenticated" });
+    const DAYS = { 0: "Sun", 1: "Mon", 2: "Tue", 3: "Wed", 4: "Thu", 5: "Fri", 6: "Sat" };
+    const LABELS = {
+      morning: "Morning Brief \u2192 Telegram",
+      commitment_check: "Commitment Check \u2192 Telegram",
+      followup_check: "Follow-Up Check \u2192 Telegram",
+      momentum_nudge: "Momentum Nudge \u2192 Telegram",
+      weekly_planning: "Weekly Planning Brief \u2192 Telegram",
+      morning_plan_build: "Build Today's Task Plan",
+      email_scan: "Email Alert Scan",
+      weekly_pattern: "Weekly Pattern Analysis"
+    };
+    const ICONS = {
+      morning: "sunny-outline",
+      commitment_check: "checkmark-circle-outline",
+      followup_check: "refresh-circle-outline",
+      momentum_nudge: "flash-outline",
+      weekly_planning: "calendar-outline",
+      morning_plan_build: "construct-outline",
+      email_scan: "mail-outline",
+      weekly_pattern: "analytics-outline"
+    };
+    const recurring = [
+      { id: "sys_morning_plan", type: "morning_plan_build", hour: 7, minute: 0, recurrence: "daily", dayOfWeek: null },
+      { id: "sys_morning", type: "morning", hour: 8, minute: 0, recurrence: "daily", dayOfWeek: null },
+      { id: "sys_commit", type: "commitment_check", hour: 10, minute: 0, recurrence: "daily", dayOfWeek: null },
+      { id: "sys_followup", type: "followup_check", hour: 12, minute: 0, recurrence: "daily", dayOfWeek: null },
+      { id: "sys_nudge", type: "momentum_nudge", hour: 14, minute: 0, recurrence: "daily", dayOfWeek: null },
+      { id: "sys_email_scan", type: "email_scan", hour: -1, minute: -1, recurrence: "every 30 min", dayOfWeek: null },
+      { id: "sys_weekly_plan", type: "weekly_planning", hour: 19, minute: 0, recurrence: "weekly", dayOfWeek: 0 },
+      { id: "sys_weekly_pat", type: "weekly_pattern", hour: 3, minute: 0, recurrence: "weekly", dayOfWeek: 0 }
+    ].map((t) => ({
+      ...t,
+      label: LABELS[t.type] ?? t.type,
+      icon: ICONS[t.type] ?? "time-outline",
+      timeLabel: t.hour < 0 ? "Continuous" : `${t.hour === 0 ? 12 : t.hour > 12 ? t.hour - 12 : t.hour}:${String(t.minute).padStart(2, "0")} ${t.hour < 12 ? "AM" : "PM"}`,
+      dayLabel: t.recurrence === "weekly" && t.dayOfWeek !== null ? DAYS[t.dayOfWeek] : "Every day",
+      isSystem: true
+    }));
+    res.json(recurring);
+  });
+  app2.get("/api/jarvis/emotional-state", async (req, res) => {
+    const userId2 = req.userId;
+    if (!userId2) return res.status(401).json({ error: "Not authenticated" });
+    try {
+      const { getEmotionalState: getEmotionalState2 } = await Promise.resolve().then(() => (init_emotional_state(), emotional_state_exports));
+      const state = await getEmotionalState2(userId2);
+      res.json(state ?? null);
+    } catch (err) {
+      console.error("[emotional-state] GET failed:", err);
+      res.status(500).json({ error: "Failed to load emotional state" });
+    }
+  });
+  app2.post("/api/jarvis/emotional-state/override", async (req, res) => {
+    const userId2 = req.userId;
+    if (!userId2) return res.status(401).json({ error: "Not authenticated" });
+    const { override } = req.body;
+    const validOverrides = ["calm", "focused", "in flow", "stressed", "overwhelmed"];
+    if (!override || !validOverrides.includes(override)) {
+      return res.status(400).json({ error: `override must be one of: ${validOverrides.join(", ")}` });
+    }
+    try {
+      const { setManualStateOverride: setManualStateOverride2 } = await Promise.resolve().then(() => (init_emotional_state(), emotional_state_exports));
+      await setManualStateOverride2(userId2, override, /* @__PURE__ */ new Date());
+      res.json({ ok: true, override });
+    } catch (err) {
+      console.error("[emotional-state] override failed:", err);
+      res.status(500).json({ error: "Failed to set override" });
     }
   });
   app2.post("/api/inbox/items/:id/action", async (req, res) => {
@@ -14531,12 +23968,24 @@ Return ONLY the JSON object.`;
       if (!actionType) return res.status(400).json({ error: "actionType is required" });
       let telegramChatId;
       try {
-        const [link] = await db.select().from(telegramLinks).where(eq30(telegramLinks.userId, userId2));
+        const [link] = await db.select().from(telegramLinks).where(eq48(telegramLinks.userId, userId2));
         telegramChatId = link?.chatId;
       } catch {
       }
       const { executeInboxAction: executeInboxAction2 } = await Promise.resolve().then(() => (init_inboxActions(), inboxActions_exports));
       const result = await executeInboxAction2(userId2, id, actionType, telegramChatId);
+      if (result.success) {
+        const egoOutcome = actionType === "dismiss" || actionType === "never_again" ? "dismissed" : "acted_on";
+        db.select({ sourceId: inboxItems.sourceId }).from(inboxItems).where(eq48(inboxItems.id, id)).then(([item]) => {
+          if (!item?.sourceId) return;
+          Promise.resolve().then(() => (init_actionLog(), actionLog_exports)).then(({ resolveActionByMetadataKey: resolveActionByMetadataKey2 }) => {
+            resolveActionByMetadataKey2(userId2, "proactive_message", "sourceId", item.sourceId, egoOutcome).catch(() => {
+            });
+          }).catch(() => {
+          });
+        }).catch(() => {
+        });
+      }
       res.json(result);
     } catch (error) {
       console.error("Error executing inbox action:", error);
@@ -14547,7 +23996,7 @@ Return ONLY the JSON object.`;
     try {
       const userId2 = req.userId;
       if (!userId2) return res.status(401).json({ error: "Not authenticated" });
-      const rules = await db.select().from(inboxRules).where(eq30(inboxRules.userId, userId2));
+      const rules = await db.select().from(inboxRules).where(eq48(inboxRules.userId, userId2));
       res.json(rules);
     } catch (error) {
       console.error("Error fetching inbox rules:", error);
@@ -14575,7 +24024,7 @@ Return ONLY the JSON object.`;
       const userId2 = req.userId;
       if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
-      await db.delete(inboxRules).where(and25(eq30(inboxRules.id, id), eq30(inboxRules.userId, userId2)));
+      await db.delete(inboxRules).where(and40(eq48(inboxRules.id, id), eq48(inboxRules.userId, userId2)));
       res.json({ success: true });
     } catch (error) {
       console.error("Error deleting inbox rule:", error);
@@ -14588,7 +24037,8 @@ Return ONLY the JSON object.`;
       if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
       const { active } = req.body;
-      await db.update(inboxRules).set({ active: active ? "true" : "false", updatedAt: /* @__PURE__ */ new Date() }).where(and25(eq30(inboxRules.id, id), eq30(inboxRules.userId, userId2)));
+      const isActive = active === true || active === "true" || active === 1;
+      await db.update(inboxRules).set({ active: isActive, updatedAt: /* @__PURE__ */ new Date() }).where(and40(eq48(inboxRules.id, id), eq48(inboxRules.userId, userId2)));
       res.json({ success: true });
     } catch (error) {
       console.error("Error updating inbox rule:", error);
@@ -14599,7 +24049,7 @@ Return ONLY the JSON object.`;
     try {
       const userId2 = req.userId;
       if (!userId2) return res.status(401).json({ error: "Not authenticated" });
-      const drafts = await db.select().from(emailDrafts).where(and25(eq30(emailDrafts.userId, userId2), eq30(emailDrafts.status, "pending_approval"))).orderBy(desc10(emailDrafts.createdAt));
+      const drafts = await db.select().from(emailDrafts).where(and40(eq48(emailDrafts.userId, userId2), eq48(emailDrafts.status, "pending_approval"))).orderBy(desc21(emailDrafts.createdAt));
       res.json(drafts);
     } catch (error) {
       console.error("Error fetching email drafts:", error);
@@ -14612,7 +24062,7 @@ Return ONLY the JSON object.`;
       if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
       const { editedSubject, editedBody } = req.body;
-      const [draft] = await db.select().from(emailDrafts).where(and25(eq30(emailDrafts.id, id), eq30(emailDrafts.userId, userId2))).limit(1);
+      const [draft] = await db.select().from(emailDrafts).where(and40(eq48(emailDrafts.id, id), eq48(emailDrafts.userId, userId2))).limit(1);
       if (!draft) return res.status(404).json({ error: "Draft not found" });
       if (draft.status !== "pending_approval") return res.status(400).json({ error: "Draft already actioned" });
       const subject = editedSubject?.trim() || draft.draftSubject;
@@ -14634,7 +24084,7 @@ Return ONLY the JSON object.`;
         actedAt: /* @__PURE__ */ new Date(),
         draftSubject: subject,
         draftBody: body
-      }).where(eq30(emailDrafts.id, id));
+      }).where(eq48(emailDrafts.id, id));
       res.json({ success: true, gmailDraftUrl: result.gmailUrl });
     } catch (error) {
       console.error("Error approving email draft:", error);
@@ -14646,7 +24096,7 @@ Return ONLY the JSON object.`;
       const userId2 = req.userId;
       if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
-      await db.update(emailDrafts).set({ status: "discarded", actedAt: /* @__PURE__ */ new Date() }).where(and25(eq30(emailDrafts.id, id), eq30(emailDrafts.userId, userId2)));
+      await db.update(emailDrafts).set({ status: "discarded", actedAt: /* @__PURE__ */ new Date() }).where(and40(eq48(emailDrafts.id, id), eq48(emailDrafts.userId, userId2)));
       res.json({ success: true });
     } catch (error) {
       console.error("Error discarding email draft:", error);
@@ -14658,7 +24108,7 @@ Return ONLY the JSON object.`;
       const userId2 = req.userId;
       if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       const goalId = req.params.id;
-      const [goalsRow] = await db.select({ data: goals.data }).from(goals).where(eq30(goals.userId, userId2)).limit(1);
+      const [goalsRow] = await db.select({ data: goals.data }).from(goals).where(eq48(goals.userId, userId2)).limit(1);
       const goalsList = goalsRow?.data || [];
       const goal = goalsList.find((g) => g.id === goalId);
       if (!goal) return res.status(404).json({ error: "Goal not found" });
@@ -14675,7 +24125,7 @@ Return ONLY the JSON object.`;
       const userId2 = req.userId;
       if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       const goalId = req.params.id;
-      const [tree] = await db.select().from(goalTrees).where(and25(eq30(goalTrees.userId, userId2), eq30(goalTrees.goalId, goalId))).limit(1);
+      const [tree] = await db.select().from(goalTrees).where(and40(eq48(goalTrees.userId, userId2), eq48(goalTrees.goalId, goalId))).limit(1);
       if (!tree) return res.status(200).json({ hasTree: false });
       res.json({ hasTree: true, ...tree });
     } catch (err) {
@@ -14695,8 +24145,8 @@ Return ONLY the JSON object.`;
       if (!title || !prompt) {
         return res.status(400).json({ error: "title and prompt are required" });
       }
-      const { submitAgentJob: submitAgentJob2 } = await Promise.resolve().then(() => (init_jobQueue(), jobQueue_exports));
-      const jobId = await submitAgentJob2({
+      const { submitAgentJob: submitAgentJob3 } = await Promise.resolve().then(() => (init_jobQueue(), jobQueue_exports));
+      const jobId = await submitAgentJob3({
         userId: userId2,
         agentType,
         title,
@@ -14715,12 +24165,49 @@ Return ONLY the JSON object.`;
       if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       const limit = Math.min(Math.max(Number(req.query.limit) || 30, 1), 100);
       const status = typeof req.query.status === "string" ? req.query.status : null;
-      const where = status ? and25(eq30(agentJobs.userId, userId2), eq30(agentJobs.status, status)) : eq30(agentJobs.userId, userId2);
-      const jobs = await db.select().from(agentJobs).where(where).orderBy(desc10(agentJobs.createdAt)).limit(limit);
+      const where = status ? and40(eq48(agentJobs.userId, userId2), eq48(agentJobs.status, status)) : eq48(agentJobs.userId, userId2);
+      const jobs = await db.select().from(agentJobs).where(where).orderBy(desc21(agentJobs.createdAt)).limit(limit);
       res.json(jobs);
     } catch (err) {
       console.error("Error listing agent jobs:", err);
       res.status(500).json({ error: "Failed to list jobs" });
+    }
+  });
+  app2.get("/api/agent-jobs/active", async (req, res) => {
+    try {
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
+      const jobs = await db.select().from(agentJobs).where(
+        and40(
+          eq48(agentJobs.userId, userId2),
+          sql26`${agentJobs.status} IN ('queued', 'running', 'cancelling')`
+        )
+      ).orderBy(asc2(agentJobs.createdAt)).limit(20);
+      res.json(jobs);
+    } catch (err) {
+      console.error("Error listing active agent jobs:", err);
+      res.status(500).json({ error: "Failed to list active jobs" });
+    }
+  });
+  app2.post("/api/agent-jobs/:id/cancel", async (req, res) => {
+    try {
+      const userId2 = req.userId;
+      if (!userId2) return res.status(401).json({ error: "Not authenticated" });
+      const { id } = req.params;
+      const [job] = await db.select().from(agentJobs).where(and40(eq48(agentJobs.id, id), eq48(agentJobs.userId, userId2))).limit(1);
+      if (!job) return res.status(404).json({ error: "Job not found" });
+      if (job.status === "complete" || job.status === "failed") {
+        return res.status(400).json({ error: "Job is already finished" });
+      }
+      if (job.status === "cancelled" || job.status === "cancelling") {
+        return res.json({ ok: true, status: job.status });
+      }
+      const newStatus = job.status === "queued" ? "cancelled" : "cancelling";
+      await db.update(agentJobs).set({ status: newStatus, completedAt: newStatus === "cancelled" ? /* @__PURE__ */ new Date() : void 0 }).where(eq48(agentJobs.id, id));
+      res.json({ ok: true, status: newStatus });
+    } catch (err) {
+      console.error("Error cancelling agent job:", err);
+      res.status(500).json({ error: "Failed to cancel job" });
     }
   });
   app2.get("/api/deliverables", async (req, res) => {
@@ -14728,7 +24215,7 @@ Return ONLY the JSON object.`;
       const userId2 = req.userId;
       if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       const status = typeof req.query.status === "string" ? req.query.status : "pending_approval";
-      const items = await db.select().from(deliverables).where(and25(eq30(deliverables.userId, userId2), eq30(deliverables.status, status))).orderBy(desc10(deliverables.createdAt)).limit(50);
+      const items = await db.select().from(deliverables).where(and40(eq48(deliverables.userId, userId2), eq48(deliverables.status, status))).orderBy(desc21(deliverables.createdAt)).limit(50);
       res.json(items);
     } catch (err) {
       console.error("Error listing deliverables:", err);
@@ -14740,7 +24227,7 @@ Return ONLY the JSON object.`;
       const userId2 = req.userId;
       if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       const id = req.params.id;
-      const [d] = await db.select().from(deliverables).where(and25(eq30(deliverables.id, id), eq30(deliverables.userId, userId2))).limit(1);
+      const [d] = await db.select().from(deliverables).where(and40(eq48(deliverables.id, id), eq48(deliverables.userId, userId2))).limit(1);
       if (!d) return res.status(404).json({ error: "Deliverable not found" });
       if (d.status !== "pending_approval") {
         return res.status(400).json({ error: "Already actioned" });
@@ -14769,9 +24256,9 @@ Return ONLY the JSON object.`;
           summary: d.summary || null
         });
       }
-      await db.update(deliverables).set({ status: "approved", actedAt: /* @__PURE__ */ new Date() }).where(eq30(deliverables.id, id));
+      await db.update(deliverables).set({ status: "approved", actedAt: /* @__PURE__ */ new Date() }).where(eq48(deliverables.id, id));
       if (d.jobId) {
-        await db.update(agentJobs).set({ status: "delivered" }).where(and25(eq30(agentJobs.id, d.jobId), eq30(agentJobs.status, "complete")));
+        await db.update(agentJobs).set({ status: "delivered" }).where(and40(eq48(agentJobs.id, d.jobId), eq48(agentJobs.status, "complete")));
       }
       res.json({ ok: true, ...resultExtra });
     } catch (err) {
@@ -14785,7 +24272,7 @@ Return ONLY the JSON object.`;
       if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       const id = req.params.id;
       const { title, summary, body, meta } = req.body;
-      const [existing] = await db.select().from(deliverables).where(and25(eq30(deliverables.id, id), eq30(deliverables.userId, userId2))).limit(1);
+      const [existing] = await db.select().from(deliverables).where(and40(eq48(deliverables.id, id), eq48(deliverables.userId, userId2))).limit(1);
       if (!existing) return res.status(404).json({ error: "Deliverable not found" });
       if (existing.status !== "pending_approval") {
         return res.status(400).json({ error: "Only pending deliverables can be edited" });
@@ -14800,7 +24287,7 @@ Return ONLY the JSON object.`;
       if (Object.keys(patch).length === 0) {
         return res.status(400).json({ error: "No editable fields provided" });
       }
-      const [updated] = await db.update(deliverables).set(patch).where(eq30(deliverables.id, id)).returning();
+      const [updated] = await db.update(deliverables).set(patch).where(eq48(deliverables.id, id)).returning();
       res.json({ ok: true, deliverable: updated });
     } catch (err) {
       console.error("Error editing deliverable:", err);
@@ -14812,10 +24299,10 @@ Return ONLY the JSON object.`;
       const userId2 = req.userId;
       if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       const id = req.params.id;
-      const [d] = await db.select({ jobId: deliverables.jobId }).from(deliverables).where(and25(eq30(deliverables.id, id), eq30(deliverables.userId, userId2))).limit(1);
-      await db.update(deliverables).set({ status: "discarded", actedAt: /* @__PURE__ */ new Date() }).where(and25(eq30(deliverables.id, id), eq30(deliverables.userId, userId2)));
+      const [d] = await db.select({ jobId: deliverables.jobId }).from(deliverables).where(and40(eq48(deliverables.id, id), eq48(deliverables.userId, userId2))).limit(1);
+      await db.update(deliverables).set({ status: "discarded", actedAt: /* @__PURE__ */ new Date() }).where(and40(eq48(deliverables.id, id), eq48(deliverables.userId, userId2)));
       if (d?.jobId) {
-        await db.update(agentJobs).set({ status: "delivered" }).where(and25(eq30(agentJobs.id, d.jobId), eq30(agentJobs.status, "complete")));
+        await db.update(agentJobs).set({ status: "delivered" }).where(and40(eq48(agentJobs.id, d.jobId), eq48(agentJobs.status, "complete")));
       }
       res.json({ ok: true });
     } catch (err) {
@@ -14835,7 +24322,7 @@ Return ONLY the JSON object.`;
         status: userDocuments.status,
         summary: userDocuments.summary,
         uploadedAt: userDocuments.uploadedAt
-      }).from(userDocuments).where(eq30(userDocuments.userId, userId2)).orderBy(desc10(userDocuments.uploadedAt)).limit(MAX_DOCS_PER_USER);
+      }).from(userDocuments).where(eq48(userDocuments.userId, userId2)).orderBy(desc21(userDocuments.uploadedAt)).limit(MAX_DOCS_PER_USER);
       res.json({ documents: docs });
     } catch (error) {
       console.error("Error fetching documents:", error);
@@ -14853,7 +24340,7 @@ Return ONLY the JSON object.`;
       if (!SUPPORTED_MIME_TYPES.includes(mimeType)) {
         return res.status(400).json({ error: `Unsupported file type. Supported: ${SUPPORTED_EXTENSIONS.join(", ")}` });
       }
-      const existing = await db.select({ id: userDocuments.id }).from(userDocuments).where(eq30(userDocuments.userId, userId2));
+      const existing = await db.select({ id: userDocuments.id }).from(userDocuments).where(eq48(userDocuments.userId, userId2));
       if (existing.length >= MAX_DOCS_PER_USER) {
         return res.status(400).json({ error: `Maximum ${MAX_DOCS_PER_USER} documents allowed. Delete some to upload more.` });
       }
@@ -14877,7 +24364,7 @@ Return ONLY the JSON object.`;
       const userId2 = req.userId;
       if (!userId2) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
-      await db.delete(userDocuments).where(and25(eq30(userDocuments.id, id), eq30(userDocuments.userId, userId2)));
+      await db.delete(userDocuments).where(and40(eq48(userDocuments.id, id), eq48(userDocuments.userId, userId2)));
       res.json({ success: true });
     } catch (error) {
       console.error("Error deleting document:", error);
@@ -14888,7 +24375,7 @@ Return ONLY the JSON object.`;
     try {
       const userId2 = req.userId;
       if (!userId2) return res.status(401).json({ error: "Not authenticated" });
-      const rows = await db.select().from(chatgptImports).where(eq30(chatgptImports.userId, userId2));
+      const rows = await db.select().from(chatgptImports).where(eq48(chatgptImports.userId, userId2));
       if (rows.length === 0) {
         return res.json({ imported: false });
       }
@@ -14939,7 +24426,7 @@ Return ONLY the JSON object.`;
       if (allTexts.length === 0) {
         return res.status(400).json({ error: "No readable conversations found in the file." });
       }
-      const existingRows = await db.select({ content: userMemories.content }).from(userMemories).where(eq30(userMemories.userId, userId2));
+      const existingRows = await db.select({ content: userMemories.content }).from(userMemories).where(eq48(userMemories.userId, userId2));
       const existingMemories = existingRows.map((r) => r.content);
       const normalizedExisting = new Set(existingMemories.map(normalizeMemoryContent));
       const batchSize = 10;
@@ -14977,7 +24464,7 @@ Return JSON: { "memories": [{"content": "string describing the fact", "category"
 Return { "memories": [] } if nothing new was learned. Do NOT repeat or rephrase existing memories.
 Extract up to 8 memories per batch.`;
         try {
-          const response = await openai12.chat.completions.create({
+          const response = await openai15.chat.completions.create({
             model: "gpt-5-mini",
             messages: [{ role: "user", content: prompt }],
             response_format: { type: "json_object" },
@@ -15017,10 +24504,154 @@ Extract up to 8 memories per batch.`;
       res.status(500).json({ error: "Failed to import ChatGPT history" });
     }
   });
+  app2.get("/api/jarvis/builds", async (req, res) => {
+    const userId2 = req.userId;
+    if (!userId2) return res.status(401).json({ error: "Not authenticated" });
+    try {
+      const rows = await db.select().from(openclawBuildLog).where(eq48(openclawBuildLog.userId, userId2)).orderBy(desc21(openclawBuildLog.createdAt)).limit(50);
+      res.json({ builds: rows });
+    } catch (err) {
+      console.error("[jarvis] GET builds failed:", err);
+      res.status(500).json({ error: "Failed to load build log" });
+    }
+  });
+  app2.get("/api/nervous-system/watches", async (req, res) => {
+    const userId2 = req.userId;
+    if (!userId2) return res.status(401).json({ error: "Not authenticated" });
+    try {
+      const watches = await db.select().from(nervousSystemWatches).where(eq48(nervousSystemWatches.userId, userId2)).orderBy(nervousSystemWatches.createdAt);
+      res.json(watches);
+    } catch (err) {
+      console.error("[NervousSystem] watches fetch failed:", err);
+      res.status(500).json({ error: "Failed to fetch watches" });
+    }
+  });
+  const VALID_NS_CATEGORIES = /* @__PURE__ */ new Set(["keyword", "company", "person", "industry"]);
+  app2.post("/api/nervous-system/watches", async (req, res) => {
+    const userId2 = req.userId;
+    if (!userId2) return res.status(401).json({ error: "Not authenticated" });
+    const { label, category } = req.body;
+    if (!label?.trim()) return res.status(400).json({ error: "label is required" });
+    const cat = category && VALID_NS_CATEGORIES.has(category) ? category : "keyword";
+    try {
+      const [watch] = await db.insert(nervousSystemWatches).values({ userId: userId2, label: label.trim(), category: cat }).returning();
+      res.json(watch);
+    } catch (err) {
+      console.error("[NervousSystem] watch create failed:", err);
+      res.status(500).json({ error: "Failed to create watch" });
+    }
+  });
+  app2.patch("/api/nervous-system/watches/:id", async (req, res) => {
+    const userId2 = req.userId;
+    if (!userId2) return res.status(401).json({ error: "Not authenticated" });
+    const { id } = req.params;
+    const { active, label, category } = req.body;
+    try {
+      const updates = {};
+      if (typeof active === "boolean") updates.active = active;
+      if (label?.trim()) updates.label = label.trim();
+      if (category !== void 0) {
+        updates.category = VALID_NS_CATEGORIES.has(category) ? category : "keyword";
+      }
+      if (Object.keys(updates).length === 0) {
+        return res.status(400).json({ error: "No valid fields to update" });
+      }
+      const [updated] = await db.update(nervousSystemWatches).set(updates).where(and40(eq48(nervousSystemWatches.id, id), eq48(nervousSystemWatches.userId, userId2))).returning();
+      if (!updated) return res.status(404).json({ error: "Watch not found" });
+      res.json(updated);
+    } catch (err) {
+      console.error("[NervousSystem] watch update failed:", err);
+      res.status(500).json({ error: "Failed to update watch" });
+    }
+  });
+  app2.delete("/api/nervous-system/watches/:id", async (req, res) => {
+    const userId2 = req.userId;
+    if (!userId2) return res.status(401).json({ error: "Not authenticated" });
+    const { id } = req.params;
+    try {
+      await db.delete(nervousSystemWatches).where(and40(eq48(nervousSystemWatches.id, id), eq48(nervousSystemWatches.userId, userId2)));
+      res.json({ ok: true });
+    } catch (err) {
+      console.error("[NervousSystem] watch delete failed:", err);
+      res.status(500).json({ error: "Failed to delete watch" });
+    }
+  });
+  app2.get("/api/nervous-system/signals", async (req, res) => {
+    const userId2 = req.userId;
+    if (!userId2) return res.status(401).json({ error: "Not authenticated" });
+    const parsedLimit = parseInt(req.query.limit || "20", 10);
+    const limit = Math.min(50, Number.isNaN(parsedLimit) || parsedLimit < 1 ? 20 : parsedLimit);
+    try {
+      const signals = await db.select().from(nervousSystemSignals).where(eq48(nervousSystemSignals.userId, userId2)).orderBy(sql26`${nervousSystemSignals.createdAt} DESC`).limit(limit);
+      res.json(signals);
+    } catch (err) {
+      console.error("[NervousSystem] signals fetch failed:", err);
+      res.status(500).json({ error: "Failed to fetch signals" });
+    }
+  });
+  app2.get("/api/gut/signals", async (req, res) => {
+    const userId2 = req.userId;
+    if (!userId2) return res.status(401).json({ error: "Not authenticated" });
+    const includeResponded = req.query.includeResponded === "true";
+    const parsedLimit = parseInt(req.query.limit || "50", 10);
+    const limit = Math.min(100, Number.isNaN(parsedLimit) || parsedLimit < 1 ? 50 : parsedLimit);
+    try {
+      const { getGutSignalsForUser: getGutSignalsForUser2 } = await Promise.resolve().then(() => (init_gut(), gut_exports));
+      const signals = await getGutSignalsForUser2(userId2, { limit, includeResponded });
+      res.json(signals);
+    } catch (err) {
+      console.error("[Gut] signals fetch failed:", err);
+      res.status(500).json({ error: "Failed to fetch gut signals" });
+    }
+  });
+  app2.get("/api/gut/signals/item/:itemRef", async (req, res) => {
+    const userId2 = req.userId;
+    if (!userId2) return res.status(401).json({ error: "Not authenticated" });
+    const { itemRef } = req.params;
+    try {
+      const { getGutSignalsForUser: getGutSignalsForUser2 } = await Promise.resolve().then(() => (init_gut(), gut_exports));
+      const signals = await getGutSignalsForUser2(userId2, { itemRef, includeResponded: false });
+      res.json(signals);
+    } catch (err) {
+      console.error("[Gut] item signals fetch failed:", err);
+      res.status(500).json({ error: "Failed to fetch gut signals for item" });
+    }
+  });
+  app2.post("/api/gut/signals/:id/respond", async (req, res) => {
+    const userId2 = req.userId;
+    if (!userId2) return res.status(401).json({ error: "Not authenticated" });
+    const { id } = req.params;
+    const { response } = req.body;
+    const VALID_RESPONSES = ["confirmed", "dismissed", "ignored"];
+    if (!response || !VALID_RESPONSES.includes(response)) {
+      return res.status(400).json({ error: "response must be confirmed, dismissed, or ignored" });
+    }
+    try {
+      const { respondToGutSignal: respondToGutSignal2 } = await Promise.resolve().then(() => (init_gut(), gut_exports));
+      await respondToGutSignal2(userId2, id, response);
+      res.json({ ok: true });
+    } catch (err) {
+      console.error("[Gut] respond failed:", err);
+      res.status(500).json({ error: "Failed to store response" });
+    }
+  });
+  app2.get("/api/gut/threat-log", async (req, res) => {
+    const userId2 = req.userId;
+    if (!userId2) return res.status(401).json({ error: "Not authenticated" });
+    const parsedLimit = parseInt(req.query.limit || "30", 10);
+    const limit = Math.min(100, Number.isNaN(parsedLimit) || parsedLimit < 1 ? 30 : parsedLimit);
+    try {
+      const rows = await db.select().from(gutSignals).where(eq48(gutSignals.userId, userId2)).orderBy(desc21(gutSignals.createdAt)).limit(limit);
+      res.json(rows);
+    } catch (err) {
+      console.error("[Gut] threat-log fetch failed:", err);
+      res.status(500).json({ error: "Failed to fetch threat log" });
+    }
+  });
   const httpServer = createServer(app2);
   return httpServer;
 }
-var openai12, screenshotStore, COACHING_FRAMEWORKS, PERSONA_BLOCKS, morningNoteSummaryCache;
+var openai15, screenshotStore, COACHING_FRAMEWORKS, PERSONA_BLOCKS, morningNoteSummaryCache;
 var init_routes2 = __esm({
   "server/routes.ts"() {
     "use strict";
@@ -15038,9 +24669,11 @@ var init_routes2 = __esm({
     init_dataRoutes();
     init_telegramRoutes();
     init_routes();
+    init_schedulesRoutes();
     init_downloadRoutes();
     init_integrationOwner();
     init_oauthRoutes();
+    init_driveRoutes();
     init_userTokenStore();
     init_search();
     init_interactionLog();
@@ -15050,7 +24683,7 @@ var init_routes2 = __esm({
     init_bridge();
     init_schema();
     init_connectChannel();
-    openai12 = new OpenAI12({
+    openai15 = new OpenAI15({
       apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
       baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL
     });
@@ -15098,29 +24731,29 @@ __export(decay_exports, {
   reinforceMemories: () => reinforceMemories,
   runDailyDecay: () => runDailyDecay
 });
-import { eq as eq31, sql as sql17, and as and26 } from "drizzle-orm";
-function utcDayKey(d) {
+import { eq as eq49, sql as sql27, and as and41 } from "drizzle-orm";
+function utcDayKey2(d) {
   return `${d.getUTCFullYear()}-${d.getUTCMonth() + 1}-${d.getUTCDate()}`;
 }
 async function runDailyDecay() {
   const result = { decremented: 0, deleted: 0 };
   try {
-    const dec = await db.execute(sql17`
+    const dec = await db.execute(sql27`
       UPDATE user_memories
-      SET relevance_score = GREATEST(0, relevance_score - CASE WHEN confidence >= 90 THEN ${sql17.raw(String(Math.max(1, Math.floor(DECAY_STEP / 3))))} ELSE ${sql17.raw(String(DECAY_STEP))} END)
+      SET relevance_score = GREATEST(0, relevance_score - CASE WHEN confidence >= 90 THEN ${sql27.raw(String(Math.max(1, Math.floor(DECAY_STEP / 3))))} ELSE ${sql27.raw(String(DECAY_STEP))} END)
       WHERE (
-        (last_referenced_at IS NOT NULL AND last_referenced_at < NOW() - INTERVAL '${sql17.raw(String(STALE_AFTER_REF_DAYS))} days')
-        OR (last_referenced_at IS NULL AND extracted_at < NOW() - INTERVAL '${sql17.raw(String(STALE_AFTER_EXTRACT_DAYS))} days')
+        (last_referenced_at IS NOT NULL AND last_referenced_at < NOW() - INTERVAL '${sql27.raw(String(STALE_AFTER_REF_DAYS))} days')
+        OR (last_referenced_at IS NULL AND extracted_at < NOW() - INTERVAL '${sql27.raw(String(STALE_AFTER_EXTRACT_DAYS))} days')
       )
       RETURNING id
     `);
     result.decremented = dec.rows?.length || 0;
-    const del = await db.execute(sql17`
+    const del = await db.execute(sql27`
       DELETE FROM user_memories
       WHERE relevance_score < ${DECAY_FLOOR}
         AND (
-          (last_referenced_at IS NOT NULL AND last_referenced_at < NOW() - INTERVAL '${sql17.raw(String(STALE_AFTER_REF_DAYS))} days')
-          OR (last_referenced_at IS NULL AND extracted_at < NOW() - INTERVAL '${sql17.raw(String(STALE_AFTER_EXTRACT_DAYS))} days')
+          (last_referenced_at IS NOT NULL AND last_referenced_at < NOW() - INTERVAL '${sql27.raw(String(STALE_AFTER_REF_DAYS))} days')
+          OR (last_referenced_at IS NULL AND extracted_at < NOW() - INTERVAL '${sql27.raw(String(STALE_AFTER_EXTRACT_DAYS))} days')
         )
       RETURNING id
     `);
@@ -15134,7 +24767,7 @@ async function runDailyDecay() {
   return result;
 }
 async function maybeRunDailyDecay() {
-  const key = utcDayKey(/* @__PURE__ */ new Date());
+  const key = utcDayKey2(/* @__PURE__ */ new Date());
   if (key === lastDecayDayKey) return null;
   lastDecayDayKey = key;
   return runDailyDecay();
@@ -15143,9 +24776,9 @@ async function reinforceMemories(userId2, ids) {
   if (ids.length === 0) return;
   try {
     await db.update(userMemories).set({
-      relevanceScore: sql17`LEAST(100, ${userMemories.relevanceScore} + 5)`,
+      relevanceScore: sql27`LEAST(100, ${userMemories.relevanceScore} + 5)`,
       lastReferencedAt: /* @__PURE__ */ new Date()
-    }).where(and26(eq31(userMemories.userId, userId2), sql17`${userMemories.id} = ANY(${ids})`));
+    }).where(and41(eq49(userMemories.userId, userId2), sql27`${userMemories.id} = ANY(${ids})`));
   } catch (err) {
     console.error("[MemoryDecay] reinforce failed:", err);
   }
@@ -15164,12 +24797,227 @@ var init_decay = __esm({
   }
 });
 
+// server/nervous-system/scanner.ts
+var scanner_exports = {};
+__export(scanner_exports, {
+  runNervousSystemScan: () => runNervousSystemScan
+});
+import crypto4 from "crypto";
+import { eq as eq50, and as and42 } from "drizzle-orm";
+import OpenAI16 from "openai";
+function contentHash(userId2, headline, url) {
+  return crypto4.createHash("sha256").update(`${userId2}::${headline.toLowerCase().trim()}::${url.toLowerCase().trim()}`).digest("hex").slice(0, 64);
+}
+async function scoreResults(watchLabel, category, results) {
+  if (results.length === 0) return [];
+  const items = results.slice(0, 6).map((r, i) => `[${i}] "${r.title}" \u2014 ${r.content.slice(0, 300)}`).join("\n\n");
+  const prompt = `You are a relevance filter for a personal assistant. The user is monitoring: "${watchLabel}" (category: ${category}).
+
+Evaluate each search result below and decide whether it is genuinely relevant to this topic. Score from 0.0 to 1.0 where:
+- 0.0\u20130.4: not relevant or only tangentially related
+- 0.5\u20130.7: relevant but generic / widely known
+- 0.8\u20131.0: directly relevant, new, specific, worth surfacing
+
+Also write a one-sentence relevance_explanation (max 20 words) for results scoring \u2265 0.5.
+
+Return JSON array, one object per result (same order):
+[{ "index": 0, "score": 0.85, "explanation": "Directly mentions Acme Corp acquisition." }, ...]
+
+Results:
+${items}`;
+  try {
+    const resp = await openai16.chat.completions.create({
+      model: "gpt-5-mini",
+      messages: [{ role: "user", content: prompt }],
+      response_format: { type: "json_object" },
+      max_completion_tokens: 600
+    });
+    const raw = resp.choices[0]?.message?.content || "{}";
+    const parsed = JSON.parse(raw);
+    let arr = [];
+    if (Array.isArray(parsed)) {
+      arr = parsed;
+    } else if (parsed !== null && typeof parsed === "object") {
+      for (const val of Object.values(parsed)) {
+        if (Array.isArray(val)) {
+          arr = val;
+          break;
+        }
+      }
+    }
+    const isRawItem = (v) => v !== null && typeof v === "object" && typeof v.index === "number" && typeof v.score === "number";
+    return arr.filter(isRawItem).map((item) => {
+      const r = results[item.index];
+      if (!r) return null;
+      return {
+        headline: r.title,
+        url: r.url,
+        snippet: r.content.slice(0, 500),
+        relevanceScore: Math.round(Math.min(1, Math.max(0, item.score)) * 100),
+        relevanceExplanation: item.explanation || `Relevant to "${watchLabel}".`
+      };
+    }).filter((x) => x !== null);
+  } catch (err) {
+    console.error("[NervousSystem] LLM scoring failed:", err);
+    return [];
+  }
+}
+async function scanWatchTopic(userId2, watch) {
+  const stampLastChecked = () => db.update(nervousSystemWatches).set({ lastCheckedAt: /* @__PURE__ */ new Date() }).where(eq50(nervousSystemWatches.id, watch.id)).catch((err) => console.error("[NervousSystem] lastCheckedAt update failed:", err));
+  let searchResults = [];
+  try {
+    const query = `${watch.label} news latest`;
+    const tavilyResp = await tavilySearch(query, 6);
+    searchResults = tavilyResp.results || [];
+  } catch (err) {
+    console.error(`[NervousSystem] search failed for "${watch.label}":`, err);
+    await stampLastChecked();
+    return 0;
+  }
+  if (searchResults.length === 0) {
+    await stampLastChecked();
+    return 0;
+  }
+  const scored = await scoreResults(watch.label, watch.category, searchResults);
+  const qualifying = scored.filter((s) => s.relevanceScore >= RELEVANCE_THRESHOLD * 100);
+  if (qualifying.length === 0) {
+    await stampLastChecked();
+    return 0;
+  }
+  let stored = 0;
+  for (const hit of qualifying) {
+    const hash = contentHash(userId2, hit.headline, hit.url);
+    try {
+      await db.insert(nervousSystemSignals).values({
+        userId: userId2,
+        watchId: watch.id,
+        watchLabel: watch.label,
+        headline: hit.headline,
+        url: hit.url,
+        snippet: hit.snippet,
+        relevanceExplanation: hit.relevanceExplanation,
+        relevanceScore: hit.relevanceScore,
+        contentHash: hash
+      });
+    } catch (err) {
+      const code = err?.code;
+      if (code === "23505") continue;
+      console.error("[NervousSystem] signal insert failed:", err);
+      continue;
+    }
+    const msgText = `\u{1F50E} Signal for "${watch.label}"
+
+${hit.headline}
+${hit.relevanceExplanation}${hit.url ? `
+
+${hit.url}` : ""}`;
+    const suppressed = await isActionSuppressed(userId2, "proactive_message").catch(() => false);
+    if (suppressed) {
+      console.log(`[NervousSystem] proactive_message suppressed for user ${userId2} (self-correction) \u2014 skipping inbox surface`);
+      continue;
+    }
+    const inboxSourceId = `nervous_system:${hash}`;
+    let inboxInserted = false;
+    try {
+      await db.insert(inboxItems).values({
+        userId: userId2,
+        sourceType: "nervous_system",
+        sourceId: inboxSourceId,
+        subject: hit.headline,
+        sender: `Nervous System \u2014 ${watch.label}`,
+        snippet: hit.relevanceExplanation || hit.snippet?.slice(0, 200),
+        jarvisReason: hit.relevanceExplanation,
+        suggestedActions: [{ label: "Dismiss", actionType: "dismiss" }],
+        status: "pending"
+      });
+      inboxInserted = true;
+    } catch (err) {
+      const code = err?.code;
+      if (code !== "23505") console.error("[NervousSystem] inbox insert failed:", err);
+    }
+    if (inboxInserted) {
+      logAction(userId2, "proactive_message", { type: "nervous_system_signal", sourceId: inboxSourceId, hash }).catch(() => {
+      });
+    }
+    try {
+      const deliveryResults = await notifyUser(userId2, "nervous_system", msgText);
+      const anyDelivered = deliveryResults.some((r) => r.result.ok && r.channel !== "in_app");
+      if (anyDelivered) {
+        await db.update(nervousSystemSignals).set({ deliveredAt: /* @__PURE__ */ new Date() }).where(and42(eq50(nervousSystemSignals.userId, userId2), eq50(nervousSystemSignals.contentHash, hash)));
+        logInteraction(userId2, "notification", "outbound", msgText, "nervous_system").catch(() => {
+        });
+      }
+    } catch (err) {
+      console.error("[NervousSystem] channel delivery failed:", err);
+    }
+    stored++;
+  }
+  await stampLastChecked();
+  return stored;
+}
+async function runNervousSystemScan() {
+  const now = Date.now();
+  let watches = [];
+  try {
+    watches = await db.select().from(nervousSystemWatches).where(eq50(nervousSystemWatches.active, true));
+  } catch (err) {
+    console.error("[NervousSystem] failed to load watches:", err);
+    return;
+  }
+  if (watches.length === 0) return;
+  const byUser = {};
+  for (const w of watches) {
+    if (!byUser[w.userId]) byUser[w.userId] = [];
+    byUser[w.userId].push(w);
+  }
+  for (const [userId2, userWatches] of Object.entries(byUser)) {
+    if (lastScanAt[userId2] === void 0) {
+      const maxDbChecked = userWatches.map((w) => w.lastCheckedAt ? new Date(w.lastCheckedAt).getTime() : 0).reduce((a, b) => Math.max(a, b), 0);
+      lastScanAt[userId2] = maxDbChecked;
+    }
+    const lastScan = lastScanAt[userId2];
+    if (now - lastScan < SCAN_INTERVAL_MS) continue;
+    lastScanAt[userId2] = now;
+    let totalSignals = 0;
+    for (const watch of userWatches) {
+      try {
+        const fired = await scanWatchTopic(userId2, watch);
+        totalSignals += fired;
+      } catch (err) {
+        console.error(`[NervousSystem] scan failed for watch "${watch.label}" user ${userId2}:`, err);
+      }
+    }
+    if (totalSignals > 0) {
+      console.log(`[NervousSystem] ${totalSignals} signal(s) delivered for user ${userId2}`);
+    }
+  }
+}
+var openai16, RELEVANCE_THRESHOLD, SCAN_INTERVAL_MS, lastScanAt;
+var init_scanner = __esm({
+  "server/nervous-system/scanner.ts"() {
+    "use strict";
+    init_db();
+    init_schema();
+    init_search();
+    init_registry();
+    init_interactionLog();
+    init_actionLog();
+    openai16 = new OpenAI16({
+      apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
+      baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL
+    });
+    RELEVANCE_THRESHOLD = 0.55;
+    SCAN_INTERVAL_MS = 30 * 60 * 1e3;
+    lastScanAt = {};
+  }
+});
+
 // server/memory/peopleSync.ts
 var peopleSync_exports = {};
 __export(peopleSync_exports, {
   syncPeopleFromGoogle: () => syncPeopleFromGoogle
 });
-import { eq as eq32, and as and27 } from "drizzle-orm";
+import { eq as eq51, and as and43 } from "drizzle-orm";
 function parseSender(from) {
   const angle = from.match(/^"?([^"<]+?)"?\s*<([^>]+)>$/);
   if (angle) return { name: angle[1].trim(), email: angle[2].trim().toLowerCase() };
@@ -15244,7 +25092,7 @@ async function syncPeopleFromGoogle(userId2, accessToken, now) {
   for (const obs of byEmail.values()) {
     const upc = upcoming.get(obs.email);
     try {
-      const [existing] = await db.select().from(people).where(and27(eq32(people.userId, userId2), eq32(people.email, obs.email))).limit(1);
+      const [existing] = await db.select().from(people).where(and43(eq51(people.userId, userId2), eq51(people.email, obs.email))).limit(1);
       const relationshipHint = obs.source === "calendar" ? `calendar attendee \u2014 ${obs.context}` : `email correspondent \u2014 re: ${obs.context}`;
       if (existing) {
         await db.update(people).set({
@@ -15255,7 +25103,7 @@ async function syncPeopleFromGoogle(userId2, accessToken, now) {
           nextInteractionAt: upc?.nearest ?? null,
           upcomingCount: upc?.count ?? 0,
           updatedAt: /* @__PURE__ */ new Date()
-        }).where(eq32(people.id, existing.id));
+        }).where(eq51(people.id, existing.id));
       } else {
         await db.insert(people).values({
           userId: userId2,
@@ -15314,11 +25162,12 @@ init_search();
 init_googleDrive();
 init_userTokenStore();
 init_interactionLog();
+init_actionLog();
 import * as fs2 from "fs";
 import * as path2 from "path";
-import { eq as eq33, and as and28, sql as sql18, desc as desc11, gte as gte5 } from "drizzle-orm";
-import OpenAI13 from "openai";
-var openai13 = new OpenAI13({
+import { eq as eq52, and as and44, sql as sql29, desc as desc22, gte as gte14 } from "drizzle-orm";
+import OpenAI17 from "openai";
+var openai17 = new OpenAI17({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL
 });
@@ -15337,19 +25186,19 @@ function readChecklist() {
     return "";
   }
 }
-function localDateKey(now, tz) {
+function localDateKey2(now, tz) {
   const d = new Date(now.toLocaleString("en-US", { timeZone: tz }));
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
-function localHour(now, tz) {
+function localHour2(now, tz) {
   return new Date(now.toLocaleString("en-US", { timeZone: tz })).getHours();
 }
 async function alreadyLogged(userId2, messageType, sentDate) {
   const rows = await db.select({ id: proactiveScheduleLog.id }).from(proactiveScheduleLog).where(
-    and28(
-      eq33(proactiveScheduleLog.userId, userId2),
-      eq33(proactiveScheduleLog.messageType, messageType),
-      eq33(proactiveScheduleLog.sentDate, sentDate)
+    and44(
+      eq52(proactiveScheduleLog.userId, userId2),
+      eq52(proactiveScheduleLog.messageType, messageType),
+      eq52(proactiveScheduleLog.sentDate, sentDate)
     )
   ).limit(1);
   return rows.length > 0;
@@ -15362,7 +25211,7 @@ async function recordLog(userId2, messageType, sentDate) {
   }
 }
 async function runMeetingBriefs(userId2, chatId, token, memories, now, tz, userEmail) {
-  const localKey = localDateKey(now, tz);
+  const localKey = localDateKey2(now, tz);
   let events = [];
   try {
     events = await getGoogleCalendarEvents(localKey, void 0, void 0, token);
@@ -15431,7 +25280,7 @@ async function runMeetingBriefs(userId2, chatId, token, memories, now, tz, userE
     try {
       const emails = externalAttendees.map((a) => a.email.toLowerCase()).filter(Boolean);
       if (emails.length > 0) {
-        const peopleRows = await db.select().from(people).where(and28(eq33(people.userId, userId2), sql18`lower(${people.email}) = ANY(${emails})`));
+        const peopleRows = await db.select().from(people).where(and44(eq52(people.userId, userId2), sql29`lower(${people.email}) = ANY(${emails})`));
         if (peopleRows.length > 0) {
           peopleContext = peopleRows.map((p) => {
             const bits = [`${p.name}${p.email ? ` <${p.email}>` : ""}`];
@@ -15482,7 +25331,7 @@ Output exactly 3 short bullets (one line each, no headers):
 Plain text, no markdown asterisks, no preamble.`;
     let brief = "";
     try {
-      const resp = await openai13.chat.completions.create({
+      const resp = await openai17.chat.completions.create({
         model: "gpt-5-mini",
         messages: [{ role: "user", content: prompt }],
         max_completion_tokens: 600
@@ -15502,6 +25351,8 @@ ${brief}`;
       await recordLog(userId2, messageType, localKey);
       logInteraction(userId2, "notification", "outbound", fullMsg, "meeting_brief").catch(() => {
       });
+      logAction(userId2, "meeting_brief", { eventTitle: event.title, eventId: event.id }).catch(() => {
+      });
       fired++;
       console.log(`[Heartbeat] sent meeting brief for "${event.title}" to ${userId2}`);
     } catch (err) {
@@ -15515,13 +25366,13 @@ async function runEmailDrafts(userId2, chatId, token, now) {
   let urgentItems = [];
   try {
     urgentItems = await db.select().from(inboxItems).where(
-      and28(
-        eq33(inboxItems.userId, userId2),
-        eq33(inboxItems.sourceType, "email"),
-        eq33(inboxItems.status, "pending"),
-        sql18`${inboxItems.surfacedAt} > ${twelveHoursAgo}`,
-        sql18`${inboxItems.jarvisReason} IS NOT NULL`,
-        sql18`${inboxItems.matchedRuleId} IS NULL`
+      and44(
+        eq52(inboxItems.userId, userId2),
+        eq52(inboxItems.sourceType, "email"),
+        eq52(inboxItems.status, "pending"),
+        sql29`${inboxItems.surfacedAt} > ${twelveHoursAgo}`,
+        sql29`${inboxItems.jarvisReason} IS NOT NULL`,
+        sql29`${inboxItems.matchedRuleId} IS NULL`
       )
     ).limit(10);
   } catch (err) {
@@ -15543,9 +25394,9 @@ async function runEmailDrafts(userId2, chatId, token, now) {
     if (!sourceMessageId) continue;
     try {
       const existing = await db.select({ id: emailDrafts.id }).from(emailDrafts).where(
-        and28(
-          eq33(emailDrafts.userId, userId2),
-          eq33(emailDrafts.sourceMessageId, sourceMessageId)
+        and44(
+          eq52(emailDrafts.userId, userId2),
+          eq52(emailDrafts.sourceMessageId, sourceMessageId)
         )
       ).limit(1);
       if (existing.length > 0) continue;
@@ -15574,7 +25425,7 @@ Return JSON: { "subject": "Re: ...", "body": "..." }`;
     let draftSubject = subject.startsWith("Re:") ? subject : `Re: ${subject}`;
     let draftBody = "";
     try {
-      const resp = await openai13.chat.completions.create({
+      const resp = await openai17.chat.completions.create({
         model: "gpt-5-mini",
         messages: [{ role: "user", content: prompt }],
         response_format: { type: "json_object" },
@@ -15600,6 +25451,8 @@ Return JSON: { "subject": "Re: ...", "body": "..." }`;
         jarvisReason: reason
       });
       queued++;
+      logAction(userId2, "email_drafted", { subject, sourceMessageId }).catch(() => {
+      });
       console.log(`[Heartbeat] queued draft reply for "${subject}" (user ${userId2})`);
     } catch (err) {
       const code = err?.code;
@@ -15607,12 +25460,13 @@ Return JSON: { "subject": "Re: ...", "body": "..." }`;
     }
   }
   if (queued > 0) {
-    const localKey = localDateKey(now, "UTC");
+    const localKey = localDateKey2(now, "UTC");
     const nudgeKey = `draft_nudge:${queued}`;
     if (!await alreadyLogged(userId2, nudgeKey, localKey)) {
       try {
-        await sendMessage(
-          chatId,
+        await notifyUser(
+          userId2,
+          "email_alert",
           `\u2709\uFE0F ${queued} email draft${queued === 1 ? "" : "s"} waiting for your review in the Inbox tab.`
         );
         await recordLog(userId2, nudgeKey, localKey);
@@ -15627,14 +25481,14 @@ Return JSON: { "subject": "Re: ...", "body": "..." }`;
 }
 async function runEveningWrapUp(userId2, chatId, token, prefs, now, tz) {
   const wrapHour = typeof prefs.eveningWrapUpHour === "number" ? prefs.eveningWrapUpHour : 21;
-  const hour = localHour(now, tz);
+  const hour = localHour2(now, tz);
   if (hour < wrapHour || hour >= 24) return false;
-  const localKey = localDateKey(now, tz);
+  const localKey = localDateKey2(now, tz);
   const messageType = "evening_wrapup";
   if (await alreadyLogged(userId2, messageType, localKey)) return false;
   let tasks = [];
   try {
-    const planRows = await db.select().from(plans).where(and28(eq33(plans.userId, userId2), eq33(plans.date, localKey))).limit(1);
+    const planRows = await db.select().from(plans).where(and44(eq52(plans.userId, userId2), eq52(plans.date, localKey))).limit(1);
     const data = planRows[0]?.data || {};
     tasks = Array.isArray(data.tasks) ? data.tasks : [];
   } catch {
@@ -15642,7 +25496,7 @@ async function runEveningWrapUp(userId2, chatId, token, prefs, now, tz) {
   let statsData = {};
   let statsRowExists = false;
   try {
-    const statsRows = await db.select().from(stats).where(eq33(stats.userId, userId2)).limit(1);
+    const statsRows = await db.select().from(stats).where(eq52(stats.userId, userId2)).limit(1);
     if (statsRows.length > 0) {
       statsData = statsRows[0].data || {};
       statsRowExists = true;
@@ -15657,7 +25511,7 @@ async function runEveningWrapUp(userId2, chatId, token, prefs, now, tz) {
       const yesterday = (() => {
         const d = new Date(now);
         d.setDate(d.getDate() - 1);
-        return localDateKey(d, tz);
+        return localDateKey2(d, tz);
       })();
       const lastDate = statsData.lastStreakDate || "";
       let newStreak = statsData.streak || 0;
@@ -15681,7 +25535,7 @@ async function runEveningWrapUp(userId2, chatId, token, prefs, now, tz) {
           lastStreakDate: localKey
         },
         updatedAt: /* @__PURE__ */ new Date()
-      }).where(eq33(stats.userId, userId2));
+      }).where(eq52(stats.userId, userId2));
       statsData = {
         ...statsData,
         streak: newStreak,
@@ -15718,7 +25572,7 @@ Return JSON:
   let tomorrowPrompt = "";
   let observation = "";
   try {
-    const resp = await openai13.chat.completions.create({
+    const resp = await openai17.chat.completions.create({
       model: "gpt-5-mini",
       messages: [{ role: "user", content: llmPrompt }],
       response_format: { type: "json_object" },
@@ -15739,6 +25593,8 @@ Return JSON:
 ${summary}`);
     logInteraction(userId2, "notification", "outbound", summary, "evening_wrapup").catch(() => {
     });
+    logAction(userId2, "evening_wrap", { date: localKey, completedCount, openCount: open.length }).catch(() => {
+    });
   } catch (err) {
     console.error(`[Heartbeat] wrap-up send failed:`, err);
     return false;
@@ -15747,9 +25603,9 @@ ${summary}`);
     const tomorrowKey = (() => {
       const d = new Date(now);
       d.setDate(d.getDate() + 1);
-      return localDateKey(d, tz);
+      return localDateKey2(d, tz);
     })();
-    const prefRows = await db.select().from(userPreferences).where(eq33(userPreferences.userId, userId2)).limit(1);
+    const prefRows = await db.select().from(userPreferences).where(eq52(userPreferences.userId, userId2)).limit(1);
     const prefData = prefRows[0]?.data || {};
     const tomorrowSeed = {
       date: tomorrowKey,
@@ -15758,7 +25614,7 @@ ${summary}`);
       observation,
       tomorrowPrompt
     };
-    await db.update(userPreferences).set({ data: { ...prefData, tomorrowSeed }, updatedAt: /* @__PURE__ */ new Date() }).where(eq33(userPreferences.userId, userId2));
+    await db.update(userPreferences).set({ data: { ...prefData, tomorrowSeed }, updatedAt: /* @__PURE__ */ new Date() }).where(eq52(userPreferences.userId, userId2));
     console.log(`[Heartbeat] tomorrow seed written for ${userId2} (date: ${tomorrowKey})`);
   } catch (err) {
     console.error(`[Heartbeat] tomorrow seed write failed (non-fatal):`, err);
@@ -15799,6 +25655,18 @@ async function runHeartbeatTick() {
   } catch (err) {
     console.error("[Heartbeat] memory decay failed:", err);
   }
+  try {
+    const { maybeRunDailyHistoryPrune: maybeRunDailyHistoryPrune2 } = await Promise.resolve().then(() => (init_emotional_state(), emotional_state_exports));
+    await maybeRunDailyHistoryPrune2();
+  } catch (err) {
+    console.error("[Heartbeat] emotional state history prune failed:", err);
+  }
+  try {
+    const { runNervousSystemScan: runNervousSystemScan2 } = await Promise.resolve().then(() => (init_scanner(), scanner_exports));
+    await runNervousSystemScan2();
+  } catch (err) {
+    console.error("[Heartbeat] nervous system scan failed:", err);
+  }
   const checklist = readChecklist();
   if (!checklist) {
     console.warn("[Heartbeat] checklist file missing, skipping tick");
@@ -15832,22 +25700,42 @@ async function runHeartbeatTick() {
     }
     let memories = [];
     try {
-      memories = await db.select({ content: userMemories.content, category: userMemories.category }).from(userMemories).where(eq33(userMemories.userId, link.userId)).orderBy(desc11(userMemories.extractedAt)).limit(30);
+      memories = await db.select({ content: userMemories.content, category: userMemories.category }).from(userMemories).where(eq52(userMemories.userId, link.userId)).orderBy(desc22(userMemories.extractedAt)).limit(30);
     } catch {
     }
     let actionsFired = 0;
     try {
-      if (token) actionsFired += await runMeetingBriefs(link.userId, link.chatId, token, memories, now, tz, userEmail);
+      const { computeAndStoreEmotionalState: computeAndStoreEmotionalState2 } = await Promise.resolve().then(() => (init_emotional_state(), emotional_state_exports));
+      await computeAndStoreEmotionalState2(link.userId, tz, now);
+    } catch (err) {
+      console.error(`[Heartbeat] emotional state computation failed for ${link.userId}:`, err);
+    }
+    try {
+      const { runGutScanForUser: runGutScanForUser2 } = await Promise.resolve().then(() => (init_gut(), gut_exports));
+      await runGutScanForUser2(link.userId, userEmail, now);
+    } catch (err) {
+      console.error(`[Heartbeat] gut scan failed for ${link.userId}:`, err);
+    }
+    try {
+      const { validateExpiredPredictions: validateExpiredPredictions2 } = await Promise.resolve().then(() => (init_predictor(), predictor_exports));
+      await validateExpiredPredictions2(link.userId, now);
+    } catch (err) {
+      console.error(`[Heartbeat] prediction validation failed for ${link.userId}:`, err);
+    }
+    try {
+      if (token && !await isActionSuppressed(link.userId, "meeting_brief"))
+        actionsFired += await runMeetingBriefs(link.userId, link.chatId, token, memories, now, tz, userEmail);
     } catch (err) {
       console.error(`[Heartbeat] meeting briefs failed for ${link.userId}:`, err);
     }
     try {
-      if (token) actionsFired += await runEmailDrafts(link.userId, link.chatId, token, now);
+      if (token && !await isActionSuppressed(link.userId, "email_drafted"))
+        actionsFired += await runEmailDrafts(link.userId, link.chatId, token, now);
     } catch (err) {
       console.error(`[Heartbeat] email drafts failed for ${link.userId}:`, err);
     }
     try {
-      if (await runEveningWrapUp(link.userId, link.chatId, token, prefs, now, tz)) actionsFired++;
+      if (!await isActionSuppressed(link.userId, "evening_wrap") && await runEveningWrapUp(link.userId, link.chatId, token, prefs, now, tz)) actionsFired++;
     } catch (err) {
       console.error(`[Heartbeat] wrap-up failed for ${link.userId}:`, err);
     }
@@ -15869,7 +25757,7 @@ async function runHeartbeatMemoryPass(userId2, googleToken, now) {
   lastHeartbeatExtractAt[userId2] = now.getTime();
   const sinceCutoff = new Date(now.getTime() - HEARTBEAT_EXTRACT_INTERVAL_MS);
   try {
-    const recentMessages = await db.select().from(telegramGroupMessages).where(and28(eq33(telegramGroupMessages.userId, userId2), gte5(telegramGroupMessages.messageDate, sinceCutoff))).orderBy(desc11(telegramGroupMessages.messageDate)).limit(20);
+    const recentMessages = await db.select().from(telegramGroupMessages).where(and44(eq52(telegramGroupMessages.userId, userId2), gte14(telegramGroupMessages.messageDate, sinceCutoff))).orderBy(desc22(telegramGroupMessages.messageDate)).limit(20);
     if (recentMessages.length > 0) {
       const text2 = recentMessages.map((m) => `[${m.fromUser ?? "?"}]: ${m.text}`).join("\n").slice(0, 4e3);
       const { extractAndStore: extractAndStore2 } = await Promise.resolve().then(() => (init_extractor(), extractor_exports));
@@ -15910,10 +25798,98 @@ init_telegram();
 // server/scheduler.ts
 init_db();
 init_schema();
+init_registry();
+init_interactionLog();
+init_actionLog();
 init_routes2();
 init_goalScheduler();
 init_weeklyJob();
-import { eq as eq34, and as and29 } from "drizzle-orm";
+init_schedules();
+import { eq as eq54, and as and46 } from "drizzle-orm";
+
+// server/discord/digest.ts
+init_db();
+init_schema();
+init_schedules();
+import { eq as eq53, and as and45 } from "drizzle-orm";
+async function buildDailyDigest(userId2) {
+  const now = /* @__PURE__ */ new Date();
+  const midnight = new Date(now);
+  midnight.setHours(0, 0, 0, 0);
+  const allSchedules = await db.select().from(discordChannelSchedules).where(eq53(discordChannelSchedules.userId, userId2));
+  const completedToday = allSchedules.filter(
+    (s) => s.lastRun && s.lastRun >= midnight
+  );
+  const pendingApprovals = await db.select().from(discordPendingApprovals).where(
+    and45(
+      eq53(discordPendingApprovals.userId, userId2),
+      eq53(discordPendingApprovals.status, "pending")
+    )
+  );
+  const agents = await db.select().from(discordAgents).where(eq53(discordAgents.userId, userId2));
+  const upcoming = allSchedules.filter((s) => s.enabled).map((s) => ({ schedule: s, next: nextRunTime(s.cronExpression) })).filter((x) => x.next !== null && x.next <= new Date(now.getTime() + 24 * 60 * 60 * 1e3)).sort((a, b) => a.next.getTime() - b.next.getTime());
+  const dateStr = now.toLocaleDateString("en-US", {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric"
+  });
+  const lines = [`\u{1F9E0} **Jarvis Daily Digest \u2014 ${dateStr}**
+`];
+  if (completedToday.length > 0) {
+    lines.push("\u2705 **Completed today:**");
+    for (const s of completedToday) {
+      const timeStr = s.lastRun ? s.lastRun.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }) : "unknown";
+      lines.push(`  \u2022 ${s.label} \u2014 posted to #${s.channelName} at ${timeStr}`);
+    }
+    lines.push("");
+  } else {
+    lines.push("\u2705 **Completed today:** None\n");
+  }
+  if (pendingApprovals.length > 0) {
+    lines.push("\u23F3 **Waiting for your approval:**");
+    for (const a of pendingApprovals) {
+      const onApprove = a.onApprove;
+      const dest = onApprove?.channelName ? ` \u2192 #${onApprove.channelName}` : "";
+      const preview = a.content.replace(/\n/g, " ").slice(0, 60) + (a.content.length > 60 ? "\u2026" : "");
+      lines.push(`  \u2022 **${a.type}**${dest}: "${preview}" (react ${a.approveEmoji} or ${a.rejectEmoji})`);
+    }
+    lines.push("");
+  } else {
+    lines.push("\u23F3 **Waiting for your approval:** None\n");
+  }
+  if (agents.length > 0) {
+    const activeAgents = agents.filter((a) => a.isActive);
+    if (activeAgents.length > 0) {
+      lines.push("\u{1F916} **Active agents:**");
+      for (const a of activeAgents) {
+        const loop = a.loopEnabled ? `(loop every ${a.loopIntervalMinutes}min)` : "(on-demand)";
+        const lastRun = a.lastLoopRun ? `last active ${a.lastLoopRun.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}` : "never run";
+        lines.push(`  \u2022 **${a.name}** (${a.role}) ${loop} \u2014 ${lastRun}`);
+      }
+      lines.push("");
+    }
+  }
+  if (upcoming.length > 0) {
+    lines.push("\u{1F4C5} **Scheduled for next 24 hours:**");
+    for (const { schedule, next } of upcoming) {
+      if (!next) continue;
+      const timeStr = next.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
+      lines.push(`  \u2022 ${timeStr} \u2014 ${schedule.label}`);
+    }
+    lines.push("");
+  } else {
+    lines.push("\u{1F4C5} **Scheduled for next 24 hours:** None\n");
+  }
+  lines.push("\u26A0\uFE0F **Issues:** None");
+  return lines.join("\n");
+}
+
+// server/scheduler.ts
+init_manager();
+init_workspace();
+init_driveRoutes();
+init_googleDrive();
 var schedulerRunning = false;
 var lastWeeklyRunKey = "";
 function sundayKey(d) {
@@ -15921,6 +25897,82 @@ function sundayKey(d) {
   const day = start.getDay();
   start.setDate(start.getDate() - day);
   return `${start.getFullYear()}-${start.getMonth() + 1}-${start.getDate()}`;
+}
+async function runDiscordSchedules(now) {
+  try {
+    const schedules = await db.select().from(discordChannelSchedules).where(eq54(discordChannelSchedules.enabled, true));
+    for (const schedule of schedules) {
+      if (matchesCron(schedule.cronExpression, now)) {
+        console.log(`[Scheduler] Firing Discord schedule "${schedule.label}" (${schedule.id})`);
+        runSchedule(schedule.id).catch((err) => {
+          console.error(`[Scheduler] Discord schedule ${schedule.id} failed:`, err);
+        });
+      }
+    }
+  } catch (err) {
+    console.error("[Scheduler] runDiscordSchedules failed:", err);
+  }
+}
+async function runAgentLoops(now) {
+  try {
+    const agents = await db.select().from(discordAgents).where(and46(
+      eq54(discordAgents.isActive, 1),
+      eq54(discordAgents.loopEnabled, 1)
+    ));
+    for (const agent of agents) {
+      const intervalMs = (agent.loopIntervalMinutes ?? 60) * 60 * 1e3;
+      const lastRun = agent.lastLoopRun?.getTime() ?? 0;
+      if (now.getTime() - lastRun >= intervalMs) {
+        console.log(`[Scheduler] Firing agent loop for ${agent.name} (${agent.id})`);
+        runAgentLoop(agent).catch((err) => {
+          console.error(`[Scheduler] Agent loop ${agent.id} failed:`, err);
+        });
+      }
+    }
+  } catch (err) {
+    console.error("[Scheduler] runAgentLoops failed:", err);
+  }
+}
+async function runAgentLoop(agent) {
+  const { runCoachAgent: runCoachAgent2 } = await Promise.resolve().then(() => (init_coachAgent(), coachAgent_exports));
+  const { postToDiscordChannel: postToDiscordChannel2 } = await Promise.resolve().then(() => (init_manager(), manager_exports));
+  const prompt = agent.loopPrompt || `You are ${agent.name}, an autonomous ${agent.role} agent. Check the user's current goals and tasks. Pick the next highest-priority task aligned with your ${agent.role} role. Do meaningful work on it. Post a progress update to your channel: "\u{1F528} Working on: [task]. Here's what I did: [summary]. Blockers: [any or none]."`;
+  let result = "";
+  try {
+    const agentResult = await runCoachAgent2({
+      userId: agent.userId,
+      userText: `[You are ${agent.name}. ${agent.persona || ""}]
+
+${prompt}`,
+      channelName: `Discord #${(agent.channelName || agent.name).toLowerCase()}`
+    });
+    result = agentResult.reply || "";
+  } catch (err) {
+    result = `\u26A0\uFE0F Agent loop error: ${err instanceof Error ? err.message : String(err)}`;
+  }
+  if (result && agent.channelName) {
+    await postToDiscordChannel2(agent.userId, agent.channelName, agent.channelId, result);
+  }
+  await db.update(discordAgents).set({ lastLoopRun: /* @__PURE__ */ new Date() }).where(eq54(discordAgents.id, agent.id));
+}
+async function runDailyDigests() {
+  try {
+    const links = await db.select().from(channelLinks).where(eq54(channelLinks.channel, "discord"));
+    for (const link of links) {
+      try {
+        const meta = link.metadata;
+        const channelId = meta?.workspace?.channels?.[DIGEST_CHANNEL_KEY];
+        if (!channelId) continue;
+        const digest = await buildDailyDigest(link.userId);
+        await postToDiscordChannel(link.userId, "daily-digest", channelId, digest);
+        console.log(`[Scheduler] Daily digest posted for user ${link.userId}`);
+      } catch (err) {
+        console.error(`[Scheduler] Daily digest failed for user ${link.userId}:`, err);
+      }
+    }
+  } catch (err) {
+    console.error("[Scheduler] runDailyDigests failed:", err);
+  }
 }
 function startScheduler() {
   if (schedulerRunning) return;
@@ -15934,6 +25986,20 @@ function startScheduler() {
       console.log("[Scheduler] Running morning plan build...");
       await runMorningPlanBuild();
     }
+    runDreamCycleForAllUsers(now).catch(
+      (err) => console.error("[Scheduler] Dream cycle failed:", err)
+    );
+    runDreamDeliveryForAllUsers(now).catch(
+      (err) => console.error("[Scheduler] Dream delivery failed:", err)
+    );
+    if (h === 2 && m === 0) {
+      Promise.resolve().then(() => (init_gut(), gut_exports)).then(({ calibrateGutForAllUsers: calibrateGutForAllUsers2 }) => {
+        console.log("[Scheduler] Running nightly gut calibration...");
+        calibrateGutForAllUsers2().catch(
+          (err) => console.error("[Scheduler] Gut calibration failed:", err)
+        );
+      }).catch((err) => console.error("[Scheduler] Gut calibration import failed:", err));
+    }
     if (dow === 0 && h === 3 && m === 0) {
       const key = sundayKey(now);
       if (key !== lastWeeklyRunKey) {
@@ -15946,38 +26012,99 @@ function startScheduler() {
         }
       }
     }
+    if (dow === 0 && h === 18 && m === 0) {
+      Promise.resolve().then(() => (init_ego(), ego_exports)).then(({ runEgoForAllUsers: runEgoForAllUsers2, getISOWeekMonday: getISOWeekMonday2 }) => {
+        const weekOf = getISOWeekMonday2(now);
+        console.log(`[Scheduler] Running Ego weekly reports (${weekOf})...`);
+        runEgoForAllUsers2(now, weekOf).catch(
+          (err) => console.error("[Scheduler] Ego reports failed:", err)
+        );
+      }).catch((err) => console.error("[Scheduler] Ego import failed:", err));
+    }
+    if (h === 21 && m === 0) {
+      console.log("[Scheduler] Running daily digests...");
+      runDailyDigests().catch((err) => console.error("[Scheduler] runDailyDigests error:", err));
+    }
+    await runDiscordSchedules(now);
+    await runAgentLoops(now);
   }, 60 * 1e3);
-  console.log("[Scheduler] Started \u2014 morning plan 7:00 AM daily, weekly patterns Sunday 3:00 AM");
+  console.log("[Scheduler] Started \u2014 morning plan 7:00 AM daily, weekly patterns Sunday 3:00 AM, Discord schedules every minute");
+}
+async function runPredictionEngineForAllUsers(startDate) {
+  const allUsers = await db.select({ id: users.id }).from(users).catch(() => []);
+  console.log(`[Predictor] Running for ${allUsers.length} user(s), 7-day horizon from ${startDate}`);
+  const datesToRun = [];
+  const base = /* @__PURE__ */ new Date(startDate + "T00:00:00");
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(base);
+    d.setDate(base.getDate() + i);
+    datesToRun.push(d.toISOString().slice(0, 10));
+  }
+  for (const user of allUsers) {
+    try {
+      const { analysePatterns: analysePatterns2 } = await Promise.resolve().then(() => (init_pattern_analyser(), pattern_analyser_exports));
+      const { generateAndStorePredictions: generateAndStorePredictions2 } = await Promise.resolve().then(() => (init_predictor(), predictor_exports));
+      const analysis = await analysePatterns2(user.id, 60);
+      let totalInserted = 0;
+      for (const targetDate of datesToRun) {
+        totalInserted += await generateAndStorePredictions2(user.id, targetDate, analysis);
+      }
+      if (totalInserted > 0) {
+        console.log(`[Predictor] ${totalInserted} new prediction(s) for user ${user.id}`);
+      }
+    } catch (err) {
+      console.error(`[Predictor] failed for user ${user.id}:`, err);
+    }
+  }
 }
 async function runMorningPlanBuild() {
   const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+  await runPredictionEngineForAllUsers(today);
   const allUsers = await db.select({ id: users.id }).from(users);
   console.log(`[Scheduler] Processing ${allUsers.length} user(s) for auto-plan build`);
   for (const user of allUsers) {
     try {
-      const existingPlan = await db.select({ data: plans.data }).from(plans).where(and29(eq34(plans.userId, user.id), eq34(plans.date, today)));
+      const existingPlan = await db.select({ data: plans.data }).from(plans).where(and46(eq54(plans.userId, user.id), eq54(plans.date, today)));
       const existingTasks = existingPlan[0]?.data?.tasks || [];
       if (existingTasks.length > 0) {
         console.log(`[Scheduler] User ${user.id} already has ${existingTasks.length} tasks, skipping`);
         continue;
       }
-      const result = await buildPlanForUser(user.id);
-      if (!result || result.tasks.length === 0) {
-        console.log(`[Scheduler] No tasks generated for user ${user.id}, skipping`);
-        continue;
+      const [planSuppressedNow, taskSuppressedNow] = await Promise.all([
+        isActionSuppressed(user.id, "plan_built"),
+        isActionSuppressed(user.id, "task_suggested")
+      ]);
+      const aiSuggestionsSuppressed = planSuppressedNow || taskSuppressedNow;
+      if (aiSuggestionsSuppressed) {
+        console.log(`[Scheduler] AI plan/task suggestions suppressed for user ${user.id} (self-correction) \u2014 using goal-tree injection only`);
       }
-      const newTasks = result.tasks.map((t) => ({
-        id: `jarvis_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
-        title: t.title,
-        category: t.category,
-        priority: t.priority,
-        duration: t.duration,
-        time: t.time,
-        description: t.description,
-        completed: false,
-        createdAt: Date.now(),
-        fromJarvis: true
-      }));
+      const newTasks = [];
+      let planReasoning = "";
+      const aiGeneratedTaskIds = [];
+      if (!aiSuggestionsSuppressed) {
+        const result = await buildPlanForUser(user.id);
+        if (result && result.tasks.length > 0) {
+          planReasoning = result.reasoning ?? "";
+          for (const t of result.tasks) {
+            const taskId = `jarvis_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+            aiGeneratedTaskIds.push(taskId);
+            newTasks.push({
+              id: taskId,
+              title: t.title,
+              category: t.category,
+              priority: t.priority,
+              duration: t.duration,
+              time: t.time,
+              description: t.description,
+              completed: false,
+              createdAt: Date.now(),
+              fromJarvis: true
+            });
+          }
+        } else {
+          console.log(`[Scheduler] No AI tasks generated for user ${user.id}`);
+        }
+      }
       let injected = [];
       try {
         injected = await getInjectableGoalTasks(user.id, today);
@@ -15986,7 +26113,7 @@ async function runMorningPlanBuild() {
       }
       for (const pick of injected) {
         const minutes = Math.max(15, Math.round((pick.estimateHours || 1) * 60));
-        const goalTask = {
+        newTasks.push({
           id: `goal_${pick.taskId}_${today}`,
           title: pick.title,
           category: "goal",
@@ -15999,8 +26126,7 @@ async function runMorningPlanBuild() {
           fromJarvis: true,
           goalTreeId: pick.goalTreeId,
           goalTaskId: pick.taskId
-        };
-        newTasks.push(goalTask);
+        });
       }
       if (injected.length > 0) {
         try {
@@ -16010,6 +26136,10 @@ async function runMorningPlanBuild() {
           console.error(`[Scheduler] markTasksInjected failed for ${user.id}:`, e);
         }
       }
+      if (newTasks.length === 0) {
+        console.log(`[Scheduler] No tasks at all for user ${user.id}, skipping plan write`);
+        continue;
+      }
       await db.insert(plans).values({
         userId: user.id,
         date: today,
@@ -16018,16 +26148,45 @@ async function runMorningPlanBuild() {
         target: [plans.userId, plans.date],
         set: { data: { date: today, tasks: newTasks }, updatedAt: /* @__PURE__ */ new Date() }
       });
-      const topTask = result.tasks[0];
-      const existingPrefs = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq34(userPreferences.userId, user.id));
+      if (!aiSuggestionsSuppressed && aiGeneratedTaskIds.length > 0) {
+        const aiTasks = newTasks.filter((t) => aiGeneratedTaskIds.includes(t.id));
+        Promise.resolve().then(() => (init_actionLog(), actionLog_exports)).then(({ logAction: logAction2 }) => {
+          logAction2(user.id, "plan_built", { date: today, aiTaskCount: aiTasks.length, totalTaskCount: newTasks.length }).catch(() => {
+          });
+          if (aiTasks[0]) {
+            logAction2(user.id, "prediction_made", {
+              prediction: `User will work on: "${aiTasks[0].title}"`,
+              taskId: aiTasks[0].id,
+              date: today
+            }).catch(() => {
+            });
+          }
+          for (const t of aiTasks) {
+            logAction2(user.id, "task_suggested", { taskId: t.id, title: t.title, date: today, source: "ai" }).catch(() => {
+            });
+          }
+        }).catch(() => {
+        });
+      }
+      let predictionText = "";
+      try {
+        const { getTodayPredictions: getTodayPredictions2, formatPredictionsForBriefing: formatPredictionsForBriefing2 } = await Promise.resolve().then(() => (init_predictor(), predictor_exports));
+        const preds = await getTodayPredictions2(user.id, today);
+        predictionText = formatPredictionsForBriefing2(preds);
+      } catch (predErr) {
+        console.error(`[Scheduler] prediction fetch failed for ${user.id}:`, predErr);
+      }
+      const topTask = newTasks[0];
+      const existingPrefs = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq54(userPreferences.userId, user.id));
       const currentPrefs = existingPrefs[0]?.data || {};
       const updatedPrefs = {
         ...currentPrefs,
         autoBuiltPlan: {
           date: today,
-          topTask: topTask.title,
-          reasoning: result.reasoning,
-          taskCount: result.tasks.length
+          topTask: topTask?.title,
+          reasoning: planReasoning || void 0,
+          taskCount: newTasks.length,
+          predictionText: predictionText || null
         }
       };
       await db.insert(userPreferences).values({
@@ -16040,12 +26199,600 @@ async function runMorningPlanBuild() {
           updatedAt: /* @__PURE__ */ new Date()
         }
       });
-      console.log(`[Scheduler] Auto-built ${newTasks.length} tasks for user ${user.id} (top: "${topTask.title}")`);
+      console.log(`[Scheduler] Auto-built ${newTasks.length} tasks for user ${user.id}${topTask ? ` (top: "${topTask.title}")` : ""}`);
+      try {
+        const { getAndMarkMorningBriefSignals: getAndMarkMorningBriefSignals2 } = await Promise.resolve().then(() => (init_gut(), gut_exports));
+        const gutFlags = await getAndMarkMorningBriefSignals2(user.id);
+        if (gutFlags.length > 0) {
+          const flagLines = gutFlags.map((g) => `\u2022 ${g.explanation}`).join("\n");
+          const prefsWithGut = {
+            ...updatedPrefs,
+            autoBuiltPlan: {
+              ...updatedPrefs.autoBuiltPlan,
+              gutFlags: gutFlags.map((g) => ({
+                id: g.id,
+                signalType: g.signalType,
+                confidenceScore: g.confidenceScore,
+                explanation: g.explanation
+              }))
+            }
+          };
+          await db.insert(userPreferences).values({
+            userId: user.id,
+            data: prefsWithGut
+          }).onConflictDoUpdate({
+            target: [userPreferences.userId],
+            set: { data: prefsWithGut, updatedAt: /* @__PURE__ */ new Date() }
+          });
+          const gutMsg = `\u{1F441} Jarvis noticed:
+${flagLines}`;
+          const { notifyUser: notifyGut } = await Promise.resolve().then(() => (init_registry(), registry_exports));
+          await notifyGut(user.id, "morning_briefing", gutMsg);
+          console.log(`[Scheduler] ${gutFlags.length} gut flag(s) embedded in morning brief for ${user.id}`);
+        }
+      } catch (gutErr) {
+        console.error(`[Scheduler] gut morning brief failed for ${user.id}:`, gutErr);
+      }
+      try {
+        const taskListLines = newTasks.slice(0, 5).map((t, i) => `${i + 1}. ${t.title}`).join("\n");
+        const morningMsg = `\u2600\uFE0F Good morning! Your plan for today:
+
+${taskListLines}${newTasks.length > 5 ? `
+\u2026and ${newTasks.length - 5} more` : ""}
+
+\u{1F4CC} Focus first: ${topTask.title}${predictionText ? `
+${predictionText}` : ""}`;
+        await notifyUser(user.id, "morning_briefing", morningMsg);
+      } catch (notifyErr) {
+        console.error(`[Scheduler] Morning notification failed for ${user.id}:`, notifyErr);
+      }
+      try {
+        const drive = await getUserDriveSettings(user.id);
+        if (drive.enabled && drive.autoSavePlans && drive.accessToken) {
+          const planText = buildPlanMarkdown(today, newTasks, planReasoning);
+          const driveFile = await createDriveTextFile(
+            drive.accessToken,
+            `Daily Plan \u2014 ${today}`,
+            planText,
+            { convertToDoc: true, folderId: drive.folderId || void 0 }
+          );
+          console.log(`[Scheduler] Drive auto-save for user ${user.id}: ${driveFile.webViewLink}`);
+          try {
+            const { sendMessage: sendMessage3, isTelegramConfigured: isTelegramConfigured2 } = await Promise.resolve().then(() => (init_telegram(), telegram_exports));
+            const { db: tdb } = await Promise.resolve().then(() => (init_db(), db_exports));
+            const { telegramLinks: telegramLinks2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
+            const { eq: teq } = await import("drizzle-orm");
+            if (isTelegramConfigured2()) {
+              const links = await tdb.select().from(telegramLinks2).where(teq(telegramLinks2.userId, user.id)).limit(1);
+              if (links[0]?.chatId) {
+                await sendMessage3(
+                  links[0].chatId,
+                  `\u{1F4C1} Your daily plan for ${today} has been saved to Google Drive:
+${driveFile.webViewLink}`
+                );
+              }
+            }
+          } catch (tgErr) {
+            console.error(`[Scheduler] Drive Telegram notification failed for ${user.id}:`, tgErr);
+          }
+        }
+      } catch (driveErr) {
+        console.error(`[Scheduler] Drive auto-save failed for user ${user.id}:`, driveErr);
+      }
     } catch (err) {
       console.error(`[Scheduler] Auto-plan build failed for user ${user.id}:`, err);
     }
   }
   console.log("[Scheduler] Morning plan build complete");
+}
+function localHourForTz(now, tz) {
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz,
+      hour: "numeric",
+      hour12: false
+    }).formatToParts(now);
+    const h = parts.find((p) => p.type === "hour");
+    return h ? parseInt(h.value, 10) : now.getUTCHours();
+  } catch {
+    return now.getUTCHours();
+  }
+}
+function localDateKeyForTz(now, tz) {
+  try {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: tz,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit"
+    }).format(now);
+    return parts;
+  } catch {
+    return now.toISOString().slice(0, 10);
+  }
+}
+async function runDreamCycleForAllUsers(now) {
+  const allUsers = await db.select({ id: users.id }).from(users).catch(() => []);
+  const allPrefs = await db.select().from(userPreferences).catch(() => []);
+  const prefsMap = {};
+  for (const p of allPrefs) prefsMap[p.userId] = p.data || {};
+  let totalInsights = 0;
+  for (const user of allUsers) {
+    const prefs = prefsMap[user.id] || {};
+    if (prefs.dreamEnabled === false) continue;
+    const tz = typeof prefs.timezone === "string" ? prefs.timezone : "UTC";
+    const localHour3 = localHourForTz(now, tz);
+    if (localHour3 !== 3) continue;
+    const localDate = localDateKeyForTz(now, tz);
+    const messageType = `dream_cycle:${localDate}`;
+    try {
+      const existing = await db.select({ id: proactiveScheduleLog.id }).from(proactiveScheduleLog).where(
+        and46(
+          eq54(proactiveScheduleLog.userId, user.id),
+          eq54(proactiveScheduleLog.messageType, messageType),
+          eq54(proactiveScheduleLog.sentDate, localDate)
+        )
+      ).limit(1);
+      if (existing.length > 0) continue;
+    } catch {
+      continue;
+    }
+    try {
+      const { runDreamForUser: runDreamForUser2 } = await Promise.resolve().then(() => (init_dream(), dream_exports));
+      const count = await runDreamForUser2(user.id, localDate);
+      totalInsights += count;
+      if (count > 0) {
+        console.log(`[Dream] ${count} insight(s) synthesised for user ${user.id} (${localDate})`);
+      }
+      await db.insert(proactiveScheduleLog).values({
+        userId: user.id,
+        messageType,
+        sentDate: localDate
+      }).catch(() => {
+      });
+    } catch (err) {
+      console.error(`[Dream] failed for user ${user.id}:`, err);
+    }
+  }
+  if (totalInsights > 0) {
+    console.log(`[Dream] Cycle batch complete \u2014 ${totalInsights} total insight(s)`);
+  }
+}
+async function runDreamDeliveryForAllUsers(now) {
+  const allUsers = await db.select({ id: users.id }).from(users).catch(() => []);
+  const allPrefs = await db.select().from(userPreferences).catch(() => []);
+  const prefsMap = {};
+  for (const p of allPrefs) prefsMap[p.userId] = p.data || {};
+  for (const user of allUsers) {
+    const prefs = prefsMap[user.id] || {};
+    if (prefs.dreamEnabled === false) continue;
+    const tz = typeof prefs.timezone === "string" ? prefs.timezone : "UTC";
+    const localHour3 = localHourForTz(now, tz);
+    if (localHour3 < 7 || localHour3 >= 10) continue;
+    const localDate = localDateKeyForTz(now, tz);
+    const messageType = `dream_delivery:${localDate}`;
+    try {
+      const existing = await db.select({ id: proactiveScheduleLog.id }).from(proactiveScheduleLog).where(
+        and46(
+          eq54(proactiveScheduleLog.userId, user.id),
+          eq54(proactiveScheduleLog.messageType, messageType),
+          eq54(proactiveScheduleLog.sentDate, localDate)
+        )
+      ).limit(1);
+      if (existing.length > 0) continue;
+    } catch {
+      continue;
+    }
+    try {
+      if (await isActionSuppressed(user.id, "dream_insight")) {
+        console.log(`[Dream] skipping delivery for ${user.id} (self-correction: suppressed)`);
+        continue;
+      }
+      const { getPendingDreamInsights: getPendingDreamInsights2, markDreamInsightsDelivered: markDreamInsightsDelivered2 } = await Promise.resolve().then(() => (init_dream(), dream_exports));
+      const pending = await getPendingDreamInsights2(user.id);
+      if (pending.length === 0) {
+        await db.insert(proactiveScheduleLog).values({
+          userId: user.id,
+          messageType,
+          sentDate: localDate
+        }).catch(() => {
+        });
+        continue;
+      }
+      const insightLines = pending.map((ins, i) => `${i + 1}. ${ins.insightText}`).join("\n\n");
+      const msg = `\u{1F319} Jarvis dreamed about you
+
+${insightLines}
+
+_(Synthesised from your last 90 days of memories)_`;
+      await notifyUser(user.id, "dream_insight", msg);
+      await markDreamInsightsDelivered2(pending.map((i) => i.id));
+      await db.insert(proactiveScheduleLog).values({
+        userId: user.id,
+        messageType,
+        sentDate: localDate
+      }).catch(() => {
+      });
+      logInteraction(user.id, "notification", "outbound", msg, "dream_delivery").catch(() => {
+      });
+      Promise.resolve().then(() => (init_actionLog(), actionLog_exports)).then(({ logAction: logAction2 }) => {
+        logAction2(user.id, "dream_insight", { count: pending.length, date: localDate }).catch(() => {
+        });
+      }).catch(() => {
+      });
+      console.log(`[Dream] delivered ${pending.length} insight(s) to ${user.id} (${localDate})`);
+    } catch (err) {
+      console.error(`[Dream] delivery failed for user ${user.id}:`, err);
+    }
+  }
+}
+function buildPlanMarkdown(date2, tasks, reasoning) {
+  const lines = [`# Daily Plan \u2014 ${date2}`, ""];
+  if (reasoning) {
+    lines.push(`> ${reasoning}`, "");
+  }
+  lines.push("## Tasks", "");
+  for (const task of tasks) {
+    const durationStr = task.duration ? ` (${task.duration} min)` : "";
+    const timeStr = task.time ? ` @ ${task.time}` : "";
+    const status = task.completed ? "\u2705" : "\u2B1C";
+    lines.push(`${status} **${task.title}**${timeStr}${durationStr}`);
+    if (task.description) lines.push(`   ${task.description}`);
+  }
+  return lines.join("\n");
+}
+
+// server/curiosityScanner.ts
+init_db();
+init_schema();
+init_registry();
+init_googleCalendar();
+init_gmail();
+init_userTokenStore();
+init_outlook();
+init_interactionLog();
+init_actionLog();
+import { eq as eq55 } from "drizzle-orm";
+import OpenAI18 from "openai";
+var openai18 = new OpenAI18({
+  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
+  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL
+});
+async function getAlreadyAskedSourceIds(userId2) {
+  const rows = await db.select({ sourceId: proactiveQuestionsSent.sourceId }).from(proactiveQuestionsSent).where(eq55(proactiveQuestionsSent.userId, userId2));
+  return new Set(rows.map((r) => r.sourceId));
+}
+async function getUserMemories(userId2) {
+  return db.select({
+    content: userMemories.content,
+    category: userMemories.category
+  }).from(userMemories).where(eq55(userMemories.userId, userId2));
+}
+async function generateCuriosityQuestions(items, memories, userId2) {
+  if (items.length === 0) return [];
+  const memoriesContext = memories.length > 0 ? `
+What I already know about this user:
+${memories.map((m) => `- [${m.category}] ${m.content}`).join("\n")}` : "";
+  const { buildAiContextSections: buildAiContextSections2 } = await Promise.resolve().then(() => (init_promptContext(), promptContext_exports));
+  const seed = items.slice(0, 3).map((i) => i.summary).join(" \u2022 ");
+  const { soulSection, patternSection } = await buildAiContextSections2(userId2, seed);
+  const itemsList = items.map(
+    (i, idx) => `${idx + 1}. [${i.sourceType}] id="${i.sourceId}" \u2014 ${i.summary}`
+  ).join("\n");
+  const prompt = `You are a curious, empathetic personal coach. Given these upcoming calendar events and recent emails, decide which ones are worth asking the user about to learn more about them.
+
+${memoriesContext}
+
+Items to evaluate:
+${itemsList}
+
+Rules:
+- Skip: recurring standup meetings, automated/system emails, newsletters, marketing, calendar holds with no attendees
+- Ask about: meetings with specific people, important-sounding events, emails from real people about substantive topics, anything with "urgent" or "important" markers, blocked focus time (ask what they plan to work on)
+- Generate genuinely curious, warm questions that would help you understand the user better
+- For calendar events: ask about their goal going in, what a win would look like, how they feel about it
+- For emails: ask about the backstory, whether it's something they've been thinking about, what they plan to do about it
+- Keep questions conversational and short (1-2 sentences)
+
+Return JSON: { "questions": [{ "sourceId": "string", "sourceType": "google_calendar"|"outlook_calendar"|"gmail"|"outlook_email", "question": "string" }] }
+Return only items worth asking about. Return { "questions": [] } if nothing is interesting enough.`;
+  const response = await openai18.chat.completions.create({
+    model: "gpt-5-mini",
+    messages: [{ role: "user", content: prompt }],
+    response_format: { type: "json_object" },
+    max_completion_tokens: 800
+  });
+  const content = response.choices[0]?.message?.content || '{"questions":[]}';
+  try {
+    const parsed = JSON.parse(content);
+    return Array.isArray(parsed.questions) ? parsed.questions : [];
+  } catch {
+    return [];
+  }
+}
+async function runCuriosityScan() {
+  try {
+    const telegramLinks2 = await db.select().from(telegramLinks);
+    const googleUserIds = await getAllGoogleConnectedUserIds();
+    const microsoftUserIds = await getAllMicrosoftConnectedUserIds();
+    const telegramOnlyUserIds = telegramLinks2.filter((l) => !googleUserIds.includes(l.userId) && !microsoftUserIds.includes(l.userId)).map((l) => l.userId);
+    const userIds = [
+      .../* @__PURE__ */ new Set([
+        ...googleUserIds,
+        ...microsoftUserIds,
+        ...telegramOnlyUserIds
+      ])
+    ];
+    if (userIds.length === 0) return;
+    for (const userId2 of userIds) {
+      try {
+        const googleTokens = await getValidGoogleTokens(userId2).catch(() => []);
+        const googleToken = googleTokens[0] ?? null;
+        const msToken = await getValidMicrosoftToken(userId2).catch(() => null);
+        if (!googleToken && !msToken) continue;
+        const alreadyAsked = await getAlreadyAskedSourceIds(userId2);
+        const memories = await getUserMemories(userId2);
+        const now = /* @__PURE__ */ new Date();
+        const tomorrow = new Date(now);
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        const todayKey = now.toISOString().slice(0, 10);
+        const tomorrowKey = tomorrow.toISOString().slice(0, 10);
+        const taggedCalendarEvents = [];
+        if (googleToken) {
+          try {
+            const todayEvents = await getGoogleCalendarEvents(todayKey, void 0, void 0, googleToken);
+            const tomorrowEvents = await getGoogleCalendarEvents(tomorrowKey, void 0, void 0, googleToken);
+            for (const ev of [...todayEvents, ...tomorrowEvents]) {
+              taggedCalendarEvents.push({ ev, provider: "google_calendar", prefix: "gcal" });
+            }
+          } catch (err) {
+            console.error(`[Curiosity] Google Calendar fetch failed for user ${userId2}:`, err);
+          }
+        }
+        if (msToken) {
+          try {
+            const todayEvents = await getOutlookCalendarEvents(todayKey, void 0, void 0, msToken);
+            const tomorrowEvents = await getOutlookCalendarEvents(tomorrowKey, void 0, void 0, msToken);
+            for (const ev of [...todayEvents, ...tomorrowEvents]) {
+              taggedCalendarEvents.push({ ev, provider: "outlook_calendar", prefix: "outlookcal" });
+            }
+          } catch (err) {
+            console.error(`[Curiosity] Outlook Calendar fetch failed for user ${userId2}:`, err);
+          }
+        }
+        let recentEmails = [];
+        if (googleToken) {
+          try {
+            const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1e3);
+            recentEmails = await getEmailsSince(oneDayAgo.getTime(), googleToken);
+          } catch (err) {
+            console.error(`[Curiosity] Email fetch failed for user ${userId2}:`, err);
+          }
+        }
+        let recentOutlookEmails = [];
+        if (msToken) {
+          try {
+            recentOutlookEmails = await getRecentOutlookEmails(msToken, 25);
+            const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1e3);
+            recentOutlookEmails = recentOutlookEmails.filter((m) => {
+              if (!m.date) return false;
+              return new Date(m.date).getTime() >= oneDayAgo.getTime();
+            });
+          } catch (err) {
+            console.error(`[Curiosity] Outlook email fetch failed for user ${userId2}:`, err);
+          }
+        }
+        const { getUserInboxRules: getUserInboxRules2, matchItemAgainstRules: matchItemAgainstRules2 } = await Promise.resolve().then(() => (init_inboxRules(), inboxRules_exports));
+        const userRules = await getUserInboxRules2(userId2);
+        const items = [];
+        for (const { ev, provider, prefix } of taggedCalendarEvents) {
+          const eventId = ev.id ? `${prefix}:${ev.id}` : `${prefix}:${ev.title}:${ev.start || ""}`;
+          if (alreadyAsked.has(eventId)) continue;
+          const ruleResult = matchItemAgainstRules2(
+            { sourceType: "calendar", sourceId: eventId, subject: ev.title, location: ev.location },
+            userRules
+          );
+          if (ruleResult.verdict === "suppress") continue;
+          if (ruleResult.verdict === "surface") {
+            try {
+              await db.insert(inboxItems).values({
+                userId: userId2,
+                sourceType: provider,
+                sourceId: eventId,
+                subject: ev.title,
+                sender: ev.organizer || null,
+                snippet: `${ev.start ? new Date(ev.start).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : ""}${ev.location ? " at " + ev.location : ""}${ev.description ? " \u2014 " + ev.description : ""}`,
+                jarvisReason: "Matched your surface rule",
+                suggestedActions: [
+                  { label: "Add Prep", actionType: "add_prep_time" },
+                  { label: "Save Context", actionType: "save_to_focus" },
+                  { label: "Dismiss", actionType: "dismiss" }
+                ],
+                matchedRuleId: ruleResult.matchedRuleId || null
+              });
+              console.log(`[Curiosity] Surfaced ${provider} event for user ${userId2}: ${ev.title}`);
+            } catch (err) {
+              console.error(`[Curiosity] context-rule surface failed for ${userId2}:`, err);
+            }
+            continue;
+          }
+          const startTime = ev.start ? new Date(ev.start).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : "";
+          items.push({
+            sourceType: provider,
+            sourceId: eventId,
+            summary: `${ev.title}${startTime ? " at " + startTime : ""}${ev.location ? " at " + ev.location : ""}${ev.description ? " \u2014 " + ev.description : ""}`
+          });
+        }
+        for (const email of recentEmails) {
+          const emailId = email.messageId ? `gmail:${email.messageId}` : `gmail:${email.subject}:${email.from || ""}`;
+          if (alreadyAsked.has(emailId)) continue;
+          const ruleResult = matchItemAgainstRules2(
+            { sourceType: "email", sourceId: emailId, sender: email.from, subject: email.subject, snippet: email.snippet },
+            userRules
+          );
+          if (ruleResult.verdict === "suppress") continue;
+          if (ruleResult.verdict === "surface") {
+            try {
+              await db.insert(inboxItems).values({
+                userId: userId2,
+                sourceType: "email",
+                sourceId: emailId,
+                subject: email.subject || "(no subject)",
+                sender: email.from || null,
+                snippet: email.snippet || null,
+                jarvisReason: "Matched your surface rule",
+                suggestedActions: [
+                  { label: "Reply", actionType: "reply" },
+                  { label: "Archive", actionType: "archive" },
+                  { label: "Dismiss", actionType: "dismiss" }
+                ],
+                matchedRuleId: ruleResult.matchedRuleId || null
+              }).onConflictDoNothing();
+              console.log(`[Curiosity] Surfaced email for user ${userId2}: ${email.subject}`);
+            } catch (err) {
+              console.error(`[Curiosity] inbox_items insert failed for email ${emailId}:`, err);
+            }
+            continue;
+          }
+          items.push({
+            sourceType: "gmail",
+            sourceId: emailId,
+            summary: `From: ${email.from || "unknown"} | Subject: "${email.subject || "no subject"}"${email.snippet ? " \u2014 " + email.snippet : ""}`
+          });
+        }
+        for (const email of recentOutlookEmails) {
+          const emailId = `outlook_email:${email.id || email.subject + ":" + (email.from || "")}`;
+          if (alreadyAsked.has(emailId)) continue;
+          const ruleResult = matchItemAgainstRules2(
+            { sourceType: "email", sourceId: emailId, sender: email.from, subject: email.subject, snippet: email.snippet },
+            userRules
+          );
+          if (ruleResult.verdict === "suppress") continue;
+          if (ruleResult.verdict === "surface") {
+            try {
+              await db.insert(inboxItems).values({
+                userId: userId2,
+                sourceType: "outlook_email",
+                sourceId: emailId,
+                subject: email.subject || "(no subject)",
+                sender: email.from || null,
+                snippet: email.snippet || null,
+                jarvisReason: "Matched your surface rule",
+                suggestedActions: [
+                  { label: "Reply", actionType: "reply" },
+                  { label: "Archive", actionType: "archive" },
+                  { label: "Dismiss", actionType: "dismiss" }
+                ],
+                matchedRuleId: ruleResult.matchedRuleId || null
+              }).onConflictDoNothing();
+              console.log(`[Curiosity] Surfaced Outlook email for user ${userId2}: ${email.subject}`);
+            } catch (err) {
+              console.error(`[Curiosity] inbox_items insert failed for Outlook email ${emailId}:`, err);
+            }
+            continue;
+          }
+          items.push({
+            sourceType: "outlook_email",
+            sourceId: emailId,
+            summary: `From: ${email.from || "unknown"} | Subject: "${email.subject || "no subject"}"${email.snippet ? " \u2014 " + email.snippet : ""}`
+          });
+        }
+        if (items.length === 0) continue;
+        const candidateSourceIds = new Set(items.map((i) => i.sourceId));
+        const questions = await generateCuriosityQuestions(
+          items.slice(0, 15),
+          memories,
+          userId2
+        );
+        const validQuestions = questions.filter(
+          (q) => q.sourceId && q.sourceType && q.question && candidateSourceIds.has(q.sourceId)
+        );
+        let sentCount = 0;
+        const MAX_QUESTIONS_PER_SCAN = 2;
+        for (const q of validQuestions) {
+          if (sentCount >= MAX_QUESTIONS_PER_SCAN) break;
+          const srcItem = items.find((i) => i.sourceId === q.sourceId);
+          const canonicalSourceType = srcItem?.sourceType ?? q.sourceType;
+          try {
+            await db.insert(proactiveQuestionsSent).values({
+              userId: userId2,
+              sourceType: canonicalSourceType,
+              sourceId: q.sourceId,
+              question: q.question
+            });
+          } catch (dbErr) {
+            if (dbErr?.code === "23505") {
+              console.log(`[Curiosity] Skipping duplicate source: ${q.sourceId}`);
+              continue;
+            } else {
+              console.error(`[Curiosity] Failed to record question for user ${userId2}:`, dbErr);
+              continue;
+            }
+          }
+          const isProactiveSuppressed = await isActionSuppressed(userId2, "proactive_message").catch(() => false);
+          if (isProactiveSuppressed) {
+            console.log(`[Curiosity] proactive_message suppressed for user ${userId2} (self-correction) \u2014 skipping inbox surface`);
+            continue;
+          }
+          let inboxInserted = false;
+          try {
+            const result = await db.insert(inboxItems).values({
+              userId: userId2,
+              sourceType: canonicalSourceType,
+              sourceId: q.sourceId,
+              subject: srcItem?.summary?.slice(0, 200) ?? q.question.slice(0, 200),
+              snippet: q.question,
+              jarvisReason: "Jarvis noticed something worth your attention",
+              suggestedActions: [
+                { label: "Reply", actionType: "reply" },
+                { label: "Dismiss", actionType: "dismiss" }
+              ]
+            }).onConflictDoNothing().returning({ id: inboxItems.id });
+            inboxInserted = result.length > 0;
+          } catch (inboxErr) {
+            console.error(`[Curiosity] inbox_items insert failed for ${q.sourceId}:`, inboxErr);
+          }
+          if (inboxInserted) {
+            logAction(userId2, "proactive_message", { type: "curiosity_question", sourceId: q.sourceId }).catch(() => {
+            });
+          }
+          try {
+            const results = await notifyUser(userId2, "general", q.question);
+            const delivered = results.some((r) => r.result.ok);
+            sentCount++;
+            if (delivered) {
+              logInteraction(userId2, "notification", "outbound", q.question, "curiosity_question").catch(() => {
+              });
+              console.log(`[Curiosity] Sent question to user ${userId2}: ${q.question.slice(0, 60)}...`);
+            } else {
+              console.log(`[Curiosity] Surfaced to inbox (no channel delivered) for user ${userId2}: ${q.question.slice(0, 60)}...`);
+            }
+          } catch (sendErr) {
+            console.error(`[Curiosity] notify failed for user ${userId2}:`, sendErr);
+            sentCount++;
+          }
+        }
+      } catch (userErr) {
+        console.error(
+          `[Curiosity] Error processing user ${userId2}:`,
+          userErr
+        );
+      }
+    }
+  } catch (err) {
+    console.error("[Curiosity] Scanner error:", err);
+  }
+}
+async function startCuriosityScanner() {
+  console.log("[Curiosity] Scanner started \u2014 runs every 30 minutes");
+  setInterval(
+    async () => {
+      console.log("[Curiosity] Running scan...");
+      await runCuriosityScan();
+    },
+    30 * 60 * 1e3
+  );
+  setTimeout(() => runCuriosityScan(), 60 * 1e3);
 }
 
 // server/channels/index.ts
@@ -16055,7 +26802,7 @@ init_registry();
 init_db();
 init_schema();
 init_telegram();
-import { eq as eq35 } from "drizzle-orm";
+import { eq as eq56 } from "drizzle-orm";
 var linkCache = /* @__PURE__ */ new Map();
 var LINK_CACHE_TTL = 6e4;
 var linkCacheTimestamps = /* @__PURE__ */ new Map();
@@ -16065,7 +26812,7 @@ async function lookupChatId(userId2) {
     return linkCache.get(userId2) ?? null;
   }
   try {
-    const rows = await db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq35(telegramLinks.userId, userId2)).limit(1);
+    const rows = await db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq56(telegramLinks.userId, userId2)).limit(1);
     const chatId = rows[0]?.chatId ?? null;
     linkCache.set(userId2, chatId);
     linkCacheTimestamps.set(userId2, Date.now());
@@ -16099,7 +26846,7 @@ var telegramChannel = {
 // server/channels/whatsappChannel.ts
 init_db();
 init_schema();
-import { eq as eq36, and as and30 } from "drizzle-orm";
+import { eq as eq57, and as and48 } from "drizzle-orm";
 var TWILIO_SID = process.env.TWILIO_ACCOUNT_SID;
 var TWILIO_TOKEN = process.env.TWILIO_AUTH_TOKEN;
 var TWILIO_FROM = process.env.TWILIO_WHATSAPP_NUMBER;
@@ -16132,7 +26879,7 @@ async function sendWhatsAppMessage(toAddress, body) {
 }
 async function lookupAddress(userId2) {
   try {
-    const rows = await db.select({ address: channelLinks.address }).from(channelLinks).where(and30(eq36(channelLinks.userId, userId2), eq36(channelLinks.channel, "whatsapp"))).limit(1);
+    const rows = await db.select({ address: channelLinks.address }).from(channelLinks).where(and48(eq57(channelLinks.userId, userId2), eq57(channelLinks.channel, "whatsapp"))).limit(1);
     return rows[0]?.address ?? null;
   } catch (err) {
     console.error("[whatsappChannel] link lookup failed:", err);
@@ -16164,10 +26911,10 @@ init_slackChannel();
 init_db();
 init_schema();
 init_bridge();
-import { eq as eq37, and as and31 } from "drizzle-orm";
+import { eq as eq58, and as and49 } from "drizzle-orm";
 async function lookupDaemon(userId2) {
   try {
-    const rows = await db.select({ id: channelLinks.id }).from(channelLinks).where(and31(eq37(channelLinks.userId, userId2), eq37(channelLinks.channel, "daemon"))).limit(1);
+    const rows = await db.select({ id: channelLinks.id }).from(channelLinks).where(and49(eq58(channelLinks.userId, userId2), eq58(channelLinks.channel, "daemon"))).limit(1);
     return rows.length > 0;
   } catch (err) {
     console.error("[daemonChannel] link lookup failed:", err);
@@ -16201,7 +26948,7 @@ init_db();
 init_schema();
 init_userTokenStore();
 init_manager();
-import { eq as eq38, and as and32 } from "drizzle-orm";
+import { eq as eq59, and as and50 } from "drizzle-orm";
 var discordChannel = {
   name: "discord",
   isConfigured() {
@@ -16211,7 +26958,7 @@ var discordChannel = {
     try {
       const [tok, link] = await Promise.all([
         getUserToken(userId2, "discord_bot"),
-        db.select({ id: channelLinks.id }).from(channelLinks).where(and32(eq38(channelLinks.userId, userId2), eq38(channelLinks.channel, "discord"))).limit(1)
+        db.select({ id: channelLinks.id }).from(channelLinks).where(and50(eq59(channelLinks.userId, userId2), eq59(channelLinks.channel, "discord"))).limit(1)
       ]);
       return !!(tok && link.length > 0 && getBotStatus(userId2) === "running");
     } catch {
@@ -16226,6 +26973,50 @@ var discordChannel = {
   }
 };
 
+// server/channels/inAppChannel.ts
+init_db();
+init_schema();
+var NOTIFICATION_SUBJECTS = {
+  morning_briefing: "Your morning briefing",
+  meeting_brief: "Meeting briefing",
+  email_alert: "Email alert",
+  evening_wrap: "Evening wrap-up",
+  commitment_check: "Commitment check",
+  weekly_planning: "Weekly planning",
+  approval_request: "Approval request",
+  dream_insight: "Jarvis dreamed about you",
+  general: "Jarvis notification"
+};
+var SELF_MANAGED_INBOX_TYPES = /* @__PURE__ */ new Set(["nervous_system"]);
+var inAppChannel = {
+  name: "in_app",
+  isConfigured: () => true,
+  isLinkedFor: async (_userId) => true,
+  async sendMessage(userId2, text2, opts = {}) {
+    try {
+      const notifType = opts.notificationType ?? "general";
+      if (SELF_MANAGED_INBOX_TYPES.has(notifType)) {
+        return { ok: true };
+      }
+      const sourceId = `in_app:${notifType}:${Date.now()}:${Math.random().toString(36).slice(2, 7)}`;
+      const subject = NOTIFICATION_SUBJECTS[notifType] ?? "Jarvis notification";
+      await db.insert(inboxItems).values({
+        userId: userId2,
+        sourceType: "other",
+        sourceId,
+        subject,
+        snippet: text2.slice(0, 600),
+        jarvisReason: `Notification (${notifType})`,
+        suggestedActions: [{ label: "Dismiss", actionType: "dismiss" }],
+        status: "pending"
+      }).onConflictDoNothing();
+      return { ok: true, messageId: sourceId };
+    } catch (err) {
+      return { ok: false, error: String(err) };
+    }
+  }
+};
+
 // server/channels/index.ts
 init_registry();
 init_coachAgent();
@@ -16235,16 +27026,17 @@ function initChannels() {
   registerChannel(slackChannel);
   registerChannel(daemonChannel);
   registerChannel(discordChannel);
-  console.log("[channels] registered: telegram, whatsapp, slack, daemon, discord");
+  registerChannel(inAppChannel);
+  console.log("[channels] registered: telegram, whatsapp, slack, daemon, discord, in_app");
 }
 
 // server/channels/whatsappWebhook.ts
 init_db();
 init_schema();
 init_coachAgent();
-import { eq as eq39, and as and33, sql as sql19 } from "drizzle-orm";
+import { eq as eq60, and as and51, sql as sql30 } from "drizzle-orm";
 import express2 from "express";
-import * as crypto4 from "crypto";
+import * as crypto5 from "crypto";
 function verifyTwilioSignature(req) {
   const authToken = process.env.TWILIO_AUTH_TOKEN;
   if (!authToken) return false;
@@ -16257,16 +27049,16 @@ function verifyTwilioSignature(req) {
   const sortedKeys = Object.keys(params).sort();
   let data = fullUrl;
   for (const k of sortedKeys) data += k + String(params[k] ?? "");
-  const expected = crypto4.createHmac("sha1", authToken).update(data).digest("base64");
+  const expected = crypto5.createHmac("sha1", authToken).update(data).digest("base64");
   try {
-    return crypto4.timingSafeEqual(Buffer.from(expected), Buffer.from(sigHeader));
+    return crypto5.timingSafeEqual(Buffer.from(expected), Buffer.from(sigHeader));
   } catch {
     return false;
   }
 }
 async function findUserByPhone(phone) {
   try {
-    const rows = await db.select({ userId: channelLinks.userId }).from(channelLinks).where(and33(eq39(channelLinks.channel, "whatsapp"), eq39(channelLinks.address, phone))).limit(1);
+    const rows = await db.select({ userId: channelLinks.userId }).from(channelLinks).where(and51(eq60(channelLinks.channel, "whatsapp"), eq60(channelLinks.address, phone))).limit(1);
     return rows[0]?.userId ?? null;
   } catch (err) {
     console.error("[whatsapp] user lookup failed:", err);
@@ -16275,11 +27067,11 @@ async function findUserByPhone(phone) {
 }
 async function tryConsumeLinkCode(code, phone) {
   try {
-    const rows = await db.select().from(channelLinkCodes).where(and33(eq39(channelLinkCodes.code, code), eq39(channelLinkCodes.channel, "whatsapp"))).limit(1);
+    const rows = await db.select().from(channelLinkCodes).where(and51(eq60(channelLinkCodes.code, code), eq60(channelLinkCodes.channel, "whatsapp"))).limit(1);
     const row = rows[0];
     if (!row) return null;
     if (row.expiresAt && row.expiresAt.getTime() < Date.now()) {
-      await db.delete(channelLinkCodes).where(eq39(channelLinkCodes.code, code));
+      await db.delete(channelLinkCodes).where(eq60(channelLinkCodes.code, code));
       return null;
     }
     await db.insert(channelLinks).values({
@@ -16291,7 +27083,7 @@ async function tryConsumeLinkCode(code, phone) {
       target: [channelLinks.channel, channelLinks.address],
       set: { userId: row.userId, lastSeenAt: /* @__PURE__ */ new Date() }
     });
-    await db.delete(channelLinkCodes).where(eq39(channelLinkCodes.code, code));
+    await db.delete(channelLinkCodes).where(eq60(channelLinkCodes.code, code));
     return row.userId;
   } catch (err) {
     console.error("[whatsapp] link code consume failed:", err);
@@ -16341,7 +27133,7 @@ function registerWhatsAppWebhook(app2) {
     }
   });
   const cleanup = setInterval(() => {
-    db.delete(channelLinkCodes).where(and33(eq39(channelLinkCodes.channel, "whatsapp"), sql19`${channelLinkCodes.expiresAt} < NOW()`)).catch((err) => console.error("[whatsapp] code cleanup failed:", err));
+    db.delete(channelLinkCodes).where(and51(eq60(channelLinkCodes.channel, "whatsapp"), sql30`${channelLinkCodes.expiresAt} < NOW()`)).catch((err) => console.error("[whatsapp] code cleanup failed:", err));
   }, 5 * 60 * 1e3);
   cleanup.unref();
 }
@@ -16579,6 +27371,9 @@ function setupErrorHandler(app2) {
       bootAllBots().catch((err) => {
         console.error("Failed to boot Discord bots:", err);
       });
+      bootSharedBot().catch((err) => {
+        console.error("Failed to boot shared Discord bot:", err);
+      });
       startProactiveScheduler().catch((err) => {
         console.error("Failed to start proactive scheduler:", err);
       });
@@ -16589,7 +27384,14 @@ function setupErrorHandler(app2) {
       startEmailAlertScanner().catch((err) => {
         console.error("Failed to start email alert scanner:", err);
       });
+      startCuriosityScanner().catch((err) => {
+        console.error("Failed to start curiosity scanner:", err);
+      });
       startHeartbeat();
+      import("playwright").then(({ chromium: chromium2 }) => {
+        chromium2.launch({ args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu", "--single-process"] }).then((b) => b.close().then(() => log("[Browser] Chromium ready \u2713"))).catch((err) => console.error("[Browser] Chromium unavailable \u2014 run `npx playwright install chromium`:", err.message.split("\n")[0]));
+      }).catch(() => {
+      });
     }
   );
 })();
