@@ -201,7 +201,7 @@ export const exampleTool: AgentTool = {
 export const buildFeatureTool: AgentTool = {
   name: "build_feature",
   description:
-    "Write a new Jarvis tool to the codebase. Generate the complete TypeScript code yourself and pass it in tool_code — Jarvis writes the file, registers it in index.ts, and runs a smoke test. Use this when the user wants a new Jarvis capability or you need to add a new tool to yourself. After a successful build restart the server for the tool to become active.",
+    "Write a new Jarvis tool to the codebase. Generate the complete TypeScript code yourself and pass it in tool_code — Jarvis writes the file, registers it in index.ts, and runs a smoke test. After a successful build the server restarts automatically so the new tool becomes immediately active. Use this when the user wants a new Jarvis capability or you need to add a new tool to yourself.",
   parameters: {
     type: "object",
     properties: {
@@ -347,12 +347,16 @@ export const buildFeatureTool: AgentTool = {
       smokeResult.ok ? smokeTestArgsToUse : null
     );
 
-    const restartNote = "\n\nRestart the server for the new tool to become active.";
-    const fullNote = `${appliedNote}${warnNote}${restartNote}`;
+    const fullNote = `${appliedNote}${warnNote}`;
 
     if (smokeResult.ok) {
+      // Schedule a graceful self-restart so the new tool becomes active without
+      // requiring a manual server restart. The short delay lets the HTTP response
+      // reach the client before the process exits.
+      setTimeout(() => process.kill(process.pid, "SIGTERM"), 1500);
+
       return ok(
-        `Tool "${featureName}" built and smoke tested successfully.${fullNote}\n\nSmoke test output: ${smokeResult.content}`,
+        `Tool "${featureName}" built and smoke tested successfully.${fullNote}\n\nSmoke test output: ${smokeResult.content}\n\nThe server is restarting now — the new tool will be active in a few seconds.`,
         "build_feature",
         `pass: ${featureName}`
       );

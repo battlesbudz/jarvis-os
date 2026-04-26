@@ -38,7 +38,7 @@ export interface ToolContext {
   /**
    * Set of tool names that are active in the current agent run.
    * Populated by the harness at run start. Tools that need to invoke other tools
-   * (e.g. openclaw_test_tool) MUST check this set to prevent surface-escaping.
+   * (e.g. test_tool) MUST check this set to prevent surface-escaping.
    */
   allowedToolNames?: ReadonlySet<string>;
 }
