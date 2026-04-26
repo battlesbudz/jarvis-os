@@ -277,6 +277,7 @@ export default function ProfileScreen() {
   const [discordShowWorkspaceSetup, setDiscordShowWorkspaceSetup] = useState(false);
   const [discordTtsEnabled, setDiscordTtsEnabled] = useState(false);
   const [ttsChannels, setTtsChannels] = useState<string[]>([]);
+  const [ttsVoice, setTtsVoice] = useState<string>('nova');
   const [documents, setDocuments] = useState<UserDocument[]>([]);
   const [documentsLoading, setDocumentsLoading] = useState(false);
   const [documentUploading, setDocumentUploading] = useState(false);
@@ -687,6 +688,7 @@ export default function ProfileScreen() {
         : prefs.ttsEnabled === true ? ['telegram'] : [];
       setTtsChannels(channels);
       setDiscordTtsEnabled(channels.includes('discord'));
+      if (prefs.ttsVoice) setTtsVoice(prefs.ttsVoice);
     } catch {}
   // loadDaemonPerms and loadAndroidDaemonPerms are useCallback([], []) — they are
   // referentially stable and safe to omit from deps; including them causes a
@@ -724,6 +726,14 @@ export default function ProfileScreen() {
     } catch {}
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   }, [discordTtsEnabled, ttsChannels]);
+
+  const handleSelectVoice = useCallback(async (voiceId: string) => {
+    setTtsVoice(voiceId);
+    try {
+      await apiRequest('PATCH', '/api/preferences', { ttsVoice: voiceId });
+    } catch {}
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  }, []);
 
   const handleTimezoneChange = useCallback(async (tz: string) => {
     setTimezone(tz);
@@ -2667,19 +2677,91 @@ export default function ProfileScreen() {
                 )}
 
                 {/* Voice replies toggle */}
-                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 10, borderTopWidth: 1, borderTopColor: Colors.border, marginTop: 6 }}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={{ fontSize: 13, fontFamily: 'Inter_500Medium', color: Colors.text }}>Voice replies</Text>
-                    <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, marginTop: 1 }}>
-                      Jarvis sends audio notes to this channel
-                    </Text>
+                <View style={{ paddingVertical: 10, borderTopWidth: 1, borderTopColor: Colors.border, marginTop: 6 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 13, fontFamily: 'Inter_500Medium', color: Colors.text }}>Voice replies</Text>
+                      <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, marginTop: 1 }}>
+                        Jarvis sends audio notes to this channel
+                      </Text>
+                    </View>
+                    <Switch
+                      value={discordTtsEnabled}
+                      onValueChange={handleToggleDiscordTts}
+                      trackColor={{ true: '#5865F2', false: Colors.border }}
+                      thumbColor="#fff"
+                    />
                   </View>
-                  <Switch
-                    value={discordTtsEnabled}
-                    onValueChange={handleToggleDiscordTts}
-                    trackColor={{ true: '#5865F2', false: Colors.border }}
-                    thumbColor="#fff"
-                  />
+
+                  {/* Voice picker — always visible so users can set their preferred voice */}
+                  <View style={{ marginTop: 12 }}>
+                    <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: Colors.textSecondary, marginBottom: 6 }}>Voice</Text>
+                    {/* OpenAI voices */}
+                    <Text style={{ fontSize: 10, fontFamily: 'Inter_500Medium', color: Colors.textSecondary, marginBottom: 4, opacity: 0.7 }}>OpenAI</Text>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 8 }}>
+                      <View style={{ flexDirection: 'row', gap: 6 }}>
+                        {[
+                          { id: 'nova', label: 'Nova' },
+                          { id: 'alloy', label: 'Alloy' },
+                          { id: 'echo', label: 'Echo' },
+                          { id: 'fable', label: 'Fable' },
+                          { id: 'onyx', label: 'Onyx' },
+                          { id: 'shimmer', label: 'Shimmer' },
+                        ].map(v => (
+                          <Pressable
+                            key={v.id}
+                            onPress={() => handleSelectVoice(v.id)}
+                            style={{
+                              paddingHorizontal: 12, paddingVertical: 6,
+                              borderRadius: 16, borderWidth: 1,
+                              borderColor: ttsVoice === v.id ? '#5865F2' : Colors.border,
+                              backgroundColor: ttsVoice === v.id ? 'rgba(88,101,242,0.15)' : 'transparent',
+                            }}
+                          >
+                            <Text style={{ fontSize: 12, fontFamily: 'Inter_500Medium', color: ttsVoice === v.id ? '#5865F2' : Colors.textSecondary }}>
+                              {v.label}
+                            </Text>
+                          </Pressable>
+                        ))}
+                      </View>
+                    </ScrollView>
+                    {/* ElevenLabs voices */}
+                    <Text style={{ fontSize: 10, fontFamily: 'Inter_500Medium', color: Colors.textSecondary, marginBottom: 4, opacity: 0.7 }}>ElevenLabs</Text>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                      <View style={{ flexDirection: 'row', gap: 6 }}>
+                        {[
+                          { id: 'EXAVITQu4vr4xnSDxMaL', label: 'Sarah' },
+                          { id: 'FGY2WhTYpPnrIDTdsKH5', label: 'Laura' },
+                          { id: 'IKne3meq5aSn9XLyUdCD', label: 'Charlie' },
+                          { id: 'JBFqnCBsd6RMkjVDRZzb', label: 'George' },
+                          { id: 'N2lVS1w4EtoT3dr4eOWO', label: 'Callum' },
+                          { id: 'SAz9YHcvj6GT2YYXdXww', label: 'River' },
+                          { id: 'Xb7hH8MSUJpSbSDYk0k2', label: 'Alice' },
+                          { id: 'XrExE9yKIg1WjnnlVkGX', label: 'Matilda' },
+                          { id: 'cgSgspJ2msm6clMCkdW9', label: 'Jessica' },
+                          { id: 'cjVigY5qzO86Huf0OWal', label: 'Eric' },
+                          { id: 'nPczCjzI2devNBz1zQrb', label: 'Brian' },
+                          { id: 'onwK4e9ZLuTAKqWW03F9', label: 'Daniel' },
+                          { id: 'pNInz6obpgDQGcFmaJgB', label: 'Adam' },
+                        ].map(v => (
+                          <Pressable
+                            key={v.id}
+                            onPress={() => handleSelectVoice(v.id)}
+                            style={{
+                              paddingHorizontal: 12, paddingVertical: 6,
+                              borderRadius: 16, borderWidth: 1,
+                              borderColor: ttsVoice === v.id ? '#F0A500' : Colors.border,
+                              backgroundColor: ttsVoice === v.id ? 'rgba(240,165,0,0.12)' : 'transparent',
+                            }}
+                          >
+                            <Text style={{ fontSize: 12, fontFamily: 'Inter_500Medium', color: ttsVoice === v.id ? '#F0A500' : Colors.textSecondary }}>
+                              {v.label}
+                            </Text>
+                          </Pressable>
+                        ))}
+                      </View>
+                    </ScrollView>
+                  </View>
                 </View>
 
                 {/* Add channel form */}
