@@ -302,7 +302,18 @@ export async function loadPackInstructionsForUser(
     }
 
     const merged = parts.join("\n\n");
-    if (!merged) continue;
+
+    const packHeartbeatRules = (pack.heartbeatRules as PackHeartbeatRules) ?? {};
+    const packToolGroups = (pack.toolGroups as PackToolGroups) ?? {};
+
+    // Include packs that have toolGroups/heartbeatRules even if instruction text
+    // is empty — they still contribute runtime tool-scope and scheduling behavior.
+    const hasRuntimeConfig =
+      (packToolGroups.boost?.length ?? 0) > 0 ||
+      (packToolGroups.suppress?.length ?? 0) > 0 ||
+      Object.keys(packHeartbeatRules).length > 0;
+
+    if (!merged && !hasRuntimeConfig) continue;
 
     result.push({
       packId: pack.id,
@@ -311,8 +322,8 @@ export async function loadPackInstructionsForUser(
       baseInstructions: pack.instructions,
       overrides,
       merged,
-      heartbeatRules: (pack.heartbeatRules as PackHeartbeatRules) ?? {},
-      toolGroups: (pack.toolGroups as PackToolGroups) ?? {},
+      heartbeatRules: packHeartbeatRules,
+      toolGroups: packToolGroups,
     });
   }
 
