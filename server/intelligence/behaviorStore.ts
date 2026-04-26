@@ -129,12 +129,24 @@ export async function publishSkillPack(payload: PublishPackPayload): Promise<Ski
 export async function getAdminPackViews(): Promise<AdminPackView[]> {
   const packs = await db.select().from(skillPacks).orderBy(skillPacks.createdAt);
 
+  // Count only rows that have at least one meaningful active override
+  // (non-empty suppressActionTypes, or a coachingNote, or customInstructions).
+  // Rows written with an empty suppression list after recovery are excluded so
+  // the count reflects "users with active behavioural adjustments" not "users
+  // that have ever had an ego cycle write".
   const overrideCounts = await db
     .select({
       packId: userSkillPacks.packId,
       count: sql<number>`count(*)::int`,
     })
     .from(userSkillPacks)
+    .where(
+      sql`(
+        jsonb_array_length(COALESCE(${userSkillPacks.instructionOverrides}->'suppressActionTypes', '[]'::jsonb)) > 0
+        OR ${userSkillPacks.instructionOverrides}->>'coachingNote' IS NOT NULL
+        OR ${userSkillPacks.instructionOverrides}->>'customInstructions' IS NOT NULL
+      )`,
+    )
     .groupBy(userSkillPacks.packId);
 
   const countMap = new Map(overrideCounts.map((r) => [r.packId, r.count]));
