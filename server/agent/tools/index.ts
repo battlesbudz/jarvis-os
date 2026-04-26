@@ -1,25 +1,31 @@
 // Tool registry — compatibility shim over the capability module system.
 //
-// This file preserves its original exported API (ALL_TOOLS, ToolGroup,
-// filterToolsByGroups, telegramCoachTools, getTool, individual re-exports)
-// so all existing call sites continue to work without changes.
+// This file preserves its original exported API and file structure so that
+// all existing callers and the buildFeatureTool auto-patcher continue to work.
 //
-// The authoritative tool list, Google-gated set, and tool-group map are now
-// derived from the CapabilityRegistry (server/capabilities/). Adding a new
-// tool means creating or updating a capability module — not editing this file.
+// buildFeatureTool.ts finds patch points by string search:
+//   "export const ALL_TOOLS" + closing "\n];"
+//   "telegramCoachTools(" + closing "\n  ];"
+//   "export {" + closing "\n};"
+// These literal structures are preserved below.
 //
-// buildFeatureTool.ts locates `export const ALL_TOOLS`, `telegramCoachTools(`
-// and `export {` by string search — those patterns are preserved below.
+// The initial tool list, Google-gated set, and tool-group map are all derived
+// from the CapabilityRegistry so each capability module owns its own data.
+// Tools generated dynamically by the build_feature agent tool are appended to
+// the literal arrays below (after the registry spread) by the patcher, keeping
+// them as the authoritative addition point without touching capability modules.
 
-// ── Capability registration (must come before registry reads) ─────────────────
+// ── Capability registration (must run before registry is read) ─────────────────
 import "../../capabilities/index";
 import { capabilityRegistry } from "../../capabilities/registry";
 
 import type { AgentTool } from "../types";
 
 // ── Individual tool imports — kept for the export { ... } compatibility block ─
-// and direct variable references inside telegramCoachTools().
-// No circular deps: individual tool files never import from this file.
+// and for direct variable references inside telegramCoachTools.
+// These tool files are also imported by capability modules; Node's module cache
+// ensures each file is evaluated exactly once. No circular deps: individual
+// tool files never import from this index.
 import { webSearchTool, researchTopicTool } from "./webSearch";
 import { gmailActionTool, gmailDraftTool } from "./gmailActions";
 import { manageTasksTool } from "./manageTasks";
@@ -102,18 +108,12 @@ export type ToolGroup =
   | "media"       // speak, image_generate
   | "connections" // check_connections, generate_reconnect_link, connect_channel
 
-// ── Registry-derived data (single source of truth) ────────────────────────────
-// ALL_TOOLS, GOOGLE_GATED, and TOOL_GROUP_MAP are now produced from the
-// capability registry rather than being maintained as parallel hardcoded lists.
+// ── Registry-derived data (single source of truth for capability tools) ────────
+// GOOGLE_GATED and TOOL_GROUP_MAP come entirely from the capability registry.
+// ALL_TOOLS is seeded from the registry; dynamic tools (from build_feature)
+// are appended to the literal array below by buildFeatureTool file-patching.
 
-// All tools registered across all capabilities (deduplicated by name).
-export const ALL_TOOLS: AgentTool[] = capabilityRegistry.getAllTools();
-
-// Set of tool names that require a valid Google OAuth token.
 const GOOGLE_GATED: Set<string> = capabilityRegistry.getGoogleGatedNames();
-
-// Map of toolName → ToolGroups[]; respects per-tool group overrides declared
-// in each capability module, falling back to capability-level toolGroups.
 const TOOL_GROUP_MAP: Record<string, string[]> = capabilityRegistry.buildToolGroupMap();
 
 // ── filterToolsByGroups ────────────────────────────────────────────────────────
@@ -134,6 +134,14 @@ export function filterToolsByGroups(
   });
 }
 
+// ── ALL_TOOLS ──────────────────────────────────────────────────────────────────
+// Seeded from the registry; buildFeatureTool appends new dynamic tools before
+// the closing `];` via file-patching. Registry tools come from the spread;
+// dynamically generated tools are appended after it in the literal array.
+export const ALL_TOOLS: AgentTool[] = [
+  ...capabilityRegistry.getAllTools(),
+];
+
 // ── Tool index + resolver ──────────────────────────────────────────────────────
 const TOOL_INDEX = new Map(ALL_TOOLS.map((t) => [t.name, t]));
 
@@ -145,17 +153,19 @@ export function getTool(name: string): AgentTool | undefined {
 }
 
 // ── telegramCoachTools ────────────────────────────────────────────────────────
-/** Tool bundle for the Telegram coach loop.
- *
- * Includes all tools EXCEPT spawn_subagent (agent-internal only).
- * Google-gated tools are appended when `hasGoogle` is true.
- */
+// Tool bundle for the Telegram coach loop (excludes spawn_subagent).
+// The `base` array is seeded from the registry, then google-gated tools are
+// conditionally appended. buildFeatureTool adds dynamic tools before `\n  ];`.
 export function telegramCoachTools(opts: { hasGoogle: boolean }): AgentTool[] {
-  return ALL_TOOLS.filter((tool) => {
-    if (tool.name === "spawn_subagent") return false;
-    if (GOOGLE_GATED.has(tool.name) && !opts.hasGoogle) return false;
-    return true;
-  });
+  const base: AgentTool[] = [
+    ...capabilityRegistry.getAllTools().filter(
+      (t) => t.name !== "spawn_subagent" && !GOOGLE_GATED.has(t.name)
+    ),
+  ];
+  if (opts.hasGoogle) {
+    base.push(gmailActionTool, gmailDraftTool, fetchCalendarTool, driveCreateFileTool, driveListFilesTool, driveReadFileTool);
+  }
+  return base;
 }
 
 // ── Individual re-exports (compatibility layer) ────────────────────────────────
