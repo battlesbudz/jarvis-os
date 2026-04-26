@@ -17,6 +17,7 @@
 import assert from "node:assert/strict";
 import type { AgentTool } from "../types";
 import type { ActivationPlan, CapabilityManifest, SessionContext } from "../activationPlanner";
+import { classifyQueryIntent } from "../queryClassifier";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -515,22 +516,10 @@ function applyUnifiedFilter(
   console.log(`✓ I2: suppression-only heartbeat: ${tools.length}/${ALL_TOOLS.length} tools (${reduction}% reduction)`);
 }
 
-// ─── Test J: Research intent classifier ───────────────────────────────────────
-// classifyQueryIntent is a pure function exported from activationPlanner.
-// We test it here with inline mock patterns to avoid importing the full module.
-
-function classifyQueryIntentInline(text: string): "research" | "general" {
-  const RESEARCH_PATTERNS = [
-    /\b(search|look up|lookup|google|find|browse|research|investigate)\b/i,
-    /\b(article|website|url|link|page|source|reference|docs?|documentation)\b/i,
-    /\b(what is|what are|who is|where is|how does|how do|explain|define|tell me about)\b/i,
-    /\b(youtube|video|transcript|watch|summarize this)\b/i,
-    /\b(latest news|news about|read about|fetch|scrape|crawl)\b/i,
-    /https?:\/\//i,
-  ];
-  if (!text || text.trim().length === 0) return "general";
-  return RESEARCH_PATTERNS.some((re) => re.test(text)) ? "research" : "general";
-}
+// ─── Test J: Research intent classifier (real import from queryClassifier.ts) ──
+// classifyQueryIntent is imported directly from its pure utility module so
+// this test will detect any drift between the implementation and the patterns.
+// (Importing from queryClassifier.ts avoids the DB connection in activationPlanner.ts)
 
 {
   const researchQueries = [
@@ -556,21 +545,21 @@ function classifyQueryIntentInline(text: string): "research" | "general" {
 
   let allPassed = true;
   for (const q of researchQueries) {
-    const result = classifyQueryIntentInline(q);
+    const result = classifyQueryIntent(q);
     if (result !== "research") {
       console.error(`  J: FAIL — expected research for: "${q}" (got ${result})`);
       allPassed = false;
     }
   }
   for (const q of generalQueries) {
-    const result = classifyQueryIntentInline(q);
+    const result = classifyQueryIntent(q);
     if (result !== "general") {
       console.error(`  J: FAIL — expected general for: "${q}" (got ${result})`);
       allPassed = false;
     }
   }
   assert.ok(allPassed, "J: all query classifications must match expected intent");
-  console.log(`✓ J: classifyQueryIntent correctly classifies ${researchQueries.length} research + ${generalQueries.length} general queries`);
+  console.log(`✓ J: classifyQueryIntent (real import) correctly classifies ${researchQueries.length} research + ${generalQueries.length} general queries`);
 }
 
 console.log("\nAll assertions passed ✓");
