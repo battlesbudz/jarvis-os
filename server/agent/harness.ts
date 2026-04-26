@@ -136,13 +136,16 @@ async function runStreamingTurn(params: {
 export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
   const {
     model: modelOpt,
-    tools,
+    tools: initialTools,
     context,
     maxTurns = 6,
     maxCompletionTokens = 2000,
     toolChoice = "auto",
     onToken,
   } = opts;
+
+  // `tools` is mutable so the channel-scope gate below can reassign it.
+  let tools = initialTools;
 
   const { getModel } = await import("../lib/modelPrefs");
   const model = modelOpt ?? (await getModel(context.userId, "chat"));
@@ -173,6 +176,42 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
       // skills are best-effort — never block an agent run
     }
   }
+
+  // ── Authoritative channel-scope tool filter ────────────────────────────────
+  // The harness is the canonical enforcement point for per-channel tool scoping.
+  // Even if a caller passes a broad tool list, the harness narrows it to the
+  // tools declared by the channel (keyed on context.channel).  This ensures
+  // every agent entrypoint — coachAgent, telegramRoutes, subagents — obeys the
+  // same allowlist without each needing to repeat the filter logic.
+  //
+  // Subagents that already pass a pre-scoped tool list benefit from this too:
+  // the intersection is a no-op when the caller's list is already narrow enough.
+  //
+  // resolveChannelTools is best-effort — if it throws (e.g. during boot before
+  // registry is populated), the original tool list is used unchanged.
+  if (context.channel) {
+    try {
+      const { resolveChannelTools } = await import("./tools/channelTools");
+      const hasGoogle = !!context.googleAccessToken;
+      const scoped = await resolveChannelTools(context.channel, hasGoogle);
+      if (scoped.length > 0) {
+        const scopedNames = new Set(scoped.map((t: AgentTool) => t.name));
+        // Intersect: keep only tools that the caller provided AND the channel allows.
+        const filtered = tools.filter((t: AgentTool) => scopedNames.has(t.name));
+        if (filtered.length > 0) {
+          // Only apply when the intersection is non-empty to avoid accidentally
+          // silencing all tools for an unrecognised channel name.
+          tools = filtered;
+          console.log(
+            `[${channel}/Harness] channel-scope: ${tools.length} tools (from ${initialTools.length})`,
+          );
+        }
+      }
+    } catch {
+      // scoping is best-effort — never block an agent run
+    }
+  }
+
   const toolMap = new Map(tools.map((t) => [t.name, t]));
   const openAITools = tools.length > 0 ? tools.map(toOpenAITool) : undefined;
 

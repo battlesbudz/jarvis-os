@@ -2,8 +2,7 @@ import { db } from "../db";
 import { eq, and, desc, sql, gte } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { runAgent } from "../agent/harness";
-import { filterToolsByGroups } from "../agent/tools";
-import type { ToolGroup } from "../agent/tools";
+import { parseChannelKey, resolveChannelTools } from "../agent/tools/channelTools";
 import { getChannel } from "./registry";
 import { getValidGoogleTokens } from "../userTokenStore";
 import { getRecentEmailCommitments } from "../integrations/gmail";
@@ -303,21 +302,19 @@ When a user's request involves multi-step research, drafting a document or plan,
     },
   };
 
-  // ── Resolve tool groups for this channel ──────────────────────────────────
-  // Look up the registered channel to read its declared toolGroups.  Channels
-  // that are not in the registry (Daemon, Voice) fall back to sensible defaults.
-  const FALLBACK_GROUPS: Record<string, ToolGroup[]> = {
-    daemon: ["coaching", "calendar", "memory", "connections", "system"],
-    voice:  ["coaching", "calendar", "memory"],
-  };
-  const registeredChannel = getChannel(channelLower as any);
-  const channelToolGroups: ToolGroup[] =
-    registeredChannel?.toolGroups ??
-    FALLBACK_GROUPS[channelLower] ??
-    ["coaching", "calendar", "email", "memory", "connections", "research"];
-
-  const scopedTools = filterToolsByGroups(channelToolGroups, !!googleAccessToken);
-  console.log(`[${channelName}] tool scope: ${scopedTools.length} tools (groups: ${channelToolGroups.join(", ")})`);
+  // ── Resolve scoped tool list for this channel (caller-side pre-filter) ───────
+  // parseChannelKey normalises display names like "Discord #research" → "discord"
+  // without any `as any` cast.  resolveChannelTools uses the channel's declared
+  // toolGroups to build the pre-filtered list that is passed to runAgent.
+  // The harness applies the same filter again as the authoritative safety gate,
+  // so the two reinforce each other without either being solely relied upon.
+  const scopedTools = await resolveChannelTools(channelName, !!googleAccessToken);
+  const canonicalKey = parseChannelKey(channelName);
+  const registeredChannel = canonicalKey ? getChannel(canonicalKey) : undefined;
+  console.log(
+    `[${channelName}] tool scope: ${scopedTools.length} tools` +
+    (registeredChannel ? ` (groups: ${registeredChannel.toolGroups.join(", ")})` : " (fallback groups)"),
+  );
 
   const agentResult = await runAgent({
     model: "gpt-5-mini",
