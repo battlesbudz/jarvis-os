@@ -12,7 +12,8 @@ const BOT_TOKEN = (!isProduction && process.env.TELEGRAM_BOT_TOKEN_DEV)
 if (!isProduction && process.env.TELEGRAM_BOT_TOKEN_DEV) {
   console.log('[Telegram] Using DEV bot token (TELEGRAM_BOT_TOKEN_DEV)');
 } else if (!isProduction) {
-  // Will be caught in index.ts startup guard — no polling will start.
+  // No dev token set — index.ts will skip polling and log the warning.
+  console.log('[Telegram] Dev mode: no TELEGRAM_BOT_TOKEN_DEV set — falling back to TELEGRAM_BOT_TOKEN (polling will be skipped to avoid conflicting with production)');
 } else {
   console.log('[Telegram] Using production bot token (TELEGRAM_BOT_TOKEN)');
 }
