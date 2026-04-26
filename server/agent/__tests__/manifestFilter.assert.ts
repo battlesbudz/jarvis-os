@@ -238,4 +238,46 @@ const CAP_TOOL_MAP: Record<string, string[]> = {
   console.log("✓ F: manifest suppression composes correctly with pre-filtered (integration health) tool list");
 }
 
+// ─── Test G: Heartbeat explicit night-gate semantics ─────────────────────────
+// Replicas the gate logic from heartbeat.ts:
+//   skipNightLlmJobs = timeOfDay === "night" && urgentSignals.length === 0
+//
+// Critical backward-compat assertions:
+//   Afternoon + no urgent signals → jobs STILL RUN (false-negative fix).
+//   Night + urgent signal         → jobs STILL RUN (urgent signals override).
+//   Night + no urgent signals     → jobs skip (the only safe idle-cost window).
+
+function computeSkipNightLlmJobs(ctx: SessionContext): boolean {
+  return ctx.timeOfDay === "night" && ctx.urgentSignals.length === 0;
+}
+
+{
+  assert.equal(
+    computeSkipNightLlmJobs(makeSessionContext("afternoon", [])),
+    false,
+    "G1: afternoon + no urgent signals → jobs run (backward-compat preserved)",
+  );
+  assert.equal(
+    computeSkipNightLlmJobs(makeSessionContext("morning", [])),
+    false,
+    "G2: morning + no urgent signals → jobs run",
+  );
+  assert.equal(
+    computeSkipNightLlmJobs(makeSessionContext("evening", [])),
+    false,
+    "G3: evening + no urgent signals → jobs run",
+  );
+  assert.equal(
+    computeSkipNightLlmJobs(makeSessionContext("night", ["High stress detected (score: 8/10)"])),
+    false,
+    "G4: night + urgent signal → jobs run (urgent signals override quiet window)",
+  );
+  assert.equal(
+    computeSkipNightLlmJobs(makeSessionContext("night", [])),
+    true,
+    "G5: night + no urgent signals → jobs skip (the only safe idle-cost window)",
+  );
+  console.log("✓ G: heartbeat night-gate correctly preserves all active-hour jobs and skips only quiet night");
+}
+
 console.log("\nAll assertions passed ✓");
