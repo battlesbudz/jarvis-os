@@ -194,8 +194,10 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
   const INTEGRATION_TOOL_DEPS: Record<string, { label: string; tools: string[] }> = {
     google:    { label: "Google (Gmail + Calendar + Drive)", tools: ["gmail_action", "create_gmail_draft", "fetch_calendar", "drive_create_file", "drive_list_files", "drive_read_file"] },
     outlook:   { label: "Microsoft Outlook",                tools: [] },
+    // Discord has agent tools that directly post/manage channels.
+    discord:   { label: "Discord",                          tools: ["discord_post", "discord_create_channel", "discord_delete_channel", "discord_list_channels", "discord_pin_message", "setup_discord_workspace", "setup_content_pipeline", "setup_named_agent", "schedule_channel_report", "list_channel_schedules", "delete_channel_schedule"] },
+    // Telegram/Slack/WhatsApp are delivery channels — no dedicated agent action tools.
     telegram:  { label: "Telegram",                         tools: [] },
-    discord:   { label: "Discord",                          tools: [] },
     slack:     { label: "Slack",                            tools: [] },
     whatsapp:  { label: "WhatsApp (via Twilio)",            tools: [] },
   };
@@ -205,14 +207,20 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
       const { getUserIntegrationStatuses } = await import("../intelligence/integrationValidator");
       const statuses = await getUserIntegrationStatuses(context.userId);
 
-      // Collect broken integrations and their tool lists.
-      const brokenIntegrations: string[] = [];
+      // Collect broken integrations: split into those with agent tools (tools disabled)
+      // and those without (channel-only — delivery is broken but no tools to exclude).
+      const brokenWithTools: string[] = [];   // integrations where tools were removed
+      const brokenChannelOnly: string[] = []; // broken but no tools to exclude
       const toolsToExclude = new Set<string>();
 
       for (const [key, { label, tools: depTools }] of Object.entries(INTEGRATION_TOOL_DEPS)) {
         if (statuses[key as keyof typeof statuses] === "broken") {
-          brokenIntegrations.push(label);
-          for (const t of depTools) toolsToExclude.add(t);
+          if (depTools.length > 0) {
+            brokenWithTools.push(label);
+            for (const t of depTools) toolsToExclude.add(t);
+          } else {
+            brokenChannelOnly.push(label);
+          }
         }
       }
 
@@ -227,11 +235,11 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
         toolsToExclude.add("fetch_emails");
         // Only surface in the alert note if a provider is explicitly broken
         // (unconfigured providers are expected and don't need an alert).
-        if (statuses.google === "broken" && !brokenIntegrations.includes("Google (Gmail + Calendar + Drive)")) {
-          brokenIntegrations.push("Google (Gmail + Calendar + Drive)");
+        if (statuses.google === "broken" && !brokenWithTools.includes("Google (Gmail + Calendar + Drive)")) {
+          brokenWithTools.push("Google (Gmail + Calendar + Drive)");
         }
-        if (statuses.outlook === "broken" && !brokenIntegrations.includes("Microsoft Outlook")) {
-          brokenIntegrations.push("Microsoft Outlook");
+        if (statuses.outlook === "broken" && !brokenWithTools.includes("Microsoft Outlook")) {
+          brokenWithTools.push("Microsoft Outlook");
         }
       }
 
@@ -240,19 +248,28 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
         const before = tools.length;
         tools = tools.filter((t: AgentTool) => !toolsToExclude.has(t.name));
         console.log(
-          `[${channel}/Harness] excluded ${before - tools.length} tools for broken integrations: ${brokenIntegrations.join(", ")}`,
+          `[${channel}/Harness] excluded ${before - tools.length} tools for broken integrations: ${brokenWithTools.join(", ")}`,
         );
       }
 
-      // (b) System prompt note for broken integrations (tool use blocked).
-      if (brokenIntegrations.length > 0) {
-        const unavailableNote = `\n\n---\n## Integration Alerts\nThe following integrations are BROKEN and their associated tools have been disabled for this session:\n${brokenIntegrations.map((b) => `- ${b}`).join("\n")}\nIf the user asks about email, calendar, or related tasks, tell them their ${brokenIntegrations.map((b) => b.split(" (")[0]).join(" / ")} connection needs to be reconnected in Settings → Connections before Jarvis can help. Do not attempt to call the disabled tools.`;
+      // (b) System prompt note for broken integrations.
+      // Separate the message for tool-disabled integrations vs channel-only integrations
+      // so we never tell the model tools were disabled when they were not.
+      const allBroken = [...brokenWithTools, ...brokenChannelOnly];
+      if (allBroken.length > 0) {
+        let unavailableNote = "\n\n---\n## Integration Alerts\n";
+        if (brokenWithTools.length > 0) {
+          unavailableNote += `The following integrations are BROKEN and their associated tools have been disabled for this session:\n${brokenWithTools.map((b) => `- ${b}`).join("\n")}\nDo not attempt to call the disabled tools. Tell the user these integrations need to be reconnected in Settings → Connections.\n`;
+        }
+        if (brokenChannelOnly.length > 0) {
+          unavailableNote += `The following messaging channels are BROKEN — Jarvis cannot receive or send messages through them:\n${brokenChannelOnly.map((b) => `- ${b}`).join("\n")}\nTell the user these channels need to be reconnected in Settings → Connections.\n`;
+        }
         messages = messages.map((m, i) =>
           i === 0 && m.role === "system"
             ? { ...m, content: (m.content ?? "") + unavailableNote }
             : m,
         );
-        console.log(`[${channel}/Harness] integration alert (broken): ${brokenIntegrations.join(", ")}`);
+        console.log(`[${channel}/Harness] integration alert (broken): ${allBroken.join(", ")}`);
       }
 
       // (c) Advisory note for expiring-soon integrations (tools still active).
