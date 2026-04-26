@@ -194,8 +194,38 @@ export default function LoginScreen() {
   async function handleGooglePress() {
     setError("");
     if (sessionExpired) clearSessionExpired();
-    setLoading(true);
 
+    if (Platform.OS === "web") {
+      if (!gisReady) {
+        setLoading(true);
+        try {
+          const clientId = process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID;
+          if (!clientId) throw new Error("Google client ID not configured");
+          await loadGisScript();
+          if (!gisInitialized.current) {
+            gisInitialized.current = true;
+            window.google!.accounts.id.initialize({
+              client_id: clientId,
+              callback: handleGisCredential,
+            });
+            setGisReady(true);
+          }
+        } catch (e: any) {
+          setError(e.message || "Could not load Google sign-in");
+          setLoading(false);
+          return;
+        }
+        setLoading(false);
+      }
+      window.google?.accounts.id.prompt((notification) => {
+        if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
+          setError("Google sign-in was dismissed. Please try again.");
+        }
+      });
+      return;
+    }
+
+    setLoading(true);
     try {
       await handleNativeGoogleSignIn();
     } catch (e: any) {
