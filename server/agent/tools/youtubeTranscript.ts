@@ -66,29 +66,44 @@ export const youtubeTranscriptTool: AgentTool = {
         };
       }
 
+      // ── Normalise offsets to milliseconds ──────────────────────────────────
+      // The library returns two formats depending on caption track type:
+      //   • srv3 (<p t="32453" d="2500">):  offsets/durations are integers in ms
+      //   • classic (<text start="32.453" dur="2.5">): floats in seconds
+      //
+      // Detection: average (lastOffset / segmentCount). Real segments are ≥ 0.5s
+      // each, so seconds-format averages stay < 100 while ms-format averages are
+      // always ≥ 100 (≥ 500ms per segment minimum).
+      const lastSeg = segments[segments.length - 1];
+      const lastRawOffset = lastSeg.offset + (lastSeg.duration ?? 0);
+      const avgRawPerSegment = lastRawOffset / segments.length;
+      const toMs = avgRawPerSegment < 100 ? 1000 : 1; // multiply seconds→ms when needed
+
       // Build timestamped lines. Group into ~30s chunks for readability.
+      const CHUNK_MS = 30_000;
       const lines: string[] = [];
-      let chunkStart = segments[0].offset;
+      let chunkStartMs = segments[0].offset * toMs;
       let chunkText: string[] = [];
 
       for (const seg of segments) {
         const text = seg.text.trim();
         if (!text) continue;
+        const offsetMs = seg.offset * toMs;
         // Start a new chunk every 30 seconds
-        if (seg.offset - chunkStart >= 30_000 && chunkText.length > 0) {
-          lines.push(`[${formatTimestamp(chunkStart)}] ${chunkText.join(" ")}`);
-          chunkStart = seg.offset;
+        if (offsetMs - chunkStartMs >= CHUNK_MS && chunkText.length > 0) {
+          lines.push(`[${formatTimestamp(chunkStartMs)}] ${chunkText.join(" ")}`);
+          chunkStartMs = offsetMs;
           chunkText = [];
         }
         chunkText.push(text);
       }
       // Flush final chunk
       if (chunkText.length > 0) {
-        lines.push(`[${formatTimestamp(chunkStart)}] ${chunkText.join(" ")}`);
+        lines.push(`[${formatTimestamp(chunkStartMs)}] ${chunkText.join(" ")}`);
       }
 
       const fullTranscript = lines.join("\n");
-      const totalDurationMs = segments[segments.length - 1].offset + (segments[segments.length - 1].duration || 0);
+      const totalDurationMs = lastRawOffset * toMs;
       const totalDuration = formatTimestamp(totalDurationMs);
 
       // Truncate if unusually large
