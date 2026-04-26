@@ -26,13 +26,20 @@ export interface RunAgentOptions {
   /**
    * Pre-computed activation plan from the ActivationPlanner.
    *
-   * When provided:
-   *   - The session context (focus areas, urgent signals, energy state) is
-   *     injected into the first system message so the model is primed with
-   *     what to focus on this tick.
-   *   - The capability manifest's `reasons` are logged for observability.
-   *   - The harness still applies its own channel-scope and integration-health
-   *     gates — the manifest is advisory context, not an exclusion override.
+   * When provided, three things happen inside runAgent:
+   *
+   *   1. Session context injection — focus areas, urgent signals, energy state,
+   *      and top Foresight predictions are injected into the first system message
+   *      so the model is primed with what to focus on this tick.
+   *
+   *   2. Manifest suppression (authoritative) — capabilities listed in
+   *      `capabilityManifest.suppressedCapabilityIds` have their tools removed
+   *      from the active tool set. This filter composes with the integration
+   *      health filter and the channel-scope filter:
+   *        broken-integration exclusions ∩ manifest suppressions ∩ channel scope
+   *
+   *   3. Capability decision logging — `capabilityManifest.reasons` are logged
+   *      for observability and future admin tooling.
    *
    * Falls back to the harness's existing behaviour when absent, so all
    * existing callers that do not pass an activation plan are unaffected.
@@ -351,6 +358,44 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
           i === 0 && m.role === "system"
             ? { ...m, content: (m.content ?? "") + expiryNote }
             : m,
+        );
+      }
+    } catch {
+      // Best-effort — never block an agent run
+    }
+  }
+
+  // ── Activation-plan manifest suppression filter ────────────────────────────
+  // When the caller supplies an ActivationPlan with explicitly suppressed
+  // capability IDs, remove those capabilities' tools from the active tool list.
+  // This is applied AFTER the integration health filter (which removes tools for
+  // broken integrations) and BEFORE the channel-scope filter (which remains the
+  // authoritative per-channel allowlist). The three filters compose:
+  //
+  //   broken-integration exclusions ∩ manifest suppressions ∩ channel scope
+  //
+  // For heartbeat ticks the planner may suppress heavy-compute capabilities
+  // (e.g. "browser", "discord") when the user is stressed or in a quiet period,
+  // reducing token and latency cost on background sessions. For channel sessions
+  // the channel-scope filter is still authoritative; planner suppressions apply
+  // on top (e.g. suppressing discord tools when user is overwhelmed).
+  if (opts.activationPlan && opts.activationPlan.capabilityManifest.suppressedCapabilityIds.length > 0) {
+    try {
+      const { capabilityRegistry } = await import("../capabilities/index");
+      const suppressedToolNames = new Set<string>();
+      for (const capId of opts.activationPlan.capabilityManifest.suppressedCapabilityIds) {
+        const cap = capabilityRegistry.getById(capId);
+        if (cap) {
+          for (const tool of cap.tools) {
+            suppressedToolNames.add(tool.name);
+          }
+        }
+      }
+      if (suppressedToolNames.size > 0) {
+        const before = tools.length;
+        tools = tools.filter((t: AgentTool) => !suppressedToolNames.has(t.name));
+        console.log(
+          `[${channel}/Harness] manifest-suppressed ${before - tools.length} tools for capabilities: ${opts.activationPlan.capabilityManifest.suppressedCapabilityIds.join(", ")}`,
         );
       }
     } catch {

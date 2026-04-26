@@ -401,28 +401,14 @@ export class ActivationPlanner {
         reasons["calendar"] || "Activated: calendar context for morning briefing";
     }
 
-    // ── Rule 8: Channel sessions always have full capability access ────────
-    // The channel-scope tool filter in the harness is the authoritative gate;
-    // the planner's manifest is advisory context, not an exclusion list.
-    if (isChannelSession) {
-      for (const id of [
-        "coaching",
-        "calendar",
-        "email",
-        "research",
-        "memory",
-        "connections",
-        "scheduling",
-        "system",
-        "media",
-        "drive",
-      ]) {
-        if (!activeCapabilityIds.includes(id) && !suppressedCapabilityIds.includes(id)) {
-          activeCapabilityIds.push(id);
-          reasons[id] = "Activated: channel session — full context available";
-        }
-      }
-    }
+    // ── Rule 8 (removed): Channel sessions had a broad "activate everything"
+    // rule here, but that conflicted with suppressions set by earlier rules
+    // (e.g. Rule 2 suppressing browser/discord for high-stress users). The
+    // harness channel-scope filter is the authoritative gate for what tools
+    // are available on a given channel; the planner's manifest controls
+    // capability-level suppressions on top of that. For channel sessions the
+    // planner's primary value is providing session context (focus areas,
+    // urgent signals, energy state) injected into the system prompt.
 
     // ── Rule 9: No actionable signals in off-peak hours → shouldRun: false ─
     // Only applies to heartbeat ticks (not channel sessions).
