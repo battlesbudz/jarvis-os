@@ -789,6 +789,7 @@ export const openclawBuildLog = pgTable("openclaw_build_log", {
   outputCode: text("output_code").notNull().default(""),
   success: boolean("success").notNull().default(false),
   smokeTestPassed: boolean("smoke_test_passed"),
+  smokeTestArgs: jsonb("smoke_test_args"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 

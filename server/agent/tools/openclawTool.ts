@@ -1,5 +1,6 @@
 import type { AgentTool, ToolResult, JsonSchema } from "../types";
 import { db } from "../../db";
+import { and, desc, eq } from "drizzle-orm";
 import { openclawBuildLog } from "@shared/schema";
 
 // ── Tool resolver injection ───────────────────────────────────────────────────
@@ -252,7 +253,8 @@ export const buildFeatureTool: AgentTool = {
     const writeBuildLog = async (
       outputCode: string,
       success: boolean,
-      smokeTestPassed: boolean | null
+      smokeTestPassed: boolean | null,
+      smokeTestArgs?: Record<string, unknown> | null
     ) => {
       try {
         await db.insert(openclawBuildLog).values({
@@ -262,6 +264,7 @@ export const buildFeatureTool: AgentTool = {
           outputCode,
           success,
           smokeTestPassed,
+          smokeTestArgs: smokeTestArgs ?? null,
         });
       } catch (logErr) {
         console.error("[build_feature] Failed to write build log:", logErr);
@@ -274,6 +277,30 @@ export const buildFeatureTool: AgentTool = {
         ? new Set([...ctx.allowedToolNames, featureName])
         : undefined,
     };
+
+    // Look up the most recent passing smokeTestArgs for this tool so future
+    // calls use args that are already known to work instead of re-generating them.
+    let priorPassingArgs: Record<string, unknown> | null = null;
+    try {
+      const priorRows = await db
+        .select({ smokeTestArgs: openclawBuildLog.smokeTestArgs })
+        .from(openclawBuildLog)
+        .where(
+          and(
+            eq(openclawBuildLog.userId, ctx.userId),
+            eq(openclawBuildLog.featureName, featureName),
+            eq(openclawBuildLog.smokeTestPassed, true)
+          )
+        )
+        .orderBy(desc(openclawBuildLog.createdAt))
+        .limit(1);
+      const stored = priorRows[0]?.smokeTestArgs;
+      if (stored && typeof stored === "object" && !Array.isArray(stored)) {
+        priorPassingArgs = stored as Record<string, unknown>;
+      }
+    } catch {
+      // Non-fatal — fall through to auto-generation
+    }
 
     // Write files to disk
     const { applied, warnings } = await applyToolCode(
@@ -298,13 +325,27 @@ export const buildFeatureTool: AgentTool = {
     }
 
     // Smoke test
+    // Prefer previously-passing args; fall back to auto-generating from the tool's JSON Schema.
+    const resolvedTool = _toolResolver?.(featureName);
+    const smokeTestArgsToUse: Record<string, unknown> =
+      priorPassingArgs !== null
+        ? priorPassingArgs
+        : resolvedTool
+        ? generateSmartTestArgs(resolvedTool.parameters)
+        : {};
+
     console.log(`[build_feature] Running smoke test for "${featureName}"`);
     const smokeResult = await testToolTool.execute(
-      { tool_name: featureName },
+      { tool_name: featureName, test_args: JSON.stringify(smokeTestArgsToUse) },
       ctxForSmokeTest
     );
 
-    await writeBuildLog(toolCode, smokeResult.ok, smokeResult.ok);
+    await writeBuildLog(
+      toolCode,
+      smokeResult.ok,
+      smokeResult.ok,
+      smokeResult.ok ? smokeTestArgsToUse : null
+    );
 
     const restartNote = "\n\nRestart the server for the new tool to become active.";
     const fullNote = `${appliedNote}${warnNote}${restartNote}`;
