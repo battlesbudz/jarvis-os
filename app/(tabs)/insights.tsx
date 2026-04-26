@@ -1084,7 +1084,8 @@ export default function InsightsScreen() {
         if (webScheduledCount === 0) {
           audioCtx.close().catch(() => {});
           webAudioCtxRef.current = null;
-          onError();
+          // Throw so the outer catch triggers the full-file fallback (matches native behavior)
+          throw new Error('No audio chunks received');
         } else {
           // Mark stream complete and check if all sources already ended
           webStreamDone = true;

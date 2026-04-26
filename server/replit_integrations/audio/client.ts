@@ -231,7 +231,7 @@ export async function elevenlabsTtsStream(
   if (!apiKey) throw new Error("ELEVENLABS_API_KEY not set");
 
   const res = await fetch(
-    `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream?optimize_streaming_latency=${latencyTier}`,
+    `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}/stream?optimize_streaming_latency=${latencyTier}`,
     {
       method: "POST",
       headers: {
