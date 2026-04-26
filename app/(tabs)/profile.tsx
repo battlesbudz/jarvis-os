@@ -3070,15 +3070,21 @@ export default function ProfileScreen() {
                   Choose exactly what the agent is allowed to do on your computer. Shell and file writes are off by default.
                 </Text>
                 {([
-                  { key: 'notify',     label: 'Send desktop notifications' },
-                  { key: 'file_read',  label: 'Read files in the workspace' },
-                  { key: 'file_list',  label: 'List files in the workspace' },
-                  { key: 'file_write', label: 'Write files in the workspace' },
-                  { key: 'shell',      label: 'Run shell commands' },
-                ] as const).map((p) => p.key === 'shell' ? (
+                  { key: 'notify',        label: 'Send desktop notifications',                 subtitle: undefined, warning: undefined },
+                  { key: 'file_read',     label: 'Read files in the workspace',                subtitle: undefined, warning: undefined },
+                  { key: 'file_list',     label: 'List files in the workspace',                subtitle: undefined, warning: undefined },
+                  { key: 'file_write',    label: 'Write files in the workspace',               subtitle: undefined, warning: undefined },
+                  { key: 'browser_local', label: 'Local browser control',                      subtitle: 'Let Jarvis automate your real browser with your logged-in sessions', warning: { heading: '⚠ Browser automation uses your real logged-in sessions', body: 'Jarvis will control your browser as you — it can see pages, click links, and fill forms using cookies and credentials already in your browser. Only enable on a machine you trust the agent to operate.' } },
+                  { key: 'shell',         label: 'Run shell commands',                         subtitle: undefined, warning: { heading: '⚠ Shell access runs ANY command on your machine', body: 'Enabling this lets the agent execute arbitrary shell commands as your local user — install packages, delete files, exfiltrate data, anything you could type yourself. Only enable on a machine you trust the agent to operate, and review what it runs. You can disable this any time.' } },
+                ] as { key: string; label: string; subtitle: string | undefined; warning: { heading: string; body: string } | undefined }[]).map((p) => p.warning ? (
                   <View key={p.key}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8 }}>
-                      <Text style={{ flex: 1, fontSize: 13, fontFamily: 'Inter_400Regular', color: Colors.text }}>{p.label}</Text>
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ fontSize: 13, fontFamily: 'Inter_400Regular', color: Colors.text }}>{p.label}</Text>
+                        {p.subtitle ? (
+                          <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, marginTop: 2 }}>{p.subtitle}</Text>
+                        ) : null}
+                      </View>
                       {daemonPermsBusy === p.key ? (
                         <ActivityIndicator size="small" color="#6B72FF" />
                       ) : (
@@ -3090,16 +3096,16 @@ export default function ProfileScreen() {
                         />
                       )}
                     </View>
-                    {/* Risk copy: shell permission grants arbitrary command
-                        execution under the daemon's local user account. */}
-                    <View style={{ marginTop: 4, marginBottom: 4, padding: 10, borderRadius: 8, backgroundColor: '#FFF4E5', borderWidth: 1, borderColor: '#F0B44A' }}>
-                      <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: '#8A5A00', marginBottom: 2 }}>
-                        ⚠ Shell access runs ANY command on your machine
-                      </Text>
-                      <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: '#8A5A00', lineHeight: 16 }}>
-                        Enabling this lets the agent execute arbitrary shell commands as your local user — install packages, delete files, exfiltrate data, anything you could type yourself. Only enable on a machine you trust the agent to operate, and review what it runs. You can disable this any time.
-                      </Text>
-                    </View>
+                    {(p.key === 'shell' || !!daemonPerms[p.key]) && (
+                      <View style={{ marginTop: 4, marginBottom: 4, padding: 10, borderRadius: 8, backgroundColor: '#FFF4E5', borderWidth: 1, borderColor: '#F0B44A' }}>
+                        <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: '#8A5A00', marginBottom: 2 }}>
+                          {p.warning.heading}
+                        </Text>
+                        <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: '#8A5A00', lineHeight: 16 }}>
+                          {p.warning.body}
+                        </Text>
+                      </View>
+                    )}
                   </View>
                 ) : (
                   <View key={p.key} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8 }}>
