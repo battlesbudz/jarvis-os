@@ -946,6 +946,8 @@ export async function ensureTablesExist() {
       )
     `).catch(() => {});
     await db.execute(sql`ALTER TABLE skill_packs ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT ''`).catch(() => {});
+    await db.execute(sql`ALTER TABLE skill_packs ADD COLUMN IF NOT EXISTS heartbeat_rules JSONB NOT NULL DEFAULT '{}'::jsonb`).catch(() => {});
+    await db.execute(sql`ALTER TABLE skill_packs ADD COLUMN IF NOT EXISTS tool_groups JSONB NOT NULL DEFAULT '{}'::jsonb`).catch(() => {});
     await db.execute(sql`ALTER TABLE skill_packs ADD COLUMN IF NOT EXISTS is_store_visible BOOLEAN NOT NULL DEFAULT false`).catch(() => {});
 
     await db.execute(sql`

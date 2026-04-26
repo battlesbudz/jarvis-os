@@ -5627,6 +5627,25 @@ Extract up to 8 memories per batch.`;
   });
 
   /**
+   * GET /api/skill-packs/:packId
+   * Fetch a single store-visible pack with the current user's activation status.
+   */
+  app.get("/api/skill-packs/:packId", async (req: Request, res: Response) => {
+    const userId = (req as any).userId as string | undefined;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    const { packId } = req.params;
+    try {
+      const { getStorePackById } = await import("./intelligence/behaviorStore");
+      const pack = await getStorePackById(packId, userId);
+      if (!pack) return res.status(404).json({ error: "Pack not found" });
+      res.json(pack);
+    } catch (err) {
+      console.error("[Routes] GET /api/skill-packs/:packId error:", err);
+      res.status(500).json({ error: "Failed to fetch skill pack" });
+    }
+  });
+
+  /**
    * POST /api/skill-packs/:packId/activate
    * Activate a pack for the current user.
    */

@@ -470,7 +470,31 @@ export const deliverables = pgTable("deliverables", {
   actedAt: timestamp("acted_at"),
 });
 
-// Phase 5 — generic per-channel link table for non-Telegram channels.
+// ── Behaviour Pack structured config types ────────────────────────────────────
+
+/**
+ * Heartbeat rules bundled with a skill pack.
+ * These control when and how Jarvis is proactive during scheduled cycles.
+ */
+export interface PackHeartbeatRules {
+  disableDuringFocusBlocks?: boolean;
+  batchInterruptions?: boolean;
+  quietHoursOnly?: boolean;
+  suppressNotificationTypes?: string[];
+}
+
+/**
+ * Tool-group preferences bundled with a skill pack.
+ * Capability IDs listed under `boost` are unblocked even when channel scope
+ * would normally exclude them. IDs under `suppress` are removed from the
+ * active tool set regardless of other rules.
+ */
+export interface PackToolGroups {
+  boost?: string[];
+  suppress?: string[];
+}
+
+// ── Phase 5 — generic per-channel link table for non-Telegram channels.
 // (telegram_links stays separate to preserve existing rows.) Channel values:
 // "whatsapp" (address = E.164 phone), "slack" (address = slack user id +
 // team id, scoped via metadata), "daemon" (address = daemon uuid).
@@ -861,6 +885,14 @@ export const skillPacks = pgTable("skill_packs", {
   description: text("description").notNull().default(""),
   version: integer("version").notNull().default(1),
   instructions: text("instructions").notNull().default(""),
+  heartbeatRules: jsonb("heartbeat_rules")
+    .$type<PackHeartbeatRules>()
+    .notNull()
+    .default(sql`'{}'::jsonb`),
+  toolGroups: jsonb("tool_groups")
+    .$type<PackToolGroups>()
+    .notNull()
+    .default(sql`'{}'::jsonb`),
   isStoreVisible: boolean("is_store_visible").notNull().default(false),
   publishedAt: timestamp("published_at"),
   changelog: jsonb("changelog")
