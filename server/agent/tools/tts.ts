@@ -168,7 +168,11 @@ export async function speakToUser(
     return { ok: true };
   }
 
-  // Default: Telegram
+  if (channelRaw !== "telegram") {
+    return { ok: false, error: `TTS delivery not supported for channel: ${channelRaw}` };
+  }
+
+  // Telegram
   const chatId = await getTelegramChatId(userId);
   if (!chatId) {
     return { ok: false, error: "User has no linked Telegram account" };
