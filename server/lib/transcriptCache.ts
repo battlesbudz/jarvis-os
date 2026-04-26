@@ -86,7 +86,7 @@ export async function fetchTranscriptCached(
     console.log(`[transcriptCache] BYPASS ${videoId} — fetching live and overwriting cache`);
   }
 
-  const { YoutubeTranscript } = await import("youtube-transcript");
+  const { YoutubeTranscript } = await import("youtube-transcript/dist/youtube-transcript.esm.js");
   const segments = await YoutubeTranscript.fetchTranscript(input, config);
 
   if (videoId && segments && segments.length > 0) {
