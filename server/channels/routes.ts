@@ -440,6 +440,15 @@ export function registerChannelRoutes(app: Express): void {
     }
   });
 
+  // GET /api/channels/discord/interactions-config — return the interactions URL and public-key status
+  // Used by the Profile screen to show the slash-command setup instructions.
+  app.get("/api/channels/discord/interactions-config", authMiddleware, (req: Request, res: Response) => {
+    const domain = process.env.REPLIT_DOMAINS?.split(",")[0] || req.hostname;
+    const interactionsUrl = `https://${domain}/api/discord/interactions`;
+    const publicKeyConfigured = !!process.env.DISCORD_PUBLIC_KEY;
+    res.json({ interactionsUrl, publicKeyConfigured });
+  });
+
   // POST /api/channels/discord/pair — complete pairing with code from Discord DM
   app.post("/api/channels/discord/pair", authMiddleware, async (req: Request, res: Response) => {
     const userId = (req as any).userId;

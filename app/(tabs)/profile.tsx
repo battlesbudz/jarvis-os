@@ -20,6 +20,7 @@ import Animated, { FadeInDown } from 'react-native-reanimated';
 import { useFocusEffect, useRouter } from 'expo-router';
 import Colors from '@/constants/colors';
 import * as Haptics from 'expo-haptics';
+import * as Clipboard from 'expo-clipboard';
 import {
   getStats,
   claimReward,
@@ -278,6 +279,9 @@ export default function ProfileScreen() {
   const [discordTtsEnabled, setDiscordTtsEnabled] = useState(false);
   const [ttsChannels, setTtsChannels] = useState<string[]>([]);
   const [ttsVoice, setTtsVoice] = useState<string>('nova');
+  const [discordSlashConfig, setDiscordSlashConfig] = useState<{ interactionsUrl: string; publicKeyConfigured: boolean } | null>(null);
+  const [discordShowSlashSetup, setDiscordShowSlashSetup] = useState(false);
+  const [discordUrlCopied, setDiscordUrlCopied] = useState(false);
   const [documents, setDocuments] = useState<UserDocument[]>([]);
   const [documentsLoading, setDocumentsLoading] = useState(false);
   const [documentUploading, setDocumentUploading] = useState(false);
@@ -734,6 +738,25 @@ export default function ProfileScreen() {
     } catch {}
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   }, []);
+
+  const handleToggleSlashSetup = useCallback(async () => {
+    setDiscordShowSlashSetup(v => !v);
+    if (!discordSlashConfig) {
+      try {
+        const res = await apiRequest('GET', '/api/channels/discord/interactions-config');
+        const data = await res.json();
+        setDiscordSlashConfig(data);
+      } catch {}
+    }
+  }, [discordSlashConfig]);
+
+  const handleCopyInteractionsUrl = useCallback(async () => {
+    if (!discordSlashConfig?.interactionsUrl) return;
+    await Clipboard.setStringAsync(discordSlashConfig.interactionsUrl);
+    setDiscordUrlCopied(true);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    setTimeout(() => setDiscordUrlCopied(false), 2000);
+  }, [discordSlashConfig]);
 
   const handleTimezoneChange = useCallback(async (tz: string) => {
     setTimezone(tz);
@@ -2675,6 +2698,121 @@ export default function ProfileScreen() {
                     )}
                   </View>
                 )}
+
+                {/* Slash commands setup */}
+                <View style={{ borderTopWidth: 1, borderTopColor: Colors.border, marginTop: 6 }}>
+                  <Pressable
+                    onPress={handleToggleSlashSetup}
+                    style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 10 }}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <Text style={{ fontSize: 13, fontFamily: 'Inter_500Medium', color: Colors.text }}>Slash commands</Text>
+                        {discordSlashConfig && !discordSlashConfig.publicKeyConfigured && (
+                          <View style={{ paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, backgroundColor: 'rgba(245,158,11,0.15)' }}>
+                            <Text style={{ fontSize: 10, fontFamily: 'Inter_600SemiBold', color: '#F59E0B' }}>Setup needed</Text>
+                          </View>
+                        )}
+                        {discordSlashConfig?.publicKeyConfigured && (
+                          <Ionicons name="checkmark-circle" size={14} color="#22C55E" />
+                        )}
+                      </View>
+                      <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, marginTop: 1 }}>
+                        Enable /jarvis commands in your server
+                      </Text>
+                    </View>
+                    <Ionicons
+                      name={discordShowSlashSetup ? 'chevron-up' : 'chevron-down'}
+                      size={16}
+                      color={Colors.textSecondary}
+                    />
+                  </Pressable>
+
+                  {discordShowSlashSetup && (
+                    <View style={{ paddingBottom: 12, gap: 12 }}>
+                      {/* Step 1 — Interactions URL */}
+                      <View style={{ backgroundColor: Colors.card, borderRadius: 10, padding: 12, gap: 8 }}>
+                        <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: Colors.text }}>
+                          Step 1 — Set Interactions Endpoint URL
+                        </Text>
+                        <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, lineHeight: 16 }}>
+                          In the Discord Developer Portal → Your Application → General Information, paste this URL into the{' '}
+                          <Text style={{ fontFamily: 'Inter_600SemiBold', color: Colors.text }}>Interactions Endpoint URL</Text> field:
+                        </Text>
+                        {discordSlashConfig ? (
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                            <Text
+                              selectable
+                              style={{
+                                flex: 1, fontSize: 11, fontFamily: 'Inter_400Regular',
+                                color: '#5865F2', backgroundColor: '#5865F210',
+                                borderRadius: 6, padding: 8, lineHeight: 16,
+                              }}
+                            >
+                              {discordSlashConfig.interactionsUrl}
+                            </Text>
+                            <Pressable
+                              onPress={handleCopyInteractionsUrl}
+                              style={{
+                                padding: 8, borderRadius: 8,
+                                backgroundColor: discordUrlCopied ? '#22C55E20' : '#5865F215',
+                              }}
+                            >
+                              <Ionicons
+                                name={discordUrlCopied ? 'checkmark' : 'copy-outline'}
+                                size={16}
+                                color={discordUrlCopied ? '#22C55E' : '#5865F2'}
+                              />
+                            </Pressable>
+                          </View>
+                        ) : (
+                          <ActivityIndicator size="small" color="#5865F2" />
+                        )}
+                      </View>
+
+                      {/* Step 2 — DISCORD_PUBLIC_KEY */}
+                      <View style={{ backgroundColor: Colors.card, borderRadius: 10, padding: 12, gap: 6 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: Colors.text }}>
+                            Step 2 — Add Public Key secret
+                          </Text>
+                          {discordSlashConfig?.publicKeyConfigured
+                            ? <Ionicons name="checkmark-circle" size={14} color="#22C55E" />
+                            : <Ionicons name="alert-circle-outline" size={14} color="#F59E0B" />}
+                        </View>
+                        <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, lineHeight: 16 }}>
+                          In Discord Developer Portal → General Information, copy the{' '}
+                          <Text style={{ fontFamily: 'Inter_600SemiBold', color: Colors.text }}>Public Key</Text>{' '}
+                          value. Then in Replit Secrets, add it as{' '}
+                          <Text style={{ fontFamily: 'Inter_600SemiBold', color: Colors.text }}>DISCORD_PUBLIC_KEY</Text>.
+                        </Text>
+                        {discordSlashConfig?.publicKeyConfigured ? (
+                          <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: '#22C55E' }}>
+                            ✓ Public key is configured
+                          </Text>
+                        ) : (
+                          <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: '#F59E0B' }}>
+                            Not configured — slash commands will be rejected until this is set
+                          </Text>
+                        )}
+                      </View>
+
+                      {/* Step 3 — Register commands */}
+                      <View style={{ backgroundColor: Colors.card, borderRadius: 10, padding: 12, gap: 6 }}>
+                        <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: Colors.text }}>
+                          Step 3 — Done
+                        </Text>
+                        <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, lineHeight: 16 }}>
+                          Once the endpoint is saved and the public key is set, restart your server. Jarvis will register{' '}
+                          <Text style={{ fontFamily: 'Inter_600SemiBold', color: Colors.text }}>/jarvis chat</Text>,{' '}
+                          <Text style={{ fontFamily: 'Inter_600SemiBold', color: Colors.text }}>/jarvis plan</Text>,{' '}
+                          <Text style={{ fontFamily: 'Inter_600SemiBold', color: Colors.text }}>/jarvis status</Text>, and{' '}
+                          <Text style={{ fontFamily: 'Inter_600SemiBold', color: Colors.text }}>/jarvis help</Text> automatically.
+                        </Text>
+                      </View>
+                    </View>
+                  )}
+                </View>
 
                 {/* Voice replies toggle */}
                 <View style={{ paddingVertical: 10, borderTopWidth: 1, borderTopColor: Colors.border, marginTop: 6 }}>
