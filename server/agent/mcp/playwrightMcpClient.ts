@@ -244,9 +244,12 @@ export function closeMcpSession(userId: string, wipeProfile = false): void {
   if (s) {
     s.close();
     sessions.delete(userId);
-    if (wipeProfile) {
-      try { fs.rmSync(s.profileDir, { recursive: true, force: true }); } catch { /* noop */ }
-    }
+  }
+  if (wipeProfile) {
+    // Always wipe the profile dir regardless of whether an in-memory session existed.
+    // This covers the case where the session already expired via idle cleanup.
+    const profileDir = path.join(os.homedir(), ".jarvis", "browser-profiles", userId);
+    try { fs.rmSync(profileDir, { recursive: true, force: true }); } catch { /* noop */ }
   }
 }
 

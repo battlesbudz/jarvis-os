@@ -589,6 +589,8 @@ export const browserCloseTool: AgentTool = {
       return { ok: true, content: "No active browser session to close.", label: "browser_close: no session" };
     }
     closeMcpSession(ctx.userId);
+    // Also close daemon browser context when local routing is active
+    await closeDaemonBrowserSession(ctx.userId);
     return { ok: true, content: "Browser session closed.", label: "browser_close: closed" };
   },
 };
