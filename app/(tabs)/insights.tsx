@@ -588,6 +588,7 @@ export default function InsightsScreen() {
   const talkModeRef = useRef(false);
   const startRecordingRef = useRef<() => Promise<void>>(() => Promise.resolve());
   const stopRecordingRef = useRef<() => Promise<void>>(() => Promise.resolve());
+  const isRecordingRef = useRef(false);
   const [isTTSLoading, setIsTTSLoading] = useState(false);
   const speakingTextRef = useRef<string | null>(null);
   const [isTranscribing, setIsTranscribing] = useState(false);
@@ -817,6 +818,7 @@ export default function InsightsScreen() {
 
   stopRecordingRef.current = stopRecordingAndSend;
   useEffect(() => { talkModeRef.current = talkModeEnabled; }, [talkModeEnabled]);
+  useEffect(() => { isRecordingRef.current = isRecording; }, [isRecording]);
 
   const stopSpeaking = useCallback(() => {
     speakAbortRef.current?.abort();
@@ -872,6 +874,7 @@ export default function InsightsScreen() {
           isSpeakingRef.current = false;
           speakingTextRef.current = null;
           setIsSpeaking(false);
+          apiRequest('POST', '/api/voice/tts-done').catch(() => {});
           if (talkModeRef.current) {
             setTimeout(() => startRecordingRef.current(), 400);
           }
@@ -896,6 +899,7 @@ export default function InsightsScreen() {
             isSpeakingRef.current = false;
             speakingTextRef.current = null;
             setIsSpeaking(false);
+            apiRequest('POST', '/api/voice/tts-done').catch(() => {});
             if (talkModeRef.current) {
               setTimeout(() => startRecordingRef.current(), 400);
             }
@@ -1316,11 +1320,20 @@ export default function InsightsScreen() {
     };
     connectWakeSSE();
 
-    // Cleanup on blur: stop recording/speaking if Talk Mode was active
+    // Cleanup on blur: stop recording if Talk Mode was active and mic is open
     return () => {
       sseAborted = true;
-      if (talkModeRef.current) {
-        stopRecordingRef.current().catch(() => {});
+      if (talkModeRef.current && isRecordingRef.current) {
+        // Cancel the in-progress recording without sending it (user navigated away)
+        setIsRecording(false);
+        if (Platform.OS !== 'web') {
+          recordingRef.current?.stopAndUnloadAsync().catch(() => {});
+          recordingRef.current = null;
+          Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true }).catch(() => {});
+        } else {
+          webRecorderRef.current?.stop();
+          webRecorderRef.current = null;
+        }
       }
     };
   }, []));

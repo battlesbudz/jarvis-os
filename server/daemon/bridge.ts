@@ -2,7 +2,7 @@ import type { Server as HttpServer } from "http";
 import { WebSocketServer, WebSocket, type RawData } from "ws";
 import { db } from "../db";
 import { eq, and, sql } from "drizzle-orm";
-import { channelLinks, channelLinkCodes } from "@shared/schema";
+import { channelLinks, channelLinkCodes, userPreferences } from "@shared/schema";
 import { randomBytes, createHash } from "crypto";
 
 interface PairMsg { type: "pair"; code: string; hostname?: string; platform?: string }
@@ -82,6 +82,32 @@ export function subscribeWakeWordTrigger(
   if (!wakeWordTriggerCallbacks.has(userId)) wakeWordTriggerCallbacks.set(userId, new Set());
   wakeWordTriggerCallbacks.get(userId)!.add(cb);
   return () => wakeWordTriggerCallbacks.get(userId)?.delete(cb);
+}
+
+/**
+ * After an Android daemon pairs or reconnects, push the user's stored wake/talk
+ * settings so the device listener is always in sync even after a reboot.
+ */
+async function syncWakeSettingsToDaemon(userId: string): Promise<void> {
+  try {
+    const rows = await db.select({ data: userPreferences.data })
+      .from(userPreferences).where(eq(userPreferences.userId, userId));
+    const prefs = (rows[0]?.data ?? {}) as Record<string, any>;
+    const wakeWordEnabled: boolean = prefs.wakeWordEnabled ?? false;
+    const talkModeEnabled: boolean = prefs.talkModeEnabled ?? false;
+    const wakeWords: string[] = prefs.wakeWords ?? ["hey jarvis", "jarvis", "computer"];
+    if (wakeWordEnabled) {
+      await sendDaemonOp(userId, {
+        type: "voice_set_wake_words",
+        enabled: true,
+        words: wakeWords,
+        talkMode: talkModeEnabled,
+      }, 5000);
+      console.log(`[daemon] wake settings synced on connect: userId=${userId} talkMode=${talkModeEnabled}`);
+    }
+  } catch (e) {
+    console.error("[daemon] wake settings sync failed:", e);
+  }
 }
 
 function nextOpId(): string {
@@ -581,6 +607,8 @@ export function startDaemonBridge(server: HttpServer): void {
           const hello: HelloMsg = { type: "hello", ok: true, userId: pairedUserId };
           try { ws.send(JSON.stringify(hello)); } catch { /* noop */ }
           console.log(`[daemon] reconnected userId=${pairedUserId} platform=${reconnPlatform} daemonId=${rm.daemonId}`);
+          // Sync wake/talk settings to daemon after reconnect (fire-and-forget)
+          if (reconnPlatform === "android") setTimeout(() => syncWakeSettingsToDaemon(pairedUserId), 1500);
         } catch (err) {
           console.error("[daemon] reconnect lookup failed:", err);
           try { ws.send(JSON.stringify({ type: "hello", ok: false, error: "reconnect failed" })); } catch { /* noop */ }
@@ -619,6 +647,8 @@ export function startDaemonBridge(server: HttpServer): void {
         const hello = { type: "hello", ok: true, userId, daemonId, reconnectSecret };
         try { ws.send(JSON.stringify(hello)); } catch { /* noop */ }
         console.log(`[daemon] paired userId=${userId} hostname=${m.hostname || "unknown"} platform=${pairPlatform}`);
+        // Sync wake/talk settings to daemon after initial pair (fire-and-forget)
+        if (pairPlatform === "android") setTimeout(() => syncWakeSettingsToDaemon(userId), 1500);
         return;
       }
 

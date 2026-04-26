@@ -899,6 +899,21 @@ export function registerChannelRoutes(app: Express): void {
     }
   });
 
+  // Mobile app notifies server that TTS playback finished — server relays to Android daemon for Talk Mode re-arm
+  app.post("/api/voice/tts-done", authMiddleware, async (req: Request, res: Response) => {
+    const userId = (req as any).userId;
+    try {
+      if (isAndroidDaemonActive(userId)) {
+        sendDaemonOp(userId, { type: "voice_tts_finished" }, 3000)
+          .catch((e: unknown) => console.error("[voice] tts-done daemon relay failed:", e));
+      }
+      res.json({ ok: true });
+    } catch (err) {
+      console.error("[voice] tts-done failed:", err);
+      res.status(500).json({ error: "Failed to relay tts-done" });
+    }
+  });
+
   // SSE endpoint — mobile app subscribes to wake word trigger events
   app.get("/api/voice/wake-events", authMiddleware, (req: Request, res: Response) => {
     const userId = (req as any).userId;
