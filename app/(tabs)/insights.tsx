@@ -2165,8 +2165,22 @@ export default function InsightsScreen() {
       <View style={[styles.inputContainer, { paddingBottom: tabBarHeight + 8 }]}>
         <Pressable
           style={{ position: 'absolute', top: -24, left: 12, flexDirection: 'row', alignItems: 'center', gap: 5, paddingVertical: 3, paddingHorizontal: 8, borderRadius: 10, backgroundColor: talkModeEnabled ? 'rgba(34,197,94,0.12)' : 'transparent' }}
-          onPress={() => {
+          onPress={async () => {
             const next = !talkModeEnabled;
+            if (next) {
+              // Enabling Talk Mode — request mic permission first
+              if (Platform.OS !== 'web') {
+                const { status } = await Audio.requestPermissionsAsync();
+                if (status !== 'granted') {
+                  Alert.alert(
+                    'Microphone Required',
+                    'Talk Mode needs microphone access to listen for your voice. Please allow microphone access in Settings.',
+                    [{ text: 'OK' }]
+                  );
+                  return;
+                }
+              }
+            }
             setTalkModeEnabled(next);
             talkModeRef.current = next;
             if (!next) {
