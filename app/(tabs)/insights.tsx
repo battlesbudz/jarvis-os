@@ -970,9 +970,12 @@ export default function InsightsScreen() {
     try {
       streamingAttempted = true;
       const streamUrl = new URL('/api/tts/stream', getApiUrl()).toString();
-      const res = await authFetch(streamUrl, {
+      const ttsToken = await getAuthToken();
+      const ttsHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (ttsToken) ttsHeaders['Authorization'] = `Bearer ${ttsToken}`;
+      const res = await expoFetch(streamUrl, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: ttsHeaders,
         body: JSON.stringify({ text: trimmedText }),
         signal: abortController.signal,
       });
