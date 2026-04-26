@@ -115,6 +115,16 @@ class WakeWordService : Service() {
             DaemonLog.add("wake: SpeechRecognizer not available on this device")
             return
         }
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M &&
+            checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            DaemonLog.add("wake: RECORD_AUDIO permission not granted — cannot start wake word detection")
+            // Broadcast so the UI can prompt the user
+            val intent = Intent("com.jarvis.daemon.WAKE_WORD_PERMISSION_DENIED")
+            intent.setPackage(packageName)
+            sendBroadcast(intent)
+            return
+        }
         mainHandler.post {
             try {
                 speechRecognizer?.destroy()

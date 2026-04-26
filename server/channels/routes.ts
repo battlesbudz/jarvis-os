@@ -4,7 +4,7 @@ import { eq, and } from "drizzle-orm";
 import { channelLinks, channelLinkCodes, telegramLinks, NOTIFICATION_TYPES, CHANNEL_NAMES, userPreferences, type ChannelName, type NotificationType } from "@shared/schema";
 import { authMiddleware } from "../auth";
 import { getAllPreferences, setPreference, getChannel, listChannels } from "./registry";
-import { createDaemonPairingCode, isUserPaired, closeUserDaemon, getDaemonPermissions, setDaemonPermissions, isDaemonActionAllowed, DEFAULT_DAEMON_PERMISSIONS, getAndroidDaemonPermissions, setAndroidDaemonPermissions, DEFAULT_ANDROID_DAEMON_PERMISSIONS, isAndroidDaemonActive, isDesktopDaemonActive, type DaemonAction, type DaemonPermissions, type AndroidDaemonAction, type AndroidDaemonPermissions } from "../daemon/bridge";
+import { createDaemonPairingCode, isUserPaired, closeUserDaemon, getDaemonPermissions, setDaemonPermissions, isDaemonActionAllowed, DEFAULT_DAEMON_PERMISSIONS, getAndroidDaemonPermissions, setAndroidDaemonPermissions, DEFAULT_ANDROID_DAEMON_PERMISSIONS, isAndroidDaemonActive, isDesktopDaemonActive, sendDaemonOp, subscribeWakeWordTrigger, type DaemonAction, type DaemonPermissions, type AndroidDaemonAction, type AndroidDaemonPermissions } from "../daemon/bridge";
 import { startUserBot, stopUserBot, getBotStatus, completePairing, getGuildsForUser, getChannelsForGuild, setupDiscordWorkspace, type AllowlistedGuild, type DiscordLinkMeta, WORKSPACE_TOPICS } from "../discord/manager";
 import { saveUserToken, getUserToken, deleteUserToken } from "../userTokenStore";
 import { createSchedule, listSchedules, deleteSchedule, toggleSchedule, parseCronExpression, SCHEDULE_TEMPLATES, nextRunTime } from "../discord/schedules";
@@ -868,14 +868,62 @@ export function registerChannelRoutes(app: Express): void {
       await db.insert(userPreferences)
         .values({ userId, data: updated })
         .onConflictDoUpdate({ target: userPreferences.userId, set: { data: updated } });
-      res.json({
+
+      const result = {
         wakeWordEnabled: updated.wakeWordEnabled ?? false,
         talkModeEnabled: updated.talkModeEnabled ?? false,
         wakeWords: updated.wakeWords ?? ["hey jarvis", "jarvis", "computer"],
-      });
+      };
+
+      // Sync to Android daemon if connected — fire-and-forget
+      if (isAndroidDaemonActive(userId)) {
+        if (wakeWordEnabled !== undefined || wakeWords !== undefined) {
+          sendDaemonOp(userId, {
+            type: "voice_set_wake_words",
+            enabled: result.wakeWordEnabled,
+            words: result.wakeWords,
+            talkMode: result.talkModeEnabled,
+          }, 5000).catch((e: unknown) => console.error("[voice] daemon sync error:", e));
+        } else if (talkModeEnabled !== undefined) {
+          sendDaemonOp(userId, {
+            type: "voice_set_talk_mode",
+            enabled: result.talkModeEnabled,
+          }, 5000).catch((e: unknown) => console.error("[voice] daemon sync error:", e));
+        }
+      }
+
+      res.json(result);
     } catch (err) {
       console.error("[voice] put wake-settings failed:", err);
       res.status(500).json({ error: "Failed to save wake settings" });
     }
+  });
+
+  // SSE endpoint — mobile app subscribes to wake word trigger events
+  app.get("/api/voice/wake-events", authMiddleware, (req: Request, res: Response) => {
+    const userId = (req as any).userId;
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.flushHeaders();
+
+    // Keep-alive ping every 25 s so Replit proxy doesn't close the connection
+    const keepalive = setInterval(() => {
+      try { res.write(": ping\n\n"); } catch { clearInterval(keepalive); }
+    }, 25000);
+
+    const unsubscribe = subscribeWakeWordTrigger(userId, (event) => {
+      try {
+        res.write(`data: ${JSON.stringify(event)}\n\n`);
+      } catch {
+        unsubscribe();
+        clearInterval(keepalive);
+      }
+    });
+
+    req.on("close", () => {
+      unsubscribe();
+      clearInterval(keepalive);
+    });
   });
 }

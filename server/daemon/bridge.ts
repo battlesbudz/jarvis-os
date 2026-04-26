@@ -37,7 +37,10 @@ export type DaemonOp =
   | { type: "desktop_screenshot" }
   | { type: "desktop_read_screen" }
   | { type: "android_notification_reply"; notificationKey: string; replyText: string }
-  | { type: "browser_mcp"; tool: string; args: Record<string, unknown> };
+  | { type: "browser_mcp"; tool: string; args: Record<string, unknown> }
+  | { type: "voice_set_wake_words"; enabled: boolean; words?: string[]; talkMode?: boolean }
+  | { type: "voice_set_talk_mode"; enabled: boolean }
+  | { type: "voice_tts_finished" };
 
 export interface PhoneNotification {
   pkg: string;
@@ -68,6 +71,18 @@ interface PendingOp {
 const userSockets = new Map<string, WebSocket>();
 const pendingByUser = new Map<string, Map<string, PendingOp>>();
 let opCounter = 0;
+
+// Wake word event subscriptions: userId → set of callbacks
+const wakeWordTriggerCallbacks = new Map<string, Set<(e: { phrase: string; transcript: string }) => void>>();
+
+export function subscribeWakeWordTrigger(
+  userId: string,
+  cb: (e: { phrase: string; transcript: string }) => void,
+): () => void {
+  if (!wakeWordTriggerCallbacks.has(userId)) wakeWordTriggerCallbacks.set(userId, new Set());
+  wakeWordTriggerCallbacks.get(userId)!.add(cb);
+  return () => wakeWordTriggerCallbacks.get(userId)?.delete(cb);
+}
 
 function nextOpId(): string {
   opCounter += 1;
@@ -331,9 +346,9 @@ export async function sendDaemonOp(
   op: DaemonOp,
   timeoutMs = 15000,
 ): Promise<{ ok: boolean; data?: unknown; error?: string }> {
-  const isAndroidOp = op.type.startsWith("android_");
+  const isAndroidOp = op.type.startsWith("android_") || op.type.startsWith("voice_");
   // "notify" and "ping" are platform-neutral: route to desktop first, android fallback.
-  // All other non-android ops are desktop-only; android_* ops are android-only.
+  // All other non-android ops are desktop-only; android_*/voice_* ops are android-only.
   const isPlatformNeutral = op.type === "ping" || op.type === "notify";
 
   let sock: WebSocket | undefined;
@@ -512,7 +527,8 @@ export function startDaemonBridge(server: HttpServer): void {
         try { ws.send(JSON.stringify({ type: "error", error: "invalid json" })); } catch { /* noop */ }
         return;
       }
-      const m = msg as PairMsg | ReconnectMsg | ResultMsg | PingMsg;
+      interface WakeWordTriggeredMsg { type: "wake_word_triggered"; phrase?: string; transcript?: string }
+      const m = msg as PairMsg | ReconnectMsg | ResultMsg | PingMsg | NotificationEventMsg | WakeWordTriggeredMsg;
 
       // Reconnect using stored daemonId + reconnectSecret (proof-of-possession).
       // The secret was issued server-side during pair; we compare sha256(provided) to stored hash.
@@ -620,6 +636,18 @@ export function startDaemonBridge(server: HttpServer): void {
           while (arr.length > MAX_NOTIFS_PER_USER) arr.pop();
           userNotifications.set(pairedUserId, arr);
         }
+        return;
+      }
+
+      // Wake word triggered — push an in-app event so the mobile client opens Talk Mode
+      if (m.type === "wake_word_triggered" && pairedUserId) {
+        const phrase: string = (m as { type: "wake_word_triggered"; phrase?: string; transcript?: string }).phrase ?? "";
+        const transcript: string = (m as { type: "wake_word_triggered"; phrase?: string; transcript?: string }).transcript ?? "";
+        console.log(`[daemon] wake_word_triggered userId=${pairedUserId} phrase="${phrase}"`);
+        // Broadcast to any SSE/in-app listeners for this user
+        wakeWordTriggerCallbacks.get(pairedUserId)?.forEach(cb => {
+          try { cb({ phrase, transcript }); } catch { /* noop */ }
+        });
         return;
       }
 
