@@ -1303,8 +1303,8 @@ export default function InsightsScreen() {
                   if (line.startsWith('data:')) {
                     try {
                       const ev = JSON.parse(line.slice(5).trim());
-                      if (ev.phrase && !talkModeRef.current) {
-                        // Wake word fired — auto-start recording
+                      if (ev.phrase) {
+                        // Wake word fired — auto-start recording (Talk Mode only affects post-TTS re-arming)
                         startRecordingRef.current();
                       }
                     } catch { /* malformed line */ }

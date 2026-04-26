@@ -38,6 +38,15 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private val requestMicrophonePermission = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        checkPermissionsStatus()
+        if (!granted) {
+            Toast.makeText(this, "Microphone permission is required for wake word detection ('Hey Jarvis'). Grant it in Settings → Apps → Jarvis Daemon → Permissions.", Toast.LENGTH_LONG).show()
+        }
+    }
+
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             val b = binder as? WebSocketService.LocalBinder ?: return
@@ -105,7 +114,12 @@ class MainActivity : AppCompatActivity() {
             openStoragePermission()
         }
 
+        binding.btnGrantMicrophone.setOnClickListener {
+            requestMicrophonePermissionIfNeeded()
+        }
+
         requestNotificationPermissionIfNeeded()
+        requestMicrophonePermissionIfNeeded()
         checkPermissionsStatus()
         bindToService()
         UpdateChecker.check(this)
@@ -141,6 +155,20 @@ class MainActivity : AppCompatActivity() {
             }
         }
     }
+
+    private fun requestMicrophonePermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
+            checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) !=
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            requestMicrophonePermission.launch(android.Manifest.permission.RECORD_AUDIO)
+        }
+    }
+
+    private fun isMicrophoneGranted(): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
+        checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED
 
     private fun bindToService() {
         val intent = Intent(this, WebSocketService::class.java)
@@ -187,6 +215,7 @@ class MainActivity : AppCompatActivity() {
         val accessibilityEnabled = isAccessibilityEnabled()
         val storageGranted = isStorageGranted()
         val notificationListenerEnabled = isNotificationListenerEnabled()
+        val micGranted = isMicrophoneGranted()
 
         binding.tvAccessibilityStatus.text = if (accessibilityEnabled) "✓ Enabled — phone control active" else "✗ Not enabled — tap Fix (REQUIRED for screen control)"
         binding.tvAccessibilityStatus.setTextColor(
@@ -202,6 +231,12 @@ class MainActivity : AppCompatActivity() {
         binding.tvStorageStatus.setTextColor(
             if (storageGranted) getColor(R.color.status_ok) else getColor(R.color.status_warn)
         )
+
+        binding.tvMicrophoneStatus.text = if (micGranted) "✓ Granted — wake word detection ready" else "✗ Not granted — tap Grant (required for 'Hey Jarvis')"
+        binding.tvMicrophoneStatus.setTextColor(
+            if (micGranted) getColor(R.color.status_ok) else getColor(R.color.status_warn)
+        )
+        binding.btnGrantMicrophone.visibility = if (micGranted) View.GONE else View.VISIBLE
     }
 
     private fun isAccessibilityEnabled(): Boolean {
