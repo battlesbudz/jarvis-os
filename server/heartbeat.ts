@@ -21,6 +21,7 @@ import { createDriveTextFile } from "./integrations/googleDrive";
 import { getValidGoogleTokens } from "./userTokenStore";
 import { logInteraction } from "./interactionLog";
 import { logAction, isActionSuppressed } from "./intelligence/actionLog";
+import { emit as diagEmit } from "./diagnostics/diagnosticsService";
 import OpenAI from "openai";
 
 const openai = new OpenAI({
@@ -663,6 +664,12 @@ export async function runHeartbeatTick(): Promise<void> {
     await maybeRunDailyDecay();
   } catch (err) {
     console.error("[Heartbeat] memory decay failed:", err);
+    diagEmit({
+      subsystem: "heartbeat",
+      severity: "error",
+      message: `Memory decay job failed: ${err instanceof Error ? err.message : String(err)}`,
+      metadata: { task: "memory_decay" },
+    }).catch(() => {});
   }
 
   // Once per UTC day, prune emotional state history rows older than 90 days.
@@ -672,6 +679,12 @@ export async function runHeartbeatTick(): Promise<void> {
     await maybeRunDailyHistoryPrune();
   } catch (err) {
     console.error("[Heartbeat] emotional state history prune failed:", err);
+    diagEmit({
+      subsystem: "heartbeat",
+      severity: "warning",
+      message: `Emotional state history prune failed: ${err instanceof Error ? err.message : String(err)}`,
+      metadata: { task: "emotional_state_prune" },
+    }).catch(() => {});
   }
 
   // Integration validator — runs every 30 min (gated here so the validator
@@ -683,6 +696,12 @@ export async function runHeartbeatTick(): Promise<void> {
       await runValidationCycle();
     } catch (err) {
       console.error("[Heartbeat] integration validation failed:", err);
+      diagEmit({
+        subsystem: "integration",
+        severity: "error",
+        message: `Integration validation cycle failed: ${err instanceof Error ? err.message : String(err)}`,
+        metadata: { task: "validation_cycle" },
+      }).catch(() => {});
     }
   }
 
@@ -693,6 +712,12 @@ export async function runHeartbeatTick(): Promise<void> {
     await runNervousSystemScan();
   } catch (err) {
     console.error("[Heartbeat] nervous system scan failed:", err);
+    diagEmit({
+      subsystem: "heartbeat",
+      severity: "error",
+      message: `Nervous system scan failed: ${err instanceof Error ? err.message : String(err)}`,
+      metadata: { task: "nervous_system_scan" },
+    }).catch(() => {});
   }
 
   const checklist = readChecklist();

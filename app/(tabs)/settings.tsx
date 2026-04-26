@@ -215,11 +215,12 @@ export default function SettingsScreen() {
     overallStatus: 'healthy' | 'degraded' | 'down';
     subsystems: SubsystemStatus[];
     openAiReachable: boolean;
+    openAiLatencyMs: number | null;
     dbReachable: boolean;
     jobQueueDepth: number;
     staleJobCount: number;
     stuckWorkflowCount: number;
-    channelStatuses: Record<string, { configured: boolean }>;
+    channelStatuses: Record<string, { configured: boolean; linked?: boolean }>;
     recentErrors: DiagEventEntry[];
     generatedAt: string;
   }
