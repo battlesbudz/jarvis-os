@@ -43,6 +43,7 @@ object OpHandler {
                 "android_file_list" -> handleFileList(op)
                 "android_file_read" -> handleFileRead(op)
                 "android_notifications_list" -> handleNotificationsList(op)
+                "android_notification_reply" -> handleNotificationReply(context, op)
                 "android_file_search" -> handleFileSearch(op)
                 "android_open_file" -> handleOpenFile(context, op)
                 "android_copy_to_clipboard" -> handleCopyToClipboard(context, op)
@@ -480,6 +481,16 @@ object OpHandler {
                 .put("listenerEnabled", listenerRunning)
                 .put("hint", if (!listenerRunning) "Grant notification access in Settings > Notifications > Device & App Notifications > Jarvis Daemon" else null)
         )
+    }
+
+    private fun handleNotificationReply(context: Context, op: JSONObject): OpResult {
+        val key = op.optString("notificationKey").ifEmpty {
+            return OpResult(false, error = "notificationKey required")
+        }
+        val text = op.optString("replyText").ifEmpty {
+            return OpResult(false, error = "replyText required")
+        }
+        return JarvisNotificationListener.performReply(context, key, text)
     }
 
     private fun handleNotify(context: Context, op: JSONObject): OpResult {

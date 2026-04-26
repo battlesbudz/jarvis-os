@@ -26,6 +26,7 @@ const ANDROID_ACTIONS: readonly string[] = [
   "android_file_search",
   "android_open_file",
   "android_copy_to_clipboard",
+  "android_notification_reply",
 ] as const;
 
 function isDesktopAction(value: string): value is DaemonAction {
@@ -48,6 +49,7 @@ function androidPermKey(action: string): AndroidDaemonAction | null {
   if (action === "android_open_file") return "android_file_list";
   if (action === "android_copy_to_clipboard") return "android_file_list";
   if (action === "android_tap" || action === "android_type" || action === "android_swipe" || action === "android_press_key") return "android_tap_type";
+  if (action === "android_notification_reply") return "android_tap_type";
   return null;
 }
 
@@ -78,8 +80,9 @@ ANDROID actions (available when an Android device daemon is paired):
 - android_file_search: recursively search for files by name across the device storage — accepts query (substring match), optional root path (defaults to external storage root), optional type filter (image/video/audio/document/any), optional maxDepth (default 4, max 8); returns up to 100 matches with name/path/size/lastModified
 - android_open_file: open a file in its native app (e.g. gallery for images) using an ACTION_VIEW Intent — accepts an absolute file path
 - android_copy_to_clipboard: copy an image file to the Android clipboard so it can be pasted into Telegram, WhatsApp, or any app that supports image paste — accepts an absolute image file path; falls back gracefully if the target app doesn't support paste
+- android_notification_reply: send an inline reply to a notification that exposes a RemoteInput reply action — requires notificationKey (from android_notifications_list) and replyText; only works on notifications where hasReplyAction is true; ALWAYS confirm the exact reply text with the user before firing this action
 
-Always confirm with the user before tap/type/swipe actions. Use android_read_screen or android_screenshot to understand context before acting. Require confirmation before any destructive shell or file_write actions. When an Android daemon is paired, prefer android_* actions. Returns the daemon's response or an error if not paired.`,
+Always confirm with the user before tap/type/swipe actions and before android_notification_reply. Use android_read_screen or android_screenshot to understand context before acting. Require confirmation before any destructive shell or file_write actions. When an Android daemon is paired, prefer android_* actions. Returns the daemon's response or an error if not paired.`,
   parameters: {
     type: "object",
     properties: {
@@ -92,6 +95,7 @@ Always confirm with the user before tap/type/swipe actions. Use android_read_scr
           "android_tap", "android_type", "android_swipe", "android_press_key",
           "android_file_list", "android_file_read",
           "android_file_search", "android_open_file", "android_copy_to_clipboard",
+          "android_notification_reply",
         ],
       },
       cmd: { type: "string", description: "Shell command (when action is 'shell')" },
@@ -116,6 +120,8 @@ Always confirm with the user before tap/type/swipe actions. Use android_read_scr
       root: { type: "string", description: "Root path to start search from (when action is 'android_file_search', defaults to external storage root)" },
       fileType: { type: "string", enum: ["image", "video", "audio", "document", "any"], description: "File type filter (when action is 'android_file_search', default 'any')" },
       maxDepth: { type: "number", description: "Maximum directory depth to recurse (when action is 'android_file_search', default 4, max 8)" },
+      notificationKey: { type: "string", description: "Notification status-bar key from android_notifications_list (when action is 'android_notification_reply')" },
+      replyText: { type: "string", description: "The reply text to send inline (when action is 'android_notification_reply')" },
     },
     required: ["action"],
   },
@@ -188,6 +194,10 @@ Always confirm with the user before tap/type/swipe actions. Use android_read_scr
       } else if (rawAction === "android_copy_to_clipboard") {
         if (!args.path) return { ok: false, content: JSON.stringify({ ok: false, error: "path required" }) };
         op = { type: "android_copy_to_clipboard", path: String(args.path) };
+      } else if (rawAction === "android_notification_reply") {
+        if (!args.notificationKey) return { ok: false, content: JSON.stringify({ ok: false, error: "notificationKey required" }) };
+        if (!args.replyText) return { ok: false, content: JSON.stringify({ ok: false, error: "replyText required" }) };
+        op = { type: "android_notification_reply", notificationKey: String(args.notificationKey), replyText: String(args.replyText) };
       } else {
         return { ok: false, content: JSON.stringify({ ok: false, error: `unknown android action ${rawAction}` }) };
       }
