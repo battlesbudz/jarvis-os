@@ -20,6 +20,7 @@ import { getAgentForChannel, getAgent } from "./agentManager";
 import { wrapToolsForAgent } from "./agentPermissions";
 import { readAgentMemories, writeAgentMemory } from "./agentMemory";
 import { logAgentEvent } from "./agentLogger";
+import { requiresApproval, requestApproval, awaitApproval } from "./agentApproval";
 import type { DiscordAgent } from "@shared/schema";
 import type OpenAI from "openai";
 
@@ -163,6 +164,55 @@ export async function runNamedAgent(opts: RunNamedAgentOptions): Promise<NamedAg
     const { getModel } = await import("../lib/modelPrefs");
     const model = await getModel(userId, "chat");
 
+    // ── Approval gate hook ───────────────────────────────────────────────────
+    // Before executing any high-risk tool, create a DB-persistent approval
+    // gate, notify the user in-app, and suspend until they approve/reject.
+    const onBeforeTool = async (
+      toolName: string,
+      toolArgs: Record<string, unknown>,
+    ): Promise<{ allowed: boolean; reason?: string }> => {
+      if (!requiresApproval(toolName)) return { allowed: true };
+
+      try {
+        // Create a persistent DB gate
+        const gate = await requestApproval({
+          agentId,
+          userId,
+          toolName,
+          toolArgs,
+          description: `Agent "${agent.name}" wants to run tool: ${toolName}`,
+          ttlMs: 10 * 60 * 1000, // 10 minutes
+        });
+
+        // Notify user in-app so they can approve/reject
+        try {
+          const { inAppChannel } = await import("../channels/inAppChannel");
+          await inAppChannel.sendMessage(
+            userId,
+            `🔐 **Approval Required**\nAgent **${agent.name}** wants to run **${toolName}**.\nApprove or reject in the Agents → Approvals tab.\n\nGate ID: \`${gate.id}\``,
+            { notificationType: "approval_request" },
+          );
+        } catch { /* non-blocking */ }
+
+        logAgentEvent({ event: "tool_blocked", agentId, userId, toolName, detail: `gate=${gate.id}` });
+
+        // Suspend until user approves/rejects (up to 10 min)
+        const approved = await awaitApproval(gate.id);
+
+        if (approved) {
+          logAgentEvent({ event: "tool_approved", agentId, userId, toolName, detail: `gate=${gate.id}` });
+          return { allowed: true };
+        } else {
+          return { allowed: false, reason: `User rejected tool execution (gate ${gate.id})` };
+        }
+      } catch (err) {
+        // If approval machinery fails, block the tool rather than allow silent execution
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`[RunNamedAgent] approval gate error for ${toolName}:`, err);
+        return { allowed: false, reason: `Approval gate error: ${msg}` };
+      }
+    };
+
     const result = await runAgent({
       model,
       messages,
@@ -171,6 +221,7 @@ export async function runNamedAgent(opts: RunNamedAgentOptions): Promise<NamedAg
       maxTurns: 6,
       maxCompletionTokens: 2000,
       onToken: opts.onToken,
+      onBeforeTool,
     });
 
     // ── Write extracted memories ──────────────────────────────────────────────
