@@ -7,6 +7,10 @@ import { getApiUrl } from '@/lib/query-client';
 export interface WakeEvent {
   phrase: string;
   transcript: string;
+  /** True when the Android daemon is handling the voice turn end-to-end (Talk Mode).
+   *  When this is set, the app should NOT start its own mic session to avoid
+   *  competing capture pipelines. */
+  daemonHandling: boolean;
 }
 
 interface WakeWordContextValue {
@@ -99,9 +103,15 @@ export function WakeWordProvider({ children }: { children: React.ReactNode }) {
                     try {
                       const ev = JSON.parse(fields['data']);
                       if (ev.phrase) {
-                        // Navigate to Insights tab then surface the pending event
+                        // Navigate to Insights tab so the wake UI is visible
                         router.push('/(tabs)/insights');
-                        setPendingWakeEvent({ phrase: ev.phrase, transcript: ev.transcript ?? '' });
+                        setPendingWakeEvent({
+                          phrase: ev.phrase,
+                          transcript: ev.transcript ?? '',
+                          // When true the daemon is handling the voice turn end-to-end;
+                          // insights.tsx should NOT start its own mic capture session
+                          daemonHandling: !!ev.daemonHandling,
+                        });
                       }
                     } catch { /* malformed JSON in data field */ }
                   }
