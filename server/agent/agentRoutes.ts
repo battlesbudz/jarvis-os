@@ -3,26 +3,29 @@
  *
  * All routes require authMiddleware (mounted upstream in routes.ts).
  *
- * Endpoints:
- *   GET    /api/agents               list user's agents
- *   POST   /api/agents               create agent
- *   GET    /api/agents/:id           get single agent
- *   PUT    /api/agents/:id           update agent
- *   DELETE /api/agents/:id           delete agent
- *   POST   /api/agents/:id/enable    enable disabled agent
- *   POST   /api/agents/:id/disable   disable agent
- *   POST   /api/agents/:id/channel   assign channel
- *   DELETE /api/agents/:id/channel   remove channel
- *   POST   /api/agents/:id/run       invoke agent directly (test)
- *   GET    /api/agents/:id/memories  list memories
- *   DELETE /api/agents/:id/memories  clear memories
- *   GET    /api/agents/:id/messages  message history
- *   GET    /api/agents/:id/export    export config JSON
- *   POST   /api/agents/import        import config JSON
- *   POST   /api/agents/council       run council mode
- *   GET    /api/agents/approvals     list pending approval gates
- *   POST   /api/agents/approvals/:gateId/approve
- *   POST   /api/agents/approvals/:gateId/reject
+ * IMPORTANT: Specific literal paths (import, council, approvals) are registered
+ * BEFORE the /:id wildcard to prevent express from capturing them as IDs.
+ *
+ * Route ordering:
+ *   1. POST /api/agents/import        (before /:id)
+ *   2. POST /api/agents/council       (before /:id)
+ *   3. GET  /api/agents/approvals     (before /:id)
+ *   4. POST /api/agents/approvals/:gateId/approve  (before /:id)
+ *   5. POST /api/agents/approvals/:gateId/reject   (before /:id)
+ *   6. GET  /api/agents               list
+ *   7. POST /api/agents               create
+ *   8. GET  /api/agents/:id
+ *   9. PUT  /api/agents/:id
+ *  10. DELETE /api/agents/:id
+ *  11. POST /api/agents/:id/enable
+ *  12. POST /api/agents/:id/disable
+ *  13. POST /api/agents/:id/channel
+ *  14. DELETE /api/agents/:id/channel
+ *  15. POST /api/agents/:id/run
+ *  16. GET  /api/agents/:id/memories
+ *  17. DELETE /api/agents/:id/memories
+ *  18. GET  /api/agents/:id/messages
+ *  19. GET  /api/agents/:id/export
  */
 import type { Express, Request, Response } from "express";
 import {
@@ -45,6 +48,7 @@ import {
   listAllGates,
   approveGate,
   rejectGate,
+  getGate,
 } from "./agentApproval";
 import {
   validateAgentConfig,
@@ -53,7 +57,7 @@ import {
 } from "./agentConfigSchema";
 import type { AgentConfigFile } from "./agentConfigSchema";
 
-// ── Helper ─────────────────────────────────────────────────────────────────────
+// ── Helpers ────────────────────────────────────────────────────────────────────
 
 async function ownerCheck(agentId: string, userId: string): Promise<boolean> {
   const agent = await getAgent(agentId);
@@ -64,7 +68,11 @@ function handleError(res: Response, err: unknown): void {
   const msg = err instanceof Error ? err.message : String(err);
   if (msg.includes("not found") || msg.includes("Not found")) {
     res.status(404).json({ error: msg });
-  } else if (msg.includes("already exists") || msg.includes("permission") || msg.includes("disabled")) {
+  } else if (
+    msg.includes("already exists") ||
+    msg.includes("permission") ||
+    msg.includes("disabled")
+  ) {
     res.status(400).json({ error: msg });
   } else {
     console.error("[AgentRoutes] error:", err);
@@ -76,17 +84,106 @@ function handleError(res: Response, err: unknown): void {
 
 export function registerAgentRoutes(app: Express): void {
 
-  // ── List agents ─────────────────────────────────────────────────────────────
+  // ── 1. POST /api/agents/import (BEFORE /:id) ──────────────────────────────
+  app.post("/api/agents/import", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId!;
+      const body = req.body as Record<string, unknown>;
+
+      const validation = validateAgentConfig(body);
+      if (!validation.ok) {
+        res.status(400).json({ error: "Invalid config", details: validation.errors });
+        return;
+      }
+
+      const args = importConfigToCreateArgs(body as unknown as AgentConfigFile);
+      const agentId = await createAgent(userId, args);
+      const agent = await getAgent(agentId);
+      res.status(201).json({ agent, warnings: validation.warnings });
+    } catch (err) { handleError(res, err); }
+  });
+
+  // ── 2. POST /api/agents/council (BEFORE /:id) ─────────────────────────────
+  app.post("/api/agents/council", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId!;
+      const { question, agentIds } = req.body as { question: string; agentIds?: string[] };
+      if (!question) {
+        res.status(400).json({ error: "question is required" });
+        return;
+      }
+      const result = await runCouncil(userId, question, agentIds);
+      res.json(result);
+    } catch (err) { handleError(res, err); }
+  });
+
+  // ── 3. GET /api/agents/approvals (BEFORE /:id) ────────────────────────────
+  app.get("/api/agents/approvals", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId!;
+      const all = req.query.all === "true";
+      const gates = all ? listAllGates(userId) : listPendingGates(userId);
+      res.json({ gates });
+    } catch (err) { handleError(res, err); }
+  });
+
+  // ── 4 & 5. Approval gate resolution (BEFORE /:id) ─────────────────────────
+  app.post("/api/agents/approvals/:gateId/approve", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId!;
+      const gate = getGate(req.params.gateId);
+      // Ownership check: only the gate's owner can approve it
+      if (!gate) {
+        res.status(404).json({ error: "Gate not found or already resolved" });
+        return;
+      }
+      if (gate.userId !== userId) {
+        res.status(403).json({ error: "Forbidden: this approval gate belongs to another user" });
+        return;
+      }
+      const ok = approveGate(req.params.gateId, userId);
+      if (!ok) {
+        res.status(400).json({ error: "Gate already resolved" });
+        return;
+      }
+      res.json({ ok: true });
+    } catch (err) { handleError(res, err); }
+  });
+
+  app.post("/api/agents/approvals/:gateId/reject", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId!;
+      const gate = getGate(req.params.gateId);
+      if (!gate) {
+        res.status(404).json({ error: "Gate not found or already resolved" });
+        return;
+      }
+      if (gate.userId !== userId) {
+        res.status(403).json({ error: "Forbidden: this approval gate belongs to another user" });
+        return;
+      }
+      const ok = rejectGate(req.params.gateId, userId);
+      if (!ok) {
+        res.status(400).json({ error: "Gate already resolved" });
+        return;
+      }
+      res.json({ ok: true });
+    } catch (err) { handleError(res, err); }
+  });
+
+  // ── 6. GET /api/agents — list all agents (active + disabled) ──────────────
   app.get("/api/agents", async (req: Request, res: Response) => {
     try {
       const userId = req.userId!;
-      const includeDisabled = req.query.includeDisabled === "true";
-      const agents = await listAgents(userId, includeDisabled);
+      // Return all agents by default so the UI can show disabled agents for re-enable.
+      // Pass activeOnly=true to filter to only active agents.
+      const activeOnly = req.query.activeOnly === "true";
+      const agents = await listAgents(userId, !activeOnly);
       res.json({ agents });
     } catch (err) { handleError(res, err); }
   });
 
-  // ── Create agent ────────────────────────────────────────────────────────────
+  // ── 7. POST /api/agents — create ──────────────────────────────────────────
   app.post("/api/agents", async (req: Request, res: Response) => {
     try {
       const userId = req.userId!;
@@ -119,7 +216,7 @@ export function registerAgentRoutes(app: Express): void {
     } catch (err) { handleError(res, err); }
   });
 
-  // ── Get agent ───────────────────────────────────────────────────────────────
+  // ── 8. GET /api/agents/:id ────────────────────────────────────────────────
   app.get("/api/agents/:id", async (req: Request, res: Response) => {
     try {
       const userId = req.userId!;
@@ -132,7 +229,7 @@ export function registerAgentRoutes(app: Express): void {
     } catch (err) { handleError(res, err); }
   });
 
-  // ── Update agent ────────────────────────────────────────────────────────────
+  // ── 9. PUT /api/agents/:id — update ──────────────────────────────────────
   app.put("/api/agents/:id", async (req: Request, res: Response) => {
     try {
       const userId = req.userId!;
@@ -146,7 +243,7 @@ export function registerAgentRoutes(app: Express): void {
     } catch (err) { handleError(res, err); }
   });
 
-  // ── Delete agent ────────────────────────────────────────────────────────────
+  // ── 10. DELETE /api/agents/:id ────────────────────────────────────────────
   app.delete("/api/agents/:id", async (req: Request, res: Response) => {
     try {
       const userId = req.userId!;
@@ -159,7 +256,7 @@ export function registerAgentRoutes(app: Express): void {
     } catch (err) { handleError(res, err); }
   });
 
-  // ── Enable / disable ────────────────────────────────────────────────────────
+  // ── 11. POST /api/agents/:id/enable ──────────────────────────────────────
   app.post("/api/agents/:id/enable", async (req: Request, res: Response) => {
     try {
       const userId = req.userId!;
@@ -172,6 +269,7 @@ export function registerAgentRoutes(app: Express): void {
     } catch (err) { handleError(res, err); }
   });
 
+  // ── 12. POST /api/agents/:id/disable ─────────────────────────────────────
   app.post("/api/agents/:id/disable", async (req: Request, res: Response) => {
     try {
       const userId = req.userId!;
@@ -184,7 +282,7 @@ export function registerAgentRoutes(app: Express): void {
     } catch (err) { handleError(res, err); }
   });
 
-  // ── Channel assignment ──────────────────────────────────────────────────────
+  // ── 13. POST /api/agents/:id/channel — assign ─────────────────────────────
   app.post("/api/agents/:id/channel", async (req: Request, res: Response) => {
     try {
       const userId = req.userId!;
@@ -202,6 +300,7 @@ export function registerAgentRoutes(app: Express): void {
     } catch (err) { handleError(res, err); }
   });
 
+  // ── 14. DELETE /api/agents/:id/channel — remove ───────────────────────────
   app.delete("/api/agents/:id/channel", async (req: Request, res: Response) => {
     try {
       const userId = req.userId!;
@@ -219,7 +318,7 @@ export function registerAgentRoutes(app: Express): void {
     } catch (err) { handleError(res, err); }
   });
 
-  // ── Run agent (test invocation) ─────────────────────────────────────────────
+  // ── 15. POST /api/agents/:id/run — test invocation ────────────────────────
   app.post("/api/agents/:id/run", async (req: Request, res: Response) => {
     try {
       const userId = req.userId!;
@@ -242,7 +341,7 @@ export function registerAgentRoutes(app: Express): void {
     } catch (err) { handleError(res, err); }
   });
 
-  // ── Memories ────────────────────────────────────────────────────────────────
+  // ── 16. GET /api/agents/:id/memories ─────────────────────────────────────
   app.get("/api/agents/:id/memories", async (req: Request, res: Response) => {
     try {
       const userId = req.userId!;
@@ -260,6 +359,7 @@ export function registerAgentRoutes(app: Express): void {
     } catch (err) { handleError(res, err); }
   });
 
+  // ── 17. DELETE /api/agents/:id/memories ──────────────────────────────────
   app.delete("/api/agents/:id/memories", async (req: Request, res: Response) => {
     try {
       const userId = req.userId!;
@@ -272,7 +372,7 @@ export function registerAgentRoutes(app: Express): void {
     } catch (err) { handleError(res, err); }
   });
 
-  // ── Messages ────────────────────────────────────────────────────────────────
+  // ── 18. GET /api/agents/:id/messages ─────────────────────────────────────
   app.get("/api/agents/:id/messages", async (req: Request, res: Response) => {
     try {
       const userId = req.userId!;
@@ -289,7 +389,7 @@ export function registerAgentRoutes(app: Express): void {
     } catch (err) { handleError(res, err); }
   });
 
-  // ── Export config ───────────────────────────────────────────────────────────
+  // ── 19. GET /api/agents/:id/export ───────────────────────────────────────
   app.get("/api/agents/:id/export", async (req: Request, res: Response) => {
     try {
       const userId = req.userId!;
@@ -301,73 +401,6 @@ export function registerAgentRoutes(app: Express): void {
       const config = exportAgentConfig(agent);
       res.setHeader("Content-Disposition", `attachment; filename="${agent.name}-config.json"`);
       res.json(config);
-    } catch (err) { handleError(res, err); }
-  });
-
-  // ── Import config ───────────────────────────────────────────────────────────
-  app.post("/api/agents/import", async (req: Request, res: Response) => {
-    try {
-      const userId = req.userId!;
-      const body = req.body as Record<string, unknown>;
-
-      const validation = validateAgentConfig(body);
-      if (!validation.ok) {
-        res.status(400).json({ error: "Invalid config", details: validation.errors });
-        return;
-      }
-
-      const args = importConfigToCreateArgs(body as unknown as AgentConfigFile);
-      const agentId = await createAgent(userId, args);
-      const agent = await getAgent(agentId);
-      res.status(201).json({ agent, warnings: validation.warnings });
-    } catch (err) { handleError(res, err); }
-  });
-
-  // ── Council mode ────────────────────────────────────────────────────────────
-  app.post("/api/agents/council", async (req: Request, res: Response) => {
-    try {
-      const userId = req.userId!;
-      const { question, agentIds } = req.body as { question: string; agentIds?: string[] };
-      if (!question) {
-        res.status(400).json({ error: "question is required" });
-        return;
-      }
-      const result = await runCouncil(userId, question, agentIds);
-      res.json(result);
-    } catch (err) { handleError(res, err); }
-  });
-
-  // ── Approval gates ──────────────────────────────────────────────────────────
-  app.get("/api/agents/approvals", async (req: Request, res: Response) => {
-    try {
-      const userId = req.userId!;
-      const all = req.query.all === "true";
-      const gates = all ? listAllGates(userId) : listPendingGates(userId);
-      res.json({ gates });
-    } catch (err) { handleError(res, err); }
-  });
-
-  app.post("/api/agents/approvals/:gateId/approve", async (req: Request, res: Response) => {
-    try {
-      const userId = req.userId!;
-      const ok = approveGate(req.params.gateId, userId);
-      if (!ok) {
-        res.status(404).json({ error: "Gate not found or already resolved" });
-        return;
-      }
-      res.json({ ok: true });
-    } catch (err) { handleError(res, err); }
-  });
-
-  app.post("/api/agents/approvals/:gateId/reject", async (req: Request, res: Response) => {
-    try {
-      const userId = req.userId!;
-      const ok = rejectGate(req.params.gateId, userId);
-      if (!ok) {
-        res.status(404).json({ error: "Gate not found or already resolved" });
-        return;
-      }
-      res.json({ ok: true });
     } catch (err) { handleError(res, err); }
   });
 }
