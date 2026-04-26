@@ -226,6 +226,7 @@ export async function elevenlabsTtsStream(
   voiceId: string,
   modelId: string = "eleven_turbo_v2_5",
   latencyTier: 0 | 1 | 2 | 3 | 4 = 2,
+  signal?: AbortSignal,
 ): Promise<AsyncIterable<string>> {
   const apiKey = process.env.ELEVENLABS_API_KEY;
   if (!apiKey) throw new Error("ELEVENLABS_API_KEY not set");
@@ -244,6 +245,7 @@ export async function elevenlabsTtsStream(
         voice_settings: { stability: 0.5, similarity_boost: 0.75 },
         output_format: "pcm_24000",
       }),
+      signal,
     }
   );
 
@@ -299,7 +301,8 @@ export async function textToSpeech(
  */
 export async function textToSpeechStream(
   text: string,
-  voice: "alloy" | "echo" | "fable" | "onyx" | "nova" | "shimmer" = "alloy"
+  voice: "alloy" | "echo" | "fable" | "onyx" | "nova" | "shimmer" = "alloy",
+  signal?: AbortSignal,
 ): Promise<AsyncIterable<string>> {
   const stream = await openai.chat.completions.create({
     model: "gpt-audio",
@@ -310,7 +313,7 @@ export async function textToSpeechStream(
       { role: "user", content: `Repeat the following text verbatim: ${text}` },
     ],
     stream: true,
-  });
+  }, { signal });
 
   return (async function* () {
     for await (const chunk of stream) {
