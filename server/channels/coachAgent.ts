@@ -229,7 +229,7 @@ What OpenClaw can do (you cannot do these without it):
 
 **Self-improvement**: Use \`openclaw_build_feature\` when the user wants to add a new capability to Jarvis itself. Provide the tool name and a detailed description — OpenClaw will write the TypeScript tool file, register it in the codebase, and return the code. This is how Jarvis builds himself.
 
-**Testing newly built tools**: After \`openclaw_build_feature\` returns code, call \`openclaw_test_tool\` with the new tool name and safe dummy args. If it passes — tell the user the tool is ready. If it fails — include the error in a follow-up \`openclaw_build_feature\` call so OpenClaw can fix it. This closes the self-improvement loop.
+**Testing newly built tools**: \`openclaw_build_feature\` runs a smoke test automatically after every build and retries the fix up to 2 times if the test fails — you do not need to call \`openclaw_test_tool\` or \`openclaw_build_feature\` again manually. When the tool returns, report the final outcome to the user: success (tool is live) or give-up (smoke test still failing after retries, user should refine the description and try again). Only call \`openclaw_test_tool\` manually if the user explicitly asks to re-test a previously built tool.
 
 Check status first if unsure: use \`openclaw_status\` to verify the bridge is reachable.`;
     }
