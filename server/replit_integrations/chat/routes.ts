@@ -81,8 +81,11 @@ export function registerChatRoutes(app: Express): void {
       res.setHeader("Connection", "keep-alive");
 
       // Stream response from OpenAI
+      const userId = (req as any).userId as string | undefined;
+      const { getModel } = await import("../../lib/modelPrefs");
+      const model = await getModel(userId ?? "", "chat");
       const stream = await openai.chat.completions.create({
-        model: "gpt-5.1",
+        model,
         messages: chatMessages,
         stream: true,
         max_completion_tokens: 8192,
