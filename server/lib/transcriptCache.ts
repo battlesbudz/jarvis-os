@@ -6,7 +6,7 @@
  * Thread-safe for single-process Node.js.
  */
 
-import type { TranscriptResponse } from "youtube-transcript";
+import type { TranscriptConfig, TranscriptResponse } from "youtube-transcript";
 
 const TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_ENTRIES = 500;
@@ -54,8 +54,8 @@ function evictOldest(): void {
 export interface FetchTranscriptOptions {
   /** When true, skip the cache lookup and overwrite any existing entry with a fresh fetch. */
   bypassCache?: boolean;
-  /** youtube-transcript library config (language, country). */
-  config?: Parameters<import("youtube-transcript").YoutubeTranscript["fetchTranscript"]>[1];
+  /** youtube-transcript library config (language, custom fetch). */
+  config?: TranscriptConfig;
 }
 
 /**
