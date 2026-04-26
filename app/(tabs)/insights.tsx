@@ -1128,6 +1128,8 @@ export default function InsightsScreen() {
         let streamDone = false;
         // Carry-over byte across PCM16 chunk boundaries — same as web path
         let nativeCarryByte: number | null = null;
+        // Per-utterance unique prefix to avoid cross-session segment filename collisions
+        const segPrefix = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
         const cleanupSegFiles = () => {
           for (const uri of segUris) {
@@ -1137,7 +1139,7 @@ export default function InsightsScreen() {
 
         const enqueueSegment = (chunks: Uint8Array[], len: number) => {
           const idx = segIdx++;
-          const uri = `${FileSystem.cacheDirectory ?? ''}jarvis_tts_${idx}.wav`;
+          const uri = `${FileSystem.cacheDirectory ?? ''}jarvis_tts_${segPrefix}_${idx}.wav`;
           segUris[idx] = uri;
           segWritePromises[idx] = (async () => {
             const wav = buildWavBytes(chunks, len);
