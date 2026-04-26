@@ -7,6 +7,9 @@ import type { Channel, ChannelSendOpts, ChannelSendResult } from "./types";
 
 export const discordChannel: Channel = {
   name: "discord",
+  // Research and posting focus — web search, YouTube, Discord management.
+  // schedule_channel_report / list / delete are already in the "discord" group.
+  toolGroups: ["research", "discord", "memory"],
 
   isConfigured(): boolean {
     return true; // each user has their own bot token — always "configured" at system level
