@@ -49,12 +49,17 @@ export const selfDiagnoseTool: AgentTool = {
       }
 
       const channelNote = Object.keys(report.channelStatuses).length > 0
-        ? `\n\nChannels: ${Object.entries(report.channelStatuses).map(([n, c]) => `${n}:${c.configured ? "✓" : "✗"}`).join(" ")}`
+        ? `\n\nChannels: ${Object.entries(report.channelStatuses).map(([n, c]) => {
+            if (!c.configured) return `${n}:unconfigured`;
+            if (c.linked === false) return `${n}:not-linked`;
+            return `${n}:✓`;
+          }).join(" ")}`
         : "";
 
-      const queueNote = report.staleJobCount > 0 || report.stuckWorkflowCount > 0
-        ? `\nQueue depth: ${report.jobQueueDepth} | Stale jobs: ${report.staleJobCount} | Stuck workflows: ${report.stuckWorkflowCount}`
-        : "";
+      const latencyNote = report.openAiLatencyMs != null ? ` | AI latency: ${report.openAiLatencyMs}ms` : "";
+      const queueNote = report.staleJobCount > 0 || report.stuckWorkflowCount > 0 || report.jobQueueDepth > 0
+        ? `\nQueue depth: ${report.jobQueueDepth} | Re-enqueued: ${report.staleJobCount} | Stuck workflows: ${report.stuckWorkflowCount}${latencyNote}`
+        : latencyNote ? `\n${latencyNote.slice(3)}` : "";
 
       const content = `${diagnosis}\n\n**Subsystem Status:**\n${statusLines}${channelNote}${queueNote}${focusedEvents}`;
 

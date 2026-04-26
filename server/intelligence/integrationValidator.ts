@@ -22,6 +22,7 @@ import { db } from "../db";
 import { eq, and, sql } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import type { IntegrationName, IntegrationStatusValue } from "@shared/schema";
+import { emit as diagEmit } from "../diagnostics/diagnosticsService";
 
 const EXPIRY_WARNING_MS = 24 * 60 * 60 * 1000; // 24 hours
 
@@ -472,11 +473,28 @@ export async function validateUserIntegrations(userId: string): Promise<void> {
       try {
         const result = await check();
         await writeStatus(userId, integration, result);
+        if (result.status === "broken") {
+          diagEmit({
+            userId,
+            subsystem: "integration",
+            severity: "error",
+            message: `Integration ${integration} broken: ${result.errorMessage ?? "unknown error"}`,
+            metadata: { integration },
+          }).catch(() => {});
+        }
       } catch (err) {
         console.error(`[IntegrationValidator] ${integration} check failed for ${userId}:`, err);
+        const errMsg = `Validator crashed: ${err instanceof Error ? err.message : String(err)}`;
         await writeStatus(userId, integration, {
           status: "broken",
-          errorMessage: `Validator crashed: ${err instanceof Error ? err.message : String(err)}`,
+          errorMessage: errMsg,
+        }).catch(() => {});
+        diagEmit({
+          userId,
+          subsystem: "integration",
+          severity: "error",
+          message: `Integration ${integration} validator crashed: ${errMsg.slice(0, 200)}`,
+          metadata: { integration },
         }).catch(() => {});
       }
     }),

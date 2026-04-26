@@ -55,10 +55,11 @@ export interface HealthReport {
   degradedSubsystems: DiagnosticSubsystem[];
   generatedAt: Date;
   openAiReachable: boolean;
+  openAiLatencyMs: number | null;
   dbReachable: boolean;
   jobQueueDepth: number;
   staleJobCount: number;
-  channelStatuses: Record<string, { configured: boolean }>;
+  channelStatuses: Record<string, { configured: boolean; linked?: boolean }>;
   stuckWorkflowCount: number;
 }
 
@@ -219,7 +220,7 @@ async function attemptAutoRecovery(subsystem: DiagnosticSubsystem, userId: strin
     if (subsystem === "job_queue") {
       const staleThreshold = new Date(Date.now() - 10 * 60 * 1000);
       const staleJobs = await db
-        .select({ id: schema.agentJobs.id })
+        .select({ id: schema.agentJobs.id, agentType: schema.agentJobs.agentType })
         .from(schema.agentJobs)
         .where(
           and(
@@ -231,19 +232,20 @@ async function attemptAutoRecovery(subsystem: DiagnosticSubsystem, userId: strin
         .limit(5);
 
       for (const job of staleJobs) {
+        // Re-enqueue (not fail): reset to queued so the job gets another chance.
         await db
           .update(schema.agentJobs)
-          .set({ status: "failed", error: "Auto-recovered: exceeded watchdog timeout", completedAt: new Date() })
+          .set({ status: "queued", startedAt: null, error: "Auto-re-enqueued: exceeded watchdog timeout" })
           .where(eq(schema.agentJobs.id, job.id))
           .catch(() => {});
         await emit({
           userId,
           subsystem: "job_queue",
           severity: "info",
-          message: `Auto-recovered stale job ${job.id}`,
-          metadata: { jobId: job.id, action: "watchdog_reset", recovery: true },
+          message: `Auto-re-enqueued stale job ${job.id} (${job.agentType})`,
+          metadata: { jobId: job.id, action: "watchdog_reenqueue", recovery: true },
         });
-        console.log(`[Diagnostics] auto-recovered stale job ${job.id}`);
+        console.log(`[Diagnostics] auto-re-enqueued stale job ${job.id}`);
       }
     }
 
@@ -299,8 +301,12 @@ async function attemptAutoRecovery(subsystem: DiagnosticSubsystem, userId: strin
     }
 
     if (subsystem === "integration") {
-      // Prompt re-validation of integrations — the integration validator will handle retries.
+      // Trigger a full validation cycle (includes token refresh via getValidGoogleTokens).
+      // This is the proper re-auth path — not just reading existing DB statuses.
       try {
+        const { validateUserIntegrations } = await import("../intelligence/integrationValidator");
+        await validateUserIntegrations(userId);
+        // After re-validation, check current statuses to see if we recovered.
         const { getUserIntegrationStatuses } = await import("../intelligence/integrationValidator");
         const statuses = await getUserIntegrationStatuses(userId);
         const anyBroken = Object.values(statuses).some((s) => s === "broken");
@@ -312,6 +318,9 @@ async function attemptAutoRecovery(subsystem: DiagnosticSubsystem, userId: strin
             message: "Integration auto-recovery: all integrations re-validated successfully",
             metadata: { recovery: true },
           });
+          console.log(`[Diagnostics] integration auto-recovery successful for user ${userId}`);
+        } else {
+          console.warn(`[Diagnostics] integration auto-recovery incomplete for user ${userId} — some still broken`);
         }
       } catch {
         // Best-effort
@@ -393,12 +402,16 @@ export async function runHealthCheck(userId?: string): Promise<HealthReport> {
     dbReachable = false;
   }
 
-  // OpenAI probe (lightweight — models list has no payload).
+  // OpenAI probe — measure latency with a lightweight models.list() call.
   let openAiReachable = true;
+  let openAiLatencyMs: number | null = null;
+  const openAiProbeStart = Date.now();
   try {
     await openai.models.list();
+    openAiLatencyMs = Date.now() - openAiProbeStart;
   } catch {
     openAiReachable = false;
+    openAiLatencyMs = null;
     await emit({
       userId,
       subsystem: "agent_harness",
@@ -408,13 +421,22 @@ export async function runHealthCheck(userId?: string): Promise<HealthReport> {
     }).catch(() => {});
   }
 
-  // Channel registry probe.
-  const channelStatuses: Record<string, { configured: boolean }> = {};
+  // Channel registry probe — configured + linked-for-user checks.
+  const channelStatuses: Record<string, { configured: boolean; linked?: boolean }> = {};
   try {
     const { listChannels } = await import("../channels/registry");
     const channels = listChannels();
     for (const ch of channels) {
-      channelStatuses[ch.name] = { configured: ch.isConfigured() };
+      const configured = ch.isConfigured();
+      let linked: boolean | undefined;
+      if (userId && configured) {
+        try {
+          linked = await ch.isLinkedFor(userId);
+        } catch {
+          linked = false;
+        }
+      }
+      channelStatuses[ch.name] = { configured, linked };
     }
   } catch {
     // Best-effort
@@ -528,6 +550,7 @@ export async function runHealthCheck(userId?: string): Promise<HealthReport> {
     degradedSubsystems,
     generatedAt: now,
     openAiReachable,
+    openAiLatencyMs,
     dbReachable,
     jobQueueDepth,
     staleJobCount,
@@ -566,18 +589,26 @@ export async function runAIDiagnosis(
     .join("\n") || "No recent errors.";
 
   const channelNote = Object.entries(report.channelStatuses)
-    .filter(([, c]) => !c.configured)
-    .map(([name]) => name)
+    .map(([name, c]) => {
+      if (!c.configured) return `${name}:unconfigured`;
+      if (c.linked === false) return `${name}:not-linked`;
+      return null;
+    })
+    .filter(Boolean)
     .join(", ");
+
+  const latencyNote = report.openAiLatencyMs != null
+    ? `${report.openAiLatencyMs}ms`
+    : "unreachable";
 
   const prompt = `You are Jarvis, performing a self-diagnosis. Analyze the system health data and write a clear, plain-English report for the user.
 
 Overall status: ${report.overallStatus.toUpperCase()}
-OpenAI reachable: ${report.openAiReachable}
+OpenAI reachable: ${report.openAiReachable} (latency: ${latencyNote})
 Database reachable: ${report.dbReachable}
-Job queue depth: ${report.jobQueueDepth} (${report.staleJobCount} stale)
+Job queue depth: ${report.jobQueueDepth} (${report.staleJobCount} stale/re-enqueued)
 Stuck workflows: ${report.stuckWorkflowCount}
-Unconfigured channels: ${channelNote || "none"}
+Channel issues: ${channelNote || "none"}
 
 Subsystem issues:
 ${subsystemSummary}
