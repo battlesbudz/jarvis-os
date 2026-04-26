@@ -26,6 +26,7 @@ import {
   deleteChannelScheduleTool,
 } from "./scheduleChannelReport";
 import { youtubeSearchTool } from "./youtubeSearch";
+import { youtubeTranscriptTool } from "./youtubeTranscript";
 import { registerApprovalTool } from "./registerApproval";
 import { discordPinMessageTool } from "./discordPinMessage";
 import { setupNamedAgentTool } from "./setupNamedAgent";
@@ -97,6 +98,7 @@ export const ALL_TOOLS: AgentTool[] = [
   discordPinMessageTool,
   setupNamedAgentTool,
   youtubeSearchTool,
+  youtubeTranscriptTool,
   queueBackgroundJobTool,
   setupContentPipelineTool,
   setupDiscordWorkspaceTool,
@@ -170,6 +172,7 @@ export function telegramCoachTools(opts: { hasGoogle: boolean }): AgentTool[] {
     discordPinMessageTool,
     setupNamedAgentTool,
     youtubeSearchTool,
+    youtubeTranscriptTool,
     setupContentPipelineTool,
     setupDiscordWorkspaceTool,
     memorySearchTool,
@@ -242,6 +245,7 @@ export {
   discordPinMessageTool,
   setupNamedAgentTool,
   youtubeSearchTool,
+  youtubeTranscriptTool,
   queueBackgroundJobTool,
   setupContentPipelineTool,
   setupDiscordWorkspaceTool,
