@@ -108,6 +108,25 @@ function hourToTimeOfDay(hour: number): SessionContext["timeOfDay"] {
   return "night";
 }
 
+// ─── Research intent classifier ───────────────────────────────────────────────
+// Lightweight keyword heuristic — no LLM call so it runs in <1ms per query.
+// Returns "research" when the query text matches patterns typical of web/doc
+// research. Returns "general" for conversational or task-management queries.
+
+const RESEARCH_PATTERNS = [
+  /\b(search|look up|lookup|google|find|browse|research|investigate)\b/i,
+  /\b(article|website|url|link|page|source|reference|docs?|documentation)\b/i,
+  /\b(what is|what are|who is|where is|how does|how do|explain|define|tell me about)\b/i,
+  /\b(youtube|video|transcript|watch|summarize this)\b/i,
+  /\b(latest news|news about|read about|fetch|scrape|crawl)\b/i,
+  /https?:\/\//i,
+];
+
+export function classifyQueryIntent(text: string): "research" | "general" {
+  if (!text || text.trim().length === 0) return "general";
+  return RESEARCH_PATTERNS.some((re) => re.test(text)) ? "research" : "general";
+}
+
 // ─── ActivationPlanner ────────────────────────────────────────────────────────
 
 export class ActivationPlanner {
@@ -128,9 +147,25 @@ export class ActivationPlanner {
    */
   async plan(
     userId: string,
-    opts: { source?: "heartbeat" | "channel"; channel?: string; timezone?: string } = {},
+    opts: {
+      source?: "heartbeat" | "channel";
+      channel?: string;
+      timezone?: string;
+      /**
+       * The user's message text (for research-intent classification).
+       * When provided, the planner checks whether research/browser tools
+       * should be activated for this query on chat-type channels.
+       */
+      queryText?: string;
+      /**
+       * Minutes until the user's next calendar meeting.
+       * Pre-computed by callers that already have a Google token.
+       * When ≤30, calendar and email capabilities are activated automatically.
+       */
+      upcomingMeetingMinutes?: number;
+    } = {},
   ): Promise<ActivationPlan> {
-    const { source = "heartbeat", channel, timezone } = opts;
+    const { source = "heartbeat", channel, timezone, queryText, upcomingMeetingMinutes } = opts;
     const now = new Date();
     const tz = timezone ?? (await this.resolveTimezone(userId));
     const hour = localHour(now, tz);
@@ -161,6 +196,8 @@ export class ActivationPlanner {
       emotionalStateRow,
       source,
       channel,
+      queryText,
+      upcomingMeetingMinutes,
     });
   }
 
@@ -312,8 +349,10 @@ export class ActivationPlanner {
     emotionalStateRow: typeof schema.userEmotionalState.$inferSelect | null;
     source: "heartbeat" | "channel";
     channel?: string;
+    queryText?: string;
+    upcomingMeetingMinutes?: number;
   }): ActivationPlan {
-    const { sessionContext, timeOfDay, predictions, emotionalStateRow, source } = opts;
+    const { sessionContext, timeOfDay, predictions, emotionalStateRow, source, channel, queryText, upcomingMeetingMinutes } = opts;
 
     const reasons: Record<string, string> = {};
     const activeCapabilityIds: string[] = [];
@@ -402,14 +441,75 @@ export class ActivationPlanner {
         reasons["calendar"] || "Activated: calendar context for morning briefing";
     }
 
-    // ── Rule 8 (removed): Channel sessions had a broad "activate everything"
-    // rule here, but that conflicted with suppressions set by earlier rules
-    // (e.g. Rule 2 suppressing browser/discord for high-stress users). The
-    // harness channel-scope filter is the authoritative gate for what tools
-    // are available on a given channel; the planner's manifest controls
-    // capability-level suppressions on top of that. For channel sessions the
-    // planner's primary value is providing session context (focus areas,
-    // urgent signals, energy state) injected into the system prompt.
+    // ── Rule 8a: Meeting proximity — calendar + email activation ──────────
+    // When the caller has pre-computed that a calendar meeting starts within
+    // 30 minutes, automatically activate calendar and email so the model can
+    // surface the agenda and prepare any pre-meeting tasks.
+    if (upcomingMeetingMinutes !== undefined && upcomingMeetingMinutes <= 30) {
+      if (!activeCapabilityIds.includes("calendar")) activeCapabilityIds.push("calendar");
+      if (!activeCapabilityIds.includes("email")) activeCapabilityIds.push("email");
+      reasons["calendar"] =
+        reasons["calendar"] ||
+        `Activated: meeting starting in ~${upcomingMeetingMinutes} minute(s)`;
+      reasons["email"] =
+        reasons["email"] ||
+        `Activated: email context loaded for upcoming meeting in ${upcomingMeetingMinutes}m`;
+      if (!sessionContext.urgentSignals.includes("Meeting starting soon")) {
+        sessionContext.urgentSignals.push(`Meeting starting in ~${upcomingMeetingMinutes} minute(s)`);
+      }
+    }
+
+    // ── Rule 8b: Focus / flow state — suppress notification-generating tools
+    // When the user is in a high-flow state (flowScore ≥ 7) and NOT stressed,
+    // suppress Discord and other notification-generating capabilities so the
+    // model doesn't interrupt a productive work session with async comms.
+    if (
+      emotionalStateRow &&
+      emotionalStateRow.flowScore >= 7 &&
+      emotionalStateRow.stressScore < 7
+    ) {
+      if (!suppressedCapabilityIds.includes("discord")) suppressedCapabilityIds.push("discord");
+      reasons["discord"] =
+        reasons["discord"] ||
+        `Suppressed: user is in flow state (flow=${emotionalStateRow.flowScore}/10) — protecting focus`;
+    }
+
+    // ── Rule 8c: Chat-channel research gating ─────────────────────────────
+    // On conversational channels (Telegram, WhatsApp, Slack, Discord) the
+    // majority of queries are coaching/planning — not web research. Loading
+    // research and browser tool schemas on every tick wastes tokens and
+    // tempts the model to browse when it's not needed.
+    //
+    // When a queryText is provided (channel session), classify its intent:
+    //   • research intent detected → activate research + browser
+    //   • general intent          → suppress research + browser
+    //
+    // No queryText (heartbeat) → apply suppression unconditionally for chat
+    // channels (the heartbeat is never user-facing so research is irrelevant).
+    const isChatChannel = isChannelSession && channel
+      ? /^(telegram|whatsapp|slack|discord)/i.test(channel)
+      : source === "heartbeat";
+
+    if (isChatChannel) {
+      const queryIntent = queryText ? classifyQueryIntent(queryText) : "general";
+      if (queryIntent === "research") {
+        if (!activeCapabilityIds.includes("research")) activeCapabilityIds.push("research");
+        if (!activeCapabilityIds.includes("browser")) activeCapabilityIds.push("browser");
+        reasons["research"] =
+          reasons["research"] || "Activated: research intent detected in query";
+        reasons["browser"] =
+          reasons["browser"] || "Activated: browser tools loaded for research query";
+      } else {
+        if (!suppressedCapabilityIds.includes("research")) suppressedCapabilityIds.push("research");
+        if (!suppressedCapabilityIds.includes("browser")) suppressedCapabilityIds.push("browser");
+        reasons["research"] =
+          reasons["research"] ||
+          `Suppressed: no research intent on ${channel ?? "chat"} — general query`;
+        reasons["browser"] =
+          reasons["browser"] ||
+          `Suppressed: browser tools not needed for general query on ${channel ?? "chat"}`;
+      }
+    }
 
     // ── Rule 9: Active hours → always allow model session ─────────────────
     // During morning, afternoon, and evening the heartbeat's job functions
