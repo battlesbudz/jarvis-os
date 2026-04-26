@@ -4,7 +4,7 @@ import { eq, and, desc, sql, gte, lte } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { sendMessage, sendMessageWithButtons, sendTelegramDocument, sendVoice, answerCallbackQuery, isTelegramConfigured, getUpdates, downloadTelegramFile, downloadTelegramFileBuffer } from "./integrations/telegram";
 import { isIngestableDocument, extractTelegramDocument, buildDocumentContextBlock } from "./telegramDocumentExtractor";
-import { getUserTtsPrefs, setUserTtsPref, speakToUser } from "./agent/tools/tts";
+import { getUserTtsPrefs, setUserTtsPref, speakToUser, getUserTtsChannels, setTtsChannels } from "./agent/tools/tts";
 import { notifyUser, getChannel } from "./channels/registry";
 import type { NotificationType } from "@shared/schema";
 import { startMomentumSession, handleMomentumDone, hasMomentumSessionToday, startMomentumExpiryScheduler } from "./momentumCoach";
@@ -393,9 +393,13 @@ async function processUpdate(update: any): Promise<void> {
 
         if (sub === "on") {
           await setUserTtsPref(userId, { enabled: true });
+          const current = await getUserTtsChannels(userId);
+          if (!current.includes("telegram")) await setTtsChannels(userId, [...current, "telegram"]);
           await sendMessage(chatId, "Voice mode is now ON — Jarvis will send voice notes instead of text. Send /tts off to switch back.");
         } else if (sub === "off") {
           await setUserTtsPref(userId, { enabled: false });
+          const current = await getUserTtsChannels(userId);
+          await setTtsChannels(userId, current.filter(c => c !== "telegram"));
           await sendMessage(chatId, "Voice mode is now OFF — back to text replies.");
         } else if (sub === "voice" && parts[2]) {
           const validVoices = ["alloy", "echo", "fable", "onyx", "nova", "shimmer"];
