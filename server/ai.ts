@@ -19,6 +19,7 @@ export interface ResizeTaskRequest {
   detailLevel: number;
   direction: "smaller" | "bigger";
   history: CompletionHistoryItem[];
+  userId?: string;
 }
 
 export interface ResizeTaskResponse {
@@ -49,6 +50,7 @@ export interface UnblockTaskRequest {
   taskDescription?: string;
   blockerType: 'too_big' | 'bad_timing' | 'need_info' | 'low_energy' | 'unknown';
   skipDays: number;
+  userId?: string;
 }
 
 export interface UnblockTaskResponse {
@@ -70,7 +72,7 @@ export interface GeneratePlanResponse {
 }
 
 export async function resizeTask(req: ResizeTaskRequest): Promise<ResizeTaskResponse> {
-  const { taskTitle, taskDescription, detailLevel, direction, history } = req;
+  const { taskTitle, taskDescription, detailLevel, direction, history, userId } = req;
 
   const completedTasks = history.filter(h => h.completed).map(h => h.title);
   const skippedTasks = history.filter(h => !h.completed).map(h => h.title);
@@ -112,8 +114,11 @@ Rules:
 
 Return ONLY a JSON object with a "steps" array of strings. No other text.`;
 
+  const { getModel } = await import("./lib/modelPrefs");
+  const model = await getModel(userId ?? "", "planning");
+
   const response = await openai.chat.completions.create({
-    model: "gpt-5-mini",
+    model,
     messages: [{ role: "user", content: prompt }],
     response_format: { type: "json_object" },
     max_completion_tokens: 8192,
@@ -129,7 +134,7 @@ Return ONLY a JSON object with a "steps" array of strings. No other text.`;
 }
 
 export async function unblockTask(req: UnblockTaskRequest): Promise<UnblockTaskResponse> {
-  const { taskTitle, taskDescription, blockerType, skipDays } = req;
+  const { taskTitle, taskDescription, blockerType, skipDays, userId } = req;
 
   const blockerGuide: Record<string, string> = {
     too_big: 'Identify the single smallest possible first action — something takeable in under 5 minutes — and describe it concretely.',
@@ -151,8 +156,11 @@ Write 2-3 sentences max. Focus on one concrete next action, not general advice. 
 
 Return ONLY a JSON object: {"suggestion": "your 2-3 sentence response"}`;
 
+  const { getModel: getModelUnblock } = await import("./lib/modelPrefs");
+  const unblockModel = await getModelUnblock(userId ?? "", "planning");
+
   const response = await openai.chat.completions.create({
-    model: 'gpt-5-mini',
+    model: unblockModel,
     messages: [{ role: 'user', content: prompt }],
     response_format: { type: 'json_object' },
     max_completion_tokens: 512,
@@ -260,8 +268,11 @@ Rules:
 
 Return ONLY a JSON object with "tasks" array and "insight" string. No other text.`;
 
+  const { getModel: getModelPlan } = await import("./lib/modelPrefs");
+  const planModel = await getModelPlan(req.userId ?? "", "planning");
+
   const response = await openai.chat.completions.create({
-    model: "gpt-5-mini",
+    model: planModel,
     messages: [{ role: "user", content: prompt }],
     response_format: { type: "json_object" },
     max_completion_tokens: 8192,

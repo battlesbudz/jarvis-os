@@ -156,6 +156,15 @@ export default function SettingsScreen() {
   const [coachingMode, setCoachingModeState] = useState<CoachingMode>('sharp');
   const [timezone, setTimezone] = useState('America/New_York');
 
+  // ── Model Preferences ──
+  type ModelCategory = 'chat' | 'planning' | 'memory' | 'research';
+  interface AvailableModel { value: string; label: string; description: string }
+  const [modelPrefs, setModelPrefs] = useState<Record<ModelCategory, string>>({
+    chat: 'gpt-5-mini', planning: 'gpt-5-mini', memory: 'gpt-5-mini', research: 'gpt-4o-mini',
+  });
+  const [availableModels, setAvailableModels] = useState<AvailableModel[]>([]);
+  const [savingModel, setSavingModel] = useState<ModelCategory | null>(null);
+
   // ── Build History ──
   const [buildHistory, setBuildHistory] = useState<BuildLogEntry[]>([]);
   const [buildHistoryExpanded, setBuildHistoryExpanded] = useState(false);
@@ -167,6 +176,15 @@ export default function SettingsScreen() {
       const data = await res.json();
       setBuildHistory(data.builds ?? []);
     } catch {}
+  }, []);
+
+  const saveModel = useCallback(async (category: ModelCategory, model: string) => {
+    setSavingModel(category);
+    try {
+      await apiRequest('PATCH', '/api/settings/models', { category, model });
+      setModelPrefs(prev => ({ ...prev, [category]: model }));
+    } catch {}
+    setSavingModel(null);
   }, []);
 
   // ── Nervous System ──
@@ -309,6 +327,11 @@ export default function SettingsScreen() {
         setTalkModeEnabled(wakeRes.talkModeEnabled ?? false);
         setWakeWords(wakeRes.wakeWords ?? ['hey jarvis', 'jarvis', 'computer']);
       }
+    } catch {}
+    try {
+      const modelRes = await apiRequest('GET', '/api/settings/models').then(r => r.json()).catch(() => null);
+      if (modelRes?.modelPreferences) setModelPrefs(modelRes.modelPreferences);
+      if (modelRes?.availableModels) setAvailableModels(modelRes.availableModels);
     } catch {}
   }, []);
 
@@ -1193,6 +1216,53 @@ export default function SettingsScreen() {
               </View>
             ))
           )}
+        </View>
+
+        {/* ── MODEL PREFERENCES ── */}
+        <SectionHeader label="AI MODELS" accent={Colors.violet} />
+        <View style={styles.card}>
+          {(
+            [
+              { key: 'chat' as ModelCategory, icon: 'chatbubble-outline', label: 'Chat & Voice' },
+              { key: 'planning' as ModelCategory, icon: 'calendar-outline', label: 'Planning' },
+              { key: 'memory' as ModelCategory, icon: 'library-outline', label: 'Memory' },
+              { key: 'research' as ModelCategory, icon: 'search-outline', label: 'Research' },
+            ] as { key: ModelCategory; icon: string; label: string }[]
+          ).map(({ key, icon, label }, idx) => {
+            const currentModel = availableModels.find(m => m.value === modelPrefs[key]);
+            return (
+              <Pressable
+                key={key}
+                style={[styles.prefRow, idx > 0 && styles.prefRowBorder]}
+                onPress={() => {
+                  if (savingModel) return;
+                  Alert.alert(
+                    label,
+                    'Choose the AI model for this category',
+                    [
+                      ...availableModels.map(m => ({
+                        text: `${m.label}  —  ${m.description}`,
+                        style: (m.value === modelPrefs[key] ? 'destructive' : 'default') as 'destructive' | 'default',
+                        onPress: () => saveModel(key, m.value),
+                      })),
+                      { text: 'Cancel', style: 'cancel' as const },
+                    ]
+                  );
+                }}
+              >
+                <View style={styles.prefLeft}>
+                  <Ionicons name={icon as any} size={16} color={Colors.violet} />
+                  <View>
+                    <Text style={styles.prefTitle}>{label}</Text>
+                    <Text style={styles.prefSub}>{currentModel ? `${currentModel.label} · ${currentModel.description}` : modelPrefs[key]}</Text>
+                  </View>
+                </View>
+                {savingModel === key
+                  ? <ActivityIndicator size="small" color={Colors.violet} />
+                  : <Ionicons name="chevron-forward" size={16} color={Colors.textTertiary} />}
+              </Pressable>
+            );
+          })}
         </View>
 
         {/* ── JARVIS REPORT ── */}

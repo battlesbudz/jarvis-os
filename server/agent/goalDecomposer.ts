@@ -150,8 +150,11 @@ ${goal.description ? `Notes: ${goal.description}` : ""}
 
 Decompose it now.`;
 
+  const { getModel } = await import("../lib/modelPrefs");
+  const model = await getModel(userId, "research");
+
   const resp = await openai.chat.completions.create({
-    model: "gpt-5-mini",
+    model,
     messages: [
       { role: "system", content: system },
       { role: "user", content: userMsg },

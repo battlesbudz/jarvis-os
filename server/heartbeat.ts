@@ -231,8 +231,10 @@ Plain text, no markdown asterisks, no preamble.`;
 
     let brief = "";
     try {
+      const { getModel } = await import("./lib/modelPrefs");
+      const briefModel = await getModel(userId, "planning");
       const resp = await openai.chat.completions.create({
-        model: "gpt-5-mini",
+        model: briefModel,
         messages: [{ role: "user", content: prompt }],
         max_completion_tokens: 600,
       });
@@ -357,8 +359,10 @@ Return JSON: { "subject": "Re: ...", "body": "..." }`;
     let draftSubject = subject.startsWith("Re:") ? subject : `Re: ${subject}`;
     let draftBody = "";
     try {
+      const { getModel } = await import("./lib/modelPrefs");
+      const draftModel = await getModel(userId, "planning");
       const resp = await openai.chat.completions.create({
-        model: "gpt-5-mini",
+        model: draftModel,
         messages: [{ role: "user", content: prompt }],
         response_format: { type: "json_object" },
         max_completion_tokens: 800,
@@ -555,8 +559,10 @@ Return JSON:
   let tomorrowPrompt = "";
   let observation = "";
   try {
+    const { getModel } = await import("./lib/modelPrefs");
+    const wrapModel = await getModel(userId, "planning");
     const resp = await openai.chat.completions.create({
-      model: "gpt-5-mini",
+      model: wrapModel,
       messages: [{ role: "user", content: llmPrompt }],
       response_format: { type: "json_object" },
       max_completion_tokens: 600,

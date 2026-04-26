@@ -84,8 +84,11 @@ Rules:
 Return JSON: { "questions": [{ "sourceId": "string", "sourceType": "google_calendar"|"outlook_calendar"|"gmail"|"outlook_email", "question": "string" }] }
 Return only items worth asking about. Return { "questions": [] } if nothing is interesting enough.`;
 
+  const { getModel } = await import("./lib/modelPrefs");
+  const model = await getModel(userId ?? "", "research");
+
   const response = await openai.chat.completions.create({
-    model: "gpt-5-mini",
+    model,
     messages: [{ role: "user", content: prompt }],
     response_format: { type: "json_object" },
     max_completion_tokens: 800,

@@ -135,7 +135,7 @@ async function runStreamingTurn(params: {
  */
 export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
   const {
-    model = "gpt-5-mini",
+    model: modelOpt,
     tools,
     context,
     maxTurns = 6,
@@ -143,6 +143,9 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
     toolChoice = "auto",
     onToken,
   } = opts;
+
+  const { getModel } = await import("../lib/modelPrefs");
+  const model = modelOpt ?? (await getModel(context.userId, "chat"));
 
   const channel = context.channel || "Agent";
   const toolMap = new Map(tools.map((t) => [t.name, t]));

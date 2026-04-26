@@ -5437,6 +5437,65 @@ Extract up to 8 memories per batch.`;
     }
   });
 
+  // ─── Model Preferences ────────────────────────────────────────────────────
+  app.get("/api/settings/models", async (req: any, res) => {
+    try {
+      const userId = req.user?.id as string;
+      const { AVAILABLE_MODELS, MODEL_DEFAULTS } = await import("./lib/modelPrefs");
+      const rows = await db
+        .select({ data: schema.userPreferences.data })
+        .from(schema.userPreferences)
+        .where(eq(schema.userPreferences.userId, userId))
+        .limit(1);
+      const prefs = rows[0]?.data as Record<string, unknown> | undefined;
+      const stored = (prefs?.modelPreferences ?? {}) as Record<string, string>;
+      const categories = Object.keys(MODEL_DEFAULTS) as Array<keyof typeof MODEL_DEFAULTS>;
+      const resolved: Record<string, string> = {};
+      for (const cat of categories) {
+        const val = stored[cat];
+        resolved[cat] = AVAILABLE_MODELS.find(m => m.value === val) ? val : MODEL_DEFAULTS[cat];
+      }
+      res.json({ modelPreferences: resolved, availableModels: AVAILABLE_MODELS });
+    } catch (err) {
+      console.error("[ModelPrefs] GET failed:", err);
+      res.status(500).json({ error: "Failed to fetch model preferences" });
+    }
+  });
+
+  app.patch("/api/settings/models", async (req: any, res) => {
+    try {
+      const userId = req.user?.id as string;
+      const { isValidModel, MODEL_DEFAULTS } = await import("./lib/modelPrefs");
+      const { category, model } = req.body as { category?: string; model?: string };
+      const validCategories = Object.keys(MODEL_DEFAULTS);
+      if (!category || !validCategories.includes(category)) {
+        return res.status(400).json({ error: "Invalid category" });
+      }
+      if (!isValidModel(model)) {
+        return res.status(400).json({ error: "Invalid model" });
+      }
+      const rows = await db
+        .select({ data: schema.userPreferences.data })
+        .from(schema.userPreferences)
+        .where(eq(schema.userPreferences.userId, userId))
+        .limit(1);
+      const existing = (rows[0]?.data ?? {}) as Record<string, unknown>;
+      const existingModelPrefs = (existing.modelPreferences ?? {}) as Record<string, string>;
+      const updated = {
+        ...existing,
+        modelPreferences: { ...existingModelPrefs, [category]: model },
+      };
+      await db
+        .insert(schema.userPreferences)
+        .values({ userId, data: updated })
+        .onConflictDoUpdate({ target: schema.userPreferences.userId, set: { data: updated } });
+      res.json({ ok: true });
+    } catch (err) {
+      console.error("[ModelPrefs] PATCH failed:", err);
+      res.status(500).json({ error: "Failed to save model preference" });
+    }
+  });
+
   const httpServer = createServer(app);
   return httpServer;
 }

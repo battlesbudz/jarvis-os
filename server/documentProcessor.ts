@@ -130,10 +130,13 @@ async function extractFromImage(buffer: Buffer, mimeType: string): Promise<strin
   return response.choices[0]?.message?.content || "";
 }
 
-async function summarizeText(name: string, text: string): Promise<string> {
+async function summarizeText(name: string, text: string, userId: string): Promise<string> {
+  const { getModel } = await import("./lib/modelPrefs");
+  const model = await getModel(userId, "research");
+
   const input = text.slice(0, MAX_SUMMARY_INPUT_CHARS);
   const response = await openai.chat.completions.create({
-    model: "gpt-4o-mini",
+    model,
     messages: [
       {
         role: "system",
@@ -187,7 +190,7 @@ export async function processDocument(
 
     const needsSummary = extractedText.length > 6000;
     const summary = needsSummary
-      ? await summarizeText(name, extractedText)
+      ? await summarizeText(name, extractedText, userId)
       : null;
 
     await db
