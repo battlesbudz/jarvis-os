@@ -1,6 +1,11 @@
 {
   "version": 1,
   "skills": {
+    "agent-tools": {
+      "source": "inf-sh/skills",
+      "sourceType": "github",
+      "computedHash": "3e8e1e6d9b56fa1126e09c589b171e786efee01c806623f7cb41dfde724b0274"
+    },
     "brainstorming": {
       "source": "obra/superpowers",
       "sourceType": "github",
@@ -11,10 +16,35 @@
       "sourceType": "github",
       "computedHash": "9f3a097275554dc44356f37d17d445d9c2b5b3579332fa93a1e9422f465f01bb"
     },
+    "clawdirect-dev": {
+      "source": "napoleond/clawdirect",
+      "sourceType": "github",
+      "computedHash": "aba0b53a6fffb1e0bc53dcda81dd74146ccf65fed54fb9f33c208cdd710f62a2"
+    },
+    "pdf": {
+      "source": "anthropics/skills",
+      "sourceType": "github",
+      "computedHash": "cfbc539377088ca7e44a813b30c306327385bbd973cd7a721e1743f60837dd62"
+    },
+    "pptx": {
+      "source": "anthropics/skills",
+      "sourceType": "github",
+      "computedHash": "6b8b859d26f93aa059c9870d1ab76b44ab69e3d6757ce4a03cc94cb760888073"
+    },
+    "python-sdk": {
+      "source": "inf-sh/skills",
+      "sourceType": "github",
+      "computedHash": "7c64dc8cd8e2888f3403048e578badd1b8877d535f417f66ee307869c95884b3"
+    },
     "skill-creator": {
       "source": "anthropics/skills",
       "sourceType": "github",
       "computedHash": "5ea13a6d9f0d4bb694405d79acd00cadec0d21bb138c4dd10fcf3c500cb835c2"
+    },
+    "skill-judge": {
+      "source": "softaworks/agent-toolkit",
+      "sourceType": "github",
+      "computedHash": "ff132ba281d460d3cf7814601e304f24e795a606a8e20e78f1bd103258bc735c"
     },
     "ui-ux-pro-max": {
       "source": "nextlevelbuilder/ui-ux-pro-max-skill",
