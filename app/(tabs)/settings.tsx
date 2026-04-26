@@ -59,6 +59,7 @@ interface BuildLogEntry {
   outputCode: string;
   success: boolean;
   smokeTestPassed: boolean | null;
+  smokeTestArgs: Record<string, unknown> | null;
   createdAt: string;
 }
 
@@ -637,14 +638,24 @@ export default function SettingsScreen() {
               </Pressable>
               {buildHistoryExpanded && (
                 <View style={{ paddingHorizontal: 14, paddingBottom: 14, gap: 8 }}>
-                  {buildHistory.map(build => (
+                  {buildHistory.map((build, idx) => {
+                    const argsJson = build.smokeTestArgs ? JSON.stringify(build.smokeTestArgs, null, 2) : null;
+                    const stableJson = (obj: Record<string, unknown> | null): string =>
+                      obj ? JSON.stringify(obj, Object.keys(obj).sort()) : '';
+                    const reusedArgs = build.smokeTestArgs
+                      ? buildHistory.slice(idx + 1).some(
+                          older => older.smokeTestPassed && older.smokeTestArgs &&
+                            stableJson(older.smokeTestArgs) === stableJson(build.smokeTestArgs)
+                        )
+                      : false;
+                    return (
                     <View key={build.id} style={ocStyles.buildCard}>
                       <Pressable
                         style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}
                         onPress={() => setExpandedBuildId(expandedBuildId === build.id ? null : build.id)}
                       >
                         <View style={{ flex: 1, gap: 2 }}>
-                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                             <Ionicons
                               name={!build.success ? 'close-circle' : build.smokeTestPassed ? 'checkmark-circle' : 'alert-circle'}
                               size={12}
@@ -653,6 +664,12 @@ export default function SettingsScreen() {
                             <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: Colors.text }}>
                               {build.featureName}
                             </Text>
+                            {reusedArgs && (
+                              <View style={{ backgroundColor: '#8B5CF620', borderRadius: 8, paddingHorizontal: 5, paddingVertical: 1, flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+                                <Ionicons name="refresh-outline" size={9} color="#8B5CF6" />
+                                <Text style={{ fontSize: 9, color: '#8B5CF6', fontFamily: 'Inter_600SemiBold' }}>reused args</Text>
+                              </View>
+                            )}
                           </View>
                           <Text style={{ fontSize: 10, fontFamily: 'Inter_500Medium', color: !build.success ? Colors.error : build.smokeTestPassed ? '#10B981' : '#F59E0B', marginBottom: 2 }}>
                             {!build.success ? 'Build failed' : build.smokeTestPassed ? 'Built and verified' : 'Built'}
@@ -671,14 +688,32 @@ export default function SettingsScreen() {
                         />
                       </Pressable>
                       {expandedBuildId === build.id && (
-                        <ScrollView style={ocStyles.buildCodeBlock} nestedScrollEnabled>
-                          <Text style={ocStyles.buildCodeText} selectable>
-                            {build.outputCode || '(no code recorded)'}
-                          </Text>
-                        </ScrollView>
+                        <>
+                          {argsJson && (
+                            <View style={{ marginTop: 8 }}>
+                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 4 }}>
+                                <Ionicons name="flask-outline" size={10} color="#8B5CF6" />
+                                <Text style={{ fontSize: 10, fontFamily: 'Inter_600SemiBold', color: '#8B5CF6' }}>
+                                  {reusedArgs ? 'Test Args (reused from prior build)' : 'Test Args'}
+                                </Text>
+                              </View>
+                              <ScrollView style={ocStyles.buildCodeBlock} nestedScrollEnabled>
+                                <Text style={ocStyles.buildCodeText} selectable>
+                                  {argsJson}
+                                </Text>
+                              </ScrollView>
+                            </View>
+                          )}
+                          <ScrollView style={[ocStyles.buildCodeBlock, { marginTop: argsJson ? 6 : 8 }]} nestedScrollEnabled>
+                            <Text style={ocStyles.buildCodeText} selectable>
+                              {build.outputCode || '(no code recorded)'}
+                            </Text>
+                          </ScrollView>
+                        </>
                       )}
                     </View>
-                  ))}
+                    );
+                  })}
                 </View>
               )}
             </View>
