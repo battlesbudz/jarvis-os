@@ -34,6 +34,7 @@ export const youtubeTranscriptTool: AgentTool = {
     "Returns timestamped segments so you can cite specific moments. " +
     "Works for short clips and videos over an hour long. " +
     "Use this when the user shares a YouTube URL and wants you to read, summarize, quote, or extract insights from it. " +
+    "Set refresh=true when the user asks to re-read, refresh, or get the latest version of a video. " +
     "Returns a clear error message if the video has no captions available.",
   parameters: {
     type: "object",
@@ -42,6 +43,12 @@ export const youtubeTranscriptTool: AgentTool = {
         type: "string",
         description:
           "YouTube video URL (e.g. https://youtube.com/watch?v=dQw4w9WgXcQ) or bare video ID (e.g. dQw4w9WgXcQ).",
+      },
+      refresh: {
+        type: "boolean",
+        description:
+          "Set to true to bypass the transcript cache and fetch a fresh copy directly from YouTube. " +
+          "Use when the user explicitly asks to re-read, refresh, or get an updated transcript.",
       },
     },
     required: ["url"],
@@ -53,10 +60,13 @@ export const youtubeTranscriptTool: AgentTool = {
       return { ok: false, content: "Please provide a YouTube URL or video ID.", label: "get_youtube_transcript: missing input" };
     }
 
-    console.log(`[get_youtube_transcript] fetching transcript for "${input}" (user=${ctx.userId})`);
+    const bypassCache = args.refresh === true;
+    console.log(
+      `[get_youtube_transcript] fetching transcript for "${input}" (user=${ctx.userId}, bypassCache=${bypassCache})`
+    );
 
     try {
-      const segments = await fetchTranscriptCached(input);
+      const segments = await fetchTranscriptCached(input, { bypassCache });
 
       if (!segments || segments.length === 0) {
         return {
