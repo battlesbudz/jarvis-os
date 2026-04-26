@@ -934,26 +934,32 @@ export async function ensureTablesExist() {
     // ── Behaviour Packs — operator publish + Ego override path (Task #282) ──
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS skill_packs (
-        id           VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
-        name         TEXT    NOT NULL,
-        version      INTEGER NOT NULL DEFAULT 1,
-        instructions TEXT    NOT NULL DEFAULT '',
-        published_at TIMESTAMP,
-        changelog    JSONB   NOT NULL DEFAULT '[]'::jsonb,
-        created_at   TIMESTAMP NOT NULL DEFAULT NOW()
+        id               VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        name             TEXT    NOT NULL,
+        description      TEXT    NOT NULL DEFAULT '',
+        version          INTEGER NOT NULL DEFAULT 1,
+        instructions     TEXT    NOT NULL DEFAULT '',
+        is_store_visible BOOLEAN NOT NULL DEFAULT false,
+        published_at     TIMESTAMP,
+        changelog        JSONB   NOT NULL DEFAULT '[]'::jsonb,
+        created_at       TIMESTAMP NOT NULL DEFAULT NOW()
       )
     `).catch(() => {});
+    await db.execute(sql`ALTER TABLE skill_packs ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT ''`).catch(() => {});
+    await db.execute(sql`ALTER TABLE skill_packs ADD COLUMN IF NOT EXISTS is_store_visible BOOLEAN NOT NULL DEFAULT false`).catch(() => {});
 
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS user_skill_packs (
         user_id               VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         pack_id               VARCHAR NOT NULL REFERENCES skill_packs(id) ON DELETE CASCADE,
         applied_version       INTEGER NOT NULL DEFAULT 1,
+        is_active             BOOLEAN NOT NULL DEFAULT false,
         instruction_overrides JSONB   NOT NULL DEFAULT '{}'::jsonb,
         updated_at            TIMESTAMP NOT NULL DEFAULT NOW(),
         PRIMARY KEY (user_id, pack_id)
       )
     `).catch(() => {});
+    await db.execute(sql`ALTER TABLE user_skill_packs ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT false`).catch(() => {});
 
     console.log("Database tables verified");
   } catch (error) {

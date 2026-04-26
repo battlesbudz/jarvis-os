@@ -222,34 +222,51 @@ export async function writeEgoOverrides(
 // ── Harness loading path ──────────────────────────────────────────────────────
 
 /**
- * Load all skill packs for a user and merge their `instruction_overrides` on
- * top of the base pack instructions.
+ * Load skill packs for a user and merge their `instruction_overrides` on top
+ * of the base pack instructions.
  *
- * Called by the agent harness at session start so the model receives operator
- * updates and Ego-written adjustments without a server restart.
+ * Two categories are loaded:
+ *   1. The system pack ("Jarvis Core Behaviour") — always, so Ego-written
+ *      coaching overrides survive pack selection changes.
+ *   2. User-activated store packs — only those the user has enabled via the
+ *      Skill Store (user_skill_packs.is_active = true).
  *
- * Returns only packs that have non-empty merged content so the system prompt
- * is not polluted with empty blocks.
+ * Called by the agent harness at session start so the model receives the
+ * latest operator instructions and per-user adjustments without a code deploy.
+ *
+ * Returns only packs with non-empty merged content so the system prompt is not
+ * polluted with empty blocks.
  */
 export async function loadPackInstructionsForUser(
   userId: string,
 ): Promise<MergedPackInstructions[]> {
   if (!userId) return [];
 
-  const allPacks = await db.select().from(skillPacks).orderBy(skillPacks.createdAt);
-  if (allPacks.length === 0) return [];
-
   const userRows = await db
     .select()
     .from(userSkillPacks)
     .where(eq(userSkillPacks.userId, userId));
 
-  const overrideMap = new Map(userRows.map((r) => [r.packId, r.instructionOverrides]));
+  const activePackIds = new Set(
+    userRows.filter((r) => r.isActive).map((r) => r.packId),
+  );
+
+  const overrideMap = new Map(userRows.map((r) => [r.packId, r]));
+
+  const allPacks = await db.select().from(skillPacks).orderBy(skillPacks.createdAt);
+  if (allPacks.length === 0) return [];
 
   const result: MergedPackInstructions[] = [];
 
   for (const pack of allPacks) {
-    const overrides: EgoInstructionOverrides = overrideMap.get(pack.id) ?? {};
+    const isSystemPack = pack.name === SYSTEM_PACK_NAME;
+    const isUserActivated = activePackIds.has(pack.id);
+
+    if (!isSystemPack && !isUserActivated) continue;
+
+    const row = overrideMap.get(pack.id);
+    const overrides: EgoInstructionOverrides = row?.instructionOverrides ?? {};
+
     const parts: string[] = [];
 
     if (pack.instructions.trim()) parts.push(pack.instructions.trim());
@@ -284,6 +301,182 @@ export async function loadPackInstructionsForUser(
   return result;
 }
 
+// ── User-facing Skill Store path ──────────────────────────────────────────────
+
+export interface StorePackView extends SkillPack {
+  isActive: boolean;
+}
+
+/**
+ * List all store-visible skill packs with the given user's activation status.
+ * Used by the Skill Store UI to render the pack catalogue.
+ */
+export async function listStorePacksForUser(userId: string): Promise<StorePackView[]> {
+  const packs = await db
+    .select()
+    .from(skillPacks)
+    .where(eq(skillPacks.isStoreVisible, true))
+    .orderBy(skillPacks.createdAt);
+
+  if (packs.length === 0) return [];
+
+  const userRows = await db
+    .select({ packId: userSkillPacks.packId, isActive: userSkillPacks.isActive })
+    .from(userSkillPacks)
+    .where(eq(userSkillPacks.userId, userId));
+
+  const activeSet = new Set(
+    userRows.filter((r) => r.isActive).map((r) => r.packId),
+  );
+
+  return packs.map((p) => ({ ...p, isActive: activeSet.has(p.id) }));
+}
+
+/**
+ * Activate or deactivate a store pack for a user.
+ *
+ * Upserts the user_skill_packs row so:
+ *   - Existing overrides written by the Ego loop are preserved.
+ *   - Only is_active and updated_at are touched when the row already exists.
+ */
+export async function setUserPackActive(
+  userId: string,
+  packId: string,
+  isActive: boolean,
+): Promise<void> {
+  const pack = await db
+    .select({ version: skillPacks.version })
+    .from(skillPacks)
+    .where(eq(skillPacks.id, packId))
+    .limit(1);
+
+  if (pack.length === 0) throw new Error(`Pack ${packId} not found`);
+
+  await db
+    .insert(userSkillPacks)
+    .values({
+      userId,
+      packId,
+      appliedVersion: pack[0].version,
+      isActive,
+      instructionOverrides: {},
+    })
+    .onConflictDoUpdate({
+      target: [userSkillPacks.userId, userSkillPacks.packId],
+      set: {
+        isActive,
+        updatedAt: new Date(),
+      },
+    });
+
+  console.log(`[BehaviorStore] user ${userId} ${isActive ? "activated" : "deactivated"} pack ${packId}`);
+}
+
+// First-party pack definitions seeded on server startup.
+interface SeedPackDef {
+  name: string;
+  description: string;
+  instructions: string;
+}
+
+const SEED_PACKS: SeedPackDef[] = [
+  {
+    name: "ADHD Focus Mode",
+    description: "Keeps Jarvis concise, task-driven and distraction-free. Short responses, one action at a time, regular gentle focus nudges.",
+    instructions: `You are operating in ADHD Focus Mode for this user.
+
+Key rules:
+- Keep all responses concise — maximum 3 sentences unless the user explicitly asks for more detail.
+- Suggest only ONE action at a time. Never present a list of options when a single clear recommendation is possible.
+- When the user drifts off-topic during a task, gently redirect: "We were working on [X] — shall we finish that first?"
+- Avoid cognitive overload: no walls of text, no multiple questions in a row.
+- Celebrate small completions with brief, genuine acknowledgement.
+- If the user hasn't responded to a task-in-progress for more than 30 minutes, send a soft check-in.`,
+  },
+  {
+    name: "Deep Work Mode",
+    description: "Protects focus blocks and discourages context-switching. Jarvis batches interruptions and guards your deep work hours.",
+    instructions: `You are operating in Deep Work Mode for this user.
+
+Key rules:
+- Respect and protect the user's calendar focus blocks. Do not suggest new tasks or action items during scheduled deep-work windows.
+- Batch non-urgent notifications and present them outside focus hours.
+- When the user asks you to schedule something, default to placing it outside their deep-work slots.
+- Discourage context-switching: if the user starts switching topics mid-task, acknowledge it and ask if they want to pause the current task first.
+- Keep all proactive messages short during deep-work hours — one line maximum.
+- After a focus block ends, offer a brief summary of what was deferred during the block.`,
+  },
+  {
+    name: "Research Mode",
+    description: "Activates deep research habits. Jarvis goes broader and deeper, tracks sources, and builds structured summaries.",
+    instructions: `You are operating in Research Mode for this user.
+
+Key rules:
+- When researching any topic, use web search proactively — do not rely on knowledge cutoff alone.
+- Always cite sources inline (URL or domain at minimum) when presenting research findings.
+- Structure research output as: Key Findings → Evidence → Open Questions → Recommended Next Steps.
+- Go deeper by default: if a topic has sub-topics worth exploring, surface them.
+- When the user asks a research question, automatically consider adjacent angles they may not have thought of.
+- Save significant research outputs to Drive automatically (if connected) and confirm with the user.`,
+  },
+  {
+    name: "Email Zero",
+    description: "Aggressive email triage to keep your inbox at zero. Jarvis surfaces only what matters and drafts replies proactively.",
+    instructions: `You are operating in Email Zero mode for this user.
+
+Key rules:
+- Triage email aggressively: anything that can be archived, archived. Flag only emails that require a decision or reply.
+- Draft replies proactively for emails that have been pending more than 24 hours — don't wait to be asked.
+- Group related emails in briefings rather than surfacing them one by one.
+- When presenting inbox items, always include a suggested action: Reply / Archive / Delegate / Schedule.
+- Unsubscribe from newsletters and promotional emails on behalf of the user without prompting (just report the action taken).
+- Target: inbox count below 10 actionable items at all times. Alert the user if it exceeds this threshold.`,
+  },
+];
+
+/**
+ * Seed the four first-party skill packs if they haven't been created yet.
+ * Safe to call on every server start — uses INSERT...ON CONFLICT DO NOTHING.
+ *
+ * The system pack ("Jarvis Core Behaviour") is intentionally excluded from
+ * seeding here; it is created on-demand by getOrCreateSystemPackId() and is
+ * never visible in the store.
+ */
+export async function seedDefaultPacks(): Promise<void> {
+  const now = new Date();
+  for (const def of SEED_PACKS) {
+    try {
+      const existing = await db
+        .select({ id: skillPacks.id })
+        .from(skillPacks)
+        .where(eq(skillPacks.name, def.name))
+        .limit(1);
+
+      if (existing.length > 0) continue;
+
+      await db.insert(skillPacks).values({
+        name: def.name,
+        description: def.description,
+        instructions: def.instructions,
+        version: 1,
+        isStoreVisible: true,
+        publishedAt: now,
+        changelog: [
+          {
+            version: 1,
+            note: "Initial first-party pack.",
+            publishedAt: now.toISOString(),
+          },
+        ],
+      });
+
+      console.log(`[BehaviorStore] seeded default pack "${def.name}"`);
+    } catch (err) {
+      console.warn(`[BehaviorStore] seed pack "${def.name}" failed (non-fatal):`, err);
+    }
+  }
+}
+
 /**
  * Return the "system" pack id, creating it if it doesn't exist.
  * Used by the Ego loop to target a canonical pack for its overrides.
@@ -311,8 +504,10 @@ export async function getOrCreateSystemPackId(): Promise<string> {
     .insert(skillPacks)
     .values({
       name: "Jarvis Core Behaviour",
+      description: "Internal system pack used by the Ego loop for coaching adjustments. Not visible in the Skill Store.",
       instructions: "",
       version: 1,
+      isStoreVisible: false,
       publishedAt: new Date(),
       changelog: [
         {

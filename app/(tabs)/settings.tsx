@@ -1390,7 +1390,7 @@ export default function SettingsScreen() {
           })}
         </View>
 
-        {/* ── JARVIS REPORT ── */}
+        {/* ── JARVIS INTELLIGENCE ── */}
         <SectionHeader label="JARVIS INTELLIGENCE" accent={Colors.cyan} />
         <View style={styles.card}>
           <Link href="/jarvis-report" asChild>
@@ -1400,6 +1400,18 @@ export default function SettingsScreen() {
                 <View>
                   <Text style={styles.prefTitle}>Jarvis Report</Text>
                   <Text style={styles.prefSub}>Impact metrics & weekly self-report</Text>
+                </View>
+              </View>
+              <Ionicons name="chevron-forward" size={16} color={Colors.textTertiary} />
+            </Pressable>
+          </Link>
+          <Link href="/skills" asChild>
+            <Pressable style={[styles.prefRow, styles.prefRowBorder]}>
+              <View style={styles.prefLeft}>
+                <Ionicons name="sparkles-outline" size={16} color={Colors.violet} />
+                <View>
+                  <Text style={styles.prefTitle}>Skill Store</Text>
+                  <Text style={styles.prefSub}>Personalise how Jarvis thinks and acts</Text>
                 </View>
               </View>
               <Ionicons name="chevron-forward" size={16} color={Colors.textTertiary} />
