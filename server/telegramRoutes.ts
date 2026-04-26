@@ -440,6 +440,203 @@ async function processUpdate(update: any): Promise<void> {
         return;
       }
 
+      // ── /agent and /ask commands (Telegram parity with Discord) ───────────
+      if (text.startsWith("/agent") || text.startsWith("/ask")) {
+        const userId = link[0].userId;
+        const parts = text.trim().split(/\s+/);
+        const cmd = parts[0]; // "/agent" or "/ask"
+
+        try {
+          const {
+            listAgents, createAgent, assignChannel,
+            enableAgent, disableAgent, deleteAgent, updateAgent,
+          } = await import("./agent/agentManager");
+          const { runNamedAgent } = await import("./agent/runNamedAgent");
+          const { runCouncil } = await import("./agent/council");
+          const { readAgentMemories, clearAgentMemory } = await import("./agent/agentMemory");
+          const { listPendingGates } = await import("./agent/agentApproval");
+
+          // /ask <agentName> <question...>
+          if (cmd === "/ask") {
+            const agentName = parts[1] ?? "";
+            const question = parts.slice(2).join(" ");
+            if (!agentName || !question) {
+              await sendMessage(chatId, "Usage: /ask <agent-name> <your question>");
+              return;
+            }
+            const agents = await listAgents(userId);
+            const agent = agents.find((a) => a.name.toLowerCase() === agentName.toLowerCase());
+            if (!agent) {
+              await sendMessage(chatId, `Agent "${agentName}" not found. Use /agent list to see your agents.`);
+              return;
+            }
+            const result = await runNamedAgent({ agentId: agent.id, userId, userMessage: question, platform: "telegram" });
+            await sendMessage(chatId, `*${agent.name}:* ${result.reply.slice(0, 4000)}`);
+            return;
+          }
+
+          const sub = (parts[1] ?? "").toLowerCase();
+
+          if (!sub || sub === "help") {
+            await sendMessage(chatId,
+              `*Agent commands*\n\n` +
+              `/agent list — your agents\n` +
+              `/agent run <name> <message> — run an agent\n` +
+              `/agent council <question> — ask all agents\n` +
+              `/agent create <name> <role> — create agent\n` +
+              `/agent assign <name> — assign this chat\n` +
+              `/agent disable <name> — disable agent\n` +
+              `/agent enable <name> — enable agent\n` +
+              `/agent delete <name> — delete agent\n` +
+              `/agent memory <name> — show memories\n` +
+              `/agent clear-memory <name> — wipe memories\n` +
+              `/agent approvals — pending approvals\n` +
+              `/ask <name> <question> — quick query`,
+              { parse_mode: "Markdown" },
+            );
+            return;
+          }
+
+          if (sub === "list") {
+            const agents = await listAgents(userId, true);
+            if (agents.length === 0) {
+              await sendMessage(chatId, "You have no agents. Create one with /agent create <name> <role>");
+              return;
+            }
+            const lines = agents.map((a) => {
+              const icon = a.isActive ? "🟢" : "🔴";
+              return `${icon} *${a.name}* (${a.role})`;
+            });
+            await sendMessage(chatId, `*Your Agents (${agents.length})*\n${lines.join("\n")}`, { parse_mode: "Markdown" });
+            return;
+          }
+
+          if (sub === "run" || sub === "ask") {
+            const agentName = parts[2] ?? "";
+            const message = parts.slice(3).join(" ");
+            if (!agentName || !message) {
+              await sendMessage(chatId, `Usage: /agent ${sub} <name> <message>`);
+              return;
+            }
+            const agents = await listAgents(userId);
+            const agent = agents.find((a) => a.name.toLowerCase() === agentName.toLowerCase());
+            if (!agent) { await sendMessage(chatId, `Agent "${agentName}" not found.`); return; }
+            const result = await runNamedAgent({ agentId: agent.id, userId, userMessage: message, platform: "telegram" });
+            await sendMessage(chatId, `*${agent.name}:* ${result.reply.slice(0, 4000)}`, { parse_mode: "Markdown" });
+            return;
+          }
+
+          if (sub === "council") {
+            const question = parts.slice(2).join(" ");
+            if (!question) { await sendMessage(chatId, "Usage: /agent council <question>"); return; }
+            const result = await runCouncil(userId, question);
+            if (result.agentCount === 0) { await sendMessage(chatId, "No active agents found. Create one first."); return; }
+            await sendMessage(chatId, `*Council (${result.succeededCount}/${result.agentCount}):*\n${result.synthesis.slice(0, 4000)}`, { parse_mode: "Markdown" });
+            return;
+          }
+
+          if (sub === "create") {
+            const name = parts[2] ?? "";
+            const role = parts[3] ?? "custom";
+            if (!name) { await sendMessage(chatId, "Usage: /agent create <name> <role>"); return; }
+            const agentId = await createAgent(userId, { name, role, platforms: ["telegram"] });
+            await sendMessage(chatId, `✅ Created *${name}* (${role}) — ID: \`${agentId}\``, { parse_mode: "Markdown" });
+            return;
+          }
+
+          if (sub === "assign") {
+            const name = parts[2] ?? "";
+            if (!name) { await sendMessage(chatId, "Usage: /agent assign <name>"); return; }
+            const agents = await listAgents(userId, true);
+            const agent = agents.find((a) => a.name.toLowerCase() === name.toLowerCase());
+            if (!agent) { await sendMessage(chatId, `Agent "${name}" not found.`); return; }
+            await assignChannel(agent.id, "telegram", String(chatId));
+            await sendMessage(chatId, `✅ This chat is now assigned to *${name}*.`, { parse_mode: "Markdown" });
+            return;
+          }
+
+          if (sub === "disable") {
+            const name = parts[2] ?? "";
+            const agents = await listAgents(userId, true);
+            const agent = agents.find((a) => a.name.toLowerCase() === name.toLowerCase());
+            if (!agent) { await sendMessage(chatId, `Agent "${name}" not found.`); return; }
+            await disableAgent(agent.id);
+            await sendMessage(chatId, `🔴 Agent *${name}* has been disabled.`, { parse_mode: "Markdown" });
+            return;
+          }
+
+          if (sub === "enable") {
+            const name = parts[2] ?? "";
+            const agents = await listAgents(userId, true);
+            const agent = agents.find((a) => a.name.toLowerCase() === name.toLowerCase());
+            if (!agent) { await sendMessage(chatId, `Agent "${name}" not found.`); return; }
+            await enableAgent(agent.id);
+            await sendMessage(chatId, `🟢 Agent *${name}* has been re-enabled.`, { parse_mode: "Markdown" });
+            return;
+          }
+
+          if (sub === "delete") {
+            const name = parts[2] ?? "";
+            const agents = await listAgents(userId, true);
+            const agent = agents.find((a) => a.name.toLowerCase() === name.toLowerCase());
+            if (!agent) { await sendMessage(chatId, `Agent "${name}" not found.`); return; }
+            await deleteAgent(agent.id);
+            await sendMessage(chatId, `🗑️ Agent *${name}* has been permanently deleted.`, { parse_mode: "Markdown" });
+            return;
+          }
+
+          if (sub === "set-permission") {
+            const name = parts[2] ?? "";
+            const perm = parts[3] ?? "";
+            const val = (parts[4] ?? "").toLowerCase();
+            const enabled = val === "on" || val === "true" || val === "1";
+            const agents = await listAgents(userId, true);
+            const agent = agents.find((a) => a.name.toLowerCase() === name.toLowerCase());
+            if (!agent || !perm) { await sendMessage(chatId, "Usage: /agent set-permission <name> <perm> on|off"); return; }
+            const currentPerms = (agent.permissions as Record<string, boolean>) ?? {};
+            await updateAgent(agent.id, { permissions: { ...currentPerms, [perm]: enabled } });
+            await sendMessage(chatId, `✅ Permission \`${perm}\` for *${name}* set to *${enabled ? "ON" : "OFF"}*`, { parse_mode: "Markdown" });
+            return;
+          }
+
+          if (sub === "memory") {
+            const name = parts[2] ?? "";
+            const agents = await listAgents(userId, true);
+            const agent = agents.find((a) => a.name.toLowerCase() === name.toLowerCase());
+            if (!agent) { await sendMessage(chatId, `Agent "${name}" not found.`); return; }
+            const memories = await readAgentMemories(agent.id, userId, "", 10);
+            if (memories.length === 0) { await sendMessage(chatId, `Agent *${name}* has no memories yet.`, { parse_mode: "Markdown" }); return; }
+            const lines = memories.map((m) => `• [${m.category}] ${m.content.slice(0, 100)}`);
+            await sendMessage(chatId, `*${name} Memories:*\n${lines.join("\n")}`, { parse_mode: "Markdown" });
+            return;
+          }
+
+          if (sub === "clear-memory") {
+            const name = parts[2] ?? "";
+            const agents = await listAgents(userId, true);
+            const agent = agents.find((a) => a.name.toLowerCase() === name.toLowerCase());
+            if (!agent) { await sendMessage(chatId, `Agent "${name}" not found.`); return; }
+            const deleted = await clearAgentMemory(agent.id, userId);
+            await sendMessage(chatId, `🧹 Cleared *${deleted}* memories for *${name}*.`, { parse_mode: "Markdown" });
+            return;
+          }
+
+          if (sub === "approvals") {
+            const gates = await listPendingGates(userId);
+            if (gates.length === 0) { await sendMessage(chatId, "✅ No pending approval requests."); return; }
+            const lines = gates.map((g) => `• \`${g.id.slice(-8)}\` — *${g.toolName}* (${g.description.slice(0, 80)})`);
+            await sendMessage(chatId, `*Pending Approvals (${gates.length})*\n${lines.join("\n")}\n\nApprove/reject in the Agents → Approvals section of the app.`, { parse_mode: "Markdown" });
+            return;
+          }
+
+          await sendMessage(chatId, `Unknown subcommand "${sub}". Send /agent help for usage.`);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          await sendMessage(chatId, `❌ Error: ${msg.slice(0, 500)}`);
+        }
+        return;
+      }
+
       const userId = link[0].userId;
 
       await handleCoachReply(userId, chatId, text, imageUrl);

@@ -978,6 +978,77 @@ export async function ensureTablesExist() {
     `).catch(() => {});
     await db.execute(sql`CREATE INDEX IF NOT EXISTS diag_events_user_subsystem_idx ON diagnostic_events(user_id, subsystem, created_at DESC)`).catch(() => {});
 
+    // ── Multi-agent ego system: new discord_agents columns ─────────────────
+    await db.execute(sql`ALTER TABLE discord_agents ADD COLUMN IF NOT EXISTS platforms JSONB NOT NULL DEFAULT '["discord"]'::jsonb`).catch(() => {});
+    await db.execute(sql`ALTER TABLE discord_agents ADD COLUMN IF NOT EXISTS permissions JSONB NOT NULL DEFAULT '{
+      "can_search_web":true,"can_use_browser":false,"can_send_emails":false,
+      "can_create_email_drafts":false,"can_read_email":false,"can_send_messages":true,
+      "can_access_files":false,"can_take_screenshots":false,"can_open_apps":false,
+      "can_call_user":false,"can_use_voice":false,"can_create_tasks":true,
+      "can_create_other_agents":false,"can_access_global_memory":false
+    }'::jsonb`).catch(() => {});
+    await db.execute(sql`ALTER TABLE discord_agents ADD COLUMN IF NOT EXISTS memory_scope VARCHAR NOT NULL DEFAULT 'agent_private'`).catch(() => {});
+    await db.execute(sql`ALTER TABLE discord_agents ADD COLUMN IF NOT EXISTS access_global_memory BOOLEAN NOT NULL DEFAULT false`).catch(() => {});
+    await db.execute(sql`ALTER TABLE discord_agents ADD COLUMN IF NOT EXISTS allowed_users JSONB NOT NULL DEFAULT '[]'::jsonb`).catch(() => {});
+    await db.execute(sql`ALTER TABLE discord_agents ADD COLUMN IF NOT EXISTS allowed_conversations JSONB NOT NULL DEFAULT '[]'::jsonb`).catch(() => {});
+    await db.execute(sql`ALTER TABLE discord_agents ADD COLUMN IF NOT EXISTS private_mode BOOLEAN NOT NULL DEFAULT false`).catch(() => {});
+    await db.execute(sql`ALTER TABLE discord_agents ADD COLUMN IF NOT EXISTS platform_channels JSONB NOT NULL DEFAULT '{}'::jsonb`).catch(() => {});
+    await db.execute(sql`ALTER TABLE discord_agents ADD COLUMN IF NOT EXISTS config_json JSONB`).catch(() => {});
+    await db.execute(sql`ALTER TABLE discord_agents ADD COLUMN IF NOT EXISTS last_heartbeat_at TIMESTAMP`).catch(() => {});
+    await db.execute(sql`ALTER TABLE discord_agents ADD COLUMN IF NOT EXISTS stuck_since TIMESTAMP`).catch(() => {});
+    await db.execute(sql`ALTER TABLE discord_agents ADD COLUMN IF NOT EXISTS heartbeat_fail_count INTEGER NOT NULL DEFAULT 0`).catch(() => {});
+
+    // ── agent_memories: per-agent private memory namespace ─────────────────
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS agent_memories (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        agent_id VARCHAR NOT NULL REFERENCES discord_agents(id) ON DELETE CASCADE,
+        user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        content TEXT NOT NULL,
+        category VARCHAR NOT NULL DEFAULT 'fact',
+        embedding JSONB,
+        relevance_score INTEGER NOT NULL DEFAULT 50,
+        confidence INTEGER NOT NULL DEFAULT 70,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `).catch(() => {});
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS agent_memories_agent_user_idx ON agent_memories(agent_id, user_id, created_at DESC)`).catch(() => {});
+
+    // ── agent_messages: agent-to-agent message bus ─────────────────────────
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS agent_messages (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        from_agent_id VARCHAR REFERENCES discord_agents(id) ON DELETE SET NULL,
+        to_agent_id VARCHAR NOT NULL REFERENCES discord_agents(id) ON DELETE CASCADE,
+        user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        message_type VARCHAR NOT NULL,
+        payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+        status VARCHAR NOT NULL DEFAULT 'pending',
+        delegation_depth INTEGER NOT NULL DEFAULT 0,
+        task_id VARCHAR,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `).catch(() => {});
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS agent_messages_to_agent_status_idx ON agent_messages(to_agent_id, status, created_at)`).catch(() => {});
+
+    // ── agent_approval_gates: persistent tool approval gates ───────────────
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS agent_approval_gates (
+        id VARCHAR PRIMARY KEY,
+        agent_id VARCHAR NOT NULL REFERENCES discord_agents(id) ON DELETE CASCADE,
+        user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        tool_name VARCHAR NOT NULL,
+        tool_args JSONB NOT NULL DEFAULT '{}'::jsonb,
+        description TEXT NOT NULL,
+        status VARCHAR NOT NULL DEFAULT 'pending',
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        expires_at TIMESTAMP NOT NULL,
+        resolved_at TIMESTAMP,
+        resolved_by VARCHAR
+      )
+    `).catch(() => {});
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS agent_approval_gates_user_status_idx ON agent_approval_gates(user_id, status, created_at DESC)`).catch(() => {});
+
     console.log("Database tables verified");
   } catch (error) {
     console.error("Failed to ensure database tables exist:", error);

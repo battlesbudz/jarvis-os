@@ -739,8 +739,22 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
                 return { tc, content: deniedResult.content };
               }
             } catch (gateErr) {
-              console.warn(`[${channel}/Agent] onBeforeTool check failed for ${tc.function.name}:`, gateErr);
-              // On gate check error, allow execution (fail-open for non-critical tools)
+              // Fail-closed: approval gate errors block the tool, not allow it.
+              // Allowing execution on gate failure would silently bypass the approval system.
+              const errMsg = gateErr instanceof Error ? gateErr.message : String(gateErr);
+              console.error(`[${channel}/Agent] onBeforeTool gate error for ${tc.function.name}: ${errMsg}`);
+              const blockedResult = {
+                ok: false,
+                content: `Tool execution blocked: approval gate check failed (${errMsg.slice(0, 100)})`,
+                label: "Gate error",
+              };
+              toolCalls.push({
+                name: tc.function.name,
+                args: parsedArgs,
+                result: blockedResult,
+                durationMs: Date.now() - start,
+              });
+              return { tc, content: blockedResult.content };
             }
           }
 
