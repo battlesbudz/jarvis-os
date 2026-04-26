@@ -115,7 +115,15 @@ export function verifyDiscordSignature(
 // ── Command registration ─────────────────────────────────────────────────────
 
 /**
- * Register slash commands globally with the Discord API.
+ * Register slash commands with the Discord API.
+ *
+ * When DISCORD_DEV_GUILD_ID is set the commands are registered to that guild
+ * only — Discord propagates guild commands instantly, which is ideal for
+ * development iteration.
+ *
+ * When DISCORD_DEV_GUILD_ID is absent the commands are registered globally
+ * (production path). Global commands can take up to 1 hour to propagate.
+ *
  * Idempotent — checks the existing command list first; only updates when the
  * command definition has changed.
  */
@@ -130,10 +138,18 @@ export async function registerSlashCommands(): Promise<void> {
     return;
   }
 
-  const url = `${DISCORD_API}/applications/${appId}/commands`;
+  const devGuildId = process.env.DISCORD_DEV_GUILD_ID?.trim() || "";
+
+  const isGuildMode = devGuildId.length > 0;
+  const scope = isGuildMode ? `guild ${devGuildId} (dev mode — instant update)` : "global (production — up to 1 hour to propagate)";
+  const url = isGuildMode
+    ? `${DISCORD_API}/applications/${appId}/guilds/${devGuildId}/commands`
+    : `${DISCORD_API}/applications/${appId}/commands`;
+
+  console.log(`[SlashCommands] Registering commands — scope: ${scope}`);
 
   try {
-    // Fetch existing global commands
+    // Fetch existing commands for the chosen scope
     const listRes = await fetch(url, {
       headers: { Authorization: `Bot ${token}` },
     });
@@ -155,7 +171,7 @@ export async function registerSlashCommands(): Promise<void> {
       const wantedOptions = JSON.stringify(JARVIS_COMMAND.options);
       const existingDesc = existingJarvis.description ?? "";
       if (existingDesc === JARVIS_COMMAND.description && existingOptions === wantedOptions) {
-        console.log(`[SlashCommands] /jarvis command unchanged — skipping registration update`);
+        console.log(`[SlashCommands] /jarvis command unchanged — skipping registration update (${scope})`);
         return;
       }
     }
@@ -185,7 +201,7 @@ export async function registerSlashCommands(): Promise<void> {
     const jarvisEntry = registered.find((c) => c.name === "jarvis");
     const action = existingJarvis ? "updated" : "registered";
     console.log(
-      `[SlashCommands] /jarvis command ${action} (id=${jarvisEntry?.id}), total global commands: ${registered.length}`,
+      `[SlashCommands] /jarvis command ${action} (id=${jarvisEntry?.id}), total commands in scope: ${registered.length} — ${scope}`,
     );
   } catch (err) {
     console.error("[SlashCommands] registerSlashCommands error:", err);
