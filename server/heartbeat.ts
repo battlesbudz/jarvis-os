@@ -13,6 +13,7 @@ import { eq, and, sql, desc, gte } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { sendMessage, isTelegramConfigured } from "./integrations/telegram";
 import { notifyUser } from "./channels/registry";
+import { activationPlanner } from "./agent/activationPlanner";
 import { getGoogleCalendarEvents, type CalendarEvent } from "./integrations/googleCalendar";
 import { getEmailsSince } from "./integrations/gmail";
 import { tavilySearch, formatSearchResults } from "./integrations/search";
@@ -748,7 +749,30 @@ export async function runHeartbeatTick(): Promise<void> {
     } catch {}
 
     let actionsFired = 0;
+
+    // ── Activation planner — run before any model sessions ────────────────
+    // Non-LLM background tasks (emotional state, gut scan, prediction
+    // validation, memory pass) always run regardless of the planner's
+    // shouldRun decision. Only the LLM-driven action jobs (meeting briefs,
+    // email drafts, evening wrap-up) are gated by the planner.
+    let heartbeatShouldRun = true;
+    let heartbeatPlanReason = "";
+    try {
+      const plan = await activationPlanner.plan(link.userId, "heartbeat", tz);
+      heartbeatShouldRun = plan.shouldRun;
+      heartbeatPlanReason = plan.reason;
+      if (!heartbeatShouldRun) {
+        console.log(`[Heartbeat] user ${link.userId} — planner skipping model sessions: ${heartbeatPlanReason}`);
+      } else if (plan.sessionContext.urgentSignals.length > 0) {
+        console.log(`[Heartbeat] user ${link.userId} — urgent signals: ${plan.sessionContext.urgentSignals.join(", ")}`);
+      }
+    } catch (err) {
+      // Best-effort — never block the heartbeat on a planner failure
+      console.warn(`[Heartbeat] activation planner failed for ${link.userId} (non-fatal):`, err);
+    }
+
     // Emotional State Engine — recompute once per tick, per user.
+    // Always runs — not gated by the activation planner.
     try {
       const { computeAndStoreEmotionalState } = await import("./intelligence/emotional-state");
       await computeAndStoreEmotionalState(link.userId, tz, now);
@@ -758,6 +782,7 @@ export async function runHeartbeatTick(): Promise<void> {
 
     // Gut — reflexive anomaly detection. Runs on every tick; detectors
     // have their own internal deduplication windows (24–72 h per type).
+    // Always runs — not gated by the activation planner.
     try {
       const { runGutScanForUser } = await import("./intelligence/gut");
       await runGutScanForUser(link.userId, userEmail, now);
@@ -766,6 +791,7 @@ export async function runHeartbeatTick(): Promise<void> {
     }
 
     // Prediction Validation — validate expired predictions against actual data.
+    // Always runs — not gated by the activation planner.
     try {
       const { validateExpiredPredictions } = await import("./intelligence/predictor");
       await validateExpiredPredictions(link.userId, now);
@@ -773,24 +799,31 @@ export async function runHeartbeatTick(): Promise<void> {
       console.error(`[Heartbeat] prediction validation failed for ${link.userId}:`, err);
     }
 
-    try {
-      if (token && !await isActionSuppressed(link.userId, "meeting_brief"))
-        actionsFired += await runMeetingBriefs(link.userId, link.chatId, token, memories, now, tz, userEmail);
-    } catch (err) { console.error(`[Heartbeat] meeting briefs failed for ${link.userId}:`, err); }
+    // ── LLM-driven action jobs — gated by activation planner ──────────────
+    // When the planner determines there is nothing actionable for this tick
+    // (e.g. night hours with no urgent signals), these model sessions are
+    // skipped to reduce idle cost. All other background tasks above still run.
+    if (heartbeatShouldRun) {
+      try {
+        if (token && !await isActionSuppressed(link.userId, "meeting_brief"))
+          actionsFired += await runMeetingBriefs(link.userId, link.chatId, token, memories, now, tz, userEmail);
+      } catch (err) { console.error(`[Heartbeat] meeting briefs failed for ${link.userId}:`, err); }
 
-    try {
-      if (token && !await isActionSuppressed(link.userId, "email_drafted"))
-        actionsFired += await runEmailDrafts(link.userId, link.chatId, token, now);
-    } catch (err) { console.error(`[Heartbeat] email drafts failed for ${link.userId}:`, err); }
+      try {
+        if (token && !await isActionSuppressed(link.userId, "email_drafted"))
+          actionsFired += await runEmailDrafts(link.userId, link.chatId, token, now);
+      } catch (err) { console.error(`[Heartbeat] email drafts failed for ${link.userId}:`, err); }
 
-    try {
-      if (!await isActionSuppressed(link.userId, "evening_wrap") &&
-          await runEveningWrapUp(link.userId, link.chatId, token, prefs, now, tz)) actionsFired++;
-    } catch (err) { console.error(`[Heartbeat] wrap-up failed for ${link.userId}:`, err); }
+      try {
+        if (!await isActionSuppressed(link.userId, "evening_wrap") &&
+            await runEveningWrapUp(link.userId, link.chatId, token, prefs, now, tz)) actionsFired++;
+      } catch (err) { console.error(`[Heartbeat] wrap-up failed for ${link.userId}:`, err); }
+    }
 
     // Phase 4 — heartbeat memory ingestion. Pull anything new since the
     // last tick (recent telegram messages, today's calendar attendees)
     // and push it through the unified extractor + people-sync passes.
+    // Always runs — not gated by the activation planner.
     try {
       await runHeartbeatMemoryPass(link.userId, token, now);
     } catch (err) {

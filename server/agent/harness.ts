@@ -1,6 +1,7 @@
 
 import OpenAI from "openai";
 import type { AgentTool, AgentToolCallRecord, ToolContext } from "./types";
+import type { ActivationPlan } from "./activationPlanner";
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
@@ -22,6 +23,21 @@ export interface RunAgentOptions {
    * Intermediate tool-call turns always run non-streaming for clean parsing.
    */
   onToken?: (chunk: string) => void;
+  /**
+   * Pre-computed activation plan from the ActivationPlanner.
+   *
+   * When provided:
+   *   - The session context (focus areas, urgent signals, energy state) is
+   *     injected into the first system message so the model is primed with
+   *     what to focus on this tick.
+   *   - The capability manifest's `reasons` are logged for observability.
+   *   - The harness still applies its own channel-scope and integration-health
+   *     gates — the manifest is advisory context, not an exclusion override.
+   *
+   * Falls back to the harness's existing behaviour when absent, so all
+   * existing callers that do not pass an activation plan are unaffected.
+   */
+  activationPlan?: ActivationPlan;
 }
 
 export interface AgentRunResult {
@@ -174,6 +190,69 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
       }
     } catch {
       // skills are best-effort — never block an agent run
+    }
+  }
+
+  // ── Activation plan: inject session context into system prompt ─────────────
+  // When the caller supplies a pre-computed ActivationPlan, inject the session
+  // context (focus areas, urgent signals, energy state) into the first system
+  // message so the model is primed with what to focus on this session.
+  // The manifest's reasons are logged for observability.
+  // Falls back to existing behaviour when no plan is provided.
+  if (opts.activationPlan) {
+    try {
+      const { sessionContext, capabilityManifest, reason } = opts.activationPlan;
+      console.log(`[${channel}/Harness] activation plan: ${reason}`);
+      if (Object.keys(capabilityManifest.reasons).length > 0) {
+        const reasonLines = Object.entries(capabilityManifest.reasons)
+          .map(([id, r]) => `  ${id}: ${r}`)
+          .join("\n");
+        console.log(`[${channel}/Harness] capability decisions:\n${reasonLines}`);
+      }
+
+      // Build context block to inject into the system prompt.
+      const contextParts: string[] = [];
+
+      if (sessionContext.urgentSignals.length > 0) {
+        contextParts.push(
+          `Urgent signals this session:\n${sessionContext.urgentSignals.map((s) => `- ${s}`).join("\n")}`,
+        );
+      }
+
+      if (sessionContext.focusAreas.length > 0) {
+        contextParts.push(
+          `Suggested focus areas:\n${sessionContext.focusAreas.map((f) => `- ${f}`).join("\n")}`,
+        );
+      }
+
+      if (sessionContext.energyState) {
+        const { stressScore, flowScore, label } = sessionContext.energyState;
+        contextParts.push(
+          `Current user state: ${label} (stress: ${stressScore}/10, flow: ${flowScore}/10)`,
+        );
+      }
+
+      if (sessionContext.topPredictions.length > 0) {
+        const predLines = sessionContext.topPredictions
+          .map(
+            (p) =>
+              `- ${p.humanReadable}${p.actionSuggestion ? ` → ${p.actionSuggestion}` : ""}`,
+          )
+          .join("\n");
+        contextParts.push(`Foresight predictions:\n${predLines}`);
+      }
+
+      if (contextParts.length > 0) {
+        const planBlock = `\n\n---\n## Activation Context\n${contextParts.join("\n\n")}`;
+        messages = messages.map((m, i) => {
+          if (i === 0 && m.role === "system") {
+            return { ...m, content: (m.content ?? "") + planBlock };
+          }
+          return m;
+        });
+      }
+    } catch {
+      // activation plan injection is best-effort — never block an agent run
     }
   }
 
