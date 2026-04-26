@@ -1502,14 +1502,31 @@ export default function SettingsScreen() {
             )}
             <View style={{ flex: 1, gap: 2 }}>
               <Text style={healthStyles.overallTitle}>System Status</Text>
-              {healthReport && (
-                <Text style={healthStyles.overallSub}>
-                  {healthReport.openAiReachable ? 'OpenAI reachable' : '⚠ OpenAI unreachable'} ·{' '}
-                  {healthReport.dbReachable ? 'DB healthy' : '⚠ DB unreachable'} ·{' '}
-                  Queue: {healthReport.jobQueueDepth}
-                  {healthReport.staleJobCount > 0 ? ` (${healthReport.staleJobCount} stale)` : ''}
-                </Text>
-              )}
+              {healthReport && (() => {
+                const checkedAgo = (() => {
+                  const diff = Date.now() - new Date(healthReport.generatedAt).getTime();
+                  const m = Math.floor(diff / 60000);
+                  if (m < 1) return 'just now';
+                  if (m < 60) return `${m}m ago`;
+                  return `${Math.floor(m / 60)}h ago`;
+                })();
+                const latencyText = healthReport.openAiLatencyMs != null
+                  ? ` (${healthReport.openAiLatencyMs}ms)`
+                  : '';
+                return (
+                  <>
+                    <Text style={healthStyles.overallSub}>
+                      {healthReport.openAiReachable ? `OpenAI ✓${latencyText}` : '⚠ OpenAI unreachable'} ·{' '}
+                      {healthReport.dbReachable ? 'DB ✓' : '⚠ DB unreachable'} ·{' '}
+                      Queue: {healthReport.jobQueueDepth}
+                      {healthReport.staleJobCount > 0 ? ` (${healthReport.staleJobCount} re-queued)` : ''}
+                    </Text>
+                    <Text style={[healthStyles.overallSub, { fontSize: 10, color: Colors.textTertiary }]}>
+                      Last checked: {checkedAgo}
+                    </Text>
+                  </>
+                );
+              })()}
             </View>
             <Pressable onPress={loadHealth} style={healthStyles.refreshBtn}>
               <Ionicons name="refresh-outline" size={16} color="#10B981" />

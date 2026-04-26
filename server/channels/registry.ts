@@ -2,7 +2,7 @@ import { db } from "../db";
 import { eq, and } from "drizzle-orm";
 import { channelPreferences, type ChannelName, type NotificationType } from "@shared/schema";
 import type { Channel, ChannelSendOpts, ChannelSendResult } from "./types";
-import { logInteraction } from "../interactionLog";
+import { logInteraction, type InteractionChannel } from "../interactionLog";
 import { emit as diagEmit } from "../diagnostics/diagnosticsService";
 
 const channels = new Map<ChannelName, Channel>();
@@ -83,7 +83,14 @@ async function trySendOnChannel(
   try {
     const result = await ch.sendMessage(userId, text, { ...opts, notificationType });
     if (result.ok) {
-      logInteraction(userId, name, "outbound", text).catch(() => {});
+      logInteraction(userId, name as InteractionChannel, "outbound", text).catch(() => {});
+      diagEmit({
+        userId,
+        subsystem: "channel_registry",
+        severity: "info",
+        message: `Channel ${name} delivered message successfully`,
+        metadata: { channel: name, notificationType, recovery: true },
+      }).catch(() => {});
     } else {
       diagEmit({
         userId,
