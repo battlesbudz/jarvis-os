@@ -80,7 +80,7 @@ ANDROID actions (available when an Android device daemon is paired):
 - android_file_search: recursively search for files by name across the device storage — accepts query (substring match), optional root path (defaults to external storage root), optional type filter (image/video/audio/document/any), optional maxDepth (default 4, max 8); returns up to 100 matches with name/path/size/lastModified
 - android_open_file: open a file in its native app (e.g. gallery for images) using an ACTION_VIEW Intent — accepts an absolute file path
 - android_copy_to_clipboard: copy an image file to the Android clipboard so it can be pasted into Telegram, WhatsApp, or any app that supports image paste — accepts an absolute image file path; falls back gracefully if the target app doesn't support paste
-- android_notification_reply: send an inline reply to a notification that exposes a RemoteInput reply action — requires notificationKey (from android_notifications_list) and replyText; only works on notifications where hasReplyAction is true; ALWAYS confirm the exact reply text with the user before firing this action
+- android_notification_reply: send an inline reply to a notification that exposes a RemoteInput reply action — requires notificationKey (from android_notifications_list), replyText, and approved: true; only works on notifications where hasReplyAction is true; TWO-STEP FLOW: first call without approved to get the confirmation prompt, show the exact reply text to the user, then call again with approved: true once the user has explicitly agreed
 
 Always confirm with the user before tap/type/swipe actions and before android_notification_reply. Use android_read_screen or android_screenshot to understand context before acting. Require confirmation before any destructive shell or file_write actions. When an Android daemon is paired, prefer android_* actions. Returns the daemon's response or an error if not paired.`,
   parameters: {
@@ -122,6 +122,7 @@ Always confirm with the user before tap/type/swipe actions and before android_no
       maxDepth: { type: "number", description: "Maximum directory depth to recurse (when action is 'android_file_search', default 4, max 8)" },
       notificationKey: { type: "string", description: "Notification status-bar key from android_notifications_list (when action is 'android_notification_reply')" },
       replyText: { type: "string", description: "The reply text to send inline (when action is 'android_notification_reply')" },
+      approved: { type: "boolean", description: "Must be true for android_notification_reply — set only after the user has explicitly confirmed the exact reply text in the conversation" },
     },
     required: ["action"],
   },
@@ -197,6 +198,9 @@ Always confirm with the user before tap/type/swipe actions and before android_no
       } else if (rawAction === "android_notification_reply") {
         if (!args.notificationKey) return { ok: false, content: JSON.stringify({ ok: false, error: "notificationKey required" }) };
         if (!args.replyText) return { ok: false, content: JSON.stringify({ ok: false, error: "replyText required" }) };
+        if (!args.approved) {
+          return { ok: false, content: JSON.stringify({ ok: false, requiresApproval: true, error: `Confirmation required before sending. Show the user the exact reply and ask them to approve it: "I'll reply inline with: \"${args.replyText}\". Send it?" — then call this action again with approved: true once they confirm.` }) };
+        }
         op = { type: "android_notification_reply", notificationKey: String(args.notificationKey), replyText: String(args.replyText) };
       } else {
         return { ok: false, content: JSON.stringify({ ok: false, error: `unknown android action ${rawAction}` }) };
