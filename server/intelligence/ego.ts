@@ -15,6 +15,7 @@ import { jarvisActionLog, egoWeeklyReports } from "@shared/schema";
 import { notifyUser } from "../channels/registry";
 import { logInteraction } from "../interactionLog";
 import { markSoulStale } from "../memory/soul";
+import { recordSkillSignal } from "./skillWriter";
 import OpenAI from "openai";
 
 const openai = new OpenAI({
@@ -379,6 +380,28 @@ async function writeSelfKnowledgeMemories(
 }
 
 /**
+ * Record skill signals for effective action types detected by the ego analysis.
+ * Each `mostEffective` action type emits one signal per ego run.
+ * When the same pattern accumulates 3 signals, SkillWriter crystallises it
+ * into a persistent instruction file for the agent harness.
+ */
+async function recordSkillSignals(userId: string, analysis: EgoAnalysis): Promise<void> {
+  for (const actionType of analysis.mostEffective) {
+    const bd = analysis.actionBreakdown[actionType];
+    const rate = bd ? Math.round((bd.actedOn / bd.total) * 100) : 0;
+    const example = `The action type "${actionType}" has a ${rate}% engagement rate — the user consistently acts on these suggestions`;
+    await recordSkillSignal(userId, `ego_effective:${actionType}`, example).catch(() => {});
+  }
+  // Also record signals for confirmed high-engagement sequences from twoWeekBreakdown
+  for (const [actionType, tw] of Object.entries(analysis.twoWeekBreakdown)) {
+    if (tw.total >= 5 && tw.actedOn / tw.total >= 0.75) {
+      const example = `Over two weeks, "${actionType}" had ${tw.actedOn}/${tw.total} accepted — strong sustained preference`;
+      await recordSkillSignal(userId, `ego_sustained:${actionType}`, example).catch(() => {});
+    }
+  }
+}
+
+/**
  * Run the full ego cycle for one user.
  * Returns true if a report was generated and delivered.
  */
@@ -441,6 +464,7 @@ export async function runEgoForUser(userId: string, weekOf: string): Promise<boo
 
   await applySelfCorrections(userId, analysis.leastEffective, analysis.actionBreakdown);
   await writeSelfKnowledgeMemories(userId, analysis);
+  await recordSkillSignals(userId, analysis);
 
   const msg = `📊 Jarvis Weekly Self-Report (week of ${weekOf})\n\n${reportText}`;
   let delivered = false;

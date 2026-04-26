@@ -364,6 +364,13 @@ function setupErrorHandler(app: express.Application) {
       });
       startHeartbeat();
 
+      // Watch for newly crystallised skill files and hot-reload the cache.
+      import("./intelligence/skillWriter").then(({ startSkillWatcher }) => {
+        startSkillWatcher();
+      }).catch(err => {
+        console.error("Failed to start skill watcher:", err);
+      });
+
       // Verify Playwright/Chromium is usable on startup — logs a warning if not.
       import("playwright").then(({ chromium }) => {
         chromium.launch({ args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu", "--single-process"] })

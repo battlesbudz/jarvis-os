@@ -5499,6 +5499,35 @@ Extract up to 8 memories per batch.`;
     }
   });
 
+  // ── Skill endpoints ──────────────────────────────────────────────────────
+  app.get("/api/skills", async (req: Request, res: Response) => {
+    const userId = (req as any).userId as string | undefined;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    try {
+      const { listUserSkills } = await import("./intelligence/skillWriter");
+      const skills = await listUserSkills(userId);
+      res.json({ skills });
+    } catch (err) {
+      console.error("[Skills] GET /api/skills failed:", err);
+      res.status(500).json({ error: "Failed to list skills" });
+    }
+  });
+
+  app.delete("/api/skills/:skillId", async (req: Request, res: Response) => {
+    const userId = (req as any).userId as string | undefined;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    const { skillId } = req.params;
+    try {
+      const { deleteSkill } = await import("./intelligence/skillWriter");
+      const deleted = await deleteSkill(userId, skillId);
+      if (!deleted) return res.status(404).json({ error: "Skill not found" });
+      res.json({ ok: true });
+    } catch (err) {
+      console.error("[Skills] DELETE /api/skills/:skillId failed:", err);
+      res.status(500).json({ error: "Failed to delete skill" });
+    }
+  });
+
   const httpServer = createServer(app);
   return httpServer;
 }
