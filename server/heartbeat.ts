@@ -751,20 +751,44 @@ export async function runHeartbeatTick(): Promise<void> {
     let actionsFired = 0;
 
     // ── Activation planner — run before any model sessions ────────────────
+    // The planner gathers Foresight predictions, emotional state, skill count,
+    // and time-of-day to build a SessionContext and CapabilityManifest.
+    //
+    // Gate semantics for LLM-driven action jobs (meeting briefs, email drafts,
+    // evening wrap-up):
+    //
+    //   • We gate ONLY on night-time (0–4am local) with no urgent signals.
+    //     At night, none of these jobs have actionable work: meeting briefs
+    //     require upcoming calendar events (morning/afternoon window), email
+    //     drafts are inactive, and evening wrap-up is already time-gated
+    //     inside runEveningWrapUp. This is the only safe, high-confidence skip.
+    //
+    //   • We do NOT use planner.shouldRun as the heartbeat gate. The planner
+    //     lacks job-level signal coverage (meeting window look-ahead, email
+    //     candidate count, wrap-up eligibility). Trusting shouldRun would
+    //     cause false-negative skips during afternoon lulls even when real
+    //     work is pending. Each job function has its own deduplication and
+    //     time gating and is the authoritative source for whether it has work.
+    //
+    //   • The planner's shouldRun, SessionContext, and CapabilityManifest are
+    //     still computed and logged — they serve future runAgent context
+    //     injection (session focus, urgent signals) once heartbeat begins
+    //     spinning up model sessions for proactive outreach.
+    //
     // Non-LLM background tasks (emotional state, gut scan, prediction
-    // validation, memory pass) always run regardless of the planner's
-    // shouldRun decision. Only the LLM-driven action jobs (meeting briefs,
-    // email drafts, evening wrap-up) are gated by the planner.
-    let heartbeatShouldRun = true;
-    let heartbeatPlanReason = "";
+    // validation, memory pass) always run — never gated.
+    let skipNightLlmJobs = false;
     try {
       const plan = await activationPlanner.plan(link.userId, { source: "heartbeat", timezone: tz });
-      heartbeatShouldRun = plan.shouldRun;
-      heartbeatPlanReason = plan.reason;
-      if (!heartbeatShouldRun) {
-        console.log(`[Heartbeat] user ${link.userId} — planner skipping model sessions: ${heartbeatPlanReason}`);
-      } else if (plan.sessionContext.urgentSignals.length > 0) {
-        console.log(`[Heartbeat] user ${link.userId} — urgent signals: ${plan.sessionContext.urgentSignals.join(", ")}`);
+      const { timeOfDay, urgentSignals } = plan.sessionContext;
+      skipNightLlmJobs = timeOfDay === "night" && urgentSignals.length === 0;
+      if (skipNightLlmJobs) {
+        console.log(`[Heartbeat] user ${link.userId} — night-time quiet window, skipping LLM jobs`);
+      } else if (urgentSignals.length > 0) {
+        console.log(`[Heartbeat] user ${link.userId} — urgent signals: ${urgentSignals.join(", ")}`);
+      }
+      if (!plan.shouldRun) {
+        console.log(`[Heartbeat] user ${link.userId} — planner note (not gating jobs): ${plan.reason}`);
       }
     } catch (err) {
       // Best-effort — never block the heartbeat on a planner failure
@@ -799,11 +823,12 @@ export async function runHeartbeatTick(): Promise<void> {
       console.error(`[Heartbeat] prediction validation failed for ${link.userId}:`, err);
     }
 
-    // ── LLM-driven action jobs — gated by activation planner ──────────────
-    // When the planner determines there is nothing actionable for this tick
-    // (e.g. night hours with no urgent signals), these model sessions are
-    // skipped to reduce idle cost. All other background tasks above still run.
-    if (heartbeatShouldRun) {
+    // ── LLM-driven action jobs — gated on night-time quiet window ─────────
+    // Skipped only during night-time (0–4am local) with no urgent signals,
+    // where none of these jobs have actionable work. All other background
+    // tasks above run unconditionally. Each job also has its own internal
+    // deduplication and eligibility logic (see runMeetingBriefs, etc.).
+    if (!skipNightLlmJobs) {
       try {
         if (token && !await isActionSuppressed(link.userId, "meeting_brief"))
           actionsFired += await runMeetingBriefs(link.userId, link.chatId, token, memories, now, tz, userEmail);
