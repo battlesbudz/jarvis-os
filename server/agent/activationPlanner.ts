@@ -410,32 +410,35 @@ export class ActivationPlanner {
     // planner's primary value is providing session context (focus areas,
     // urgent signals, energy state) injected into the system prompt.
 
-    // ── Rule 9: No actionable signals in off-peak hours → shouldRun: false ─
-    // Only applies to heartbeat ticks (not channel sessions).
-    if (!isChannelSession && !hasUrgentSignals && timeOfDay === "afternoon" && activeCapabilityIds.length === 0) {
-      return {
-        capabilityManifest: this.buildManifest(
-          activeCapabilityIds,
-          suppressedCapabilityIds,
-          reasons,
-        ),
-        sessionContext,
-        shouldRun: false,
-        reason:
-          "No actionable signals found during off-peak hours — skipping model session",
-      };
-    }
+    // ── Rule 9: Active hours → always allow model session ─────────────────
+    // During morning, afternoon, and evening the heartbeat's job functions
+    // (meeting briefs, email drafts, evening wrap-up) may have actionable
+    // work that the planner cannot see (e.g. upcoming calendar events,
+    // pending email candidates). We therefore set shouldRun: true for all
+    // non-night hours so each job can decide for itself whether to run.
+    // The only safe, high-confidence skip window is night (Rule 1 above).
 
     const manifest = this.buildManifest(activeCapabilityIds, suppressedCapabilityIds, reasons);
+
+    // shouldRun is true whenever:
+    //   • there are urgent signals, OR
+    //   • the user sent a message (channel session), OR
+    //   • at least one capability was activated by an earlier rule, OR
+    //   • it is an active hour (morning / afternoon / evening) — job
+    //     functions have their own eligibility logic for those windows.
+    // shouldRun is false only when none of the above apply AND it is
+    // night-time (that case is handled by Rule 1's early return above;
+    // this fallback is belt-and-suspenders for any edge-case path).
     const hasSomethingToDo =
       hasUrgentSignals ||
       isChannelSession ||
       activeCapabilityIds.length > 0 ||
-      hasEveningWork;
+      hasEveningWork ||
+      timeOfDay !== "night"; // Active hours: always run
 
     const reason = hasSomethingToDo
       ? `Session activated: ${sessionContext.focusAreas.slice(0, 2).join(", ") || timeOfDay + " context"}`
-      : "No actionable context — heartbeat tick can be skipped";
+      : "Night-time with no signals and no active capabilities — skipping model session";
 
     return {
       capabilityManifest: manifest,

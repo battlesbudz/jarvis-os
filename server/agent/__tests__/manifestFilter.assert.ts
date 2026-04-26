@@ -238,46 +238,70 @@ const CAP_TOOL_MAP: Record<string, string[]> = {
   console.log("✓ F: manifest suppression composes correctly with pre-filtered (integration health) tool list");
 }
 
-// ─── Test G: Heartbeat explicit night-gate semantics ─────────────────────────
-// Replicas the gate logic from heartbeat.ts:
-//   skipNightLlmJobs = timeOfDay === "night" && urgentSignals.length === 0
+// ─── Test G: Planner shouldRun contract — night-only suppression ──────────────
+// The planner's hasSomethingToDo logic (from applyRules) must guarantee:
+//   morning/afternoon/evening + no signals → shouldRun TRUE (jobs run)
+//   night + no signals                    → shouldRun FALSE (jobs skip)
+//   night + urgent signal                 → shouldRun TRUE (urgent overrides)
 //
-// Critical backward-compat assertions:
-//   Afternoon + no urgent signals → jobs STILL RUN (false-negative fix).
-//   Night + urgent signal         → jobs STILL RUN (urgent signals override).
-//   Night + no urgent signals     → jobs skip (the only safe idle-cost window).
+// heartbeat trusts plan.shouldRun directly. The planner owns the gating
+// contract; each job function owns its own eligibility check on top of that.
+//
+// We test the hasSomethingToDo formula from activationPlanner.ts:
+//   hasSomethingToDo = hasUrgentSignals || isChannelSession
+//                    || activeCapabilityIds.length > 0 || hasEveningWork
+//                    || timeOfDay !== "night"
 
-function computeSkipNightLlmJobs(ctx: SessionContext): boolean {
-  return ctx.timeOfDay === "night" && ctx.urgentSignals.length === 0;
+function computeHasSomethingToDo(opts: {
+  timeOfDay: SessionContext["timeOfDay"];
+  urgentSignals: string[];
+  isChannelSession: boolean;
+  activeCapabilityIds: string[];
+}): boolean {
+  const { timeOfDay, urgentSignals, isChannelSession, activeCapabilityIds } = opts;
+  const hasUrgentSignals = urgentSignals.length > 0;
+  const hasEveningWork = timeOfDay === "evening";
+  return (
+    hasUrgentSignals ||
+    isChannelSession ||
+    activeCapabilityIds.length > 0 ||
+    hasEveningWork ||
+    timeOfDay !== "night"
+  );
 }
 
 {
   assert.equal(
-    computeSkipNightLlmJobs(makeSessionContext("afternoon", [])),
-    false,
-    "G1: afternoon + no urgent signals → jobs run (backward-compat preserved)",
-  );
-  assert.equal(
-    computeSkipNightLlmJobs(makeSessionContext("morning", [])),
-    false,
-    "G2: morning + no urgent signals → jobs run",
-  );
-  assert.equal(
-    computeSkipNightLlmJobs(makeSessionContext("evening", [])),
-    false,
-    "G3: evening + no urgent signals → jobs run",
-  );
-  assert.equal(
-    computeSkipNightLlmJobs(makeSessionContext("night", ["High stress detected (score: 8/10)"])),
-    false,
-    "G4: night + urgent signal → jobs run (urgent signals override quiet window)",
-  );
-  assert.equal(
-    computeSkipNightLlmJobs(makeSessionContext("night", [])),
+    computeHasSomethingToDo({ timeOfDay: "afternoon", urgentSignals: [], isChannelSession: false, activeCapabilityIds: [] }),
     true,
-    "G5: night + no urgent signals → jobs skip (the only safe idle-cost window)",
+    "G1: afternoon + no signals → shouldRun true (backward-compat: jobs run)",
   );
-  console.log("✓ G: heartbeat night-gate correctly preserves all active-hour jobs and skips only quiet night");
+  assert.equal(
+    computeHasSomethingToDo({ timeOfDay: "morning", urgentSignals: [], isChannelSession: false, activeCapabilityIds: [] }),
+    true,
+    "G2: morning + no signals → shouldRun true (meeting briefs window)",
+  );
+  assert.equal(
+    computeHasSomethingToDo({ timeOfDay: "evening", urgentSignals: [], isChannelSession: false, activeCapabilityIds: [] }),
+    true,
+    "G3: evening + no signals → shouldRun true (wrap-up window)",
+  );
+  assert.equal(
+    computeHasSomethingToDo({ timeOfDay: "night", urgentSignals: ["High stress detected (score: 8/10)"], isChannelSession: false, activeCapabilityIds: [] }),
+    true,
+    "G4: night + urgent signal → shouldRun true (urgent overrides quiet window)",
+  );
+  assert.equal(
+    computeHasSomethingToDo({ timeOfDay: "night", urgentSignals: [], isChannelSession: false, activeCapabilityIds: [] }),
+    false,
+    "G5: night + no signals + no capabilities → shouldRun false (safe idle skip)",
+  );
+  assert.equal(
+    computeHasSomethingToDo({ timeOfDay: "night", urgentSignals: [], isChannelSession: true, activeCapabilityIds: [] }),
+    true,
+    "G6: night + channel session → shouldRun true (user sent a message)",
+  );
+  console.log("✓ G: planner hasSomethingToDo correctly gates only quiet nights; all active hours run");
 }
 
 console.log("\nAll assertions passed ✓");
