@@ -1,6 +1,6 @@
 import type { AgentTool, ToolResult, JsonSchema } from "../types";
 import { db } from "../../db";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, isNotNull } from "drizzle-orm";
 import { openclawBuildLog } from "@shared/schema";
 
 // ── Tool resolver injection ───────────────────────────────────────────────────
@@ -336,7 +336,7 @@ export const buildFeatureTool: AgentTool = {
 
     console.log(`[build_feature] Running smoke test for "${featureName}"`);
     const smokeResult = await testToolTool.execute(
-      { tool_name: featureName, test_args: JSON.stringify(smokeTestArgsToUse) },
+      { tool_name: featureName, test_args: JSON.stringify(smokeTestArgsToUse), _internal: true },
       ctxForSmokeTest
     );
 
@@ -489,10 +489,43 @@ export const testToolTool: AgentTool = {
       );
     }
 
-    const testArgs: Record<string, unknown> = callerArgs ?? generateSmartTestArgs(tool.parameters);
+    // Look up the most recent passing smokeTestArgs for this tool so we can
+    // reuse them instead of re-generating, giving consistent smoke-test behaviour.
+    let priorPassingArgs: Record<string, unknown> | null = null;
+    try {
+      const priorRows = await db
+        .select({ smokeTestArgs: openclawBuildLog.smokeTestArgs })
+        .from(openclawBuildLog)
+        .where(
+          and(
+            eq(openclawBuildLog.userId, ctx.userId),
+            eq(openclawBuildLog.featureName, toolName),
+            eq(openclawBuildLog.smokeTestPassed, true),
+            isNotNull(openclawBuildLog.smokeTestArgs)
+          )
+        )
+        .orderBy(desc(openclawBuildLog.createdAt))
+        .limit(1);
+      const stored = priorRows[0]?.smokeTestArgs;
+      if (stored && typeof stored === "object" && !Array.isArray(stored)) {
+        priorPassingArgs = stored as Record<string, unknown>;
+      }
+    } catch {
+      // Non-fatal — fall through to auto-generation
+    }
+
+    const testArgs: Record<string, unknown> =
+      callerArgs !== null
+        ? callerArgs
+        : priorPassingArgs !== null
+        ? priorPassingArgs
+        : generateSmartTestArgs(tool.parameters);
+
     const argsNote =
       callerArgs !== null
         ? `args: ${JSON.stringify(testArgs)}`
+        : priorPassingArgs !== null
+        ? `using previously-passing args: ${JSON.stringify(testArgs)}`
         : `auto-generated args: ${JSON.stringify(testArgs)}`;
 
     const SMOKE_TIMEOUT_MS = 30_000;
@@ -519,6 +552,24 @@ export const testToolTool: AgentTool = {
     }
 
     if (result.ok) {
+      // Persist manually-supplied passing args so they can be reused next time.
+      // Skip when called internally by build_feature — it already writes its own log row.
+      const isInternalCall = Boolean(args._internal);
+      if (callerArgs !== null && !isInternalCall) {
+        try {
+          await db.insert(openclawBuildLog).values({
+            userId: ctx.userId,
+            featureName: toolName,
+            description: "manual test",
+            outputCode: "",
+            success: true,
+            smokeTestPassed: true,
+            smokeTestArgs: callerArgs,
+          });
+        } catch {
+          // Non-fatal
+        }
+      }
       return {
         ok: true,
         content: `Smoke test PASSED for "${toolName}" (${argsNote}).\n\nOutput: ${result.content}`,
