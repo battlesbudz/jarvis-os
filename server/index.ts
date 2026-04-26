@@ -336,14 +336,25 @@ function setupErrorHandler(app: express.Application) {
             console.error("[Telegram] Production mode but REPLIT_DOMAINS is not set — cannot register webhook");
           }
         } else {
-          // Delete any previously-set webhook (e.g. from a production deploy)
-          // before starting polling — Telegram only delivers to ONE endpoint,
-          // so an active webhook silently swallows all getUpdates responses.
-          deleteWebhook()
-            .then(() => startTelegramPolling())
-            .catch(err => {
-              console.error("Failed to start Telegram polling:", err);
-            });
+          // Dev mode: only start polling if a dedicated dev bot token is set.
+          // Without it, both dev and production would share the same bot —
+          // Telegram delivers each message to exactly one endpoint, so they'd
+          // race and the user would receive two replies for every message.
+          if (!process.env.TELEGRAM_BOT_TOKEN_DEV) {
+            console.warn(
+              "[Telegram] ⚠ Dev polling SKIPPED — set TELEGRAM_BOT_TOKEN_DEV as a Replit secret " +
+              "(create a test bot via BotFather) to enable polling without conflicting with the production bot."
+            );
+          } else {
+            // Delete any previously-set webhook (e.g. from a production deploy)
+            // before starting polling — Telegram only delivers to ONE endpoint,
+            // so an active webhook silently swallows all getUpdates responses.
+            deleteWebhook()
+              .then(() => startTelegramPolling())
+              .catch(err => {
+                console.error("Failed to start Telegram polling:", err);
+              });
+          }
         }
       }
 

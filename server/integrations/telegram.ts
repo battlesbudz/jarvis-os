@@ -1,6 +1,22 @@
 import crypto from 'crypto';
 
-const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+// Token selection: in dev, prefer TELEGRAM_BOT_TOKEN_DEV (a separate test bot
+// created via BotFather) so the dev server never races with the production
+// webhook.  Set TELEGRAM_BOT_TOKEN_DEV as a Replit secret in the workspace.
+// In production, always use TELEGRAM_BOT_TOKEN.
+const isProduction = process.env.NODE_ENV === 'production';
+const BOT_TOKEN = (!isProduction && process.env.TELEGRAM_BOT_TOKEN_DEV)
+  ? process.env.TELEGRAM_BOT_TOKEN_DEV
+  : process.env.TELEGRAM_BOT_TOKEN;
+
+if (!isProduction && process.env.TELEGRAM_BOT_TOKEN_DEV) {
+  console.log('[Telegram] Using DEV bot token (TELEGRAM_BOT_TOKEN_DEV)');
+} else if (!isProduction) {
+  // Will be caught in index.ts startup guard — no polling will start.
+} else {
+  console.log('[Telegram] Using production bot token (TELEGRAM_BOT_TOKEN)');
+}
+
 const BASE = `https://api.telegram.org/bot${BOT_TOKEN}`;
 
 function generateWebhookSecret(): string {
