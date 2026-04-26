@@ -554,25 +554,16 @@ export async function runValidationCycle(): Promise<void> {
   }
 }
 
-const INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
-
 export function startIntegrationValidator(): void {
   // Delay first run by 10 seconds to let DB connections warm up on boot.
+  // Recurring 30-min cycles are driven exclusively by the heartbeat's
+  // runHeartbeatTick() → runValidationCycle() call (with lastValidationRunAt
+  // throttle) so there is a single scheduler source of truth.
   setTimeout(() => {
     runValidationCycle().catch((err) =>
       console.error("[IntegrationValidator] initial run failed:", err),
     );
   }, 10_000);
-
-  // Own 30-minute interval — independent of Telegram / heartbeat configuration.
-  // runHeartbeatTick() also calls runValidationCycle() opportunistically, but
-  // the `running` guard and `lastValidationRunAt` throttle in heartbeat.ts
-  // prevent double-execution when both fire close together.
-  setInterval(() => {
-    runValidationCycle().catch((err) =>
-      console.error("[IntegrationValidator] scheduled run failed:", err),
-    );
-  }, INTERVAL_MS);
 
   console.log("[IntegrationValidator] started — boot check in 10s, then every 30 min");
 }
