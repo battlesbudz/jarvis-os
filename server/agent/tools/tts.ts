@@ -175,8 +175,11 @@ export async function speakToUser(
   const isDiscord = channelRaw.startsWith("discord");
 
   const snippedText = text.slice(0, 4000);
-  const isElevenLabs = !OPENAI_VOICES.has(voice) && !!process.env.ELEVENLABS_API_KEY;
-  const mp3 = isElevenLabs
+  const isElevenLabsVoice = !OPENAI_VOICES.has(voice);
+  if (isElevenLabsVoice && !process.env.ELEVENLABS_API_KEY) {
+    return { ok: false, error: "ElevenLabs voice selected but ELEVENLABS_API_KEY is not configured" };
+  }
+  const mp3 = isElevenLabsVoice
     ? await elevenlabsTts(snippedText, voice)
     : await textToSpeech(snippedText, voice as "alloy" | "echo" | "fable" | "onyx" | "nova" | "shimmer", "mp3");
   const ogg = await mp3ToOggOpus(mp3);
