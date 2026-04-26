@@ -281,18 +281,42 @@ async function attemptAutoRecovery(subsystem: DiagnosticSubsystem, userId: strin
     }
 
     if (subsystem === "channel_registry") {
-      // Re-probe channels: if any are now reachable, emit recovery.
+      // Re-probe each channel: check configured + linked, log outcome, emit recovery if reachable.
       try {
         const { listChannels } = await import("../channels/registry");
         const channels = listChannels();
-        const anyConfigured = channels.some((ch) => ch.isConfigured());
-        if (anyConfigured) {
+        const outcomes: Record<string, string> = {};
+        let anyReachable = false;
+
+        for (const ch of channels) {
+          const configured = ch.isConfigured();
+          let linked = false;
+          if (configured) {
+            try { linked = await ch.isLinkedFor(userId); } catch { linked = false; }
+          }
+          const status = !configured ? "unconfigured" : !linked ? "not-linked" : "reachable";
+          outcomes[ch.name] = status;
+          if (status === "reachable") anyReachable = true;
+
+          console.log(`[Diagnostics] channel recovery probe: ${ch.name} → ${status}`);
+          if (status !== "reachable") {
+            await emit({
+              userId,
+              subsystem: "channel_registry",
+              severity: "warning",
+              message: `Channel ${ch.name} recovery probe: ${status}`,
+              metadata: { channel: ch.name, status },
+            });
+          }
+        }
+
+        if (anyReachable) {
           await emit({
             userId,
             subsystem: "channel_registry",
             severity: "info",
-            message: "Channel registry auto-recovery: at least one channel is configured",
-            metadata: { recovery: true },
+            message: `Channel registry recovery: at least one channel reachable — ${JSON.stringify(outcomes)}`,
+            metadata: { outcomes, recovery: true },
           });
         }
       } catch {
