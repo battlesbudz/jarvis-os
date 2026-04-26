@@ -57,7 +57,7 @@ import {
   buildFeatureTool,
   testToolTool,
   initToolResolver,
-} from "./openclawTool";
+} from "./buildFeatureTool";
 
 export const ALL_TOOLS: AgentTool[] = [
   webSearchTool,
