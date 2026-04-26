@@ -239,17 +239,51 @@ class WakeWordService : Service() {
     }
 
     private fun onWakeWordDetected(phrase: String, fullTranscript: String) {
+        // Bring the Jarvis web app to the foreground so the SSE event is received by the open tab
+        bringJarvisToForeground()
+
         val event = JSONObject().apply {
             put("type", "wake_word_triggered")
             put("phrase", phrase)
             put("transcript", fullTranscript)
         }
-        WebSocketService.sendEvent(event.toString())
+        // Small delay so the browser tab has time to come to the foreground before the event fires
+        mainHandler.postDelayed({ WebSocketService.sendEvent(event.toString()) }, 400L)
+
         // Pause listening during the conversation; auto-resume after a guard timeout
         active = false
         mainHandler.postDelayed({
             if (!active) startListening()
         }, 10_000L)
+    }
+
+    /**
+     * Brings the browser app that has the Jarvis web app open to the foreground.
+     * Tries common browser packages in priority order (Chrome first, then others).
+     */
+    private fun bringJarvisToForeground() {
+        val browsers = listOf(
+            "com.android.chrome",
+            "org.mozilla.firefox",
+            "com.microsoft.emmx",
+            "com.brave.browser",
+            "com.opera.browser",
+        )
+        for (pkg in browsers) {
+            try {
+                val intent = packageManager.getLaunchIntentForPackage(pkg) ?: continue
+                intent.addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+                )
+                startActivity(intent)
+                DaemonLog.add("wake: brought $pkg to foreground")
+                return
+            } catch (e: Exception) {
+                // package not installed or launch failed — try next
+            }
+        }
+        DaemonLog.add("wake: could not bring browser to foreground (no matching package)")
     }
 
     // ── Talk Mode ────────────────────────────────────────────────────────────
