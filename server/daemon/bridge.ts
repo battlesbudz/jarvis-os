@@ -96,15 +96,14 @@ async function syncWakeSettingsToDaemon(userId: string): Promise<void> {
     const wakeWordEnabled: boolean = prefs.wakeWordEnabled ?? false;
     const talkModeEnabled: boolean = prefs.talkModeEnabled ?? false;
     const wakeWords: string[] = prefs.wakeWords ?? ["hey jarvis", "jarvis", "computer"];
-    if (wakeWordEnabled) {
-      await sendDaemonOp(userId, {
-        type: "voice_set_wake_words",
-        enabled: true,
-        words: wakeWords,
-        talkMode: talkModeEnabled,
-      }, 5000);
-      console.log(`[daemon] wake settings synced on connect: userId=${userId} talkMode=${talkModeEnabled}`);
-    }
+    // Always push authoritative state so a previously-enabled daemon stops if user disabled it
+    await sendDaemonOp(userId, {
+      type: "voice_set_wake_words",
+      enabled: wakeWordEnabled,
+      words: wakeWords,
+      talkMode: talkModeEnabled,
+    }, 5000);
+    console.log(`[daemon] wake settings synced on connect: userId=${userId} enabled=${wakeWordEnabled} talkMode=${talkModeEnabled}`);
   } catch (e) {
     console.error("[daemon] wake settings sync failed:", e);
   }
