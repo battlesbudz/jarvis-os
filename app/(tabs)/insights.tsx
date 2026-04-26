@@ -444,6 +444,9 @@ function MessageBubble({ message, isFirst, isLastAssistant, goals, onFollowup, o
                   style={styles.generatedImage}
                   resizeMode="cover"
                 />
+                {!!ea.imageCaption && (
+                  <Text style={styles.generatedImageCaption}>{ea.imageCaption}</Text>
+                )}
               </View>
             ))}
           </>
@@ -3280,6 +3283,14 @@ const styles = StyleSheet.create({
     width: 280,
     height: 280,
     backgroundColor: Colors.surface,
+  },
+  generatedImageCaption: {
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    lineHeight: 17,
   },
   confirmCard: {
     backgroundColor: Colors.surface,
