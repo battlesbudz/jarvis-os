@@ -216,17 +216,21 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
         }
       }
 
-      // send_email and fetch_emails work via either Google OR Outlook.
-      // Only exclude them when BOTH email providers are broken (no fallback available).
-      const googleBroken = statuses.google === "broken";
-      const outlookBroken = statuses.outlook === "broken";
-      if (googleBroken && outlookBroken) {
+      // send_email and fetch_emails require at least one operational email provider.
+      // "Operational" = healthy or expiring_soon (token still works).
+      // "Non-operational" = broken OR unconfigured — treat both as unavailable
+      // for fallback decisions so {google: broken, outlook: unconfigured} → excluded.
+      const googleOperational = statuses.google === "healthy" || statuses.google === "expiring_soon";
+      const outlookOperational = statuses.outlook === "healthy" || statuses.outlook === "expiring_soon";
+      if (!googleOperational && !outlookOperational) {
         toolsToExclude.add("send_email");
         toolsToExclude.add("fetch_emails");
-        if (!brokenIntegrations.includes("Google (Gmail + Calendar + Drive)")) {
+        // Only surface in the alert note if a provider is explicitly broken
+        // (unconfigured providers are expected and don't need an alert).
+        if (statuses.google === "broken" && !brokenIntegrations.includes("Google (Gmail + Calendar + Drive)")) {
           brokenIntegrations.push("Google (Gmail + Calendar + Drive)");
         }
-        if (!brokenIntegrations.includes("Microsoft Outlook")) {
+        if (statuses.outlook === "broken" && !brokenIntegrations.includes("Microsoft Outlook")) {
           brokenIntegrations.push("Microsoft Outlook");
         }
       }
