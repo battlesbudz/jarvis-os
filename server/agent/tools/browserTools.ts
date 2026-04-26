@@ -11,6 +11,7 @@ import type { AgentTool } from "../types";
 import {
   callBrowserTool,
   closeMcpSession,
+  closeDaemonBrowserSession,
   hasActiveBrowserContext,
   popLatestScreenshot,
 } from "../mcp/playwrightMcpClient";
@@ -500,8 +501,16 @@ export const browserClearSessionTool: AgentTool = {
     "Use this to log out of sites or start fresh. A new session will be created on the next browser call.",
   parameters: { type: "object", properties: {} },
   async execute(_args, ctx) {
+    // Close server-side session and wipe its profile dir (cookies/localStorage)
     closeMcpSession(ctx.userId, true /* wipeProfile */);
-    return { ok: true, content: "Browser session cleared. Cookies, login state, and persisted storage have been reset.", label: "Session cleared" };
+    // When routing through daemon local browser: close the current browser
+    // context on the daemon's MCP server (best-effort; cannot wipe real Chrome profile)
+    await closeDaemonBrowserSession(ctx.userId);
+    return {
+      ok: true,
+      content: "Browser session cleared. Server-side cookies and storage wiped; daemon browser context closed.",
+      label: "Session cleared",
+    };
   },
 };
 
