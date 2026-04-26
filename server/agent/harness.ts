@@ -148,7 +148,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
   const toolMap = new Map(tools.map((t) => [t.name, t]));
   const openAITools = tools.length > 0 ? tools.map(toOpenAITool) : undefined;
 
-  // Inject the active tool set so surface-scoped tools (e.g. openclaw_test_tool)
+  // Inject the active tool set so surface-scoped tools (e.g. test_tool)
   // can verify they are not being used to escape per-surface restrictions.
   context.allowedToolNames = new Set(tools.map((t) => t.name));
 
