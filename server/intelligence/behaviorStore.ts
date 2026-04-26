@@ -17,11 +17,10 @@
  */
 
 import { db } from "../db";
-import { eq, sql } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import {
   skillPacks,
   userSkillPacks,
-  users,
   type SkillPack,
   type SkillPackChangelogEntry,
   type EgoInstructionOverrides,
@@ -165,7 +164,7 @@ export async function writeEgoOverrides(
   const existing = await db
     .select({ instructionOverrides: userSkillPacks.instructionOverrides, appliedVersion: userSkillPacks.appliedVersion })
     .from(userSkillPacks)
-    .where(eq(userSkillPacks.userId, userId))
+    .where(and(eq(userSkillPacks.userId, userId), eq(userSkillPacks.packId, packId)))
     .limit(1);
 
   const pack = await db
@@ -277,10 +276,20 @@ export async function loadPackInstructionsForUser(
  * Used by the Ego loop to target a canonical pack for its overrides.
  * The system pack is identified by the name "Jarvis Core Behaviour".
  */
+export const SYSTEM_PACK_NAME = "Jarvis Core Behaviour";
+
+/**
+ * Return the id of the canonical system pack (named "Jarvis Core Behaviour"),
+ * creating it if it doesn't exist.
+ *
+ * Uses the pack name as the stable identifier so this function returns the
+ * correct row even when multiple operator packs exist in the table.
+ */
 export async function getOrCreateSystemPackId(): Promise<string> {
   const existing = await db
     .select({ id: skillPacks.id })
     .from(skillPacks)
+    .where(eq(skillPacks.name, SYSTEM_PACK_NAME))
     .limit(1);
 
   if (existing.length > 0) return existing[0].id;
