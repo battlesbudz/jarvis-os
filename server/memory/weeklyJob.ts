@@ -208,8 +208,11 @@ ${energyText || "(none)"}`;
   let patterns: WeeklyPattern[] = [];
   let summary = "";
   try {
+    const { getModel } = await import("../lib/modelPrefs");
+    const model = await getModel(userId, "memory");
+
     const response = await openai.chat.completions.create({
-      model: "gpt-5-mini",
+      model,
       messages: [{ role: "user", content: prompt }],
       response_format: { type: "json_object" },
       max_completion_tokens: 1200,

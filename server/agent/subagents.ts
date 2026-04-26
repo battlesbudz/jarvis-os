@@ -242,8 +242,11 @@ export async function runSubAgent(opts: RunSubAgentOptions): Promise<SubAgentRes
     }
   }
 
+  const { getModel } = await import("../lib/modelPrefs");
+  const subAgentModel = await getModel(opts.context.userId, "research");
+
   const result = await runAgent({
-    model: "gpt-4o-mini",
+    model: subAgentModel,
     messages: [
       { role: "system", content: systemPrompt },
       { role: "user", content: opts.prompt },

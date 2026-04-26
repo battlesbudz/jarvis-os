@@ -14,7 +14,7 @@ const SESSION_TIMEOUT_MS = 30 * 60 * 1000;
 const STEP_DELAY_MS = 3 * 60 * 1000;
 
 export async function generateMomentumSteps(
-  _userId: string,
+  userId: string,
   context: {
     tasks: any[];
     goals: any[];
@@ -57,8 +57,11 @@ Respond with a JSON array of 4 objects: [{ "text": "message to send", "tactic": 
 Keep each text under 2 sentences. Plain text only — no markdown, no asterisks.`;
 
   try {
+    const { getModel } = await import("./lib/modelPrefs");
+    const model = await getModel(userId, "planning");
+
     const resp = await openai.chat.completions.create({
-      model: "gpt-5-mini",
+      model,
       messages: [
         { role: "system", content: "You are an ADHD productivity coach. Respond with valid JSON only." },
         { role: "user", content: prompt },

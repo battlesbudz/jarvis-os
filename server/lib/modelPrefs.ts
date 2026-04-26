@@ -1,0 +1,56 @@
+/**
+ * Model Preferences
+ *
+ * Central helper for resolving which AI model to use per task category.
+ * Reads from userPreferences.data.modelPreferences with hard-coded defaults.
+ * Falls back silently on any DB error so callers never crash.
+ */
+import { db } from "../db";
+import { userPreferences } from "@shared/schema";
+import { eq } from "drizzle-orm";
+
+export type ModelCategory = "chat" | "planning" | "memory" | "research";
+
+export const MODEL_DEFAULTS: Record<ModelCategory, string> = {
+  chat: "gpt-5-mini",
+  planning: "gpt-5-mini",
+  memory: "gpt-5-mini",
+  research: "gpt-4o-mini",
+};
+
+export const AVAILABLE_MODELS = [
+  { value: "gpt-5-mini", label: "Fast", description: "Quick responses, great for most tasks" },
+  { value: "gpt-5.1", label: "Smart", description: "Better reasoning with balanced speed" },
+  { value: "gpt-4o", label: "Powerful", description: "Highest quality for complex tasks" },
+  { value: "gpt-4o-mini", label: "Lightweight", description: "Efficient for high-volume tasks" },
+] as const;
+
+export type AvailableModel = (typeof AVAILABLE_MODELS)[number]["value"];
+
+const VALID_MODEL_VALUES = new Set(AVAILABLE_MODELS.map((m) => m.value));
+
+export function isValidModel(value: unknown): value is AvailableModel {
+  return typeof value === "string" && VALID_MODEL_VALUES.has(value as AvailableModel);
+}
+
+/**
+ * Return the model string for a given user + category.
+ * Falls back to MODEL_DEFAULTS[category] if the preference is missing or the DB call fails.
+ */
+export async function getModel(userId: string, category: ModelCategory): Promise<string> {
+  if (!userId) return MODEL_DEFAULTS[category];
+  try {
+    const rows = await db
+      .select({ data: userPreferences.data })
+      .from(userPreferences)
+      .where(eq(userPreferences.userId, userId))
+      .limit(1);
+    const prefs = rows[0]?.data as Record<string, unknown> | undefined;
+    const modelPrefs = prefs?.modelPreferences as Record<string, string> | undefined;
+    const pref = modelPrefs?.[category];
+    if (isValidModel(pref)) return pref;
+  } catch {
+    // silently fall through
+  }
+  return MODEL_DEFAULTS[category];
+}

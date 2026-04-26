@@ -257,8 +257,11 @@ ${corpus.text.slice(0, 12000)}`;
 
   let rawInsights: DreamInsightRaw[] = [];
   try {
+    const { getModel } = await import("../lib/modelPrefs");
+    const model = await getModel(userId, "memory");
+
     const resp = await openai.chat.completions.create({
-      model: "gpt-4o",
+      model,
       messages: [{ role: "user", content: prompt }],
       response_format: { type: "json_object" },
       max_completion_tokens: 1200,
