@@ -1113,6 +1113,14 @@ export default function InsightsScreen() {
         let pendingLen = 0;
         let nativeFirstChunk = false;
         let streamDone = false;
+        // Carry-over byte across PCM16 chunk boundaries — same as web path
+        let nativeCarryByte: number | null = null;
+
+        const cleanupSegFiles = () => {
+          for (const uri of segUris) {
+            FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
+          }
+        };
 
         const enqueueSegment = (chunks: Uint8Array[], len: number) => {
           const idx = segIdx++;
@@ -1134,11 +1142,14 @@ export default function InsightsScreen() {
               if (!isSpeakingRef.current || abortController.signal.aborted) break;
               const { sound } = await Audio.Sound.createAsync({ uri: segUris[playIdx] }, { shouldPlay: true });
               soundRef.current = sound;
+              const segUri = segUris[playIdx];
               playIdx++;
               await new Promise<void>((resolve) => {
                 sound.setOnPlaybackStatusUpdate((status) => {
                   if ('didJustFinish' in status && status.didJustFinish) {
                     sound.unloadAsync().catch(() => {});
+                    // Delete the segment file now that playback is done
+                    FileSystem.deleteAsync(segUri, { idempotent: true }).catch(() => {});
                     resolve();
                   }
                 });
@@ -1149,6 +1160,8 @@ export default function InsightsScreen() {
               await new Promise(r => setTimeout(r, 30)); // Wait for next segment
             }
           }
+          // Clean up any remaining unplayed segments on abort/stop
+          cleanupSegFiles();
           if (isSpeakingRef.current) onPlaybackEnd();
         })();
 
@@ -1161,10 +1174,27 @@ export default function InsightsScreen() {
             if (msg.type === 'chunk' && msg.data) {
               if (!nativeFirstChunk) { nativeFirstChunk = true; setIsTTSLoading(false); }
               const binaryStr = atob(msg.data);
-              const bytes = new Uint8Array(binaryStr.length);
-              for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
-              pendingBuf.push(bytes);
-              pendingLen += bytes.length;
+              let raw = new Uint8Array(binaryStr.length);
+              for (let i = 0; i < binaryStr.length; i++) raw[i] = binaryStr.charCodeAt(i);
+
+              // PCM16 byte-alignment carry-over (same logic as web path)
+              let aligned: Uint8Array;
+              if (nativeCarryByte !== null) {
+                aligned = new Uint8Array(1 + raw.length);
+                aligned[0] = nativeCarryByte;
+                aligned.set(raw, 1);
+                nativeCarryByte = null;
+              } else {
+                aligned = raw;
+              }
+              if (aligned.length % 2 !== 0) {
+                nativeCarryByte = aligned[aligned.length - 1];
+                aligned = aligned.subarray(0, aligned.length - 1);
+              }
+              if (aligned.length > 0) {
+                pendingBuf.push(aligned);
+                pendingLen += aligned.length;
+              }
               if (pendingLen >= SEGMENT_BYTES) {
                 enqueueSegment([...pendingBuf], pendingLen);
                 pendingBuf = []; pendingLen = 0;
@@ -1177,14 +1207,17 @@ export default function InsightsScreen() {
           }
         }
 
-        // Flush any remaining PCM as final segment
+        // Flush any remaining PCM as final segment (PCM16-aligned via carry-over above)
         if (pendingLen > 0 && isSpeakingRef.current) {
           enqueueSegment([...pendingBuf], pendingLen);
         }
         if (!nativeFirstChunk) setIsTTSLoading(false);
         streamDone = true;
 
-        if (!isSpeakingRef.current || abortController.signal.aborted) return;
+        if (!isSpeakingRef.current || abortController.signal.aborted) {
+          cleanupSegFiles();
+          return;
+        }
         if (segIdx === 0) throw new Error('No audio data received');
 
         await playbackDone;
