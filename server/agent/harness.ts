@@ -175,6 +175,10 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
   let packBoostCapIds: string[] = [];
   let packSuppressCapIds: string[] = [];
 
+  // Tools hard-excluded by integration health (broken integrations).
+  // Pack boosts MUST NOT re-add these — they are unavailable at runtime.
+  const hardExcludedToolNames = new Set<string>();
+
   const { getModel } = await import("../lib/modelPrefs");
   const model = modelOpt ?? (await getModel(context.userId, "chat"));
 
@@ -375,6 +379,8 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
 
       // (a) Deterministic tool exclusion for broken integrations.
       if (toolsToExclude.size > 0) {
+        // Record hard exclusions so pack boosts cannot re-add unavailable tools.
+        for (const name of toolsToExclude) hardExcludedToolNames.add(name);
         const before = tools.length;
         tools = tools.filter((t: AgentTool) => !toolsToExclude.has(t.name));
         console.log(
@@ -550,6 +556,8 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
           const cap = capabilityRegistry.getById(capId);
           if (cap) {
             for (const tool of cap.tools) {
+              // Never re-add tools hard-excluded by integration health.
+              if (hardExcludedToolNames.has(tool.name)) continue;
               if (!currentNames.has(tool.name)) {
                 const src = (initialTools as AgentTool[]).find((it) => it.name === tool.name);
                 if (src) { tools = [...tools, src]; currentNames.add(src.name); boosted++; }
