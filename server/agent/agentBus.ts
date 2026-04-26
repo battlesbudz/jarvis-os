@@ -56,7 +56,7 @@ export interface BusDeliveryResult {
   error?: string;
 }
 
-const MAX_DELEGATION_DEPTH = 3;
+const MAX_DELEGATION_DEPTH = 5; // spec requires max depth 5 (was incorrectly set to 3)
 
 // ── sendToAgent ────────────────────────────────────────────────────────────────
 

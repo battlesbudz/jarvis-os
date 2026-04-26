@@ -1,37 +1,85 @@
 /**
- * AgentConfigSchema — JSON import/export schema for agent configs.
+ * AgentConfigSchema — Zod-validated JSON import/export schema for agent configs.
  *
  * Agents can be exported to JSON and imported back, enabling sharing and
  * version control of agent configurations.
  *
  * The schema is also used to validate configs submitted via the REST API.
  */
+import { z } from "zod";
 import type { AgentPermissions, AgentMemoryScope } from "@shared/schema";
 import { DEFAULT_AGENT_PERMISSIONS } from "@shared/schema";
+import type { DiscordAgent } from "@shared/schema";
 
-// ── JSON Schema for agent config ───────────────────────────────────────────────
+// ── Zod schema for agent permissions ──────────────────────────────────────────
 
-export interface AgentConfigFile {
-  version: "1";
-  name: string;
-  role: string;
-  personality_prompt?: string;
-  platforms: string[];
-  permissions: AgentPermissions;
-  memory_scope: AgentMemoryScope;
-  can_access_global_memory: boolean;
-  private_mode?: boolean;
-  loop_enabled?: boolean;
-  loop_interval_minutes?: number;
-  loop_prompt?: string;
-  channel_id?: string;
-  channel_name?: string;
-  platform_channels?: Record<string, string[]>;
-  allowed_users?: string[];
-  allowed_conversations?: string[];
-  tags?: string[];
-  exported_at: string;
-}
+export const AgentPermissionsSchema = z.object({
+  can_search_web: z.boolean().default(true),
+  can_use_browser: z.boolean().default(false),
+  can_send_emails: z.boolean().default(false),
+  can_create_email_drafts: z.boolean().default(false),
+  can_read_email: z.boolean().default(false),
+  can_send_messages: z.boolean().default(true),
+  can_access_files: z.boolean().default(false),
+  can_take_screenshots: z.boolean().default(false),
+  can_open_apps: z.boolean().default(false),
+  can_call_user: z.boolean().default(false),
+  can_use_voice: z.boolean().default(false),
+  can_create_tasks: z.boolean().default(true),
+  can_create_other_agents: z.boolean().default(false),
+  can_access_global_memory: z.boolean().default(false),
+});
+
+// ── Zod schema for agent config file ──────────────────────────────────────────
+
+const VALID_ROLES = [
+  "coach", "researcher", "coder", "writer", "analyst",
+  "scheduler", "support", "security", "devops", "custom",
+] as const;
+
+const VALID_PLATFORMS = ["discord", "telegram", "web", "api", "council"] as const;
+const VALID_SCOPES = ["agent_private", "shared", "global"] as const;
+
+export const AgentConfigFileSchema = z.object({
+  version: z.literal("1"),
+  name: z
+    .string()
+    .min(1, "name is required")
+    .max(64, "name must be ≤ 64 characters")
+    .refine((v) => v.trim().length > 0, "name must not be blank"),
+  role: z
+    .string()
+    .min(1, "role is required"),
+  personality_prompt: z.string().optional(),
+  platforms: z
+    .array(z.string())
+    .default(["discord"])
+    .refine(
+      (arr) => arr.every((p) => (VALID_PLATFORMS as readonly string[]).includes(p)),
+      { message: `platforms must only contain: ${VALID_PLATFORMS.join(", ")}` },
+    ),
+  permissions: AgentPermissionsSchema.default(DEFAULT_AGENT_PERMISSIONS),
+  memory_scope: z.enum(VALID_SCOPES).default("agent_private"),
+  can_access_global_memory: z.boolean().default(false),
+  private_mode: z.boolean().optional().default(false),
+  loop_enabled: z.boolean().optional().default(false),
+  loop_interval_minutes: z
+    .number()
+    .int()
+    .min(1, "loop_interval_minutes must be ≥ 1")
+    .max(10080, "loop_interval_minutes must be ≤ 10080 (1 week)")
+    .optional(),
+  loop_prompt: z.string().optional(),
+  channel_id: z.string().optional(),
+  channel_name: z.string().optional(),
+  platform_channels: z.record(z.array(z.string())).optional(),
+  allowed_users: z.array(z.string()).optional().default([]),
+  allowed_conversations: z.array(z.string()).optional().default([]),
+  tags: z.array(z.string()).optional(),
+  exported_at: z.string().datetime({ message: "exported_at must be a valid ISO 8601 datetime" }),
+});
+
+export type AgentConfigFile = z.infer<typeof AgentConfigFileSchema>;
 
 // ── Validation ─────────────────────────────────────────────────────────────────
 
@@ -41,85 +89,35 @@ export interface ValidationResult {
   warnings: string[];
 }
 
-const VALID_ROLES = [
-  "coach", "researcher", "coder", "writer", "analyst",
-  "scheduler", "support", "security", "devops", "custom",
-];
-const VALID_PLATFORMS = ["discord", "telegram", "web", "api", "council"];
-const VALID_SCOPES: AgentMemoryScope[] = ["agent_private", "shared", "global"];
-
 export function validateAgentConfig(raw: unknown): ValidationResult {
-  const errors: string[] = [];
-  const warnings: string[] = [];
+  const result = AgentConfigFileSchema.safeParse(raw);
+  if (result.success) {
+    const warnings: string[] = [];
+    const data = raw as Record<string, unknown>;
 
-  if (!raw || typeof raw !== "object") {
-    return { ok: false, errors: ["Config must be a JSON object"], warnings: [] };
-  }
-
-  const config = raw as Record<string, unknown>;
-
-  // Required fields
-  if (!config.name || typeof config.name !== "string" || !config.name.trim()) {
-    errors.push("'name' is required and must be a non-empty string");
-  } else if (config.name.length > 64) {
-    errors.push("'name' must be ≤ 64 characters");
-  }
-
-  if (!config.role || typeof config.role !== "string") {
-    errors.push("'role' is required");
-  } else if (!VALID_ROLES.includes(config.role as string)) {
-    warnings.push(`'role' "${config.role}" is not a standard role. Standard roles: ${VALID_ROLES.join(", ")}`);
-  }
-
-  // Platforms
-  if (config.platforms !== undefined) {
-    if (!Array.isArray(config.platforms)) {
-      errors.push("'platforms' must be an array");
-    } else {
-      for (const p of config.platforms as string[]) {
-        if (!VALID_PLATFORMS.includes(p)) {
-          warnings.push(`Unknown platform: "${p}". Valid platforms: ${VALID_PLATFORMS.join(", ")}`);
-        }
-      }
+    // Warn on non-standard roles (not hard errors)
+    if (
+      data.role &&
+      typeof data.role === "string" &&
+      !(VALID_ROLES as readonly string[]).includes(data.role)
+    ) {
+      warnings.push(
+        `'role' "${data.role}" is not a standard role. Standard roles: ${VALID_ROLES.join(", ")}`,
+      );
     }
+
+    return { ok: true, errors: [], warnings };
   }
 
-  // Permissions
-  if (config.permissions !== undefined) {
-    if (typeof config.permissions !== "object" || Array.isArray(config.permissions)) {
-      errors.push("'permissions' must be an object");
-    } else {
-      const perms = config.permissions as Record<string, unknown>;
-      const validFlags = Object.keys(DEFAULT_AGENT_PERMISSIONS);
-      for (const key of Object.keys(perms)) {
-        if (!validFlags.includes(key)) {
-          warnings.push(`Unknown permission flag: "${key}"`);
-        } else if (typeof perms[key] !== "boolean") {
-          errors.push(`Permission flag "${key}" must be a boolean`);
-        }
-      }
-    }
-  }
-
-  // Memory scope
-  if (config.memory_scope !== undefined && !VALID_SCOPES.includes(config.memory_scope as AgentMemoryScope)) {
-    errors.push(`'memory_scope' must be one of: ${VALID_SCOPES.join(", ")}`);
-  }
-
-  // Numeric fields
-  if (config.loop_interval_minutes !== undefined) {
-    const n = Number(config.loop_interval_minutes);
-    if (isNaN(n) || n < 1 || n > 10080) {
-      errors.push("'loop_interval_minutes' must be between 1 and 10080 (1 week)");
-    }
-  }
-
-  return { ok: errors.length === 0, errors, warnings };
+  // Map Zod issues to error strings
+  const errors = result.error.issues.map((issue) => {
+    const path = issue.path.length > 0 ? `'${issue.path.join(".")}': ` : "";
+    return `${path}${issue.message}`;
+  });
+  return { ok: false, errors, warnings: [] };
 }
 
 // ── Export ─────────────────────────────────────────────────────────────────────
-
-import type { DiscordAgent } from "@shared/schema";
 
 export function exportAgentConfig(agent: DiscordAgent): AgentConfigFile {
   return {
