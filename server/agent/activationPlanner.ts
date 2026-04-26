@@ -109,23 +109,9 @@ function hourToTimeOfDay(hour: number): SessionContext["timeOfDay"] {
 }
 
 // ─── Research intent classifier ───────────────────────────────────────────────
-// Lightweight keyword heuristic — no LLM call so it runs in <1ms per query.
-// Returns "research" when the query text matches patterns typical of web/doc
-// research. Returns "general" for conversational or task-management queries.
-
-const RESEARCH_PATTERNS = [
-  /\b(search|look up|lookup|google|find|browse|research|investigate)\b/i,
-  /\b(article|website|url|link|page|source|reference|docs?|documentation)\b/i,
-  /\b(what is|what are|who is|where is|how does|how do|explain|define|tell me about)\b/i,
-  /\b(youtube|video|transcript|watch|summarize this)\b/i,
-  /\b(latest news|news about|read about|fetch|scrape|crawl)\b/i,
-  /https?:\/\//i,
-];
-
-export function classifyQueryIntent(text: string): "research" | "general" {
-  if (!text || text.trim().length === 0) return "general";
-  return RESEARCH_PATTERNS.some((re) => re.test(text)) ? "research" : "general";
-}
+// Pure utility extracted to queryClassifier.ts so tests can import the real
+// implementation without triggering DB or OpenAI connections.
+export { classifyQueryIntent } from "./queryClassifier";
 
 // ─── ActivationPlanner ────────────────────────────────────────────────────────
 
