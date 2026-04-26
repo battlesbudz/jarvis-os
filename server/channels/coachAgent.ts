@@ -2,6 +2,7 @@ import { db } from "../db";
 import { eq, and, desc, sql, gte } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { runAgent } from "../agent/harness";
+import { activationPlanner } from "../agent/activationPlanner";
 import { parseChannelKey, resolveChannelTools } from "../agent/tools/channelTools";
 import { getChannel } from "./registry";
 import { getValidGoogleTokens } from "../userTokenStore";
@@ -316,6 +317,20 @@ When a user's request involves multi-step research, drafting a document or plan,
     (registeredChannel ? ` (groups: ${registeredChannel.toolGroups.join(", ")})` : " (fallback groups)"),
   );
 
+  // ── Activation planner — run before the model session ─────────────────────
+  // Channel sessions always run (shouldRun is always true for explicit user
+  // messages), but the planner injects session context (focus areas, urgent
+  // signals, energy state, top predictions) into the system prompt so the
+  // model is primed with what to focus on this turn.
+  let channelActivationPlan: import("../agent/activationPlanner").ActivationPlan | undefined;
+  try {
+    channelActivationPlan = await activationPlanner.plan(userId, channelName);
+    console.log(`[${channelName}] activation: shouldRun=${channelActivationPlan.shouldRun} — ${channelActivationPlan.reason}`);
+  } catch (err) {
+    // Best-effort — never block a channel session
+    console.warn(`[${channelName}] activation planner failed (non-fatal):`, err);
+  }
+
   const agentResult = await runAgent({
     model: "gpt-5-mini",
     messages: baseMessages,
@@ -324,6 +339,7 @@ When a user's request involves multi-step research, drafting a document or plan,
     maxTurns: 6,
     maxCompletionTokens: getMaxTokensForChannel(channelName),
     onToken,
+    activationPlan: channelActivationPlan,
   });
 
   console.log(`[${channelName}] coach agent — turns=${agentResult.turns}, tools_used=${agentResult.toolCalls.length}, finish=${agentResult.finishReason}`);
