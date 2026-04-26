@@ -177,34 +177,76 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
     }
   }
 
-  // ── Pre-flight integration status → system prompt note ───────────────────
-  // Read cached integration health for this user. If any integration that the
-  // channel's tool surface depends on is broken, inject a plain-language note
-  // into the system prompt so the model can tell the user proactively instead
-  // of silently failing mid-conversation.
-  // Google-gated tools are already excluded by the hasGoogle flag; this block
-  // adds the human-readable diagnostic note.
+  // ── Pre-flight integration status: tool exclusion + system prompt note ──────
+  // Reads cached integration health for this user and:
+  //   (a) Deterministically removes tools whose required integration is BROKEN
+  //       from the active tool list — prompt-only guidance is insufficient.
+  //   (b) Injects a plain-language system prompt note so the model can explain
+  //       proactively why certain capabilities are unavailable.
+  //   (c) Adds a softer advisory note for EXPIRING_SOON integrations (still
+  //       usable — warn the user to reconnect soon but don't block tools).
+  //
+  // Tool-to-integration dependency map: tools in INTEGRATION_TOOL_DEPS[k] are
+  // excluded from the session when integration k is broken.
+  const INTEGRATION_TOOL_DEPS: Record<string, string[]> = {
+    google: [
+      "gmail_action", "gmail_draft", "fetch_calendar",
+      "drive_create_file", "drive_list_files", "drive_read_file",
+    ],
+    outlook: [
+      // Outlook tools are not yet exposed as AgentTools; reserved for future.
+    ],
+  };
+
   if (context.userId) {
     try {
       const { getUserIntegrationStatuses } = await import("../intelligence/integrationValidator");
       const statuses = await getUserIntegrationStatuses(context.userId);
 
-      // Build list of broken integrations that affect agent capabilities.
-      const broken: string[] = [];
-      if (statuses.google === "broken")        broken.push("Google (Gmail + Calendar + Drive)");
-      if (statuses.outlook === "broken")       broken.push("Microsoft Outlook");
-      if (statuses.google === "expiring_soon") broken.push("Google (token expiring soon — user should reconnect)");
-      if (statuses.outlook === "expiring_soon") broken.push("Microsoft Outlook (token expiring soon)");
+      // Collect broken integrations and their tool lists.
+      const brokenIntegrations: string[] = [];
+      const toolsToExclude = new Set<string>();
 
-      if (broken.length > 0) {
-        const note = `\n\n---\n## Integration Alerts\nThe following integrations are currently unavailable and their tools MUST NOT be used:\n${broken.map((b) => `- ${b}`).join("\n")}\nIf the user asks about email, calendar, or related tasks, tell them their ${broken.map((b) => b.split(" (")[0]).join(" / ")} connection needs to be reconnected in Settings → Connections before Jarvis can help.`;
-        messages = messages.map((m, i) => {
-          if (i === 0 && m.role === "system") {
-            return { ...m, content: (m.content ?? "") + note };
-          }
-          return m;
-        });
-        console.log(`[${channel}/Harness] integration alert: ${broken.join(", ")}`);
+      if (statuses.google === "broken") {
+        brokenIntegrations.push("Google (Gmail + Calendar + Drive)");
+        for (const t of (INTEGRATION_TOOL_DEPS.google ?? [])) toolsToExclude.add(t);
+      }
+      if (statuses.outlook === "broken") {
+        brokenIntegrations.push("Microsoft Outlook");
+        for (const t of (INTEGRATION_TOOL_DEPS.outlook ?? [])) toolsToExclude.add(t);
+      }
+
+      // (a) Deterministic tool exclusion for broken integrations.
+      if (toolsToExclude.size > 0) {
+        const before = tools.length;
+        tools = tools.filter((t: AgentTool) => !toolsToExclude.has(t.name));
+        console.log(
+          `[${channel}/Harness] excluded ${before - tools.length} tools for broken integrations: ${brokenIntegrations.join(", ")}`,
+        );
+      }
+
+      // (b) System prompt note for broken integrations (tool use blocked).
+      if (brokenIntegrations.length > 0) {
+        const unavailableNote = `\n\n---\n## Integration Alerts\nThe following integrations are BROKEN and their associated tools have been disabled for this session:\n${brokenIntegrations.map((b) => `- ${b}`).join("\n")}\nIf the user asks about email, calendar, or related tasks, tell them their ${brokenIntegrations.map((b) => b.split(" (")[0]).join(" / ")} connection needs to be reconnected in Settings → Connections before Jarvis can help. Do not attempt to call the disabled tools.`;
+        messages = messages.map((m, i) =>
+          i === 0 && m.role === "system"
+            ? { ...m, content: (m.content ?? "") + unavailableNote }
+            : m,
+        );
+        console.log(`[${channel}/Harness] integration alert (broken): ${brokenIntegrations.join(", ")}`);
+      }
+
+      // (c) Advisory note for expiring-soon integrations (tools still active).
+      const expiringSoon: string[] = [];
+      if (statuses.google === "expiring_soon") expiringSoon.push("Google");
+      if (statuses.outlook === "expiring_soon") expiringSoon.push("Microsoft Outlook");
+      if (expiringSoon.length > 0) {
+        const expiryNote = `\n\n⚠️ Note: The following integration tokens are expiring soon (tools are still active): ${expiringSoon.join(", ")}. Mention this to the user if relevant so they can reconnect before the token expires.`;
+        messages = messages.map((m, i) =>
+          i === 0 && m.role === "system"
+            ? { ...m, content: (m.content ?? "") + expiryNote }
+            : m,
+        );
       }
     } catch {
       // Best-effort — never block an agent run
