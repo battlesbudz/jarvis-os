@@ -1056,12 +1056,18 @@ export default function InsightsScreen() {
         const chunks: Uint8Array[] = [];
         let totalLength = 0;
         let done = false;
+        let firstChunkReceived = false;
 
         while (!done && !abortController.signal.aborted && isSpeakingRef.current) {
           const { done: readDone, value } = await reader.read();
           if (readDone) break;
           for (const msg of parseLines(decoder.decode(value, { stream: true }))) {
             if (msg.type === 'chunk' && msg.data) {
+              // Show waveform indicator as soon as first audio chunk arrives
+              if (!firstChunkReceived) {
+                firstChunkReceived = true;
+                setIsTTSLoading(false);
+              }
               const binaryStr = atob(msg.data);
               const bytes = new Uint8Array(binaryStr.length);
               for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
@@ -1096,7 +1102,7 @@ export default function InsightsScreen() {
         let offset = 44;
         for (const chunk of chunks) { wavBytes.set(chunk, offset); offset += chunk.length; }
 
-        setIsTTSLoading(false);
+        if (!firstChunkReceived) setIsTTSLoading(false);
         const tmpUri = (FileSystem.cacheDirectory ?? '') + 'jarvis_stream.wav';
         await FileSystem.writeAsStringAsync(tmpUri, uint8ToBase64(wavBytes), { encoding: FileSystem.EncodingType.Base64 });
 
