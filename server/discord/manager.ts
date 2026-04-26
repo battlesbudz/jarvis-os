@@ -5,6 +5,7 @@ import { channelLinks, users, discordPendingApprovals, discordAgents } from "@sh
 import { getUserToken, saveUserToken, deleteUserToken } from "../userTokenStore";
 import { runCoachAgent } from "../channels/coachAgent";
 import { setupWorkspace as _setupWorkspace, postToTopicChannel as _postToTopicChannel, classifyTopic, getTopicForChannel, WORKSPACE_TOPICS, type WorkspaceMeta } from "./workspace";
+import { getUserTtsChannels, getUserTtsPrefs, speakToUser } from "../agent/tools/tts";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -556,6 +557,18 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
         await editOrSendLong(placeholder, reply);
       } else {
         await sendLong(message.channel as { send(t: string): Promise<unknown> }, reply);
+      }
+
+      // Auto-voice mode: if "discord" is enabled in user's ttsChannels, also
+      // send every reply as an OGG audio attachment (additive — text still sent).
+      try {
+        const channels = await getUserTtsChannels(userId);
+        if (channels.includes("discord")) {
+          const prefs = await getUserTtsPrefs(userId);
+          await speakToUser(userId, reply, prefs.voice, { channel: "discord", discordChannelId });
+        }
+      } catch (ttsErr) {
+        console.warn("[DiscordManager] auto-voice TTS failed (text reply already sent):", ttsErr);
       }
     } catch (err) {
       console.error("[DiscordManager] runCoachAgent failed:", err);
