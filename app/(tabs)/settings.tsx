@@ -204,6 +204,13 @@ export default function SettingsScreen() {
     errorCount15m: number;
     lastEvent?: string;
   }
+  interface DiagEventEntry {
+    id: string;
+    subsystem: string;
+    severity: string;
+    message: string;
+    createdAt: string;
+  }
   interface HealthReport {
     overallStatus: 'healthy' | 'degraded' | 'down';
     subsystems: SubsystemStatus[];
@@ -211,6 +218,9 @@ export default function SettingsScreen() {
     dbReachable: boolean;
     jobQueueDepth: number;
     staleJobCount: number;
+    stuckWorkflowCount: number;
+    channelStatuses: Record<string, { configured: boolean }>;
+    recentErrors: DiagEventEntry[];
     generatedAt: string;
   }
   const [healthReport, setHealthReport] = useState<HealthReport | null>(null);
@@ -1523,6 +1533,35 @@ export default function SettingsScreen() {
             </View>
           )}
 
+          {/* Recent error timeline */}
+          {healthReport && healthReport.recentErrors && healthReport.recentErrors.length > 0 && (
+            <View style={healthStyles.timelineSection}>
+              <Text style={healthStyles.timelineHeader}>Recent Errors</Text>
+              {healthReport.recentErrors.slice(0, 5).map((ev) => {
+                const sevColor = ev.severity === 'critical' ? Colors.error : ev.severity === 'error' ? Colors.error : '#F59E0B';
+                const timeAgo = (() => {
+                  const diffMs = Date.now() - new Date(ev.createdAt).getTime();
+                  const m = Math.floor(diffMs / 60000);
+                  if (m < 1) return 'just now';
+                  if (m < 60) return `${m}m ago`;
+                  return `${Math.floor(m / 60)}h ago`;
+                })();
+                return (
+                  <View key={ev.id} style={healthStyles.timelineRow}>
+                    <View style={[healthStyles.timelineDot, { backgroundColor: sevColor }]} />
+                    <View style={healthStyles.timelineContent}>
+                      <View style={healthStyles.timelineMeta}>
+                        <Text style={[healthStyles.timelineSub, { color: sevColor }]}>{ev.subsystem.replace('_', ' ')}</Text>
+                        <Text style={healthStyles.timelineTime}>{timeAgo}</Text>
+                      </View>
+                      <Text style={healthStyles.timelineMsg} numberOfLines={2}>{ev.message}</Text>
+                    </View>
+                  </View>
+                );
+              })}
+            </View>
+          )}
+
           {/* Diagnosis section */}
           <View style={healthStyles.diagSection}>
             <Pressable
@@ -2418,5 +2457,58 @@ const healthStyles = StyleSheet.create({
     fontFamily: 'Inter_400Regular',
     color: Colors.textSecondary,
     lineHeight: 18,
+  },
+  timelineSection: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  timelineHeader: {
+    fontSize: 10,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.textTertiary,
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+    marginBottom: 4,
+  },
+  timelineRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+  },
+  timelineDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    marginTop: 5,
+    flexShrink: 0,
+  },
+  timelineContent: {
+    flex: 1,
+    gap: 2,
+  },
+  timelineMeta: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  timelineSub: {
+    fontSize: 10,
+    fontFamily: 'Inter_600SemiBold',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  timelineTime: {
+    fontSize: 10,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textTertiary,
+  },
+  timelineMsg: {
+    fontSize: 11,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+    lineHeight: 15,
   },
 });

@@ -10,6 +10,7 @@ import * as schema from "@shared/schema";
 import type { WorkflowStep } from "@shared/schema";
 import { notifyUser } from "../channels/registry";
 import { submitAgentJob } from "./jobClient";
+import { emit as diagEmit } from "../diagnostics/diagnosticsService";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -194,4 +195,12 @@ export async function onWorkflowJobFail(
     "approval_request",
     `❌ Workflow failed: "${workflow.title}" — Step ${stepIndex + 1} error: ${error.slice(0, 300)}`,
   ).catch(() => {});
+
+  diagEmit({
+    userId: workflow.userId,
+    subsystem: "workflow_engine",
+    severity: "error",
+    message: `Workflow "${workflow.title}" step ${stepIndex + 1} failed: ${error.slice(0, 200)}`,
+    metadata: { workflowId, stepIndex, workflowTitle: workflow.title },
+  }).catch(() => {});
 }

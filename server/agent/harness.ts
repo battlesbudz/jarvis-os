@@ -2,6 +2,7 @@
 import OpenAI from "openai";
 import type { AgentTool, AgentToolCallRecord, ToolContext } from "./types";
 import type { ActivationPlan } from "./activationPlanner";
+import { emit as diagEmit } from "../diagnostics/diagnosticsService";
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
@@ -736,6 +737,13 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
               `[${channel}/Agent] tool=${tc.function.name} threw:`,
               err,
             );
+            diagEmit({
+              userId: context.userId,
+              subsystem: "agent_harness",
+              severity: "warning",
+              message: `Tool ${tc.function.name} threw: ${detail.slice(0, 200)}`,
+              metadata: { toolName: tc.function.name, channel: context.channel ?? "unknown" },
+            }).catch(() => {});
             return { tc, content: result.content };
           }
         }),
