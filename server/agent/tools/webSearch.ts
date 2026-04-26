@@ -1,9 +1,50 @@
 import type { AgentTool } from "../types";
 import { tavilySearch, formatSearchResults } from "../../integrations/search";
+import type { SearchResult } from "../../integrations/search";
+import { callBrowserTool } from "../mcp/playwrightMcpClient";
 
 type TavilyLikeResult = Awaited<ReturnType<typeof tavilySearch>>;
 function emptyTavilyResult(answer: string): TavilyLikeResult {
   return { answer, results: [] } as TavilyLikeResult;
+}
+
+const JS_SPARSE_THRESHOLD = 200;
+const MAX_BROWSER_FALLBACK = 2;
+
+/**
+ * For search results with very short content (likely JS-rendered pages where
+ * Tavily's crawler got little text), attempt to retrieve richer content via
+ * the Playwright MCP browser.  At most MAX_BROWSER_FALLBACK URLs are fetched
+ * to keep latency reasonable.
+ */
+async function enrichSparseResults(
+  results: SearchResult[],
+  userId: string,
+): Promise<SearchResult[]> {
+  const enriched = [...results];
+  let attempts = 0;
+  for (let i = 0; i < enriched.length && attempts < MAX_BROWSER_FALLBACK; i++) {
+    if (enriched[i].content.trim().length >= JS_SPARSE_THRESHOLD) continue;
+    const url = enriched[i].url;
+    if (!url.startsWith("http")) continue;
+    try {
+      await callBrowserTool(userId, "browser_navigate", { url });
+      const snap = await callBrowserTool(userId, "browser_snapshot", {});
+      const text = snap.content
+        .filter((c) => c.type === "text" && c.text)
+        .map((c) => c.text!)
+        .join("\n")
+        .trim()
+        .slice(0, 2000);
+      if (text.length > enriched[i].content.length) {
+        enriched[i] = { ...enriched[i], content: text };
+      }
+    } catch {
+      /* best-effort — don't fail research if browser fallback errors */
+    }
+    attempts++;
+  }
+  return enriched;
 }
 
 export const webSearchTool: AgentTool = {
@@ -76,7 +117,7 @@ export const researchTopicTool: AgentTool = {
       : [topic];
 
     try {
-      const results: TavilyLikeResult[] = await Promise.all(
+      const rawResults: TavilyLikeResult[] = await Promise.all(
         queries.map((q) =>
           tavilySearch(q, 4).catch((err: unknown) => {
             const msg = err instanceof Error ? err.message : String(err);
@@ -85,8 +126,20 @@ export const researchTopicTool: AgentTool = {
         )
       );
 
+      // Enrich sparse (likely JS-rendered) results via Playwright MCP browser fallback.
+      // Flatten → enrich (max 2 URLs total) → re-map back per query.
+      const allResults = rawResults.flatMap((r) => r.results);
+      const enrichedAll = await enrichSparseResults(allResults, ctx.userId);
+      let offset = 0;
+      const enrichedByQuery: TavilyLikeResult[] = rawResults.map((r) => {
+        const count = r.results.length;
+        const slice = enrichedAll.slice(offset, offset + count);
+        offset += count;
+        return { ...r, results: slice };
+      });
+
       const sections = queries.map((q, i) => {
-        const formatted = formatSearchResults(results[i]);
+        const formatted = formatSearchResults(enrichedByQuery[i]);
         return `### Query: ${q}\n${formatted || "(no results)"}`;
       });
 
