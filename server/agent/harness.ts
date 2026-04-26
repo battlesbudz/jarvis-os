@@ -170,6 +170,11 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
   // `tools` is mutable so the channel-scope gate below can reassign it.
   let tools = initialTools;
 
+  // Aggregated tool-group preferences from active skill packs.
+  // Populated during pack loading; consumed by the tool-filter phase.
+  let packBoostCapIds: string[] = [];
+  let packSuppressCapIds: string[] = [];
+
   const { getModel } = await import("../lib/modelPrefs");
   const model = modelOpt ?? (await getModel(context.userId, "chat"));
 
@@ -211,7 +216,24 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
         const packBlock = packs
           .map((p) => `### Pack: ${p.name} (v${p.version})\n${p.merged}`)
           .join("\n\n");
-        const injected = `\n\n---\n## Behaviour Packs\nThe following operator instructions MUST be followed. Per-user Ego adjustments are included:\n\n${packBlock}`;
+        // Build heartbeat-rules summary for packs that have non-empty rules.
+        const heartbeatLines: string[] = [];
+        for (const p of packs) {
+          const r = p.heartbeatRules;
+          const lines: string[] = [];
+          if (r.disableDuringFocusBlocks) lines.push("do not send proactive messages during focus blocks");
+          if (r.batchInterruptions) lines.push("batch non-urgent interruptions outside focus hours");
+          if (r.quietHoursOnly) lines.push("limit proactive messaging to quiet hours only");
+          if (r.suppressNotificationTypes?.length) {
+            lines.push(`suppress notification types: ${r.suppressNotificationTypes.join(", ")}`);
+          }
+          if (lines.length > 0) heartbeatLines.push(`${p.name}: ${lines.join("; ")}`);
+        }
+        const heartbeatSection = heartbeatLines.length > 0
+          ? `\n\n**Active heartbeat rules from packs:** ${heartbeatLines.join(" | ")}`
+          : "";
+
+        const injected = `\n\n---\n## Behaviour Packs\nThe following operator instructions MUST be followed. Per-user Ego adjustments are included:${heartbeatSection}\n\n${packBlock}`;
         messages = messages.map((m, i) => {
           if (i === 0 && m.role === "system") {
             return { ...m, content: (m.content ?? "") + injected };
@@ -219,6 +241,13 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
           return m;
         });
         console.log(`[${channel}/Harness] injected ${packs.length} behaviour pack(s)`);
+
+        // Aggregate tool-group preferences from all active packs for use
+        // in the tool-filter phase (applied after manifest suppressions).
+        for (const p of packs) {
+          if (p.toolGroups?.boost?.length) packBoostCapIds.push(...p.toolGroups.boost);
+          if (p.toolGroups?.suppress?.length) packSuppressCapIds.push(...p.toolGroups.suppress);
+        }
       }
     } catch {
       // packs are best-effort — never block an agent run
@@ -452,6 +481,26 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
         }
       }
 
+      // Step 2.5: Skill-pack BOOSTS — add tools for capabilities requested by active packs.
+      // Applied after manifest activations so pack preferences supplement (not replace) session context.
+      if (packBoostCapIds.length > 0) {
+        let boosted = 0;
+        for (const capId of packBoostCapIds) {
+          const cap = capabilityRegistry.getById(capId);
+          if (cap) {
+            for (const tool of cap.tools) {
+              if (!allowedToolNames.has(tool.name)) { allowedToolNames.add(tool.name); boosted++; }
+            }
+          }
+        }
+        if (boosted > 0) {
+          hasAnyScope = true;
+          console.log(
+            `[${channel}/Harness] pack boosts: +${boosted} tools for capabilities: [${[...new Set(packBoostCapIds)].join(", ")}]`,
+          );
+        }
+      }
+
       // Step 2b: Suppression-only heartbeat fallback.
       // When a plan has ONLY suppressions (no active capabilities) and there is no
       // channel scope, the allowed set is empty so suppressions would be a no-op.
@@ -485,6 +534,25 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
         if (removed > 0) {
           console.log(
             `[${channel}/Harness] manifest suppressions: -${removed} tools for capabilities: [${opts.activationPlan.capabilityManifest.suppressedCapabilityIds.join(", ")}]`,
+          );
+        }
+      }
+
+      // Step 3.5: Skill-pack SUPPRESSIONS — remove tools for capabilities suppressed by active packs.
+      // Applied after manifest suppressions; pack preferences win over boosts from the same pack.
+      if (packSuppressCapIds.length > 0) {
+        let removed = 0;
+        for (const capId of packSuppressCapIds) {
+          const cap = capabilityRegistry.getById(capId);
+          if (cap) {
+            for (const tool of cap.tools) {
+              if (allowedToolNames.has(tool.name)) { allowedToolNames.delete(tool.name); removed++; }
+            }
+          }
+        }
+        if (removed > 0) {
+          console.log(
+            `[${channel}/Harness] pack suppressions: -${removed} tools for capabilities: [${[...new Set(packSuppressCapIds)].join(", ")}]`,
           );
         }
       }

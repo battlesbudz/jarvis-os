@@ -24,6 +24,8 @@ import {
   type SkillPack,
   type SkillPackChangelogEntry,
   type EgoInstructionOverrides,
+  type PackHeartbeatRules,
+  type PackToolGroups,
 } from "@shared/schema";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -32,6 +34,8 @@ export interface PublishPackPayload {
   packId?: string;
   name: string;
   instructions: string;
+  heartbeatRules?: PackHeartbeatRules;
+  toolGroups?: PackToolGroups;
   changeNote: string;
 }
 
@@ -42,6 +46,8 @@ export interface MergedPackInstructions {
   baseInstructions: string;
   overrides: EgoInstructionOverrides;
   merged: string;
+  heartbeatRules: PackHeartbeatRules;
+  toolGroups: PackToolGroups;
 }
 
 export interface AdminPackView extends SkillPack {
@@ -86,6 +92,8 @@ export async function publishSkillPack(payload: PublishPackPayload): Promise<Ski
         .set({
           name: payload.name,
           instructions: payload.instructions,
+          ...(payload.heartbeatRules !== undefined ? { heartbeatRules: payload.heartbeatRules } : {}),
+          ...(payload.toolGroups !== undefined ? { toolGroups: payload.toolGroups } : {}),
           version: newVersion,
           publishedAt: now,
           changelog: newChangelog,
@@ -295,6 +303,8 @@ export async function loadPackInstructionsForUser(
       baseInstructions: pack.instructions,
       overrides,
       merged,
+      heartbeatRules: (pack.heartbeatRules as PackHeartbeatRules) ?? {},
+      toolGroups: (pack.toolGroups as PackToolGroups) ?? {},
     });
   }
 
@@ -333,6 +343,33 @@ export async function listStorePacksForUser(userId: string): Promise<StorePackVi
 }
 
 /**
+ * Fetch a single store-visible pack with the given user's activation status.
+ * Returns null if the pack doesn't exist or is not visible in the store.
+ */
+export async function getStorePackById(
+  packId: string,
+  userId: string,
+): Promise<StorePackView | null> {
+  const rows = await db
+    .select()
+    .from(skillPacks)
+    .where(and(eq(skillPacks.id, packId), eq(skillPacks.isStoreVisible, true)))
+    .limit(1);
+
+  if (rows.length === 0) return null;
+
+  const pack = rows[0];
+
+  const userRow = await db
+    .select({ isActive: userSkillPacks.isActive })
+    .from(userSkillPacks)
+    .where(and(eq(userSkillPacks.userId, userId), eq(userSkillPacks.packId, packId)))
+    .limit(1);
+
+  return { ...pack, isActive: userRow[0]?.isActive ?? false };
+}
+
+/**
  * Activate or deactivate a store pack for a user.
  *
  * Upserts the user_skill_packs row so:
@@ -345,12 +382,13 @@ export async function setUserPackActive(
   isActive: boolean,
 ): Promise<void> {
   const pack = await db
-    .select({ version: skillPacks.version })
+    .select({ version: skillPacks.version, isStoreVisible: skillPacks.isStoreVisible })
     .from(skillPacks)
     .where(eq(skillPacks.id, packId))
     .limit(1);
 
   if (pack.length === 0) throw new Error(`Pack ${packId} not found`);
+  if (!pack[0].isStoreVisible) throw new Error(`Pack ${packId} is not a store-visible pack`);
 
   await db
     .insert(userSkillPacks)
@@ -377,6 +415,8 @@ interface SeedPackDef {
   name: string;
   description: string;
   instructions: string;
+  heartbeatRules: PackHeartbeatRules;
+  toolGroups: PackToolGroups;
 }
 
 const SEED_PACKS: SeedPackDef[] = [
@@ -392,6 +432,12 @@ Key rules:
 - Avoid cognitive overload: no walls of text, no multiple questions in a row.
 - Celebrate small completions with brief, genuine acknowledgement.
 - If the user hasn't responded to a task-in-progress for more than 30 minutes, send a soft check-in.`,
+    heartbeatRules: {
+      disableDuringFocusBlocks: false,
+      batchInterruptions: true,
+      suppressNotificationTypes: ["low-priority"],
+    },
+    toolGroups: {},
   },
   {
     name: "Deep Work Mode",
@@ -405,6 +451,15 @@ Key rules:
 - Discourage context-switching: if the user starts switching topics mid-task, acknowledge it and ask if they want to pause the current task first.
 - Keep all proactive messages short during deep-work hours — one line maximum.
 - After a focus block ends, offer a brief summary of what was deferred during the block.`,
+    heartbeatRules: {
+      disableDuringFocusBlocks: true,
+      batchInterruptions: true,
+      quietHoursOnly: false,
+      suppressNotificationTypes: ["low-priority", "social"],
+    },
+    toolGroups: {
+      suppress: ["browser"],
+    },
   },
   {
     name: "Research Mode",
@@ -418,6 +473,10 @@ Key rules:
 - Go deeper by default: if a topic has sub-topics worth exploring, surface them.
 - When the user asks a research question, automatically consider adjacent angles they may not have thought of.
 - Save significant research outputs to Drive automatically (if connected) and confirm with the user.`,
+    heartbeatRules: {},
+    toolGroups: {
+      boost: ["browser", "research"],
+    },
   },
   {
     name: "Email Zero",
@@ -431,6 +490,12 @@ Key rules:
 - When presenting inbox items, always include a suggested action: Reply / Archive / Delegate / Schedule.
 - Unsubscribe from newsletters and promotional emails on behalf of the user without prompting (just report the action taken).
 - Target: inbox count below 10 actionable items at all times. Alert the user if it exceeds this threshold.`,
+    heartbeatRules: {
+      suppressNotificationTypes: ["social", "low-priority"],
+    },
+    toolGroups: {
+      boost: ["email"],
+    },
   },
 ];
 
@@ -458,6 +523,8 @@ export async function seedDefaultPacks(): Promise<void> {
         name: def.name,
         description: def.description,
         instructions: def.instructions,
+        heartbeatRules: def.heartbeatRules,
+        toolGroups: def.toolGroups,
         version: 1,
         isStoreVisible: true,
         publishedAt: now,
