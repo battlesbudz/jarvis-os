@@ -177,12 +177,13 @@ export async function writeEgoOverrides(
 
   const prev: EgoInstructionOverrides = existing[0]?.instructionOverrides ?? {};
 
+  // Replacement semantics: the caller always passes the full computed list, so
+  // we overwrite (not union) suppressActionTypes. This lets Ego recovery cycles
+  // clear entries that were previously suppressed.
   const merged: EgoInstructionOverrides = {
     ...prev,
     ...overrides,
-    suppressActionTypes: Array.from(
-      new Set([...(prev.suppressActionTypes ?? []), ...(overrides.suppressActionTypes ?? [])]),
-    ),
+    suppressActionTypes: overrides.suppressActionTypes ?? prev.suppressActionTypes ?? [],
     updatedAt: new Date().toISOString(),
   };
 
