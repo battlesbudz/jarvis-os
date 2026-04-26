@@ -7,7 +7,6 @@ import { discordPinMessageTool } from "../agent/tools/discordPinMessage";
 import { setupNamedAgentTool } from "../agent/tools/setupNamedAgent";
 import { setupContentPipelineTool } from "../agent/tools/setupContentPipeline";
 import { setupDiscordWorkspaceTool } from "../agent/tools/setupDiscordWorkspace";
-import { registerApprovalTool } from "../agent/tools/registerApproval";
 import {
   scheduleChannelReportTool,
   listChannelSchedulesTool,
@@ -47,7 +46,6 @@ export const discordCapability: Capability = {
     setupNamedAgentTool,
     setupContentPipelineTool,
     setupDiscordWorkspaceTool,
-    registerApprovalTool,
     scheduleChannelReportTool,
     listChannelSchedulesTool,
     deleteChannelScheduleTool,
