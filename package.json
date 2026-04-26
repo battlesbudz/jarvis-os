@@ -35,6 +35,7 @@
     "expo-auth-session": "~7.0.10",
     "expo-av": "^16.0.8",
     "expo-blur": "~15.0.8",
+    "expo-clipboard": "^55.0.13",
     "expo-constants": "~18.0.11",
     "expo-document-picker": "^55.0.8",
     "expo-file-system": "^55.0.10",
