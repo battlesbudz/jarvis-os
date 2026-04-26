@@ -322,9 +322,38 @@ When a user's request involves multi-step research, drafting a document or plan,
   // messages), but the planner injects session context (focus areas, urgent
   // signals, energy state, top predictions) into the system prompt so the
   // model is primed with what to focus on this turn.
+  //
+  // upcomingMeetingMinutes: compute from the already-fetched calendarEvents.
+  // We look for the nearest event starting within the next 60 minutes so the
+  // planner can activate calendar + email tools before the meeting starts.
+  let upcomingMeetingMinutes: number | undefined;
+  if (calendarEvents.length > 0) {
+    const nowMs = Date.now();
+    let minMinutes = Infinity;
+    for (const ev of calendarEvents) {
+      try {
+        const startMs = new Date(ev.start).getTime();
+        const diffMinutes = (startMs - nowMs) / 60000;
+        if (diffMinutes >= 0 && diffMinutes < 60 && diffMinutes < minMinutes) {
+          minMinutes = diffMinutes;
+        }
+      } catch {
+        // non-fatal — skip malformed event
+      }
+    }
+    if (minMinutes < Infinity) {
+      upcomingMeetingMinutes = Math.round(minMinutes);
+    }
+  }
+
   let channelActivationPlan: import("../agent/activationPlanner").ActivationPlan | undefined;
   try {
-    channelActivationPlan = await activationPlanner.plan(userId, { source: "channel", channel: channelName });
+    channelActivationPlan = await activationPlanner.plan(userId, {
+      source: "channel",
+      channel: channelName,
+      queryText: userText,
+      upcomingMeetingMinutes,
+    });
     console.log(`[${channelName}] activation: shouldRun=${channelActivationPlan.shouldRun} — ${channelActivationPlan.reason}`);
   } catch (err) {
     // Best-effort — never block a channel session

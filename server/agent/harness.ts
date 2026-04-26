@@ -365,20 +365,51 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
     }
   }
 
+  // ── Activation-plan: lazy positive capability filter ──────────────────────
+  // Core of Task #281 — lazy capability loading.
+  //
+  // When the caller supplies an ActivationPlan with non-empty activeCapabilityIds,
+  // keep ONLY the tools that belong to those capabilities. This is the primary
+  // token-reduction mechanism: instead of sending all tool schemas to the model
+  // every tick, we send only the schemas for contextually relevant capabilities.
+  //
+  // Filter order (all compose; channel-scope remains authoritative last):
+  //   broken-integration exclusions
+  //   → manifest positive filter   ← THIS BLOCK (lazy capability loading)
+  //   → manifest suppression       ← belt-and-suspenders for explicit suppressions
+  //   → channel scope              ← authoritative per-channel allowlist
+  //
+  // When activeCapabilityIds is EMPTY the filter is a no-op so existing
+  // callers that do not configure capability rules are unaffected.
+  if (opts.activationPlan && opts.activationPlan.capabilityManifest.activeCapabilityIds.length > 0) {
+    try {
+      const { capabilityRegistry } = await import("../capabilities/index");
+      const activeToolNames = new Set<string>();
+      for (const capId of opts.activationPlan.capabilityManifest.activeCapabilityIds) {
+        const cap = capabilityRegistry.getById(capId);
+        if (cap) {
+          for (const tool of cap.tools) {
+            activeToolNames.add(tool.name);
+          }
+        }
+      }
+      if (activeToolNames.size > 0) {
+        const before = tools.length;
+        tools = tools.filter((t: AgentTool) => activeToolNames.has(t.name));
+        const reduction = before > 0 ? Math.round((1 - tools.length / before) * 100) : 0;
+        console.log(
+          `[${channel}/Harness] lazy-load: ${tools.length}/${before} tools (${reduction}% reduction) for capabilities: [${opts.activationPlan.capabilityManifest.activeCapabilityIds.join(", ")}]`,
+        );
+      }
+    } catch {
+      // Best-effort — never block an agent run
+    }
+  }
+
   // ── Activation-plan manifest suppression filter ────────────────────────────
-  // When the caller supplies an ActivationPlan with explicitly suppressed
-  // capability IDs, remove those capabilities' tools from the active tool list.
-  // This is applied AFTER the integration health filter (which removes tools for
-  // broken integrations) and BEFORE the channel-scope filter (which remains the
-  // authoritative per-channel allowlist). The three filters compose:
-  //
-  //   broken-integration exclusions ∩ manifest suppressions ∩ channel scope
-  //
-  // For heartbeat ticks the planner may suppress heavy-compute capabilities
-  // (e.g. "browser", "discord") when the user is stressed or in a quiet period,
-  // reducing token and latency cost on background sessions. For channel sessions
-  // the channel-scope filter is still authoritative; planner suppressions apply
-  // on top (e.g. suppressing discord tools when user is overwhelmed).
+  // Belt-and-suspenders: remove suppressed capabilities' tools even after the
+  // positive filter (handles edge cases where a suppressed cap slipped through).
+  // Applied AFTER the positive filter and BEFORE the channel-scope filter.
   if (opts.activationPlan && opts.activationPlan.capabilityManifest.suppressedCapabilityIds.length > 0) {
     try {
       const { capabilityRegistry } = await import("../capabilities/index");
@@ -394,9 +425,11 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
       if (suppressedToolNames.size > 0) {
         const before = tools.length;
         tools = tools.filter((t: AgentTool) => !suppressedToolNames.has(t.name));
-        console.log(
-          `[${channel}/Harness] manifest-suppressed ${before - tools.length} tools for capabilities: ${opts.activationPlan.capabilityManifest.suppressedCapabilityIds.join(", ")}`,
-        );
+        if (before > tools.length) {
+          console.log(
+            `[${channel}/Harness] manifest-suppressed ${before - tools.length} tools for capabilities: [${opts.activationPlan.capabilityManifest.suppressedCapabilityIds.join(", ")}]`,
+          );
+        }
       }
     } catch {
       // Best-effort — never block an agent run
