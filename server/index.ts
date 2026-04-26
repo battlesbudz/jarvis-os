@@ -273,6 +273,14 @@ function setupErrorHandler(app: express.Application) {
 
 (async () => {
   await ensureTablesExist();
+
+  // Seed first-party skill packs (idempotent — skips existing rows)
+  import("./intelligence/behaviorStore").then(({ seedDefaultPacks }) => {
+    seedDefaultPacks().catch((err) =>
+      console.warn("[Startup] skill pack seeding failed (non-fatal):", err),
+    );
+  }).catch(() => {});
+
   logTelegramStatus();
 
   setupCors(app);

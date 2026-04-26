@@ -858,8 +858,10 @@ export interface SkillPackChangelogEntry {
 export const skillPacks = pgTable("skill_packs", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   name: text("name").notNull(),
+  description: text("description").notNull().default(""),
   version: integer("version").notNull().default(1),
   instructions: text("instructions").notNull().default(""),
+  isStoreVisible: boolean("is_store_visible").notNull().default(false),
   publishedAt: timestamp("published_at"),
   changelog: jsonb("changelog")
     .$type<SkillPackChangelogEntry[]>()
@@ -881,6 +883,7 @@ export const userSkillPacks = pgTable("user_skill_packs", {
   userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   packId: varchar("pack_id").notNull().references(() => skillPacks.id, { onDelete: "cascade" }),
   appliedVersion: integer("applied_version").notNull().default(1),
+  isActive: boolean("is_active").notNull().default(false),
   instructionOverrides: jsonb("instruction_overrides")
     .$type<EgoInstructionOverrides>()
     .notNull()

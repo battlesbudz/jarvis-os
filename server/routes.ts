@@ -5608,6 +5608,62 @@ Extract up to 8 memories per batch.`;
     }
   });
 
+  // ── Skill Store — user-facing pack endpoints ─────────────────────────────
+  /**
+   * GET /api/skill-packs
+   * List all store-visible packs with the current user's activation status.
+   */
+  app.get("/api/skill-packs", async (req: Request, res: Response) => {
+    const userId = (req as any).userId as string | undefined;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    try {
+      const { listStorePacksForUser } = await import("./intelligence/behaviorStore");
+      const packs = await listStorePacksForUser(userId);
+      res.json({ packs });
+    } catch (err) {
+      console.error("[SkillStore] list failed:", err);
+      res.status(500).json({ error: "Failed to list skill packs" });
+    }
+  });
+
+  /**
+   * POST /api/skill-packs/:packId/activate
+   * Activate a pack for the current user.
+   */
+  app.post("/api/skill-packs/:packId/activate", async (req: Request, res: Response) => {
+    const userId = (req as any).userId as string | undefined;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    const { packId } = req.params;
+    try {
+      const { setUserPackActive } = await import("./intelligence/behaviorStore");
+      await setUserPackActive(userId, packId, true);
+      res.json({ ok: true });
+    } catch (err: any) {
+      if (err?.message?.includes("not found")) return res.status(404).json({ error: err.message });
+      console.error("[SkillStore] activate failed:", err);
+      res.status(500).json({ error: "Failed to activate pack" });
+    }
+  });
+
+  /**
+   * DELETE /api/skill-packs/:packId/activate
+   * Deactivate a pack for the current user.
+   */
+  app.delete("/api/skill-packs/:packId/activate", async (req: Request, res: Response) => {
+    const userId = (req as any).userId as string | undefined;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    const { packId } = req.params;
+    try {
+      const { setUserPackActive } = await import("./intelligence/behaviorStore");
+      await setUserPackActive(userId, packId, false);
+      res.json({ ok: true });
+    } catch (err: any) {
+      if (err?.message?.includes("not found")) return res.status(404).json({ error: err.message });
+      console.error("[SkillStore] deactivate failed:", err);
+      res.status(500).json({ error: "Failed to deactivate pack" });
+    }
+  });
+
   app.delete("/api/skills/:skillId", async (req: Request, res: Response) => {
     const userId = (req as any).userId as string | undefined;
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
