@@ -119,6 +119,73 @@ async function handleOp(op) {
         .slice(0, 500);
       return { ok: true, entries };
     }
+    if (op.type === "desktop_screenshot" || op.type === "desktop_read_screen") {
+      const tmpFile = `/tmp/jarvis-shot-${Date.now()}.png`;
+      const platform = process.platform;
+
+      // Build the platform-specific screenshot command
+      let shotCmd;
+      if (platform === "darwin") {
+        shotCmd = `screencapture -x -t png "${tmpFile}"`;
+      } else if (platform === "linux") {
+        // Try scrot first; fall back to ImageMagick import
+        shotCmd = `scrot "${tmpFile}" 2>/dev/null || import -window root "${tmpFile}"`;
+      } else if (platform === "win32") {
+        const ps = `Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Screen]::PrimaryScreen | ForEach-Object { $bmp = New-Object System.Drawing.Bitmap($_.Bounds.Width, $_.Bounds.Height); $g = [System.Drawing.Graphics]::FromImage($bmp); $g.CopyFromScreen($_.Bounds.Location, [System.Drawing.Point]::Empty, $_.Bounds.Size); $bmp.Save('${tmpFile}') }`;
+        shotCmd = `powershell -NoProfile -Command "${ps.replace(/"/g, '\\"')}"`;
+      } else {
+        return { ok: false, error: `desktop_screenshot not supported on platform ${platform}` };
+      }
+
+      // Capture
+      const shotResult = await new Promise((resolve) => {
+        exec(shotCmd, { timeout: 15000 }, (err) => {
+          if (err) resolve({ ok: false, error: String(err.message || err) });
+          else resolve({ ok: true });
+        });
+      });
+
+      if (!shotResult.ok) {
+        return { ok: false, error: `Screenshot command failed: ${shotResult.error}` };
+      }
+
+      if (!fs.existsSync(tmpFile)) {
+        return { ok: false, error: "Screenshot file was not created. Ensure a display server is running." };
+      }
+
+      const imgBuf = fs.readFileSync(tmpFile);
+      const imgBase64 = imgBuf.toString("base64");
+
+      // Clean up temp file (best effort)
+      try { fs.unlinkSync(tmpFile); } catch (_) { /* noop */ }
+
+      if (op.type === "desktop_screenshot") {
+        return { ok: true, image: imgBase64, mimeType: "image/png" };
+      }
+
+      // desktop_read_screen — run OCR via tesseract if available
+      const ocrTmpBase = `/tmp/jarvis-ocr-${Date.now()}`;
+      const ocrTmpPng = `${ocrTmpBase}-in.png`;
+      fs.writeFileSync(ocrTmpPng, imgBuf);
+
+      const ocrResult = await new Promise((resolve) => {
+        exec(`tesseract "${ocrTmpPng}" stdout 2>/dev/null`, { timeout: 30000, maxBuffer: 2 * 1024 * 1024 }, (err, stdout) => {
+          try { fs.unlinkSync(ocrTmpPng); } catch (_) { /* noop */ }
+          if (err || !stdout || !stdout.trim()) {
+            resolve({ ok: false, text: null });
+          } else {
+            resolve({ ok: true, text: stdout.trim() });
+          }
+        });
+      });
+
+      if (ocrResult.ok && ocrResult.text) {
+        return { ok: true, text: ocrResult.text, ocrAvailable: true };
+      }
+
+      // Tesseract not available or produced no text — return screenshot as fallback
+      return { ok: true, text: null, ocrAvailable: false, image: imgBase64, mimeType: "image/png", note: "Tesseract not available; returning raw screenshot for visual inspection." };
+    }
     return { ok: false, error: `unknown op type ${op.type}` };
   } catch (err) {
     return { ok: false, error: String(err && err.message ? err.message : err) };
