@@ -1224,6 +1224,31 @@ Rules:
         },
       },
     },
+    {
+      type: "function" as const,
+      function: {
+        name: "image_generate",
+        description:
+          "Generate an image from a text prompt using DALL-E 3 and display it inline in the chat. " +
+          "Use for concept illustrations, motivational visuals, meal plan photos, mind maps, or any explicit image request. " +
+          "Do NOT call this for text-only answers — only when the user explicitly asks for an image or a visual would meaningfully enhance the response.",
+        parameters: {
+          type: "object",
+          properties: {
+            prompt: {
+              type: "string",
+              description: "A detailed description of the image to generate. Include style, content, mood, and any relevant details.",
+            },
+            size: {
+              type: "string",
+              enum: ["square", "landscape", "portrait"],
+              description: "Image aspect ratio: square (1:1, default), landscape (16:9), portrait (9:16).",
+            },
+          },
+          required: ["prompt"],
+        },
+      },
+    },
   ];
 
   function fuzzyMatch(needle: string, haystack: string): boolean {
@@ -1973,6 +1998,33 @@ Rules:
           const recurrenceLabel = args.recurrence ? ` (${args.recurrence})` : '';
           return { result: 'success', label: 'Task scheduled', detail: `"${args.title}" scheduled for ${timeLabel}${recurrenceLabel}` };
         }
+        case 'image_generate': {
+          const prompt = String(args.prompt || '').trim();
+          if (!prompt) return { result: 'error', label: 'prompt required', detail: 'Provide a prompt for image_generate.' };
+          const sizeMap: Record<string, string> = { square: '1024x1024', landscape: '1792x1024', portrait: '1024x1792' };
+          const size = sizeMap[String(args.size || 'square')] ?? '1024x1024';
+          try {
+            const { default: OpenAI } = await import('openai');
+            const imgClient = new OpenAI({
+              apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
+              baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
+            });
+            const response = await imgClient.images.generate({
+              model: 'dall-e-3',
+              prompt,
+              n: 1,
+              size: size as '1024x1024' | '1792x1024' | '1024x1792',
+              response_format: 'url',
+            });
+            const imageUrl = response.data[0]?.url;
+            if (!imageUrl) throw new Error('No image URL returned');
+            return { result: 'success', label: 'Image generated', detail: JSON.stringify({ imageUrl }) };
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.error('[image_generate] DALL-E 3 error in routes:', err);
+            return { result: 'error', label: 'Image generation failed', detail: msg };
+          }
+        }
         default:
           return { result: 'error', label: 'Unknown action', detail: `Unknown tool: ${toolName}` };
       }
@@ -2432,12 +2484,15 @@ You can extend yourself by building new tools directly. Generate the complete Ty
             }
 
             const execResult = await executeCoachTool(tc.function.name, args, userId);
-            let linkData: { url?: string; buttonLabel?: string; code?: string; channel?: string; screenshotUrl?: string } = {};
+            let linkData: { url?: string; buttonLabel?: string; code?: string; channel?: string; screenshotUrl?: string; imageUrl?: string } = {};
             if ((tc.function.name === 'generate_reconnect_link' || tc.function.name === 'connect_channel') && execResult.result === 'success') {
               try { linkData = JSON.parse(execResult.detail); } catch {}
             }
             if (tc.function.name === 'daemon_action' && String(args.action) === 'android_screenshot' && execResult.result === 'success') {
               try { const parsed = JSON.parse(execResult.detail); if (parsed.screenshotUrl) linkData.screenshotUrl = parsed.screenshotUrl; } catch {}
+            }
+            if (tc.function.name === 'image_generate' && execResult.result === 'success') {
+              try { const parsed = JSON.parse(execResult.detail); if (parsed.imageUrl) linkData.imageUrl = parsed.imageUrl; } catch {}
             }
             actionResults.push({ tool: tc.function.name, result: execResult.result, label: execResult.label, ...linkData });
             let toolResultContent: string;

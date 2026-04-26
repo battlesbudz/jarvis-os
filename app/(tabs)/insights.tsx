@@ -364,7 +364,8 @@ function MessageBubble({ message, isFirst, isLastAssistant, goals, onFollowup, o
       {!isUser && message.executedActions && message.executedActions.length > 0 && (() => {
         const urlActions = message.executedActions!.filter(ea => ea.url);
         const screenshotActions = message.executedActions!.filter(ea => !ea.url && ea.screenshotUrl);
-        const nonUrlActions = message.executedActions!.filter(ea => !ea.url && !ea.screenshotUrl);
+        const imageActions = message.executedActions!.filter(ea => !ea.url && !ea.screenshotUrl && ea.imageUrl);
+        const nonUrlActions = message.executedActions!.filter(ea => !ea.url && !ea.screenshotUrl && !ea.imageUrl);
         return (
           <>
             {urlActions.map((ea, idx) => (
@@ -433,6 +434,15 @@ function MessageBubble({ message, isFirst, isLastAssistant, goals, onFollowup, o
                   source={{ uri: `${getApiUrl().replace(/\/$/, '')}${ea.screenshotUrl}` }}
                   style={styles.screenshotImage}
                   resizeMode="contain"
+                />
+              </View>
+            ))}
+            {imageActions.map((ea, idx) => (
+              <View key={`image-${idx}`} style={styles.generatedImageContainer}>
+                <Image
+                  source={{ uri: ea.imageUrl! }}
+                  style={styles.generatedImage}
+                  resizeMode="cover"
                 />
               </View>
             ))}
@@ -3257,6 +3267,19 @@ const styles = StyleSheet.create({
     width: 280,
     height: 497,
     backgroundColor: '#000',
+  },
+  generatedImageContainer: {
+    marginTop: 10,
+    borderRadius: 12,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: Colors.border,
+    maxWidth: 280,
+  },
+  generatedImage: {
+    width: 280,
+    height: 280,
+    backgroundColor: Colors.surface,
   },
   confirmCard: {
     backgroundColor: Colors.surface,
