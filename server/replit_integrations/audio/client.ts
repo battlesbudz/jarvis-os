@@ -225,12 +225,13 @@ export async function elevenlabsTtsStream(
   text: string,
   voiceId: string,
   modelId: string = "eleven_turbo_v2_5",
+  latencyTier: 0 | 1 | 2 | 3 | 4 = 2,
 ): Promise<AsyncIterable<string>> {
   const apiKey = process.env.ELEVENLABS_API_KEY;
   if (!apiKey) throw new Error("ELEVENLABS_API_KEY not set");
 
   const res = await fetch(
-    `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream?optimize_streaming_latency=2`,
+    `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream?optimize_streaming_latency=${latencyTier}`,
     {
       method: "POST",
       headers: {

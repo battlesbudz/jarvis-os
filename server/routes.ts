@@ -3300,7 +3300,7 @@ Return ONLY the JSON object.`;
     const userId = req.userId;
     if (!userId) return res.status(401).json({ error: "Not authenticated" });
 
-    const { text, voice } = req.body;
+    const { text, voice: voiceOverride, latencyTier } = req.body;
     if (!text || typeof text !== 'string') {
       return res.status(400).json({ error: "text is required" });
     }
@@ -3312,13 +3312,24 @@ Return ONLY the JSON object.`;
     }
 
     const OPENAI_VOICES = new Set(["alloy", "echo", "fable", "onyx", "nova", "shimmer"]);
-    const safeVoice = (voice && typeof voice === "string" ? voice.toLowerCase() : "alloy");
-    const isElevenLabs = !OPENAI_VOICES.has(safeVoice);
+
+    // Resolve voice: explicit override → user's saved preference → default "nova"
+    const { getUserTtsPrefs } = await import('./agent/tools/tts');
+    const prefs = await getUserTtsPrefs(userId);
+    const resolvedVoice = (voiceOverride && typeof voiceOverride === "string")
+      ? voiceOverride.toLowerCase()
+      : (prefs.voice || "nova");
+
+    const isElevenLabs = !OPENAI_VOICES.has(resolvedVoice);
+
+    // ElevenLabs latency tier: 0=best quality, 4=lowest latency; default 2 (balanced)
+    const elLatency = (typeof latencyTier === "number" && latencyTier >= 0 && latencyTier <= 4)
+      ? latencyTier : 2;
 
     res.setHeader("Content-Type", "application/x-ndjson");
     res.setHeader("Transfer-Encoding", "chunked");
     res.setHeader("Cache-Control", "no-cache");
-    res.setHeader("X-Accel-Buffering", "no"); // Disable Nginx buffering
+    res.setHeader("X-Accel-Buffering", "no");
 
     const writeLine = (obj: object) => {
       if (!res.destroyed) {
@@ -3328,9 +3339,14 @@ Return ONLY the JSON object.`;
 
     try {
       const { textToSpeechStream, elevenlabsTtsStream } = await import('./replit_integrations/audio/client');
+
+      const openaiVoice = OPENAI_VOICES.has(resolvedVoice)
+        ? resolvedVoice as "alloy" | "echo" | "fable" | "onyx" | "nova" | "shimmer"
+        : "nova";
+
       const stream = isElevenLabs && process.env.ELEVENLABS_API_KEY
-        ? await elevenlabsTtsStream(trimmedText, safeVoice)
-        : await textToSpeechStream(trimmedText, OPENAI_VOICES.has(safeVoice) ? safeVoice as "alloy" | "echo" | "fable" | "onyx" | "nova" | "shimmer" : "alloy");
+        ? await elevenlabsTtsStream(trimmedText, resolvedVoice, "eleven_turbo_v2_5", elLatency)
+        : await textToSpeechStream(trimmedText, openaiVoice);
 
       for await (const base64Chunk of stream) {
         if (res.destroyed) break;
