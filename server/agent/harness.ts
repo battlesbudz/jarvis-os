@@ -195,17 +195,16 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
       const hasGoogle = !!context.googleAccessToken;
       const scoped = await resolveChannelTools(context.channel, hasGoogle);
       if (scoped.length > 0) {
+        // For a *known* channel the scope is authoritative — always apply the
+        // intersection, even when it reduces the list to zero tools. This fails
+        // closed for misconfigured callers rather than leaking extra tools.
+        // (If scoped.length === 0 the channel was unrecognised and we leave tools
+        // unchanged to preserve resiliency for unnamed internal sub-agents.)
         const scopedNames = new Set(scoped.map((t: AgentTool) => t.name));
-        // Intersect: keep only tools that the caller provided AND the channel allows.
-        const filtered = tools.filter((t: AgentTool) => scopedNames.has(t.name));
-        if (filtered.length > 0) {
-          // Only apply when the intersection is non-empty to avoid accidentally
-          // silencing all tools for an unrecognised channel name.
-          tools = filtered;
-          console.log(
-            `[${channel}/Harness] channel-scope: ${tools.length} tools (from ${initialTools.length})`,
-          );
-        }
+        tools = tools.filter((t: AgentTool) => scopedNames.has(t.name));
+        console.log(
+          `[${channel}/Harness] channel-scope: ${tools.length} tools (from ${initialTools.length})`,
+        );
       }
     } catch {
       // scoping is best-effort — never block an agent run
