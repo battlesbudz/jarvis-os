@@ -666,7 +666,7 @@ export default function SettingsScreen() {
                       ? { backgroundColor: Colors.error + '20', borderColor: Colors.error }
                       : status.connected ? styles.connBtnConnected : styles.connBtnDisconnected,
                   ]}
-                  onPress={() => (isBroken || !status.connected) ? handleConnect(p.id) : handleDisconnect(p.id)}
+                  onPress={() => (isBroken || isExpiring || !status.connected) ? handleConnect(p.id) : handleDisconnect(p.id)}
                   disabled={isConnecting || loadingStatus}
                 >
                   {isConnecting ? (

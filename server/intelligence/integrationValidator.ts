@@ -99,23 +99,17 @@ async function checkOAuthIntegration(
     const expiresAt: Date | null = row.expires_at ? new Date(row.expires_at) : null;
     const now = Date.now();
 
-    if (expiresAt) {
-      if (expiresAt.getTime() < now) {
-        // Expired — validator is read-only; report broken so UI shows reconnect CTA.
-        // Token refresh is handled by the OAuth routes on the next user-initiated action.
-        return {
-          status: "broken",
-          errorMessage: "Token expired — please reconnect in Settings",
-          expiresAt,
-        };
-      }
-
-      if (expiresAt.getTime() < now + EXPIRY_WARNING_MS) {
-        return { status: "expiring_soon", expiresAt };
-      }
+    // Hard-expired: report broken immediately — no ping needed, token is unusable.
+    if (expiresAt && expiresAt.getTime() < now) {
+      return {
+        status: "broken",
+        errorMessage: "Token expired — please reconnect in Settings",
+        expiresAt,
+      };
     }
 
-    // Token exists and not expired — do a cheap connectivity ping
+    // Token is present and not expired — always do a cheap connectivity ping
+    // to verify scopes haven't been revoked, even for expiring_soon tokens.
     const healthy = await pingOAuthProvider(provider, row.access_token as string);
     if (!healthy.ok) {
       return {
@@ -123,6 +117,11 @@ async function checkOAuthIntegration(
         errorMessage: healthy.error ?? "API ping failed — token may be revoked",
         expiresAt: expiresAt ?? undefined,
       };
+    }
+
+    // Ping passed — classify as expiring_soon if within warning window, else healthy.
+    if (expiresAt && expiresAt.getTime() < now + EXPIRY_WARNING_MS) {
+      return { status: "expiring_soon", expiresAt };
     }
 
     return { status: "healthy", expiresAt: expiresAt ?? undefined };
