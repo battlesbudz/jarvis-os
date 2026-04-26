@@ -918,6 +918,19 @@ export async function ensureTablesExist() {
       ALTER TABLE openclaw_build_log ADD COLUMN IF NOT EXISTS smoke_test_args JSONB
     `).catch(() => {});
 
+    // integration_status — pre-flight validator cache written every 30 min
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS integration_status (
+        user_id         VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        integration     VARCHAR NOT NULL,
+        status          VARCHAR NOT NULL DEFAULT 'unconfigured',
+        last_checked_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        error_message   TEXT,
+        expires_at      TIMESTAMP,
+        PRIMARY KEY (user_id, integration)
+      )
+    `).catch(() => {});
+
     console.log("Database tables verified");
   } catch (error) {
     console.error("Failed to ensure database tables exist:", error);

@@ -208,36 +208,170 @@ async function pingOAuthProvider(
   }
 }
 
+// ── Cached system-level credential checks (once per process start) ────────────
+// These validate that the bot/API credentials are correctly configured.
+// Per-call overhead is a Map lookup; actual ping happens once per cycle.
+
+const systemPingCache = new Map<string, { ok: boolean; checkedAt: number }>();
+const SYSTEM_PING_TTL_MS = 30 * 60 * 1000; // 30 min — same as run cadence
+
+async function checkSystemCredential(
+  key: string,
+  pingFn: () => Promise<boolean>,
+): Promise<boolean> {
+  const cached = systemPingCache.get(key);
+  if (cached && Date.now() - cached.checkedAt < SYSTEM_PING_TTL_MS) {
+    return cached.ok;
+  }
+  let ok = false;
+  try { ok = await pingFn(); } catch { ok = false; }
+  systemPingCache.set(key, { ok, checkedAt: Date.now() });
+  return ok;
+}
+
+async function pingTelegramBot(): Promise<boolean> {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token) return false;
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${token}/getMe`);
+    const body = await res.json() as any;
+    return body?.ok === true;
+  } catch { return false; }
+}
+
+async function pingDiscordBot(): Promise<boolean> {
+  const token = process.env.DISCORD_BOT_TOKEN;
+  if (!token) return false;
+  try {
+    const res = await fetch("https://discord.com/api/v10/users/@me", {
+      headers: { Authorization: `Bot ${token}` },
+    });
+    return res.ok;
+  } catch { return false; }
+}
+
+async function pingSlack(): Promise<boolean> {
+  const token = process.env.SLACK_BOT_TOKEN;
+  if (!token) return false;
+  try {
+    const res = await fetch("https://slack.com/api/auth.test", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    });
+    const body = await res.json() as any;
+    return body?.ok === true;
+  } catch { return false; }
+}
+
+async function pingTwilio(): Promise<boolean> {
+  const sid = process.env.TWILIO_ACCOUNT_SID;
+  const token = process.env.TWILIO_AUTH_TOKEN;
+  if (!sid || !token) return false;
+  try {
+    const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${sid}.json`, {
+      headers: { Authorization: `Basic ${Buffer.from(`${sid}:${token}`).toString("base64")}` },
+    });
+    return res.ok;
+  } catch { return false; }
+}
+
 async function checkTelegram(userId: string): Promise<CheckResult> {
   try {
+    // Step 1: verify system bot token is valid
+    const botOk = await checkSystemCredential("telegram_bot", pingTelegramBot);
+    if (!botOk) {
+      return { status: "broken", errorMessage: "Telegram bot token missing or invalid" };
+    }
+    // Step 2: verify user has linked their account
     const rows = await db
       .select({ chatId: schema.telegramLinks.chatId })
       .from(schema.telegramLinks)
       .where(eq(schema.telegramLinks.userId, userId))
       .limit(1);
-    return rows.length > 0
-      ? { status: "healthy" }
-      : { status: "unconfigured" };
+    return rows.length > 0 ? { status: "healthy" } : { status: "unconfigured" };
   } catch {
     return { status: "unconfigured" };
   }
 }
 
-async function checkChannelLink(userId: string, channel: string): Promise<CheckResult> {
+async function checkDiscord(userId: string): Promise<CheckResult> {
   try {
+    // Step 1: verify system Discord bot token
+    const botOk = await checkSystemCredential("discord_bot", pingDiscordBot);
+    if (!botOk) {
+      return { status: "broken", errorMessage: "Discord bot token missing or invalid" };
+    }
+    // Step 2: check user-level link (channel_links or discordAgents)
     const rows = await db
       .select({ id: schema.channelLinks.id })
       .from(schema.channelLinks)
-      .where(
-        and(
-          eq(schema.channelLinks.userId, userId),
-          eq(schema.channelLinks.channel, channel),
-        ),
-      )
+      .where(and(
+        eq(schema.channelLinks.userId, userId),
+        eq(schema.channelLinks.channel, "discord"),
+      ))
       .limit(1);
-    return rows.length > 0
-      ? { status: "healthy" }
-      : { status: "unconfigured" };
+    return rows.length > 0 ? { status: "healthy" } : { status: "unconfigured" };
+  } catch {
+    return { status: "unconfigured" };
+  }
+}
+
+async function checkSlack(userId: string): Promise<CheckResult> {
+  try {
+    const tokenOk = await checkSystemCredential("slack_token", pingSlack);
+    if (!tokenOk) {
+      // Slack may also use per-workspace OAuth stored in channel_links — check that
+      const rows = await db
+        .select({ id: schema.channelLinks.id })
+        .from(schema.channelLinks)
+        .where(and(
+          eq(schema.channelLinks.userId, userId),
+          eq(schema.channelLinks.channel, "slack"),
+        ))
+        .limit(1);
+      if (rows.length === 0) return { status: "unconfigured" };
+      // Linked but system token invalid → broken
+      return { status: "broken", errorMessage: "Slack workspace token missing or invalid" };
+    }
+    const rows = await db
+      .select({ id: schema.channelLinks.id })
+      .from(schema.channelLinks)
+      .where(and(
+        eq(schema.channelLinks.userId, userId),
+        eq(schema.channelLinks.channel, "slack"),
+      ))
+      .limit(1);
+    return rows.length > 0 ? { status: "healthy" } : { status: "unconfigured" };
+  } catch {
+    return { status: "unconfigured" };
+  }
+}
+
+async function checkWhatsApp(userId: string): Promise<CheckResult> {
+  try {
+    const twilioOk = await checkSystemCredential("twilio", pingTwilio);
+    if (!twilioOk) {
+      // Check if user is linked — if so the system creds are broken
+      const rows = await db
+        .select({ id: schema.channelLinks.id })
+        .from(schema.channelLinks)
+        .where(and(
+          eq(schema.channelLinks.userId, userId),
+          eq(schema.channelLinks.channel, "whatsapp"),
+        ))
+        .limit(1);
+      if (rows.length === 0) return { status: "unconfigured" };
+      return { status: "broken", errorMessage: "Twilio credentials missing or invalid" };
+    }
+    const rows = await db
+      .select({ id: schema.channelLinks.id })
+      .from(schema.channelLinks)
+      .where(and(
+        eq(schema.channelLinks.userId, userId),
+        eq(schema.channelLinks.channel, "whatsapp"),
+      ))
+      .limit(1);
+    return rows.length > 0 ? { status: "healthy" } : { status: "unconfigured" };
   } catch {
     return { status: "unconfigured" };
   }
@@ -275,9 +409,9 @@ export async function validateUserIntegrations(userId: string): Promise<void> {
     { integration: "google",   check: () => checkOAuthIntegration(userId, "google") },
     { integration: "outlook",  check: () => checkOAuthIntegration(userId, "microsoft") },
     { integration: "telegram", check: () => checkTelegram(userId) },
-    { integration: "discord",  check: () => checkChannelLink(userId, "discord") },
-    { integration: "slack",    check: () => checkChannelLink(userId, "slack") },
-    { integration: "whatsapp", check: () => checkChannelLink(userId, "whatsapp") },
+    { integration: "discord",  check: () => checkDiscord(userId) },
+    { integration: "slack",    check: () => checkSlack(userId) },
+    { integration: "whatsapp", check: () => checkWhatsApp(userId) },
   ];
 
   await Promise.all(
