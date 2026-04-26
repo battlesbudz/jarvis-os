@@ -195,13 +195,33 @@ export async function callBrowserTool(
   return getOrCreate(userId).callTool(toolName, args);
 }
 
-export function closeMcpSession(userId: string): void {
+export function closeMcpSession(userId: string, wipeProfile = false): void {
   const s = sessions.get(userId);
-  if (s) { s.close(); sessions.delete(userId); }
+  if (s) {
+    s.close();
+    sessions.delete(userId);
+    if (wipeProfile) {
+      try { fs.rmSync(s.profileDir, { recursive: true, force: true }); } catch { /* noop */ }
+    }
+  }
 }
 
 export function hasMcpSession(userId: string): boolean {
   return sessions.has(userId);
+}
+
+/**
+ * Returns true when there is either:
+ * - a live server-side MCP session, OR
+ * - a connected desktop daemon with browser_local permission enabled
+ * (meaning the next callBrowserTool will succeed without navigating first).
+ */
+export async function hasActiveBrowserContext(userId: string): Promise<boolean> {
+  if (sessions.has(userId)) return true;
+  if (isDesktopDaemonActive(userId)) {
+    return isDaemonActionAllowed(userId, "browser_local");
+  }
+  return false;
 }
 
 export function getScreenshotDir(userId: string): string {

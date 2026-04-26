@@ -11,6 +11,28 @@ function emptyTavilyResult(answer: string): TavilyLikeResult {
 const JS_SPARSE_THRESHOLD = 200;
 const MAX_BROWSER_FALLBACK = 2;
 
+// SSRF guard for the browser fallback — mirrors the one in browserTools.ts
+const BLOCKED_SEARCH_HOSTS = /^(localhost|0\.0\.0\.0|metadata\.google\.internal|169\.254\.169\.254)$/i;
+const PRIVATE_IP_PATTERNS = [
+  /^127\.\d+\.\d+\.\d+$/,
+  /^10\.\d+\.\d+\.\d+$/,
+  /^172\.(1[6-9]|2\d|3[01])\.\d+\.\d+$/,
+  /^192\.168\.\d+\.\d+$/,
+  /^169\.254\.\d+\.\d+$/,
+];
+
+function isSafeSearchUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+    const host = parsed.hostname.toLowerCase();
+    if (BLOCKED_SEARCH_HOSTS.test(host)) return false;
+    if (host.endsWith(".local") || host.endsWith(".internal")) return false;
+    if (PRIVATE_IP_PATTERNS.some((rx) => rx.test(host))) return false;
+    return true;
+  } catch { return false; }
+}
+
 /**
  * For search results with very short content (likely JS-rendered pages where
  * Tavily's crawler got little text), attempt to retrieve richer content via
@@ -26,7 +48,7 @@ async function enrichSparseResults(
   for (let i = 0; i < enriched.length && attempts < MAX_BROWSER_FALLBACK; i++) {
     if (enriched[i].content.trim().length >= JS_SPARSE_THRESHOLD) continue;
     const url = enriched[i].url;
-    if (!url.startsWith("http")) continue;
+    if (!isSafeSearchUrl(url)) continue;
     try {
       await callBrowserTool(userId, "browser_navigate", { url });
       const snap = await callBrowserTool(userId, "browser_snapshot", {});
