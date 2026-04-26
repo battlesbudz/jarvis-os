@@ -29,6 +29,11 @@ const openai = new OpenAI({
 
 const HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 const CHECKLIST_PATH = path.resolve(process.cwd(), "JARVIS_HEARTBEAT.md");
+const VALIDATION_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
+
+// Tracks the last time the integration validator ran so each heartbeat tick
+// can gate the (expensive) validation cycle to once per 30 minutes.
+let lastValidationRunAt = 0;
 
 interface UserPrefs {
   timezone?: string;
@@ -666,6 +671,18 @@ export async function runHeartbeatTick(): Promise<void> {
     await maybeRunDailyHistoryPrune();
   } catch (err) {
     console.error("[Heartbeat] emotional state history prune failed:", err);
+  }
+
+  // Integration validator — runs every 30 min (gated here so the validator
+  // itself no longer needs its own setInterval).
+  if (Date.now() - lastValidationRunAt >= VALIDATION_INTERVAL_MS) {
+    lastValidationRunAt = Date.now();
+    try {
+      const { runValidationCycle } = await import("./intelligence/integrationValidator");
+      await runValidationCycle();
+    } catch (err) {
+      console.error("[Heartbeat] integration validation failed:", err);
+    }
   }
 
   // Nervous System — runs first, independent of Telegram linkage.

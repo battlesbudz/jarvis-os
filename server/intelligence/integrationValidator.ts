@@ -25,6 +25,55 @@ import type { IntegrationName, IntegrationStatusValue } from "@shared/schema";
 
 const EXPIRY_WARNING_MS = 24 * 60 * 60 * 1000; // 24 hours
 
+// ── Typed row / response shapes ───────────────────────────────────────────────
+
+interface OAuthTokenRow {
+  access_token: string;
+  refresh_token: string | null;
+  expires_at: Date | string | null;
+  scopes: string | null;
+}
+
+interface SqlQueryResult<T> {
+  rows?: T[];
+}
+
+interface GoogleApiErrorBody {
+  error?: { message?: string };
+}
+
+interface MicrosoftApiErrorBody {
+  error?: { message?: string };
+}
+
+interface TelegramGetMeResponse {
+  ok: boolean;
+  result?: { id: number; is_bot: boolean; username: string };
+}
+
+interface TelegramWebhookInfoResponse {
+  ok: boolean;
+  result?: {
+    url?: string;
+    last_error_date?: number;
+    last_error_message?: string;
+  };
+}
+
+interface SlackAuthTestResponse {
+  ok: boolean;
+  error?: string;
+}
+
+interface DiscordGuildEntry {
+  id: string;
+  name: string;
+}
+
+interface UserIdRow {
+  id: string | number;
+}
+
 // ── Per-integration health checkers ─────────────────────────────────────────
 
 interface CheckResult {
@@ -44,7 +93,7 @@ async function checkOAuthIntegration(
       WHERE user_id = ${userId} AND provider = ${provider}
       LIMIT 1
     `);
-    const row = (rows as any).rows?.[0] ?? (Array.isArray(rows) ? rows[0] : null);
+    const row = (rows as SqlQueryResult<OAuthTokenRow>).rows?.[0] ?? (Array.isArray(rows) ? (rows as OAuthTokenRow[])[0] : null);
     if (!row) return { status: "unconfigured" };
 
     const expiresAt: Date | null = row.expires_at ? new Date(row.expires_at) : null;
@@ -97,7 +146,7 @@ async function pingOAuthProvider(
         { headers: { Authorization: `Bearer ${accessToken}` } },
       );
       if (res.ok) return { ok: true };
-      const body = await res.json() as any;
+      const body = await res.json() as GoogleApiErrorBody;
       return { ok: false, error: body?.error?.message ?? `HTTP ${res.status}` };
     }
 
@@ -106,7 +155,7 @@ async function pingOAuthProvider(
         headers: { Authorization: `Bearer ${accessToken}` },
       });
       if (res.ok) return { ok: true };
-      const body = await res.json() as any;
+      const body = await res.json() as MicrosoftApiErrorBody;
       return {
         ok: false,
         error: body?.error?.message ?? `HTTP ${res.status}`,
@@ -146,7 +195,7 @@ async function pingTelegramBot(): Promise<boolean> {
   if (!token) return false;
   try {
     const res = await fetch(`https://api.telegram.org/bot${token}/getMe`);
-    const body = await res.json() as any;
+    const body = await res.json() as TelegramGetMeResponse;
     return body?.ok === true;
   } catch { return false; }
 }
@@ -170,7 +219,7 @@ async function pingSlack(): Promise<boolean> {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     });
-    const body = await res.json() as any;
+    const body = await res.json() as SlackAuthTestResponse;
     return body?.ok === true;
   } catch { return false; }
 }
@@ -194,7 +243,7 @@ async function checkTelegramWebhookState(): Promise<boolean> {
   if (!token) return false;
   try {
     const res = await fetch(`https://api.telegram.org/bot${token}/getWebhookInfo`);
-    const body = await res.json() as any;
+    const body = await res.json() as TelegramWebhookInfoResponse;
     if (!body?.ok) return false;
     const info = body.result ?? {};
     // If lastErrorDate is within the last 60 minutes, webhook is degraded.
@@ -239,7 +288,7 @@ async function pingDiscordBotGuilds(): Promise<boolean> {
       headers: { Authorization: `Bot ${token}` },
     });
     if (!res.ok) return false;
-    const guilds = await res.json() as any[];
+    const guilds = await res.json() as DiscordGuildEntry[];
     return Array.isArray(guilds) && guilds.length > 0;
   } catch { return false; }
 }
@@ -430,8 +479,8 @@ export async function getUserIntegrationStatuses(
 async function getAllUserIds(): Promise<string[]> {
   try {
     const rows = await db.execute(sql`SELECT id FROM users`);
-    const items = (rows as any).rows ?? (Array.isArray(rows) ? rows : []);
-    return items.map((r: any) => String(r.id));
+    const items: UserIdRow[] = (rows as SqlQueryResult<UserIdRow>).rows ?? (Array.isArray(rows) ? (rows as UserIdRow[]) : []);
+    return items.map((r) => String(r.id));
   } catch {
     return [];
   }
@@ -439,7 +488,7 @@ async function getAllUserIds(): Promise<string[]> {
 
 let running = false;
 
-async function runValidationCycle(): Promise<void> {
+export async function runValidationCycle(): Promise<void> {
   if (running) return;
   running = true;
   try {
@@ -456,21 +505,14 @@ async function runValidationCycle(): Promise<void> {
   }
 }
 
-const INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
-
 export function startIntegrationValidator(): void {
-  // Delay first run by 10 seconds to let DB connections warm up on boot
+  // Delay first run by 10 seconds to let DB connections warm up on boot.
+  // Subsequent 30-minute cycles are driven by runHeartbeatTick() in heartbeat.ts.
   setTimeout(() => {
     runValidationCycle().catch((err) =>
       console.error("[IntegrationValidator] initial run failed:", err),
     );
   }, 10_000);
 
-  setInterval(() => {
-    runValidationCycle().catch((err) =>
-      console.error("[IntegrationValidator] scheduled run failed:", err),
-    );
-  }, INTERVAL_MS);
-
-  console.log("[IntegrationValidator] started — runs every 30 min");
+  console.log("[IntegrationValidator] started — boot check in 10s, then every 30 min via heartbeat");
 }

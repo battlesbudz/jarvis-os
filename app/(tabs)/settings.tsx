@@ -146,6 +146,7 @@ export default function SettingsScreen() {
   const [discordPairCode, setDiscordPairCode] = useState('');
   const [discordLinking, setDiscordLinking] = useState(false);
   const [integrationHealth, setIntegrationHealth] = useState<Record<string, string>>({});
+  const [integrationErrors, setIntegrationErrors] = useState<Record<string, string | null>>({});
   const [loadingStatus, setLoadingStatus] = useState(true);
   const [connectingId, setConnectingId] = useState<string | null>(null);
   const [androidDaemonCode, setAndroidDaemonCode] = useState<string | null>(null);
@@ -321,10 +322,14 @@ export default function SettingsScreen() {
       setDiscordUsername(discordRes?.discordUsername ?? null);
       if (integrationRes && typeof integrationRes === 'object') {
         const health: Record<string, string> = {};
+        const errors: Record<string, string | null> = {};
         for (const [k, v] of Object.entries(integrationRes)) {
-          health[k] = (v as any)?.status ?? 'unconfigured';
+          const entry = v as { status?: string; errorMessage?: string | null } | null;
+          health[k] = entry?.status ?? 'unconfigured';
+          errors[k] = entry?.errorMessage ?? null;
         }
         setIntegrationHealth(health);
+        setIntegrationErrors(errors);
       }
     } catch {}
     setLoadingStatus(false);
@@ -638,28 +643,40 @@ export default function SettingsScreen() {
           })}
 
           {/* Telegram */}
-          <View style={[styles.connRow, styles.connRowBorder]}>
-            <View style={[styles.connIconWrap, { backgroundColor: '#0088CC20' }]}>
-              <Ionicons name="paper-plane-outline" size={18} color="#0088CC" />
-            </View>
-            <View style={styles.connInfo}>
-              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <Text style={styles.connName}>Telegram</Text>
-                <StatusDot status={integrationHealth['telegram']} />
+          {(() => {
+            const telegramBroken = integrationHealth['telegram'] === 'broken';
+            const telegramErrMsg = integrationErrors['telegram'];
+            return (
+              <View style={[styles.connRow, styles.connRowBorder]}>
+                <View style={[styles.connIconWrap, { backgroundColor: '#0088CC20' }]}>
+                  <Ionicons name="paper-plane-outline" size={18} color="#0088CC" />
+                </View>
+                <View style={styles.connInfo}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <Text style={styles.connName}>Telegram</Text>
+                    <StatusDot status={integrationHealth['telegram']} />
+                  </View>
+                  <Text style={[styles.connSub, telegramBroken && { color: Colors.error }]}>
+                    {telegramBroken
+                      ? (telegramErrMsg ?? 'Connection error — tap to reconnect')
+                      : telegramStatus.connected
+                        ? (telegramStatus.username ? `@${telegramStatus.username}` : 'Connected')
+                        : 'Chat with Jarvis via Telegram'}
+                  </Text>
+                </View>
+                <Pressable
+                  style={[styles.connBtn, (telegramBroken || !telegramStatus.connected) ? styles.connBtnDisconnected : styles.connBtnConnected,
+                    telegramBroken && { borderColor: Colors.error }]}
+                  onPress={telegramStatus.connected && !telegramBroken ? handleTelegramDisconnect : handleTelegramLink}
+                >
+                  <Text style={[styles.connBtnText, telegramBroken && { color: Colors.error },
+                    !telegramBroken && telegramStatus.connected && styles.connBtnTextConnected]}>
+                    {telegramBroken ? 'Reconnect' : telegramStatus.connected ? 'Connected' : telegramLinkCode ? '...' : 'Connect'}
+                  </Text>
+                </Pressable>
               </View>
-              <Text style={styles.connSub}>
-                {telegramStatus.connected ? (telegramStatus.username ? `@${telegramStatus.username}` : 'Connected') : 'Chat with Jarvis via Telegram'}
-              </Text>
-            </View>
-            <Pressable
-              style={[styles.connBtn, telegramStatus.connected ? styles.connBtnConnected : styles.connBtnDisconnected]}
-              onPress={telegramStatus.connected ? handleTelegramDisconnect : handleTelegramLink}
-            >
-              <Text style={[styles.connBtnText, telegramStatus.connected && styles.connBtnTextConnected]}>
-                {telegramStatus.connected ? 'Connected' : telegramLinkCode ? '...' : 'Connect'}
-              </Text>
-            </Pressable>
-          </View>
+            );
+          })()}
 
           {/* Telegram link code */}
           {telegramLinkCode && (
@@ -676,33 +693,43 @@ export default function SettingsScreen() {
           )}
 
           {/* Discord */}
-          <Pressable
-            style={[styles.connRow, styles.connRowBorder]}
-            onPress={() => {
-              if (!discordConnected) setDiscordPairExpanded(v => !v);
-            }}
-          >
-            <View style={[styles.connIconWrap, { backgroundColor: '#5865F220' }]}>
-              <Ionicons name="logo-discord" size={18} color="#5865F2" />
-            </View>
-            <View style={styles.connInfo}>
-              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <Text style={styles.connName}>Discord</Text>
-                <StatusDot status={integrationHealth['discord']} />
-              </View>
-              <Text style={styles.connSub}>
-                {discordConnected
-                  ? (discordUsername ? `@${discordUsername}` : 'Connected')
-                  : 'Tap to link your Discord account'}
-              </Text>
-            </View>
-            <View style={[styles.connBtn, discordConnected ? styles.connBtnConnected : styles.connBtnDisconnected]}>
-              <Text style={[styles.connBtnText, discordConnected && styles.connBtnTextConnected]}>
-                {discordConnected ? 'Connected' : 'Connect'}
-              </Text>
-            </View>
-          </Pressable>
-          {discordPairExpanded && !discordConnected && (
+          {(() => {
+            const discordBroken = integrationHealth['discord'] === 'broken';
+            const discordErrMsg = integrationErrors['discord'];
+            return (
+              <Pressable
+                style={[styles.connRow, styles.connRowBorder]}
+                onPress={() => {
+                  if (discordBroken || !discordConnected) setDiscordPairExpanded(v => !v);
+                }}
+              >
+                <View style={[styles.connIconWrap, { backgroundColor: '#5865F220' }]}>
+                  <Ionicons name="logo-discord" size={18} color="#5865F2" />
+                </View>
+                <View style={styles.connInfo}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <Text style={styles.connName}>Discord</Text>
+                    <StatusDot status={integrationHealth['discord']} />
+                  </View>
+                  <Text style={[styles.connSub, discordBroken && { color: Colors.error }]}>
+                    {discordBroken
+                      ? (discordErrMsg ?? 'Connection error — tap to reconnect')
+                      : discordConnected
+                        ? (discordUsername ? `@${discordUsername}` : 'Connected')
+                        : 'Tap to link your Discord account'}
+                  </Text>
+                </View>
+                <View style={[styles.connBtn, (discordBroken || !discordConnected) ? styles.connBtnDisconnected : styles.connBtnConnected,
+                  discordBroken && { borderColor: Colors.error }]}>
+                  <Text style={[styles.connBtnText, discordBroken && { color: Colors.error },
+                    !discordBroken && discordConnected && styles.connBtnTextConnected]}>
+                    {discordBroken ? 'Reconnect' : discordConnected ? 'Connected' : 'Connect'}
+                  </Text>
+                </View>
+              </Pressable>
+            );
+          })()}
+          {discordPairExpanded && (!discordConnected || integrationHealth['discord'] === 'broken') && (
             <View style={styles.linkCodeBlock}>
               <Text style={styles.linkCodeLabel}>How to link Discord:</Text>
               <Text style={[styles.connSub, { marginBottom: 6 }]}>
