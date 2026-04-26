@@ -51,17 +51,26 @@ function evictOldest(): void {
   if (oldestKey) cache.delete(oldestKey);
 }
 
+export interface FetchTranscriptOptions {
+  /** When true, skip the cache lookup and overwrite any existing entry with a fresh fetch. */
+  bypassCache?: boolean;
+  /** youtube-transcript library config (language, country). */
+  config?: Parameters<import("youtube-transcript").YoutubeTranscript["fetchTranscript"]>[1];
+}
+
 /**
  * Fetch a transcript, returning a cached result when available.
- * Falls through to the live youtube-transcript library on a miss or expiry.
+ * Falls through to the live youtube-transcript library on a miss, expiry, or when
+ * `bypassCache` is true (which also overwrites the old cache entry).
  */
 export async function fetchTranscriptCached(
   input: string,
-  config?: Parameters<import("youtube-transcript").YoutubeTranscript["fetchTranscript"]>[1]
+  options: FetchTranscriptOptions = {}
 ): Promise<TranscriptResponse[]> {
+  const { bypassCache = false, config } = options;
   const videoId = extractVideoId(input);
 
-  if (videoId) {
+  if (videoId && !bypassCache) {
     evictExpired();
     const hit = cache.get(videoId);
     if (hit) {
@@ -73,15 +82,20 @@ export async function fetchTranscriptCached(
     }
   }
 
+  if (videoId && bypassCache) {
+    console.log(`[transcriptCache] BYPASS ${videoId} — fetching live and overwriting cache`);
+  }
+
   const { YoutubeTranscript } = await import("youtube-transcript");
   const segments = await YoutubeTranscript.fetchTranscript(input, config);
 
   if (videoId && segments && segments.length > 0) {
     evictExpired();
-    if (cache.size >= MAX_ENTRIES) evictOldest();
+    if (!cache.has(videoId) && cache.size >= MAX_ENTRIES) evictOldest();
     cache.set(videoId, { segments, cachedAt: Date.now() });
+    const reason = bypassCache ? "BYPASS→stored" : "MISS→stored";
     console.log(
-      `[transcriptCache] MISS ${videoId} — fetched live, ${segments.length} segs stored (cache size: ${cache.size})`
+      `[transcriptCache] ${reason} ${videoId} — ${segments.length} segs (cache size: ${cache.size})`
     );
   }
 
