@@ -177,6 +177,40 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
     }
   }
 
+  // ── Pre-flight integration status → system prompt note ───────────────────
+  // Read cached integration health for this user. If any integration that the
+  // channel's tool surface depends on is broken, inject a plain-language note
+  // into the system prompt so the model can tell the user proactively instead
+  // of silently failing mid-conversation.
+  // Google-gated tools are already excluded by the hasGoogle flag; this block
+  // adds the human-readable diagnostic note.
+  if (context.userId) {
+    try {
+      const { getUserIntegrationStatuses } = await import("../intelligence/integrationValidator");
+      const statuses = await getUserIntegrationStatuses(context.userId);
+
+      // Build list of broken integrations that affect agent capabilities.
+      const broken: string[] = [];
+      if (statuses.google === "broken")        broken.push("Google (Gmail + Calendar + Drive)");
+      if (statuses.outlook === "broken")       broken.push("Microsoft Outlook");
+      if (statuses.google === "expiring_soon") broken.push("Google (token expiring soon — user should reconnect)");
+      if (statuses.outlook === "expiring_soon") broken.push("Microsoft Outlook (token expiring soon)");
+
+      if (broken.length > 0) {
+        const note = `\n\n---\n## Integration Alerts\nThe following integrations are currently unavailable and their tools MUST NOT be used:\n${broken.map((b) => `- ${b}`).join("\n")}\nIf the user asks about email, calendar, or related tasks, tell them their ${broken.map((b) => b.split(" (")[0]).join(" / ")} connection needs to be reconnected in Settings → Connections before Jarvis can help.`;
+        messages = messages.map((m, i) => {
+          if (i === 0 && m.role === "system") {
+            return { ...m, content: (m.content ?? "") + note };
+          }
+          return m;
+        });
+        console.log(`[${channel}/Harness] integration alert: ${broken.join(", ")}`);
+      }
+    } catch {
+      // Best-effort — never block an agent run
+    }
+  }
+
   // ── Authoritative channel-scope tool filter ────────────────────────────────
   // The harness is the canonical enforcement point for per-channel tool scoping.
   // Even if a caller passes a broad tool list, the harness narrows it to the
