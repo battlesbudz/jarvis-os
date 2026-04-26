@@ -105,10 +105,24 @@ export async function listUserSkills(userId: string): Promise<SkillFile[]> {
 
 /**
  * Delete a skill file by ID. Returns true if deleted successfully.
+ *
+ * Security: skillId is validated against a strict allowlist (alphanumeric, hyphens,
+ * underscores only) and the resolved file path is verified to remain within the
+ * user's skill directory to prevent path-traversal / cross-user deletion.
  */
 export async function deleteSkill(userId: string, skillId: string): Promise<boolean> {
-  const dir = path.join(SKILLS_DIR, userId);
-  const filePath = path.join(dir, `${skillId}.skill.json`);
+  // Reject any skillId that contains path separators or non-safe characters.
+  if (!skillId || !/^[\w-]+$/.test(skillId)) {
+    console.warn("[SkillWriter] deleteSkill: rejected unsafe skillId:", skillId);
+    return false;
+  }
+  const dir = path.resolve(SKILLS_DIR, userId);
+  const filePath = path.resolve(dir, `${skillId}.skill.json`);
+  // Ensure resolved path stays within the user's directory.
+  if (!filePath.startsWith(dir + path.sep)) {
+    console.warn("[SkillWriter] deleteSkill: path traversal attempt for skillId:", skillId);
+    return false;
+  }
   try {
     await fs.unlink(filePath);
     invalidateSkillCache(userId);
@@ -118,14 +132,21 @@ export async function deleteSkill(userId: string, skillId: string): Promise<bool
   }
 }
 
+// ── In-flight crystallisation guard ─────────────────────────────────────────
+// Tracks patterns currently being crystallised to prevent duplicate concurrent
+// LLM calls. Entries are removed once crystalliseSkill resolves (success or fail).
+const crystallisingNow = new Set<string>();
+
 // ── Signal accumulation ──────────────────────────────────────────────────────
 
 /**
  * Record a pattern signal for a user. When the signal count reaches the
  * crystallisation threshold, a skill file is generated asynchronously.
+ * The `crystallized` flag is only persisted AFTER a successful file write so
+ * a failed LLM call or disk write does not permanently silence the pattern.
  *
  * @param userId       User to record the signal for
- * @param patternId    Stable identifier for the pattern (e.g. "proactive_message_morning")
+ * @param patternId    Stable identifier for the pattern (e.g. "acted_on:task_suggested")
  * @param example      Human-readable example of the behaviour
  */
 export async function recordSkillSignal(
@@ -164,19 +185,15 @@ export async function recordSkillSignal(
       .values({ userId, data: updated })
       .onConflictDoUpdate({ target: userPreferences.userId, set: { data: updated } });
 
-    if (sig.count >= CRYSTALLIZE_THRESHOLD) {
-      // Mark crystallised before the async write to prevent duplicate files
-      signals[patternId] = { ...sig, crystallized: true };
-      const updated2 = { ...data, skillSignals: signals };
-      await db
-        .insert(userPreferences)
-        .values({ userId, data: updated2 })
-        .onConflictDoUpdate({ target: userPreferences.userId, set: { data: updated2 } });
-
-      // Fire-and-forget — crystalliseSkill does its own error handling
-      crystalliseSkill(userId, patternId, sig.example).catch((err) =>
-        console.error("[SkillWriter] crystalliseSkill error:", err),
-      );
+    const guardKey = `${userId}:${patternId}`;
+    if (sig.count >= CRYSTALLIZE_THRESHOLD && !crystallisingNow.has(guardKey)) {
+      // Guard against concurrent duplicate crystallisation attempts.
+      crystallisingNow.add(guardKey);
+      // crystalliseSkill sets crystallized=true in the DB only after a
+      // successful file write so a partial failure can be retried.
+      crystalliseSkill(userId, patternId, sig.example)
+        .catch((err) => console.error("[SkillWriter] crystalliseSkill error:", err))
+        .finally(() => crystallisingNow.delete(guardKey));
     }
   } catch (err) {
     console.error("[SkillWriter] recordSkillSignal failed:", err);
@@ -248,6 +265,27 @@ Reply with ONLY valid JSON.`;
   const dir = path.join(SKILLS_DIR, userId);
   await fs.mkdir(dir, { recursive: true });
   await fs.writeFile(path.join(dir, `${id}.skill.json`), JSON.stringify(skill, null, 2), "utf-8");
+
+  // Only mark crystallized=true AFTER the file is successfully on disk.
+  // This ensures a failed LLM call or write does not permanently block re-tries.
+  try {
+    const rows2 = await db
+      .select({ data: userPreferences.data })
+      .from(userPreferences)
+      .where(eq(userPreferences.userId, userId))
+      .limit(1);
+    const data2 = (rows2[0]?.data ?? {}) as Record<string, unknown>;
+    const signals2 = ((data2.skillSignals ?? {}) as Record<string, SkillSignalState>);
+    signals2[patternId] = { ...(signals2[patternId] ?? { count: CRYSTALLIZE_THRESHOLD, lastSeen: new Date().toISOString(), example }), crystallized: true };
+    const updated3 = { ...data2, skillSignals: signals2 };
+    await db
+      .insert(userPreferences)
+      .values({ userId, data: updated3 })
+      .onConflictDoUpdate({ target: userPreferences.userId, set: { data: updated3 } });
+  } catch (err) {
+    // Non-fatal: the file is written; the flag will be set next time a signal fires.
+    console.error("[SkillWriter] crystallized flag update failed (non-fatal):", err);
+  }
 
   invalidateSkillCache(userId);
   console.log(`[SkillWriter] crystallised skill "${skill.name}" for user ${userId} (pattern: ${patternId})`);

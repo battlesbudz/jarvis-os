@@ -3,11 +3,26 @@
  *
  * Lightweight helpers for recording Jarvis actions and resolving their
  * outcomes. Fires-and-forgets; never throws so callers don't need try/catch.
+ *
+ * Signal integration: whenever an action is resolved as "acted_on" or
+ * "completed", a skill pattern signal is emitted for that actionType so the
+ * Behaviour-to-Skill pipeline can crystallise repeated engagement patterns.
  */
 import { db } from "../db";
 import { eq, and, gte, sql } from "drizzle-orm";
 import { jarvisActionLog } from "@shared/schema";
 import { userPreferences } from "@shared/schema";
+import { recordSkillSignal } from "./skillWriter";
+
+/**
+ * Emit a skill signal for a resolved action (best-effort, never throws).
+ */
+function emitSkillSignal(userId: string, actionType: ActionType, outcome: ActionOutcome): void {
+  if (outcome !== "acted_on" && outcome !== "completed") return;
+  const patternId = `acted_on:${actionType}`;
+  const example = `User consistently engaged with Jarvis's "${actionType}" actions (outcome: ${outcome})`;
+  recordSkillSignal(userId, patternId, example).catch(() => {});
+}
 
 export type ActionType =
   | "email_drafted"
@@ -57,10 +72,19 @@ export async function resolveAction(
   outcome: ActionOutcome,
 ): Promise<void> {
   try {
+    // Fetch the row first so we can emit a skill signal with userId + actionType.
+    const rows = await db
+      .select({ userId: jarvisActionLog.userId, actionType: jarvisActionLog.actionType })
+      .from(jarvisActionLog)
+      .where(eq(jarvisActionLog.id, actionId))
+      .limit(1);
     await db
       .update(jarvisActionLog)
       .set({ outcome, updatedAt: new Date() })
       .where(eq(jarvisActionLog.id, actionId));
+    if (rows[0]) {
+      emitSkillSignal(rows[0].userId, rows[0].actionType as ActionType, outcome);
+    }
   } catch (err) {
     console.error("[Ego] resolveAction failed:", err);
   }
@@ -95,6 +119,7 @@ export async function resolvePendingActions(
           gte(jarvisActionLog.createdAt, cutoff),
         ),
       );
+    emitSkillSignal(userId, actionType, outcome);
   } catch (err) {
     console.error("[Ego] resolvePendingActions failed:", err);
   }
@@ -126,6 +151,7 @@ export async function resolveActionByMetadataKey(
           sql`${jarvisActionLog.metadata}->>${metadataKey} = ${metadataValue}`,
         ),
       );
+    emitSkillSignal(userId, actionType, outcome);
   } catch (err) {
     console.error("[Ego] resolveActionByMetadataKey failed:", err);
   }
