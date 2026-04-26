@@ -963,6 +963,21 @@ export async function ensureTablesExist() {
     `).catch(() => {});
     await db.execute(sql`ALTER TABLE user_skill_packs ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT false`).catch(() => {});
 
+    // Diagnostics — system health events
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS diagnostic_events (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id VARCHAR REFERENCES users(id) ON DELETE CASCADE,
+        subsystem VARCHAR NOT NULL,
+        severity VARCHAR NOT NULL DEFAULT 'info',
+        message TEXT NOT NULL,
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        resolved BOOLEAN NOT NULL DEFAULT false,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `).catch(() => {});
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS diag_events_user_subsystem_idx ON diagnostic_events(user_id, subsystem, created_at DESC)`).catch(() => {});
+
     console.log("Database tables verified");
   } catch (error) {
     console.error("Failed to ensure database tables exist:", error);

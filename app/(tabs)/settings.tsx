@@ -196,6 +196,55 @@ export default function SettingsScreen() {
     } catch {}
   }, []);
 
+  // ── Jarvis Health ──
+  interface SubsystemStatus {
+    name: string;
+    label: string;
+    status: 'healthy' | 'degraded' | 'down' | 'unknown';
+    errorCount15m: number;
+    lastEvent?: string;
+  }
+  interface HealthReport {
+    overallStatus: 'healthy' | 'degraded' | 'down';
+    subsystems: SubsystemStatus[];
+    openAiReachable: boolean;
+    dbReachable: boolean;
+    jobQueueDepth: number;
+    staleJobCount: number;
+    generatedAt: string;
+  }
+  const [healthReport, setHealthReport] = useState<HealthReport | null>(null);
+  const [healthLoading, setHealthLoading] = useState(false);
+  const [diagnosisText, setDiagnosisText] = useState<string | null>(null);
+  const [diagnosisLoading, setDiagnosisLoading] = useState(false);
+
+  const loadHealth = useCallback(async () => {
+    setHealthLoading(true);
+    try {
+      const res = await apiRequest('GET', '/api/diagnostics/health');
+      if (res.ok) {
+        const data = await res.json();
+        setHealthReport(data);
+      }
+    } catch {}
+    setHealthLoading(false);
+  }, []);
+
+  const runDiagnosis = useCallback(async () => {
+    setDiagnosisLoading(true);
+    setDiagnosisText(null);
+    try {
+      const res = await apiRequest('POST', '/api/diagnostics/run');
+      if (res.ok) {
+        const data = await res.json();
+        setDiagnosisText(data.diagnosis ?? null);
+      }
+    } catch (e) {
+      setDiagnosisText('Failed to run diagnosis. Please try again.');
+    }
+    setDiagnosisLoading(false);
+  }, []);
+
   const saveModel = useCallback(async (category: ModelCategory, model: string) => {
     setSavingModel(category);
     try {
@@ -370,10 +419,11 @@ export default function SettingsScreen() {
     loadNervousSystem();
     loadThreatLog();
     loadBuildHistory();
+    loadHealth();
     return () => {
       if (telegramPollRef.current) clearInterval(telegramPollRef.current);
     };
-  }, [loadAll, loadNervousSystem, loadThreatLog, loadBuildHistory]));
+  }, [loadAll, loadNervousSystem, loadThreatLog, loadBuildHistory, loadHealth]));
 
   // ── Helpers ──
   // Triggers an immediate server-side re-validation for the current user so
@@ -1419,7 +1469,84 @@ export default function SettingsScreen() {
           </Link>
         </View>
 
-        {/* ── ACCOUNT ── */}
+        {/* ── JARVIS HEALTH ── */}
+        <SectionHeader label="JARVIS HEALTH" accent="#10B981" />
+        <View style={[styles.card, { gap: 0 }]}>
+          {/* Overall status row */}
+          <View style={healthStyles.overallRow}>
+            {healthLoading ? (
+              <ActivityIndicator size="small" color="#10B981" />
+            ) : (
+              <View style={[
+                healthStyles.overallBadge,
+                healthReport?.overallStatus === 'healthy' && healthStyles.badgeHealthy,
+                healthReport?.overallStatus === 'degraded' && healthStyles.badgeDegraded,
+                healthReport?.overallStatus === 'down' && healthStyles.badgeDown,
+                !healthReport && healthStyles.badgeUnknown,
+              ]}>
+                <Text style={healthStyles.overallBadgeText}>
+                  {!healthReport ? 'UNKNOWN' : healthReport.overallStatus.toUpperCase()}
+                </Text>
+              </View>
+            )}
+            <View style={{ flex: 1, gap: 2 }}>
+              <Text style={healthStyles.overallTitle}>System Status</Text>
+              {healthReport && (
+                <Text style={healthStyles.overallSub}>
+                  {healthReport.openAiReachable ? 'OpenAI reachable' : '⚠ OpenAI unreachable'} ·{' '}
+                  {healthReport.dbReachable ? 'DB healthy' : '⚠ DB unreachable'} ·{' '}
+                  Queue: {healthReport.jobQueueDepth}
+                  {healthReport.staleJobCount > 0 ? ` (${healthReport.staleJobCount} stale)` : ''}
+                </Text>
+              )}
+            </View>
+            <Pressable onPress={loadHealth} style={healthStyles.refreshBtn}>
+              <Ionicons name="refresh-outline" size={16} color="#10B981" />
+            </Pressable>
+          </View>
+
+          {/* Subsystem grid */}
+          {healthReport && healthReport.subsystems.length > 0 && (
+            <View style={healthStyles.subsystemGrid}>
+              {healthReport.subsystems.map((s) => (
+                <View key={s.name} style={healthStyles.subsystemCell}>
+                  <View style={[
+                    healthStyles.subsystemDot,
+                    s.status === 'healthy' && { backgroundColor: '#10B981' },
+                    s.status === 'degraded' && { backgroundColor: '#F59E0B' },
+                    s.status === 'down' && { backgroundColor: Colors.error },
+                    s.status === 'unknown' && { backgroundColor: Colors.textTertiary },
+                  ]} />
+                  <Text style={healthStyles.subsystemLabel} numberOfLines={1}>{s.label}</Text>
+                </View>
+              ))}
+            </View>
+          )}
+
+          {/* Diagnosis section */}
+          <View style={healthStyles.diagSection}>
+            <Pressable
+              style={[healthStyles.diagBtn, diagnosisLoading && { opacity: 0.6 }]}
+              onPress={runDiagnosis}
+              disabled={diagnosisLoading}
+            >
+              {diagnosisLoading ? (
+                <ActivityIndicator size="small" color="#10B981" />
+              ) : (
+                <Ionicons name="pulse-outline" size={14} color="#10B981" />
+              )}
+              <Text style={healthStyles.diagBtnText}>
+                {diagnosisLoading ? 'Diagnosing...' : 'Run AI Diagnosis'}
+              </Text>
+            </Pressable>
+            {diagnosisText && (
+              <View style={healthStyles.diagResult}>
+                <Text style={healthStyles.diagText}>{diagnosisText}</Text>
+              </View>
+            )}
+          </View>
+        </View>
+
         <SectionHeader label="ACCOUNT" accent={Colors.textTertiary} />
         <View style={styles.card}>
           <Pressable style={styles.prefRow} onPress={() => {
@@ -2185,5 +2312,111 @@ const ocStyles = StyleSheet.create({
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
     color: Colors.textSecondary,
     lineHeight: 16,
+  },
+});
+
+const healthStyles = StyleSheet.create({
+  overallRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    padding: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  overallBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  badgeHealthy: { backgroundColor: '#10B98120' },
+  badgeDegraded: { backgroundColor: '#F59E0B20' },
+  badgeDown: { backgroundColor: `${Colors.error}20` },
+  badgeUnknown: { backgroundColor: Colors.surfaceAlt },
+  overallBadgeText: {
+    fontSize: 9,
+    fontFamily: 'Inter_700Bold',
+    letterSpacing: 1.5,
+    color: Colors.textSecondary,
+  },
+  overallTitle: {
+    fontSize: 13,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.text,
+  },
+  overallSub: {
+    fontSize: 11,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textTertiary,
+    lineHeight: 15,
+  },
+  refreshBtn: {
+    padding: 6,
+  },
+  subsystemGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    padding: 10,
+    gap: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  subsystemCell: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    backgroundColor: Colors.surfaceAlt,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  subsystemDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  subsystemLabel: {
+    fontSize: 11,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.textSecondary,
+    maxWidth: 90,
+  },
+  diagSection: {
+    padding: 12,
+    gap: 10,
+  },
+  diagBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#10B981',
+    backgroundColor: '#10B98115',
+    alignSelf: 'flex-start',
+  },
+  diagBtnText: {
+    fontSize: 12,
+    fontFamily: 'Inter_600SemiBold',
+    color: '#10B981',
+  },
+  diagResult: {
+    backgroundColor: Colors.surfaceAlt,
+    borderRadius: 8,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  diagText: {
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+    lineHeight: 18,
   },
 });

@@ -2382,7 +2382,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
         : "";
 
       const chatMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-        { role: "system", content: daemonAbsoluteRule + systemPrompt + proactiveQuestionContext + "\n\nYou can take actions on the user's behalf using the available tools. When a user asks you to add a task, log progress, update their context, etc., use the appropriate tool. Respond naturally — do not mention 'tool calls' or 'functions' to the user. Just confirm what you did conversationally." + (process.env.TAVILY_API_KEY ? "\n\nYou also have a web_search tool. Use it whenever the user asks about current events, live data (weather, stock prices, sports scores, news), or anything requiring real-time information you wouldn't know. Cite your sources naturally in your response." : "") },
+        { role: "system", content: daemonAbsoluteRule + systemPrompt + proactiveQuestionContext + "\n\nYou can take actions on the user's behalf using the available tools. When a user asks you to add a task, log progress, update their context, etc., use the appropriate tool. Respond naturally — do not mention 'tool calls' or 'functions' to the user. Just confirm what you did conversationally." + (process.env.TAVILY_API_KEY ? "\n\nYou also have a web_search tool. Use it whenever the user asks about current events, live data (weather, stock prices, sports scores, news), or anything requiring real-time information you wouldn't know. Cite your sources naturally in your response." : "") + "\n\nYou have a jarvis_self_diagnose tool. Call it whenever the user asks about your health, why something isn't working, 'are you OK?', 'what's wrong?', 'why did that fail?', or any question about system reliability. It runs a full subsystem check and returns a plain-English diagnosis." },
         ...messages.map((m: any, idx: number) => {
           const isLast = idx === messages.length - 1;
           const content = (isLast && m.role === 'user' && youtubeCtxBlock)
@@ -5777,6 +5777,34 @@ Extract up to 8 memories per batch.`;
     } catch (err) {
       console.error("[Integrations] POST /api/integrations/refresh failed:", err);
       res.status(500).json({ error: "Failed to refresh integration statuses" });
+    }
+  });
+
+  // ── Diagnostics ──────────────────────────────────────────────────────────────
+
+  app.get("/api/diagnostics/health", async (req: Request, res: Response) => {
+    const userId = (req as any).userId as string | undefined;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    try {
+      const { runHealthCheck } = await import("./diagnostics/diagnosticsService");
+      const report = await runHealthCheck(userId);
+      res.json(report);
+    } catch (err) {
+      console.error("[Diagnostics] GET /api/diagnostics/health failed:", err);
+      res.status(500).json({ error: "Failed to run health check" });
+    }
+  });
+
+  app.post("/api/diagnostics/run", async (req: Request, res: Response) => {
+    const userId = (req as any).userId as string | undefined;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    try {
+      const { runAIDiagnosis } = await import("./diagnostics/diagnosticsService");
+      const diagnosis = await runAIDiagnosis(userId);
+      res.json({ diagnosis });
+    } catch (err) {
+      console.error("[Diagnostics] POST /api/diagnostics/run failed:", err);
+      res.status(500).json({ error: "Failed to run diagnosis" });
     }
   });
 

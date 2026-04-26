@@ -9,6 +9,7 @@ import { getValidGoogleTokens } from "../userTokenStore";
 import type { ToolContext } from "./types";
 import { notifyUser } from "../channels/registry";
 import { onWorkflowJobComplete, onWorkflowJobFail } from "./workflowEngine";
+import { emit as diagEmit } from "../diagnostics/diagnosticsService";
 import { submitAgentJob as _submitAgentJob, type SubmitJobInput, type AgentJobType as _AgentJobType } from "./jobClient";
 
 // Re-export from the shared client so existing callers don't break.
@@ -76,7 +77,7 @@ async function claimNextJob(): Promise<typeof schema.agentJobs.$inferSelect | nu
   return row || null;
 }
 
-async function failJob(jobId: string, message: string): Promise<void> {
+async function failJob(jobId: string, message: string, userId?: string): Promise<void> {
   try {
     await db
       .update(schema.agentJobs)
@@ -85,6 +86,13 @@ async function failJob(jobId: string, message: string): Promise<void> {
   } catch (err) {
     console.error(`[JobQueue] failJob ${jobId} write failed:`, err);
   }
+  diagEmit({
+    userId,
+    subsystem: "job_queue",
+    severity: "error",
+    message: `Job ${jobId} failed: ${message.slice(0, 200)}`,
+    metadata: { jobId },
+  }).catch(() => {});
 }
 
 async function completeJob(
@@ -233,11 +241,11 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
           .where(eq(schema.agentJobs.id, job.id));
       } catch (retryErr) {
         console.error(`[JobQueue] failed to re-queue job ${job.id}:`, retryErr);
-        await failJob(job.id, msg);
+        await failJob(job.id, msg, job.userId);
       }
     } else {
       console.log(`[JobQueue] permanently failing job ${job.id} after ${MAX_RETRIES + 1} total attempts`);
-      await failJob(job.id, msg);
+      await failJob(job.id, msg, job.userId);
       // Fail the workflow step if applicable.
       const wfId2   = jobInput.workflowId    as string | undefined;
       const wfStep2 = jobInput.workflowStepIndex as number | undefined;

@@ -3,6 +3,7 @@ import { eq, and } from "drizzle-orm";
 import { channelPreferences, type ChannelName, type NotificationType } from "@shared/schema";
 import type { Channel, ChannelSendOpts, ChannelSendResult } from "./types";
 import { logInteraction } from "../interactionLog";
+import { emit as diagEmit } from "../diagnostics/diagnosticsService";
 
 const channels = new Map<ChannelName, Channel>();
 
@@ -81,10 +82,27 @@ async function trySendOnChannel(
   if (!(await ch.isLinkedFor(userId))) return { channel: name, result: { ok: false, error: "user not linked" } };
   try {
     const result = await ch.sendMessage(userId, text, { ...opts, notificationType });
-    if (result.ok) logInteraction(userId, name, "outbound", text).catch(() => {});
+    if (result.ok) {
+      logInteraction(userId, name, "outbound", text).catch(() => {});
+    } else {
+      diagEmit({
+        userId,
+        subsystem: "channel_registry",
+        severity: "warning",
+        message: `Channel ${name} send returned not-ok: ${result.error ?? "unknown"}`,
+        metadata: { channel: name, notificationType },
+      }).catch(() => {});
+    }
     return { channel: name, result };
   } catch (err) {
     console.error(`[channels] ${name} send failed:`, err);
+    diagEmit({
+      userId,
+      subsystem: "channel_registry",
+      severity: "error",
+      message: `Channel ${name} send threw: ${String(err).slice(0, 200)}`,
+      metadata: { channel: name, notificationType },
+    }).catch(() => {});
     return { channel: name, result: { ok: false, error: String(err) } };
   }
 }

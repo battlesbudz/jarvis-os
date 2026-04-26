@@ -90,6 +90,7 @@ import {
   testToolTool,
   initToolResolver,
 } from "./buildFeatureTool";
+import { selfDiagnoseTool } from "./selfDiagnoseTool";
 
 // ── Tool Groups ────────────────────────────────────────────────────────────────
 // Each group represents a functional capability cluster. Channels declare which
@@ -239,4 +240,5 @@ export {
   buildFeatureTool,
   testToolTool,
   imageGenerateTool,
+  selfDiagnoseTool,
 };
