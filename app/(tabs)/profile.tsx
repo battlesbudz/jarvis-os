@@ -275,6 +275,8 @@ export default function ProfileScreen() {
   const [discordWorkspaceGuilds, setDiscordWorkspaceGuilds] = useState<{id: string; name: string}[]>([]);
   const [discordWorkspaceSelGuild, setDiscordWorkspaceSelGuild] = useState('');
   const [discordShowWorkspaceSetup, setDiscordShowWorkspaceSetup] = useState(false);
+  const [discordTtsEnabled, setDiscordTtsEnabled] = useState(false);
+  const [ttsChannels, setTtsChannels] = useState<string[]>([]);
   const [documents, setDocuments] = useState<UserDocument[]>([]);
   const [documentsLoading, setDocumentsLoading] = useState(false);
   const [documentUploading, setDocumentUploading] = useState(false);
@@ -680,6 +682,11 @@ export default function ProfileScreen() {
       if (prefs.timezone) setTimezone(prefs.timezone);
       if (typeof prefs.emailAlertsEnabled === 'boolean') setEmailAlertsEnabled(prefs.emailAlertsEnabled);
       if (typeof prefs.dreamEnabled === 'boolean') setDreamEnabled(prefs.dreamEnabled);
+      const channels: string[] = Array.isArray(prefs.ttsChannels)
+        ? prefs.ttsChannels
+        : prefs.ttsEnabled === true ? ['telegram'] : [];
+      setTtsChannels(channels);
+      setDiscordTtsEnabled(channels.includes('discord'));
     } catch {}
   // loadDaemonPerms and loadAndroidDaemonPerms are useCallback([], []) — they are
   // referentially stable and safe to omit from deps; including them causes a
@@ -704,6 +711,19 @@ export default function ProfileScreen() {
     } catch {}
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   }, [dreamEnabled]);
+
+  const handleToggleDiscordTts = useCallback(async () => {
+    const next = !discordTtsEnabled;
+    setDiscordTtsEnabled(next);
+    const newChannels = next
+      ? [...ttsChannels.filter(c => c !== 'discord'), 'discord']
+      : ttsChannels.filter(c => c !== 'discord');
+    setTtsChannels(newChannels);
+    try {
+      await apiRequest('PATCH', '/api/preferences', { ttsChannels: newChannels });
+    } catch {}
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  }, [discordTtsEnabled, ttsChannels]);
 
   const handleTimezoneChange = useCallback(async (tz: string) => {
     setTimezone(tz);
@@ -2645,6 +2665,22 @@ export default function ProfileScreen() {
                     )}
                   </View>
                 )}
+
+                {/* Voice replies toggle */}
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 10, borderTopWidth: 1, borderTopColor: Colors.border, marginTop: 6 }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 13, fontFamily: 'Inter_500Medium', color: Colors.text }}>Voice replies</Text>
+                    <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, marginTop: 1 }}>
+                      Jarvis sends audio notes to this channel
+                    </Text>
+                  </View>
+                  <Switch
+                    value={discordTtsEnabled}
+                    onValueChange={handleToggleDiscordTts}
+                    trackColor={{ true: '#5865F2', false: Colors.border }}
+                    thumbColor="#fff"
+                  />
+                </View>
 
                 {/* Add channel form */}
                 {discordShowManage && (
