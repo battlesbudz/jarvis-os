@@ -1,21 +1,25 @@
 /**
  * DiagnosticsService — Jarvis system health monitoring.
  *
- * Central hub for emitting, detecting, and recovering from system-wide
- * anomalies. All subsystems call `emit()` for errors and key milestones.
+ * Central hub for emitting, detecting, and recovering from system-wide anomalies.
+ * All subsystems call emit() for errors and key milestones.
  *
- * Pattern detection: 3+ errors in a 15-minute window on the same subsystem
- * emits a persisted "pattern_detected" critical event and notifies the user.
- * Degraded state is derived from the DB (not in-memory) so it survives restarts.
+ * Pattern detection: 3+ errors in 15 min on the same subsystem persists a
+ * "pattern_detected" critical event in the DB and notifies the user.
+ * Degraded state is DB-backed (not in-memory) so it survives restarts.
+ *
+ * Degradation clears only when a caller explicitly emits with
+ * `metadata.recovery = true`, preventing false clearance from incidental info events.
  *
  * runHealthCheck() actively probes: OpenAI, DB, job queue, channel registry,
- * workflow engine, and integration statuses.
+ * workflow engine (stuck count), and integration statuses.
  *
- * Auto-recovery: stale jobs past the watchdog timeout are reset to failed.
+ * Auto-recovery handles: stale queued jobs and stuck workflows.
  */
 
 import { db } from "../db";
 import { eq, and, desc, gte, sql as sqlExpr } from "drizzle-orm";
+import type { SQL } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import type { DiagnosticSubsystem, DiagnosticSeverity } from "@shared/schema";
 import OpenAI from "openai";
@@ -71,10 +75,9 @@ const SUBSYSTEM_LABELS: Record<DiagnosticSubsystem, string> = {
   database: "Database",
 };
 
-const NOTIFY_COOLDOWN_MS = 30 * 60 * 1000;
-// Notification cooldown: avoid re-notifying within 30 min for same subsystem.
-// Tracked in memory (minor: restart resets this, but only affects notification rate, not state).
+// Notification cooldown — only affects notification rate, not degraded state.
 const notifiedDegradedAt = new Map<string, Date>();
+const NOTIFY_COOLDOWN_MS = 30 * 60 * 1000;
 
 // ─── Core emit ────────────────────────────────────────────────────────────────
 
@@ -94,7 +97,8 @@ export async function emit(opts: EmitOptions): Promise<void> {
 
   if (opts.severity === "error" || opts.severity === "critical") {
     await detectDegradation(opts.subsystem, opts.userId);
-  } else if (opts.severity === "info") {
+  } else if (opts.severity === "info" && opts.metadata?.recovery === true) {
+    // Degradation clears only on an explicit recovery signal, not on every info event.
     await clearDegradation(opts.subsystem, opts.userId);
   }
 }
@@ -105,8 +109,8 @@ export async function emit(opts: EmitOptions): Promise<void> {
 
 async function isDegradedInDB(subsystem: DiagnosticSubsystem, userId?: string): Promise<boolean> {
   try {
-    const since = new Date(Date.now() - 4 * 60 * 60 * 1000); // 4 hours back
-    const conditions = [
+    const since = new Date(Date.now() - 4 * 60 * 60 * 1000);
+    const conditions: SQL<unknown>[] = [
       eq(schema.diagnosticEvents.subsystem, subsystem),
       eq(schema.diagnosticEvents.severity, "critical"),
       eq(schema.diagnosticEvents.resolved, false),
@@ -129,7 +133,7 @@ async function isDegradedInDB(subsystem: DiagnosticSubsystem, userId?: string): 
 async function detectDegradation(subsystem: DiagnosticSubsystem, userId?: string): Promise<void> {
   try {
     const windowStart = new Date(Date.now() - 15 * 60 * 1000);
-    const errorConditions = [
+    const errorConditions: SQL<unknown>[] = [
       eq(schema.diagnosticEvents.subsystem, subsystem),
       sqlExpr`${schema.diagnosticEvents.severity} IN ('error', 'critical')`,
       gte(schema.diagnosticEvents.createdAt, windowStart),
@@ -167,7 +171,7 @@ async function detectDegradation(subsystem: DiagnosticSubsystem, userId?: string
 
     try {
       const { notifyUser } = await import("../channels/registry");
-      const label = SUBSYSTEM_LABELS[subsystem] ?? subsystem;
+      const label = SUBSYSTEM_LABELS[subsystem];
       await notifyUser(
         userId,
         "general",
@@ -189,7 +193,7 @@ async function clearDegradation(subsystem: DiagnosticSubsystem, userId?: string)
     if (!isDegraded) return;
 
     const since = new Date(Date.now() - 4 * 60 * 60 * 1000);
-    const conditions = [
+    const conditions: SQL<unknown>[] = [
       eq(schema.diagnosticEvents.subsystem, subsystem),
       eq(schema.diagnosticEvents.resolved, false),
       gte(schema.diagnosticEvents.createdAt, since),
@@ -237,7 +241,7 @@ async function attemptAutoRecovery(subsystem: DiagnosticSubsystem, userId: strin
           subsystem: "job_queue",
           severity: "info",
           message: `Auto-recovered stale job ${job.id}`,
-          metadata: { jobId: job.id, action: "watchdog_reset" },
+          metadata: { jobId: job.id, action: "watchdog_reset", recovery: true },
         });
         console.log(`[Diagnostics] auto-recovered stale job ${job.id}`);
       }
@@ -268,9 +272,49 @@ async function attemptAutoRecovery(subsystem: DiagnosticSubsystem, userId: strin
           subsystem: "workflow_engine",
           severity: "info",
           message: `Auto-recovered stuck workflow "${wf.title}"`,
-          metadata: { workflowId: wf.id, action: "stuck_reset" },
+          metadata: { workflowId: wf.id, action: "stuck_reset", recovery: true },
         });
         console.log(`[Diagnostics] auto-recovered stuck workflow ${wf.id}`);
+      }
+    }
+
+    if (subsystem === "channel_registry") {
+      // Re-probe channels: if any are now reachable, emit recovery.
+      try {
+        const { listChannels } = await import("../channels/registry");
+        const channels = listChannels();
+        const anyConfigured = channels.some((ch) => ch.isConfigured());
+        if (anyConfigured) {
+          await emit({
+            userId,
+            subsystem: "channel_registry",
+            severity: "info",
+            message: "Channel registry auto-recovery: at least one channel is configured",
+            metadata: { recovery: true },
+          });
+        }
+      } catch {
+        // Best-effort
+      }
+    }
+
+    if (subsystem === "integration") {
+      // Prompt re-validation of integrations — the integration validator will handle retries.
+      try {
+        const { getUserIntegrationStatuses } = await import("../intelligence/integrationValidator");
+        const statuses = await getUserIntegrationStatuses(userId);
+        const anyBroken = Object.values(statuses).some((s) => s === "broken");
+        if (!anyBroken) {
+          await emit({
+            userId,
+            subsystem: "integration",
+            severity: "info",
+            message: "Integration auto-recovery: all integrations re-validated successfully",
+            metadata: { recovery: true },
+          });
+        }
+      } catch {
+        // Best-effort
       }
     }
   } catch (err) {
@@ -290,16 +334,18 @@ export async function getRecentEvents(opts: {
 }): Promise<schema.DiagnosticEvent[]> {
   const { userId, subsystem, severity, limit = 50, sinceMinutes, excludePatternDetected = false } = opts;
   try {
-    const conditions: ReturnType<typeof eq>[] = [];
+    const conditions: SQL<unknown>[] = [];
     if (userId) conditions.push(eq(schema.diagnosticEvents.userId, userId));
     if (subsystem) conditions.push(eq(schema.diagnosticEvents.subsystem, subsystem));
     if (severity) conditions.push(eq(schema.diagnosticEvents.severity, severity));
     if (sinceMinutes) {
       const since = new Date(Date.now() - sinceMinutes * 60 * 1000);
-      conditions.push(gte(schema.diagnosticEvents.createdAt, since) as any);
+      conditions.push(gte(schema.diagnosticEvents.createdAt, since));
     }
     if (excludePatternDetected) {
-      conditions.push(sqlExpr`(${schema.diagnosticEvents.metadata}->>'type') IS DISTINCT FROM 'pattern_detected'` as any);
+      conditions.push(
+        sqlExpr`(${schema.diagnosticEvents.metadata}->>'type') IS DISTINCT FROM 'pattern_detected'`,
+      );
     }
 
     return await db
@@ -362,20 +408,19 @@ export async function runHealthCheck(userId?: string): Promise<HealthReport> {
     }).catch(() => {});
   }
 
-  // Channel registry probe — check isConfigured() per registered channel.
+  // Channel registry probe.
   const channelStatuses: Record<string, { configured: boolean }> = {};
   try {
     const { listChannels } = await import("../channels/registry");
     const channels = listChannels();
     for (const ch of channels) {
-      const configured = ch.isConfigured();
-      channelStatuses[ch.name] = { configured };
+      channelStatuses[ch.name] = { configured: ch.isConfigured() };
     }
   } catch {
     // Best-effort
   }
 
-  // Integration health probe — query integrationStatus table.
+  // Integration health probe.
   let integrationHealth: Record<string, string> = {};
   if (userId) {
     try {
@@ -391,7 +436,7 @@ export async function runHealthCheck(userId?: string): Promise<HealthReport> {
   const subsystems: SubsystemStatus[] = await Promise.all(
     (schema.DIAGNOSTIC_SUBSYSTEMS as readonly DiagnosticSubsystem[]).map(async (sub) => {
       try {
-        const errorConditions: any[] = [
+        const errorConditions: SQL<unknown>[] = [
           eq(schema.diagnosticEvents.subsystem, sub),
           gte(schema.diagnosticEvents.createdAt, windowStart),
           sqlExpr`${schema.diagnosticEvents.severity} IN ('error', 'critical')`,
@@ -399,15 +444,16 @@ export async function runHealthCheck(userId?: string): Promise<HealthReport> {
         ];
         if (userId) errorConditions.push(eq(schema.diagnosticEvents.userId, userId));
 
+        const lastEventConditions: SQL<unknown>[] = [eq(schema.diagnosticEvents.subsystem, sub)];
+        if (userId) lastEventConditions.push(eq(schema.diagnosticEvents.userId, userId));
+
         const [recentErrorRows, lastEventRows] = await Promise.all([
-          db.select({ count: sqlExpr<number>`count(*)::int` }).from(schema.diagnosticEvents).where(and(...errorConditions)),
+          db.select({ count: sqlExpr<number>`count(*)::int` })
+            .from(schema.diagnosticEvents)
+            .where(and(...errorConditions)),
           db.select({ message: schema.diagnosticEvents.message, createdAt: schema.diagnosticEvents.createdAt })
             .from(schema.diagnosticEvents)
-            .where(
-              userId
-                ? and(eq(schema.diagnosticEvents.subsystem, sub), eq(schema.diagnosticEvents.userId, userId))
-                : eq(schema.diagnosticEvents.subsystem, sub),
-            )
+            .where(and(...lastEventConditions))
             .orderBy(desc(schema.diagnosticEvents.createdAt))
             .limit(1),
         ]);
@@ -454,9 +500,8 @@ export async function runHealthCheck(userId?: string): Promise<HealthReport> {
     const s = subsystems.find((s) => s.name === "integration");
     if (s && s.status === "healthy") s.status = "degraded";
   }
-  // Channel registry degradation: count channels not configured (excludes unregistered channels).
-  const unconfiguredChannels = Object.values(channelStatuses).filter((c) => !c.configured).length;
-  if (unconfiguredChannels === Object.keys(channelStatuses).length && Object.keys(channelStatuses).length > 0) {
+  const unconfiguredChannelCount = Object.values(channelStatuses).filter((c) => !c.configured).length;
+  if (unconfiguredChannelCount > 0 && unconfiguredChannelCount === Object.keys(channelStatuses).length) {
     const s = subsystems.find((s) => s.name === "channel_registry");
     if (s) s.status = "degraded";
   }
@@ -468,7 +513,9 @@ export async function runHealthCheck(userId?: string): Promise<HealthReport> {
     sinceMinutes: 60,
     excludePatternDetected: true,
   });
-  const degradedSubsystems = subsystems.filter((s) => s.status !== "healthy" && s.status !== "unknown").map((s) => s.name);
+  const degradedSubsystems = subsystems
+    .filter((s) => s.status !== "healthy" && s.status !== "unknown")
+    .map((s) => s.name);
 
   let overallStatus: HealthReport["overallStatus"] = "healthy";
   if (subsystems.some((s) => s.status === "down")) overallStatus = "down";
@@ -491,12 +538,15 @@ export async function runHealthCheck(userId?: string): Promise<HealthReport> {
 
 // ─── AI-powered diagnosis ─────────────────────────────────────────────────────
 
-/** Run an AI diagnosis against a pre-computed (or freshly computed) HealthReport. */
+/**
+ * Run an AI diagnosis against a pre-computed (or freshly computed) HealthReport.
+ * Pass `existingReport` to avoid a duplicate health check when the caller already ran one.
+ */
 export async function runAIDiagnosis(
   userId?: string,
   existingReport?: HealthReport,
 ): Promise<{ diagnosis: string; report: HealthReport }> {
-  const report = existingReport ?? await runHealthCheck(userId);
+  const report = existingReport ?? (await runHealthCheck(userId));
 
   const recentEvents = await getRecentEvents({
     userId,
@@ -552,7 +602,7 @@ Plain text, no markdown headers, 4-6 sentences max. Be calm and informative, not
     const diagnosis = resp.choices[0]?.message?.content?.trim() || "Unable to generate diagnosis — OpenAI unavailable.";
     return { diagnosis, report };
   } catch {
-    const lines = ["Diagnosis summary:"];
+    const lines: string[] = ["Diagnosis summary:"];
     lines.push(`Overall: ${report.overallStatus}`);
     if (!report.openAiReachable) lines.push("OpenAI API is unreachable — AI features are unavailable.");
     if (!report.dbReachable) lines.push("Database is unreachable — all data operations are failing.");

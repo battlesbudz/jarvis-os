@@ -131,6 +131,13 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
         turns: 1,
         toolCallsCount: 0,
       });
+      diagEmit({
+        userId: job.userId,
+        subsystem: "job_queue",
+        severity: "info",
+        message: `Job ${job.id} (weekly_pattern) completed — ${result.patternCount} patterns`,
+        metadata: { jobId: job.id, agentType: job.agentType, recovery: true },
+      }).catch(() => {});
       console.log(`[JobQueue] complete weekly_pattern job ${job.id} → ${result.patternCount} patterns`);
       const weeklyMsg = result.driveLink
         ? `${result.patternCount} pattern(s) identified, ${result.promotedMemories} promoted to long-term memory.\n${result.summary}\n\n📁 Saved to Google Drive: ${result.driveLink}`
@@ -156,6 +163,13 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
         turns: result.turns,
         toolCallsCount: result.toolCallsCount,
       });
+      diagEmit({
+        userId: job.userId,
+        subsystem: "job_queue",
+        severity: "info",
+        message: `Job ${job.id} (goal_decompose) completed — ${result.phaseCount} phases`,
+        metadata: { jobId: job.id, agentType: job.agentType, recovery: true },
+      }).catch(() => {});
       console.log(`[JobQueue] complete goal_decompose job ${job.id} → tree ${result.goalTreeId}`);
       const goalMsg = `Goal broken into ${result.phaseCount} phase(s). Open the Goals tab to review.`;
       await notifyJobComplete(job.userId, "goal_decompose", job.title, goalMsg);
@@ -204,6 +218,13 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
       turns: sub.turns,
       toolCallsCount: sub.toolCallsCount,
     });
+    diagEmit({
+      userId: job.userId,
+      subsystem: "job_queue",
+      severity: "info",
+      message: `Job ${job.id} (${job.agentType}) completed — deliverable ${deliverableId}`,
+      metadata: { jobId: job.id, agentType: job.agentType, recovery: true },
+    }).catch(() => {});
     console.log(`[JobQueue] complete ${job.agentType} job ${job.id} → deliverable ${deliverableId}`);
     const subNotifyMsg = `${sub.summary || "Ready for review"} — open Inbox to approve, edit, or discard.`;
     await notifyJobComplete(
