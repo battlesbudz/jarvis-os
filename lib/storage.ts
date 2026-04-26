@@ -291,6 +291,7 @@ export interface ExecutedAction {
   channel?: string;
   screenshotUrl?: string;
   imageUrl?: string;
+  imageCaption?: string;
 }
 
 export interface PendingConfirm {

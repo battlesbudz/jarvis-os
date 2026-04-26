@@ -1244,6 +1244,10 @@ Rules:
               enum: ["square", "landscape", "portrait"],
               description: "Image aspect ratio: square (1:1, default), landscape (16:9), portrait (9:16).",
             },
+            caption: {
+              type: "string",
+              description: "Optional short caption displayed below the image in chat (1-2 sentences max).",
+            },
           },
           required: ["prompt"],
         },
@@ -2001,6 +2005,7 @@ Rules:
         case 'image_generate': {
           const prompt = String(args.prompt || '').trim();
           if (!prompt) return { result: 'error', label: 'prompt required', detail: 'Provide a prompt for image_generate.' };
+          const caption = args.caption ? String(args.caption).trim() : undefined;
           const sizeMap: Record<string, string> = { square: '1024x1024', landscape: '1792x1024', portrait: '1024x1792' };
           const size = sizeMap[String(args.size || 'square')] ?? '1024x1024';
           try {
@@ -2018,7 +2023,7 @@ Rules:
             });
             const imageUrl = response.data[0]?.url;
             if (!imageUrl) throw new Error('No image URL returned');
-            return { result: 'success', label: 'Image generated', detail: JSON.stringify({ imageUrl }) };
+            return { result: 'success', label: 'Image generated', detail: JSON.stringify({ imageUrl, caption }) };
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             console.error('[image_generate] DALL-E 3 error in routes:', err);
@@ -2484,7 +2489,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
             }
 
             const execResult = await executeCoachTool(tc.function.name, args, userId);
-            let linkData: { url?: string; buttonLabel?: string; code?: string; channel?: string; screenshotUrl?: string; imageUrl?: string } = {};
+            let linkData: { url?: string; buttonLabel?: string; code?: string; channel?: string; screenshotUrl?: string; imageUrl?: string; imageCaption?: string } = {};
             if ((tc.function.name === 'generate_reconnect_link' || tc.function.name === 'connect_channel') && execResult.result === 'success') {
               try { linkData = JSON.parse(execResult.detail); } catch {}
             }
@@ -2492,7 +2497,11 @@ You can extend yourself by building new tools directly. Generate the complete Ty
               try { const parsed = JSON.parse(execResult.detail); if (parsed.screenshotUrl) linkData.screenshotUrl = parsed.screenshotUrl; } catch {}
             }
             if (tc.function.name === 'image_generate' && execResult.result === 'success') {
-              try { const parsed = JSON.parse(execResult.detail); if (parsed.imageUrl) linkData.imageUrl = parsed.imageUrl; } catch {}
+              try {
+                const parsed = JSON.parse(execResult.detail);
+                if (parsed.imageUrl) linkData.imageUrl = parsed.imageUrl;
+                if (parsed.caption) linkData.imageCaption = parsed.caption;
+              } catch {}
             }
             actionResults.push({ tool: tc.function.name, result: execResult.result, label: execResult.label, ...linkData });
             let toolResultContent: string;
