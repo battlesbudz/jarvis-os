@@ -5309,11 +5309,12 @@ function closeMcpSession(userId2, wipeProfile = false) {
   if (s) {
     s.close();
     sessions.delete(userId2);
-    if (wipeProfile) {
-      try {
-        fs.rmSync(s.profileDir, { recursive: true, force: true });
-      } catch {
-      }
+  }
+  if (wipeProfile) {
+    const profileDir = path.join(os.homedir(), ".jarvis", "browser-profiles", userId2);
+    try {
+      fs.rmSync(profileDir, { recursive: true, force: true });
+    } catch {
     }
   }
 }
@@ -16075,6 +16076,7 @@ ${pageText || "(page updated)"}`,
           return { ok: true, content: "No active browser session to close.", label: "browser_close: no session" };
         }
         closeMcpSession(ctx.userId);
+        await closeDaemonBrowserSession(ctx.userId);
         return { ok: true, content: "Browser session closed.", label: "browser_close: closed" };
       }
     };
@@ -18505,7 +18507,7 @@ function registerChannelRoutes(app2) {
   app2.put("/api/channels/daemon/permissions", authMiddleware, async (req, res) => {
     const userId2 = req.userId;
     const incoming = req.body?.permissions || {};
-    const ACTIONS2 = ["shell", "notify", "file_read", "file_write", "file_list", "browser_local"];
+    const ACTIONS2 = ["shell", "notify", "file_read", "file_write", "file_list", "desktop_screenshot", "desktop_read_screen", "browser_local"];
     const sanitized = {};
     for (const k of ACTIONS2) {
       if (k in incoming) sanitized[k] = !!incoming[k];
