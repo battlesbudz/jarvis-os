@@ -694,11 +694,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
    * POST /api/admin/skills/publish
    * Publish a new or updated skill pack.
    *
-   * Body: { packId?: string; name: string; instructions: string; changeNote: string }
-   *
-   * If packId is omitted, a new pack is created.
-   * If packId refers to an existing pack, its instructions are updated, its
-   * version is incremented, and a changelog entry is appended.
+   * Body:
+   *   packId?        — if provided and exists, update that pack; otherwise create new
+   *   name           — pack display name (required)
+   *   instructions   — base instruction text (required)
+   *   changeNote     — changelog note for this version (required)
+   *   description?   — user-facing description (defaults to "" on create)
+   *   isStoreVisible? — whether to show in the Skill Store (defaults to true on create)
+   *   heartbeatRules? — JSON heartbeat rule config { disableDuringFocusBlocks, ... }
+   *   toolGroups?    — JSON tool group config { boost: [...], suppress: [...] }
    *
    * Active sessions pick up the new instructions at their next session start —
    * mid-session injection is intentionally not supported to avoid instability.
@@ -707,16 +711,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
     if (!requireAdminSecret(req, res)) return;
     try {
       const { publishSkillPack } = await import("./intelligence/behaviorStore");
-      const { packId, name, instructions, changeNote } = req.body as {
+      const { packId, name, instructions, changeNote, description, isStoreVisible, heartbeatRules, toolGroups } = req.body as {
         packId?: string;
         name?: string;
         instructions?: string;
         changeNote?: string;
+        description?: string;
+        isStoreVisible?: boolean;
+        heartbeatRules?: Record<string, unknown>;
+        toolGroups?: Record<string, unknown>;
       };
       if (!name || !instructions || !changeNote) {
         return res.status(400).json({ error: "name, instructions, and changeNote are required" });
       }
-      const pack = await publishSkillPack({ packId, name, instructions, changeNote });
+      const pack = await publishSkillPack({
+        packId,
+        name,
+        instructions,
+        changeNote,
+        description,
+        isStoreVisible,
+        heartbeatRules: heartbeatRules as any,
+        toolGroups: toolGroups as any,
+      });
       console.log(`[Admin/Skills] published pack "${pack.name}" v${pack.version}`);
       res.json({ ok: true, pack });
     } catch (err) {
