@@ -216,6 +216,21 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
         }
       }
 
+      // send_email and fetch_emails work via either Google OR Outlook.
+      // Only exclude them when BOTH email providers are broken (no fallback available).
+      const googleBroken = statuses.google === "broken";
+      const outlookBroken = statuses.outlook === "broken";
+      if (googleBroken && outlookBroken) {
+        toolsToExclude.add("send_email");
+        toolsToExclude.add("fetch_emails");
+        if (!brokenIntegrations.includes("Google (Gmail + Calendar + Drive)")) {
+          brokenIntegrations.push("Google (Gmail + Calendar + Drive)");
+        }
+        if (!brokenIntegrations.includes("Microsoft Outlook")) {
+          brokenIntegrations.push("Microsoft Outlook");
+        }
+      }
+
       // (a) Deterministic tool exclusion for broken integrations.
       if (toolsToExclude.size > 0) {
         const before = tools.length;
