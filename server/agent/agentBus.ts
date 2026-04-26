@@ -20,12 +20,18 @@ import { runNamedAgent } from "./runNamedAgent";
 import { getAgent } from "./agentManager";
 import { logAgentEvent } from "./agentLogger";
 
+/**
+ * Valid message types — must match AGENT_MESSAGE_TYPES in shared/schema.ts.
+ * "query" and "notification" are aliases that map to schema-supported types.
+ */
 export type MessageType =
-  | "task_request"       // delegate a task to another agent
-  | "query"              // ask another agent for information
-  | "result"             // return a result from a delegated task
-  | "error"              // report failure back to sender
-  | "notification";      // one-way notification, no reply expected
+  | "task_request"
+  | "task_result"
+  | "clarification_needed"
+  | "error"
+  | "memory_update_request"
+  | "tool_request_denied"
+  | "final_answer";
 
 export interface AgentBusPayload {
   text: string;
@@ -85,7 +91,7 @@ export async function sendToAgent(opts: SendMessageOptions): Promise<BusDelivery
       userId,
       messageType,
       payload: payload as unknown as Record<string, unknown>,
-      status: "processing",
+      status: "pending",
       delegationDepth: depth,
       taskId,
     })
@@ -111,7 +117,7 @@ export async function sendToAgent(opts: SendMessageOptions): Promise<BusDelivery
 
     await db
       .update(agentMessages)
-      .set({ status: "completed" })
+      .set({ status: "processed" })
       .where(eq(agentMessages.id, messageId));
 
     return { messageId, reply: result.reply, status: "completed" };
@@ -148,9 +154,9 @@ export async function postNotification(
       fromAgentId: fromAgentId ?? undefined,
       toAgentId,
       userId,
-      messageType: "notification",
+      messageType: "final_answer",
       payload: { text, ...metadata },
-      status: "completed",
+      status: "processed",
     })
     .returning({ id: agentMessages.id });
   return row.id;
@@ -178,7 +184,10 @@ export async function getPendingMessages(toAgentId: string): Promise<AgentMessag
   return db
     .select()
     .from(agentMessages)
-    .where(and(eq(agentMessages.toAgentId, toAgentId), eq(agentMessages.status, "pending")))
+    .where(and(
+      eq(agentMessages.toAgentId, toAgentId),
+      eq(agentMessages.status, "pending"),
+    ))
     .orderBy(agentMessages.createdAt)
     .limit(10);
 }
@@ -271,7 +280,7 @@ export async function getMessageStats(agentId: string, userId: string): Promise<
     const n = parseInt(row.count, 10);
     stats.total += n;
     if (row.status === "pending") stats.pending = n;
-    else if (row.status === "completed") stats.completed = n;
+    else if (row.status === "processed") stats.completed = n; // expose as "completed" to callers
     else if (row.status === "failed") stats.failed = n;
   }
   return stats;

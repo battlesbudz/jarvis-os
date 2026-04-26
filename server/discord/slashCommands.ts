@@ -176,11 +176,11 @@ export async function registerSlashCommands(): Promise<void> {
       }
     }
 
-    // Build the merged command list: keep all existing non-jarvis commands, then
-    // add/replace the /jarvis command. This is non-destructive — other bot commands
-    // (if any) are preserved rather than wiped by the PUT operation.
-    const otherCommands = existing.filter((c) => c.name !== "jarvis");
-    const mergedCommands = [...otherCommands, JARVIS_COMMAND];
+    // Build the merged command list: keep all existing non-jarvis/non-agent commands,
+    // then add/replace the /jarvis and /agent commands. Non-destructive.
+    const { AGENT_COMMAND } = await import("./agentCommands");
+    const otherCommands = existing.filter((c) => c.name !== "jarvis" && c.name !== "agent");
+    const mergedCommands = [...otherCommands, JARVIS_COMMAND, AGENT_COMMAND];
 
     const putRes = await fetch(url, {
       method: "PUT",
@@ -465,6 +465,29 @@ export async function handleInteraction(interaction: any): Promise<object> {
 
   // ── Slash command ───────────────────────────────────────────────────────
   if (interaction.type === InteractionType.APPLICATION_COMMAND) {
+    // ── /agent command ────────────────────────────────────────────────────
+    if (interaction.data?.name === "agent") {
+      const memberUser = interaction.member?.user ?? interaction.user ?? {};
+      const discordUserId: string = memberUser.id ?? "";
+      const paired = await lookupUserByDiscordId(discordUserId);
+      if (!paired) {
+        const discordUsername: string = memberUser.username ?? memberUser.global_name ?? discordUserId;
+        return immediateEphemeral(buildPairingPrompt(discordUserId, discordUsername));
+      }
+      // Defer while we process (agents can take a few seconds)
+      setImmediate(async () => {
+        try {
+          const { handleAgentCommand } = await import("./agentCommands");
+          const result = await handleAgentCommand(interaction, paired.userId);
+          await editInteractionReply(appId, interaction.token, result.content, result.flags);
+        } catch (err) {
+          console.error("[SlashCommands] /agent error:", err);
+          await editInteractionReply(appId, interaction.token, "❌ Agent command failed.", EPHEMERAL);
+        }
+      });
+      return deferredEphemeral();
+    }
+
     if (interaction.data?.name !== "jarvis") {
       return immediateEphemeral("Unknown command.");
     }

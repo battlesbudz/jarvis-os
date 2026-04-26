@@ -4,6 +4,7 @@ import { eq, and, sql } from "drizzle-orm";
 import { channelLinks, users, discordPendingApprovals, discordAgents } from "@shared/schema";
 import { getUserToken, saveUserToken, deleteUserToken } from "../userTokenStore";
 import { runCoachAgent } from "../channels/coachAgent";
+import { routeToNamedAgent } from "../agent/runNamedAgent";
 import { setupWorkspace as _setupWorkspace, postToTopicChannel as _postToTopicChannel, classifyTopic, getTopicForChannel, WORKSPACE_TOPICS, type WorkspaceMeta } from "./workspace";
 import { getUserTtsChannels, getUserTtsPrefs, speakToUser } from "../agent/tools/tts";
 
@@ -465,7 +466,26 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
       ? `\n\n[Workspace channel: ${topicForChannel.emoji} ${topicForChannel.name.charAt(0).toUpperCase() + topicForChannel.name.slice(1)}. ${topicForChannel.description} Keep your response focused on this life area unless the user explicitly asks about something else.]`
       : "";
 
-    // ── Phase 6: Named agent persona injection ─────────────────────────
+    // ── Phase 6: Named agent routing ───────────────────────────────────
+    // Check if this channel is assigned to a named agent (new agent system).
+    // If so, route directly to runNamedAgent. If not, fall through to the
+    // standard runCoachAgent pipeline with optional persona-prefix injection.
+    const namedAgentResult = !isDM
+      ? await routeToNamedAgent(userId, "discord", message.channelId, userText)
+      : null;
+
+    if (namedAgentResult !== null) {
+      // Named agent handled the message — send the reply and skip coach pipeline.
+      const reply = namedAgentResult.reply || "Sorry, the agent couldn't generate a response right now.";
+      if (typingMsg) {
+        await editOrSendLong(typingMsg, reply);
+      } else {
+        await sendLong(message.channel as { send(t: string): Promise<unknown> }, reply);
+      }
+      return;
+    }
+
+    // ── Phase 6b: Legacy persona injection (pre-new-agent-system rows) ────
     const namedAgent = !isDM ? await getNamedAgentForChannel(userId, message.channelId) : null;
     const personaPrefix = namedAgent
       ? `[You are ${namedAgent.name}. ${namedAgent.persona}]\n\n`
