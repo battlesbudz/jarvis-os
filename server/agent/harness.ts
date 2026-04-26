@@ -186,24 +186,14 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
   //   (c) Adds a softer advisory note for EXPIRING_SOON integrations (still
   //       usable — warn the user to reconnect soon but don't block tools).
   //
-  // Tool-to-integration dependency map: tools in INTEGRATION_TOOL_DEPS[k] are
-  // excluded from the session when integration k is broken.
-  // Maps integration key → tools that are disabled when that integration is broken.
-  // Channel integrations (telegram/discord/slack/whatsapp) have no agent tools to gate,
-  // but are still tracked here so the proactive prompt note covers them.
-  const INTEGRATION_TOOL_DEPS: Record<string, { label: string; tools: string[] }> = {
-    google:    { label: "Google (Gmail + Calendar + Drive)", tools: ["gmail_action", "create_gmail_draft", "fetch_calendar", "drive_create_file", "drive_list_files", "drive_read_file"] },
-    outlook:   { label: "Microsoft Outlook",                tools: [] },
-    // Discord has agent tools that directly post/manage channels.
-    discord:   { label: "Discord",                          tools: ["discord_post", "discord_create_channel", "discord_delete_channel", "discord_list_channels", "discord_pin_message", "setup_discord_workspace", "setup_content_pipeline", "setup_named_agent", "schedule_channel_report", "list_channel_schedules", "delete_channel_schedule"] },
-    // Telegram/Slack/WhatsApp are delivery channels — no dedicated agent action tools.
-    telegram:  { label: "Telegram",                         tools: [] },
-    slack:     { label: "Slack",                            tools: [] },
-    whatsapp:  { label: "WhatsApp (via Twilio)",            tools: [] },
-  };
+  // The integration → tool mapping is sourced from the capability registry so
+  // each capability module owns its own dependency declaration rather than
+  // being hard-coded here. The registry is lazily imported and cached by Node.
 
   if (context.userId) {
     try {
+      const { capabilityRegistry } = await import("../capabilities/index");
+      const integrationDeps = capabilityRegistry.getIntegrationDeps();
       const { getUserIntegrationStatuses } = await import("../intelligence/integrationValidator");
       const statuses = await getUserIntegrationStatuses(context.userId);
 
@@ -213,7 +203,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
       const brokenChannelOnly: string[] = []; // broken but no tools to exclude
       const toolsToExclude = new Set<string>();
 
-      for (const [key, { label, tools: depTools }] of Object.entries(INTEGRATION_TOOL_DEPS)) {
+      for (const [key, { label, toolNames: depTools }] of Object.entries(integrationDeps)) {
         if (statuses[key as keyof typeof statuses] === "broken") {
           if (depTools.length > 0) {
             brokenWithTools.push(label);
