@@ -10,6 +10,8 @@ export type AgentEventType =
   | "agent_invoked"
   | "tool_used"
   | "tool_permission_denied"
+  | "tool_blocked"
+  | "tool_approved"
   | "task_delegated"
   | "task_completed"
   | "task_failed"

@@ -117,6 +117,20 @@ export function registerAgentRoutes(app: Express): void {
     } catch (err) { handleError(res, err); }
   });
 
+  // ── POST /api/council — short-form alias for /api/agents/council ───────────
+  app.post("/api/council", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId!;
+      const { question, agentIds } = req.body as { question: string; agentIds?: string[] };
+      if (!question) {
+        res.status(400).json({ error: "question is required" });
+        return;
+      }
+      const result = await runCouncil(userId, question, agentIds);
+      res.json(result);
+    } catch (err) { handleError(res, err); }
+  });
+
   // ── 3. GET /api/agents/approvals (BEFORE /:id) ────────────────────────────
   app.get("/api/agents/approvals", async (req: Request, res: Response) => {
     try {

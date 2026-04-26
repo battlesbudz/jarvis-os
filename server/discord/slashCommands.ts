@@ -176,11 +176,11 @@ export async function registerSlashCommands(): Promise<void> {
       }
     }
 
-    // Build the merged command list: keep all existing non-jarvis/non-agent commands,
-    // then add/replace the /jarvis and /agent commands. Non-destructive.
-    const { AGENT_COMMAND } = await import("./agentCommands");
-    const otherCommands = existing.filter((c) => c.name !== "jarvis" && c.name !== "agent");
-    const mergedCommands = [...otherCommands, JARVIS_COMMAND, AGENT_COMMAND];
+    // Build the merged command list: keep all existing non-jarvis/non-agent/non-ask
+    // commands, then add/replace the /jarvis, /agent, and /ask commands. Non-destructive.
+    const { AGENT_COMMAND, ASK_COMMAND } = await import("./agentCommands");
+    const otherCommands = existing.filter((c) => c.name !== "jarvis" && c.name !== "agent" && c.name !== "ask");
+    const mergedCommands = [...otherCommands, JARVIS_COMMAND, AGENT_COMMAND, ASK_COMMAND];
 
     const putRes = await fetch(url, {
       method: "PUT",
@@ -483,6 +483,28 @@ export async function handleInteraction(interaction: any): Promise<object> {
         } catch (err) {
           console.error("[SlashCommands] /agent error:", err);
           await editInteractionReply(appId, interaction.token, "❌ Agent command failed.", EPHEMERAL);
+        }
+      });
+      return deferredEphemeral();
+    }
+
+    // ── /ask command ──────────────────────────────────────────────────────────
+    if (interaction.data?.name === "ask") {
+      const memberUser = interaction.member?.user ?? interaction.user ?? {};
+      const discordUserId: string = memberUser.id ?? "";
+      const paired = await lookupUserByDiscordId(discordUserId);
+      if (!paired) {
+        const discordUsername: string = memberUser.username ?? memberUser.global_name ?? discordUserId;
+        return immediateEphemeral(buildPairingPrompt(discordUserId, discordUsername));
+      }
+      setImmediate(async () => {
+        try {
+          const { handleAskCommand } = await import("./agentCommands");
+          const result = await handleAskCommand(interaction, paired.userId);
+          await editInteractionReply(appId, interaction.token, result.content, result.flags);
+        } catch (err) {
+          console.error("[SlashCommands] /ask error:", err);
+          await editInteractionReply(appId, interaction.token, "❌ Ask command failed.", EPHEMERAL);
         }
       });
       return deferredEphemeral();

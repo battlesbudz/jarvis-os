@@ -25,6 +25,18 @@ export interface RunAgentOptions {
    */
   onToken?: (chunk: string) => void;
   /**
+   * Optional pre-execution hook called before each tool is invoked.
+   * Return { allowed: true } to allow execution.
+   * Return { allowed: false, reason } to block execution — the tool call
+   * receives a denied-error result and the agent is informed.
+   *
+   * Named agents use this for approval-gate checks on high-risk tools.
+   */
+  onBeforeTool?: (
+    toolName: string,
+    toolArgs: Record<string, unknown>,
+  ) => Promise<{ allowed: boolean; reason?: string }>;
+  /**
    * Pre-computed activation plan from the ActivationPlanner.
    *
    * When provided, three things happen inside runAgent:
@@ -705,6 +717,31 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
               durationMs: Date.now() - start,
             });
             return { tc, content: result.content };
+          }
+
+          // ── Pre-execution approval gate check ────────────────────────
+          if (opts.onBeforeTool) {
+            try {
+              const gate = await opts.onBeforeTool(tc.function.name, parsedArgs);
+              if (!gate.allowed) {
+                const deniedResult = {
+                  ok: false,
+                  content: `Tool execution blocked: ${gate.reason ?? "user approval required"}`,
+                  label: "Approval required",
+                };
+                toolCalls.push({
+                  name: tc.function.name,
+                  args: parsedArgs,
+                  result: deniedResult,
+                  durationMs: Date.now() - start,
+                });
+                console.log(`[${channel}/Agent] tool=${tc.function.name} BLOCKED (approval required)`);
+                return { tc, content: deniedResult.content };
+              }
+            } catch (gateErr) {
+              console.warn(`[${channel}/Agent] onBeforeTool check failed for ${tc.function.name}:`, gateErr);
+              // On gate check error, allow execution (fail-open for non-critical tools)
+            }
           }
 
           try {
