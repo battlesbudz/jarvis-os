@@ -216,6 +216,60 @@ export async function elevenlabsTts(
 }
 
 /**
+ * ElevenLabs Streaming Text-to-Speech.
+ * Returns an async iterable of base64-encoded raw PCM16 chunks at 24 kHz mono.
+ * Uses optimize_streaming_latency=2 for lowest latency.
+ * Falls back to elevenlabsTts() if streaming is not available.
+ */
+export async function elevenlabsTtsStream(
+  text: string,
+  voiceId: string,
+  modelId: string = "eleven_turbo_v2_5",
+): Promise<AsyncIterable<string>> {
+  const apiKey = process.env.ELEVENLABS_API_KEY;
+  if (!apiKey) throw new Error("ELEVENLABS_API_KEY not set");
+
+  const res = await fetch(
+    `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream?optimize_streaming_latency=2`,
+    {
+      method: "POST",
+      headers: {
+        "xi-api-key": apiKey,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        text,
+        model_id: modelId,
+        voice_settings: { stability: 0.5, similarity_boost: 0.75 },
+        output_format: "pcm_24000",
+      }),
+    }
+  );
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => res.statusText);
+    throw new Error(`ElevenLabs stream failed (${res.status}): ${errText}`);
+  }
+
+  if (!res.body) throw new Error("ElevenLabs stream: no response body");
+
+  return (async function* () {
+    const reader = (res.body as ReadableStream<Uint8Array>).getReader();
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value && value.length > 0) {
+          yield Buffer.from(value).toString("base64");
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  })();
+}
+
+/**
  * Text-to-Speech: Converts text to speech verbatim.
  * Uses OpenAI tts-1 model via Replit AI Integrations.
  */

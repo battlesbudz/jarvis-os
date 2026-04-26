@@ -597,6 +597,7 @@ export default function InsightsScreen() {
   const silencePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const soundRef = useRef<Audio.Sound | null>(null);
   const webAudioRef = useRef<HTMLAudioElement | null>(null);
+  const webAudioCtxRef = useRef<AudioContext | null>(null);
   const speakAbortRef = useRef<AbortController | null>(null);
   const isSpeakingRef = useRef(false);
   const webRecorderRef = useRef<MediaRecorder | null>(null);
@@ -910,6 +911,8 @@ export default function InsightsScreen() {
     if (Platform.OS === 'web') {
       webAudioRef.current?.pause();
       webAudioRef.current = null;
+      webAudioCtxRef.current?.close().catch(() => {});
+      webAudioCtxRef.current = null;
     } else {
       soundRef.current?.stopAsync().catch(() => {});
       soundRef.current?.unloadAsync().catch(() => {});
@@ -929,72 +932,222 @@ export default function InsightsScreen() {
     speakingTextRef.current = text;
     setIsSpeaking(true);
     setIsTTSLoading(true);
-    try {
-      const abortController = new AbortController();
-      speakAbortRef.current = abortController;
-      const url = new URL('/api/coach/speak', getApiUrl());
-      const res = await authFetch(url.toString(), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: text.slice(0, 4000) }),
-        signal: abortController.signal,
-      });
-      if (!isSpeakingRef.current) return;
-      const data = await res.json();
-      setIsTTSLoading(false);
-      if (!data.audio || !isSpeakingRef.current) {
-        isSpeakingRef.current = false;
-        speakingTextRef.current = null;
-        setIsSpeaking(false);
-        return;
-      }
 
-      if (Platform.OS === 'web') {
-        const audioEl = new window.Audio(`data:audio/mp3;base64,${data.audio}`);
-        webAudioRef.current = audioEl;
-        audioEl.onended = () => {
-          isSpeakingRef.current = false;
-          speakingTextRef.current = null;
-          setIsSpeaking(false);
-          apiRequest('POST', '/api/voice/tts-done').catch(() => {});
-          if (talkModeRef.current) {
-            setTimeout(() => startRecordingRef.current(), 400);
-          }
-        };
-        audioEl.onerror = () => {
-          isSpeakingRef.current = false;
-          speakingTextRef.current = null;
-          setIsSpeaking(false);
-        };
-        await audioEl.play();
-      } else {
-        await Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true });
-        const tmpUri = FileSystem.cacheDirectory + 'coach_speech.mp3';
-        await FileSystem.writeAsStringAsync(tmpUri, data.audio, { encoding: FileSystem.EncodingType.Base64 });
-        const { sound } = await Audio.Sound.createAsync(
-          { uri: tmpUri },
-          { shouldPlay: true }
-        );
-        soundRef.current = sound;
-        sound.setOnPlaybackStatusUpdate((status) => {
-          if ('didJustFinish' in status && status.didJustFinish) {
-            isSpeakingRef.current = false;
-            speakingTextRef.current = null;
-            setIsSpeaking(false);
-            apiRequest('POST', '/api/voice/tts-done').catch(() => {});
-            if (talkModeRef.current) {
-              setTimeout(() => startRecordingRef.current(), 400);
-            }
-          }
-        });
-      }
-    } catch (error: unknown) {
-      if (error instanceof Error && error.name === 'AbortError') return;
-      console.error('Failed to speak:', error);
+    const abortController = new AbortController();
+    speakAbortRef.current = abortController;
+
+    const onPlaybackEnd = () => {
       isSpeakingRef.current = false;
       speakingTextRef.current = null;
       setIsSpeaking(false);
       setIsTTSLoading(false);
+      apiRequest('POST', '/api/voice/tts-done').catch(() => {});
+      if (talkModeRef.current) {
+        setTimeout(() => startRecordingRef.current(), 400);
+      }
+    };
+
+    const onError = () => {
+      isSpeakingRef.current = false;
+      speakingTextRef.current = null;
+      setIsSpeaking(false);
+      setIsTTSLoading(false);
+    };
+
+    const trimmedText = text.slice(0, 4000);
+
+    const uint8ToBase64 = (bytes: Uint8Array): string => {
+      const chunkSize = 8192;
+      let b64 = '';
+      for (let i = 0; i < bytes.length; i += chunkSize) {
+        b64 += String.fromCharCode(...bytes.subarray(i, Math.min(i + chunkSize, bytes.length)));
+      }
+      return btoa(b64);
+    };
+
+    let streamingAttempted = false;
+
+    try {
+      streamingAttempted = true;
+      const streamUrl = new URL('/api/tts/stream', getApiUrl()).toString();
+      const res = await authFetch(streamUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: trimmedText }),
+        signal: abortController.signal,
+      });
+
+      if (!res.ok || !res.body) throw new Error(`Stream ${res.status}`);
+      if (!isSpeakingRef.current) return;
+
+      const reader = (res.body as ReadableStream<Uint8Array>).getReader();
+      const decoder = new TextDecoder();
+      let lineBuffer = '';
+
+      const parseLines = (rawText: string): Array<{ type: string; data?: string; sampleRate?: number; message?: string }> => {
+        lineBuffer += rawText;
+        const parsed: Array<{ type: string; data?: string; sampleRate?: number; message?: string }> = [];
+        const lines = lineBuffer.split('\n');
+        lineBuffer = lines.pop() ?? '';
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          try { parsed.push(JSON.parse(trimmed)); } catch { /* skip malformed */ }
+        }
+        return parsed;
+      };
+
+      if (Platform.OS === 'web') {
+        const WinAudioContext = (window as unknown as Record<string, unknown>).AudioContext ?? (window as unknown as Record<string, unknown>).webkitAudioContext;
+        if (!WinAudioContext) throw new Error('Web Audio API not available');
+        const audioCtx = new (WinAudioContext as typeof AudioContext)({ sampleRate: 24000 });
+        webAudioCtxRef.current = audioCtx;
+        let scheduledTime = audioCtx.currentTime + 0.1;
+        let lastSource: AudioBufferSourceNode | null = null;
+        let chunkCount = 0;
+
+        const scheduleChunk = (base64Data: string, sr = 24000) => {
+          const binaryStr = atob(base64Data);
+          const bytes = new Uint8Array(binaryStr.length);
+          for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+          const pcm16 = new Int16Array(bytes.buffer);
+          const float32 = new Float32Array(pcm16.length);
+          for (let i = 0; i < pcm16.length; i++) float32[i] = pcm16[i] / 32768;
+          const buf = audioCtx.createBuffer(1, float32.length, sr);
+          buf.getChannelData(0).set(float32);
+          const src = audioCtx.createBufferSource();
+          src.buffer = buf;
+          src.connect(audioCtx.destination);
+          const startAt = Math.max(audioCtx.currentTime + 0.001, scheduledTime);
+          src.start(startAt);
+          scheduledTime = startAt + buf.duration;
+          chunkCount++;
+          return src;
+        };
+
+        setIsTTSLoading(false);
+        let done = false;
+        while (!done && !abortController.signal.aborted && isSpeakingRef.current) {
+          const { done: readDone, value } = await reader.read();
+          if (readDone) break;
+          for (const msg of parseLines(decoder.decode(value, { stream: true }))) {
+            if (msg.type === 'chunk' && msg.data) {
+              lastSource = scheduleChunk(msg.data, msg.sampleRate ?? 24000);
+            } else if (msg.type === 'done') {
+              done = true;
+            } else if (msg.type === 'error') {
+              throw new Error(msg.message ?? 'Stream error');
+            }
+          }
+        }
+
+        if (lastSource && chunkCount > 0) {
+          lastSource.onended = () => {
+            if (isSpeakingRef.current) onPlaybackEnd();
+            audioCtx.close().catch(() => {});
+            webAudioCtxRef.current = null;
+          };
+        } else {
+          audioCtx.close().catch(() => {});
+          webAudioCtxRef.current = null;
+          onError();
+        }
+      } else {
+        const chunks: Uint8Array[] = [];
+        let totalLength = 0;
+        let done = false;
+
+        while (!done && !abortController.signal.aborted && isSpeakingRef.current) {
+          const { done: readDone, value } = await reader.read();
+          if (readDone) break;
+          for (const msg of parseLines(decoder.decode(value, { stream: true }))) {
+            if (msg.type === 'chunk' && msg.data) {
+              const binaryStr = atob(msg.data);
+              const bytes = new Uint8Array(binaryStr.length);
+              for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+              chunks.push(bytes);
+              totalLength += bytes.length;
+            } else if (msg.type === 'done') {
+              done = true;
+            } else if (msg.type === 'error') {
+              throw new Error(msg.message ?? 'Stream error');
+            }
+          }
+        }
+
+        if (!isSpeakingRef.current || abortController.signal.aborted) return;
+        if (totalLength === 0) throw new Error('No audio data');
+
+        const sampleRate = 24000;
+        const wavHeader = new ArrayBuffer(44);
+        const dv = new DataView(wavHeader);
+        dv.setUint8(0, 0x52); dv.setUint8(1, 0x49); dv.setUint8(2, 0x46); dv.setUint8(3, 0x46);
+        dv.setUint32(4, 36 + totalLength, true);
+        dv.setUint8(8, 0x57); dv.setUint8(9, 0x41); dv.setUint8(10, 0x56); dv.setUint8(11, 0x45);
+        dv.setUint8(12, 0x66); dv.setUint8(13, 0x6d); dv.setUint8(14, 0x74); dv.setUint8(15, 0x20);
+        dv.setUint32(16, 16, true); dv.setUint16(20, 1, true); dv.setUint16(22, 1, true);
+        dv.setUint32(24, sampleRate, true); dv.setUint32(28, sampleRate * 2, true);
+        dv.setUint16(32, 2, true); dv.setUint16(34, 16, true);
+        dv.setUint8(36, 0x64); dv.setUint8(37, 0x61); dv.setUint8(38, 0x74); dv.setUint8(39, 0x61);
+        dv.setUint32(40, totalLength, true);
+
+        const wavBytes = new Uint8Array(44 + totalLength);
+        wavBytes.set(new Uint8Array(wavHeader), 0);
+        let offset = 44;
+        for (const chunk of chunks) { wavBytes.set(chunk, offset); offset += chunk.length; }
+
+        setIsTTSLoading(false);
+        const tmpUri = (FileSystem.cacheDirectory ?? '') + 'jarvis_stream.wav';
+        await FileSystem.writeAsStringAsync(tmpUri, uint8ToBase64(wavBytes), { encoding: FileSystem.EncodingType.Base64 });
+
+        if (!isSpeakingRef.current) return;
+        await Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true });
+        const { sound } = await Audio.Sound.createAsync({ uri: tmpUri }, { shouldPlay: true });
+        soundRef.current = sound;
+        sound.setOnPlaybackStatusUpdate((status) => {
+          if ('didJustFinish' in status && status.didJustFinish) { onPlaybackEnd(); }
+        });
+      }
+    } catch (error: unknown) {
+      if (error instanceof Error && error.name === 'AbortError') return;
+      console.warn('[speakText] Streaming failed, falling back:', error);
+
+      if (streamingAttempted && !isSpeakingRef.current) return;
+
+      try {
+        const url = new URL('/api/coach/speak', getApiUrl());
+        const res = await authFetch(url.toString(), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: trimmedText }),
+          signal: abortController.signal,
+        });
+        if (!isSpeakingRef.current) return;
+        const data = await res.json();
+        setIsTTSLoading(false);
+        if (!data.audio || !isSpeakingRef.current) { onError(); return; }
+
+        if (Platform.OS === 'web') {
+          const audioEl = new window.Audio(`data:audio/mp3;base64,${data.audio}`);
+          webAudioRef.current = audioEl;
+          audioEl.onended = () => { onPlaybackEnd(); };
+          audioEl.onerror = () => { onError(); };
+          await audioEl.play();
+        } else {
+          await Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true });
+          const tmpUri = (FileSystem.cacheDirectory ?? '') + 'coach_speech.mp3';
+          await FileSystem.writeAsStringAsync(tmpUri, data.audio, { encoding: FileSystem.EncodingType.Base64 });
+          const { sound } = await Audio.Sound.createAsync({ uri: tmpUri }, { shouldPlay: true });
+          soundRef.current = sound;
+          sound.setOnPlaybackStatusUpdate((status) => {
+            if ('didJustFinish' in status && status.didJustFinish) { onPlaybackEnd(); }
+          });
+        }
+      } catch (fallbackErr: unknown) {
+        if (fallbackErr instanceof Error && fallbackErr.name === 'AbortError') return;
+        console.error('[speakText] Fallback also failed:', fallbackErr);
+        onError();
+      }
     }
   }, [isSpeaking, stopSpeaking]);
 

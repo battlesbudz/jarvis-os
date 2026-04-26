@@ -3282,6 +3282,69 @@ Return ONLY the JSON object.`;
     }
   });
 
+  /**
+   * Streaming TTS endpoint — streams PCM16 chunks (24 kHz, mono, 16-bit LE) as
+   * newline-delimited JSON so the mobile client can begin playback before the
+   * entire audio is generated.
+   *
+   * Response format (one JSON object per line):
+   *   {"type":"chunk","data":"<base64-pcm16>","sampleRate":24000}\n  ← audio chunk
+   *   {"type":"done"}\n                                               ← end of stream
+   *   {"type":"error","message":"..."}\n                              ← on failure
+   *
+   * ElevenLabs voices (non-OpenAI IDs) use the ElevenLabs /stream endpoint with
+   * optimize_streaming_latency=2 and pcm_24000 output format.
+   * OpenAI voices use the gpt-audio streaming path (textToSpeechStream).
+   */
+  app.post("/api/tts/stream", async (req: Request, res: Response) => {
+    const userId = req.userId;
+    if (!userId) return res.status(401).json({ error: "Not authenticated" });
+
+    const { text, voice } = req.body;
+    if (!text || typeof text !== 'string') {
+      return res.status(400).json({ error: "text is required" });
+    }
+
+    let trimmedText = text.slice(0, 4000);
+    if (text.length > 4000) {
+      const lastSentence = trimmedText.lastIndexOf('.');
+      if (lastSentence > 0) trimmedText = trimmedText.slice(0, lastSentence + 1);
+    }
+
+    const OPENAI_VOICES = new Set(["alloy", "echo", "fable", "onyx", "nova", "shimmer"]);
+    const safeVoice = (voice && typeof voice === "string" ? voice.toLowerCase() : "alloy");
+    const isElevenLabs = !OPENAI_VOICES.has(safeVoice);
+
+    res.setHeader("Content-Type", "application/x-ndjson");
+    res.setHeader("Transfer-Encoding", "chunked");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("X-Accel-Buffering", "no"); // Disable Nginx buffering
+
+    const writeLine = (obj: object) => {
+      if (!res.destroyed) {
+        try { res.write(JSON.stringify(obj) + "\n"); } catch { /* connection closed */ }
+      }
+    };
+
+    try {
+      const { textToSpeechStream, elevenlabsTtsStream } = await import('./replit_integrations/audio/client');
+      const stream = isElevenLabs && process.env.ELEVENLABS_API_KEY
+        ? await elevenlabsTtsStream(trimmedText, safeVoice)
+        : await textToSpeechStream(trimmedText, OPENAI_VOICES.has(safeVoice) ? safeVoice as "alloy" | "echo" | "fable" | "onyx" | "nova" | "shimmer" : "alloy");
+
+      for await (const base64Chunk of stream) {
+        if (res.destroyed) break;
+        writeLine({ type: "chunk", data: base64Chunk, sampleRate: 24000 });
+      }
+      writeLine({ type: "done" });
+      res.end();
+    } catch (error) {
+      console.error("[/api/tts/stream] error:", error);
+      writeLine({ type: "error", message: error instanceof Error ? error.message : "TTS stream failed" });
+      res.end();
+    }
+  });
+
   app.get("/api/commitments", async (req: Request, res: Response) => {
     try {
       const userId = req.userId;
