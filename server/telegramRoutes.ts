@@ -403,15 +403,14 @@ async function processUpdate(update: any): Promise<void> {
           await sendMessage(chatId, "Voice mode is now OFF — back to text replies.");
         } else if (sub === "voice" && parts[2]) {
           const openaiVoices = ["alloy", "echo", "fable", "onyx", "nova", "shimmer"];
-          const elevenLabsNames = Object.keys(ELEVENLABS_VOICES).map(k => k.toLowerCase());
           const v = parts[2].toLowerCase();
           const elevenKey = Object.keys(ELEVENLABS_VOICES).find(k => k.toLowerCase() === v);
           if (openaiVoices.includes(v)) {
-            await setUserTtsPref(userId, { voice: v as any });
+            await setUserTtsPref(userId, { voice: v });
             await sendMessage(chatId, `Voice set to "${v}". Send /tts on to enable voice mode.`);
           } else if (elevenKey) {
             const voiceId = ELEVENLABS_VOICES[elevenKey];
-            await setUserTtsPref(userId, { voice: voiceId as any });
+            await setUserTtsPref(userId, { voice: voiceId });
             await sendMessage(chatId, `Voice set to "${elevenKey}" (ElevenLabs). Send /tts on to enable voice mode.`);
           } else {
             const allVoices = [...openaiVoices, ...Object.keys(ELEVENLABS_VOICES)].join(", ");
