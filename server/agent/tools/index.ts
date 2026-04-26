@@ -15,9 +15,10 @@
 // the literal arrays below (after the registry spread) by the patcher, keeping
 // them as the authoritative addition point without touching capability modules.
 
-// ── Capability registration (must run before registry is read) ─────────────────
-import "../../capabilities/index";
-import { capabilityRegistry } from "../../capabilities/registry";
+// ── Capability registration ────────────────────────────────────────────────────
+// Importing from capabilities/index guarantees registration side effects run
+// before any registry method is called (single, safe import entry point).
+import { capabilityRegistry } from "../../capabilities/index";
 
 import type { AgentTool } from "../types";
 
