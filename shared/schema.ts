@@ -904,6 +904,41 @@ export const skillPacks = pgTable("skill_packs", {
 
 export type SkillPack = typeof skillPacks.$inferSelect;
 
+// ── Diagnostic Events — system-wide health and error tracking ─────────────────
+// Every significant error, warning, and success milestone across the system
+// emits here so DiagnosticsService can detect degradation patterns and
+// auto-recover. Queried by the /api/diagnostics/* endpoints and the
+// jarvis_self_diagnose agent tool.
+
+export const DIAGNOSTIC_SUBSYSTEMS = [
+  "job_queue",
+  "workflow_engine",
+  "agent_harness",
+  "channel_registry",
+  "integration",
+  "heartbeat",
+  "memory",
+  "database",
+] as const;
+export type DiagnosticSubsystem = typeof DIAGNOSTIC_SUBSYSTEMS[number];
+
+export const DIAGNOSTIC_SEVERITIES = ["info", "warning", "error", "critical"] as const;
+export type DiagnosticSeverity = typeof DIAGNOSTIC_SEVERITIES[number];
+
+export const diagnosticEvents = pgTable("diagnostic_events", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").references(() => users.id, { onDelete: "cascade" }),
+  subsystem: varchar("subsystem").$type<DiagnosticSubsystem>().notNull(),
+  severity: varchar("severity").$type<DiagnosticSeverity>().notNull().default("info"),
+  message: text("message").notNull(),
+  metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+  resolved: boolean("resolved").notNull().default(false),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export type DiagnosticEvent = typeof diagnosticEvents.$inferSelect;
+export type InsertDiagnosticEvent = typeof diagnosticEvents.$inferInsert;
+
 export interface EgoInstructionOverrides {
   suppressActionTypes?: string[];
   coachingNote?: string;
