@@ -140,13 +140,25 @@ async function pingOAuthProvider(
 ): Promise<{ ok: boolean; error?: string }> {
   try {
     if (provider === "google") {
-      const res = await fetch(
-        "https://gmail.googleapis.com/gmail/v1/users/me/profile",
-        { headers: { Authorization: `Bearer ${accessToken}` } },
-      );
-      if (res.ok) return { ok: true };
-      const body = await res.json() as GoogleApiErrorBody;
-      return { ok: false, error: body?.error?.message ?? `HTTP ${res.status}` };
+      // Validate Gmail AND Calendar scopes in parallel so a revoked Calendar
+      // scope (while Gmail is still valid) is caught before tools are offered.
+      const [gmailRes, calendarRes] = await Promise.all([
+        fetch("https://gmail.googleapis.com/gmail/v1/users/me/profile", {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        }),
+        fetch("https://www.googleapis.com/calendar/v3/calendars/primary", {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        }),
+      ]);
+      if (!gmailRes.ok) {
+        const body = await gmailRes.json() as GoogleApiErrorBody;
+        return { ok: false, error: body?.error?.message ?? `Gmail HTTP ${gmailRes.status}` };
+      }
+      if (!calendarRes.ok) {
+        const body = await calendarRes.json() as GoogleApiErrorBody;
+        return { ok: false, error: body?.error?.message ?? `Calendar HTTP ${calendarRes.status}` };
+      }
+      return { ok: true };
     }
 
     if (provider === "microsoft") {
