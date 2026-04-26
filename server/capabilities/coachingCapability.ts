@@ -7,6 +7,9 @@ export const coachingCapability: Capability = {
   id: "coaching",
   label: "Coaching",
   toolGroups: ["coaching"],
+  toolGroupOverrides: {
+    schedule_jarvis_task: ["coaching", "scheduling"],
+  },
   tools: [manageTasksTool, queueBackgroundJobTool, scheduleJarvisTaskTool],
   configRequirements: [],
   async healthCheck() {

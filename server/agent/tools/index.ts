@@ -1,7 +1,25 @@
-// Tool registry — collects every typed AgentTool and exposes ready-made
-// bundles for different surfaces (Telegram chat, app chat, autonomous loops).
+// Tool registry — compatibility shim over the capability module system.
+//
+// This file preserves its original exported API (ALL_TOOLS, ToolGroup,
+// filterToolsByGroups, telegramCoachTools, getTool, individual re-exports)
+// so all existing call sites continue to work without changes.
+//
+// The authoritative tool list, Google-gated set, and tool-group map are now
+// derived from the CapabilityRegistry (server/capabilities/). Adding a new
+// tool means creating or updating a capability module — not editing this file.
+//
+// buildFeatureTool.ts locates `export const ALL_TOOLS`, `telegramCoachTools(`
+// and `export {` by string search — those patterns are preserved below.
+
+// ── Capability registration (must come before registry reads) ─────────────────
+import "../../capabilities/index";
+import { capabilityRegistry } from "../../capabilities/registry";
 
 import type { AgentTool } from "../types";
+
+// ── Individual tool imports — kept for the export { ... } compatibility block ─
+// and direct variable references inside telegramCoachTools().
+// No circular deps: individual tool files never import from this file.
 import { webSearchTool, researchTopicTool } from "./webSearch";
 import { gmailActionTool, gmailDraftTool } from "./gmailActions";
 import { manageTasksTool } from "./manageTasks";
@@ -84,110 +102,21 @@ export type ToolGroup =
   | "media"       // speak, image_generate
   | "connections" // check_connections, generate_reconnect_link, connect_channel
 
-// Tools that are only included when the user has a valid Google OAuth token.
-// Note: create_calendar_event is intentionally not gated — it remains available
-// even without a Google token so users can still queue/log calendar intentions.
-const GOOGLE_GATED = new Set([
-  "gmail_action",
-  "create_gmail_draft",
-  "fetch_calendar",
-  "drive_create_file",
-  "drive_list_files",
-  "drive_read_file",
-]);
+// ── Registry-derived data (single source of truth) ────────────────────────────
+// ALL_TOOLS, GOOGLE_GATED, and TOOL_GROUP_MAP are now produced from the
+// capability registry rather than being maintained as parallel hardcoded lists.
 
-// Mapping: tool name → set of ToolGroups it belongs to.
-const TOOL_GROUP_MAP: Record<string, ToolGroup[]> = {
-  // research
-  web_search:            ["research"],
-  research_topic:        ["research"],
-  web_fetch:             ["research"],
-  youtube_search:        ["research"],
-  youtube_transcript:    ["research"],
+// All tools registered across all capabilities (deduplicated by name).
+export const ALL_TOOLS: AgentTool[] = capabilityRegistry.getAllTools();
 
-  // coaching
-  manage_tasks:          ["coaching"],
-  queue_background_job:  ["coaching"],
-  daemon_action:         ["coaching", "system"],
+// Set of tool names that require a valid Google OAuth token.
+const GOOGLE_GATED: Set<string> = capabilityRegistry.getGoogleGatedNames();
 
-  // calendar (Google-gated)
-  fetch_calendar:        ["calendar"],
-  create_calendar_event: ["calendar"],
+// Map of toolName → ToolGroups[]; respects per-tool group overrides declared
+// in each capability module, falling back to capability-level toolGroups.
+const TOOL_GROUP_MAP: Record<string, string[]> = capabilityRegistry.buildToolGroupMap();
 
-  // email
-  gmail_action:          ["email"],
-  create_gmail_draft:    ["email"],
-  send_email:            ["email"],
-  fetch_emails:          ["email"],
-
-  // memory
-  memory_search:         ["memory"],
-  memory_get:            ["memory"],
-
-  // documents (drive tools are Google-gated)
-  create_document:       ["documents"],
-  list_documents:        ["documents"],
-  read_document:         ["documents"],
-  drive_create_file:     ["documents"],
-  drive_list_files:      ["documents"],
-  drive_read_file:       ["documents"],
-
-  // discord
-  discord_post:                ["discord"],
-  discord_create_channel:      ["discord"],
-  discord_delete_channel:      ["discord"],
-  discord_list_channels:       ["discord"],
-  discord_pin_message:         ["discord"],
-  setup_discord_workspace:     ["discord"],
-  setup_content_pipeline:      ["discord"],
-  setup_named_agent:           ["discord", "system"],
-  schedule_channel_report:     ["discord", "scheduling"],
-  list_channel_schedules:      ["discord", "scheduling"],
-  delete_channel_schedule:     ["discord", "scheduling"],
-
-  // scheduling (schedule_jarvis_task is also in coaching so coaching channels get it)
-  schedule_jarvis_task:  ["coaching", "scheduling"],
-  cron_create:           ["scheduling"],
-  cron_list:             ["scheduling"],
-  cron_delete:           ["scheduling"],
-  cron_update:           ["scheduling"],
-  workflow_create:       ["scheduling"],
-  workflow_run:          ["scheduling"],
-  workflow_status:       ["scheduling"],
-  workflow_pause:        ["scheduling"],
-  workflow_resume:       ["scheduling"],
-  workflow_list:         ["scheduling"],
-
-  // browser
-  browser_navigate:      ["browser"],
-  browser_click:         ["browser"],
-  browser_type:          ["browser"],
-  browser_screenshot:    ["browser"],
-  browser_extract:       ["browser"],
-  browser_close:         ["browser"],
-  browser_snapshot:      ["browser"],
-  browser_wait_for:      ["browser"],
-  browser_select:        ["browser"],
-  browser_tabs:          ["browser"],
-  browser_clear_session: ["browser"],
-
-  // system
-  spawn_subagent:            ["system"],
-  check_connections:         ["connections", "system"],
-  generate_reconnect_link:   ["connections", "system"],
-  connect_channel:           ["connections", "system"],
-  register_approval:         ["system"],
-  sessions_list:             ["system"],
-  sessions_history:          ["system"],
-  sessions_send:             ["system"],
-  build_feature:             ["system"],
-  test_tool:                 ["system"],
-
-  // media
-  speak:          ["media"],
-  image_generate: ["media"],
-};
-
+// ── filterToolsByGroups ────────────────────────────────────────────────────────
 /**
  * Return the subset of ALL_TOOLS whose groups intersect `requestedGroups`.
  * Google-gated tools are only included when `hasGoogle` is true.
@@ -196,7 +125,7 @@ export function filterToolsByGroups(
   requestedGroups: ToolGroup[],
   hasGoogle = false,
 ): AgentTool[] {
-  const groupSet = new Set<ToolGroup>(requestedGroups);
+  const groupSet = new Set<string>(requestedGroups);
   return ALL_TOOLS.filter((tool) => {
     if (GOOGLE_GATED.has(tool.name) && !hasGoogle) return false;
     const toolGroups = TOOL_GROUP_MAP[tool.name];
@@ -205,76 +134,7 @@ export function filterToolsByGroups(
   });
 }
 
-export const ALL_TOOLS: AgentTool[] = [
-  webSearchTool,
-  researchTopicTool,
-  gmailActionTool,
-  gmailDraftTool,
-  fetchCalendarTool,
-  createCalendarEventTool,
-  manageTasksTool,
-  createDocumentTool,
-  listDocumentsTool,
-  readDocumentTool,
-  driveCreateFileTool,
-  driveListFilesTool,
-  driveReadFileTool,
-  spawnSubagentTool,
-  daemonActionTool,
-  checkConnectionsTool,
-  generateReconnectLinkTool,
-  sendEmailTool,
-  fetchEmailsTool,
-  connectChannelTool,
-  discordPostTool,
-  discordCreateChannelTool,
-  discordDeleteChannelTool,
-  discordListChannelsTool,
-  scheduleJarvisTaskTool,
-  scheduleChannelReportTool,
-  listChannelSchedulesTool,
-  deleteChannelScheduleTool,
-  registerApprovalTool,
-  discordPinMessageTool,
-  setupNamedAgentTool,
-  youtubeSearchTool,
-  youtubeTranscriptTool,
-  queueBackgroundJobTool,
-  setupContentPipelineTool,
-  setupDiscordWorkspaceTool,
-  memorySearchTool,
-  memoryGetTool,
-  webFetchTool,
-  sessionsListTool,
-  sessionsHistoryTool,
-  sessionsSendTool,
-  speakTool,
-  cronCreateTool,
-  cronListTool,
-  cronDeleteTool,
-  cronUpdateTool,
-  workflowCreateTool,
-  workflowRunTool,
-  workflowStatusTool,
-  workflowPauseTool,
-  workflowResumeTool,
-  workflowListTool,
-  browserNavigateTool,
-  browserClickTool,
-  browserTypeTool,
-  browserScreenshotTool,
-  browserExtractTool,
-  browserCloseTool,
-  browserSnapshotTool,
-  browserWaitForTool,
-  browserSelectTool,
-  browserTabsTool,
-  browserClearSessionTool,
-  buildFeatureTool,
-  testToolTool,
-  imageGenerateTool,
-];
-
+// ── Tool index + resolver ──────────────────────────────────────────────────────
 const TOOL_INDEX = new Map(ALL_TOOLS.map((t) => [t.name, t]));
 
 // Wire the resolver so testToolTool can look up tools without a circular import.
@@ -284,76 +144,22 @@ export function getTool(name: string): AgentTool | undefined {
   return TOOL_INDEX.get(name);
 }
 
-/** Tool bundle for the Telegram coach loop. */
+// ── telegramCoachTools ────────────────────────────────────────────────────────
+/** Tool bundle for the Telegram coach loop.
+ *
+ * Includes all tools EXCEPT spawn_subagent (agent-internal only).
+ * Google-gated tools are appended when `hasGoogle` is true.
+ */
 export function telegramCoachTools(opts: { hasGoogle: boolean }): AgentTool[] {
-  const base: AgentTool[] = [
-    webSearchTool,
-    researchTopicTool,
-    manageTasksTool,
-    createDocumentTool,
-    listDocumentsTool,
-    readDocumentTool,
-    queueBackgroundJobTool,
-    daemonActionTool,
-    checkConnectionsTool,
-    generateReconnectLinkTool,
-    createCalendarEventTool,
-    sendEmailTool,
-    fetchEmailsTool,
-    connectChannelTool,
-    discordPostTool,
-    discordCreateChannelTool,
-    discordDeleteChannelTool,
-    discordListChannelsTool,
-    scheduleJarvisTaskTool,
-    scheduleChannelReportTool,
-    listChannelSchedulesTool,
-    deleteChannelScheduleTool,
-    registerApprovalTool,
-    discordPinMessageTool,
-    setupNamedAgentTool,
-    youtubeSearchTool,
-    youtubeTranscriptTool,
-    setupContentPipelineTool,
-    setupDiscordWorkspaceTool,
-    memorySearchTool,
-    memoryGetTool,
-    webFetchTool,
-    sessionsListTool,
-    sessionsHistoryTool,
-    sessionsSendTool,
-    speakTool,
-    cronCreateTool,
-    cronListTool,
-    cronDeleteTool,
-    cronUpdateTool,
-    workflowCreateTool,
-    workflowRunTool,
-    workflowStatusTool,
-    workflowPauseTool,
-    workflowResumeTool,
-    workflowListTool,
-    browserNavigateTool,
-    browserClickTool,
-    browserTypeTool,
-    browserScreenshotTool,
-    browserExtractTool,
-    browserCloseTool,
-    browserSnapshotTool,
-    browserWaitForTool,
-    browserSelectTool,
-    browserTabsTool,
-    browserClearSessionTool,
-    buildFeatureTool,
-    testToolTool,
-    imageGenerateTool,
-  ];
-  if (opts.hasGoogle) {
-    base.push(gmailActionTool, gmailDraftTool, fetchCalendarTool, driveCreateFileTool, driveListFilesTool, driveReadFileTool);
-  }
-  return base;
+  return ALL_TOOLS.filter((tool) => {
+    if (tool.name === "spawn_subagent") return false;
+    if (GOOGLE_GATED.has(tool.name) && !opts.hasGoogle) return false;
+    return true;
+  });
 }
 
+// ── Individual re-exports (compatibility layer) ────────────────────────────────
+// Other modules import specific tools from this file; preserve every export.
 export {
   webSearchTool,
   researchTopicTool,
