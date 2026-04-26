@@ -274,12 +274,14 @@ function setupErrorHandler(app: express.Application) {
 (async () => {
   await ensureTablesExist();
 
-  // Seed first-party skill packs (idempotent — skips existing rows)
-  import("./intelligence/behaviorStore").then(({ seedDefaultPacks }) => {
-    seedDefaultPacks().catch((err) =>
-      console.warn("[Startup] skill pack seeding failed (non-fatal):", err),
-    );
-  }).catch(() => {});
+  // Seed first-party skill packs (idempotent — skips existing rows).
+  // Awaited so the catalogue is populated before the first request arrives.
+  try {
+    const { seedDefaultPacks } = await import("./intelligence/behaviorStore");
+    await seedDefaultPacks();
+  } catch (err) {
+    console.warn("[Startup] skill pack seeding failed (non-fatal):", err);
+  }
 
   logTelegramStatus();
 
