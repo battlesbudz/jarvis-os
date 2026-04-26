@@ -750,30 +750,34 @@ export async function runHeartbeatTick(): Promise<void> {
 
     let actionsFired = 0;
 
-    // ── Activation planner — run before any model sessions ────────────────
+    // ── Activation planner — context and manifest for this tick ───────────
     // The planner gathers Foresight predictions, emotional state, skill count,
-    // and time-of-day to build a SessionContext and CapabilityManifest.
+    // and time-of-day to produce a SessionContext and CapabilityManifest. Its
+    // output is used for:
     //
-    // Gate semantics for LLM-driven action jobs (meeting briefs, email drafts,
-    // evening wrap-up):
+    //   1. Logging urgent signals and capability decisions for observability.
+    //   2. Passing session context into runAgent so proactive model sessions
+    //      (future feature: Jarvis-initiated outreach) are primed with what to
+    //      focus on when they eventually start spinning up in this heartbeat.
+    //   3. plan.shouldRun gates those future proactive outreach sessions ONLY.
     //
-    //   • heartbeat trusts plan.shouldRun to gate model sessions. The planner
-    //     is designed so shouldRun is false ONLY during the night-time quiet
-    //     window (10pm–5am local, no urgent signals), which is the only period
-    //     where meeting briefs, email drafts, and wrap-up definitively have
-    //     no actionable work. During morning/afternoon/evening shouldRun is
-    //     always true so each job can run its own eligibility check.
+    // The existing scheduled jobs (runMeetingBriefs, runEmailDrafts,
+    // runEveningWrapUp) are NOT gated by plan.shouldRun — they have their own
+    // internal eligibility and deduplication logic and are the authoritative
+    // source for whether job-level work exists. Gating them on shouldRun would
+    // require the planner to inspect job-level signals it does not have access
+    // to (upcoming meeting windows, pending email candidates), violating the
+    // "all existing behavior preserved" requirement.
     //
-    //   • Non-LLM background tasks (emotional state, gut scan, prediction
-    //     validation, memory pass) always run — never gated by the planner.
-    let heartbeatShouldRun = true;
+    // Non-LLM background tasks (emotional state, gut scan, prediction
+    // validation, memory pass) always run — never gated.
     try {
       const plan = await activationPlanner.plan(link.userId, { source: "heartbeat", timezone: tz });
-      heartbeatShouldRun = plan.shouldRun;
-      if (!heartbeatShouldRun) {
-        console.log(`[Heartbeat] user ${link.userId} — planner skipping model sessions: ${plan.reason}`);
-      } else if (plan.sessionContext.urgentSignals.length > 0) {
+      if (plan.sessionContext.urgentSignals.length > 0) {
         console.log(`[Heartbeat] user ${link.userId} — urgent signals: ${plan.sessionContext.urgentSignals.join(", ")}`);
+      }
+      if (!plan.shouldRun) {
+        console.log(`[Heartbeat] user ${link.userId} — planner note (informational): ${plan.reason}`);
       }
     } catch (err) {
       // Best-effort — never block the heartbeat on a planner failure
@@ -808,26 +812,23 @@ export async function runHeartbeatTick(): Promise<void> {
       console.error(`[Heartbeat] prediction validation failed for ${link.userId}:`, err);
     }
 
-    // ── LLM-driven action jobs — gated by activation planner ──────────────
-    // Skipped when shouldRun is false (night-time quiet window). All
-    // background tasks above run unconditionally. Each job has its own
-    // internal deduplication and eligibility logic.
-    if (heartbeatShouldRun) {
-      try {
-        if (token && !await isActionSuppressed(link.userId, "meeting_brief"))
-          actionsFired += await runMeetingBriefs(link.userId, link.chatId, token, memories, now, tz, userEmail);
-      } catch (err) { console.error(`[Heartbeat] meeting briefs failed for ${link.userId}:`, err); }
+    // ── LLM-driven action jobs ─────────────────────────────────────────────
+    // Run every tick; each job has its own eligibility and deduplication logic.
+    // Not gated by the activation planner — see planner comment block above.
+    try {
+      if (token && !await isActionSuppressed(link.userId, "meeting_brief"))
+        actionsFired += await runMeetingBriefs(link.userId, link.chatId, token, memories, now, tz, userEmail);
+    } catch (err) { console.error(`[Heartbeat] meeting briefs failed for ${link.userId}:`, err); }
 
-      try {
-        if (token && !await isActionSuppressed(link.userId, "email_drafted"))
-          actionsFired += await runEmailDrafts(link.userId, link.chatId, token, now);
-      } catch (err) { console.error(`[Heartbeat] email drafts failed for ${link.userId}:`, err); }
+    try {
+      if (token && !await isActionSuppressed(link.userId, "email_drafted"))
+        actionsFired += await runEmailDrafts(link.userId, link.chatId, token, now);
+    } catch (err) { console.error(`[Heartbeat] email drafts failed for ${link.userId}:`, err); }
 
-      try {
-        if (!await isActionSuppressed(link.userId, "evening_wrap") &&
-            await runEveningWrapUp(link.userId, link.chatId, token, prefs, now, tz)) actionsFired++;
-      } catch (err) { console.error(`[Heartbeat] wrap-up failed for ${link.userId}:`, err); }
-    }
+    try {
+      if (!await isActionSuppressed(link.userId, "evening_wrap") &&
+          await runEveningWrapUp(link.userId, link.chatId, token, prefs, now, tz)) actionsFired++;
+    } catch (err) { console.error(`[Heartbeat] wrap-up failed for ${link.userId}:`, err); }
 
     // Phase 4 — heartbeat memory ingestion. Pull anything new since the
     // last tick (recent telegram messages, today's calendar attendees)
