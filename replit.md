@@ -131,6 +131,31 @@ Jarvis now tracks its own performance and delivers weekly self-reports:
 - **API routes**: `GET /api/ego/dashboard`, `GET /api/ego/reports`, `POST /api/ego/trigger`
 - **Key files**: `server/intelligence/ego.ts`, `server/intelligence/actionLog.ts`, `app/jarvis-report.tsx`, `shared/schema.ts` (jarvisActionLog, egoWeeklyReports)
 
+## Capability Module System (`server/capabilities/`)
+
+The agent harness no longer hard-codes the integration-to-tool dependency map. Instead, each functional domain is encapsulated in a Capability module:
+
+- **`server/capabilities/types.ts`** — Core interfaces: `Capability`, `IntegrationDependency`, `ConfigRequirement`, `CapabilityHealthStatus`
+- **`server/capabilities/registry.ts`** — `CapabilityRegistry` class + `capabilityRegistry` singleton. Exposes `getIntegrationDeps()` (for harness) and `getHealthStatuses()` (for integrationValidator)
+- **`server/capabilities/index.ts`** — Entry point: registers all 13 capability modules on import
+- **Capability modules** (one per domain):
+  - `calendarCapability` — Google Calendar tools
+  - `emailCapability` — Gmail + Outlook send/fetch/draft tools
+  - `coachingCapability` — Tasks, background jobs, scheduling
+  - `researchCapability` — Web search, web fetch, YouTube
+  - `discordCapability` — Discord post/channel/report tools
+  - `browserCapability` — Headless browser (Playwright MCP)
+  - `daemonCapability` — Desktop daemon action tool
+  - `driveCapability` — Google Drive + Documents
+  - `systemCapability` — Subagent, sessions, buildFeatureTool
+  - `schedulingCapability` — Cron + Workflow tools
+  - `mediaCapability` — TTS (ElevenLabs) + image generation
+  - `memoryCapability` — Memory search/get
+  - `connectionsCapability` — Reconnect tools + channel-only integrations (Telegram/Slack/WhatsApp/Outlook)
+
+**Harness integration**: `harness.ts` dynamically imports `capabilityRegistry` and calls `getIntegrationDeps()` to build the tool-exclusion map at runtime — no hardcoded map in harness.
+**Validator integration**: `runValidationCycle()` calls `capabilityRegistry.getHealthStatuses()` at boot to log config-level issues (missing env vars) before the per-user OAuth pings run.
+
 ## Curiosity Scanner (Proactive Questions)
 A background service (`server/curiosityScanner.ts`) runs every 30 minutes to proactively learn about the user:
 - Fetches upcoming calendar events (today + tomorrow) and recent emails (last 24h)

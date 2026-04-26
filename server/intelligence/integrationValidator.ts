@@ -541,6 +541,24 @@ export async function runValidationCycle(): Promise<void> {
   if (running) return;
   running = true;
   try {
+    // ── Config-level capability health check ───────────────────────────────
+    // Run each capability's lightweight healthCheck (env-var / config only,
+    // no network calls). Unhealthy capabilities are logged so operators can
+    // diagnose missing secrets without waiting for an OAuth ping to fail.
+    try {
+      const { capabilityRegistry } = await import("../capabilities/index");
+      const capHealth = await capabilityRegistry.getHealthStatuses();
+      const unhealthy = Object.entries(capHealth).filter(([, s]) => !s.healthy);
+      if (unhealthy.length > 0) {
+        for (const [id, status] of unhealthy) {
+          console.warn(`[IntegrationValidator] capability "${id}" config unhealthy: ${status.reason}`);
+        }
+      }
+    } catch (err) {
+      console.error("[IntegrationValidator] capability health check failed:", err);
+    }
+
+    // ── Per-user OAuth integration checks ─────────────────────────────────
     const userIds = await getAllUserIds();
     console.log(`[IntegrationValidator] checking ${userIds.length} user(s)`);
     for (const userId of userIds) {
