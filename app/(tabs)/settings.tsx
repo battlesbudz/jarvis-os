@@ -17,6 +17,7 @@ import { Link, useFocusEffect } from 'expo-router';
 import Colors from '@/constants/colors';
 import * as Haptics from 'expo-haptics';
 import * as WebBrowser from 'expo-web-browser';
+import { Audio } from 'expo-av';
 import {
   getStats,
   claimReward,
@@ -412,11 +413,33 @@ export default function SettingsScreen() {
   }, []);
 
   const toggleWakeWord = useCallback(async (val: boolean) => {
+    if (val && Platform.OS !== 'web') {
+      const { status } = await Audio.requestPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert(
+          'Microphone Required',
+          'Wake Word detection needs microphone access. Please allow microphone access in Settings.',
+          [{ text: 'OK' }]
+        );
+        return;
+      }
+    }
     setWakeWordEnabled(val);
     await saveWakeSettings({ wakeWordEnabled: val });
   }, [saveWakeSettings]);
 
   const toggleTalkMode = useCallback(async (val: boolean) => {
+    if (val && Platform.OS !== 'web') {
+      const { status } = await Audio.requestPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert(
+          'Microphone Required',
+          'Talk Mode needs microphone access to listen for your voice. Please allow microphone access in Settings.',
+          [{ text: 'OK' }]
+        );
+        return;
+      }
+    }
     setTalkModeEnabled(val);
     await saveWakeSettings({ talkModeEnabled: val });
   }, [saveWakeSettings]);
