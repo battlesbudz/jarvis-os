@@ -74,11 +74,11 @@ const pendingByUser = new Map<string, Map<string, PendingOp>>();
 let opCounter = 0;
 
 // Wake word event subscriptions: userId → set of callbacks
-const wakeWordTriggerCallbacks = new Map<string, Set<(e: { phrase: string; transcript: string }) => void>>();
+const wakeWordTriggerCallbacks = new Map<string, Set<(e: { phrase: string; transcript: string; daemonHandling: boolean }) => void>>();
 
 export function subscribeWakeWordTrigger(
   userId: string,
-  cb: (e: { phrase: string; transcript: string }) => void,
+  cb: (e: { phrase: string; transcript: string; daemonHandling: boolean }) => void,
 ): () => void {
   if (!wakeWordTriggerCallbacks.has(userId)) wakeWordTriggerCallbacks.set(userId, new Set());
   wakeWordTriggerCallbacks.get(userId)!.add(cb);
@@ -717,12 +717,14 @@ export function startDaemonBridge(server: HttpServer): void {
 
       // Wake word triggered — push an in-app event so the mobile client opens Talk Mode
       if (m.type === "wake_word_triggered" && pairedUserId) {
-        const phrase: string = (m as { type: "wake_word_triggered"; phrase?: string; transcript?: string }).phrase ?? "";
-        const transcript: string = (m as { type: "wake_word_triggered"; phrase?: string; transcript?: string }).transcript ?? "";
-        console.log(`[daemon] wake_word_triggered userId=${pairedUserId} phrase="${phrase}"`);
+        const wm = m as { type: "wake_word_triggered"; phrase?: string; transcript?: string; daemonHandling?: boolean };
+        const phrase: string = wm.phrase ?? "";
+        const transcript: string = wm.transcript ?? "";
+        const daemonHandling: boolean = !!wm.daemonHandling;
+        console.log(`[daemon] wake_word_triggered userId=${pairedUserId} phrase="${phrase}" daemonHandling=${daemonHandling}`);
         // Broadcast to any SSE/in-app listeners for this user
         wakeWordTriggerCallbacks.get(pairedUserId)?.forEach(cb => {
-          try { cb({ phrase, transcript }); } catch { /* noop */ }
+          try { cb({ phrase, transcript, daemonHandling }); } catch { /* noop */ }
         });
         return;
       }

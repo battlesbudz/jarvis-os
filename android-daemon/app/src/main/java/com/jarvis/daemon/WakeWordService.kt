@@ -276,6 +276,9 @@ class WakeWordService : Service() {
             put("type", "wake_word_triggered")
             put("phrase", phrase)
             put("transcript", fullTranscript)
+            // Let the app know whether the daemon is handling the voice turn end-to-end.
+            // When true, the app should NOT start its own mic session to avoid competing pipelines.
+            put("daemonHandling", talkModeEnabled)
         }
         // Small delay so the app has time to come to the foreground before the event fires
         mainHandler.postDelayed({ WebSocketService.sendEvent(event.toString()) }, 400L)
@@ -359,8 +362,21 @@ class WakeWordService : Service() {
 
     private fun handleTtsFinished() {
         if (!talkModeEnabled) return
-        DaemonLog.add("wake: TTS done — re-arming mic (talk mode)")
-        mainHandler.postDelayed({ startListening() }, 600L)
+        DaemonLog.add("wake: TTS done — re-arming mic for next utterance (talk mode)")
+        // Stay in utterance-capture mode: the next speech result is treated as
+        // the next user turn without requiring another wake word.
+        capturingUtterance = true
+        mainHandler.postDelayed({
+            if (!active) startListening()
+        }, 600L)
+        // Safety timeout: fall back to wake-word scan if no utterance in 15s
+        mainHandler.postDelayed({
+            if (capturingUtterance) {
+                capturingUtterance = false
+                DaemonLog.add("talk: post-TTS utterance timed out — returning to wake scan")
+                if (active) restartRecognizer(300)
+            }
+        }, 15_000L)
     }
 
     // ── Foreground notification ──────────────────────────────────────────────

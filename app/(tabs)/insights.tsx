@@ -895,6 +895,10 @@ export default function InsightsScreen() {
   useEffect(() => {
     if (!pendingWakeEvent) return;
     clearWakeEvent();
+    // When the daemon is handling the voice turn end-to-end (Talk Mode active),
+    // do NOT start the app-side mic session — only the daemon captures and processes
+    // the utterance to prevent dual-capture pipeline conflicts.
+    if (pendingWakeEvent.daemonHandling) return;
     startRecordingRef.current();
   }, [pendingWakeEvent, clearWakeEvent]);
 
