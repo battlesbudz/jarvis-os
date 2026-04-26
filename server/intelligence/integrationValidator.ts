@@ -326,23 +326,47 @@ async function checkDiscord(userId: string): Promise<CheckResult> {
 }
 
 async function checkSlack(userId: string): Promise<CheckResult> {
+  // Slack is connected via the OAuth flow (user_oauth_tokens, provider 'slack'),
+  // which is the same path used by Google and Outlook in Settings → Connections.
+  // We validate the user's OAuth token first; fall back to channel_links for
+  // workspaces using a system bot token instead of per-user OAuth.
   try {
-    const tokenOk = await checkSystemCredential("slack_token", pingSlack);
-    if (!tokenOk) {
-      // Slack may also use per-workspace OAuth stored in channel_links — check that
-      const rows = await db
-        .select({ id: schema.channelLinks.id })
-        .from(schema.channelLinks)
-        .where(and(
-          eq(schema.channelLinks.userId, userId),
-          eq(schema.channelLinks.channel, "slack"),
-        ))
-        .limit(1);
-      if (rows.length === 0) return { status: "unconfigured" };
-      // Linked but system token invalid → broken
-      return { status: "broken", errorMessage: "Slack workspace token missing or invalid" };
+    // Primary path: user has a Slack OAuth token
+    const oauthRows = await db.execute(sql`
+      SELECT access_token, refresh_token, expires_at, scopes
+      FROM user_oauth_tokens
+      WHERE user_id = ${userId} AND provider = 'slack'
+      LIMIT 1
+    `);
+    const oauthRow = (oauthRows as SqlQueryResult<OAuthTokenRow>).rows?.[0]
+      ?? (Array.isArray(oauthRows) ? (oauthRows as OAuthTokenRow[])[0] : null);
+
+    if (oauthRow) {
+      // User has an OAuth token — validate it via auth.test
+      const expiresAt: Date | null = oauthRow.expires_at ? new Date(oauthRow.expires_at) : null;
+      const now = Date.now();
+
+      if (expiresAt && expiresAt.getTime() < now) {
+        return { status: "broken", errorMessage: "Slack token expired — please reconnect in Settings", expiresAt };
+      }
+
+      const res = await fetch("https://slack.com/api/auth.test", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${oauthRow.access_token}`, "Content-Type": "application/json" },
+      });
+      const body = await res.json() as SlackAuthTestResponse;
+      if (!body.ok) {
+        return { status: "broken", errorMessage: body.error ?? "Slack OAuth token rejected — please reconnect", expiresAt: expiresAt ?? undefined };
+      }
+
+      if (expiresAt && expiresAt.getTime() < now + EXPIRY_WARNING_MS) {
+        return { status: "expiring_soon", expiresAt };
+      }
+      return { status: "healthy", expiresAt: expiresAt ?? undefined };
     }
-    const rows = await db
+
+    // Fallback: check channel_links for bot-token-based Slack connections
+    const channelRows = await db
       .select({ id: schema.channelLinks.id })
       .from(schema.channelLinks)
       .where(and(
@@ -350,7 +374,15 @@ async function checkSlack(userId: string): Promise<CheckResult> {
         eq(schema.channelLinks.channel, "slack"),
       ))
       .limit(1);
-    return rows.length > 0 ? { status: "healthy" } : { status: "unconfigured" };
+
+    if (channelRows.length === 0) return { status: "unconfigured" };
+
+    // User has a channel_links entry — verify the system bot token is still valid
+    const tokenOk = await checkSystemCredential("slack_token", pingSlack);
+    if (!tokenOk) {
+      return { status: "broken", errorMessage: "Slack workspace token missing or invalid" };
+    }
+    return { status: "healthy" };
   } catch {
     return { status: "unconfigured" };
   }
@@ -510,14 +542,25 @@ export async function runValidationCycle(): Promise<void> {
   }
 }
 
+const INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
+
 export function startIntegrationValidator(): void {
   // Delay first run by 10 seconds to let DB connections warm up on boot.
-  // Subsequent 30-minute cycles are driven by runHeartbeatTick() in heartbeat.ts.
   setTimeout(() => {
     runValidationCycle().catch((err) =>
       console.error("[IntegrationValidator] initial run failed:", err),
     );
   }, 10_000);
 
-  console.log("[IntegrationValidator] started — boot check in 10s, then every 30 min via heartbeat");
+  // Own 30-minute interval — independent of Telegram / heartbeat configuration.
+  // runHeartbeatTick() also calls runValidationCycle() opportunistically, but
+  // the `running` guard and `lastValidationRunAt` throttle in heartbeat.ts
+  // prevent double-execution when both fire close together.
+  setInterval(() => {
+    runValidationCycle().catch((err) =>
+      console.error("[IntegrationValidator] scheduled run failed:", err),
+    );
+  }, INTERVAL_MS);
+
+  console.log("[IntegrationValidator] started — boot check in 10s, then every 30 min");
 }
