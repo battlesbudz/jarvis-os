@@ -218,13 +218,52 @@ function findMcpCli() {
   return null;
 }
 
+/**
+ * Try to find the user's real Chrome/Chromium User Data directory so that
+ * the local MCP server can reuse existing logged-in sessions.
+ * Falls back to ~/.jarvis/daemon-browser-profile if none is found.
+ */
+function findRealChromiumProfile() {
+  const home = os.homedir();
+  const platform = process.platform;
+  const candidates = [];
+  if (platform === "darwin") {
+    candidates.push(
+      path.join(home, "Library", "Application Support", "Google", "Chrome"),
+      path.join(home, "Library", "Application Support", "Chromium"),
+      path.join(home, "Library", "Application Support", "Google", "Chrome Beta"),
+    );
+  } else if (platform === "linux") {
+    candidates.push(
+      path.join(home, ".config", "google-chrome"),
+      path.join(home, ".config", "chromium"),
+      path.join(home, ".config", "google-chrome-beta"),
+    );
+  } else if (platform === "win32") {
+    const localAppData = process.env.LOCALAPPDATA || path.join(home, "AppData", "Local");
+    candidates.push(
+      path.join(localAppData, "Google", "Chrome", "User Data"),
+      path.join(localAppData, "Chromium", "User Data"),
+    );
+  }
+  for (const c of candidates) {
+    try {
+      if (fs.existsSync(path.join(c, "Local State")) || fs.existsSync(path.join(c, "Default"))) {
+        return c;
+      }
+    } catch { /* ignore */ }
+  }
+  return path.join(home, ".jarvis", "daemon-browser-profile");
+}
+
 function ensureLocalMcp() {
   if (localMcpInitPromise) return localMcpInitPromise;
   localMcpInitPromise = new Promise((resolve, reject) => {
     const cli = findMcpCli();
+    const userDataDir = findRealChromiumProfile();
     const args = [
       "--no-sandbox",
-      "--user-data-dir", path.join(os.homedir(), ".jarvis", "daemon-browser-profile"),
+      "--user-data-dir", userDataDir,
       "--allow-unrestricted-file-access",
     ];
 

@@ -23,6 +23,33 @@ const REQUEST_TIMEOUT_MS = 30_000;
 
 const MCP_CLI = path.join(process.cwd(), "node_modules/@playwright/mcp/cli.js");
 
+/**
+ * Find Playwright's own chromium binary so the MCP subprocess can use it
+ * instead of looking for a system "chrome" distribution.
+ */
+function findPlaywrightChromium(): string | null {
+  // Standard Playwright cache paths
+  const cacheDirs = [
+    path.join(process.cwd(), ".cache", "ms-playwright"),
+    path.join(os.homedir(), ".cache", "ms-playwright"),
+  ];
+  for (const cacheDir of cacheDirs) {
+    if (!fs.existsSync(cacheDir)) continue;
+    try {
+      const dirs = fs.readdirSync(cacheDir)
+        .filter((d) => d.startsWith("chromium-"))
+        .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
+      for (const dir of dirs) {
+        for (const sub of ["chrome-linux64/chrome", "chrome-linux/chrome", "chrome-mac/Chromium.app/Contents/MacOS/Chromium", "chrome.exe"]) {
+          const p = path.join(cacheDir, dir, sub);
+          if (fs.existsSync(p)) return p;
+        }
+      }
+    } catch { /* ignore */ }
+  }
+  return null;
+}
+
 export interface McpContentItem {
   type: "text" | "image" | "resource";
   text?: string;
@@ -65,18 +92,17 @@ class McpSession {
     fs.mkdirSync(this.profileDir, { recursive: true });
     fs.mkdirSync(this.screenshotDir, { recursive: true });
 
-    this.proc = spawn(
-      "node",
-      [
-        MCP_CLI,
-        "--headless",
-        "--no-sandbox",
-        "--user-data-dir", this.profileDir,
-        "--output-dir", this.screenshotDir,
-        "--allow-unrestricted-file-access",
-      ],
-      { stdio: ["pipe", "pipe", "pipe"] },
-    );
+    const chromiumPath = findPlaywrightChromium();
+    const mcpArgs = [
+      "--headless",
+      "--no-sandbox",
+      "--user-data-dir", this.profileDir,
+      "--output-dir", this.screenshotDir,
+      "--allow-unrestricted-file-access",
+    ];
+    if (chromiumPath) mcpArgs.push("--executable-path", chromiumPath);
+
+    this.proc = spawn("node", [MCP_CLI, ...mcpArgs], { stdio: ["pipe", "pipe", "pipe"] });
 
     this.proc.stdout!.on("data", (chunk: Buffer) => {
       this.buf += chunk.toString();
