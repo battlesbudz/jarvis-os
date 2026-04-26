@@ -1006,11 +1006,23 @@ export default function InsightsScreen() {
         const audioCtx = new (WinAudioContext as typeof AudioContext)({ sampleRate: 24000 });
         webAudioCtxRef.current = audioCtx;
         let scheduledTime = audioCtx.currentTime + 0.1;
-        let lastSource: AudioBufferSourceNode | null = null;
-        let chunkCount = 0;
 
         // Carry-over byte to handle odd-length PCM chunks (PCM16 requires 2-byte alignment)
         let webCarryByte: number | null = null;
+
+        // Counter-based completion tracking — avoids lastSource.onended race condition
+        // where very short audio finishes before the handler is attached.
+        let webScheduledCount = 0;
+        let webEndedCount = 0;
+        let webStreamDone = false;
+
+        const checkWebDone = () => {
+          if (webStreamDone && webEndedCount === webScheduledCount) {
+            if (isSpeakingRef.current) onPlaybackEnd();
+            audioCtx.close().catch(() => {});
+            webAudioCtxRef.current = null;
+          }
+        };
 
         const scheduleChunk = (base64Data: string, sr = 24000) => {
           const binaryStr = atob(base64Data);
@@ -1032,7 +1044,7 @@ export default function InsightsScreen() {
             webCarryByte = aligned[aligned.length - 1];
             aligned = aligned.subarray(0, aligned.length - 1);
           }
-          if (aligned.length === 0) return null;
+          if (aligned.length === 0) return;
 
           const pcm16 = new Int16Array(aligned.buffer, aligned.byteOffset, aligned.byteLength / 2);
           const float32 = new Float32Array(pcm16.length);
@@ -1045,8 +1057,12 @@ export default function InsightsScreen() {
           const startAt = Math.max(audioCtx.currentTime + 0.001, scheduledTime);
           src.start(startAt);
           scheduledTime = startAt + buf.duration;
-          chunkCount++;
-          return src;
+          webScheduledCount++;
+          // Attach handler at scheduling time to avoid race on short clips
+          src.onended = () => {
+            webEndedCount++;
+            checkWebDone();
+          };
         };
 
         setIsTTSLoading(false);
@@ -1056,8 +1072,7 @@ export default function InsightsScreen() {
           if (readDone) break;
           for (const msg of parseLines(decoder.decode(value, { stream: true }))) {
             if (msg.type === 'chunk' && msg.data) {
-              const src = scheduleChunk(msg.data, msg.sampleRate ?? 24000);
-              if (src) lastSource = src;
+              scheduleChunk(msg.data, msg.sampleRate ?? 24000);
             } else if (msg.type === 'done') {
               done = true;
             } else if (msg.type === 'error') {
@@ -1066,16 +1081,14 @@ export default function InsightsScreen() {
           }
         }
 
-        if (lastSource && chunkCount > 0) {
-          lastSource.onended = () => {
-            if (isSpeakingRef.current) onPlaybackEnd();
-            audioCtx.close().catch(() => {});
-            webAudioCtxRef.current = null;
-          };
-        } else {
+        if (webScheduledCount === 0) {
           audioCtx.close().catch(() => {});
           webAudioCtxRef.current = null;
           onError();
+        } else {
+          // Mark stream complete and check if all sources already ended
+          webStreamDone = true;
+          checkWebDone();
         }
       } else {
         // ── Native: rolling segment pipeline ──────────────────────────────────
