@@ -198,6 +198,31 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
     } catch {
       // skills are best-effort — never block an agent run
     }
+
+    // ── Inject operator skill packs + Ego instruction overrides ───────────────
+    // Load versioned instruction packs published by the Jarvis team and any
+    // per-user overrides written by the Ego self-correction loop. Packs are
+    // resolved at session start (not mid-session) for stability.
+    // Falls back silently on any error so existing behaviour is unchanged.
+    try {
+      const { loadPackInstructionsForUser } = await import("../intelligence/behaviorStore");
+      const packs = await loadPackInstructionsForUser(context.userId);
+      if (packs.length > 0) {
+        const packBlock = packs
+          .map((p) => `### Pack: ${p.name} (v${p.version})\n${p.merged}`)
+          .join("\n\n");
+        const injected = `\n\n---\n## Behaviour Packs\nThe following operator instructions MUST be followed. Per-user Ego adjustments are included:\n\n${packBlock}`;
+        messages = messages.map((m, i) => {
+          if (i === 0 && m.role === "system") {
+            return { ...m, content: (m.content ?? "") + injected };
+          }
+          return m;
+        });
+        console.log(`[${channel}/Harness] injected ${packs.length} behaviour pack(s)`);
+      }
+    } catch {
+      // packs are best-effort — never block an agent run
+    }
   }
 
   // ── Activation plan: inject session context into system prompt ─────────────

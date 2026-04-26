@@ -839,3 +839,53 @@ export const integrationStatus = pgTable("integration_status", {
 ]);
 
 export type IntegrationStatusRow = typeof integrationStatus.$inferSelect;
+
+// ── Behaviour Packs — Operator-pushed instruction updates ─────────────────────
+// skill_packs: versioned instruction bundles the Jarvis team can publish to all
+// users without a code deploy. Each publish increments `version` and appends a
+// changelog entry.
+//
+// user_skill_packs: per-user join table. The Ego loop writes coaching
+// adjustments into `instructionOverrides`; the agent harness merges these on
+// top of the base pack instructions at session start.
+
+export interface SkillPackChangelogEntry {
+  version: number;
+  note: string;
+  publishedAt: string; // ISO timestamp
+}
+
+export const skillPacks = pgTable("skill_packs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  version: integer("version").notNull().default(1),
+  instructions: text("instructions").notNull().default(""),
+  publishedAt: timestamp("published_at"),
+  changelog: jsonb("changelog")
+    .$type<SkillPackChangelogEntry[]>()
+    .notNull()
+    .default(sql`'[]'::jsonb`),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export type SkillPack = typeof skillPacks.$inferSelect;
+
+export interface EgoInstructionOverrides {
+  suppressActionTypes?: string[];
+  coachingNote?: string;
+  customInstructions?: string;
+  updatedAt?: string;
+}
+
+export const userSkillPacks = pgTable("user_skill_packs", {
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  packId: varchar("pack_id").notNull().references(() => skillPacks.id, { onDelete: "cascade" }),
+  appliedVersion: integer("applied_version").notNull().default(1),
+  instructionOverrides: jsonb("instruction_overrides")
+    .$type<EgoInstructionOverrides>()
+    .notNull()
+    .default(sql`'{}'::jsonb`),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => [
+  primaryKey({ columns: [table.userId, table.packId] }),
+]);
