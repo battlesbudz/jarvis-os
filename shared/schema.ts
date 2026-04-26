@@ -807,3 +807,35 @@ export const egoWeeklyReports = pgTable("ego_weekly_reports", {
 }, (table) => [
   uniqueIndex("ego_weekly_reports_user_week_idx").on(table.userId, table.weekOf),
 ]);
+
+// ── Pre-flight Integration Status ─────────────────────────────────────────────
+// Cached health check results written by IntegrationValidator every 30 minutes
+// and on server start. Each row represents one integration for one user.
+// status values:
+//   "healthy"        — token valid, scope confirmed
+//   "expiring_soon"  — token expires within 24 hours but is still valid
+//   "broken"         — token expired/revoked or missing required scope
+//   "unconfigured"   — user has not linked this integration at all
+export const INTEGRATION_NAMES = [
+  "google",
+  "outlook",
+  "telegram",
+  "discord",
+  "slack",
+  "whatsapp",
+] as const;
+export type IntegrationName = typeof INTEGRATION_NAMES[number];
+export type IntegrationStatusValue = "healthy" | "expiring_soon" | "broken" | "unconfigured";
+
+export const integrationStatus = pgTable("integration_status", {
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  integration: varchar("integration").$type<IntegrationName>().notNull(),
+  status: varchar("status").$type<IntegrationStatusValue>().notNull().default("unconfigured"),
+  lastCheckedAt: timestamp("last_checked_at").defaultNow().notNull(),
+  errorMessage: text("error_message"),
+  expiresAt: timestamp("expires_at"),
+}, (table) => [
+  primaryKey({ columns: [table.userId, table.integration] }),
+]);
+
+export type IntegrationStatusRow = typeof integrationStatus.$inferSelect;

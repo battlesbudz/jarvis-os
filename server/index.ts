@@ -9,6 +9,7 @@ import { startJobQueueWorker } from "./agent/jobQueue";
 import { isTelegramConfigured, logTelegramStatus, setWebhook, deleteWebhook } from "./integrations/telegram";
 import { startScheduler } from "./scheduler";
 import { startCuriosityScanner } from "./curiosityScanner";
+import { startIntegrationValidator } from "./intelligence/integrationValidator";
 import { initChannels } from "./channels";
 import { registerWhatsAppWebhook } from "./channels/whatsappWebhook";
 import { registerSlackWebhook } from "./channels/slackWebhook";
@@ -363,6 +364,7 @@ function setupErrorHandler(app: express.Application) {
         console.error("Failed to start curiosity scanner:", err);
       });
       startHeartbeat();
+      startIntegrationValidator();
 
       // Watch for newly crystallised skill files and hot-reload the cache.
       import("./intelligence/skillWriter").then(({ startSkillWatcher }) => {

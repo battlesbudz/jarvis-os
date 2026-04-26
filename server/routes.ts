@@ -5552,6 +5552,56 @@ Extract up to 8 memories per batch.`;
     }
   });
 
+  // ── Integration pre-flight status ────────────────────────────────────────
+  // Returns a map of { integration → { status, errorMessage, expiresAt, lastCheckedAt } }
+  // for the authenticated user. Used by the Settings screen to show health badges.
+  app.get("/api/integrations/status", async (req: Request, res: Response) => {
+    const userId = (req as any).userId as string | undefined;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    try {
+      const { db } = await import("./db");
+      const { integrationStatus } = await import("@shared/schema");
+      const { eq } = await import("drizzle-orm");
+      const rows = await db
+        .select()
+        .from(integrationStatus)
+        .where(eq(integrationStatus.userId, userId));
+
+      const result: Record<string, {
+        status: string;
+        errorMessage: string | null;
+        expiresAt: string | null;
+        lastCheckedAt: string;
+      }> = {};
+      for (const row of rows) {
+        result[row.integration] = {
+          status: row.status,
+          errorMessage: row.errorMessage ?? null,
+          expiresAt: row.expiresAt ? row.expiresAt.toISOString() : null,
+          lastCheckedAt: row.lastCheckedAt.toISOString(),
+        };
+      }
+      res.json(result);
+    } catch (err) {
+      console.error("[Integrations] GET /api/integrations/status failed:", err);
+      res.status(500).json({ error: "Failed to fetch integration statuses" });
+    }
+  });
+
+  // Trigger an immediate re-check for the current user (called after reconnect).
+  app.post("/api/integrations/refresh", async (req: Request, res: Response) => {
+    const userId = (req as any).userId as string | undefined;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    try {
+      const { validateUserIntegrations } = await import("./intelligence/integrationValidator");
+      await validateUserIntegrations(userId);
+      res.json({ ok: true });
+    } catch (err) {
+      console.error("[Integrations] POST /api/integrations/refresh failed:", err);
+      res.status(500).json({ error: "Failed to refresh integration statuses" });
+    }
+  });
+
   const httpServer = createServer(app);
   return httpServer;
 }

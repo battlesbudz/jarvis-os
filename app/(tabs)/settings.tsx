@@ -88,6 +88,22 @@ function SectionHeader({ label, accent }: { label: string; accent: string }) {
   );
 }
 
+type HealthStatus = 'healthy' | 'expiring_soon' | 'broken' | 'unconfigured' | string;
+
+function StatusDot({ status }: { status: HealthStatus }) {
+  if (!status || status === 'unconfigured') return null;
+  const color =
+    status === 'healthy' ? Colors.success :
+    status === 'expiring_soon' ? '#F59E0B' :
+    status === 'broken' ? Colors.error : Colors.textTertiary;
+  return (
+    <View style={{
+      width: 8, height: 8, borderRadius: 4,
+      backgroundColor: color, marginLeft: 6, alignSelf: 'center',
+    }} />
+  );
+}
+
 const sectionStyles = StyleSheet.create({
   header: {
     borderLeftWidth: 2,
@@ -129,6 +145,7 @@ export default function SettingsScreen() {
   const [discordPairExpanded, setDiscordPairExpanded] = useState(false);
   const [discordPairCode, setDiscordPairCode] = useState('');
   const [discordLinking, setDiscordLinking] = useState(false);
+  const [integrationHealth, setIntegrationHealth] = useState<Record<string, string>>({});
   const [loadingStatus, setLoadingStatus] = useState(true);
   const [connectingId, setConnectingId] = useState<string | null>(null);
   const [androidDaemonCode, setAndroidDaemonCode] = useState<string | null>(null);
@@ -284,10 +301,11 @@ export default function SettingsScreen() {
   const loadAll = useCallback(async () => {
     setLoadingStatus(true);
     try {
-      const [oauthRes, telegramRes, discordRes] = await Promise.all([
+      const [oauthRes, telegramRes, discordRes, integrationRes] = await Promise.all([
         apiRequest('GET', '/api/oauth/status').then(r => r.json()).catch(() => null),
         apiRequest('GET', '/api/telegram/status').then(r => r.json()).catch(() => null),
         apiRequest('GET', '/api/discord/status').then(r => r.json()).catch(() => null),
+        apiRequest('GET', '/api/integrations/status').then(r => r.json()).catch(() => null),
       ]);
       if (oauthRes) setOAuthStatus({
         google: oauthRes.google ?? { connected: false },
@@ -301,6 +319,13 @@ export default function SettingsScreen() {
       });
       setDiscordConnected(discordRes?.connected ?? false);
       setDiscordUsername(discordRes?.discordUsername ?? null);
+      if (integrationRes && typeof integrationRes === 'object') {
+        const health: Record<string, string> = {};
+        for (const [k, v] of Object.entries(integrationRes)) {
+          health[k] = (v as any)?.status ?? 'unconfigured';
+        }
+        setIntegrationHealth(health);
+      }
     } catch {}
     setLoadingStatus(false);
 
@@ -534,6 +559,12 @@ export default function SettingsScreen() {
     { id: 'microsoft', name: 'Microsoft', subtitle: 'Outlook Calendar', icon: 'logo-windows' as const, color: '#0078D4' },
     { id: 'slack', name: 'Slack', subtitle: 'Messages & Channels', icon: 'chatbubbles-outline' as const, color: '#611f69' },
   ];
+  // Maps OAuth platform id → integration_status table key
+  const PLATFORM_HEALTH_KEY: Record<string, string> = {
+    google: 'google',
+    microsoft: 'outlook',
+    slack: 'slack',
+  };
 
   return (
     <View style={[styles.root, { paddingTop: topPad }]}>
@@ -557,29 +588,48 @@ export default function SettingsScreen() {
           {PLATFORMS.map((p, idx) => {
             const status = oauthStatus[p.id as keyof OAuthStatus];
             const isConnecting = connectingId === p.id;
+            const healthKey = PLATFORM_HEALTH_KEY[p.id];
+            const health = healthKey ? integrationHealth[healthKey] : undefined;
+            const isBroken = health === 'broken';
+            const isExpiring = health === 'expiring_soon';
             return (
               <View key={p.id} style={[styles.connRow, idx > 0 && styles.connRowBorder]}>
                 <View style={[styles.connIconWrap, { backgroundColor: p.color + '20' }]}>
                   <Ionicons name={p.icon} size={18} color={p.color} />
                 </View>
                 <View style={styles.connInfo}>
-                  <Text style={styles.connName}>{p.name}</Text>
-                  <Text style={styles.connSub}>
-                    {status.connected
-                      ? (status.accounts?.[0]?.email ?? status.email ?? 'Connected')
-                      : p.subtitle}
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <Text style={styles.connName}>{p.name}</Text>
+                    {health && <StatusDot status={health} />}
+                  </View>
+                  <Text style={[styles.connSub, isBroken && { color: Colors.error }]}>
+                    {isBroken
+                      ? 'Connection broken — tap Reconnect'
+                      : isExpiring
+                        ? 'Token expiring soon'
+                        : status.connected
+                          ? (status.accounts?.[0]?.email ?? status.email ?? 'Connected')
+                          : p.subtitle}
                   </Text>
                 </View>
                 <Pressable
-                  style={[styles.connBtn, status.connected ? styles.connBtnConnected : styles.connBtnDisconnected]}
-                  onPress={() => status.connected ? handleDisconnect(p.id) : handleConnect(p.id)}
+                  style={[
+                    styles.connBtn,
+                    isBroken
+                      ? { backgroundColor: Colors.error + '20', borderColor: Colors.error }
+                      : status.connected ? styles.connBtnConnected : styles.connBtnDisconnected,
+                  ]}
+                  onPress={() => (isBroken || !status.connected) ? handleConnect(p.id) : handleDisconnect(p.id)}
                   disabled={isConnecting || loadingStatus}
                 >
                   {isConnecting ? (
                     <ActivityIndicator size="small" color={Colors.cyan} />
                   ) : (
-                    <Text style={[styles.connBtnText, status.connected && styles.connBtnTextConnected]}>
-                      {status.connected ? 'Connected' : 'Connect'}
+                    <Text style={[
+                      styles.connBtnText,
+                      isBroken ? { color: Colors.error } : status.connected && styles.connBtnTextConnected,
+                    ]}>
+                      {isBroken ? 'Reconnect' : isExpiring ? 'Renew' : status.connected ? 'Connected' : 'Connect'}
                     </Text>
                   )}
                 </Pressable>
@@ -593,7 +643,10 @@ export default function SettingsScreen() {
               <Ionicons name="paper-plane-outline" size={18} color="#0088CC" />
             </View>
             <View style={styles.connInfo}>
-              <Text style={styles.connName}>Telegram</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Text style={styles.connName}>Telegram</Text>
+                <StatusDot status={integrationHealth['telegram']} />
+              </View>
               <Text style={styles.connSub}>
                 {telegramStatus.connected ? (telegramStatus.username ? `@${telegramStatus.username}` : 'Connected') : 'Chat with Jarvis via Telegram'}
               </Text>
@@ -633,7 +686,10 @@ export default function SettingsScreen() {
               <Ionicons name="logo-discord" size={18} color="#5865F2" />
             </View>
             <View style={styles.connInfo}>
-              <Text style={styles.connName}>Discord</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Text style={styles.connName}>Discord</Text>
+                <StatusDot status={integrationHealth['discord']} />
+              </View>
               <Text style={styles.connSub}>
                 {discordConnected
                   ? (discordUsername ? `@${discordUsername}` : 'Connected')
