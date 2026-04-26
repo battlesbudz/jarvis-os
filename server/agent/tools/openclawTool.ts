@@ -1,157 +1,12 @@
-import type { AgentTool, ToolResult } from "../types";
+import type { AgentTool, ToolResult, JsonSchema } from "../types";
 import { db } from "../../db";
-import { eq } from "drizzle-orm";
-import { userPreferences, openclawBuildLog } from "@shared/schema";
-import { promises as dns } from "dns";
-
-export interface OpenClawBridgeConfig {
-  mode: "telegram" | "gateway";
-  telegramChatId?: string;
-  gatewayUrl?: string;
-  gatewayToken?: string;
-  enabled: boolean;
-  timeoutMinutes?: number;
-}
-
-// ── Pending delegation store ─────────────────────────────────────────────────
-// Keyed by userId.  Resolved by telegramRoutes.ts when a message arrives
-// from the configured OpenClaw chat that is a Telegram reply to sentMessageId.
-export interface PendingDelegation {
-  chatId: string;
-  sentMessageId: number | null; // message_id we sent — primary reply_to correlation
-  nonce: string;                // embedded nonce — secondary correlation if no reply_to
-  resolve: (text: string) => void;
-  reject: (err: Error) => void;
-  timer: ReturnType<typeof setTimeout>;
-}
-
-export const pendingOpenClawDelegations = new Map<string, PendingDelegation>();
-
-// ── Gateway response types ───────────────────────────────────────────────────
-interface GatewayImmediateResponse {
-  result?: string;
-  output?: string;
-  content?: string;
-  message?: string;
-  status?: string;
-}
-
-interface GatewayJobResponse {
-  id?: string;
-  job_id?: string;
-  task_id?: string;
-  status?: "queued" | "running" | "complete" | "done" | "finished" | "error" | "failed" | string;
-  result?: string | object;
-  error?: string | object;
-}
-
-// ── SSRF protection ──────────────────────────────────────────────────────────
-// Two-layer: (1) literal IP/hostname patterns, (2) DNS resolution to catch
-// public hostnames resolving to private/internal IPs.
-const PRIVATE_IP_RANGES = [
-  /^127\./,
-  /^10\./,
-  /^172\.(1[6-9]|2\d|3[01])\./,
-  /^192\.168\./,
-  /^169\.254\./,
-  /^::1$/,
-  /^fc[0-9a-f]{2}:/i,
-  /^fe80:/i,
-  /^0\.0\.0\.0$/,
-];
-const PRIVATE_HOSTNAMES = /^(localhost|.*\.local|.*\.internal|.*\.corp|.*\.intranet)$/i;
-
-function isPrivateIp(ip: string): boolean {
-  return PRIVATE_IP_RANGES.some((re) => re.test(ip));
-}
-
-async function validateGatewayUrl(
-  raw: string
-): Promise<{ ok: true; url: URL } | { ok: false; error: string }> {
-  let parsed: URL;
-  try {
-    parsed = new URL(raw);
-  } catch {
-    return { ok: false, error: "Gateway URL is not a valid URL." };
-  }
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    return { ok: false, error: "Gateway URL must use http or https." };
-  }
-  const host = parsed.hostname;
-
-  // Layer 1: literal hostname/IP check
-  if (isPrivateIp(host) || PRIVATE_HOSTNAMES.test(host)) {
-    return {
-      ok: false,
-      error:
-        "Gateway URL points to a private/loopback address. Use a public tunnel URL (ngrok, Cloudflare Tunnel, Tailscale funnel).",
-    };
-  }
-
-  // Layer 2: DNS resolution — resolve and block if any address is private
-  try {
-    let addresses: string[] = [];
-    try {
-      addresses = await dns.resolve(host);
-    } catch {
-      const v4 = await dns.resolve4(host).catch(() => [] as string[]);
-      const v6 = await dns.resolve6(host).catch(() => [] as string[]);
-      addresses = [...v4, ...v6];
-    }
-    if (addresses.length === 0) {
-      return {
-        ok: false,
-        error: `Cannot resolve gateway hostname "${host}". Ensure the tunnel is active.`,
-      };
-    }
-    for (const addr of addresses) {
-      if (isPrivateIp(addr)) {
-        return {
-          ok: false,
-          error: `Gateway hostname "${host}" resolves to a private IP (${addr}). SSRF protection requires a public gateway address.`,
-        };
-      }
-    }
-  } catch {
-    return {
-      ok: false,
-      error: `Cannot resolve gateway hostname "${host}". Ensure the tunnel is active.`,
-    };
-  }
-
-  return { ok: true, url: parsed };
-}
-
-// ── Nonce ────────────────────────────────────────────────────────────────────
-// Short random ID embedded in the sent task message so OpenClaw can echo it
-// back as a deterministic secondary correlation key (in case it doesn't
-// reply as a Telegram threaded reply to the original message_id).
-function generateNonce(): string {
-  return Math.random().toString(36).slice(2, 9).toUpperCase();
-}
-
-// ── Config helper ────────────────────────────────────────────────────────────
-export async function getOpenClawConfig(userId: string): Promise<OpenClawBridgeConfig | null> {
-  try {
-    const rows = await db
-      .select({ data: userPreferences.data })
-      .from(userPreferences)
-      .where(eq(userPreferences.userId, userId))
-      .limit(1);
-    const prefs = (rows[0]?.data as Record<string, unknown>) ?? {};
-    const cfg = prefs.openclawBridge as OpenClawBridgeConfig | undefined;
-    if (!cfg || !cfg.enabled) return null;
-    return cfg;
-  } catch {
-    return null;
-  }
-}
+import { openclawBuildLog } from "@shared/schema";
 
 // ── Tool resolver injection ───────────────────────────────────────────────────
 // Populated by index.ts after all tools are registered to avoid circular imports.
-// Used by openclawTestTool to look up live registered tools by name.
+// Used by testToolTool to look up live registered tools by name.
 let _toolResolver: ((name: string) => AgentTool | undefined) | null = null;
-export function initOpenClawToolResolver(resolver: (name: string) => AgentTool | undefined): void {
+export function initToolResolver(resolver: (name: string) => AgentTool | undefined): void {
   _toolResolver = resolver;
 }
 
@@ -163,388 +18,20 @@ function fail(content: string, label?: string): ToolResult {
   return { ok: false, content, label };
 }
 
-// ── openclaw_delegate tool ───────────────────────────────────────────────────
-export const openclawDelegateTool: AgentTool = {
-  name: "openclaw_delegate",
-  description:
-    "Delegate a task to OpenClaw — a locally-running AI agent on the user's machine with full computer-use capabilities: shell execution, browser control, code running, vibe coding (building apps), file operations, and multi-model reasoning. Use this when the user asks to: run or write code, execute shell commands, control the browser, build a new app, create a Replit project, or do anything that requires local compute. Returns OpenClaw's result once the task is complete.",
-  parameters: {
-    type: "object",
-    properties: {
-      task: {
-        type: "string",
-        description:
-          "The full task description for OpenClaw. Be specific and include all context — OpenClaw will act on exactly this message.",
-      },
-      timeout_minutes: {
-        type: "number",
-        description:
-          "Max minutes to wait for a result. Defaults to the user's configured timeout (or 10 if not set). Max 30. For long build tasks, use a higher value.",
-      },
-    },
-    required: ["task"],
-  },
-  async execute(args, ctx): Promise<ToolResult> {
-    const task = String(args.task ?? "").trim();
-    if (!task) return fail("task argument is required.");
-
-    const userId = ctx.userId;
-    const cfg = await getOpenClawConfig(userId);
-
-    if (!cfg) {
-      return fail(
-        "OpenClaw bridge is not configured or disabled. Go to Settings → OpenClaw Brain to set up the connection.",
-        "openclaw_not_configured"
-      );
-    }
-
-    const SERVER_MAX_TIMEOUT_MINUTES = 30;
-    const userDefaultTimeout = Math.max(1, Math.min(Number(cfg.timeoutMinutes) || 10, SERVER_MAX_TIMEOUT_MINUTES));
-    const rawOverride = Number(args.timeout_minutes);
-    const effectiveMinutes = rawOverride > 0
-      ? Math.max(1, Math.min(rawOverride, SERVER_MAX_TIMEOUT_MINUTES))
-      : userDefaultTimeout;
-    const timeoutMs = effectiveMinutes * 60 * 1000;
-
-    // Guard: reject if there's already a pending delegation for this user.
-    if (pendingOpenClawDelegations.has(userId)) {
-      return fail(
-        "A delegation to OpenClaw is already in progress for your account. Wait for it to complete (or timeout) before sending another task.",
-        "openclaw_delegation_in_progress"
-      );
-    }
-
-    // ── Telegram mode ─────────────────────────────────────────────────────
-    if (cfg.mode === "telegram") {
-      const chatId = cfg.telegramChatId?.trim();
-      if (!chatId) {
-        return fail(
-          "Telegram chat ID is not set. Configure it in Settings → OpenClaw Brain.",
-          "openclaw_telegram_no_chatid"
-        );
-      }
-
-      // Generate a per-request nonce and embed it in the task message.
-      // telegramRoutes.ts resolves the pending delegation when it receives a
-      // message from the same chatId that satisfies EITHER:
-      //   (A) reply_to_message.message_id === sentMessageId  [primary — standard reply]
-      //   (B) text contains the embedded correlation tag [OC:{nonce}]  [secondary]
-      // Both are explicit correlation keys; arbitrary unrelated messages are rejected.
-      const nonce = generateNonce();
-      const sentText =
-        `[JARVIS→OPENCLAW] ref:${nonce}\n${task}\n\n` +
-        `(Reply to this message, or start your response with [OC:${nonce}])`;
-
-      const sentResult = await sendMessageWithId(chatId, sentText);
-      if (!sentResult) {
-        return fail(
-          "Failed to send task to OpenClaw via Telegram — bot token may be missing or chat ID is incorrect. Check Settings → OpenClaw Brain.",
-          "openclaw_telegram_send_failed"
-        );
-      }
-
-      // Await a correlated reply.  The existing Telegram poller (processUpdate)
-      // checks every incoming message against pendingOpenClawDelegations and
-      // resolves this Promise when a matching message arrives.
-      let replyText: string;
-      try {
-        replyText = await new Promise<string>((resolve, reject) => {
-          const timer = setTimeout(() => {
-            pendingOpenClawDelegations.delete(userId);
-            reject(
-              new Error(
-                `OpenClaw did not reply within ${Math.round(timeoutMs / 60000)} minutes. ` +
-                  `The task was sent (message_id=${sentResult.message_id}, nonce=${nonce}). ` +
-                  `Check your Telegram chat for partial output. ` +
-                  `If your task needs more time, raise the timeout (currently ${effectiveMinutes} min) in Settings → OpenClaw Brain.`
-              )
-            );
-          }, timeoutMs);
-
-          pendingOpenClawDelegations.set(userId, {
-            chatId,
-            sentMessageId: sentResult.message_id,
-            nonce,
-            resolve: (text: string) => {
-              clearTimeout(timer);
-              resolve(text);
-            },
-            reject: (err: Error) => {
-              clearTimeout(timer);
-              reject(err);
-            },
-            timer,
-          });
-        });
-      } catch (err) {
-        return fail(
-          err instanceof Error ? err.message : String(err),
-          "openclaw_telegram_timeout"
-        );
-      }
-
-      return ok(replyText, "openclaw_delegate", `telegram/message_id=${sentResult.message_id}`);
-    }
-
-    // ── Gateway mode ──────────────────────────────────────────────────────
-    if (cfg.mode === "gateway") {
-      const rawUrl = cfg.gatewayUrl?.trim();
-      if (!rawUrl) {
-        return fail(
-          "Gateway URL is not set. Configure it in Settings → OpenClaw Brain.",
-          "openclaw_gateway_no_url"
-        );
-      }
-
-      const urlCheck = await validateGatewayUrl(rawUrl);
-      if (!urlCheck.ok) {
-        return fail(`Gateway URL rejected: ${urlCheck.error}`, "openclaw_ssrf_blocked");
-      }
-      const gatewayBase = rawUrl.replace(/\/$/, "");
-
-      // Send token in both Authorization header AND body per spec ({ message, token })
-      const authHeaders: Record<string, string> = cfg.gatewayToken
-        ? { Authorization: `Bearer ${cfg.gatewayToken}` }
-        : {};
-      const bodyPayload: Record<string, string> = { message: task };
-      if (cfg.gatewayToken) bodyPayload.token = cfg.gatewayToken;
-
-      let response: Response;
-      try {
-        response = await fetch(`${gatewayBase}/api/v1/message`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", ...authHeaders },
-          body: JSON.stringify(bodyPayload),
-          signal: AbortSignal.timeout(30_000),
-        });
-      } catch (err) {
-        return fail(
-          `Could not reach OpenClaw gateway at ${rawUrl}: ${err instanceof Error ? err.message : String(err)}. Make sure your tunnel (ngrok/Cloudflare/Tailscale) is active.`,
-          "openclaw_gateway_unreachable"
-        );
-      }
-
-      if (!response.ok) {
-        const body = await response.text().catch(() => "");
-        return fail(
-          `OpenClaw gateway returned HTTP ${response.status}: ${body.slice(0, 300)}`,
-          "openclaw_gateway_http_error"
-        );
-      }
-
-      const contentType = response.headers.get("content-type") ?? "";
-
-      // SSE streaming
-      if (contentType.includes("text/event-stream")) {
-        const reader = response.body?.getReader();
-        if (!reader) {
-          return fail(
-            "Gateway returned SSE stream but body is unreadable.",
-            "openclaw_sse_error"
-          );
-        }
-        const decoder = new TextDecoder();
-        const chunks: string[] = [];
-        const deadline = Date.now() + timeoutMs;
-        while (Date.now() < deadline) {
-          const { done, value } = await reader
-            .read()
-            .catch(() => ({ done: true as const, value: undefined }));
-          if (done) break;
-          if (value) {
-            const chunk = decoder.decode(value);
-            for (const line of chunk.split("\n")) {
-              if (line.startsWith("data:")) {
-                const payload = line.slice(5).trim();
-                if (payload && payload !== "[DONE]") chunks.push(payload);
-              }
-            }
-          }
-        }
-        reader.cancel().catch(() => {});
-        const result = chunks.join("");
-        return ok(result || "(empty SSE stream from OpenClaw)", "openclaw_delegate", "gateway/sse");
-      }
-
-      // JSON — either immediate result or async job stub
-      const data = (await response.json().catch(() => null)) as
-        | GatewayImmediateResponse
-        | GatewayJobResponse
-        | null;
-
-      // Detect async job
-      const jobData = data as GatewayJobResponse | null;
-      const jobId =
-        jobData?.job_id ??
-        jobData?.task_id ??
-        ((jobData?.status === "queued" || jobData?.status === "running")
-          ? jobData?.id
-          : undefined);
-
-      if (jobId) {
-        const deadline = Date.now() + timeoutMs;
-
-        // Per spec: first try /api/v1/events SSE stream for real-time results.
-        // Fall back to polling /api/v1/jobs/{jobId} every 15s if events unavailable.
-        const eventsUrl = `${gatewayBase}/api/v1/events?job_id=${encodeURIComponent(String(jobId))}`;
-        let usedSse = false;
-        try {
-          const eventsRes = await fetch(eventsUrl, {
-            method: "GET",
-            headers: { Accept: "text/event-stream", ...authHeaders },
-            signal: AbortSignal.timeout(8_000), // 8s to establish the SSE stream
-          });
-          if (eventsRes.ok && eventsRes.headers.get("content-type")?.includes("text/event-stream")) {
-            usedSse = true;
-            const evReader = eventsRes.body?.getReader();
-            if (evReader) {
-              const decoder = new TextDecoder();
-              const chunks: string[] = [];
-              while (Date.now() < deadline) {
-                const { done, value } = await evReader
-                  .read()
-                  .catch(() => ({ done: true as const, value: undefined }));
-                if (done) break;
-                if (value) {
-                  const chunk = decoder.decode(value);
-                  for (const line of chunk.split("\n")) {
-                    if (line.startsWith("data:")) {
-                      const payload = line.slice(5).trim();
-                      if (payload === "[DONE]") {
-                        evReader.cancel().catch(() => {});
-                        return ok(chunks.join(""), "openclaw_delegate", `gateway/events/${jobId}`);
-                      }
-                      if (payload) chunks.push(payload);
-                    }
-                  }
-                }
-              }
-              evReader.cancel().catch(() => {});
-              if (chunks.length > 0) {
-                return ok(chunks.join(""), "openclaw_delegate", `gateway/events/${jobId}`);
-              }
-            }
-          }
-        } catch {
-          // Events endpoint not available — fall through to polling
-        }
-
-        // Polling fallback: check /api/v1/jobs/{jobId} every 15s
-        const pollUrl = `${gatewayBase}/api/v1/jobs/${jobId}`;
-        let lastData: GatewayJobResponse | null = data as GatewayJobResponse;
-        while (Date.now() < deadline) {
-          await new Promise<void>((r) => setTimeout(r, 15_000)); // poll every 15s per spec
-          try {
-            const pollRes = await fetch(pollUrl, {
-              method: "GET",
-              headers: { "Content-Type": "application/json", ...authHeaders },
-              signal: AbortSignal.timeout(15_000),
-            });
-            if (!pollRes.ok) break;
-            lastData = (await pollRes.json()) as GatewayJobResponse;
-            const status = lastData?.status;
-            if (
-              status === "complete" ||
-              status === "done" ||
-              status === "finished" ||
-              lastData?.result !== undefined
-            ) {
-              const raw = lastData?.result;
-              const resultStr = typeof raw === "string" ? raw : JSON.stringify(raw);
-              return ok(resultStr, "openclaw_delegate", `gateway/${usedSse ? "events-fallback" : "job"}/${jobId}`);
-            }
-            if (status === "error" || status === "failed") {
-              const raw = lastData?.error;
-              const errStr = typeof raw === "string" ? raw : JSON.stringify(raw);
-              return fail(errStr, "openclaw_job_failed");
-            }
-          } catch {
-            break;
-          }
-        }
-
-        return fail(
-          `OpenClaw job ${jobId} did not complete within ${Math.round(timeoutMs / 60000)} minutes. Last status: ${JSON.stringify(lastData)}. ` +
-            `If your task needs more time, raise the timeout (currently ${effectiveMinutes} min) in Settings → OpenClaw Brain.`,
-          "openclaw_job_timeout"
-        );
-      }
-
-      // Immediate result
-      const immData = data as GatewayImmediateResponse | null;
-      const immediateResult =
-        immData?.result ??
-        immData?.output ??
-        immData?.content ??
-        immData?.message ??
-        (data !== null ? JSON.stringify(data) : "(empty response from OpenClaw)");
-      return ok(
-        typeof immediateResult === "string" ? immediateResult : JSON.stringify(immediateResult),
-        "openclaw_delegate",
-        "gateway/immediate"
-      );
-    }
-
-    return fail(`Unknown bridge mode: ${String((cfg as OpenClawBridgeConfig).mode)}`);
-  },
-};
-
-// ── Code application helpers ──────────────────────────────────────────────────
-
 function toCamelCase(snake: string): string {
-  return snake.replace(/_([a-z0-9])/g, (_, c: string) => c.toUpperCase());
+  return snake.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
 }
 
-/**
- * Scans OpenClaw's response for labelled code blocks.
- * Returns a map of normalised file path → file content.
- * Looks for headings / bold text mentioning a file path immediately preceding each block.
- */
-function extractNamedCodeBlocks(text: string): Map<string, string> {
-  const result = new Map<string, string>();
-  const codeBlockRe = /```(?:\w+)?\n([\s\S]*?)```/g;
-  let match: RegExpExecArray | null;
-
-  while ((match = codeBlockRe.exec(text)) !== null) {
-    const code = match[1];
-    const blockStart = match.index;
-    const preceding = text.slice(Math.max(0, blockStart - 700), blockStart);
-
-    // Patterns: "File: path", "**`path`**", "## path", "`path`:"
-    const filePathRe =
-      /(?:(?:file|path|filename)[:\s`*_]+([a-zA-Z0-9_\-./]+\.(?:ts|js|json)))|`([a-zA-Z0-9_\-./]+\.(?:ts|js|json))`|#{1,4}\s+`?([a-zA-Z0-9_\-./]+\.(?:ts|js|json))`?/gi;
-    let lastFilePath: string | null = null;
-    let fm: RegExpExecArray | null;
-    while ((fm = filePathRe.exec(preceding)) !== null) {
-      lastFilePath = fm[1] ?? fm[2] ?? fm[3];
-    }
-
-    if (lastFilePath) {
-      result.set(lastFilePath.replace(/^\.\//, ""), code);
-    }
-  }
-
-  return result;
-}
-
+// ── Apply tool code directly to disk ─────────────────────────────────────────
 interface ApplyResult {
   applied: string[];
   warnings: string[];
 }
 
-/**
- * Applies OpenClaw-built code directly to the codebase:
- *   1. Writes the new tool file (and optional route file) to disk.
- *   2. Programmatically patches server/agent/tools/index.ts:
- *      - adds the import at the top
- *      - adds the tool to ALL_TOOLS[]
- *      - adds the tool to telegramCoachTools()
- *      - adds the re-export at the bottom
- */
-async function applyOpenClawBuildResult(
+async function applyToolCode(
   featureName: string,
-  openClawResponse: string,
-  needsApiEndpoint: boolean
+  toolCode: string,
+  routeCode?: string | null
 ): Promise<ApplyResult> {
   const { promises: fs } = await import("fs");
   const path = await import("path");
@@ -552,48 +39,26 @@ async function applyOpenClawBuildResult(
   const applied: string[] = [];
   const warnings: string[] = [];
 
-  const toolExportName = `${toCamelCase(featureName)}Tool`;
   const toolFilePath = `server/agent/tools/${featureName}.ts`;
-  // Route files live at server/<featureName>Routes.ts — matching repo convention
-  // (server/dataRoutes.ts, server/telegramRoutes.ts, etc.)
   const routeFilePath = `server/${featureName}Routes.ts`;
 
-  const codeBlocks = extractNamedCodeBlocks(openClawResponse);
-
-  // ── 1. Write tool file (independent step) ──────────────────────────────
+  // 1. Write tool file
   try {
-    const toolCode = codeBlocks.get(toolFilePath);
-    if (toolCode) {
-      await fs.mkdir(path.resolve(process.cwd(), "server/agent/tools"), { recursive: true });
-      await fs.writeFile(path.resolve(process.cwd(), toolFilePath), toolCode, "utf8");
-      applied.push(toolFilePath);
-    } else {
-      warnings.push(
-        `No code block found for ${toolFilePath}. Create the file manually from OpenClaw's output above.`
-      );
-    }
+    await fs.mkdir(path.resolve(process.cwd(), "server/agent/tools"), { recursive: true });
+    await fs.writeFile(path.resolve(process.cwd(), toolFilePath), toolCode, "utf8");
+    applied.push(toolFilePath);
   } catch (err) {
     warnings.push(
       `Failed to write ${toolFilePath}: ${err instanceof Error ? err.message : String(err)}`
     );
   }
 
-  // ── 2. Write route file if requested (independent step) ─────────────────
-  if (needsApiEndpoint) {
+  // 2. Write route file if provided
+  if (routeCode) {
     try {
-      // Accept either the canonical path or legacy "server/routes/<name>.ts"
-      const routeCode =
-        codeBlocks.get(routeFilePath) ??
-        codeBlocks.get(`server/routes/${featureName}.ts`);
-      if (routeCode) {
-        await fs.mkdir(path.resolve(process.cwd(), "server"), { recursive: true });
-        await fs.writeFile(path.resolve(process.cwd(), routeFilePath), routeCode, "utf8");
-        applied.push(routeFilePath);
-      } else {
-        warnings.push(
-          `No code block found for ${routeFilePath}. Add the Express route file manually and mount it in server/index.ts.`
-        );
-      }
+      await fs.mkdir(path.resolve(process.cwd(), "server"), { recursive: true });
+      await fs.writeFile(path.resolve(process.cwd(), routeFilePath), routeCode, "utf8");
+      applied.push(routeFilePath);
     } catch (err) {
       warnings.push(
         `Failed to write ${routeFilePath}: ${err instanceof Error ? err.message : String(err)}`
@@ -601,185 +66,118 @@ async function applyOpenClawBuildResult(
     }
   }
 
-  // ── 3. Patch index.ts (independent step) ───────────────────────────────
-  // Only patch index.ts if the tool file was actually written; patching index.ts
-  // to import a file that does not exist would break the server on restart.
+  // 3. Patch index.ts — only if the tool file was written
   const toolFileWritten = applied.includes(toolFilePath);
   if (!toolFileWritten) {
-    warnings.push(
-      `Skipping index.ts patch because ${toolFilePath} was not written — add registrations manually once the file exists.`
-    );
-  } else {
-    try {
-      const indexAbsPath = path.resolve(process.cwd(), "server/agent/tools/index.ts");
-      let idx = await fs.readFile(indexAbsPath, "utf8");
-      let indexModified = false;
+    warnings.push(`Skipping index.ts patch because ${toolFilePath} was not written.`);
+    return { applied, warnings };
+  }
 
-      // Determine the actual exported constant name from the written tool file.
-      // OpenClaw may use a slightly different casing; parse the real symbol first.
-      // Falls back to the convention-derived name if parsing fails.
-      let actualExportName = toolExportName;
-      try {
-        const writtenCode = await fs.readFile(
-          path.resolve(process.cwd(), toolFilePath),
-          "utf8"
+  try {
+    const toolExportName = `${toCamelCase(featureName)}Tool`;
+    let actualExportName = toolExportName;
+
+    // Parse the actual export name from the written code
+    const exportMatch = toolCode.match(/^export const (\w+)\s*:\s*AgentTool/m);
+    if (exportMatch?.[1]) {
+      actualExportName = exportMatch[1];
+      if (actualExportName !== toolExportName) {
+        warnings.push(
+          `Tool uses export name \`${actualExportName}\` (expected \`${toolExportName}\`). Registering with actual name.`
         );
-        const exportMatch = writtenCode.match(/^export const (\w+)\s*:\s*AgentTool/m);
-        if (exportMatch?.[1]) {
-          actualExportName = exportMatch[1];
-          if (actualExportName !== toolExportName) {
-            warnings.push(
-              `OpenClaw used export name \`${actualExportName}\` (expected \`${toolExportName}\`). Registering with actual name.`
-            );
-          }
-        }
-      } catch {
-        // Non-fatal: fall back to convention-derived name
       }
-
-      // a) Import — idempotent: only add if not already present
-      const importLine = `import { ${actualExportName} } from "./${featureName}";`;
-      if (!idx.includes(`from "./${featureName}"`)) {
-        const lastImportPos = idx.lastIndexOf("\nimport ");
-        if (lastImportPos !== -1) {
-          const lineEnd = idx.indexOf("\n", lastImportPos + 1);
-          if (lineEnd !== -1) {
-            idx = idx.slice(0, lineEnd) + "\n" + importLine + idx.slice(lineEnd);
-            indexModified = true;
-          }
-        } else {
-          warnings.push("Could not locate last import line in index.ts — add the import manually.");
-        }
-      }
-
-      // b) ALL_TOOLS array — anchored to the `export const ALL_TOOLS` declaration
-      // to avoid mis-targeting other arrays or closing brackets in the file.
-      if (!idx.includes(`${actualExportName},`) && !idx.includes(`${actualExportName}\n`)) {
-        const allToolsDecl = idx.indexOf("export const ALL_TOOLS");
-        if (allToolsDecl !== -1) {
-          const allToolsClose = idx.indexOf("\n];", allToolsDecl);
-          if (allToolsClose !== -1) {
-            idx =
-              idx.slice(0, allToolsClose) +
-              `\n  ${actualExportName},` +
-              idx.slice(allToolsClose);
-            indexModified = true;
-          } else {
-            warnings.push(
-              `Could not find ALL_TOOLS closing ]; in index.ts — add \`${actualExportName},\` manually.`
-            );
-          }
-        } else {
-          warnings.push(
-            `Could not find ALL_TOOLS declaration in index.ts — add \`${actualExportName},\` manually.`
-          );
-        }
-      }
-
-      // c) telegramCoachTools() base array — scoped search after function declaration
-      const tcFnIdx = idx.indexOf("telegramCoachTools(");
-      if (tcFnIdx !== -1) {
-        const tcClose = idx.indexOf("\n  ];", tcFnIdx);
-        if (tcClose !== -1) {
-          const tcSection = idx.slice(tcFnIdx, tcClose);
-          if (!tcSection.includes(`${actualExportName},`) && !tcSection.includes(`${actualExportName}\n`)) {
-            idx =
-              idx.slice(0, tcClose) +
-              `\n    ${actualExportName},` +
-              idx.slice(tcClose);
-            indexModified = true;
-          }
-        } else {
-          warnings.push(
-            `Could not find telegramCoachTools base array in index.ts — add \`${actualExportName},\` there manually.`
-          );
-        }
-      }
-
-      // d) Re-export block — anchored to the last `export {` block in the file
-      const exportBlockStart = idx.lastIndexOf("export {");
-      if (exportBlockStart !== -1) {
-        const exportBlockClose = idx.indexOf("\n};", exportBlockStart);
-        if (exportBlockClose !== -1) {
-          const exportSection = idx.slice(exportBlockStart, exportBlockClose);
-          if (!exportSection.includes(`${actualExportName},`) && !exportSection.includes(`${actualExportName}\n`)) {
-            idx =
-              idx.slice(0, exportBlockClose) +
-              `\n  ${actualExportName},` +
-              idx.slice(exportBlockClose);
-            indexModified = true;
-          }
-        } else {
-          warnings.push(
-            `Could not find export block closing in index.ts — add \`${actualExportName},\` to the exports manually.`
-          );
-        }
-      }
-
-      if (indexModified) {
-        await fs.writeFile(indexAbsPath, idx, "utf8");
-        applied.push("server/agent/tools/index.ts");
-      } else {
-        warnings.push(`index.ts already contains ${actualExportName} entries — no changes made.`);
-      }
-    } catch (err) {
-      warnings.push(
-        `Failed to patch index.ts: ${err instanceof Error ? err.message : String(err)}`
-      );
     }
+
+    const indexAbsPath = path.resolve(process.cwd(), "server/agent/tools/index.ts");
+    let idx = await fs.readFile(indexAbsPath, "utf8");
+    let modified = false;
+
+    // a) Import — idempotent
+    const importLine = `import { ${actualExportName} } from "./${featureName}";`;
+    if (!idx.includes(`from "./${featureName}"`)) {
+      const lastImportPos = idx.lastIndexOf("\nimport ");
+      if (lastImportPos !== -1) {
+        const lineEnd = idx.indexOf("\n", lastImportPos + 1);
+        if (lineEnd !== -1) {
+          idx = idx.slice(0, lineEnd) + "\n" + importLine + idx.slice(lineEnd);
+          modified = true;
+        }
+      } else {
+        warnings.push("Could not locate last import in index.ts — add the import manually.");
+      }
+    }
+
+    // b) ALL_TOOLS array
+    if (!idx.includes(`${actualExportName},`) && !idx.includes(`${actualExportName}\n`)) {
+      const allToolsDecl = idx.indexOf("export const ALL_TOOLS");
+      if (allToolsDecl !== -1) {
+        const close = idx.indexOf("\n];", allToolsDecl);
+        if (close !== -1) {
+          idx = idx.slice(0, close) + `\n  ${actualExportName},` + idx.slice(close);
+          modified = true;
+        } else {
+          warnings.push(
+            `Could not find ALL_TOOLS closing \`];\` in index.ts — add \`${actualExportName},\` manually.`
+          );
+        }
+      } else {
+        warnings.push(
+          `Could not find ALL_TOOLS in index.ts — add \`${actualExportName},\` manually.`
+        );
+      }
+    }
+
+    // c) telegramCoachTools() base array
+    const tcFnIdx = idx.indexOf("telegramCoachTools(");
+    if (tcFnIdx !== -1) {
+      const tcClose = idx.indexOf("\n  ];", tcFnIdx);
+      if (tcClose !== -1) {
+        const tcSection = idx.slice(tcFnIdx, tcClose);
+        if (!tcSection.includes(`${actualExportName},`) && !tcSection.includes(`${actualExportName}\n`)) {
+          idx = idx.slice(0, tcClose) + `\n    ${actualExportName},` + idx.slice(tcClose);
+          modified = true;
+        }
+      } else {
+        warnings.push(
+          `Could not find telegramCoachTools closing in index.ts — add \`${actualExportName},\` there manually.`
+        );
+      }
+    }
+
+    // d) Re-export block
+    const exportBlockStart = idx.lastIndexOf("export {");
+    if (exportBlockStart !== -1) {
+      const exportBlockClose = idx.indexOf("\n};", exportBlockStart);
+      if (exportBlockClose !== -1) {
+        const exportSection = idx.slice(exportBlockStart, exportBlockClose);
+        if (!exportSection.includes(`${actualExportName},`) && !exportSection.includes(`${actualExportName}\n`)) {
+          idx = idx.slice(0, exportBlockClose) + `\n  ${actualExportName},` + idx.slice(exportBlockClose);
+          modified = true;
+        }
+      } else {
+        warnings.push(
+          `Could not find export block closing in index.ts — add \`${actualExportName},\` to exports manually.`
+        );
+      }
+    }
+
+    if (modified) {
+      await fs.writeFile(indexAbsPath, idx, "utf8");
+      applied.push("server/agent/tools/index.ts");
+    } else {
+      warnings.push(`index.ts already contains ${actualExportName} entries — no changes made.`);
+    }
+  } catch (err) {
+    warnings.push(
+      `Failed to patch index.ts: ${err instanceof Error ? err.message : String(err)}`
+    );
   }
 
   return { applied, warnings };
 }
 
-// ── openclaw_build_feature tool ──────────────────────────────────────────────
-export const openclawBuildFeatureTool: AgentTool = {
-  name: "openclaw_build_feature",
-  description:
-    "Ask OpenClaw to autonomously build a new Jarvis tool and integrate it into the codebase. Use this when the user wants to add a new capability to Jarvis itself — OpenClaw will write the TypeScript tool file, register it in the tool index, add any required API endpoint, and send the resulting code back. This is Jarvis's self-improvement loop.",
-  parameters: {
-    type: "object",
-    properties: {
-      feature_name: {
-        type: "string",
-        description:
-          "Short snake_case name for the new tool, e.g. 'weather_lookup' or 'notion_create_page'. This becomes the tool filename and tool.name value.",
-      },
-      description: {
-        type: "string",
-        description:
-          "Plain-English description of what the new tool should do, when Jarvis should use it, what inputs it accepts, and what it returns. Be specific — OpenClaw will implement exactly this.",
-      },
-      parameters_schema: {
-        type: "string",
-        description:
-          "Optional JSON Schema (as a JSON string) describing the tool's parameters object. If omitted, OpenClaw will infer a sensible schema from the description.",
-      },
-      needs_api_endpoint: {
-        type: "boolean",
-        description:
-          "Set to true if the tool requires a new Express REST endpoint on the Jarvis server (e.g. to expose data to the frontend). Defaults to false — most tools call external APIs directly.",
-      },
-      timeout_minutes: {
-        type: "number",
-        description: "Max minutes to wait for OpenClaw to finish building (default 15, max 15).",
-      },
-    },
-    required: ["feature_name", "description"],
-  },
-  async execute(args, ctx): Promise<ToolResult> {
-    const rawFeatureName = String(args.feature_name ?? "").trim().replace(/\s+/g, "_");
-    const featureName = rawFeatureName.toLowerCase().replace(/[^a-z0-9_]/g, "_").replace(/_+/g, "_").replace(/^_|_$/g, "");
-    const description = String(args.description ?? "").trim();
-
-    if (!featureName) return fail("feature_name must be a non-empty snake_case identifier (letters, digits, underscores only).");
-    if (!description) return fail("description argument is required.");
-
-    const parametersSchema = args.parameters_schema ? String(args.parameters_schema).trim() : null;
-    const needsApiEndpoint = Boolean(args.needs_api_endpoint ?? false);
-    const timeoutMinutes = Math.max(1, Math.min(Number(args.timeout_minutes) || 15, 15));
-
-    const toolSchemaExample = `
+// ── build_feature tool ────────────────────────────────────────────────────────
+const TOOL_CODE_TEMPLATE = `
 import type { AgentTool, ToolResult } from "../types";
 
 export const exampleTool: AgentTool = {
@@ -788,80 +186,69 @@ export const exampleTool: AgentTool = {
   parameters: {
     type: "object",
     properties: {
-      input: {
-        type: "string",
-        description: "The main input for the tool.",
-      },
+      input: { type: "string", description: "The main input for the tool." },
     },
     required: ["input"],
   },
   async execute(args, ctx): Promise<ToolResult> {
     const input = String(args.input ?? "").trim();
     if (!input) return { ok: false, content: "input is required." };
-
-    // Implementation here
     return { ok: true, content: "Result from tool", label: "example_tool" };
   },
-};
-`.trim();
+};`.trim();
 
-    const repoStructure = `
-Jarvis repo key paths:
-- server/agent/tools/<toolName>.ts         — one file per tool, exports a const of type AgentTool
-- server/agent/tools/index.ts              — imports all tools and registers them in ALL_TOOLS array and telegramCoachTools()
-- server/<featureName>Routes.ts            — Express route files live directly under server/ (e.g. server/dataRoutes.ts, server/telegramRoutes.ts)
-- server/index.ts                          — mounts route files (register new router here if needed)
-- shared/schema.ts                         — Drizzle ORM schema (add new DB table here if needed)
-`.trim();
+export const buildFeatureTool: AgentTool = {
+  name: "build_feature",
+  description:
+    "Write a new Jarvis tool to the codebase. Generate the complete TypeScript code yourself and pass it in tool_code — Jarvis writes the file, registers it in index.ts, and runs a smoke test. Use this when the user wants a new Jarvis capability or you need to add a new tool to yourself. After a successful build restart the server for the tool to become active.",
+  parameters: {
+    type: "object",
+    properties: {
+      feature_name: {
+        type: "string",
+        description:
+          "Short snake_case name for the new tool, e.g. 'weather_lookup'. Becomes the filename (server/agent/tools/<feature_name>.ts) and the tool.name value.",
+      },
+      description: {
+        type: "string",
+        description: "Plain-English description of what the tool does (stored in the build log).",
+      },
+      tool_code: {
+        type: "string",
+        description: `Complete TypeScript source for server/agent/tools/<feature_name>.ts. Must export a const of type AgentTool. Follow this pattern exactly:\n\n${TOOL_CODE_TEMPLATE}\n\nRepo key paths:\n- server/agent/tools/<toolName>.ts — one file per tool\n- server/agent/tools/index.ts — auto-patched by build_feature\n- server/<featureName>Routes.ts — Express routes if needed\n- server/index.ts — mount new routers here\n- shared/schema.ts — Drizzle ORM schema\n\nConstraints: no uuid package; use Math.random().toString(36) for IDs; handle errors with return {ok:false}; never throw; use async/await.`,
+      },
+      route_code: {
+        type: "string",
+        description:
+          "Optional Express route file code for server/<feature_name>Routes.ts. Only needed when the tool requires a new REST endpoint. You must also add the mount line to server/index.ts manually after the build.",
+      },
+      needs_api_endpoint: {
+        type: "boolean",
+        description:
+          "Set to true if the tool requires a new Express REST endpoint. Provide route_code when true.",
+      },
+    },
+    required: ["feature_name", "description", "tool_code"],
+  },
+  async execute(args, ctx): Promise<ToolResult> {
+    const rawFeatureName = String(args.feature_name ?? "")
+      .trim()
+      .replace(/\s+/g, "_");
+    const featureName = rawFeatureName
+      .toLowerCase()
+      .replace(/[^a-z0-9_]/g, "_")
+      .replace(/_+/g, "_")
+      .replace(/^_|_$/g, "");
+    const description = String(args.description ?? "").trim();
+    const toolCode = String(args.tool_code ?? "").trim();
+    const routeCode = args.route_code ? String(args.route_code).trim() : null;
+    const needsApiEndpoint = Boolean(args.needs_api_endpoint ?? false);
 
-    const parametersSectionLines: string[] = [];
-    if (parametersSchema) {
-      parametersSectionLines.push(`\n## Requested Parameters Schema\n\`\`\`json\n${parametersSchema}\n\`\`\``);
-    }
+    if (!featureName)
+      return fail("feature_name must be a non-empty snake_case identifier (letters, digits, underscores).");
+    if (!description) return fail("description is required.");
+    if (!toolCode) return fail("tool_code is required.");
 
-    const apiEndpointSection = needsApiEndpoint
-      ? `\n## API Endpoint Required\nThis tool also needs a new Express REST endpoint. Create a route file at server/${featureName}Routes.ts (following the repo convention: server/dataRoutes.ts, server/telegramRoutes.ts, etc.), mount it in server/index.ts under /api/${featureName.replace(/_/g, "-")}, and label the code block with the file path \`server/${featureName}Routes.ts\`.`
-      : "";
-
-    const buildTask = (currentDescription: string, priorError?: string) => {
-      const fixSection = priorError
-        ? `\n\n## Fix required — previous attempt failed\nThe tool was built and applied but its smoke test failed with the following error. Your task is to fix this specific error:\n\`\`\`\n${priorError}\n\`\`\``
-        : "";
-      return `[JARVIS SELF-IMPROVEMENT] Build a new Jarvis agent tool.
-
-## Tool to build: \`${featureName}\`
-
-## Description / behaviour
-${currentDescription}
-${parametersSectionLines.join("\n")}${apiEndpointSection}${fixSection}
-
-## AgentTool TypeScript interface (must match exactly)
-\`\`\`typescript
-${toolSchemaExample}
-\`\`\`
-
-## Repo structure
-${repoStructure}
-
-## Your tasks — complete ALL of these:
-1. Write the complete TypeScript source for \`server/agent/tools/${featureName}.ts\`. Export the tool as \`${featureName}Tool\` (camelCase). The file must compile without errors.
-2. Show the exact line(s) to add to \`server/agent/tools/index.ts\`:
-   a. The import statement at the top.
-   b. The entry to add to the \`ALL_TOOLS\` array.
-   c. The entry to add inside \`telegramCoachTools()\`.
-   d. The re-export at the bottom of the file.
-3. If an API endpoint is required, write the Express route file and the mount line for server/index.ts.
-4. Reply with ALL file contents in clearly labelled code blocks so the code can be applied directly.
-
-## Important constraints
-- Do NOT use the uuid package (no crypto.getRandomValues in Node without polyfill). Use Math.random().toString(36) for IDs if needed.
-- Keep the tool focused — do one thing well.
-- Use async/await. Handle errors with \`return { ok: false, content: "..." }\` — never throw.
-- The \`ctx\` parameter has shape \`{ userId: string; ... }\`.
-- Do not add comments unless they explain non-obvious logic.`;
-    };
-
-    // Helper: write a build log row, swallowing errors so logging never breaks the tool.
     const writeBuildLog = async (
       outputCode: string,
       success: boolean,
@@ -877,13 +264,10 @@ ${repoStructure}
           smokeTestPassed,
         });
       } catch (logErr) {
-        console.error("[OpenClaw] Failed to write build log:", logErr);
+        console.error("[build_feature] Failed to write build log:", logErr);
       }
     };
 
-    // We extend ctx.allowedToolNames to include the just-built tool name so the
-    // per-surface access control check inside openclawTestTool does not block this
-    // internal invocation — the test is explicitly scoped to what was just built.
     const ctxForSmokeTest = {
       ...ctx,
       allowedToolNames: ctx.allowedToolNames
@@ -891,118 +275,64 @@ ${repoStructure}
         : undefined,
     };
 
-    // ── Retry loop ────────────────────────────────────────────────────────
-    // Attempt to build, apply, and smoke-test the tool. If the smoke test
-    // fails, automatically ask OpenClaw to fix the specific error — up to
-    // MAX_BUILD_RETRIES additional times — before giving up.
-    // Override via OPENCLAW_BUILD_MAX_RETRIES env var (default: 2, max: 5).
-    const MAX_BUILD_RETRIES = Math.min(
-      Math.max(0, parseInt(process.env.OPENCLAW_BUILD_MAX_RETRIES ?? "2", 10) || 2),
-      5
+    // Write files to disk
+    const { applied, warnings } = await applyToolCode(
+      featureName,
+      toolCode,
+      needsApiEndpoint ? routeCode : null
     );
-    let priorError: string | undefined;
-    let lastDelegateContent = "";
-    let lastApplyReport = "";
-    let lastSmokeResult: ToolResult | null = null;
-    const retryLog: string[] = [];
 
-    for (let attempt = 0; attempt <= MAX_BUILD_RETRIES; attempt++) {
-      const isRetry = attempt > 0;
-      const task = buildTask(description, priorError);
+    const appliedNote =
+      applied.length > 0
+        ? `\n\nFiles written:\n${applied.map((f) => `- \`${f}\``).join("\n")}`
+        : "";
+    const warnNote =
+      warnings.length > 0
+        ? `\n\nWarnings (manual action may be needed):\n${warnings.map((w) => `- ${w}`).join("\n")}`
+        : "";
 
-      if (isRetry) {
-        const retryMsg = `Retrying fix (attempt ${attempt} of ${MAX_BUILD_RETRIES}) — asking OpenClaw to address the smoke-test error…`;
-        console.log(`[OpenClaw] ${retryMsg}`);
-        retryLog.push(`\n\n---\n**${retryMsg}**`);
-      }
-
-      // Delegate to openclaw_delegate with the structured prompt
-      const delegateResult = await openclawDelegateTool.execute(
-        { task, timeout_minutes: timeoutMinutes },
-        ctx
-      );
-
-      if (!delegateResult.ok) {
-        await writeBuildLog(delegateResult.content, false, null);
-        return delegateResult;
-      }
-
-      lastDelegateContent = delegateResult.content;
-
-      // ── Auto-apply: write files & patch index.ts ───────────────────────
-      let applyReport = "";
-      try {
-        const { applied, warnings } = await applyOpenClawBuildResult(
-          featureName,
-          delegateResult.content,
-          needsApiEndpoint
-        );
-
-        const appliedLines =
-          applied.length > 0
-            ? `\n\n**Files written automatically:**\n${applied.map((f) => `- \`${f}\``).join("\n")}`
-            : "";
-        const warnLines =
-          warnings.length > 0
-            ? `\n\n**Warnings (manual action needed):**\n${warnings.map((w) => `- ${w}`).join("\n")}`
-            : "";
-
-        applyReport =
-          applied.length > 0 || warnings.length > 0
-            ? `${appliedLines}${warnLines}\n\n${applied.length > 0 ? "Restart the server for the new tool to become active." : ""}`
-            : "";
-      } catch (applyErr) {
-        applyReport = `\n\n**Auto-apply failed:** ${applyErr instanceof Error ? applyErr.message : String(applyErr)}. Apply the code from OpenClaw's output above manually.`;
-      }
-
-      lastApplyReport = applyReport;
-
-      // ── Smoke test ─────────────────────────────────────────────────────
-      console.log(`[OpenClaw] Running smoke test for tool "${featureName}" (attempt ${attempt + 1})`);
-      const smokeResult = await openclawTestTool.execute(
-        { tool_name: featureName, test_args: "{}" },
-        ctxForSmokeTest
-      );
-
-      lastSmokeResult = smokeResult;
-
-      await writeBuildLog(delegateResult.content, true, smokeResult.ok);
-
-      if (smokeResult.ok) {
-        const smokeNote = `\n\n---\nSmoke test: PASSED\nOutput: ${smokeResult.content}`;
-        const retryContext = retryLog.length > 0 ? retryLog.join("") : "";
-        return {
-          ok: true,
-          content: lastDelegateContent + lastApplyReport + retryContext + smokeNote,
-          label: "openclaw_build_feature",
-          detail: `Built and verified: ${featureName}${attempt > 0 ? ` (fixed after ${attempt} retry)` : ""}`,
-        };
-      }
-
-      // Smoke test failed — prepare for retry if attempts remain
-      if (attempt < MAX_BUILD_RETRIES) {
-        priorError = smokeResult.content;
-      }
+    if (!applied.includes(`server/agent/tools/${featureName}.ts`)) {
+      const errMsg = `Failed to write tool file.${warnNote}`;
+      await writeBuildLog(toolCode, false, null);
+      return fail(errMsg, "build_feature");
     }
 
-    // All attempts exhausted — report the final failure
-    const smokeNote = `\n\n---\nSmoke test: ${lastSmokeResult!.content}`;
-    const giveUpNote = `\n\n**Jarvis gave up after ${MAX_BUILD_RETRIES} automatic fix attempt(s).** The tool file has been written but the smoke test still fails. Review the error above and ask Jarvis to try again with a more specific description.`;
-    const retryContext = retryLog.length > 0 ? retryLog.join("") : "";
+    // Smoke test
+    console.log(`[build_feature] Running smoke test for "${featureName}"`);
+    const smokeResult = await testToolTool.execute(
+      { tool_name: featureName },
+      ctxForSmokeTest
+    );
+
+    await writeBuildLog(toolCode, smokeResult.ok, smokeResult.ok);
+
+    const restartNote = "\n\nRestart the server for the new tool to become active.";
+    const fullNote = `${appliedNote}${warnNote}${restartNote}`;
+
+    if (smokeResult.ok) {
+      return ok(
+        `Tool "${featureName}" built and smoke tested successfully.${fullNote}\n\nSmoke test output: ${smokeResult.content}`,
+        "build_feature",
+        `pass: ${featureName}`
+      );
+    }
 
     return {
       ok: false,
-      content: lastDelegateContent + lastApplyReport + retryContext + smokeNote + giveUpNote,
-      label: "openclaw_build_feature",
-      detail: `Built (smoke test failed after ${MAX_BUILD_RETRIES} retries): ${featureName}`,
+      content:
+        `Tool "${featureName}" written but smoke test failed.${fullNote}\n\n` +
+        `Smoke test error: ${smokeResult.content}\n\n` +
+        `Fix the tool_code and call build_feature again with the corrected code.`,
+      label: "build_feature",
+      detail: `fail: ${featureName}`,
     };
   },
 };
 
-// ── Smart dummy arg generator ────────────────────────────────────────────────
-// Inspects a tool's JSON Schema and produces minimal safe dummy values for all
-// required fields so the smoke test is more meaningful than calling with `{}`.
-function generateSmartTestArgs(schema: import("../types").JsonSchema): Record<string, unknown> {
+// ── Smart dummy arg generator ─────────────────────────────────────────────────
+// Inspects a tool's JSON Schema and produces safe dummy values for all required
+// fields so smoke tests are more meaningful than calling with an empty object.
+function generateSmartTestArgs(schema: JsonSchema): Record<string, unknown> {
   const properties = schema.properties ?? {};
   const required = new Set(schema.required ?? []);
   const result: Record<string, unknown> = {};
@@ -1040,21 +370,18 @@ function generateSmartTestArgs(schema: import("../types").JsonSchema): Record<st
   return result;
 }
 
-// ── openclaw_test_tool ───────────────────────────────────────────────────────
-// Executes a registered tool by name with caller-supplied test args.
-// Used as the final step of the self-improvement loop: after OpenClaw delivers
-// new tool code and it has been applied to the codebase, call this to verify
-// the tool runs without errors before telling the user it's ready.
-export const openclawTestTool: AgentTool = {
-  name: "openclaw_test_tool",
+// ── test_tool ─────────────────────────────────────────────────────────────────
+export const testToolTool: AgentTool = {
+  name: "test_tool",
   description:
-    "Run a smoke test against a registered Jarvis tool. Invokes the tool with the provided test arguments and reports whether it passed or failed. Use this after openclaw_build_feature to verify the new tool works before confirming to the user. If the tool is not yet registered (code hasn't been applied to the codebase), the test will report that clearly.",
+    "Run a smoke test against a registered Jarvis tool by name. Invokes the tool with the provided test arguments (or auto-generated safe values from its schema) and reports whether it passed or failed. Use after build_feature to verify a new tool works before confirming to the user. If the tool is not yet registered, the test will report that clearly.",
   parameters: {
     type: "object",
     properties: {
       tool_name: {
         type: "string",
-        description: "Exact name of the tool to test (the tool.name value, e.g. 'weather_lookup').",
+        description:
+          "Exact name of the tool to test (the tool.name value, e.g. 'weather_lookup').",
       },
       test_args: {
         type: "string",
@@ -1068,41 +395,29 @@ export const openclawTestTool: AgentTool = {
     const toolName = String(args.tool_name ?? "").trim();
     if (!toolName) return fail("tool_name is required.");
 
-    // Guard: prevent self-invocation (infinite recursion).
-    if (toolName === "openclaw_test_tool") {
-      return fail("openclaw_test_tool cannot test itself.", "openclaw_test_tool");
+    if (toolName === "test_tool") {
+      return fail("test_tool cannot test itself.", "test_tool");
     }
 
-    // Guard: block meta/orchestration tools that must not be invoked indirectly
-    // to prevent unintended side effects or prompt-injection escalation paths.
-    const META_TOOLS = new Set([
-      "openclaw_delegate",
-      "openclaw_build_feature",
-      "spawn_subagent",
-      "queue_background_job",
-    ]);
+    const META_TOOLS = new Set(["build_feature", "spawn_subagent", "queue_background_job"]);
     if (META_TOOLS.has(toolName)) {
       return fail(
-        `"${toolName}" is an orchestration tool and cannot be invoked via the smoke-test path.`,
-        "openclaw_test_tool"
+        `"${toolName}" is an orchestration tool and cannot be invoked via smoke test.`,
+        "test_tool"
       );
     }
 
-    // Guard: enforce per-surface access control.
-    // ctx.allowedToolNames is populated by the harness to contain only the tools
-    // visible in the current agent run. Anything outside that set cannot be tested
-    // here, even if it exists in ALL_TOOLS, preventing surface-escaping.
     if (ctx.allowedToolNames && !ctx.allowedToolNames.has(toolName)) {
       return fail(
-        `Tool "${toolName}" is not in the allowed tool set for this agent surface and cannot be tested here.`,
-        "openclaw_test_tool"
+        `Tool "${toolName}" is not in the allowed tool set for this agent surface.`,
+        "test_tool"
       );
     }
 
-    // Parse explicitly-provided test_args (fail fast before tool lookup).
     const hasExplicitArgs = args.test_args !== undefined;
     const testArgsRaw = hasExplicitArgs ? String(args.test_args).trim() : "";
     let callerArgs: Record<string, unknown> | null = null;
+
     if (hasExplicitArgs && testArgsRaw) {
       let parsed: unknown;
       try {
@@ -1118,23 +433,21 @@ export const openclawTestTool: AgentTool = {
 
     if (!_toolResolver) {
       return fail(
-        "Tool resolver not initialized — server may be starting up. Try again in a moment.",
-        "openclaw_test_tool"
+        "Tool resolver not initialized — server may still be starting up. Try again in a moment.",
+        "test_tool"
       );
     }
+
     const tool = _toolResolver(toolName);
     if (!tool) {
       return fail(
         `Tool "${toolName}" is not registered in the live server. ` +
-          "Apply the code that OpenClaw built to the codebase (add the tool file and register it in index.ts), " +
+          "Apply the code (add the tool file and register it in index.ts), " +
           "then restart the server so it appears in the registry.",
-        "openclaw_test_tool"
+        "test_tool"
       );
     }
 
-    // If no args were explicitly provided, auto-generate safe dummy values from
-    // the tool's JSON Schema so required fields are populated and the smoke test
-    // is more meaningful than calling with an empty object.
     const testArgs: Record<string, unknown> = callerArgs ?? generateSmartTestArgs(tool.parameters);
     const argsNote =
       callerArgs !== null
@@ -1146,7 +459,10 @@ export const openclawTestTool: AgentTool = {
     try {
       const resultPromise = tool.execute(testArgs, ctx);
       const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error(`smoke test timed out after ${SMOKE_TIMEOUT_MS / 1000}s`)), SMOKE_TIMEOUT_MS)
+        setTimeout(
+          () => reject(new Error(`smoke test timed out after ${SMOKE_TIMEOUT_MS / 1000}s`)),
+          SMOKE_TIMEOUT_MS
+        )
       );
       result = await Promise.race([resultPromise, timeoutPromise]);
     } catch (err) {
@@ -1155,8 +471,8 @@ export const openclawTestTool: AgentTool = {
         ok: false,
         content:
           `Tool "${toolName}" threw an exception during the smoke test (${argsNote}): ${detail}\n\n` +
-          "If this was called from openclaw_build_feature the retry loop will handle it automatically. Otherwise call openclaw_build_feature again with this error included in the description.",
-        label: "openclaw_test_tool",
+          "Fix the code in the tool file and call build_feature again with the corrected tool_code.",
+        label: "test_tool",
         detail: `throw: ${toolName} — ${detail}`,
       };
     }
@@ -1164,227 +480,19 @@ export const openclawTestTool: AgentTool = {
     if (result.ok) {
       return {
         ok: true,
-        content:
-          `Smoke test PASSED for tool "${toolName}" (${argsNote}).\n\nOutput: ${result.content}`,
-        label: "openclaw_test_tool",
+        content: `Smoke test PASSED for "${toolName}" (${argsNote}).\n\nOutput: ${result.content}`,
+        label: "test_tool",
         detail: `pass: ${toolName}`,
       };
     }
+
     return {
       ok: false,
       content:
-        `Smoke test FAILED for tool "${toolName}" (${argsNote}).\n\nError: ${result.content}\n\n` +
-        "If this was called from openclaw_build_feature the retry loop will handle it automatically. Otherwise call openclaw_build_feature again with this error included in the description.",
-      label: "openclaw_test_tool",
+        `Smoke test FAILED for "${toolName}" (${argsNote}).\n\nError: ${result.content}\n\n` +
+        "Fix the code and call build_feature again with the corrected tool_code.",
+      label: "test_tool",
       detail: `fail: ${toolName} — ${result.content}`,
     };
   },
 };
-
-// ── openclaw_status tool ─────────────────────────────────────────────────────
-export const openclawStatusTool: AgentTool = {
-  name: "openclaw_status",
-  description:
-    "Check whether the OpenClaw compute bridge is configured and reachable. Returns online status, the configured mode (telegram or gateway), and latency for gateway mode. Use this before delegating a task if you are unsure whether the bridge is active.",
-  parameters: {
-    type: "object",
-    properties: {},
-    required: [],
-  },
-  async execute(_args, ctx): Promise<ToolResult> {
-    const statusJson = await checkOpenClawStatus(ctx.userId);
-    const data = JSON.parse(statusJson) as { online: boolean; message?: string };
-    return {
-      ok: !!data.online,
-      content: statusJson,
-      label: "openclaw_status",
-      detail: data.message,
-    };
-  },
-};
-
-// ── Shared status check — used by tool + REST endpoint ───────────────────────
-export async function checkOpenClawStatus(userId: string): Promise<string> {
-  let rawPrefs: Record<string, unknown> = {};
-  try {
-    const rows = await db
-      .select({ data: userPreferences.data })
-      .from(userPreferences)
-      .where(eq(userPreferences.userId, userId))
-      .limit(1);
-    rawPrefs = (rows[0]?.data as Record<string, unknown>) ?? {};
-  } catch {}
-
-  const cfg = rawPrefs.openclawBridge as OpenClawBridgeConfig | undefined;
-
-  if (!cfg) {
-    return JSON.stringify({
-      configured: false,
-      online: false,
-      message: "OpenClaw bridge is not configured. Go to Settings → OpenClaw Brain to set it up.",
-    });
-  }
-
-  if (!cfg.enabled) {
-    return JSON.stringify({
-      configured: true,
-      online: false,
-      mode: cfg.mode,
-      message:
-        "OpenClaw bridge is configured but currently disabled. Enable it in Settings → OpenClaw Brain.",
-    });
-  }
-
-  if (cfg.mode === "telegram") {
-    const chatId = cfg.telegramChatId?.trim();
-    const hasBotToken = !!process.env.TELEGRAM_BOT_TOKEN;
-
-    if (!chatId) {
-      return JSON.stringify({
-        configured: true,
-        online: false,
-        mode: "telegram",
-        message: "Telegram chat ID is not set. Enter it in Settings → OpenClaw Brain.",
-      });
-    }
-    if (!hasBotToken) {
-      return JSON.stringify({
-        configured: true,
-        online: false,
-        mode: "telegram",
-        message: "Telegram bot token is not set — configure TELEGRAM_BOT_TOKEN.",
-      });
-    }
-
-    // Liveness probe: call Telegram getChat API to verify bot can reach the chat
-    try {
-      const res = await fetch(
-        `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/getChat?chat_id=${encodeURIComponent(chatId)}`,
-        { signal: AbortSignal.timeout(5000) }
-      );
-      const body = (await res.json()) as { ok: boolean; result?: { type?: string; title?: string } };
-      if (!res.ok || !body.ok) {
-        return JSON.stringify({
-          configured: true,
-          online: false,
-          mode: "telegram",
-          chatId,
-          message:
-            "Bot cannot reach the configured Telegram chat. Verify the chat ID in Settings → OpenClaw Brain and ensure the bot is a member of that chat.",
-        });
-      }
-      return JSON.stringify({
-        configured: true,
-        online: true,
-        mode: "telegram",
-        chatId,
-        chatType: body.result?.type ?? "unknown",
-        message:
-          "OpenClaw Telegram bridge is active. Tasks will be sent to the configured chat and replies forwarded back to Jarvis.",
-      });
-    } catch {
-      return JSON.stringify({
-        configured: true,
-        online: false,
-        mode: "telegram",
-        chatId,
-        message: "Could not verify Telegram chat reachability — check your connection.",
-      });
-    }
-  }
-
-  if (cfg.mode === "gateway") {
-    const rawUrl = cfg.gatewayUrl?.trim();
-    if (!rawUrl) {
-      return JSON.stringify({
-        configured: true,
-        online: false,
-        mode: "gateway",
-        message: "Gateway URL is not set. Enter it in Settings → OpenClaw Brain.",
-      });
-    }
-
-    const urlCheck = await validateGatewayUrl(rawUrl);
-    if (!urlCheck.ok) {
-      return JSON.stringify({
-        configured: true,
-        online: false,
-        mode: "gateway",
-        message: `Gateway URL validation failed: ${urlCheck.error}`,
-      });
-    }
-
-    const checkUrl = `${rawUrl.replace(/\/$/, "")}/api/v1/check`;
-    const authHeaders: Record<string, string> = cfg.gatewayToken
-      ? { Authorization: `Bearer ${cfg.gatewayToken}` }
-      : {};
-    const t0 = Date.now();
-    try {
-      const res = await fetch(checkUrl, {
-        method: "GET",
-        headers: authHeaders,
-        signal: AbortSignal.timeout(5000),
-      });
-      const latencyMs = Date.now() - t0;
-      if (res.ok) {
-        return JSON.stringify({
-          configured: true,
-          online: true,
-          mode: "gateway",
-          latencyMs,
-          gatewayUrl: rawUrl,
-          message: `OpenClaw gateway is online (${latencyMs}ms latency).`,
-        });
-      }
-      return JSON.stringify({
-        configured: true,
-        online: false,
-        mode: "gateway",
-        latencyMs,
-        gatewayUrl: rawUrl,
-        message: `Gateway responded with HTTP ${res.status}. Make sure OpenClaw is running and your tunnel is active.`,
-      });
-    } catch (err) {
-      const latencyMs = Date.now() - t0;
-      return JSON.stringify({
-        configured: true,
-        online: false,
-        mode: "gateway",
-        latencyMs,
-        gatewayUrl: rawUrl,
-        message: `Cannot reach gateway at ${rawUrl}: ${err instanceof Error ? err.message : String(err)}. Check that your tunnel is active.`,
-      });
-    }
-  }
-
-  return JSON.stringify({
-    configured: true,
-    online: false,
-    message: `Unknown mode: ${String((cfg as OpenClawBridgeConfig).mode)}`,
-  });
-}
-
-// ── Telegram send helper — captures message_id ───────────────────────────────
-interface TelegramSendResult {
-  message_id: number;
-}
-
-async function sendMessageWithId(
-  chatId: string,
-  text: string
-): Promise<TelegramSendResult | null> {
-  const token = process.env.TELEGRAM_BOT_TOKEN;
-  if (!token) return null;
-  try {
-    const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chat_id: chatId, text }),
-    });
-    if (!res.ok) return null;
-    const data = (await res.json()) as { ok: boolean; result?: { message_id: number } };
-    return data.ok && data.result ? { message_id: data.result.message_id } : null;
-  } catch {
-    return null;
-  }
-}
