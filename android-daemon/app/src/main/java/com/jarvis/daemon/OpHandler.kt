@@ -51,6 +51,7 @@ object OpHandler {
                 "voice_set_wake_words" -> handleSetWakeWords(context, op)
                 "voice_set_talk_mode" -> handleSetTalkMode(context, op)
                 "voice_tts_finished" -> handleTtsFinished()
+                "voice_speak_audio" -> handleSpeakAudio(context, op)
                 else -> OpResult(false, error = "Unknown op type: $type")
             }
             val durationMs = SystemClock.elapsedRealtime() - startMs
@@ -732,5 +733,40 @@ object OpHandler {
         WakeWordService.onTtsFinished()
         DaemonLog.add("voice_tts_finished: notified WakeWordService")
         return OpResult(true, data = JSONObject().put("notified", true))
+    }
+
+    /**
+     * Plays a base64-encoded MP3 audio clip sent from the server as a Talk Mode response.
+     * Writes to a temp file, plays via MediaPlayer, and notifies WakeWordService when done.
+     */
+    private fun handleSpeakAudio(context: Context, op: JSONObject): OpResult {
+        val audioBase64 = op.optString("audioBase64", "")
+        if (audioBase64.isEmpty()) return OpResult(false, error = "audioBase64 missing")
+
+        return try {
+            val bytes = Base64.decode(audioBase64, Base64.DEFAULT)
+            val tmpFile = java.io.File(context.cacheDir, "jarvis_tts_${System.currentTimeMillis()}.mp3")
+            tmpFile.writeBytes(bytes)
+
+            // Pause the wake-word microphone so the speaker audio isn't captured
+            WakeWordService.pauseForPlayback()
+
+            val player = android.media.MediaPlayer()
+            player.setDataSource(tmpFile.absolutePath)
+            player.prepare()
+            player.setOnCompletionListener { mp ->
+                mp.release()
+                tmpFile.delete()
+                // Notify WakeWordService so Talk Mode can re-arm the mic
+                WakeWordService.onTtsFinished()
+                DaemonLog.add("voice_speak_audio: playback complete — talk mode re-armed")
+            }
+            player.start()
+            DaemonLog.add("voice_speak_audio: playing ${bytes.size} bytes")
+            OpResult(true, data = JSONObject().put("playing", true).put("bytes", bytes.size))
+        } catch (e: Exception) {
+            Log.e(TAG, "handleSpeakAudio failed", e)
+            OpResult(false, error = e.message ?: "playback failed")
+        }
     }
 }
