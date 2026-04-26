@@ -258,18 +258,23 @@ class WakeWordService : Service() {
     }
 
     /**
-     * Brings the browser app that has the Jarvis web app open to the foreground.
-     * Tries common browser packages in priority order (Chrome first, then others).
+     * Brings the Jarvis mobile app to the foreground when a wake word fires.
+     *
+     * Priority order:
+     *   1. The standalone Jarvis Expo app (com.gameplan) — direct launch, no reload
+     *   2. Expo Go (host.exp.exponent) — used during development
+     *   3. Common browser apps as a last resort for web-only deployments
      */
     private fun bringJarvisToForeground() {
-        val browsers = listOf(
-            "com.android.chrome",
+        val candidates = listOf(
+            "com.gameplan",           // Standalone Jarvis mobile app (production build)
+            "host.exp.exponent",      // Expo Go (development)
+            "com.android.chrome",     // Fallback: Chrome (web version)
             "org.mozilla.firefox",
             "com.microsoft.emmx",
             "com.brave.browser",
-            "com.opera.browser",
         )
-        for (pkg in browsers) {
+        for (pkg in candidates) {
             try {
                 val intent = packageManager.getLaunchIntentForPackage(pkg) ?: continue
                 intent.addFlags(
@@ -283,7 +288,7 @@ class WakeWordService : Service() {
                 // package not installed or launch failed — try next
             }
         }
-        DaemonLog.add("wake: could not bring browser to foreground (no matching package)")
+        DaemonLog.add("wake: could not bring Jarvis app to foreground (no matching package)")
     }
 
     // ── Talk Mode ────────────────────────────────────────────────────────────
