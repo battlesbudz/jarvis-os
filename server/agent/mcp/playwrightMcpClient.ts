@@ -207,18 +207,36 @@ export async function callBrowserTool(
     if (allowed) {
       try {
         const result = await sendDaemonOp(userId, { type: "browser_mcp", tool: toolName, args }, 35000);
-        if (result.ok && result.data) {
-          return result.data as McpToolResult;
-        }
-        if (!result.ok) {
-          console.log(`[MCP] daemon browser_mcp failed for ${toolName}, falling back to server: ${result.error}`);
-        }
+        // Transport succeeded — return daemon result directly (even if tool returned isError).
+        // Only fall through to server-side on a transport/unreachable failure (the catch below).
+        return result.data as McpToolResult ?? {
+          content: [{ type: "text", text: result.error ?? "Daemon browser_mcp returned no data" }],
+          isError: true,
+        };
       } catch (err) {
-        console.log(`[MCP] daemon routing error, falling back to server:`, err);
+        // Transport-level failure (daemon unreachable / WebSocket closed / timeout).
+        // Fall back to server-side headless MCP.
+        console.log(`[MCP] daemon unreachable for ${toolName}, falling back to server:`, (err as Error).message ?? err);
       }
     }
   }
   return getOrCreate(userId).callTool(toolName, args);
+}
+
+/**
+ * Close the daemon's local MCP browser session (best-effort).
+ * Called when browser_clear_session is used while browser_local routing is active.
+ * We send browser_close through the daemon to end its current browser context.
+ * We cannot wipe the real Chrome profile (that would be destructive), so only
+ * the current browser window/context is closed.
+ */
+export async function closeDaemonBrowserSession(userId: string): Promise<void> {
+  if (!isDesktopDaemonActive(userId)) return;
+  try {
+    const allowed = await isDaemonActionAllowed(userId, "browser_local");
+    if (!allowed) return;
+    await sendDaemonOp(userId, { type: "browser_mcp", tool: "browser_close", args: {} }, 10000);
+  } catch { /* best effort */ }
 }
 
 export function closeMcpSession(userId: string, wipeProfile = false): void {
