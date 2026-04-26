@@ -52,24 +52,13 @@ async function checkOAuthIntegration(
 
     if (expiresAt) {
       if (expiresAt.getTime() < now) {
-        // Expired — check if we have a refresh_token that might save us
-        if (!row.refresh_token) {
-          return {
-            status: "broken",
-            errorMessage: "Token expired and no refresh token available",
-            expiresAt,
-          };
-        }
-        // Has refresh token — attempt a cheap refresh ping
-        const refreshed = await attemptTokenRefresh(userId, provider, row.refresh_token as string);
-        if (!refreshed) {
-          return {
-            status: "broken",
-            errorMessage: "Token expired and refresh failed — please reconnect",
-            expiresAt,
-          };
-        }
-        return { status: "healthy", expiresAt: refreshed };
+        // Expired — validator is read-only; report broken so UI shows reconnect CTA.
+        // Token refresh is handled by the OAuth routes on the next user-initiated action.
+        return {
+          status: "broken",
+          errorMessage: "Token expired — please reconnect in Settings",
+          expiresAt,
+        };
       }
 
       if (expiresAt.getTime() < now + EXPIRY_WARNING_MS) {
@@ -96,83 +85,6 @@ async function checkOAuthIntegration(
   }
 }
 
-async function attemptTokenRefresh(
-  userId: string,
-  provider: string,
-  refreshToken: string,
-): Promise<Date | null> {
-  try {
-    if (provider === "google") {
-      const clientId = process.env.GOOGLE_WEB_CLIENT_ID ?? process.env.GOOGLE_CLIENT_ID;
-      const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-      if (!clientId || !clientSecret) return null;
-
-      const res = await fetch("https://oauth2.googleapis.com/token", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-          client_id: clientId,
-          client_secret: clientSecret,
-          refresh_token: refreshToken,
-          grant_type: "refresh_token",
-        }),
-      });
-      const data = await res.json() as any;
-      if (!data.access_token) return null;
-
-      const expiresAt = data.expires_in
-        ? new Date(Date.now() + data.expires_in * 1000)
-        : new Date(Date.now() + 3600 * 1000);
-
-      // Persist refreshed token
-      await db.execute(sql`
-        UPDATE user_oauth_tokens
-        SET access_token = ${data.access_token},
-            expires_at   = ${expiresAt},
-            updated_at   = NOW()
-        WHERE user_id = ${userId} AND provider = ${provider}
-      `);
-      return expiresAt;
-    }
-
-    if (provider === "microsoft") {
-      const clientId = process.env.MICROSOFT_CLIENT_ID;
-      const clientSecret = process.env.MICROSOFT_CLIENT_SECRET;
-      if (!clientId || !clientSecret) return null;
-
-      const res = await fetch("https://login.microsoftonline.com/common/oauth2/v2.0/token", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-          client_id: clientId,
-          client_secret: clientSecret,
-          refresh_token: refreshToken,
-          grant_type: "refresh_token",
-          scope: "offline_access Calendars.ReadWrite Mail.ReadWrite Mail.Send User.Read",
-        }),
-      });
-      const data = await res.json() as any;
-      if (!data.access_token) return null;
-
-      const expiresAt = data.expires_in
-        ? new Date(Date.now() + data.expires_in * 1000)
-        : new Date(Date.now() + 3600 * 1000);
-
-      await db.execute(sql`
-        UPDATE user_oauth_tokens
-        SET access_token  = ${data.access_token},
-            refresh_token = COALESCE(${data.refresh_token ?? null}, refresh_token),
-            expires_at    = ${expiresAt},
-            updated_at    = NOW()
-        WHERE user_id = ${userId} AND provider = ${provider}
-      `);
-      return expiresAt;
-    }
-  } catch {
-    // refresh failed — caller treats as broken
-  }
-  return null;
-}
 
 async function pingOAuthProvider(
   provider: string,
@@ -275,14 +187,38 @@ async function pingTwilio(): Promise<boolean> {
   } catch { return false; }
 }
 
+async function checkTelegramWebhookState(): Promise<boolean> {
+  // Returns false if the webhook has recent delivery errors (within the last hour),
+  // indicating a connectivity problem between Telegram and this server.
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token) return false;
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${token}/getWebhookInfo`);
+    const body = await res.json() as any;
+    if (!body?.ok) return false;
+    const info = body.result ?? {};
+    // If lastErrorDate is within the last 60 minutes, webhook is degraded.
+    if (info.last_error_date) {
+      const errorAgeMs = Date.now() - info.last_error_date * 1000;
+      if (errorAgeMs < 60 * 60 * 1000) return false;
+    }
+    return true;
+  } catch { return false; }
+}
+
 async function checkTelegram(userId: string): Promise<CheckResult> {
   try {
-    // Step 1: verify system bot token is valid
+    // Step 1: verify system bot token is valid (getMe ping)
     const botOk = await checkSystemCredential("telegram_bot", pingTelegramBot);
     if (!botOk) {
       return { status: "broken", errorMessage: "Telegram bot token missing or invalid" };
     }
-    // Step 2: verify user has linked their account
+    // Step 2: verify webhook (or polling) is healthy — no recent delivery errors
+    const webhookOk = await checkSystemCredential("telegram_webhook", checkTelegramWebhookState);
+    if (!webhookOk) {
+      return { status: "broken", errorMessage: "Telegram webhook has recent delivery errors" };
+    }
+    // Step 3: verify user has linked their account
     const rows = await db
       .select({ chatId: schema.telegramLinks.chatId })
       .from(schema.telegramLinks)
@@ -294,14 +230,33 @@ async function checkTelegram(userId: string): Promise<CheckResult> {
   }
 }
 
+async function pingDiscordBotGuilds(): Promise<boolean> {
+  // Verifies the bot is in at least one guild (implying send_messages permission granted).
+  const token = process.env.DISCORD_BOT_TOKEN;
+  if (!token) return false;
+  try {
+    const res = await fetch("https://discord.com/api/v10/users/@me/guilds", {
+      headers: { Authorization: `Bot ${token}` },
+    });
+    if (!res.ok) return false;
+    const guilds = await res.json() as any[];
+    return Array.isArray(guilds) && guilds.length > 0;
+  } catch { return false; }
+}
+
 async function checkDiscord(userId: string): Promise<CheckResult> {
   try {
-    // Step 1: verify system Discord bot token
+    // Step 1: verify system Discord bot token is valid
     const botOk = await checkSystemCredential("discord_bot", pingDiscordBot);
     if (!botOk) {
       return { status: "broken", errorMessage: "Discord bot token missing or invalid" };
     }
-    // Step 2: check user-level link (channel_links or discordAgents)
+    // Step 2: verify bot has guild membership (i.e. has been added with correct permissions)
+    const inGuild = await checkSystemCredential("discord_guilds", pingDiscordBotGuilds);
+    if (!inGuild) {
+      return { status: "broken", errorMessage: "Discord bot has no guild access — bot may lack required permissions" };
+    }
+    // Step 3: check user-level link
     const rows = await db
       .select({ id: schema.channelLinks.id })
       .from(schema.channelLinks)

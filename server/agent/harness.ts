@@ -188,14 +188,16 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
   //
   // Tool-to-integration dependency map: tools in INTEGRATION_TOOL_DEPS[k] are
   // excluded from the session when integration k is broken.
-  const INTEGRATION_TOOL_DEPS: Record<string, string[]> = {
-    google: [
-      "gmail_action", "gmail_draft", "fetch_calendar",
-      "drive_create_file", "drive_list_files", "drive_read_file",
-    ],
-    outlook: [
-      // Outlook tools are not yet exposed as AgentTools; reserved for future.
-    ],
+  // Maps integration key → tools that are disabled when that integration is broken.
+  // Channel integrations (telegram/discord/slack/whatsapp) have no agent tools to gate,
+  // but are still tracked here so the proactive prompt note covers them.
+  const INTEGRATION_TOOL_DEPS: Record<string, { label: string; tools: string[] }> = {
+    google:    { label: "Google (Gmail + Calendar + Drive)", tools: ["gmail_action", "gmail_draft", "fetch_calendar", "drive_create_file", "drive_list_files", "drive_read_file"] },
+    outlook:   { label: "Microsoft Outlook",                tools: [] },
+    telegram:  { label: "Telegram",                         tools: [] },
+    discord:   { label: "Discord",                          tools: [] },
+    slack:     { label: "Slack",                            tools: [] },
+    whatsapp:  { label: "WhatsApp (via Twilio)",            tools: [] },
   };
 
   if (context.userId) {
@@ -207,13 +209,11 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
       const brokenIntegrations: string[] = [];
       const toolsToExclude = new Set<string>();
 
-      if (statuses.google === "broken") {
-        brokenIntegrations.push("Google (Gmail + Calendar + Drive)");
-        for (const t of (INTEGRATION_TOOL_DEPS.google ?? [])) toolsToExclude.add(t);
-      }
-      if (statuses.outlook === "broken") {
-        brokenIntegrations.push("Microsoft Outlook");
-        for (const t of (INTEGRATION_TOOL_DEPS.outlook ?? [])) toolsToExclude.add(t);
+      for (const [key, { label, tools: depTools }] of Object.entries(INTEGRATION_TOOL_DEPS)) {
+        if (statuses[key as keyof typeof statuses] === "broken") {
+          brokenIntegrations.push(label);
+          for (const t of depTools) toolsToExclude.add(t);
+        }
       }
 
       // (a) Deterministic tool exclusion for broken integrations.
