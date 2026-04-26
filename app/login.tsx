@@ -197,22 +197,7 @@ export default function LoginScreen() {
     setLoading(true);
 
     try {
-      if (Platform.OS === "web") {
-        if (!gisReady || !window.google?.accounts?.id) {
-          setError("Google sign-in is not ready yet. Please try again.");
-          setLoading(false);
-          return;
-        }
-
-        setLoading(false);
-        window.google.accounts.id.prompt((notification) => {
-          if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
-            setError("Google sign-in popup was blocked or dismissed. Make sure popups are allowed and third-party cookies are enabled.");
-          }
-        });
-      } else {
-        await handleNativeGoogleSignIn();
-      }
+      await handleNativeGoogleSignIn();
     } catch (e: any) {
       setError(e.message || "Could not start sign-in");
       setLoading(false);
