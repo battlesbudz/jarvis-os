@@ -233,8 +233,9 @@ Always confirm with the user before tap/type/swipe actions. Use android_read_scr
     }
     const isScreenOp = action === "desktop_screenshot" || action === "desktop_read_screen";
     const result = await sendDaemonOp(ctx.userId, op, action === "shell" ? 30000 : isScreenOp ? 20000 : 10000);
-    // Truncate more aggressively for screenshot payloads (base64 is large)
-    const limit = isScreenOp ? 200000 : 8000;
-    return { ok: !!result.ok, content: JSON.stringify(result).slice(0, limit) };
+    // Screen ops return base64 PNG — do not truncate or the base64 will be corrupt.
+    // For all other ops keep the existing 8 000-char safety cap.
+    const serialised = JSON.stringify(result);
+    return { ok: !!result.ok, content: isScreenOp ? serialised : serialised.slice(0, 8000) };
   },
 };

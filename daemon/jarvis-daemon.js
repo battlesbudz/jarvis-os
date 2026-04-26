@@ -120,7 +120,7 @@ async function handleOp(op) {
       return { ok: true, entries };
     }
     if (op.type === "desktop_screenshot" || op.type === "desktop_read_screen") {
-      const tmpFile = `/tmp/jarvis-shot-${Date.now()}.png`;
+      const tmpFile = path.join(os.tmpdir(), `jarvis-shot-${Date.now()}.png`);
       const platform = process.platform;
 
       // Build the platform-specific screenshot command
@@ -164,8 +164,7 @@ async function handleOp(op) {
       }
 
       // desktop_read_screen — run OCR via tesseract if available
-      const ocrTmpBase = `/tmp/jarvis-ocr-${Date.now()}`;
-      const ocrTmpPng = `${ocrTmpBase}-in.png`;
+      const ocrTmpPng = path.join(os.tmpdir(), `jarvis-ocr-${Date.now()}-in.png`);
       fs.writeFileSync(ocrTmpPng, imgBuf);
 
       const ocrResult = await new Promise((resolve) => {
