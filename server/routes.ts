@@ -2058,6 +2058,24 @@ Rules:
     });
   }
 
+  /**
+   * Detect praise/correction/preference signals in the latest exchange and
+   * feed them into the Behaviour-to-Skill pipeline (best-effort, never throws).
+   */
+  function detectAndRecordBehaviorSignals(userId: string | undefined, messages: any[]): void {
+    if (!userId || messages.length === 0) return;
+    try {
+      const { detectBehaviorSignals } = require("./intelligence/pattern-analyser");
+      const { recordSkillSignal } = require("./intelligence/skillWriter");
+      const signals: Array<{ patternId: string; example: string }> = detectBehaviorSignals(messages);
+      for (const sig of signals) {
+        recordSkillSignal(userId, sig.patternId, sig.example).catch(() => {});
+      }
+    } catch {
+      // best-effort — never block the response
+    }
+  }
+
   async function markProactiveQuestionsAnswered(userId: string, messages: any[]) {
     try {
       const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
@@ -2395,6 +2413,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
               res.write('data: [DONE]\n\n');
               res.end();
               extractProfileInBackground(userId, messages);
+              detectAndRecordBehaviorSignals(userId, messages);
               markProactiveQuestionsAnswered(userId, messages).catch(() => {});
               const lastUserMsg0 = [...messages].reverse().find((m: any) => m.role === 'user');
               if (lastUserMsg0?.content) logInteraction(userId, "app_chat", "inbound", typeof lastUserMsg0.content === 'string' ? lastUserMsg0.content : JSON.stringify(lastUserMsg0.content)).catch(() => {});
@@ -2556,6 +2575,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
           res.write('data: [DONE]\n\n');
           res.end();
           extractProfileInBackground(userId, messages);
+          detectAndRecordBehaviorSignals(userId, messages);
           markProactiveQuestionsAnswered(userId, messages).catch(() => {});
           const lastUserMsgLoop = [...messages].reverse().find((m: any) => m.role === 'user');
           if (lastUserMsgLoop?.content) logInteraction(userId, "app_chat", "inbound", typeof lastUserMsgLoop.content === 'string' ? lastUserMsgLoop.content : JSON.stringify(lastUserMsgLoop.content)).catch(() => {});
@@ -2625,6 +2645,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
       }
       if (userId) {
         extractProfileInBackground(userId, messages);
+        detectAndRecordBehaviorSignals(userId, messages);
         markProactiveQuestionsAnswered(userId, messages).catch(() => {});
         const lastUserMsg = [...messages].reverse().find((m: any) => m.role === 'user');
         if (lastUserMsg?.content) logInteraction(userId, "app_chat", "inbound", typeof lastUserMsg.content === 'string' ? lastUserMsg.content : JSON.stringify(lastUserMsg.content)).catch(() => {});

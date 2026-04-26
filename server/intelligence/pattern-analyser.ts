@@ -454,3 +454,132 @@ function buildBrainDumpPattern(planRows: (typeof schema.plans.$inferSelect)[]): 
     avgItemsPerDay: planRows.length > 0 ? totalItems / planRows.length : 0,
   };
 }
+
+// ── Behaviour signal detection ────────────────────────────────────────────────
+
+export interface BehaviorSignal {
+  patternId: string;
+  type: "praise" | "correction" | "preference";
+  example: string;
+}
+
+/**
+ * Scan the most recent user message (and the preceding assistant message) for
+ * praise, correction, or standing-preference signals.  Returns zero or more
+ * BehaviorSignal objects that can be fed directly to `recordSkillSignal`.
+ *
+ * Pattern IDs use the convention:
+ *   praise:<category>        — user explicitly praised this type of Jarvis behaviour
+ *   correction:<category>    — user asked Jarvis to stop or change behaviour
+ *   preference:<category>    — user stated a standing preference ("always", "never")
+ *
+ * Detection is intentionally keyword-based (no LLM call) so it runs on every
+ * conversation turn with zero latency overhead.
+ */
+export function detectBehaviorSignals(
+  messages: Array<{ role: string; content: string | unknown }>,
+): BehaviorSignal[] {
+  // Extract the last user message and, if present, the preceding assistant message.
+  const reversed = [...messages].reverse();
+  const lastUser = reversed.find((m) => m.role === "user");
+  const lastAssistant = reversed.find((m) => m.role === "assistant");
+
+  if (!lastUser) return [];
+
+  const userText =
+    typeof lastUser.content === "string" ? lastUser.content.toLowerCase() : "";
+  const assistantText =
+    typeof lastAssistant?.content === "string"
+      ? lastAssistant.content.toLowerCase()
+      : "";
+
+  const signals: BehaviorSignal[] = [];
+
+  // ── Praise detection ───────────────────────────────────────────────────────
+  const praiseKeywords = [
+    "perfect", "great job", "well done", "love this", "exactly right",
+    "that's exactly", "brilliant", "spot on", "nailed it", "this is great",
+    "this is perfect", "fantastic", "excellent", "amazing", "helpful",
+    "thanks, that's", "thank you, that's", "this helps", "that helps",
+    "you're right", "good call", "good suggestion", "appreciate that",
+  ];
+  const hasPraise = praiseKeywords.some((kw) => userText.includes(kw));
+  if (hasPraise) {
+    // Infer which category is being praised from the assistant's response.
+    const category = inferCategory(assistantText, userText);
+    signals.push({
+      patternId: `praise:${category}`,
+      type: "praise",
+      example: `User praised Jarvis's ${category} response: "${truncate(userText, 80)}"`,
+    });
+  }
+
+  // ── Correction detection ───────────────────────────────────────────────────
+  const correctionKeywords = [
+    "don't do that", "stop doing", "please don't", "never do", "don't say",
+    "that's wrong", "that's not right", "incorrect", "you got that wrong",
+    "actually no", "not what i meant", "that's not what", "please stop",
+    "i didn't ask", "don't include", "don't add", "don't mention",
+    "too long", "too short", "too formal", "too casual", "you're repeating",
+  ];
+  const hasCorrection = correctionKeywords.some((kw) => userText.includes(kw));
+  if (hasCorrection) {
+    const category = inferCorrectionCategory(userText);
+    signals.push({
+      patternId: `correction:${category}`,
+      type: "correction",
+      example: `User corrected Jarvis's ${category}: "${truncate(userText, 80)}"`,
+    });
+  }
+
+  // ── Standing preference detection ─────────────────────────────────────────
+  const preferencePatterns: Array<[RegExp, string]> = [
+    [/always\s+(give|send|use|start|begin|include|add|format|write|reply)/i, "response_format"],
+    [/never\s+(give|send|use|start|begin|include|add|format|write|reply)/i, "response_format"],
+    [/i (prefer|like|want|need) (you to|jarvis to)/i, "user_preference"],
+    [/from now on/i, "standing_instruction"],
+    [/going forward/i, "standing_instruction"],
+    [/every time you/i, "standing_instruction"],
+    [/whenever you/i, "standing_instruction"],
+  ];
+  for (const [pattern, category] of preferencePatterns) {
+    if (pattern.test(userText)) {
+      signals.push({
+        patternId: `preference:${category}`,
+        type: "preference",
+        example: `User stated standing preference (${category}): "${truncate(userText, 80)}"`,
+      });
+      break; // one preference signal per message is enough
+    }
+  }
+
+  return signals;
+}
+
+/** Infer the category of what Jarvis was doing from text context. */
+function inferCategory(assistantText: string, userText: string): string {
+  const combined = assistantText + " " + userText;
+  if (combined.includes("task") || combined.includes("todo") || combined.includes("plan")) return "task_management";
+  if (combined.includes("email") || combined.includes("draft")) return "email_drafting";
+  if (combined.includes("calendar") || combined.includes("meeting") || combined.includes("schedule")) return "calendar_management";
+  if (combined.includes("reminder") || combined.includes("alarm")) return "reminders";
+  if (combined.includes("coach") || combined.includes("motivation") || combined.includes("advice")) return "coaching";
+  if (combined.includes("summar") || combined.includes("recap")) return "summarisation";
+  if (combined.includes("search") || combined.includes("find") || combined.includes("lookup")) return "information_retrieval";
+  return "general_assistance";
+}
+
+/** Infer the correction category from the user's correction message. */
+function inferCorrectionCategory(userText: string): string {
+  if (userText.includes("long") || userText.includes("short") || userText.includes("brief") || userText.includes("concise")) return "response_length";
+  if (userText.includes("formal") || userText.includes("casual") || userText.includes("tone")) return "tone";
+  if (userText.includes("repeat") || userText.includes("again") || userText.includes("already")) return "repetition";
+  if (userText.includes("format") || userText.includes("bullet") || userText.includes("list") || userText.includes("markdown")) return "formatting";
+  if (userText.includes("task") || userText.includes("plan")) return "task_management";
+  if (userText.includes("email")) return "email_drafting";
+  return "general_behaviour";
+}
+
+function truncate(text: string, maxLen: number): string {
+  return text.length > maxLen ? text.slice(0, maxLen) + "…" : text;
+}
