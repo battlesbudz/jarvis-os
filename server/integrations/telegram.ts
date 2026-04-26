@@ -92,11 +92,17 @@ export interface InlineKeyboardMarkup {
 export async function sendMessage(
   chatId: string,
   text: string,
-  replyMarkup?: InlineKeyboardMarkup
+  replyMarkupOrOpts?: InlineKeyboardMarkup | { parse_mode?: string }
 ): Promise<void> {
   if (!BOT_TOKEN) return;
   const body: Record<string, unknown> = { chat_id: chatId, text };
-  if (replyMarkup) body.reply_markup = replyMarkup;
+  if (replyMarkupOrOpts) {
+    if ("inline_keyboard" in replyMarkupOrOpts) {
+      body.reply_markup = replyMarkupOrOpts;
+    } else if ("parse_mode" in replyMarkupOrOpts && replyMarkupOrOpts.parse_mode) {
+      body.parse_mode = replyMarkupOrOpts.parse_mode;
+    }
+  }
   const res = await fetch(`${BASE}/sendMessage`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
