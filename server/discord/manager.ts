@@ -507,6 +507,7 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
       const discordGuildId = message.guild?.id || undefined;
       let result: Awaited<ReturnType<typeof runCoachAgent>> | null = null;
       let streamingFailed = false;
+      const discordChannelId = message.channelId;
       try {
         result = await runCoachAgent({
           userId,
@@ -514,6 +515,7 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
           channelName: namedAgent ? `Discord #${namedAgent.name.toLowerCase()}` : channelLabel,
           onToken,
           discordGuildId,
+          discordChannelId,
         });
         // Only retry when streaming produced NO visible content at all.
         // If streamBuf has content the placeholder was already edited; a
@@ -541,6 +543,7 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
           userText: fullUserText,
           channelName: namedAgent ? `Discord #${namedAgent.name.toLowerCase()}` : channelLabel,
           discordGuildId,
+          discordChannelId,
           // no onToken → forces non-streaming path
         });
       }
@@ -569,6 +572,32 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
       }
     }
   };
+}
+
+/**
+ * Send an OGG/Opus audio buffer as a file attachment to a Discord text channel.
+ * Used by the `speak` TTS tool when the conversation originates from Discord.
+ * Returns true on success, false on any failure (logs internally).
+ */
+export async function sendDiscordAudio(userId: string, channelId: string, ogg: Buffer): Promise<boolean> {
+  const client = getClientForUser(userId);
+  if (!client) {
+    console.warn(`[DiscordManager] sendDiscordAudio: no bot client for user ${userId}`);
+    return false;
+  }
+  try {
+    const channel = await client.channels.fetch(channelId);
+    if (!channel || !("send" in channel)) {
+      console.warn(`[DiscordManager] sendDiscordAudio: channel ${channelId} not found or not sendable`);
+      return false;
+    }
+    const ch = channel as TextChannel | DMChannel;
+    await ch.send({ files: [{ attachment: ogg, name: "voice-note.ogg" }] });
+    return true;
+  } catch (err) {
+    console.error("[DiscordManager] sendDiscordAudio failed:", err);
+    return false;
+  }
 }
 
 // Discord messages are capped at 2000 chars — split long replies

@@ -35,6 +35,8 @@ export interface ToolContext {
   channel?: string;
   /** Discord guild (server) ID — set when the message originates from a Discord guild channel */
   discordGuildId?: string;
+  /** Discord text channel ID — set when the message originates from a Discord channel (DM or guild) */
+  discordChannelId?: string;
   /**
    * Set of tool names that are active in the current agent run.
    * Populated by the harness at run start. Tools that need to invoke other tools

@@ -24,6 +24,8 @@ export interface CoachReplyInput {
    *  Surfaced in ToolContext so Discord-specific tools (e.g. deleteDiscordChannel) can
    *  identify the server without requiring a pre-configured workspace. */
   discordGuildId?: string;
+  /** Discord text channel ID — DM or guild channel. Used by the speak tool to deliver audio. */
+  discordChannelId?: string;
 }
 
 export interface CoachReplyResult {
@@ -53,7 +55,7 @@ function getMaxTokensForChannel(channelName: string): number {
 // daemon adapters. Returns { reply, attachments } — the caller is
 // responsible for delivery and post-send bookkeeping.
 export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyResult> {
-  const { userId, userText, channelName, imageUrl, onToken, discordGuildId } = input;
+  const { userId, userText, channelName, imageUrl, onToken, discordGuildId, discordChannelId } = input;
   const channelLower = channelName.toLowerCase();
 
   let userGoals: any[] = [];
@@ -284,6 +286,7 @@ When a user's request involves multi-step research, drafting a document or plan,
     channel: channelName,
     googleAccessToken: googleAccessToken || undefined,
     discordGuildId: discordGuildId || undefined,
+    discordChannelId: discordChannelId || undefined,
     state: {
       dateKey,
       todayPlan,
