@@ -18,6 +18,7 @@ import { getSoulPromptBlock } from "./memory/soul";
 import { runAgent } from "./agent/harness";
 import { telegramCoachTools } from "./agent/tools";
 import { runCoachAgent } from "./channels/coachAgent";
+import { routeToNamedAgent } from "./agent/runNamedAgent";
 import { completePairing as completeDiscordPairing } from "./discord/manager";
 import OpenAI from "openai";
 
@@ -38,6 +39,15 @@ function generateLinkCode(): string {
 
 async function handleCoachReply(userId: string, chatId: string, userText: string, imageUrl?: string): Promise<void> {
   try {
+    // Check if this Telegram chatId is assigned to a named agent first.
+    // routeToNamedAgent returns null when no agent is configured for the channel.
+    const namedResult = await routeToNamedAgent(userId, "telegram", chatId, userText).catch(() => null);
+    if (namedResult !== null) {
+      const namedReply = namedResult.reply || "Sorry, the agent couldn't respond right now.";
+      await sendMessage(chatId, namedReply);
+      return;
+    }
+
     const { reply, attachments } = await runCoachAgent({
       userId,
       userText,
