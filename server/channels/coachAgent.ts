@@ -324,7 +324,7 @@ When a user's request involves multi-step research, drafting a document or plan,
   // model is primed with what to focus on this turn.
   let channelActivationPlan: import("../agent/activationPlanner").ActivationPlan | undefined;
   try {
-    channelActivationPlan = await activationPlanner.plan(userId, channelName);
+    channelActivationPlan = await activationPlanner.plan(userId, { source: "channel", channel: channelName });
     console.log(`[${channelName}] activation: shouldRun=${channelActivationPlan.shouldRun} — ${channelActivationPlan.reason}`);
   } catch (err) {
     // Best-effort — never block a channel session
