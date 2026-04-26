@@ -4,7 +4,7 @@ import { eq, and, desc, sql, gte, lte } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { sendMessage, sendMessageWithButtons, sendTelegramDocument, sendVoice, answerCallbackQuery, isTelegramConfigured, getUpdates, downloadTelegramFile, downloadTelegramFileBuffer } from "./integrations/telegram";
 import { isIngestableDocument, extractTelegramDocument, buildDocumentContextBlock } from "./telegramDocumentExtractor";
-import { getUserTtsPrefs, setUserTtsPref, speakToUser, getUserTtsChannels, setTtsChannels } from "./agent/tools/tts";
+import { getUserTtsPrefs, setUserTtsPref, speakToUser, getUserTtsChannels, setTtsChannels, ELEVENLABS_VOICES } from "./agent/tools/tts";
 import { notifyUser, getChannel } from "./channels/registry";
 import type { NotificationType } from "@shared/schema";
 import { startMomentumSession, handleMomentumDone, hasMomentumSessionToday, startMomentumExpiryScheduler } from "./momentumCoach";
@@ -402,19 +402,30 @@ async function processUpdate(update: any): Promise<void> {
           await setTtsChannels(userId, current.filter(c => c !== "telegram"));
           await sendMessage(chatId, "Voice mode is now OFF — back to text replies.");
         } else if (sub === "voice" && parts[2]) {
-          const validVoices = ["alloy", "echo", "fable", "onyx", "nova", "shimmer"];
+          const openaiVoices = ["alloy", "echo", "fable", "onyx", "nova", "shimmer"];
+          const elevenLabsNames = Object.keys(ELEVENLABS_VOICES).map(k => k.toLowerCase());
           const v = parts[2].toLowerCase();
-          if (validVoices.includes(v)) {
+          const elevenKey = Object.keys(ELEVENLABS_VOICES).find(k => k.toLowerCase() === v);
+          if (openaiVoices.includes(v)) {
             await setUserTtsPref(userId, { voice: v as any });
             await sendMessage(chatId, `Voice set to "${v}". Send /tts on to enable voice mode.`);
+          } else if (elevenKey) {
+            const voiceId = ELEVENLABS_VOICES[elevenKey];
+            await setUserTtsPref(userId, { voice: voiceId as any });
+            await sendMessage(chatId, `Voice set to "${elevenKey}" (ElevenLabs). Send /tts on to enable voice mode.`);
           } else {
-            await sendMessage(chatId, `Unknown voice "${v}". Available voices: ${validVoices.join(", ")}`);
+            const allVoices = [...openaiVoices, ...Object.keys(ELEVENLABS_VOICES)].join(", ");
+            await sendMessage(chatId, `Unknown voice "${v}". Available voices: ${allVoices}`);
           }
         } else {
           const prefs = await getUserTtsPrefs(userId);
+          const elevenName = Object.entries(ELEVENLABS_VOICES).find(([, id]) => id === prefs.voice)?.[0];
+          const voiceLabel = elevenName ? `${elevenName} (ElevenLabs)` : prefs.voice;
+          const openaiList = "alloy, echo, fable, onyx, nova, shimmer";
+          const elevenList = Object.keys(ELEVENLABS_VOICES).join(", ");
           await sendMessage(
             chatId,
-            `Voice mode: ${prefs.enabled ? "ON" : "OFF"} | Voice: ${prefs.voice}\n\nCommands:\n/tts on — enable voice replies\n/tts off — disable voice replies\n/tts voice <name> — change voice (alloy, echo, fable, onyx, nova, shimmer)`,
+            `Voice mode: ${prefs.enabled ? "ON" : "OFF"} | Voice: ${voiceLabel}\n\nCommands:\n/tts on — enable voice replies\n/tts off — disable voice replies\n/tts voice <name> — change voice\n\nOpenAI voices: ${openaiList}\nElevenLabs voices: ${elevenList}`,
           );
         }
         return;

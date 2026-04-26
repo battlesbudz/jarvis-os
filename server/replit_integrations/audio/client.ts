@@ -181,6 +181,41 @@ export async function voiceChatStream(
 }
 
 /**
+ * ElevenLabs Text-to-Speech: Converts text to speech using ElevenLabs API.
+ * Returns an MP3 buffer. Falls back gracefully when API key is not set.
+ */
+export async function elevenlabsTts(
+  text: string,
+  voiceId: string,
+  modelId: string = "eleven_turbo_v2_5",
+): Promise<Buffer> {
+  const apiKey = process.env.ELEVENLABS_API_KEY;
+  if (!apiKey) throw new Error("ELEVENLABS_API_KEY not set");
+
+  const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
+    method: "POST",
+    headers: {
+      "xi-api-key": apiKey,
+      "Content-Type": "application/json",
+      "Accept": "audio/mpeg",
+    },
+    body: JSON.stringify({
+      text,
+      model_id: modelId,
+      voice_settings: { stability: 0.5, similarity_boost: 0.75 },
+    }),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => res.statusText);
+    throw new Error(`ElevenLabs TTS failed (${res.status}): ${errText}`);
+  }
+
+  const arrayBuffer = await res.arrayBuffer();
+  return Buffer.from(arrayBuffer);
+}
+
+/**
  * Text-to-Speech: Converts text to speech verbatim.
  * Uses OpenAI tts-1 model via Replit AI Integrations.
  */

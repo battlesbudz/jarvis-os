@@ -8,10 +8,33 @@ import { eq } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { telegramLinks } from "@shared/schema";
 import { sendVoice } from "../../integrations/telegram";
-import { textToSpeech } from "../../replit_integrations/audio/client";
+import { textToSpeech, elevenlabsTts } from "../../replit_integrations/audio/client";
 import type { AgentTool } from "../types";
 
-export type TtsVoice = "alloy" | "echo" | "fable" | "onyx" | "nova" | "shimmer";
+export type TtsVoice = "alloy" | "echo" | "fable" | "onyx" | "nova" | "shimmer" | string;
+
+/** OpenAI voice IDs — anything else is treated as an ElevenLabs voice ID. */
+const OPENAI_VOICES = new Set(["alloy", "echo", "fable", "onyx", "nova", "shimmer"]);
+
+/**
+ * ElevenLabs premade voices available to all users.
+ * Key = user-facing name, value = ElevenLabs voice_id.
+ */
+export const ELEVENLABS_VOICES: Record<string, string> = {
+  "Sarah": "EXAVITQu4vr4xnSDxMaL",
+  "Laura": "FGY2WhTYpPnrIDTdsKH5",
+  "Charlie": "IKne3meq5aSn9XLyUdCD",
+  "George": "JBFqnCBsd6RMkjVDRZzb",
+  "Callum": "N2lVS1w4EtoT3dr4eOWO",
+  "River": "SAz9YHcvj6GT2YYXdXww",
+  "Alice": "Xb7hH8MSUJpSbSDYk0k2",
+  "Matilda": "XrExE9yKIg1WjnnlVkGX",
+  "Jessica": "cgSgspJ2msm6clMCkdW9",
+  "Eric": "cjVigY5qzO86Huf0OWal",
+  "Brian": "nPczCjzI2devNBz1zQrb",
+  "Daniel": "onwK4e9ZLuTAKqWW03F9",
+  "Adam": "pNInz6obpgDQGcFmaJgB",
+};
 
 /** Convert MP3 buffer → OGG-Opus buffer (required for Telegram voice bubbles). */
 async function mp3ToOggOpus(mp3Buffer: Buffer): Promise<Buffer> {
@@ -152,7 +175,10 @@ export async function speakToUser(
   const isDiscord = channelRaw.startsWith("discord");
 
   const snippedText = text.slice(0, 4000);
-  const mp3 = await textToSpeech(snippedText, voice, "mp3");
+  const isElevenLabs = !OPENAI_VOICES.has(voice) && !!process.env.ELEVENLABS_API_KEY;
+  const mp3 = isElevenLabs
+    ? await elevenlabsTts(snippedText, voice)
+    : await textToSpeech(snippedText, voice as "alloy" | "echo" | "fable" | "onyx" | "nova" | "shimmer", "mp3");
   const ogg = await mp3ToOggOpus(mp3);
 
   if (isDiscord) {
