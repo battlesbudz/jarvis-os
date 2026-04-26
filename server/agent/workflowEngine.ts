@@ -147,6 +147,13 @@ export async function onWorkflowJobComplete(
       "approval_request",
       `✅ Workflow complete: "${workflow.title}"\nAll ${steps.length} step(s) finished.`,
     ).catch(() => {});
+    diagEmit({
+      userId: workflow.userId,
+      subsystem: "workflow_engine",
+      severity: "info",
+      message: `Workflow "${workflow.title}" completed all ${steps.length} step(s)`,
+      metadata: { workflowId, recovery: true },
+    }).catch(() => {});
     return;
   }
 
