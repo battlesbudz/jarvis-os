@@ -3359,8 +3359,8 @@ Return ONLY the JSON object.`;
         : "nova";
 
       const stream = isElevenLabs && process.env.ELEVENLABS_API_KEY
-        ? await elevenlabsTtsStream(trimmedText, resolvedVoice, "eleven_turbo_v2_5", elLatency)
-        : await textToSpeechStream(trimmedText, openaiVoice);
+        ? await elevenlabsTtsStream(trimmedText, resolvedVoice, "eleven_turbo_v2_5", elLatency, streamAbort.signal)
+        : await textToSpeechStream(trimmedText, openaiVoice, streamAbort.signal);
 
       for await (const base64Chunk of stream) {
         if (res.destroyed || streamAbort.signal.aborted) break;
