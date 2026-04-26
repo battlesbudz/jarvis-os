@@ -206,7 +206,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
 
 **How to build**: Think through what the tool needs to do, write the full TypeScript code following the AgentTool pattern, then call \`build_feature\` with feature_name, description, and tool_code (the complete file content). The tool must export a const of type AgentTool.
 
-**After building**: The tool is written to disk and smoke tested automatically. Restart the server for it to become active in future conversations. Report the outcome to the user — success means the tool is ready after restart, failure means the code needs fixing (call \`build_feature\` again with corrected tool_code).
+**After building**: The tool is written to disk and smoke tested automatically. The server restarts automatically so the new tool is active in a few seconds. Report the outcome to the user — success means the tool is now active, failure means the code needs fixing (call \`build_feature\` again with corrected tool_code).
 
 **Manual re-testing**: Use \`test_tool\` to re-run the smoke test on any built tool by name without rebuilding it.
 
