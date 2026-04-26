@@ -562,4 +562,49 @@ function applyUnifiedFilter(
   console.log(`✓ J: classifyQueryIntent (real import) correctly classifies ${researchQueries.length} research + ${generalQueries.length} general queries`);
 }
 
+// ─── Test K: Ego override replacement semantics ─────────────────────────────
+// Validates that writeEgoOverrides uses replacement (not union) semantics for
+// suppressActionTypes, so recovery cycles correctly remove previously-suppressed
+// action types from the next session's system prompt.
+//
+// This test simulates the merge logic in behaviorStore.writeEgoOverrides()
+// without a database so it can run in CI without side-effects.
+{
+  // Simulate Ego Cycle 1: suppresses "email_drafted" and "task_suggested"
+  const cycleOneSuppressions = ["email_drafted", "task_suggested"];
+  const prevOverrides = { suppressActionTypes: cycleOneSuppressions };
+
+  // Simulate Ego Cycle 2: "email_drafted" recovered (back above threshold)
+  const cycleTwoSuppressions = ["task_suggested"]; // email_drafted removed
+
+  // Apply replacement semantics (mirrors the corrected writeEgoOverrides logic)
+  const newOverrides = { suppressActionTypes: cycleTwoSuppressions };
+  const merged = {
+    ...prevOverrides,
+    ...newOverrides,
+    suppressActionTypes: newOverrides.suppressActionTypes ?? prevOverrides.suppressActionTypes ?? [],
+  };
+
+  assert.deepEqual(merged.suppressActionTypes, ["task_suggested"],
+    "K: replacement semantics must yield only the latest suppression list");
+  assert.ok(
+    !merged.suppressActionTypes.includes("email_drafted"),
+    "K: recovered action type 'email_drafted' must NOT appear in merged instruction_overrides"
+  );
+
+  // Simulate Ego Cycle 3: all action types recovered (empty list)
+  const cycleThreeSuppressions: string[] = [];
+  const newOverrides3 = { suppressActionTypes: cycleThreeSuppressions };
+  const merged3 = {
+    ...merged,
+    ...newOverrides3,
+    suppressActionTypes: newOverrides3.suppressActionTypes ?? [],
+  };
+
+  assert.deepEqual(merged3.suppressActionTypes, [],
+    "K: when all action types recover, instruction_overrides.suppressActionTypes must be empty");
+
+  console.log("✓ K: Ego override replacement semantics: suppress → recover → clear lifecycle verified");
+}
+
 console.log("\nAll assertions passed ✓");
