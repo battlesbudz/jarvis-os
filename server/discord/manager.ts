@@ -613,6 +613,41 @@ export async function sendDiscordAudio(userId: string, channelId: string, ogg: B
   }
 }
 
+/**
+ * Send an image buffer as a photo attachment to a Discord text channel.
+ * Used by the `image_generate` tool when the conversation originates from Discord.
+ * Returns true on success, false on any failure (logs internally).
+ */
+export async function sendDiscordImage(
+  userId: string,
+  channelId: string,
+  imageBuffer: Buffer,
+  filename = "image.png",
+  caption?: string,
+): Promise<boolean> {
+  const client = getClientForUser(userId);
+  if (!client) {
+    console.warn(`[DiscordManager] sendDiscordImage: no bot client for user ${userId}`);
+    return false;
+  }
+  try {
+    const channel = await client.channels.fetch(channelId);
+    if (!channel || !("send" in channel)) {
+      console.warn(`[DiscordManager] sendDiscordImage: channel ${channelId} not found or not sendable`);
+      return false;
+    }
+    const ch = channel as TextChannel | DMChannel;
+    await ch.send({
+      content: caption || undefined,
+      files: [{ attachment: imageBuffer, name: filename }],
+    });
+    return true;
+  } catch (err) {
+    console.error("[DiscordManager] sendDiscordImage failed:", err);
+    return false;
+  }
+}
+
 // Discord messages are capped at 2000 chars — split long replies
 async function editOrSendLong(msg: Message, text: string): Promise<void> {
   const chunks = splitIntoChunks(text, 1900);

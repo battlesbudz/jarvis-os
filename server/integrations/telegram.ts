@@ -248,6 +248,33 @@ export async function downloadTelegramFileBuffer(fileId: string): Promise<{ buff
   }
 }
 
+/**
+ * Sends a photo to a Telegram chat as an inline image.
+ * Accepts a Buffer (PNG/JPEG) and an optional caption.
+ */
+export async function sendPhoto(
+  chatId: string,
+  imageBuffer: Buffer,
+  caption?: string,
+): Promise<boolean> {
+  if (!BOT_TOKEN) return false;
+  try {
+    const form = new FormData();
+    form.append("chat_id", chatId);
+    if (caption) form.append("caption", caption.slice(0, 1024));
+    form.append("photo", new Blob([imageBuffer], { type: "image/png" }), "image.png");
+    const res = await fetch(`${BASE}/sendPhoto`, { method: "POST", body: form });
+    if (!res.ok) {
+      console.error("Telegram sendPhoto error:", await res.text());
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.error("Telegram sendPhoto threw:", String(e));
+    return false;
+  }
+}
+
 export async function getUpdates(offset: number): Promise<TelegramUpdate[]> {
   if (!BOT_TOKEN) return [];
   try {
