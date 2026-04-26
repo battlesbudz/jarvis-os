@@ -12,6 +12,11 @@ export const connectionsCapability: Capability = {
   id: "connections",
   label: "Connections & Channels",
   toolGroups: ["connections"],
+  toolGroupOverrides: {
+    check_connections:       ["connections", "system"],
+    generate_reconnect_link: ["connections", "system"],
+    connect_channel:         ["connections", "system"],
+  },
   tools: [checkConnectionsTool, generateReconnectLinkTool, connectChannelTool],
   integrationDependencies: [
     { integrationId: "telegram",  label: "Telegram",                toolNames: [] },

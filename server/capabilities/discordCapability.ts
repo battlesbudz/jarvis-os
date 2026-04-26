@@ -32,6 +32,12 @@ export const discordCapability: Capability = {
   id: "discord",
   label: "Discord",
   toolGroups: ["discord"],
+  toolGroupOverrides: {
+    setup_named_agent:      ["discord", "system"],
+    schedule_channel_report: ["discord", "scheduling"],
+    list_channel_schedules:  ["discord", "scheduling"],
+    delete_channel_schedule: ["discord", "scheduling"],
+  },
   tools: [
     discordPostTool,
     discordCreateChannelTool,

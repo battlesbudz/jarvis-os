@@ -66,6 +66,15 @@ export interface Capability {
   /** Env vars / secrets required at the config level. */
   configRequirements?: ConfigRequirement[];
   /**
+   * Per-tool group overrides for tools whose group membership differs from the
+   * capability's default `toolGroups`. For example, a tool might belong to both
+   * "discord" (capability default) and "system" (override needed for that tool).
+   *
+   * When absent for a tool, the tool inherits all groups from `toolGroups`.
+   * When present, the override completely replaces the default for that tool.
+   */
+  toolGroupOverrides?: Record<string, string[]>;
+  /**
    * Lightweight config-level health check — no external network calls.
    * Returns healthy:false when required env vars are missing.
    * The full OAuth-ping health check is done by integrationValidator.ts.
