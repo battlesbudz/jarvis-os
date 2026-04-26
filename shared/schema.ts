@@ -741,6 +741,30 @@ export const agentMessages = pgTable("agent_messages", {
 
 export type AgentMessage = typeof agentMessages.$inferSelect;
 
+// ── Agent Approval Gates ──────────────────────────────────────────────────────
+// Persistent record of approval gates created by agents before executing
+// sensitive tools. Gates survive server restarts and are surfaced to the user
+// via the mobile UI and REST API.
+
+export const AGENT_APPROVAL_STATUSES = ["pending", "approved", "rejected", "expired"] as const;
+export type AgentApprovalStatus = typeof AGENT_APPROVAL_STATUSES[number];
+
+export const agentApprovalGates = pgTable("agent_approval_gates", {
+  id: varchar("id").primaryKey(),
+  agentId: varchar("agent_id").notNull().references(() => discordAgents.id, { onDelete: "cascade" }),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  toolName: varchar("tool_name").notNull(),
+  toolArgs: jsonb("tool_args").notNull().default(sql`'{}'::jsonb`),
+  description: text("description").notNull(),
+  status: varchar("status").$type<AgentApprovalStatus>().notNull().default("pending"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  expiresAt: timestamp("expires_at").notNull(),
+  resolvedAt: timestamp("resolved_at"),
+  resolvedBy: varchar("resolved_by"),
+});
+
+export type AgentApprovalGate = typeof agentApprovalGates.$inferSelect;
+
 // ── Nervous System — Ambient Signal Monitoring ────────────────────────────────
 // Per-user watch topics (keywords, companies, people, industries) that the
 // nervous system scanner monitors every 30 minutes via web search.

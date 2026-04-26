@@ -937,71 +937,136 @@ export async function runAgentHealthCheck(): Promise<void> {
     const { logAgentEvent } = await import("./agent/agentLogger");
 
     const now = new Date();
+    const THIRTY_MIN_MS = 30 * 60 * 1000;
 
-    // Get all active agents with loopEnabled
-    const loopAgents = await db
+    // ── 1. Get all active agents ──────────────────────────────────────────────
+    const allActive = await db
       .select()
       .from(discordAgents)
-      .where(and(eq(discordAgents.isActive, 1), eq(discordAgents.loopEnabled, 1)));
+      .where(eq(discordAgents.isActive, 1));
 
-    for (const agent of loopAgents) {
-      const intervalMs = (agent.loopIntervalMinutes ?? 60) * 60 * 1000;
-      const staleThresholdMs = intervalMs * 2;
-      const lastBeat = agent.lastHeartbeatAt;
+    const summaryByUser: Map<string, string[]> = new Map();
+    function addSummary(userId: string, line: string) {
+      const lines = summaryByUser.get(userId) ?? [];
+      lines.push(line);
+      summaryByUser.set(userId, lines);
+    }
 
-      const isStale = lastBeat
-        ? now.getTime() - new Date(lastBeat).getTime() > staleThresholdMs
-        : false; // newly created agents are not stale yet
+    for (const agent of allActive) {
+      // ── 2. Config validity check ────────────────────────────────────────────
+      const configIssues: string[] = [];
+      if (!agent.name) configIssues.push("missing name");
+      if (!agent.role) configIssues.push("missing role");
+      if (agent.loopEnabled && !agent.loopPrompt) configIssues.push("loop enabled but no loopPrompt");
+      if (configIssues.length > 0) {
+        console.warn(`[AgentHealth] agent ${agent.name ?? agent.id} has config issues: ${configIssues.join(", ")}`);
+        logAgentEvent({
+          event: "heartbeat_check",
+          agentId: agent.id,
+          userId: agent.userId,
+          detail: `config_issues=${configIssues.join(",")}`,
+        });
+        addSummary(agent.userId, `⚠️ Agent "${agent.name ?? agent.id}" has config issues: ${configIssues.join(", ")}`);
+      }
 
-      if (isStale) {
-        const newFailCount = (agent.heartbeatFailCount ?? 0) + 1;
+      // ── 3. Loop freeze check (stale heartbeat for loop agents) ─────────────
+      if (agent.loopEnabled) {
+        const intervalMs = (agent.loopIntervalMinutes ?? 60) * 60 * 1000;
+        const staleThresholdMs = intervalMs * 2;
+        const lastBeat = agent.lastHeartbeatAt;
 
-        if (newFailCount >= 3) {
-          // Auto-disable stuck agents
-          await disableAgent(agent.id);
-          await db
-            .update(discordAgents)
-            .set({ stuckSince: agent.stuckSince ?? now, heartbeatFailCount: newFailCount })
-            .where(eq(discordAgents.id, agent.id));
-          console.warn(`[AgentHealth] auto-disabled stuck agent ${agent.name} (${agent.id}), fails=${newFailCount}`);
-          logAgentEvent({
-            event: "agent_disabled_stuck",
-            agentId: agent.id,
-            userId: agent.userId,
-            detail: `heartbeat_fails=${newFailCount}`,
-          });
+        const isStale = lastBeat
+          ? now.getTime() - new Date(lastBeat).getTime() > staleThresholdMs
+          : false;
+
+        if (isStale) {
+          const newFailCount = (agent.heartbeatFailCount ?? 0) + 1;
+
+          if (newFailCount >= 3) {
+            await disableAgent(agent.id);
+            await db
+              .update(discordAgents)
+              .set({ stuckSince: agent.stuckSince ?? now, heartbeatFailCount: newFailCount })
+              .where(eq(discordAgents.id, agent.id));
+            console.warn(`[AgentHealth] auto-disabled stuck agent ${agent.name} (${agent.id}), fails=${newFailCount}`);
+            logAgentEvent({
+              event: "agent_disabled_stuck",
+              agentId: agent.id,
+              userId: agent.userId,
+              detail: `heartbeat_fails=${newFailCount}`,
+            });
+            addSummary(agent.userId, `🔴 Agent "${agent.name}" was auto-disabled after ${newFailCount} missed heartbeats.`);
+          } else {
+            await db
+              .update(discordAgents)
+              .set({ heartbeatFailCount: newFailCount, stuckSince: agent.stuckSince ?? now })
+              .where(eq(discordAgents.id, agent.id));
+            console.warn(`[AgentHealth] agent ${agent.name} (${agent.id}) stale — fail ${newFailCount}/3`);
+            logAgentEvent({
+              event: "heartbeat_check",
+              agentId: agent.id,
+              userId: agent.userId,
+              detail: `stale=true fail=${newFailCount}`,
+            });
+            addSummary(agent.userId, `🟡 Agent "${agent.name}" missed heartbeat (${newFailCount}/3 before auto-disable).`);
+          }
         } else {
           await db
             .update(discordAgents)
-            .set({ heartbeatFailCount: newFailCount, stuckSince: agent.stuckSince ?? now })
+            .set({ lastHeartbeatAt: now, heartbeatFailCount: 0, stuckSince: null })
             .where(eq(discordAgents.id, agent.id));
-          console.warn(`[AgentHealth] agent ${agent.name} (${agent.id}) stale — fail ${newFailCount}/3`);
+        }
+      }
+
+      // ── 4. Stuck active-job check (> 30 min) ────────────────────────────────
+      if (agent.stuckSince) {
+        const stuckMs = now.getTime() - new Date(agent.stuckSince).getTime();
+        if (stuckMs > THIRTY_MIN_MS) {
           logAgentEvent({
             event: "heartbeat_check",
             agentId: agent.id,
             userId: agent.userId,
-            detail: `stale=true fail=${newFailCount}`,
+            detail: `stuck_since=${agent.stuckSince} duration_min=${Math.round(stuckMs / 60_000)}`,
           });
+          addSummary(agent.userId, `🔴 Agent "${agent.name}" has been stuck for ${Math.round(stuckMs / 60_000)} minutes.`);
         }
-      } else {
-        // Agent is healthy — reset fail count and update heartbeat
-        await db
-          .update(discordAgents)
-          .set({ lastHeartbeatAt: now, heartbeatFailCount: 0, stuckSince: null })
-          .where(eq(discordAgents.id, agent.id));
       }
     }
+
+    // ── 5. User summary notifications (in-app) ────────────────────────────────
+    // Send a single consolidated in-app notification per user when any agent
+    // has health issues. Rate-limit to at most one notification per hour by
+    // checking the notification cache.
+    if (summaryByUser.size > 0) {
+      try {
+        const { inAppChannel } = await import("./channels/inAppChannel");
+        for (const [userId, lines] of summaryByUser) {
+          const text = `**Agent Health Summary**\n${lines.join("\n")}`;
+          await inAppChannel.sendMessage(userId, text, { notificationType: "general" }).catch(() => {});
+        }
+      } catch (notifErr) {
+        console.warn("[AgentHealth] failed to send user summary notifications:", notifErr);
+      }
+    }
+
   } catch (err) {
     console.error("[AgentHealth] health check failed:", err);
   }
 }
 
 export function startHeartbeat(): void {
-  if (!isTelegramConfigured()) return;
+  // Agent health check runs unconditionally — not gated by Telegram so agents
+  // are monitored even when no Telegram bot is configured.
+  setInterval(() => { runAgentHealthCheck().catch((err) => console.error("[AgentHealth] error:", err)); }, 5 * 60 * 1000);
+  // Warm up: run first health check after 30s on boot
+  setTimeout(() => { runAgentHealthCheck().catch((err) => console.error("[AgentHealth] boot check error:", err)); }, 30_000);
+
+  // Main heartbeat tick is still gated by Telegram (requires a configured bot)
+  if (!isTelegramConfigured()) {
+    console.log(`[Heartbeat] daemon running (agent health only — Telegram not configured, main tick skipped)`);
+    return;
+  }
   console.log(`[Heartbeat] daemon started — checklist at ${CHECKLIST_PATH}, interval ${HEARTBEAT_INTERVAL_MS / 1000}s`);
   setTimeout(() => { runHeartbeatTick().catch((err) => console.error("[Heartbeat] tick error:", err)); }, 60 * 1000);
   setInterval(() => { runHeartbeatTick().catch((err) => console.error("[Heartbeat] tick error:", err)); }, HEARTBEAT_INTERVAL_MS);
-
-  // Agent health check runs every 5 minutes
-  setInterval(() => { runAgentHealthCheck().catch((err) => console.error("[AgentHealth] error:", err)); }, 5 * 60 * 1000);
 }

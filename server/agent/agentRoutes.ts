@@ -122,7 +122,7 @@ export function registerAgentRoutes(app: Express): void {
     try {
       const userId = req.userId!;
       const all = req.query.all === "true";
-      const gates = all ? listAllGates(userId) : listPendingGates(userId);
+      const gates = await (all ? listAllGates(userId) : listPendingGates(userId));
       res.json({ gates });
     } catch (err) { handleError(res, err); }
   });
@@ -131,21 +131,20 @@ export function registerAgentRoutes(app: Express): void {
   app.post("/api/agents/approvals/:gateId/approve", async (req: Request, res: Response) => {
     try {
       const userId = req.userId!;
-      const gate = getGate(req.params.gateId);
-      // Ownership check: only the gate's owner can approve it
+      const gate = await getGate(req.params.gateId);
       if (!gate) {
-        res.status(404).json({ error: "Gate not found or already resolved" });
+        res.status(404).json({ error: "Gate not found" });
         return;
       }
       if (gate.userId !== userId) {
         res.status(403).json({ error: "Forbidden: this approval gate belongs to another user" });
         return;
       }
-      const ok = approveGate(req.params.gateId, userId);
-      if (!ok) {
+      if (gate.status !== "pending") {
         res.status(400).json({ error: "Gate already resolved" });
         return;
       }
+      approveGate(req.params.gateId, userId);
       res.json({ ok: true });
     } catch (err) { handleError(res, err); }
   });
@@ -153,20 +152,20 @@ export function registerAgentRoutes(app: Express): void {
   app.post("/api/agents/approvals/:gateId/reject", async (req: Request, res: Response) => {
     try {
       const userId = req.userId!;
-      const gate = getGate(req.params.gateId);
+      const gate = await getGate(req.params.gateId);
       if (!gate) {
-        res.status(404).json({ error: "Gate not found or already resolved" });
+        res.status(404).json({ error: "Gate not found" });
         return;
       }
       if (gate.userId !== userId) {
         res.status(403).json({ error: "Forbidden: this approval gate belongs to another user" });
         return;
       }
-      const ok = rejectGate(req.params.gateId, userId);
-      if (!ok) {
+      if (gate.status !== "pending") {
         res.status(400).json({ error: "Gate already resolved" });
         return;
       }
+      rejectGate(req.params.gateId, userId);
       res.json({ ok: true });
     } catch (err) { handleError(res, err); }
   });
@@ -338,6 +337,62 @@ export function registerAgentRoutes(app: Express): void {
         platform,
       });
       res.json({ reply: result.reply, turns: result.turns, toolCalls: result.toolCalls.length });
+    } catch (err) { handleError(res, err); }
+  });
+
+  // ── 15b. POST /api/agents/:id/chat — in-app streaming chat ───────────────
+  // Dedicated in-app chat endpoint for the mobile Agents tab. Provides
+  // streaming SSE output (text/event-stream) so the UI can display tokens
+  // progressively. Falls back to JSON when Accept header is not SSE.
+  app.post("/api/agents/:id/chat", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId!;
+      if (!(await ownerCheck(req.params.id, userId))) {
+        res.status(404).json({ error: "Agent not found" });
+        return;
+      }
+      const { message } = req.body as { message: string };
+      if (!message) {
+        res.status(400).json({ error: "message is required" });
+        return;
+      }
+
+      const wantsStream = req.headers.accept?.includes("text/event-stream") ?? false;
+
+      if (wantsStream) {
+        res.setHeader("Content-Type", "text/event-stream");
+        res.setHeader("Cache-Control", "no-cache, no-transform");
+        res.setHeader("X-Accel-Buffering", "no");
+        res.setHeader("Access-Control-Allow-Origin", "*");
+        res.flushHeaders();
+
+        let fullReply = "";
+        const result = await runNamedAgent({
+          agentId: req.params.id,
+          userId,
+          userMessage: message,
+          platform: "in_app",
+          onToken: (chunk: string) => {
+            fullReply += chunk;
+            res.write(`data: ${JSON.stringify({ content: chunk })}\n\n`);
+          },
+        });
+
+        // Ensure final reply is flushed (handles non-streaming fallback inside runNamedAgent)
+        if (!fullReply && result.reply) {
+          res.write(`data: ${JSON.stringify({ content: result.reply })}\n\n`);
+        }
+        res.write(`data: [DONE]\n\n`);
+        res.end();
+      } else {
+        const result = await runNamedAgent({
+          agentId: req.params.id,
+          userId,
+          userMessage: message,
+          platform: "in_app",
+        });
+        res.json({ reply: result.reply, turns: result.turns, toolCalls: result.toolCalls.length });
+      }
     } catch (err) { handleError(res, err); }
   });
 
