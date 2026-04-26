@@ -327,7 +327,7 @@ export function registerChannelRoutes(app: Express): void {
   app.put("/api/channels/daemon/permissions", authMiddleware, async (req: Request, res: Response) => {
     const userId = (req as any).userId;
     const incoming = (req.body?.permissions || {}) as Record<string, unknown>;
-    const ACTIONS: readonly DaemonAction[] = ["shell", "notify", "file_read", "file_write", "file_list", "browser_local"] as const;
+    const ACTIONS: readonly DaemonAction[] = ["shell", "notify", "file_read", "file_write", "file_list", "desktop_screenshot", "desktop_read_screen", "browser_local"] as const;
     const sanitized: Partial<DaemonPermissions> = {};
     for (const k of ACTIONS) {
       if (k in incoming) sanitized[k] = !!incoming[k];
