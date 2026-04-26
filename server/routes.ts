@@ -3260,7 +3260,7 @@ Return ONLY the JSON object.`;
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
 
-      const { text, voice } = req.body;
+      const { text, voice: voiceParam } = req.body;
       if (!text || typeof text !== 'string') {
         return res.status(400).json({ error: "text is required" });
       }
@@ -3273,8 +3273,18 @@ Return ONLY the JSON object.`;
         }
       }
 
+      // Resolve voice: explicit param → user's saved preference → default 'nova'
+      let resolvedVoice = voiceParam && typeof voiceParam === 'string' ? voiceParam : null;
+      if (!resolvedVoice) {
+        const { getUserTtsPrefs } = await import('./agent/tools/tts');
+        const prefs = await getUserTtsPrefs(userId);
+        // Fallback only supports OpenAI MP3; map ElevenLabs voices to closest OpenAI voice
+        const OPENAI_VOICES = new Set(["alloy", "echo", "fable", "onyx", "nova", "shimmer"]);
+        resolvedVoice = OPENAI_VOICES.has(prefs.voice) ? prefs.voice : 'nova';
+      }
+
       const { textToSpeech } = await import('./replit_integrations/audio/client');
-      const audioBuffer = await textToSpeech(trimmedText, voice || 'alloy', 'mp3');
+      const audioBuffer = await textToSpeech(trimmedText, resolvedVoice, 'mp3');
       res.json({ audio: audioBuffer.toString('base64') });
     } catch (error) {
       console.error("Error generating speech:", error);
