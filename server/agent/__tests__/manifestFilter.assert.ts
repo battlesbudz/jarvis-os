@@ -339,12 +339,25 @@ function applyUnifiedFilter(
     for (const name of channelScope) allowed.add(name);
   }
 
-  // Step 2: UNION in activated capability tools.
+  // Step 2a: UNION in activated capability tools.
   if (plan?.capabilityManifest.activeCapabilityIds.length) {
     hasAnyScope = true;
     for (const capId of plan.capabilityManifest.activeCapabilityIds) {
       for (const name of capToolMap[capId] ?? []) allowed.add(name);
     }
+  }
+
+  // Step 2b: Suppression-only heartbeat fallback.
+  // When the plan has suppressions but no activations and no channel scope,
+  // seed allowed with ALL tools so suppressions have something to remove from.
+  if (
+    !channelScope &&
+    plan &&
+    !plan.capabilityManifest.activeCapabilityIds.length &&
+    plan.capabilityManifest.suppressedCapabilityIds.length > 0
+  ) {
+    hasAnyScope = true;
+    for (const t of tools) allowed.add(t.name);
   }
 
   // Step 3: REMOVE suppressed capability tools (wins over both scope and activations).
@@ -464,6 +477,42 @@ function applyUnifiedFilter(
   assert.equal(tools.length, ALL_TOOLS.length, "I: all tools pass when no plan and no channel");
   assert.equal(reduction, 0, "I: 0% reduction without plan or channel");
   console.log("✓ I: no plan + no channel → all tools pass (backward compat)");
+}
+
+// ─── Test I2: Suppression-only heartbeat — suppressions still reduce tools ──
+// When a heartbeat plan has ONLY suppressions (empty activeCapabilityIds),
+// suppression must still apply against the full tool list.
+// Previously: hasAnyScope stayed false → no filter → all tools passed. BUG.
+// Fixed: Step 2b seeds allowed with all tools when suppression-only + no channel.
+{
+  const plan: ActivationPlan = {
+    capabilityManifest: {
+      activeCapabilityIds: [],                          // no positive filter
+      suppressedCapabilityIds: ["browser", "research"], // only suppressions
+      activatedToolGroups: [],
+      reasons: {
+        browser: "Suppressed: general heartbeat query",
+        research: "Suppressed: general heartbeat query",
+      },
+    },
+    sessionContext: makeSessionContext("morning"),
+    shouldRun: true,
+    reason: "general heartbeat — suppress research/browser",
+  };
+
+  const { tools, reduction } = applyUnifiedFilter(ALL_TOOLS, plan, CAP_TOOL_MAP, null);
+  const toolNames = tools.map((t) => t.name);
+
+  // browser tools must be removed even though no activeCapabilityIds
+  for (const name of BROWSER_TOOLS) {
+    assert.equal(toolNames.includes(name), false, `I2: browser tool "${name}" must be suppressed on heartbeat`);
+  }
+  // coaching tools must still be present (not suppressed)
+  for (const name of COACHING_TOOLS) {
+    assert.equal(toolNames.includes(name), true, `I2: coaching tool "${name}" must survive suppression-only heartbeat`);
+  }
+  assert.ok(reduction > 0, `I2: suppression-only heartbeat must reduce tool count (got ${reduction}% reduction)`);
+  console.log(`✓ I2: suppression-only heartbeat: ${tools.length}/${ALL_TOOLS.length} tools (${reduction}% reduction)`);
 }
 
 // ─── Test J: Research intent classifier ───────────────────────────────────────
