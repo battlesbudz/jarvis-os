@@ -31,7 +31,16 @@ The coach is no longer Telegram-only. A channel abstraction layer (`server/chann
 - **Link codes** — `channel_link_codes` issues short-lived 6/8-char codes for WhatsApp (text the code) and the desktop daemon (paste into the daemon CLI). Codes expire in 15 min and are single-use.
 
 ### Desktop Daemon
-A standalone Node.js script in `daemon/jarvis-daemon.js` pairs to the server over a WebSocket (`/api/daemon/ws`). It exposes a sandboxed set of operations — `shell`, `notify`, `file_read`, `file_write`, `file_list` — all confined to `JARVIS_DAEMON_ROOT` (default `~/jarvis-workspace`). The agent invokes them via the `daemon_action` tool, and `daemonChannel` uses the `notify` op to send native desktop notifications when channel preferences route a notification to the daemon. Pattern inspired by [OpenClaw](https://github.com/steipete/openclaw) (MIT, © 2025 Peter Steinberger).
+A standalone Node.js script in `daemon/jarvis-daemon.js` pairs to the server over a WebSocket (`/api/daemon/ws`). It exposes a sandboxed set of operations — `shell`, `notify`, `file_read`, `file_write`, `file_list`, `browser_mcp` — all confined to `JARVIS_DAEMON_ROOT` (default `~/jarvis-workspace`). The agent invokes them via the `daemon_action` tool, and `daemonChannel` uses the `notify` op to send native desktop notifications when channel preferences route a notification to the daemon. Pattern inspired by [OpenClaw](https://github.com/steipete/openclaw) (MIT, © 2025 Peter Steinberger).
+
+### Playwright MCP Browser Integration
+Browser automation is backed by `@playwright/mcp@0.0.70` — the official Playwright Model Context Protocol server — instead of a hand-rolled session manager.
+
+- **`server/agent/mcp/playwrightMcpClient.ts`** — spawns one `@playwright/mcp` subprocess per user (stdio JSON-RPC). Sessions are lazy (first browser call creates them), idle-timeout after 5 min, and persist cookies/localStorage via per-user profile dirs in `~/.jarvis/browser-profiles/<userId>/`. Daemon routing: when a desktop daemon is connected and the `browser_local` permission is ON, tool calls are proxied through the daemon's local MCP server (real browser + user's existing logins) instead of the server-side headless instance.
+- **Browser tools** — `browser_navigate`, `browser_click`, `browser_type`, `browser_screenshot`, `browser_extract`, `browser_close`, `browser_snapshot` (accessibility tree), `browser_wait_for`, `browser_select`, `browser_clear_session`.
+- **`browser_local` permission** — opt-in daemon permission (default OFF) in `DaemonPermissions` / `DEFAULT_DAEMON_PERMISSIONS` in `bridge.ts`. Controls whether browser ops route through the user's local browser.
+- **`browser_mcp` daemon op** — the daemon spawns a local `@playwright/mcp` server on first use and proxies MCP tool calls to it, returning structured results.
+- **JS-rendering fallback in research** — `research_topic` detects Tavily results with sparse content (<200 chars, likely JS-rendered) and fetches up to 2 such URLs via `browser_navigate` to enrich the research output.
 
 ### Android Daemon APK
 An Android APK (`android-daemon/`) pairs to the server and exposes phone-control ops:

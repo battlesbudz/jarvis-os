@@ -36,7 +36,8 @@ export type DaemonOp =
   | { type: "android_copy_to_clipboard"; path: string }
   | { type: "desktop_screenshot" }
   | { type: "desktop_read_screen" }
-  | { type: "android_notification_reply"; notificationKey: string; replyText: string };
+  | { type: "android_notification_reply"; notificationKey: string; replyText: string }
+  | { type: "browser_mcp"; tool: string; args: Record<string, unknown> };
 
 export interface PhoneNotification {
   pkg: string;
@@ -131,7 +132,7 @@ export function closeUserDaemon(userId: string, platform?: string): boolean {
 // Stored in channel_links.metadata.permissions for the user's daemon row.
 // Defaults: notify/file_read/file_list/desktop_screenshot/desktop_read_screen ON,
 //           shell/file_write OFF.
-export type DaemonAction = "shell" | "notify" | "file_read" | "file_write" | "file_list" | "desktop_screenshot" | "desktop_read_screen";
+export type DaemonAction = "shell" | "notify" | "file_read" | "file_write" | "file_list" | "desktop_screenshot" | "desktop_read_screen" | "browser_local";
 export type DaemonPermissions = Record<DaemonAction, boolean>;
 
 export const DEFAULT_DAEMON_PERMISSIONS: DaemonPermissions = {
@@ -142,6 +143,7 @@ export const DEFAULT_DAEMON_PERMISSIONS: DaemonPermissions = {
   file_list: true,
   desktop_screenshot: true,
   desktop_read_screen: true,
+  browser_local: false,
 };
 
 // ───── Per-action permission model (Android) ────────────────────────────

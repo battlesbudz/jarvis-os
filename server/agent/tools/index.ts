@@ -52,6 +52,10 @@ import {
   browserScreenshotTool,
   browserExtractTool,
   browserCloseTool,
+  browserSnapshotTool,
+  browserWaitForTool,
+  browserSelectTool,
+  browserClearSessionTool,
 } from "./browserTools";
 import {
   buildFeatureTool,
@@ -118,6 +122,10 @@ export const ALL_TOOLS: AgentTool[] = [
   browserScreenshotTool,
   browserExtractTool,
   browserCloseTool,
+  browserSnapshotTool,
+  browserWaitForTool,
+  browserSelectTool,
+  browserClearSessionTool,
   buildFeatureTool,
   testToolTool,
 ];
@@ -185,6 +193,10 @@ export function telegramCoachTools(opts: { hasGoogle: boolean }): AgentTool[] {
     browserScreenshotTool,
     browserExtractTool,
     browserCloseTool,
+    browserSnapshotTool,
+    browserWaitForTool,
+    browserSelectTool,
+    browserClearSessionTool,
     buildFeatureTool,
     testToolTool,
   ];
@@ -253,6 +265,10 @@ export {
   browserScreenshotTool,
   browserExtractTool,
   browserCloseTool,
+  browserSnapshotTool,
+  browserWaitForTool,
+  browserSelectTool,
+  browserClearSessionTool,
   buildFeatureTool,
   testToolTool,
 };

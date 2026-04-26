@@ -19,7 +19,7 @@ const WebSocket = require("ws");
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
-const { exec } = require("child_process");
+const { exec, spawn } = require("child_process");
 
 function arg(name) {
   const idx = process.argv.indexOf(`--${name}`);
@@ -185,10 +185,130 @@ async function handleOp(op) {
       // Tesseract not available or produced no text — return screenshot as fallback
       return { ok: true, text: null, ocrAvailable: false, image: imgBase64, mimeType: "image/png", note: "Tesseract not available; returning raw screenshot for visual inspection." };
     }
+    if (op.type === "browser_mcp") {
+      return await runLocalMcpTool(op.tool, op.args || {});
+    }
     return { ok: false, error: `unknown op type ${op.type}` };
   } catch (err) {
     return { ok: false, error: String(err && err.message ? err.message : err) };
   }
+}
+
+// ── Local Playwright MCP bridge ───────────────────────────────────────────────
+// Spawns a local @playwright/mcp server against the user's default browser
+// profile so the agent can automate the user's real logged-in browser sessions.
+
+let localMcpProc = null;
+let localMcpReady = false;
+let localMcpBuf = "";
+let localMcpPending = new Map();
+let localMcpCounter = 0;
+let localMcpInitPromise = null;
+
+function findMcpCli() {
+  const candidates = [
+    path.join(os.homedir(), ".npm", "lib", "node_modules", "@playwright", "mcp", "cli.js"),
+    path.join(__dirname, "node_modules", "@playwright", "mcp", "cli.js"),
+    "/usr/local/lib/node_modules/@playwright/mcp/cli.js",
+    "/usr/lib/node_modules/@playwright/mcp/cli.js",
+  ];
+  for (const c of candidates) {
+    if (fs.existsSync(c)) return c;
+  }
+  return null;
+}
+
+function ensureLocalMcp() {
+  if (localMcpInitPromise) return localMcpInitPromise;
+  localMcpInitPromise = new Promise((resolve, reject) => {
+    const cli = findMcpCli();
+    const args = [
+      "--no-sandbox",
+      "--user-data-dir", path.join(os.homedir(), ".jarvis", "daemon-browser-profile"),
+      "--allow-unrestricted-file-access",
+    ];
+
+    let proc;
+    if (cli) {
+      proc = spawn("node", [cli, ...args], { stdio: ["pipe", "pipe", "pipe"] });
+    } else {
+      proc = spawn("npx", ["@playwright/mcp@latest", ...args], { stdio: ["pipe", "pipe", "pipe"] });
+    }
+
+    localMcpProc = proc;
+
+    proc.stdout.on("data", (d) => {
+      localMcpBuf += d.toString();
+      const lines = localMcpBuf.split("\n");
+      localMcpBuf = lines.pop() || "";
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const msg = JSON.parse(line);
+          if (msg.id != null) {
+            const cb = localMcpPending.get(msg.id);
+            if (cb) { localMcpPending.delete(msg.id); cb(msg); }
+          }
+        } catch (_) { /* not JSON */ }
+      }
+    });
+
+    proc.stderr.on("data", () => { /* suppress */ });
+
+    proc.on("exit", () => {
+      localMcpProc = null;
+      localMcpReady = false;
+      localMcpInitPromise = null;
+      localMcpBuf = "";
+    });
+
+    proc.on("error", (err) => {
+      reject(err);
+      localMcpInitPromise = null;
+    });
+
+    function mcpSend(msg) {
+      try { proc.stdin.write(JSON.stringify(msg) + "\n"); } catch (_) { /* noop */ }
+    }
+
+    function mcpRequest(method, params) {
+      return new Promise((res) => {
+        const id = ++localMcpCounter;
+        const timer = setTimeout(() => {
+          localMcpPending.delete(id);
+          res({ id, jsonrpc: "2.0", error: { message: `Timeout: ${method}` } });
+        }, 30000);
+        localMcpPending.set(id, (r) => { clearTimeout(timer); res(r); });
+        mcpSend({ jsonrpc: "2.0", id, method, params });
+      });
+    }
+
+    mcpRequest("initialize", {
+      protocolVersion: "2024-11-05",
+      capabilities: {},
+      clientInfo: { name: "jarvis-daemon", version: "1.0.0" },
+    }).then((r) => {
+      if (r.error) { reject(new Error(r.error.message)); return; }
+      mcpSend({ jsonrpc: "2.0", method: "notifications/initialized", params: {} });
+      localMcpReady = true;
+      console.log("[daemon] local Playwright MCP server ready");
+      resolve({ req: mcpRequest });
+    }).catch(reject);
+  });
+  return localMcpInitPromise;
+}
+
+async function runLocalMcpTool(toolName, toolArgs) {
+  let handle;
+  try {
+    handle = await ensureLocalMcp();
+  } catch (err) {
+    return { ok: false, error: `Failed to start local Playwright MCP: ${String(err.message || err)}. Install @playwright/mcp: npm install -g @playwright/mcp` };
+  }
+  const res = await handle.req("tools/call", { name: toolName, arguments: toolArgs });
+  if (res.error) return { ok: false, error: res.error.message };
+  const result = res.result || { content: [], isError: false };
+  return { ok: !result.isError, data: result };
 }
 
 let backoffMs = 1000;
