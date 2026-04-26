@@ -51,6 +51,51 @@ function mcpText(content: { type: string; text?: string }[]): string {
     .trim();
 }
 
+/**
+ * Parse a Playwright MCP accessibility-tree snapshot to find the `ref`
+ * attribute (e.g. `e1`, `e4`) for the first element whose line contains
+ * `description` (case-insensitive).
+ *
+ * Snapshot lines look like:
+ *   - button "Submit" [ref=e1]
+ *   - textbox "Email" [ref=e3]
+ *
+ * Returns the ref string if found, null otherwise.
+ */
+function findRef(snapshot: string, description: string): string | null {
+  if (!description || !snapshot) return null;
+  const needle = description.toLowerCase();
+  for (const line of snapshot.split("\n")) {
+    if (line.toLowerCase().includes(needle)) {
+      const m = line.match(/\[ref=([\w]+)\]/);
+      if (m) return m[1];
+    }
+  }
+  return null;
+}
+
+/**
+ * Take a snapshot and resolve a ref for the given element description.
+ * Returns { ref, snapshot } on success, or { error, snapshot } on failure.
+ */
+async function snapshotAndResolve(
+  userId: string,
+  description: string,
+): Promise<{ ref: string; snapshot: string } | { error: string; snapshot: string }> {
+  const snapResult = await callBrowserTool(userId, "browser_snapshot", {});
+  const snapshot = mcpText(snapResult.content);
+  if (snapResult.isError) return { error: `Snapshot failed: ${snapshot}`, snapshot };
+  const ref = findRef(snapshot, description);
+  if (!ref) {
+    return {
+      error: `Could not find element matching "${description}" in the current page. ` +
+        `Use browser_snapshot to see available elements and their refs, then call this tool with the ref directly.`,
+      snapshot: snapshot.slice(0, 2000),
+    };
+  }
+  return { ref, snapshot };
+}
+
 // ── browser_navigate ───────────────────────────────────────────────────────────
 
 export const browserNavigateTool: AgentTool = {
@@ -103,18 +148,20 @@ export const browserNavigateTool: AgentTool = {
 export const browserClickTool: AgentTool = {
   name: "browser_click",
   description:
-    "Click an element on the current browser page. Specify the visible text of the element or a description of it. " +
-    "Returns the updated page content.",
+    "Click an element on the current browser page. " +
+    "Provide a `ref` from browser_snapshot for precise targeting, OR a human-readable `text` description " +
+    "which will be resolved to a ref automatically via an internal snapshot. " +
+    "Returns the updated page content after clicking.",
   parameters: {
     type: "object",
     properties: {
+      ref: {
+        type: "string",
+        description: "Element ref from browser_snapshot (e.g. 'e1'). Preferred — use this when you know the ref.",
+      },
       text: {
         type: "string",
-        description: "Visible text or description of the element to click (e.g. 'Submit button', 'Next link')",
-      },
-      selector: {
-        type: "string",
-        description: "CSS selector or description of the element (used if text is not provided)",
+        description: "Visible text or description of the element to click (e.g. 'Submit', 'Next link'). Used when ref is not provided.",
       },
     },
   },
@@ -122,25 +169,33 @@ export const browserClickTool: AgentTool = {
     if (!await hasActiveBrowserContext(ctx.userId)) {
       return { ok: false, content: "No active browser session. Call browser_navigate first.", label: "browser_click: no session" };
     }
-    const text = args.text ? String(args.text).trim() : "";
-    const selector = args.selector ? String(args.selector).trim() : "";
-    if (!text && !selector) {
-      return { ok: false, content: "Provide either `text` or `selector`.", label: "browser_click: no target" };
+
+    let ref = args.ref ? String(args.ref).trim() : "";
+    const description = args.text ? String(args.text).trim() : ref;
+
+    if (!ref) {
+      if (!description) {
+        return { ok: false, content: "Provide `ref` (from browser_snapshot) or `text` description.", label: "browser_click: no target" };
+      }
+      const resolved = await snapshotAndResolve(ctx.userId, description);
+      if ("error" in resolved) {
+        return { ok: false, content: resolved.error, label: "browser_click: element not found" };
+      }
+      ref = resolved.ref;
     }
 
     try {
-      const element = text || selector;
-      const result = await callBrowserTool(ctx.userId, "browser_click", { element });
+      const result = await callBrowserTool(ctx.userId, "browser_click", { ref, element: description || ref });
       if (result.isError) {
         return { ok: false, content: `browser_click failed: ${mcpText(result.content)}`, label: "browser_click: error" };
       }
       const snapResult = await callBrowserTool(ctx.userId, "browser_snapshot", {});
       const pageText = mcpText(snapResult.content).slice(0, 2000);
-      console.log(`[${ctx.channel || "Agent"}] browser_click "${element}"`);
+      console.log(`[${ctx.channel || "Agent"}] browser_click ref=${ref} "${description}"`);
       return {
         ok: true,
-        content: `Clicked "${element}".\n\n${pageText || "(page updated)"}`,
-        label: `Clicked: ${element}`,
+        content: `Clicked "${description || ref}".\n\n${pageText || "(page updated)"}`,
+        label: `Clicked: ${description || ref}`,
       };
     } catch (err) {
       const msg = err instanceof Error ? err.message.split("\n")[0] : String(err);
@@ -154,16 +209,16 @@ export const browserClickTool: AgentTool = {
 export const browserTypeTool: AgentTool = {
   name: "browser_type",
   description:
-    "Find an input field on the current browser page and type text into it. " +
-    "Locate by label text, placeholder text, or CSS selector. " +
-    "Set submit=true to press Enter after typing (useful for search forms).",
+    "Type text into an input field on the current browser page. " +
+    "Provide a `ref` from browser_snapshot for precise targeting, OR a `label`/`placeholder` description " +
+    "which will be resolved to a ref automatically. " +
+    "Set submit=true to press Enter after typing.",
   parameters: {
     type: "object",
     properties: {
       text: { type: "string", description: "The text to type into the field" },
-      label: { type: "string", description: "Label text associated with the input field" },
-      placeholder: { type: "string", description: "Placeholder text of the input field" },
-      selector: { type: "string", description: "CSS selector or description of the input field (fallback)" },
+      ref: { type: "string", description: "Element ref from browser_snapshot (e.g. 'e2'). Preferred." },
+      label: { type: "string", description: "Label text, placeholder, or description of the input field. Used when ref is not provided." },
       submit: { type: "boolean", description: "Press Enter after typing (default: false)" },
     },
     required: ["text"],
@@ -174,25 +229,32 @@ export const browserTypeTool: AgentTool = {
     }
     const textToType = String(args.text || "").trim();
     if (!textToType) return { ok: false, content: "`text` is required.", label: "browser_type: no text" };
-    const label = args.label ? String(args.label).trim() : "";
-    const placeholder = args.placeholder ? String(args.placeholder).trim() : "";
-    const selector = args.selector ? String(args.selector).trim() : "";
+
+    let ref = args.ref ? String(args.ref).trim() : "";
+    const description = args.label ? String(args.label).trim() : ref;
     const submit = Boolean(args.submit);
-    const element = label || placeholder || selector;
-    if (!element) {
-      return { ok: false, content: "Provide at least one of: label, placeholder, selector.", label: "browser_type: no locator" };
+
+    if (!ref) {
+      if (!description) {
+        return { ok: false, content: "Provide `ref` (from browser_snapshot) or `label` to identify the field.", label: "browser_type: no locator" };
+      }
+      const resolved = await snapshotAndResolve(ctx.userId, description);
+      if ("error" in resolved) {
+        return { ok: false, content: resolved.error, label: "browser_type: element not found" };
+      }
+      ref = resolved.ref;
     }
 
     try {
-      const result = await callBrowserTool(ctx.userId, "browser_type", { element, text: textToType, submit });
+      const result = await callBrowserTool(ctx.userId, "browser_type", { ref, element: description || ref, text: textToType, submit });
       if (result.isError) {
         return { ok: false, content: `browser_type failed: ${mcpText(result.content)}`, label: "browser_type: error" };
       }
-      console.log(`[${ctx.channel || "Agent"}] browser_type into "${element}" submit=${submit}`);
+      console.log(`[${ctx.channel || "Agent"}] browser_type ref=${ref} into "${description}" submit=${submit}`);
       return {
         ok: true,
-        content: `Typed "${textToType}" into field "${element}"${submit ? " (submitted)" : ""}.`,
-        label: `Typed into: ${element}`,
+        content: `Typed "${textToType}" into "${description || ref}"${submit ? " (submitted)" : ""}.`,
+        label: `Typed into: ${description || ref}`,
       };
     } catch (err) {
       const msg = err instanceof Error ? err.message.split("\n")[0] : String(err);
@@ -374,35 +436,52 @@ export const browserWaitForTool: AgentTool = {
 export const browserSelectTool: AgentTool = {
   name: "browser_select",
   description:
-    "Select an option (or multiple options) from a dropdown/select element on the current browser page.",
+    "Select one or more options from a dropdown/select element on the current browser page. " +
+    "Provide a `ref` from browser_snapshot for precise targeting, OR an `element` description " +
+    "that will be resolved to a ref automatically.",
   parameters: {
     type: "object",
     properties: {
-      element: { type: "string", description: "Human-readable description of the dropdown (e.g. 'Country select')" },
+      ref: { type: "string", description: "Element ref from browser_snapshot (e.g. 'e5'). Preferred." },
+      element: { type: "string", description: "Human-readable description of the dropdown (e.g. 'Country'). Used when ref is not provided." },
       values: {
         type: "array",
         items: { type: "string" },
         description: "One or more option values or labels to select",
       },
     },
-    required: ["element", "values"],
+    required: ["values"],
   },
   async execute(args, ctx) {
     if (!await hasActiveBrowserContext(ctx.userId)) {
       return { ok: false, content: "No active browser session. Call browser_navigate first.", label: "browser_select: no session" };
     }
-    const element = String(args.element || "").trim();
     const values = Array.isArray(args.values) ? args.values.map(String) : [];
-    if (!element || !values.length) {
-      return { ok: false, content: "Provide `element` and at least one `values` entry.", label: "browser_select: bad args" };
+    if (!values.length) {
+      return { ok: false, content: "Provide at least one entry in `values`.", label: "browser_select: bad args" };
     }
+
+    let ref = args.ref ? String(args.ref).trim() : "";
+    const description = args.element ? String(args.element).trim() : ref;
+
+    if (!ref) {
+      if (!description) {
+        return { ok: false, content: "Provide `ref` (from browser_snapshot) or `element` description.", label: "browser_select: no target" };
+      }
+      const resolved = await snapshotAndResolve(ctx.userId, description);
+      if ("error" in resolved) {
+        return { ok: false, content: resolved.error, label: "browser_select: element not found" };
+      }
+      ref = resolved.ref;
+    }
+
     try {
-      const result = await callBrowserTool(ctx.userId, "browser_select_option", { element, values });
+      const result = await callBrowserTool(ctx.userId, "browser_select_option", { ref, element: description || ref, values });
       const text = mcpText(result.content);
-      console.log(`[${ctx.channel || "Agent"}] browser_select "${element}" values=${values}`);
+      console.log(`[${ctx.channel || "Agent"}] browser_select ref=${ref} "${description}" values=${values}`);
       return {
         ok: !result.isError,
-        content: text || `Selected ${values.join(", ")} in "${element}".`,
+        content: text || `Selected ${values.join(", ")} in "${description || ref}".`,
         label: `Selected: ${values.join(", ")}`,
       };
     } catch (err) {
