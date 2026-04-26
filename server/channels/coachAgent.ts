@@ -9,6 +9,7 @@ import { getGoogleCalendarEvents } from "../integrations/googleCalendar";
 import { getRecentInteractions, formatInteractionTimeline, logInteraction } from "../interactionLog";
 import { getSoulPromptBlock } from "../memory/soul";
 import { isUserPaired, isAndroidDaemonActive, isDesktopDaemonActive } from "../daemon/bridge";
+import { buildYouTubeContextBlock } from "../utils/youtubeAutoFetch";
 import type { ChannelAttachment } from "./types";
 
 export interface CoachReplyInput {
@@ -267,12 +268,15 @@ When a user's request involves multi-step research, drafting a document or plan,
 
 **Fail explicitly**: If a tool call returns an error or fails, tell the user specifically what went wrong. Do not silently continue or pretend the action succeeded.`;
 
+  const youtubeCtx = await buildYouTubeContextBlock(userText || "").catch(() => "");
+  const enrichedUserText = userText + youtubeCtx;
+
   const userMessageContent = imageUrl
     ? [
-        { type: "text" as const, text: userText || "What do you see in this image?" },
+        { type: "text" as const, text: enrichedUserText || "What do you see in this image?" },
         { type: "image_url" as const, image_url: { url: imageUrl } },
       ]
-    : userText;
+    : enrichedUserText;
 
   const baseMessages: import("openai").default.Chat.Completions.ChatCompletionMessageParam[] = [
     { role: "system", content: systemPrompt },
