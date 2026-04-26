@@ -179,47 +179,57 @@ export function awaitApproval(gateId: string, ttlMs?: number): Promise<boolean> 
 
 /**
  * Approve a pending gate. Only the gate's owner (userId) may approve.
- * Returns true if successfully resolved, false if already resolved or not found.
+ * Returns true if the gate was successfully resolved in the DB,
+ * false if not found, already resolved, or on DB failure.
+ * Events are ONLY emitted after successful durable write — not optimistically.
  */
-export function approveGate(gateId: string, resolvedBy: string): boolean {
+export async function approveGate(gateId: string, resolvedBy: string): Promise<boolean> {
   const now = new Date();
-  db.update(agentApprovalGates)
-    .set({ status: "approved", resolvedAt: now, resolvedBy })
-    .where(and(eq(agentApprovalGates.id, gateId), eq(agentApprovalGates.status, "pending")))
-    .then((result) => {
-      if ((result.rowCount ?? 0) > 0) {
-        gateEmitter.emit(gateId, { approved: true });
-        logAgentEvent({ event: "tool_approved", agentId: "unknown", userId: resolvedBy, detail: `gate=${gateId}` });
-      }
-    })
-    .catch((err) => console.error("[AgentApproval] approveGate DB error:", err));
-
-  // Optimistically emit to unblock the await — DB write is async
-  gateEmitter.emit(gateId, { approved: true });
-  return true;
+  try {
+    const result = await db.update(agentApprovalGates)
+      .set({ status: "approved", resolvedAt: now, resolvedBy })
+      .where(and(eq(agentApprovalGates.id, gateId), eq(agentApprovalGates.status, "pending")));
+    const rows = result.rowCount ?? 0;
+    if (rows === 0) {
+      // Gate not found or already resolved — no event emitted
+      return false;
+    }
+    // Only emit AFTER successful DB write
+    gateEmitter.emit(gateId, { approved: true });
+    logAgentEvent({ event: "tool_approved", agentId: "unknown", userId: resolvedBy, detail: `gate=${gateId}` });
+    return true;
+  } catch (err) {
+    console.error("[AgentApproval] approveGate DB error:", err);
+    return false;
+  }
 }
 
 // ── rejectGate ─────────────────────────────────────────────────────────────────
 
 /**
  * Reject a pending gate. Only the gate's owner (userId) may reject.
- * Returns true if successfully resolved, false if already resolved or not found.
+ * Returns true if the gate was successfully resolved in the DB,
+ * false if not found, already resolved, or on DB failure.
+ * Events are ONLY emitted after successful durable write — not optimistically.
  */
-export function rejectGate(gateId: string, resolvedBy: string): boolean {
+export async function rejectGate(gateId: string, resolvedBy: string): Promise<boolean> {
   const now = new Date();
-  db.update(agentApprovalGates)
-    .set({ status: "rejected", resolvedAt: now, resolvedBy })
-    .where(and(eq(agentApprovalGates.id, gateId), eq(agentApprovalGates.status, "pending")))
-    .then((result) => {
-      if ((result.rowCount ?? 0) > 0) {
-        gateEmitter.emit(gateId, { approved: false, reason: "rejected" });
-        logAgentEvent({ event: "tool_blocked", agentId: "unknown", userId: resolvedBy, detail: `gate=${gateId} rejected` });
-      }
-    })
-    .catch((err) => console.error("[AgentApproval] rejectGate DB error:", err));
-
-  gateEmitter.emit(gateId, { approved: false, reason: "rejected" });
-  return true;
+  try {
+    const result = await db.update(agentApprovalGates)
+      .set({ status: "rejected", resolvedAt: now, resolvedBy })
+      .where(and(eq(agentApprovalGates.id, gateId), eq(agentApprovalGates.status, "pending")));
+    const rows = result.rowCount ?? 0;
+    if (rows === 0) {
+      return false;
+    }
+    // Only emit AFTER successful DB write
+    gateEmitter.emit(gateId, { approved: false, reason: "rejected" });
+    logAgentEvent({ event: "tool_blocked", agentId: "unknown", userId: resolvedBy, detail: `gate=${gateId} rejected` });
+    return true;
+  } catch (err) {
+    console.error("[AgentApproval] rejectGate DB error:", err);
+    return false;
+  }
 }
 
 // ── getGate ────────────────────────────────────────────────────────────────────

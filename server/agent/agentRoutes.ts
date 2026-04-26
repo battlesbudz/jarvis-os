@@ -158,7 +158,11 @@ export function registerAgentRoutes(app: Express): void {
         res.status(400).json({ error: "Gate already resolved" });
         return;
       }
-      approveGate(req.params.gateId, userId);
+      const approved = await approveGate(req.params.gateId, userId);
+      if (!approved) {
+        res.status(500).json({ error: "Failed to persist gate approval — DB write may have failed" });
+        return;
+      }
       res.json({ ok: true });
     } catch (err) { handleError(res, err); }
   });
@@ -179,7 +183,11 @@ export function registerAgentRoutes(app: Express): void {
         res.status(400).json({ error: "Gate already resolved" });
         return;
       }
-      rejectGate(req.params.gateId, userId);
+      const rejected = await rejectGate(req.params.gateId, userId);
+      if (!rejected) {
+        res.status(500).json({ error: "Failed to persist gate rejection — DB write may have failed" });
+        return;
+      }
       res.json({ ok: true });
     } catch (err) { handleError(res, err); }
   });
