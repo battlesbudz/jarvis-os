@@ -1,8 +1,13 @@
 package com.jarvis.daemon
 
 import android.app.Notification
+import android.app.PendingIntent
+import android.app.RemoteInput
+import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.Bundle
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
@@ -11,34 +16,6 @@ import org.json.JSONObject
 import java.util.concurrent.CopyOnWriteArrayList
 
 class JarvisNotificationListener : NotificationListenerService() {
-
-    companion object {
-        private const val TAG = "JarvisNotifListener"
-        private const val MAX_CACHED = 60
-
-        // Thread-safe ring buffer of recent notifications (newest first)
-        val recent = CopyOnWriteArrayList<JSONObject>()
-
-        var instance: JarvisNotificationListener? = null
-            private set
-
-        // Skip our own daemon and pure system noise
-        private val DENY_PACKAGES = setOf(
-            "com.jarvis.daemon",
-            "android",
-            "com.android.systemui",
-            "com.android.phone",
-            "com.google.android.gms",
-            "com.samsung.android.app.smartcapture",
-            "com.samsung.android.SettingsIntelligence",
-        )
-
-        fun getRecentJson(limit: Int = 20): JSONArray {
-            val arr = JSONArray()
-            recent.take(limit).forEach { arr.put(it) }
-            return arr
-        }
-    }
 
     override fun onListenerConnected() {
         super.onListenerConnected()
@@ -73,6 +50,10 @@ class JarvisNotificationListener : NotificationListenerService() {
             ).toString()
         } catch (e: Exception) { pkg }
 
+        val hasReplyAction = notif.actions?.any { action ->
+            action.remoteInputs?.isNotEmpty() == true
+        } ?: false
+
         val obj = JSONObject()
             .put("pkg", pkg)
             .put("app", appLabel)
@@ -80,6 +61,7 @@ class JarvisNotificationListener : NotificationListenerService() {
             .put("text", text ?: "")
             .put("ts", System.currentTimeMillis())
             .put("key", sbn.key)
+            .put("hasReplyAction", hasReplyAction)
 
         // Ring buffer — newest first
         recent.add(0, obj)
@@ -103,5 +85,72 @@ class JarvisNotificationListener : NotificationListenerService() {
         sbn ?: return
         val key = sbn.key ?: return
         recent.removeIf { it.optString("key") == key }
+    }
+
+    fun replyToNotification(context: Context, key: String, text: String): OpResult {
+        val active = try {
+            activeNotifications
+        } catch (e: Exception) {
+            return OpResult(false, error = "Cannot access active notifications: ${e.message}")
+        }
+        val sbn = active?.firstOrNull { it.key == key }
+            ?: return OpResult(false, error = "Notification with key '$key' is no longer active or has been dismissed.")
+        val actions = sbn.notification.actions
+        if (actions.isNullOrEmpty()) {
+            return OpResult(false, error = "This notification has no actions and cannot be replied to.")
+        }
+        val replyAction = actions.firstOrNull { action ->
+            action.remoteInputs?.isNotEmpty() == true
+        } ?: return OpResult(false, error = "This notification does not expose a text reply action (no RemoteInput found). Try opening the app and replying manually.")
+        return try {
+            val remoteInputs = replyAction.remoteInputs!!
+            val bundle = Bundle()
+            for (ri in remoteInputs) {
+                bundle.putCharSequence(ri.resultKey, text)
+            }
+            val fillIn = Intent()
+            RemoteInput.addResultsToIntent(remoteInputs, fillIn, bundle)
+            replyAction.actionIntent.send(context, 0, fillIn)
+            Log.i(TAG, "Notification reply sent: key=$key text_length=${text.length}")
+            OpResult(true, data = JSONObject()
+                .put("replied", true)
+                .put("key", key)
+                .put("replyText", text))
+        } catch (e: PendingIntent.CanceledException) {
+            OpResult(false, error = "The notification's reply action was cancelled or expired. The app may have already handled it.")
+        } catch (e: Exception) {
+            OpResult(false, error = "Failed to send reply: ${e.message}")
+        }
+    }
+
+    companion object {
+        private const val TAG = "JarvisNotifListener"
+        private const val MAX_CACHED = 60
+
+        val recent = CopyOnWriteArrayList<JSONObject>()
+
+        var instance: JarvisNotificationListener? = null
+            private set
+
+        private val DENY_PACKAGES = setOf(
+            "com.jarvis.daemon",
+            "android",
+            "com.android.systemui",
+            "com.android.phone",
+            "com.google.android.gms",
+            "com.samsung.android.app.smartcapture",
+            "com.samsung.android.SettingsIntelligence",
+        )
+
+        fun getRecentJson(limit: Int = 20): JSONArray {
+            val arr = JSONArray()
+            recent.take(limit).forEach { arr.put(it) }
+            return arr
+        }
+
+        fun performReply(context: Context, key: String, text: String): OpResult {
+            return instance?.replyToNotification(context, key, text)
+                ?: OpResult(false, error = "Notification listener service is not connected. Grant notification access in Settings > Notifications > Device & App Notifications > Jarvis Daemon.")
+        }
     }
 }
