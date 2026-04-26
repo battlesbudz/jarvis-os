@@ -810,6 +810,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         detailLevel: Math.min(5, Math.max(1, detailLevel)),
         direction,
         history: history || [],
+        userId: (req as any).userId,
       });
 
       res.json(result);
@@ -849,7 +850,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!taskTitle || !blockerType) {
         return res.status(400).json({ error: "taskTitle and blockerType are required" });
       }
-      const result = await unblockTask({ taskTitle, taskDescription, blockerType, skipDays: skipDays || 1 });
+      const result = await unblockTask({ taskTitle, taskDescription, blockerType, skipDays: skipDays || 1, userId: (req as any).userId });
       res.json(result);
     } catch (error) {
       console.error("Error unblocking task:", error);
@@ -5440,7 +5441,8 @@ Extract up to 8 memories per batch.`;
   // ─── Model Preferences ────────────────────────────────────────────────────
   app.get("/api/settings/models", async (req: any, res) => {
     try {
-      const userId = req.user?.id as string;
+      const userId = req.userId as string;
+      if (!userId) return res.status(401).json({ error: "Authentication required" });
       const { AVAILABLE_MODELS, MODEL_DEFAULTS } = await import("./lib/modelPrefs");
       const rows = await db
         .select({ data: schema.userPreferences.data })
@@ -5464,7 +5466,8 @@ Extract up to 8 memories per batch.`;
 
   app.patch("/api/settings/models", async (req: any, res) => {
     try {
-      const userId = req.user?.id as string;
+      const userId = req.userId as string;
+      if (!userId) return res.status(401).json({ error: "Authentication required" });
       const { isValidModel, MODEL_DEFAULTS } = await import("./lib/modelPrefs");
       const { category, model } = req.body as { category?: string; model?: string };
       const validCategories = Object.keys(MODEL_DEFAULTS);
