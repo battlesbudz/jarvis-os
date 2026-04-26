@@ -1006,11 +1006,32 @@ export default function InsightsScreen() {
         let lastSource: AudioBufferSourceNode | null = null;
         let chunkCount = 0;
 
+        // Carry-over byte to handle odd-length PCM chunks (PCM16 requires 2-byte alignment)
+        let webCarryByte: number | null = null;
+
         const scheduleChunk = (base64Data: string, sr = 24000) => {
           const binaryStr = atob(base64Data);
-          const bytes = new Uint8Array(binaryStr.length);
-          for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
-          const pcm16 = new Int16Array(bytes.buffer);
+          let raw = new Uint8Array(binaryStr.length);
+          for (let i = 0; i < binaryStr.length; i++) raw[i] = binaryStr.charCodeAt(i);
+
+          // Prepend any carry-over byte from the previous chunk
+          let aligned: Uint8Array;
+          if (webCarryByte !== null) {
+            aligned = new Uint8Array(1 + raw.length);
+            aligned[0] = webCarryByte;
+            aligned.set(raw, 1);
+            webCarryByte = null;
+          } else {
+            aligned = raw;
+          }
+          // If still odd-length, save last byte for next chunk
+          if (aligned.length % 2 !== 0) {
+            webCarryByte = aligned[aligned.length - 1];
+            aligned = aligned.subarray(0, aligned.length - 1);
+          }
+          if (aligned.length === 0) return null;
+
+          const pcm16 = new Int16Array(aligned.buffer, aligned.byteOffset, aligned.byteLength / 2);
           const float32 = new Float32Array(pcm16.length);
           for (let i = 0; i < pcm16.length; i++) float32[i] = pcm16[i] / 32768;
           const buf = audioCtx.createBuffer(1, float32.length, sr);
@@ -1032,7 +1053,8 @@ export default function InsightsScreen() {
           if (readDone) break;
           for (const msg of parseLines(decoder.decode(value, { stream: true }))) {
             if (msg.type === 'chunk' && msg.data) {
-              lastSource = scheduleChunk(msg.data, msg.sampleRate ?? 24000);
+              const src = scheduleChunk(msg.data, msg.sampleRate ?? 24000);
+              if (src) lastSource = src;
             } else if (msg.type === 'done') {
               done = true;
             } else if (msg.type === 'error') {
@@ -1053,26 +1075,97 @@ export default function InsightsScreen() {
           onError();
         }
       } else {
-        const chunks: Uint8Array[] = [];
-        let totalLength = 0;
-        let done = false;
-        let firstChunkReceived = false;
+        // ── Native: rolling segment pipeline ──────────────────────────────────
+        // Splits the PCM16 stream into ~500ms WAV segments and plays them
+        // sequentially. Playback begins as soon as the first segment is ready
+        // (concurrent with streaming — audio starts before generation ends).
+        //
+        // Why not single WAV: expo-av requires the complete file before play.
+        // Why not PCM streaming: no public React Native API for raw PCM append.
+        const SEGMENT_BYTES = 24000; // 24000 hz × 2 bytes × 0.5 s = 24000 bytes ≈ 500ms
 
+        const buildWavBytes = (chunks: Uint8Array[], totalLen: number): Uint8Array => {
+          const sr = 24000;
+          const h = new ArrayBuffer(44); const dv = new DataView(h);
+          dv.setUint8(0,0x52);dv.setUint8(1,0x49);dv.setUint8(2,0x46);dv.setUint8(3,0x46);
+          dv.setUint32(4, 36 + totalLen, true);
+          dv.setUint8(8,0x57);dv.setUint8(9,0x41);dv.setUint8(10,0x56);dv.setUint8(11,0x45);
+          dv.setUint8(12,0x66);dv.setUint8(13,0x6d);dv.setUint8(14,0x74);dv.setUint8(15,0x20);
+          dv.setUint32(16,16,true);dv.setUint16(20,1,true);dv.setUint16(22,1,true);
+          dv.setUint32(24,sr,true);dv.setUint32(28,sr*2,true);
+          dv.setUint16(32,2,true);dv.setUint16(34,16,true);
+          dv.setUint8(36,0x64);dv.setUint8(37,0x61);dv.setUint8(38,0x74);dv.setUint8(39,0x61);
+          dv.setUint32(40, totalLen, true);
+          const wav = new Uint8Array(44 + totalLen);
+          wav.set(new Uint8Array(h), 0);
+          let off = 44; for (const c of chunks) { wav.set(c, off); off += c.length; }
+          return wav;
+        };
+
+        // segWritePromises[i] resolves when segment i WAV is written to segUris[i]
+        const segUris: string[] = [];
+        const segWritePromises: Promise<void>[] = [];
+        let segIdx = 0;
+        let pendingBuf: Uint8Array[] = [];
+        let pendingLen = 0;
+        let nativeFirstChunk = false;
+        let streamDone = false;
+
+        const enqueueSegment = (chunks: Uint8Array[], len: number) => {
+          const idx = segIdx++;
+          const uri = `${FileSystem.cacheDirectory ?? ''}jarvis_tts_${idx}.wav`;
+          segUris[idx] = uri;
+          segWritePromises[idx] = (async () => {
+            const wav = buildWavBytes(chunks, len);
+            await FileSystem.writeAsStringAsync(uri, uint8ToBase64(wav), { encoding: FileSystem.EncodingType.Base64 });
+          })();
+        };
+
+        // Playback loop runs concurrently with streaming
+        const playbackDone = (async () => {
+          await Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true });
+          let playIdx = 0;
+          while (!abortController.signal.aborted && isSpeakingRef.current) {
+            if (playIdx < segWritePromises.length) {
+              await segWritePromises[playIdx]; // Wait until this segment is written
+              if (!isSpeakingRef.current || abortController.signal.aborted) break;
+              const { sound } = await Audio.Sound.createAsync({ uri: segUris[playIdx] }, { shouldPlay: true });
+              soundRef.current = sound;
+              playIdx++;
+              await new Promise<void>((resolve) => {
+                sound.setOnPlaybackStatusUpdate((status) => {
+                  if ('didJustFinish' in status && status.didJustFinish) {
+                    sound.unloadAsync().catch(() => {});
+                    resolve();
+                  }
+                });
+              });
+            } else if (streamDone) {
+              break; // All segments played
+            } else {
+              await new Promise(r => setTimeout(r, 30)); // Wait for next segment
+            }
+          }
+          if (isSpeakingRef.current) onPlaybackEnd();
+        })();
+
+        // Streaming loop — enqueues segments as chunks arrive
+        let done = false;
         while (!done && !abortController.signal.aborted && isSpeakingRef.current) {
           const { done: readDone, value } = await reader.read();
           if (readDone) break;
           for (const msg of parseLines(decoder.decode(value, { stream: true }))) {
             if (msg.type === 'chunk' && msg.data) {
-              // Show waveform indicator as soon as first audio chunk arrives
-              if (!firstChunkReceived) {
-                firstChunkReceived = true;
-                setIsTTSLoading(false);
-              }
+              if (!nativeFirstChunk) { nativeFirstChunk = true; setIsTTSLoading(false); }
               const binaryStr = atob(msg.data);
               const bytes = new Uint8Array(binaryStr.length);
               for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
-              chunks.push(bytes);
-              totalLength += bytes.length;
+              pendingBuf.push(bytes);
+              pendingLen += bytes.length;
+              if (pendingLen >= SEGMENT_BYTES) {
+                enqueueSegment([...pendingBuf], pendingLen);
+                pendingBuf = []; pendingLen = 0;
+              }
             } else if (msg.type === 'done') {
               done = true;
             } else if (msg.type === 'error') {
@@ -1081,38 +1174,17 @@ export default function InsightsScreen() {
           }
         }
 
+        // Flush any remaining PCM as final segment
+        if (pendingLen > 0 && isSpeakingRef.current) {
+          enqueueSegment([...pendingBuf], pendingLen);
+        }
+        if (!nativeFirstChunk) setIsTTSLoading(false);
+        streamDone = true;
+
         if (!isSpeakingRef.current || abortController.signal.aborted) return;
-        if (totalLength === 0) throw new Error('No audio data');
+        if (segIdx === 0) throw new Error('No audio data received');
 
-        const sampleRate = 24000;
-        const wavHeader = new ArrayBuffer(44);
-        const dv = new DataView(wavHeader);
-        dv.setUint8(0, 0x52); dv.setUint8(1, 0x49); dv.setUint8(2, 0x46); dv.setUint8(3, 0x46);
-        dv.setUint32(4, 36 + totalLength, true);
-        dv.setUint8(8, 0x57); dv.setUint8(9, 0x41); dv.setUint8(10, 0x56); dv.setUint8(11, 0x45);
-        dv.setUint8(12, 0x66); dv.setUint8(13, 0x6d); dv.setUint8(14, 0x74); dv.setUint8(15, 0x20);
-        dv.setUint32(16, 16, true); dv.setUint16(20, 1, true); dv.setUint16(22, 1, true);
-        dv.setUint32(24, sampleRate, true); dv.setUint32(28, sampleRate * 2, true);
-        dv.setUint16(32, 2, true); dv.setUint16(34, 16, true);
-        dv.setUint8(36, 0x64); dv.setUint8(37, 0x61); dv.setUint8(38, 0x74); dv.setUint8(39, 0x61);
-        dv.setUint32(40, totalLength, true);
-
-        const wavBytes = new Uint8Array(44 + totalLength);
-        wavBytes.set(new Uint8Array(wavHeader), 0);
-        let offset = 44;
-        for (const chunk of chunks) { wavBytes.set(chunk, offset); offset += chunk.length; }
-
-        if (!firstChunkReceived) setIsTTSLoading(false);
-        const tmpUri = (FileSystem.cacheDirectory ?? '') + 'jarvis_stream.wav';
-        await FileSystem.writeAsStringAsync(tmpUri, uint8ToBase64(wavBytes), { encoding: FileSystem.EncodingType.Base64 });
-
-        if (!isSpeakingRef.current) return;
-        await Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true });
-        const { sound } = await Audio.Sound.createAsync({ uri: tmpUri }, { shouldPlay: true });
-        soundRef.current = sound;
-        sound.setOnPlaybackStatusUpdate((status) => {
-          if ('didJustFinish' in status && status.didJustFinish) { onPlaybackEnd(); }
-        });
+        await playbackDone;
       }
     } catch (error: unknown) {
       if (error instanceof Error && error.name === 'AbortError') return;
