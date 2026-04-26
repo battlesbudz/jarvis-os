@@ -759,7 +759,7 @@ export async function runHeartbeatTick(): Promise<void> {
     //
     //   • heartbeat trusts plan.shouldRun to gate model sessions. The planner
     //     is designed so shouldRun is false ONLY during the night-time quiet
-    //     window (0–4am local, no urgent signals), which is the only period
+    //     window (10pm–5am local, no urgent signals), which is the only period
     //     where meeting briefs, email drafts, and wrap-up definitively have
     //     no actionable work. During morning/afternoon/evening shouldRun is
     //     always true so each job can run its own eligibility check.
