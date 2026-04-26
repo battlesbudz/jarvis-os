@@ -5,7 +5,10 @@
  * transcripts so Jarvis can summarize without requiring the user to ask.
  */
 
-const MAX_CHARS = 80_000;
+/** Per-URL character limit (prevents a single very long video from consuming the whole budget). */
+const MAX_CHARS_PER_URL = 20_000;
+/** Global character budget across all URLs in one request (prevents 3-URL × 80k = 240k blowup). */
+const MAX_CHARS_TOTAL = 30_000;
 
 function fmtMs(ms: number): string {
   const total = Math.floor(ms / 1000);
@@ -43,8 +46,14 @@ export async function buildYouTubeContextBlock(message: string): Promise<string>
   if (urls.length === 0) return "";
 
   const blocks: string[] = [];
+  let totalCharsUsed = 0;
 
   for (const url of urls.slice(0, 3)) {
+    if (totalCharsUsed >= MAX_CHARS_TOTAL) {
+      console.log(`[youtubeAutoFetch] Global budget exhausted (${totalCharsUsed}/${MAX_CHARS_TOTAL}), skipping ${url}`);
+      break;
+    }
+
     try {
       const { YoutubeTranscript } = await import("youtube-transcript");
       const segments = await YoutubeTranscript.fetchTranscript(url);
@@ -75,21 +84,34 @@ export async function buildYouTubeContextBlock(message: string): Promise<string>
       if (chunk.length > 0) lines.push(`[${fmtMs(chunkStart)}] ${chunk.join(" ")}`);
 
       let transcript = lines.join("\n");
-      if (transcript.length > MAX_CHARS) {
-        transcript = transcript.slice(0, MAX_CHARS) + "\n[Transcript truncated — video is very long]";
+
+      // Apply per-URL cap first
+      if (transcript.length > MAX_CHARS_PER_URL) {
+        transcript = transcript.slice(0, MAX_CHARS_PER_URL) + "\n[Transcript truncated — video is very long]";
+      }
+
+      // Apply remaining global budget
+      const remaining = MAX_CHARS_TOTAL - totalCharsUsed;
+      if (transcript.length > remaining) {
+        transcript = transcript.slice(0, remaining) + "\n[Transcript truncated — global context budget reached]";
       }
 
       const totalDuration = fmtMs(lastRawOffset * toMs);
-      blocks.push(
+      const block =
         `[Auto-fetched YouTube transcript for ${url}]\n` +
-          `Duration: ~${totalDuration} | ${segments.length} caption segments\n` +
-          "─".repeat(50) +
-          "\n" +
-          transcript +
-          "\n" +
-          "─".repeat(50)
+        `Duration: ~${totalDuration} | ${segments.length} caption segments\n` +
+        "─".repeat(50) +
+        "\n" +
+        transcript +
+        "\n" +
+        "─".repeat(50);
+
+      blocks.push(block);
+      totalCharsUsed += transcript.length;
+      console.log(
+        `[youtubeAutoFetch] Fetched transcript for ${url} (${segments.length} segs, ~${totalDuration}, ` +
+          `${transcript.length} chars; total ${totalCharsUsed}/${MAX_CHARS_TOTAL})`
       );
-      console.log(`[youtubeAutoFetch] Fetched transcript for ${url} (${segments.length} segs, ~${totalDuration})`);
     } catch (err) {
       console.warn(
         `[youtubeAutoFetch] Could not fetch transcript for ${url}:`,
