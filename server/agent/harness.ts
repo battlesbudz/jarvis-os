@@ -148,6 +148,31 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
   const model = modelOpt ?? (await getModel(context.userId, "chat"));
 
   const channel = context.channel || "Agent";
+
+  // ── Inject user skills into system prompt ──────────────────────────────────
+  // Load active skill files for this user and append their instructions to the
+  // first system message so the agent follows learnt behaviour patterns.
+  let messages = opts.messages;
+  if (context.userId) {
+    try {
+      const { loadUserSkills } = await import("../intelligence/skillWriter");
+      const skills = await loadUserSkills(context.userId);
+      if (skills.length > 0) {
+        const skillBlock = skills
+          .map((s) => `### Skill: ${s.name}\n${s.instructions}`)
+          .join("\n\n");
+        const injected = `\n\n---\n## Learnt Behaviour Skills\nThe following skills have been crystallised from repeated patterns and MUST be followed:\n\n${skillBlock}`;
+        messages = messages.map((m, i) => {
+          if (i === 0 && m.role === "system") {
+            return { ...m, content: (m.content ?? "") + injected };
+          }
+          return m;
+        });
+      }
+    } catch {
+      // skills are best-effort — never block an agent run
+    }
+  }
   const toolMap = new Map(tools.map((t) => [t.name, t]));
   const openAITools = tools.length > 0 ? tools.map(toOpenAITool) : undefined;
 
@@ -155,8 +180,9 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
   // can verify they are not being used to escape per-surface restrictions.
   context.allowedToolNames = new Set(tools.map((t) => t.name));
 
-  const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-    ...opts.messages,
+  // `messages` was already set above (with skills injected); spread into a mutable copy
+  const conversationMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+    ...messages,
   ];
   const toolCalls: AgentToolCallRecord[] = [];
   let lastFinish: string | null = null;
@@ -171,7 +197,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
       // Original non-streaming behaviour — unchanged for all existing callers.
       const completion = await openai.chat.completions.create({
         model,
-        messages,
+        messages: conversationMessages,
         tools: openAITools,
         tool_choice: openAITools ? toolChoice : undefined,
         max_completion_tokens: maxCompletionTokens,
@@ -195,7 +221,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
       // from leaking into live-edit UIs such as Discord placeholder edits.
       const streamResult = await runStreamingTurn({
         model,
-        messages,
+        messages: conversationMessages,
         openAITools,
         toolChoice,
         maxCompletionTokens,
@@ -229,7 +255,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
           content: msgContent,
           tool_calls: msgToolCalls,
         };
-      messages.push(assistantMsg);
+      conversationMessages.push(assistantMsg);
 
       const results = await Promise.all(
         msgToolCalls.map(async (tc) => {
@@ -295,7 +321,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
       );
 
       for (const { tc, content } of results) {
-        messages.push({
+        conversationMessages.push({
           role: "tool",
           tool_call_id: tc.id,
           content,
@@ -306,7 +332,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
 
     // ── Text reply — no tool calls ─────────────────────────────────────
     reply = msgContent || "";
-    return { reply, turns: turn + 1, toolCalls, finishReason: lastFinish, messages };
+    return { reply, turns: turn + 1, toolCalls, finishReason: lastFinish, messages: conversationMessages };
   }
 
   // Hit max turns. Force a final answer with tools disabled.
@@ -315,7 +341,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
     if (onToken) {
       const streamResult = await runStreamingTurn({
         model,
-        messages,
+        messages: conversationMessages,
         openAITools: undefined, // no tools — force text reply
         toolChoice: "none",
         maxCompletionTokens,
@@ -329,7 +355,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
     } else {
       const final = await openai.chat.completions.create({
         model,
-        messages,
+        messages: conversationMessages,
         max_completion_tokens: maxCompletionTokens,
       });
       reply = final.choices[0]?.message?.content || "";
@@ -339,5 +365,5 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
     console.error(`[${channel}/Agent] final-answer call failed:`, err);
   }
 
-  return { reply, turns: maxTurns, toolCalls, finishReason: lastFinish, messages };
+  return { reply, turns: maxTurns, toolCalls, finishReason: lastFinish, messages: conversationMessages };
 }
