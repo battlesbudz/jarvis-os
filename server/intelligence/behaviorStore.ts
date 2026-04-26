@@ -34,6 +34,8 @@ export interface PublishPackPayload {
   packId?: string;
   name: string;
   instructions: string;
+  description?: string;
+  isStoreVisible?: boolean;
   heartbeatRules?: PackHeartbeatRules;
   toolGroups?: PackToolGroups;
   changeNote: string;
@@ -92,6 +94,8 @@ export async function publishSkillPack(payload: PublishPackPayload): Promise<Ski
         .set({
           name: payload.name,
           instructions: payload.instructions,
+          ...(payload.description !== undefined ? { description: payload.description } : {}),
+          ...(payload.isStoreVisible !== undefined ? { isStoreVisible: payload.isStoreVisible } : {}),
           ...(payload.heartbeatRules !== undefined ? { heartbeatRules: payload.heartbeatRules } : {}),
           ...(payload.toolGroups !== undefined ? { toolGroups: payload.toolGroups } : {}),
           version: newVersion,
@@ -119,7 +123,11 @@ export async function publishSkillPack(payload: PublishPackPayload): Promise<Ski
     .values({
       ...(payload.packId ? { id: payload.packId } : {}),
       name: payload.name,
+      description: payload.description ?? "",
       instructions: payload.instructions,
+      heartbeatRules: payload.heartbeatRules ?? {},
+      toolGroups: payload.toolGroups ?? {},
+      isStoreVisible: payload.isStoreVisible ?? true,
       version: 1,
       publishedAt: now,
       changelog: initChangelog,
