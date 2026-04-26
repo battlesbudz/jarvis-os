@@ -26,6 +26,11 @@
       "sourceType": "github",
       "computedHash": "b58ae6c69fa86fe48c4745db460fc190c7661ab0371d1e719d7272a36630880c"
     },
+    "javascript-sdk": {
+      "source": "inf-sh/skills",
+      "sourceType": "github",
+      "computedHash": "bced67b0784e8a9574e5346153b6777bccadbb6f7075fea47234cab56ab383bf"
+    },
     "pdf": {
       "source": "anthropics/skills",
       "sourceType": "github",
