@@ -1223,7 +1223,7 @@ export default function SettingsScreen() {
         <View style={styles.card}>
           {(
             [
-              { key: 'chat' as ModelCategory, icon: 'chatbubble-outline', label: 'Chat & Voice' },
+              { key: 'chat' as ModelCategory, icon: 'chatbubble-outline', label: 'Chat & Agent' },
               { key: 'planning' as ModelCategory, icon: 'calendar-outline', label: 'Planning' },
               { key: 'memory' as ModelCategory, icon: 'library-outline', label: 'Memory' },
               { key: 'research' as ModelCategory, icon: 'search-outline', label: 'Research' },
