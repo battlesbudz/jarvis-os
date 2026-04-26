@@ -89,7 +89,7 @@ export type ToolGroup =
 // even without a Google token so users can still queue/log calendar intentions.
 const GOOGLE_GATED = new Set([
   "gmail_action",
-  "gmail_draft",
+  "create_gmail_draft",
   "fetch_calendar",
   "drive_create_file",
   "drive_list_files",
@@ -116,7 +116,7 @@ const TOOL_GROUP_MAP: Record<string, ToolGroup[]> = {
 
   // email
   gmail_action:          ["email"],
-  gmail_draft:           ["email"],
+  create_gmail_draft:    ["email"],
   send_email:            ["email"],
   fetch_emails:          ["email"],
 
