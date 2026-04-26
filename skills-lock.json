@@ -21,6 +21,11 @@
       "sourceType": "github",
       "computedHash": "aba0b53a6fffb1e0bc53dcda81dd74146ccf65fed54fb9f33c208cdd710f62a2"
     },
+    "command-creator": {
+      "source": "softaworks/agent-toolkit",
+      "sourceType": "github",
+      "computedHash": "b58ae6c69fa86fe48c4745db460fc190c7661ab0371d1e719d7272a36630880c"
+    },
     "pdf": {
       "source": "anthropics/skills",
       "sourceType": "github",
