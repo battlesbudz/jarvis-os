@@ -5029,9 +5029,9 @@ Extract up to 8 memories per batch.`;
     }
   });
 
-  // ── OpenClaw Compute Brain — Config ──────────────────────────────────────
+  // ── Jarvis Build History — Config ────────────────────────────────────────
 
-  app.get("/api/openclaw/builds", async (req: Request, res: Response) => {
+  app.get("/api/jarvis/builds", async (req: Request, res: Response) => {
     const userId = req.userId;
     if (!userId) return res.status(401).json({ error: "Not authenticated" });
     try {
@@ -5043,7 +5043,7 @@ Extract up to 8 memories per batch.`;
         .limit(50);
       res.json({ builds: rows });
     } catch (err) {
-      console.error("[openclaw] GET builds failed:", err);
+      console.error("[jarvis] GET builds failed:", err);
       res.status(500).json({ error: "Failed to load build log" });
     }
   });

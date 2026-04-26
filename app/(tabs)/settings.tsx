@@ -148,15 +148,15 @@ export default function SettingsScreen() {
   const [timezone, setTimezone] = useState('America/New_York');
 
   // ── Build History ──
-  const [openclawBuilds, setOpenclawBuilds] = useState<BuildLogEntry[]>([]);
+  const [buildHistory, setBuildHistory] = useState<BuildLogEntry[]>([]);
   const [buildHistoryExpanded, setBuildHistoryExpanded] = useState(false);
   const [expandedBuildId, setExpandedBuildId] = useState<string | null>(null);
 
-  const loadOpenClawBuilds = useCallback(async () => {
+  const loadBuildHistory = useCallback(async () => {
     try {
-      const res = await apiRequest('GET', '/api/openclaw/builds');
+      const res = await apiRequest('GET', '/api/jarvis/builds');
       const data = await res.json();
-      setOpenclawBuilds(data.builds ?? []);
+      setBuildHistory(data.builds ?? []);
     } catch {}
   }, []);
 
@@ -299,11 +299,11 @@ export default function SettingsScreen() {
     loadAll();
     loadNervousSystem();
     loadThreatLog();
-    loadOpenClawBuilds();
+    loadBuildHistory();
     return () => {
       if (telegramPollRef.current) clearInterval(telegramPollRef.current);
     };
-  }, [loadAll, loadNervousSystem, loadThreatLog, loadOpenClawBuilds]));
+  }, [loadAll, loadNervousSystem, loadThreatLog, loadBuildHistory]));
 
   // ── OAuth connect ──
   const handleConnect = useCallback(async (platform: string) => {
@@ -610,7 +610,7 @@ export default function SettingsScreen() {
         </View>
 
         {/* ── BUILD HISTORY ── */}
-        {openclawBuilds.length > 0 && (
+        {buildHistory.length > 0 && (
           <>
             <SectionHeader label="BUILD HISTORY" accent="#8B5CF6" />
             <View style={styles.card}>
@@ -625,7 +625,7 @@ export default function SettingsScreen() {
                   </Text>
                   <View style={{ backgroundColor: '#8B5CF620', borderRadius: 10, paddingHorizontal: 6, paddingVertical: 1 }}>
                     <Text style={{ fontSize: 11, color: '#8B5CF6', fontFamily: 'Inter_600SemiBold' }}>
-                      {openclawBuilds.length}
+                      {buildHistory.length}
                     </Text>
                   </View>
                 </View>
@@ -637,7 +637,7 @@ export default function SettingsScreen() {
               </Pressable>
               {buildHistoryExpanded && (
                 <View style={{ paddingHorizontal: 14, paddingBottom: 14, gap: 8 }}>
-                  {openclawBuilds.map(build => (
+                  {buildHistory.map(build => (
                     <View key={build.id} style={ocStyles.buildCard}>
                       <Pressable
                         style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}
