@@ -1,6 +1,8 @@
 import type { ChannelName, NotificationType } from "@shared/schema";
+import type { ToolGroup } from "../agent/tools";
 
 export type { ChannelName, NotificationType };
+export type { ToolGroup };
 
 export interface ChannelAttachment {
   kind: "document";
@@ -25,6 +27,12 @@ export interface ChannelSendResult {
 
 export interface Channel {
   name: ChannelName;
+  /**
+   * Tool groups this channel requires. The agent call-site filters ALL_TOOLS
+   * to only include tools belonging to these groups before building the session
+   * context, keeping the model's tool surface lean per channel.
+   */
+  toolGroups: ToolGroup[];
   isConfigured(): boolean;
   isLinkedFor(userId: string): Promise<boolean>;
   sendMessage(userId: string, text: string, opts?: ChannelSendOpts): Promise<ChannelSendResult>;

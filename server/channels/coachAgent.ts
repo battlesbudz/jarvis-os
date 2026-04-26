@@ -2,7 +2,9 @@ import { db } from "../db";
 import { eq, and, desc, sql, gte } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { runAgent } from "../agent/harness";
-import { telegramCoachTools } from "../agent/tools";
+import { filterToolsByGroups } from "../agent/tools";
+import type { ToolGroup } from "../agent/tools";
+import { getChannel } from "./registry";
 import { getValidGoogleTokens } from "../userTokenStore";
 import { getRecentEmailCommitments } from "../integrations/gmail";
 import { getGoogleCalendarEvents } from "../integrations/googleCalendar";
@@ -301,17 +303,33 @@ When a user's request involves multi-step research, drafting a document or plan,
     },
   };
 
+  // ── Resolve tool groups for this channel ──────────────────────────────────
+  // Look up the registered channel to read its declared toolGroups.  Channels
+  // that are not in the registry (Daemon, Voice) fall back to sensible defaults.
+  const FALLBACK_GROUPS: Record<string, ToolGroup[]> = {
+    daemon: ["coaching", "calendar", "memory", "connections", "system"],
+    voice:  ["coaching", "calendar", "memory"],
+  };
+  const registeredChannel = getChannel(channelLower as any);
+  const channelToolGroups: ToolGroup[] =
+    registeredChannel?.toolGroups ??
+    FALLBACK_GROUPS[channelLower] ??
+    ["coaching", "calendar", "email", "memory", "connections", "research"];
+
+  const scopedTools = filterToolsByGroups(channelToolGroups, !!googleAccessToken);
+  console.log(`[${channelName}] tool scope: ${scopedTools.length} tools (groups: ${channelToolGroups.join(", ")})`);
+
   const agentResult = await runAgent({
     model: "gpt-5-mini",
     messages: baseMessages,
-    tools: telegramCoachTools({ hasGoogle: !!googleAccessToken }),
+    tools: scopedTools,
     context: agentCtx,
     maxTurns: 6,
     maxCompletionTokens: getMaxTokensForChannel(channelName),
     onToken,
   });
 
-  console.log(`[${channelName}] coach agent — turns=${agentResult.turns}, tools=${agentResult.toolCalls.length}, finish=${agentResult.finishReason}`);
+  console.log(`[${channelName}] coach agent — turns=${agentResult.turns}, tools_used=${agentResult.toolCalls.length}, finish=${agentResult.finishReason}`);
 
   const rawReply = agentResult.reply;
   const reply = rawReply || "Sorry, I couldn't generate a response right now.";

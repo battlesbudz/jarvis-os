@@ -28,6 +28,9 @@ async function lookupChatId(userId: string): Promise<string | null> {
 
 export const telegramChannel: Channel = {
   name: "telegram",
+  // Full coaching surface — Telegram is Jarvis's primary conversational channel.
+  // schedule_jarvis_task is already included via the "coaching" group.
+  toolGroups: ["coaching", "calendar", "email", "memory", "documents", "research", "connections", "media"],
   isConfigured: () => isTelegramConfigured(),
   isLinkedFor: async (userId) => !!(await lookupChatId(userId)),
   async sendMessage(userId, text, opts: ChannelSendOpts = {}) {

@@ -19,6 +19,8 @@ async function lookupDaemon(userId: string): Promise<boolean> {
 
 export const daemonChannel: Channel = {
   name: "daemon",
+  // Desktop automation channel — needs system commands, task/calendar management.
+  toolGroups: ["coaching", "calendar", "memory", "connections", "system"],
   isConfigured: () => true,
   async isLinkedFor(userId) {
     return (await lookupDaemon(userId)) && isUserPaired(userId);
