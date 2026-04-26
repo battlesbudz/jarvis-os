@@ -2935,9 +2935,9 @@ export default function ProfileScreen() {
                       <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: Colors.textSecondary, marginBottom: 6 }}>Response Speed</Text>
                       <View style={{ flexDirection: 'row', gap: 6 }}>
                         {([
-                          { tier: 4 as const, label: 'Fastest' },
+                          { tier: 4 as const, label: 'Low Latency' },
                           { tier: 2 as const, label: 'Balanced' },
-                          { tier: 0 as const, label: 'Highest Quality' },
+                          { tier: 0 as const, label: 'High Quality' },
                         ] as { tier: 0 | 2 | 4; label: string }[]).map(({ tier, label }) => (
                           <Pressable
                             key={tier}
