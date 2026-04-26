@@ -77,8 +77,8 @@ async function getTelegramChatId(userId: string): Promise<string | null> {
   }
 }
 
-/** Read the user's TTS preference (voice name, enabled flag). */
-export async function getUserTtsPrefs(userId: string): Promise<{ enabled: boolean; voice: TtsVoice }> {
+/** Read the user's TTS preference (voice name, enabled flag, latency tier). */
+export async function getUserTtsPrefs(userId: string): Promise<{ enabled: boolean; voice: TtsVoice; latencyTier: 0 | 1 | 2 | 3 | 4 }> {
   try {
     const rows = await db
       .select({ data: schema.userPreferences.data })
@@ -86,19 +86,25 @@ export async function getUserTtsPrefs(userId: string): Promise<{ enabled: boolea
       .where(eq(schema.userPreferences.userId, userId))
       .limit(1);
     const data = (rows[0]?.data as Record<string, unknown>) || {};
+    const rawTier = data.ttsLatencyTier;
+    const latencyTier: 0 | 1 | 2 | 3 | 4 =
+      (typeof rawTier === "number" && [0, 1, 2, 3, 4].includes(rawTier))
+        ? rawTier as 0 | 1 | 2 | 3 | 4
+        : 2;
     return {
       enabled: data.ttsEnabled === true,
       voice: (data.ttsVoice as TtsVoice) || "nova",
+      latencyTier,
     };
   } catch {
-    return { enabled: false, voice: "nova" };
+    return { enabled: false, voice: "nova", latencyTier: 2 };
   }
 }
 
 /** Persist TTS preference update for a user. */
 export async function setUserTtsPref(
   userId: string,
-  patch: Partial<{ enabled: boolean; voice: TtsVoice }>,
+  patch: Partial<{ enabled: boolean; voice: TtsVoice; latencyTier: 0 | 1 | 2 | 3 | 4 }>,
 ): Promise<void> {
   const existing = await db
     .select({ data: schema.userPreferences.data })
@@ -109,6 +115,7 @@ export async function setUserTtsPref(
   const updated: Record<string, unknown> = { ...current };
   if (patch.enabled !== undefined) updated.ttsEnabled = patch.enabled;
   if (patch.voice !== undefined) updated.ttsVoice = patch.voice;
+  if (patch.latencyTier !== undefined) updated.ttsLatencyTier = patch.latencyTier;
   await db
     .insert(schema.userPreferences)
     .values({ userId, data: updated })

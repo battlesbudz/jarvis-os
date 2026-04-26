@@ -3322,9 +3322,9 @@ Return ONLY the JSON object.`;
 
     const isElevenLabs = !OPENAI_VOICES.has(resolvedVoice);
 
-    // ElevenLabs latency tier: 0=best quality, 4=lowest latency; default 2 (balanced)
+    // ElevenLabs latency tier: 0=best quality, 4=lowest latency; default from user prefs (fallback 2)
     const elLatency = (typeof latencyTier === "number" && latencyTier >= 0 && latencyTier <= 4)
-      ? latencyTier : 2;
+      ? latencyTier : (prefs.latencyTier ?? 2);
 
     res.setHeader("Content-Type", "application/x-ndjson");
     res.setHeader("Transfer-Encoding", "chunked");

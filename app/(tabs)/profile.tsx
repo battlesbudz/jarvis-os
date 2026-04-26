@@ -279,6 +279,7 @@ export default function ProfileScreen() {
   const [discordTtsEnabled, setDiscordTtsEnabled] = useState(false);
   const [ttsChannels, setTtsChannels] = useState<string[]>([]);
   const [ttsVoice, setTtsVoice] = useState<string>('nova');
+  const [ttsLatencyTier, setTtsLatencyTier] = useState<0 | 2 | 4>(2);
   const [discordSlashConfig, setDiscordSlashConfig] = useState<{ interactionsUrl: string; publicKeyConfigured: boolean } | null>(null);
   const [discordShowSlashSetup, setDiscordShowSlashSetup] = useState(false);
   const [discordUrlCopied, setDiscordUrlCopied] = useState(false);
@@ -693,6 +694,9 @@ export default function ProfileScreen() {
       setTtsChannels(channels);
       setDiscordTtsEnabled(channels.includes('discord'));
       if (prefs.ttsVoice) setTtsVoice(prefs.ttsVoice);
+      if (typeof prefs.ttsLatencyTier === 'number' && [0, 2, 4].includes(prefs.ttsLatencyTier)) {
+        setTtsLatencyTier(prefs.ttsLatencyTier as 0 | 2 | 4);
+      }
     } catch {}
   // loadDaemonPerms and loadAndroidDaemonPerms are useCallback([], []) — they are
   // referentially stable and safe to omit from deps; including them causes a
@@ -735,6 +739,14 @@ export default function ProfileScreen() {
     setTtsVoice(voiceId);
     try {
       await apiRequest('PATCH', '/api/preferences', { ttsVoice: voiceId });
+    } catch {}
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  }, []);
+
+  const handleSelectLatencyTier = useCallback(async (tier: 0 | 2 | 4) => {
+    setTtsLatencyTier(tier);
+    try {
+      await apiRequest('PATCH', '/api/preferences', { ttsLatencyTier: tier });
     } catch {}
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   }, []);
@@ -2916,6 +2928,35 @@ export default function ProfileScreen() {
                       </View>
                     </ScrollView>
                   </View>
+
+                  {/* ElevenLabs latency tier — only shown when an ElevenLabs voice is selected */}
+                  {!['nova','alloy','echo','fable','onyx','shimmer'].includes(ttsVoice) && (
+                    <View style={{ marginTop: 12 }}>
+                      <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: Colors.textSecondary, marginBottom: 6 }}>Response Speed</Text>
+                      <View style={{ flexDirection: 'row', gap: 6 }}>
+                        {([
+                          { tier: 4 as const, label: 'Fastest' },
+                          { tier: 2 as const, label: 'Balanced' },
+                          { tier: 0 as const, label: 'Highest Quality' },
+                        ] as { tier: 0 | 2 | 4; label: string }[]).map(({ tier, label }) => (
+                          <Pressable
+                            key={tier}
+                            onPress={() => handleSelectLatencyTier(tier)}
+                            style={{
+                              flex: 1, paddingVertical: 7,
+                              borderRadius: 10, borderWidth: 1, alignItems: 'center',
+                              borderColor: ttsLatencyTier === tier ? '#F0A500' : Colors.border,
+                              backgroundColor: ttsLatencyTier === tier ? 'rgba(240,165,0,0.12)' : 'transparent',
+                            }}
+                          >
+                            <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: ttsLatencyTier === tier ? '#F0A500' : Colors.textSecondary }}>
+                              {label}
+                            </Text>
+                          </Pressable>
+                        ))}
+                      </View>
+                    </View>
+                  )}
                 </View>
 
                 {/* Add channel form */}
