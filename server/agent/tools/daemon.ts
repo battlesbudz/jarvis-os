@@ -11,7 +11,7 @@ import {
   type DaemonOp,
 } from "../../daemon/bridge";
 
-const DESKTOP_ACTIONS: readonly DaemonAction[] = ["shell", "notify", "file_read", "file_write", "file_list"] as const;
+const DESKTOP_ACTIONS: readonly DaemonAction[] = ["shell", "notify", "file_read", "file_write", "file_list", "desktop_screenshot", "desktop_read_screen"] as const;
 const ANDROID_ACTIONS: readonly string[] = [
   "android_open_app",
   "android_browse",
@@ -61,6 +61,8 @@ DESKTOP actions (available when a desktop daemon is paired):
 - file_read: read a text file under the workspace root
 - file_write: write a text file under the workspace root
 - file_list: list files in a directory under the workspace root
+- desktop_screenshot: capture the primary display as a base64-encoded PNG; use this to see what is currently on screen
+- desktop_read_screen: capture the screen and extract all visible text via OCR (Tesseract); returns raw text if Tesseract is available, otherwise returns the base64 screenshot only
 
 ANDROID actions (available when an Android device daemon is paired):
 - android_open_app: launch an Android app by package name (e.g. "com.google.android.youtube") — confirm with user before launching
@@ -85,6 +87,7 @@ Always confirm with the user before tap/type/swipe actions. Use android_read_scr
         type: "string",
         enum: [
           "shell", "notify", "file_read", "file_write", "file_list",
+          "desktop_screenshot", "desktop_read_screen",
           "android_open_app", "android_browse", "android_screenshot", "android_read_screen",
           "android_tap", "android_type", "android_swipe", "android_press_key",
           "android_file_list", "android_file_read",
@@ -221,10 +224,17 @@ Always confirm with the user before tap/type/swipe actions. Use android_read_scr
     } else if (action === "file_list") {
       if (!args.path) return { ok: false, content: JSON.stringify({ ok: false, error: "path required" }) };
       op = { type: "file_list", path: String(args.path) };
+    } else if (action === "desktop_screenshot") {
+      op = { type: "desktop_screenshot" };
+    } else if (action === "desktop_read_screen") {
+      op = { type: "desktop_read_screen" };
     } else {
       return { ok: false, content: JSON.stringify({ ok: false, error: `unknown action ${action}` }) };
     }
-    const result = await sendDaemonOp(ctx.userId, op, action === "shell" ? 30000 : 10000);
-    return { ok: !!result.ok, content: JSON.stringify(result).slice(0, 8000) };
+    const isScreenOp = action === "desktop_screenshot" || action === "desktop_read_screen";
+    const result = await sendDaemonOp(ctx.userId, op, action === "shell" ? 30000 : isScreenOp ? 20000 : 10000);
+    // Truncate more aggressively for screenshot payloads (base64 is large)
+    const limit = isScreenOp ? 200000 : 8000;
+    return { ok: !!result.ok, content: JSON.stringify(result).slice(0, limit) };
   },
 };

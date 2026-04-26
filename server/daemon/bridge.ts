@@ -33,7 +33,9 @@ export type DaemonOp =
   | { type: "android_return_to_jarvis" }
   | { type: "android_file_search"; query: string; root?: string; fileType?: string; maxDepth?: number }
   | { type: "android_open_file"; path: string }
-  | { type: "android_copy_to_clipboard"; path: string };
+  | { type: "android_copy_to_clipboard"; path: string }
+  | { type: "desktop_screenshot" }
+  | { type: "desktop_read_screen" };
 
 export interface PhoneNotification {
   pkg: string;
@@ -125,8 +127,9 @@ export function closeUserDaemon(userId: string, platform?: string): boolean {
 
 // ───── Per-action permission model (Desktop) ────────────────────────────
 // Stored in channel_links.metadata.permissions for the user's daemon row.
-// Defaults: notify/file_read/file_list ON, shell/file_write OFF.
-export type DaemonAction = "shell" | "notify" | "file_read" | "file_write" | "file_list";
+// Defaults: notify/file_read/file_list/desktop_screenshot/desktop_read_screen ON,
+//           shell/file_write OFF.
+export type DaemonAction = "shell" | "notify" | "file_read" | "file_write" | "file_list" | "desktop_screenshot" | "desktop_read_screen";
 export type DaemonPermissions = Record<DaemonAction, boolean>;
 
 export const DEFAULT_DAEMON_PERMISSIONS: DaemonPermissions = {
@@ -135,6 +138,8 @@ export const DEFAULT_DAEMON_PERMISSIONS: DaemonPermissions = {
   notify: true,
   file_read: true,
   file_list: true,
+  desktop_screenshot: true,
+  desktop_read_screen: true,
 };
 
 // ───── Per-action permission model (Android) ────────────────────────────
