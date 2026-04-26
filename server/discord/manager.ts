@@ -716,6 +716,33 @@ export async function bootAllBots(): Promise<void> {
 
 // ── Pairing API ─────────────────────────────────────────────────────────────
 
+/**
+ * Generate (or retrieve an existing) pairing code for a Discord user interacting
+ * via a slash command.  Used by the slash command handler so unpaired users get a
+ * real code they can enter in the app right away.
+ */
+export function generateSlashCommandPairingCode(discordUserId: string, discordUsername: string): string {
+  // Re-use any existing non-expired code for this user
+  for (const [code, rec] of pairingCodes) {
+    if (
+      rec.botOwnerId === SHARED_BOT_KEY &&
+      rec.discordUserId === discordUserId &&
+      rec.expiresAt > Date.now()
+    ) {
+      return code;
+    }
+  }
+  const code = generateCode(6);
+  pairingCodes.set(code, {
+    botOwnerId: SHARED_BOT_KEY,
+    discordUserId,
+    discordDmChannelId: "",   // no DM channel available in slash command context
+    discordUsername,
+    expiresAt: Date.now() + 60 * 60 * 1000,
+  });
+  return code;
+}
+
 export function getPairingCodeFor(botOwnerId: string, discordUserId: string): string | null {
   for (const [code, rec] of pairingCodes) {
     if (rec.botOwnerId === botOwnerId && rec.discordUserId === discordUserId && rec.expiresAt > Date.now()) {
@@ -1464,6 +1491,12 @@ export async function bootSharedBot(): Promise<void> {
 
   client.once(Events.ClientReady, (c) => {
     console.log(`[DiscordManager] Shared bot ready: ${c.user.tag}`);
+    // Register /jarvis slash commands globally once the bot is ready.
+    import("./slashCommands").then(({ registerSlashCommands }) => {
+      registerSlashCommands().catch((err) =>
+        console.error("[DiscordManager] slash command registration failed:", err),
+      );
+    }).catch(() => {});
   });
 
   client.on(Events.MessageCreate, buildMessageHandler(SHARED_BOT_KEY, client));
