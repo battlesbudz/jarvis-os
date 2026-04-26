@@ -1,7 +1,7 @@
 import type { Express, Request, Response } from "express";
 import { db } from "../db";
 import { eq, and } from "drizzle-orm";
-import { channelLinks, channelLinkCodes, telegramLinks, NOTIFICATION_TYPES, CHANNEL_NAMES, type ChannelName, type NotificationType } from "@shared/schema";
+import { channelLinks, channelLinkCodes, telegramLinks, NOTIFICATION_TYPES, CHANNEL_NAMES, userPreferences, type ChannelName, type NotificationType } from "@shared/schema";
 import { authMiddleware } from "../auth";
 import { getAllPreferences, setPreference, getChannel, listChannels } from "./registry";
 import { createDaemonPairingCode, isUserPaired, closeUserDaemon, getDaemonPermissions, setDaemonPermissions, isDaemonActionAllowed, DEFAULT_DAEMON_PERMISSIONS, getAndroidDaemonPermissions, setAndroidDaemonPermissions, DEFAULT_ANDROID_DAEMON_PERMISSIONS, isAndroidDaemonActive, isDesktopDaemonActive, type DaemonAction, type DaemonPermissions, type AndroidDaemonAction, type AndroidDaemonPermissions } from "../daemon/bridge";
@@ -828,6 +828,54 @@ export function registerChannelRoutes(app: Express): void {
     } catch (err) {
       console.error("[channels] discord activity failed:", err);
       res.status(500).json({ error: "Failed to get activity" });
+    }
+  });
+
+  // ── Voice / Wake Word Settings ────────────────────────────────────────────
+
+  app.get("/api/voice/wake-settings", authMiddleware, async (req: Request, res: Response) => {
+    const userId = (req as any).userId;
+    try {
+      const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq(userPreferences.userId, userId));
+      const prefs = (rows[0]?.data ?? {}) as Record<string, any>;
+      res.json({
+        wakeWordEnabled: prefs.wakeWordEnabled ?? false,
+        talkModeEnabled: prefs.talkModeEnabled ?? false,
+        wakeWords: prefs.wakeWords ?? ["hey jarvis", "jarvis", "computer"],
+      });
+    } catch (err) {
+      console.error("[voice] get wake-settings failed:", err);
+      res.status(500).json({ error: "Failed to get wake settings" });
+    }
+  });
+
+  app.put("/api/voice/wake-settings", authMiddleware, async (req: Request, res: Response) => {
+    const userId = (req as any).userId;
+    const { wakeWordEnabled, talkModeEnabled, wakeWords } = req.body as {
+      wakeWordEnabled?: boolean;
+      talkModeEnabled?: boolean;
+      wakeWords?: string[];
+    };
+    try {
+      const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq(userPreferences.userId, userId));
+      const existing = (rows[0]?.data ?? {}) as Record<string, any>;
+      const updated = {
+        ...existing,
+        ...(wakeWordEnabled !== undefined && { wakeWordEnabled }),
+        ...(talkModeEnabled !== undefined && { talkModeEnabled }),
+        ...(wakeWords !== undefined && { wakeWords }),
+      };
+      await db.insert(userPreferences)
+        .values({ userId, data: updated })
+        .onConflictDoUpdate({ target: userPreferences.userId, set: { data: updated } });
+      res.json({
+        wakeWordEnabled: updated.wakeWordEnabled ?? false,
+        talkModeEnabled: updated.talkModeEnabled ?? false,
+        wakeWords: updated.wakeWords ?? ["hey jarvis", "jarvis", "computer"],
+      });
+    } catch (err) {
+      console.error("[voice] put wake-settings failed:", err);
+      res.status(500).json({ error: "Failed to save wake settings" });
     }
   });
 }

@@ -48,6 +48,9 @@ object OpHandler {
                 "android_open_file" -> handleOpenFile(context, op)
                 "android_copy_to_clipboard" -> handleCopyToClipboard(context, op)
                 "notify" -> handleNotify(context, op)
+                "voice_set_wake_words" -> handleSetWakeWords(context, op)
+                "voice_set_talk_mode" -> handleSetTalkMode(context, op)
+                "voice_tts_finished" -> handleTtsFinished()
                 else -> OpResult(false, error = "Unknown op type: $type")
             }
             val durationMs = SystemClock.elapsedRealtime() - startMs
@@ -646,5 +649,88 @@ object OpHandler {
                 Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES).absolutePath
             else -> Environment.getExternalStorageDirectory().absolutePath + "/$path"
         }
+    }
+
+    // ── Voice / Wake Word / Talk Mode ────────────────────────────────────────
+
+    /**
+     * Start (or update) the WakeWordService with the given trigger phrases.
+     * Pass `enabled: false` to stop the service.
+     */
+    private fun handleSetWakeWords(context: Context, op: JSONObject): OpResult {
+        val enabled = op.optBoolean("enabled", true)
+        val talkMode = op.optBoolean("talkMode", false)
+        val wordsArray = op.optJSONArray("words")
+        val words: Array<String> = if (wordsArray != null) {
+            Array(wordsArray.length()) { i -> wordsArray.optString(i) }.filter { it.isNotBlank() }.toTypedArray()
+        } else {
+            arrayOf("hey jarvis", "jarvis", "computer")
+        }
+
+        if (!enabled) {
+            val stopIntent = Intent(context, WakeWordService::class.java).apply {
+                action = WakeWordService.ACTION_STOP
+            }
+            context.stopService(stopIntent)
+            DaemonLog.add("voice_set_wake_words: stopped service")
+            return OpResult(true, data = JSONObject().put("status", "stopped"))
+        }
+
+        if (WakeWordService.instance != null) {
+            // Already running — update words/mode without a full restart
+            val updateIntent = Intent(context, WakeWordService::class.java).apply {
+                action = WakeWordService.ACTION_UPDATE
+                putExtra(WakeWordService.EXTRA_WAKE_WORDS, words)
+                putExtra(WakeWordService.EXTRA_TALK_MODE, talkMode)
+            }
+            context.startService(updateIntent)
+            DaemonLog.add("voice_set_wake_words: updated — words=[${words.joinToString()}] talkMode=$talkMode")
+        } else {
+            val startIntent = Intent(context, WakeWordService::class.java).apply {
+                action = WakeWordService.ACTION_START
+                putExtra(WakeWordService.EXTRA_WAKE_WORDS, words)
+                putExtra(WakeWordService.EXTRA_TALK_MODE, talkMode)
+            }
+            context.startForegroundService(startIntent)
+            DaemonLog.add("voice_set_wake_words: started — words=[${words.joinToString()}] talkMode=$talkMode")
+        }
+
+        return OpResult(
+            ok = true,
+            data = JSONObject()
+                .put("status", "active")
+                .put("words", words.toList().toString())
+                .put("talkMode", talkMode)
+        )
+    }
+
+    /**
+     * Enable or disable Talk Mode on the running WakeWordService.
+     * Talk Mode automatically re-arms the mic after each TTS response.
+     */
+    private fun handleSetTalkMode(context: Context, op: JSONObject): OpResult {
+        val enabled = op.optBoolean("enabled", false)
+        val svc = WakeWordService.instance
+        return if (svc != null) {
+            val updateIntent = Intent(context, WakeWordService::class.java).apply {
+                action = WakeWordService.ACTION_UPDATE
+                putExtra(WakeWordService.EXTRA_TALK_MODE, enabled)
+            }
+            context.startService(updateIntent)
+            DaemonLog.add("voice_set_talk_mode: talkMode=$enabled")
+            OpResult(true, data = JSONObject().put("talkMode", enabled))
+        } else {
+            OpResult(false, error = "Wake word service is not running — enable wake words first")
+        }
+    }
+
+    /**
+     * Called when TTS audio has finished playing.
+     * Delegates to WakeWordService to re-arm the mic in Talk Mode.
+     */
+    private fun handleTtsFinished(): OpResult {
+        WakeWordService.onTtsFinished()
+        DaemonLog.add("voice_tts_finished: notified WakeWordService")
+        return OpResult(true, data = JSONObject().put("notified", true))
     }
 }

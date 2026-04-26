@@ -54,7 +54,7 @@ import {
   scheduleCommitmentDueDateReminder,
   scheduleWeeklyReview,
 } from '@/lib/notifications';
-import { getApiUrl, queryClient } from '@/lib/query-client';
+import { getApiUrl, queryClient, apiRequest } from '@/lib/query-client';
 import { authFetch, getAuthToken } from '@/lib/auth-context';
 import { Linking, Image } from 'react-native';
 
@@ -584,6 +584,9 @@ export default function InsightsScreen() {
   const coachingModeRef = useRef<CoachingMode>('sharp');
   const [isRecording, setIsRecording] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [talkModeEnabled, setTalkModeEnabled] = useState(false);
+  const talkModeRef = useRef(false);
+  const startRecordingRef = useRef<() => Promise<void>>(() => Promise.resolve());
   const [isTTSLoading, setIsTTSLoading] = useState(false);
   const speakingTextRef = useRef<string | null>(null);
   const [isTranscribing, setIsTranscribing] = useState(false);
@@ -752,6 +755,10 @@ export default function InsightsScreen() {
     }
   }, []);
 
+  startRecordingRef.current = startRecording;
+
+  useEffect(() => { talkModeRef.current = talkModeEnabled; }, [talkModeEnabled]);
+
   const stopRecordingAndSend = useCallback(async () => {
     setIsRecording(false);
 
@@ -862,6 +869,9 @@ export default function InsightsScreen() {
           isSpeakingRef.current = false;
           speakingTextRef.current = null;
           setIsSpeaking(false);
+          if (talkModeRef.current) {
+            setTimeout(() => startRecordingRef.current(), 400);
+          }
         };
         audioEl.onerror = () => {
           isSpeakingRef.current = false;
@@ -883,6 +893,9 @@ export default function InsightsScreen() {
             isSpeakingRef.current = false;
             speakingTextRef.current = null;
             setIsSpeaking(false);
+            if (talkModeRef.current) {
+              setTimeout(() => startRecordingRef.current(), 400);
+            }
           }
         });
       }
@@ -1256,6 +1269,11 @@ export default function InsightsScreen() {
   useFocusEffect(useCallback(() => {
     getGoals().then(setGoals);
     getStats().then(setStats);
+    apiRequest('GET', '/api/voice/wake-settings').then(r => r.json()).then(d => {
+      const enabled = d?.talkModeEnabled ?? false;
+      setTalkModeEnabled(enabled);
+      talkModeRef.current = enabled;
+    }).catch(() => {});
   }, []));
 
   const sendMessage = useCallback(async (text: string) => {
@@ -2040,6 +2058,14 @@ export default function InsightsScreen() {
       </View>
 
       <View style={[styles.inputContainer, { paddingBottom: tabBarHeight + 8 }]}>
+        {talkModeEnabled && (
+          <View style={{ position: 'absolute', top: -22, left: 14, flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+            <Ionicons name="chatbubbles" size={10} color={Colors.success} />
+            <Text style={{ fontSize: 10, color: Colors.success, fontFamily: 'Inter_500Medium', letterSpacing: 0.3 }}>
+              Talk Mode
+            </Text>
+          </View>
+        )}
         <Pressable
           style={[styles.micBtn, isRecording && styles.micBtnRecording, isBaseLoading && { opacity: 0.4 }]}
           onPress={isSpeaking ? stopSpeaking : isRecording ? stopRecordingAndSend : startRecording}
