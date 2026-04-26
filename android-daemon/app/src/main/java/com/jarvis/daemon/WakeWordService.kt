@@ -50,6 +50,14 @@ class WakeWordService : Service() {
             private set
 
         /**
+         * Called by OpHandler before playing a voice_speak_audio clip.
+         * Temporarily stops the recognizer so the microphone doesn't capture speaker audio.
+         */
+        fun pauseForPlayback() {
+            instance?.handlePauseForPlayback()
+        }
+
+        /**
          * Called by OpHandler when TTS audio finishes playing.
          * Re-arms the microphone when Talk Mode is on.
          */
@@ -65,6 +73,8 @@ class WakeWordService : Service() {
     private var wakeWords: List<String> = listOf("hey jarvis", "jarvis", "computer")
     private var talkModeEnabled = false
     private var active = false
+    /** True when Talk Mode is on and we are waiting to capture the user's utterance after a wake word */
+    private var capturingUtterance = false
 
     // ── Lifecycle ────────────────────────────────────────────────────────────
 
@@ -212,13 +222,33 @@ class WakeWordService : Service() {
 
         override fun onResults(results: Bundle?) {
             val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION) ?: emptyList<String>()
+            if (capturingUtterance) {
+                // Talk Mode: send the captured utterance to the server for AI processing
+                val utterance = matches.firstOrNull()?.trim().orEmpty()
+                if (utterance.isNotEmpty()) {
+                    capturingUtterance = false
+                    val event = JSONObject().apply {
+                        put("type", "voice_user_utterance")
+                        put("text", utterance)
+                    }
+                    WebSocketService.sendEvent(event.toString())
+                    DaemonLog.add("talk: sent utterance \"${utterance.take(60)}\"")
+                    // Re-arm for next wake word after sending utterance
+                    if (active) restartRecognizer(300)
+                } else {
+                    // Empty result — re-arm
+                    capturingUtterance = false
+                    if (active) restartRecognizer(300)
+                }
+                return
+            }
             val found = checkForWakeWord(matches)
             if (!found && active) restartRecognizer(100)
         }
 
         override fun onPartialResults(partialResults: Bundle?) {
             val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION) ?: emptyList<String>()
-            checkForWakeWord(matches)
+            if (!capturingUtterance) checkForWakeWord(matches)
         }
 
         override fun onEvent(eventType: Int, params: Bundle?) {}
@@ -239,7 +269,7 @@ class WakeWordService : Service() {
     }
 
     private fun onWakeWordDetected(phrase: String, fullTranscript: String) {
-        // Bring the Jarvis web app to the foreground so the SSE event is received by the open tab
+        // Bring the Jarvis mobile app to the foreground
         bringJarvisToForeground()
 
         val event = JSONObject().apply {
@@ -247,14 +277,30 @@ class WakeWordService : Service() {
             put("phrase", phrase)
             put("transcript", fullTranscript)
         }
-        // Small delay so the browser tab has time to come to the foreground before the event fires
+        // Small delay so the app has time to come to the foreground before the event fires
         mainHandler.postDelayed({ WebSocketService.sendEvent(event.toString()) }, 400L)
 
-        // Pause listening during the conversation; auto-resume after a guard timeout
-        active = false
-        mainHandler.postDelayed({
-            if (!active) startListening()
-        }, 10_000L)
+        if (talkModeEnabled) {
+            // Talk Mode: keep the recognizer running to immediately capture the next utterance.
+            // SpeechRecognizer will end naturally when the user stops speaking;
+            // onResults fires with the utterance text which we relay to the server.
+            capturingUtterance = true
+            DaemonLog.add("talk: wake detected — waiting for utterance")
+            // Safety timeout: if no utterance captured in 15s, reset to wake-word scan mode
+            mainHandler.postDelayed({
+                if (capturingUtterance) {
+                    capturingUtterance = false
+                    DaemonLog.add("talk: utterance capture timed out — resuming wake scan")
+                    if (active) restartRecognizer(300)
+                }
+            }, 15_000L)
+        } else {
+            // Non-talk mode: pause listening during the conversation; auto-resume after timeout
+            active = false
+            mainHandler.postDelayed({
+                if (!active) startListening()
+            }, 10_000L)
+        }
     }
 
     /**
@@ -292,6 +338,24 @@ class WakeWordService : Service() {
     }
 
     // ── Talk Mode ────────────────────────────────────────────────────────────
+
+    /**
+     * Stop the recognizer while speaker audio plays to prevent mic picking up TTS audio.
+     * After playback, onTtsFinished() restarts it via handleTtsFinished().
+     */
+    private fun handlePauseForPlayback() {
+        if (!talkModeEnabled) return
+        DaemonLog.add("wake: pausing mic for TTS playback")
+        mainHandler.post {
+            try {
+                speechRecognizer?.stopListening()
+            } catch (e: Exception) {
+                Log.e(TAG, "handlePauseForPlayback error", e)
+            }
+        }
+        // Set active=false so startListening() in handleTtsFinished() is not a no-op
+        active = false
+    }
 
     private fun handleTtsFinished() {
         if (!talkModeEnabled) return

@@ -594,6 +594,7 @@ export default function InsightsScreen() {
   const speakingTextRef = useRef<string | null>(null);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const recordingRef = useRef<Audio.Recording | null>(null);
+  const silencePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const soundRef = useRef<Audio.Sound | null>(null);
   const webAudioRef = useRef<HTMLAudioElement | null>(null);
   const speakAbortRef = useRef<AbortController | null>(null);
@@ -734,6 +735,39 @@ export default function InsightsScreen() {
         recorder.start();
         webRecorderRef.current = recorder;
         setIsRecording(true);
+
+        // Web Talk Mode: use Web Audio API to detect silence and auto-submit
+        if (talkModeRef.current) {
+          const audioCtx = new AudioContext();
+          const analyser = audioCtx.createAnalyser();
+          audioCtx.createMediaStreamSource(stream).connect(analyser);
+          const data = new Float32Array(analyser.fftSize);
+          let silenceMs = 0;
+          const SILENCE_THRESHOLD_DB = -40;
+          const SILENCE_DURATION_MS = 1500;
+          const POLL_MS = 200;
+          silencePollRef.current = setInterval(() => {
+            if (!talkModeRef.current || !webRecorderRef.current) {
+              clearInterval(silencePollRef.current!);
+              audioCtx.close().catch(() => {});
+              return;
+            }
+            analyser.getFloatTimeDomainData(data);
+            const maxAmp = data.reduce((m, v) => Math.max(m, Math.abs(v)), 0);
+            const db = maxAmp > 0 ? 20 * Math.log10(maxAmp) : -Infinity;
+            if (db < SILENCE_THRESHOLD_DB) {
+              silenceMs += POLL_MS;
+              if (silenceMs >= SILENCE_DURATION_MS) {
+                clearInterval(silencePollRef.current!);
+                silencePollRef.current = null;
+                audioCtx.close().catch(() => {});
+                stopRecordingRef.current().catch(() => {});
+              }
+            } else {
+              silenceMs = 0;
+            }
+          }, POLL_MS);
+        }
       } else {
         const { status } = await Audio.requestPermissionsAsync();
         if (status !== 'granted') {
@@ -747,10 +781,40 @@ export default function InsightsScreen() {
         }
         await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
         const { recording } = await Audio.Recording.createAsync(
-          Audio.RecordingOptionsPresets.HIGH_QUALITY
+          { ...Audio.RecordingOptionsPresets.HIGH_QUALITY, isMeteringEnabled: true }
         );
         recordingRef.current = recording;
         setIsRecording(true);
+
+        // Native Talk Mode: poll metering and auto-submit after sustained silence
+        if (talkModeRef.current) {
+          let silenceMs = 0;
+          const SILENCE_THRESHOLD_DB = -40;
+          const SILENCE_DURATION_MS = 1500;
+          const POLL_MS = 250;
+          silencePollRef.current = setInterval(async () => {
+            if (!talkModeRef.current || !recordingRef.current) {
+              clearInterval(silencePollRef.current!);
+              silencePollRef.current = null;
+              return;
+            }
+            try {
+              const status = await recordingRef.current.getStatusAsync();
+              if ('metering' in status && typeof status.metering === 'number') {
+                if (status.metering < SILENCE_THRESHOLD_DB) {
+                  silenceMs += POLL_MS;
+                  if (silenceMs >= SILENCE_DURATION_MS) {
+                    clearInterval(silencePollRef.current!);
+                    silencePollRef.current = null;
+                    stopRecordingRef.current().catch(() => {});
+                  }
+                } else {
+                  silenceMs = 0;
+                }
+              }
+            } catch { /* recording may have been stopped externally */ }
+          }, POLL_MS);
+        }
       }
     } catch (error) {
       console.error('Failed to start recording:', error);
@@ -763,6 +827,11 @@ export default function InsightsScreen() {
 
   const stopRecordingAndSend = useCallback(async () => {
     setIsRecording(false);
+    // Clear silence detection polling if active
+    if (silencePollRef.current) {
+      clearInterval(silencePollRef.current);
+      silencePollRef.current = null;
+    }
 
     if (Platform.OS === 'web') {
       const recorder = webRecorderRef.current;
@@ -1293,6 +1362,10 @@ export default function InsightsScreen() {
 
     // Cleanup on blur: stop recording if Talk Mode was active and mic is open
     return () => {
+      if (silencePollRef.current) {
+        clearInterval(silencePollRef.current);
+        silencePollRef.current = null;
+      }
       if (talkModeRef.current && isRecordingRef.current) {
         // Cancel the in-progress recording without sending it (user navigated away)
         setIsRecording(false);
@@ -2096,6 +2169,13 @@ export default function InsightsScreen() {
             const next = !talkModeEnabled;
             setTalkModeEnabled(next);
             talkModeRef.current = next;
+            if (!next) {
+              // Clear silence detection poll immediately
+              if (silencePollRef.current) {
+                clearInterval(silencePollRef.current);
+                silencePollRef.current = null;
+              }
+            }
             if (!next && isRecordingRef.current) {
               // Immediately disarm the active loop
               setIsRecording(false);

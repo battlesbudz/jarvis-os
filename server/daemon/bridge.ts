@@ -40,7 +40,8 @@ export type DaemonOp =
   | { type: "browser_mcp"; tool: string; args: Record<string, unknown> }
   | { type: "voice_set_wake_words"; enabled: boolean; words?: string[]; talkMode?: boolean }
   | { type: "voice_set_talk_mode"; enabled: boolean }
-  | { type: "voice_tts_finished" };
+  | { type: "voice_tts_finished" }
+  | { type: "voice_speak_audio"; audioBase64: string; format?: string };
 
 export interface PhoneNotification {
   pkg: string;
@@ -82,6 +83,46 @@ export function subscribeWakeWordTrigger(
   if (!wakeWordTriggerCallbacks.has(userId)) wakeWordTriggerCallbacks.set(userId, new Set());
   wakeWordTriggerCallbacks.get(userId)!.add(cb);
   return () => wakeWordTriggerCallbacks.get(userId)?.delete(cb);
+}
+
+/**
+ * Handles a voice utterance captured by the Android daemon in Talk Mode.
+ * Calls the AI, gets a response, converts to speech, and dispatches
+ * voice_speak_audio back to the daemon so the phone plays it immediately —
+ * allowing hands-free operation even when the Jarvis mobile app is backgrounded.
+ */
+async function processDaemonUtterance(userId: string, utterance: string): Promise<void> {
+  try {
+    console.log(`[daemon] talk: processing utterance for userId=${userId}: "${utterance.slice(0, 60)}"`);
+    // Lazy imports to avoid startup cost
+    const { default: OpenAI } = await import("openai");
+    const { textToSpeech } = await import("../replit_integrations/audio/client");
+
+    const client = new OpenAI();
+    const chatResp = await client.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        {
+          role: "system",
+          content: "You are Jarvis, an AI personal assistant. Respond conversationally and concisely — your response will be read aloud on a phone speaker. Keep answers under 3 sentences unless the user asks for more detail.",
+        },
+        { role: "user", content: utterance },
+      ],
+      max_tokens: 200,
+    });
+    const responseText = chatResp.choices[0]?.message.content?.trim() ?? "I'm sorry, I didn't quite get that.";
+    console.log(`[daemon] talk: AI response: "${responseText.slice(0, 80)}"`);
+
+    const audioBuffer = await textToSpeech(responseText, "alloy", "mp3");
+    const audioBase64 = audioBuffer.toString("base64");
+
+    // Send audio to daemon — it will play it and then re-arm for the next utterance
+    await sendDaemonOp(userId, { type: "voice_speak_audio", audioBase64, format: "mp3" }, 10_000);
+  } catch (err) {
+    console.error("[daemon] processDaemonUtterance failed:", err);
+    // Try to send an error notification so the user knows something went wrong
+    sendDaemonOp(userId, { type: "notify", title: "Jarvis", body: "Could not process your request — please try again." }, 5_000).catch(() => {});
+  }
 }
 
 /**
@@ -664,6 +705,17 @@ export function startDaemonBridge(server: HttpServer): void {
           arr.unshift(ne.notification); // newest first
           while (arr.length > MAX_NOTIFS_PER_USER) arr.pop();
           userNotifications.set(pairedUserId, arr);
+        }
+        return;
+      }
+
+      // Voice utterance from daemon Talk Mode — run through AI and respond via TTS
+      if (m.type === "voice_user_utterance" && pairedUserId) {
+        const text = (m as { type: string; text?: string }).text ?? "";
+        if (text) {
+          processDaemonUtterance(pairedUserId, text).catch(err =>
+            console.error(`[daemon] voice_user_utterance processing failed: ${err}`)
+          );
         }
         return;
       }
