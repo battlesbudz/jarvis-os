@@ -5,6 +5,8 @@
  * transcripts so Jarvis can summarize without requiring the user to ask.
  */
 
+import { fetchTranscriptCached } from "../lib/transcriptCache";
+
 /** Per-URL character limit (prevents a single very long video from consuming the whole budget). */
 const MAX_CHARS_PER_URL = 20_000;
 /** Global character budget across all URLs in one request (prevents 3-URL × 80k = 240k blowup). */
@@ -55,8 +57,7 @@ export async function buildYouTubeContextBlock(message: string): Promise<string>
     }
 
     try {
-      const { YoutubeTranscript } = await import("youtube-transcript");
-      const segments = await YoutubeTranscript.fetchTranscript(url);
+      const segments = await fetchTranscriptCached(url);
 
       if (!segments || segments.length === 0) continue;
 

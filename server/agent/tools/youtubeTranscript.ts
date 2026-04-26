@@ -10,6 +10,7 @@
  */
 
 import type { AgentTool, ToolArgs, ToolContext, ToolResult } from "../types";
+import { fetchTranscriptCached } from "../../lib/transcriptCache";
 
 /** Maximum characters returned before truncation (≈ ~150k tokens safe limit). */
 const MAX_CHARS = 120_000;
@@ -55,8 +56,7 @@ export const youtubeTranscriptTool: AgentTool = {
     console.log(`[get_youtube_transcript] fetching transcript for "${input}" (user=${ctx.userId})`);
 
     try {
-      const { YoutubeTranscript } = await import("youtube-transcript");
-      const segments = await YoutubeTranscript.fetchTranscript(input);
+      const segments = await fetchTranscriptCached(input);
 
       if (!segments || segments.length === 0) {
         return {
