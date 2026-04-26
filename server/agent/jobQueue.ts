@@ -213,14 +213,39 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[JobQueue] job ${job.id} failed:`, err);
-    await failJob(job.id, msg);
-    // Fail the workflow step if applicable.
-    const wfId2   = (job.input as Record<string, unknown>)?.workflowId    as string | undefined;
-    const wfStep2 = (job.input as Record<string, unknown>)?.workflowStepIndex as number | undefined;
-    if (wfId2 && wfStep2 !== undefined) {
-      await onWorkflowJobFail(wfId2, wfStep2, msg).catch((e) =>
-        console.error("[JobQueue] workflow fail hook failed:", e),
-      );
+
+    const jobInput = (job.input as Record<string, unknown>) ?? {};
+    const retryCount = typeof jobInput.retryCount === "number" ? jobInput.retryCount : 0;
+    const MAX_RETRIES = 2;
+
+    if (retryCount < MAX_RETRIES) {
+      const nextRetry = retryCount + 1;
+      console.log(`[JobQueue] re-queuing job ${job.id} (attempt ${nextRetry}/${MAX_RETRIES}) after error: ${msg}`);
+      try {
+        await db
+          .update(schema.agentJobs)
+          .set({
+            status: "queued",
+            startedAt: null,
+            error: `Retry ${nextRetry}/${MAX_RETRIES}: ${msg}`.slice(0, 2000),
+            input: { ...jobInput, retryCount: nextRetry },
+          })
+          .where(eq(schema.agentJobs.id, job.id));
+      } catch (retryErr) {
+        console.error(`[JobQueue] failed to re-queue job ${job.id}:`, retryErr);
+        await failJob(job.id, msg);
+      }
+    } else {
+      console.log(`[JobQueue] permanently failing job ${job.id} after ${MAX_RETRIES + 1} total attempts`);
+      await failJob(job.id, msg);
+      // Fail the workflow step if applicable.
+      const wfId2   = jobInput.workflowId    as string | undefined;
+      const wfStep2 = jobInput.workflowStepIndex as number | undefined;
+      if (wfId2 && wfStep2 !== undefined) {
+        await onWorkflowJobFail(wfId2, wfStep2, msg).catch((e) =>
+          console.error("[JobQueue] workflow fail hook failed:", e),
+        );
+      }
     }
   } finally {
     clearTimeout(watchdog);

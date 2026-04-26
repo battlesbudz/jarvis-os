@@ -37,7 +37,7 @@ const SHARED_RULES = `Output rules:
 - Be concrete and specific, never generic.
 - No filler ("As an AI…", "I hope this helps…").
 - No markdown headers above H2 (##). No bold/italic for decoration.
-- All factual claims must come from a tool result you actually executed in this run.`;
+- Prefer facts from tool results you executed in this run. If searches fail or return nothing, synthesize from general knowledge and note clearly that live data was unavailable.`;
 
 const SPECS: Record<SubAgentType, SubAgentSpec> = {
   research: {
@@ -243,7 +243,7 @@ export async function runSubAgent(opts: RunSubAgentOptions): Promise<SubAgentRes
   }
 
   const result = await runAgent({
-    model: "gpt-5-mini",
+    model: "gpt-4o-mini",
     messages: [
       { role: "system", content: systemPrompt },
       { role: "user", content: opts.prompt },
