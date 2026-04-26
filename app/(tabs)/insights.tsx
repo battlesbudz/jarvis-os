@@ -1161,10 +1161,17 @@ export default function InsightsScreen() {
               const segUri = segUris[playIdx];
               playIdx++;
               await new Promise<void>((resolve) => {
+                let started = false;
                 sound.setOnPlaybackStatusUpdate((status) => {
+                  if (!('isLoaded' in status)) { resolve(); return; }
+                  if (status.isLoaded && status.isPlaying) started = true;
                   if ('didJustFinish' in status && status.didJustFinish) {
                     sound.unloadAsync().catch(() => {});
-                    // Delete the segment file now that playback is done
+                    FileSystem.deleteAsync(segUri, { idempotent: true }).catch(() => {});
+                    resolve();
+                  } else if (started && status.isLoaded && !status.isPlaying) {
+                    // Sound was stopped externally (abort/stop) — resolve to unblock loop
+                    sound.unloadAsync().catch(() => {});
                     FileSystem.deleteAsync(segUri, { idempotent: true }).catch(() => {});
                     resolve();
                   }

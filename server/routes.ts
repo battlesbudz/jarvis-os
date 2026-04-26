@@ -3347,6 +3347,10 @@ Return ONLY the JSON object.`;
       }
     };
 
+    // Abort provider stream when client disconnects early
+    const streamAbort = new AbortController();
+    req.on('close', () => streamAbort.abort());
+
     try {
       const { textToSpeechStream, elevenlabsTtsStream } = await import('./replit_integrations/audio/client');
 
@@ -3359,11 +3363,13 @@ Return ONLY the JSON object.`;
         : await textToSpeechStream(trimmedText, openaiVoice);
 
       for await (const base64Chunk of stream) {
-        if (res.destroyed) break;
+        if (res.destroyed || streamAbort.signal.aborted) break;
         writeLine({ type: "chunk", data: base64Chunk, sampleRate: 24000 });
       }
-      writeLine({ type: "done" });
-      res.end();
+      if (!streamAbort.signal.aborted) {
+        writeLine({ type: "done" });
+        res.end();
+      }
     } catch (error) {
       console.error("[/api/tts/stream] error:", error);
       writeLine({ type: "error", message: error instanceof Error ? error.message : "TTS stream failed" });
