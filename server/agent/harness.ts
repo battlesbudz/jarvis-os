@@ -405,7 +405,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
         }
       }
 
-      // Step 2: UNION in activated capability tools.
+      // Step 2a: UNION in activated capability tools.
       // Allows planner rules to add tools beyond the channel's normal scope
       // (e.g. calendar + email for upcoming meeting on a Discord channel).
       if (opts.activationPlan?.capabilityManifest.activeCapabilityIds.length) {
@@ -425,6 +425,25 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
             `[${channel}/Harness] manifest activations: +${added} tools for capabilities: [${opts.activationPlan.capabilityManifest.activeCapabilityIds.join(", ")}]`,
           );
         }
+      }
+
+      // Step 2b: Suppression-only heartbeat fallback.
+      // When a plan has ONLY suppressions (no active capabilities) and there is no
+      // channel scope, the allowed set is empty so suppressions would be a no-op.
+      // Fix: seed with the full current tool list so Step 3 can remove from it.
+      // This handles cases like "suppress browser + research on general heartbeat"
+      // without requiring the planner to explicitly enumerate every other capability.
+      if (
+        !context.channel &&
+        opts.activationPlan &&
+        !opts.activationPlan.capabilityManifest.activeCapabilityIds.length &&
+        opts.activationPlan.capabilityManifest.suppressedCapabilityIds.length > 0
+      ) {
+        hasAnyScope = true;
+        for (const t of tools) allowedToolNames.add(t.name);
+        console.log(
+          `[${channel}/Harness] suppression-only heartbeat: seeded ${tools.length} tools before removing suppressed capabilities`,
+        );
       }
 
       // Step 3: REMOVE suppressed capability tools (highest priority — wins over activations).
