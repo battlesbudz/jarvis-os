@@ -132,6 +132,13 @@ export default function SettingsScreen() {
   const [connectingId, setConnectingId] = useState<string | null>(null);
   const [androidDaemonCode, setAndroidDaemonCode] = useState<string | null>(null);
 
+  // ── Wake Word ──
+  const [wakeWordEnabled, setWakeWordEnabled] = useState(false);
+  const [talkModeEnabled, setTalkModeEnabled] = useState(false);
+  const [wakeWords, setWakeWords] = useState<string[]>(['hey jarvis', 'jarvis', 'computer']);
+  const [newWakeWord, setNewWakeWord] = useState('');
+  const [wakeSettingsSaving, setWakeSettingsSaving] = useState(false);
+
   // ── Stats / XP ──
   const [stats, setStats] = useState<UserStats>({
     streak: 0, totalCompleted: 0, bestStreak: 0, xp: 0, badges: [], claimedRewards: [],
@@ -294,6 +301,14 @@ export default function SettingsScreen() {
       const prefsRes = await apiRequest('GET', '/api/data/user-preferences').then(r => r.json()).catch(() => null);
       if (prefsRes?.data?.timezone) setTimezone(prefsRes.data.timezone);
     } catch {}
+    try {
+      const wakeRes = await apiRequest('GET', '/api/voice/wake-settings').then(r => r.json()).catch(() => null);
+      if (wakeRes) {
+        setWakeWordEnabled(wakeRes.wakeWordEnabled ?? false);
+        setTalkModeEnabled(wakeRes.talkModeEnabled ?? false);
+        setWakeWords(wakeRes.wakeWords ?? ['hey jarvis', 'jarvis', 'computer']);
+      }
+    } catch {}
   }, []);
 
   useFocusEffect(useCallback(() => {
@@ -385,6 +400,41 @@ export default function SettingsScreen() {
       setAndroidDaemonCode(data.code ?? null);
     } catch {}
   }, [androidDaemonCode]);
+
+  const saveWakeSettings = useCallback(async (
+    updates: { wakeWordEnabled?: boolean; talkModeEnabled?: boolean; wakeWords?: string[] }
+  ) => {
+    setWakeSettingsSaving(true);
+    try {
+      await apiRequest('PUT', '/api/voice/wake-settings', updates);
+    } catch {}
+    setWakeSettingsSaving(false);
+  }, []);
+
+  const toggleWakeWord = useCallback(async (val: boolean) => {
+    setWakeWordEnabled(val);
+    await saveWakeSettings({ wakeWordEnabled: val });
+  }, [saveWakeSettings]);
+
+  const toggleTalkMode = useCallback(async (val: boolean) => {
+    setTalkModeEnabled(val);
+    await saveWakeSettings({ talkModeEnabled: val });
+  }, [saveWakeSettings]);
+
+  const addWakeWord = useCallback(async () => {
+    const phrase = newWakeWord.trim().toLowerCase();
+    if (!phrase || wakeWords.includes(phrase)) { setNewWakeWord(''); return; }
+    const next = [...wakeWords, phrase];
+    setWakeWords(next);
+    setNewWakeWord('');
+    await saveWakeSettings({ wakeWords: next });
+  }, [newWakeWord, wakeWords, saveWakeSettings]);
+
+  const removeWakeWord = useCallback(async (phrase: string) => {
+    const next = wakeWords.filter(w => w !== phrase);
+    setWakeWords(next);
+    await saveWakeSettings({ wakeWords: next });
+  }, [wakeWords, saveWakeSettings]);
 
   const handleDiscordPairSubmit = useCallback(async () => {
     const code = discordPairCode.trim().toUpperCase();
@@ -606,6 +656,80 @@ export default function SettingsScreen() {
             <View style={styles.linkCodeBlock}>
               <Text style={styles.linkCodeLabel}>Enter this code in the GamePlan Daemon app:</Text>
               <Text style={styles.linkCode}>{androidDaemonCode}</Text>
+            </View>
+          )}
+        </View>
+
+        {/* ── WAKE WORD ── */}
+        <SectionHeader label="WAKE WORD" accent={Colors.primary} />
+        <View style={styles.card}>
+          {/* Wake Word toggle */}
+          <View style={[styles.connRow, { paddingVertical: 12 }]}>
+            <View style={[styles.connIconWrap, { backgroundColor: '#1E3A5F' }]}>
+              <Ionicons name="mic-outline" size={18} color={Colors.primary} />
+            </View>
+            <View style={styles.connInfo}>
+              <Text style={styles.connName}>Wake Word</Text>
+              <Text style={styles.connSub}>Say a phrase to activate Jarvis hands-free (Android only)</Text>
+            </View>
+            <Switch
+              value={wakeWordEnabled}
+              onValueChange={toggleWakeWord}
+              disabled={wakeSettingsSaving}
+              trackColor={{ false: Colors.border, true: Colors.primary }}
+            />
+          </View>
+
+          {/* Talk Mode toggle */}
+          <View style={[styles.connRow, styles.connRowBorder, { paddingVertical: 12 }]}>
+            <View style={[styles.connIconWrap, { backgroundColor: '#0f2f1a' }]}>
+              <Ionicons name="chatbubble-ellipses-outline" size={18} color={Colors.success} />
+            </View>
+            <View style={styles.connInfo}>
+              <Text style={styles.connName}>Talk Mode</Text>
+              <Text style={styles.connSub}>Auto re-arm mic after each TTS response for hands-free chat</Text>
+            </View>
+            <Switch
+              value={talkModeEnabled}
+              onValueChange={toggleTalkMode}
+              disabled={wakeSettingsSaving}
+              trackColor={{ false: Colors.border, true: Colors.success }}
+            />
+          </View>
+
+          {/* Trigger phrase list */}
+          {wakeWordEnabled && (
+            <View style={{ paddingHorizontal: 14, paddingBottom: 12 }}>
+              <Text style={{ fontSize: 11, color: Colors.textTertiary, fontFamily: 'Inter_500Medium', marginTop: 6, marginBottom: 8, letterSpacing: 0.5 }}>
+                TRIGGER PHRASES
+              </Text>
+              {wakeWords.map(phrase => (
+                <View key={phrase} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6, backgroundColor: Colors.surface, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 7 }}>
+                  <Ionicons name="radio-outline" size={14} color={Colors.textSecondary} style={{ marginRight: 8 }} />
+                  <Text style={{ flex: 1, fontSize: 13, color: Colors.text, fontFamily: 'Inter_400Regular' }}>{phrase}</Text>
+                  <Pressable onPress={() => removeWakeWord(phrase)} hitSlop={10}>
+                    <Ionicons name="close-circle" size={16} color={Colors.textTertiary} />
+                  </Pressable>
+                </View>
+              ))}
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 }}>
+                <TextInput
+                  style={[styles.tzInput, { flex: 1, marginTop: 0 }]}
+                  placeholder="Add phrase..."
+                  placeholderTextColor={Colors.textTertiary}
+                  value={newWakeWord}
+                  onChangeText={setNewWakeWord}
+                  onSubmitEditing={addWakeWord}
+                  returnKeyType="done"
+                  autoCapitalize="none"
+                />
+                <Pressable
+                  onPress={addWakeWord}
+                  style={{ backgroundColor: Colors.primary, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8 }}
+                >
+                  <Ionicons name="add" size={16} color="#fff" />
+                </Pressable>
+              </View>
             </View>
           )}
         </View>
