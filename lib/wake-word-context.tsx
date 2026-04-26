@@ -24,6 +24,31 @@ export function useWakeWord(): WakeWordContextValue {
 }
 
 /**
+ * Parse complete SSE events from accumulated buffer text.
+ * SSE events are delimited by double newlines (\n\n).
+ * Returns [parsedEvents, remainingBuffer].
+ */
+function parseSseEvents(buffer: string): [Array<Record<string, string>>, string] {
+  const events: Array<Record<string, string>> = [];
+  // Split on double-newline boundaries to get complete event blocks
+  const blocks = buffer.split(/\n\n/);
+  // Last block is potentially incomplete — keep it in the buffer
+  const remaining = blocks.pop() ?? '';
+  for (const block of blocks) {
+    const fields: Record<string, string> = {};
+    for (const line of block.split('\n')) {
+      const colonIdx = line.indexOf(':');
+      if (colonIdx === -1) continue;
+      const field = line.slice(0, colonIdx).trim();
+      const value = line.slice(colonIdx + 1).trim();
+      if (field) fields[field] = value;
+    }
+    if (Object.keys(fields).length > 0) events.push(fields);
+  }
+  return [events, remaining];
+}
+
+/**
  * App-level provider that maintains a persistent SSE connection to
  * /api/voice/wake-events regardless of which screen is active.
  *
@@ -60,20 +85,25 @@ export function WakeWordProvider({ children }: { children: React.ReactNode }) {
             if (abortedRef.current || !res.body) return;
             const reader = res.body.getReader();
             const decode = new TextDecoder();
+            let buffer = '';
+
             const pump = (): void => {
               reader.read().then(({ done, value }) => {
                 if (done || abortedRef.current) return;
-                const text = decode.decode(value, { stream: true });
-                for (const line of text.split('\n')) {
-                  if (line.startsWith('data:')) {
+                // Accumulate chunks and parse complete SSE events (delimited by \n\n)
+                buffer += decode.decode(value, { stream: true });
+                const [events, remaining] = parseSseEvents(buffer);
+                buffer = remaining;
+                for (const fields of events) {
+                  if (fields['data']) {
                     try {
-                      const ev = JSON.parse(line.slice(5).trim());
+                      const ev = JSON.parse(fields['data']);
                       if (ev.phrase) {
                         // Navigate to Insights tab then surface the pending event
-                        router.push('/(tabs)/insights' as any);
+                        router.push('/(tabs)/insights');
                         setPendingWakeEvent({ phrase: ev.phrase, transcript: ev.transcript ?? '' });
                       }
-                    } catch { /* malformed line */ }
+                    } catch { /* malformed JSON in data field */ }
                   }
                 }
                 pump();
