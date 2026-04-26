@@ -232,7 +232,10 @@ Always confirm with the user before tap/type/swipe actions. Use android_read_scr
       return { ok: false, content: JSON.stringify({ ok: false, error: `unknown action ${action}` }) };
     }
     const isScreenOp = action === "desktop_screenshot" || action === "desktop_read_screen";
-    const result = await sendDaemonOp(ctx.userId, op, action === "shell" ? 30000 : isScreenOp ? 20000 : 10000);
+    // desktop_read_screen can take up to 30s for OCR — give bridge a 40s window so
+    // it never times out before the daemon finishes. desktop_screenshot is faster (20s).
+    const screenTimeout = action === "desktop_read_screen" ? 40000 : 20000;
+    const result = await sendDaemonOp(ctx.userId, op, action === "shell" ? 30000 : isScreenOp ? screenTimeout : 10000);
     // Screen ops return base64 PNG — do not truncate or the base64 will be corrupt.
     // For all other ops keep the existing 8 000-char safety cap.
     const serialised = JSON.stringify(result);
