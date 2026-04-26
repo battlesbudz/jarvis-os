@@ -758,7 +758,7 @@ export async function runHeartbeatTick(): Promise<void> {
     let heartbeatShouldRun = true;
     let heartbeatPlanReason = "";
     try {
-      const plan = await activationPlanner.plan(link.userId, "heartbeat", tz);
+      const plan = await activationPlanner.plan(link.userId, { source: "heartbeat", timezone: tz });
       heartbeatShouldRun = plan.shouldRun;
       heartbeatPlanReason = plan.reason;
       if (!heartbeatShouldRun) {

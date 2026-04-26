@@ -112,21 +112,25 @@ function hourToTimeOfDay(hour: number): SessionContext["timeOfDay"] {
 
 export class ActivationPlanner {
   /**
-   * Run the planner for a given user + optional channel.
+   * Run the planner for a given user.
    *
-   * @param userId   The user to plan for.
-   * @param channel  Optional channel name (e.g. "Telegram", "Discord #research").
-   *                 When provided it is logged for observability but does not
-   *                 currently gate capability decisions (channel scoping is the
-   *                 harness's responsibility).
-   * @param timezone Optional timezone override. When omitted the planner reads
-   *                 the user's stored preference.
+   * @param userId  The user to plan for.
+   * @param opts    Planner options.
+   * @param opts.source   Explicit caller type.
+   *                      "heartbeat" — background tick (suppressions apply).
+   *                      "channel"   — user-initiated message (always runs).
+   *                      Defaults to "heartbeat".
+   * @param opts.channel  Human-readable channel name for logging/observability
+   *                      (e.g. "Telegram", "Discord #research"). Only relevant
+   *                      when source === "channel".
+   * @param opts.timezone Optional timezone override. When omitted the planner
+   *                      reads the user's stored preference.
    */
   async plan(
     userId: string,
-    channel?: string,
-    timezone?: string,
+    opts: { source?: "heartbeat" | "channel"; channel?: string; timezone?: string } = {},
   ): Promise<ActivationPlan> {
+    const { source = "heartbeat", channel, timezone } = opts;
     const now = new Date();
     const tz = timezone ?? (await this.resolveTimezone(userId));
     const hour = localHour(now, tz);
@@ -150,7 +154,14 @@ export class ActivationPlanner {
     });
 
     // ── 3. Apply priority-ordered planning rules ───────────────────────────
-    return this.applyRules({ sessionContext, timeOfDay, predictions, emotionalStateRow, channel });
+    return this.applyRules({
+      sessionContext,
+      timeOfDay,
+      predictions,
+      emotionalStateRow,
+      source,
+      channel,
+    });
   }
 
   // ── Signal fetchers ───────────────────────────────────────────────────────
@@ -299,9 +310,10 @@ export class ActivationPlanner {
     timeOfDay: SessionContext["timeOfDay"];
     predictions: schema.JarvisPrediction[];
     emotionalStateRow: typeof schema.userEmotionalState.$inferSelect | null;
+    source: "heartbeat" | "channel";
     channel?: string;
   }): ActivationPlan {
-    const { sessionContext, timeOfDay, predictions, emotionalStateRow, channel } = opts;
+    const { sessionContext, timeOfDay, predictions, emotionalStateRow, source } = opts;
 
     const reasons: Record<string, string> = {};
     const activeCapabilityIds: string[] = [];
@@ -309,7 +321,7 @@ export class ActivationPlanner {
 
     const hasUrgentSignals = sessionContext.urgentSignals.length > 0;
     const hasEveningWork = timeOfDay === "evening";
-    const isChannelSession = !!channel;
+    const isChannelSession = source === "channel";
 
     // ── Rule 1: Night-time with no urgent signals → skip model session ─────
     // Channel sessions always run (user explicitly sent a message).
