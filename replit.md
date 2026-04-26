@@ -20,6 +20,34 @@ Key architectural patterns and features include:
 -   **Multi-User Support:** All user data is stored server-side and scoped by user ID, accessible across devices.
 -   **Onboarding:** A guided onboarding flow captures initial user preferences and goals.
 
+## Multi-Agent Ego System (Task #296)
+
+Named sub-agents allow creating multiple specialized AI personas, each with isolated memory namespaces, permission profiles, and channel routing.
+
+### Core Services
+- **`server/agent/agentManager.ts`** — CRUD for named agents: `createAgent`, `listAgents`, `updateAgent`, `deleteAgent`, `assignChannel`, `getAgentForChannel`.
+- **`server/agent/agentPermissions.ts`** — 14-flag permission system. `wrapToolsForAgent()` filters the tool list before the harness runs, emitting `tool_permission_denied` events for blocked tools.
+- **`server/agent/agentMemory.ts`** — Per-agent private memory namespace in `agent_memories` table. Auto-summarization at 400+ entries. FTS search via `plainto_tsquery`.
+- **`server/agent/runNamedAgent.ts`** — Main runner: loads agent, filters tools, retrieves memories + optional global soul, calls `runAgent()`, extracts memories post-conversation. Loop detection (max depth 3).
+- **`server/agent/council.ts`** — Council mode: all agents respond in parallel (30s timeout each), main LLM synthesizes a unified answer.
+- **`server/agent/agentBus.ts`** — Agent-to-agent async message bus persisted to `agent_messages`. `sendToAgent`, `broadcastToAgents`, `retryFailedMessages`.
+- **`server/agent/agentApproval.ts`** — In-memory approval gate system for destructive tools. `requestApproval`, `awaitApproval`, `approveGate`, `rejectGate`.
+- **`server/agent/agentLogger.ts`** — Structured JSON event logging for all agent lifecycle events.
+- **`server/agent/agentConfigSchema.ts`** — JSON export/import schema for agent configs. `validateAgentConfig`, `exportAgentConfig`, `importConfigToCreateArgs`.
+- **`server/agent/agentRoutes.ts`** — Full REST API mounted at `/api/agents` (list, create, get, update, delete, enable/disable, channel assignment, run, memories, messages, export/import, council, approvals).
+- **`server/discord/agentCommands.ts`** — Discord `/agent` slash command (list, run, council, create, assign).
+
+### Schema Extensions
+- `discord_agents` extended with 11 new columns: `platforms`, `permissions`, `memory_scope`, `access_global_memory`, `allowed_users`, `allowed_conversations`, `private_mode`, `platform_channels`, `config_json`, `last_heartbeat_at`, `stuck_since`, `heartbeat_fail_count`.
+- New tables: `agent_memories`, `agent_messages`.
+- `shared/schema.ts` exports: `AgentPermissions`, `DEFAULT_AGENT_PERMISSIONS`, `AgentMemoryScope`, `AgentMemory`, `AgentMessage`.
+
+### Heartbeat
+`runAgentHealthCheck()` in `server/heartbeat.ts` runs every 5 min: checks loop-enabled agents for stale heartbeats, auto-disables after 3 consecutive failures.
+
+### Mobile UI
+New **Agents** tab (`app/(tabs)/agents.tsx`) with agent cards (role icons, channel badges, loop indicator), create sheet (name + role picker + persona), run modal (direct invocation), and council modal.
+
 ## Multi-Channel & Computer Control (Phase 5)
 
 The coach is no longer Telegram-only. A channel abstraction layer (`server/channels/`) lets every notification and conversation flow through Telegram, WhatsApp (Twilio Business API), Slack DM (chat.postMessage + Events API + `/jarvis` slash command), and a paired desktop daemon — chosen per notification type via `channel_preferences`.

@@ -32,6 +32,7 @@ import { registerDataRoutes } from "./dataRoutes";
 import { registerTelegramRoutes } from "./telegramRoutes";
 import { registerChannelRoutes } from "./channels/routes";
 import { registerDiscordScheduleRoutes } from "./discord/schedulesRoutes";
+import { registerAgentRoutes } from "./agent/agentRoutes";
 import { registerDownloadRoutes } from "./downloadRoutes";
 import { isIntegrationOwner, claimIntegrationOwnership } from "./integrationOwner";
 import { oauthRouter, oauthCallbackRouter } from "./oauthRoutes";
@@ -766,6 +767,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   registerTelegramRoutes(app);
   registerChannelRoutes(app);
   registerDiscordScheduleRoutes(app);
+  registerAgentRoutes(app);
   app.use("/api/drive", driveRouter);
 
   // ── Jarvis Ego — Dashboard API ─────────────────────────────────────────────

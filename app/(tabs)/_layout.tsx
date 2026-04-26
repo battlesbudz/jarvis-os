@@ -33,6 +33,10 @@ function NativeTabLayout() {
         <Icon sf={{ default: "sparkles", selected: "sparkles" }} />
         <Label>Jarvis</Label>
       </NativeTabs.Trigger>
+      <NativeTabs.Trigger name="agents">
+        <Icon sf={{ default: "person.2", selected: "person.2.fill" }} />
+        <Label>Agents</Label>
+      </NativeTabs.Trigger>
       <NativeTabs.Trigger name="settings">
         <Icon sf={{ default: "gearshape", selected: "gearshape.fill" }} />
         <Label>Settings</Label>
@@ -107,6 +111,19 @@ function ClassicTabLayout() {
           tabBarIcon: ({ color, focused }) => (
             <Ionicons
               name={focused ? "sparkles" : "sparkles-outline"}
+              size={24}
+              color={color}
+            />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="agents"
+        options={{
+          title: "Agents",
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons
+              name={focused ? "people" : "people-outline"}
               size={24}
               color={color}
             />

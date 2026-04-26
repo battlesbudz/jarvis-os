@@ -598,6 +598,46 @@ export const discordPendingApprovals = pgTable("discord_pending_approvals", {
 
 // ── Discord OS — Phase 6: Named Sub-Agents ────────────────────────────────────
 
+/**
+ * Default safe-baseline permission set for a new agent.
+ * All destructive/external actions start disabled.
+ */
+export interface AgentPermissions {
+  can_search_web: boolean;
+  can_use_browser: boolean;
+  can_send_emails: boolean;
+  can_create_email_drafts: boolean;
+  can_read_email: boolean;
+  can_send_messages: boolean;
+  can_access_files: boolean;
+  can_take_screenshots: boolean;
+  can_open_apps: boolean;
+  can_call_user: boolean;
+  can_use_voice: boolean;
+  can_create_tasks: boolean;
+  can_create_other_agents: boolean;
+  can_access_global_memory: boolean;
+}
+
+export const DEFAULT_AGENT_PERMISSIONS: AgentPermissions = {
+  can_search_web: true,
+  can_use_browser: false,
+  can_send_emails: false,
+  can_create_email_drafts: false,
+  can_read_email: false,
+  can_send_messages: true,
+  can_access_files: false,
+  can_take_screenshots: false,
+  can_open_apps: false,
+  can_call_user: false,
+  can_use_voice: false,
+  can_create_tasks: true,
+  can_create_other_agents: false,
+  can_access_global_memory: false,
+};
+
+export type AgentMemoryScope = "agent_private" | "shared" | "global";
+
 export const discordAgents = pgTable("discord_agents", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
@@ -612,7 +652,94 @@ export const discordAgents = pgTable("discord_agents", {
   loopPrompt: text("loop_prompt"),
   lastLoopRun: timestamp("last_loop_run"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
+  // ── Multi-agent ego extension ──────────────────────────────────────────
+  /** Platforms this agent operates on. Default: ["discord"] */
+  platforms: jsonb("platforms").$type<string[]>().notNull().default(sql`'["discord"]'::jsonb`),
+  /** Per-flag permissions. Defaults to safe baseline. */
+  permissions: jsonb("permissions").$type<AgentPermissions>().notNull().default(sql`'{
+    "can_search_web":true,"can_use_browser":false,"can_send_emails":false,
+    "can_create_email_drafts":false,"can_read_email":false,"can_send_messages":true,
+    "can_access_files":false,"can_take_screenshots":false,"can_open_apps":false,
+    "can_call_user":false,"can_use_voice":false,"can_create_tasks":true,
+    "can_create_other_agents":false,"can_access_global_memory":false
+  }'::jsonb`),
+  /** Memory isolation: agent_private (default), shared, or global */
+  memoryScope: varchar("memory_scope").notNull().default("agent_private"),
+  /** Whether this agent can read global user_memories */
+  accessGlobalMemory: boolean("access_global_memory").notNull().default(false),
+  /** Users allowed to interact. Empty = all. */
+  allowedUsers: jsonb("allowed_users").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+  /** Conversation/channel IDs allowed. Empty = all. */
+  allowedConversations: jsonb("allowed_conversations").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+  /** Private mode: only respond to allowedUsers */
+  privateMode: boolean("private_mode").notNull().default(false),
+  /** Map of platform → channelId[]. Extends channelId for multi-platform. */
+  platformChannels: jsonb("platform_channels").$type<Record<string, string[]>>().notNull().default(sql`'{}'::jsonb`),
+  /** Raw config blob for import/export */
+  configJson: jsonb("config_json"),
+  /** Last heartbeat check timestamp */
+  lastHeartbeatAt: timestamp("last_heartbeat_at"),
+  /** Set when agent is detected as stuck */
+  stuckSince: timestamp("stuck_since"),
+  /** Consecutive heartbeat failures */
+  heartbeatFailCount: integer("heartbeat_fail_count").notNull().default(0),
 });
+
+export type DiscordAgent = typeof discordAgents.$inferSelect;
+export type InsertDiscordAgent = typeof discordAgents.$inferInsert;
+
+// ── Agent Memory Namespace ────────────────────────────────────────────────────
+// Per-agent private memories, separate from global user_memories.
+// An agent with memory_scope = "agent_private" can ONLY read/write here.
+// An agent with access_global_memory = true can also read user_memories.
+
+export const agentMemories = pgTable("agent_memories", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  agentId: varchar("agent_id").notNull().references(() => discordAgents.id, { onDelete: "cascade" }),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  content: text("content").notNull(),
+  category: varchar("category").notNull().default("fact"),
+  embedding: jsonb("embedding"),
+  relevanceScore: integer("relevance_score").notNull().default(50),
+  confidence: integer("confidence").notNull().default(70),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export type AgentMemory = typeof agentMemories.$inferSelect;
+
+// ── Agent-to-Agent Message Bus ────────────────────────────────────────────────
+// Internal structured message protocol for agent delegation and coordination.
+// Messages are stored and processed asynchronously. Loop detection uses
+// delegation depth tracked per (userId + taskId) chain (max depth: 5).
+
+export const AGENT_MESSAGE_TYPES = [
+  "task_request",
+  "task_result",
+  "clarification_needed",
+  "error",
+  "memory_update_request",
+  "tool_request_denied",
+  "final_answer",
+] as const;
+export type AgentMessageType = typeof AGENT_MESSAGE_TYPES[number];
+
+export const AGENT_MESSAGE_STATUSES = ["pending", "processed", "failed"] as const;
+export type AgentMessageStatus = typeof AGENT_MESSAGE_STATUSES[number];
+
+export const agentMessages = pgTable("agent_messages", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  fromAgentId: varchar("from_agent_id").references(() => discordAgents.id, { onDelete: "set null" }),
+  toAgentId: varchar("to_agent_id").notNull().references(() => discordAgents.id, { onDelete: "cascade" }),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  messageType: varchar("message_type").$type<AgentMessageType>().notNull(),
+  payload: jsonb("payload").notNull().default(sql`'{}'::jsonb`),
+  status: varchar("status").$type<AgentMessageStatus>().notNull().default("pending"),
+  delegationDepth: integer("delegation_depth").notNull().default(0),
+  taskId: varchar("task_id"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export type AgentMessage = typeof agentMessages.$inferSelect;
 
 // ── Nervous System — Ambient Signal Monitoring ────────────────────────────────
 // Per-user watch topics (keywords, companies, people, industries) that the
