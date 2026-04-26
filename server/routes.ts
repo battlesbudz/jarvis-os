@@ -48,6 +48,7 @@ import { telegramLinks, channelLinks } from "@shared/schema";
 import { connectChannelTool } from "./agent/tools/connectChannel";
 import { YoutubeTranscript } from "youtube-transcript/dist/youtube-transcript.esm.js";
 import ytSearch from "yt-search";
+import { buildYouTubeContextBlock } from "./utils/youtubeAutoFetch";
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
@@ -2267,9 +2268,20 @@ You can extend yourself by building new tools directly. Generate the complete Ty
         ? `\n⚠️ ABSOLUTE RULE — DEVICE CONTROL: You have ZERO physical ability to open apps, take screenshots, tap, swipe, type, or perform any action on the phone through text alone. The ONLY way ANY phone action can happen is by calling the daemon_action tool and receiving result:'success'. If daemon_action is not called, NOTHING happened on the phone. Prior conversation messages where you (the assistant) described performing phone actions without a daemon_action tool call were ERRORS — do not repeat that pattern. For EVERY phone action request, call daemon_action. Never write "I opened X" or "I took a screenshot" unless daemon_action returned result:'success' in this response.\n`
         : '';
 
+      const lastUserOrigText = typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : '';
+      const youtubeCtxBlock = lastUserOrigText
+        ? await buildYouTubeContextBlock(lastUserOrigText).catch(() => "")
+        : "";
+
       const chatMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
         { role: "system", content: daemonAbsoluteRule + systemPrompt + proactiveQuestionContext + "\n\nYou can take actions on the user's behalf using the available tools. When a user asks you to add a task, log progress, update their context, etc., use the appropriate tool. Respond naturally — do not mention 'tool calls' or 'functions' to the user. Just confirm what you did conversationally." + (process.env.TAVILY_API_KEY ? "\n\nYou also have a web_search tool. Use it whenever the user asks about current events, live data (weather, stock prices, sports scores, news), or anything requiring real-time information you wouldn't know. Cite your sources naturally in your response." : "") },
-        ...messages.map((m: any) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
+        ...messages.map((m: any, idx: number) => {
+          const isLast = idx === messages.length - 1;
+          const content = (isLast && m.role === 'user' && youtubeCtxBlock)
+            ? m.content + youtubeCtxBlock
+            : m.content;
+          return { role: m.role as 'user' | 'assistant', content };
+        }),
       ];
 
       const actionResults: { tool: string; result: 'success' | 'error'; label: string; url?: string; buttonLabel?: string }[] = [];
