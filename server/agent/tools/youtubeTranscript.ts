@@ -126,19 +126,20 @@ export const youtubeTranscriptTool: AgentTool = {
       const msg = err instanceof Error ? err.message : String(err);
       const lower = msg.toLowerCase();
 
-      // Provide user-friendly error messages for known failure modes
-      if (lower.includes("disabled") || lower.includes("not available")) {
-        return {
-          ok: false,
-          content: `This video does not have captions available. The owner may have disabled transcripts, or it may be a live stream without auto-captions.`,
-          label: "get_youtube_transcript: no captions",
-        };
-      }
+      // Provide user-friendly error messages for known failure modes.
+      // Check video-level errors first — "unavailable" text overlaps with caption errors.
       if (lower.includes("unavailable") || lower.includes("not found") || lower.includes("private")) {
         return {
           ok: false,
           content: `Video not found or is private/unavailable. Please check the URL and try again.`,
           label: "get_youtube_transcript: video unavailable",
+        };
+      }
+      if (lower.includes("disabled") || lower.includes("not available") || lower.includes("no transcript")) {
+        return {
+          ok: false,
+          content: `This video does not have captions available. The owner may have disabled transcripts, or it may be a live stream without auto-captions.`,
+          label: "get_youtube_transcript: no captions",
         };
       }
       if (lower.includes("too many requests") || lower.includes("429")) {
