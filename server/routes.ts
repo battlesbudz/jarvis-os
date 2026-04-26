@@ -5612,6 +5612,76 @@ Extract up to 8 memories per batch.`;
     }
   });
 
+  // ── Admin: Skill Pack management (operator publish path) ─────────────────────
+  // Auth: x-admin-secret header must match JARVIS_ADMIN_SECRET env var.
+  // These endpoints are intentionally NOT protected by the user auth middleware
+  // (authMiddleware) because they are called by the Jarvis team, not individual
+  // users. A static shared secret is sufficient for this low-volume internal API.
+
+  function requireAdminSecret(req: Request, res: Response): boolean {
+    const secret = process.env.JARVIS_ADMIN_SECRET;
+    if (!secret) {
+      res.status(503).json({ error: "Admin secret not configured on this server." });
+      return false;
+    }
+    if (req.headers["x-admin-secret"] !== secret) {
+      res.status(401).json({ error: "Invalid admin secret." });
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * POST /api/admin/skills/publish
+   * Publish a new or updated skill pack.
+   *
+   * Body: { packId?: string; name: string; instructions: string; changeNote: string }
+   *
+   * If packId is omitted, a new pack is created.
+   * If packId refers to an existing pack, its instructions are updated, its
+   * version is incremented, and a changelog entry is appended.
+   *
+   * Active sessions pick up the new instructions at their next session start —
+   * mid-session injection is intentionally not supported to avoid instability.
+   */
+  app.post("/api/admin/skills/publish", async (req: Request, res: Response) => {
+    if (!requireAdminSecret(req, res)) return;
+    try {
+      const { publishSkillPack } = await import("./intelligence/behaviorStore");
+      const { packId, name, instructions, changeNote } = req.body as {
+        packId?: string;
+        name?: string;
+        instructions?: string;
+        changeNote?: string;
+      };
+      if (!name || !instructions || !changeNote) {
+        return res.status(400).json({ error: "name, instructions, and changeNote are required" });
+      }
+      const pack = await publishSkillPack({ packId, name, instructions, changeNote });
+      console.log(`[Admin/Skills] published pack "${pack.name}" v${pack.version}`);
+      res.json({ ok: true, pack });
+    } catch (err) {
+      console.error("[Admin/Skills] publish failed:", err);
+      res.status(500).json({ error: "Failed to publish skill pack" });
+    }
+  });
+
+  /**
+   * GET /api/admin/skills
+   * List all skill packs with their changelogs and per-user override counts.
+   */
+  app.get("/api/admin/skills", async (req: Request, res: Response) => {
+    if (!requireAdminSecret(req, res)) return;
+    try {
+      const { getAdminPackViews } = await import("./intelligence/behaviorStore");
+      const packs = await getAdminPackViews();
+      res.json({ packs });
+    } catch (err) {
+      console.error("[Admin/Skills] list failed:", err);
+      res.status(500).json({ error: "Failed to list skill packs" });
+    }
+  });
+
   const httpServer = createServer(app);
   return httpServer;
 }

@@ -15,6 +15,7 @@ import { eq, desc, and } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { getTodayPredictions } from "../intelligence/predictor";
 import type { EmotionalState } from "../intelligence/emotional-state";
+import { classifyQueryIntent } from "./queryClassifier";
 
 // ─── Exported types ───────────────────────────────────────────────────────────
 
@@ -111,7 +112,7 @@ function hourToTimeOfDay(hour: number): SessionContext["timeOfDay"] {
 // ─── Research intent classifier ───────────────────────────────────────────────
 // Pure utility extracted to queryClassifier.ts so tests can import the real
 // implementation without triggering DB or OpenAI connections.
-export { classifyQueryIntent } from "./queryClassifier";
+export { classifyQueryIntent };
 
 // ─── ActivationPlanner ────────────────────────────────────────────────────────
 

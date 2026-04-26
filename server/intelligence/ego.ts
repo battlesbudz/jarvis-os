@@ -275,6 +275,26 @@ async function applySelfCorrections(
         target: schema.userPreferences.userId,
         set: { data: { ...prefData, jarvisSuppressedActions: suppressedActions }, updatedAt: new Date() },
       });
+
+    // Also persist suppression signals into the behaviour store so the agent
+    // harness can merge them into the system prompt at next session start —
+    // decoupling behaviour updates from code deploys (Task #282).
+    if (suppressedActions.length > 0) {
+      try {
+        const { writeEgoOverrides, getOrCreateSystemPackId } = await import("./behaviorStore");
+        const systemPackId = await getOrCreateSystemPackId();
+        const coachingNote = suppressedActions.length > 0
+          ? `Ego self-correction (${new Date().toISOString().slice(0, 10)}): reduce frequency of low-engagement actions.`
+          : undefined;
+        await writeEgoOverrides(userId, systemPackId, {
+          suppressActionTypes: suppressedActions,
+          ...(coachingNote ? { coachingNote } : {}),
+        });
+      } catch (bsErr) {
+        // Non-fatal — behaviour store write is best-effort
+        console.warn("[Ego] behaviour store override write failed (non-fatal):", bsErr);
+      }
+    }
   } catch (err) {
     console.error("[Ego] applySelfCorrections failed:", err);
   }
