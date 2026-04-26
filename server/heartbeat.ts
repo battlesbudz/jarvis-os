@@ -921,9 +921,87 @@ async function runHeartbeatMemoryPass(userId: string, googleToken: string | null
   }
 }
 
+// ── Agent health check ─────────────────────────────────────────────────────────
+
+/**
+ * Checks all active agents for signs of being stuck:
+ *  - Updates last_heartbeat_at on every active agent.
+ *  - If an agent's last_heartbeat_at hasn't been updated for > 2× its loop
+ *    interval, it increments heartbeat_fail_count.
+ *  - After 3 consecutive failures, marks the agent as stuck and disables it.
+ */
+export async function runAgentHealthCheck(): Promise<void> {
+  try {
+    const { discordAgents } = await import("@shared/schema");
+    const { disableAgent } = await import("./agent/agentManager");
+    const { logAgentEvent } = await import("./agent/agentLogger");
+
+    const now = new Date();
+
+    // Get all active agents with loopEnabled
+    const loopAgents = await db
+      .select()
+      .from(discordAgents)
+      .where(and(eq(discordAgents.isActive, 1), eq(discordAgents.loopEnabled, 1)));
+
+    for (const agent of loopAgents) {
+      const intervalMs = (agent.loopIntervalMinutes ?? 60) * 60 * 1000;
+      const staleThresholdMs = intervalMs * 2;
+      const lastBeat = agent.lastHeartbeatAt;
+
+      const isStale = lastBeat
+        ? now.getTime() - new Date(lastBeat).getTime() > staleThresholdMs
+        : false; // newly created agents are not stale yet
+
+      if (isStale) {
+        const newFailCount = (agent.heartbeatFailCount ?? 0) + 1;
+
+        if (newFailCount >= 3) {
+          // Auto-disable stuck agents
+          await disableAgent(agent.id);
+          await db
+            .update(discordAgents)
+            .set({ stuckSince: agent.stuckSince ?? now, heartbeatFailCount: newFailCount })
+            .where(eq(discordAgents.id, agent.id));
+          console.warn(`[AgentHealth] auto-disabled stuck agent ${agent.name} (${agent.id}), fails=${newFailCount}`);
+          logAgentEvent({
+            event: "agent_disabled_stuck",
+            agentId: agent.id,
+            userId: agent.userId,
+            detail: `heartbeat_fails=${newFailCount}`,
+          });
+        } else {
+          await db
+            .update(discordAgents)
+            .set({ heartbeatFailCount: newFailCount, stuckSince: agent.stuckSince ?? now })
+            .where(eq(discordAgents.id, agent.id));
+          console.warn(`[AgentHealth] agent ${agent.name} (${agent.id}) stale — fail ${newFailCount}/3`);
+          logAgentEvent({
+            event: "heartbeat_check",
+            agentId: agent.id,
+            userId: agent.userId,
+            detail: `stale=true fail=${newFailCount}`,
+          });
+        }
+      } else {
+        // Agent is healthy — reset fail count and update heartbeat
+        await db
+          .update(discordAgents)
+          .set({ lastHeartbeatAt: now, heartbeatFailCount: 0, stuckSince: null })
+          .where(eq(discordAgents.id, agent.id));
+      }
+    }
+  } catch (err) {
+    console.error("[AgentHealth] health check failed:", err);
+  }
+}
+
 export function startHeartbeat(): void {
   if (!isTelegramConfigured()) return;
   console.log(`[Heartbeat] daemon started — checklist at ${CHECKLIST_PATH}, interval ${HEARTBEAT_INTERVAL_MS / 1000}s`);
   setTimeout(() => { runHeartbeatTick().catch((err) => console.error("[Heartbeat] tick error:", err)); }, 60 * 1000);
   setInterval(() => { runHeartbeatTick().catch((err) => console.error("[Heartbeat] tick error:", err)); }, HEARTBEAT_INTERVAL_MS);
+
+  // Agent health check runs every 5 minutes
+  setInterval(() => { runAgentHealthCheck().catch((err) => console.error("[AgentHealth] error:", err)); }, 5 * 60 * 1000);
 }
