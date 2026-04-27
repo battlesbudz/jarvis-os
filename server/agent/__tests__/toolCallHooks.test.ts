@@ -161,6 +161,51 @@ async function run() {
     assert(result.allowed === false, "TH-11: block still fires even after prior param rewrite");
   }
 
+  // TH-12: critical=true handler — exception propagates (fail-closed)
+  {
+    const reg = new ToolCallHookRegistry();
+    reg.register(() => { throw new Error("critical handler crash"); }, { critical: true });
+    let threw = false;
+    try {
+      await reg.run(makeCtx());
+    } catch (err) {
+      threw = err instanceof Error && err.message === "critical handler crash";
+    }
+    assert(threw, "TH-12: critical handler exception propagates (fail-closed)");
+  }
+
+  // TH-13: critical=true handler throws — non-critical handler after it does not run
+  {
+    const ran: string[] = [];
+    const reg = new ToolCallHookRegistry();
+    reg.register(() => { throw new Error("critical crash"); }, { priority: 100, critical: true });
+    reg.register(() => { ran.push("low"); return undefined; }, { priority: 10 });
+    try { await reg.run(makeCtx()); } catch { /* expected */ }
+    assert(ran.length === 0, "TH-13: handlers after a critical crash do not run");
+  }
+
+  // TH-14: HOOK_PRIORITY constants are exported and have correct relative ordering
+  {
+    const { HOOK_PRIORITY } = await import("../toolCallHooks");
+    assert(
+      HOOK_PRIORITY.PERMISSION > HOOK_PRIORITY.APPROVAL && HOOK_PRIORITY.APPROVAL > HOOK_PRIORITY.DEFAULT,
+      `TH-14: PERMISSION(${HOOK_PRIORITY.PERMISSION}) > APPROVAL(${HOOK_PRIORITY.APPROVAL}) > DEFAULT(${HOOK_PRIORITY.DEFAULT})`,
+    );
+  }
+
+  // TH-15: agentName and userId are optional — registry accepts context without them
+  {
+    const reg = new ToolCallHookRegistry();
+    reg.register((ctx) => {
+      // Handler can read optional fields without crashing
+      const _ = ctx.agentName ?? "unknown";
+      const __ = ctx.userId ?? "anon";
+      return undefined;
+    });
+    const result = await reg.run({ toolName: "test", params: {}, agentId: "a1" });
+    assert(result.allowed === true, "TH-15: registry works without agentName/userId in context");
+  }
+
   // ── Summary ────────────────────────────────────────────────────────────────
   console.log(`\nResults: ${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);

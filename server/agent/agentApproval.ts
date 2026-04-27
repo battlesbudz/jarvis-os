@@ -18,7 +18,7 @@ import { agentApprovalGates } from "@shared/schema";
 import { eq, and, lt } from "drizzle-orm";
 import { logAgentEvent } from "./agentLogger";
 import { EventEmitter } from "events";
-import { toolCallHooks } from "./toolCallHooks";
+import { toolCallHooks, HOOK_PRIORITY } from "./toolCallHooks";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -433,5 +433,5 @@ toolCallHooks.register(
       },
     };
   },
-  { priority: 100 },
+  { priority: HOOK_PRIORITY.APPROVAL },
 );
