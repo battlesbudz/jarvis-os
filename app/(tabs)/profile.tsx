@@ -305,6 +305,82 @@ export default function ProfileScreen() {
   const [driveLoading, setDriveLoading] = useState(false);
   const [driveEnabling, setDriveEnabling] = useState(false);
 
+  const [websiteCrawl, setWebsiteCrawl] = useState<{
+    status: 'idle' | 'crawling' | 'done' | 'error';
+    url?: string;
+    pageCount?: number;
+    summary?: string | null;
+    crawledAt?: string | null;
+  }>({ status: 'idle' });
+  const [websiteUrlInput, setWebsiteUrlInput] = useState('');
+  const [websiteCrawling, setWebsiteCrawling] = useState(false);
+  const websitePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const loadWebsiteCrawl = useCallback(async () => {
+    try {
+      const res = await apiRequest('GET', '/api/website-crawl');
+      const data = await res.json();
+      setWebsiteCrawl(data);
+      if (data.url) setWebsiteUrlInput(data.url);
+    } catch {}
+  }, []);
+
+  const startWebsitePoll = useCallback(() => {
+    if (websitePollRef.current) clearInterval(websitePollRef.current);
+    const poll = setInterval(async () => {
+      try {
+        const res = await apiRequest('GET', '/api/website-crawl');
+        const data = await res.json();
+        setWebsiteCrawl(data);
+        if (data.status !== 'crawling') {
+          clearInterval(websitePollRef.current!);
+          websitePollRef.current = null;
+          setWebsiteCrawling(false);
+        }
+      } catch {}
+    }, 3000);
+    websitePollRef.current = poll;
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (websitePollRef.current) {
+        clearInterval(websitePollRef.current);
+        websitePollRef.current = null;
+      }
+    };
+  }, []);
+
+  const handleCrawlWebsite = useCallback(async () => {
+    const url = websiteUrlInput.trim();
+    if (!url) return;
+    setWebsiteCrawling(true);
+    setWebsiteCrawl({ status: 'crawling', url });
+    try {
+      await apiRequest('POST', '/api/website-crawl', { url });
+      startWebsitePoll();
+    } catch {
+      setWebsiteCrawling(false);
+      setWebsiteCrawl({ status: 'error', url });
+    }
+  }, [websiteUrlInput, startWebsitePoll]);
+
+  const handleRemoveWebsiteCrawl = useCallback(async () => {
+    Alert.alert('Remove website data', 'This will remove the crawled website knowledge from Jarvis. You can re-crawl any time.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Remove', style: 'destructive',
+        onPress: async () => {
+          try {
+            await apiRequest('DELETE', '/api/website-crawl');
+            setWebsiteCrawl({ status: 'idle' });
+            setWebsiteUrlInput('');
+          } catch {}
+        },
+      },
+    ]);
+  }, []);
+
   const loadChannels = useCallback(async () => {
     try {
       const res = await apiRequest('GET', '/api/channels');
@@ -702,7 +778,7 @@ export default function ProfileScreen() {
     setLifeContext(lc);
     setNotificationsEnabledState(notifications);
     setUserName(name);
-    await Promise.all([loadOAuthStatus(), loadMemories(), loadTelegramStatus(), loadMorningNotes(), loadDocuments(), loadSoul(), loadPeople(), loadChannels(), loadDaemonPerms(), loadAndroidDaemonPerms(), loadDriveStatus(), loadDreamInsights()]);
+    await Promise.all([loadOAuthStatus(), loadMemories(), loadTelegramStatus(), loadMorningNotes(), loadDocuments(), loadSoul(), loadPeople(), loadChannels(), loadDaemonPerms(), loadAndroidDaemonPerms(), loadDriveStatus(), loadDreamInsights(), loadWebsiteCrawl()]);
     try {
       const importRes = await apiRequest('GET', '/api/chatgpt-import/status');
       const importData = await importRes.json();
@@ -728,7 +804,7 @@ export default function ProfileScreen() {
   // referentially stable and safe to omit from deps; including them causes a
   // temporal-dead-zone ReferenceError because they are declared after loadAll.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loadOAuthStatus, loadMemories, loadTelegramStatus, loadMorningNotes, loadDocuments, loadSoul, loadPeople, loadChannels, loadDriveStatus, loadDreamInsights]);
+  }, [loadOAuthStatus, loadMemories, loadTelegramStatus, loadMorningNotes, loadDocuments, loadSoul, loadPeople, loadChannels, loadDriveStatus, loadDreamInsights, loadWebsiteCrawl]);
 
   const handleToggleEmailAlerts = useCallback(async () => {
     const newValue = !emailAlertsEnabled;
@@ -3499,6 +3575,101 @@ export default function ProfileScreen() {
               })}
             </View>
           )}
+        </Animated.View>
+
+        {/* My Website */}
+        <Animated.View entering={FadeInDown.duration(400).delay(450)}>
+          <Text style={[styles.sectionTitle, { marginTop: 28 }]}>My Website</Text>
+          <View style={styles.platformsList}>
+            <View style={{ paddingHorizontal: 16, paddingTop: 14, paddingBottom: 14 }}>
+              <Text style={{ fontSize: 13, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, lineHeight: 18, marginBottom: 12 }}>
+                Point Jarvis at your personal or business website so it always knows who you are and what you do.
+              </Text>
+
+              {/* URL input row */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                <TextInput
+                  style={{
+                    flex: 1,
+                    height: 40,
+                    borderRadius: 10,
+                    borderWidth: 1,
+                    borderColor: Colors.border,
+                    paddingHorizontal: 12,
+                    fontSize: 13,
+                    fontFamily: 'Inter_400Regular',
+                    color: Colors.text,
+                    backgroundColor: Colors.surface,
+                  }}
+                  placeholder="https://yoursite.com"
+                  placeholderTextColor={Colors.textTertiary}
+                  value={websiteUrlInput}
+                  onChangeText={setWebsiteUrlInput}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  keyboardType="url"
+                  editable={!websiteCrawling && websiteCrawl.status !== 'crawling'}
+                />
+                <Pressable
+                  style={{
+                    height: 40,
+                    paddingHorizontal: 14,
+                    borderRadius: 10,
+                    backgroundColor: (websiteCrawling || websiteCrawl.status === 'crawling' || !websiteUrlInput.trim()) ? Colors.border : '#6366F1',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                  onPress={handleCrawlWebsite}
+                  disabled={websiteCrawling || websiteCrawl.status === 'crawling' || !websiteUrlInput.trim()}
+                >
+                  {websiteCrawling || websiteCrawl.status === 'crawling' ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: '#fff' }}>Crawl</Text>
+                  )}
+                </Pressable>
+              </View>
+
+              {/* Status badge */}
+              {websiteCrawl.status === 'idle' ? (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: Colors.textTertiary }} />
+                  <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: Colors.textTertiary }}>Not connected</Text>
+                </View>
+              ) : websiteCrawl.status === 'crawling' ? (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <ActivityIndicator size="small" color="#6366F1" style={{ transform: [{ scale: 0.7 }] }} />
+                  <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: '#6366F1' }}>Crawling website…</Text>
+                </View>
+              ) : websiteCrawl.status === 'error' ? (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Ionicons name="alert-circle" size={13} color="#EF4444" />
+                  <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: '#EF4444' }}>Crawl failed — try again</Text>
+                </View>
+              ) : websiteCrawl.status === 'done' ? (
+                <View>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <Ionicons name="checkmark-circle" size={13} color={Colors.success} />
+                      <Text style={{ fontSize: 12, fontFamily: 'Inter_500Medium', color: Colors.success }}>
+                        Connected — {websiteCrawl.pageCount ?? 0} pages read
+                      </Text>
+                    </View>
+                    <Pressable onPress={handleRemoveWebsiteCrawl} hitSlop={10}>
+                      <Text style={{ fontSize: 12, fontFamily: 'Inter_500Medium', color: '#EF4444' }}>Remove</Text>
+                    </Pressable>
+                  </View>
+                  {websiteCrawl.summary ? (
+                    <View style={{ marginTop: 10, padding: 10, borderRadius: 10, backgroundColor: Colors.surface, borderWidth: 1, borderColor: Colors.border }}>
+                      <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, lineHeight: 16 }} numberOfLines={5}>
+                        {websiteCrawl.summary}
+                      </Text>
+                    </View>
+                  ) : null}
+                </View>
+              ) : null}
+            </View>
+          </View>
         </Animated.View>
 
         {/* My Documents */}

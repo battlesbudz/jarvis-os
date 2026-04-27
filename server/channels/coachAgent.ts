@@ -205,6 +205,13 @@ export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyR
     : "";
 
   const soulBlock = await getSoulPromptBlock(userId);
+
+  let websiteCrawlBlock = '';
+  try {
+    const { getWebsiteCrawlSummaryBlock } = await import("../websiteCrawler");
+    websiteCrawlBlock = await getWebsiteCrawlSummaryBlock(userId);
+  } catch {}
+
   const formatHintKey = Object.keys(FORMAT_HINTS).find((k) => channelName.startsWith(k)) ?? "Telegram";
   const formatHint = FORMAT_HINTS[formatHintKey];
 
@@ -237,7 +244,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
 Today is ${dayOfWeek}, ${dateStr}. User's timezone: ${userTimezone}.
 ${crossChannelSection}
 
-${soulBlock}
+${soulBlock}${websiteCrawlBlock}
 
 ## User Profile
 - Streak: ${userStats.streak || 0} days

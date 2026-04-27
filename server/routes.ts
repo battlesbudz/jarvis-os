@@ -160,7 +160,7 @@ async function getMorningNoteSummary(userId: string): Promise<string> {
   }
 }
 
-function buildCoachSystemPrompt(goals: any[], stats: any, history: any[], calendarEvents: any[] = [], lifeContext?: any, gmailItems?: any[], gmailConnected?: boolean, slackMessages?: any[], slackConnected?: boolean, commitmentsList?: any[], coachingMode?: string, memories?: { content: string; category: string }[], telegramMessages?: any[], telegramConnected?: boolean, morningNoteSummary?: string, documentsContext?: string, crossChannelContext?: string, soulBlock?: string, daemonSection?: string, emotionalStateBlock?: string, selfImprovementSection?: string): string {
+function buildCoachSystemPrompt(goals: any[], stats: any, history: any[], calendarEvents: any[] = [], lifeContext?: any, gmailItems?: any[], gmailConnected?: boolean, slackMessages?: any[], slackConnected?: boolean, commitmentsList?: any[], coachingMode?: string, memories?: { content: string; category: string }[], telegramMessages?: any[], telegramConnected?: boolean, morningNoteSummary?: string, documentsContext?: string, crossChannelContext?: string, soulBlock?: string, daemonSection?: string, emotionalStateBlock?: string, selfImprovementSection?: string, websiteContext?: string): string {
   const completedHistory = history.filter((h: any) => h.completed);
   const skippedHistory = history.filter((h: any) => !h.completed);
   const completionRate = history.length > 0
@@ -197,6 +197,7 @@ function buildCoachSystemPrompt(goals: any[], stats: any, history: any[], calend
     : '';
 
   const documentsSection = documentsContext || '';
+  const websiteSection = websiteContext || '';
 
   const commitmentsSection = commitmentsList && commitmentsList.length > 0
     ? `\n## Open Commitments (user said they would do these)\n` +
@@ -293,7 +294,7 @@ ${soulBlock && soulBlock.trim() ? soulBlock : memoriesSection}${emotionalStateBl
 - Total tasks completed: ${stats.totalCompleted || 0}
 - Total XP earned: ${stats.xp || 0}
 - Task completion rate (last 7 days): ${completionRate}% (${completedHistory.length} completed, ${skippedHistory.length} skipped)
-${strugglingCategories.length > 0 ? `- Struggling most with: ${strugglingCategories.join(', ')}` : ''}${soulBlock && soulBlock.trim() ? '' : lifeContextSection}${documentsSection}
+${strugglingCategories.length > 0 ? `- Struggling most with: ${strugglingCategories.join(', ')}` : ''}${soulBlock && soulBlock.trim() ? '' : lifeContextSection}${websiteSection}${documentsSection}
 
 ## Active Goals
 ${goalsText}
@@ -2367,7 +2368,15 @@ You can extend yourself by building new tools directly. Generate the complete Ty
 
 **After building**: The server restarts automatically so the new tool becomes active. Use \`test_tool\` to manually re-test any built tool. All builds are logged in Settings → Build History.`;
 
-      const systemPrompt = buildCoachSystemPrompt(goals || [], stats || {}, history || [], calendarEvents || [], lifeContext || null, resolvedGmailItems, resolvedGmailConnected, slackMessages || [], slackConnected ?? false, userCommitments, coachingMode, memories, telegramMessages || [], telegramConnected ?? false, morningNoteSummary, documentsContext, crossChannelContext, soulBlock, daemonSection, emotionalStateBlock, selfImprovementSection);
+      let websiteContext = '';
+      if (userId) {
+        try {
+          const { getWebsiteCrawlSummaryBlock } = await import("./websiteCrawler");
+          websiteContext = await getWebsiteCrawlSummaryBlock(userId);
+        } catch {}
+      }
+
+      const systemPrompt = buildCoachSystemPrompt(goals || [], stats || {}, history || [], calendarEvents || [], lifeContext || null, resolvedGmailItems, resolvedGmailConnected, slackMessages || [], slackConnected ?? false, userCommitments, coachingMode, memories, telegramMessages || [], telegramConnected ?? false, morningNoteSummary, documentsContext, crossChannelContext, soulBlock, daemonSection, emotionalStateBlock, selfImprovementSection, websiteContext);
 
       // Detect if the user's current message is a device-control request so we can
       // force tool use rather than letting the model respond with plain text.
@@ -5376,6 +5385,65 @@ Return ONLY the JSON object.`;
     } catch (error) {
       console.error("Error deleting document:", error);
       res.status(500).json({ error: "Failed to delete document" });
+    }
+  });
+
+  app.post("/api/website-crawl", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const { url } = req.body;
+      if (!url || typeof url !== "string") return res.status(400).json({ error: "url is required" });
+      let normalized = url.trim();
+      if (!normalized.startsWith("http://") && !normalized.startsWith("https://")) {
+        normalized = "https://" + normalized;
+      }
+      const { startWebsiteCrawl } = await import("./websiteCrawler");
+      const crawledAt = new Date();
+      await db
+        .insert(schema.websiteCrawls)
+        .values({ userId, url: normalized, status: "crawling", pageCount: 0, summary: null, crawledAt })
+        .onConflictDoUpdate({
+          target: schema.websiteCrawls.userId,
+          set: { url: normalized, status: "crawling", pageCount: 0, summary: null, crawledAt },
+        });
+      startWebsiteCrawl(userId, normalized).catch((err) => console.error("[website-crawl] background error:", err));
+      res.json({ status: "crawling", url: normalized, pageCount: 0, summary: null, crawledAt });
+    } catch (error) {
+      console.error("Error starting website crawl:", error);
+      res.status(500).json({ error: "Failed to start crawl" });
+    }
+  });
+
+  app.get("/api/website-crawl", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const rows = await db.select().from(schema.websiteCrawls).where(eq(schema.websiteCrawls.userId, userId)).limit(1);
+      if (rows.length === 0) return res.json({ status: "idle" });
+      const row = rows[0];
+      res.json({
+        status: row.status,
+        url: row.url,
+        pageCount: row.pageCount,
+        summary: row.summary,
+        crawledAt: row.crawledAt,
+      });
+    } catch (error) {
+      console.error("Error fetching website crawl:", error);
+      res.status(500).json({ error: "Failed to fetch crawl status" });
+    }
+  });
+
+  app.delete("/api/website-crawl", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      await db.delete(schema.websiteCrawls).where(eq(schema.websiteCrawls.userId, userId));
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error deleting website crawl:", error);
+      res.status(500).json({ error: "Failed to delete crawl" });
     }
   });
 
