@@ -374,6 +374,24 @@ export async function ensureTablesExist() {
     `);
 
     await db.execute(sql`
+      DELETE FROM inbox_items a
+      USING (
+        SELECT id,
+               ROW_NUMBER() OVER (
+                 PARTITION BY "userId", "sourceId"
+                 ORDER BY "createdAt" ASC, id ASC
+               ) AS rn
+        FROM inbox_items
+      ) b
+      WHERE a.id = b.id AND b.rn > 1
+    `);
+
+    await db.execute(sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS inbox_items_user_source_uidx
+      ON inbox_items ("userId", "sourceId")
+    `);
+
+    await db.execute(sql`
       CREATE TABLE IF NOT EXISTS proactive_schedule_log (
         id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
         user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
