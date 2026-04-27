@@ -8,6 +8,13 @@ import { routeToNamedAgent } from "../agent/runNamedAgent";
 import { setupWorkspace as _setupWorkspace, postToTopicChannel as _postToTopicChannel, classifyTopic, getTopicForChannel, WORKSPACE_TOPICS, type WorkspaceMeta } from "./workspace";
 import { getUserTtsChannels, getUserTtsPrefs, speakToUser } from "../agent/tools/tts";
 
+// ── Per-user session ID store for Discord coach conversations ───────────────
+// Volatile in-process cache keyed by userId. Lost on server restart but the
+// coach pipeline gracefully falls back to full history injection on cache miss,
+// so there is no data loss — only a minor efficiency cost for the first turn
+// after a restart.
+const discordCoachSessions = new Map<string, string>();
+
 // ── Types ──────────────────────────────────────────────────────────────────
 
 interface PairingRecord {
@@ -543,6 +550,7 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
       let result: Awaited<ReturnType<typeof runCoachAgent>> | null = null;
       let streamingFailed = false;
       const discordChannelId = message.channelId;
+      const storedSessionId = discordCoachSessions.get(userId);
       try {
         result = await runCoachAgent({
           userId,
@@ -551,6 +559,7 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
           onToken,
           discordGuildId,
           discordChannelId,
+          sdkSessionId: storedSessionId,
         });
         // Only retry when streaming produced NO visible content at all.
         // If streamBuf has content the placeholder was already edited; a
@@ -579,8 +588,14 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
           channelName: namedAgent ? `Discord #${namedAgent.name.toLowerCase()}` : channelLabel,
           discordGuildId,
           discordChannelId,
+          sdkSessionId: storedSessionId,
           // no onToken → forces non-streaming path
         });
+      }
+
+      // Persist the session ID so the next turn can resume without a DB chat_history fetch.
+      if (result?.sdkSessionId) {
+        discordCoachSessions.set(userId, result.sdkSessionId);
       }
 
       // Use streamed buffer as final reply when result is unavailable but

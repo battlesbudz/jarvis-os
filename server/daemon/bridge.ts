@@ -85,6 +85,13 @@ export function subscribeWakeWordTrigger(
   return () => wakeWordTriggerCallbacks.get(userId)?.delete(cb);
 }
 
+// ── Per-user session ID store for daemon (Voice) coach conversations ────────
+// Volatile in-process cache keyed by userId. Lost on server restart but the
+// coach pipeline gracefully falls back to full history injection on cache miss,
+// so there is no data loss — only a minor efficiency cost for the first turn
+// after a restart.
+const daemonCoachSessions = new Map<string, string>();
+
 /**
  * Handles a voice utterance captured by the Android daemon in Talk Mode.
  * Routes through the full Jarvis coach pipeline (runCoachAgent) so the response
@@ -99,11 +106,17 @@ async function processDaemonUtterance(userId: string, utterance: string): Promis
     const { runCoachAgent } = await import("../channels/coachAgent");
     const { textToSpeech } = await import("../replit_integrations/audio/client");
 
+    const storedSessionId = daemonCoachSessions.get(userId);
     const result = await runCoachAgent({
       userId,
       userText: utterance,
       channelName: "Voice",
+      sdkSessionId: storedSessionId,
     });
+    // Persist the session ID so the next turn can resume without a DB chat_history fetch.
+    if (result.sdkSessionId) {
+      daemonCoachSessions.set(userId, result.sdkSessionId);
+    }
 
     const responseText = result.reply.trim() || "I'm not sure how to help with that.";
     console.log(`[daemon] talk: Jarvis reply: "${responseText.slice(0, 80)}"`);

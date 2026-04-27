@@ -8,6 +8,13 @@ import { runCoachAgent } from "./coachAgent";
 import { postSlackMessage, getSlackBotToken } from "./slackChannel";
 import { buildPlanFromInputs } from "../routes";
 
+// ── Per-user session ID store for Slack coach conversations ─────────────────
+// Volatile in-process cache keyed by userId. Lost on server restart but the
+// coach pipeline gracefully falls back to full history injection on cache miss,
+// so there is no data loss — only a minor efficiency cost for the first turn
+// after a restart.
+const slackCoachSessions = new Map<string, string>();
+
 const SLACK_SIGNING_SECRET = process.env.SLACK_SIGNING_SECRET;
 
 function verifySlackSignature(req: Request): boolean {
@@ -106,7 +113,12 @@ export function registerSlackWebhook(app: Express): void {
       if (!botToken) return;
 
       try {
-        const { reply } = await runCoachAgent({ userId, userText: text, channelName: "Slack" });
+        const storedSessionId = slackCoachSessions.get(userId);
+        const { reply, sdkSessionId } = await runCoachAgent({ userId, userText: text, channelName: "Slack", sdkSessionId: storedSessionId });
+        // Persist the session ID so the next turn can resume without a DB chat_history fetch.
+        if (sdkSessionId) {
+          slackCoachSessions.set(userId, sdkSessionId);
+        }
         if (reply && reply.trim()) {
           await postSlackMessage(botToken, ev.channel, reply);
         }
@@ -163,11 +175,15 @@ export function registerSlackWebhook(app: Express): void {
           await respond(`*Today's plan*\n${lines}\n\n_${plan.reasoning}_`);
         } else if (subcommand === "brain-dump" || subcommand === "braindump") {
           if (!arg) { await respond("Add the thought after the command, e.g. `/jarvis brain-dump finish Q3 deck`."); return; }
-          const { reply } = await runCoachAgent({ userId, userText: `Brain dump: ${arg}`, channelName: "Slack" });
-          await respond(reply);
+          const braindumpSession = slackCoachSessions.get(userId);
+          const braindumpResult = await runCoachAgent({ userId, userText: `Brain dump: ${arg}`, channelName: "Slack", sdkSessionId: braindumpSession });
+          if (braindumpResult.sdkSessionId) slackCoachSessions.set(userId, braindumpResult.sdkSessionId);
+          await respond(braindumpResult.reply);
         } else if (subcommand === "status") {
-          const { reply } = await runCoachAgent({ userId, userText: arg || "What's the status of my day?", channelName: "Slack" });
-          await respond(reply);
+          const statusSession = slackCoachSessions.get(userId);
+          const statusResult = await runCoachAgent({ userId, userText: arg || "What's the status of my day?", channelName: "Slack", sdkSessionId: statusSession });
+          if (statusResult.sdkSessionId) slackCoachSessions.set(userId, statusResult.sdkSessionId);
+          await respond(statusResult.reply);
         } else {
           await respond("Unknown subcommand. Try `/jarvis plan`, `/jarvis brain-dump <thought>`, or `/jarvis status`.");
         }
