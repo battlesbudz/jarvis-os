@@ -1136,6 +1136,30 @@ export async function ensureTablesExist() {
     await db.execute(sql`CREATE INDEX IF NOT EXISTS agent_approval_gates_user_status_idx ON agent_approval_gates(user_id, status, created_at DESC)`).catch(() => {});
     await db.execute(sql`ALTER TABLE agent_approval_gates ADD COLUMN IF NOT EXISTS initiated_by VARCHAR NOT NULL DEFAULT 'user'`).catch(() => {});
 
+    // ── agent_approval_policies: per-agent approval scope ─────────────────────
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS agent_approval_policies (
+        agent_id VARCHAR PRIMARY KEY REFERENCES discord_agents(id) ON DELETE CASCADE,
+        user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        scope VARCHAR NOT NULL DEFAULT 'global',
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `).catch(() => {});
+
+    // ── agent_approval_allowlist: per-agent tool allowlist patterns ────────────
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS agent_approval_allowlist (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        agent_id VARCHAR NOT NULL REFERENCES discord_agents(id) ON DELETE CASCADE,
+        user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        pattern VARCHAR NOT NULL,
+        use_count INTEGER NOT NULL DEFAULT 0,
+        last_used_at TIMESTAMP,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `).catch(() => {});
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS agent_approval_allowlist_agent_idx ON agent_approval_allowlist(agent_id)`).catch(() => {});
+
     // ── agent_chat_messages: permanent per-agent conversation log (no TTL) ──
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS agent_chat_messages (

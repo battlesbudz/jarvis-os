@@ -75,6 +75,7 @@ const DELIVERABLE_ICON: Record<string, keyof typeof Ionicons.glyphMap> = {
   document: 'document-text',
   plan: 'list',
   email_draft: 'mail',
+  approval_gate: 'shield-checkmark-outline',
 };
 
 const DELIVERABLE_LABEL: Record<string, string> = {
@@ -82,6 +83,7 @@ const DELIVERABLE_LABEL: Record<string, string> = {
   document: 'Document',
   plan: 'Plan',
   email_draft: 'Email draft',
+  approval_gate: 'Approval required',
 };
 
 const JOB_ICON: Record<string, keyof typeof Ionicons.glyphMap> = {
@@ -529,6 +531,19 @@ export default function InboxScreen() {
                     <Text style={styles.reasonText} numberOfLines={1}>To: {meta.to}</Text>
                   </View>
                 )}
+                {d.type === 'approval_gate' && (() => {
+                  const gateMeta = d.meta as { policyApplied?: string; toolName?: string } | null;
+                  const policy = gateMeta?.policyApplied;
+                  if (!policy || policy === 'global') return null;
+                  return (
+                    <View style={[styles.reasonContainer, { backgroundColor: Colors.primary + '10', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 3 }]}>
+                      <Ionicons name="shield-outline" size={12} color={Colors.primary} />
+                      <Text style={[styles.reasonText, { color: Colors.primary }]} numberOfLines={1}>
+                        Policy: {policy.length > 40 ? policy.slice(0, 40) + '…' : policy}
+                      </Text>
+                    </View>
+                  );
+                })()}
 
                 <View style={styles.draftBodyBox}>
                   <Text style={styles.draftBodyText} numberOfLines={8}>

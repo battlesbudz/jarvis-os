@@ -65,6 +65,14 @@ import {
 } from "./agentConfigSchema";
 import type { AgentConfigFile } from "./agentConfigSchema";
 import { resumeSession, persistChatMessages, getChatHistory } from "./providers/claude";
+import {
+  getAgentPolicy,
+  setAgentPolicyScope,
+  addAllowlistPattern,
+  removeAllowlistPattern,
+} from "./agentPolicyManager";
+import type { AgentPolicyScope } from "@shared/schema";
+import { AGENT_POLICY_SCOPES } from "@shared/schema";
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -817,6 +825,77 @@ export function registerAgentRoutes(app: Express): void {
       const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(Math.floor(rawLimit), 1000) : 0;
       const messages = await getChatHistory(req.params.id, userId, limit);
       res.json({ messages });
+    } catch (err) { handleError(res, err); }
+  });
+
+  // ── 15f. GET  /api/agents/:id/policy — read policy + allowlist ───────────
+  app.get("/api/agents/:id/policy", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId!;
+      if (!(await ownerCheck(req.params.id, userId))) {
+        res.status(404).json({ error: "Agent not found" });
+        return;
+      }
+      const policy = await getAgentPolicy(req.params.id);
+      res.json({
+        agentId: req.params.id,
+        scope: policy?.scope ?? "global",
+        allowlist: policy?.allowlist ?? [],
+      });
+    } catch (err) { handleError(res, err); }
+  });
+
+  // ── 15g. PUT  /api/agents/:id/policy — set policy scope ──────────────────
+  app.put("/api/agents/:id/policy", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId!;
+      if (!(await ownerCheck(req.params.id, userId))) {
+        res.status(404).json({ error: "Agent not found" });
+        return;
+      }
+      const { scope } = req.body as { scope: string };
+      if (!scope || !(AGENT_POLICY_SCOPES as readonly string[]).includes(scope)) {
+        res.status(400).json({ error: `scope must be one of: ${AGENT_POLICY_SCOPES.join(", ")}` });
+        return;
+      }
+      await setAgentPolicyScope(req.params.id, userId, scope as AgentPolicyScope);
+      const policy = await getAgentPolicy(req.params.id);
+      res.json({ ok: true, scope: policy?.scope ?? scope, allowlist: policy?.allowlist ?? [] });
+    } catch (err) { handleError(res, err); }
+  });
+
+  // ── 15h. POST /api/agents/:id/policy/allowlist — add pattern ─────────────
+  app.post("/api/agents/:id/policy/allowlist", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId!;
+      if (!(await ownerCheck(req.params.id, userId))) {
+        res.status(404).json({ error: "Agent not found" });
+        return;
+      }
+      const { pattern } = req.body as { pattern: string };
+      if (!pattern?.trim()) {
+        res.status(400).json({ error: "pattern is required" });
+        return;
+      }
+      const entry = await addAllowlistPattern(req.params.id, userId, pattern.trim());
+      res.status(201).json({ ok: true, entry });
+    } catch (err) { handleError(res, err); }
+  });
+
+  // ── 15i. DELETE /api/agents/:id/policy/allowlist/:patternId ──────────────
+  app.delete("/api/agents/:id/policy/allowlist/:patternId", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId!;
+      if (!(await ownerCheck(req.params.id, userId))) {
+        res.status(404).json({ error: "Agent not found" });
+        return;
+      }
+      const removed = await removeAllowlistPattern(req.params.patternId, req.params.id);
+      if (!removed) {
+        res.status(404).json({ error: "Pattern not found" });
+        return;
+      }
+      res.json({ ok: true });
     } catch (err) { handleError(res, err); }
   });
 

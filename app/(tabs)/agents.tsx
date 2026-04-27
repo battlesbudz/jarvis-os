@@ -31,6 +31,30 @@ import { IntegrationErrorCard } from "@/components/IntegrationErrorCard";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
+type PolicyScope = "global" | "permissive" | "strict" | "custom";
+
+interface AllowlistEntry {
+  id: string;
+  agentId: string;
+  pattern: string;
+  useCount: number;
+  lastUsedAt: string | null;
+  createdAt: string;
+}
+
+interface AgentPolicy {
+  agentId: string;
+  scope: PolicyScope;
+  allowlist: AllowlistEntry[];
+}
+
+const POLICY_SCOPE_LABELS: Record<PolicyScope, { label: string; description: string; color: string }> = {
+  global:     { label: "Global",     description: "Use system defaults",                   color: "#6b7280" },
+  permissive: { label: "Permissive", description: "Auto-approve all reversible tools",      color: "#22c55e" },
+  strict:     { label: "Strict",     description: "Always require manual approval",         color: "#ef4444" },
+  custom:     { label: "Custom",     description: "Allowlist controls auto-approval",       color: "#f59e0b" },
+};
+
 interface AgentPermissions {
   can_search_web: boolean;
   can_use_browser: boolean;
@@ -1421,7 +1445,7 @@ function AgentDetailSheet({
   onDelete: (agent: RosterAgent) => void;
   onToggle: (agent: RosterAgent) => void;
 }) {
-  const [activeTab, setActiveTab] = useState<"overview" | "memories" | "config">("overview");
+  const [activeTab, setActiveTab] = useState<"overview" | "memories" | "config" | "policy">("overview");
   const [name, setName] = useState("");
   const [role, setRole] = useState("custom");
   const [persona, setPersona] = useState("");
@@ -1433,10 +1457,41 @@ function AgentDetailSheet({
   const [mentionPatterns, setMentionPatterns] = useState<string[]>([]);
   const [mentionPatternInput, setMentionPatternInput] = useState("");
   const [saving, setSaving] = useState(false);
+  const [newPattern, setNewPattern] = useState("");
+  const [addingPattern, setAddingPattern] = useState(false);
+
+  const queryClient = useQueryClient();
 
   const { data: memData, isLoading: memLoading } = useQuery<{ memories: MemoryItem[]; count: number }>({
     queryKey: ["/api/agents", agent?.id, "memories"],
     enabled: !!agent && activeTab === "memories",
+  });
+
+  const { data: policyData, isLoading: policyLoading } = useQuery<AgentPolicy>({
+    queryKey: ["/api/agents", agent?.id, "policy"],
+    enabled: !!agent && activeTab === "policy",
+  });
+
+  const setScopeMutation = useMutation({
+    mutationFn: ({ scope }: { scope: PolicyScope }) =>
+      apiRequest("PUT", `/api/agents/${agent!.id}/policy`, { scope }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/agents", agent?.id, "policy"] }),
+  });
+
+  const addPatternMutation = useMutation({
+    mutationFn: ({ pattern }: { pattern: string }) =>
+      apiRequest("POST", `/api/agents/${agent!.id}/policy/allowlist`, { pattern }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/agents", agent?.id, "policy"] });
+      setNewPattern("");
+      setAddingPattern(false);
+    },
+  });
+
+  const removePatternMutation = useMutation({
+    mutationFn: ({ patternId }: { patternId: string }) =>
+      apiRequest("DELETE", `/api/agents/${agent!.id}/policy/allowlist/${patternId}`, {}),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/agents", agent?.id, "policy"] }),
   });
 
   useEffect(() => {
@@ -1547,14 +1602,17 @@ function AgentDetailSheet({
 
         {/* Tab bar */}
         <View style={[styles.tabBar, { borderBottomColor: Colors.border }]}>
-          {(["overview", "memories", "config"] as const).map((tab) => (
+          {(["overview", "memories", "config", "policy"] as const).map((tab) => (
             <TouchableOpacity
               key={tab}
               style={[styles.tab, activeTab === tab && { borderBottomColor: Colors.primary, borderBottomWidth: 2 }]}
               onPress={() => setActiveTab(tab)}
             >
               <Text style={[styles.tabText, { color: activeTab === tab ? Colors.primary : Colors.textSecondary }]}>
-                {tab === "overview" ? "Overview" : tab === "memories" ? `Memories${memCount > 0 ? ` (${memCount})` : ""}` : "Config"}
+                {tab === "overview" ? "Overview"
+                  : tab === "memories" ? `Memories${memCount > 0 ? ` (${memCount})` : ""}`
+                  : tab === "config" ? "Config"
+                  : "Policy"}
               </Text>
             </TouchableOpacity>
           ))}
@@ -1904,6 +1962,157 @@ function AgentDetailSheet({
                 );
               })}
             </View>
+
+            <View style={{ height: 40 }} />
+          </ScrollView>
+        )}
+
+        {/* Policy tab */}
+        {activeTab === "policy" && (
+          <ScrollView style={styles.sheetBody} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+            <Text style={[styles.detailSectionHint, { color: Colors.textTertiary, marginTop: 0 }]}>
+              Control when this agent needs your approval before running high-risk tools.
+            </Text>
+
+            {/* Scope picker */}
+            <Text style={[styles.fieldLabel, { color: Colors.textSecondary }]}>APPROVAL SCOPE</Text>
+            {policyLoading ? (
+              <ActivityIndicator size="small" color={Colors.primary} style={{ marginTop: 12 }} />
+            ) : (
+              <View style={[styles.permsList, { backgroundColor: Colors.surface, borderColor: Colors.border }]}>
+                {(["global", "permissive", "strict", "custom"] as PolicyScope[]).map((scope, idx, arr) => {
+                  const { label, description, color } = POLICY_SCOPE_LABELS[scope];
+                  const isSelected = (policyData?.scope ?? "global") === scope;
+                  const isLast = idx === arr.length - 1;
+                  return (
+                    <View key={scope}>
+                      <TouchableOpacity
+                        style={styles.permRow}
+                        onPress={() => setScopeMutation.mutate({ scope })}
+                        disabled={setScopeMutation.isPending}
+                      >
+                        <View style={[styles.permIconWrap, { backgroundColor: isSelected ? color + "22" : Colors.background }]}>
+                          <Ionicons
+                            name={
+                              scope === "global" ? "globe-outline" :
+                              scope === "permissive" ? "checkmark-circle-outline" :
+                              scope === "strict" ? "lock-closed-outline" :
+                              "list-outline"
+                            }
+                            size={15}
+                            color={isSelected ? color : Colors.textSecondary}
+                          />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={[styles.permLabel, { color: isSelected ? color : Colors.text, fontWeight: isSelected ? "600" : "400" }]}>
+                            {label}
+                          </Text>
+                          <Text style={[styles.metaText, { color: Colors.textTertiary, marginTop: 1 }]}>{description}</Text>
+                        </View>
+                        {isSelected && (
+                          <Ionicons name="checkmark" size={16} color={color} />
+                        )}
+                      </TouchableOpacity>
+                      {!isLast && <View style={[styles.permDivider, { backgroundColor: Colors.border }]} />}
+                    </View>
+                  );
+                })}
+              </View>
+            )}
+
+            {/* Allowlist patterns */}
+            <View style={[styles.detailSectionDivider, { borderTopColor: Colors.border, marginTop: 20 }]} />
+            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 16, marginBottom: 6 }}>
+              <Text style={[styles.fieldLabel, { color: Colors.textSecondary, marginTop: 0, marginBottom: 0 }]}>
+                TOOL ALLOWLIST
+              </Text>
+              <TouchableOpacity
+                style={[styles.runBtn, { backgroundColor: Colors.primary + "22" }]}
+                onPress={() => setAddingPattern(true)}
+              >
+                <Ionicons name="add" size={16} color={Colors.primary} />
+              </TouchableOpacity>
+            </View>
+            <Text style={[styles.detailSectionHint, { color: Colors.textTertiary, marginTop: 0, marginBottom: 8 }]}>
+              Tools matching a pattern here are auto-approved for this agent regardless of scope. Wildcards supported: e.g. gmail_*
+            </Text>
+
+            {addingPattern && (
+              <View style={[styles.loopToggleRow, { backgroundColor: Colors.surface, borderColor: Colors.primary + "55", marginBottom: 10 }]}>
+                <TextInput
+                  style={[styles.chatInput, { flex: 1, backgroundColor: "transparent", borderWidth: 0, paddingHorizontal: 0, paddingVertical: 0, fontSize: 14, height: 32 }]}
+                  value={newPattern}
+                  onChangeText={setNewPattern}
+                  placeholder="e.g. gmail_* or browser_navigate"
+                  placeholderTextColor={Colors.textTertiary}
+                  autoFocus
+                  autoCapitalize="none"
+                />
+                <TouchableOpacity
+                  style={[styles.chatSendBtn, { width: 32, height: 32, backgroundColor: newPattern.trim() ? Colors.primary : Colors.border }]}
+                  onPress={() => { if (newPattern.trim()) addPatternMutation.mutate({ pattern: newPattern.trim() }); }}
+                  disabled={!newPattern.trim() || addPatternMutation.isPending}
+                >
+                  <Ionicons name="checkmark" size={16} color={Colors.white} />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.chatSendBtn, { width: 32, height: 32, backgroundColor: Colors.background }]}
+                  onPress={() => { setAddingPattern(false); setNewPattern(""); }}
+                >
+                  <Ionicons name="close" size={16} color={Colors.textSecondary} />
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {policyLoading ? null : (policyData?.allowlist ?? []).length === 0 ? (
+              <View style={[styles.personaCard, { backgroundColor: Colors.surface, borderColor: Colors.border, alignItems: "center", gap: 6 }]}>
+                <Ionicons name="list-outline" size={22} color={Colors.textTertiary} />
+                <Text style={[styles.personaText, { color: Colors.textTertiary, textAlign: "center" }]}>
+                  No allowlist patterns yet.{"\n"}Tap + to add one.
+                </Text>
+              </View>
+            ) : (
+              <View style={[styles.permsList, { backgroundColor: Colors.surface, borderColor: Colors.border }]}>
+                {(policyData?.allowlist ?? []).map((entry, idx, arr) => {
+                  const isLast = idx === arr.length - 1;
+                  const lastUsed = entry.lastUsedAt
+                    ? new Date(entry.lastUsedAt).toLocaleDateString()
+                    : "never";
+                  return (
+                    <View key={entry.id}>
+                      <View style={styles.permRow}>
+                        <View style={[styles.permIconWrap, { backgroundColor: Colors.background }]}>
+                          <Ionicons name="code-slash-outline" size={13} color={Colors.textSecondary} />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={[styles.permLabel, { color: Colors.text, fontFamily: "monospace", fontSize: 13 }]}>
+                            {entry.pattern}
+                          </Text>
+                          <Text style={[styles.metaText, { color: Colors.textTertiary, marginTop: 1 }]}>
+                            Used {entry.useCount}× · last {lastUsed}
+                          </Text>
+                        </View>
+                        <TouchableOpacity
+                          onPress={() => Alert.alert(
+                            "Remove pattern",
+                            `Remove "${entry.pattern}" from the allowlist?`,
+                            [
+                              { text: "Cancel", style: "cancel" },
+                              { text: "Remove", style: "destructive", onPress: () => removePatternMutation.mutate({ patternId: entry.id }) },
+                            ]
+                          )}
+                          disabled={removePatternMutation.isPending}
+                          style={{ padding: 4 }}
+                        >
+                          <Ionicons name="trash-outline" size={15} color={Colors.error} />
+                        </TouchableOpacity>
+                      </View>
+                      {!isLast && <View style={[styles.permDivider, { backgroundColor: Colors.border }]} />}
+                    </View>
+                  );
+                })}
+              </View>
+            )}
 
             <View style={{ height: 40 }} />
           </ScrollView>

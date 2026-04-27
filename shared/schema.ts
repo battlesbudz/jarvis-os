@@ -816,6 +816,40 @@ export const agentApprovalGates = pgTable("agent_approval_gates", {
 
 export type AgentApprovalGate = typeof agentApprovalGates.$inferSelect;
 
+// ── Per-Agent Approval Policies ───────────────────────────────────────────────
+// Each named agent can have its own approval policy that overrides the global
+// defaults. Scopes: "global" (use system defaults), "permissive" (auto-approve
+// all reversible high-risk tools), "strict" (manual approval for everything),
+// "custom" (fine-grained allowlist patterns control auto-approval).
+
+export const AGENT_POLICY_SCOPES = ["global", "permissive", "strict", "custom"] as const;
+export type AgentPolicyScope = typeof AGENT_POLICY_SCOPES[number];
+
+export const agentApprovalPolicies = pgTable("agent_approval_policies", {
+  agentId: varchar("agent_id").primaryKey().references(() => discordAgents.id, { onDelete: "cascade" }),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  scope: varchar("scope").$type<AgentPolicyScope>().notNull().default("global"),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export type AgentApprovalPolicy = typeof agentApprovalPolicies.$inferSelect;
+
+// Per-pattern allowlist rows. A "pattern" may be an exact tool name (e.g.
+// "gmail_draft") or a simple wildcard suffix (e.g. "gmail_*").
+// When the tool name matches any pattern for the agent's policy, it is
+// auto-approved without interrupting the user.
+export const agentApprovalAllowlist = pgTable("agent_approval_allowlist", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  agentId: varchar("agent_id").notNull().references(() => discordAgents.id, { onDelete: "cascade" }),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  pattern: varchar("pattern").notNull(),
+  useCount: integer("use_count").notNull().default(0),
+  lastUsedAt: timestamp("last_used_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export type AgentApprovalAllowlistEntry = typeof agentApprovalAllowlist.$inferSelect;
+
 // ── Nervous System — Ambient Signal Monitoring ────────────────────────────────
 // Per-user watch topics (keywords, companies, people, industries) that the
 // nervous system scanner monitors every 30 minutes via web search.
