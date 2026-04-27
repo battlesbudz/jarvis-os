@@ -54,6 +54,7 @@ import {
 } from "./scheduleChannelReport";
 import { youtubeSearchTool } from "./youtubeSearch";
 import { youtubeTranscriptTool } from "./youtubeTranscript";
+import { xSearchTool } from "./xSearch";
 import { registerApprovalTool } from "./registerApproval";
 import { discordPinMessageTool } from "./discordPinMessage";
 import { setupNamedAgentTool } from "./setupNamedAgent";
@@ -125,7 +126,7 @@ export type ToolGroup =
   | "email"       // gmail_action, gmail_draft (Google-gated), send_email, fetch_emails
   | "memory"      // memory_search, memory_get
   | "documents"   // create/list/read_document, drive_* (Google-gated)
-  | "research"    // web_search, research_topic, web_fetch, youtube_search, youtube_transcript
+  | "research"    // web_search, research_topic, web_fetch, youtube_search, youtube_transcript, x_search
   | "discord"     // discord_post, discord_manage, schedule_channel_report, setup_content_pipeline
   | "scheduling"  // schedule_jarvis_task, cron_*, workflow_*
   | "browser"     // browser_navigate, browser_click, …
@@ -246,6 +247,7 @@ export {
   setupNamedAgentTool,
   youtubeSearchTool,
   youtubeTranscriptTool,
+  xSearchTool,
   queueBackgroundJobTool,
   setupContentPipelineTool,
   setupDiscordWorkspaceTool,
