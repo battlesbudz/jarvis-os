@@ -1,6 +1,7 @@
 import { db } from "../db";
 import { inboxItems } from "@shared/schema";
 import type { Channel, ChannelSendOpts, ChannelSendResult } from "./types";
+import { outboundMiddleware } from "./outboundMiddleware";
 
 const NOTIFICATION_SUBJECTS: Record<string, string> = {
   morning_briefing: "Your morning briefing",
@@ -30,6 +31,14 @@ export const inAppChannel: Channel = {
       if (SELF_MANAGED_INBOX_TYPES.has(notifType)) {
         return { ok: true };
       }
+      // Run through outbound middleware (whitespace cleaner, length limiter, etc.)
+      // before persisting to the inbox. Markdown normaliser passes through for in_app
+      // since the mobile UI renders markdown natively.
+      const processedText = await outboundMiddleware.run({ text, platform: "in_app", userId });
+      if (processedText === null) {
+        // A middleware handler cancelled delivery — skip insertion.
+        return { ok: true };
+      }
       const sourceId = `in_app:${notifType}:${Date.now()}:${Math.random().toString(36).slice(2, 7)}`;
       const subject = NOTIFICATION_SUBJECTS[notifType] ?? "Jarvis notification";
       await db.insert(inboxItems).values({
@@ -37,7 +46,7 @@ export const inAppChannel: Channel = {
         sourceType: "other",
         sourceId,
         subject,
-        snippet: text.slice(0, 600),
+        snippet: processedText.slice(0, 600),
         jarvisReason: `Notification (${notifType})`,
         suggestedActions: [{ label: "Dismiss", actionType: "dismiss" }],
         status: "pending",
