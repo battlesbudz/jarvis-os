@@ -49,8 +49,8 @@ import Anthropic from "@anthropic-ai/sdk";
 import type OpenAI from "openai";
 import { randomUUID } from "crypto";
 import { db } from "../../db";
-import { eq, and, gt } from "drizzle-orm";
-import { agentChatSessions } from "@shared/schema";
+import { eq, and, gt, asc, desc } from "drizzle-orm";
+import { agentChatSessions, agentChatMessages } from "@shared/schema";
 import type { AgentChatMessage } from "@shared/schema";
 import { BaseProvider } from "./base";
 import type { ProviderChunk, ProviderQueryParams } from "./base";
@@ -249,6 +249,91 @@ export async function appendToSession(
     cacheSet(sdkSessionId, merged, expiresAt.getTime());
   } catch (err) {
     console.error("[ClaudeProvider] appendToSession DB error:", err);
+  }
+}
+
+// ── Permanent chat message log ─────────────────────────────────────────────────
+
+/**
+ * Persist a user or assistant message to the permanent `agent_chat_messages`
+ * table. Called after every chat turn so history survives session expiry.
+ * Best-effort — errors are logged but never thrown to the caller.
+ */
+export async function persistChatMessages(
+  agentId: string,
+  userId: string,
+  messages: Array<{ role: "user" | "assistant"; content: string }>,
+): Promise<void> {
+  if (messages.length === 0) return;
+  // Insert messages sequentially (not in a single batch) so each row receives a
+  // distinct NOW() timestamp, ensuring stable chronological ordering even when
+  // user + assistant messages are stored in the same call.
+  for (const m of messages) {
+    try {
+      await db.insert(agentChatMessages).values({
+        agentId,
+        userId,
+        role: m.role,
+        content: m.content,
+      });
+    } catch (err) {
+      console.error("[ClaudeProvider] persistChatMessages DB error:", err);
+    }
+  }
+}
+
+/**
+ * Fetch permanent chat history for an agent + user pair.
+ *
+ * Returns messages in ascending chronological order (oldest first) for display.
+ * When a limit is specified the *most recent* `limit` messages are returned so
+ * the user always sees the latest context rather than the oldest rows.
+ * Pass limit=0 (or omit) to return all messages — appropriate for the initial
+ * chat open where we want to show the full history.
+ */
+export async function getChatHistory(
+  agentId: string,
+  userId: string,
+  limit = 0,
+): Promise<Array<{ id: string; role: "user" | "assistant"; content: string; createdAt: string }>> {
+  // Validate limit: must be a positive finite integer (0 = no limit / fetch all).
+  const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 0;
+
+  try {
+    const where = and(
+      eq(agentChatMessages.agentId, agentId),
+      eq(agentChatMessages.userId, userId),
+    );
+
+    let rows;
+    if (safeLimit > 0) {
+      // DB-level limit: fetch the most recent N rows (DESC + LIMIT), then
+      // reverse so the caller receives them in chronological (oldest-first) order.
+      const newest = await db
+        .select()
+        .from(agentChatMessages)
+        .where(where)
+        .orderBy(desc(agentChatMessages.createdAt))
+        .limit(safeLimit);
+      rows = newest.reverse();
+    } else {
+      // No limit — return full history in chronological order.
+      rows = await db
+        .select()
+        .from(agentChatMessages)
+        .where(where)
+        .orderBy(asc(agentChatMessages.createdAt));
+    }
+
+    return rows.map((r) => ({
+      id: r.id,
+      role: r.role,
+      content: r.content,
+      createdAt: r.createdAt.toISOString(),
+    }));
+  } catch (err) {
+    console.error("[ClaudeProvider] getChatHistory DB error:", err);
+    return [];
   }
 }
 

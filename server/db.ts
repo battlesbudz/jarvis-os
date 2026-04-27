@@ -1056,6 +1056,22 @@ export async function ensureTablesExist() {
     await db.execute(sql`CREATE INDEX IF NOT EXISTS agent_approval_gates_user_status_idx ON agent_approval_gates(user_id, status, created_at DESC)`).catch(() => {});
     await db.execute(sql`ALTER TABLE agent_approval_gates ADD COLUMN IF NOT EXISTS initiated_by VARCHAR NOT NULL DEFAULT 'user'`).catch(() => {});
 
+    // ── agent_chat_messages: permanent per-agent conversation log (no TTL) ──
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS agent_chat_messages (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        agent_id VARCHAR NOT NULL REFERENCES discord_agents(id) ON DELETE CASCADE,
+        user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        role VARCHAR NOT NULL,
+        content TEXT NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `).catch(() => {});
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS agent_chat_messages_agent_user_idx
+        ON agent_chat_messages(agent_id, user_id, created_at ASC)
+    `).catch(() => {});
+
     console.log("Database tables verified");
   } catch (error) {
     console.error("Failed to ensure database tables exist:", error);

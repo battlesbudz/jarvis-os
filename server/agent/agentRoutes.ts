@@ -25,6 +25,7 @@
  *  15b. POST /api/agents/:id/chat      (SSE streaming; heartbeat + abort support)
  *  15c. POST /api/agents/:id/abort     (cancel an in-flight SSE run by runId)
  *  15d. GET  /api/agents/:id/session   (fetch cached session conversation history)
+ *  15e. GET  /api/agents/:id/history   (permanent chat history — no 24-hour TTL)
  *  16. GET  /api/agents/:id/memories
  *  17. DELETE /api/agents/:id/memories
  *  18. GET  /api/agents/:id/messages
@@ -63,7 +64,7 @@ import {
   importConfigToCreateArgs,
 } from "./agentConfigSchema";
 import type { AgentConfigFile } from "./agentConfigSchema";
-import { resumeSession } from "./providers/claude";
+import { resumeSession, persistChatMessages, getChatHistory } from "./providers/claude";
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -611,6 +612,16 @@ export function registerAgentRoutes(app: Express): void {
             },
           });
 
+          // Persist user message + assistant reply to the permanent history table.
+          // Always persist the user message; only add the assistant message if
+          // a non-empty reply was produced (errors / empty turns still log the user turn).
+          const replyText = fullReply || result.reply || "";
+          const toStore: Array<{ role: "user" | "assistant"; content: string }> = [
+            { role: "user", content: message },
+            ...(replyText ? [{ role: "assistant" as const, content: replyText }] : []),
+          ];
+          persistChatMessages(req.params.id, userId, toStore).catch(() => {});
+
           // Forward the session ID to the client via both a header (first turn)
           // and an SSE event (all turns) so it can resume on the next message.
           if (result.sdkSessionId && !res.writableEnded) {
@@ -648,6 +659,16 @@ export function registerAgentRoutes(app: Express): void {
           platform: "in_app",
           sdkSessionId: incomingSessionId,
         });
+        // Persist to permanent history — always log user message; add assistant
+        // message only when a non-empty reply was produced.
+        {
+          const assistantReply = result.reply || "";
+          const toStore: Array<{ role: "user" | "assistant"; content: string }> = [
+            { role: "user", content: message },
+            ...(assistantReply ? [{ role: "assistant" as const, content: assistantReply }] : []),
+          ];
+          persistChatMessages(req.params.id, userId, toStore).catch(() => {});
+        }
         res.json({
           reply: result.reply,
           turns: result.turns,
@@ -719,6 +740,26 @@ export function registerAgentRoutes(app: Express): void {
           content: typeof m.content === "string" ? m.content : "",
         }));
       res.json({ messages: visibleMessages, sdkSessionId });
+    } catch (err) { handleError(res, err); }
+  });
+
+  // ── 15e. GET /api/agents/:id/history — permanent chat history ─────────────
+  // Returns user + assistant messages from the permanent `agent_chat_messages`
+  // table ordered oldest-first. Unlike the session cache this data has no TTL
+  // so it survives session expiry and server restarts indefinitely.
+  // Query params:
+  //   limit  — max rows to return; 0 or omitted = all messages (capped at 1000 when specified)
+  app.get("/api/agents/:id/history", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId!;
+      if (!(await ownerCheck(req.params.id, userId))) {
+        res.status(404).json({ error: "Agent not found" });
+        return;
+      }
+      const rawLimit = Number(req.query.limit ?? 0);
+      const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(Math.floor(rawLimit), 1000) : 0;
+      const messages = await getChatHistory(req.params.id, userId, limit);
+      res.json({ messages });
     } catch (err) { handleError(res, err); }
   });
 

@@ -609,7 +609,8 @@ function RunModal({ agent, onClose }: { agent: RosterAgent | null; onClose: () =
   const prevAgentIdRef = useRef<string | null>(null);
   const sdkSessionIdRef = useRef<string | null>(null);
 
-  // Load history: try server session cache first (authoritative), fall back to AsyncStorage
+  // Load history: try permanent server history first (no TTL), fall back to AsyncStorage.
+  // Also restore the session ID from storage so subsequent turns can resume the session.
   useEffect(() => {
     if (!agent) return;
     if (prevAgentIdRef.current === agent.id) return;
@@ -619,50 +620,42 @@ function RunModal({ agent, onClose }: { agent: RosterAgent | null; onClose: () =
 
     (async () => {
       try {
+        // Restore session ID from local storage (used for session resumption, not history)
         const storedSessionId = await loadStoredSessionId(agent.id);
         if (storedSessionId) {
           sdkSessionIdRef.current = storedSessionId;
-          const token = await getAuthToken();
-          const url = new URL(
-            `/api/agents/${agent.id}/session?sdkSessionId=${encodeURIComponent(storedSessionId)}`,
-            getApiUrl(),
-          );
-          const resp = await fetch(url.toString(), {
-            headers: token ? { Authorization: `Bearer ${token}` } : {},
-          });
-          if (resp.ok) {
-            const data = (await resp.json()) as {
-              messages: Array<{ role: "user" | "assistant"; content: string }>;
-            };
-            if (data.messages && data.messages.length > 0) {
-              const serverMessages: ChatMessage[] = data.messages
-                .filter((m) => m.content)
-                .map((m, i) => ({
-                  id: `server_${i}_${m.role}`,
-                  role: m.role,
-                  content: m.content,
-                  timestamp: Date.now() - (data.messages.length - i) * 1000,
-                }));
-              setMessages(serverMessages);
-              // Sync local AsyncStorage to server truth
-              await saveChatHistory(agent.id, serverMessages);
-              setStreamingContent("");
-              setIntegrationError(null);
-              setHistoryLoading(false);
-              return;
-            } else {
-              // Session expired or empty — discard the stale ID so subsequent
-              // requests start a fresh session rather than retrying a dead one.
-              sdkSessionIdRef.current = null;
-              await clearStoredSessionId(agent.id);
-            }
-          } else {
-            // Server error resolving session — discard the stale session ID.
-            sdkSessionIdRef.current = null;
-            await clearStoredSessionId(agent.id);
+        }
+
+        // Primary: permanent history endpoint (survives session expiry)
+        const token = await getAuthToken();
+        const historyUrl = new URL(`/api/agents/${agent.id}/history`, getApiUrl());
+        const resp = await fetch(historyUrl.toString(), {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+        if (resp.ok) {
+          const data = (await resp.json()) as {
+            messages: Array<{ id: string; role: "user" | "assistant"; content: string; createdAt: string }>;
+          };
+          if (data.messages && data.messages.length > 0) {
+            const serverMessages: ChatMessage[] = data.messages
+              .filter((m) => m.content)
+              .map((m) => ({
+                id: m.id,
+                role: m.role,
+                content: m.content,
+                timestamp: new Date(m.createdAt).getTime(),
+              }));
+            setMessages(serverMessages);
+            // Sync local AsyncStorage to server truth
+            await saveChatHistory(agent.id, serverMessages);
+            setStreamingContent("");
+            setIntegrationError(null);
+            setHistoryLoading(false);
+            return;
           }
         }
-        // Fallback: local AsyncStorage history
+
+        // Fallback: local AsyncStorage history (offline / pre-feature messages)
         const history = await loadChatHistory(agent.id);
         setMessages(history);
         setStreamingContent("");
