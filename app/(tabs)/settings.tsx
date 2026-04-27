@@ -19,6 +19,7 @@ import * as Haptics from 'expo-haptics';
 import * as WebBrowser from 'expo-web-browser';
 import * as Clipboard from 'expo-clipboard';
 import { Audio } from 'expo-av';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import {
   getStats,
   claimReward,
@@ -172,6 +173,38 @@ const sectionStyles = StyleSheet.create({
     color: Colors.text,
   },
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Module-level constants
+// ─────────────────────────────────────────────────────────────────────────────
+
+const GUT_THREAT_LABEL: Record<string, string> = {
+  calendar_anomaly: 'Calendar Anomaly',
+  email_pattern: 'Email Manipulation',
+  deep_work_erosion: 'Deep Work Erosion',
+  project_drift: 'Project Drift',
+  relationship_anomaly: 'Relationship Signal',
+};
+
+function SettingsFallback({ error, resetError }: { error: Error; resetError: () => void }) {
+  return (
+    <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24 }}>
+      <Ionicons name="warning-outline" size={36} color={Colors.error} style={{ marginBottom: 12 }} />
+      <Text style={{ color: Colors.text, fontSize: 15, textAlign: 'center', marginBottom: 8, fontFamily: 'Inter_600SemiBold' }}>
+        Settings failed to load
+      </Text>
+      <Text style={{ color: Colors.textSecondary, fontSize: 13, textAlign: 'center', marginBottom: 20, fontFamily: 'Inter_400Regular' }}>
+        {error?.message || 'An unexpected error occurred.'}
+      </Text>
+      <Pressable
+        onPress={resetError}
+        style={{ backgroundColor: Colors.accent, paddingHorizontal: 20, paddingVertical: 10, borderRadius: 8 }}
+      >
+        <Text style={{ color: '#fff', fontFamily: 'Inter_600SemiBold', fontSize: 14 }}>Retry</Text>
+      </Pressable>
+    </View>
+  );
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Main Screen
@@ -332,9 +365,8 @@ export default function SettingsScreen() {
       });
       if (res.ok) {
         const data = await res.json();
-        if (data.audio) {
-          const { Sound } = Audio;
-          const { sound } = await Sound.createAsync(
+        if (data.audio && Platform.OS !== 'web') {
+          const { sound } = await Audio.Sound.createAsync(
             { uri: `data:audio/mp3;base64,${data.audio}` },
             { shouldPlay: true },
           );
@@ -536,14 +568,6 @@ export default function SettingsScreen() {
     } catch {}
     setThreatLogLoading(false);
   }, []);
-
-  const GUT_THREAT_LABEL: Record<string, string> = {
-    calendar_anomaly: 'Calendar Anomaly',
-    email_pattern: 'Email Manipulation',
-    deep_work_erosion: 'Deep Work Erosion',
-    project_drift: 'Project Drift',
-    relationship_anomaly: 'Relationship Signal',
-  };
 
   const loadNervousSystem = useCallback(async () => {
     setNsLoading(true);
@@ -1117,6 +1141,7 @@ export default function SettingsScreen() {
         <Text style={styles.headerUser}>{userName || authUsername || 'Agent'}</Text>
       </View>
 
+      <ErrorBoundary FallbackComponent={SettingsFallback}>
       <ScrollView
         ref={scrollViewRef}
         style={styles.scroll}
@@ -2713,6 +2738,7 @@ export default function SettingsScreen() {
         </View>
 
       </ScrollView>
+      </ErrorBoundary>
 
       {/* Life Context Sheet */}
       <LifeContextSheet

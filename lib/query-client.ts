@@ -1,6 +1,6 @@
 import { fetch } from "expo/fetch";
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
-import { getAuthToken } from "@/lib/auth-context";
+import { getAuthToken } from "@/lib/auth-token";
 
 let _onUnauthorized: (() => void) | null = null;
 
