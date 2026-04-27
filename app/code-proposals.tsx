@@ -20,6 +20,13 @@ import Colors from '@/constants/colors';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
+interface DebugContext {
+  errorMessage: string;
+  stackExcerpt?: string;
+  rootCauseSummary: string;
+  errorLogId?: string;
+}
+
 interface ProposalSummary {
   id: string;
   title: string;
@@ -27,6 +34,7 @@ interface ProposalSummary {
   filePath: string;
   status: 'pending' | 'approved' | 'rejected';
   rejectionNote: string | null;
+  debugContext: DebugContext | null;
   createdAt: string;
   appliedAt: string | null;
 }
@@ -137,6 +145,96 @@ const diffStyles = StyleSheet.create({
   },
 });
 
+// ── Debug context section ──────────────────────────────────────────────────────
+
+function DebugContextSection({ ctx }: { ctx: DebugContext }) {
+  const [expanded, setExpanded] = useState(false);
+
+  return (
+    <View style={debugStyles.container}>
+      <Pressable style={debugStyles.header} onPress={() => setExpanded((v) => !v)}>
+        <Ionicons name="bug-outline" size={15} color={Colors.violet} />
+        <Text style={debugStyles.headerText}>Why Jarvis made this change</Text>
+        <Ionicons name={expanded ? 'chevron-up' : 'chevron-down'} size={14} color={Colors.textSecondary} />
+      </Pressable>
+      {expanded && (
+        <View style={debugStyles.body}>
+          <Text style={debugStyles.label}>Error detected</Text>
+          <Text style={debugStyles.value}>{ctx.errorMessage}</Text>
+          <Text style={debugStyles.label}>Root cause</Text>
+          <Text style={debugStyles.value}>{ctx.rootCauseSummary}</Text>
+          {ctx.stackExcerpt ? (
+            <>
+              <Text style={debugStyles.label}>Stack excerpt</Text>
+              <ScrollView horizontal style={debugStyles.stack}>
+                <Text style={debugStyles.stackText}>{ctx.stackExcerpt}</Text>
+              </ScrollView>
+            </>
+          ) : null}
+        </View>
+      )}
+    </View>
+  );
+}
+
+const debugStyles = StyleSheet.create({
+  container: {
+    marginHorizontal: 16,
+    marginBottom: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.violet + '44',
+    backgroundColor: Colors.violet + '0A',
+    overflow: 'hidden',
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  headerText: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '600' as const,
+    color: Colors.violet,
+  },
+  body: {
+    paddingHorizontal: 12,
+    paddingBottom: 12,
+    borderTopWidth: 1,
+    borderTopColor: Colors.violet + '22',
+  },
+  label: {
+    fontSize: 10,
+    fontWeight: '700' as const,
+    color: Colors.textTertiary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginTop: 8,
+    marginBottom: 2,
+  },
+  value: {
+    fontSize: 13,
+    color: Colors.text,
+    lineHeight: 19,
+  },
+  stack: {
+    marginTop: 4,
+    backgroundColor: Colors.surface,
+    borderRadius: 6,
+    padding: 8,
+    maxHeight: 120,
+  },
+  stackText: {
+    fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' }),
+    fontSize: 10,
+    color: Colors.textSecondary,
+    lineHeight: 16,
+  },
+});
+
 // ── Detail modal ───────────────────────────────────────────────────────────────
 
 function DetailModal({
@@ -217,6 +315,11 @@ function DetailModal({
                 <Text style={modalStyles.rejNoteLabel}>Rejection note</Text>
                 <Text style={modalStyles.rejNoteText}>{proposal.rejectionNote}</Text>
               </View>
+            ) : null}
+
+            {/* Debug context (shown when proposal originated from a debug session) */}
+            {proposal.debugContext ? (
+              <DebugContextSection ctx={proposal.debugContext} />
             ) : null}
 
             {/* Diff */}

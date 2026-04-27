@@ -11,6 +11,7 @@
 import type { Express, Request, Response } from "express";
 import { db } from "../db";
 import { codeProposals } from "@shared/schema";
+import type { DebugContext } from "@shared/schema";
 import { eq, and, desc } from "drizzle-orm";
 import fs from "fs/promises";
 import path from "path";
@@ -52,6 +53,56 @@ function isPathAllowed(filePath: string): boolean {
   return ALLOWED_SOURCE_DIRS.includes(firstSegment);
 }
 
+/**
+ * Schedules a post-fix verification job after a debug-originated proposal is approved.
+ * Waits 8 seconds (let the server restart begin) then enqueues a general agent job
+ * that re-checks the relevant capability and sends the result to the user's inbox.
+ */
+async function schedulePostFixVerification(
+  userId: string,
+  proposalId: string,
+  filePath: string,
+  debugCtx: DebugContext,
+): Promise<void> {
+  // Brief delay to allow the file write to settle before the verification job runs.
+  await new Promise<void>((resolve) => setTimeout(resolve, 8000));
+
+  try {
+    const { submitAgentJob } = await import("./jobQueue");
+    const brief = [
+      `A code fix has just been applied (proposal ID: ${proposalId}, file: ${filePath}).`,
+      ``,
+      `This fix originated from a debug session. The original error was:`,
+      `"${debugCtx.errorMessage}"`,
+      ``,
+      `Root cause identified at the time: ${debugCtx.rootCauseSummary}`,
+      ``,
+      `Please verify whether the fix resolved the issue:`,
+      `1. Call read_recent_errors to check if the same error has recurred since the fix was applied.`,
+      `2. If no new errors appear, notify the user that the fix appears to be working.`,
+      `3. If errors persist, read_recent_errors again, then notify the user of the ongoing issue with a concise explanation.`,
+      ``,
+      `Send a brief inbox message with the verification result — do NOT create another code proposal unless you identify a new, distinct issue.`,
+    ].join("\n");
+
+    await submitAgentJob({
+      userId,
+      agentType: "general",
+      title: `Verifying fix for: ${debugCtx.errorMessage.slice(0, 80)}`,
+      prompt: brief,
+      input: {
+        postFixVerification: true,
+        proposalId,
+        filePath,
+      },
+    });
+
+    console.log(`[CodeProposals] queued post-fix verification for proposal ${proposalId}`);
+  } catch (err) {
+    console.error("[CodeProposals] schedulePostFixVerification failed:", err);
+  }
+}
+
 export function registerCodeProposalsRoutes(app: Express): void {
   // ── Owner guard ────────────────────────────────────────────────────────────
   // Code proposals give write access to live source files.  Only the
@@ -82,6 +133,7 @@ export function registerCodeProposalsRoutes(app: Express): void {
           filePath: codeProposals.filePath,
           status: codeProposals.status,
           rejectionNote: codeProposals.rejectionNote,
+          debugContext: codeProposals.debugContext,
           createdAt: codeProposals.createdAt,
           appliedAt: codeProposals.appliedAt,
         })
@@ -155,6 +207,16 @@ export function registerCodeProposalsRoutes(app: Express): void {
         .where(eq(codeProposals.id, row.id));
 
       console.log(`[CodeProposals] approved proposal ${row.id} → wrote ${row.filePath}`);
+
+      // Post-fix verification: if this proposal originated from a debug session,
+      // queue a follow-up job to re-run the relevant health check and notify the user.
+      const debugCtx = row.debugContext as DebugContext | null;
+      if (debugCtx) {
+        schedulePostFixVerification(userId, row.id, row.filePath, debugCtx).catch((e) =>
+          console.error("[CodeProposals] post-fix verification scheduling failed:", e),
+        );
+      }
+
       res.json({ ok: true, filePath: row.filePath, restarting: true });
 
       // Gracefully restart so the newly-written file is loaded immediately.

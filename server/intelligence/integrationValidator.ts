@@ -23,6 +23,11 @@ import { eq, and, sql } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import type { IntegrationName, IntegrationStatusValue } from "@shared/schema";
 import { emit as diagEmit } from "../diagnostics/diagnosticsService";
+import { logSystemError } from "../agent/errorLogger";
+
+// Rate-limit automatic debug sessions: one per capability per hour
+const lastDebugTriggerAt = new Map<string, number>();
+const DEBUG_TRIGGER_COOLDOWN_MS = 60 * 60 * 1000;
 
 const EXPIRY_WARNING_MS = 24 * 60 * 60 * 1000; // 24 hours
 
@@ -456,6 +461,51 @@ async function writeStatus(
   `);
 }
 
+// ── Automatic debug session trigger ───────────────────────────────────────────
+
+interface AutoDebugOptions {
+  userId: string;
+  capability: string;
+  errorMessage: string;
+  source: string;
+  errorLogId?: string;
+}
+
+async function triggerAutoDebugSession(opts: AutoDebugOptions): Promise<void> {
+  try {
+    const { submitAgentJob } = await import("../agent/jobQueue");
+    const brief = [
+      `Health check for the "${opts.capability}" integration has failed.`,
+      `Error: ${opts.errorMessage}`,
+      ``,
+      `Please investigate this failure:`,
+      `1. Call read_recent_errors with source_filter="${opts.capability}" to read the error log.`,
+      `2. Call list_source_files and read_source_file to inspect the relevant code.`,
+      `3. If you identify a code fix, call propose_code_change with the fix and include debug_context.`,
+      `4. If no code fix is appropriate, send a plain-English diagnosis to the user's inbox explaining the root cause.`,
+      ``,
+      `Error log ID for reference: ${opts.errorLogId ?? "N/A"}`,
+    ].join("\n");
+
+    await submitAgentJob({
+      userId: opts.userId,
+      agentType: "general",
+      title: `Auto debug: ${opts.capability} health check failed`,
+      prompt: brief,
+      input: {
+        autoDebug: true,
+        capability: opts.capability,
+        source: opts.source,
+        errorLogId: opts.errorLogId,
+      },
+    });
+
+    console.log(`[IntegrationValidator] queued auto debug session for "${opts.capability}" (user ${opts.userId})`);
+  } catch (err) {
+    console.error("[IntegrationValidator] triggerAutoDebugSession failed:", err);
+  }
+}
+
 // ── Run all checks for one user ───────────────────────────────────────────────
 
 export async function validateUserIntegrations(userId: string): Promise<void> {
@@ -474,13 +524,37 @@ export async function validateUserIntegrations(userId: string): Promise<void> {
         const result = await check();
         await writeStatus(userId, integration, result);
         if (result.status === "broken") {
+          const errMsg = result.errorMessage ?? "unknown error";
           diagEmit({
             userId,
             subsystem: "integration",
             severity: "error",
-            message: `Integration ${integration} broken: ${result.errorMessage ?? "unknown error"}`,
+            message: `Integration ${integration} broken: ${errMsg}`,
             metadata: { integration },
           }).catch(() => {});
+
+          // Persist to system_error_log for Jarvis self-debugging
+          const errorLogId = await logSystemError({
+            source: `integrationValidator/${integration}`,
+            message: `Health check failure: ${errMsg}`,
+            level: "error",
+            context: { integration, userId, status: result.status },
+            userId,
+          });
+
+          // Trigger automatic debug session (rate-limited to 1 per capability per hour)
+          const rateKey = `${integration}:${userId}`;
+          const last = lastDebugTriggerAt.get(rateKey) ?? 0;
+          if (Date.now() - last > DEBUG_TRIGGER_COOLDOWN_MS) {
+            lastDebugTriggerAt.set(rateKey, Date.now());
+            triggerAutoDebugSession({
+              userId,
+              capability: integration,
+              errorMessage: errMsg,
+              source: `integrationValidator/${integration}`,
+              errorLogId: errorLogId ?? undefined,
+            }).catch((e) => console.error("[IntegrationValidator] auto debug trigger failed:", e));
+          }
         }
       } catch (err) {
         console.error(`[IntegrationValidator] ${integration} check failed for ${userId}:`, err);
@@ -496,6 +570,16 @@ export async function validateUserIntegrations(userId: string): Promise<void> {
           message: `Integration ${integration} validator crashed: ${errMsg.slice(0, 200)}`,
           metadata: { integration },
         }).catch(() => {});
+
+        // Persist crash to system_error_log
+        await logSystemError({
+          source: `integrationValidator/${integration}`,
+          message: errMsg,
+          error: err,
+          level: "error",
+          context: { integration, userId },
+          userId,
+        });
       }
     }),
   );

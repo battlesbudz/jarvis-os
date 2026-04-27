@@ -314,6 +314,19 @@ function setupErrorHandler(app: express.Application) {
 
     console.error("Internal Server Error:", err);
 
+    // Persist to system_error_log for Jarvis self-debugging (non-blocking, never throws)
+    if (status >= 500) {
+      import("./agent/errorLogger").then(({ logSystemError }) => {
+        logSystemError({
+          source: "express/errorHandler",
+          message: message.slice(0, 2000),
+          error: err,
+          level: "error",
+          context: { status },
+        });
+      }).catch(() => {});
+    }
+
     if (res.headersSent) {
       return next(err);
     }
