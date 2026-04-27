@@ -4,7 +4,7 @@
  * Key format: jarvis_<40 hex chars>
  * Only the bcrypt hash is stored. The raw key is returned once on creation.
  *
- * Rate limits (in-memory sliding windows):
+ * Rate limits (DB-backed sliding windows — survive server restarts):
  *   - Authenticated requests: 120 req/min per key ID (DB row UUID).
  *   - Pre-auth attempts: 10 attempts/min per 16-char prefix bucket to
  *     prevent bcrypt CPU amplification on the unauthenticated endpoint.
@@ -12,6 +12,7 @@
 
 import crypto from "crypto";
 import bcrypt from "bcryptjs";
+import { sql } from "drizzle-orm";
 import { db } from "../../db";
 import { mcpApiKeys } from "@shared/schema";
 import { eq } from "drizzle-orm";
@@ -30,23 +31,17 @@ const RATE_LIMIT_WINDOW_MS = 60_000;
 const PRE_AUTH_MAX = 10;
 const PRE_AUTH_WINDOW_MS = 60_000;
 
-// In-memory trackers
-const rateLimitCounters = new Map<string, { count: number; windowStart: number }>();
-const preAuthCounters  = new Map<string, { count: number; windowStart: number }>();
-
-// Periodic cleanup: evict expired entries every 5 minutes to prevent unbounded growth.
-// Attackers sending many unique prefixes to the unauthenticated endpoint would otherwise
-// cause preAuthCounters to grow without bound.
+// Periodic cleanup: delete expired rows from DB every 5 minutes to prevent unbounded growth.
 const EVICTION_INTERVAL_MS = 5 * 60 * 1000;
-function evictExpired(map: Map<string, { count: number; windowStart: number }>, windowMs: number): void {
+setInterval(async () => {
   const now = Date.now();
-  for (const [key, entry] of map) {
-    if (now - entry.windowStart >= windowMs) map.delete(key);
-  }
-}
-setInterval(() => {
-  evictExpired(rateLimitCounters, RATE_LIMIT_WINDOW_MS);
-  evictExpired(preAuthCounters, PRE_AUTH_WINDOW_MS);
+  await db.execute(sql`
+    DELETE FROM mcp_rate_limits
+    WHERE
+      (bucket LIKE 'auth:%'     AND ${now} - window_start >= ${RATE_LIMIT_WINDOW_MS})
+      OR
+      (bucket LIKE 'pre-auth:%' AND ${now} - window_start >= ${PRE_AUTH_WINDOW_MS})
+  `).catch(() => {});
 }, EVICTION_INTERVAL_MS).unref(); // .unref() so the timer never prevents process exit
 
 // ── Key generation ─────────────────────────────────────────────────────────────
@@ -104,7 +99,7 @@ export async function verifyMcpApiKey(rawKey: string): Promise<VerifiedKey | nul
   const prefix = rawKey.slice(0, KEY_PREFIX_LEN);
 
   // Pre-auth rate limit: reject before doing any bcrypt if too many attempts
-  if (!checkCounter(preAuthCounters, prefix, PRE_AUTH_MAX, PRE_AUTH_WINDOW_MS)) {
+  if (!(await checkCounter("pre-auth", prefix, PRE_AUTH_MAX, PRE_AUTH_WINDOW_MS))) {
     return null;
   }
 
@@ -117,8 +112,8 @@ export async function verifyMcpApiKey(rawKey: string): Promise<VerifiedKey | nul
   for (const row of rows) {
     const valid = await bcrypt.compare(rawKey, row.keyHash);
     if (valid) {
-      // Reset pre-auth counter on success
-      preAuthCounters.delete(prefix);
+      // Reset pre-auth counter on success (best-effort)
+      resetCounter("pre-auth", prefix).catch(() => {});
 
       // Update last_used_at asynchronously — don't block response
       db.update(mcpApiKeys)
@@ -139,29 +134,59 @@ export async function verifyMcpApiKey(rawKey: string): Promise<VerifiedKey | nul
  * Check per-key rate limit (authenticated requests).
  * Key: DB row UUID — unique per key, no cross-user coupling.
  * Returns true if the request should be allowed, false if rate-limited.
+ * Backed by the DB so the window survives server restarts.
  */
-export function checkRateLimit(keyId: string): boolean {
-  return checkCounter(rateLimitCounters, keyId, RATE_LIMIT_MAX, RATE_LIMIT_WINDOW_MS);
+export async function checkRateLimit(keyId: string): Promise<boolean> {
+  return checkCounter("auth", keyId, RATE_LIMIT_MAX, RATE_LIMIT_WINDOW_MS);
 }
 
-/** Shared sliding-window counter helper. */
-function checkCounter(
-  map: Map<string, { count: number; windowStart: number }>,
+/**
+ * DB-backed sliding-window counter helper.
+ *
+ * Uses an atomic PostgreSQL upsert so reads and increments are race-free even
+ * under concurrent requests or across multiple server processes.
+ *
+ * Returns true (allow) when count after increment is within [1, max].
+ * Returns false (deny) when count exceeds max — the counter continues to
+ * increment so the caller cannot game the window by sending exactly max reqs.
+ */
+async function checkCounter(
+  namespace: string,
   key: string,
   max: number,
   windowMs: number,
-): boolean {
+): Promise<boolean> {
+  const bucket = `${namespace}:${key}`;
   const now = Date.now();
-  const entry = map.get(key);
 
-  if (!entry || now - entry.windowStart >= windowMs) {
-    map.set(key, { count: 1, windowStart: now });
-    return true;
-  }
+  const result = await db.execute(sql`
+    INSERT INTO mcp_rate_limits (bucket, count, window_start)
+    VALUES (${bucket}, 1, ${now})
+    ON CONFLICT (bucket) DO UPDATE
+    SET
+      count = CASE
+        WHEN ${now} - mcp_rate_limits.window_start >= ${windowMs}
+          THEN 1
+        ELSE mcp_rate_limits.count + 1
+      END,
+      window_start = CASE
+        WHEN ${now} - mcp_rate_limits.window_start >= ${windowMs}
+          THEN ${now}
+        ELSE mcp_rate_limits.window_start
+      END
+    RETURNING count
+  `);
 
-  if (entry.count >= max) return false;
-  entry.count++;
-  return true;
+  const count = (result.rows[0] as { count: number }).count;
+  return count <= max;
+}
+
+/**
+ * Reset a rate-limit counter (e.g. on successful pre-auth to clear the throttle).
+ */
+async function resetCounter(namespace: string, key: string): Promise<void> {
+  const bucket = `${namespace}:${key}`;
+  await db.execute(sql`DELETE FROM mcp_rate_limits WHERE bucket = ${bucket}`);
 }
 
 // ── Key info retrieval ─────────────────────────────────────────────────────────

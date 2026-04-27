@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, jsonb, timestamp, date, primaryKey, integer, uniqueIndex, boolean, serial, real } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, jsonb, timestamp, date, primaryKey, integer, uniqueIndex, boolean, serial, real, bigint } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -976,6 +976,18 @@ export const mcpApiKeys = pgTable("mcp_api_keys", {
 });
 
 export type McpApiKey = typeof mcpApiKeys.$inferSelect;
+
+// ── MCP Rate Limits — DB-backed sliding-window counters (survives restarts) ──
+// bucket: "<namespace>:<key>", e.g. "auth:<keyId>" or "pre-auth:<prefix>"
+// count: requests in the current window
+// window_start: unix epoch milliseconds when the current window opened
+export const mcpRateLimits = pgTable("mcp_rate_limits", {
+  bucket: text("bucket").primaryKey(),
+  count: integer("count").notNull(),
+  windowStart: bigint("window_start", { mode: "number" }).notNull(),
+});
+
+export type McpRateLimit = typeof mcpRateLimits.$inferSelect;
 
 // ── Jarvis Ego — Action Log ───────────────────────────────────────────────────
 // Every significant action Jarvis takes is recorded here so the Ego analyser
