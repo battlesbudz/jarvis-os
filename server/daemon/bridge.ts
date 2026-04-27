@@ -42,7 +42,12 @@ export type DaemonOp =
   | { type: "voice_set_wake_words"; enabled: boolean; words?: string[]; talkMode?: boolean }
   | { type: "voice_set_talk_mode"; enabled: boolean }
   | { type: "voice_tts_finished" }
-  | { type: "voice_speak_audio"; audioBase64: string; format?: string };
+  | { type: "voice_speak_audio"; audioBase64: string; format?: string }
+  | { type: "android_camera_snap"; facing?: "front" | "back" | "both" }
+  | { type: "android_camera_clip"; facing?: "front" | "back"; durationMs?: number; audio?: boolean }
+  | { type: "android_location_get"; accuracy?: "coarse" | "precise"; maxAgeMs?: number }
+  | { type: "android_sms_send"; to: string; message: string }
+  | { type: "android_screen_record"; durationMs?: number; fps?: number; audio?: boolean };
 
 export interface PhoneNotification {
   pkg: string;
@@ -243,7 +248,11 @@ export type AndroidDaemonAction =
   | "android_browse"
   | "android_file_list"
   | "android_file_read"
-  | "android_tap_type";
+  | "android_tap_type"
+  | "android_camera"
+  | "android_location"
+  | "android_sms"
+  | "android_screen_record";
 export type AndroidDaemonPermissions = Record<AndroidDaemonAction, boolean>;
 
 export const DEFAULT_ANDROID_DAEMON_PERMISSIONS: AndroidDaemonPermissions = {
@@ -254,6 +263,10 @@ export const DEFAULT_ANDROID_DAEMON_PERMISSIONS: AndroidDaemonPermissions = {
   android_file_list: true,
   android_file_read: false,
   android_tap_type: false,
+  android_camera: true,
+  android_location: true,
+  android_sms: false,
+  android_screen_record: true,
 };
 
 // Prefer the real paired row (any non-pending address) over a pre-pairing
@@ -453,6 +466,28 @@ export async function sendDaemonOp(
   }
   const pendingKey = socketKey(userId, actualPlatform);
 
+  // ── Bridge-level Android permission gate ──────────────────────────────────
+  // Enforce permission checks at the bridge layer so no code path can bypass
+  // the user's permission settings, even if the tool layer check is skipped.
+  if (isAndroidOp) {
+    const OP_PERM_MAP: Partial<Record<string, AndroidDaemonAction>> = {
+      android_camera_snap:   "android_camera",
+      android_camera_clip:   "android_camera",
+      android_location_get:  "android_location",
+      android_sms_send:      "android_sms",
+      android_screen_record: "android_screen_record",
+    };
+    const requiredPerm = OP_PERM_MAP[op.type];
+    if (requiredPerm) {
+      const allowed = await isAndroidDaemonActionAllowed(userId, requiredPerm);
+      if (!allowed) {
+        const msg = `Android permission '${requiredPerm}' is disabled. Enable it in Profile → Connected Channels → Android Daemon before using this feature.`;
+        console.log(`[daemon] op BLOCKED (bridge-level permission) userId=${userId} op=${op.type} perm=${requiredPerm}`);
+        return { ok: false, error: msg };
+      }
+    }
+  }
+  // ─────────────────────────────────────────────────────────────────────────
   console.log(`[daemon] op SENT userId=${userId} op=${op.type}`, 'packageName' in op ? `pkg=${(op as any).packageName}` : '');
   const sentAt = Date.now();
   return new Promise((resolve) => {

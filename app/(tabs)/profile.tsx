@@ -10,6 +10,7 @@ import {
   Modal,
   FlatList,
   Alert,
+  Linking,
   TextInput,
   Switch,
   Image,
@@ -3418,15 +3419,55 @@ export default function ProfileScreen() {
                   Choose what Jarvis can do on your Android. Tap/type and file reads are off by default.
                 </Text>
                 {([
-                  { key: 'android_screenshot',  label: 'Take screenshots' },
-                  { key: 'android_read_screen',  label: 'Read screen content (accessibility tree)' },
-                  { key: 'android_open_app',     label: 'Open apps by name' },
-                  { key: 'android_browse',       label: 'Open URLs in browser' },
-                  { key: 'android_file_list',    label: 'List files (gallery, downloads, any folder)' },
-                  { key: 'android_file_read',    label: 'Read files from device storage' },
-                  { key: 'android_tap_type',     label: 'Tap, type and swipe on screen' },
-                ] as const).map((p) => p.key === 'android_tap_type' ? (
-                  <View key={p.key}>
+                  { key: 'android_screenshot',    label: 'Take screenshots' },
+                  { key: 'android_read_screen',   label: 'Read screen content (accessibility tree)' },
+                  { key: 'android_open_app',      label: 'Open apps by name' },
+                  { key: 'android_browse',        label: 'Open URLs in browser' },
+                  { key: 'android_file_list',     label: 'List files (gallery, downloads, any folder)' },
+                  { key: 'android_file_read',     label: 'Read files from device storage' },
+                  { key: 'android_tap_type',      label: 'Tap, type and swipe on screen' },
+                  { key: 'android_camera',        label: 'Camera (photos & video clips)' },
+                  { key: 'android_location',      label: 'Location (GPS coordinates)' },
+                  { key: 'android_sms',           label: 'Send SMS messages' },
+                  { key: 'android_screen_record', label: 'Screen recording (up to 60s)' },
+                ] as const).map((p) => {
+                  const warnings: Record<string, { title: string; body: string; warn?: boolean; fixLabel?: string; fixAction?: () => void }> = {
+                    android_tap_type: { title: '⚠ Tap/type gives Jarvis input control', body: 'Jarvis will always ask for confirmation before tapping or typing on your behalf. Enable only if you trust Jarvis to act on your screen.', warn: true },
+                    android_sms: {
+                      title: '⚠ SMS requires your explicit confirmation',
+                      body: 'Jarvis will show you the exact recipient and message and ask for approval before sending any SMS. Requires SEND_SMS permission on your Android device.',
+                      warn: true,
+                      fixLabel: 'Open Settings',
+                      fixAction: () => Linking.openSettings(),
+                    },
+                    android_camera: {
+                      title: 'Device permission required',
+                      body: 'Open the Jarvis Daemon app on your Android and tap "Grant" next to Camera. Without this, camera snaps and clips will fail.',
+                      warn: false,
+                      fixLabel: 'Open Settings',
+                      fixAction: () => Linking.openSettings(),
+                    },
+                    android_location: {
+                      title: 'Device permission required',
+                      body: 'The first time Jarvis requests your location, Android will prompt for permission. You can also grant it in Settings → Apps → Jarvis Daemon → Permissions → Location.',
+                      warn: false,
+                      fixLabel: 'Open Settings',
+                      fixAction: () => Linking.openSettings(),
+                    },
+                    android_screen_record: {
+                      title: 'One-time device grant required',
+                      body: 'Open the Jarvis Daemon app on your Android and tap "Allow" next to Screen Recording to grant MediaProjection access. This must be done before screen recording will work.',
+                      warn: false,
+                      fixLabel: 'How to fix',
+                      fixAction: () => Alert.alert(
+                        'Enable Screen Recording',
+                        '1. Open the Jarvis Daemon app on your Android device.\n2. Tap "Allow" next to Screen Recording.\n3. Approve the system prompt that appears.\n\nAfter granting access, screen recording will be available.',
+                        [{ text: 'OK' }]
+                      ),
+                    },
+                  };
+                  const hint = warnings[p.key];
+                  const switchRow = (
                     <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8 }}>
                       <Text style={{ flex: 1, fontSize: 13, fontFamily: 'Inter_400Regular', color: Colors.text }}>{p.label}</Text>
                       {androidDaemonPermsBusy === p.key ? (
@@ -3440,30 +3481,34 @@ export default function ProfileScreen() {
                         />
                       )}
                     </View>
-                    <View style={{ marginTop: 4, marginBottom: 4, padding: 10, borderRadius: 8, backgroundColor: '#FFF4E5', borderWidth: 1, borderColor: '#F0B44A' }}>
-                      <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: '#8A5A00', marginBottom: 2 }}>
-                        ⚠ Tap/type gives Jarvis input control
-                      </Text>
-                      <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: '#8A5A00', lineHeight: 16 }}>
-                        Jarvis will always ask for confirmation before tapping or typing on your behalf. Enable only if you trust Jarvis to act on your screen.
-                      </Text>
-                    </View>
-                  </View>
-                ) : (
-                  <View key={p.key} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8 }}>
-                    <Text style={{ flex: 1, fontSize: 13, fontFamily: 'Inter_400Regular', color: Colors.text }}>{p.label}</Text>
-                    {androidDaemonPermsBusy === p.key ? (
-                      <ActivityIndicator size="small" color="#34A853" />
-                    ) : (
-                      <Switch
-                        value={!!androidDaemonPerms[p.key]}
-                        onValueChange={() => handleToggleAndroidDaemonPerm(p.key)}
-                        trackColor={{ false: Colors.border, true: '#34A85388' }}
-                        thumbColor={androidDaemonPerms[p.key] ? '#34A853' : '#f4f3f4'}
-                      />
-                    )}
-                  </View>
-                ))}
+                  );
+                  if (hint) {
+                    const bgColor = hint.warn ? '#FFF4E5' : '#EAF4FF';
+                    const borderColor = hint.warn ? '#F0B44A' : '#5B9BD5';
+                    const textColor = hint.warn ? '#8A5A00' : '#1A4A7A';
+                    return (
+                      <View key={p.key}>
+                        {switchRow}
+                        <View style={{ marginTop: 4, marginBottom: 4, padding: 10, borderRadius: 8, backgroundColor: bgColor, borderWidth: 1, borderColor: borderColor }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
+                            <Text style={{ flex: 1, fontSize: 11, fontFamily: 'Inter_600SemiBold', color: textColor }}>
+                              {hint.title}
+                            </Text>
+                            {hint.fixAction && (
+                              <Pressable onPress={hint.fixAction} style={{ paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4, backgroundColor: borderColor }}>
+                                <Text style={{ fontSize: 10, fontFamily: 'Inter_600SemiBold', color: hint.warn ? '#5A3A00' : '#fff' }}>{hint.fixLabel}</Text>
+                              </Pressable>
+                            )}
+                          </View>
+                          <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: textColor, lineHeight: 16 }}>
+                            {hint.body}
+                          </Text>
+                        </View>
+                      </View>
+                    );
+                  }
+                  return <View key={p.key}>{switchRow}</View>;
+                })}
               </View>
             )}
           </View>

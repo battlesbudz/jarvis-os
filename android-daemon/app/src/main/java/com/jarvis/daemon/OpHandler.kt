@@ -1,22 +1,33 @@
 package com.jarvis.daemon
 
+import android.Manifest
 import android.app.PendingIntent
 import android.content.ClipData
 import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.location.Location
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.os.SystemClock
+import android.telephony.SmsManager
 import android.util.Base64
 import android.util.Log
 import android.webkit.MimeTypeMap
 import androidx.core.content.FileProvider
+import com.google.android.gms.location.FusedLocationProviderClient
+import com.google.android.gms.location.LocationRequest
+import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.Priority
+import com.google.android.gms.tasks.CancellationTokenSource
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 data class OpResult(val ok: Boolean, val data: Any? = null, val error: String? = null)
 
@@ -52,6 +63,11 @@ object OpHandler {
                 "voice_set_talk_mode" -> handleSetTalkMode(context, op)
                 "voice_tts_finished" -> handleTtsFinished()
                 "voice_speak_audio" -> handleSpeakAudio(context, op)
+                "android_camera_snap" -> CameraHandler.handleSnap(context, op)
+                "android_camera_clip" -> CameraHandler.handleClip(context, op)
+                "android_location_get" -> handleLocationGet(context, op)
+                "android_sms_send" -> handleSmsSend(context, op)
+                "android_screen_record" -> ScreenRecordHandler.handleScreenRecord(context, op)
                 else -> OpResult(false, error = "Unknown op type: $type")
             }
             val durationMs = SystemClock.elapsedRealtime() - startMs
@@ -630,6 +646,158 @@ object OpHandler {
         } catch (e: Exception) {
             Log.e(TAG, "android_copy_to_clipboard failed: ${e.message}")
             OpResult(false, error = "Could not copy to clipboard: ${e.message}")
+        }
+    }
+
+    // ── android_location_get ──────────────────────────────────────────────────
+
+    private fun handleLocationGet(context: Context, op: JSONObject): OpResult {
+        val preciseGranted = context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        val coarseGranted = context.checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+
+        if (!preciseGranted && !coarseGranted) {
+            return OpResult(
+                false,
+                error = "LOCATION_PERMISSION_REQUIRED: Location permission is not granted. " +
+                    "Go to Settings → Apps → Jarvis Daemon → Permissions → Location and select 'Allow all the time' or 'Allow only while using the app'."
+            )
+        }
+
+        val accuracyStr = op.optString("accuracy", "precise").lowercase()
+        val maxAgeMs = if (op.has("maxAgeMs")) op.optLong("maxAgeMs") else -1L
+        val priority = if (accuracyStr == "coarse" || !preciseGranted) Priority.PRIORITY_BALANCED_POWER_ACCURACY
+                       else Priority.PRIORITY_HIGH_ACCURACY
+
+        val client = LocationServices.getFusedLocationProviderClient(context)
+        val latch = CountDownLatch(1)
+        var location: Location? = null
+
+        // First try to get the last known location if it's fresh enough
+        if (maxAgeMs > 0) {
+            try {
+                client.lastLocation.addOnSuccessListener { loc ->
+                    if (loc != null && (System.currentTimeMillis() - loc.time) <= maxAgeMs) {
+                        location = loc
+                    }
+                    latch.countDown()
+                }.addOnFailureListener {
+                    latch.countDown()
+                }
+                latch.await(5, TimeUnit.SECONDS)
+                if (location != null) {
+                    return buildLocationResult(location!!, accuracyStr, cached = true)
+                }
+            } catch (e: SecurityException) {
+                return OpResult(false, error = "LOCATION_PERMISSION_REQUIRED: ${e.message}")
+            }
+        }
+
+        // Request a fresh location fix
+        val freshLatch = CountDownLatch(1)
+        val cts = CancellationTokenSource()
+        try {
+            client.getCurrentLocation(priority, cts.token)
+                .addOnSuccessListener { loc -> location = loc; freshLatch.countDown() }
+                .addOnFailureListener { freshLatch.countDown() }
+        } catch (e: SecurityException) {
+            return OpResult(false, error = "LOCATION_PERMISSION_REQUIRED: ${e.message}")
+        }
+
+        val gotFix = freshLatch.await(15, TimeUnit.SECONDS)
+        cts.cancel()
+
+        if (!gotFix || location == null) {
+            // Fall back to last known
+            val fallbackLatch = CountDownLatch(1)
+            try {
+                client.lastLocation.addOnSuccessListener { loc -> location = loc; fallbackLatch.countDown() }
+                    .addOnFailureListener { fallbackLatch.countDown() }
+                fallbackLatch.await(5, TimeUnit.SECONDS)
+            } catch (_: SecurityException) {}
+        }
+
+        return if (location != null) {
+            buildLocationResult(location!!, accuracyStr, cached = false)
+        } else {
+            OpResult(
+                false,
+                error = "Could not obtain a GPS fix. Make sure location is enabled on the device and the Jarvis app has been granted location permission. " +
+                    "On some devices, location services must be turned on in Quick Settings."
+            )
+        }
+    }
+
+    private fun buildLocationResult(loc: Location, accuracy: String, cached: Boolean): OpResult {
+        DaemonLog.add("location_get: lat=${loc.latitude} lng=${loc.longitude} acc=${loc.accuracy}m cached=$cached")
+        return OpResult(
+            true,
+            data = JSONObject()
+                .put("latitude", loc.latitude)
+                .put("longitude", loc.longitude)
+                .put("accuracy", loc.accuracy)
+                .put("altitude", if (loc.hasAltitude()) loc.altitude else JSONObject.NULL)
+                .put("bearing", if (loc.hasBearing()) loc.bearing else JSONObject.NULL)
+                .put("speed", if (loc.hasSpeed()) loc.speed else JSONObject.NULL)
+                .put("provider", loc.provider ?: "unknown")
+                .put("timestampMs", loc.time)
+                .put("cachedFix", cached)
+                .put("requestedAccuracy", accuracy)
+        )
+    }
+
+    // ── android_sms_send ──────────────────────────────────────────────────────
+
+    private fun handleSmsSend(context: Context, op: JSONObject): OpResult {
+        val to = op.optString("to").ifEmpty {
+            return OpResult(false, error = "to (phone number) required")
+        }
+        val message = op.optString("message").ifEmpty {
+            return OpResult(false, error = "message required")
+        }
+
+        if (context.checkSelfPermission(Manifest.permission.SEND_SMS) != PackageManager.PERMISSION_GRANTED) {
+            return OpResult(
+                false,
+                error = "SMS_PERMISSION_REQUIRED: SEND_SMS permission is not granted. " +
+                    "Go to Settings → Apps → Jarvis Daemon → Permissions → SMS and enable it."
+            )
+        }
+
+        // Check if the device has SMS capability (Wi-Fi-only tablets don't)
+        val pm = context.packageManager
+        if (!pm.hasSystemFeature(PackageManager.FEATURE_TELEPHONY)) {
+            return OpResult(
+                false,
+                error = "SMS_NOT_SUPPORTED: This device does not have SMS capability. " +
+                    "SMS requires a device with an active SIM card and cellular connectivity."
+            )
+        }
+
+        return try {
+            val smsManager: SmsManager = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                context.getSystemService(SmsManager::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                SmsManager.getDefault()
+            }
+            // Split long messages automatically
+            val parts = smsManager.divideMessage(message)
+            if (parts.size == 1) {
+                smsManager.sendTextMessage(to, null, message, null, null)
+            } else {
+                smsManager.sendMultipartTextMessage(to, null, parts, null, null)
+            }
+            DaemonLog.add("sms_send: sent to=$to parts=${parts.size}")
+            OpResult(
+                true,
+                data = JSONObject()
+                    .put("to", to)
+                    .put("messageParts", parts.size)
+                    .put("sent", true)
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "handleSmsSend failed", e)
+            OpResult(false, error = "SMS send failed: ${e.message}")
         }
     }
 

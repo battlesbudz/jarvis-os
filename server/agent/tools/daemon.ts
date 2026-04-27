@@ -27,6 +27,11 @@ const ANDROID_ACTIONS: readonly string[] = [
   "android_open_file",
   "android_copy_to_clipboard",
   "android_notification_reply",
+  "android_camera_snap",
+  "android_camera_clip",
+  "android_location_get",
+  "android_sms_send",
+  "android_screen_record",
 ] as const;
 
 function isDesktopAction(value: string): value is DaemonAction {
@@ -50,6 +55,10 @@ function androidPermKey(action: string): AndroidDaemonAction | null {
   if (action === "android_copy_to_clipboard") return "android_file_list";
   if (action === "android_tap" || action === "android_type" || action === "android_swipe" || action === "android_press_key") return "android_tap_type";
   if (action === "android_notification_reply") return "android_tap_type";
+  if (action === "android_camera_snap" || action === "android_camera_clip") return "android_camera";
+  if (action === "android_location_get") return "android_location";
+  if (action === "android_sms_send") return "android_sms";
+  if (action === "android_screen_record") return "android_screen_record";
   return null;
 }
 
@@ -81,8 +90,13 @@ ANDROID actions (available when an Android device daemon is paired):
 - android_open_file: open a file in its native app (e.g. gallery for images) using an ACTION_VIEW Intent — accepts an absolute file path
 - android_copy_to_clipboard: copy an image file to the Android clipboard so it can be pasted into Telegram, WhatsApp, or any app that supports image paste — accepts an absolute image file path; falls back gracefully if the target app doesn't support paste
 - android_notification_reply: send an inline reply to a notification that exposes a RemoteInput reply action — requires notificationKey (from android_notifications_list), replyText, and approved: true; only works on notifications where hasReplyAction is true; TWO-STEP FLOW: first call without approved to get the confirmation prompt, show the exact reply text to the user, then call again with approved: true once the user has explicitly agreed
+- android_camera_snap: take a photo with the device camera — specify facing (front/back, default back); returns base64 JPEG; requires the Jarvis app to be in the foreground and Camera permission granted in daemon settings
+- android_camera_clip: record a short video clip from the camera — specify facing (front/back), durationMs (max 30000 ms, default 5000), audio (boolean); returns base64 MP4; REQUIRES explicit user confirmation (privacy-sensitive); app must be foregrounded
+- android_location_get: get the device's current GPS coordinates — specify accuracy (coarse/precise, default precise) and optional maxAgeMs (accept cached fix if fresh enough); works in background; returns lat/lng/accuracy/provider
+- android_sms_send: send an SMS text message on behalf of the user — requires to (phone number), message (text body); REQUIRES explicit user confirmation showing exact recipient and message text before sending; approved must be true
+- android_screen_record: record the phone screen as an MP4 clip — specify durationMs (max 60000 ms, default 10000), fps (default 15), audio (boolean); returns base64 MP4; REQUIRES explicit user confirmation; app must be foregrounded
 
-Always confirm with the user before tap/type/swipe actions and before android_notification_reply. Use android_read_screen or android_screenshot to understand context before acting. Require confirmation before any destructive shell or file_write actions. When an Android daemon is paired, prefer android_* actions. Returns the daemon's response or an error if not paired.`,
+Always confirm with the user before tap/type/swipe actions and before android_notification_reply, android_sms_send, android_camera_clip, and android_screen_record. Use android_read_screen or android_screenshot to understand context before acting. Require confirmation before any destructive shell or file_write actions. When an Android daemon is paired, prefer android_* actions. Returns the daemon's response or an error if not paired.`,
   parameters: {
     type: "object",
     properties: {
@@ -96,6 +110,8 @@ Always confirm with the user before tap/type/swipe actions and before android_no
           "android_file_list", "android_file_read",
           "android_file_search", "android_open_file", "android_copy_to_clipboard",
           "android_notification_reply",
+          "android_camera_snap", "android_camera_clip",
+          "android_location_get", "android_sms_send", "android_screen_record",
         ],
       },
       cmd: { type: "string", description: "Shell command (when action is 'shell')" },
@@ -122,7 +138,14 @@ Always confirm with the user before tap/type/swipe actions and before android_no
       maxDepth: { type: "number", description: "Maximum directory depth to recurse (when action is 'android_file_search', default 4, max 8)" },
       notificationKey: { type: "string", description: "Notification status-bar key from android_notifications_list (when action is 'android_notification_reply')" },
       replyText: { type: "string", description: "The reply text to send inline (when action is 'android_notification_reply')" },
-      approved: { type: "boolean", description: "Must be true for android_notification_reply — set only after the user has explicitly confirmed the exact reply text in the conversation" },
+      approved: { type: "boolean", description: "Must be true for android_notification_reply and android_sms_send — set only after the user has explicitly confirmed in the conversation" },
+      facing: { type: "string", enum: ["front", "back", "both"], description: "Camera facing direction (when action is 'android_camera_snap': front/back/both returns one or both images; android_camera_clip: front/back only; default 'back')" },
+      audio: { type: "boolean", description: "Whether to record audio (when action is 'android_camera_clip' or 'android_screen_record')" },
+      accuracy: { type: "string", enum: ["coarse", "precise"], description: "Location accuracy mode (when action is 'android_location_get', default 'precise')" },
+      maxAgeMs: { type: "number", description: "Accept cached GPS fix if it's this fresh in ms (when action is 'android_location_get')" },
+      to: { type: "string", description: "Phone number to send SMS to (when action is 'android_sms_send')" },
+      message: { type: "string", description: "SMS message body (when action is 'android_sms_send')" },
+      fps: { type: "number", description: "Frames per second for screen recording (when action is 'android_screen_record', default 15)" },
     },
     required: ["action"],
   },
@@ -202,12 +225,76 @@ Always confirm with the user before tap/type/swipe actions and before android_no
           return { ok: false, content: JSON.stringify({ ok: false, requiresApproval: true, error: `Confirmation required before sending. Show the user the exact reply and ask them to approve it: "I'll reply inline with: \"${args.replyText}\". Send it?" — then call this action again with approved: true once they confirm.` }) };
         }
         op = { type: "android_notification_reply", notificationKey: String(args.notificationKey), replyText: String(args.replyText) };
+      } else if (rawAction === "android_camera_snap") {
+        const facing = String(args.facing || "back") as "front" | "back" | "both";
+        op = { type: "android_camera_snap", facing };
+      } else if (rawAction === "android_camera_clip") {
+        if (!args.approved) {
+          return { ok: false, content: JSON.stringify({ ok: false, requiresApproval: true, error: `Confirmation required before recording a video clip (privacy-sensitive). Ask the user: "I'll record a ${Math.round((typeof args.durationMs === "number" ? args.durationMs : 5000) / 1000)}s video clip from the ${args.facing || "back"} camera. Is that OK?" — then call again with approved: true.` }) };
+        }
+        const facing = String(args.facing || "back") as "front" | "back";
+        const durationMs = Math.min(typeof args.durationMs === "number" ? args.durationMs : 5000, 30000);
+        op = { type: "android_camera_clip", facing, durationMs, audio: !!args.audio };
+      } else if (rawAction === "android_location_get") {
+        const accuracy = String(args.accuracy || "precise") as "coarse" | "precise";
+        op = { type: "android_location_get", accuracy, maxAgeMs: typeof args.maxAgeMs === "number" ? args.maxAgeMs : undefined };
+      } else if (rawAction === "android_sms_send") {
+        if (!args.to) return { ok: false, content: JSON.stringify({ ok: false, error: "to (phone number) required" }) };
+        if (!args.message) return { ok: false, content: JSON.stringify({ ok: false, error: "message required" }) };
+        if (!args.approved) {
+          return { ok: false, content: JSON.stringify({ ok: false, requiresApproval: true, error: `Confirmation required before sending SMS. Show the user exactly: "Send SMS to ${args.to}: \"${args.message}\"?" — then call again with approved: true once they confirm.` }) };
+        }
+        op = { type: "android_sms_send", to: String(args.to), message: String(args.message) };
+      } else if (rawAction === "android_screen_record") {
+        if (!args.approved) {
+          const dur = Math.min(typeof args.durationMs === "number" ? args.durationMs : 10000, 60000);
+          return { ok: false, content: JSON.stringify({ ok: false, requiresApproval: true, error: `Confirmation required before recording the screen. Ask the user: "I'll record your screen for ${Math.round(dur / 1000)}s. Is that OK?" — then call again with approved: true.` }) };
+        }
+        const durationMs = Math.min(typeof args.durationMs === "number" ? args.durationMs : 10000, 60000);
+        op = { type: "android_screen_record", durationMs, fps: typeof args.fps === "number" ? args.fps : 15, audio: !!args.audio };
       } else {
         return { ok: false, content: JSON.stringify({ ok: false, error: `unknown android action ${rawAction}` }) };
       }
 
-      const result = await sendDaemonOp(ctx.userId, op, 30000);
-      return { ok: !!result.ok, content: JSON.stringify(result).slice(0, 12000) };
+      // Camera clip and screen record can take up to 60s + overhead; give generous timeouts
+      const isCameraClip = rawAction === "android_camera_clip";
+      const isScreenRec = rawAction === "android_screen_record";
+      const opTimeout = isCameraClip
+        ? Math.min(typeof args.durationMs === "number" ? args.durationMs : 5000, 30000) + 15000
+        : isScreenRec
+          ? Math.min(typeof args.durationMs === "number" ? args.durationMs : 10000, 60000) + 20000
+          : rawAction === "android_location_get" ? 20000 : 30000;
+
+      const result = await sendDaemonOp(ctx.userId, op, opTimeout);
+
+      // Translate structured error codes from the daemon into user-friendly Fix instructions
+      if (!result.ok && typeof result.error === "string") {
+        const err = result.error;
+        if (err.startsWith("FOREGROUND_REQUIRED")) {
+          return { ok: false, content: JSON.stringify({ ok: false, error: "This action requires the Jarvis Daemon app to be in the foreground on your Android device. Open the Jarvis Daemon app and try again.", code: "FOREGROUND_REQUIRED" }) };
+        }
+        if (err.startsWith("CAMERA_PERMISSION_REQUIRED") || err.startsWith("SCREEN_RECORD_PERMISSION_REQUIRED")) {
+          const isScreenRec = err.startsWith("SCREEN_RECORD_PERMISSION_REQUIRED");
+          const fixNote = isScreenRec
+            ? "Screen recording requires a one-time grant. Open the Jarvis Daemon app on your Android device and tap 'Allow' next to Screen Recording, then try again."
+            : "Camera permission is not granted on the Android device. Open the Jarvis Daemon app and tap 'Grant' next to Camera, or go to Settings → Apps → Jarvis Daemon → Permissions → Camera.";
+          return { ok: false, content: JSON.stringify({ ok: false, error: fixNote, code: isScreenRec ? "SCREEN_RECORD_PERMISSION_REQUIRED" : "CAMERA_PERMISSION_REQUIRED" }) };
+        }
+        if (err.startsWith("LOCATION_PERMISSION_REQUIRED")) {
+          return { ok: false, content: JSON.stringify({ ok: false, error: "Location permission is not granted. On the Android device go to Settings → Apps → Jarvis Daemon → Permissions → Location and select 'Allow all the time' or 'Allow only while using the app'.", code: "LOCATION_PERMISSION_REQUIRED" }) };
+        }
+        if (err.startsWith("SMS_PERMISSION_REQUIRED")) {
+          return { ok: false, content: JSON.stringify({ ok: false, error: "SEND_SMS permission is not granted. On the Android device go to Settings → Apps → Jarvis Daemon → Permissions → SMS and enable it.", code: "SMS_PERMISSION_REQUIRED" }) };
+        }
+        if (err.startsWith("SMS_NOT_SUPPORTED")) {
+          return { ok: false, content: JSON.stringify({ ok: false, error: "This Android device does not support SMS (no SIM / cellular). SMS cannot be sent.", code: "SMS_NOT_SUPPORTED" }) };
+        }
+      }
+
+      // Media ops return base64 — don't truncate or base64 will be corrupt
+      const isMediaOp = rawAction === "android_camera_snap" || rawAction === "android_camera_clip" || rawAction === "android_screen_record";
+      const serialised = JSON.stringify(result);
+      return { ok: !!result.ok, content: isMediaOp ? serialised : serialised.slice(0, 12000) };
     }
 
     // ── Desktop actions ────────────────────────────────────────────────────
