@@ -8,9 +8,16 @@
  *
  * Claude Opus is ONLY the orchestrator (decompose + verify + synthesize).
  * Sub-agents continue using the GPT harness for tool execution.
+ *
+ * Strict verification contract:
+ * - A task is accepted only when the verifier explicitly returns { passed: true }
+ * - Verifier errors / parse failures are treated as NOT passed (fail-safe)
+ * - After MAX_RETRIES, the orchestration fails with a clear error message rather
+ *   than silently accepting a failed result
  */
 
-import { anthropic, ORCHESTRATOR_MODEL, ORCHESTRATOR_MAX_TOKENS } from "../lib/anthropicClient";
+import { anthropic, ORCHESTRATOR_MAX_TOKENS } from "../lib/anthropicClient";
+import { getModel } from "../lib/modelPrefs";
 import { runAgent } from "./harness";
 import { db } from "../db";
 import { orchestrationTraces } from "@shared/schema";
@@ -60,26 +67,12 @@ interface SubTaskResult {
  */
 function parseSubTasks(text: string): SubTask[] {
   const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```/);
-  if (!jsonMatch) {
-    // Fallback: try raw JSON parse
-    try {
-      const parsed = JSON.parse(text.trim());
-      return Array.isArray(parsed) ? parsed : [parsed];
-    } catch {
-      // Treat the whole response as a single task
-      return [{
-        id: "task-1",
-        label: "Process request",
-        instruction: text,
-        acceptanceCriteria: "Provides a helpful and complete response",
-        dependsOn: [],
-      }];
-    }
-  }
+  const raw = jsonMatch ? jsonMatch[1] : text.trim();
   try {
-    const parsed = JSON.parse(jsonMatch[1]);
+    const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : [parsed];
   } catch {
+    // Treat the whole response as a single task if parsing fails
     return [{
       id: "task-1",
       label: "Process request",
@@ -93,9 +86,13 @@ function parseSubTasks(text: string): SubTask[] {
 /**
  * Ask Claude Opus to decompose the user request into sub-tasks.
  */
-async function decomposeRequest(userRequest: string, systemContext: string): Promise<SubTask[]> {
+async function decomposeRequest(
+  userRequest: string,
+  systemContext: string,
+  orchestratorModel: string,
+): Promise<SubTask[]> {
   const response = await anthropic.messages.create({
-    model: ORCHESTRATOR_MODEL,
+    model: orchestratorModel,
     max_tokens: ORCHESTRATOR_MAX_TOKENS,
     system: `You are an intelligent task orchestrator. Given a user request and context, break it into discrete, independently executable sub-tasks. Each sub-task must:
 1. Have a unique id (task-1, task-2, ...)
@@ -142,41 +139,51 @@ Keep sub-tasks minimal — only decompose when there are genuinely independent p
 
 /**
  * Ask Claude Opus to verify whether a sub-task result meets its acceptance criteria.
+ * Fail-safe: any error or unparseable response returns { passed: false }.
  */
 async function verifyResult(
   task: SubTask,
   result: string,
+  orchestratorModel: string,
   correctionContext?: string,
 ): Promise<{ passed: boolean; reason: string }> {
-  const response = await anthropic.messages.create({
-    model: ORCHESTRATOR_MODEL,
-    max_tokens: 512,
-    system: `You are a strict quality verifier. Evaluate whether a sub-agent's result meets the acceptance criteria. Respond with JSON only: {"passed": true/false, "reason": "brief explanation"}`,
-    messages: [
-      {
-        role: "user",
-        content: [
-          `Sub-task: ${task.label}`,
-          `Instruction: ${task.instruction}`,
-          `Acceptance criteria: ${task.acceptanceCriteria}`,
-          `Sub-agent result:\n${result}`,
-          correctionContext ? `\nPrevious correction context: ${correctionContext}` : "",
-        ].filter(Boolean).join("\n"),
-      },
-    ],
-  });
-
-  const content = response.content[0];
-  const text = content.type === "text" ? content.text : "{}";
   try {
+    const response = await anthropic.messages.create({
+      model: orchestratorModel,
+      max_tokens: 512,
+      system: `You are a strict quality verifier. Evaluate whether a sub-agent's result meets the acceptance criteria. Respond with JSON only — no other text: {"passed": true/false, "reason": "brief explanation"}`,
+      messages: [
+        {
+          role: "user",
+          content: [
+            `Sub-task: ${task.label}`,
+            `Instruction: ${task.instruction}`,
+            `Acceptance criteria: ${task.acceptanceCriteria}`,
+            `Sub-agent result:\n${result}`,
+            correctionContext ? `\nPrevious correction context: ${correctionContext}` : "",
+          ].filter(Boolean).join("\n"),
+        },
+      ],
+    });
+
+    const content = response.content[0];
+    const text = content.type === "text" ? content.text : "";
     const jsonMatch = text.match(/\{[\s\S]*\}/);
-    const parsed = JSON.parse(jsonMatch ? jsonMatch[0] : text);
+    if (!jsonMatch) {
+      // Could not parse verifier response — fail-safe: treat as not passed
+      return { passed: false, reason: "Verifier returned unparseable response — treating as failed" };
+    }
+    const parsed = JSON.parse(jsonMatch[0]) as { passed?: unknown; reason?: unknown };
     return {
-      passed: Boolean(parsed.passed),
-      reason: String(parsed.reason ?? "No reason provided"),
+      passed: parsed.passed === true,
+      reason: typeof parsed.reason === "string" ? parsed.reason : "No reason provided",
     };
-  } catch {
-    return { passed: true, reason: "Verification parse error — accepted" };
+  } catch (err) {
+    // Verifier error — fail-safe: treat as not passed
+    return {
+      passed: false,
+      reason: `Verifier error: ${err instanceof Error ? err.message : String(err)}`,
+    };
   }
 }
 
@@ -187,13 +194,14 @@ async function synthesizeFinalAnswer(
   userRequest: string,
   systemContext: string,
   results: SubTaskResult[],
+  orchestratorModel: string,
 ): Promise<string> {
   const resultsSummary = results
     .map((r) => `### ${r.label}\n${r.result}`)
     .join("\n\n");
 
   const response = await anthropic.messages.create({
-    model: ORCHESTRATOR_MODEL,
+    model: orchestratorModel,
     max_tokens: ORCHESTRATOR_MAX_TOKENS,
     system: `You are Jarvis, an intelligent personal assistant. You have received results from multiple specialized sub-agents. Synthesize their findings into a single, coherent, helpful response addressed directly to the user. Be concise but complete. Use the system context to match the appropriate tone and format.
 
@@ -245,7 +253,44 @@ async function executeSubTask(
 }
 
 /**
+ * Topological sort of sub-tasks to respect dependsOn ordering.
+ * Tasks with unresolvable dependencies (referencing unknown task ids) are
+ * executed last with a warning, rather than silently discarding their deps.
+ */
+function topologicalSort(tasks: SubTask[]): SubTask[] {
+  const taskMap = new Map(tasks.map((t) => [t.id, t]));
+  const visited = new Set<string>();
+  const sorted: SubTask[] = [];
+
+  function visit(task: SubTask, chain: Set<string>) {
+    if (chain.has(task.id)) {
+      console.warn(`[orchestrator] circular dependency detected on task "${task.id}" — breaking cycle`);
+      return;
+    }
+    if (visited.has(task.id)) return;
+    chain.add(task.id);
+    for (const depId of task.dependsOn) {
+      const dep = taskMap.get(depId);
+      if (dep) {
+        visit(dep, chain);
+      } else {
+        console.warn(`[orchestrator] task "${task.id}" depends on unknown task "${depId}" — skipping dep`);
+      }
+    }
+    chain.delete(task.id);
+    visited.add(task.id);
+    sorted.push(task);
+  }
+
+  for (const task of tasks) {
+    visit(task, new Set());
+  }
+  return sorted;
+}
+
+/**
  * Main orchestration loop.
+ * Throws if any sub-task cannot be verified after all retries.
  */
 export async function runOrchestrator(input: OrchestratorInput): Promise<OrchestratorResult> {
   const { userId, userRequest, systemContext, tools, toolContext, maxCompletionTokens, onSubtaskComplete } = input;
@@ -254,14 +299,18 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<Orchest
   const startedAt = new Date();
   let totalRetries = 0;
 
+  // Resolve orchestrator model from user preferences
+  const orchestratorModel = await getModel(userId, "orchestrator");
+  console.log(`[orchestrator] ${traceId} — model=${orchestratorModel}`);
+
   // Step 1: Decompose
-  let subTasks: SubTask[];
+  let rawSubTasks: SubTask[];
   try {
-    subTasks = await decomposeRequest(userRequest, systemContext);
+    rawSubTasks = await decomposeRequest(userRequest, systemContext, orchestratorModel);
   } catch (err) {
     console.error("[orchestrator] decomposition failed:", err);
     // Fall back to single task
-    subTasks = [{
+    rawSubTasks = [{
       id: "task-1",
       label: "Handle request",
       instruction: userRequest,
@@ -270,19 +319,22 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<Orchest
     }];
   }
 
-  console.log(`[orchestrator] ${traceId} — ${subTasks.length} sub-task(s)`);
+  // Sort sub-tasks topologically to honour dependsOn
+  const subTasks = topologicalSort(rawSubTasks);
+  console.log(`[orchestrator] ${traceId} — ${subTasks.length} sub-task(s) (sorted)`);
 
-  // Step 2: Execute + verify each sub-task (respecting dependencies)
+  // Step 2: Execute + verify each sub-task in dependency order
   const completedResults = new Map<string, SubTaskResult>();
+  const failedTaskLabels: string[] = [];
 
   for (const task of subTasks) {
-    // Gather dependency results
+    // Gather resolved dependency results (unresolved deps already warned above)
     const depResults = task.dependsOn
       .map((depId) => completedResults.get(depId))
       .filter((r): r is SubTaskResult => r !== undefined);
 
-    let taskResult: string = "(no result)";
-    let passed = false;
+    let taskResult = "(no result)";
+    let finalPassed = false;
     let retries = 0;
     let verificationReason = "";
     let correctionContext: string | undefined;
@@ -291,61 +343,80 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<Orchest
       try {
         taskResult = await executeSubTask(task, tools, toolContext, depResults, correctionContext, maxCompletionTokens);
       } catch (err) {
-        taskResult = `Error during execution: ${err instanceof Error ? err.message : String(err)}`;
+        taskResult = `Execution error: ${err instanceof Error ? err.message : String(err)}`;
       }
 
-      let verification: { passed: boolean; reason: string };
-      try {
-        verification = await verifyResult(task, taskResult, correctionContext);
-      } catch {
-        verification = { passed: true, reason: "Verification failed — accepted" };
-      }
-
-      passed = verification.passed;
+      // Strict verification — fail-safe on errors
+      const verification = await verifyResult(task, taskResult, orchestratorModel, correctionContext);
       verificationReason = verification.reason;
 
-      if (passed || attempt === MAX_RETRIES) {
-        if (!passed) {
-          console.warn(`[orchestrator] ${traceId} task "${task.label}" failed after ${MAX_RETRIES} retries — accepting anyway`);
-          passed = true; // accept on final retry
-        }
+      if (verification.passed) {
+        finalPassed = true;
         break;
       }
 
-      retries++;
-      totalRetries++;
-      correctionContext = verification.reason;
-      console.log(`[orchestrator] ${traceId} task "${task.label}" retry ${retries}: ${verification.reason}`);
+      if (attempt < MAX_RETRIES) {
+        retries++;
+        totalRetries++;
+        correctionContext = verification.reason;
+        console.log(
+          `[orchestrator] ${traceId} task "${task.label}" retry ${retries}/${MAX_RETRIES}: ${verification.reason}`,
+        );
+      }
+      // else: fall through — finalPassed remains false
+    }
+
+    if (!finalPassed) {
+      failedTaskLabels.push(task.label);
+      console.error(
+        `[orchestrator] ${traceId} task "${task.label}" failed after ${MAX_RETRIES} retries (${verificationReason})`,
+      );
     }
 
     const subtaskResult: SubTaskResult = {
       taskId: task.id,
       label: task.label,
       result: taskResult,
-      passed,
+      passed: finalPassed,
       retries,
       verificationReason,
     };
 
     completedResults.set(task.id, subtaskResult);
-    onSubtaskComplete?.(completedResults.size, subTasks.length, task.label, passed);
+    onSubtaskComplete?.(completedResults.size, subTasks.length, task.label, finalPassed);
   }
 
   const allResults = Array.from(completedResults.values());
 
+  // If any tasks failed all retries, fail the orchestration
+  if (failedTaskLabels.length > 0) {
+    const failMsg = `Orchestration failed: the following sub-tasks could not be verified after ${MAX_RETRIES} retries: ${failedTaskLabels.join(", ")}`;
+    console.error(`[orchestrator] ${traceId} — ${failMsg}`);
+
+    // Persist partial trace before throwing
+    await db.insert(orchestrationTraces).values({
+      userId,
+      traceId,
+      userRequest,
+      subtasks: subTasks as unknown as Record<string, unknown>[],
+      results: allResults as unknown as Record<string, unknown>[],
+      finalAnswer: failMsg,
+      totalRetries,
+      completedAt: new Date(),
+      durationMs: Date.now() - startedAt.getTime(),
+    }).catch((e) => console.error("[orchestrator] trace persist (partial) failed:", e));
+
+    throw new Error(failMsg);
+  }
+
   // Step 3: Synthesize final answer
   let finalAnswer: string;
   try {
-    if (allResults.length === 1) {
-      // Single task — use the sub-agent result directly if it's good, otherwise ask Claude to polish
-      const single = allResults[0];
-      if (single.result && single.result.length > 0 && single.result !== "(no result)") {
-        finalAnswer = single.result;
-      } else {
-        finalAnswer = await synthesizeFinalAnswer(userRequest, systemContext, allResults);
-      }
+    if (allResults.length === 1 && allResults[0].result && allResults[0].result !== "(no result)") {
+      // Single-task short-circuit: Claude already produced the full answer
+      finalAnswer = allResults[0].result;
     } else {
-      finalAnswer = await synthesizeFinalAnswer(userRequest, systemContext, allResults);
+      finalAnswer = await synthesizeFinalAnswer(userRequest, systemContext, allResults, orchestratorModel);
     }
   } catch (err) {
     console.error("[orchestrator] synthesis failed:", err);
