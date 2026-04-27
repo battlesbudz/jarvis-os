@@ -73,6 +73,54 @@ const INNERTUBE_TERMINAL_STATUSES = new Set([
   "UNPLAYABLE",
 ]);
 
+// ── InnerTube response type interfaces ───────────────────────────────────────
+
+interface InnerTubeSnippetRun {
+  text: string;
+}
+
+interface InnerTubeTranscriptSegmentRenderer {
+  startMs: string;
+  endMs: string;
+  snippet: { runs: InnerTubeSnippetRun[] };
+}
+
+interface InnerTubeTranscriptSegmentItem {
+  transcriptSegmentRenderer?: InnerTubeTranscriptSegmentRenderer;
+}
+
+interface InnerTubeTranscriptSegmentListRenderer {
+  initialSegments: InnerTubeTranscriptSegmentItem[];
+}
+
+interface InnerTubePlayabilityStatus {
+  status: string;
+}
+
+interface InnerTubeResponse {
+  playabilityStatus?: InnerTubePlayabilityStatus;
+  actions?: Array<{
+    updateEngagementPanelAction?: {
+      content?: {
+        transcriptRenderer?: {
+          content?: {
+            transcriptSearchPanelRenderer?: {
+              body?: {
+                transcriptSegmentListRenderer?: InnerTubeTranscriptSegmentListRenderer;
+              };
+            };
+          };
+        };
+      };
+    };
+  }>;
+}
+
+/** Safely read a string property from an unknown value, returning undefined if not a string. */
+function safeStr(v: unknown): string | undefined {
+  return typeof v === "string" ? v : undefined;
+}
+
 /**
  * Fetch a transcript via YouTube's InnerTube API (`/youtubei/v1/get_transcript`).
  * Works for public videos without authentication.
@@ -116,10 +164,10 @@ async function fetchInnerTubeTranscript(videoId: string): Promise<TranscriptResp
     throw new Error(`InnerTube HTTP ${res.status} for video ${videoId}`);
   }
 
-  const json = (await res.json()) as Record<string, unknown>;
+  const json = (await res.json()) as InnerTubeResponse;
 
   // Check for terminal playability errors
-  const errorStatus: string | undefined = (json as any)?.playabilityStatus?.status;
+  const errorStatus = safeStr(json.playabilityStatus?.status);
   if (errorStatus && INNERTUBE_TERMINAL_STATUSES.has(errorStatus)) {
     if (errorStatus === "LOGIN_REQUIRED") {
       throw new Error("LOGIN_REQUIRED: This video requires a signed-in YouTube account to access.");
@@ -131,16 +179,16 @@ async function fetchInnerTubeTranscript(videoId: string): Promise<TranscriptResp
   }
 
   // Navigate the InnerTube response tree to the transcript segment list
-  const transcriptBody = (json as any)
-    ?.actions?.[0]
-    ?.updateEngagementPanelAction
-    ?.content
-    ?.transcriptRenderer
-    ?.content
-    ?.transcriptSearchPanelRenderer
-    ?.body
-    ?.transcriptSegmentListRenderer
-    ?.initialSegments;
+  const transcriptBody =
+    json.actions?.[0]
+      ?.updateEngagementPanelAction
+      ?.content
+      ?.transcriptRenderer
+      ?.content
+      ?.transcriptSearchPanelRenderer
+      ?.body
+      ?.transcriptSegmentListRenderer
+      ?.initialSegments;
 
   if (!transcriptBody || !Array.isArray(transcriptBody)) {
     // No transcript track present — return empty so the fallback is tried
@@ -149,12 +197,13 @@ async function fetchInnerTubeTranscript(videoId: string): Promise<TranscriptResp
 
   const segments: TranscriptResponse[] = [];
   for (const item of transcriptBody) {
-    const seg = item?.transcriptSegmentRenderer;
+    const seg = item.transcriptSegmentRenderer;
     if (!seg) continue;
-    const startMs = parseInt(seg.startMs ?? "0", 10);
-    const endMs = parseInt(seg.endMs ?? seg.startMs ?? "0", 10);
+    const startMs = parseInt(safeStr(seg.startMs) ?? "0", 10);
+    const endMs = parseInt(safeStr(seg.endMs) ?? safeStr(seg.startMs) ?? "0", 10);
     const durationMs = endMs - startMs;
-    const rawText = (seg.snippet?.runs ?? []).map((r: any) => r.text ?? "").join("");
+    const runs: InnerTubeSnippetRun[] = Array.isArray(seg.snippet?.runs) ? seg.snippet.runs : [];
+    const rawText = runs.map((r) => safeStr(r.text) ?? "").join("");
     const text = rawText.replace(/\n/g, " ").trim();
     if (!text) continue;
     segments.push({
