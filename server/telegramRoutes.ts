@@ -2,7 +2,7 @@ import type { Express, Request, Response } from "express";
 import { db } from "./db";
 import { eq, and, desc, sql, gte, lte } from "drizzle-orm";
 import * as schema from "@shared/schema";
-import { sendMessage, sendMessageWithButtons, sendTelegramDocument, sendVoice, answerCallbackQuery, isTelegramConfigured, getUpdates, downloadTelegramFile, downloadTelegramFileBuffer } from "./integrations/telegram";
+import { sendMessage, sendMessageWithButtons, sendTelegramDocument, sendVoice, answerCallbackQuery, isTelegramConfigured, getUpdates, downloadTelegramFile, downloadTelegramFileBuffer, getWebhookHealth, ensureWebhook, getExpectedWebhookUrl } from "./integrations/telegram";
 import { isIngestableDocument, extractTelegramDocument, buildDocumentContextBlock } from "./telegramDocumentExtractor";
 import { getUserTtsPrefs, setUserTtsPref, speakToUser, getUserTtsChannels, setTtsChannels, ELEVENLABS_VOICES } from "./agent/tools/tts";
 import { notifyUser, getChannel } from "./channels/registry";
@@ -720,18 +720,58 @@ export function registerTelegramRoutes(app: Express): void {
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
 
       const link = await db.select().from(schema.telegramLinks).where(eq(schema.telegramLinks.userId, userId)).limit(1);
+
+      const isProduction = process.env.NODE_ENV === 'production';
+      const webhookHealth = isProduction ? getWebhookHealth() : null;
+
       if (link.length === 0) {
-        return res.json({ connected: false, username: null, configured: isTelegramConfigured() });
+        return res.json({
+          connected: false,
+          username: null,
+          configured: isTelegramConfigured(),
+          webhookHealthy: webhookHealth?.healthy ?? null,
+          webhookLastChecked: webhookHealth?.lastChecked ?? null,
+        });
       }
 
       res.json({
         connected: true,
         username: link[0].username,
         configured: isTelegramConfigured(),
+        webhookHealthy: webhookHealth?.healthy ?? null,
+        webhookLastChecked: webhookHealth?.lastChecked ?? null,
       });
     } catch (error) {
       console.error("Error getting Telegram status:", error);
       res.status(500).json({ error: "Failed to get status" });
+    }
+  });
+
+  app.post("/api/telegram/reset-webhook", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+
+      if (!isTelegramConfigured()) {
+        return res.status(400).json({ error: "Telegram bot not configured" });
+      }
+
+      const webhookUrl = getExpectedWebhookUrl();
+      if (!webhookUrl) {
+        return res.status(400).json({ error: "Not in production mode — cannot determine webhook URL" });
+      }
+
+      console.log(`[Telegram] Manual webhook reset requested by user=${userId}`);
+      const result = await ensureWebhook(webhookUrl);
+      res.json({
+        success: result.healthy,
+        reregistered: result.reregistered,
+        webhookUrl,
+        healthy: result.healthy,
+      });
+    } catch (error) {
+      console.error("Error resetting Telegram webhook:", error);
+      res.status(500).json({ error: "Failed to reset webhook" });
     }
   });
 

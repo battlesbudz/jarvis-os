@@ -344,6 +344,86 @@ export async function setWebhook(webhookUrl: string): Promise<void> {
   }
 }
 
+export interface WebhookInfo {
+  url: string;
+  has_custom_certificate: boolean;
+  pending_update_count: number;
+  last_error_date?: number;
+  last_error_message?: string;
+}
+
+/**
+ * Fetches the currently registered webhook info from Telegram.
+ * Returns null if the bot token is missing or the call fails.
+ */
+export async function getWebhookInfo(): Promise<WebhookInfo | null> {
+  if (!BOT_TOKEN) return null;
+  try {
+    const res = await fetch(`${BASE}/getWebhookInfo`);
+    if (!res.ok) return null;
+    const data = await res.json() as { ok: boolean; result?: WebhookInfo };
+    if (data.ok && data.result) return data.result;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// ── Webhook health state (module-level, lives for the process lifetime) ────────
+let _webhookHealth: {
+  healthy: boolean;
+  registeredUrl: string | null;
+  lastChecked: string | null;
+} = { healthy: false, registeredUrl: null, lastChecked: null };
+
+export function getWebhookHealth() {
+  return { ..._webhookHealth };
+}
+
+/**
+ * Verifies that the Telegram webhook is registered to `expectedUrl`.
+ * If it is missing or points elsewhere, re-registers immediately.
+ * Updates the in-memory health state so it can be surfaced by the API.
+ */
+export async function ensureWebhook(expectedUrl: string): Promise<{ healthy: boolean; reregistered: boolean }> {
+  const info = await getWebhookInfo();
+  const now = new Date().toISOString();
+
+  if (info && info.url === expectedUrl) {
+    _webhookHealth = { healthy: true, registeredUrl: info.url, lastChecked: now };
+    console.log('[Telegram] Webhook health check passed — URL matches expected:', expectedUrl);
+    return { healthy: true, reregistered: false };
+  }
+
+  const reason = !info
+    ? 'getWebhookInfo call failed'
+    : info.url
+    ? `registered to wrong URL: ${info.url}`
+    : 'no webhook registered';
+  console.warn(`[Telegram] Webhook mismatch (${reason}) — re-registering to ${expectedUrl}`);
+
+  try {
+    await setWebhook(expectedUrl);
+    _webhookHealth = { healthy: true, registeredUrl: expectedUrl, lastChecked: now };
+    console.log('[Telegram] Webhook re-registered successfully:', expectedUrl);
+    return { healthy: true, reregistered: true };
+  } catch (err) {
+    _webhookHealth = { healthy: false, registeredUrl: info?.url || null, lastChecked: now };
+    console.error('[Telegram] Webhook re-registration failed:', err);
+    return { healthy: false, reregistered: false };
+  }
+}
+
+/**
+ * Returns the expected production webhook URL derived from REPLIT_DOMAINS.
+ * Returns null if REPLIT_DOMAINS is not set (dev mode).
+ */
+export function getExpectedWebhookUrl(): string | null {
+  const domain = (process.env.REPLIT_DOMAINS || '').split(',')[0]?.trim();
+  if (!domain) return null;
+  return `https://${domain}/api/telegram/webhook`;
+}
+
 export function isTelegramConfigured(): boolean {
   return !!BOT_TOKEN;
 }

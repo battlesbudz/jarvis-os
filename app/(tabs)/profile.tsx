@@ -132,6 +132,8 @@ interface TelegramStatus {
   connected: boolean;
   username: string | null;
   configured: boolean;
+  webhookHealthy: boolean | null;
+  webhookLastChecked: string | null;
 }
 
 interface PlatformInfo {
@@ -196,8 +198,9 @@ export default function ProfileScreen() {
     slack: { connected: false },
   });
   const [telegramStatus, setTelegramStatus] = useState<TelegramStatus>({
-    connected: false, username: null, configured: false,
+    connected: false, username: null, configured: false, webhookHealthy: null, webhookLastChecked: null,
   });
+  const [webhookResetting, setWebhookResetting] = useState(false);
   const [telegramLinkCode, setTelegramLinkCode] = useState<string | null>(null);
   const [telegramPolling, setTelegramPolling] = useState(false);
   const [channelData, setChannelData] = useState<{
@@ -316,9 +319,28 @@ export default function ProfileScreen() {
         connected: data.connected ?? false,
         username: data.username ?? null,
         configured: data.configured ?? false,
+        webhookHealthy: data.webhookHealthy ?? null,
+        webhookLastChecked: data.webhookLastChecked ?? null,
       });
     } catch {
-      setTelegramStatus({ connected: false, username: null, configured: false });
+      setTelegramStatus({ connected: false, username: null, configured: false, webhookHealthy: null, webhookLastChecked: null });
+    }
+  }, []);
+
+  const handleResetWebhook = useCallback(async () => {
+    setWebhookResetting(true);
+    try {
+      const res = await apiRequest('POST', '/api/telegram/reset-webhook');
+      const data = await res.json();
+      if (data.healthy) {
+        setTelegramStatus(prev => ({ ...prev, webhookHealthy: true, webhookLastChecked: new Date().toISOString() }));
+      } else {
+        alert('Webhook reset failed. Check server logs for details.');
+      }
+    } catch {
+      alert('Could not reach the server to reset the webhook.');
+    } finally {
+      setWebhookResetting(false);
     }
   }, []);
 
@@ -2260,6 +2282,29 @@ export default function ProfileScreen() {
                 </Pressable>
               )}
             </View>
+            {telegramStatus.configured && telegramStatus.webhookHealthy !== null && (
+              <View style={styles.webhookStatusRow}>
+                <Ionicons
+                  name={telegramStatus.webhookHealthy ? 'checkmark-circle' : 'warning'}
+                  size={13}
+                  color={telegramStatus.webhookHealthy ? Colors.success : '#F59E0B'}
+                />
+                <Text style={[styles.webhookStatusText, !telegramStatus.webhookHealthy && { color: '#F59E0B' }]}>
+                  {telegramStatus.webhookHealthy
+                    ? `Bot connected${telegramStatus.webhookLastChecked ? ` · verified ${new Date(telegramStatus.webhookLastChecked).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''}`
+                    : 'Bot webhook may be offline'}
+                </Text>
+                {!telegramStatus.webhookHealthy && (
+                  webhookResetting ? (
+                    <ActivityIndicator size="small" color="#229ED9" style={{ marginLeft: 8 }} />
+                  ) : (
+                    <Pressable onPress={handleResetWebhook} style={styles.webhookFixBtn}>
+                      <Text style={styles.webhookFixBtnText}>Fix now</Text>
+                    </Pressable>
+                  )
+                )}
+              </View>
+            )}
           </View>
 
           <View style={[styles.platformsList, { marginTop: 12 }]}>
@@ -3977,6 +4022,31 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter_400Regular',
     color: Colors.textTertiary,
     textDecorationLine: 'underline',
+  },
+  webhookStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 12,
+    paddingTop: 6,
+    paddingBottom: 2,
+  },
+  webhookStatusText: {
+    fontSize: 11,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textTertiary,
+    flex: 1,
+  },
+  webhookFixBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderRadius: 6,
+    backgroundColor: '#229ED918',
+  },
+  webhookFixBtnText: {
+    fontSize: 11,
+    fontFamily: 'Inter_600SemiBold',
+    color: '#229ED9',
   },
   upgradePermText: {
     fontSize: 11,
