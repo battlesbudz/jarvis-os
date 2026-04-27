@@ -340,96 +340,115 @@ export async function ensureTablesExist() {
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS inbox_rules (
         id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
-        "userId" VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         type VARCHAR NOT NULL DEFAULT 'suppress',
         scope VARCHAR NOT NULL DEFAULT 'all',
         pattern TEXT NOT NULL,
-        "matchHints" JSONB NOT NULL DEFAULT '{}'::jsonb,
+        match_hints JSONB NOT NULL DEFAULT '{}'::jsonb,
         active VARCHAR NOT NULL DEFAULT 'true',
-        "matchCount" VARCHAR NOT NULL DEFAULT '0',
-        "dismissCount" VARCHAR NOT NULL DEFAULT '0',
+        match_count VARCHAR NOT NULL DEFAULT '0',
         source VARCHAR NOT NULL DEFAULT 'user',
-        "createdAt" TIMESTAMP DEFAULT NOW(),
-        "updatedAt" TIMESTAMP DEFAULT NOW()
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
       )
+    `);
+
+    await db.execute(sql`
+      DO $$
+      BEGIN
+        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'inbox_rules' AND column_name = 'userId') THEN
+          ALTER TABLE inbox_rules RENAME COLUMN "userId" TO user_id;
+        END IF;
+        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'inbox_rules' AND column_name = 'matchHints') THEN
+          ALTER TABLE inbox_rules RENAME COLUMN "matchHints" TO match_hints;
+        END IF;
+        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'inbox_rules' AND column_name = 'matchCount') THEN
+          ALTER TABLE inbox_rules RENAME COLUMN "matchCount" TO match_count;
+        END IF;
+        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'inbox_rules' AND column_name = 'createdAt') THEN
+          ALTER TABLE inbox_rules RENAME COLUMN "createdAt" TO created_at;
+        END IF;
+        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'inbox_rules' AND column_name = 'updatedAt') THEN
+          ALTER TABLE inbox_rules RENAME COLUMN "updatedAt" TO updated_at;
+        END IF;
+      END$$
     `);
 
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS inbox_items (
         id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
-        "userId" VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        "sourceType" VARCHAR NOT NULL,
-        "sourceId" VARCHAR NOT NULL,
+        user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        source_type VARCHAR NOT NULL,
+        source_id VARCHAR NOT NULL,
         subject TEXT,
         sender TEXT,
         snippet TEXT,
-        "jarvisReason" TEXT,
-        "suggestedActions" JSONB NOT NULL DEFAULT '[]'::jsonb,
-        "matchedRuleId" VARCHAR,
+        jarvis_reason TEXT,
+        suggested_actions JSONB NOT NULL DEFAULT '[]'::jsonb,
+        matched_rule_id VARCHAR,
         status VARCHAR NOT NULL DEFAULT 'pending',
-        "actedAt" TIMESTAMP,
-        "dismissCount" VARCHAR NOT NULL DEFAULT '0',
-        "createdAt" TIMESTAMP DEFAULT NOW()
+        acted_at TIMESTAMP,
+        dismiss_count INTEGER NOT NULL DEFAULT 0,
+        surfaced_at TIMESTAMP DEFAULT NOW()
       )
     `);
 
-    // Migrate inbox_items columns from snake_case to camelCase (if old schema)
-    const inboxCols = await db.execute(sql`
-      SELECT column_name FROM information_schema.columns
-      WHERE table_name = 'inbox_items'
-    `);
-    const inboxColNames = inboxCols.rows.map((r: any) => r.column_name as string);
-    const inboxRenames: Array<[string, string]> = [
-      ['user_id',          '"userId"'],
-      ['source_type',      '"sourceType"'],
-      ['source_id',        '"sourceId"'],
-      ['jarvis_reason',    '"jarvisReason"'],
-      ['suggested_actions','"suggestedActions"'],
-      ['dismiss_count',    '"dismissCount"'],
-      ['matched_rule_id',  '"matchedRuleId"'],
-      ['acted_at',         '"actedAt"'],
-      ['surfaced_at',      '"surfacedAt"'],
-    ];
-    for (const [oldCol, newCol] of inboxRenames) {
-      if (inboxColNames.includes(oldCol)) {
-        // Use pool directly for DDL with dynamic identifiers (drizzle sql tag
-        // does not support parameterized DDL with dynamic column names)
-        await pool.query(`ALTER TABLE inbox_items RENAME COLUMN ${oldCol} TO ${newCol}`);
-      }
-    }
-    // Add createdAt if missing
     await db.execute(sql`
-      ALTER TABLE inbox_items
-      ADD COLUMN IF NOT EXISTS "createdAt" TIMESTAMP DEFAULT NOW()
+      DO $$
+      BEGIN
+        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'inbox_items' AND column_name = 'userId') THEN
+          ALTER TABLE inbox_items RENAME COLUMN "userId" TO user_id;
+        END IF;
+        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'inbox_items' AND column_name = 'sourceType') THEN
+          ALTER TABLE inbox_items RENAME COLUMN "sourceType" TO source_type;
+        END IF;
+        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'inbox_items' AND column_name = 'sourceId') THEN
+          ALTER TABLE inbox_items RENAME COLUMN "sourceId" TO source_id;
+        END IF;
+        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'inbox_items' AND column_name = 'jarvisReason') THEN
+          ALTER TABLE inbox_items RENAME COLUMN "jarvisReason" TO jarvis_reason;
+        END IF;
+        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'inbox_items' AND column_name = 'suggestedActions') THEN
+          ALTER TABLE inbox_items RENAME COLUMN "suggestedActions" TO suggested_actions;
+        END IF;
+        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'inbox_items' AND column_name = 'matchedRuleId') THEN
+          ALTER TABLE inbox_items RENAME COLUMN "matchedRuleId" TO matched_rule_id;
+        END IF;
+        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'inbox_items' AND column_name = 'actedAt') THEN
+          ALTER TABLE inbox_items RENAME COLUMN "actedAt" TO acted_at;
+        END IF;
+        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'inbox_items' AND column_name = 'dismissCount') THEN
+          ALTER TABLE inbox_items RENAME COLUMN "dismissCount" TO dismiss_count;
+        END IF;
+        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'inbox_items' AND column_name = 'createdAt') THEN
+          IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'inbox_items' AND column_name = 'surfaced_at') THEN
+            ALTER TABLE inbox_items DROP COLUMN "createdAt";
+          ELSE
+            ALTER TABLE inbox_items RENAME COLUMN "createdAt" TO surfaced_at;
+          END IF;
+        END IF;
+      END$$
     `);
 
-    await db.execute(sql`
-      ALTER TABLE inbox_items ADD COLUMN IF NOT EXISTS "surfacedAt" TIMESTAMP DEFAULT NOW()
-    `);
+    await db.execute(sql`ALTER TABLE inbox_items ADD COLUMN IF NOT EXISTS surfaced_at TIMESTAMP DEFAULT NOW()`);
 
-    // Dedup using post-rename camelCase column names ("userId", "sourceId").
-    // Non-fatal: if schema is still in transition the .catch() keeps startup alive.
     await db.execute(sql`
       DELETE FROM inbox_items a
       USING (
         SELECT id,
                ROW_NUMBER() OVER (
-                 PARTITION BY "userId", "sourceId"
-                 ORDER BY "createdAt" ASC, id ASC
+                 PARTITION BY user_id, source_id
+                 ORDER BY surfaced_at ASC, id ASC
                ) AS rn
         FROM inbox_items
       ) b
       WHERE a.id = b.id AND b.rn > 1
-    `).catch((err: Error) => {
-      console.warn("[DB] inbox_items dedup skipped (column mismatch — non-fatal):", err.message);
-    });
+    `);
 
     await db.execute(sql`
       CREATE UNIQUE INDEX IF NOT EXISTS inbox_items_user_source_uidx
-      ON inbox_items ("userId", "sourceId")
-    `).catch(() => {
-      // Index may already exist or column names may differ — non-fatal
-    });
+      ON inbox_items (user_id, source_id)
+    `);
 
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS proactive_schedule_log (
