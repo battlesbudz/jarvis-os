@@ -17,6 +17,13 @@ export interface ChannelSendOpts {
   notificationType?: NotificationType;
   buttons?: { text: string; callbackData: string }[];
   threadKey?: string;
+  /**
+   * When true, Discord delivery is skipped if the user sent a Discord message
+   * within the last 3 minutes (they are actively chatting).  The notifyUser
+   * fallback then delivers via in-app instead, avoiding spam during live sessions.
+   * Only set this for low-urgency background notifications (e.g. Curiosity).
+   */
+  skipIfDiscordActive?: boolean;
 }
 
 export interface ChannelSendResult {
