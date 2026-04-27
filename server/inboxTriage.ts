@@ -25,40 +25,17 @@ const openai = new OpenAI({
 
 type TriageVerdict = "auto_handle" | "escalate" | "promote_memory";
 
-/**
- * Tools where Jarvis-initiated deliverables can be auto-handled by triage
- * without asking the user (mirrors the non-strictly-irreversible set).
- */
-const AUTO_APPROVABLE_GATE_TOOLS = new Set([
-  "browser_navigate",
-  "browser_click",
-  "browser_type",
-  "browser_select",
-  "browser_clear_session",
-  "create_document",
-  "drive_create_file",
-  "setup_named_agent",
-  "gmail_draft",
-  "clear_memory",
-  "agent_memory_clear",
-  "connect_channel",
-]);
-
 async function classifyDeliverable(
   d: typeof schema.deliverables.$inferSelect
 ): Promise<{ verdict: TriageVerdict; note: string }> {
-  const meta = (d.meta as Record<string, unknown>) || {};
-
   if (d.type === "email_draft") {
     return { verdict: "escalate", note: "Email drafts require your review before sending" };
   }
 
+  // Approval-gate deliverables only exist for user-initiated or strictly-irreversible
+  // requests (Jarvis-initiated safe gates are auto-approved at creation with no deliverable).
+  // Always escalate so the user sees them.
   if (d.type === "approval_gate") {
-    const initiatedBy = meta.initiatedBy as string | undefined;
-    const toolName = meta.toolName as string | undefined;
-    if (initiatedBy === "jarvis" && toolName && AUTO_APPROVABLE_GATE_TOOLS.has(toolName)) {
-      return { verdict: "auto_handle", note: `Auto-approved — Jarvis-initiated ${toolName}` };
-    }
     return { verdict: "escalate", note: "Requires your approval before proceeding" };
   }
 
