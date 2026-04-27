@@ -19,6 +19,7 @@ import * as Haptics from 'expo-haptics';
 import * as WebBrowser from 'expo-web-browser';
 import * as Clipboard from 'expo-clipboard';
 import { createAudioPlayer, requestRecordingPermissionsAsync } from '@/lib/audio';
+import * as FileSystem from 'expo-file-system/legacy';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import {
   getStats,
@@ -408,6 +409,7 @@ export default function SettingsScreen() {
 
   const previewTtsVoice = useCallback(async () => {
     setTtsPreviewing(true);
+    let tempUri: string | null = null;
     try {
       const res = await apiRequest('POST', '/api/coach/speak', {
         text: "Hi, I'm Jarvis. This is what I sound like with this voice.",
@@ -415,18 +417,29 @@ export default function SettingsScreen() {
       });
       if (res.ok) {
         const data = await res.json();
-        if (data.audio && Platform.OS !== 'web') {
-          const player = createAudioPlayer({ uri: `data:audio/mp3;base64,${data.audio}` });
+        if (data.audio && Platform.OS !== 'web' && FileSystem.documentDirectory) {
+          tempUri = `${FileSystem.documentDirectory}tts_preview_${Date.now()}.mp3`;
+          await FileSystem.writeAsStringAsync(tempUri, data.audio, {
+            encoding: FileSystem.EncodingType.Base64,
+          });
+          const playUri = tempUri;
+          tempUri = null;
+          const player = createAudioPlayer({ uri: playUri });
           player.addListener('playbackStatusUpdate', (status) => {
             if (status.didJustFinish) {
               player.remove();
+              FileSystem.deleteAsync(playUri, { idempotent: true }).catch(() => {});
             }
           });
           player.play();
         }
       }
-    } catch {}
-    setTtsPreviewing(false);
+    } catch (err) {
+      console.warn('[settings] TTS preview failed:', err);
+    } finally {
+      if (tempUri) FileSystem.deleteAsync(tempUri, { idempotent: true }).catch(() => {});
+      setTtsPreviewing(false);
+    }
   }, [ttsVoice]);
 
   // ── Build History ──
@@ -1987,7 +2000,7 @@ export default function SettingsScreen() {
                 : <Ionicons name="volume-medium-outline" size={16} color="#7C3AED" />
               }
               <Text style={{ fontSize: 13, fontFamily: 'Inter_500Medium', color: '#7C3AED' }}>
-                {ttsPreviewing ? 'Sending…' : `Preview ${TTS_OPENAI_VOICES.find(v => v.id === ttsVoice)?.label ?? ttsVoice} voice on Telegram`}
+                {ttsPreviewing ? 'Loading…' : `Preview ${TTS_OPENAI_VOICES.find(v => v.id === ttsVoice)?.label ?? ttsVoice} voice`}
               </Text>
             </Pressable>
             <Text style={{ fontSize: 11, color: Colors.textTertiary, fontFamily: 'Inter_400Regular', textAlign: 'center', marginTop: 6 }}>
