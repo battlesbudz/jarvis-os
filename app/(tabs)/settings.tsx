@@ -453,9 +453,21 @@ export default function SettingsScreen() {
     loadBuildHistory();
     loadHealth();
     return () => {
-      if (telegramPollRef.current) clearInterval(telegramPollRef.current);
+      if (telegramPollRef.current) {
+        clearInterval(telegramPollRef.current);
+        telegramPollRef.current = null;
+      }
     };
   }, [loadAll, loadNervousSystem, loadThreatLog, loadBuildHistory, loadHealth]));
+
+  useEffect(() => {
+    return () => {
+      if (telegramPollRef.current) {
+        clearInterval(telegramPollRef.current);
+        telegramPollRef.current = null;
+      }
+    };
+  }, []);
 
   // ── Helpers ──
   // Triggers an immediate server-side re-validation for the current user so
@@ -1557,7 +1569,7 @@ export default function SettingsScreen() {
                 !healthReport && healthStyles.badgeUnknown,
               ]}>
                 <Text style={healthStyles.overallBadgeText}>
-                  {!healthReport ? 'UNKNOWN' : healthReport.overallStatus.toUpperCase()}
+                  {(healthReport?.overallStatus ?? 'unknown').toUpperCase()}
                 </Text>
               </View>
             )}
@@ -1595,9 +1607,9 @@ export default function SettingsScreen() {
           </View>
 
           {/* Subsystem grid */}
-          {healthReport && healthReport.subsystems.length > 0 && (
+          {healthReport && (healthReport.subsystems ?? []).length > 0 && (
             <View style={healthStyles.subsystemGrid}>
-              {healthReport.subsystems.map((s) => (
+              {(healthReport.subsystems ?? []).map((s) => (
                 <View key={s.name} style={healthStyles.subsystemCell}>
                   <View style={[
                     healthStyles.subsystemDot,

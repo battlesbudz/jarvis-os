@@ -163,6 +163,11 @@ const GUT_TYPE_LABEL: Record<string, string> = {
   relationship_anomaly: 'Relationship flag',
 };
 
+const SUPPORTED_ACTION_TYPES = new Set([
+  'dismiss', 'never_again', 'archive', 'mark_important',
+  'save_as_task', 'add_prep_time', 'save_to_focus', 'navigate_telegram_health', 'reply',
+]);
+
 export default function InboxScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -411,7 +416,7 @@ export default function InboxScreen() {
   const renderItem = ({ item, index }: { item: InboxItem; index: number }) => {
     const senderName = getSenderName(item.sender);
     const src = getSourceConfig(item.sourceType);
-    const actions = item.suggestedActions || [];
+    const actions = (item.suggestedActions || []).filter(a => SUPPORTED_ACTION_TYPES.has(a.actionType));
     const gutSignal = gutByItemRef.get(item.id) ?? gutByItemRef.get(item.sourceId);
 
     return (
