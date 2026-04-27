@@ -555,6 +555,33 @@ export class ClaudeProvider extends BaseProvider {
 
   // ── Non-streaming path ────────────────────────────────────────────────────
 
+  /**
+   * Convert a completed Anthropic Messages API response into the canonical
+   * ProviderChunk stream.  Extracted from _completeTurn so this conversion
+   * boundary can be tested independently of request construction.
+   */
+  private *_convertResponse(response: Anthropic.Message): Generator<ProviderChunk> {
+    for (const block of response.content) {
+      if (block.type === "text") {
+        yield { type: "text", delta: block.text };
+      } else if (block.type === "tool_use") {
+        const idx = response.content.indexOf(block);
+        yield { type: "tool_call_start", index: idx, id: block.id, name: block.name };
+        yield {
+          type: "tool_call_args",
+          index: idx,
+          args: JSON.stringify(block.input),
+        };
+      }
+    }
+
+    const finishReason =
+      response.stop_reason === "tool_use"
+        ? "tool_calls"
+        : response.stop_reason ?? null;
+    yield { type: "finish", reason: finishReason };
+  }
+
   private async *_completeTurn(
     params: ProviderQueryParams,
   ): AsyncGenerator<ProviderChunk> {
@@ -577,25 +604,7 @@ export class ClaudeProvider extends BaseProvider {
       { signal: params.signal ?? undefined },
     );
 
-    for (const block of response.content) {
-      if (block.type === "text") {
-        yield { type: "text", delta: block.text };
-      } else if (block.type === "tool_use") {
-        const idx = response.content.indexOf(block);
-        yield { type: "tool_call_start", index: idx, id: block.id, name: block.name };
-        yield {
-          type: "tool_call_args",
-          index: idx,
-          args: JSON.stringify(block.input),
-        };
-      }
-    }
-
-    const finishReason =
-      response.stop_reason === "tool_use"
-        ? "tool_calls"
-        : response.stop_reason ?? null;
-    yield { type: "finish", reason: finishReason };
+    yield* this._convertResponse(response);
   }
 
   // ── Streaming path ────────────────────────────────────────────────────────
