@@ -4,6 +4,7 @@ import {
   Text,
   StyleSheet,
   ScrollView,
+  FlatList,
   TouchableOpacity,
   TextInput,
   Modal,
@@ -13,7 +14,9 @@ import {
   RefreshControl,
   Switch,
   Animated,
+  KeyboardAvoidingView,
 } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -542,18 +545,61 @@ function CreateAgentSheet({
 
 // ── RunModal ───────────────────────────────────────────────────────────────────
 
+interface ChatMessage {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  timestamp: number;
+}
+
+const CHAT_STORAGE_KEY = (agentId: string) => `agent_chat_history_${agentId}`;
+
+async function loadChatHistory(agentId: string): Promise<ChatMessage[]> {
+  try {
+    const raw = await AsyncStorage.getItem(CHAT_STORAGE_KEY(agentId));
+    if (!raw) return [];
+    return JSON.parse(raw) as ChatMessage[];
+  } catch {
+    return [];
+  }
+}
+
+async function saveChatHistory(agentId: string, messages: ChatMessage[]): Promise<void> {
+  try {
+    await AsyncStorage.setItem(CHAT_STORAGE_KEY(agentId), JSON.stringify(messages));
+  } catch { /* best-effort */ }
+}
+
 function RunModal({ agent, onClose }: { agent: RosterAgent | null; onClose: () => void }) {
+  const insets = useSafeAreaInsets();
   const [message, setMessage] = useState("");
-  const [reply, setReply] = useState("");
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [streamingContent, setStreamingContent] = useState("");
   const [running, setRunning] = useState(false);
   const [integrationError, setIntegrationError] = useState<{ integration: string } | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const runIdRef = useRef<string | null>(null);
+  const prevAgentIdRef = useRef<string | null>(null);
+
+  // Load history from AsyncStorage when agent changes
+  useEffect(() => {
+    if (!agent) return;
+    if (prevAgentIdRef.current === agent.id) return;
+    prevAgentIdRef.current = agent.id;
+    loadChatHistory(agent.id).then((history) => {
+      setMessages(history);
+      setStreamingContent("");
+      setIntegrationError(null);
+    });
+  }, [agent?.id]);
+
+  function buildConversationHistory(msgs: ChatMessage[]): Array<{ role: string; content: string }> {
+    return msgs.map((m) => ({ role: m.role, content: m.content }));
+  }
 
   async function handleRun() {
     if (!agent || !message.trim()) return;
 
-    // Cancel any in-flight run before starting a new one.
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
     }
@@ -562,12 +608,24 @@ function RunModal({ agent, onClose }: { agent: RosterAgent | null; onClose: () =
     abortControllerRef.current = controller;
     runIdRef.current = null;
 
+    const userMsg: ChatMessage = {
+      id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+      role: "user",
+      content: message.trim(),
+      timestamp: Date.now(),
+    };
+
+    const updatedMessages = [...messages, userMsg];
+    setMessages(updatedMessages);
+    saveChatHistory(agent.id, updatedMessages);
+    setMessage("");
     setRunning(true);
-    setReply("");
+    setStreamingContent("");
     setIntegrationError(null);
 
     try {
       const token = await getAuthToken();
+      const conversationHistory = buildConversationHistory(messages);
 
       const url = new URL(`/api/agents/${agent.id}/chat`, getApiUrl());
       const response = await expoFetch(url.toString(), {
@@ -577,7 +635,7 @@ function RunModal({ agent, onClose }: { agent: RosterAgent | null; onClose: () =
           Accept: "text/event-stream",
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify({ message }),
+        body: JSON.stringify({ message: userMsg.content, conversationHistory }),
         signal: controller.signal,
       });
 
@@ -585,11 +643,9 @@ function RunModal({ agent, onClose }: { agent: RosterAgent | null; onClose: () =
         throw new Error(`Server error: ${response.status}`);
       }
 
-      // Capture the run ID so the Stop button can call the abort endpoint.
       const serverRunId = response.headers.get("X-Run-Id");
       if (serverRunId) runIdRef.current = serverRunId;
 
-      // Read the SSE stream.
       const reader = response.body?.getReader();
       if (!reader) throw new Error("No response body");
 
@@ -613,7 +669,7 @@ function RunModal({ agent, onClose }: { agent: RosterAgent | null; onClose: () =
             const parsed = JSON.parse(data) as { content?: string; type?: string; integration?: string; message?: string };
             if (parsed.type === "aborted") {
               accumulated += "\n\n[Stopped]";
-              setReply(accumulated.trim());
+              setStreamingContent(accumulated.trim());
               break;
             }
             if (parsed.type === "integration_error" && parsed.integration) {
@@ -621,19 +677,40 @@ function RunModal({ agent, onClose }: { agent: RosterAgent | null; onClose: () =
             }
             if (parsed.content) {
               accumulated += parsed.content;
-              setReply(accumulated);
+              setStreamingContent(accumulated);
             }
           } catch { /* skip malformed lines */ }
         }
       }
+
+      if (accumulated) {
+        const assistantMsg: ChatMessage = {
+          id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+          role: "assistant",
+          content: accumulated,
+          timestamp: Date.now(),
+        };
+        const finalMessages = [...updatedMessages, assistantMsg];
+        setMessages(finalMessages);
+        saveChatHistory(agent.id, finalMessages);
+      }
     } catch (err) {
       if (err instanceof Error && err.name === "AbortError") {
-        // Client-side abort — reply may already be partially set.
+        // Client-side abort — partial content already shown
       } else {
-        setReply(`Error: ${err instanceof Error ? err.message : String(err)}`);
+        const errorMsg: ChatMessage = {
+          id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+          role: "assistant",
+          content: `Error: ${err instanceof Error ? err.message : String(err)}`,
+          timestamp: Date.now(),
+        };
+        const finalMessages = [...updatedMessages, errorMsg];
+        setMessages(finalMessages);
+        saveChatHistory(agent.id, finalMessages);
       }
     } finally {
       setRunning(false);
+      setStreamingContent("");
       abortControllerRef.current = null;
       runIdRef.current = null;
     }
@@ -641,7 +718,6 @@ function RunModal({ agent, onClose }: { agent: RosterAgent | null; onClose: () =
 
   async function handleStop() {
     if (!agent) return;
-    // Signal the server first (stops the model loop), then cancel the fetch.
     if (runIdRef.current) {
       try {
         await apiRequest("POST", `/api/agents/${agent.id}/abort`, { runId: runIdRef.current });
@@ -650,12 +726,30 @@ function RunModal({ agent, onClose }: { agent: RosterAgent | null; onClose: () =
     abortControllerRef.current?.abort();
   }
 
+  function handleClear() {
+    if (!agent) return;
+    Alert.alert("Clear conversation", "Remove all messages with this agent?", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Clear",
+        style: "destructive",
+        onPress: () => {
+          setMessages([]);
+          setStreamingContent("");
+          setIntegrationError(null);
+          saveChatHistory(agent.id, []);
+        },
+      },
+    ]);
+  }
+
   function handleClose() {
     handleStop();
     setMessage("");
-    setReply("");
+    setStreamingContent("");
     setRunning(false);
     setIntegrationError(null);
+    prevAgentIdRef.current = null;
     onClose();
   }
 
@@ -665,62 +759,151 @@ function RunModal({ agent, onClose }: { agent: RosterAgent | null; onClose: () =
     router.push({ pathname: "/(tabs)/settings", params: integration ? { scrollTo: integration } : {} });
   }
 
+  // Build display list: persisted messages + live streaming bubble
+  const displayMessages = streamingContent
+    ? [...messages, { id: "__streaming__", role: "assistant" as const, content: streamingContent, timestamp: Date.now() }]
+    : messages;
+
+  // Inverted FlatList: newest at bottom
+  const invertedMessages = [...displayMessages].reverse();
+
+  function renderMessage({ item }: { item: ChatMessage }) {
+    const isUser = item.role === "user";
+    const isStreaming = item.id === "__streaming__";
+    return (
+      <View style={[styles.chatBubbleRow, isUser ? styles.chatBubbleRowUser : styles.chatBubbleRowAgent]}>
+        {!isUser && (
+          <View style={[styles.chatAvatar, { backgroundColor: Colors.primary + "22" }]}>
+            <Ionicons name="flash-outline" size={12} color={Colors.primary} />
+          </View>
+        )}
+        <View
+          style={[
+            styles.chatBubble,
+            isUser
+              ? [styles.chatBubbleUser, { backgroundColor: Colors.primary }]
+              : [styles.chatBubbleAgent, { backgroundColor: Colors.surface, borderColor: Colors.border }],
+          ]}
+        >
+          <Text style={[styles.chatBubbleText, { color: isUser ? Colors.white : Colors.text }]}>
+            {item.content}
+          </Text>
+          {isStreaming && (
+            <ActivityIndicator size="small" color={Colors.primary} style={{ marginTop: 4, alignSelf: "flex-start" }} />
+          )}
+        </View>
+      </View>
+    );
+  }
+
+  const bottomPad = insets.bottom;
+
   return (
     <Modal visible={!!agent} animationType="slide" presentationStyle="formSheet" onRequestClose={handleClose}>
-      <View style={[styles.sheet, { backgroundColor: Colors.background }]}>
+      <KeyboardAvoidingView
+        style={[styles.sheet, { backgroundColor: Colors.background }]}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        keyboardVerticalOffset={0}
+      >
+        {/* Header */}
         <View style={[styles.sheetHeader, { borderBottomColor: Colors.border }]}>
           <TouchableOpacity onPress={handleClose}>
             <Text style={[styles.sheetCancel, { color: Colors.textSecondary }]}>Close</Text>
           </TouchableOpacity>
-          <Text style={[styles.sheetTitle, { color: Colors.text }]}>{agent?.name ?? ""}</Text>
+          <Text style={[styles.sheetTitle, { color: Colors.text }]} numberOfLines={1}>
+            {agent?.name ?? ""}
+          </Text>
           {running ? (
             <TouchableOpacity onPress={handleStop}>
               <Text style={[styles.sheetDone, { color: Colors.error }]}>Stop</Text>
             </TouchableOpacity>
           ) : (
-            <TouchableOpacity onPress={handleRun} disabled={!message.trim()}>
-              <Text style={[styles.sheetDone, { color: message.trim() ? Colors.primary : Colors.textTertiary }]}>
-                Run
-              </Text>
+            <TouchableOpacity onPress={handleClear} disabled={messages.length === 0}>
+              <Ionicons
+                name="trash-outline"
+                size={18}
+                color={messages.length > 0 ? Colors.textSecondary : Colors.textTertiary}
+              />
             </TouchableOpacity>
           )}
         </View>
 
-        <ScrollView style={styles.sheetBody} keyboardShouldPersistTaps="handled">
-          <TextInput
-            style={[styles.input, styles.inputMultiline, { backgroundColor: Colors.surface, color: Colors.text, borderColor: Colors.border }]}
-            value={message}
-            onChangeText={setMessage}
-            placeholder="Send a message to this agent…"
-            placeholderTextColor={Colors.textTertiary}
-            multiline
-            numberOfLines={3}
-            editable={!running}
+        {/* Messages */}
+        {displayMessages.length === 0 && !running ? (
+          <View style={styles.chatEmpty}>
+            <Ionicons name="chatbubble-ellipses-outline" size={32} color={Colors.textTertiary} />
+            <Text style={[styles.chatEmptyText, { color: Colors.textTertiary }]}>
+              Start a conversation with {agent?.name ?? "this agent"}
+            </Text>
+          </View>
+        ) : (
+          <FlatList
+            data={invertedMessages}
+            keyExtractor={(item) => item.id}
+            renderItem={renderMessage}
+            inverted
+            style={{ flex: 1 }}
+            contentContainerStyle={styles.chatList}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
           />
-          {running && (
-            <View style={styles.loadingRow}>
-              <ActivityIndicator size="small" color={Colors.primary} />
-              <Text style={[styles.loadingText, { color: Colors.textSecondary }]}>Thinking…</Text>
-            </View>
-          )}
-          {reply ? (
-            <View style={[styles.replyBox, { backgroundColor: Colors.surface, borderColor: Colors.border }]}>
-              <Text style={[styles.replyLabel, { color: Colors.textSecondary }]}>Reply</Text>
-              <ScrollView style={{ maxHeight: 300 }} nestedScrollEnabled>
-                <Text style={[styles.replyText, { color: Colors.text }]}>{reply}</Text>
-              </ScrollView>
-            </View>
-          ) : null}
-          {integrationError ? (
+        )}
+
+        {/* Integration error */}
+        {integrationError ? (
+          <View style={{ paddingHorizontal: 16, paddingBottom: 8 }}>
             <IntegrationErrorCard
               integrationKey={integrationError.integration}
-              cardStyle={{ marginTop: 12 }}
+              cardStyle={{}}
               onDismiss={() => setIntegrationError(null)}
               onGoToSettings={handleGoToSettings}
             />
-          ) : null}
-        </ScrollView>
-      </View>
+          </View>
+        ) : null}
+
+        {/* Input bar */}
+        <View
+          style={[
+            styles.chatInputBar,
+            {
+              backgroundColor: Colors.background,
+              borderTopColor: Colors.border,
+              paddingBottom: bottomPad > 0 ? bottomPad : 12,
+            },
+          ]}
+        >
+          <TextInput
+            style={[
+              styles.chatInput,
+              { backgroundColor: Colors.surface, color: Colors.text, borderColor: Colors.border },
+            ]}
+            value={message}
+            onChangeText={setMessage}
+            placeholder={`Message ${agent?.name ?? "agent"}…`}
+            placeholderTextColor={Colors.textTertiary}
+            multiline
+            maxLength={2000}
+            editable={!running}
+            onSubmitEditing={handleRun}
+            returnKeyType="send"
+            blurOnSubmit={false}
+          />
+          <TouchableOpacity
+            style={[
+              styles.chatSendBtn,
+              { backgroundColor: message.trim() && !running ? Colors.primary : Colors.border },
+            ]}
+            onPress={handleRun}
+            disabled={!message.trim() || running}
+          >
+            {running ? (
+              <ActivityIndicator size="small" color={Colors.white} />
+            ) : (
+              <Ionicons name="arrow-up" size={18} color={Colors.white} />
+            )}
+          </TouchableOpacity>
+        </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
@@ -1829,4 +2012,31 @@ const styles = StyleSheet.create({
   councilDesc: { fontSize: 14, lineHeight: 20, marginBottom: 16 },
   loadingRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 12 },
   loadingText: { fontSize: 14 },
+
+  // Chat (RunModal)
+  chatList: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 8 },
+  chatEmpty: { flex: 1, alignItems: "center", justifyContent: "center", gap: 12, paddingHorizontal: 32 },
+  chatEmptyText: { fontSize: 14, textAlign: "center", lineHeight: 20 },
+  chatBubbleRow: { flexDirection: "row", marginBottom: 12, alignItems: "flex-end", gap: 8 },
+  chatBubbleRowUser: { justifyContent: "flex-end" },
+  chatBubbleRowAgent: { justifyContent: "flex-start" },
+  chatAvatar: { width: 24, height: 24, borderRadius: 12, alignItems: "center", justifyContent: "center", flexShrink: 0 },
+  chatBubble: { maxWidth: "78%", borderRadius: 18, paddingHorizontal: 14, paddingVertical: 10 },
+  chatBubbleUser: { borderBottomRightRadius: 4 },
+  chatBubbleAgent: { borderWidth: 1, borderBottomLeftRadius: 4 },
+  chatBubbleText: { fontSize: 14, lineHeight: 20 },
+  chatInputBar: {
+    flexDirection: "row", alignItems: "flex-end", gap: 10,
+    paddingHorizontal: 16, paddingTop: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  chatInput: {
+    flex: 1, borderRadius: 22, borderWidth: 1,
+    paddingHorizontal: 16, paddingVertical: 10,
+    fontSize: 15, maxHeight: 120,
+  },
+  chatSendBtn: {
+    width: 38, height: 38, borderRadius: 19,
+    alignItems: "center", justifyContent: "center", flexShrink: 0,
+  },
 });

@@ -532,7 +532,10 @@ export function registerAgentRoutes(app: Express): void {
         res.status(404).json({ error: "Agent not found" });
         return;
       }
-      const { message } = req.body as { message: string };
+      const { message, conversationHistory } = req.body as {
+        message: string;
+        conversationHistory?: any[];
+      };
       if (!message) {
         res.status(400).json({ error: "message is required" });
         return;
@@ -578,6 +581,7 @@ export function registerAgentRoutes(app: Express): void {
             agentId: req.params.id,
             userId,
             userMessage: message,
+            conversationHistory: conversationHistory ?? [],
             platform: "in_app",
             signal: abortController.signal,
             onToken: (chunk: string) => {
@@ -630,6 +634,7 @@ export function registerAgentRoutes(app: Express): void {
           agentId: req.params.id,
           userId,
           userMessage: message,
+          conversationHistory: conversationHistory ?? [],
           platform: "in_app",
         });
         res.json({ reply: result.reply, turns: result.turns, toolCalls: result.toolCalls.length });
