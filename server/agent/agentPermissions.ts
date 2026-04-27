@@ -224,23 +224,36 @@ toolCallHooks.register(
     try {
       const { getAgent } = await import("./agentManager");
       const agent = await getAgent(ctx.agentId);
-      if (!agent) return undefined; // unknown agent — let other hooks decide
+      if (!agent) {
+        // Unknown agent — fail-closed: block rather than silently allow
+        return { block: true, blockReason: `Agent ${ctx.agentId} not found` };
+      }
 
-      const permitted = new Set(getPermittedToolNames(agent));
-      if (permitted.has(ctx.toolName)) return undefined; // allowed — pass through
-
-      // Tool is not in the agent's permitted set — block with audit log
-      logAgentEvent({
-        event: "tool_permission_denied",
-        agentId: ctx.agentId,
-        userId: ctx.userId,
-        toolName: ctx.toolName,
-        detail: "runtime-hook: not in permitted set",
-      });
-      return { block: true, blockReason: `Agent does not have permission to use ${ctx.toolName}` };
-    } catch {
-      // If permission check fails, fail-open (don't disrupt runs for metadata errors)
-      return undefined;
+      // Use checkPermission which correctly handles ALWAYS_ALLOWED_TOOLS
+      // and PERMISSION_TOOL_MAP in one place. It throws PermissionDeniedError
+      // if the tool is not permitted, returns void if permitted.
+      try {
+        checkPermission(agent, ctx.toolName);
+        return undefined; // allowed — pass through
+      } catch (permErr) {
+        if (permErr instanceof PermissionDeniedError) {
+          logAgentEvent({
+            event: "tool_permission_denied",
+            agentId: ctx.agentId,
+            userId: ctx.userId,
+            toolName: ctx.toolName,
+            detail: "runtime-hook: not in permitted set",
+          });
+          return { block: true, blockReason: `Agent does not have permission to use ${ctx.toolName}` };
+        }
+        throw permErr; // unexpected error — re-throw to trigger fail-closed outer catch
+      }
+    } catch (err) {
+      // Fail-closed: if agent lookup or permission check fails unexpectedly, block
+      // rather than silently allowing execution. Log for diagnostics.
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[ToolCallHooks/permissions] hook error for ${ctx.toolName}:`, msg);
+      return { block: true, blockReason: `Permission check failed for ${ctx.toolName}` };
     }
   },
   { priority: 50 },
