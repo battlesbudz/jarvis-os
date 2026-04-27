@@ -6,7 +6,7 @@ import { registerTelegramWebhook, startProactiveScheduler, startTelegramPolling,
 import { startMomentumExpiryScheduler } from "./momentumCoach";
 import { startHeartbeat } from "./heartbeat";
 import { startJobQueueWorker } from "./agent/jobQueue";
-import { isTelegramConfigured, logTelegramStatus, setWebhook, deleteWebhook, ensureWebhook, getExpectedWebhookUrl } from "./integrations/telegram";
+import { isTelegramConfigured, logTelegramStatus, deleteWebhook, ensureWebhook, getExpectedWebhookUrl } from "./integrations/telegram";
 import { startScheduler } from "./scheduler";
 import { startCuriosityScanner } from "./curiosityScanner";
 import { startIntegrationValidator } from "./intelligence/integrationValidator";
