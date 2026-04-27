@@ -527,6 +527,18 @@ function setupErrorHandler(app: express.Application) {
         );
       });
 
+      // Doctor scan — runs 30 s after startup (non-blocking). Any failures are
+      // piped into the inbox alert system so users are notified on the home screen.
+      setTimeout(() => {
+        import("./doctor/doctorRoutes").then(({ runStartupDoctorScan }) => {
+          runStartupDoctorScan().catch((err: Error) => {
+            console.error("[Doctor] Startup scan error:", err.message);
+          });
+        }).catch((err: Error) => {
+          console.warn("[Doctor] Could not load doctor module:", err.message);
+        });
+      }, 30_000);
+
       // Verify Playwright/Chromium is usable on startup — logs a warning if not.
       import("playwright").then(({ chromium }) => {
         chromium.launch({ args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu", "--single-process"] })
