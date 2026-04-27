@@ -3847,6 +3847,15 @@ Return ONLY the JSON object.`;
 
       const { speechToText, detectAudioFormat } = await import('./replit_integrations/audio/client');
       const rawBuffer = Buffer.from(audio, 'base64');
+
+      // Size guards: skip silent/empty clips, reject huge files
+      if (rawBuffer.length < 1024) {
+        return res.json({ text: "" });
+      }
+      if (rawBuffer.length > 20 * 1024 * 1024) {
+        return res.status(400).json({ error: "Audio file is too large (max 20 MB). Please send a shorter recording." });
+      }
+
       const format = detectAudioFormat(rawBuffer);
       const text = await speechToText(rawBuffer, format);
       res.json({ text });
