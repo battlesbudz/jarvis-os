@@ -342,6 +342,22 @@ function setupErrorHandler(app: express.Application) {
     console.warn("[Startup] core agent seeding failed (non-fatal):", err);
   }
 
+  // Pre-warm lazily-imported modules so the first in-app message has no
+  // cold-start delay from module loading + capability registry construction.
+  // All imports are fire-and-forget (errors are non-fatal).
+  setTimeout(() => {
+    Promise.allSettled([
+      import("./agent/tools/index"),
+      import("./capabilities/index"),
+      import("./lib/modelPrefs"),
+      import("./intelligence/behaviorStore"),
+      import("./intelligence/skillWriter"),
+      import("./agent/tools/channelTools"),
+    ]).then(() => {
+      console.log("[Startup] pre-warming complete: agent modules loaded");
+    }).catch(() => {});
+  }, 2000);
+
   logTelegramStatus();
 
   setupCors(app);

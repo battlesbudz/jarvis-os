@@ -75,6 +75,8 @@ export interface RunNamedAgentOptions {
   onToken?: (chunk: string) => void;
   /** Who initiated this agent run — used to auto-approve Jarvis-to-Jarvis tool gates */
   initiatedBy?: 'user' | 'jarvis';
+  /** Optional AbortSignal — when fired the agent loop exits cleanly with an AbortError */
+  signal?: AbortSignal;
 }
 
 export interface NamedAgentResult {
@@ -86,7 +88,7 @@ export interface NamedAgentResult {
 }
 
 export async function runNamedAgent(opts: RunNamedAgentOptions): Promise<NamedAgentResult> {
-  const { agentId, userId, userMessage, platform, initiatedBy = 'user' } = opts;
+  const { agentId, userId, userMessage, platform, initiatedBy = 'user', signal } = opts;
 
   // ── Load agent ────────────────────────────────────────────────────────────
   const agent = await getAgent(agentId);
@@ -232,6 +234,7 @@ export async function runNamedAgent(opts: RunNamedAgentOptions): Promise<NamedAg
       maxCompletionTokens: 2000,
       onToken: opts.onToken,
       onBeforeTool,
+      signal,
     });
 
     // ── Write extracted memories ──────────────────────────────────────────────

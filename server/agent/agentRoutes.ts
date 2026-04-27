@@ -22,12 +22,15 @@
  *  13. POST /api/agents/:id/channel
  *  14. DELETE /api/agents/:id/channel
  *  15. POST /api/agents/:id/run
+ *  15b. POST /api/agents/:id/chat      (SSE streaming; heartbeat + abort support)
+ *  15c. POST /api/agents/:id/abort     (cancel an in-flight SSE run by runId)
  *  16. GET  /api/agents/:id/memories
  *  17. DELETE /api/agents/:id/memories
  *  18. GET  /api/agents/:id/messages
  *  19. GET  /api/agents/:id/export
  */
 import type { Express, Request, Response } from "express";
+import { randomUUID } from "crypto";
 import {
   createAgent,
   getAgent,
@@ -93,6 +96,17 @@ function handleError(res: Response, err: unknown): void {
     res.status(500).json({ error: "Internal server error" });
   }
 }
+
+// ── Active run abort map ────────────────────────────────────────────────────────
+// Keyed by runId (UUID generated per SSE chat request).
+// Each entry stores the AbortController alongside the owning agentId + userId
+// so the abort endpoint can verify the caller owns the run before cancelling.
+interface ActiveRun {
+  controller: AbortController;
+  agentId: string;
+  userId: string;
+}
+const activeRuns = new Map<string, ActiveRun>();
 
 // ── Route registration ─────────────────────────────────────────────────────────
 
@@ -505,6 +519,12 @@ export function registerAgentRoutes(app: Express): void {
   // Dedicated in-app chat endpoint for the mobile Agents tab. Provides
   // streaming SSE output (text/event-stream) so the UI can display tokens
   // progressively. Falls back to JSON when Accept header is not SSE.
+  //
+  // SSE extras:
+  //  • X-Run-Id response header carries a UUID the client can pass to the
+  //    abort endpoint to cancel the in-flight run.
+  //  • `: heartbeat` SSE comment sent every 15 s keeps the connection alive
+  //    on mobile networks that silently drop idle connections.
   app.post("/api/agents/:id/chat", async (req: Request, res: Response) => {
     try {
       const userId = req.userId!;
@@ -521,30 +541,75 @@ export function registerAgentRoutes(app: Express): void {
       const wantsStream = req.headers.accept?.includes("text/event-stream") ?? false;
 
       if (wantsStream) {
+        // Generate a run ID so the client can abort this specific run.
+        const runId = randomUUID();
+        const abortController = new AbortController();
+        activeRuns.set(runId, { controller: abortController, agentId: req.params.id, userId });
+
         res.setHeader("Content-Type", "text/event-stream");
         res.setHeader("Cache-Control", "no-cache, no-transform");
         res.setHeader("X-Accel-Buffering", "no");
         res.setHeader("Access-Control-Allow-Origin", "*");
+        res.setHeader("X-Run-Id", runId);
         res.flushHeaders();
 
-        let fullReply = "";
-        const result = await runNamedAgent({
-          agentId: req.params.id,
-          userId,
-          userMessage: message,
-          platform: "in_app",
-          onToken: (chunk: string) => {
-            fullReply += chunk;
-            res.write(`data: ${JSON.stringify({ content: chunk })}\n\n`);
-          },
+        // Heartbeat: SSE comment every 15 s prevents mobile network idle-drops.
+        const heartbeat = setInterval(() => {
+          if (!res.writableEnded && !res.destroyed) {
+            try { res.write(": heartbeat\n\n"); } catch { /* ignore */ }
+          }
+        }, 15_000);
+
+        // Cleanup helper — called on normal completion and on client disconnect.
+        const cleanup = () => {
+          clearInterval(heartbeat);
+          activeRuns.delete(runId);
+        };
+
+        // If the client closes the connection mid-stream, abort the agent loop.
+        req.on("close", () => {
+          abortController.abort();
+          cleanup();
         });
 
-        // Ensure final reply is flushed (handles non-streaming fallback inside runNamedAgent)
-        if (!fullReply && result.reply) {
-          res.write(`data: ${JSON.stringify({ content: result.reply })}\n\n`);
+        try {
+          let fullReply = "";
+          const result = await runNamedAgent({
+            agentId: req.params.id,
+            userId,
+            userMessage: message,
+            platform: "in_app",
+            signal: abortController.signal,
+            onToken: (chunk: string) => {
+              fullReply += chunk;
+              if (!res.writableEnded) {
+                res.write(`data: ${JSON.stringify({ content: chunk })}\n\n`);
+              }
+            },
+          });
+
+          if (!res.writableEnded) {
+            // Ensure final reply is flushed (handles non-streaming fallback inside runNamedAgent)
+            if (!fullReply && result.reply) {
+              res.write(`data: ${JSON.stringify({ content: result.reply })}\n\n`);
+            }
+            res.write(`data: [DONE]\n\n`);
+            res.end();
+          }
+        } catch (err) {
+          const isAbort = err instanceof Error && err.name === "AbortError";
+          if (!res.writableEnded) {
+            if (isAbort) {
+              res.write(`data: ${JSON.stringify({ type: "aborted" })}\n\n`);
+            } else {
+              const msg = err instanceof Error ? err.message : String(err);
+              res.write(`data: ${JSON.stringify({ type: "error", message: msg })}\n\n`);
+            }
+            res.end();
+          }
+        } finally {
+          cleanup();
         }
-        res.write(`data: [DONE]\n\n`);
-        res.end();
       } else {
         const result = await runNamedAgent({
           agentId: req.params.id,
@@ -554,6 +619,38 @@ export function registerAgentRoutes(app: Express): void {
         });
         res.json({ reply: result.reply, turns: result.turns, toolCalls: result.toolCalls.length });
       }
+    } catch (err) { handleError(res, err); }
+  });
+
+  // ── 15c. POST /api/agents/:id/abort — cancel an in-flight SSE run ─────────
+  // The client passes the runId it received in the X-Run-Id header.
+  // The server finds the corresponding AbortController and signals abort.
+  app.post("/api/agents/:id/abort", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId!;
+      if (!(await ownerCheck(req.params.id, userId))) {
+        res.status(404).json({ error: "Agent not found" });
+        return;
+      }
+      const { runId } = req.body as { runId?: string };
+      if (!runId) {
+        res.status(400).json({ error: "runId is required" });
+        return;
+      }
+      const run = activeRuns.get(runId);
+      if (!run) {
+        // Already finished or unknown — not an error from the client's perspective.
+        res.json({ ok: true, aborted: false, reason: "run not found or already completed" });
+        return;
+      }
+      // Verify the run belongs to the requesting user AND the stated agent.
+      if (run.agentId !== req.params.id || run.userId !== userId) {
+        res.status(403).json({ error: "Forbidden: this run belongs to a different agent or user" });
+        return;
+      }
+      run.controller.abort();
+      activeRuns.delete(runId);
+      res.json({ ok: true, aborted: true });
     } catch (err) { handleError(res, err); }
   });
 
