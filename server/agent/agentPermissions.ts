@@ -17,9 +17,13 @@ export class PermissionDeniedError extends Error {
   constructor(
     public readonly agentId: string,
     public readonly toolName: string,
-    public readonly flag: keyof AgentPermissions,
+    public readonly flag: keyof AgentPermissions | "unclassified_tool",
   ) {
-    super(`Agent ${agentId} is not permitted to use tool "${toolName}" (requires ${flag})`);
+    super(
+      flag === "unclassified_tool"
+        ? `Agent ${agentId} is not permitted to use unclassified tool "${toolName}"`
+        : `Agent ${agentId} is not permitted to use tool "${toolName}" (requires ${flag})`,
+    );
     this.name = "PermissionDeniedError";
   }
 }
@@ -111,7 +115,7 @@ export function checkPermission(agent: DiscordAgent, toolName: string): void {
       toolName,
       detail: "unclassified-tool-denied",
     });
-    throw new PermissionDeniedError(agent.id, toolName, "can_search_web" as keyof AgentPermissions);
+    throw new PermissionDeniedError(agent.id, toolName, "unclassified_tool");
   }
 
   // All required flags must be true (for tools in multiple groups, AND logic).

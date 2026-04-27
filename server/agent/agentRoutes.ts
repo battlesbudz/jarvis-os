@@ -250,8 +250,8 @@ export function registerAgentRoutes(app: Express): void {
     } catch (err) { handleError(res, err); }
   });
 
-  // ── 9. PUT /api/agents/:id — update ──────────────────────────────────────
-  app.put("/api/agents/:id", async (req: Request, res: Response) => {
+  // ── 9. PUT /api/agents/:id — update (also accepts PATCH) ─────────────────
+  const _handleAgentUpdate = async (req: Request, res: Response) => {
     try {
       const userId = req.userId!;
       if (!(await ownerCheck(req.params.id, userId))) {
@@ -262,7 +262,9 @@ export function registerAgentRoutes(app: Express): void {
       const agent = await getAgent(req.params.id);
       res.json({ agent });
     } catch (err) { handleError(res, err); }
-  });
+  };
+  app.put("/api/agents/:id", _handleAgentUpdate);
+  app.patch("/api/agents/:id", _handleAgentUpdate);
 
   // ── 10. DELETE /api/agents/:id ────────────────────────────────────────────
   app.delete("/api/agents/:id", async (req: Request, res: Response) => {
