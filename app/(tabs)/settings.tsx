@@ -279,6 +279,7 @@ export default function SettingsScreen() {
 
   const loadHealth = useCallback(async () => {
     setHealthLoading(true);
+    setHealthError(false);
     try {
       const res = await apiRequest('GET', '/api/diagnostics/health');
       if (res.ok) {
