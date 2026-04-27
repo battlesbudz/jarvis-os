@@ -2636,6 +2636,10 @@ export default function InsightsScreen() {
           <Pressable style={styles.stopBtn} onPress={handleStop}>
             <Ionicons name="stop" size={16} color="#fff" />
           </Pressable>
+        ) : isSpeaking ? (
+          <Pressable style={styles.stopBtn} onPress={stopSpeaking}>
+            <Ionicons name="stop" size={16} color="#fff" />
+          </Pressable>
         ) : (
           <Pressable
             style={[styles.sendBtn, (!input.trim() || isBaseLoading) && styles.sendBtnDisabled]}
