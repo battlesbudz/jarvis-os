@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Link, useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { Link, useFocusEffect, useLocalSearchParams, useRouter, type Href } from 'expo-router';
 import Colors from '@/constants/colors';
 import * as Haptics from 'expo-haptics';
 import * as WebBrowser from 'expo-web-browser';
@@ -179,6 +179,7 @@ const sectionStyles = StyleSheet.create({
 
 export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
+  const router = useRouter();
   const { logout, username: authUsername } = useAuth();
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const { scrollTo } = useLocalSearchParams<{ scrollTo?: string }>();
@@ -288,6 +289,42 @@ export default function SettingsScreen() {
       const data = await res.json();
       setBuildHistory(data.builds ?? []);
     } catch {}
+  }, []);
+
+  // ── Doctor Scan ──
+  type DoctorStatus = 'pass' | 'warn' | 'fail';
+  interface DoctorResult {
+    id: string;
+    label: string;
+    status: DoctorStatus;
+    message: string;
+    settingsPath?: string;
+  }
+  interface DoctorReport {
+    results: DoctorResult[];
+    ranAt: string;
+    summary: { pass: number; warn: number; fail: number };
+    cached?: boolean;
+  }
+  const [doctorReport, setDoctorReport] = useState<DoctorReport | null>(null);
+  const [doctorLoading, setDoctorLoading] = useState(false);
+
+  const runDoctor = useCallback(async () => {
+    setDoctorLoading(true);
+    try {
+      const res = await apiRequest('GET', '/api/doctor');
+      if (res.status === 202) {
+        // Scan already in progress — leave previous report visible and
+        // stop the loading spinner; the user can retry momentarily.
+      } else if (res.ok) {
+        const data = await res.json();
+        // Guard against malformed responses before touching state.
+        if (data && Array.isArray(data.results) && data.summary && data.ranAt) {
+          setDoctorReport(data);
+        }
+      }
+    } catch {}
+    setDoctorLoading(false);
   }, []);
 
   // ── Jarvis Health ──
@@ -2394,6 +2431,87 @@ export default function SettingsScreen() {
           </View>
         </View>
 
+        {/* ── DIAGNOSTICS ── */}
+        <SectionHeader label="DIAGNOSTICS" accent="#10B981" />
+        <View style={[styles.card, { gap: 0 }]}>
+          <View style={drStyles.headerRow}>
+            <View style={{ flex: 1, gap: 2 }}>
+              <Text style={drStyles.title}>Configuration Health Scan</Text>
+              <Text style={drStyles.subtitle}>
+                {doctorReport
+                  ? `${doctorReport.summary.pass} passed · ${doctorReport.summary.warn} warned · ${doctorReport.summary.fail} failed${doctorReport.cached ? ' · cached' : ''}`
+                  : 'Checks credentials, tokens, env vars, and connectivity'}
+              </Text>
+              {doctorReport && (
+                <Text style={drStyles.ranAt}>
+                  Last run: {new Date(doctorReport.ranAt).toLocaleTimeString()}
+                </Text>
+              )}
+            </View>
+            <Pressable
+              style={[drStyles.runBtn, doctorLoading && { opacity: 0.6 }]}
+              onPress={runDoctor}
+              disabled={doctorLoading}
+            >
+              {doctorLoading ? (
+                <ActivityIndicator size="small" color="#10B981" />
+              ) : (
+                <>
+                  <Ionicons name="medkit-outline" size={14} color="#10B981" />
+                  <Text style={drStyles.runBtnText}>Run Diagnostics</Text>
+                </>
+              )}
+            </Pressable>
+          </View>
+
+          {doctorReport && doctorReport.results.map((item, idx) => {
+            const iconName: 'checkmark-circle' | 'warning' | 'close-circle' =
+              item.status === 'pass' ? 'checkmark-circle' :
+              item.status === 'warn' ? 'warning' : 'close-circle';
+            const iconColor =
+              item.status === 'pass' ? '#10B981' :
+              item.status === 'warn' ? '#F59E0B' : Colors.error;
+            const isActionable = item.status !== 'pass' && !!item.settingsPath;
+            const inner = (
+              <>
+                <Ionicons name={iconName} size={16} color={iconColor} style={{ marginTop: 1 }} />
+                <View style={{ flex: 1, gap: 2 }}>
+                  <Text style={drStyles.resultLabel}>{item.label}</Text>
+                  <Text style={drStyles.resultMsg} numberOfLines={3}>{item.message}</Text>
+                </View>
+                {isActionable && (
+                  <Ionicons name="chevron-forward" size={14} color={Colors.textTertiary} />
+                )}
+              </>
+            );
+            return isActionable ? (
+              <Pressable
+                key={item.id}
+                style={[drStyles.resultRow, idx === 0 && drStyles.resultFirst]}
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  router.push(item.settingsPath as Href);
+                }}
+              >
+                {inner}
+              </Pressable>
+            ) : (
+              <View
+                key={item.id}
+                style={[drStyles.resultRow, idx === 0 && drStyles.resultFirst]}
+              >
+                {inner}
+              </View>
+            );
+          })}
+
+          {!doctorReport && !doctorLoading && (
+            <View style={drStyles.emptyHint}>
+              <Text style={drStyles.emptyHintText}>Tap Run to check your Jarvis configuration</Text>
+            </View>
+          )}
+        </View>
+
         <SectionHeader label="ACCOUNT" accent={Colors.textTertiary} />
         <View style={styles.card}>
           <Pressable style={styles.prefRow} onPress={() => {
@@ -3033,6 +3151,84 @@ const tlStyles = StyleSheet.create({
   },
   signalDate: {
     fontSize: 10,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textTertiary,
+  },
+});
+
+const drStyles = StyleSheet.create({
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    padding: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  title: {
+    fontSize: 13,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.text,
+  },
+  subtitle: {
+    fontSize: 11,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+    lineHeight: 15,
+  },
+  ranAt: {
+    fontSize: 10,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textTertiary,
+    marginTop: 2,
+  },
+  runBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#10B981',
+    backgroundColor: '#10B98115',
+    minWidth: 62,
+    justifyContent: 'center',
+  },
+  runBtnText: {
+    fontSize: 12,
+    fontFamily: 'Inter_600SemiBold',
+    color: '#10B981',
+  },
+  resultFirst: {
+    borderTopWidth: 0,
+  },
+  resultRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+  },
+  resultLabel: {
+    fontSize: 13,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.text,
+  },
+  resultMsg: {
+    fontSize: 11,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+    lineHeight: 15,
+  },
+  emptyHint: {
+    padding: 14,
+    alignItems: 'center',
+  },
+  emptyHintText: {
+    fontSize: 12,
     fontFamily: 'Inter_400Regular',
     color: Colors.textTertiary,
   },
