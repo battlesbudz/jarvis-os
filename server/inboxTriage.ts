@@ -112,6 +112,72 @@ async function promoteToMemory(
   markSoulStale(userId).catch(() => {});
 }
 
+async function classifyInboxItem(
+  item: typeof schema.inboxItems.$inferSelect
+): Promise<{ autoDismiss: boolean; reason: string }> {
+  const prompt = `You are an inbox triage assistant for Jarvis, a personal AI assistant.
+
+Decide if this inbox notification should be AUTO-DISMISSED (it needs no action from the user) or KEPT for the user to see.
+
+Auto-dismiss when ALL of these are true:
+- Purely informational / FYI (no decision or action needed)
+- Not time-sensitive
+- No personal reply required
+- Not related to money, health, legal, or security
+
+Keep (return false) when the item might need a reply, approval, scheduling decision, or follow-up.
+
+Return JSON only: {"autoDismiss": true/false, "reason": "one sentence"}
+
+Source type: ${item.sourceType}
+Subject: ${item.subject || "(none)"}
+Sender: ${item.sender || "(none)"}
+Snippet: ${(item.snippet || "").slice(0, 400)}
+Jarvis reason: ${item.jarvisReason || "(none)"}`;
+
+  try {
+    const resp = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [{ role: "user", content: prompt }],
+      response_format: { type: "json_object" },
+      max_completion_tokens: 80,
+    });
+    const raw = resp.choices[0]?.message?.content || "{}";
+    const result = JSON.parse(raw) as { autoDismiss?: boolean; reason?: string };
+    return { autoDismiss: result.autoDismiss === true, reason: result.reason || "" };
+  } catch {
+    return { autoDismiss: false, reason: "" };
+  }
+}
+
+async function triageInboxItemsForUser(userId: string): Promise<void> {
+  const pendingItems = await db
+    .select()
+    .from(schema.inboxItems)
+    .where(
+      and(
+        eq(schema.inboxItems.userId, userId),
+        eq(schema.inboxItems.status, "pending")
+      )
+    )
+    .limit(15);
+
+  for (const item of pendingItems) {
+    try {
+      const { autoDismiss, reason } = await classifyInboxItem(item);
+      if (autoDismiss) {
+        await db
+          .update(schema.inboxItems)
+          .set({ status: "dismissed", actedAt: new Date() })
+          .where(eq(schema.inboxItems.id, item.id));
+        console.log(`[InboxTriage] auto-dismissed inbox item: ${item.id} (${(item.subject || "").slice(0, 60)}) — ${reason}`);
+      }
+    } catch (err) {
+      console.error(`[InboxTriage] error triaging inbox item ${item.id}:`, err);
+    }
+  }
+}
+
 export async function runTriagePassForUser(userId: string): Promise<void> {
   const pending = await db
     .select()
@@ -172,6 +238,9 @@ export async function runTriagePassForUser(userId: string): Promise<void> {
       console.error(`[InboxTriage] error triaging deliverable ${d.id}:`, err);
     }
   }
+
+  // Also triage raw inbox notifications
+  await triageInboxItemsForUser(userId);
 }
 
 let triageRunning = false;

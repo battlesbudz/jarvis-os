@@ -78,6 +78,7 @@ export async function runCouncil(
         userId,
         userMessage: q,
         platform: "council",
+        initiatedBy: 'jarvis',
       });
 
       const result = await Promise.race([runPromise, timeoutPromise]);

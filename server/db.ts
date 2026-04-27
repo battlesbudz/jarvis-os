@@ -559,6 +559,11 @@ export async function ensureTablesExist() {
       CREATE INDEX IF NOT EXISTS deliverables_user_status_idx
         ON deliverables (user_id, status, created_at DESC)
     `).catch(() => {});
+    await db.execute(sql`
+      ALTER TABLE deliverables
+        ADD COLUMN IF NOT EXISTS triage_status VARCHAR NOT NULL DEFAULT 'needs_attention',
+        ADD COLUMN IF NOT EXISTS triage_note TEXT
+    `).catch(() => {});
 
     // ── Phase 5: multi-channel + computer control ──────────────────
     await db.execute(sql`
@@ -1048,6 +1053,7 @@ export async function ensureTablesExist() {
       )
     `).catch(() => {});
     await db.execute(sql`CREATE INDEX IF NOT EXISTS agent_approval_gates_user_status_idx ON agent_approval_gates(user_id, status, created_at DESC)`).catch(() => {});
+    await db.execute(sql`ALTER TABLE agent_approval_gates ADD COLUMN IF NOT EXISTS initiated_by VARCHAR NOT NULL DEFAULT 'user'`).catch(() => {});
 
     console.log("Database tables verified");
   } catch (error) {
