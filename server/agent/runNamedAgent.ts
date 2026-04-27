@@ -187,6 +187,13 @@ export async function runNamedAgent(opts: RunNamedAgentOptions): Promise<NamedAg
           initiatedBy,
         });
 
+        // Short-circuit: if gate was auto-approved (Jarvis-initiated, non-irreversible)
+        // the status is already 'approved' in the returned gate — skip notification and wait.
+        if (gate.status === "approved") {
+          logAgentEvent({ event: "tool_approved", agentId, userId, toolName, detail: `gate=${gate.id} auto-approved` });
+          return { allowed: true };
+        }
+
         // Notify user in-app so they can approve/reject
         try {
           const { inAppChannel } = await import("../channels/inAppChannel");
