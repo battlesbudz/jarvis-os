@@ -62,6 +62,23 @@ interface SubTaskResult {
 }
 
 /**
+ * Normalize and validate a raw parsed task object into a SubTask.
+ * Fills in defaults for any missing or malformed fields.
+ */
+function normalizeSubTask(raw: unknown, index: number): SubTask {
+  const obj = (typeof raw === "object" && raw !== null ? raw : {}) as Record<string, unknown>;
+  return {
+    id: typeof obj.id === "string" && obj.id ? obj.id : `task-${index + 1}`,
+    label: typeof obj.label === "string" && obj.label ? obj.label : `Sub-task ${index + 1}`,
+    instruction: typeof obj.instruction === "string" && obj.instruction ? obj.instruction : String(raw),
+    acceptanceCriteria: typeof obj.acceptanceCriteria === "string" && obj.acceptanceCriteria
+      ? obj.acceptanceCriteria
+      : "Provides a helpful and complete response",
+    dependsOn: Array.isArray(obj.dependsOn) ? obj.dependsOn.filter((d): d is string => typeof d === "string") : [],
+  };
+}
+
+/**
  * Parse Claude's decomposition response into structured sub-tasks.
  * Expected format is a JSON array in a ```json block.
  */
@@ -70,9 +87,10 @@ function parseSubTasks(text: string): SubTask[] {
   const raw = jsonMatch ? jsonMatch[1] : text.trim();
   try {
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [parsed];
+    const items: unknown[] = Array.isArray(parsed) ? parsed : [parsed];
+    return items.map((item, i) => normalizeSubTask(item, i));
   } catch {
-    // Treat the whole response as a single task if parsing fails
+    // Treat the whole response as a single fallback task if parsing fails
     return [{
       id: "task-1",
       label: "Process request",
@@ -409,15 +427,10 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<Orchest
     throw new Error(failMsg);
   }
 
-  // Step 3: Synthesize final answer
+  // Step 3: Synthesize final answer via Claude (always — no single-task bypass)
   let finalAnswer: string;
   try {
-    if (allResults.length === 1 && allResults[0].result && allResults[0].result !== "(no result)") {
-      // Single-task short-circuit: Claude already produced the full answer
-      finalAnswer = allResults[0].result;
-    } else {
-      finalAnswer = await synthesizeFinalAnswer(userRequest, systemContext, allResults, orchestratorModel);
-    }
+    finalAnswer = await synthesizeFinalAnswer(userRequest, systemContext, allResults, orchestratorModel);
   } catch (err) {
     console.error("[orchestrator] synthesis failed:", err);
     finalAnswer = allResults.map((r) => r.result).join("\n\n");
