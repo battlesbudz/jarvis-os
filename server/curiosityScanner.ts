@@ -1,4 +1,4 @@
-import { db } from "./db";
+import { db, pool } from "./db";
 import { eq, and, gt, inArray } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { notifyUser } from "./channels/registry";
@@ -15,7 +15,7 @@ const openai = new OpenAI({
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
 });
 
-let scanInProgress = false;
+const CURIOSITY_SCAN_LOCK_ID = 7654321098;
 let scannerStarted = false;
 
 const ALREADY_ASKED_WINDOW_DAYS = 30;
@@ -164,11 +164,32 @@ Return only items worth asking about. Return { "questions": [] } if nothing is i
 }
 
 export async function runCuriosityScan(): Promise<void> {
-  if (scanInProgress) {
-    console.log("[Curiosity] Scan already in progress — skipping concurrent run");
+  let lockClient;
+  try {
+    lockClient = await pool.connect();
+  } catch (connectErr) {
+    console.error("[Curiosity] Failed to obtain DB connection for advisory lock — skipping scan:", connectErr);
     return;
   }
-  scanInProgress = true;
+
+  let lockAcquired = false;
+  try {
+    const lockResult = await lockClient.query(
+      `SELECT pg_try_advisory_lock($1::bigint) AS acquired`,
+      [CURIOSITY_SCAN_LOCK_ID]
+    );
+    lockAcquired = lockResult.rows[0]?.acquired === true;
+    if (!lockAcquired) {
+      console.log("[Curiosity] Scan already in progress (DB advisory lock held) — skipping concurrent run");
+      lockClient.release();
+      return;
+    }
+  } catch (lockErr) {
+    console.error("[Curiosity] Failed to acquire DB advisory lock — skipping scan:", lockErr);
+    lockClient.release();
+    return;
+  }
+
   try {
     const telegramLinks = await db.select().from(schema.telegramLinks);
 
@@ -544,7 +565,11 @@ export async function runCuriosityScan(): Promise<void> {
   } catch (err) {
     console.error("[Curiosity] Scanner error:", err);
   } finally {
-    scanInProgress = false;
+    await lockClient.query(
+      `SELECT pg_advisory_unlock($1::bigint)`,
+      [CURIOSITY_SCAN_LOCK_ID]
+    ).catch(() => {});
+    lockClient.release();
   }
 }
 
