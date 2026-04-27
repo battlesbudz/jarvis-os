@@ -3,7 +3,7 @@ import type { Express, Request, Response } from "express";
 import { db } from "./db";
 import { eq, and, desc, sql, gte, lte } from "drizzle-orm";
 import * as schema from "@shared/schema";
-import { sendMessage, sendLongMessage, sendMessageWithButtons, sendTelegramDocument, sendPhoto, sendVoice, sendChatAction, answerCallbackQuery, isTelegramConfigured, getUpdates, downloadTelegramFile, downloadTelegramFileBuffer, getWebhookHealth, ensureWebhook, getExpectedWebhookUrl } from "./integrations/telegram";
+import { sendMessage, sendLongMessage, sendMessageWithButtons, sendTelegramDocument, sendPhoto, sendVoice, sendChatAction, answerCallbackQuery, isTelegramConfigured, getUpdates, downloadTelegramFile, downloadTelegramFileBuffer, getWebhookHealth, ensureWebhook, getExpectedWebhookUrl, sendMessageGetId, editMessage } from "./integrations/telegram";
 import { attachmentToBuffer, collectMarkdownExtras } from "./channels/attachmentHelpers";
 import { outboundMiddleware } from "./channels/outboundMiddleware";
 import type { ChannelAttachment } from "./channels/types";
@@ -59,6 +59,7 @@ async function deliverNamedAgentResult(
   userId: string,
   agentLabel: string | null,
   result: { reply: string; attachments?: ChannelAttachment[] },
+  placeholderMsgId?: number | null,
 ): Promise<void> {
   const atts = result.attachments ?? [];
   const mediaAttsCount = atts.filter((a) => a.kind !== "markdown").length;
@@ -92,7 +93,9 @@ async function deliverNamedAgentResult(
   let textSent = false;
   if (mediaAtts.length > 0 && textReply.trim()) {
     try {
-      await sendLongMessage(chatId, textReply);
+      await deliverCoachText(chatId, textReply, placeholderMsgId ?? null);
+      // Placeholder consumed — clear so we don't reuse it below.
+      placeholderMsgId = null;
       logInteraction(userId, "telegram", "outbound", textReply).catch(() => {});
       textSent = true;
     } catch (sendErr) {
@@ -136,12 +139,40 @@ async function deliverNamedAgentResult(
   // Send text that hasn't been sent yet — either because there were no media
   // attachments, or because the pre-media send failed.
   if (!textSent && textReply.trim()) {
-    await sendLongMessage(chatId, textReply);
+    await deliverCoachText(chatId, textReply, placeholderMsgId ?? null);
     logInteraction(userId, "telegram", "outbound", textReply).catch(() => {});
   }
 }
 
+/**
+ * Deliver the final text reply to Telegram, reusing a placeholder message when
+ * one was sent at the start of the turn (streaming mode). If the text fits in a
+ * single message the placeholder is edited in-place; overflow chunks are sent as
+ * additional messages so long replies still reach the user in full.
+ */
+async function deliverCoachText(
+  chatId: string,
+  text: string,
+  placeholderMsgId: number | null,
+): Promise<void> {
+  if (!text.trim()) return;
+  if (placeholderMsgId) {
+    // Edit the placeholder with the first 4096 chars, send overflow chunks separately.
+    const first = text.slice(0, 4096);
+    await editMessage(chatId, placeholderMsgId, first);
+    if (text.length > 4096) {
+      // sendLongMessage handles chunking for the overflow portion.
+      await sendLongMessage(chatId, text.slice(4096));
+    }
+  } else {
+    await sendLongMessage(chatId, text);
+  }
+}
+
 async function handleCoachReply(userId: string, chatId: string, userText: string, imageUrl?: string): Promise<void> {
+  // Pre-fetch TTS prefs — used to decide between streaming (text) and voice paths.
+  const ttsPrefs = await getUserTtsPrefs(userId).catch(() => ({ enabled: false, voice: "" as string }));
+
   // Send an immediate typing indicator so the user knows the message was received.
   sendChatAction(chatId, "typing").catch(() => {});
 
@@ -151,26 +182,57 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
     sendChatAction(chatId, "typing").catch(() => {});
   }, 4000);
 
-  // After 15 seconds of silence, send a brief "still working" message so the
-  // user knows the bot hasn't stalled. We cancel both timers once the reply arrives.
-  const stillThinkingTimer = setTimeout(async () => {
-    try {
-      await sendMessage(chatId, "Still working on it…");
-    } catch { /* non-blocking */ }
-  }, 15000);
+  // ── Streaming strategy (non-TTS only) ────────────────────────────────────────
+  // Send a "Working on it…" placeholder immediately so the user sees something
+  // within <1 second. As the LLM produces tokens we edit that message in-place
+  // every ~1.5 s (well within Telegram's ~20 edits/min rate limit). The final
+  // processed reply replaces the placeholder when the agent finishes.
+  //
+  // TTS users are excluded — their reply will be sent as a voice bubble, so
+  // we keep the typing indicator alone and skip the placeholder flow.
+  let placeholderMsgId: number | null = null;
+  let streamBuf = "";
+  let lastEditAt = 0;
+  const STREAM_INTERVAL_MS = 1500;
+  let ttsStillThinkingTimer: ReturnType<typeof setTimeout> | null = null;
+  // Guard: once the final reply delivery begins we must stop any in-flight
+  // token edits from overwriting the completed message (e.g. leaving " ▌").
+  let streamClosed = false;
+
+  let onToken: ((chunk: string) => void) | undefined;
+
+  if (!ttsPrefs.enabled) {
+    placeholderMsgId = await sendMessageGetId(chatId, "Working on it…").catch(() => null);
+    onToken = (chunk: string) => {
+      if (streamClosed) return;
+      streamBuf += chunk;
+      const now = Date.now();
+      // Only edit once we have a meaningful snippet (≥10 chars) and the interval has elapsed.
+      if (placeholderMsgId && now - lastEditAt >= STREAM_INTERVAL_MS && streamBuf.trim().length >= 10) {
+        editMessage(chatId, placeholderMsgId, streamBuf + " ▌").catch(() => {});
+        lastEditAt = now;
+      }
+    };
+  } else {
+    // TTS fallback: keep the "still working" timer so voice users aren't left in silence.
+    ttsStillThinkingTimer = setTimeout(async () => {
+      try { await sendMessage(chatId, "Still working on it…"); } catch { /* non-blocking */ }
+    }, 15000);
+  }
 
   const clearTimers = () => {
     clearInterval(typingInterval);
-    clearTimeout(stillThinkingTimer);
+    if (ttsStillThinkingTimer !== null) clearTimeout(ttsStillThinkingTimer);
   };
 
   try {
     // Check if this Telegram chatId is assigned to a named agent first.
-    // routeToNamedAgent returns null when no agent is configured for the channel.
-    const namedResult = await routeToNamedAgent(userId, "telegram", chatId, userText).catch(() => null);
+    // Pass onToken so named-agent replies also stream into the placeholder.
+    const namedResult = await routeToNamedAgent(userId, "telegram", chatId, userText, undefined, onToken).catch(() => null);
     if (namedResult !== null) {
+      streamClosed = true;
       clearTimers();
-      await deliverNamedAgentResult(chatId, userId, null, namedResult);
+      await deliverNamedAgentResult(chatId, userId, null, namedResult, placeholderMsgId);
       return;
     }
 
@@ -181,14 +243,12 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
       channelName: "Telegram",
       imageUrl,
       sdkSessionId: storedSessionId,
+      onToken,
     });
 
     if (sdkSessionId) {
       setCoachSession(userId, "Telegram", sdkSessionId);
     }
-
-    // Check if user has TTS / voice mode enabled
-    const ttsPrefs = await getUserTtsPrefs(userId);
 
     // Collect markdown attachments and append to the text reply so they are
     // delivered inline (markdown attachments have no binary payload to send separately).
@@ -201,18 +261,27 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
       platform: "telegram",
       userId,
     });
-    let textReply = coachProcessed ?? "";
+    // Fall back to the streamed buffer if rawReply was empty but tokens arrived.
+    let textReply = coachProcessed ?? (streamBuf.trim().length > 0 ? streamBuf : "");
 
-    // Stop typing indicator and "still thinking" timer — the reply is ready.
+    // Close the stream before delivery — prevents any late fire-and-forget
+    // token edits from overwriting the final formatted message.
+    streamClosed = true;
+
+    // Stop typing indicator — the reply is ready.
     clearTimers();
 
-    // Non-markdown attachments (images, documents, files) require the text to be
+    // Non-markdown attachments (images, documents, files) require text to be
     // sent first so message ordering is natural (text → media).
     const mediaAtts = attachments.filter((a) => a.kind !== "markdown");
 
     if (mediaAtts.length > 0 && textReply && textReply.trim()) {
       if (!ttsPrefs.enabled) {
-        try { await sendMessage(chatId, textReply); } catch (sendErr) {
+        try {
+          await deliverCoachText(chatId, textReply, placeholderMsgId);
+          // Placeholder consumed — don't reuse for anything else.
+          placeholderMsgId = null;
+        } catch (sendErr) {
           console.error("[Telegram] failed to send text before attachment:", sendErr);
         }
         logInteraction(userId, "telegram", "outbound", textReply).catch(() => {});
@@ -253,7 +322,7 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
 
     if (textReply && textReply.trim()) {
       if (ttsPrefs.enabled) {
-        // Auto-voice mode: send as round audio bubble, fall back to text if TTS fails
+        // Auto-voice mode: send as round audio bubble, fall back to text if TTS fails.
         console.log(`[Telegram] TTS mode active — converting reply to voice for user=${userId}`);
         const voiceResult = await speakToUser(userId, textReply, ttsPrefs.voice).catch((e) => ({
           ok: false,
@@ -265,7 +334,7 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
         }
         logInteraction(userId, "telegram", "outbound", textReply).catch(() => {});
       } else {
-        await sendMessage(chatId, textReply);
+        await deliverCoachText(chatId, textReply, placeholderMsgId);
         logInteraction(userId, "telegram", "outbound", textReply).catch(() => {});
       }
     }
@@ -275,9 +344,18 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
     });
     return;
   } catch (error) {
+    streamClosed = true;
     clearTimers();
     console.error("Error handling Telegram coach reply:", error);
-    await sendMessage(chatId, "Sorry, I encountered an error. Please try again.");
+    // If we have a placeholder, update it with the error message instead of sending
+    // a separate message (avoids leaving an orphaned "Working on it…" bubble).
+    if (placeholderMsgId) {
+      await editMessage(chatId, placeholderMsgId, "Sorry, I encountered an error. Please try again.").catch(() => {
+        sendMessage(chatId, "Sorry, I encountered an error. Please try again.").catch(() => {});
+      });
+    } else {
+      await sendMessage(chatId, "Sorry, I encountered an error. Please try again.");
+    }
     return;
   }
 }
