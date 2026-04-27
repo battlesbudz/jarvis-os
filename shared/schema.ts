@@ -295,6 +295,15 @@ export const userDocuments = pgTable("user_documents", {
 });
 
 
+export const websiteCrawls = pgTable("website_crawls", {
+  userId: varchar("user_id").notNull().primaryKey().references(() => users.id, { onDelete: "cascade" }),
+  url: text("url").notNull(),
+  status: varchar("status").notNull().default("idle"),
+  pageCount: integer("page_count").notNull().default(0),
+  summary: text("summary"),
+  crawledAt: timestamp("crawled_at"),
+});
+
 export const chatgptImports = pgTable("chatgpt_imports", {
   userId: varchar("user_id").notNull().primaryKey().references(() => users.id),
   importedAt: timestamp("imported_at").defaultNow().notNull(),
