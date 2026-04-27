@@ -37,6 +37,13 @@ function generateLinkCode(): string {
 }
 
 
+// ── Per-user session ID store for Telegram coach conversations ─────────────────
+// Volatile in-process cache keyed by userId. Lost on server restart but the
+// coach pipeline gracefully falls back to full history injection on cache miss,
+// so there is no data loss — only a minor efficiency cost for the first turn
+// after a restart.
+const telegramCoachSessions = new Map<string, string>();
+
 async function handleCoachReply(userId: string, chatId: string, userText: string, imageUrl?: string): Promise<void> {
   try {
     // Check if this Telegram chatId is assigned to a named agent first.
@@ -48,12 +55,19 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
       return;
     }
 
-    const { reply, attachments } = await runCoachAgent({
+    const storedSessionId = telegramCoachSessions.get(userId);
+    const { reply, attachments, sdkSessionId } = await runCoachAgent({
       userId,
       userText,
       channelName: "Telegram",
       imageUrl,
+      sdkSessionId: storedSessionId,
     });
+
+    // Persist the session ID so the next turn can resume without a DB chat_history fetch.
+    if (sdkSessionId) {
+      telegramCoachSessions.set(userId, sdkSessionId);
+    }
 
     // Check if user has TTS / voice mode enabled
     const ttsPrefs = await getUserTtsPrefs(userId);

@@ -30,6 +30,16 @@ export interface CoachReplyInput {
   discordGuildId?: string;
   /** Discord text channel ID — DM or guild channel. Used by the speak tool to deliver audio. */
   discordChannelId?: string;
+  /**
+   * SDK session ID for native session resumption (mirrors named-agent pattern).
+   *
+   * When provided the coach pipeline attempts to resume the cached conversation
+   * state from the server-side session store (in-process cache → DB) and skips
+   * the `chat_history` DB fetch for that turn. On the first message this field
+   * is absent; a new session is initialised and the returned `sdkSessionId`
+   * should be forwarded to the caller so it can resume on the next turn.
+   */
+  sdkSessionId?: string;
 }
 
 export interface CoachReplyResult {
@@ -39,6 +49,15 @@ export interface CoachReplyResult {
    *  Use this to detect "no response" without string-matching the fallback message. */
   rawReply: string;
   attachments: ChannelAttachment[];
+  /**
+   * SDK session ID to be forwarded to the caller for the next turn.
+   *
+   * Always returned — either a newly created session ID (first turn) or the
+   * existing session ID passed in (continuation turns). Callers should store
+   * this and send it back on the next message so the coach can skip the
+   * `chat_history` DB fetch and resume from the in-process / DB cache.
+   */
+  sdkSessionId?: string;
 }
 
 const FORMAT_HINTS: Record<string, string> = {
@@ -61,9 +80,44 @@ function getMaxTokensForChannel(channelName: string): number {
 // Channel-agnostic coach pipeline shared by Telegram / WhatsApp / Slack /
 // daemon adapters. Returns { reply, attachments } — the caller is
 // responsible for delivery and post-send bookkeeping.
+/** Agent ID used as the namespace key in the claude session store for main coach turns. */
+const COACH_AGENT_ID = "coach";
+
 export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyResult> {
   const { userId, userText, channelName, imageUrl, onToken, discordGuildId, discordChannelId } = input;
   const channelLower = channelName.toLowerCase();
+
+  // ── Native session resumption (mirrors runNamedAgent pattern) ────────────────
+  // When the caller provides a sdkSessionId, attempt to resume the cached
+  // conversation from the server-side session store (in-process cache → DB).
+  // On success the chat_history DB fetch is skipped and the cached message list
+  // is used directly, saving a DB round-trip and accumulating history beyond
+  // the 10-message rolling window that the DB-based path applies.
+  let activeSessionId: string | undefined = input.sdkSessionId;
+  let sessionResumed = false;
+  let cachedSessionMessages: import("openai").default.Chat.Completions.ChatCompletionMessageParam[] = [];
+
+  if (input.sdkSessionId) {
+    try {
+      const { resumeSession } = await import("../agent/providers/claude");
+      const resumed = await resumeSession(input.sdkSessionId, COACH_AGENT_ID, userId);
+      if (resumed) {
+        cachedSessionMessages = resumed.messages;
+        sessionResumed = true;
+        console.log(
+          `[coach] session resumed: sdkSessionId=${input.sdkSessionId} messages=${cachedSessionMessages.length}`,
+        );
+      } else {
+        console.warn(
+          `[coach] session not found, falling back to full history: sdkSessionId=${input.sdkSessionId}`,
+        );
+        activeSessionId = undefined;
+      }
+    } catch (err) {
+      console.warn("[coach] session resume error, falling back:", err);
+      activeSessionId = undefined;
+    }
+  }
 
   let userGoals: any[] = [];
   let userStats: any = {};
@@ -82,7 +136,11 @@ export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyR
     db.select().from(schema.goals).where(eq(schema.goals.userId, userId)).limit(1),
     db.select().from(schema.stats).where(eq(schema.stats.userId, userId)).limit(1),
     db.select().from(schema.lifeContext).where(eq(schema.lifeContext.userId, userId)).limit(1),
-    db.select().from(schema.chatHistory).where(eq(schema.chatHistory.userId, userId)).limit(1),
+    // Skip chat_history fetch when the session cache is warm — the cached
+    // message list replaces the rolling 10-message DB window.
+    sessionResumed
+      ? Promise.resolve([] as any[])
+      : db.select().from(schema.chatHistory).where(eq(schema.chatHistory.userId, userId)).limit(1),
     db.select().from(schema.commitments)
       .where(and(eq(schema.commitments.userId, userId), eq(schema.commitments.status, "pending")))
       .orderBy(desc(schema.commitments.extractedAt)).limit(10),
@@ -156,7 +214,11 @@ export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyR
     }
   }
 
-  const recentMessages = chatMessages.slice(0, 10).reverse();
+  // When the session was resumed the cached messages replace the DB window;
+  // otherwise fall back to the last 10 messages from the chat_history table.
+  const recentMessages = sessionResumed
+    ? cachedSessionMessages.filter((m) => m.role !== "system")
+    : chatMessages.slice(0, 10).reverse();
   const now = new Date();
   const dayOfWeek = now.toLocaleDateString("en-US", { weekday: "long" });
   const dateStr = now.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
@@ -303,14 +365,24 @@ When a user's request involves multi-step research, drafting a document or plan,
       ]
     : enrichedUserText;
 
-  const baseMessages: import("openai").default.Chat.Completions.ChatCompletionMessageParam[] = [
-    { role: "system", content: effectiveSystemPrompt },
-    ...recentMessages.map((m: { role: string; content: string }) => ({
-      role: m.role === "assistant" ? ("assistant" as const) : ("user" as const),
-      content: m.content,
-    })),
-    { role: "user", content: userMessageContent },
-  ];
+  // Build the message list for the harness / fallback path.
+  // On session resumption the cached messages already carry proper OpenAI
+  // types (including tool_call turns); the fresh system prompt replaces the
+  // stale one so real-time context (calendar, Gmail, …) stays current.
+  const baseMessages: import("openai").default.Chat.Completions.ChatCompletionMessageParam[] = sessionResumed
+    ? [
+        { role: "system" as const, content: effectiveSystemPrompt },
+        ...recentMessages as import("openai").default.Chat.Completions.ChatCompletionMessageParam[],
+        { role: "user" as const, content: userMessageContent },
+      ]
+    : [
+        { role: "system" as const, content: effectiveSystemPrompt },
+        ...recentMessages.map((m: { role: string; content: string }) => ({
+          role: m.role === "assistant" ? ("assistant" as const) : ("user" as const),
+          content: m.content,
+        })),
+        { role: "user" as const, content: userMessageContent },
+      ];
 
   const agentCtx: import("../agent/types").ToolContext = {
     userId,
@@ -419,6 +491,43 @@ When a user's request involves multi-step research, drafting a document or plan,
   const reply = rawReply || "Sorry, I couldn't generate a response right now.";
   const attachments = (agentCtx.state.pendingAttachments || []) as ChannelAttachment[];
 
+  // ── Session management — update or initialise after successful run ────────────
+  // Mirror the runNamedAgent pattern:
+  //   • First turn (no sdkSessionId or expired fallback): init a new session
+  //     from the complete message list so the next turn can resume cheaply.
+  //   • Continuation turns (sessionResumed): append only the new exchange
+  //     (user message + assistant reply) to keep the session up-to-date.
+  const newUserMsg  = { role: "user"      as const, content: userText };
+  const newAssistMsg = { role: "assistant" as const, content: reply   };
+
+  let finalSessionId: string | undefined = activeSessionId;
+  try {
+    const { initSession, appendToSession } = await import("../agent/providers/claude");
+    if (sessionResumed && activeSessionId) {
+      appendToSession(activeSessionId, COACH_AGENT_ID, userId, [newUserMsg, newAssistMsg]).catch(() => {});
+    } else {
+      // Build the full message list for the new session:
+      // system prompt + prior history (from DB or empty) + new exchange.
+      const priorHistory: import("openai").default.Chat.Completions.ChatCompletionMessageParam[] = chatMessages
+        .slice(0, 10)
+        .reverse()
+        .map((m: { role: string; content: string }) => ({
+          role: m.role === "assistant" ? ("assistant" as const) : ("user" as const),
+          content: m.content,
+        }));
+
+      finalSessionId = await initSession(COACH_AGENT_ID, userId, [
+        { role: "system" as const, content: effectiveSystemPrompt },
+        ...priorHistory,
+        newUserMsg,
+        newAssistMsg,
+      ]);
+      console.log(`[coach] session initialised: sdkSessionId=${finalSessionId}`);
+    }
+  } catch (err) {
+    console.error("[coach] session update failed (non-blocking):", err);
+  }
+
   // Save chat history (channel-agnostic — single conversation thread per user)
   const userMsg = { id: Date.now().toString(), role: "user", content: userText };
   const assistantMsg = { id: (Date.now() + 1).toString(), role: "assistant", content: reply };
@@ -435,5 +544,5 @@ When a user's request involves multi-step research, drafting a document or plan,
     console.error("[coach] chat history persist failed:", err);
   }
 
-  return { reply, rawReply, attachments };
+  return { reply, rawReply, attachments, sdkSessionId: finalSessionId };
 }

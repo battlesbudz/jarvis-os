@@ -2239,7 +2239,7 @@ Answer (yes/no):`,
 
   app.post("/api/coach/chat", async (req: Request, res: Response) => {
     try {
-      const { messages, goals, stats, history, calendarEvents, lifeContext, gmailItems, gmailConnected, slackMessages, slackConnected, coachingMode, telegramMessages, telegramConnected } = req.body;
+      const { messages, goals, stats, history, calendarEvents, lifeContext, gmailItems, gmailConnected, slackMessages, slackConnected, coachingMode, telegramMessages, telegramConnected, sdkSessionId: incomingAppSessionId } = req.body;
       const userId = req.userId;
 
       if (!messages || !Array.isArray(messages)) {
@@ -2552,12 +2552,33 @@ You can extend yourself by building new tools directly. Generate the complete Ty
               res.setHeader('Access-Control-Allow-Origin', '*');
               res.flushHeaders();
               res.write(`data: ${JSON.stringify({ content: responseText })}\n\n`);
+              const lastUserMsg0 = [...messages].reverse().find((m: any) => m.role === 'user');
+              // Session management — save/extend session and emit sdkSessionId.
+              if (userId) {
+                try {
+                  const { initSession, appendToSession } = await import("./agent/providers/claude");
+                  const COACH_APP_AGENT_ID = "coach_app";
+                  let appSessionId: string | undefined;
+                  if (incomingAppSessionId) {
+                    const exchangeMsgs = [
+                      { role: "user" as const, content: typeof lastUserMsg0?.content === "string" ? lastUserMsg0.content : "" },
+                      { role: "assistant" as const, content: responseText },
+                    ];
+                    await appendToSession(incomingAppSessionId, COACH_APP_AGENT_ID, userId, exchangeMsgs).catch(() => {});
+                    appSessionId = incomingAppSessionId;
+                  } else {
+                    appSessionId = await initSession(COACH_APP_AGENT_ID, userId, [...chatMessages, { role: "assistant" as const, content: responseText }]);
+                  }
+                  if (appSessionId) {
+                    res.write(`data: ${JSON.stringify({ type: "session_init", sdkSessionId: appSessionId })}\n\n`);
+                  }
+                } catch { /* non-blocking — never break the response */ }
+              }
               res.write('data: [DONE]\n\n');
               res.end();
               extractProfileInBackground(userId, messages);
               detectAndRecordBehaviorSignals(userId, messages);
               markProactiveQuestionsAnswered(userId, messages).catch(() => {});
-              const lastUserMsg0 = [...messages].reverse().find((m: any) => m.role === 'user');
               if (lastUserMsg0?.content) logInteraction(userId, "app_chat", "inbound", typeof lastUserMsg0.content === 'string' ? lastUserMsg0.content : JSON.stringify(lastUserMsg0.content)).catch(() => {});
               logInteraction(userId, "app_chat", "outbound", responseText).catch(() => {});
               cleanupRun();
@@ -2862,6 +2883,28 @@ You can extend yourself by building new tools directly. Generate the complete Ty
         savePendingResponse(userId, fullStreamedReply, screenshotUrl).catch(() => {});
       }
 
+      // Session management — save/extend session and emit sdkSessionId.
+      if (userId && fullStreamedReply && !clientDisconnected) {
+        try {
+          const { initSession, appendToSession } = await import("./agent/providers/claude");
+          const COACH_APP_AGENT_ID = "coach_app";
+          const lastUserMsgForSession = [...messages].reverse().find((m: any) => m.role === 'user');
+          let appSessionId: string | undefined;
+          if (incomingAppSessionId) {
+            const exchangeMsgs = [
+              { role: "user" as const, content: typeof lastUserMsgForSession?.content === "string" ? lastUserMsgForSession.content : "" },
+              { role: "assistant" as const, content: fullStreamedReply },
+            ];
+            await appendToSession(incomingAppSessionId, COACH_APP_AGENT_ID, userId, exchangeMsgs).catch(() => {});
+            appSessionId = incomingAppSessionId;
+          } else {
+            appSessionId = await initSession(COACH_APP_AGENT_ID, userId, [...chatMessages, { role: "assistant" as const, content: fullStreamedReply }]);
+          }
+          if (appSessionId) {
+            try { res.write(`data: ${JSON.stringify({ type: "session_init", sdkSessionId: appSessionId })}\n\n`); } catch {}
+          }
+        } catch { /* non-blocking — never break the response */ }
+      }
       cleanupRun();
       if (!clientDisconnected) {
         if (signal.aborted) {
