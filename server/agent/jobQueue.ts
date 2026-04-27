@@ -13,6 +13,8 @@ import { onWorkflowJobComplete, onWorkflowJobFail } from "./workflowEngine";
 import { emit as diagEmit } from "../diagnostics/diagnosticsService";
 import { logSystemError } from "./errorLogger";
 import { submitAgentJob as _submitAgentJob, getModelForJobType as _getModelForJobType, type SubmitJobInput, type AgentJobType as _AgentJobType } from "./jobClient";
+import { runAgent } from "./harness";
+import { readRecentErrorsTool, listSourceFilesTool, readSourceFileTool, proposeCodeChangeTool } from "./tools/selfEditTools";
 
 // Re-export from the shared client so existing callers don't break.
 export type AgentJobType = _AgentJobType;
@@ -234,6 +236,61 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
       await notifyJobComplete(job.userId, "goal_decompose", job.title, goalMsg);
       if (hasWorkflow) {
         await onWorkflowJobComplete(wfId!, wfStep!, job.id, goalMsg).catch((e) =>
+          console.error("[JobQueue] workflow hook failed:", e),
+        );
+      }
+      return;
+    }
+
+    // ── General-purpose diagnostic agent (e.g. auto-debug from IntegrationValidator) ─
+    if (job.agentType === "general") {
+      const generalCtx: ToolContext = {
+        userId: job.userId,
+        googleAccessToken: null,
+        channel: `JobQueue/general`,
+        state: { pendingAttachments: [] },
+      };
+
+      const debugTools = [
+        readRecentErrorsTool,
+        listSourceFilesTool,
+        readSourceFileTool,
+        proposeCodeChangeTool,
+      ];
+
+      const result = await runAgent({
+        messages: [
+          {
+            role: "system",
+            content: `You are Jarvis, an AI assistant running a background diagnostic task.
+The user is NOT present in this conversation. Your job is to investigate an error, diagnose the root
+cause, and either propose a code fix or send a plain-English diagnosis to the user's inbox.
+
+Always conclude by either calling propose_code_change (if a targeted code fix is appropriate) or by
+writing a clear inbox message explaining what is broken and what the user should do.`,
+          },
+          { role: "user", content: job.prompt },
+        ],
+        tools: debugTools,
+        context: generalCtx,
+        maxTurns: 8,
+      });
+
+      await completeJob(job.id, {
+        result: { output: result.reply, agentType: "general" },
+        turns: result.turns,
+        toolCallsCount: result.toolCalls?.length ?? 0,
+      });
+
+      console.log(`[JobQueue] complete general job ${job.id} turns=${result.turns}`);
+
+      const generalReply = result.reply?.trim()
+        ? result.reply.slice(0, 1200)
+        : "Auto-debug ran but produced no summary. Please check the Proposals tab or review recent error logs for details.";
+      await notifyJobComplete(job.userId, "general", job.title, generalReply);
+
+      if (hasWorkflow) {
+        await onWorkflowJobComplete(wfId!, wfStep!, job.id, generalReply).catch((e) =>
           console.error("[JobQueue] workflow hook failed:", e),
         );
       }
