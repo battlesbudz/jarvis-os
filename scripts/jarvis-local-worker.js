@@ -1,15 +1,21 @@
 #!/usr/bin/env node
 /**
- * Jarvis Local Worker — YouTube Transcript Fetcher
+ * Jarvis Local Worker — YouTube Transcript Fetcher + Audio Transcription
  *
  * Run this script on your PC to give Jarvis a local fallback for fetching
  * YouTube transcripts. When all server-side strategies fail (because YouTube
  * blocks Replit's cloud IPs), the server forwards the job here and your
  * machine fetches it instead.
  *
+ * Two strategies are tried in order:
+ *   1. yt-dlp subtitle extraction (fast, preferred)
+ *   2. Audio download + server-side AI transcription (Whisper)
+ *      — used when no official captions exist
+ *
  * Requirements:
  *   - Node.js 18+
  *   - yt-dlp installed and on your PATH  (https://github.com/yt-dlp/yt-dlp)
+ *   - ffmpeg (optional — needed only for splitting very long audio files)
  *
  * Setup:
  *   1. Get your token from Jarvis:
@@ -28,7 +34,7 @@ const SERVER = (process.env.SERVER || "").replace(/\/$/, "");
 // ────────────────────────────────────────────────────────────────────────────
 
 const { execSync, spawnSync } = require("child_process");
-const { mkdtempSync, rmSync, readdirSync, readFileSync } = require("fs");
+const { mkdtempSync, rmSync, readdirSync, readFileSync, statSync } = require("fs");
 const path = require("path");
 const os = require("os");
 
@@ -71,9 +77,9 @@ function parseSrt(content) {
   return segments;
 }
 
-// ── Fetch transcript via yt-dlp ───────────────────────────────────────────────
+// ── Subtitle fetch via yt-dlp ─────────────────────────────────────────────────
 
-function fetchTranscript(url) {
+function fetchSubtitles(url) {
   const tmpDir = mkdtempSync(path.join(os.tmpdir(), "ytdlp-lw-"));
   try {
     const outputTemplate = path.join(tmpDir, "%(id)s");
@@ -110,6 +116,128 @@ function fetchTranscript(url) {
 
     const content = readFileSync(path.join(tmpDir, best), "utf-8");
     return parseSrt(content);
+  } finally {
+    try { rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+  }
+}
+
+// ── Audio download + server-side Whisper transcription ───────────────────────
+// Used as a fallback when no official captions exist.
+// - Your PC downloads the audio (no IP blocks)
+// - The server transcribes via OpenAI Whisper (API key stays on server)
+
+const WHISPER_MAX_BYTES = 23 * 1024 * 1024; // 23 MB — leave headroom under 25 MB limit
+const CHUNK_SECS = 600;                       // 10 minutes per chunk
+
+/** Check whether ffmpeg is available. */
+function hasFfmpeg() {
+  try { execSync("ffmpeg -version", { stdio: "ignore" }); return true; } catch { return false; }
+}
+
+/** Get total duration of an audio file via ffprobe (seconds). */
+function getAudioDuration(filePath) {
+  try {
+    const out = execSync(
+      `ffprobe -v quiet -show_entries format=duration -of csv=p=0 "${filePath}"`,
+      { encoding: "utf-8", timeout: 15_000 }
+    );
+    return parseFloat(out.trim()) || 0;
+  } catch { return 0; }
+}
+
+/** POST base64-encoded audio to the server for Whisper transcription. */
+async function transcribeChunk(audioB64, format) {
+  const resp = await apiFetch(
+    "POST",
+    `${SERVER}/api/local-worker/transcribe-audio?token=${TOKEN}`,
+    { audio: audioB64, format }
+  );
+  if (resp.status !== 200) {
+    throw new Error(`Server transcription error ${resp.status}: ${JSON.stringify(resp.body)}`);
+  }
+  return resp.body?.transcript || "";
+}
+
+/** Download audio for a YouTube URL and transcribe via Whisper. */
+async function fetchAudioTranscript(url) {
+  const tmpDir = mkdtempSync(path.join(os.tmpdir(), "ytaudio-lw-"));
+
+  try {
+    log("  Downloading audio (this may take a minute)…");
+    const outputTemplate = path.join(tmpDir, "%(id)s.%(ext)s");
+    const result = spawnSync(
+      "yt-dlp",
+      [
+        "-f", "bestaudio[filesize<100M]/bestaudio",
+        "--extract-audio",
+        "--audio-format", "mp3",
+        "--no-playlist",
+        "--no-warnings",
+        "--quiet",
+        "--no-progress",
+        "--max-filesize", "100M",
+        "--output", outputTemplate,
+        "--", url,
+      ],
+      { timeout: 180_000, encoding: "utf-8" }
+    );
+
+    if (result.status !== 0) {
+      const errMsg = (result.stderr || result.stdout || "yt-dlp audio download failed").slice(0, 500);
+      throw new Error(errMsg);
+    }
+
+    const files = readdirSync(tmpDir).filter((f) => /\.(mp3|m4a|opus|webm)$/i.test(f));
+    if (files.length === 0) throw new Error("yt-dlp produced no audio file");
+
+    const audioPath = path.join(tmpDir, files[0]);
+    const audioExt = path.extname(files[0]).slice(1).toLowerCase() || "mp3";
+    const audioSize = statSync(audioPath).size;
+
+    log(`  Audio downloaded: ${files[0]} (${(audioSize / 1024 / 1024).toFixed(1)} MB)`);
+
+    // ── Single chunk (fits within Whisper limit) ─────────────────────────────
+    if (audioSize <= WHISPER_MAX_BYTES) {
+      log("  Sending to Whisper for transcription…");
+      const audioB64 = readFileSync(audioPath).toString("base64");
+      const transcript = await transcribeChunk(audioB64, audioExt);
+      if (!transcript.trim()) throw new Error("Whisper returned empty transcript");
+      return transcript.trim();
+    }
+
+    // ── Multi-chunk (split with ffmpeg) ─────────────────────────────────────
+    if (!hasFfmpeg()) {
+      throw new Error(
+        `Audio is too large (${(audioSize / 1024 / 1024).toFixed(1)} MB) for a single Whisper request. ` +
+        `Install ffmpeg to enable automatic chunking: https://ffmpeg.org/download.html`
+      );
+    }
+
+    const totalDuration = getAudioDuration(audioPath);
+    if (!totalDuration) throw new Error("Could not determine audio duration for chunking");
+
+    log(`  Audio is large — splitting into ${CHUNK_SECS}s chunks for Whisper…`);
+    const parts = [];
+    let offset = 0;
+    let chunkNum = 0;
+
+    while (offset < totalDuration) {
+      const chunkPath = path.join(tmpDir, `chunk-${chunkNum}.mp3`);
+      execSync(
+        `ffmpeg -i "${audioPath}" -ss ${offset} -t ${CHUNK_SECS} -acodec libmp3lame -q:a 4 -y "${chunkPath}"`,
+        { stdio: "ignore", timeout: 60_000 }
+      );
+      const chunkB64 = readFileSync(chunkPath).toString("base64");
+      log(`  Transcribing chunk ${chunkNum + 1}…`);
+      const text = await transcribeChunk(chunkB64, "mp3");
+      if (text.trim()) parts.push(text.trim());
+      offset += CHUNK_SECS;
+      chunkNum++;
+    }
+
+    if (parts.length === 0) throw new Error("All chunks returned empty transcripts");
+    return parts.join(" ");
+
   } finally {
     try { rmSync(tmpDir, { recursive: true, force: true }); } catch {}
   }
@@ -182,10 +310,30 @@ async function tick() {
   log(`Claimed job ${job.id} — url: ${job.url}`);
 
   try {
-    const segments = fetchTranscript(job.url);
-    if (segments.length === 0) throw new Error("yt-dlp returned no subtitle segments");
-    await apiFetch("POST", `${SERVER}/api/local-worker/jobs/${job.id}/complete?token=${TOKEN}`, { segments });
-    log(`Job ${job.id} completed — ${segments.length} segments`);
+    // ── Strategy 1: Subtitle extraction ───────────────────────────────────────
+    log("  Trying subtitle extraction…");
+    const segments = fetchSubtitles(job.url);
+
+    if (segments.length > 0) {
+      await apiFetch("POST", `${SERVER}/api/local-worker/jobs/${job.id}/complete?token=${TOKEN}`, { segments });
+      log(`Job ${job.id} completed via subtitles — ${segments.length} segments`);
+      return;
+    }
+
+    // ── Strategy 2: Audio transcription ───────────────────────────────────────
+    log("  No subtitles found — trying audio transcription…");
+    const transcript = await fetchAudioTranscript(job.url);
+
+    // Return as a single AI-generated segment (matching server-side format)
+    const aiSegments = [{
+      text: `[AI-generated transcript — no official captions available]\n\n${transcript}`,
+      offset: 0,
+      duration: 0,
+    }];
+
+    await apiFetch("POST", `${SERVER}/api/local-worker/jobs/${job.id}/complete?token=${TOKEN}`, { segments: aiSegments });
+    log(`Job ${job.id} completed via audio transcription — ${transcript.length} chars`);
+
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     log(`Job ${job.id} failed: ${msg}`);
@@ -194,6 +342,7 @@ async function tick() {
 }
 
 log(`Jarvis local worker started — server: ${SERVER}`);
+log("Strategies: subtitles → audio transcription (via Whisper)");
 log("Polling for jobs every 5 seconds. Press Ctrl+C to stop.\n");
 
 tick();
