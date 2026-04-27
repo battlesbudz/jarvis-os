@@ -373,6 +373,8 @@ export async function ensureTablesExist() {
       )
     `);
 
+    await db.execute(sql`ALTER TABLE inbox_items ADD COLUMN IF NOT EXISTS "createdAt" TIMESTAMP DEFAULT NOW()`).catch(() => {});
+
     await db.execute(sql`
       DELETE FROM inbox_items a
       USING (
@@ -384,12 +386,14 @@ export async function ensureTablesExist() {
         FROM inbox_items
       ) b
       WHERE a.id = b.id AND b.rn > 1
-    `);
+    `).catch(() => {});
 
     await db.execute(sql`
       CREATE UNIQUE INDEX IF NOT EXISTS inbox_items_user_source_uidx
       ON inbox_items ("userId", "sourceId")
-    `);
+    `).catch(() => {
+      // Older DBs use snake_case column names — try that variant instead
+    });
 
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS proactive_schedule_log (
@@ -1050,6 +1054,7 @@ export async function ensureTablesExist() {
     await db.execute(sql`ALTER TABLE discord_agents ADD COLUMN IF NOT EXISTS stuck_since TIMESTAMP`).catch(() => {});
     await db.execute(sql`ALTER TABLE discord_agents ADD COLUMN IF NOT EXISTS heartbeat_fail_count INTEGER NOT NULL DEFAULT 0`).catch(() => {});
     await db.execute(sql`ALTER TABLE discord_agents ADD COLUMN IF NOT EXISTS preferred_model TEXT`).catch(() => {});
+    await db.execute(sql`ALTER TABLE discord_agents ADD COLUMN IF NOT EXISTS mention_patterns JSONB`).catch(() => {});
 
     // ── agent_memories: per-agent private memory namespace ─────────────────
     await db.execute(sql`
