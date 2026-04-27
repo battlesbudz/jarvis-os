@@ -19,6 +19,7 @@
     "@anthropic-ai/sdk": "^0.91.1",
     "@expo-google-fonts/inter": "^0.4.0",
     "@expo/vector-icons": "^15.0.3",
+    "@inferencesh/sdk": "^0.5.16",
     "@microsoft/microsoft-graph-client": "^3.0.7",
     "@napi-rs/canvas": "^0.1.99",
     "@playwright/mcp": "^0.0.70",

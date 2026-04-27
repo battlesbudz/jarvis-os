@@ -63,6 +63,7 @@ import { webFetchTool } from "./webFetch";
 import { sessionsListTool, sessionsHistoryTool, sessionsSendTool } from "./sessionTools";
 import { speakTool } from "./tts";
 import { imageGenerateTool } from "./imageGenerate";
+import { videoGenerateTool } from "./videoGenerate";
 import { cronCreateTool, cronListTool, cronDeleteTool, cronUpdateTool } from "./cronTools";
 import {
   workflowCreateTool,
@@ -107,7 +108,7 @@ export type ToolGroup =
   | "scheduling"  // schedule_jarvis_task, cron_*, workflow_*
   | "browser"     // browser_navigate, browser_click, …
   | "system"      // spawn_subagent, sessions_*, register_approval, build_feature, test_tool
-  | "media"       // speak, image_generate
+  | "media"       // speak, image_generate, generate_video
   | "connections" // check_connections, generate_reconnect_link, connect_channel
 
 // ── Registry-derived data (single source of truth for capability tools) ────────
@@ -240,5 +241,6 @@ export {
   buildFeatureTool,
   testToolTool,
   imageGenerateTool,
+  videoGenerateTool,
   selfDiagnoseTool,
 };
