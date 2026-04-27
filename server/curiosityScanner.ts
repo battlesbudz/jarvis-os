@@ -18,11 +18,19 @@ const openai = new OpenAI({
 let scanInProgress = false;
 let scannerStarted = false;
 
+const ALREADY_ASKED_WINDOW_DAYS = 30;
+
 async function getAlreadyAskedSourceIds(userId: string): Promise<Set<string>> {
+  const windowStart = new Date(Date.now() - ALREADY_ASKED_WINDOW_DAYS * 24 * 60 * 60 * 1000);
   const rows = await db
     .select({ sourceId: schema.proactiveQuestionsSent.sourceId })
     .from(schema.proactiveQuestionsSent)
-    .where(eq(schema.proactiveQuestionsSent.userId, userId));
+    .where(
+      and(
+        eq(schema.proactiveQuestionsSent.userId, userId),
+        gt(schema.proactiveQuestionsSent.sentAt, windowStart)
+      )
+    );
   return new Set(rows.map((r) => r.sourceId));
 }
 
@@ -289,7 +297,10 @@ export async function runCuriosityScan(): Promise<void> {
                 sourceType: provider,
                 sourceId: eventId,
                 question: "Surfaced by inbox rule",
-              }).onConflictDoNothing();
+              }).onConflictDoUpdate({
+                target: [schema.proactiveQuestionsSent.userId, schema.proactiveQuestionsSent.sourceId],
+                set: { sentAt: new Date(), question: "Surfaced by inbox rule" },
+              });
               console.log(`[Curiosity] Surfaced ${provider} event for user ${userId}: ${ev.title}`);
             } catch (err) {
               console.error(`[Curiosity] context-rule surface failed for ${userId}:`, err);
@@ -343,7 +354,10 @@ export async function runCuriosityScan(): Promise<void> {
                 sourceType: "email",
                 sourceId: emailId,
                 question: "Surfaced by inbox rule",
-              }).onConflictDoNothing();
+              }).onConflictDoUpdate({
+                target: [schema.proactiveQuestionsSent.userId, schema.proactiveQuestionsSent.sourceId],
+                set: { sentAt: new Date(), question: "Surfaced by inbox rule" },
+              });
               console.log(`[Curiosity] Surfaced email for user ${userId}: ${email.subject}`);
             } catch (err) {
               console.error(`[Curiosity] inbox_items insert failed for email ${emailId}:`, err);
@@ -402,7 +416,10 @@ export async function runCuriosityScan(): Promise<void> {
                 sourceType: "outlook_email",
                 sourceId: emailId,
                 question: "Surfaced by inbox rule",
-              }).onConflictDoNothing();
+              }).onConflictDoUpdate({
+                target: [schema.proactiveQuestionsSent.userId, schema.proactiveQuestionsSent.sourceId],
+                set: { sentAt: new Date(), question: "Surfaced by inbox rule" },
+              });
               console.log(`[Curiosity] Surfaced Outlook email for user ${userId}: ${email.subject}`);
             } catch (err) {
               console.error(`[Curiosity] inbox_items insert failed for Outlook email ${emailId}:`, err);
@@ -461,15 +478,13 @@ export async function runCuriosityScan(): Promise<void> {
               sourceType: canonicalSourceType,
               sourceId: q.sourceId,
               question: q.question,
+            }).onConflictDoUpdate({
+              target: [schema.proactiveQuestionsSent.userId, schema.proactiveQuestionsSent.sourceId],
+              set: { sentAt: new Date(), question: q.question },
             });
           } catch (dbErr: any) {
-            if (dbErr?.code === '23505') {
-              console.log(`[Curiosity] Skipping duplicate source: ${q.sourceId}`);
-              continue;
-            } else {
-              console.error(`[Curiosity] Failed to record question for user ${userId}:`, dbErr);
-              continue;
-            }
+            console.error(`[Curiosity] Failed to record question for user ${userId}:`, dbErr);
+            continue;
           }
 
           if (srcSenderKey) recentlySurfacedSenders.add(srcSenderKey);
