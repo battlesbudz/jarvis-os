@@ -159,34 +159,37 @@ export const youtubeTranscriptTool: AgentTool = {
         };
       }
 
-      // ── Generic / youtube-transcript library errors ─────────────────────────
-      // Check video-level errors first — "unavailable" text overlaps with caption errors.
-      if (lower.includes("unavailable") || lower.includes("not found") || lower.includes("private")) {
-        return {
-          ok: false,
-          content: `Video not found or is private/unavailable. Please check the URL and try again.`,
-          label: "get_youtube_transcript: video unavailable",
-        };
-      }
-      if (lower.includes("disabled") || lower.includes("not available") || lower.includes("no transcript")) {
-        return {
-          ok: false,
-          content: `This video does not have captions available. The owner may have disabled transcripts, or it may be a live stream without auto-captions.`,
-          label: "get_youtube_transcript: no captions",
-        };
-      }
+      // ── Generic / non-terminal errors ───────────────────────────────────────
+      // Avoid mirroring library error messages that may falsely imply the video
+      // is private, restricted, or requires sign-in when it doesn't.
+      // Only report "no captions" for clear no-transcript signals; all other
+      // failures get a generic "try again" message.
       if (lower.includes("too many requests") || lower.includes("429")) {
         return {
           ok: false,
-          content: `YouTube is rate-limiting transcript requests right now. Please wait a moment and try again.`,
+          content: "YouTube is rate-limiting transcript requests right now. Please wait a moment and try again.",
           label: "get_youtube_transcript: rate limited",
         };
       }
+      // Genuine no-captions signals from the library
+      if (
+        lower.includes("disabled") ||
+        lower.includes("no transcript") ||
+        lower === "transcript is disabled on this video"
+      ) {
+        return {
+          ok: false,
+          content: "This video doesn't have captions available. The creator may have disabled transcripts, or it may be a live stream.",
+          label: "get_youtube_transcript: no captions",
+        };
+      }
 
-      console.error(`[get_youtube_transcript] error: ${msg}`);
+      // For everything else — transient network failures, unexpected XML, etc.
+      // — don't imply the video is private or that the user did anything wrong.
+      console.error(`[get_youtube_transcript] non-terminal error: ${msg}`);
       return {
         ok: false,
-        content: `Failed to fetch transcript: ${msg}`,
+        content: "Couldn't read the captions for this video right now — please try again in a moment.",
         label: "get_youtube_transcript: error",
       };
     }

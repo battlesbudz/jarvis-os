@@ -8,9 +8,9 @@
 import { fetchTranscriptCached } from "../lib/transcriptCache";
 
 /** Per-URL character limit (prevents a single very long video from consuming the whole budget). */
-const MAX_CHARS_PER_URL = 20_000;
+const MAX_CHARS_PER_URL = 60_000;
 /** Global character budget across all URLs in one request (prevents 3-URL × 80k = 240k blowup). */
-const MAX_CHARS_TOTAL = 30_000;
+const MAX_CHARS_TOTAL = 60_000;
 
 function fmtMs(ms: number): string {
   const total = Math.floor(ms / 1000);
@@ -126,8 +126,10 @@ export async function buildYouTubeContextBlock(message: string): Promise<string>
   return (
     "\n\n" +
     blocks.join("\n\n") +
-    "\n\n[The transcript above was auto-fetched because this message contains a YouTube link. " +
-    "If the user gave no explicit instruction, provide a concise summary of the video and ask what they'd like to know more about. " +
-    "If they asked a specific question, answer it using the transcript.]"
+    "\n\n[TRANSCRIPT AUTO-FETCHED: The transcript above was pre-loaded for this message. " +
+    "Reply INLINE right now — do NOT call queue_background_job for this. " +
+    "If the user gave no explicit instruction, provide a thorough summary of the video here in this message. " +
+    "If they asked a specific question, answer it using the transcript. " +
+    "Never route transcript-backed summaries to the background queue.]"
   );
 }
