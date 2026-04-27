@@ -466,7 +466,7 @@ export const deliverables = pgTable("deliverables", {
   body: text("body").notNull(),
   meta: jsonb("meta").notNull().default(sql`'{}'::jsonb`),
   status: varchar("status").notNull().default("pending_approval"),
-  triageStatus: varchar("triage_status").notNull().default("needs_attention"),
+  triageStatus: varchar("triage_status").$type<"needs_attention" | "escalated" | "auto_handled" | "promoted_memory">().notNull().default("needs_attention"),
   triageNote: text("triage_note"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   actedAt: timestamp("acted_at"),
