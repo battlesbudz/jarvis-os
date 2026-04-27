@@ -187,6 +187,12 @@ export interface RunSubAgentOptions {
   prompt: string;
   defaultTitle: string;
   context: ToolContext;
+  /**
+   * Per-request model override. When provided, used instead of the global
+   * user "research" model preference. Lets the orchestrator route different
+   * sub-agent workloads to different models without touching the agent loop.
+   */
+  model?: string;
 }
 
 /**
@@ -243,7 +249,9 @@ export async function runSubAgent(opts: RunSubAgentOptions): Promise<SubAgentRes
   }
 
   const { getModel } = await import("../lib/modelPrefs");
-  const subAgentModel = await getModel(opts.context.userId, "research");
+  const subAgentModel =
+    opts.model ??
+    (await getModel(opts.context.userId, "research"));
 
   const result = await runAgent({
     model: subAgentModel,

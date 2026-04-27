@@ -77,6 +77,9 @@ export const reviewAgentTaskTool: AgentTool = {
     const agentName = String(input.agentName ?? "Agent");
     const iterationCount = typeof input.iterationCount === "number" ? input.iterationCount : 0;
     const previousOutput = String((job.result as Record<string, unknown>)?.output ?? "");
+    // Preserve the original model override so revision iterations use the same
+    // model as the initial run rather than falling back to defaults.
+    const modelOverride = typeof input.model === "string" ? input.model : undefined;
 
     if (verdict === "approved") {
       // Mark as delivered
@@ -113,6 +116,7 @@ export const reviewAgentTaskTool: AgentTool = {
         iterationCount: iterationCount + 1,
         previousJobId: jobId,
         feedback,
+        ...(modelOverride ? { model: modelOverride } : {}),
       },
     });
 

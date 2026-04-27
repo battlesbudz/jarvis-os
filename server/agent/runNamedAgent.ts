@@ -83,6 +83,13 @@ export interface RunNamedAgentOptions {
    * integration_error event without polling or checking results after the fact.
    */
   onIntegrationError?: (integrationKey: string, message: string) => void;
+  /**
+   * Per-request model override. Resolution order (first wins):
+   *   1. opts.model (caller override)
+   *   2. agent.preferredModel (per-agent DB setting)
+   *   3. getModel(userId, "chat") (global user preference / system default)
+   */
+  model?: string;
 }
 
 export interface NamedAgentResult {
@@ -170,9 +177,22 @@ export async function runNamedAgent(opts: RunNamedAgentOptions): Promise<NamedAg
       { role: "user", content: userMessage },
     ];
 
-    // ── Run the agent ─────────────────────────────────────────────────────────
-    const { getModel } = await import("../lib/modelPrefs");
-    const model = await getModel(userId, "chat");
+    // ── Resolve model (caller override → agent preferredModel → global pref) ──
+    const { getModel, AVAILABLE_MODELS, ORCHESTRATOR_MODELS } = await import("../lib/modelPrefs");
+    const model =
+      opts.model ??
+      agent.preferredModel ??
+      (await getModel(userId, "chat"));
+
+    // Non-blocking validation: warn if resolved model is not in the known-valid
+    // set so misconfigurations surface in logs without breaking agent execution.
+    const KNOWN_MODELS = new Set([
+      ...AVAILABLE_MODELS.map((m) => m.value),
+      ...ORCHESTRATOR_MODELS.map((m) => m.value),
+    ]);
+    if (!KNOWN_MODELS.has(model)) {
+      console.warn(`[runNamedAgent] agent=${agentId} resolved unknown model "${model}" — continuing`);
+    }
 
     // ── Approval gate hook ───────────────────────────────────────────────────
     // Before executing any high-risk tool, create a DB-persistent approval

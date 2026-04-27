@@ -1,5 +1,5 @@
 import type { AgentTool } from "../types";
-import { submitAgentJob, type AgentJobType } from "../jobQueue";
+import { submitAgentJob, type AgentJobType, getModelForJobType } from "../jobQueue";
 import { SUB_AGENT_TYPES, type SubAgentType } from "../subagents";
 
 interface QueueJobArgs {
@@ -68,11 +68,16 @@ Do NOT use for: quick one-sentence answers, reading today's tasks, anything answ
     const title = String(a.title || "").trim() || deriveTitle(agentType, prompt);
 
     try {
+      // Inject per-type model routing so the job queue uses the appropriate
+      // model for each sub-agent workload (research/planning → claude-sonnet-4-6,
+      // writing/email → claude-haiku-4-5).
+      const routedModel = getModelForJobType(agentType as AgentJobType);
       const jobId = await submitAgentJob({
         userId: ctx.userId,
         agentType: agentType as AgentJobType,
         title,
         prompt,
+        input: routedModel ? { model: routedModel } : undefined,
       });
       console.log(
         `[${ctx.channel || "Coach"}] queue_background_job type=${agentType} job=${jobId} title="${title.slice(0, 60)}"`,
