@@ -11,12 +11,12 @@ const openai = new OpenAI({
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
 });
 
-type DallE3Size = "1024x1024" | "1792x1024" | "1024x1792";
+type GptImage1Size = "1024x1024" | "1536x1024" | "1024x1536";
 
-const SIZE_MAP: Record<string, DallE3Size> = {
+const SIZE_MAP: Record<string, GptImage1Size> = {
   square: "1024x1024",
-  landscape: "1792x1024",
-  portrait: "1024x1792",
+  landscape: "1536x1024",
+  portrait: "1024x1536",
 };
 
 /** FLUX image_size values understood by falai/flux-dev-lora */
@@ -40,6 +40,11 @@ async function getTelegramChatId(userId: string): Promise<string | null> {
 }
 
 async function fetchImageBuffer(url: string): Promise<Buffer | null> {
+  // gpt-image-1 returns base64 data URLs — decode directly without a network request
+  if (url.startsWith("data:")) {
+    const b64 = url.split(",")[1];
+    return b64 ? Buffer.from(b64, "base64") : null;
+  }
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(30000) });
     if (!res.ok) return null;
@@ -50,18 +55,17 @@ async function fetchImageBuffer(url: string): Promise<Buffer | null> {
   }
 }
 
-/** Generate an image via DALL-E 3 and return its URL. */
-async function generateDallE(prompt: string, size: DallE3Size): Promise<string> {
+/** Generate an image via gpt-image-1 and return a data URL (base64). */
+async function generateGptImage(prompt: string, size: GptImage1Size): Promise<string> {
   const response = await openai.images.generate({
-    model: "dall-e-3",
+    model: "gpt-image-1",
     prompt,
     n: 1,
     size,
-    response_format: "url",
   });
-  const url = response.data[0]?.url;
-  if (!url) throw new Error("No image URL returned from DALL-E 3");
-  return url;
+  const b64 = response.data[0]?.b64_json;
+  if (!b64) throw new Error("No image data returned from gpt-image-1");
+  return `data:image/png;base64,${b64}`;
 }
 
 /** Generate an image via FLUX (falai/flux-dev-lora) and return its URL. */
@@ -93,7 +97,7 @@ export const imageGenerateTool: AgentTool = {
   name: "image_generate",
   description:
     "Generate an image from a text prompt and deliver it to the user's current channel. " +
-    "Supports two models: DALL-E 3 (default — fast, reliable, great for illustrations and concepts) and " +
+    "Supports two models: GPT Image (default — fast, reliable, great for illustrations and concepts) and " +
     "FLUX (high-quality, photorealistic and artistic outputs — requires INFSH_API_KEY). " +
     "On Telegram: sends the image inline as a photo bubble. On Discord: sends as an embedded image attachment. " +
     "In the app: displays the image inline in the chat bubble. " +
@@ -117,7 +121,7 @@ export const imageGenerateTool: AgentTool = {
         type: "string",
         enum: ["dalle", "flux"],
         description:
-          "Image model to use. 'dalle' (default) = DALL-E 3 — fast and reliable. 'flux' = FLUX Dev — higher quality, more photorealistic and artistic, slower. Use flux when the user asks for photorealistic or high-quality images.",
+          "Image model to use. 'dalle' (default) = GPT Image — fast and reliable. 'flux' = FLUX Dev — higher quality, more photorealistic and artistic, slower. Use flux when the user asks for photorealistic or high-quality images.",
       },
       caption: {
         type: "string",
@@ -137,7 +141,7 @@ export const imageGenerateTool: AgentTool = {
     const modelKey = String(args.model || "dalle").toLowerCase();
     const useFlux = modelKey === "flux";
     const caption = args.caption ? String(args.caption).slice(0, 200) : undefined;
-    const modelLabel = useFlux ? "FLUX" : "DALL-E 3";
+    const modelLabel = useFlux ? "FLUX" : "GPT Image";
 
     let imageUrl: string;
     try {
@@ -145,8 +149,8 @@ export const imageGenerateTool: AgentTool = {
         const fluxSize = FLUX_SIZE_MAP[sizeKey] ?? "square_hd";
         imageUrl = await generateFlux(prompt, fluxSize);
       } else {
-        const size: DallE3Size = SIZE_MAP[sizeKey] ?? "1024x1024";
-        imageUrl = await generateDallE(prompt, size);
+        const size: GptImage1Size = SIZE_MAP[sizeKey] ?? "1024x1024";
+        imageUrl = await generateGptImage(prompt, size);
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
