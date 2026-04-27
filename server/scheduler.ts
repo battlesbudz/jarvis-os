@@ -445,6 +445,7 @@ export async function runMorningPlanBuild() {
         .where(eq(schema.userPreferences.userId, user.id));
 
       const currentPrefs = (existingPrefs[0]?.data as any) || {};
+      const lastDreamCycle = currentPrefs.lastDreamCycle || null;
       const updatedPrefs = {
         ...currentPrefs,
         autoBuiltPlan: {
@@ -453,6 +454,15 @@ export async function runMorningPlanBuild() {
           reasoning: planReasoning || undefined,
           taskCount: newTasks.length,
           predictionText: predictionText || null,
+          dreamCycleMeta: lastDreamCycle && lastDreamCycle.date === today
+            ? {
+                insightsStored: lastDreamCycle.insightsStored,
+                consolidation: lastDreamCycle.consolidation,
+                semanticExtraction: lastDreamCycle.semanticExtraction,
+                decay: lastDreamCycle.decay,
+                reinforcement: lastDreamCycle.reinforcement,
+              }
+            : null,
         }
       };
 
@@ -639,10 +649,42 @@ export async function runDreamCycleForAllUsers(now: Date): Promise<void> {
 
     try {
       const { runDreamForUser } = await import('./memory/dream');
-      const count = await runDreamForUser(user.id, localDate);
+      const dreamResult = await runDreamForUser(user.id, localDate);
+      const count = dreamResult.insightsStored;
       totalInsights += count;
-      if (count > 0) {
-        console.log(`[Dream] ${count} insight(s) synthesised for user ${user.id} (${localDate})`);
+      if (count > 0 || dreamResult.consolidation.promoted > 0 || dreamResult.semanticExtraction.factsExtracted > 0) {
+        console.log(
+          `[Dream] user=${user.id} (${localDate}) insights=${count} promoted=${dreamResult.consolidation.promoted} discarded=${dreamResult.consolidation.discarded} factsExtracted=${dreamResult.semanticExtraction.factsExtracted} decayed=${dreamResult.decay.decayed} deleted=${dreamResult.decay.hardDeleted} boosted=${dreamResult.reinforcement.boosted}`,
+        );
+      }
+      // Persist dream cycle metadata into user preferences so the morning
+      // briefing builder can surface consolidation stats in its context.
+      try {
+        const existingPrefsRows = await db
+          .select({ data: schema.userPreferences.data })
+          .from(schema.userPreferences)
+          .where(eq(schema.userPreferences.userId, user.id));
+        const existingPrefs = (existingPrefsRows[0]?.data as Record<string, unknown>) || {};
+        const updatedPrefsWithDream = {
+          ...existingPrefs,
+          lastDreamCycle: {
+            date: localDate,
+            insightsStored: dreamResult.insightsStored,
+            consolidation: dreamResult.consolidation,
+            semanticExtraction: dreamResult.semanticExtraction,
+            decay: dreamResult.decay,
+            reinforcement: dreamResult.reinforcement,
+          },
+        };
+        await db.insert(schema.userPreferences).values({
+          userId: user.id,
+          data: updatedPrefsWithDream,
+        }).onConflictDoUpdate({
+          target: [schema.userPreferences.userId],
+          set: { data: updatedPrefsWithDream, updatedAt: new Date() },
+        });
+      } catch (prefErr) {
+        console.error(`[Dream] failed to persist dream metadata for ${user.id}:`, prefErr);
       }
       await db.insert(schema.proactiveScheduleLog).values({
         userId: user.id,
