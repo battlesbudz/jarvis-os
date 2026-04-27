@@ -2636,6 +2636,77 @@ You can extend yourself by building new tools directly. Generate the complete Ty
             }
 
             const execResult = await executeCoachTool(tc.function.name, args, userId);
+
+            // Detect integration connectivity errors in the primary chat and emit
+            // a structured integration_error SSE event so the UI can show an
+            // actionable "Reconnect <integration>" prompt inline.
+            // Uses the capability registry to determine which integrations a
+            // failed tool depends on, then validates against the live integration
+            // status — works for any integration without brittle label matching.
+            if (execResult.result === 'error' && userId) {
+              try {
+                const { capabilityRegistry } = await import('./capabilities/index');
+                const integrationDeps = capabilityRegistry.getIntegrationDeps();
+                // Build reverse map: toolName → integration IDs that require it
+                const toolToIntegrations = new Map<string, string[]>();
+                for (const [integId, { toolNames }] of Object.entries(integrationDeps)) {
+                  for (const toolName of toolNames) {
+                    const existing = toolToIntegrations.get(toolName) ?? [];
+                    if (!existing.includes(integId)) existing.push(integId);
+                    toolToIntegrations.set(toolName, existing);
+                  }
+                }
+                const candidateIntegrations = toolToIntegrations.get(tc.function.name) ?? [];
+                if (candidateIntegrations.length > 0) {
+                  const { getUserIntegrationStatuses } = await import('./intelligence/integrationValidator');
+                  const liveStatuses = await getUserIntegrationStatuses(userId);
+                  // Auth signals used to gate expiring_soon (still functional) cases —
+                  // avoids misclassifying generic tool failures as reconnect events.
+                  const detail = (execResult.detail ?? '').toLowerCase();
+                  const authSignals = ['401', '403', 'unauthorized', 'forbidden', 'expired',
+                    'invalid_grant', 'revoked', 'token', 'authentication', 'oauth',
+                    'permission denied', 'scope', 'credentials', 'unauthenticated', 'access denied'];
+                  const hasAuthSignal = authSignals.some((s) => detail.includes(s));
+                  // For multi-provider tools that fail with auth signals but no provider
+                  // is definitively broken (stale validator), attempt to disambiguate
+                  // by provider hint in the error text to avoid misattribution.
+                  const providerHint = /microsoft|outlook|office365/i.test(detail)
+                    ? 'outlook'
+                    : /google|gmail/i.test(detail)
+                      ? 'google'
+                      : null;
+                  const isMultiProvider = candidateIntegrations.length > 1;
+                  for (const integKey of candidateIntegrations) {
+                    const integStatus = liveStatuses[integKey as keyof typeof liveStatuses];
+                    // Primary: emit when validator confirms broken (authoritative, no ambiguity).
+                    // Fallback: hasAuthSignal covers mid-run expiry with stale cached status.
+                    //   For multi-provider tools, only fall back if provider hint matches
+                    //   this integKey — otherwise suppress to avoid wrong reconnect flow.
+                    const canFallback = !isMultiProvider || (providerHint === integKey);
+                    const shouldEmit = integStatus === 'broken' || (hasAuthSignal && canFallback);
+                    if (shouldEmit) {
+                      if (!res.headersSent) {
+                        res.setHeader('Content-Type', 'text/event-stream');
+                        res.setHeader('Cache-Control', 'no-cache, no-transform');
+                        res.setHeader('X-Accel-Buffering', 'no');
+                        res.setHeader('Access-Control-Allow-Origin', '*');
+                        res.flushHeaders();
+                      }
+                      const coachIntegrationLabels: Record<string, string> = {
+                        google: 'Google', outlook: 'Outlook', slack: 'Slack',
+                        telegram: 'Telegram', discord: 'Discord', whatsapp: 'WhatsApp',
+                      };
+                      const coachLabel = coachIntegrationLabels[integKey] ?? integKey;
+                      const safeMsg = `Your ${coachLabel} connection has expired and needs to be reconnected.`;
+                      console.debug(`[Coach/SSE] integration_error detail: ${(execResult.detail ?? '').slice(0, 300)}`);
+                      res.write(`data: ${JSON.stringify({ type: 'integration_error', integration: integKey, message: safeMsg })}\n\n`);
+                      break; // emit for the first broken integration found
+                    }
+                  }
+                }
+              } catch { /* best-effort — never block the chat loop */ }
+            }
+
             let linkData: { url?: string; buttonLabel?: string; code?: string; channel?: string; screenshotUrl?: string; imageUrl?: string; imageCaption?: string; videoUrl?: string; videoCaption?: string } = {};
             if ((tc.function.name === 'generate_reconnect_link' || tc.function.name === 'connect_channel') && execResult.result === 'success') {
               try { linkData = JSON.parse(execResult.detail); } catch {}

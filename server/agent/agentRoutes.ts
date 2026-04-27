@@ -586,6 +586,21 @@ export function registerAgentRoutes(app: Express): void {
                 res.write(`data: ${JSON.stringify({ content: chunk })}\n\n`);
               }
             },
+            onIntegrationError: (integrationKey: string, errorMessage: string) => {
+              if (!res.writableEnded) {
+                console.warn(`[AgentRoutes/SSE] integration_error: integration=${integrationKey}`);
+                const integrationLabels: Record<string, string> = {
+                  google: 'Google', outlook: 'Outlook', slack: 'Slack',
+                  telegram: 'Telegram', discord: 'Discord', whatsapp: 'WhatsApp',
+                };
+                const label = integrationLabels[integrationKey] ?? integrationKey;
+                const safeMessage = `Your ${label} connection has expired and needs to be reconnected.`;
+                console.debug(`[AgentRoutes/SSE] integration_error detail: ${errorMessage.slice(0, 300)}`);
+                res.write(
+                  `data: ${JSON.stringify({ type: "integration_error", integration: integrationKey, message: safeMessage })}\n\n`,
+                );
+              }
+            },
           });
 
           if (!res.writableEnded) {

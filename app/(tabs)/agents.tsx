@@ -18,9 +18,11 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { fetch as expoFetch } from "expo/fetch";
+import { router } from "expo-router";
 import { apiRequest, getApiUrl } from "@/lib/query-client";
 import { getAuthToken } from "@/lib/auth-context";
 import Colors from "@/constants/colors";
+import { IntegrationErrorCard } from "@/components/IntegrationErrorCard";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -544,6 +546,7 @@ function RunModal({ agent, onClose }: { agent: RosterAgent | null; onClose: () =
   const [message, setMessage] = useState("");
   const [reply, setReply] = useState("");
   const [running, setRunning] = useState(false);
+  const [integrationError, setIntegrationError] = useState<{ integration: string } | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const runIdRef = useRef<string | null>(null);
 
@@ -561,6 +564,7 @@ function RunModal({ agent, onClose }: { agent: RosterAgent | null; onClose: () =
 
     setRunning(true);
     setReply("");
+    setIntegrationError(null);
 
     try {
       const token = await getAuthToken();
@@ -606,11 +610,14 @@ function RunModal({ agent, onClose }: { agent: RosterAgent | null; onClose: () =
           const data = line.slice(6);
           if (data === "[DONE]") break;
           try {
-            const parsed = JSON.parse(data) as { content?: string; type?: string };
+            const parsed = JSON.parse(data) as { content?: string; type?: string; integration?: string; message?: string };
             if (parsed.type === "aborted") {
               accumulated += "\n\n[Stopped]";
               setReply(accumulated.trim());
               break;
+            }
+            if (parsed.type === "integration_error" && parsed.integration) {
+              setIntegrationError({ integration: parsed.integration });
             }
             if (parsed.content) {
               accumulated += parsed.content;
@@ -648,7 +655,14 @@ function RunModal({ agent, onClose }: { agent: RosterAgent | null; onClose: () =
     setMessage("");
     setReply("");
     setRunning(false);
+    setIntegrationError(null);
     onClose();
+  }
+
+  function handleGoToSettings() {
+    const integration = integrationError?.integration;
+    handleClose();
+    router.push({ pathname: "/(tabs)/settings", params: integration ? { scrollTo: integration } : {} });
   }
 
   return (
@@ -696,6 +710,14 @@ function RunModal({ agent, onClose }: { agent: RosterAgent | null; onClose: () =
                 <Text style={[styles.replyText, { color: Colors.text }]}>{reply}</Text>
               </ScrollView>
             </View>
+          ) : null}
+          {integrationError ? (
+            <IntegrationErrorCard
+              integrationKey={integrationError.integration}
+              cardStyle={{ marginTop: 12 }}
+              onDismiss={() => setIntegrationError(null)}
+              onGoToSettings={handleGoToSettings}
+            />
           ) : null}
         </ScrollView>
       </View>

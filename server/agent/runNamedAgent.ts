@@ -77,6 +77,12 @@ export interface RunNamedAgentOptions {
   initiatedBy?: 'user' | 'jarvis';
   /** Optional AbortSignal — when fired the agent loop exits cleanly with an AbortError */
   signal?: AbortSignal;
+  /**
+   * Optional callback fired when a tool fails due to an integration auth issue.
+   * Threaded through to runAgent so the SSE route can emit a structured
+   * integration_error event without polling or checking results after the fact.
+   */
+  onIntegrationError?: (integrationKey: string, message: string) => void;
 }
 
 export interface NamedAgentResult {
@@ -235,6 +241,7 @@ export async function runNamedAgent(opts: RunNamedAgentOptions): Promise<NamedAg
       onToken: opts.onToken,
       onBeforeTool,
       signal,
+      onIntegrationError: opts.onIntegrationError,
     });
 
     // ── Write extracted memories ──────────────────────────────────────────────
