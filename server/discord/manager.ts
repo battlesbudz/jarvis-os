@@ -682,6 +682,41 @@ export async function sendDiscordImage(
   }
 }
 
+/**
+ * Send a video buffer as a file attachment to a Discord text channel.
+ * Used by the `generate_video` tool when the conversation originates from Discord.
+ * Returns true on success, false on any failure (logs internally).
+ */
+export async function sendDiscordVideo(
+  userId: string,
+  channelId: string,
+  videoBuffer: Buffer,
+  filename = "video.mp4",
+  caption?: string,
+): Promise<boolean> {
+  const client = getClientForUser(userId);
+  if (!client) {
+    console.warn(`[DiscordManager] sendDiscordVideo: no bot client for user ${userId}`);
+    return false;
+  }
+  try {
+    const channel = await client.channels.fetch(channelId);
+    if (!channel || !("send" in channel)) {
+      console.warn(`[DiscordManager] sendDiscordVideo: channel ${channelId} not found or not sendable`);
+      return false;
+    }
+    const ch = channel as TextChannel | DMChannel;
+    await ch.send({
+      content: caption || undefined,
+      files: [{ attachment: videoBuffer, name: filename }],
+    });
+    return true;
+  } catch (err) {
+    console.error("[DiscordManager] sendDiscordVideo failed:", err);
+    return false;
+  }
+}
+
 // Discord messages are capped at 2000 chars — split long replies
 async function editOrSendLong(msg: Message, text: string): Promise<void> {
   const chunks = splitIntoChunks(text, 1900);

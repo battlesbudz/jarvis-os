@@ -455,6 +455,33 @@ export async function sendPhoto(
   }
 }
 
+/**
+ * Sends a video to a Telegram chat as an inline video message.
+ * Accepts an MP4 buffer and an optional caption.
+ */
+export async function sendVideo(
+  chatId: string,
+  videoBuffer: Buffer,
+  caption?: string,
+): Promise<boolean> {
+  if (!BOT_TOKEN) return false;
+  try {
+    const form = new FormData();
+    form.append("chat_id", chatId);
+    if (caption) form.append("caption", caption.slice(0, 1024));
+    form.append("video", new Blob([videoBuffer], { type: "video/mp4" }), "video.mp4");
+    const res = await fetch(`${BASE}/sendVideo`, { method: "POST", body: form });
+    if (!res.ok) {
+      console.error("Telegram sendVideo error:", await res.text());
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.error("Telegram sendVideo threw:", String(e));
+    return false;
+  }
+}
+
 export async function getUpdates(offset: number): Promise<TelegramUpdate[]> {
   if (!BOT_TOKEN) return [];
   try {
