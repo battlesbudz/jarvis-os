@@ -89,6 +89,29 @@ const INNERTUBE_CLIENTS: InnerTubeClientConfig[] = [
     },
   },
   {
+    name: "IOS",
+    headers: {
+      "Content-Type": "application/json",
+      "User-Agent":
+        "com.google.ios.youtube/19.29.1 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X)",
+      "X-YouTube-Client-Name": "5",
+      "X-YouTube-Client-Version": "19.29.1",
+      "Accept-Language": "en-US,en;q=0.9",
+    },
+    context: {
+      client: {
+        clientName: "IOS",
+        clientVersion: "19.29.1",
+        deviceMake: "Apple",
+        deviceModel: "iPhone16,2",
+        osName: "iPhone",
+        osVersion: "17.5.1.21F90",
+        hl: "en",
+        gl: "US",
+      },
+    },
+  },
+  {
     name: "ANDROID",
     headers: {
       "Content-Type": "application/json",
@@ -145,7 +168,7 @@ interface InnerTubePlayerResponse {
 }
 
 /** A single <text> element parsed from YouTube's timed-text XML caption format. */
-interface CaptionTextElement {
+export interface CaptionTextElement {
   start: string;
   dur: string;
   text: string;
@@ -159,8 +182,9 @@ function safeStr(v: unknown): string | undefined {
 /**
  * Parse YouTube's timed-text XML (srv3 / timedtext format) into
  * a list of caption elements with start/dur/text.
+ * Exported so the transcript tool can reuse it for browser-fetched XML.
  */
-function parseTimedTextXml(xml: string): CaptionTextElement[] {
+export function parseTimedTextXml(xml: string): CaptionTextElement[] {
   const results: CaptionTextElement[] = [];
   const textTagRx = /<text\s+([^>]*)>([\s\S]*?)<\/text>/g;
   const attrRx = /(\w+)="([^"]*)"/g;
