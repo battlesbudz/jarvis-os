@@ -168,7 +168,11 @@ async function triageInboxItemsForUser(userId: string): Promise<void> {
       if (autoDismiss) {
         await db
           .update(schema.inboxItems)
-          .set({ status: "dismissed", actedAt: new Date() })
+          .set({
+            status: "dismissed",
+            actedAt: new Date(),
+            jarvisReason: reason || "Auto-dismissed — not actionable",
+          })
           .where(eq(schema.inboxItems.id, item.id));
         console.log(`[InboxTriage] auto-dismissed inbox item: ${item.id} (${(item.subject || "").slice(0, 60)}) — ${reason}`);
       }
@@ -236,12 +240,11 @@ export async function runTriagePassForUser(userId: string): Promise<void> {
           .where(eq(schema.deliverables.id, d.id));
         console.log(`[InboxTriage] promoted to memory: ${d.id} (${d.title.slice(0, 60)})`);
       } else {
-        if (note) {
-          await db
-            .update(schema.deliverables)
-            .set({ triageNote: note })
-            .where(eq(schema.deliverables.id, d.id));
-        }
+        // Mark as 'escalated' so this deliverable is NOT re-evaluated on the next pass
+        await db
+          .update(schema.deliverables)
+          .set({ triageStatus: "escalated", triageNote: note || undefined })
+          .where(eq(schema.deliverables.id, d.id));
         console.log(`[InboxTriage] escalated to user: ${d.id} (${d.title.slice(0, 60)})`);
       }
     } catch (err) {
