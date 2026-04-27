@@ -1,5 +1,5 @@
 import { db, pool } from "./db";
-import { eq, and, gt, inArray } from "drizzle-orm";
+import { eq, and, gt, lt, inArray } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { notifyUser } from "./channels/registry";
 import { getGoogleCalendarEvents } from "./integrations/googleCalendar";
@@ -573,6 +573,21 @@ export async function runCuriosityScan(): Promise<void> {
   }
 }
 
+const CLEANUP_RETENTION_DAYS = 60;
+
+async function cleanupOldCuriosityHistory(): Promise<void> {
+  try {
+    const cutoff = new Date(Date.now() - CLEANUP_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+    const deleted = await db
+      .delete(schema.proactiveQuestionsSent)
+      .where(lt(schema.proactiveQuestionsSent.sentAt, cutoff))
+      .returning({ id: schema.proactiveQuestionsSent.id });
+    console.log(`[Curiosity] Cleanup: deleted ${deleted.length} rows older than ${CLEANUP_RETENTION_DAYS} days from proactive_questions_sent`);
+  } catch (err) {
+    console.error("[Curiosity] Cleanup failed:", err);
+  }
+}
+
 export async function startCuriosityScanner(): Promise<void> {
   if (scannerStarted) {
     console.log("[Curiosity] Scanner already started — ignoring duplicate call");
@@ -589,5 +604,14 @@ export async function startCuriosityScanner(): Promise<void> {
     30 * 60 * 1000
   );
 
+  setInterval(
+    async () => {
+      console.log("[Curiosity] Running daily history cleanup...");
+      await cleanupOldCuriosityHistory();
+    },
+    24 * 60 * 60 * 1000
+  );
+
   setTimeout(() => runCuriosityScan(), 60 * 1000);
+  setTimeout(() => cleanupOldCuriosityHistory(), 5 * 60 * 1000);
 }
