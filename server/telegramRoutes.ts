@@ -714,6 +714,8 @@ export function registerTelegramRoutes(app: Express): void {
     }
   });
 
+  const WEBHOOK_STATUS_REFRESH_MS = 5 * 60 * 1000; // re-check at most every 5 minutes
+
   app.get("/api/telegram/status", async (req: Request, res: Response) => {
     try {
       const userId = req.userId;
@@ -722,6 +724,20 @@ export function registerTelegramRoutes(app: Express): void {
       const link = await db.select().from(schema.telegramLinks).where(eq(schema.telegramLinks.userId, userId)).limit(1);
 
       const isProduction = process.env.NODE_ENV === 'production';
+      // If health data is stale (or never set), kick off a background refresh so
+      // the next request (within ~1 s) sees fresh data. We do not await it here
+      // to keep the response snappy.
+      if (isProduction && isTelegramConfigured()) {
+        const currentHealth = getWebhookHealth();
+        const stale = !currentHealth.lastChecked ||
+          (Date.now() - new Date(currentHealth.lastChecked).getTime() > WEBHOOK_STATUS_REFRESH_MS);
+        if (stale) {
+          const expectedUrl = getExpectedWebhookUrl();
+          if (expectedUrl) {
+            ensureWebhook(expectedUrl).catch(() => { /* silent — periodic check will retry */ });
+          }
+        }
+      }
       const webhookHealth = isProduction ? getWebhookHealth() : null;
 
       if (link.length === 0) {
