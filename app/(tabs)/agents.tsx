@@ -553,6 +553,7 @@ interface ChatMessage {
 }
 
 const CHAT_STORAGE_KEY = (agentId: string) => `agent_chat_history_${agentId}`;
+const CHAT_SESSION_KEY = (agentId: string) => `agent_chat_session_${agentId}`;
 
 // Sliding-window limits for messages sent to the API per request.
 // Full history is still stored locally for display.
@@ -575,6 +576,26 @@ async function saveChatHistory(agentId: string, messages: ChatMessage[]): Promis
   } catch { /* best-effort */ }
 }
 
+async function loadStoredSessionId(agentId: string): Promise<string | null> {
+  try {
+    return await AsyncStorage.getItem(CHAT_SESSION_KEY(agentId));
+  } catch {
+    return null;
+  }
+}
+
+async function saveStoredSessionId(agentId: string, sessionId: string): Promise<void> {
+  try {
+    await AsyncStorage.setItem(CHAT_SESSION_KEY(agentId), sessionId);
+  } catch { /* best-effort */ }
+}
+
+async function clearStoredSessionId(agentId: string): Promise<void> {
+  try {
+    await AsyncStorage.removeItem(CHAT_SESSION_KEY(agentId));
+  } catch { /* best-effort */ }
+}
+
 function RunModal({ agent, onClose }: { agent: RosterAgent | null; onClose: () => void }) {
   const insets = useSafeAreaInsets();
   const [message, setMessage] = useState("");
@@ -582,20 +603,79 @@ function RunModal({ agent, onClose }: { agent: RosterAgent | null; onClose: () =
   const [streamingContent, setStreamingContent] = useState("");
   const [running, setRunning] = useState(false);
   const [integrationError, setIntegrationError] = useState<{ integration: string } | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const abortControllerRef = useRef<AbortController | null>(null);
   const runIdRef = useRef<string | null>(null);
   const prevAgentIdRef = useRef<string | null>(null);
+  const sdkSessionIdRef = useRef<string | null>(null);
 
-  // Load history from AsyncStorage when agent changes
+  // Load history: try server session cache first (authoritative), fall back to AsyncStorage
   useEffect(() => {
     if (!agent) return;
     if (prevAgentIdRef.current === agent.id) return;
     prevAgentIdRef.current = agent.id;
-    loadChatHistory(agent.id).then((history) => {
-      setMessages(history);
-      setStreamingContent("");
-      setIntegrationError(null);
-    });
+    sdkSessionIdRef.current = null;
+    setHistoryLoading(true);
+
+    (async () => {
+      try {
+        const storedSessionId = await loadStoredSessionId(agent.id);
+        if (storedSessionId) {
+          sdkSessionIdRef.current = storedSessionId;
+          const token = await getAuthToken();
+          const url = new URL(
+            `/api/agents/${agent.id}/session?sdkSessionId=${encodeURIComponent(storedSessionId)}`,
+            getApiUrl(),
+          );
+          const resp = await fetch(url.toString(), {
+            headers: token ? { Authorization: `Bearer ${token}` } : {},
+          });
+          if (resp.ok) {
+            const data = (await resp.json()) as {
+              messages: Array<{ role: "user" | "assistant"; content: string }>;
+            };
+            if (data.messages && data.messages.length > 0) {
+              const serverMessages: ChatMessage[] = data.messages
+                .filter((m) => m.content)
+                .map((m, i) => ({
+                  id: `server_${i}_${m.role}`,
+                  role: m.role,
+                  content: m.content,
+                  timestamp: Date.now() - (data.messages.length - i) * 1000,
+                }));
+              setMessages(serverMessages);
+              // Sync local AsyncStorage to server truth
+              await saveChatHistory(agent.id, serverMessages);
+              setStreamingContent("");
+              setIntegrationError(null);
+              setHistoryLoading(false);
+              return;
+            } else {
+              // Session expired or empty — discard the stale ID so subsequent
+              // requests start a fresh session rather than retrying a dead one.
+              sdkSessionIdRef.current = null;
+              await clearStoredSessionId(agent.id);
+            }
+          } else {
+            // Server error resolving session — discard the stale session ID.
+            sdkSessionIdRef.current = null;
+            await clearStoredSessionId(agent.id);
+          }
+        }
+        // Fallback: local AsyncStorage history
+        const history = await loadChatHistory(agent.id);
+        setMessages(history);
+        setStreamingContent("");
+        setIntegrationError(null);
+      } catch {
+        const history = await loadChatHistory(agent.id);
+        setMessages(history);
+        setStreamingContent("");
+        setIntegrationError(null);
+      } finally {
+        setHistoryLoading(false);
+      }
+    })();
   }, [agent?.id]);
 
   function buildConversationHistory(msgs: ChatMessage[]): Array<{ role: string; content: string }> {
@@ -642,7 +722,11 @@ function RunModal({ agent, onClose }: { agent: RosterAgent | null; onClose: () =
           Accept: "text/event-stream",
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify({ message: userMsg.content, conversationHistory }),
+        body: JSON.stringify({
+          message: userMsg.content,
+          conversationHistory,
+          ...(sdkSessionIdRef.current ? { sdkSessionId: sdkSessionIdRef.current } : {}),
+        }),
         signal: controller.signal,
       });
 
@@ -673,11 +757,15 @@ function RunModal({ agent, onClose }: { agent: RosterAgent | null; onClose: () =
           const data = line.slice(6);
           if (data === "[DONE]") break;
           try {
-            const parsed = JSON.parse(data) as { content?: string; type?: string; integration?: string; message?: string };
+            const parsed = JSON.parse(data) as { content?: string; type?: string; integration?: string; message?: string; sdkSessionId?: string };
             if (parsed.type === "aborted") {
               accumulated += "\n\n[Stopped]";
               setStreamingContent(accumulated.trim());
               break;
+            }
+            if (parsed.type === "session_init" && parsed.sdkSessionId && agent) {
+              sdkSessionIdRef.current = parsed.sdkSessionId;
+              saveStoredSessionId(agent.id, parsed.sdkSessionId);
             }
             if (parsed.type === "integration_error" && parsed.integration) {
               setIntegrationError({ integration: parsed.integration });
@@ -745,6 +833,8 @@ function RunModal({ agent, onClose }: { agent: RosterAgent | null; onClose: () =
           setStreamingContent("");
           setIntegrationError(null);
           saveChatHistory(agent.id, []);
+          sdkSessionIdRef.current = null;
+          clearStoredSessionId(agent.id);
         },
       },
     ]);
@@ -836,7 +926,14 @@ function RunModal({ agent, onClose }: { agent: RosterAgent | null; onClose: () =
         </View>
 
         {/* Messages */}
-        {displayMessages.length === 0 && !running ? (
+        {historyLoading ? (
+          <View style={styles.chatEmpty}>
+            <ActivityIndicator size="small" color={Colors.textTertiary} />
+            <Text style={[styles.chatEmptyText, { color: Colors.textTertiary }]}>
+              Loading conversation…
+            </Text>
+          </View>
+        ) : displayMessages.length === 0 && !running ? (
           <View style={styles.chatEmpty}>
             <Ionicons name="chatbubble-ellipses-outline" size={32} color={Colors.textTertiary} />
             <Text style={[styles.chatEmptyText, { color: Colors.textTertiary }]}>

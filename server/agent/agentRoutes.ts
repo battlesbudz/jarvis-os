@@ -24,6 +24,7 @@
  *  15. POST /api/agents/:id/run
  *  15b. POST /api/agents/:id/chat      (SSE streaming; heartbeat + abort support)
  *  15c. POST /api/agents/:id/abort     (cancel an in-flight SSE run by runId)
+ *  15d. GET  /api/agents/:id/session   (fetch cached session conversation history)
  *  16. GET  /api/agents/:id/memories
  *  17. DELETE /api/agents/:id/memories
  *  18. GET  /api/agents/:id/messages
@@ -62,6 +63,7 @@ import {
   importConfigToCreateArgs,
 } from "./agentConfigSchema";
 import type { AgentConfigFile } from "./agentConfigSchema";
+import { resumeSession } from "./providers/claude";
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -685,6 +687,38 @@ export function registerAgentRoutes(app: Express): void {
       run.controller.abort();
       activeRuns.delete(runId);
       res.json({ ok: true, aborted: true });
+    } catch (err) { handleError(res, err); }
+  });
+
+  // ── 15d. GET /api/agents/:id/session — fetch cached session messages ──────
+  // Returns user + assistant messages from the server-side session cache
+  // keyed by sdkSessionId. Used by the mobile chat UI to restore conversation
+  // history across app restarts without relying solely on AsyncStorage.
+  app.get("/api/agents/:id/session", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId!;
+      if (!(await ownerCheck(req.params.id, userId))) {
+        res.status(404).json({ error: "Agent not found" });
+        return;
+      }
+      const sdkSessionId = String(req.query.sdkSessionId ?? "");
+      if (!sdkSessionId) {
+        res.status(400).json({ error: "sdkSessionId is required" });
+        return;
+      }
+      const result = await resumeSession(sdkSessionId, req.params.id, userId);
+      if (!result || !result.resumed) {
+        res.json({ messages: [], sdkSessionId });
+        return;
+      }
+      // Return only user/assistant messages (exclude system + tool messages)
+      const visibleMessages = result.messages
+        .filter((m) => m.role === "user" || m.role === "assistant")
+        .map((m) => ({
+          role: m.role as "user" | "assistant",
+          content: typeof m.content === "string" ? m.content : "",
+        }));
+      res.json({ messages: visibleMessages, sdkSessionId });
     } catch (err) { handleError(res, err); }
   });
 
