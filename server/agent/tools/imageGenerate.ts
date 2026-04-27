@@ -173,6 +173,32 @@ async function generateGptImage(prompt: string, size: GptImage1Size): Promise<st
   throw new Error("No image data returned from gpt-image-1 or dall-e-3");
 }
 
+const POLLINATIONS_SIZE_MAP: Record<string, { width: number; height: number }> = {
+  square:    { width: 1024, height: 1024 },
+  landscape: { width: 1792, height: 1024 },
+  portrait:  { width: 1024, height: 1792 },
+};
+
+/**
+ * Generate an image via Pollinations.ai — free, no API key required.
+ * Returns a data URL (data:image/jpeg;base64,...) ready for existing delivery paths.
+ */
+async function generatePollinations(prompt: string, sizeKey: string): Promise<string> {
+  const { width, height } = POLLINATIONS_SIZE_MAP[sizeKey] ?? { width: 1024, height: 1024 };
+  const seed = Math.floor(Math.random() * 2_147_483_647);
+  const url =
+    `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}` +
+    `?width=${width}&height=${height}&model=flux&nologo=true&seed=${seed}`;
+
+  const res = await fetch(url, { signal: AbortSignal.timeout(90_000) });
+  if (!res.ok) {
+    throw new Error(`Pollinations returned HTTP ${res.status}`);
+  }
+  const arr = await res.arrayBuffer();
+  const b64 = Buffer.from(arr).toString("base64");
+  return `data:image/jpeg;base64,${b64}`;
+}
+
 /** Generate an image via FLUX (falai/flux-dev-lora) and return its URL. */
 async function generateFlux(prompt: string, imageSize: string): Promise<string> {
   const apiKey = process.env.INFSH_API_KEY;
@@ -246,16 +272,30 @@ export const imageGenerateTool: AgentTool = {
     const modelKey = String(args.model || "dalle").toLowerCase();
     const useFlux  = modelKey === "flux";
     const caption  = args.caption ? String(args.caption).slice(0, 200) : undefined;
-    const modelLabel = useFlux ? "FLUX" : "GPT Image";
+
+    const hasInfshKey   = !!process.env.INFSH_API_KEY;
+    const hasOpenAiKey  = !!(process.env.OPENAI_API_KEY?.startsWith("sk-"));
+    const usingPollinations = (useFlux && !hasInfshKey) || (!useFlux && !hasOpenAiKey);
+    const modelLabel = usingPollinations
+      ? "Pollinations (FLUX)"
+      : useFlux ? "FLUX" : "GPT Image";
 
     let imageUrl: string;
     try {
       if (useFlux) {
-        const fluxSize = FLUX_SIZE_MAP[sizeKey] ?? "square_hd";
-        imageUrl = await generateFlux(prompt, fluxSize);
+        if (hasInfshKey) {
+          const fluxSize = FLUX_SIZE_MAP[sizeKey] ?? "square_hd";
+          imageUrl = await generateFlux(prompt, fluxSize);
+        } else {
+          imageUrl = await generatePollinations(prompt, sizeKey);
+        }
       } else {
-        const size: GptImage1Size = SIZE_MAP[sizeKey] ?? "1024x1024";
-        imageUrl = await generateGptImage(prompt, size);
+        if (hasOpenAiKey) {
+          const size: GptImage1Size = SIZE_MAP[sizeKey] ?? "1024x1024";
+          imageUrl = await generateGptImage(prompt, size);
+        } else {
+          imageUrl = await generatePollinations(prompt, sizeKey);
+        }
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
