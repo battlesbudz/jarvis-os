@@ -3,8 +3,8 @@ import type OpenAI from "openai";
 import type { AgentTool, AgentToolCallRecord, ToolContext } from "./types";
 import type { ActivationPlan } from "./activationPlanner";
 import { emit as diagEmit } from "../diagnostics/diagnosticsService";
-import { getProvider, accumulateTurn } from "./providers";
-import type { ProviderName } from "./providers";
+import { getProvider, accumulateTurn, queryWithFallback, getGlobalFallbackChain, DEFAULT_PROVIDER_MODELS } from "./providers";
+import type { ProviderName, FallbackChainEntry } from "./providers";
 
 /**
  * Resolve the provider name from a model string.
@@ -60,6 +60,37 @@ export interface RunAgentOptions {
    * message        — the raw error detail from the tool throw
    */
   onIntegrationError?: (integrationKey: string, message: string) => void;
+  /**
+   * Ordered list of fallback providers to try when the primary provider
+   * returns a retriable error (5xx, 429, timeout).
+   *
+   * The primary provider is automatically derived from the `model` name
+   * (claude-* → claude, everything else → openai) and is always tried first.
+   * Names listed here are appended as backups — duplicates of the primary
+   * are silently de-duplicated.
+   *
+   * Example: `providerFallbackChain: ["claude"]` on an OpenAI model will
+   * retry on ClaudeProvider whenever OpenAI returns a 5xx or rate-limit.
+   * The fallback provider uses a sensible default model (see
+   * DEFAULT_PROVIDER_MODELS in providers/fallback.ts) unless overridden via
+   * `providerFallbackModels`.
+   *
+   * Opt-in and off by default. A global default can be set via the
+   * PROVIDER_FALLBACK_CHAIN environment variable (comma-separated provider
+   * names, with optional explicit models via "name:model" syntax, e.g.
+   * "openai:gpt-4o,claude:claude-3-5-sonnet-20241022") which applies to every
+   * runAgent call that does not provide its own chain.
+   */
+  providerFallbackChain?: ProviderName[];
+  /**
+   * Optional per-provider model overrides for the fallback chain.
+   * When a fallback provider is selected, its model string is resolved from
+   * this map first, then falls back to DEFAULT_PROVIDER_MODELS.
+   *
+   * Example: `providerFallbackModels: { claude: "claude-3-haiku-20240307" }`
+   * will use claude-3-haiku on the backup turn rather than the default.
+   */
+  providerFallbackModels?: Partial<Record<ProviderName, string>>;
   /**
    * Pre-computed activation plan from the ActivationPlanner.
    *
@@ -683,7 +714,63 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
   // Resolve the provider once per run based on the model name.
   // claude-* models → ClaudeProvider, everything else → OpenAIProvider.
   // To switch an agent's provider, change its model string in modelPrefs.
-  const provider = getProvider(resolveProviderName(model));
+  const primaryProviderName = resolveProviderName(model);
+  const provider = getProvider(primaryProviderName);
+
+  // Build the effective fallback chain (opt-in).
+  //   Priority: per-run option > global env var > single-provider (no fallback).
+  // The primary provider is always first; duplicates from the tail are removed.
+  // Each entry carries its own model string so cross-provider fallback always
+  // sends a model ID the receiving provider understands (OpenAI models use
+  // "gpt-*", Anthropic models use "claude-*" — they are not interchangeable).
+  const effectiveFallbackChain: FallbackChainEntry[] | null = (() => {
+    // Resolve the tail: per-run option takes priority over the global env chain.
+    // opts.providerFallbackChain is ProviderName[]; env chain is already
+    // FallbackChainEntry[] (supports "provider:model" syntax).
+    const globalChain = getGlobalFallbackChain();
+    if (opts.providerFallbackChain) {
+      // Per-run option: caller supplies provider names; resolve models from
+      // providerFallbackModels overrides first, then DEFAULT_PROVIDER_MODELS.
+      const tail: FallbackChainEntry[] = opts.providerFallbackChain
+        .filter((n) => n !== primaryProviderName)
+        .map((n) => ({
+          providerName: n,
+          model: opts.providerFallbackModels?.[n] ?? DEFAULT_PROVIDER_MODELS[n],
+        }));
+      if (tail.length === 0) return null;
+      return [{ providerName: primaryProviderName, model }, ...tail];
+    } else if (globalChain) {
+      // Global env chain: already FallbackChainEntry[] with models resolved.
+      // Replace the first entry with the actual primary (the env var primary
+      // may differ from the model the caller requested this run).
+      const tail = globalChain.filter((e) => e.providerName !== primaryProviderName);
+      if (tail.length === 0) return null;
+      return [{ providerName: primaryProviderName, model }, ...tail];
+    }
+    return null;
+  })();
+
+  if (effectiveFallbackChain) {
+    const chainDesc = effectiveFallbackChain
+      .map((e) => `${e.providerName}(${e.model})`)
+      .join(" → ");
+    console.log(`[${channel}/Agent] provider_fallback enabled: chain=[${chainDesc}]`);
+  }
+
+  /**
+   * Run a single provider turn, using the fallback chain when enabled.
+   * Falls back to the plain accumulateTurn(provider.query(...)) path when
+   * no fallback chain is configured so the hot path has no extra overhead.
+   */
+  const runProviderQuery = (
+    queryParams: Parameters<typeof provider.query>[0],
+  ) => {
+    if (effectiveFallbackChain) {
+      return queryWithFallback(effectiveFallbackChain, queryParams, `[${channel}/Agent]`);
+    }
+    console.log(`[${channel}/Agent] provider=${primaryProviderName} model=${model}`);
+    return accumulateTurn(provider.query(queryParams));
+  };
 
   // `messages` was already set above (with skills injected); spread into a mutable copy
   const conversationMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
@@ -706,7 +793,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
     let msgContent: string | null = null;
     let msgToolCalls: OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall[] | undefined;
 
-    const turnResult = await accumulateTurn(provider.query({
+    const turnResult = await runProviderQuery({
       model,
       messages: conversationMessages,
       tools: openAITools,
@@ -714,7 +801,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
       maxCompletionTokens,
       stream: !!onToken,
       signal,
-    }));
+    });
 
     lastFinish = turnResult.finishReason;
     console.log(
@@ -955,7 +1042,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
   // Hit max turns. Force a final answer with tools disabled.
   console.warn(`[${channel}/Agent] hit maxTurns=${maxTurns}, forcing final answer`);
   try {
-    const finalResult = await accumulateTurn(provider.query({
+    const finalResult = await runProviderQuery({
       model,
       messages: conversationMessages,
       tools: undefined, // no tools — force text reply
@@ -963,7 +1050,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
       maxCompletionTokens,
       stream: !!onToken,
       signal,
-    }));
+    });
     reply = finalResult.textContent;
     lastFinish = finalResult.finishReason;
     // Replay buffered chunks — this is always a text-only turn (no tools).

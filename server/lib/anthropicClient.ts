@@ -10,5 +10,5 @@ export const anthropic = new Anthropic({
   baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL,
 });
 
-export const ORCHESTRATOR_MODEL = "claude-opus-4-6";
+export const ORCHESTRATOR_MODEL = "claude-opus-4-7";
 export const ORCHESTRATOR_MAX_TOKENS = 8192;

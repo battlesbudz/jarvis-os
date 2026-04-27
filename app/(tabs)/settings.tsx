@@ -230,7 +230,7 @@ export default function SettingsScreen() {
   const [savingModel, setSavingModel] = useState<ModelCategory | null>(null);
 
   // ── Orchestrator ──
-  const [orchestratorModel, setOrchestratorModel] = useState('claude-opus-4-6');
+  const [orchestratorModel, setOrchestratorModel] = useState('claude-opus-4-7');
   const [availableOrchestratorModels, setAvailableOrchestratorModels] = useState<AvailableModel[]>([]);
   const [savingOrchestrator, setSavingOrchestrator] = useState(false);
 
@@ -503,7 +503,7 @@ export default function SettingsScreen() {
     if (modelRes?.modelPreferences) setModelPrefs(modelRes.modelPreferences);
     if (modelRes?.availableModels) setAvailableModels(modelRes.availableModels);
     if (orchRes) {
-      setOrchestratorModel(orchRes.orchestratorModel ?? 'claude-opus-4-6');
+      setOrchestratorModel(orchRes.orchestratorModel ?? 'claude-opus-4-7');
       setAvailableOrchestratorModels(orchRes.availableOrchestratorModels ?? []);
     }
   }, []);
