@@ -5,11 +5,27 @@
  * TTL: 24 hours. Max 500 entries (oldest evicted when full).
  * Thread-safe for single-process Node.js.
  *
- * Fetch strategy (in order):
- *   1. InnerTube API — TVHTML5 → iOS → ANDROID client contexts.
- *   2. yt-dlp — subtitle extraction via the yt-dlp binary (server-side).
- *   3. YouTube /api/timedtext direct XML endpoint (no auth).
- *   4. youtube-transcript library — last-resort fallback.
+ * Fetch pipeline (metadata-first):
+ *   Phase 1 — Metadata check (InnerTube player API, lightweight)
+ *     → Determines whether captions exist at all before committing to heavier work.
+ *     → Terminal errors (private, age-restricted, rate-limit) surface immediately.
+ *
+ *   Phase 2a — IF captions confirmed available:
+ *     1. Fetch caption XML via InnerTube tracks (reuses data from Phase 1, no extra API call)
+ *     2. yt-dlp subtitle extraction (--write-subs / --write-auto-subs)
+ *     3. YouTube /api/timedtext direct XML endpoint
+ *     4. youtube-transcript library
+ *
+ *   Phase 2b — IF captions confirmed unavailable:
+ *     → Skip all subtitle strategies immediately → audio transcription
+ *
+ *   Phase 2c — IF InnerTube blocked (can't determine availability):
+ *     → Try yt-dlp → timedtext → youtube-transcript library → audio
+ *
+ *   Phase 3 — Audio transcription (all subtitle strategies failed, OR no captions):
+ *     → yt-dlp audio download → ffmpeg WAV → OpenAI Whisper (chunked ≤10 min each)
+ *
+ * Duplicate strategies are never retried within the same request.
  */
 
 import { exec } from "child_process";
@@ -438,6 +454,19 @@ interface InnerTubePlayerResponse {
   };
 }
 
+// ── Caption availability result ───────────────────────────────────────────────
+// Returned by checkInnerTubePlayerData() to describe what the player API said.
+
+type CaptionAvailability =
+  /** InnerTube responded and confirms captions exist. */
+  | { status: "has-captions"; tracks: InnerTubeCaptionTrack[]; clientName: string }
+  /** InnerTube responded and confirms no captions on this video. */
+  | { status: "no-captions" }
+  /** Terminal error: private, age-restricted, rate-limited, etc. */
+  | { status: "terminal"; error: Error }
+  /** All InnerTube clients returned non-terminal HTTP errors — IP blocked. */
+  | { status: "blocked" };
+
 /** A single <text> element parsed from YouTube's timed-text XML caption format. */
 export interface CaptionTextElement {
   start: string;
@@ -503,6 +532,137 @@ function rankCaptionTracks(tracks: InnerTubeCaptionTrack[]): InnerTubeCaptionTra
     if (bEn && !aEn) return 1;
     return 0;
   });
+}
+
+/**
+ * Lightweight InnerTube metadata check.
+ *
+ * Calls the player API once (trying each client in turn) to determine whether
+ * captions exist for a video — WITHOUT downloading any caption XML.
+ * This is Phase 1 of the transcript pipeline: it routes subsequent work so we
+ * don't waste time on subtitle strategies when no captions exist.
+ *
+ * Returns one of four outcomes:
+ *   has-captions  → caption tracks found; ready to download XML
+ *   no-captions   → player responded but has no caption tracks
+ *   terminal      → private / age-restricted / rate-limited
+ *   blocked       → all clients returned HTTP errors (Replit IP block)
+ */
+async function checkInnerTubePlayerData(videoId: string): Promise<CaptionAvailability> {
+  for (const client of INNERTUBE_CLIENTS) {
+    try {
+      const playerRes = await fetch(
+        `https://www.youtube.com/youtubei/v1/player?key=${INNERTUBE_KEY}`,
+        {
+          method: "POST",
+          headers: client.headers,
+          body: JSON.stringify({
+            context: client.context,
+            videoId,
+            playbackContext: { contentPlaybackContext: { signatureTimestamp: 0 } },
+          }),
+        }
+      );
+
+      if (!playerRes.ok) {
+        if (playerRes.status === 429) {
+          return {
+            status: "terminal",
+            error: new Error("TOO_MANY_REQUESTS: YouTube is rate-limiting requests. Please try again shortly."),
+          };
+        }
+        console.warn(`[transcriptCache] metadata check ${client.name} HTTP ${playerRes.status} for ${videoId}`);
+        continue; // try next client
+      }
+
+      const player = (await playerRes.json()) as InnerTubePlayerResponse;
+      const playStatus = safeStr(player.playabilityStatus?.status);
+
+      if (playStatus && INNERTUBE_TERMINAL_STATUSES.has(playStatus)) {
+        if (playStatus === "LOGIN_REQUIRED") {
+          return {
+            status: "terminal",
+            error: new Error("LOGIN_REQUIRED: This video requires a signed-in YouTube account to access."),
+          };
+        }
+        if (playStatus === "AGE_CHECK_REQUIRED" || playStatus === "AGE_VERIFICATION_REQUIRED") {
+          return {
+            status: "terminal",
+            error: new Error("CONTENT_RESTRICTED: This video is age-restricted and cannot be accessed without sign-in."),
+          };
+        }
+        const reason = safeStr(player.playabilityStatus?.reason) ?? playStatus;
+        return {
+          status: "terminal",
+          error: new Error(`CONTENT_RESTRICTED: YouTube reports this video is restricted — ${reason}`),
+        };
+      }
+
+      const tracks = player.captions?.playerCaptionsTracklistRenderer?.captionTracks ?? [];
+      if (tracks.length === 0) {
+        console.log(`[transcriptCache] metadata/${client.name}: no caption tracks for ${videoId}`);
+        return { status: "no-captions" };
+      }
+
+      console.log(
+        `[transcriptCache] metadata/${client.name}: ${tracks.length} caption track(s) for ${videoId}`
+      );
+      return { status: "has-captions", tracks, clientName: client.name };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[transcriptCache] metadata check ${client.name} failed for ${videoId}: ${msg}`);
+    }
+  }
+
+  return { status: "blocked" };
+}
+
+/**
+ * Download and parse caption XML from pre-fetched InnerTube caption tracks.
+ *
+ * Called after checkInnerTubePlayerData() returns has-captions. Reuses the
+ * track list already retrieved in Phase 1 — no second player API call needed.
+ */
+async function fetchCaptionsFromTracks(
+  tracks: InnerTubeCaptionTrack[],
+  videoId: string,
+  userAgent?: string
+): Promise<TranscriptResponse[]> {
+  const ranked = rankCaptionTracks(tracks);
+  const best = ranked[0];
+  if (!best?.baseUrl) return [];
+
+  const captionUrl = new URL(best.baseUrl);
+  captionUrl.searchParams.set("fmt", "srv3");
+  captionUrl.searchParams.set("tlang", "en");
+
+  const res = await fetch(captionUrl.toString(), {
+    headers: {
+      "User-Agent":
+        userAgent ??
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    },
+  });
+  if (!res.ok) {
+    console.warn(
+      `[transcriptCache] fetchCaptionsFromTracks: HTTP ${res.status} for ${videoId} (${best.languageCode})`
+    );
+    return [];
+  }
+
+  const xml = await res.text();
+  const elements = parseTimedTextXml(xml);
+  if (elements.length === 0) return [];
+
+  console.log(
+    `[transcriptCache] fetchCaptionsFromTracks OK ${videoId} lang=${best.languageCode} — ${elements.length} segs`
+  );
+  return elements.map((el) => ({
+    text: el.text,
+    offset: parseFloat(el.start) * 1000,
+    duration: parseFloat(el.dur) * 1000,
+    lang: best.languageCode,
+  }));
 }
 
 /**
@@ -665,14 +825,28 @@ export interface FetchTranscriptOptions {
 /**
  * Fetch a transcript, returning a cached result when available.
  *
- * On a cache miss (or when bypassCache=true), four server-side strategies are tried:
- *   1. InnerTube API (TVHTML5 → iOS → ANDROID clients)
- *   2. yt-dlp subtitle extraction (--write-subs, --write-auto-subs)
- *   3. YouTube /api/timedtext direct XML endpoint
- *   4. youtube-transcript library (last resort)
+ * On a cache miss (or when bypassCache=true), runs a metadata-first pipeline:
  *
- * Terminal errors (LOGIN_REQUIRED, CONTENT_RESTRICTED, TOO_MANY_REQUESTS) are
- * propagated immediately — no further strategy will succeed.
+ * Phase 1 — InnerTube player API check (no caption XML downloaded yet).
+ *   Determines whether captions exist and surfaces terminal errors immediately.
+ *
+ * Phase 2a — Captions confirmed available:
+ *   a) Download caption XML from InnerTube tracks (data from Phase 1 reused)
+ *   b) yt-dlp subtitle extraction
+ *   c) YouTube /api/timedtext direct XML
+ *   d) youtube-transcript library
+ *
+ * Phase 2b — Captions confirmed absent:
+ *   → Skip straight to audio transcription.
+ *
+ * Phase 2c — InnerTube blocked (can't determine availability):
+ *   → Try yt-dlp → timedtext → youtube-transcript library.
+ *
+ * Phase 3 — Audio transcription (yt-dlp audio + ffmpeg + OpenAI Whisper).
+ *   Only attempted if all subtitle strategies returned nothing.
+ *
+ * Each strategy is tried at most once per request (no duplicate retries).
+ * Terminal errors propagate immediately — no further strategy will succeed.
  */
 export async function fetchTranscriptCached(
   input: string,
@@ -686,9 +860,7 @@ export async function fetchTranscriptCached(
     const hit = cache.get(videoId);
     if (hit) {
       const age = Math.round((Date.now() - hit.cachedAt) / 1000);
-      console.log(
-        `[transcriptCache] HIT  ${videoId} — ${hit.segments.length} segs, cached ${age}s ago`
-      );
+      console.log(`[transcriptCache] HIT  ${videoId} — ${hit.segments.length} segs, cached ${age}s ago`);
       return hit.segments;
     }
   }
@@ -701,109 +873,128 @@ export async function fetchTranscriptCached(
   let segments: TranscriptResponse[] = [];
   let source = "unknown";
 
-  // ── Strategy 1: InnerTube API (multi-client) ──────────────────────────────
-  try {
-    segments = await fetchInnerTubeTranscript(resolvedId);
-    if (segments.length > 0) {
-      source = "innertube";
-    } else {
-      console.log(
-        `[transcriptCache] InnerTube 0 segs for ${resolvedId}, trying yt-dlp`
-      );
-    }
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    if (
-      msg.startsWith("LOGIN_REQUIRED") ||
-      msg.startsWith("CONTENT_RESTRICTED") ||
-      msg.startsWith("TOO_MANY_REQUESTS")
-    ) {
-      console.log(`[transcriptCache] InnerTube terminal error for ${resolvedId}: ${msg}`);
-      throw err;
-    }
-    console.warn(
-      `[transcriptCache] InnerTube non-terminal failure for ${resolvedId}: ${msg} — trying yt-dlp`
+  // ── Phase 1: InnerTube metadata check ────────────────────────────────────
+  // One lightweight API call that tells us: captions exist / don't exist / terminal / blocked.
+  // This avoids wasting time on subtitle strategies when a video has no captions at all.
+  const meta = await checkInnerTubePlayerData(resolvedId);
+
+  if (meta.status === "terminal") {
+    console.log(`[transcriptCache] terminal error from metadata check for ${resolvedId}: ${meta.error.message}`);
+    throw meta.error;
+  }
+
+  const hasCaptions = meta.status === "has-captions";
+  const noCaptions  = meta.status === "no-captions";
+  const isBlocked   = meta.status === "blocked";
+
+  // ── Phase 2: Route based on metadata ─────────────────────────────────────
+
+  if (noCaptions) {
+    // Fast path: player API confirmed no captions → nothing to look up with subtitle tools
+    console.log(
+      `[transcriptCache] no captions confirmed for ${resolvedId} — skipping subtitle strategies`
     );
-  }
+  } else {
+    // hasCaptions OR blocked — attempt subtitle strategies
 
-  // ── Strategy 2: yt-dlp subtitle extraction ────────────────────────────────
-  if (segments.length === 0) {
-    try {
-      segments = await fetchYtDlpTranscript(resolvedId);
-      if (segments.length > 0) {
-        source = "yt-dlp";
-      } else {
-        console.log(`[transcriptCache] yt-dlp 0 segs for ${resolvedId}, trying timedtext`);
+    // ── 2a: Download caption XML from InnerTube tracks ─────────────────────
+    // If Phase 1 succeeded we already have the track list — just download the XML.
+    // If Phase 1 was blocked, skip InnerTube entirely (already failed for this request).
+    if (hasCaptions) {
+      try {
+        const clientHeaders = INNERTUBE_CLIENTS.find((c) => c.name === meta.clientName)?.headers;
+        const userAgent = clientHeaders?.["User-Agent"] as string | undefined;
+        segments = await fetchCaptionsFromTracks(meta.tracks, resolvedId, userAgent);
+        if (segments.length > 0) {
+          source = `innertube/${meta.clientName}`;
+        } else {
+          console.log(
+            `[transcriptCache] InnerTube caption XML returned 0 segs for ${resolvedId} — trying yt-dlp`
+          );
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (/^(LOGIN_REQUIRED|CONTENT_RESTRICTED|TOO_MANY_REQUESTS):/.test(msg)) throw err;
+        console.warn(`[transcriptCache] InnerTube caption download failed for ${resolvedId}: ${msg}`);
       }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (
-        msg.startsWith("LOGIN_REQUIRED") ||
-        msg.startsWith("CONTENT_RESTRICTED") ||
-        msg.startsWith("TOO_MANY_REQUESTS")
-      ) {
-        console.log(`[transcriptCache] yt-dlp terminal error for ${resolvedId}: ${msg}`);
-        throw err;
-      }
-      console.warn(
-        `[transcriptCache] yt-dlp non-terminal failure for ${resolvedId}: ${msg} — trying timedtext`
+    } else {
+      // isBlocked — InnerTube is unavailable; log and fall through to yt-dlp
+      console.log(
+        `[transcriptCache] InnerTube blocked for ${resolvedId} — trying yt-dlp subtitles`
       );
     }
-  }
 
-  // ── Strategy 3: YouTube /api/timedtext direct XML ─────────────────────────
-  if (segments.length === 0) {
-    try {
-      segments = await fetchTimedTextTranscript(resolvedId);
-      if (segments.length > 0) {
-        source = "timedtext";
-        console.log(`[transcriptCache] timedtext strategy OK ${resolvedId} — ${segments.length} segs`);
-      } else {
-        console.log(`[transcriptCache] timedtext returned 0 segs for ${resolvedId}, trying youtube-transcript library`);
+    // ── 2b: yt-dlp subtitle extraction ─────────────────────────────────────
+    if (segments.length === 0) {
+      try {
+        segments = await fetchYtDlpTranscript(resolvedId);
+        if (segments.length > 0) {
+          source = "yt-dlp";
+        } else {
+          console.log(`[transcriptCache] yt-dlp 0 segs for ${resolvedId} — trying timedtext`);
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (/^(LOGIN_REQUIRED|CONTENT_RESTRICTED|TOO_MANY_REQUESTS):/.test(msg)) throw err;
+        console.warn(`[transcriptCache] yt-dlp failed for ${resolvedId}: ${msg}`);
       }
-    } catch (err) {
-      console.warn(
-        `[transcriptCache] timedtext strategy failed for ${resolvedId}: ${
-          err instanceof Error ? err.message : String(err)
-        }`
-      );
+    }
+
+    // ── 2c: YouTube /api/timedtext direct XML ──────────────────────────────
+    if (segments.length === 0) {
+      try {
+        segments = await fetchTimedTextTranscript(resolvedId);
+        if (segments.length > 0) {
+          source = "timedtext";
+          console.log(`[transcriptCache] timedtext OK ${resolvedId} — ${segments.length} segs`);
+        } else {
+          console.log(`[transcriptCache] timedtext 0 segs for ${resolvedId} — trying youtube-transcript`);
+        }
+      } catch (err) {
+        console.warn(
+          `[transcriptCache] timedtext failed for ${resolvedId}: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+    }
+
+    // ── 2d: youtube-transcript library ─────────────────────────────────────
+    if (segments.length === 0) {
+      try {
+        const { YoutubeTranscript } = await import("youtube-transcript/dist/youtube-transcript.esm.js");
+        segments = await YoutubeTranscript.fetchTranscript(input, config);
+        if (segments.length > 0) {
+          source = "youtube-transcript";
+          console.log(`[transcriptCache] youtube-transcript OK ${resolvedId} — ${segments.length} segs`);
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[transcriptCache] youtube-transcript failed for ${resolvedId}: ${msg}`);
+      }
     }
   }
 
-  // ── Strategy 3: youtube-transcript library (last subtitle resort) ────────
+  // ── Phase 3: Audio transcription ─────────────────────────────────────────
+  // Reached when:
+  //   • Captions confirmed absent (noCaptions) — fastest path into here
+  //   • All subtitle strategies returned nothing
+  // Downloads audio via yt-dlp, converts to WAV, transcribes via Whisper.
   if (segments.length === 0) {
-    try {
-      const { YoutubeTranscript } = await import("youtube-transcript/dist/youtube-transcript.esm.js");
-      segments = await YoutubeTranscript.fetchTranscript(input, config);
-      if (segments.length > 0) {
-        source = "youtube-transcript";
-        console.log(`[transcriptCache] youtube-transcript fallback OK ${resolvedId} — ${segments.length} segs`);
-      }
-    } catch (fallbackErr) {
-      const msg = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
-      console.warn(`[transcriptCache] youtube-transcript fallback also failed for ${resolvedId}: ${msg}`);
-    }
-  }
-
-  // ── Strategy 4: Audio transcription (yt-dlp audio → ffmpeg WAV → Whisper) ─
-  // Only attempted when all subtitle strategies fail. Downloads the audio track,
-  // converts to mono 16 kHz WAV, splits into ≤10-min chunks, and transcribes
-  // via OpenAI Whisper. Result is labelled as AI-generated.
-  if (segments.length === 0) {
-    console.log(`[transcriptCache] strategy 4: audio transcription for ${resolvedId}`);
+    const reason = noCaptions
+      ? "no captions — going straight to audio transcription"
+      : "all subtitle strategies failed — trying audio transcription";
+    console.log(`[transcriptCache] ${reason} for ${resolvedId}`);
     try {
       const audioSegs = await fetchAudioTranscript(resolvedId);
       if (audioSegs.length > 0) {
         segments = audioSegs;
         source = "audio-transcription";
         console.log(
-          `[transcriptCache] audio transcription OK ${resolvedId} — ${audioSegs.length} seg(s), ` +
+          `[transcriptCache] audio transcription OK ${resolvedId} — ` +
             `${audioSegs.reduce((n, s) => n + s.text.length, 0)} chars`
         );
       }
     } catch (audioErr) {
       const msg = audioErr instanceof Error ? audioErr.message : String(audioErr);
-      // Re-throw known terminal errors so they surface correctly
       if (/^(LOGIN_REQUIRED|CONTENT_RESTRICTED|TOO_MANY_REQUESTS):/.test(msg)) throw audioErr;
       console.warn(`[transcriptCache] audio transcription failed for ${resolvedId}: ${msg}`);
     }
