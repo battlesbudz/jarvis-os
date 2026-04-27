@@ -1,5 +1,9 @@
 import OpenAI from "openai";
-import { inference } from "@inferencesh/sdk";
+// @inferencesh/sdk is loaded dynamically inside generateFlux() — do NOT
+// add a static top-level import here.  The package uses bare ESM relative
+// imports (no .js extensions) that crash Node.js at startup when the module
+// is left external by esbuild.  Dynamic import() defers resolution until the
+// FLUX path is actually executed (i.e. only when INFSH_API_KEY is set).
 import { db } from "../../db";
 import { eq } from "drizzle-orm";
 import { telegramLinks } from "@shared/schema";
@@ -228,6 +232,8 @@ async function generateFlux(prompt: string, imageSize: string): Promise<string> 
       "INFSH_API_KEY is not configured. Add it as a Replit secret to enable FLUX image generation."
     );
   }
+  // Dynamic import so the module is never loaded when INFSH_API_KEY is absent.
+  const { inference } = await import("@inferencesh/sdk");
   const client = inference({ apiKey });
   const result = await Promise.race([
     client.run({
