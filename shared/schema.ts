@@ -686,6 +686,12 @@ export const discordAgents = pgTable("discord_agents", {
   stuckSince: timestamp("stuck_since"),
   /** Consecutive heartbeat failures */
   heartbeatFailCount: integer("heartbeat_fail_count").notNull().default(0),
+  /**
+   * Preferred model for this agent. When set, used instead of the global user
+   * model preference. Can be overridden per-call via runNamedAgent opts.model.
+   * Examples: "claude-sonnet-4-6", "claude-haiku-4-5", "claude-opus-4-6"
+   */
+  preferredModel: text("preferred_model"),
 });
 
 export type DiscordAgent = typeof discordAgents.$inferSelect;

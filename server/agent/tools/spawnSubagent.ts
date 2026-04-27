@@ -1,5 +1,5 @@
 import type { AgentTool } from "../types";
-import { submitAgentJob, type AgentJobType } from "../jobQueue";
+import { submitAgentJob, type AgentJobType, getModelForJobType } from "../jobQueue";
 import { SUB_AGENT_TYPES } from "../subagents";
 
 interface SpawnArgs {
@@ -50,11 +50,14 @@ export const spawnSubagentTool: AgentTool = {
     if (!prompt) return { ok: false, content: "prompt is required.", label: "Missing prompt" };
 
     try {
+      // Inject per-type model routing at the orchestrator spawn point.
+      const routedModel = getModelForJobType(agentType as AgentJobType);
       const jobId = await submitAgentJob({
         userId: ctx.userId,
         agentType: agentType as AgentJobType,
         title,
         prompt,
+        input: routedModel ? { model: routedModel } : undefined,
       });
       console.log(`[${ctx.channel || "Agent"}] spawn_subagent type=${agentType} job=${jobId} title="${title.slice(0, 60)}"`);
       return {

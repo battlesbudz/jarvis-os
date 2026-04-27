@@ -1002,6 +1002,7 @@ export async function ensureTablesExist() {
     await db.execute(sql`ALTER TABLE discord_agents ADD COLUMN IF NOT EXISTS last_heartbeat_at TIMESTAMP`).catch(() => {});
     await db.execute(sql`ALTER TABLE discord_agents ADD COLUMN IF NOT EXISTS stuck_since TIMESTAMP`).catch(() => {});
     await db.execute(sql`ALTER TABLE discord_agents ADD COLUMN IF NOT EXISTS heartbeat_fail_count INTEGER NOT NULL DEFAULT 0`).catch(() => {});
+    await db.execute(sql`ALTER TABLE discord_agents ADD COLUMN IF NOT EXISTS preferred_model TEXT`).catch(() => {});
 
     // ── agent_memories: per-agent private memory namespace ─────────────────
     await db.execute(sql`

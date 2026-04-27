@@ -11,12 +11,13 @@ import type { ToolContext } from "./types";
 import { notifyUser } from "../channels/registry";
 import { onWorkflowJobComplete, onWorkflowJobFail } from "./workflowEngine";
 import { emit as diagEmit } from "../diagnostics/diagnosticsService";
-import { submitAgentJob as _submitAgentJob, type SubmitJobInput, type AgentJobType as _AgentJobType } from "./jobClient";
+import { submitAgentJob as _submitAgentJob, getModelForJobType as _getModelForJobType, type SubmitJobInput, type AgentJobType as _AgentJobType } from "./jobClient";
 
 // Re-export from the shared client so existing callers don't break.
 export type AgentJobType = _AgentJobType;
 export type { SubmitJobInput };
 export const submitAgentJob = _submitAgentJob;
+export const getModelForJobType = _getModelForJobType;
 
 async function notifyJobComplete(
   userId: string,
@@ -163,6 +164,8 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
       const namedAgentId = String(input.namedAgentId ?? "");
       const agentName = String(input.agentName ?? "Agent");
       const iterationCount = typeof input.iterationCount === "number" ? input.iterationCount : 0;
+      // Optional per-request model override from the orchestrator.
+      const namedAgentModel = typeof input.model === "string" ? input.model : undefined;
 
       if (!namedAgentId) throw new Error("named_agent_task job missing namedAgentId");
 
@@ -176,6 +179,7 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
         userMessage: job.prompt,
         platform: "orchestrator",
         initiatedBy: "jarvis",
+        model: namedAgentModel,
       });
 
       await completeJob(job.id, {
@@ -245,11 +249,19 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
       state: { pendingAttachments: [] },
     };
 
+    // Per-type model routing is handled at orchestrator-controlled spawn points
+    // (queue_background_job, spawn_subagent) via getModelForJobType(). The model
+    // arrives here via job.input.model. Other callers that omit input.model
+    // preserve the original resolution path inside runSubAgent.
+    const jobInput = (job.input as Record<string, unknown>) ?? {};
+    const subAgentModelOverride = typeof jobInput.model === "string" ? jobInput.model : undefined;
+
     const sub = await runSubAgent({
       agentType: job.agentType as SubAgentType,
       prompt: job.prompt,
       defaultTitle: job.title,
       context: ctx,
+      model: subAgentModelOverride,
     });
 
     const inserted = await db
