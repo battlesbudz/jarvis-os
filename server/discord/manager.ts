@@ -468,11 +468,19 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
 
     // ── Phase 6: Named agent routing ───────────────────────────────────
     // Check if this channel is assigned to a named agent (new agent system).
-    // If so, route directly to runNamedAgent. If not, fall through to the
-    // standard runCoachAgent pipeline with optional persona-prefix injection.
-    const namedAgentResult = !isDM
-      ? await routeToNamedAgent(userId, "discord", message.channelId, userText)
-      : null;
+    // If so, route directly to runNamedAgent. If not (or if it throws), fall
+    // through to the standard runCoachAgent pipeline with optional persona-prefix.
+    let namedAgentResult: { reply: string } | null = null;
+    let namedAgentFailed = false;
+    if (!isDM) {
+      try {
+        namedAgentResult = await routeToNamedAgent(userId, "discord", message.channelId, userText);
+      } catch (agentErr) {
+        console.error("[DiscordManager] routeToNamedAgent failed — falling back to coach:", agentErr);
+        namedAgentFailed = true;
+        namedAgentResult = null;
+      }
+    }
 
     if (namedAgentResult !== null) {
       // Named agent handled the message — send the reply and skip coach pipeline.
@@ -483,6 +491,12 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
         await sendLong(message.channel as { send(t: string): Promise<unknown> }, reply);
       }
       return;
+    }
+
+    // If the named agent threw, let the user know something went wrong then
+    // continue with the standard coach pipeline so they still get a response.
+    if (namedAgentFailed && typingMsg) {
+      await typingMsg.edit("_Agent encountered an issue — routing to Jarvis instead…_").catch(() => {});
     }
 
     // ── Phase 6b: Legacy persona injection (pre-new-agent-system rows) ────

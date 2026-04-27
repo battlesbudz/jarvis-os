@@ -35,10 +35,13 @@ import { listPendingGates } from "../agent/agentApproval";
 
 const EPHEMERAL = 64;
 
-// ── /agent command definition ──────────────────────────────────────────────────
+// ── /agents command definition ─────────────────────────────────────────────────
+// Primary slash command. Named /agents (plural) to match task spec.
+// Any Discord guild that registered the old /agent command will simply have
+// the old one replaced on the next call to registerSlashCommands().
 
 export const AGENT_COMMAND = {
-  name: "agent",
+  name: "agents",
   description: "Manage and invoke Jarvis sub-agents",
   options: [
     {
@@ -291,7 +294,7 @@ export async function handleAgentCommand(
         const enabled = optBool("enabled");
         const agent = await findAgent(name);
         if (!agent) return { content: `Agent "${name}" not found.`, flags: EPHEMERAL };
-        const currentPerms = (agent.permissions as Record<string, boolean>) ?? {};
+        const currentPerms = (agent.permissions as unknown as Record<string, boolean>) ?? {};
         const updatedPerms = { ...currentPerms, [permission]: enabled };
         await updateAgent(agent.id, { permissions: updatedPerms });
         return {
