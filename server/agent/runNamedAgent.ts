@@ -20,7 +20,10 @@ import { getAgentForChannel, getAgent } from "./agentManager";
 import { wrapToolsForAgent } from "./agentPermissions";
 import { readAgentMemories, writeAgentMemory } from "./agentMemory";
 import { logAgentEvent } from "./agentLogger";
-import { requiresApproval, requestApproval, awaitApproval } from "./agentApproval";
+import { toolCallHooks } from "./toolCallHooks";
+// Side-effect import: ensures the built-in approval hook is registered before
+// any agent run. agentApproval registers itself into toolCallHooks at module load.
+import "./agentApproval";
 import type { DiscordAgent } from "@shared/schema";
 import type { ChannelAttachment } from "../channels/types";
 import type OpenAI from "openai";
@@ -276,61 +279,27 @@ export async function runNamedAgent(opts: RunNamedAgentOptions): Promise<NamedAg
       console.warn(`[runNamedAgent] agent=${agentId} resolved unknown model "${model}" — continuing`);
     }
 
-    // ── Approval gate hook ───────────────────────────────────────────────────
-    // Before executing any high-risk tool, create a DB-persistent approval
-    // gate, notify the user in-app, and suspend until they approve/reject.
+    // ── Tool-call hook gate ──────────────────────────────────────────────────
+    // Runs the composable toolCallHooks registry before each tool execution.
+    // Registered handlers (in priority order) can block, require approval,
+    // or silently rewrite parameters. The built-in approval hook (priority 100)
+    // is registered by agentApproval.ts at module-load time.
     const onBeforeTool = async (
       toolName: string,
       toolArgs: Record<string, unknown>,
     ): Promise<{ allowed: boolean; reason?: string }> => {
-      if (!requiresApproval(toolName)) return { allowed: true };
-
-      try {
-        // Create a persistent DB gate
-        const gate = await requestApproval({
-          agentId,
-          userId,
-          toolName,
-          toolArgs,
-          description: `Agent "${agent.name}" wants to run tool: ${toolName}`,
-          ttlMs: 10 * 60 * 1000, // 10 minutes
-          initiatedBy,
-        });
-
-        // Short-circuit: if gate was auto-approved (Jarvis-initiated, non-irreversible)
-        // the status is already 'approved' in the returned gate — skip notification and wait.
-        if (gate.status === "approved") {
-          logAgentEvent({ event: "tool_approved", agentId, userId, toolName, detail: `gate=${gate.id} auto-approved` });
-          return { allowed: true };
-        }
-
-        // Notify user in-app so they can approve/reject
-        try {
-          const { inAppChannel } = await import("../channels/inAppChannel");
-          await inAppChannel.sendMessage(
-            userId,
-            `🔐 **Approval Required**\nAgent **${agent.name}** wants to run **${toolName}**.\nApprove or reject in the Agents → Approvals tab.\n\nGate ID: \`${gate.id}\``,
-            { notificationType: "approval_request" },
-          );
-        } catch { /* non-blocking */ }
-
-        logAgentEvent({ event: "tool_blocked", agentId, userId, toolName, detail: `gate=${gate.id}` });
-
-        // Suspend until user approves/rejects (up to 10 min), or the run is cancelled
-        const approved = await awaitApproval(gate.id, undefined, signal);
-
-        if (approved) {
-          logAgentEvent({ event: "tool_approved", agentId, userId, toolName, detail: `gate=${gate.id}` });
-          return { allowed: true };
-        } else {
-          return { allowed: false, reason: `User rejected tool execution (gate ${gate.id})` };
-        }
-      } catch (err) {
-        // If approval machinery fails, block the tool rather than allow silent execution
-        const msg = err instanceof Error ? err.message : String(err);
-        console.error(`[RunNamedAgent] approval gate error for ${toolName}:`, err);
-        return { allowed: false, reason: `Approval gate error: ${msg}` };
-      }
+      const result = await toolCallHooks.run({
+        toolName,
+        params: toolArgs,
+        agentId,
+        agentName: agent.name,
+        userId,
+        platform,
+        channelId: opts.channelId,
+        initiatedBy,
+        signal,
+      });
+      return { allowed: result.allowed, reason: result.reason };
     };
 
     const result = await runAgent({

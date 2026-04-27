@@ -18,6 +18,7 @@ import { agentApprovalGates } from "@shared/schema";
 import { eq, and, lt } from "drizzle-orm";
 import { logAgentEvent } from "./agentLogger";
 import { EventEmitter } from "events";
+import { toolCallHooks } from "./toolCallHooks";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -401,3 +402,29 @@ export async function listAllGates(userId: string): Promise<ApprovalGate[]> {
     .limit(50);
   return rows.map(rowToGate);
 }
+
+// ── Built-in hook: approval gate (priority 100) ────────────────────────────────
+//
+// Registers the existing HIGH_RISK_TOOLS check as a `toolCallHooks` handler so
+// the approval gate is part of the composable hook chain. The hook returns
+// `requireApproval` for any tool in HIGH_RISK_TOOLS; the registry's
+// `runApprovalFlow` then handles the DB gate, user notification, and await.
+//
+// Note: `toolCallHooks.ts` calls `requestApproval` / `awaitApproval` from this
+// file via dynamic import, intentionally breaking the circular dependency at
+// module-load time.
+
+toolCallHooks.register(
+  (ctx) => {
+    if (!requiresApproval(ctx.toolName)) return undefined;
+    return {
+      requireApproval: {
+        title: `Approve: ${ctx.toolName}`,
+        description: `Agent "${ctx.agentName}" wants to run tool: ${ctx.toolName}`,
+        severity: "info" as const,
+        timeoutMs: 10 * 60 * 1000,
+      },
+    };
+  },
+  { priority: 100 },
+);
