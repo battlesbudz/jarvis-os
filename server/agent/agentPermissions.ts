@@ -10,6 +10,7 @@ import type { AgentTool } from "./types";
 import type { DiscordAgent, AgentPermissions } from "@shared/schema";
 import { DEFAULT_AGENT_PERMISSIONS } from "@shared/schema";
 import { logAgentEvent } from "./agentLogger";
+import { toolCallHooks } from "./toolCallHooks";
 
 // ── Error ──────────────────────────────────────────────────────────────────────
 
@@ -206,3 +207,41 @@ export function getPermittedToolNames(agent: DiscordAgent): string[] {
 
   return Array.from(permitted);
 }
+
+// ── Built-in hook: permission check (priority 50) ─────────────────────────────
+//
+// Defence-in-depth runtime check. wrapToolsForAgent already strips disallowed
+// tools from the harness's tool list at agent-init time (so the model never
+// learns they exist). This hook catches any edge-case where an unlisted tool
+// name reaches onBeforeTool (e.g. tool added after init, or harness bypass).
+//
+// Uses dynamic import of agentManager to avoid a circular dependency:
+//   agentManager → wrapToolsForAgent (agentPermissions) ← toolCallHooks
+// Dynamic import breaks the cycle at module-load time.
+
+toolCallHooks.register(
+  async (ctx) => {
+    try {
+      const { getAgent } = await import("./agentManager");
+      const agent = await getAgent(ctx.agentId);
+      if (!agent) return undefined; // unknown agent — let other hooks decide
+
+      const permitted = new Set(getPermittedToolNames(agent));
+      if (permitted.has(ctx.toolName)) return undefined; // allowed — pass through
+
+      // Tool is not in the agent's permitted set — block with audit log
+      logAgentEvent({
+        event: "tool_permission_denied",
+        agentId: ctx.agentId,
+        userId: ctx.userId,
+        toolName: ctx.toolName,
+        detail: "runtime-hook: not in permitted set",
+      });
+      return { block: true, blockReason: `Agent does not have permission to use ${ctx.toolName}` };
+    } catch {
+      // If permission check fails, fail-open (don't disrupt runs for metadata errors)
+      return undefined;
+    }
+  },
+  { priority: 50 },
+);
