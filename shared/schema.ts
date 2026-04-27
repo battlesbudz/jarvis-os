@@ -1176,6 +1176,19 @@ export const agentChatSessions = pgTable("agent_chat_sessions", {
 
 export type AgentChatSession = typeof agentChatSessions.$inferSelect;
 
+// ── Coach channel sessions ────────────────────────────────────────────────────
+// Persists the per-user, per-channel sdkSessionId so conversations survive
+// server restarts.  The channel server-handlers use this as a write-through
+// backing store behind their in-process Maps.
+export const coachChannelSessions = pgTable("coach_channel_sessions", {
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  channel: varchar("channel").notNull(),
+  sdkSessionId: varchar("sdk_session_id").notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => [
+  primaryKey({ columns: [table.userId, table.channel] }),
+]);
+
 export const userSkillPacks = pgTable("user_skill_packs", {
   userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   packId: varchar("pack_id").notNull().references(() => skillPacks.id, { onDelete: "cascade" }),

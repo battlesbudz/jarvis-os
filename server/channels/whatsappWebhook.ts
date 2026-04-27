@@ -6,15 +6,7 @@ import express from "express";
 import * as crypto from "crypto";
 import { runCoachAgent } from "./coachAgent";
 import { sendWhatsAppMessage, isTwilioConfigured } from "./whatsappChannel";
-import { SessionCache } from "../sessionCache";
-
-// ── Per-user session ID store for WhatsApp coach conversations ───────────────
-// Volatile in-process cache keyed by userId. Lost on server restart but the
-// coach pipeline gracefully falls back to full history injection on cache miss,
-// so there is no data loss — only a minor efficiency cost for the first turn
-// after a restart.  Entries unused for 24 h are evicted automatically.
-const whatsappCoachSessions = new SessionCache("whatsapp");
-whatsappCoachSessions.startSweep();
+import { getSession, setSession } from "./sessionStore";
 
 // Twilio signs every webhook request with X-Twilio-Signature, computed as
 // HMAC-SHA1(authToken, fullUrl + concat(sorted(paramKey + paramValue)))
@@ -122,11 +114,10 @@ export function registerWhatsAppWebhook(app: Express): void {
     }
 
     try {
-      const storedSessionId = whatsappCoachSessions.get(userId);
+      const storedSessionId = await getSession(userId, "WhatsApp");
       const { reply, sdkSessionId } = await runCoachAgent({ userId, userText: text, channelName: "WhatsApp", sdkSessionId: storedSessionId });
-      // Persist the session ID so the next turn can resume without a DB chat_history fetch.
       if (sdkSessionId) {
-        whatsappCoachSessions.set(userId, sdkSessionId);
+        setSession(userId, "WhatsApp", sdkSessionId);
       }
       if (reply && reply.trim()) {
         await sendWhatsAppMessage(from, reply);

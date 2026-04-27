@@ -7,15 +7,7 @@ import { runCoachAgent } from "../channels/coachAgent";
 import { routeToNamedAgent } from "../agent/runNamedAgent";
 import { setupWorkspace as _setupWorkspace, postToTopicChannel as _postToTopicChannel, classifyTopic, getTopicForChannel, WORKSPACE_TOPICS, type WorkspaceMeta } from "./workspace";
 import { getUserTtsChannels, getUserTtsPrefs, speakToUser } from "../agent/tools/tts";
-import { SessionCache } from "../sessionCache";
-
-// ── Per-user session ID store for Discord coach conversations ───────────────
-// Volatile in-process cache keyed by userId. Lost on server restart but the
-// coach pipeline gracefully falls back to full history injection on cache miss,
-// so there is no data loss — only a minor efficiency cost for the first turn
-// after a restart.  Entries unused for 24 h are evicted automatically.
-const discordCoachSessions = new SessionCache("discord");
-discordCoachSessions.startSweep();
+import { getSession as getCoachSession, setSession as setCoachSession } from "../channels/sessionStore";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -552,7 +544,7 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
       let result: Awaited<ReturnType<typeof runCoachAgent>> | null = null;
       let streamingFailed = false;
       const discordChannelId = message.channelId;
-      const storedSessionId = discordCoachSessions.get(userId);
+      const storedSessionId = await getCoachSession(userId, "Discord");
       try {
         result = await runCoachAgent({
           userId,
@@ -595,9 +587,8 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
         });
       }
 
-      // Persist the session ID so the next turn can resume without a DB chat_history fetch.
       if (result?.sdkSessionId) {
-        discordCoachSessions.set(userId, result.sdkSessionId);
+        setCoachSession(userId, "Discord", result.sdkSessionId);
       }
 
       // Use streamed buffer as final reply when result is unavailable but
