@@ -114,6 +114,73 @@ export async function sendMessage(
   }
 }
 
+/** Telegram's hard per-message character limit. */
+const TG_MAX_CHARS = 4096;
+
+/**
+ * Split a long text into chunks that each fit within Telegram's 4096-character
+ * message limit. Chunks are cut preferring double-newlines (paragraph breaks),
+ * then single newlines, then the last space before the limit.
+ *
+ * If only one chunk is produced, no part labels are added.
+ * If multiple chunks are produced, each is prefixed with "(Part N of M)".
+ */
+export function splitTelegramMessage(text: string): string[] {
+  if (text.length <= TG_MAX_CHARS) return [text];
+
+  const chunks: string[] = [];
+  let remaining = text;
+
+  while (remaining.length > 0) {
+    if (remaining.length <= TG_MAX_CHARS) {
+      chunks.push(remaining);
+      break;
+    }
+
+    let cutAt = TG_MAX_CHARS;
+
+    // Try to cut at a paragraph boundary (double newline)
+    const dnl = remaining.lastIndexOf("\n\n", cutAt);
+    if (dnl > TG_MAX_CHARS / 2) {
+      cutAt = dnl + 2; // keep the blank line with the previous chunk
+    } else {
+      // Try to cut at a single newline
+      const nl = remaining.lastIndexOf("\n", cutAt);
+      if (nl > TG_MAX_CHARS / 2) {
+        cutAt = nl + 1;
+      } else {
+        // Fall back to the last space (word boundary)
+        const sp = remaining.lastIndexOf(" ", cutAt);
+        if (sp > TG_MAX_CHARS / 2) {
+          cutAt = sp + 1;
+        }
+        // If no good boundary found, hard-cut at the limit
+      }
+    }
+
+    chunks.push(remaining.slice(0, cutAt).trimEnd());
+    remaining = remaining.slice(cutAt);
+  }
+
+  if (chunks.length === 1) return chunks;
+
+  // Label multi-part messages so the user knows more is coming
+  return chunks.map((chunk, i) => `(Part ${i + 1} of ${chunks.length})\n\n${chunk}`);
+}
+
+/**
+ * Send a potentially long text response to a Telegram chat, automatically
+ * splitting it into ≤4096-character messages when needed. Each chunk is sent
+ * sequentially. When more than one chunk is produced the chunks are labelled
+ * "(Part N of M)" so the user knows additional messages are coming.
+ */
+export async function sendLongMessage(chatId: string, text: string): Promise<void> {
+  const chunks = splitTelegramMessage(text);
+  for (const chunk of chunks) {
+    await sendMessage(chatId, chunk);
+  }
+}
+
 /**
  * Sends a generated document (e.g. markdown brief) to a Telegram chat as a
  * file attachment. Used by the agent's create_document tool so the user can

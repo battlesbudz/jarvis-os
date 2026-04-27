@@ -43,7 +43,7 @@ export interface CoachReplyResult {
 }
 
 const FORMAT_HINTS: Record<string, string> = {
-  Telegram: "You're responding via Telegram. Keep messages SHORT (2-4 sentences). Plain text, no markdown headers.",
+  Telegram: "You're responding via Telegram. Match response length to the request: short and direct for simple questions, but complete and thorough for research, analysis, planning, or anything that needs a full answer. Never truncate or redirect the user to the app — deliver the full response here. Plain text, no markdown headers.",
   WhatsApp: "You're responding via WhatsApp. Keep messages SHORT (2-4 sentences). Plain text. WhatsApp supports *bold*, _italic_, `code` only — no markdown headers.",
   Slack: "You're responding via Slack DM. Keep messages SHORT (2-4 sentences). Use Slack mrkdwn (*bold*, _italic_, `code`, > quote). No markdown headers.",
   Daemon: "You're responding to a desktop daemon. Plain text only. The user sees the reply as a desktop notification — keep it under 2 sentences when possible.",
@@ -55,6 +55,7 @@ function getMaxTokensForChannel(channelName: string): number {
   if (channelName.startsWith("Discord")) return 1200;
   if (channelName === "Daemon") return 200;
   if (channelName === "Voice") return 250;
+  if (channelName === "Telegram") return 8000;
   return 2000;
 }
 

@@ -1,7 +1,7 @@
 import { db } from "../db";
 import { eq } from "drizzle-orm";
 import { telegramLinks } from "@shared/schema";
-import { sendMessage, sendTelegramDocument, isTelegramConfigured } from "../integrations/telegram";
+import { sendLongMessage, sendTelegramDocument, isTelegramConfigured } from "../integrations/telegram";
 import type { Channel, ChannelSendOpts, ChannelSendResult } from "./types";
 
 const linkCache = new Map<string, string | null>();
@@ -37,7 +37,7 @@ export const telegramChannel: Channel = {
     const chatId = await lookupChatId(userId);
     if (!chatId) return { ok: false, error: "no telegram link" };
     try {
-      if (text && text.trim()) await sendMessage(chatId, text);
+      if (text && text.trim()) await sendLongMessage(chatId, text);
       for (const att of opts.attachments || []) {
         if (att.kind === "document") {
           await sendTelegramDocument(chatId, att.filename, att.content, att.caption, att.mimeType);
