@@ -19,10 +19,11 @@ const openai = new OpenAI({
 
 // Image generation — must bypass the Replit proxy, which only supports
 // chat/text models and returns "Unknown model" for gpt-image-1 / dall-e-3.
-// Prefers OPENAI_API_KEY if the user has added their own; otherwise falls
-// back to the integration key without the proxy base URL.
+// Only uses a real OPENAI_API_KEY (sk-...). The Replit AI integration proxy
+// key must NOT be used here — it only works with the proxy base URL and
+// will return "Unknown model" when hitting api.openai.com directly.
 const imageOpenai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY || process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
+  apiKey: process.env.OPENAI_API_KEY ?? "no-direct-openai-key",
   // No baseURL — image requests go to api.openai.com directly.
 });
 
