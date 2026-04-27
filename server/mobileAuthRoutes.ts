@@ -100,6 +100,7 @@ mobileAuthRouter.get("/start", (req: Request, res: Response) => {
     state: session_id,
     access_type: "offline",
     prompt: "select_account",
+    max_age: "0",
   });
 
   res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`);
@@ -163,6 +164,13 @@ mobileAuthRouter.get("/callback", async (req: Request, res: Response) => {
     let user;
     if (existing.length > 0) {
       user = existing[0];
+      const updates: Record<string, string> = {};
+      if (googleUser.name && googleUser.name !== user.displayName) updates.displayName = googleUser.name;
+      if (googleUser.email && googleUser.email !== user.email) updates.email = googleUser.email;
+      if (Object.keys(updates).length > 0) {
+        await db.update(users).set(updates).where(eq(users.id, user.id));
+        user = { ...user, ...updates };
+      }
     } else {
       const base = googleUser.email
         ? googleUser.email.split("@")[0]
@@ -176,6 +184,7 @@ mobileAuthRouter.get("/callback", async (req: Request, res: Response) => {
         username: uniqueUsername,
         googleId: googleUser.id,
         displayName: googleUser.name || uniqueUsername,
+        email: googleUser.email || null,
       }).returning();
       user = newUser;
     }

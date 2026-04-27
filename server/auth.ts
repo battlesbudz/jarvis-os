@@ -191,11 +191,12 @@ authRouter.post("/google", async (req: Request, res: Response) => {
     let user;
     if (existing.length > 0) {
       user = existing[0];
-      if (googleUser.name && googleUser.name !== user.displayName) {
-        await db.update(users)
-          .set({ displayName: googleUser.name })
-          .where(eq(users.id, user.id));
-        user = { ...user, displayName: googleUser.name };
+      const updates: Partial<typeof users.$inferInsert> = {};
+      if (googleUser.name && googleUser.name !== user.displayName) updates.displayName = googleUser.name;
+      if (googleUser.email && googleUser.email !== user.email) updates.email = googleUser.email;
+      if (Object.keys(updates).length > 0) {
+        await db.update(users).set(updates).where(eq(users.id, user.id));
+        user = { ...user, ...updates };
       }
     } else {
       const username = googleUser.email
@@ -213,6 +214,7 @@ authRouter.post("/google", async (req: Request, res: Response) => {
         username: uniqueUsername,
         googleId: googleUser.id,
         displayName: googleUser.name || uniqueUsername,
+        email: googleUser.email || null,
       }).returning();
       user = newUser;
     }
@@ -223,6 +225,7 @@ authRouter.post("/google", async (req: Request, res: Response) => {
       token,
       userId: user.id,
       username: user.displayName || user.username,
+      email: user.email || null,
     });
   } catch (error) {
     console.error("Google auth error:", error);
@@ -244,6 +247,7 @@ authRouter.get("/me", async (req: Request, res: Response) => {
       id: users.id,
       username: users.username,
       displayName: users.displayName,
+      email: users.email,
       createdAt: users.createdAt,
     }).from(users).where(eq(users.id, payload.userId)).limit(1);
 
@@ -254,6 +258,7 @@ authRouter.get("/me", async (req: Request, res: Response) => {
     res.json({
       userId: user.id,
       username: user.displayName || user.username,
+      email: user.email || null,
     });
   } catch (error) {
     return res.status(401).json({ error: "Invalid token" });

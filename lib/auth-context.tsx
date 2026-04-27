@@ -6,6 +6,7 @@ interface AuthState {
   token: string | null;
   userId: string | null;
   username: string | null;
+  userEmail: string | null;
   isLoading: boolean;
   isAuthenticated: boolean;
   sessionExpired: boolean;
@@ -24,20 +25,23 @@ interface AuthContextType extends AuthState {
 const AUTH_TOKEN_KEY = "@gameplan_auth_token";
 const AUTH_USER_ID_KEY = "@gameplan_auth_user_id";
 const AUTH_USERNAME_KEY = "@gameplan_auth_username";
+const AUTH_USER_EMAIL_KEY = "@gameplan_auth_user_email";
 const AUTH_RETURN_ROUTE_KEY = "@gameplan_return_route";
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
-async function setAuthStorage(token: string, userId: string, username: string) {
-  await AsyncStorage.multiSet([
+async function setAuthStorage(token: string, userId: string, username: string, email?: string | null) {
+  const pairs: [string, string][] = [
     [AUTH_TOKEN_KEY, token],
     [AUTH_USER_ID_KEY, userId],
     [AUTH_USERNAME_KEY, username],
-  ]);
+  ];
+  if (email) pairs.push([AUTH_USER_EMAIL_KEY, email]);
+  await AsyncStorage.multiSet(pairs);
 }
 
-async function clearAuthStorage() {
-  await AsyncStorage.multiRemove([AUTH_TOKEN_KEY, AUTH_USER_ID_KEY, AUTH_USERNAME_KEY]);
+export async function clearAuthStorage() {
+  await AsyncStorage.multiRemove([AUTH_TOKEN_KEY, AUTH_USER_ID_KEY, AUTH_USERNAME_KEY, AUTH_USER_EMAIL_KEY]);
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -45,6 +49,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     token: null,
     userId: null,
     username: null,
+    userEmail: null,
     isLoading: true,
     isAuthenticated: false,
     sessionExpired: false,
@@ -65,6 +70,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       token: null,
       userId: null,
       username: null,
+      userEmail: null,
       isLoading: false,
       isAuthenticated: false,
       sessionExpired: true,
@@ -97,10 +103,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       if (res.ok) {
         const data = await res.json();
+        if (data.email) await AsyncStorage.setItem(AUTH_USER_EMAIL_KEY, data.email);
         setState({
           token,
           userId: data.userId,
           username: data.username,
+          userEmail: data.email || (await AsyncStorage.getItem(AUTH_USER_EMAIL_KEY)),
           isLoading: false,
           isAuthenticated: true,
           sessionExpired: false,
@@ -129,12 +137,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     const data = await res.json();
-    await setAuthStorage(data.token, data.userId, data.username);
+    await setAuthStorage(data.token, data.userId, data.username, data.email);
 
     setState({
       token: data.token,
       userId: data.userId,
       username: data.username,
+      userEmail: data.email || null,
       isLoading: false,
       isAuthenticated: true,
       sessionExpired: false,
@@ -161,6 +170,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       token: data.token,
       userId: data.userId,
       username: data.username,
+      userEmail: null,
       isLoading: false,
       isAuthenticated: true,
       sessionExpired: false,
@@ -181,12 +191,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     const data = await res.json();
-    await setAuthStorage(data.token, data.userId, data.username);
+    await setAuthStorage(data.token, data.userId, data.username, data.email);
 
     setState({
       token: data.token,
       userId: data.userId,
       username: data.username,
+      userEmail: data.email || null,
       isLoading: false,
       isAuthenticated: true,
       sessionExpired: false,
@@ -200,11 +211,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
     if (!res.ok) throw new Error("Invalid token");
     const data = await res.json();
-    await setAuthStorage(token, data.userId, data.username);
+    await setAuthStorage(token, data.userId, data.username, data.email);
     setState({
       token,
       userId: data.userId,
       username: data.username,
+      userEmail: data.email || null,
       isLoading: false,
       isAuthenticated: true,
       sessionExpired: false,
@@ -218,6 +230,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       token: null,
       userId: null,
       username: null,
+      userEmail: null,
       isLoading: false,
       isAuthenticated: false,
       sessionExpired: false,

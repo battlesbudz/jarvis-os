@@ -191,7 +191,7 @@ export default function ProfileScreen() {
   const { focus } = useLocalSearchParams<{ focus?: string }>();
   const scrollViewRef = useRef<ScrollView>(null);
   const webhookRowRef = useRef<View>(null);
-  const { logout, username: authUsername } = useAuth();
+  const { logout, username: authUsername, userEmail: authUserEmail } = useAuth();
   const [stats, setStats] = useState<UserStats>({
     streak: 0, totalCompleted: 0, bestStreak: 0, xp: 0, badges: [], claimedRewards: [],
     dailyXpEarned: { date: '', xp: 0 },
@@ -3690,7 +3690,7 @@ export default function ProfileScreen() {
               <View style={styles.platformInfo}>
                 <Text style={[styles.platformName, { color: '#FF3B30' }]}>Log Out</Text>
                 <Text style={styles.platformStatus}>
-                  {authUsername ? `Signed in as ${authUsername}` : 'Sign out of your account'}
+                  {authUserEmail || (authUsername ? `Signed in as ${authUsername}` : 'Sign out of your account')}
                 </Text>
               </View>
               <Ionicons name="chevron-forward" size={18} color={Colors.textTertiary} />
