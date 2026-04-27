@@ -401,8 +401,8 @@ export default function SettingsScreen() {
     const watchRes = watchResult.status === 'fulfilled' ? watchResult.value : null;
     const signalRes = signalResult.status === 'fulfilled' ? signalResult.value : null;
 
-    // Show error when the primary watches call fails
-    setNervousSystemError(watchResult.status === 'rejected');
+    // Show error when any nervous system call fails.
+    setNervousSystemError(watchResult.status === 'rejected' || signalResult.status === 'rejected');
 
     if (watchRes !== null) setWatches(Array.isArray(watchRes) ? watchRes : []);
     if (signalRes !== null) setRecentSignals(Array.isArray(signalRes) ? signalRes : []);
@@ -453,9 +453,10 @@ export default function SettingsScreen() {
     const discordRes = discordResult.status === 'fulfilled' ? discordResult.value : null;
     const integrationRes = integrationResult.status === 'fulfilled' ? integrationResult.value : null;
 
-    // Show error row only when the primary connections data (OAuth status) failed.
-    const primaryFailed = oauthResult.status === 'rejected';
-    setConnectionsError(primaryFailed);
+    // Show error row when any connections endpoint fails.
+    const anyConnectionFailed = [oauthResult, telegramResult, discordResult, integrationResult]
+      .some(r => r.status === 'rejected');
+    setConnectionsError(anyConnectionFailed);
 
     if (oauthRes) setOAuthStatus({
       google: oauthRes.google ?? { connected: false },
