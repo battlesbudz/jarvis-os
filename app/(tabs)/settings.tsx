@@ -493,8 +493,8 @@ export default function SettingsScreen() {
     const modelRes = modelResult.status === 'fulfilled' ? modelResult.value : null;
     const orchRes = orchResult.status === 'fulfilled' ? orchResult.value : null;
 
-    // Show error row when the primary model preferences call failed.
-    setModelsError(modelResult.status === 'rejected');
+    // Show error row when either model preferences or orchestrator settings failed.
+    setModelsError(modelResult.status === 'rejected' || orchResult.status === 'rejected');
 
     if (modelRes?.modelPreferences) setModelPrefs(modelRes.modelPreferences);
     if (modelRes?.availableModels) setAvailableModels(modelRes.availableModels);
