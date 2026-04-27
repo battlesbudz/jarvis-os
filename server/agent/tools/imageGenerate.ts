@@ -6,24 +6,42 @@ import { telegramLinks } from "@shared/schema";
 import { sendPhoto } from "../../integrations/telegram";
 import type { AgentTool } from "../types";
 
+// Chat/text completions — routes through the Replit AI integration proxy.
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
 });
 
+// Image generation — must bypass the Replit proxy, which only supports
+// chat/text models and returns "Unknown model" for gpt-image-1 / dall-e-3.
+// Prefers OPENAI_API_KEY if the user has added their own; otherwise falls
+// back to the integration key without the proxy base URL.
+const imageOpenai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY || process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
+  // No baseURL — image requests go to api.openai.com directly.
+});
+
 type GptImage1Size = "1024x1024" | "1536x1024" | "1024x1536";
+type Dalle3Size    = "1024x1024" | "1792x1024" | "1024x1792";
 
 const SIZE_MAP: Record<string, GptImage1Size> = {
-  square: "1024x1024",
+  square:    "1024x1024",
   landscape: "1536x1024",
-  portrait: "1024x1536",
+  portrait:  "1024x1536",
+};
+
+// dall-e-3 has slightly different size values; map from gpt-image-1 equivalents.
+const DALLE3_SIZE_MAP: Record<GptImage1Size, Dalle3Size> = {
+  "1024x1024": "1024x1024",
+  "1536x1024": "1792x1024",
+  "1024x1536": "1024x1792",
 };
 
 /** FLUX image_size values understood by falai/flux-dev-lora */
 const FLUX_SIZE_MAP: Record<string, string> = {
-  square: "square_hd",
+  square:    "square_hd",
   landscape: "landscape_16_9",
-  portrait: "portrait_16_9",
+  portrait:  "portrait_16_9",
 };
 
 async function getTelegramChatId(userId: string): Promise<string | null> {
@@ -40,7 +58,7 @@ async function getTelegramChatId(userId: string): Promise<string | null> {
 }
 
 async function fetchImageBuffer(url: string): Promise<Buffer | null> {
-  // gpt-image-1 returns base64 data URLs — decode directly without a network request
+  // gpt-image-1 / dall-e-3 (b64_json mode) return base64 data URLs — decode directly.
   if (url.startsWith("data:")) {
     const b64 = url.split(",")[1];
     return b64 ? Buffer.from(b64, "base64") : null;
@@ -55,34 +73,101 @@ async function fetchImageBuffer(url: string): Promise<Buffer | null> {
   }
 }
 
-/** Generate an image via gpt-image-1 and return a data URL (base64). */
+/**
+ * Detect whether an OpenAI error is a "model not found / not supported" error
+ * (as opposed to quota, content policy, auth, etc.).
+ */
+function isModelNotFoundError(err: unknown): boolean {
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  return (
+    msg.includes("unknown model") ||
+    msg.includes("model not found") ||
+    msg.includes("does not exist") ||
+    msg.includes("no such model") ||
+    msg.includes("unsupported model")
+  );
+}
+
+/**
+ * Generate an image via gpt-image-1 (direct OpenAI) and return a data URL.
+ * Falls back to dall-e-3 automatically if gpt-image-1 is not available on
+ * the current API key tier.
+ */
 async function generateGptImage(prompt: string, size: GptImage1Size): Promise<string> {
-  let b64: string | undefined;
+  // ── Attempt 1: gpt-image-1 ─────────────────────────────────────────────
   try {
-    const response = await openai.images.generate({
+    const response = await imageOpenai.images.generate({
       model: "gpt-image-1",
       prompt,
       n: 1,
       size,
     });
-    b64 = response.data[0]?.b64_json;
+    const b64 = response.data[0]?.b64_json;
+    if (b64) return `data:image/png;base64,${b64}`;
   } catch (err) {
-    // If the preferred size failed, retry once with the universally-supported square size
-    if (size !== "1024x1024") {
-      console.warn(`[image_generate] size ${size} failed, retrying with 1024x1024:`, err);
-      const fallback = await openai.images.generate({
-        model: "gpt-image-1",
-        prompt,
-        n: 1,
-        size: "1024x1024",
-      });
-      b64 = fallback.data[0]?.b64_json;
-    } else {
-      throw err;
+    if (!isModelNotFoundError(err)) {
+      // Non-model error (quota, content policy, size not supported…) — retry
+      // with square before propagating, then re-throw the original.
+      if (size !== "1024x1024") {
+        console.warn(`[image_generate] gpt-image-1 size ${size} failed, retrying 1024x1024:`, err);
+        try {
+          const retry = await imageOpenai.images.generate({
+            model: "gpt-image-1",
+            prompt,
+            n: 1,
+            size: "1024x1024",
+          });
+          const b64 = retry.data[0]?.b64_json;
+          if (b64) return `data:image/png;base64,${b64}`;
+        } catch {
+          // fall through to dall-e-3 below
+        }
+      }
+      // Auth / quota errors that won't be helped by switching models
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/auth|unauthorized|permission|quota|rate.?limit|billing/i.test(msg)) {
+        throw new Error(
+          "Image generation requires a direct OpenAI API key. " +
+          "The Replit AI integration proxy does not support image models. " +
+          "Add your own OPENAI_API_KEY as a Replit secret to enable image generation. " +
+          `(Original error: ${msg})`
+        );
+      }
+      // For other errors fall through to dall-e-3
     }
+    const errMsg = err instanceof Error ? err.message : String(err);
+    console.warn(`[image_generate] gpt-image-1 unavailable (${errMsg}), falling back to dall-e-3`);
   }
-  if (!b64) throw new Error("No image data returned from gpt-image-1");
-  return `data:image/png;base64,${b64}`;
+
+  // ── Attempt 2: dall-e-3 fallback ──────────────────────────────────────
+  const dalle3Size = DALLE3_SIZE_MAP[size] ?? "1024x1024";
+  try {
+    const response = await imageOpenai.images.generate({
+      model: "dall-e-3",
+      prompt,
+      n: 1,
+      size: dalle3Size,
+      response_format: "b64_json",
+    });
+    const b64 = response.data[0]?.b64_json;
+    if (b64) return `data:image/png;base64,${b64}`;
+    // If b64_json wasn't returned, accept a URL too
+    const url = (response.data[0] as { url?: string })?.url;
+    if (url) return url;
+  } catch (dalle3Err) {
+    const msg = dalle3Err instanceof Error ? dalle3Err.message : String(dalle3Err);
+    if (/auth|unauthorized|permission|quota|rate.?limit|billing/i.test(msg)) {
+      throw new Error(
+        "Image generation requires a direct OpenAI API key. " +
+        "The Replit AI integration proxy does not support image models. " +
+        "Add your own OPENAI_API_KEY as a Replit secret to enable image generation. " +
+        `(Original error: ${msg})`
+      );
+    }
+    throw new Error(`Image generation failed with both gpt-image-1 and dall-e-3: ${msg}`);
+  }
+
+  throw new Error("No image data returned from gpt-image-1 or dall-e-3");
 }
 
 /** Generate an image via FLUX (falai/flux-dev-lora) and return its URL. */
@@ -154,10 +239,10 @@ export const imageGenerateTool: AgentTool = {
       return { ok: false, content: "No prompt provided.", label: "image_generate: no prompt" };
     }
 
-    const sizeKey = String(args.size || "square").toLowerCase();
+    const sizeKey  = String(args.size  || "square").toLowerCase();
     const modelKey = String(args.model || "dalle").toLowerCase();
-    const useFlux = modelKey === "flux";
-    const caption = args.caption ? String(args.caption).slice(0, 200) : undefined;
+    const useFlux  = modelKey === "flux";
+    const caption  = args.caption ? String(args.caption).slice(0, 200) : undefined;
     const modelLabel = useFlux ? "FLUX" : "GPT Image";
 
     let imageUrl: string;
@@ -182,7 +267,7 @@ export const imageGenerateTool: AgentTool = {
 
     const channelRaw = (ctx.channel || "app").toLowerCase();
     const isTelegram = channelRaw === "telegram";
-    const isDiscord = channelRaw.startsWith("discord");
+    const isDiscord  = channelRaw.startsWith("discord");
 
     if (isTelegram) {
       const chatId = await getTelegramChatId(ctx.userId);
