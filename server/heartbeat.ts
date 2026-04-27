@@ -69,28 +69,6 @@ function localHour(now: Date, tz: string): number {
   return new Date(now.toLocaleString("en-US", { timeZone: tz })).getHours();
 }
 
-async function alreadyLogged(userId: string, messageType: string, sentDate: string): Promise<boolean> {
-  const rows = await db
-    .select({ id: schema.proactiveScheduleLog.id })
-    .from(schema.proactiveScheduleLog)
-    .where(
-      and(
-        eq(schema.proactiveScheduleLog.userId, userId),
-        eq(schema.proactiveScheduleLog.messageType, messageType),
-        eq(schema.proactiveScheduleLog.sentDate, sentDate),
-      ),
-    )
-    .limit(1);
-  return rows.length > 0;
-}
-
-async function recordLog(userId: string, messageType: string, sentDate: string): Promise<void> {
-  try {
-    await db.insert(schema.proactiveScheduleLog).values({ userId, messageType, sentDate });
-  } catch (err) {
-    console.error("[Heartbeat] recordLog error:", err);
-  }
-}
 
 // ============================================================
 // Job 1 — Pre-meeting research brief (30–60 min ahead)
@@ -145,7 +123,7 @@ async function runMeetingBriefs(
     if (externalAttendees.length === 0) continue;
 
     const messageType = `meeting_brief:${event.id}`;
-    if (await alreadyLogged(userId, messageType, localKey)) continue;
+    if (!(await claimAndMark(userId, messageType, localKey))) continue;
 
     // Pull related emails
     let emailContext = "";
@@ -260,7 +238,6 @@ Plain text, no markdown asterisks, no preamble.`;
       // Route through channel preferences (telegram/whatsapp/slack/daemon).
       // Falls back to telegram by default if the user hasn't set prefs.
       await notifyUser(userId, "meeting_brief", fullMsg);
-      await recordLog(userId, messageType, localKey);
       logInteraction(userId, "notification", "outbound", fullMsg, "meeting_brief").catch(() => {});
       logAction(userId, "meeting_brief", { eventTitle: event.title, eventId: event.id }).catch(() => {});
       fired++;
@@ -408,14 +385,13 @@ Return JSON: { "subject": "Re: ...", "body": "..." }`;
   if (queued > 0) {
     const localKey = localDateKey(now, "UTC");
     const nudgeKey = `draft_nudge:${queued}`;
-    if (!(await alreadyLogged(userId, nudgeKey, localKey))) {
+    if (await claimAndMark(userId, nudgeKey, localKey)) {
       try {
         await notifyUser(
           userId,
           "email_alert",
           `✉️ ${queued} email draft${queued === 1 ? "" : "s"} waiting for your review in the Inbox tab.`,
         );
-        await recordLog(userId, nudgeKey, localKey);
         logInteraction(userId, "notification", "outbound", `Draft queue: ${queued} item(s)`, "draft_nudge").catch(() => {});
       } catch (err) {
         console.error(`[Heartbeat] draft nudge send failed:`, err);
@@ -497,7 +473,7 @@ async function runEveningWrapUp(
       let newStreak = statsData.streak || 0;
 
       if (lastDate === localKey) {
-        // Already updated tonight (shouldn't happen due to alreadyLogged, but guard anyway)
+        // Already updated tonight (shouldn't happen due to claimAndMark, but guard anyway)
       } else if (lastDate === yesterday) {
         // Consecutive — extend streak
         newStreak += 1;
