@@ -493,10 +493,16 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
     // No new send needed here — both cases are already covered above.
     let placeholder: Message | null = typingMsg ?? earlyPlaceholder;
 
-    // ── Detect workspace topic channel ─────────────────────────────────
+    // ── Detect workspace topic channel + legacy persona (parallel) ────────
+    // Fire both independent DB lookups concurrently to save one round-trip:
+    //   • lookupLink  — workspace/topic channel metadata
+    //   • getNamedAgentForChannel — legacy persona prefix (pre-new-agent-system rows)
     // Use the resolved per-user userId (not botOwnerId which may be '__shared__')
     // so workspace metadata is always fetched from the correct channel_links row.
-    const link2 = await lookupLink(userId);
+    const [link2, namedAgent] = await Promise.all([
+      lookupLink(userId),
+      isDM ? Promise.resolve(null) : getNamedAgentForChannel(userId, message.channelId),
+    ]);
     const workspace = link2?.meta.workspace;
     const topicForChannel = getTopicForChannel(workspace, message.channelId);
     const channelLabel = topicForChannel
@@ -540,7 +546,7 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
     }
 
     // ── Phase 6b: Legacy persona injection (pre-new-agent-system rows) ────
-    const namedAgent = !isDM ? await getNamedAgentForChannel(userId, message.channelId) : null;
+    // namedAgent was already fetched above in parallel with lookupLink.
     const personaPrefix = namedAgent
       ? `[You are ${namedAgent.name}. ${namedAgent.persona}]\n\n`
       : "";
