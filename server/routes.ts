@@ -2144,7 +2144,7 @@ Rules:
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             console.error('[image_generate] gpt-image-1 error in routes:', err);
-            return { result: 'error', label: 'Image generation failed', detail: `Image generation failed: ${msg}` };
+            return { result: 'error', label: 'Image generation failed', detail: msg };
           }
         }
         default:
