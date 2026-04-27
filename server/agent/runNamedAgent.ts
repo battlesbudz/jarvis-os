@@ -22,6 +22,7 @@ import { readAgentMemories, writeAgentMemory } from "./agentMemory";
 import { logAgentEvent } from "./agentLogger";
 import { requiresApproval, requestApproval, awaitApproval } from "./agentApproval";
 import type { DiscordAgent } from "@shared/schema";
+import type { ChannelAttachment } from "../channels/types";
 import type OpenAI from "openai";
 
 // ── Errors ─────────────────────────────────────────────────────────────────────
@@ -117,6 +118,8 @@ export interface NamedAgentResult {
   toolCalls: AgentRunResult["toolCalls"];
   agentName: string;
   agentId: string;
+  /** Attachments (images, files, markdown) produced by MCP tool calls during the run. */
+  attachments: ChannelAttachment[];
   /**
    * SDK session ID for the next turn.
    *
@@ -388,6 +391,7 @@ export async function runNamedAgent(opts: RunNamedAgentOptions): Promise<NamedAg
       toolCalls: result.toolCalls,
       agentName: agent.name,
       agentId,
+      attachments: (ctx.state.pendingAttachments as ChannelAttachment[]) ?? [],
       sdkSessionId: finalSessionId,
     };
   } catch (err) {

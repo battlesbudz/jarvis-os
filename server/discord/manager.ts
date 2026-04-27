@@ -4,7 +4,7 @@ import { eq, and, sql } from "drizzle-orm";
 import { channelLinks, users, discordPendingApprovals, discordAgents } from "@shared/schema";
 import { getUserToken, saveUserToken, deleteUserToken } from "../userTokenStore";
 import { runCoachAgent } from "../channels/coachAgent";
-import { routeToNamedAgent } from "../agent/runNamedAgent";
+import { routeToNamedAgent, type NamedAgentResult } from "../agent/runNamedAgent";
 import { setupWorkspace as _setupWorkspace, postToTopicChannel as _postToTopicChannel, classifyTopic, getTopicForChannel, WORKSPACE_TOPICS, type WorkspaceMeta } from "./workspace";
 import { getUserTtsChannels, getUserTtsPrefs, speakToUser } from "../agent/tools/tts";
 import { getSession as getCoachSession, setSession as setCoachSession } from "../channels/sessionStore";
@@ -517,7 +517,7 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
     // Check if this channel is assigned to a named agent (new agent system).
     // If so, route directly to runNamedAgent. If not (or if it throws), fall
     // through to the standard runCoachAgent pipeline with optional persona-prefix.
-    let namedAgentResult: { reply: string } | null = null;
+    let namedAgentResult: NamedAgentResult | null = null;
     let namedAgentFailed = false;
     if (!isDM) {
       try {
@@ -531,12 +531,63 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
 
     if (namedAgentResult !== null) {
       // Named agent handled the message — send the reply and skip coach pipeline.
-      const reply = namedAgentResult.reply || "Sorry, the agent couldn't generate a response right now.";
-      if (placeholder) {
-        await editOrSendLong(placeholder, reply);
-      } else {
-        await sendLong(message.channel as { send(t: string): Promise<unknown> }, reply);
+      const namedAtts = namedAgentResult.attachments ?? [];
+
+      // Merge any markdown attachments into the text reply.
+      const namedMarkdownExtra = collectMarkdownExtras(namedAtts);
+      let namedReply = namedAgentResult.reply || "Sorry, the agent couldn't generate a response right now.";
+      if (namedMarkdownExtra) {
+        namedReply = namedReply ? `${namedReply}\n\n${namedMarkdownExtra}` : namedMarkdownExtra;
       }
+
+      if (placeholder) {
+        await editOrSendLong(placeholder, namedReply);
+      } else {
+        await sendLong(message.channel as { send(t: string): Promise<unknown> }, namedReply);
+      }
+
+      // Deliver binary attachments (images, files, documents) produced by agent tool calls.
+      if (namedAtts.length > 0) {
+        const sendBinaryToNamedChannel = async (buf: Buffer, filename: string, caption?: string) => {
+          const fileAtt = new AttachmentBuilder(buf, { name: filename, description: caption?.slice(0, 1024) });
+          await (message.channel as { send(opts: unknown): Promise<unknown> }).send({ files: [fileAtt] });
+        };
+
+        for (const att of namedAtts) {
+          if (att.kind === "document") {
+            try {
+              const fileContent = Buffer.isBuffer(att.content) ? att.content : Buffer.from(att.content);
+              await sendBinaryToNamedChannel(fileContent, att.filename, att.caption);
+            } catch (attErr) {
+              console.warn(`[DiscordManager] named-agent document attachment send failed: ${att.filename}`, attErr);
+            }
+          } else if (att.kind === "image") {
+            try {
+              const buf = await attachmentToBuffer(att);
+              if (buf) {
+                await sendBinaryToNamedChannel(buf, imageFilename(att.mimeType), att.caption);
+              } else {
+                console.warn("[DiscordManager] named-agent image attachment had no usable source — skipping");
+              }
+            } catch (attErr) {
+              console.warn("[DiscordManager] named-agent image attachment send failed (non-blocking):", attErr);
+            }
+          } else if (att.kind === "file") {
+            try {
+              const buf = await attachmentToBuffer(att);
+              if (buf) {
+                await sendBinaryToNamedChannel(buf, att.filename, att.caption);
+              } else {
+                console.warn(`[DiscordManager] named-agent file attachment ${att.filename} had no usable source — skipping`);
+              }
+            } catch (attErr) {
+              console.warn(`[DiscordManager] named-agent file attachment send failed: ${att.filename}`, attErr);
+            }
+          }
+          // markdown kind already merged into the text reply above
+        }
+      }
+
       return;
     }
 
