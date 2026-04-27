@@ -1881,8 +1881,10 @@ export async function startEmailAlertScanner(): Promise<void> {
               jarvisReason: reason,
               suggestedActions,
               matchedRuleId: ruleId || null,
-            });
-          } catch {}
+            }).onConflictDoNothing();
+          } catch (err) {
+            console.error("[EmailAlert] inbox_items insert failed:", err);
+          }
           const senderName = email.from.replace(/<.*>/, '').trim() || email.from;
           const msg = `📧 Surfaced for you:\nFrom: ${senderName}\n"${email.subject}"\n\n${email.snippet.slice(0, 150)}${email.snippet.length > 150 ? '...' : ''}\n\nJarvis: ${reason}`;
           await notifyUser(link.userId, "email_alert", msg);
@@ -1961,8 +1963,10 @@ Return [] if nothing is urgent.`,
               snippet: email.snippet,
               jarvisReason: flag.reason,
               suggestedActions,
-            });
-          } catch {}
+            }).onConflictDoNothing();
+          } catch (err) {
+            console.error("[EmailAlert] inbox_items insert failed:", err);
+          }
 
           const msg = `📧 Email needs your attention:\nFrom: ${senderName}\n"${email.subject}"\n\n${email.snippet.slice(0, 150)}${email.snippet.length > 150 ? '...' : ''}\n\nJarvis: ${flag.reason}`;
           await notifyUser(link.userId, "email_alert", msg);
