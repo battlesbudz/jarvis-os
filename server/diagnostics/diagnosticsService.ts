@@ -569,16 +569,16 @@ export async function runHealthCheck(userId?: string): Promise<HealthReport> {
 
   return {
     overallStatus,
-    subsystems,
-    recentErrors,
-    degradedSubsystems,
+    subsystems: Array.isArray(subsystems) ? subsystems : [],
+    recentErrors: Array.isArray(recentErrors) ? recentErrors : [],
+    degradedSubsystems: Array.isArray(degradedSubsystems) ? degradedSubsystems : [],
     generatedAt: now,
     openAiReachable,
     openAiLatencyMs,
     dbReachable,
     jobQueueDepth,
     staleJobCount,
-    channelStatuses,
+    channelStatuses: channelStatuses ?? {},
     stuckWorkflowCount,
   };
 }

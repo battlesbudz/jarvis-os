@@ -88,6 +88,18 @@ function SectionHeader({ label, accent }: { label: string; accent: string }) {
   );
 }
 
+function SectionErrorRow({ message, onRetry }: { message?: string; onRetry: () => void }) {
+  return (
+    <View style={sectionStyles.errorRow}>
+      <Ionicons name="alert-circle-outline" size={15} color={Colors.textTertiary} />
+      <Text style={sectionStyles.errorText}>{message ?? "Couldn't load"}</Text>
+      <Pressable onPress={onRetry} style={sectionStyles.retryBtn}>
+        <Text style={sectionStyles.retryText}>Retry</Text>
+      </Pressable>
+    </View>
+  );
+}
+
 type HealthStatus = 'healthy' | 'expiring_soon' | 'broken' | 'unconfigured' | string;
 
 function StatusDot({ status }: { status: HealthStatus }) {
@@ -116,6 +128,31 @@ const sectionStyles = StyleSheet.create({
     fontSize: 10,
     fontFamily: 'Inter_700Bold',
     letterSpacing: 2,
+  },
+  errorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+  },
+  errorText: {
+    flex: 1,
+    fontSize: 13,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textTertiary,
+  },
+  retryBtn: {
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  retryText: {
+    fontSize: 12,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.text,
   },
 });
 
@@ -150,6 +187,12 @@ export default function SettingsScreen() {
   const [loadingStatus, setLoadingStatus] = useState(true);
   const [connectingId, setConnectingId] = useState<string | null>(null);
   const [androidDaemonCode, setAndroidDaemonCode] = useState<string | null>(null);
+
+  // ── Per-section error states ──
+  const [connectionsError, setConnectionsError] = useState(false);
+  const [modelsError, setModelsError] = useState(false);
+  const [nervousSystemError, setNervousSystemError] = useState(false);
+  const [healthError, setHealthError] = useState(false);
 
   // ── Wake Word ──
   const [wakeWordEnabled, setWakeWordEnabled] = useState(false);
@@ -240,9 +283,21 @@ export default function SettingsScreen() {
       const res = await apiRequest('GET', '/api/diagnostics/health');
       if (res.ok) {
         const data = await res.json();
-        setHealthReport(data);
+        // Validate the response has the expected shape before accepting it
+        if (data && typeof data === 'object' && 'overallStatus' in data) {
+          data.subsystems = Array.isArray(data.subsystems) ? data.subsystems : [];
+          data.recentErrors = Array.isArray(data.recentErrors) ? data.recentErrors : [];
+          setHealthReport(data);
+          setHealthError(false);
+        } else {
+          setHealthError(true);
+        }
+      } else {
+        setHealthError(true);
       }
-    } catch {}
+    } catch {
+      setHealthError(true);
+    }
     setHealthLoading(false);
   }, []);
 
@@ -336,12 +391,19 @@ export default function SettingsScreen() {
     setNsLoading(true);
     try {
       const [watchRes, signalRes] = await Promise.all([
-        apiRequest('GET', '/api/nervous-system/watches').then(r => r.json()).catch(() => []),
-        apiRequest('GET', '/api/nervous-system/signals?limit=5').then(r => r.json()).catch(() => []),
+        apiRequest('GET', '/api/nervous-system/watches').then(r => r.json()).catch(() => null),
+        apiRequest('GET', '/api/nervous-system/signals?limit=5').then(r => r.json()).catch(() => null),
       ]);
-      setWatches(Array.isArray(watchRes) ? watchRes : []);
-      setRecentSignals(Array.isArray(signalRes) ? signalRes : []);
-    } catch {}
+      if (watchRes === null && signalRes === null) {
+        setNervousSystemError(true);
+      } else {
+        setWatches(Array.isArray(watchRes) ? watchRes : []);
+        setRecentSignals(Array.isArray(signalRes) ? signalRes : []);
+        setNervousSystemError(false);
+      }
+    } catch {
+      setNervousSystemError(true);
+    }
     setNsLoading(false);
   }, []);
 
@@ -372,8 +434,8 @@ export default function SettingsScreen() {
     } catch {}
   }, []);
 
-  // ── Load everything ──
-  const loadAll = useCallback(async () => {
+  // ── Load connections (OAuth, Telegram, Discord, integrations) ──
+  const loadConnections = useCallback(async () => {
     setLoadingStatus(true);
     try {
       const [oauthRes, telegramRes, discordRes, integrationRes] = await Promise.all([
@@ -405,8 +467,35 @@ export default function SettingsScreen() {
         setIntegrationHealth(health);
         setIntegrationErrors(errors);
       }
-    } catch {}
+      setConnectionsError(false);
+    } catch {
+      setConnectionsError(true);
+    }
     setLoadingStatus(false);
+  }, []);
+
+  // ── Load AI model preferences ──
+  const loadModels = useCallback(async () => {
+    try {
+      const [modelRes, orchRes] = await Promise.all([
+        apiRequest('GET', '/api/settings/models').then(r => r.json()).catch(() => null),
+        apiRequest('GET', '/api/settings/orchestrator').then(r => r.json()).catch(() => null),
+      ]);
+      if (modelRes?.modelPreferences) setModelPrefs(modelRes.modelPreferences);
+      if (modelRes?.availableModels) setAvailableModels(modelRes.availableModels);
+      if (orchRes) {
+        setOrchestratorModel(orchRes.orchestratorModel ?? 'claude-opus-4-6');
+        setAvailableOrchestratorModels(orchRes.availableOrchestratorModels ?? []);
+      }
+      setModelsError(false);
+    } catch {
+      setModelsError(true);
+    }
+  }, []);
+
+  // ── Load everything ──
+  const loadAll = useCallback(async () => {
+    await loadConnections();
 
     const [s, lc, name, notif, cm] = await Promise.all([
       getStats(),
@@ -432,19 +521,8 @@ export default function SettingsScreen() {
         setWakeWords(wakeRes.wakeWords ?? ['hey jarvis', 'jarvis', 'computer']);
       }
     } catch {}
-    try {
-      const modelRes = await apiRequest('GET', '/api/settings/models').then(r => r.json()).catch(() => null);
-      if (modelRes?.modelPreferences) setModelPrefs(modelRes.modelPreferences);
-      if (modelRes?.availableModels) setAvailableModels(modelRes.availableModels);
-    } catch {}
-    try {
-      const orchRes = await apiRequest('GET', '/api/settings/orchestrator').then(r => r.json()).catch(() => null);
-      if (orchRes) {
-        setOrchestratorModel(orchRes.orchestratorModel ?? 'claude-opus-4-6');
-        setAvailableOrchestratorModels(orchRes.availableOrchestratorModels ?? []);
-      }
-    } catch {}
-  }, []);
+    await loadModels();
+  }, [loadConnections, loadModels]);
 
   useFocusEffect(useCallback(() => {
     loadAll();
@@ -725,6 +803,9 @@ export default function SettingsScreen() {
         <SectionHeader label="CONNECTIONS" accent={Colors.cyan} />
 
         <View style={styles.card}>
+          {connectionsError && (
+            <SectionErrorRow message="Couldn't load connections" onRetry={loadConnections} />
+          )}
           {/* OAuth platforms */}
           {PLATFORMS.map((p, idx) => {
             const status = oauthStatus[p.id as keyof OAuthStatus];
@@ -1210,6 +1291,8 @@ export default function SettingsScreen() {
             <View style={nsStyles.loadingRow}>
               <ActivityIndicator size="small" color="#F59E0B" />
             </View>
+          ) : nervousSystemError ? (
+            <SectionErrorRow message="Couldn't load Nervous System" onRetry={loadNervousSystem} />
           ) : (
             <>
               {watches.length === 0 && (
@@ -1440,53 +1523,62 @@ export default function SettingsScreen() {
         {/* ── MODEL PREFERENCES ── */}
         <SectionHeader label="AI MODELS" accent={Colors.violet} />
         <View style={styles.card}>
-          {(
-            [
-              { key: 'chat' as ModelCategory, icon: 'chatbubble-outline', label: 'Chat & Agent' },
-              { key: 'planning' as ModelCategory, icon: 'calendar-outline', label: 'Planning' },
-              { key: 'memory' as ModelCategory, icon: 'library-outline', label: 'Memory' },
-              { key: 'research' as ModelCategory, icon: 'search-outline', label: 'Research' },
-            ] as { key: ModelCategory; icon: string; label: string }[]
-          ).map(({ key, icon, label }, idx) => {
-            const currentModel = availableModels.find(m => m.value === modelPrefs[key]);
-            return (
-              <Pressable
-                key={key}
-                style={[styles.prefRow, idx > 0 && styles.prefRowBorder]}
-                onPress={() => {
-                  if (savingModel) return;
-                  Alert.alert(
-                    label,
-                    'Choose the AI model for this category',
-                    [
-                      ...availableModels.map(m => ({
-                        text: `${m.label}  —  ${m.description}`,
-                        style: (m.value === modelPrefs[key] ? 'destructive' : 'default') as 'destructive' | 'default',
-                        onPress: () => saveModel(key, m.value),
-                      })),
-                      { text: 'Cancel', style: 'cancel' as const },
-                    ]
-                  );
-                }}
-              >
-                <View style={styles.prefLeft}>
-                  <Ionicons name={icon as any} size={16} color={Colors.violet} />
-                  <View>
-                    <Text style={styles.prefTitle}>{label}</Text>
-                    <Text style={styles.prefSub}>{currentModel ? `${currentModel.label} · ${currentModel.description}` : modelPrefs[key]}</Text>
-                  </View>
-                </View>
-                {savingModel === key
-                  ? <ActivityIndicator size="small" color={Colors.violet} />
-                  : <Ionicons name="chevron-forward" size={16} color={Colors.textTertiary} />}
-              </Pressable>
-            );
-          })}
+          {modelsError ? (
+            <SectionErrorRow message="Couldn't load model settings" onRetry={loadModels} />
+          ) : (
+            <>
+              {(
+                [
+                  { key: 'chat' as ModelCategory, icon: 'chatbubble-outline', label: 'Chat & Agent' },
+                  { key: 'planning' as ModelCategory, icon: 'calendar-outline', label: 'Planning' },
+                  { key: 'memory' as ModelCategory, icon: 'library-outline', label: 'Memory' },
+                  { key: 'research' as ModelCategory, icon: 'search-outline', label: 'Research' },
+                ] as { key: ModelCategory; icon: string; label: string }[]
+              ).map(({ key, icon, label }, idx) => {
+                const currentModel = availableModels.find(m => m.value === modelPrefs[key]);
+                return (
+                  <Pressable
+                    key={key}
+                    style={[styles.prefRow, idx > 0 && styles.prefRowBorder]}
+                    onPress={() => {
+                      if (savingModel) return;
+                      Alert.alert(
+                        label,
+                        'Choose the AI model for this category',
+                        [
+                          ...availableModels.map(m => ({
+                            text: `${m.label}  —  ${m.description}`,
+                            style: (m.value === modelPrefs[key] ? 'destructive' : 'default') as 'destructive' | 'default',
+                            onPress: () => saveModel(key, m.value),
+                          })),
+                          { text: 'Cancel', style: 'cancel' as const },
+                        ]
+                      );
+                    }}
+                  >
+                    <View style={styles.prefLeft}>
+                      <Ionicons name={icon as any} size={16} color={Colors.violet} />
+                      <View>
+                        <Text style={styles.prefTitle}>{label}</Text>
+                        <Text style={styles.prefSub}>{currentModel ? `${currentModel.label} · ${currentModel.description}` : modelPrefs[key]}</Text>
+                      </View>
+                    </View>
+                    {savingModel === key
+                      ? <ActivityIndicator size="small" color={Colors.violet} />
+                      : <Ionicons name="chevron-forward" size={16} color={Colors.textTertiary} />}
+                  </Pressable>
+                );
+              })}
+            </>
+          )}
         </View>
 
         {/* ── ORCHESTRATOR MODE ── */}
         <SectionHeader label="ORCHESTRATOR MODE" accent={Colors.violet} />
         <View style={styles.card}>
+          {modelsError ? (
+            <SectionErrorRow message="Couldn't load orchestrator settings" onRetry={loadModels} />
+          ) : (
           <Pressable
             style={styles.prefRow}
             onPress={() => {
@@ -1522,6 +1614,7 @@ export default function SettingsScreen() {
                 </View>
             }
           </Pressable>
+          )}
         </View>
 
         {/* ── JARVIS INTELLIGENCE ── */}
@@ -1556,7 +1649,12 @@ export default function SettingsScreen() {
         {/* ── JARVIS HEALTH ── */}
         <SectionHeader label="JARVIS HEALTH" accent="#10B981" />
         <View style={[styles.card, { gap: 0 }]}>
+          {/* Health error state */}
+          {!healthLoading && healthError && (
+            <SectionErrorRow message="Health check unavailable" onRetry={loadHealth} />
+          )}
           {/* Overall status row */}
+          {!healthError && (
           <View style={healthStyles.overallRow}>
             {healthLoading ? (
               <ActivityIndicator size="small" color="#10B981" />
@@ -1605,6 +1703,7 @@ export default function SettingsScreen() {
               <Ionicons name="refresh-outline" size={16} color="#10B981" />
             </Pressable>
           </View>
+          )}
 
           {/* Subsystem grid */}
           {healthReport && (healthReport.subsystems ?? []).length > 0 && (
