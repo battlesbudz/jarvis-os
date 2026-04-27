@@ -14,7 +14,7 @@
 
 import { exec } from "child_process";
 import { promisify } from "util";
-import { readdir, readFile, rm } from "fs/promises";
+import { readdir, readFile, rm, stat as fsStat } from "fs/promises";
 import { mkdtempSync } from "fs";
 import path from "path";
 import os from "os";
@@ -186,6 +186,146 @@ function evictOldest(): void {
     }
   }
   if (oldestKey) cache.delete(oldestKey);
+}
+
+// ── Audio transcription via yt-dlp + ffmpeg + OpenAI Whisper ─────────────────
+// Last server-side fallback when all subtitle-based strategies fail.
+// Downloads audio-only, converts to mono 16 kHz WAV, splits into 10-min chunks
+// if needed (Whisper API limit: 25 MB), transcribes each chunk, and combines.
+// Labels output as AI-generated so users know it isn't from official captions.
+
+/** Max audio file size we'll attempt to transcribe (~30-40 min at typical bitrate). */
+const AUDIO_MAX_BYTES = 80 * 1024 * 1024;
+/** Whisper API file size limit with headroom. */
+const WHISPER_MAX_BYTES = 23 * 1024 * 1024;
+/** Length of each WAV chunk sent to Whisper (10 minutes). */
+const AUDIO_CHUNK_SECS = 600;
+
+async function transcribeBuffer(buf: Buffer, ext: "wav" | "mp3"): Promise<string> {
+  const { openai } = await import("../replit_integrations/audio/client");
+  const { toFile } = await import("openai");
+  const file = await toFile(buf, `audio.${ext}`, { type: `audio/${ext}` });
+  const resp = await openai.audio.transcriptions.create({
+    file,
+    model: "whisper-1",
+    language: "en",
+    response_format: "text",
+  });
+  return typeof resp === "string" ? resp : ((resp as { text?: string }).text ?? "");
+}
+
+async function fetchAudioTranscript(videoId: string): Promise<TranscriptResponse[]> {
+  if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) return [];
+
+  let tmpDir: string;
+  try {
+    tmpDir = mkdtempSync(path.join(os.tmpdir(), `ytaudio-${videoId}-`));
+  } catch {
+    return [];
+  }
+
+  try {
+    const url = `https://www.youtube.com/watch?v=${videoId}`;
+    const outputTemplate = path.join(tmpDir, "%(id)s.%(ext)s");
+
+    // Download audio only — cap at AUDIO_MAX_BYTES to reject very long videos
+    await execAsync(
+      `yt-dlp -f "bestaudio[filesize<80M]/bestaudio" --extract-audio --audio-format mp3 ` +
+        `--no-playlist --no-warnings --quiet --no-progress ` +
+        `--max-filesize 80M ` +
+        `--output "${outputTemplate}" -- "${url}"`,
+      { timeout: 120_000 }
+    );
+
+    const files = await readdir(tmpDir).catch(() => [] as string[]);
+    const mp3File = files.find((f) => f.endsWith(".mp3")) ?? files.find((f) => f.endsWith(".m4a"));
+    if (!mp3File) return [];
+
+    const mp3Path = path.join(tmpDir, mp3File);
+    const mp3Stat = await fsStat(mp3Path);
+    if (mp3Stat.size > AUDIO_MAX_BYTES) {
+      console.warn(
+        `[transcriptCache] audio: ${videoId} exceeds size limit (${mp3Stat.size} bytes) — skipping`
+      );
+      return [];
+    }
+
+    // Convert to mono 16 kHz WAV for chunking
+    const wavPath = path.join(tmpDir, `${videoId}.wav`);
+    await execAsync(
+      `ffmpeg -i "${mp3Path}" -ar 16000 -ac 1 -acodec pcm_s16le -y "${wavPath}"`,
+      { timeout: 120_000 }
+    );
+
+    const wavStat = await fsStat(wavPath);
+    let fullText = "";
+
+    if (wavStat.size <= WHISPER_MAX_BYTES) {
+      const buf = await readFile(wavPath);
+      fullText = await transcribeBuffer(buf, "wav");
+    } else {
+      // Get total duration so we can split into fixed-length chunks
+      const { stdout } = await execAsync(
+        `ffprobe -v quiet -show_entries format=duration -of csv=p=0 "${wavPath}"`,
+        { timeout: 15_000 }
+      );
+      const totalDuration = parseFloat(stdout.trim()) || 0;
+
+      if (!totalDuration) {
+        // Unknown duration — just try the whole file (may exceed Whisper limit)
+        const buf = await readFile(wavPath);
+        fullText = await transcribeBuffer(buf, "wav");
+      } else {
+        const chunks: string[] = [];
+        let offset = 0;
+        let chunkNum = 0;
+        while (offset < totalDuration) {
+          const chunkPath = path.join(tmpDir, `chunk-${chunkNum}.wav`);
+          await execAsync(
+            `ffmpeg -i "${wavPath}" -ss ${offset} -t ${AUDIO_CHUNK_SECS} ` +
+              `-ar 16000 -ac 1 -acodec pcm_s16le -y "${chunkPath}"`,
+            { timeout: 60_000 }
+          );
+          const buf = await readFile(chunkPath);
+          const text = await transcribeBuffer(buf, "wav").catch(() => "");
+          if (text.trim()) chunks.push(text.trim());
+          offset += AUDIO_CHUNK_SECS;
+          chunkNum++;
+        }
+        fullText = chunks.join(" ");
+      }
+    }
+
+    if (!fullText.trim()) return [];
+
+    console.log(
+      `[transcriptCache] audio transcription OK ${videoId} — ${fullText.length} chars`
+    );
+    return [
+      {
+        text: `[AI-generated transcript — no official captions available]\n\n${fullText.trim()}`,
+        offset: 0,
+        duration: 0,
+        lang: "en",
+      },
+    ];
+  } catch (err) {
+    const raw = err instanceof Error ? err.message : String(err);
+    const lower = raw.toLowerCase();
+    if (lower.includes("private video") || lower.includes("video unavailable")) {
+      throw new Error(`LOGIN_REQUIRED: ${raw}`);
+    }
+    if (lower.includes("age-restricted") || lower.includes("sign in to confirm")) {
+      throw new Error(`CONTENT_RESTRICTED: ${raw}`);
+    }
+    if (lower.includes("429") || lower.includes("too many requests")) {
+      throw new Error(`TOO_MANY_REQUESTS: ${raw}`);
+    }
+    console.warn(`[transcriptCache] audio transcription non-terminal failure for ${videoId}: ${raw}`);
+    return [];
+  } finally {
+    rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+  }
 }
 
 // ── InnerTube multi-client configuration ─────────────────────────────────────
@@ -630,7 +770,7 @@ export async function fetchTranscriptCached(
     }
   }
 
-  // ── Strategy 3: youtube-transcript library (last resort) ─────────────────
+  // ── Strategy 3: youtube-transcript library (last subtitle resort) ────────
   if (segments.length === 0) {
     try {
       const { YoutubeTranscript } = await import("youtube-transcript/dist/youtube-transcript.esm.js");
@@ -642,7 +782,30 @@ export async function fetchTranscriptCached(
     } catch (fallbackErr) {
       const msg = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
       console.warn(`[transcriptCache] youtube-transcript fallback also failed for ${resolvedId}: ${msg}`);
-      if (segments.length === 0) throw fallbackErr;
+    }
+  }
+
+  // ── Strategy 4: Audio transcription (yt-dlp audio → ffmpeg WAV → Whisper) ─
+  // Only attempted when all subtitle strategies fail. Downloads the audio track,
+  // converts to mono 16 kHz WAV, splits into ≤10-min chunks, and transcribes
+  // via OpenAI Whisper. Result is labelled as AI-generated.
+  if (segments.length === 0) {
+    console.log(`[transcriptCache] strategy 4: audio transcription for ${resolvedId}`);
+    try {
+      const audioSegs = await fetchAudioTranscript(resolvedId);
+      if (audioSegs.length > 0) {
+        segments = audioSegs;
+        source = "audio-transcription";
+        console.log(
+          `[transcriptCache] audio transcription OK ${resolvedId} — ${audioSegs.length} seg(s), ` +
+            `${audioSegs.reduce((n, s) => n + s.text.length, 0)} chars`
+        );
+      }
+    } catch (audioErr) {
+      const msg = audioErr instanceof Error ? audioErr.message : String(audioErr);
+      // Re-throw known terminal errors so they surface correctly
+      if (/^(LOGIN_REQUIRED|CONTENT_RESTRICTED|TOO_MANY_REQUESTS):/.test(msg)) throw audioErr;
+      console.warn(`[transcriptCache] audio transcription failed for ${resolvedId}: ${msg}`);
     }
   }
 

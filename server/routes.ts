@@ -6069,6 +6069,54 @@ Extract up to 8 memories per batch.`;
     res.json({ ok: true });
   });
 
+  /** POST /api/local-worker/transcribe-audio?token=XXX
+   *  Transcribes audio uploaded by the local worker using OpenAI Whisper.
+   *  The local worker downloads YouTube audio on the user's PC (no IP blocks),
+   *  encodes it as base64, then posts here for AI transcription.
+   *  Body: { audio: "<base64>", format: "mp3"|"wav"|"m4a", videoId?: string } */
+  app.post("/api/local-worker/transcribe-audio", async (req: Request, res: Response) => {
+    const token = String(req.query.token || req.body?.token || "");
+    if (!token) return res.status(400).json({ error: "token required" });
+
+    // Validate token — any registered worker token is accepted
+    const { getUserIdByToken } = await import("./lib/localWorkerQueue");
+    const userId = getUserIdByToken(token);
+    if (!userId) return res.status(401).json({ error: "invalid token" });
+
+    const audioB64 = req.body?.audio as string | undefined;
+    const format = (req.body?.format as string | undefined) || "mp3";
+    if (!audioB64) return res.status(400).json({ error: "audio (base64) required" });
+
+    if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+      return res.status(503).json({ error: "OpenAI API not configured" });
+    }
+
+    try {
+      const audioBuffer = Buffer.from(audioB64, "base64");
+      // Enforce 25 MB Whisper API limit
+      if (audioBuffer.length > 25 * 1024 * 1024) {
+        return res.status(413).json({ error: "Audio chunk exceeds 25 MB Whisper limit — split into smaller chunks" });
+      }
+
+      const { openai } = await import("./replit_integrations/audio/client");
+      const { toFile } = await import("openai");
+      const safeFormat = ["mp3", "wav", "m4a", "webm", "mp4", "ogg"].includes(format) ? format : "mp3";
+      const file = await toFile(audioBuffer, `audio.${safeFormat}`, { type: `audio/${safeFormat}` });
+      const response = await openai.audio.transcriptions.create({
+        file,
+        model: "whisper-1",
+        language: "en",
+        response_format: "text",
+      });
+      const transcript = typeof response === "string" ? response : ((response as { text?: string }).text ?? "");
+      res.json({ ok: true, transcript });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[local-worker/transcribe-audio] error for user ${userId}: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
   const httpServer = createServer(app);
   return httpServer;
 }

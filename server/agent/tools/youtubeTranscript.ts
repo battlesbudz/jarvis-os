@@ -2,11 +2,14 @@
  * YouTube Transcript Fetcher
  *
  * Retrieves the full spoken transcript from any YouTube video using
- * official captions or auto-generated subtitles — no API key required.
+ * official captions, auto-generated subtitles, audio transcription, or
+ * web-search as a last resort — no API key required for basic usage.
  *
- * Handles both manual and auto-generated captions for short clips and
- * long-form videos (1h+). Segments are formatted with human-readable
- * timestamps so the AI can cite specific moments.
+ * Strategy order:
+ *   1-4. Server-side (InnerTube → yt-dlp subs → timedtext → yt-transcript lib → audio transcription)
+ *   5.   Browser fallback (Playwright with real cookies)
+ *   6.   Local worker (user's own machine, bypasses IP blocks)
+ *   7.   Tavily web search (last resort — returns summaries, not real transcript)
  */
 
 import type { AgentTool, ToolArgs, ToolContext, ToolResult } from "../types";
@@ -103,6 +106,79 @@ async function fetchTranscriptViaBrowser(
   }
 }
 
+// ── Tavily web-search fallback ────────────────────────────────────────────────
+// Absolute last resort: searches the web for information about the video when
+// no transcript can be retrieved by any other method. Returns summaries and
+// external sources, clearly labelled as web-search results (not a transcript).
+
+async function fetchViaTavily(input: string): Promise<ToolResult | null> {
+  if (!process.env.TAVILY_API_KEY) return null;
+
+  const { tavilySearch } = await import("../../integrations/search");
+  const videoId = extractVideoId(input);
+  const videoUrl = videoId
+    ? `https://www.youtube.com/watch?v=${videoId}`
+    : input;
+
+  try {
+    // Run two parallel searches: one for the URL itself, one for transcript sites
+    const [urlRes, transcriptRes] = await Promise.allSettled([
+      tavilySearch(videoUrl, 5),
+      tavilySearch(`${videoId ?? input} youtube transcript`, 5),
+    ]);
+
+    const parts: string[] = [];
+
+    if (urlRes.status === "fulfilled" && urlRes.value.answer) {
+      parts.push(`**What the web says about this video:**\n${urlRes.value.answer}`);
+    }
+    if (transcriptRes.status === "fulfilled" && transcriptRes.value.answer) {
+      parts.push(`**Transcript search summary:**\n${transcriptRes.value.answer}`);
+    }
+
+    // Deduplicate results by URL and take top 6
+    const seen = new Set<string>();
+    const results: Array<{ title: string; url: string; content: string }> = [];
+    for (const pool of [urlRes, transcriptRes]) {
+      if (pool.status !== "fulfilled") continue;
+      for (const r of pool.value.results) {
+        if (!seen.has(r.url)) {
+          seen.add(r.url);
+          results.push(r);
+        }
+      }
+    }
+
+    if (results.length > 0) {
+      parts.push(
+        "**Related sources:**\n" +
+          results
+            .slice(0, 6)
+            .map((r) => `- [${r.title}](${r.url})\n  ${r.content.slice(0, 250)}`)
+            .join("\n\n")
+      );
+    }
+
+    if (parts.length === 0) return null;
+
+    const header =
+      `⚠️ No official transcript could be retrieved — showing web search results instead.\n` +
+      `These are NOT a word-for-word transcript but may still help.\n` +
+      `${"─".repeat(60)}\n`;
+
+    return {
+      ok: true,
+      content: header + parts.join("\n\n"),
+      label: "get_youtube_transcript: tavily-search fallback",
+    };
+  } catch (err) {
+    console.warn(
+      `[get_youtube_transcript] Tavily fallback error: ${err instanceof Error ? err.message : String(err)}`
+    );
+    return null;
+  }
+}
+
 export const youtubeTranscriptTool: AgentTool = {
   name: "get_youtube_transcript",
   description:
@@ -161,6 +237,57 @@ export const youtubeTranscriptTool: AgentTool = {
       rawSegments: Array<{ text: string; offset: number; duration?: number | null }>,
       source?: string
     ): ToolResult => {
+      const sourceTag = source ? ` · via ${source}` : "";
+
+      // ── AI-generated transcript (audio transcription, no timestamps) ──────
+      // Audio-transcribed segments have offset=0 and duration=0, with a
+      // special prefix in the text. Format them as plain text without timestamps.
+      const isAiGenerated =
+        rawSegments.length === 1 &&
+        rawSegments[0].offset === 0 &&
+        rawSegments[0].duration === 0 &&
+        rawSegments[0].text.startsWith("[AI-generated transcript");
+
+      if (isAiGenerated) {
+        const body = rawSegments[0].text;
+        const header =
+          `AI-Generated Transcript (audio transcription${sourceTag})\n` +
+          `${"─".repeat(60)}\n`;
+        const fullText = header + body;
+
+        if (body.length > FILE_THRESHOLD) {
+          const pending = (ctx.state.pendingAttachments ||= []);
+          pending.push({
+            kind: "document",
+            filename: `transcript-${(extractVideoId(input) ?? "video")}.txt`,
+            content: fullText,
+            caption: `AI-generated transcript (no official captions were available).`,
+            mimeType: "text/plain",
+          });
+          return {
+            ok: true,
+            content:
+              `Audio transcription complete (~${Math.round(body.length / 1000)} k chars). ` +
+              `No official captions were available, so the audio was transcribed via AI. ` +
+              `Sending the full transcript as a text file.`,
+            label: `get_youtube_transcript: ai-audio-transcription → file`,
+          };
+        }
+
+        let inlineBody = body;
+        let truncNote = "";
+        if (inlineBody.length > MAX_CHARS) {
+          inlineBody = inlineBody.slice(0, MAX_CHARS);
+          truncNote = `\n\n[Transcript truncated at ${MAX_CHARS.toLocaleString()} characters.]`;
+        }
+        return {
+          ok: true,
+          content: header + inlineBody + truncNote,
+          label: `get_youtube_transcript: ai-audio-transcription`,
+        };
+      }
+
+      // ── Standard timestamped transcript ───────────────────────────────────
       // Normalise offsets: InnerTube ms vs. classic library seconds detection.
       const lastSeg = rawSegments[rawSegments.length - 1];
       const lastRawOffset = lastSeg.offset + (lastSeg.duration ?? 0);
@@ -188,7 +315,6 @@ export const youtubeTranscriptTool: AgentTool = {
       }
 
       const totalDuration = formatTimestamp(lastRawOffset * toMs);
-      const sourceTag = source ? ` · via ${source}` : "";
       const header =
         `Transcript (${rawSegments.length} segments, ~${totalDuration} duration${sourceTag})\n` +
         `${"─".repeat(60)}\n`;
@@ -255,10 +381,20 @@ export const youtubeTranscriptTool: AgentTool = {
           }
         }
 
+        // ── Strategy 7: Tavily web-search ────────────────────────────────────
+        // All transcript methods exhausted — search the web for any available
+        // summaries or third-party transcripts instead.
+        console.log(`[get_youtube_transcript] all strategies empty — trying Tavily web search`);
+        const tavilyResult = await fetchViaTavily(input);
+        if (tavilyResult) return tavilyResult;
+
         return {
           ok: false,
-          content: "No transcript segments were returned. The video may have captions disabled.",
-          label: "get_youtube_transcript: empty transcript",
+          content:
+            "No transcript could be retrieved for this video. It may have captions disabled, " +
+            "be a live stream, or be blocked from server access. If you have the local worker " +
+            "running on your PC, it can often succeed where the server cannot.",
+          label: "get_youtube_transcript: all strategies exhausted",
         };
       }
 
@@ -303,7 +439,7 @@ export const youtubeTranscriptTool: AgentTool = {
       const browserSegs = await fetchTranscriptViaBrowser(input, ctx.userId);
       if (browserSegs.length > 0) return buildResult(browserSegs, "browser");
 
-      // ── Last resort: local worker ─────────────────────────────────────────
+      // ── Local worker ──────────────────────────────────────────────────────
       if (isWorkerOnline(ctx.userId)) {
         console.log(`[get_youtube_transcript] browser also failed — forwarding to local worker`);
         try {
@@ -314,11 +450,19 @@ export const youtubeTranscriptTool: AgentTool = {
         }
       }
 
+      // ── Tavily web search (absolute last resort) ───────────────────────────
+      console.log(`[get_youtube_transcript] all strategies failed — trying Tavily web search`);
+      const tavilyFallback = await fetchViaTavily(input);
+      if (tavilyFallback) return tavilyFallback;
+
       console.error(`[get_youtube_transcript] all strategies exhausted: ${msg}`);
       return {
         ok: false,
-        content: "Couldn't read the captions for this video right now — please try again in a moment.",
-        label: "get_youtube_transcript: error",
+        content:
+          "Couldn't retrieve the transcript for this video right now. " +
+          "The video may be private, have captions disabled, or YouTube is blocking server access. " +
+          "You can try again in a moment, or start the local worker on your PC for better results.",
+        label: "get_youtube_transcript: all strategies exhausted",
       };
     }
   },
