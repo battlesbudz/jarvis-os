@@ -6,8 +6,10 @@
  * Thread-safe for single-process Node.js.
  *
  * Fetch strategy (in order):
- *   1. InnerTube API — works for public videos with no login required.
- *   2. youtube-transcript library — fallback for edge cases.
+ *   1. InnerTube API — tries TVHTML5_SIMPLY_EMBEDDED_PLAYER, then ANDROID
+ *      client contexts to bypass bot detection on the WEB client.
+ *   2. YouTube timedtext API — direct /api/timedtext XML endpoint (no auth).
+ *   3. youtube-transcript library — last-resort fallback.
  */
 
 import type { TranscriptConfig, TranscriptResponse } from "youtube-transcript";
@@ -55,30 +57,57 @@ function evictOldest(): void {
   if (oldestKey) cache.delete(oldestKey);
 }
 
-// ── InnerTube transcript fetching ─────────────────────────────────────────────
+// ── InnerTube multi-client configuration ─────────────────────────────────────
+// YouTube increasingly blocks the WEB client context from server-side
+// requests. TVHTML5_SIMPLY_EMBEDDED_PLAYER and ANDROID are embedded/app
+// clients that bypass most bot-detection filters applied to the web player.
 
-/** InnerTube API key (public WEB client key, same as YouTube's web player). */
 const INNERTUBE_KEY = "your-youtube-innertube-api-key";
-const INNERTUBE_CLIENT_VERSION = "2.20241107.04.00";
 
-const INNERTUBE_HEADERS = {
-  "Content-Type": "application/json",
-  "User-Agent":
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-  "X-YouTube-Client-Name": "1",
-  "X-YouTube-Client-Version": INNERTUBE_CLIENT_VERSION,
-  Origin: "https://www.youtube.com",
-  "Accept-Language": "en-US,en;q=0.9",
-};
+interface InnerTubeClientConfig {
+  name: string;
+  headers: Record<string, string>;
+  context: Record<string, unknown>;
+}
 
-const INNERTUBE_CONTEXT = {
-  client: {
-    clientName: "WEB",
-    clientVersion: INNERTUBE_CLIENT_VERSION,
-    hl: "en",
-    gl: "US",
+const INNERTUBE_CLIENTS: InnerTubeClientConfig[] = [
+  {
+    name: "TVHTML5_SIMPLY_EMBEDDED_PLAYER",
+    headers: {
+      "Content-Type": "application/json",
+      "X-YouTube-Client-Name": "85",
+      "X-YouTube-Client-Version": "2.0",
+      "Accept-Language": "en-US,en;q=0.9",
+    },
+    context: {
+      client: {
+        clientName: "TVHTML5_SIMPLY_EMBEDDED_PLAYER",
+        clientVersion: "2.0",
+        hl: "en",
+        gl: "US",
+      },
+    },
   },
-};
+  {
+    name: "ANDROID",
+    headers: {
+      "Content-Type": "application/json",
+      "User-Agent": "com.google.android.youtube/19.29.34 (Linux; U; Android 11) gzip",
+      "X-YouTube-Client-Name": "3",
+      "X-YouTube-Client-Version": "19.29.34",
+      "Accept-Language": "en-US,en;q=0.9",
+    },
+    context: {
+      client: {
+        clientName: "ANDROID",
+        clientVersion: "19.29.34",
+        androidSdkVersion: 30,
+        hl: "en",
+        gl: "US",
+      },
+    },
+  },
+];
 
 /** Playability statuses that mean no fallback will help. */
 const INNERTUBE_TERMINAL_STATUSES = new Set([
@@ -182,27 +211,21 @@ function rankCaptionTracks(tracks: InnerTubeCaptionTrack[]): InnerTubeCaptionTra
 }
 
 /**
- * Fetch a transcript via YouTube's InnerTube player API.
- *
- * Strategy:
- *   1. POST /youtubei/v1/player with the videoId to get a player response.
- *   2. Extract available caption tracks from captions.playerCaptionsTracklistRenderer.
- *   3. Choose the best track (English manual > English ASR > other).
- *   4. Append fmt=srv3&tlang=en to the track's baseUrl and download the XML captions.
- *   5. Parse the timed-text XML into TranscriptResponse[].
- *
- * Returns empty array when no caption tracks are present (triggers fallback).
- * Throws terminal errors for private/restricted videos.
+ * Fetch a transcript via a single InnerTube client config.
+ * Returns empty array on non-terminal failures (triggers next strategy).
+ * Throws terminal errors immediately.
  */
-async function fetchInnerTubeTranscript(videoId: string): Promise<TranscriptResponse[]> {
-  // Step 1: Call /youtubei/v1/player to get caption track metadata
+async function fetchInnerTubeWithClient(
+  videoId: string,
+  client: InnerTubeClientConfig
+): Promise<TranscriptResponse[]> {
   const playerRes = await fetch(
     `https://www.youtube.com/youtubei/v1/player?key=${INNERTUBE_KEY}`,
     {
       method: "POST",
-      headers: INNERTUBE_HEADERS,
+      headers: client.headers,
       body: JSON.stringify({
-        context: INNERTUBE_CONTEXT,
+        context: client.context,
         videoId,
         playbackContext: {
           contentPlaybackContext: { signatureTimestamp: 0 },
@@ -215,12 +238,14 @@ async function fetchInnerTubeTranscript(videoId: string): Promise<TranscriptResp
     if (playerRes.status === 429) {
       throw new Error("TOO_MANY_REQUESTS: YouTube is rate-limiting requests. Please try again shortly.");
     }
-    throw new Error(`InnerTube player request failed with HTTP ${playerRes.status}`);
+    // Non-terminal HTTP error — return empty to try next client
+    console.warn(`[transcriptCache] InnerTube ${client.name} HTTP ${playerRes.status} for ${videoId}`);
+    return [];
   }
 
   const player = (await playerRes.json()) as InnerTubePlayerResponse;
 
-  // Step 2: Check terminal playability errors
+  // Check terminal playability errors
   const status = safeStr(player.playabilityStatus?.status);
   if (status && INNERTUBE_TERMINAL_STATUSES.has(status)) {
     if (status === "LOGIN_REQUIRED") {
@@ -233,48 +258,104 @@ async function fetchInnerTubeTranscript(videoId: string): Promise<TranscriptResp
     throw new Error(`CONTENT_RESTRICTED: YouTube reports this video is restricted — ${reason}`);
   }
 
-  // Step 3: Extract and rank caption tracks
-  const tracks =
-    player.captions?.playerCaptionsTracklistRenderer?.captionTracks ?? [];
-  if (tracks.length === 0) {
-    // No captions available at all — return empty so the fallback is tried
-    return [];
-  }
+  const tracks = player.captions?.playerCaptionsTracklistRenderer?.captionTracks ?? [];
+  if (tracks.length === 0) return [];
 
   const ranked = rankCaptionTracks(tracks);
   const best = ranked[0];
   if (!best.baseUrl) return [];
 
-  // Step 4: Download the timed-text XML (srv3 format)
   const captionUrl = new URL(best.baseUrl);
   captionUrl.searchParams.set("fmt", "srv3");
   captionUrl.searchParams.set("tlang", "en");
 
   const captionRes = await fetch(captionUrl.toString(), {
-    headers: { "User-Agent": INNERTUBE_HEADERS["User-Agent"] },
+    headers: {
+      "User-Agent": (client.headers["User-Agent"] as string) ||
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    },
   });
   if (!captionRes.ok) {
-    // Non-fatal — return empty to trigger fallback
-    console.warn(`[transcriptCache] InnerTube caption download returned HTTP ${captionRes.status} for ${videoId}`);
+    console.warn(`[transcriptCache] InnerTube ${client.name} caption download HTTP ${captionRes.status} for ${videoId}`);
     return [];
   }
 
   const xml = await captionRes.text();
-
-  // Step 5: Parse XML into TranscriptResponse[]
   const elements = parseTimedTextXml(xml);
   if (elements.length === 0) return [];
 
-  return elements.map((el) => {
-    const offsetSec = parseFloat(el.start);
-    const durSec = parseFloat(el.dur);
-    return {
-      text: el.text,
-      offset: offsetSec * 1000,  // convert seconds → milliseconds
-      duration: durSec * 1000,   // convert seconds → milliseconds
-      lang: best.languageCode,
-    };
-  });
+  return elements.map((el) => ({
+    text: el.text,
+    offset: parseFloat(el.start) * 1000,
+    duration: parseFloat(el.dur) * 1000,
+    lang: best.languageCode,
+  }));
+}
+
+/**
+ * Fetch a transcript via YouTube's InnerTube player API.
+ * Tries TVHTML5_SIMPLY_EMBEDDED_PLAYER first, then ANDROID as fallback.
+ * Both bypass the bot-detection that YouTube applies to the WEB client.
+ */
+async function fetchInnerTubeTranscript(videoId: string): Promise<TranscriptResponse[]> {
+  for (const client of INNERTUBE_CLIENTS) {
+    try {
+      const segments = await fetchInnerTubeWithClient(videoId, client);
+      if (segments.length > 0) {
+        console.log(`[transcriptCache] InnerTube OK via ${client.name} ${videoId} — ${segments.length} segs`);
+        return segments;
+      }
+      console.log(`[transcriptCache] InnerTube ${client.name} returned 0 segs for ${videoId}, trying next client`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // Terminal errors propagate immediately — no point trying other clients
+      if (
+        msg.startsWith("LOGIN_REQUIRED") ||
+        msg.startsWith("CONTENT_RESTRICTED") ||
+        msg.startsWith("TOO_MANY_REQUESTS")
+      ) {
+        throw err;
+      }
+      console.warn(`[transcriptCache] InnerTube ${client.name} non-terminal failure for ${videoId}: ${msg}`);
+    }
+  }
+  return [];
+}
+
+/**
+ * Fetch a transcript via YouTube's legacy /api/timedtext endpoint.
+ * This direct XML endpoint sometimes works for videos whose caption
+ * baseUrls aren't exposed in the player response.
+ */
+async function fetchTimedTextTranscript(videoId: string): Promise<TranscriptResponse[]> {
+  const langs = ["en", "en-US", "en-GB", "a.en"];
+  for (const lang of langs) {
+    try {
+      const url = `https://www.youtube.com/api/timedtext?v=${encodeURIComponent(videoId)}&lang=${lang}&fmt=srv3`;
+      const res = await fetch(url, {
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+          "Accept-Language": "en-US,en;q=0.9",
+        },
+      });
+      if (!res.ok) continue;
+      const xml = await res.text();
+      if (!xml.trim().startsWith("<")) continue;
+      const elements = parseTimedTextXml(xml);
+      if (elements.length === 0) continue;
+      console.log(`[transcriptCache] timedtext OK lang=${lang} ${videoId} — ${elements.length} segs`);
+      return elements.map((el) => ({
+        text: el.text,
+        offset: parseFloat(el.start) * 1000,
+        duration: parseFloat(el.dur) * 1000,
+        lang,
+      }));
+    } catch {
+      // Non-fatal — try next lang
+    }
+  }
+  return [];
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -289,9 +370,10 @@ export interface FetchTranscriptOptions {
 /**
  * Fetch a transcript, returning a cached result when available.
  *
- * On a cache miss (or when bypassCache=true):
- *   1. Try InnerTube API first — handles most public videos without authentication.
- *   2. Fall back to the youtube-transcript library if InnerTube returns empty segments.
+ * On a cache miss (or when bypassCache=true), three strategies are tried:
+ *   1. InnerTube API (TVHTML5_SIMPLY_EMBEDDED_PLAYER → ANDROID client)
+ *   2. YouTube /api/timedtext direct XML endpoint
+ *   3. youtube-transcript library (last resort)
  *
  * Terminal InnerTube errors (LOGIN_REQUIRED, CONTENT_RESTRICTED, TOO_MANY_REQUESTS)
  * are propagated immediately — no fallback is attempted because the fallback
@@ -324,20 +406,18 @@ export async function fetchTranscriptCached(
   let segments: TranscriptResponse[] = [];
   let source = "unknown";
 
-  // ── Strategy 1: InnerTube API ────────────────────────────────────────────────
+  // ── Strategy 1: InnerTube API (multi-client) ──────────────────────────────
   try {
     segments = await fetchInnerTubeTranscript(resolvedId);
     if (segments.length > 0) {
       source = "innertube";
-      console.log(`[transcriptCache] InnerTube OK ${resolvedId} — ${segments.length} segs`);
     } else {
       console.log(
-        `[transcriptCache] InnerTube returned 0 segs for ${resolvedId}, trying youtube-transcript fallback`
+        `[transcriptCache] InnerTube 0 segs for ${resolvedId}, trying timedtext fallback`
       );
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    // Terminal errors: propagate immediately — the fallback would also fail
     if (
       msg.startsWith("LOGIN_REQUIRED") ||
       msg.startsWith("CONTENT_RESTRICTED") ||
@@ -347,11 +427,30 @@ export async function fetchTranscriptCached(
       throw err;
     }
     console.warn(
-      `[transcriptCache] InnerTube non-terminal failure for ${resolvedId}: ${msg} — trying fallback`
+      `[transcriptCache] InnerTube non-terminal failure for ${resolvedId}: ${msg} — trying timedtext`
     );
   }
 
-  // ── Strategy 2: youtube-transcript library (fallback) ────────────────────────
+  // ── Strategy 2: YouTube /api/timedtext direct XML ─────────────────────────
+  if (segments.length === 0) {
+    try {
+      segments = await fetchTimedTextTranscript(resolvedId);
+      if (segments.length > 0) {
+        source = "timedtext";
+        console.log(`[transcriptCache] timedtext strategy OK ${resolvedId} — ${segments.length} segs`);
+      } else {
+        console.log(`[transcriptCache] timedtext returned 0 segs for ${resolvedId}, trying youtube-transcript fallback`);
+      }
+    } catch (err) {
+      console.warn(
+        `[transcriptCache] timedtext strategy failed for ${resolvedId}: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      );
+    }
+  }
+
+  // ── Strategy 3: youtube-transcript library (last resort) ─────────────────
   if (segments.length === 0) {
     try {
       const { YoutubeTranscript } = await import("youtube-transcript/dist/youtube-transcript.esm.js");
@@ -367,7 +466,7 @@ export async function fetchTranscriptCached(
     }
   }
 
-  // ── Cache the result ─────────────────────────────────────────────────────────
+  // ── Cache the result ──────────────────────────────────────────────────────
   if (videoId && segments && segments.length > 0) {
     evictExpired();
     if (!cache.has(videoId) && cache.size >= MAX_ENTRIES) evictOldest();
