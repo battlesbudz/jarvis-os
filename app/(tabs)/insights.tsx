@@ -725,6 +725,7 @@ export default function InsightsScreen() {
   const talkModeRef = useRef(false);
   const startRecordingRef = useRef<() => Promise<void>>(() => Promise.resolve());
   const stopRecordingRef = useRef<() => Promise<void>>(() => Promise.resolve());
+  const speakTextRef = useRef<(text: string) => void>(() => {});
   const isRecordingRef = useRef(false);
   const [isTTSLoading, setIsTTSLoading] = useState(false);
   const speakingTextRef = useRef<string | null>(null);
@@ -1465,6 +1466,8 @@ export default function InsightsScreen() {
     }
   }, [isSpeaking, stopSpeaking]);
 
+  speakTextRef.current = speakText;
+
   const scanForTasks = useCallback(async (currentGoals: Goal[]) => {
     if (currentGoals.length === 0) return;
     setScanLoading(true);
@@ -2093,6 +2096,11 @@ export default function InsightsScreen() {
         saveChatHistory(updated);
         return updated;
       });
+
+      // Auto-speak the reply in Talk Mode once streaming finishes.
+      if (talkModeRef.current && finalContent.trim()) {
+        speakTextRef.current(finalContent);
+      }
 
       // If Jarvis just sent a channel connect link, start polling for connection.
       // When the channel connects, a confirmation message is injected into the chat.

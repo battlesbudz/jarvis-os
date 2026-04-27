@@ -135,11 +135,11 @@ export default function VoiceRealtimeScreen() {
 
   // ── Native refs ──────────────────────────────────────────────────────────
   const nativeRecorder = useAudioRecorder({
-    extension: Platform.OS === 'android' ? '.wav' : '.caf',
+    extension: '.wav',
     sampleRate: 24000,
     numberOfChannels: 1,
-    bitRate: 48000,
-    android: { outputFormat: 'aac_adts', audioEncoder: 'he_aac' },
+    bitRate: 384000,
+    android: { outputFormat: 'default', audioEncoder: 'default' },
     ios: { audioQuality: AudioQuality.LOW, linearPCMBitDepth: 16, linearPCMIsBigEndian: false, linearPCMIsFloat: false },
     web: { mimeType: 'audio/webm', bitsPerSecond: 48000 },
   });
@@ -498,10 +498,26 @@ export default function VoiceRealtimeScreen() {
         const base64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
         FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
 
+        // Strip the 44-byte WAV header before sending raw PCM16 to OpenAI.
+        // iOS linearPCM .wav files have a fixed 44-byte RIFF header;
+        // Android default .wav output also uses a 44-byte header.
+        const binaryStr = atob(base64);
+        const wavBytes = new Uint8Array(binaryStr.length);
+        for (let i = 0; i < binaryStr.length; i++) wavBytes[i] = binaryStr.charCodeAt(i);
+        const WAV_HEADER_BYTES = 44;
+        const pcmBytes = wavBytes.length > WAV_HEADER_BYTES ? wavBytes.subarray(WAV_HEADER_BYTES) : wavBytes;
+        if (pcmBytes.length === 0) continue;
+        const chunkSize = 8192;
+        let pcmBase64 = '';
+        for (let i = 0; i < pcmBytes.length; i += chunkSize) {
+          pcmBase64 += String.fromCharCode(...pcmBytes.subarray(i, Math.min(i + chunkSize, pcmBytes.length)));
+        }
+        const pcmAudio = btoa(pcmBase64);
+
         if (wsRef.current?.readyState === WebSocket.OPEN) {
           wsRef.current.send(JSON.stringify({
             type: 'input_audio_buffer.append',
-            audio: base64,
+            audio: pcmAudio,
           }));
         }
       } catch (err) {
