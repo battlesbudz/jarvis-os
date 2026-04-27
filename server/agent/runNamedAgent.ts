@@ -73,6 +73,8 @@ export interface RunNamedAgentOptions {
   channelId?: string;
   conversationHistory?: OpenAI.Chat.Completions.ChatCompletionMessageParam[];
   onToken?: (chunk: string) => void;
+  /** Who initiated this agent run — used to auto-approve Jarvis-to-Jarvis tool gates */
+  initiatedBy?: 'user' | 'jarvis';
 }
 
 export interface NamedAgentResult {
@@ -84,7 +86,7 @@ export interface NamedAgentResult {
 }
 
 export async function runNamedAgent(opts: RunNamedAgentOptions): Promise<NamedAgentResult> {
-  const { agentId, userId, userMessage, platform } = opts;
+  const { agentId, userId, userMessage, platform, initiatedBy = 'user' } = opts;
 
   // ── Load agent ────────────────────────────────────────────────────────────
   const agent = await getAgent(agentId);
@@ -182,6 +184,7 @@ export async function runNamedAgent(opts: RunNamedAgentOptions): Promise<NamedAg
           toolArgs,
           description: `Agent "${agent.name}" wants to run tool: ${toolName}`,
           ttlMs: 10 * 60 * 1000, // 10 minutes
+          initiatedBy,
         });
 
         // Notify user in-app so they can approve/reject

@@ -113,6 +113,7 @@ export async function sendToAgent(opts: SendMessageOptions): Promise<BusDelivery
       userId,
       userMessage: payload.text,
       platform: "agent_bus",
+      initiatedBy: 'jarvis',
     });
 
     await db
