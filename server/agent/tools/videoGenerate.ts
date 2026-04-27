@@ -151,6 +151,10 @@ export const videoGenerateTool: AgentTool = {
         ? Math.round(Number(args.duration))
         : undefined;
     const caption = args.caption ? String(args.caption).slice(0, 200) : undefined;
+    const detailMeta = (): Record<string, unknown> => ({
+      ...(duration != null ? { duration } : {}),
+      ...(caption ? { caption } : {}),
+    });
 
     let videoUrl: string;
     try {
@@ -177,7 +181,7 @@ export const videoGenerateTool: AgentTool = {
           ok: true,
           content: `Video generated but Telegram is not linked. View it here: ${videoUrl}`,
           label: "Video generated (Telegram not linked)",
-          detail: JSON.stringify({ videoUrl, ...(duration != null ? { duration } : {}) }),
+          detail: JSON.stringify({ videoUrl, ...detailMeta() }),
         };
       }
 
@@ -187,7 +191,7 @@ export const videoGenerateTool: AgentTool = {
           ok: true,
           content: `Video generated but could not download it for delivery. View it here: ${videoUrl}`,
           label: "Video generated (download failed)",
-          detail: JSON.stringify({ videoUrl, ...(duration != null ? { duration } : {}) }),
+          detail: JSON.stringify({ videoUrl, ...detailMeta() }),
         };
       }
 
@@ -197,7 +201,7 @@ export const videoGenerateTool: AgentTool = {
           ok: false,
           content: `Video generated but failed to send to Telegram. View it here: ${videoUrl}`,
           label: "Video generated (Telegram send failed)",
-          detail: JSON.stringify({ videoUrl, ...(duration != null ? { duration } : {}) }),
+          detail: JSON.stringify({ videoUrl, ...detailMeta() }),
         };
       }
 
@@ -208,7 +212,7 @@ export const videoGenerateTool: AgentTool = {
           ? `Video sent to Telegram with caption: "${caption}".`
           : "Video sent to Telegram.",
         label: "Video sent to Telegram",
-        detail: JSON.stringify({ videoUrl, ...(duration != null ? { duration } : {}) }),
+        detail: JSON.stringify({ videoUrl, ...detailMeta() }),
       };
     }
 
@@ -219,7 +223,7 @@ export const videoGenerateTool: AgentTool = {
           ok: true,
           content: `Video generated: ${videoUrl}`,
           label: "Video generated (Discord channel ID unavailable)",
-          detail: JSON.stringify({ videoUrl, ...(duration != null ? { duration } : {}) }),
+          detail: JSON.stringify({ videoUrl, ...detailMeta() }),
         };
       }
 
@@ -229,7 +233,7 @@ export const videoGenerateTool: AgentTool = {
           ok: true,
           content: `Video generated but could not download it for delivery. View it here: ${videoUrl}`,
           label: "Video generated (download failed)",
-          detail: JSON.stringify({ videoUrl, ...(duration != null ? { duration } : {}) }),
+          detail: JSON.stringify({ videoUrl, ...detailMeta() }),
         };
       }
 
@@ -240,7 +244,7 @@ export const videoGenerateTool: AgentTool = {
           ok: false,
           content: `Video generated but failed to send to Discord. View it here: ${videoUrl}`,
           label: "Video generated (Discord send failed)",
-          detail: JSON.stringify({ videoUrl, ...(duration != null ? { duration } : {}) }),
+          detail: JSON.stringify({ videoUrl, ...detailMeta() }),
         };
       }
 
@@ -251,7 +255,7 @@ export const videoGenerateTool: AgentTool = {
           ? `Video sent to Discord with caption: "${caption}".`
           : "Video sent to Discord.",
         label: "Video sent to Discord",
-        detail: JSON.stringify({ videoUrl, ...(duration != null ? { duration } : {}) }),
+        detail: JSON.stringify({ videoUrl, ...detailMeta() }),
       };
     }
 
@@ -262,7 +266,7 @@ export const videoGenerateTool: AgentTool = {
         ? `Here's your generated video — "${caption}".`
         : "Here's the generated video.",
       label: "Video generated",
-      detail: JSON.stringify({ videoUrl, ...(duration != null ? { duration } : {}) }),
+      detail: JSON.stringify({ videoUrl, ...detailMeta() }),
     };
   },
 };
