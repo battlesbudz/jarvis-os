@@ -57,13 +57,30 @@ async function fetchImageBuffer(url: string): Promise<Buffer | null> {
 
 /** Generate an image via gpt-image-1 and return a data URL (base64). */
 async function generateGptImage(prompt: string, size: GptImage1Size): Promise<string> {
-  const response = await openai.images.generate({
-    model: "gpt-image-1",
-    prompt,
-    n: 1,
-    size,
-  });
-  const b64 = response.data[0]?.b64_json;
+  let b64: string | undefined;
+  try {
+    const response = await openai.images.generate({
+      model: "gpt-image-1",
+      prompt,
+      n: 1,
+      size,
+    });
+    b64 = response.data[0]?.b64_json;
+  } catch (err) {
+    // If the preferred size failed, retry once with the universally-supported square size
+    if (size !== "1024x1024") {
+      console.warn(`[image_generate] size ${size} failed, retrying with 1024x1024:`, err);
+      const fallback = await openai.images.generate({
+        model: "gpt-image-1",
+        prompt,
+        n: 1,
+        size: "1024x1024",
+      });
+      b64 = fallback.data[0]?.b64_json;
+    } else {
+      throw err;
+    }
+  }
   if (!b64) throw new Error("No image data returned from gpt-image-1");
   return `data:image/png;base64,${b64}`;
 }
@@ -157,7 +174,7 @@ export const imageGenerateTool: AgentTool = {
       console.error(`[image_generate] ${modelLabel} generation error:`, err);
       return {
         ok: false,
-        content: `Image generation failed (${modelLabel}): ${msg}. I'll describe it in text instead.`,
+        content: `Image generation failed: ${msg}`,
         label: `image_generate: generation failed (${modelLabel})`,
         detail: msg,
       };
