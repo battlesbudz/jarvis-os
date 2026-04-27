@@ -30,7 +30,7 @@ export const telegramChannel: Channel = {
   name: "telegram",
   // Full coaching surface — Telegram is Jarvis's primary conversational channel.
   // schedule_jarvis_task is already included via the "coaching" group.
-  toolGroups: ["coaching", "calendar", "email", "memory", "documents", "research", "connections", "media", "browser", "mcp"],
+  toolGroups: ["coaching", "calendar", "email", "memory", "documents", "research", "connections", "media", "self_edit", "browser", "mcp"],
   isConfigured: () => isTelegramConfigured(),
   isLinkedFor: async (userId) => !!(await lookupChatId(userId)),
   async sendMessage(userId, text, opts: ChannelSendOpts = {}) {

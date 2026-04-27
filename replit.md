@@ -201,3 +201,21 @@ A background service (`server/curiosityScanner.ts`) runs every 30 minutes to pro
 - Sends questions via Telegram (max 2 per scan to avoid spam)
 - Tracks sent questions in `proactive_questions_sent` table to prevent repeats
 - When user replies to a proactive question, the system marks it as answered and extracts profile facts from the response
+## Jarvis Self-Inspection & Code Proposals (Task #452)
+
+Jarvis can now read its own source code, reason about it, propose targeted improvements, and apply approved changes — with the user always in the approval gate.
+
+### Architecture
+- **`server/agent/tools/selfEditTools.ts`** — Three tools: `list_source_files` (returns a filtered directory tree of allowed paths), `read_source_file` (reads a single file with a max 600-line cap and paging support), `propose_code_change` (writes a proposal record to the DB and creates an inbox notification — never writes files).
+- **`server/capabilities/selfEditCapability.ts`** — Capability module wrapping the three tools, registered in the `system` tool group.
+- **`server/agent/codeProposalsRoutes.ts`** — REST API at `/api/code-proposals`: GET list, GET detail, POST approve (re-validates path allow-list then writes file), POST reject (archives with optional note).
+- **`shared/schema.ts`** — New `code_proposals` table with `id, user_id, title, reason, file_path, original_content, proposed_content, status, rejection_note, created_at, applied_at`.
+- **`app/code-proposals.tsx`** — Code Proposals screen with status filter tabs (Pending / Applied / Archived), proposal cards, and a full-screen detail modal with a before/after diff view and Approve / Reject actions.
+- **`app/(tabs)/settings.tsx`** — "Code Proposals" link added under the JARVIS INTELLIGENCE section.
+- **`server/routes.ts`** — System prompt now includes self-edit tool instructions: when to use them, the sequential read→propose workflow, and the rule that files must never be written directly.
+
+### Security Model
+- Path allow-list enforced in two places: the `propose_code_change` tool (at proposal creation) and the `/approve` endpoint (at file write time).
+- Allowed base directories: `server/`, `shared/`, `app/`, `components/`, `hooks/`, `constants/`, `lib/`.
+- Absolute paths, `..` traversal, and paths outside the allow-list are rejected at both layers.
+- The approval gate code (`codeProposalsRoutes.ts`) is explicitly excluded from the tool's self-modification instructions.

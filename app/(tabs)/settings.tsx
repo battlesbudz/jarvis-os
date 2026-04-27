@@ -1929,6 +1929,18 @@ export default function SettingsScreen() {
               <Ionicons name="chevron-forward" size={16} color={Colors.textTertiary} />
             </Pressable>
           </Link>
+          <Link href="/code-proposals" asChild>
+            <Pressable style={[styles.prefRow, styles.prefRowBorder]}>
+              <View style={styles.prefLeft}>
+                <Ionicons name="code-slash-outline" size={16} color={Colors.cyan} />
+                <View>
+                  <Text style={styles.prefTitle}>Code Proposals</Text>
+                  <Text style={styles.prefSub}>Review and approve Jarvis's self-improvements</Text>
+                </View>
+              </View>
+              <Ionicons name="chevron-forward" size={16} color={Colors.textTertiary} />
+            </Pressable>
+          </Link>
         </View>
 
         {/* ── JARVIS HEALTH ── */}

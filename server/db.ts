@@ -1111,6 +1111,26 @@ export async function ensureTablesExist() {
       CREATE INDEX IF NOT EXISTS mcp_servers_user_idx ON mcp_servers (user_id)
     `).catch(() => {});
 
+    // ── Code Proposals (Task #452) ──────────────────────────────────────────────
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS code_proposals (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        title TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        file_path TEXT NOT NULL,
+        original_content TEXT NOT NULL,
+        proposed_content TEXT NOT NULL,
+        status VARCHAR NOT NULL DEFAULT 'pending',
+        rejection_note TEXT,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        applied_at TIMESTAMP
+      )
+    `).catch(() => {});
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS code_proposals_user_idx ON code_proposals (user_id)
+    `).catch(() => {});
+
     console.log("Database tables verified");
   } catch (error) {
     console.error("Failed to ensure database tables exist:", error);
