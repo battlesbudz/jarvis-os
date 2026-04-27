@@ -33,6 +33,7 @@ import {
 } from "../agent/agentManager";
 import { readAgentMemories, clearAgentMemory } from "../agent/agentMemory";
 import { listPendingGates } from "../agent/agentApproval";
+import { outboundMiddleware } from "../channels/outboundMiddleware";
 
 const EPHEMERAL = 64;
 
@@ -236,7 +237,14 @@ export async function handleAgentCommand(
           platform: "discord",
           channelId: typeof interaction.channel_id === "string" ? interaction.channel_id : undefined,
         });
-        return { content: `**${agent.name}:** ${result.reply.slice(0, 1900)}` };
+        const finalText = await outboundMiddleware.run({
+          text: result.reply,
+          platform: "discord",
+          userId,
+          agentId: agent.id,
+          agentName: agent.name,
+        });
+        return { content: finalText ?? "Sorry, I couldn't generate a response right now." };
       }
 
       // ── council ─────────────────────────────────────────────────────────────
@@ -425,7 +433,14 @@ export async function handleAskCommand(
       platform: "discord",
       channelId: typeof interaction.channel_id === "string" ? interaction.channel_id : undefined,
     });
-    return { content: `**${agent.name}:** ${result.reply.slice(0, 1900)}` };
+    const finalText = await outboundMiddleware.run({
+      text: result.reply,
+      platform: "discord",
+      userId,
+      agentId: agent.id,
+      agentName: agent.name,
+    });
+    return { content: finalText ?? "Sorry, I couldn't generate a response right now." };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return { content: `❌ Error: ${msg.slice(0, 500)}`, flags: EPHEMERAL };

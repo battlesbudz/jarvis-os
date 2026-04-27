@@ -4,6 +4,7 @@ import { eq, and, desc, sql, gte, lte } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { sendMessage, sendLongMessage, sendMessageWithButtons, sendTelegramDocument, sendPhoto, sendVoice, answerCallbackQuery, isTelegramConfigured, getUpdates, downloadTelegramFile, downloadTelegramFileBuffer, getWebhookHealth, ensureWebhook, getExpectedWebhookUrl } from "./integrations/telegram";
 import { attachmentToBuffer, collectMarkdownExtras } from "./channels/attachmentHelpers";
+import { outboundMiddleware } from "./channels/outboundMiddleware";
 import type { ChannelAttachment } from "./channels/types";
 import { isIngestableDocument, extractTelegramDocument, buildDocumentContextBlock } from "./telegramDocumentExtractor";
 import { getUserTtsPrefs, setUserTtsPref, speakToUser, getUserTtsChannels, setTtsChannels, ELEVENLABS_VOICES } from "./agent/tools/tts";
@@ -71,14 +72,19 @@ async function deliverNamedAgentResult(
     textReply = textReply ? `${textReply}\n\n${markdownExtra}` : markdownExtra;
   }
 
-  // If there is a named label, prefix it onto the text reply (one message, no
-  // extra header send) so the chat stays tidy.
-  if (agentLabel && textReply) {
-    textReply = `${agentLabel}: ${textReply}`;
-  } else if (agentLabel) {
-    // No text to prefix — send the label as a standalone header before media.
+  // Run outbound middleware (agent-name prefix, length limiter, whitespace cleaner).
+  const processedText = await outboundMiddleware.run({
+    text: textReply,
+    platform: "telegram",
+    userId,
+    agentName: agentLabel ?? undefined,
+  });
+  // Middleware may cancel the send (e.g. empty reply guard made nothing useful).
+  // In that case still send the label as a header so media attachments have context.
+  if (processedText === null && agentLabel && atts.filter((a) => a.kind !== "markdown").length > 0) {
     try { await sendMessage(chatId, `${agentLabel}:`); } catch (_) { /* non-blocking */ }
   }
+  textReply = processedText ?? "";
 
   // Non-markdown attachments need text sent first so ordering is natural (text → media).
   const mediaAtts = atts.filter((a) => a.kind !== "markdown");
@@ -163,7 +169,15 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
     // Collect markdown attachments and append to the text reply so they are
     // delivered inline (markdown attachments have no binary payload to send separately).
     const markdownExtra = collectMarkdownExtras(attachments);
-    let textReply = markdownExtra ? (reply ? `${reply}\n\n${markdownExtra}` : markdownExtra) : reply;
+    const rawTextReply = markdownExtra ? (reply ? `${reply}\n\n${markdownExtra}` : markdownExtra) : reply;
+
+    // Apply outbound middleware (whitespace cleaner, length limiter, empty-reply guard).
+    const coachProcessed = await outboundMiddleware.run({
+      text: rawTextReply,
+      platform: "telegram",
+      userId,
+    });
+    let textReply = coachProcessed ?? "";
 
     // Non-markdown attachments (images, documents, files) require the text to be
     // sent first so message ordering is natural (text → media).

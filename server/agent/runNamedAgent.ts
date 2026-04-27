@@ -24,6 +24,10 @@ import { toolCallHooks } from "./toolCallHooks";
 // Side-effect import: ensures the built-in approval hook is registered before
 // any agent run. agentApproval registers itself into toolCallHooks at module load.
 import "./agentApproval";
+import { checkResponseQuality } from "./responseQuality";
+import { contextRegistry } from "./contextRegistry";
+// Side-effect import: registers workspace topic context provider.
+import "./providers/topicContext";
 import type { DiscordAgent } from "@shared/schema";
 import type { ChannelAttachment } from "../channels/types";
 import type OpenAI from "openai";
@@ -113,6 +117,11 @@ export interface RunNamedAgentOptions {
    * gracefully to full history injection and starts a fresh session.
    */
   sdkSessionId?: string;
+  /**
+   * Internal flag set to `true` when this call is a quality-check revision pass.
+   * Prevents infinite recursion — the quality checker is skipped on revision passes.
+   */
+  isRevisionPass?: boolean;
 }
 
 export interface NamedAgentResult {
@@ -233,7 +242,24 @@ export async function runNamedAgent(opts: RunNamedAgentOptions): Promise<NamedAg
 
       // ── Compose system prompt ──────────────────────────────────────────────
       const persona = agent.persona ?? `You are ${agent.name}, a ${agent.role} assistant.`;
-      const systemPrompt = `${persona}${soulBlock}${memoryBlock}`;
+      const systemPromptBase = `${persona}${soulBlock}${memoryBlock}`;
+
+      // ── Context registry: inject registered provider context ───────────────
+      const registryCtx = await contextRegistry.build({
+        userId,
+        platform,
+        channelId: opts.channelId,
+        agentId,
+        userMessage,
+      });
+      const systemPrompt = registryCtx.systemContext
+        ? `${systemPromptBase}\n\n${registryCtx.systemContext}`
+        : systemPromptBase;
+      const effectiveUserMessage = [
+        registryCtx.prependContext,
+        userMessage,
+        registryCtx.appendContext,
+      ].filter(Boolean).join("\n");
 
       // ── Build messages from history ────────────────────────────────────────
       const history = opts.conversationHistory ?? [];
@@ -255,7 +281,7 @@ export async function runNamedAgent(opts: RunNamedAgentOptions): Promise<NamedAg
       messages = [
         { role: "system", content: systemPrompt },
         ...trimmedHistory,
-        { role: "user", content: userMessage },
+        { role: "user", content: effectiveUserMessage },
       ];
     } else {
       // Session resumed — memories and soul are already in the cached system prompt.
@@ -346,6 +372,47 @@ export async function runNamedAgent(opts: RunNamedAgentOptions): Promise<NamedAg
 
     // ── Write extracted memories ──────────────────────────────────────────────
     extractAndWriteMemories(agentId, userId, userMessage, result.reply).catch(() => {});
+
+    // ── Response quality check (one revision pass max) ────────────────────────
+    // Skip the check on revision passes to prevent infinite recursion.
+    if (!opts.isRevisionPass) {
+      const toolNames = result.toolCalls.map((tc) => tc.name);
+      const qc = checkResponseQuality({
+        userMessage,
+        agentReply: result.reply,
+        toolsUsed: toolNames,
+        agentId,
+        userId,
+      });
+
+      if (qc.action === "revise") {
+        const revisionStart = Date.now();
+        logAgentEvent({
+          event: "quality_revision_triggered",
+          agentId,
+          userId,
+          detail: qc.reason.slice(0, 200),
+        });
+        try {
+          const revised = await runNamedAgent({
+            ...opts,
+            isRevisionPass: true,
+            userMessage: `${userMessage}\n\n[QUALITY NOTE: ${qc.reason}]`,
+          });
+          logAgentEvent({
+            event: "quality_revision_completed",
+            agentId,
+            userId,
+            durationMs: Date.now() - revisionStart,
+            detail: `reply_words=${revised.reply.trim().split(/\s+/).length}`,
+          });
+          return revised;
+        } catch (revErr) {
+          // If the revision pass fails, fall through and return the original reply.
+          console.warn("[RunNamedAgent] quality revision pass failed, using original reply:", revErr);
+        }
+      }
+    }
 
     logAgentEvent({
       event: "task_completed",
