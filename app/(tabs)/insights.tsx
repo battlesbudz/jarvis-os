@@ -878,8 +878,15 @@ export default function InsightsScreen() {
       const data = await res.json();
       if (data.text && data.text.trim()) {
         setIsTranscribing(false);
-        setInput(data.text);
-        sendMessageRef.current(data.text);
+        if (talkModeRef.current) {
+          // Talk Mode: auto-send immediately so the conversation flows hands-free.
+          setInput(data.text);
+          sendMessageRef.current(data.text);
+        } else {
+          // Regular mic tap: drop the transcript into the input so the user
+          // can review and edit before sending manually.
+          setInput(prev => prev.trim() ? prev.trimEnd() + ' ' + data.text.trim() : data.text.trim());
+        }
       } else {
         setIsTranscribing(false);
         Alert.alert('Could not understand', 'No speech was detected. Please try again and speak clearly.');
