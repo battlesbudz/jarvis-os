@@ -1012,6 +1012,13 @@ export default function MissionControlScreen() {
           </View>
         </View>
         <View style={styles.headerRight}>
+          <Pressable
+            onPress={() => router.push('/voice-realtime')}
+            style={styles.voiceBtn}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons name="mic-circle-outline" size={22} color={Colors.cyan} />
+          </Pressable>
           <Text style={styles.headerTitle}>MISSION{'\n'}CONTROL</Text>
           {lastUpdatedDisplay && (
             <Text style={styles.headerUpdated}>{lastUpdatedDisplay}</Text>
@@ -2054,6 +2061,10 @@ const styles = StyleSheet.create({
   },
   headerRight: {
     alignItems: 'flex-end',
+    gap: 6,
+  },
+  voiceBtn: {
+    padding: 2,
   },
   headerTitle: {
     fontSize: 13,
