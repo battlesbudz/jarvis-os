@@ -763,6 +763,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  /**
+   * GET /api/admin/provider-health
+   * Smoke-tests ClaudeProvider and OpenAIProvider and returns a health report.
+   * Useful for verifying API key configuration and SDK compatibility without
+   * waiting for a real user turn to fail.
+   */
+  app.get("/api/admin/provider-health", async (req: Request, res: Response) => {
+    if (!requireAdminSecret(req, res)) return;
+    try {
+      const { runProviderHealthChecks } = await import("./agent/providers/healthCheck");
+      const report = await runProviderHealthChecks();
+      res.status(report.allOk ? 200 : 503).json(report);
+    } catch (err) {
+      console.error("[Admin/ProviderHealth] check threw:", err);
+      res.status(500).json({ error: "Failed to run provider health checks" });
+    }
+  });
+
   app.use(authMiddleware);
   app.use("/api/oauth", oauthRouter);
 
