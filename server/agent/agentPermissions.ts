@@ -219,6 +219,8 @@ export function getPermittedToolNames(agent: DiscordAgent): string[] {
 //   agentManager → wrapToolsForAgent (agentPermissions) ← toolCallHooks
 // Dynamic import breaks the cycle at module-load time.
 
+// Priority 200 — permission check MUST run before the approval hook (priority 100).
+// If a disallowed tool is also HIGH_RISK, we want a hard block (not an approval prompt).
 toolCallHooks.register(
   async (ctx) => {
     try {
@@ -256,5 +258,5 @@ toolCallHooks.register(
       return { block: true, blockReason: `Permission check failed for ${ctx.toolName}` };
     }
   },
-  { priority: 50 },
+  { priority: 200 },
 );
