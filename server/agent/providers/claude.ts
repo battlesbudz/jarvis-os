@@ -26,7 +26,8 @@ import { agentChatSessions } from "@shared/schema";
 import type { AgentChatMessage } from "@shared/schema";
 import type OpenAI from "openai";
 
-const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
+const SESSION_TTL_HOURS = parseInt(process.env.AGENT_SESSION_TTL_HOURS ?? "24", 10);
+const SESSION_TTL_MS = (isNaN(SESSION_TTL_HOURS) || SESSION_TTL_HOURS <= 0 ? 24 : SESSION_TTL_HOURS) * 60 * 60 * 1000;
 
 type OAIMessage = OpenAI.Chat.Completions.ChatCompletionMessageParam;
 

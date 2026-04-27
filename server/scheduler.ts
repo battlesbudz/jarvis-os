@@ -1,5 +1,5 @@
 import { db } from './db';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, lt } from 'drizzle-orm';
 import * as schema from '@shared/schema';
 import { notifyUser } from './channels/registry';
 import { logInteraction } from './interactionLog';
@@ -130,6 +130,20 @@ async function runDailyDigests(): Promise<void> {
   }
 }
 
+/** Delete agent_chat_sessions rows that have passed their expires_at timestamp. */
+async function cleanUpExpiredAgentChatSessions(): Promise<void> {
+  const startedAt = new Date();
+  try {
+    const deleted = await db
+      .delete(schema.agentChatSessions)
+      .where(lt(schema.agentChatSessions.expiresAt, startedAt))
+      .returning({ id: schema.agentChatSessions.sdkSessionId });
+    console.log(`[Scheduler] Expired agent chat session cleanup complete at ${startedAt.toISOString()}: ${deleted.length} row(s) deleted`);
+  } catch (err) {
+    console.error('[Scheduler] cleanUpExpiredAgentChatSessions failed:', err);
+  }
+}
+
 export function startScheduler() {
   if (schedulerRunning) return;
   schedulerRunning = true;
@@ -204,6 +218,11 @@ export function startScheduler() {
       runDailyDigests().catch((err) => console.error('[Scheduler] runDailyDigests error:', err));
     }
 
+    // Daily 04:00 — delete expired agent chat sessions to keep the table tidy
+    if (h === 4 && m === 0) {
+      cleanUpExpiredAgentChatSessions();
+    }
+
     // Discord channel schedules — check every minute
     await runDiscordSchedules(now);
 
@@ -212,7 +231,7 @@ export function startScheduler() {
 
   }, 60 * 1000);
 
-  console.log('[Scheduler] Started — morning plan 7:00 AM daily, weekly patterns Sunday 3:00 AM, Discord schedules every minute');
+  console.log('[Scheduler] Started — morning plan 7:00 AM daily, weekly patterns Sunday 3:00 AM, session cleanup 4:00 AM daily, Discord schedules every minute');
 }
 
 /**
