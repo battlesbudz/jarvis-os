@@ -404,12 +404,12 @@ function CollapsiblePanel({
             <Text style={styles.accordionSummary} numberOfLines={1}>{summary}</Text>
           )}
           {expanded && onAdd && (
-            <Pressable onPress={onAdd} style={styles.panelAddBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <Pressable onPress={(e) => { e.stopPropagation(); onAdd!(); }} style={styles.panelAddBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
               <Ionicons name="add" size={16} color={accent} />
             </Pressable>
           )}
           {expanded && onViewAll && (
-            <Pressable onPress={onViewAll} style={styles.panelViewAll} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <Pressable onPress={(e) => { e.stopPropagation(); onViewAll!(); }} style={styles.panelViewAll} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
               <Text style={[styles.panelViewAllText, { color: accent }]}>ALL</Text>
               <Ionicons name="chevron-forward" size={11} color={accent} />
             </Pressable>
@@ -1472,47 +1472,45 @@ export default function MissionControlScreen() {
         </Animated.View>
 
         {/* FORESIGHT */}
-        {(predictionsLoading || predictions.length > 0 || weekPredictions.length > 0) && (
-          <Animated.View entering={FadeInDown.delay(140).duration(350)}>
-            <CollapsiblePanel
-              panelId="foresight"
-              title="JARVIS FORESIGHT"
-              icon="telescope-outline"
-              accent="#9b59b6"
-              summary={foresightSummary}
-              expanded={!!expandedPanels.foresight}
-              onToggle={handleTogglePanel}
-              loading={predictionsLoading}
-            >
-              {predictions.length === 0 && weekPredictions.length === 0 ? (
-                <Text style={styles.emptyText}>No predictions yet.</Text>
-              ) : (
-                <>
-                  {predictions.length > 0 && (
-                    <>
-                      <Text style={styles.predictionSectionLabel}>TODAY</Text>
-                      {predictions.slice(0, 4).map((pred) => <PredictionCard key={pred.id} pred={pred} />)}
-                    </>
-                  )}
-                  {weekPredictions.length > 0 && (
-                    <>
-                      <Text style={[styles.predictionSectionLabel, { marginTop: predictions.length > 0 ? 10 : 0 }]}>THIS WEEK</Text>
-                      {weekPredictions.slice(0, 3).map((pred) => <PredictionCard key={pred.id} pred={pred} compact />)}
-                    </>
-                  )}
-                  {predictionAccuracy && predictionAccuracy.validated >= 3 && (
-                    <View style={styles.predictionAccuracyRow}>
-                      <Ionicons name="analytics-outline" size={11} color="#9b59b6" />
-                      <Text style={styles.predictionAccuracyText}>
-                        {Math.round(predictionAccuracy.accuracyRate * 100)}% accurate · {predictionAccuracy.validated} validated
-                      </Text>
-                    </View>
-                  )}
-                </>
-              )}
-            </CollapsiblePanel>
-          </Animated.View>
-        )}
+        <Animated.View entering={FadeInDown.delay(140).duration(350)}>
+          <CollapsiblePanel
+            panelId="foresight"
+            title="JARVIS FORESIGHT"
+            icon="telescope-outline"
+            accent="#9b59b6"
+            summary={foresightSummary}
+            expanded={!!expandedPanels.foresight}
+            onToggle={handleTogglePanel}
+            loading={predictionsLoading}
+          >
+            {predictions.length === 0 && weekPredictions.length === 0 ? (
+              <Text style={styles.emptyText}>No predictions yet.</Text>
+            ) : (
+              <>
+                {predictions.length > 0 && (
+                  <>
+                    <Text style={styles.predictionSectionLabel}>TODAY</Text>
+                    {predictions.slice(0, 4).map((pred) => <PredictionCard key={pred.id} pred={pred} />)}
+                  </>
+                )}
+                {weekPredictions.length > 0 && (
+                  <>
+                    <Text style={[styles.predictionSectionLabel, { marginTop: predictions.length > 0 ? 10 : 0 }]}>THIS WEEK</Text>
+                    {weekPredictions.slice(0, 3).map((pred) => <PredictionCard key={pred.id} pred={pred} compact />)}
+                  </>
+                )}
+                {predictionAccuracy && predictionAccuracy.validated >= 3 && (
+                  <View style={styles.predictionAccuracyRow}>
+                    <Ionicons name="analytics-outline" size={11} color="#9b59b6" />
+                    <Text style={styles.predictionAccuracyText}>
+                      {Math.round(predictionAccuracy.accuracyRate * 100)}% accurate · {predictionAccuracy.validated} validated
+                    </Text>
+                  </View>
+                )}
+              </>
+            )}
+          </CollapsiblePanel>
+        </Animated.View>
 
         {/* DOCS */}
         <Animated.View entering={FadeInDown.delay(160).duration(350)}>
