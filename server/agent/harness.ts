@@ -49,7 +49,7 @@ export interface RunAgentOptions {
   onBeforeTool?: (
     toolName: string,
     toolArgs: Record<string, unknown>,
-  ) => Promise<{ allowed: boolean; reason?: string }>;
+  ) => Promise<{ allowed: boolean; reason?: string; params?: Record<string, unknown> }>;
   /**
    * Optional callback fired when a tool fails due to an integration auth/
    * connectivity issue. The caller (e.g. the SSE route) can use this to
@@ -870,15 +870,16 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
             return { tc, content: result.content };
           }
 
-          // ── Pre-execution approval gate check ────────────────────────
+          // ── Pre-execution hook gate check ─────────────────────────────
+          let effectiveArgs = parsedArgs;
           if (opts.onBeforeTool) {
             try {
               const gate = await opts.onBeforeTool(tc.function.name, parsedArgs);
               if (!gate.allowed) {
                 const deniedResult = {
                   ok: false,
-                  content: `Tool execution blocked: ${gate.reason ?? "user approval required"}`,
-                  label: "Approval required",
+                  content: `[Tool blocked] ${gate.reason ?? "This action is not permitted"}`,
+                  label: "Blocked",
                 };
                 toolCalls.push({
                   name: tc.function.name,
@@ -886,17 +887,21 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
                   result: deniedResult,
                   durationMs: Date.now() - start,
                 });
-                console.log(`[${channel}/Agent] tool=${tc.function.name} BLOCKED (approval required)`);
+                console.log(`[${channel}/Agent] tool=${tc.function.name} BLOCKED`);
                 return { tc, content: deniedResult.content };
+              }
+              // Apply rewritten params from hook (e.g. sanitisation, injection)
+              if (gate.params) {
+                effectiveArgs = gate.params;
               }
             } catch (gateErr) {
               // Fail-closed: approval gate errors block the tool, not allow it.
-              // Allowing execution on gate failure would silently bypass the approval system.
+              // Allowing execution on gate failure would silently bypass the hook system.
               const errMsg = gateErr instanceof Error ? gateErr.message : String(gateErr);
               console.error(`[${channel}/Agent] onBeforeTool gate error for ${tc.function.name}: ${errMsg}`);
               const blockedResult = {
                 ok: false,
-                content: `Tool execution blocked: approval gate check failed (${errMsg.slice(0, 100)})`,
+                content: `[Tool blocked] Hook check failed (${errMsg.slice(0, 100)})`,
                 label: "Gate error",
               };
               toolCalls.push({
@@ -910,7 +915,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
           }
 
           try {
-            const result = await tool.execute(parsedArgs, context);
+            const result = await tool.execute(effectiveArgs, context);
             toolCalls.push({
               name: tc.function.name,
               args: parsedArgs,

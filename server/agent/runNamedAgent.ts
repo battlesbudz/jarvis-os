@@ -299,7 +299,7 @@ export async function runNamedAgent(opts: RunNamedAgentOptions): Promise<NamedAg
         initiatedBy,
         signal,
       });
-      return { allowed: result.allowed, reason: result.reason };
+      return { allowed: result.allowed, reason: result.reason, params: result.params };
     };
 
     const result = await runAgent({
