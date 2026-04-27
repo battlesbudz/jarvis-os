@@ -1,6 +1,9 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getApiUrl, setOnUnauthorized, queryClient } from "@/lib/query-client";
+import { AUTH_TOKEN_KEY, getAuthToken } from "@/lib/auth-token";
+
+export { getAuthToken };
 
 interface AuthState {
   token: string | null;
@@ -22,7 +25,6 @@ interface AuthContextType extends AuthState {
   consumeReturnRoute: () => Promise<string | null>;
 }
 
-const AUTH_TOKEN_KEY = "@gameplan_auth_token";
 const AUTH_USER_ID_KEY = "@gameplan_auth_user_id";
 const AUTH_USERNAME_KEY = "@gameplan_auth_username";
 const AUTH_USER_EMAIL_KEY = "@gameplan_auth_user_email";
@@ -263,10 +265,6 @@ export function useAuth(): AuthContextType {
   const ctx = useContext(AuthContext);
   if (!ctx) throw new Error("useAuth must be used within an AuthProvider");
   return ctx;
-}
-
-export async function getAuthToken(): Promise<string | null> {
-  return AsyncStorage.getItem(AUTH_TOKEN_KEY);
 }
 
 export async function authFetch(url: string, options: RequestInit = {}): Promise<Response> {
