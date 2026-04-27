@@ -26,6 +26,9 @@ import { toolCallHooks } from "./toolCallHooks";
 import "./agentApproval";
 import { checkResponseQuality } from "./responseQuality";
 import { contextRegistry } from "./contextRegistry";
+import { db } from "../db";
+import { userPreferences } from "@shared/schema";
+import { eq } from "drizzle-orm";
 // Side-effect import: registers workspace topic context provider.
 import "./providers/topicContext";
 import type { DiscordAgent } from "@shared/schema";
@@ -375,7 +378,20 @@ export async function runNamedAgent(opts: RunNamedAgentOptions): Promise<NamedAg
 
     // ── Response quality check (one revision pass max) ────────────────────────
     // Skip the check on revision passes to prevent infinite recursion.
-    if (!opts.isRevisionPass) {
+    // Also honour the user's opt-out preference (responseQualityCheck === false).
+    let qualityCheckEnabled = true;
+    if (!opts.isRevisionPass && userId) {
+      try {
+        const prefRows = await db.select({ data: userPreferences.data })
+          .from(userPreferences)
+          .where(eq(userPreferences.userId, userId))
+          .limit(1);
+        const prefs = (prefRows[0]?.data ?? {}) as Record<string, unknown>;
+        if (prefs.responseQualityCheck === false) qualityCheckEnabled = false;
+      } catch { /* non-blocking — default to enabled */ }
+    }
+
+    if (!opts.isRevisionPass && qualityCheckEnabled) {
       const toolNames = result.toolCalls.map((tc) => tc.name);
       const qc = checkResponseQuality({
         userMessage,
