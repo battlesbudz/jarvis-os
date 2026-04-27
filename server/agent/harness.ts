@@ -1,13 +1,20 @@
 
-import OpenAI from "openai";
+import type OpenAI from "openai";
 import type { AgentTool, AgentToolCallRecord, ToolContext } from "./types";
 import type { ActivationPlan } from "./activationPlanner";
 import { emit as diagEmit } from "../diagnostics/diagnosticsService";
+import { getProvider, accumulateTurn } from "./providers";
+import type { ProviderName } from "./providers";
 
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
+/**
+ * Resolve the provider name from a model string.
+ * Claude models (claude-*) route to ClaudeProvider; everything else to OpenAIProvider.
+ * Switching an agent to a different provider is done by changing its model string
+ * (via modelPrefs) — no harness edits required.
+ */
+function resolveProviderName(model: string): ProviderName {
+  return model.startsWith("claude") ? "claude" : "openai";
+}
 
 export interface RunAgentOptions {
   model?: string;
@@ -130,88 +137,6 @@ function toOpenAITool(t: AgentTool): OpenAI.Chat.Completions.ChatCompletionTool 
       parameters: t.parameters,
     },
   };
-}
-
-/**
- * Run a single turn using the OpenAI streaming API.
- * Accumulates tool-call deltas across chunks so the caller can execute tools
- * after the stream completes.
- *
- * Text deltas are buffered and NOT forwarded to onToken during the stream.
- * The caller inspects the result: if toolCallList is empty (text-only reply)
- * it replays the buffer via onToken. This prevents intermediate tool-call
- * content from leaking into live-edit UIs (e.g. Discord placeholder edits).
- */
-async function runStreamingTurn(params: {
-  model: string;
-  messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[];
-  openAITools: OpenAI.Chat.Completions.ChatCompletionTool[] | undefined;
-  toolChoice: "auto" | "required" | "none";
-  maxCompletionTokens: number;
-  signal?: AbortSignal;
-}): Promise<{
-  textContent: string;
-  textChunks: string[];
-  toolCallList: OpenAI.Chat.Completions.ChatCompletionMessageToolCall[];
-  finishReason: string | null;
-}> {
-  const stream = await openai.chat.completions.create({
-    model: params.model,
-    messages: params.messages,
-    tools: params.openAITools,
-    tool_choice: params.openAITools ? params.toolChoice : undefined,
-    max_completion_tokens: params.maxCompletionTokens,
-    stream: true,
-  }, { signal: params.signal });
-
-  let textContent = "";
-  const textChunks: string[] = [];
-  // Accumulate tool-call arguments across chunks keyed by index
-  const toolCallAccum = new Map<
-    number,
-    { id: string; name: string; args: string }
-  >();
-  let finishReason: string | null = null;
-
-  for await (const chunk of stream) {
-    const delta = chunk.choices[0]?.delta;
-    const fr = chunk.choices[0]?.finish_reason;
-    if (fr) finishReason = fr;
-
-    if (delta?.content) {
-      textContent += delta.content;
-      textChunks.push(delta.content); // buffered — caller decides when to emit
-    }
-
-    if (delta?.tool_calls) {
-      for (const tc of delta.tool_calls) {
-        const idx = tc.index;
-        if (!toolCallAccum.has(idx)) {
-          toolCallAccum.set(idx, { id: "", name: "", args: "" });
-        }
-        const acc = toolCallAccum.get(idx)!;
-        if (tc.id) acc.id += tc.id;
-        if (tc.function?.name) acc.name += tc.function.name;
-        if (tc.function?.arguments) acc.args += tc.function.arguments;
-      }
-    }
-  }
-
-  // Reconstruct OpenAI-compatible tool_calls array from accumulated deltas
-  const toolCallList: OpenAI.Chat.Completions.ChatCompletionMessageToolCall[] =
-    Array.from(toolCallAccum.entries())
-      .sort(([a], [b]) => a - b)
-      .map(([, acc]) => ({
-        id: acc.id,
-        type: "function" as const,
-        function: { name: acc.name, arguments: acc.args },
-      }));
-
-  if (!textContent && toolCallList.length === 0) {
-    console.warn(`[harness] runStreamingTurn: stream completed with empty textContent and no tool calls (finishReason=${finishReason})`);
-  }
-
-  return { textContent, textChunks, toolCallList, finishReason };
 }
 
 /**
@@ -728,6 +653,11 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
   // can verify they are not being used to escape per-surface restrictions.
   context.allowedToolNames = new Set(tools.map((t) => t.name));
 
+  // Resolve the provider once per run based on the model name.
+  // claude-* models → ClaudeProvider, everything else → OpenAIProvider.
+  // To switch an agent's provider, change its model string in modelPrefs.
+  const provider = getProvider(resolveProviderName(model));
+
   // `messages` was already set above (with skills injected); spread into a mutable copy
   const conversationMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
     ...messages,
@@ -742,62 +672,36 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
       throw new DOMException("Agent run aborted by caller", "AbortError");
     }
 
-    // ── Non-streaming path (default, tool-call turns) ───────────────────
+    // ── Provider query (streaming or non-streaming) ─────────────────────
+    // Text chunks are buffered inside the provider and replayed via onToken
+    // only after confirming this is a text-only turn (no tool calls), so
+    // intermediate orchestration text never leaks into live-edit UIs.
     let msgContent: string | null = null;
-    let msgToolCalls: OpenAI.Chat.Completions.ChatCompletionMessageToolCall[] | undefined;
+    let msgToolCalls: OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall[] | undefined;
 
-    if (!onToken) {
-      // Original non-streaming behaviour — unchanged for all existing callers.
-      const completion = await openai.chat.completions.create({
-        model,
-        messages: conversationMessages,
-        tools: openAITools,
-        tool_choice: openAITools ? toolChoice : undefined,
-        max_completion_tokens: maxCompletionTokens,
-      }, { signal });
+    const turnResult = await accumulateTurn(provider.query({
+      model,
+      messages: conversationMessages,
+      tools: openAITools,
+      toolChoice,
+      maxCompletionTokens,
+      stream: !!onToken,
+      signal,
+    }));
 
-      const choice = completion.choices[0];
-      lastFinish = choice?.finish_reason || null;
-      const msg = choice?.message;
-      console.log(
-        `[${channel}/Agent] turn=${turn} finish=${lastFinish} tool_calls=${msg?.tool_calls?.length || 0}`,
-      );
-      if (!msg) break;
-      msgContent = msg.content ?? null;
-      msgToolCalls = msg.tool_calls ?? undefined;
-    } else {
-      // ── Streaming path ─────────────────────────────────────────────────
-      // All turns run streaming so tool-call deltas can be accumulated.
-      // Text chunks are buffered inside runStreamingTurn and are only
-      // forwarded to onToken AFTER we confirm this is a text-only turn
-      // (no tool calls). This prevents partial tool-orchestration text
-      // from leaking into live-edit UIs such as Discord placeholder edits.
-      const streamResult = await runStreamingTurn({
-        model,
-        messages: conversationMessages,
-        openAITools,
-        toolChoice,
-        maxCompletionTokens,
-        signal,
-      });
+    lastFinish = turnResult.finishReason;
+    console.log(
+      `[${channel}/Agent] turn=${turn}${onToken ? " (streaming)" : ""} finish=${lastFinish} tool_calls=${turnResult.toolCallList.length}`,
+    );
+    msgContent = turnResult.textContent || null;
+    msgToolCalls = turnResult.toolCallList.length > 0 ? turnResult.toolCallList : undefined;
 
-      lastFinish = streamResult.finishReason;
-      console.log(
-        `[${channel}/Agent] turn=${turn} (streaming) finish=${lastFinish} tool_calls=${streamResult.toolCallList.length}`,
-      );
-      msgContent = streamResult.textContent || null;
-      msgToolCalls =
-        streamResult.toolCallList.length > 0
-          ? streamResult.toolCallList
-          : undefined;
-
-      // Replay buffered text tokens only for pure text replies so the
-      // caller's live-edit UI (e.g. Discord) sees progressive updates on
-      // the final turn but stays quiet during tool-call turns.
-      if (!msgToolCalls && streamResult.textChunks.length > 0) {
-        for (const chunk of streamResult.textChunks) {
-          onToken(chunk);
-        }
+    // Replay buffered text tokens only for pure text replies so the
+    // caller's live-edit UI (e.g. Discord) sees progressive updates on
+    // the final turn but stays quiet during tool-call turns.
+    if (onToken && !msgToolCalls && turnResult.textChunks.length > 0) {
+      for (const chunk of turnResult.textChunks) {
+        onToken(chunk);
       }
     }
 
@@ -1024,29 +928,22 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
   // Hit max turns. Force a final answer with tools disabled.
   console.warn(`[${channel}/Agent] hit maxTurns=${maxTurns}, forcing final answer`);
   try {
+    const finalResult = await accumulateTurn(provider.query({
+      model,
+      messages: conversationMessages,
+      tools: undefined, // no tools — force text reply
+      toolChoice: "none",
+      maxCompletionTokens,
+      stream: !!onToken,
+      signal,
+    }));
+    reply = finalResult.textContent;
+    lastFinish = finalResult.finishReason;
+    // Replay buffered chunks — this is always a text-only turn (no tools).
     if (onToken) {
-      const streamResult = await runStreamingTurn({
-        model,
-        messages: conversationMessages,
-        openAITools: undefined, // no tools — force text reply
-        toolChoice: "none",
-        maxCompletionTokens,
-        signal,
-      });
-      reply = streamResult.textContent;
-      lastFinish = streamResult.finishReason;
-      // Replay buffered chunks — this is always a text-only turn (no tools).
-      for (const chunk of streamResult.textChunks) {
+      for (const chunk of finalResult.textChunks) {
         onToken(chunk);
       }
-    } else {
-      const final = await openai.chat.completions.create({
-        model,
-        messages: conversationMessages,
-        max_completion_tokens: maxCompletionTokens,
-      }, { signal });
-      reply = final.choices[0]?.message?.content || "";
-      lastFinish = final.choices[0]?.finish_reason || lastFinish;
     }
   } catch (err) {
     console.error(`[${channel}/Agent] final-answer call failed:`, err);
