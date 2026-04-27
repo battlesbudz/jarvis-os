@@ -1,4 +1,3 @@
-import { createHash } from 'crypto';
 import type { Express, Request, Response } from "express";
 import { db } from "./db";
 import { eq, and, desc, sql, gte, lte } from "drizzle-orm";
@@ -14,7 +13,8 @@ import type { NotificationType } from "@shared/schema";
 import { startMomentumSession, handleMomentumDone, hasMomentumSessionToday, startMomentumExpiryScheduler } from "./momentumCoach";
 import { getRecentEmailCommitments, getEmailsSince, getStarredFollowUpEmails, gmailModifyMessage } from "./integrations/gmail";
 import { getGoogleCalendarEvents } from "./integrations/googleCalendar";
-import { getValidGoogleTokens } from "./userTokenStore";
+import { getValidGoogleTokens, getUserTokens, refreshGoogleToken } from "./userTokenStore";
+import { buildGmailSourceId, gmailMessageIdExistsForUser } from "./utils/gmailSourceId";
 import { tavilySearch, formatSearchResults } from "./integrations/search";
 import { logInteraction, getRecentInteractions, formatInteractionTimeline } from "./interactionLog";
 import { extractAndStore } from "./memory/extractor";
@@ -1886,9 +1886,8 @@ export async function startEmailAlertScanner(): Promise<void> {
         const prefs = prefsMap[link.userId] || {};
         if (prefs.emailAlertsEnabled === false) continue;
 
-        const tokens = await getValidGoogleTokens(link.userId).catch(() => []);
-        if (!tokens || tokens.length === 0) continue;
-        const token = tokens[0];
+        const tokenObjs = await getUserTokens(link.userId, 'google').catch(() => []);
+        if (tokenObjs.length === 0) continue;
 
         const sinceMs = prefs.lastEmailScanAt
           ? Number(prefs.lastEmailScanAt)
@@ -1904,86 +1903,96 @@ export async function startEmailAlertScanner(): Promise<void> {
             set: { data: newPrefs, updatedAt: new Date() },
           });
 
-        const emails = await getEmailsSince(sinceMs, token);
-        if (emails.length === 0) continue;
-
-        console.log(`[EmailAlert] ${emails.length} new email(s) for user ${link.userId}, classifying...`);
-
         const { getUserInboxRules, matchItemAgainstRules } = await import("./inboxRules");
         const userRules = await getUserInboxRules(link.userId);
 
-        const filteredEmails: typeof emails = [];
-        const autoSurfaced: { email: typeof emails[0]; ruleId?: string; reason: string }[] = [];
-
-        for (const email of emails) {
-          const result = matchItemAgainstRules(
-            {
-              sourceType: "email",
-              sourceId: email.messageId || "",
-              sender: email.from,
-              subject: email.subject,
-              snippet: email.snippet,
-            },
-            userRules
-          );
-          if (result.verdict === "suppress") {
-            console.log(`[EmailAlert] Suppressed "${email.subject}" by rule ${result.matchedRuleId}`);
-            continue;
+        for (const tokenObj of tokenObjs) {
+          let accessToken = tokenObj.accessToken;
+          if (tokenObj.expiresAt && tokenObj.expiresAt.getTime() < Date.now() + 60_000) {
+            const refreshed = await refreshGoogleToken(tokenObj);
+            if (!refreshed) continue;
+            accessToken = refreshed.accessToken;
           }
-          if (result.verdict === "surface") {
-            autoSurfaced.push({ email, ruleId: result.matchedRuleId, reason: "Matched your surface rule" });
-            continue;
-          }
-          filteredEmails.push(email);
-        }
+          const accountEmail = tokenObj.accountEmail || '';
 
-        for (const { email, ruleId, reason } of autoSurfaced) {
-          const suggestedActions = email.messageId
-            ? [
-                { label: "Archive", actionType: "archive" },
-                { label: "Star", actionType: "mark_important" },
-                { label: "Save as Task", actionType: "save_as_task" },
-                { label: "Dismiss", actionType: "dismiss" },
-              ]
-            : [
-                { label: "Save as Task", actionType: "save_as_task" },
-                { label: "Dismiss", actionType: "dismiss" },
-              ];
-          try {
-            await db.insert(schema.inboxItems).values({
-              userId: link.userId,
-              sourceType: "email",
-              sourceId: email.messageId ? `gmail:${email.messageId}` : `gmail:fallback:${createHash('sha256').update(JSON.stringify({ subject: email.subject, from: email.from || '', receivedAt: email.receivedAt || '' })).digest('hex').slice(0, 16)}`,
-              subject: email.subject,
-              sender: email.from,
-              snippet: email.snippet,
-              jarvisReason: reason,
-              suggestedActions,
-              matchedRuleId: ruleId || null,
-            }).onConflictDoNothing();
-          } catch (err) {
-            console.error("[EmailAlert] inbox_items insert failed:", err);
-          }
-          const senderName = email.from.replace(/<.*>/, '').trim() || email.from;
-          const msg = `📧 Surfaced for you:\nFrom: ${senderName}\n"${email.subject}"\n\n${email.snippet.slice(0, 150)}${email.snippet.length > 150 ? '...' : ''}\n\nJarvis: ${reason}`;
-          await notifyUser(link.userId, "email_alert", msg);
-          logInteraction(link.userId, "notification", "outbound", msg, "email_surfaced").catch(() => {});
-        }
+          const emails = await getEmailsSince(sinceMs, accessToken);
+          if (emails.length === 0) continue;
 
-        if (filteredEmails.length === 0) continue;
+          console.log(`[EmailAlert] ${emails.length} new email(s) for user ${link.userId} (${accountEmail}), classifying...`);
 
-        const emailList = filteredEmails.map((e, i) =>
-          `${i}. From: ${e.from}\n   Subject: "${e.subject}"\n   Preview: ${e.snippet}`
-        ).join('\n\n');
+          const filteredEmails: typeof emails = [];
+          const autoSurfaced: { email: typeof emails[0]; ruleId?: string; reason: string }[] = [];
 
-        let flagged: { index: number; reason: string }[] = [];
-        try {
-          const classification = await openai.chat.completions.create({
-            model: 'gpt-5-mini',
-            messages: [
+          for (const email of emails) {
+            const result = matchItemAgainstRules(
               {
-                role: 'system',
-                content: `You review emails and decide which need IMMEDIATE user attention. Alert = true ONLY for:
+                sourceType: "email",
+                sourceId: email.messageId || "",
+                sender: email.from,
+                subject: email.subject,
+                snippet: email.snippet,
+              },
+              userRules
+            );
+            if (result.verdict === "suppress") {
+              console.log(`[EmailAlert] Suppressed "${email.subject}" by rule ${result.matchedRuleId}`);
+              continue;
+            }
+            if (result.verdict === "surface") {
+              autoSurfaced.push({ email, ruleId: result.matchedRuleId, reason: "Matched your surface rule" });
+              continue;
+            }
+            filteredEmails.push(email);
+          }
+
+          for (const { email, ruleId, reason } of autoSurfaced) {
+            if (email.messageId && await gmailMessageIdExistsForUser(link.userId, email.messageId)) continue;
+            const suggestedActions = email.messageId
+              ? [
+                  { label: "Archive", actionType: "archive" },
+                  { label: "Star", actionType: "mark_important" },
+                  { label: "Save as Task", actionType: "save_as_task" },
+                  { label: "Dismiss", actionType: "dismiss" },
+                ]
+              : [
+                  { label: "Save as Task", actionType: "save_as_task" },
+                  { label: "Dismiss", actionType: "dismiss" },
+                ];
+            try {
+              await db.insert(schema.inboxItems).values({
+                userId: link.userId,
+                sourceType: "email",
+                sourceId: buildGmailSourceId(accountEmail, email.messageId, { subject: email.subject, from: email.from || '', receivedAt: email.receivedAt || 0 }),
+                subject: email.subject,
+                sender: email.from,
+                snippet: email.snippet,
+                jarvisReason: reason,
+                suggestedActions,
+                matchedRuleId: ruleId || null,
+              }).onConflictDoNothing();
+            } catch (err) {
+              console.error("[EmailAlert] inbox_items insert failed:", err);
+            }
+            const senderName = email.from.replace(/<.*>/, '').trim() || email.from;
+            const msg = `📧 Surfaced for you:\nFrom: ${senderName}\n"${email.subject}"\n\n${email.snippet.slice(0, 150)}${email.snippet.length > 150 ? '...' : ''}\n\nJarvis: ${reason}`;
+            await notifyUser(link.userId, "email_alert", msg);
+            logInteraction(link.userId, "notification", "outbound", msg, "email_surfaced").catch(() => {});
+          }
+
+          if (filteredEmails.length === 0) continue;
+
+          const emailList = filteredEmails.map((e, i) =>
+            `${i}. From: ${e.from}\n   Subject: "${e.subject}"\n   Preview: ${e.snippet}`
+          ).join('\n\n');
+
+          let flagged: { index: number; reason: string }[] = [];
+          try {
+            const classification = await openai.chat.completions.create({
+              model: 'gpt-5-mini',
+              messages: [
+                {
+                  role: 'system',
+                  content: `You review emails and decide which need IMMEDIATE user attention. Alert = true ONLY for:
 - Urgent reply needed from a real person they know
 - Deadline TODAY or TOMORROW explicitly mentioned
 - Meeting cancelled, moved, or significantly changed
@@ -2000,57 +2009,59 @@ Alert = false for:
 Return ONLY a JSON array of flagged emails (only include alert=true ones):
 [{"index": 0, "reason": "brief reason why this is urgent"}]
 Return [] if nothing is urgent.`,
-              },
-              {
-                role: 'user',
-                content: `Emails received in the last 30 minutes:\n\n${emailList}`,
-              },
-            ],
-            max_completion_tokens: 2000,
-          });
+                },
+                {
+                  role: 'user',
+                  content: `Emails received in the last 30 minutes:\n\n${emailList}`,
+                },
+              ],
+              max_completion_tokens: 2000,
+            });
 
-          const raw = classification.choices[0]?.message?.content || '[]';
-          const jsonMatch = raw.match(/\[[\s\S]*\]/);
-          if (jsonMatch) flagged = JSON.parse(jsonMatch[0]);
-        } catch (err) {
-          console.error('[EmailAlert] Classification failed:', err);
-          continue;
-        }
-
-        for (const flag of flagged) {
-          const email = filteredEmails[flag.index];
-          if (!email) continue;
-          const senderName = email.from.replace(/<.*>/, '').trim() || email.from;
-
-          const suggestedActions = email.messageId
-            ? [
-                { label: "Archive", actionType: "archive" },
-                { label: "Save as Task", actionType: "save_as_task" },
-                { label: "Dismiss", actionType: "dismiss" },
-              ]
-            : [
-                { label: "Save as Task", actionType: "save_as_task" },
-                { label: "Dismiss", actionType: "dismiss" },
-              ];
-          try {
-            await db.insert(schema.inboxItems).values({
-              userId: link.userId,
-              sourceType: "email",
-              sourceId: email.messageId ? `gmail:${email.messageId}` : `gmail:fallback:${createHash('sha256').update(JSON.stringify({ subject: email.subject, from: email.from || '', receivedAt: email.receivedAt || '' })).digest('hex').slice(0, 16)}`,
-              subject: email.subject,
-              sender: email.from,
-              snippet: email.snippet,
-              jarvisReason: flag.reason,
-              suggestedActions,
-            }).onConflictDoNothing();
+            const raw = classification.choices[0]?.message?.content || '[]';
+            const jsonMatch = raw.match(/\[[\s\S]*\]/);
+            if (jsonMatch) flagged = JSON.parse(jsonMatch[0]);
           } catch (err) {
-            console.error("[EmailAlert] inbox_items insert failed:", err);
+            console.error('[EmailAlert] Classification failed:', err);
+            continue;
           }
 
-          const msg = `📧 Email needs your attention:\nFrom: ${senderName}\n"${email.subject}"\n\n${email.snippet.slice(0, 150)}${email.snippet.length > 150 ? '...' : ''}\n\nJarvis: ${flag.reason}`;
-          await notifyUser(link.userId, "email_alert", msg);
-          logInteraction(link.userId, "notification", "outbound", msg, "email_alert").catch(() => {});
-          console.log(`[EmailAlert] Alerted user ${link.userId}: "${email.subject}"`);
+          for (const flag of flagged) {
+            const email = filteredEmails[flag.index];
+            if (!email) continue;
+            if (email.messageId && await gmailMessageIdExistsForUser(link.userId, email.messageId)) continue;
+            const senderName = email.from.replace(/<.*>/, '').trim() || email.from;
+
+            const suggestedActions = email.messageId
+              ? [
+                  { label: "Archive", actionType: "archive" },
+                  { label: "Save as Task", actionType: "save_as_task" },
+                  { label: "Dismiss", actionType: "dismiss" },
+                ]
+              : [
+                  { label: "Save as Task", actionType: "save_as_task" },
+                  { label: "Dismiss", actionType: "dismiss" },
+                ];
+            try {
+              await db.insert(schema.inboxItems).values({
+                userId: link.userId,
+                sourceType: "email",
+                sourceId: buildGmailSourceId(accountEmail, email.messageId, { subject: email.subject, from: email.from || '', receivedAt: email.receivedAt || 0 }),
+                subject: email.subject,
+                sender: email.from,
+                snippet: email.snippet,
+                jarvisReason: flag.reason,
+                suggestedActions,
+              }).onConflictDoNothing();
+            } catch (err) {
+              console.error("[EmailAlert] inbox_items insert failed:", err);
+            }
+
+            const msg = `📧 Email needs your attention:\nFrom: ${senderName}\n"${email.subject}"\n\n${email.snippet.slice(0, 150)}${email.snippet.length > 150 ? '...' : ''}\n\nJarvis: ${flag.reason}`;
+            await notifyUser(link.userId, "email_alert", msg);
+            logInteraction(link.userId, "notification", "outbound", msg, "email_alert").catch(() => {});
+            console.log(`[EmailAlert] Alerted user ${link.userId}: "${email.subject}"`);
+          }
         }
       }
     } catch (err) {

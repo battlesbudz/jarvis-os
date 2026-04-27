@@ -1,4 +1,5 @@
 import { createHash } from 'crypto';
+import { buildGmailSourceId, gmailMessageIdExistsForUser } from "./utils/gmailSourceId";
 import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "node:http";
 import OpenAI from "openai";
@@ -3645,9 +3646,13 @@ Only return the JSON object, no extra text.`;
             return false;
           });
           if (!matchedEmail) continue;
-          const emailId = matchedEmail.messageId
-            ? `gmail:${matchedEmail.messageId}`
-            : `gmail:fallback:${createHash('sha256').update(JSON.stringify({ subject: matchedEmail.subject, from: matchedEmail.from || '', receivedAt: matchedEmail.receivedAt || '' })).digest('hex').slice(0, 16)}`;
+          const msgId = matchedEmail.messageId || matchedEmail.id || null;
+          if (msgId && await gmailMessageIdExistsForUser(userId, msgId)) continue;
+          const emailId = buildGmailSourceId(
+            matchedEmail.accountEmail || '',
+            msgId,
+            { subject: matchedEmail.subject || '', from: matchedEmail.from || '', receivedAt: matchedEmail.receivedAt || new Date(matchedEmail.date || 0).getTime() }
+          );
           try {
             await db.insert(schema.inboxItems).values({
               userId,

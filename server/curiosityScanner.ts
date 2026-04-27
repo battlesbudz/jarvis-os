@@ -4,7 +4,8 @@ import * as schema from "@shared/schema";
 import { notifyUser } from "./channels/registry";
 import { getGoogleCalendarEvents } from "./integrations/googleCalendar";
 import { getEmailsSince } from "./integrations/gmail";
-import { getValidGoogleTokens, getAllGoogleConnectedUserIds, getAllMicrosoftConnectedUserIds, getValidMicrosoftToken } from "./userTokenStore";
+import { getUserTokens, refreshGoogleToken, getAllGoogleConnectedUserIds, getAllMicrosoftConnectedUserIds, getValidMicrosoftToken } from "./userTokenStore";
+import { buildGmailSourceId, gmailMessageIdExistsForUser } from "./utils/gmailSourceId";
 import { getOutlookCalendarEvents, getRecentOutlookEmails } from "./integrations/outlook";
 import { logInteraction } from "./interactionLog";
 import { logAction, isActionSuppressed } from "./intelligence/actionLog";
@@ -212,8 +213,17 @@ export async function runCuriosityScan(): Promise<void> {
 
     for (const userId of userIds) {
       try {
-        const googleTokens = await getValidGoogleTokens(userId).catch(() => []);
-        const googleToken = googleTokens[0] ?? null;
+        const googleTokenObjs = await getUserTokens(userId, 'google').catch(() => []);
+        const validGoogleTokenObjs: { accessToken: string; accountEmail: string }[] = [];
+        for (const t of googleTokenObjs) {
+          if (t.expiresAt && t.expiresAt.getTime() < Date.now() + 60_000) {
+            const refreshed = await refreshGoogleToken(t).catch(() => null);
+            if (refreshed) validGoogleTokenObjs.push({ accessToken: refreshed.accessToken, accountEmail: t.accountEmail || '' });
+          } else {
+            validGoogleTokenObjs.push({ accessToken: t.accessToken, accountEmail: t.accountEmail || '' });
+          }
+        }
+        const googleToken = validGoogleTokenObjs[0]?.accessToken ?? null;
         const msToken = await getValidMicrosoftToken(userId).catch(() => null);
 
         if (!googleToken && !msToken) continue;
@@ -257,12 +267,17 @@ export async function runCuriosityScan(): Promise<void> {
         }
 
         let recentEmails: any[] = [];
-        if (googleToken) {
-          try {
-            const emailsSince = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-            recentEmails = await getEmailsSince(emailsSince.getTime(), googleToken);
-          } catch (err) {
-            console.error(`[Curiosity] Email fetch failed for user ${userId}:`, err);
+        if (validGoogleTokenObjs.length > 0) {
+          const emailsSince = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+          for (const { accessToken, accountEmail } of validGoogleTokenObjs) {
+            try {
+              const fetched = await getEmailsSince(emailsSince.getTime(), accessToken);
+              for (const e of fetched) {
+                recentEmails.push({ ...e, accountEmail });
+              }
+            } catch (err) {
+              console.error(`[Curiosity] Email fetch failed for user ${userId} (${accountEmail}):`, err);
+            }
           }
         }
 
@@ -340,8 +355,16 @@ export async function runCuriosityScan(): Promise<void> {
         }
 
         for (const email of recentEmails) {
-          const emailId = email.messageId ? `gmail:${email.messageId}` : `gmail:${email.subject}:${email.from || ''}`;
+          const emailId = buildGmailSourceId(
+            email.accountEmail || '',
+            email.messageId,
+            { subject: email.subject || '', from: email.from || '', receivedAt: email.receivedAt || 0 }
+          );
           if (alreadyAsked.has(emailId)) continue;
+          if (email.messageId && await gmailMessageIdExistsForUser(userId, email.messageId)) {
+            alreadyAsked.add(emailId);
+            continue;
+          }
 
           const senderKey = extractSenderKey(email.from);
 
