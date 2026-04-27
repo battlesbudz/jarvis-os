@@ -14,6 +14,8 @@ import { isUserPaired, isAndroidDaemonActive, isDesktopDaemonActive } from "../d
 import { buildYouTubeContextBlock } from "../utils/youtubeAutoFetch";
 import type { ChannelAttachment } from "./types";
 import { runOrchestrator } from "../agent/orchestrator";
+import { preThink, postCheck } from "../agent/qualityLoop";
+import { getModel, MODEL_DEFAULTS } from "../lib/modelPrefs";
 
 export interface CoachReplyInput {
   userId: string;
@@ -132,7 +134,15 @@ export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyR
 
   const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
-  const [goalsRow, statsRow, lcRow, chatRow, commitmentsRows, googleTokens, prefsRow, recentInteractionsResult, surfacedItemsResult] = await Promise.allSettled([
+  const _quickDateStr = new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
+  // Resolve the per-user orchestrator model once, then immediately chain preThink
+  // so it fires with the correct model as soon as the DB row lands — still fully
+  // parallel with the other DB queries below (zero net latency on the hot path).
+  const _orchestratorModelPromise = getModel(userId, "orchestrator");
+  const _preThinkPromise = _orchestratorModelPromise.then((m) =>
+    preThink(userText || "", channelName + " " + _quickDateStr, m),
+  );
+  const [goalsRow, statsRow, lcRow, chatRow, commitmentsRows, googleTokens, prefsRow, recentInteractionsResult, surfacedItemsResult, orchestratorModelResult, preThinkResult] = await Promise.allSettled([
     db.select().from(schema.goals).where(eq(schema.goals.userId, userId)).limit(1),
     db.select().from(schema.stats).where(eq(schema.stats.userId, userId)).limit(1),
     db.select().from(schema.lifeContext).where(eq(schema.lifeContext.userId, userId)).limit(1),
@@ -162,6 +172,10 @@ export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyR
       ))
       .orderBy(desc(schema.inboxItems.surfacedAt))
       .limit(5),
+    // Resolved per-user orchestrator model (already fired above).
+    _orchestratorModelPromise,
+    // Pre-think fires as soon as the model resolves (already chained above).
+    _preThinkPromise,
   ]);
 
   logInteraction(userId, channelLower as any, "inbound", userText || "[image]").catch(() => {});
@@ -179,6 +193,14 @@ export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyR
   if (surfacedItemsResult.status === "fulfilled") {
     recentlySurfacedItems = surfacedItemsResult.value;
   }
+
+  const orchestratorModel: string =
+    orchestratorModelResult.status === "fulfilled"
+      ? orchestratorModelResult.value
+      : MODEL_DEFAULTS.orchestrator;
+
+  const turnGuidance: string =
+    preThinkResult.status === "fulfilled" ? (preThinkResult.value as string) : "";
 
   const localForDateKey = new Date(new Date().toLocaleString("en-US", { timeZone: userTimezone }));
   const dateKey = `${localForDateKey.getFullYear()}-${String(localForDateKey.getMonth() + 1).padStart(2, "0")}-${String(localForDateKey.getDate()).padStart(2, "0")}`;
@@ -356,7 +378,10 @@ When a user's request involves multi-step research, drafting a document or plan,
   const youtubeInlineConstraint = youtubeCtx
     ? "\n\n## MANDATORY: YouTube transcript inline reply\nA YouTube transcript has been pre-loaded in this request (marked TRANSCRIPT AUTO-FETCHED). You MUST summarise or answer the question inline in this single reply. NEVER call queue_background_job for this request."
     : "";
-  const effectiveSystemPrompt = systemPrompt + youtubeInlineConstraint;
+  const turnStrategyBlock = turnGuidance
+    ? `\n\n## Turn Strategy\n${turnGuidance}`
+    : "";
+  const effectiveSystemPrompt = systemPrompt + youtubeInlineConstraint + turnStrategyBlock;
 
   const userMessageContent = imageUrl
     ? [
@@ -487,6 +512,54 @@ When a user's request involves multi-step research, drafting a document or plan,
     });
     rawReply = fallback.reply;
   }
+
+  // ── Post-check quality gate ────────────────────────────────────────────────
+  // Ask the orchestrator model whether the reply adequately addressed the user's
+  // request.  On failure, fire a single corrective harness retry with the
+  // failure reason injected.  Errors/timeouts are fail-open (never block reply).
+  let postCheckPassed = true;
+  let retried = false;
+  if (rawReply) {
+    const checkUserText = userText || "[image-only message]";
+    try {
+      const checkResult = await postCheck(checkUserText, rawReply, orchestratorModel);
+      postCheckPassed = checkResult.passed;
+      if (!checkResult.passed) {
+        const correctionFeedback = checkResult.feedback ||
+          "Answer did not fully address the request; provide a complete direct response.";
+        const correctionPrompt =
+          effectiveSystemPrompt +
+          `\n\n## Quality correction: ${correctionFeedback}`;
+        const correctionMessages: import("openai").default.Chat.Completions.ChatCompletionMessageParam[] = [
+          { role: "system" as const, content: correctionPrompt },
+          ...baseMessages.slice(1),
+        ];
+        retried = true;
+        try {
+          const correction = await runAgent({
+            model: "gpt-5-mini",
+            messages: correctionMessages,
+            tools: scopedTools,
+            context: agentCtx,
+            maxTurns: 4,
+            maxCompletionTokens: getMaxTokensForChannel(channelName),
+            activationPlan: channelActivationPlan,
+          });
+          if (correction.reply) {
+            rawReply = correction.reply;
+          }
+        } catch (retryErr) {
+          console.warn(`[${channelName}] quality correction retry failed (non-blocking):`, retryErr);
+        }
+      }
+    } catch (checkErr) {
+      console.warn(`[${channelName}] post-check failed (non-blocking):`, checkErr);
+    }
+  }
+
+  console.log(
+    `[qualityLoop] guidance="${turnGuidance.slice(0, 80)}" postCheck=${postCheckPassed ? "passed" : "failed"} retried=${retried}`,
+  );
 
   const reply = rawReply || "Sorry, I couldn't generate a response right now.";
   const attachments = (agentCtx.state.pendingAttachments || []) as ChannelAttachment[];
