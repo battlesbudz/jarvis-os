@@ -6871,6 +6871,174 @@ Extract up to 8 memories per batch.`;
     await handleMcpRequest(req, res);
   });
 
+  // ── Voice Realtime API ────────────────────────────────────────────────────
+
+  /**
+   * POST /api/voice/realtime-session
+   * Mints a short-lived OpenAI Realtime API ephemeral client secret for WebRTC/WebSocket.
+   * The secret expires in ~60 seconds and is scoped to a single session.
+   */
+  app.post("/api/voice/realtime-session", authMiddleware, async (req: Request, res: Response) => {
+    const userId = (req as any).userId as string;
+    try {
+      const openaiBase = (process.env.AI_INTEGRATIONS_OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/v1\/?$/, '');
+      const sessionRes = await fetch(`${openaiBase}/v1/realtime/sessions`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${process.env.AI_INTEGRATIONS_OPENAI_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o-realtime-preview-2024-12-17',
+          voice: 'verse',
+          instructions: `You are Jarvis, an intelligent AI productivity assistant. Keep responses concise and conversational for voice. You can access the user's tasks, schedule, and memories via tools. Be proactive in surfacing relevant information.`,
+          tools: [
+            {
+              type: 'function',
+              name: 'get_today_summary',
+              description: "Get the user's tasks and upcoming scheduled items for today",
+              parameters: { type: 'object', properties: {} },
+            },
+            {
+              type: 'function',
+              name: 'search_memories',
+              description: "Search the user's personal memories and knowledge base",
+              parameters: {
+                type: 'object',
+                properties: { query: { type: 'string', description: 'The search query' } },
+                required: ['query'],
+              },
+            },
+          ],
+          tool_choice: 'auto',
+          input_audio_format: 'pcm16',
+          output_audio_format: 'pcm16',
+          input_audio_transcription: { model: 'whisper-1' },
+          turn_detection: {
+            type: 'server_vad',
+            threshold: 0.5,
+            prefix_padding_ms: 300,
+            silence_duration_ms: 600,
+          },
+        }),
+      });
+
+      if (!sessionRes.ok) {
+        const errText = await sessionRes.text().catch(() => sessionRes.statusText);
+        console.error(`[voice/realtime-session] OpenAI error ${sessionRes.status}:`, errText);
+        return res.status(502).json({ error: 'Failed to create realtime session' });
+      }
+
+      const session = await sessionRes.json() as Record<string, unknown>;
+      console.log(`[voice/realtime-session] Session ${session.id} created for user ${userId}`);
+      res.json({ client_secret: session.client_secret, session_id: session.id });
+    } catch (err) {
+      console.error('[voice/realtime-session] Error:', err);
+      res.status(500).json({ error: 'Failed to create realtime session' });
+    }
+  });
+
+  /**
+   * POST /api/voice/tool-call
+   * Executes a named tool from a Realtime voice session and returns the result.
+   * The Realtime API sends function_call events; the client POSTs here and relays
+   * the result back to the session data channel.
+   */
+  app.post("/api/voice/tool-call", authMiddleware, async (req: Request, res: Response) => {
+    const userId = (req as any).userId as string;
+    const { tool_name, arguments: toolArgs } = req.body || {};
+    try {
+      if (tool_name === 'get_today_summary') {
+        const today = new Date().toISOString().slice(0, 10);
+        const tasks = await db
+          .select({
+            id: schema.jarvisScheduledTasks.id,
+            title: schema.jarvisScheduledTasks.title,
+            scheduledAt: schema.jarvisScheduledTasks.scheduledAt,
+            completedAt: schema.jarvisScheduledTasks.completedAt,
+          })
+          .from(schema.jarvisScheduledTasks)
+          .where(
+            and(
+              eq(schema.jarvisScheduledTasks.userId, userId),
+              sql`DATE(${schema.jarvisScheduledTasks.scheduledAt}) = ${today}`,
+            )
+          )
+          .limit(10);
+        return res.json({
+          result: JSON.stringify({
+            date: today,
+            tasks: tasks.map(t => ({
+              title: t.title,
+              scheduledAt: t.scheduledAt,
+              done: !!t.completedAt,
+            })),
+          }),
+        });
+      }
+
+      if (tool_name === 'search_memories') {
+        const query = String((toolArgs as Record<string, unknown>)?.query || '').trim();
+        const { retrieveRelevantMemories } = await import('./memory/retrieve');
+        const memories = await retrieveRelevantMemories(userId, query, 5);
+        return res.json({
+          result: JSON.stringify({
+            memories: memories.map((m: { content: string; category: string }) => ({
+              content: m.content,
+              category: m.category,
+            })),
+          }),
+        });
+      }
+
+      return res.json({ result: JSON.stringify({ error: `Unknown tool: ${tool_name}` }) });
+    } catch (err) {
+      console.error('[voice/tool-call] Error:', err);
+      res.status(500).json({ error: 'Tool execution failed' });
+    }
+  });
+
+  /**
+   * POST /api/conversations
+   * Create a new voice/audio conversation thread.
+   */
+  app.post("/api/conversations", authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const { chatStorage } = await import('./replit_integrations/chat/storage');
+      const { title } = req.body || {};
+      const conversation = await chatStorage.createConversation(title || 'Voice Session');
+      res.status(201).json(conversation);
+    } catch (err) {
+      console.error('[conversations] create error:', err);
+      res.status(500).json({ error: 'Failed to create conversation' });
+    }
+  });
+
+  /**
+   * POST /api/conversations/:id/voice-transcript
+   * Save an array of voice transcript entries to a conversation.
+   * Body: { entries: Array<{ role: 'user' | 'assistant'; text: string }> }
+   */
+  app.post("/api/conversations/:id/voice-transcript", authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const conversationId = parseInt(req.params.id, 10);
+      const entries: Array<{ role: string; text: string }> = req.body?.entries || [];
+      if (!Array.isArray(entries) || entries.length === 0) {
+        return res.status(400).json({ error: 'entries array is required' });
+      }
+      const { chatStorage } = await import('./replit_integrations/chat/storage');
+      for (const entry of entries) {
+        if (entry.role && entry.text) {
+          await chatStorage.createMessage(conversationId, entry.role, entry.text);
+        }
+      }
+      res.json({ ok: true, saved: entries.length });
+    } catch (err) {
+      console.error('[conversations/voice-transcript] error:', err);
+      res.status(500).json({ error: 'Failed to save transcript' });
+    }
+  });
+
   const httpServer = createServer(app);
   return httpServer;
 }
