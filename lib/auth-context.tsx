@@ -1,9 +1,9 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getApiUrl, setOnUnauthorized, queryClient } from "@/lib/query-client";
-import { AUTH_TOKEN_KEY, getAuthToken } from "@/lib/auth-token";
+import { AUTH_TOKEN_KEY, getAuthToken, clearAuthStorage } from "@/lib/auth-token";
 
-export { getAuthToken };
+export { getAuthToken, clearAuthStorage };
 
 interface AuthState {
   token: string | null;
@@ -47,9 +47,6 @@ async function setAuthStorage(token: string, userId: string, username: string, e
   }
 }
 
-export async function clearAuthStorage() {
-  await AsyncStorage.multiRemove([AUTH_TOKEN_KEY, AUTH_USER_ID_KEY, AUTH_USERNAME_KEY, AUTH_USER_EMAIL_KEY]);
-}
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<AuthState>({

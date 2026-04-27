@@ -18,7 +18,7 @@ import Colors from '@/constants/colors';
 import * as Haptics from 'expo-haptics';
 import * as WebBrowser from 'expo-web-browser';
 import * as Clipboard from 'expo-clipboard';
-import { Audio } from 'expo-av';
+import { createAudioPlayer, requestRecordingPermissionsAsync } from '@/lib/audio';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import {
   getStats,
@@ -366,15 +366,8 @@ export default function SettingsScreen() {
       if (res.ok) {
         const data = await res.json();
         if (data.audio && Platform.OS !== 'web') {
-          const { sound } = await Audio.Sound.createAsync(
-            { uri: `data:audio/mp3;base64,${data.audio}` },
-            { shouldPlay: true },
-          );
-          sound.setOnPlaybackStatusUpdate((status) => {
-            if ('didJustFinish' in status && status.didJustFinish) {
-              sound.unloadAsync().catch(() => {});
-            }
-          });
+          const player = createAudioPlayer({ uri: `data:audio/mp3;base64,${data.audio}` });
+          player.play();
         }
       }
     } catch {}
@@ -1015,8 +1008,8 @@ export default function SettingsScreen() {
 
   const toggleWakeWord = useCallback(async (val: boolean) => {
     if (val && Platform.OS !== 'web') {
-      const { status } = await Audio.requestPermissionsAsync();
-      if (status !== 'granted') {
+      const { granted } = await requestRecordingPermissionsAsync();
+      if (!granted) {
         Alert.alert(
           'Microphone Required',
           'Wake Word detection needs microphone access. Please allow microphone access in Settings.',
@@ -1031,8 +1024,8 @@ export default function SettingsScreen() {
 
   const toggleTalkMode = useCallback(async (val: boolean) => {
     if (val && Platform.OS !== 'web') {
-      const { status } = await Audio.requestPermissionsAsync();
-      if (status !== 'granted') {
+      const { granted } = await requestRecordingPermissionsAsync();
+      if (!granted) {
         Alert.alert(
           'Microphone Required',
           'Talk Mode needs microphone access to listen for your voice. Please allow microphone access in Settings.',
@@ -1900,8 +1893,8 @@ export default function SettingsScreen() {
             </View>
           </View>
 
-          {/* Preview button */}
-          <View style={{ paddingHorizontal: 14, paddingVertical: 12 }}>
+          {/* Preview button — audio playback unavailable on web */}
+          {Platform.OS !== 'web' && <View style={{ paddingHorizontal: 14, paddingVertical: 12 }}>
             <Pressable
               onPress={previewTtsVoice}
               disabled={ttsPreviewing}
@@ -1929,7 +1922,7 @@ export default function SettingsScreen() {
             <Text style={{ fontSize: 11, color: Colors.textTertiary, fontFamily: 'Inter_400Regular', textAlign: 'center', marginTop: 6 }}>
               You can also ask Jarvis to "read that out" or "say it as a voice message" at any time
             </Text>
-          </View>
+          </View>}
         </View>
 
         {/* ── BUILD HISTORY ── */}
@@ -2000,7 +1993,7 @@ export default function SettingsScreen() {
                             {build.description}
                           </Text>
                           <Text style={{ fontSize: 10, color: Colors.textTertiary, fontFamily: 'Inter_400Regular', marginTop: 2 }}>
-                            {new Date(build.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                            {new Date(build.createdAt ?? '').toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
                           </Text>
                         </View>
                         <Ionicons
@@ -2364,7 +2357,7 @@ export default function SettingsScreen() {
                   <Text style={tlStyles.signalDate}>
                     {signal.userResponse
                       ? signal.userResponse === 'confirmed' ? 'Good catch' : "This one's fine"
-                      : new Date(signal.createdAt).toLocaleDateString()}
+                      : new Date(signal.createdAt ?? '').toLocaleDateString()}
                   </Text>
                 </View>
               </View>
@@ -2539,7 +2532,7 @@ export default function SettingsScreen() {
               <Text style={healthStyles.overallTitle}>System Status</Text>
               {healthReport && (() => {
                 const checkedAgo = (() => {
-                  const diff = Date.now() - new Date(healthReport.generatedAt).getTime();
+                  const diff = Date.now() - new Date(healthReport.generatedAt ?? '').getTime();
                   const m = Math.floor(diff / 60000);
                   if (m < 1) return 'just now';
                   if (m < 60) return `${m}m ago`;
@@ -2594,7 +2587,7 @@ export default function SettingsScreen() {
               {healthReport.recentErrors.slice(0, 5).map((ev) => {
                 const sevColor = ev.severity === 'critical' ? Colors.error : ev.severity === 'error' ? Colors.error : '#F59E0B';
                 const timeAgo = (() => {
-                  const diffMs = Date.now() - new Date(ev.createdAt).getTime();
+                  const diffMs = Date.now() - new Date(ev.createdAt ?? '').getTime();
                   const m = Math.floor(diffMs / 60000);
                   if (m < 1) return 'just now';
                   if (m < 60) return `${m}m ago`;
@@ -2653,7 +2646,7 @@ export default function SettingsScreen() {
               </Text>
               {doctorReport && (
                 <Text style={drStyles.ranAt}>
-                  Last run: {new Date(doctorReport.ranAt).toLocaleTimeString()}
+                  Last run: {new Date(doctorReport.ranAt ?? '').toLocaleTimeString()}
                 </Text>
               )}
             </View>
