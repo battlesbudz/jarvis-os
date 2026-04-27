@@ -256,6 +256,15 @@ export async function runTriagePassForUser(userId: string): Promise<void> {
   await triageInboxItemsForUser(userId);
 }
 
+export async function runStartupTriagePass(): Promise<void> {
+  const users = await db.select({ id: schema.users.id }).from(schema.users);
+  for (const user of users) {
+    await runTriagePassForUser(user.id).catch((err) => {
+      console.error(`[InboxTriage] startup pass failed for user ${user.id}:`, err);
+    });
+  }
+}
+
 let triageRunning = false;
 
 export function startTriageRunner(): void {

@@ -8,7 +8,7 @@ import { startHeartbeat } from "./heartbeat";
 import { startJobQueueWorker } from "./agent/jobQueue";
 import { isTelegramConfigured, logTelegramStatus, deleteWebhook, ensureWebhook, getExpectedWebhookUrl } from "./integrations/telegram";
 import { startScheduler } from "./scheduler";
-import { startTriageRunner } from "./inboxTriage";
+import { startTriageRunner, runStartupTriagePass } from "./inboxTriage";
 import { startCuriosityScanner } from "./curiosityScanner";
 import { startIntegrationValidator } from "./intelligence/integrationValidator";
 import { initChannels } from "./channels";
@@ -303,6 +303,8 @@ function setupErrorHandler(app: express.Application) {
 
   startScheduler();
   startTriageRunner();
+  // Run one immediate triage pass 5s after startup to clear untriaged backlog
+  setTimeout(() => runStartupTriagePass().catch(() => {}), 5000);
   // Sub-agent background worker — runs queued goal_decompose / research /
   // writing / planning / email jobs and writes deliverables for approval.
   startJobQueueWorker();
