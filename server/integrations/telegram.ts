@@ -562,6 +562,27 @@ export async function sendVideo(
   }
 }
 
+/**
+ * Sends a chat action (e.g. "typing") to show the bot is active.
+ * The typing indicator disappears automatically after ~5 seconds, so
+ * call it again if the operation takes longer than that.
+ */
+export async function sendChatAction(
+  chatId: string,
+  action: "typing" | "upload_document" | "upload_photo" | "upload_voice" = "typing",
+): Promise<void> {
+  if (!BOT_TOKEN) return;
+  try {
+    await fetch(`${BASE}/sendChatAction`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: chatId, action }),
+    });
+  } catch {
+    // best-effort: a failed typing indicator is not worth surfacing
+  }
+}
+
 export async function getUpdates(offset: number): Promise<TelegramUpdate[]> {
   if (!BOT_TOKEN) return [];
   try {
