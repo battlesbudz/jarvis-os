@@ -1130,6 +1130,35 @@ export const orchestrationTraces = pgTable("orchestration_traces", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+// ── Agent Chat Sessions — native session resumption ───────────────────────────
+// Stores server-side conversation state for named agent chats so that
+// subsequent turns can resume from cached messages instead of re-injecting
+// the full history from the DB. Sessions expire after 24 hours.
+//
+// Flow:
+//   1. First user message → build full context, store in this table, return sessionId
+//   2. Subsequent messages → look up sessionId, append new exchange, skip history rebuild
+//   3. Session not found / expired → fall back to full history injection (logged as warning)
+
+export interface AgentChatMessage {
+  role: "system" | "user" | "assistant" | "tool";
+  content: string | null;
+  tool_calls?: unknown[];
+  tool_call_id?: string;
+}
+
+export const agentChatSessions = pgTable("agent_chat_sessions", {
+  sdkSessionId: varchar("sdk_session_id").primaryKey(),
+  agentId: varchar("agent_id").notNull().references(() => discordAgents.id, { onDelete: "cascade" }),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  messages: jsonb("messages").$type<AgentChatMessage[]>().notNull().default(sql`'[]'::jsonb`),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  expiresAt: timestamp("expires_at").notNull(),
+});
+
+export type AgentChatSession = typeof agentChatSessions.$inferSelect;
+
 export const userSkillPacks = pgTable("user_skill_packs", {
   userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   packId: varchar("pack_id").notNull().references(() => skillPacks.id, { onDelete: "cascade" }),
