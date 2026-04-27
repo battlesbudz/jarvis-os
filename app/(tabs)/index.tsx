@@ -119,6 +119,8 @@ interface Memory {
   content: string;
   category: string;
   extractedAt: string;
+  relevanceScore?: number;
+  lastReferencedAt?: string | null;
 }
 
 interface UserDocument {
@@ -457,6 +459,8 @@ export default function MissionControlScreen() {
   const [deliverablesLoading, setDeliverablesLoading] = useState(true);
   const [memories, setMemories] = useState<Memory[]>([]);
   const [memoriesLoading, setMemoriesLoading] = useState(true);
+  const [fadingMemories, setFadingMemories] = useState<Memory[]>([]);
+  const [keepingMemoryId, setKeepingMemoryId] = useState<string | null>(null);
   const [documents, setDocuments] = useState<UserDocument[]>([]);
   const [documentsLoading, setDocumentsLoading] = useState(true);
   const [scheduledTasks, setScheduledTasks] = useState<ScheduledTask[]>([]);
@@ -551,10 +555,11 @@ export default function MissionControlScreen() {
     const weekStart = new Date().toISOString();
     const weekEnd = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
     const calParams = `?startTime=${encodeURIComponent(weekStart)}&endTime=${encodeURIComponent(weekEnd)}`;
-    const [inboxRes, delRes, memRes, docRes, schedRes, gcalRes, ocalRes, sysSchedRes, esRes, predsRes, weekPredsRes, predAccRes] = await Promise.allSettled([
+    const [inboxRes, delRes, memRes, fadingMemRes, docRes, schedRes, gcalRes, ocalRes, sysSchedRes, esRes, predsRes, weekPredsRes, predAccRes] = await Promise.allSettled([
       apiRequest('GET', '/api/inbox/items').then(r => r.json()),
       apiRequest('GET', '/api/deliverables').then(r => r.json()),
       authFetch(new URL('/api/memories', getApiUrl()).toString()).then(r => r.json()),
+      authFetch(new URL('/api/memories/fading', getApiUrl()).toString()).then(r => r.json()).catch(() => null),
       authFetch(new URL('/api/documents', getApiUrl()).toString()).then(r => r.json()),
       apiRequest('GET', '/api/jarvis/scheduled-tasks').then(r => r.json()),
       apiRequest('GET', `/api/calendar/google/events${calParams}`).then(r => r.json()).catch(() => null),
@@ -578,6 +583,9 @@ export default function MissionControlScreen() {
 
     if (memRes.status === 'fulfilled' && memRes.value?.memories) {
       setMemories(memRes.value.memories);
+    }
+    if (fadingMemRes.status === 'fulfilled' && fadingMemRes.value?.memories) {
+      setFadingMemories(fadingMemRes.value.memories);
     }
     setMemoriesLoading(false);
 
@@ -764,6 +772,21 @@ export default function MissionControlScreen() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setDeliverables(prev => prev.filter(d => d.id !== id));
     await apiRequest('POST', `/api/deliverables/${id}/discard`).catch(() => null);
+  }, []);
+
+  const handleKeepMemory = useCallback(async (id: string) => {
+    setKeepingMemoryId(id);
+    try {
+      const res = await authFetch(new URL(`/api/memories/${id}/keep`, getApiUrl()).toString(), { method: 'POST' });
+      if (res.ok) {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        setFadingMemories(prev => prev.filter(m => m.id !== id));
+        setMemories(prev => prev.map(m => m.id === id ? { ...m, relevanceScore: 50 } : m));
+      }
+    } catch (_e) {
+    } finally {
+      setKeepingMemoryId(null);
+    }
   }, []);
 
   const openEditTask = useCallback((task: Task) => {
@@ -1561,6 +1584,14 @@ export default function MissionControlScreen() {
             loading={memoriesLoading}
             onViewAll={() => setMemoriesModal(true)}
           >
+            {fadingMemories.length > 0 && (
+              <Pressable style={styles.fadingBadgeRow} onPress={() => setMemoriesModal(true)}>
+                <Ionicons name="hourglass-outline" size={12} color={Colors.warning} />
+                <Text style={styles.fadingBadgeText}>
+                  {fadingMemories.length} {fadingMemories.length === 1 ? 'memory' : 'memories'} fading — tap to review
+                </Text>
+              </Pressable>
+            )}
             {memories.length === 0 ? (
               <Text style={styles.emptyText}>No memories yet. Jarvis learns about you from conversations.</Text>
             ) : (
@@ -1855,6 +1886,38 @@ export default function MissionControlScreen() {
 
       {/* Memory modal */}
       <FullModal visible={memoriesModal} title="MEMORY" accent={Colors.violet} onClose={() => { setMemoriesModal(false); setMemorySearch(''); }}>
+        {fadingMemories.length > 0 && !memorySearch && (
+          <View style={styles.fadingSectionWrapper}>
+            <View style={styles.fadingSectionHeader}>
+              <Ionicons name="hourglass-outline" size={14} color={Colors.warning} />
+              <Text style={styles.fadingSectionTitle}>FADING — {fadingMemories.length} {fadingMemories.length === 1 ? 'memory' : 'memories'} Jarvis may forget</Text>
+            </View>
+            {fadingMemories.map(m => (
+              <View key={m.id} style={[styles.modalItemRow, { borderLeftColor: Colors.warning }]}>
+                <View style={styles.modalItemContent}>
+                  <View style={[styles.catBadge, { backgroundColor: Colors.warningDim, marginBottom: 6 }]}>
+                    <Text style={[styles.catBadgeText, { color: Colors.warning }]}>{m.category}</Text>
+                  </View>
+                  <Text style={styles.modalItemTitle}>{m.content}</Text>
+                  <Text style={styles.modalItemMeta}>
+                    {m.lastReferencedAt
+                      ? `Last referenced ${new Date(m.lastReferencedAt).toLocaleDateString()}`
+                      : `Saved ${new Date(m.extractedAt).toLocaleDateString()}`}
+                    {' · '}relevance {m.relevanceScore ?? '?'}/100
+                  </Text>
+                </View>
+                <Pressable
+                  style={[styles.keepMemoryBtn, keepingMemoryId === m.id && { opacity: 0.5 }]}
+                  onPress={() => handleKeepMemory(m.id)}
+                  disabled={keepingMemoryId === m.id}
+                >
+                  <Ionicons name="heart-outline" size={13} color={Colors.warning} />
+                  <Text style={styles.keepMemoryText}>Keep</Text>
+                </Pressable>
+              </View>
+            ))}
+          </View>
+        )}
         <View style={styles.searchBar}>
           <Ionicons name="search-outline" size={16} color={Colors.textTertiary} />
           <TextInput
@@ -2407,6 +2470,61 @@ const styles = StyleSheet.create({
   },
   modalItemDelete: {
     padding: 4,
+  },
+  fadingBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: Colors.warningDim,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(245,158,11,0.2)',
+  },
+  fadingBadgeText: {
+    fontSize: 11,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.warning,
+    flex: 1,
+  },
+  fadingSectionWrapper: {
+    marginBottom: 4,
+  },
+  fadingSectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginHorizontal: 16,
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  fadingSectionTitle: {
+    fontSize: 11,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.warning,
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+  },
+  keepMemoryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: Colors.warningDim,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(245,158,11,0.25)',
+    alignSelf: 'flex-start',
+    marginTop: 2,
+  },
+  keepMemoryText: {
+    fontSize: 11,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.warning,
+    letterSpacing: 0.3,
   },
   modalTaskCheck: {
     width: 20,
