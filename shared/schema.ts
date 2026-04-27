@@ -718,6 +718,15 @@ export const discordAgents = pgTable("discord_agents", {
    * Examples: "claude-sonnet-4-6", "claude-haiku-4-5", "claude-opus-4-6"
    */
   preferredModel: text("preferred_model"),
+  /**
+   * Mention patterns: plain strings or /regex/flags that trigger routing to
+   * this agent from any Discord guild channel, regardless of channel assignment.
+   * Evaluated before the channel-based routing (Phase 6) on every guild message.
+   */
+  mentionPatterns: jsonb("mention_patterns")
+    .$type<string[]>()
+    .notNull()
+    .default(sql`'[]'::jsonb`),
 });
 
 export type DiscordAgent = typeof discordAgents.$inferSelect;

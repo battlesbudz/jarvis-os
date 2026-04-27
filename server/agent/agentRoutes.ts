@@ -384,6 +384,7 @@ export function registerAgentRoutes(app: Express): void {
         loopIntervalMinutes: body.loopIntervalMinutes ? Number(body.loopIntervalMinutes) : 60,
         loopPrompt: body.loopPrompt ? String(body.loopPrompt) : undefined,
         platformChannels: body.platformChannels as Record<string, string[]> | undefined,
+        mentionPatterns: Array.isArray(body.mentionPatterns) ? (body.mentionPatterns as string[]) : undefined,
       });
 
       const agent = await getAgent(agentId);
@@ -412,7 +413,20 @@ export function registerAgentRoutes(app: Express): void {
         res.status(404).json({ error: "Agent not found" });
         return;
       }
-      await updateAgent(req.params.id, req.body);
+      const body = req.body as Record<string, unknown>;
+      // Normalize mentionPatterns explicitly so array-of-strings contract is
+      // enforced (mirrors the create-route handling).
+      const patch = {
+        ...body,
+        ...(body.mentionPatterns !== undefined && {
+          mentionPatterns: Array.isArray(body.mentionPatterns)
+            ? (body.mentionPatterns as unknown[])
+                .filter((p) => typeof p === "string" && (p as string).trim().length > 0)
+                .map((p) => (p as string).trim())
+            : undefined,
+        }),
+      };
+      await updateAgent(req.params.id, patch);
       const agent = await getAgent(req.params.id);
       res.json({ agent });
     } catch (err) { handleError(res, err); }
