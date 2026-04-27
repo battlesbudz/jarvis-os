@@ -6,7 +6,7 @@ import { registerTelegramWebhook, startProactiveScheduler, startTelegramPolling,
 import { startMomentumExpiryScheduler } from "./momentumCoach";
 import { startHeartbeat } from "./heartbeat";
 import { startJobQueueWorker } from "./agent/jobQueue";
-import { isTelegramConfigured, logTelegramStatus, setWebhook, deleteWebhook } from "./integrations/telegram";
+import { isTelegramConfigured, logTelegramStatus, setWebhook, deleteWebhook, ensureWebhook, getExpectedWebhookUrl } from "./integrations/telegram";
 import { startScheduler } from "./scheduler";
 import { startCuriosityScanner } from "./curiosityScanner";
 import { startIntegrationValidator } from "./intelligence/integrationValidator";
@@ -324,14 +324,27 @@ function setupErrorHandler(app: express.Application) {
         const isProduction = process.env.NODE_ENV === 'production';
 
         if (isProduction) {
-          const domain = (process.env.REPLIT_DOMAINS || '').split(',')[0]?.trim();
-          if (domain) {
-            const webhookUrl = `https://${domain}/api/telegram/webhook`;
-            setWebhook(webhookUrl).then(() => {
-              console.log(`[Telegram] Production mode — webhook active at ${webhookUrl}`);
+          const webhookUrl = getExpectedWebhookUrl();
+          if (webhookUrl) {
+            ensureWebhook(webhookUrl).then(({ reregistered }) => {
+              console.log(`[Telegram] Production mode — webhook ${reregistered ? 're-registered' : 'verified'} at ${webhookUrl}`);
             }).catch(err => {
-              console.error("[Telegram] Failed to set webhook:", err);
+              console.error("[Telegram] Failed to ensure webhook on boot:", err);
             });
+
+            // Periodic health check: every 30 minutes, verify and auto-repair if needed.
+            const WEBHOOK_CHECK_INTERVAL_MS = 30 * 60 * 1000;
+            setInterval(() => {
+              ensureWebhook(webhookUrl).then(({ healthy, reregistered }) => {
+                if (reregistered) {
+                  console.warn("[Telegram] Periodic check: webhook was stale — re-registered successfully");
+                } else if (!healthy) {
+                  console.error("[Telegram] Periodic check: webhook re-registration failed — bot may be offline");
+                }
+              }).catch(err => {
+                console.error("[Telegram] Periodic webhook check threw:", err);
+              });
+            }, WEBHOOK_CHECK_INTERVAL_MS);
           } else {
             console.error("[Telegram] Production mode but REPLIT_DOMAINS is not set — cannot register webhook");
           }
