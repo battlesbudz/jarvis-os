@@ -15,7 +15,7 @@ import {
   KeyboardAvoidingView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -164,6 +164,7 @@ const GUT_TYPE_LABEL: Record<string, string> = {
 };
 
 export default function InboxScreen() {
+  const router = useRouter();
   const insets = useSafeAreaInsets();
   const isWeb = Platform.OS === 'web';
   const queryClient = useQueryClient();
@@ -397,6 +398,11 @@ export default function InboxScreen() {
           { text: 'Yes, suppress', onPress: () => actionMutation.mutate({ itemId, actionType }) },
         ]
       );
+      return;
+    }
+    if (actionType === 'navigate_telegram_health') {
+      actionMutation.mutate({ itemId, actionType });
+      router.push({ pathname: '/(tabs)/profile', params: { focus: 'telegram_webhook' } });
       return;
     }
     actionMutation.mutate({ itemId, actionType });

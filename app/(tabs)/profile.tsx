@@ -13,11 +13,12 @@ import {
   TextInput,
   Switch,
   Image,
+  findNodeHandle,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, { FadeInDown } from 'react-native-reanimated';
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useFocusEffect, useRouter, useLocalSearchParams } from 'expo-router';
 import Colors from '@/constants/colors';
 import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
@@ -187,6 +188,9 @@ const PLATFORMS: PlatformInfo[] = [
 export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const { focus } = useLocalSearchParams<{ focus?: string }>();
+  const scrollViewRef = useRef<ScrollView>(null);
+  const webhookRowRef = useRef<View>(null);
   const { logout, username: authUsername } = useAuth();
   const [stats, setStats] = useState<UserStats>({
     streak: 0, totalCompleted: 0, bestStreak: 0, xp: 0, badges: [], claimedRewards: [],
@@ -1281,6 +1285,23 @@ export default function ProfileScreen() {
 
   useFocusEffect(useCallback(() => { loadAll(); }, [loadAll]));
 
+  useEffect(() => {
+    if (focus !== 'telegram_webhook') return;
+    const timer = setTimeout(() => {
+      const scrollNode = findNodeHandle(scrollViewRef.current);
+      if (scrollNode && webhookRowRef.current) {
+        webhookRowRef.current.measureLayout(
+          scrollNode,
+          (_x, y) => {
+            scrollViewRef.current?.scrollTo({ y: Math.max(0, y - 24), animated: true });
+          },
+          () => {}
+        );
+      }
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [focus]);
+
   const lifetimeXp = getLifetimeXp(stats);
   const xpInfo = getXpForNextLevel(lifetimeXp);
   const level = getLevel(lifetimeXp);
@@ -1331,6 +1352,7 @@ export default function ProfileScreen() {
   return (
     <View style={styles.container}>
       <ScrollView
+        ref={scrollViewRef}
         contentContainerStyle={[
           styles.scrollContent,
           {
@@ -2249,7 +2271,7 @@ export default function ProfileScreen() {
             </View>
           )}
 
-          <View style={[styles.platformsList, { marginTop: 12 }]}>
+          <View ref={webhookRowRef} style={[styles.platformsList, { marginTop: 12 }]}>
             <View style={styles.platformRow}>
               <View style={[styles.platformIcon, { backgroundColor: '#229ED918' }]}>
                 <Ionicons name="paper-plane-outline" size={20} color="#229ED9" />

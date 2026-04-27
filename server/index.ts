@@ -1,7 +1,7 @@
 import express from "express";
 import type { Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
-import { ensureTablesExist } from "./db";
+import { ensureTablesExist, db } from "./db";
 import { registerTelegramWebhook, startProactiveScheduler, startTelegramPolling, startEmailAlertScanner, runProactiveStartupCatchup } from "./telegramRoutes";
 import { startMomentumExpiryScheduler } from "./momentumCoach";
 import { startHeartbeat } from "./heartbeat";
@@ -16,8 +16,57 @@ import { registerWhatsAppWebhook } from "./channels/whatsappWebhook";
 import { registerSlackWebhook } from "./channels/slackWebhook";
 import { startDaemonBridge } from "./daemon/bridge";
 import { bootAllBots as bootDiscordBots, bootSharedBot } from "./discord/manager";
+import { telegramLinks, inboxItems } from "@shared/schema";
+import { eq, and } from "drizzle-orm";
 import * as fs from "fs";
 import * as path from "path";
+
+async function alertTelegramUsersWebhookDown(): Promise<void> {
+  try {
+    const linked = await db.select({ userId: telegramLinks.userId }).from(telegramLinks);
+    const uniqueUserIds = [...new Set(linked.map((r) => r.userId))];
+    let alertedCount = 0;
+    for (const userId of uniqueUserIds) {
+      // Skip if a pending alert already exists — prevents inbox spam during prolonged outages.
+      const existing = await db
+        .select({ id: inboxItems.id })
+        .from(inboxItems)
+        .where(
+          and(
+            eq(inboxItems.userId, userId),
+            eq(inboxItems.sourceType, "other"),
+            eq(inboxItems.status, "pending"),
+            eq(inboxItems.subject, "Telegram bot is offline")
+          )
+        )
+        .limit(1);
+      if (existing.length > 0) continue;
+
+      const sourceId = `telegram_webhook_down:${userId}:${Date.now()}`;
+      await db.insert(inboxItems).values({
+        userId,
+        sourceType: "other",
+        sourceId,
+        subject: "Telegram bot is offline",
+        snippet: "Jarvis couldn't re-register the Telegram webhook — your bot may not receive messages. Tap 'Fix now' to open the health check in your profile.",
+        jarvisReason: "Webhook re-registration failed",
+        suggestedActions: [
+          { label: "Fix now", actionType: "navigate_telegram_health" },
+          { label: "Dismiss", actionType: "dismiss" },
+        ],
+        status: "pending",
+      }).onConflictDoNothing();
+      alertedCount++;
+    }
+    if (alertedCount > 0) {
+      console.warn(`[Telegram] Sent offline alert to ${alertedCount} linked user(s)`);
+    } else {
+      console.warn("[Telegram] Webhook still down but all users already have a pending alert — skipping duplicate insert");
+    }
+  } catch (err) {
+    console.error("[Telegram] Failed to send offline alert to users:", err);
+  }
+}
 
 const app = express();
 const log = console.log;
@@ -344,9 +393,11 @@ function setupErrorHandler(app: express.Application) {
                   console.warn("[Telegram] Periodic check: webhook was stale — re-registered successfully");
                 } else if (!healthy) {
                   console.error("[Telegram] Periodic check: webhook re-registration failed — bot may be offline");
+                  alertTelegramUsersWebhookDown();
                 }
               }).catch(err => {
                 console.error("[Telegram] Periodic webhook check threw:", err);
+                alertTelegramUsersWebhookDown();
               });
             }, WEBHOOK_CHECK_INTERVAL_MS);
           } else {
