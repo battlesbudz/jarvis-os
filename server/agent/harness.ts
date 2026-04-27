@@ -82,6 +82,20 @@ export interface RunAgentOptions {
    * existing callers that do not pass an activation plan are unaffected.
    */
   activationPlan?: ActivationPlan;
+  /**
+   * Optional integration dependency map for test contexts.
+   *
+   * When provided, this map is used to seed `toolToIntegrationKey` directly
+   * instead of calling `capabilityRegistry.getIntegrationDeps()` via the
+   * dynamic import of `../capabilities/index`. This bypasses the real registry
+   * import (which can fail in test environments due to circular dependencies)
+   * while still exercising the full harness classification and error-routing
+   * logic from the real code path.
+   *
+   * Production callers should never set this — leave it undefined so the
+   * capability registry is used as normal.
+   */
+  _testOnlyIntegrationDeps?: Record<string, { label: string; toolNames: string[] }>;
 }
 
 export interface AgentRunResult {
@@ -337,21 +351,34 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
   // detection. This mapping comes from the capability registry (not per-user data), so it must
   // be populated regardless of whether a userId is present. Without this, integration auth
   // failures are not classified in headless / test-harness runs that lack a userId.
-  try {
-    const { capabilityRegistry } = await import("../capabilities/index");
-    const integrationDeps = capabilityRegistry.getIntegrationDeps();
-
-    // Multiple integrations can share a tool (e.g. send_email works with google/outlook),
-    // so we collect all candidate keys and resolve the broken one later via live status.
-    for (const [key, { toolNames }] of Object.entries(integrationDeps)) {
+  //
+  // In test contexts, callers may inject the map directly via opts._testOnlyIntegrationDeps
+  // to bypass the dynamic import (which can fail in test environments due to circular deps).
+  if (opts._testOnlyIntegrationDeps) {
+    for (const [key, { toolNames }] of Object.entries(opts._testOnlyIntegrationDeps)) {
       for (const toolName of toolNames) {
         const existing = toolToIntegrationKey.get(toolName) ?? [];
         if (!existing.includes(key)) existing.push(key);
         toolToIntegrationKey.set(toolName, existing);
       }
     }
-  } catch {
-    // registry import is best-effort — never block an agent run
+  } else {
+    try {
+      const { capabilityRegistry } = await import("../capabilities/index");
+      const integrationDeps = capabilityRegistry.getIntegrationDeps();
+
+      // Multiple integrations can share a tool (e.g. send_email works with google/outlook),
+      // so we collect all candidate keys and resolve the broken one later via live status.
+      for (const [key, { toolNames }] of Object.entries(integrationDeps)) {
+        for (const toolName of toolNames) {
+          const existing = toolToIntegrationKey.get(toolName) ?? [];
+          if (!existing.includes(key)) existing.push(key);
+          toolToIntegrationKey.set(toolName, existing);
+        }
+      }
+    } catch {
+      // registry import is best-effort — never block an agent run
+    }
   }
 
   if (context.userId) {
