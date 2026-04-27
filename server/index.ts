@@ -349,6 +349,26 @@ function setupErrorHandler(app: express.Application) {
     console.warn("[Startup] core agent seeding failed (non-fatal):", err);
   }
 
+  // Start the generic MCP server registry — connects all enabled MCP servers
+  // and registers their discovered tools into the agent's tool system.
+  // Non-blocking; connection failures are non-fatal.
+  import("./agent/mcp/mcpServerRegistry").then(async ({ mcpServerRegistry }) => {
+    await mcpServerRegistry.start();
+    const systemTools = mcpServerRegistry.getSystemTools();
+    if (systemTools.length > 0) {
+      const [{ capabilityRegistry }, { buildMcpCapability }, { registerMcpTools }] = await Promise.all([
+        import("./capabilities/index"),
+        import("./capabilities/mcpCapability"),
+        import("./agent/tools/index"),
+      ]);
+      capabilityRegistry.register(buildMcpCapability());
+      registerMcpTools(systemTools);
+      console.log(`[McpRegistry] registered ${systemTools.length} system tools`);
+    }
+  }).catch((err: Error) => {
+    console.warn("[McpRegistry] startup failed (non-fatal):", err.message);
+  });
+
   // Pre-warm lazily-imported modules so the first in-app message has no
   // cold-start delay from module loading + capability registry construction.
   // All imports are fire-and-forget (errors are non-fatal).

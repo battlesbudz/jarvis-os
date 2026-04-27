@@ -6486,6 +6486,112 @@ Extract up to 8 memories per batch.`;
     }
   });
 
+  // ── MCP server management ────────────────────────────────────────────────────
+
+  /** GET /api/mcp-servers — list MCP servers visible to the current user. */
+  app.get("/api/mcp-servers", async (req: Request, res: Response) => {
+    const userId = (req as any).userId as string | undefined;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    try {
+      const { mcpServerRegistry } = await import("./agent/mcp/mcpServerRegistry");
+      const statuses = mcpServerRegistry.getStatusForUser(userId);
+      res.json({
+        servers: statuses.map((s) => ({
+          id: s.server.id,
+          name: s.server.name,
+          transport: s.server.transport,
+          command: s.server.command,
+          url: s.server.url,
+          enabled: s.server.enabled,
+          isBuiltIn: s.server.isBuiltIn,
+          connected: s.connected,
+          toolCount: s.toolCount,
+          error: s.error,
+          isSystem: s.server.userId === null,
+        })),
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /** POST /api/mcp-servers — add a new MCP server. */
+  app.post("/api/mcp-servers", async (req: Request, res: Response) => {
+    const userId = (req as any).userId as string | undefined;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    const { name, transport, command, url, authToken } = req.body as {
+      name?: string;
+      transport?: string;
+      command?: string;
+      url?: string;
+      authToken?: string;
+    };
+    if (!name || typeof name !== "string") {
+      return res.status(400).json({ error: "name is required" });
+    }
+    const transport2 = transport === "http" ? "http" : "stdio";
+    if (transport2 === "stdio" && !command) {
+      return res.status(400).json({ error: "command is required for stdio transport" });
+    }
+    if (transport2 === "http" && !url) {
+      return res.status(400).json({ error: "url is required for http transport" });
+    }
+    try {
+      const { mcpServerRegistry } = await import("./agent/mcp/mcpServerRegistry");
+      const row = await mcpServerRegistry.addServer({
+        userId,
+        name: name.trim().slice(0, 80),
+        transport: transport2,
+        command: command ?? null,
+        url: url ?? null,
+        authToken: authToken ?? null,
+        enabled: true,
+        isBuiltIn: false,
+      });
+      res.status(201).json({ ok: true, id: row.id });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[MCP API] addServer failed:", msg);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /** DELETE /api/mcp-servers/:id — remove a user-owned MCP server. */
+  app.delete("/api/mcp-servers/:id", async (req: Request, res: Response) => {
+    const userId = (req as any).userId as string | undefined;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    const { id } = req.params;
+    try {
+      const { mcpServerRegistry } = await import("./agent/mcp/mcpServerRegistry");
+      const deleted = await mcpServerRegistry.deleteServer(id, userId);
+      if (!deleted) return res.status(404).json({ error: "Server not found or not owned by you" });
+      res.json({ ok: true });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /** PATCH /api/mcp-servers/:id/enabled — toggle a server on/off. */
+  app.patch("/api/mcp-servers/:id/enabled", async (req: Request, res: Response) => {
+    const userId = (req as any).userId as string | undefined;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    const { id } = req.params;
+    const { enabled } = req.body as { enabled?: boolean };
+    if (typeof enabled !== "boolean") {
+      return res.status(400).json({ error: "enabled must be a boolean" });
+    }
+    try {
+      const { mcpServerRegistry } = await import("./agent/mcp/mcpServerRegistry");
+      await mcpServerRegistry.setEnabled(id, enabled);
+      res.json({ ok: true });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: msg });
+    }
+  });
+
   const httpServer = createServer(app);
   return httpServer;
 }

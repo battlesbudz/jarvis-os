@@ -1219,3 +1219,18 @@ export const userSkillPacks = pgTable("user_skill_packs", {
 }, (table) => [
   primaryKey({ columns: [table.userId, table.packId] }),
 ]);
+
+// ── MCP Server registry ────────────────────────────────────────────────────────
+
+export const mcpServers = pgTable("mcp_servers", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").references(() => users.id, { onDelete: "cascade" }),
+  name: varchar("name").notNull(),
+  transport: varchar("transport").notNull().default("stdio"),
+  command: text("command"),
+  url: text("url"),
+  authToken: text("auth_token"),
+  enabled: boolean("enabled").notNull().default(true),
+  isBuiltIn: boolean("is_built_in").notNull().default(false),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});

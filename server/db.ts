@@ -1092,6 +1092,25 @@ export async function ensureTablesExist() {
         ON coach_channel_sessions (user_id)
     `).catch(() => {});
 
+    // ── MCP server registry ────────────────────────────────────────────────
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS mcp_servers (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id VARCHAR REFERENCES users(id) ON DELETE CASCADE,
+        name VARCHAR NOT NULL,
+        transport VARCHAR NOT NULL DEFAULT 'stdio',
+        command TEXT,
+        url TEXT,
+        auth_token TEXT,
+        enabled BOOLEAN NOT NULL DEFAULT TRUE,
+        is_built_in BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `).catch(() => {});
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS mcp_servers_user_idx ON mcp_servers (user_id)
+    `).catch(() => {});
+
     console.log("Database tables verified");
   } catch (error) {
     console.error("Failed to ensure database tables exist:", error);
