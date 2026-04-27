@@ -4979,6 +4979,27 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const triageSection = typeof req.query.triageSection === "string" ? req.query.triageSection : null;
+
+      if (triageSection === "auto_handled") {
+        // Return recently auto-handled / promoted-to-memory items (last 48 h)
+        const since = new Date(Date.now() - 48 * 60 * 60 * 1000);
+        const items = await db
+          .select()
+          .from(schema.deliverables)
+          .where(
+            and(
+              eq(schema.deliverables.userId, userId),
+              eq(schema.deliverables.status, "approved"),
+              gte(schema.deliverables.actedAt, since),
+              sql`${schema.deliverables.triageStatus} IN ('auto_handled', 'promoted_memory')`
+            )
+          )
+          .orderBy(desc(schema.deliverables.createdAt))
+          .limit(20);
+        return res.json(items);
+      }
+
       const status = typeof req.query.status === "string" ? req.query.status : "pending_approval";
       const items = await db
         .select()

@@ -63,7 +63,10 @@ interface Deliverable {
   body: string;
   meta: Record<string, unknown> | null;
   status: string;
+  triageStatus: string | null;
+  triageNote: string | null;
   createdAt: string;
+  actedAt: string | null;
 }
 
 const DELIVERABLE_ICON: Record<string, keyof typeof Ionicons.glyphMap> = {
@@ -214,6 +217,13 @@ export default function InboxScreen() {
     refetchInterval: 30000,
   });
 
+  const { data: autoHandledDeliverables = [], refetch: refetchAutoHandled } = useQuery<Deliverable[]>({
+    queryKey: ['/api/deliverables?triageSection=auto_handled'],
+    refetchInterval: 60000,
+  });
+
+  const [autoHandledExpanded, setAutoHandledExpanded] = useState(false);
+
   const { data: activeJobs = [], refetch: refetchActiveJobs } = useQuery<AgentJob[]>({
     queryKey: ['/api/agent-jobs/active'],
     refetchInterval: (query) => {
@@ -242,6 +252,7 @@ export default function InboxScreen() {
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['/api/deliverables'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/deliverables?triageSection=auto_handled'] });
       Alert.alert(
         'Approved',
         data?.gmailDraftUrl
@@ -261,6 +272,7 @@ export default function InboxScreen() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/deliverables'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/deliverables?triageSection=auto_handled'] });
     },
   });
 
@@ -363,9 +375,10 @@ export default function InboxScreen() {
       refetch();
       refetchDrafts();
       refetchDeliverables();
+      refetchAutoHandled();
       refetchActiveJobs();
       refetchGut();
-    }, [refetch, refetchDrafts, refetchDeliverables, refetchActiveJobs, refetchGut])
+    }, [refetch, refetchDrafts, refetchDeliverables, refetchAutoHandled, refetchActiveJobs, refetchGut])
   );
 
   const handleAction = (itemId: string, actionType: string) => {
@@ -466,7 +479,7 @@ export default function InboxScreen() {
         <View style={styles.draftHeader}>
           <Ionicons name="sparkles" size={16} color={Colors.primary} />
           <Text style={styles.draftHeaderText}>
-            Deliverables · {deliverables.length} ready for review
+            Needs your review · {deliverables.length} item{deliverables.length === 1 ? '' : 's'}
           </Text>
         </View>
         {deliverables.map((d, index) => {
@@ -534,6 +547,81 @@ export default function InboxScreen() {
                     <Text style={[styles.actionText, styles.actionTextDismiss]}>Discard</Text>
                   </Pressable>
                 </View>
+              </View>
+            </Animated.View>
+          );
+        })}
+      </View>
+    );
+  };
+
+  const renderAutoHandledDeliverables = () => {
+    if (autoHandledDeliverables.length === 0) return null;
+    const TRIAGE_ICONS: Record<string, keyof typeof Ionicons.glyphMap> = {
+      auto_handled: 'checkmark-circle-outline',
+      promoted_memory: 'bookmark-outline',
+    };
+    const TRIAGE_COLOR: Record<string, string> = {
+      auto_handled: Colors.success,
+      promoted_memory: '#8B5CF6',
+    };
+    const TRIAGE_LABEL: Record<string, string> = {
+      auto_handled: 'Auto-handled',
+      promoted_memory: 'Saved to memory',
+    };
+    return (
+      <View style={styles.draftSection}>
+        <Pressable
+          style={styles.draftHeader}
+          onPress={() => setAutoHandledExpanded(!autoHandledExpanded)}
+          testID="auto-handled-toggle"
+        >
+          <Ionicons name="checkmark-done-outline" size={16} color={Colors.textSecondary} />
+          <Text style={[styles.draftHeaderText, { color: Colors.textSecondary, flex: 1 }]}>
+            Auto-handled · {autoHandledDeliverables.length} item{autoHandledDeliverables.length === 1 ? '' : 's'}
+          </Text>
+          <Ionicons
+            name={autoHandledExpanded ? 'chevron-up' : 'chevron-down'}
+            size={14}
+            color={Colors.textTertiary}
+          />
+        </Pressable>
+        {autoHandledExpanded && autoHandledDeliverables.map((d, index) => {
+          const ts = d.triageStatus || 'auto_handled';
+          const statusIcon = TRIAGE_ICONS[ts] || 'checkmark-circle-outline';
+          const statusColor = TRIAGE_COLOR[ts] || Colors.success;
+          const statusLabel = TRIAGE_LABEL[ts] || 'Auto-handled';
+          const icon = DELIVERABLE_ICON[d.type] || 'document-text';
+          const typeLabel = DELIVERABLE_LABEL[d.type] || d.type;
+          return (
+            <Animated.View key={d.id} entering={FadeInDown.duration(300).delay(index * 50)}>
+              <View style={[styles.draftCard, styles.autoHandledCard]}>
+                <View style={styles.cardHeader}>
+                  <View style={[styles.sourceIcon, { backgroundColor: statusColor + '15' }]}>
+                    <Ionicons name={icon} size={18} color={statusColor} />
+                  </View>
+                  <View style={styles.cardHeaderText}>
+                    <Text style={[styles.senderName, { color: Colors.textSecondary }]} numberOfLines={1}>
+                      {typeLabel}
+                    </Text>
+                    <Text style={styles.timestamp}>
+                      {d.actedAt
+                        ? new Date(d.actedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+                        : new Date(d.createdAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+                    </Text>
+                  </View>
+                  <View style={[styles.triageBadge, { backgroundColor: statusColor + '18' }]}>
+                    <Ionicons name={statusIcon} size={11} color={statusColor} />
+                    <Text style={[styles.triageBadgeText, { color: statusColor }]}>{statusLabel}</Text>
+                  </View>
+                </View>
+                <Text style={[styles.subject, { color: Colors.textSecondary }]} numberOfLines={2}>{d.title}</Text>
+                {d.triageNote ? (
+                  <View style={styles.triageNoteRow}>
+                    <Ionicons name="sparkles" size={11} color={Colors.textTertiary} />
+                    <Text style={styles.triageNoteText} numberOfLines={2}>{d.triageNote}</Text>
+                  </View>
+                ) : null}
               </View>
             </Animated.View>
           );
@@ -636,6 +724,7 @@ export default function InboxScreen() {
       {renderGutNoticed()}
       {renderRunningJobs()}
       {renderDeliverables()}
+      {renderAutoHandledDeliverables()}
       {renderDraftQueue()}
     </View>
   );
@@ -729,9 +818,9 @@ export default function InboxScreen() {
     <View style={[styles.container, { paddingTop: isWeb ? 67 : insets.top }]}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Inbox</Text>
-        {items.length > 0 && (
+        {(items.length + deliverables.length) > 0 && (
           <View style={styles.badge}>
-            <Text style={styles.badgeText}>{items.length}</Text>
+            <Text style={styles.badgeText}>{items.length + deliverables.length}</Text>
           </View>
         )}
       </View>
@@ -1112,6 +1201,35 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter_400Regular',
     color: Colors.text,
     lineHeight: 18,
+  },
+  autoHandledCard: {
+    borderColor: Colors.border,
+    opacity: 0.85,
+  },
+  triageBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 8,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    gap: 3,
+  },
+  triageBadgeText: {
+    fontSize: 10,
+    fontFamily: 'Inter_500Medium',
+  },
+  triageNoteRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 4,
+    marginTop: 4,
+  },
+  triageNoteText: {
+    fontSize: 11,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textTertiary,
+    flex: 1,
+    lineHeight: 15,
   },
   emptyContainer: {
     alignItems: 'center',
