@@ -1,5 +1,6 @@
 {pkgs}: {
   deps = [
+    pkgs.yt-dlp
     pkgs.expat
     pkgs.cairo
     pkgs.pango

@@ -6,11 +6,20 @@
  * Thread-safe for single-process Node.js.
  *
  * Fetch strategy (in order):
- *   1. InnerTube API — tries TVHTML5_SIMPLY_EMBEDDED_PLAYER, then ANDROID
- *      client contexts to bypass bot detection on the WEB client.
- *   2. YouTube timedtext API — direct /api/timedtext XML endpoint (no auth).
- *   3. youtube-transcript library — last-resort fallback.
+ *   1. InnerTube API — TVHTML5 → iOS → ANDROID client contexts.
+ *   2. yt-dlp — subtitle extraction via the yt-dlp binary (server-side).
+ *   3. YouTube /api/timedtext direct XML endpoint (no auth).
+ *   4. youtube-transcript library — last-resort fallback.
  */
+
+import { exec } from "child_process";
+import { promisify } from "util";
+import { readdir, readFile, rm } from "fs/promises";
+import { mkdtempSync } from "fs";
+import path from "path";
+import os from "os";
+
+const execAsync = promisify(exec);
 
 import type { TranscriptConfig, TranscriptResponse } from "youtube-transcript";
 
@@ -31,9 +40,131 @@ export function extractVideoId(input: string): string | null {
   if (/^[a-zA-Z0-9_-]{11}$/.test(bare)) return bare;
 
   const pat =
-    /(?:youtube\.com\/(?:watch\?(?:[^\s#&]*&)*v=|shorts\/|embed\/|v\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/i;
+    /(?:youtube\.com\/(?:watch\?(?:[^\s#&]*&)*v=|shorts\/|embed\/|v\/|live\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/i;
   const m = pat.exec(bare);
   return m ? m[1] : null;
+}
+
+/**
+ * Returns true if the input is a YouTube playlist URL with no individual video selected.
+ * Playlist URLs should be rejected — the tool can only fetch one video at a time.
+ */
+export function isPlaylistUrl(input: string): boolean {
+  try {
+    const url = new URL(input.trim());
+    const list = url.searchParams.get("list");
+    const videoId = url.searchParams.get("v");
+    // It's a playlist-only URL if it has a list parameter but no v= video ID
+    if (list && !videoId) return true;
+  } catch {
+    // Not a URL (e.g. bare video ID) — not a playlist
+  }
+  return false;
+}
+
+// ── SRT/VTT subtitle parser ───────────────────────────────────────────────────
+// Supports the SRT format produced by yt-dlp --convert-subs srt.
+
+function parseSrt(content: string): TranscriptResponse[] {
+  const blocks = content.trim().split(/\n\s*\n/);
+  const segments: TranscriptResponse[] = [];
+  const tsRe =
+    /(\d{1,2}):(\d{2}):(\d{2})[,.](\d{3})\s*-->\s*(\d{1,2}):(\d{2}):(\d{2})[,.](\d{3})/;
+
+  for (const block of blocks) {
+    const lines = block.trim().split("\n");
+    if (lines.length < 2) continue;
+
+    const tsLineIdx = lines.findIndex((l) => tsRe.test(l));
+    if (tsLineIdx === -1) continue;
+
+    const m = tsRe.exec(lines[tsLineIdx])!;
+    const startMs =
+      (parseInt(m[1]) * 3600 + parseInt(m[2]) * 60 + parseInt(m[3])) * 1000 +
+      parseInt(m[4]);
+    const endMs =
+      (parseInt(m[5]) * 3600 + parseInt(m[6]) * 60 + parseInt(m[7])) * 1000 +
+      parseInt(m[8]);
+
+    const textLines = lines
+      .slice(tsLineIdx + 1)
+      .map((l) =>
+        l
+          .replace(/<[^>]+>/g, "")
+          .replace(/\{[^}]+\}/g, "")
+          .trim()
+      )
+      .filter(Boolean);
+    const text = textLines.join(" ");
+    if (!text) continue;
+
+    segments.push({ text, offset: startMs, duration: endMs - startMs, lang: "en" });
+  }
+
+  return segments;
+}
+
+// ── yt-dlp subtitle extraction ────────────────────────────────────────────────
+
+async function fetchYtDlpTranscript(videoId: string): Promise<TranscriptResponse[]> {
+  let tmpDir: string;
+  try {
+    tmpDir = mkdtempSync(path.join(os.tmpdir(), `ytdlp-${videoId}-`));
+  } catch {
+    return [];
+  }
+
+  try {
+    const outputTemplate = path.join(tmpDir, "%(id)s");
+    const url = `https://www.youtube.com/watch?v=${videoId}`;
+
+    await execAsync(
+      `yt-dlp --skip-download --write-subs --write-auto-subs ` +
+        `--sub-langs "en.*,en" --convert-subs srt --no-playlist ` +
+        `--no-warnings --quiet --no-progress ` +
+        `--output "${outputTemplate}" -- "${url}"`,
+      { timeout: 45_000 }
+    );
+
+    const files = await readdir(tmpDir).catch(() => [] as string[]);
+    const srtFiles = files.filter((f) => f.endsWith(".srt"));
+    if (srtFiles.length === 0) return [];
+
+    // Prefer manual English, then any English, then first file
+    const best =
+      srtFiles.find((f) => /\.(en|en-US|en-GB)\[.*manual\]\.srt$/.test(f)) ??
+      srtFiles.find((f) => /\.(en|en-US|en-GB)\.srt$/.test(f)) ??
+      srtFiles.find((f) => /\.en/.test(f)) ??
+      srtFiles[0];
+
+    const content = await readFile(path.join(tmpDir, best), "utf-8");
+    const segments = parseSrt(content);
+
+    if (segments.length > 0) {
+      console.log(
+        `[transcriptCache] yt-dlp OK ${videoId} — ${segments.length} segs via ${best}`
+      );
+    }
+
+    return segments;
+  } catch (err) {
+    const raw = err instanceof Error ? err.message : String(err);
+    const lower = raw.toLowerCase();
+    // Surface terminal errors so the caller can skip further strategies
+    if (lower.includes("video unavailable") || lower.includes("private video")) {
+      throw new Error(`LOGIN_REQUIRED: ${raw}`);
+    }
+    if (lower.includes("age-restricted") || lower.includes("sign in to confirm")) {
+      throw new Error(`CONTENT_RESTRICTED: ${raw}`);
+    }
+    if (lower.includes("429") || lower.includes("too many requests")) {
+      throw new Error(`TOO_MANY_REQUESTS: ${raw}`);
+    }
+    console.warn(`[transcriptCache] yt-dlp non-terminal failure for ${videoId}: ${raw}`);
+    return [];
+  } finally {
+    rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+  }
 }
 
 /** Evict entries that have expired. Called before every cache read/write to keep memory lean. */
@@ -394,14 +525,14 @@ export interface FetchTranscriptOptions {
 /**
  * Fetch a transcript, returning a cached result when available.
  *
- * On a cache miss (or when bypassCache=true), three strategies are tried:
- *   1. InnerTube API (TVHTML5_SIMPLY_EMBEDDED_PLAYER → ANDROID client)
- *   2. YouTube /api/timedtext direct XML endpoint
- *   3. youtube-transcript library (last resort)
+ * On a cache miss (or when bypassCache=true), four server-side strategies are tried:
+ *   1. InnerTube API (TVHTML5 → iOS → ANDROID clients)
+ *   2. yt-dlp subtitle extraction (--write-subs, --write-auto-subs)
+ *   3. YouTube /api/timedtext direct XML endpoint
+ *   4. youtube-transcript library (last resort)
  *
- * Terminal InnerTube errors (LOGIN_REQUIRED, CONTENT_RESTRICTED, TOO_MANY_REQUESTS)
- * are propagated immediately — no fallback is attempted because the fallback
- * would encounter the same restriction.
+ * Terminal errors (LOGIN_REQUIRED, CONTENT_RESTRICTED, TOO_MANY_REQUESTS) are
+ * propagated immediately — no further strategy will succeed.
  */
 export async function fetchTranscriptCached(
   input: string,
@@ -437,7 +568,7 @@ export async function fetchTranscriptCached(
       source = "innertube";
     } else {
       console.log(
-        `[transcriptCache] InnerTube 0 segs for ${resolvedId}, trying timedtext fallback`
+        `[transcriptCache] InnerTube 0 segs for ${resolvedId}, trying yt-dlp`
       );
     }
   } catch (err) {
@@ -451,11 +582,36 @@ export async function fetchTranscriptCached(
       throw err;
     }
     console.warn(
-      `[transcriptCache] InnerTube non-terminal failure for ${resolvedId}: ${msg} — trying timedtext`
+      `[transcriptCache] InnerTube non-terminal failure for ${resolvedId}: ${msg} — trying yt-dlp`
     );
   }
 
-  // ── Strategy 2: YouTube /api/timedtext direct XML ─────────────────────────
+  // ── Strategy 2: yt-dlp subtitle extraction ────────────────────────────────
+  if (segments.length === 0) {
+    try {
+      segments = await fetchYtDlpTranscript(resolvedId);
+      if (segments.length > 0) {
+        source = "yt-dlp";
+      } else {
+        console.log(`[transcriptCache] yt-dlp 0 segs for ${resolvedId}, trying timedtext`);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (
+        msg.startsWith("LOGIN_REQUIRED") ||
+        msg.startsWith("CONTENT_RESTRICTED") ||
+        msg.startsWith("TOO_MANY_REQUESTS")
+      ) {
+        console.log(`[transcriptCache] yt-dlp terminal error for ${resolvedId}: ${msg}`);
+        throw err;
+      }
+      console.warn(
+        `[transcriptCache] yt-dlp non-terminal failure for ${resolvedId}: ${msg} — trying timedtext`
+      );
+    }
+  }
+
+  // ── Strategy 3: YouTube /api/timedtext direct XML ─────────────────────────
   if (segments.length === 0) {
     try {
       segments = await fetchTimedTextTranscript(resolvedId);
@@ -463,7 +619,7 @@ export async function fetchTranscriptCached(
         source = "timedtext";
         console.log(`[transcriptCache] timedtext strategy OK ${resolvedId} — ${segments.length} segs`);
       } else {
-        console.log(`[transcriptCache] timedtext returned 0 segs for ${resolvedId}, trying youtube-transcript fallback`);
+        console.log(`[transcriptCache] timedtext returned 0 segs for ${resolvedId}, trying youtube-transcript library`);
       }
     } catch (err) {
       console.warn(

@@ -10,8 +10,18 @@
  */
 
 import type { AgentTool, ToolArgs, ToolContext, ToolResult } from "../types";
-import { fetchTranscriptCached, extractVideoId, parseTimedTextXml } from "../../lib/transcriptCache";
+import {
+  fetchTranscriptCached,
+  extractVideoId,
+  parseTimedTextXml,
+  isPlaylistUrl,
+} from "../../lib/transcriptCache";
 import { callBrowserTool } from "../mcp/playwrightMcpClient";
+import {
+  isWorkerOnline,
+  queueTranscriptJob,
+  type LocalJobSegment,
+} from "../../lib/localWorkerQueue";
 
 /** Maximum characters returned before truncation (≈ ~150k tokens safe limit). */
 const MAX_CHARS = 120_000;
@@ -126,14 +136,30 @@ export const youtubeTranscriptTool: AgentTool = {
       return { ok: false, content: "Please provide a YouTube URL or video ID.", label: "get_youtube_transcript: missing input" };
     }
 
+    // ── Reject playlist URLs ──────────────────────────────────────────────────
+    if (isPlaylistUrl(input)) {
+      return {
+        ok: false,
+        content:
+          "That looks like a YouTube playlist URL. I can only fetch transcripts for individual videos. " +
+          "Please share a single video URL (e.g. https://youtube.com/watch?v=VIDEO_ID).",
+        label: "get_youtube_transcript: playlist URL rejected",
+      };
+    }
+
     const bypassCache = args.refresh === true;
     console.log(
       `[get_youtube_transcript] fetching transcript for "${input}" (user=${ctx.userId}, bypassCache=${bypassCache})`
     );
 
     // ── Shared formatter: segments → readable timestamped transcript ──────────
+    // Long transcripts (> 40 000 chars, roughly a 1 h+ video) are sent as a
+    // .txt file attachment so the chat isn't flooded with message chunks.
+    const FILE_THRESHOLD = 40_000;
+
     const buildResult = (
-      rawSegments: Array<{ text: string; offset: number; duration?: number | null }>
+      rawSegments: Array<{ text: string; offset: number; duration?: number | null }>,
+      source?: string
     ): ToolResult => {
       // Normalise offsets: InnerTube ms vs. classic library seconds detection.
       const lastSeg = rawSegments[rawSegments.length - 1];
@@ -161,19 +187,46 @@ export const youtubeTranscriptTool: AgentTool = {
         lines.push(`[${formatTimestamp(chunkStartMs)}] ${chunkText.join(" ")}`);
       }
 
-      let body = lines.join("\n");
+      const totalDuration = formatTimestamp(lastRawOffset * toMs);
+      const sourceTag = source ? ` · via ${source}` : "";
+      const header =
+        `Transcript (${rawSegments.length} segments, ~${totalDuration} duration${sourceTag})\n` +
+        `${"─".repeat(60)}\n`;
+      const body = lines.join("\n");
+      const fullText = header + body;
+
+      // ── Long transcript → .txt file ────────────────────────────────────────
+      // When a transcript is very long (> 40 k chars, roughly a 1 h+ video),
+      // push it as a file attachment so the chat isn't flooded with text chunks.
+      if (body.length > FILE_THRESHOLD) {
+        const pending = (ctx.state.pendingAttachments ||= []);
+        pending.push({
+          kind: "document",
+          filename: `transcript-${(extractVideoId(input) ?? "video")}.txt`,
+          content: fullText,
+          caption: `Full transcript (~${totalDuration}) — ${rawSegments.length} segments.`,
+          mimeType: "text/plain",
+        });
+        return {
+          ok: true,
+          content:
+            `Transcript retrieved (${rawSegments.length} segments, ~${totalDuration}${sourceTag}). ` +
+            `The full text is long (~${Math.round(body.length / 1000)} k chars) — I'm sending it as a text file so it's easy to save or search.`,
+          label: `get_youtube_transcript: ${rawSegments.length} segments, ~${totalDuration} → file`,
+        };
+      }
+
+      // Short enough to inline — but still cap at MAX_CHARS for the AI context window
+      let inlineBody = body;
       let truncationNote = "";
-      if (body.length > MAX_CHARS) {
-        body = body.slice(0, MAX_CHARS);
+      if (inlineBody.length > MAX_CHARS) {
+        inlineBody = inlineBody.slice(0, MAX_CHARS);
         truncationNote = `\n\n[Transcript truncated at ${MAX_CHARS.toLocaleString()} characters. The video is very long — the above covers the first portion.]`;
       }
 
-      const totalDuration = formatTimestamp(lastRawOffset * toMs);
-      const header = `Transcript (${rawSegments.length} segments, ~${totalDuration} duration)\n${"─".repeat(60)}\n`;
-
       return {
         ok: true,
-        content: header + body + truncationNote,
+        content: header + inlineBody + truncationNote,
         label: `get_youtube_transcript: ${rawSegments.length} segments, ~${totalDuration}`,
       };
     };
@@ -181,13 +234,27 @@ export const youtubeTranscriptTool: AgentTool = {
     try {
       let segments = await fetchTranscriptCached(input, { bypassCache });
 
-      // ── Strategy 4: browser fallback if server-side got nothing ──────────────
+      // ── Strategy 5: browser fallback if server-side got nothing ──────────────
       // YouTube increasingly blocks server-side requests from cloud IPs. Running
       // the same fetch through a real browser (Playwright) bypasses that block.
       if (!segments || segments.length === 0) {
         console.log(`[get_youtube_transcript] server strategies returned 0 segs — trying browser fallback`);
         const browserSegs = await fetchTranscriptViaBrowser(input, ctx.userId);
-        if (browserSegs.length > 0) return buildResult(browserSegs);
+        if (browserSegs.length > 0) return buildResult(browserSegs, "browser");
+
+        // ── Strategy 6: local worker ─────────────────────────────────────────
+        // If the user has a local agent running on their PC, forward the job to
+        // it — their machine won't be subject to Replit's IP-level blocks.
+        if (isWorkerOnline(ctx.userId)) {
+          console.log(`[get_youtube_transcript] browser fallback empty — forwarding to local worker`);
+          try {
+            const localSegs = await queueTranscriptJob(ctx.userId, input);
+            if (localSegs.length > 0) return buildResult(localSegs, "local-worker");
+          } catch (lwErr) {
+            console.warn(`[get_youtube_transcript] local worker failed: ${lwErr instanceof Error ? lwErr.message : String(lwErr)}`);
+          }
+        }
+
         return {
           ok: false,
           content: "No transcript segments were returned. The video may have captions disabled.",
@@ -234,7 +301,18 @@ export const youtubeTranscriptTool: AgentTool = {
       // ── Non-terminal: try browser fallback before giving up ─────────────────
       console.log(`[get_youtube_transcript] non-terminal error (${msg}) — trying browser fallback`);
       const browserSegs = await fetchTranscriptViaBrowser(input, ctx.userId);
-      if (browserSegs.length > 0) return buildResult(browserSegs);
+      if (browserSegs.length > 0) return buildResult(browserSegs, "browser");
+
+      // ── Last resort: local worker ─────────────────────────────────────────
+      if (isWorkerOnline(ctx.userId)) {
+        console.log(`[get_youtube_transcript] browser also failed — forwarding to local worker`);
+        try {
+          const localSegs = await queueTranscriptJob(ctx.userId, input);
+          if (localSegs.length > 0) return buildResult(localSegs, "local-worker");
+        } catch (lwErr) {
+          console.warn(`[get_youtube_transcript] local worker also failed: ${lwErr instanceof Error ? lwErr.message : String(lwErr)}`);
+        }
+      }
 
       console.error(`[get_youtube_transcript] all strategies exhausted: ${msg}`);
       return {
