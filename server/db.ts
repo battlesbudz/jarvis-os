@@ -404,12 +404,16 @@ export async function ensureTablesExist() {
     `);
 
     await db.execute(sql`
+      ALTER TABLE inbox_items ADD COLUMN IF NOT EXISTS surfaced_at TIMESTAMP DEFAULT NOW()
+    `);
+
+    await db.execute(sql`
       DELETE FROM inbox_items a
       USING (
         SELECT id,
                ROW_NUMBER() OVER (
-                 PARTITION BY "userId", "sourceId"
-                 ORDER BY "createdAt" ASC, id ASC
+                 PARTITION BY user_id, source_id
+                 ORDER BY surfaced_at ASC, id ASC
                ) AS rn
         FROM inbox_items
       ) b

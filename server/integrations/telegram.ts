@@ -114,6 +114,63 @@ export async function sendMessage(
   }
 }
 
+/**
+ * Sends a message and returns the Telegram message_id of the sent message,
+ * or null if the send failed or the bot token is not configured.
+ * Used to obtain a handle for in-place edits via editMessage().
+ */
+export async function sendMessageGetId(
+  chatId: string,
+  text: string,
+): Promise<number | null> {
+  if (!BOT_TOKEN) return null;
+  try {
+    const res = await fetch(`${BASE}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, text }),
+    });
+    if (!res.ok) {
+      console.error('Telegram sendMessageGetId error:', await res.text());
+      return null;
+    }
+    const data = await res.json() as { ok: boolean; result?: { message_id: number } };
+    return data.result?.message_id ?? null;
+  } catch (e) {
+    console.error('Telegram sendMessageGetId threw:', String(e));
+    return null;
+  }
+}
+
+/**
+ * Edits the text of a previously sent message in-place.
+ * Silently ignores "message is not modified" errors (no visible change = no error).
+ * Text is clamped to 4096 characters (Telegram's per-message limit).
+ */
+export async function editMessage(
+  chatId: string,
+  messageId: number,
+  text: string,
+): Promise<void> {
+  if (!BOT_TOKEN) return;
+  const safeText = text.slice(0, 4096) || "…";
+  try {
+    const res = await fetch(`${BASE}/editMessageText`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, message_id: messageId, text: safeText }),
+    });
+    if (!res.ok) {
+      const err = await res.text();
+      if (!err.includes('message is not modified')) {
+        console.warn('Telegram editMessage error:', err);
+      }
+    }
+  } catch (e) {
+    console.warn('Telegram editMessage threw:', String(e));
+  }
+}
+
 /** Telegram's hard per-message character limit. */
 const TG_MAX_CHARS = 4096;
 
