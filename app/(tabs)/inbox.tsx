@@ -33,6 +33,7 @@ interface InboxItem {
   suggestedActions: { label: string; actionType: string }[] | null;
   status: string;
   surfacedAt: string;
+  actedAt: string | null;
 }
 
 interface GutSignal {
@@ -219,6 +220,11 @@ export default function InboxScreen() {
 
   const { data: autoHandledDeliverables = [], refetch: refetchAutoHandled } = useQuery<Deliverable[]>({
     queryKey: ['/api/deliverables?triageSection=auto_handled'],
+    refetchInterval: 60000,
+  });
+
+  const { data: dismissedInboxItems = [] } = useQuery<InboxItem[]>({
+    queryKey: ['/api/inbox/items?status=dismissed'],
     refetchInterval: 60000,
   });
 
@@ -556,7 +562,8 @@ export default function InboxScreen() {
   };
 
   const renderAutoHandledDeliverables = () => {
-    if (autoHandledDeliverables.length === 0) return null;
+    const totalCount = autoHandledDeliverables.length + dismissedInboxItems.length;
+    if (totalCount === 0) return null;
     const TRIAGE_ICONS: Record<string, keyof typeof Ionicons.glyphMap> = {
       auto_handled: 'checkmark-circle-outline',
       promoted_memory: 'bookmark-outline',
@@ -578,7 +585,7 @@ export default function InboxScreen() {
         >
           <Ionicons name="checkmark-done-outline" size={16} color={Colors.textSecondary} />
           <Text style={[styles.draftHeaderText, { color: Colors.textSecondary, flex: 1 }]}>
-            Auto-handled · {autoHandledDeliverables.length} item{autoHandledDeliverables.length === 1 ? '' : 's'}
+            Auto-handled · {totalCount} item{totalCount === 1 ? '' : 's'}
           </Text>
           <Ionicons
             name={autoHandledExpanded ? 'chevron-up' : 'chevron-down'}
@@ -620,6 +627,43 @@ export default function InboxScreen() {
                   <View style={styles.triageNoteRow}>
                     <Ionicons name="sparkles" size={11} color={Colors.textTertiary} />
                     <Text style={styles.triageNoteText} numberOfLines={2}>{d.triageNote}</Text>
+                  </View>
+                ) : null}
+              </View>
+            </Animated.View>
+          );
+        })}
+        {autoHandledExpanded && dismissedInboxItems.map((item, index) => {
+          const offset = autoHandledDeliverables.length;
+          return (
+            <Animated.View key={item.id} entering={FadeInDown.duration(300).delay((index + offset) * 50)}>
+              <View style={[styles.draftCard, styles.autoHandledCard]}>
+                <View style={styles.cardHeader}>
+                  <View style={[styles.sourceIcon, { backgroundColor: Colors.success + '15' }]}>
+                    <Ionicons name="mail-outline" size={18} color={Colors.success} />
+                  </View>
+                  <View style={styles.cardHeaderText}>
+                    <Text style={[styles.senderName, { color: Colors.textSecondary }]} numberOfLines={1}>
+                      {item.sender || item.sourceType}
+                    </Text>
+                    <Text style={styles.timestamp}>
+                      {item.actedAt
+                        ? new Date(item.actedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+                        : new Date(item.surfacedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+                    </Text>
+                  </View>
+                  <View style={[styles.triageBadge, { backgroundColor: Colors.success + '18' }]}>
+                    <Ionicons name="checkmark-circle-outline" size={11} color={Colors.success} />
+                    <Text style={[styles.triageBadgeText, { color: Colors.success }]}>Auto-dismissed</Text>
+                  </View>
+                </View>
+                <Text style={[styles.subject, { color: Colors.textSecondary }]} numberOfLines={2}>
+                  {item.subject || '(no subject)'}
+                </Text>
+                {item.snippet ? (
+                  <View style={styles.triageNoteRow}>
+                    <Ionicons name="sparkles" size={11} color={Colors.textTertiary} />
+                    <Text style={styles.triageNoteText} numberOfLines={2}>{item.snippet}</Text>
                   </View>
                 ) : null}
               </View>

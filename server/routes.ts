@@ -4400,11 +4400,13 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const statusFilter = typeof req.query.status === "string" ? req.query.status : "pending";
       const items = await db
         .select()
         .from(schema.inboxItems)
-        .where(and(eq(schema.inboxItems.userId, userId), eq(schema.inboxItems.status, "pending")))
-        .orderBy(desc(schema.inboxItems.surfacedAt));
+        .where(and(eq(schema.inboxItems.userId, userId), eq(schema.inboxItems.status, statusFilter)))
+        .orderBy(desc(schema.inboxItems.surfacedAt))
+        .limit(50);
       res.json(items);
     } catch (error) {
       console.error("Error fetching inbox items:", error);
