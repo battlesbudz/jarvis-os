@@ -17,6 +17,7 @@ import { Link, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import Colors from '@/constants/colors';
 import * as Haptics from 'expo-haptics';
 import * as WebBrowser from 'expo-web-browser';
+import * as Clipboard from 'expo-clipboard';
 import { Audio } from 'expo-av';
 import {
   getStats,
@@ -259,6 +260,16 @@ export default function SettingsScreen() {
   const [mcpAddToken, setMcpAddToken] = useState('');
   const [mcpAddError, setMcpAddError] = useState('');
   const [mcpAddSaving, setMcpAddSaving] = useState(false);
+
+  // ── MCP Server (Jarvis as MCP server) ──
+  interface McpKeyInfo { prefix: string; createdAt: string; lastUsedAt: string | null }
+  const [mcpKeyInfo, setMcpKeyInfo] = useState<McpKeyInfo | null>(null);
+  const [mcpKeyLoading, setMcpKeyLoading] = useState(false);
+  const [mcpRawKey, setMcpRawKey] = useState<string | null>(null);
+  const [mcpKeyRegenerating, setMcpKeyRegenerating] = useState(false);
+  const [mcpSnippetExpanded, setMcpSnippetExpanded] = useState(false);
+  const [mcpKeyCopied, setMcpKeyCopied] = useState(false);
+  const [mcpUrlCopied, setMcpUrlCopied] = useState(false);
 
   // ── Build History ──
   const [buildHistory, setBuildHistory] = useState<BuildLogEntry[]>([]);
@@ -588,6 +599,58 @@ export default function SettingsScreen() {
     }
   }, [mcpAddName, mcpAddTransport, mcpAddCommand, mcpAddUrl, mcpAddToken, loadMcpServers]);
 
+  // ── MCP Server key management ──
+  const loadMcpServerKey = useCallback(async () => {
+    setMcpKeyLoading(true);
+    try {
+      const res = await apiRequest('GET', '/api/mcp-key');
+      if (res.ok) {
+        const data = await res.json();
+        setMcpKeyInfo(data.hasKey ? data : null);
+      }
+    } catch { /* non-fatal */ } finally {
+      setMcpKeyLoading(false);
+    }
+  }, []);
+
+  const handleMcpRegenerateKey = useCallback(async () => {
+    Alert.alert(
+      'Regenerate API Key',
+      'This will revoke your current key. Any connected MCP clients will stop working until updated. Continue?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Regenerate',
+          style: 'destructive',
+          onPress: async () => {
+            setMcpKeyRegenerating(true);
+            try {
+              const res = await apiRequest('POST', '/api/mcp-key/generate');
+              if (res.ok) {
+                const data = await res.json();
+                setMcpRawKey(data.rawKey);
+                await loadMcpServerKey();
+                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+              }
+            } catch { /* non-fatal */ } finally {
+              setMcpKeyRegenerating(false);
+            }
+          },
+        },
+      ]
+    );
+  }, [loadMcpServerKey]);
+
+  const getMcpServerUrl = useCallback((): string => {
+    try {
+      const { getApiUrl } = require('@/lib/query-client');
+      const base = getApiUrl();
+      return `${base.replace(/\/$/, '')}/api/mcp`;
+    } catch {
+      return `https://<your-domain>/api/mcp`;
+    }
+  }, []);
+
   // ── Load everything ──
   const loadAll = useCallback(async () => {
     await loadConnections();
@@ -628,13 +691,14 @@ export default function SettingsScreen() {
     loadBuildHistory();
     loadHealth();
     loadMcpServers();
+    loadMcpServerKey();
     return () => {
       if (telegramPollRef.current) {
         clearInterval(telegramPollRef.current);
         telegramPollRef.current = null;
       }
     };
-  }, [loadAll, loadNervousSystem, loadThreatLog, loadBuildHistory, loadHealth, loadMcpServers]));
+  }, [loadAll, loadNervousSystem, loadThreatLog, loadBuildHistory, loadHealth, loadMcpServers, loadMcpServerKey]));
 
   useEffect(() => {
     return () => {
@@ -1290,6 +1354,150 @@ export default function SettingsScreen() {
             </View>
           </View>
         )}
+
+        {/* ── MCP SERVER (Jarvis as MCP server) ── */}
+        <SectionHeader label="MCP SERVER" accent="#8B5CF6" />
+        <View style={styles.card}>
+          {/* Server URL row */}
+          <View style={[styles.connRow, { paddingVertical: 12 }]}>
+            <View style={[styles.connIconWrap, { backgroundColor: '#2D1B69' }]}>
+              <Ionicons name="server-outline" size={18} color="#8B5CF6" />
+            </View>
+            <View style={styles.connInfo}>
+              <Text style={styles.connName}>Server URL</Text>
+              <Text style={[styles.connSub, { fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace', fontSize: 10 }]} numberOfLines={1}>
+                {getMcpServerUrl()}
+              </Text>
+            </View>
+            <Pressable
+              onPress={async () => {
+                await Clipboard.setStringAsync(getMcpServerUrl());
+                setMcpUrlCopied(true);
+                setTimeout(() => setMcpUrlCopied(false), 2000);
+              }}
+              style={{ padding: 8 }}
+            >
+              <Ionicons
+                name={mcpUrlCopied ? 'checkmark-circle' : 'copy-outline'}
+                size={18}
+                color={mcpUrlCopied ? '#10B981' : Colors.textSecondary}
+              />
+            </Pressable>
+          </View>
+
+          {/* API Key row */}
+          <View style={[styles.connRow, styles.connRowBorder, { paddingVertical: 12 }]}>
+            <View style={[styles.connIconWrap, { backgroundColor: '#2D1B69' }]}>
+              <Ionicons name="key-outline" size={18} color="#8B5CF6" />
+            </View>
+            <View style={styles.connInfo}>
+              <Text style={styles.connName}>API Key</Text>
+              {mcpKeyLoading ? (
+                <ActivityIndicator size="small" color="#8B5CF6" />
+              ) : mcpRawKey ? (
+                <Text style={[styles.connSub, { fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace', fontSize: 10, color: '#10B981' }]} numberOfLines={1}>
+                  {mcpRawKey}
+                </Text>
+              ) : mcpKeyInfo ? (
+                <>
+                  <Text style={[styles.connSub, { fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace', fontSize: 10 }]}>
+                    {mcpKeyInfo.prefix}••••••••••••••••••••••••••••••••
+                  </Text>
+                  <Text style={{ fontSize: 10, color: Colors.textTertiary, fontFamily: 'Inter_400Regular', marginTop: 1 }}>
+                    Key is masked — regenerate to reveal a new one
+                  </Text>
+                </>
+              ) : (
+                <Text style={styles.connSub}>No key — tap Regenerate to create one</Text>
+              )}
+            </View>
+            {(mcpRawKey || mcpKeyInfo) && (
+              <Pressable
+                onPress={async () => {
+                  if (mcpRawKey) {
+                    await Clipboard.setStringAsync(mcpRawKey);
+                    setMcpKeyCopied(true);
+                    setTimeout(() => setMcpKeyCopied(false), 2000);
+                  }
+                }}
+                style={{ padding: 8 }}
+                disabled={!mcpRawKey}
+              >
+                <Ionicons
+                  name={mcpKeyCopied ? 'checkmark-circle' : 'copy-outline'}
+                  size={18}
+                  color={mcpKeyCopied ? '#10B981' : mcpRawKey ? Colors.textSecondary : Colors.textMuted}
+                />
+              </Pressable>
+            )}
+          </View>
+
+          {/* Raw key one-time warning */}
+          {!!mcpRawKey && (
+            <View style={{ paddingHorizontal: 14, paddingBottom: 10, backgroundColor: '#8B5CF610', borderRadius: 8, marginHorizontal: 8, marginBottom: 4 }}>
+              <Text style={{ fontSize: 11, color: '#8B5CF6', fontFamily: 'Inter_600SemiBold', marginTop: 8, marginBottom: 2 }}>
+                Copy your key now
+              </Text>
+              <Text style={{ fontSize: 11, color: Colors.textSecondary, fontFamily: 'Inter_400Regular', lineHeight: 15 }}>
+                This is shown once. Store it somewhere safe — you won't be able to see it again.
+              </Text>
+            </View>
+          )}
+
+          {/* Regenerate button */}
+          <View style={[styles.connRow, styles.connRowBorder, { paddingVertical: 10, justifyContent: 'center' }]}>
+            <Pressable
+              onPress={handleMcpRegenerateKey}
+              disabled={mcpKeyRegenerating}
+              style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8, borderWidth: 1, borderColor: '#8B5CF6', backgroundColor: '#8B5CF610' }}
+            >
+              {mcpKeyRegenerating
+                ? <ActivityIndicator size="small" color="#8B5CF6" />
+                : <Ionicons name="refresh-outline" size={16} color="#8B5CF6" />
+              }
+              <Text style={{ color: '#8B5CF6', fontSize: 13, fontFamily: 'Inter_600SemiBold' }}>
+                {mcpKeyInfo ? 'Regenerate Key' : 'Generate Key'}
+              </Text>
+            </Pressable>
+          </View>
+
+          {/* Claude Desktop snippet */}
+          <Pressable
+            style={[styles.connRow, styles.connRowBorder, { paddingVertical: 10, justifyContent: 'space-between' }]}
+            onPress={() => setMcpSnippetExpanded(v => !v)}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Ionicons name="code-slash-outline" size={16} color={Colors.textSecondary} />
+              <Text style={{ fontSize: 13, color: Colors.textSecondary, fontFamily: 'Inter_500Medium' }}>
+                Claude Desktop config
+              </Text>
+            </View>
+            <Ionicons name={mcpSnippetExpanded ? 'chevron-up' : 'chevron-down'} size={16} color={Colors.textTertiary} />
+          </Pressable>
+          {mcpSnippetExpanded && (
+            <View style={{ paddingHorizontal: 14, paddingBottom: 14 }}>
+              <Text style={{ fontSize: 11, color: Colors.textTertiary, fontFamily: 'Inter_400Regular', lineHeight: 15, marginBottom: 8 }}>
+                Add this to your <Text style={{ fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' }}>claude_desktop_config.json</Text>:
+              </Text>
+              <View style={{ backgroundColor: Colors.surface, borderRadius: 8, padding: 10, borderWidth: 1, borderColor: Colors.border }}>
+                <Text style={{ fontSize: 11, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace', color: Colors.textSecondary, lineHeight: 16 }}>
+                  {`{\n  "mcpServers": {\n    "jarvis": {\n      "url": "${getMcpServerUrl()}",\n      "type": "http",\n      "headers": {\n        "Authorization": "Bearer <your-key>"\n      }\n    }\n  }\n}`}
+                </Text>
+              </View>
+              <Pressable
+                onPress={async () => {
+                  const snippet = `{\n  "mcpServers": {\n    "jarvis": {\n      "url": "${getMcpServerUrl()}",\n      "type": "http",\n      "headers": {\n        "Authorization": "Bearer ${mcpRawKey ?? '<your-key>'} "\n      }\n    }\n  }\n}`;
+                  await Clipboard.setStringAsync(snippet);
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                }}
+                style={{ marginTop: 8, flexDirection: 'row', alignItems: 'center', gap: 5, alignSelf: 'flex-end' }}
+              >
+                <Ionicons name="copy-outline" size={14} color={Colors.textTertiary} />
+                <Text style={{ fontSize: 11, color: Colors.textTertiary, fontFamily: 'Inter_500Medium' }}>Copy snippet</Text>
+              </Pressable>
+            </View>
+          )}
+        </View>
 
         {/* ── WAKE WORD ── */}
         <SectionHeader label="WAKE WORD" accent={Colors.primary} />
