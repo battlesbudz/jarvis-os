@@ -1920,6 +1920,7 @@ export default function AgentsScreen() {
   const [showCouncil, setShowCouncil] = useState(false);
   const [detailAgent, setDetailAgent] = useState<RosterAgent | null>(null);
   const [detailTask, setDetailTask] = useState<AgentTask | null>(null);
+  const [qualityCheckEnabled, setQualityCheckEnabled] = useState(true);
 
   const topPad = Platform.OS === "web" ? 67 : insets.top;
   const bottomPad = Platform.OS === "web" ? 34 : insets.bottom;
@@ -1930,6 +1931,24 @@ export default function AgentsScreen() {
   }>({
     queryKey: ["/api/agents/roster"],
     refetchInterval: 20000,
+  });
+
+  const { data: prefs } = useQuery<Record<string, unknown>>({
+    queryKey: ["/api/preferences"],
+    select: (d) => d,
+    staleTime: 60_000,
+  });
+
+  useEffect(() => {
+    if (prefs && "responseQualityCheck" in prefs) {
+      setQualityCheckEnabled(prefs.responseQualityCheck !== false);
+    }
+  }, [prefs]);
+
+  const prefMutation = useMutation({
+    mutationFn: (value: boolean) =>
+      apiRequest("PATCH", "/api/preferences", { responseQualityCheck: value }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/preferences"] }),
   });
 
   const agents = data?.agents ?? [];
@@ -2118,6 +2137,35 @@ export default function AgentsScreen() {
               ))}
             </>
           )}
+
+          {/* Quality review preference */}
+          <View style={[styles.sectionHeader, { marginTop: 20 }]}>
+            <Text style={[styles.sectionLabel, { color: Colors.textSecondary }]}>QUALITY REVIEW</Text>
+          </View>
+          <View style={[styles.loopToggleRow, { backgroundColor: Colors.surface, borderColor: Colors.border }]}>
+            <Ionicons
+              name="shield-checkmark-outline"
+              size={20}
+              color={qualityCheckEnabled ? Colors.primary : Colors.textTertiary}
+            />
+            <View style={{ flex: 1, gap: 2 }}>
+              <Text style={[styles.loopToggleLabel, { color: Colors.text }]}>
+                Response quality check
+              </Text>
+              <Text style={[styles.detailSectionHint, { color: Colors.textTertiary, marginTop: 0 }]} numberOfLines={2}>
+                Jarvis reviews agent replies before sending. May add 1–2s on complex requests.
+              </Text>
+            </View>
+            <Switch
+              value={qualityCheckEnabled}
+              onValueChange={(v) => {
+                setQualityCheckEnabled(v);
+                prefMutation.mutate(v);
+              }}
+              trackColor={{ false: Colors.border, true: Colors.primary + "55" }}
+              thumbColor={qualityCheckEnabled ? Colors.primary : Colors.textTertiary}
+            />
+          </View>
         </ScrollView>
       )}
 
