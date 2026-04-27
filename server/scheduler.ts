@@ -1,6 +1,7 @@
 import { db } from './db';
 import { eq, and, lt, sql } from 'drizzle-orm';
 import * as schema from '@shared/schema';
+
 import { notifyUser } from './channels/registry';
 import { logInteraction } from './interactionLog';
 import { isActionSuppressed } from './intelligence/actionLog';
@@ -13,6 +14,14 @@ import { postToDiscordChannel } from './discord/manager';
 import { DIGEST_CHANNEL_KEY } from './discord/workspace';
 import { getUserDriveSettings } from './driveRoutes';
 import { createDriveTextFile } from './integrations/googleDrive';
+
+// ---------------------------------------------------------------------------
+// Retention windows — edit these constants to tune how long high-growth logs
+// are kept. Both tables are only queried for recent windows (24 h–7 days) so
+// rows older than the retention period have no operational value.
+// ---------------------------------------------------------------------------
+const INTERACTION_LOG_RETENTION_DAYS = 90;
+const ACTION_LOG_RETENTION_DAYS = 90;
 
 let schedulerRunning = false;
 let lastWeeklyRunKey = '';
@@ -159,6 +168,34 @@ async function cleanUpExpiredAgentChatSessions(): Promise<void> {
   }
 }
 
+/** Hard-delete interaction_log rows older than INTERACTION_LOG_RETENTION_DAYS. */
+async function cleanUpOldInteractionLogs(): Promise<void> {
+  try {
+    const cutoff = new Date(Date.now() - INTERACTION_LOG_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+    const result = await db.execute(sql`
+      DELETE FROM interaction_log WHERE created_at < ${cutoff}
+    `);
+    const count = (result as unknown as { rowCount?: number }).rowCount ?? 0;
+    console.log(`[Scheduler] Interaction log cleanup: ${count} row(s) older than ${INTERACTION_LOG_RETENTION_DAYS} days deleted`);
+  } catch (err) {
+    console.error('[Scheduler] cleanUpOldInteractionLogs failed:', err);
+  }
+}
+
+/** Hard-delete jarvis_action_log rows older than ACTION_LOG_RETENTION_DAYS. */
+async function cleanUpOldActionLogs(): Promise<void> {
+  try {
+    const cutoff = new Date(Date.now() - ACTION_LOG_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+    const result = await db.execute(sql`
+      DELETE FROM jarvis_action_log WHERE created_at < ${cutoff}
+    `);
+    const count = (result as unknown as { rowCount?: number }).rowCount ?? 0;
+    console.log(`[Scheduler] Action log cleanup: ${count} row(s) older than ${ACTION_LOG_RETENTION_DAYS} days deleted`);
+  } catch (err) {
+    console.error('[Scheduler] cleanUpOldActionLogs failed:', err);
+  }
+}
+
 export function startScheduler() {
   if (schedulerRunning) return;
   schedulerRunning = true;
@@ -243,6 +280,16 @@ export function startScheduler() {
       cleanUpExpiredMemories();
     }
 
+    // Daily 05:00 — purge interaction_log rows older than INTERACTION_LOG_RETENTION_DAYS.
+    if (h === 5 && m === 0) {
+      cleanUpOldInteractionLogs();
+    }
+
+    // Daily 05:15 — purge jarvis_action_log rows older than ACTION_LOG_RETENTION_DAYS.
+    if (h === 5 && m === 15) {
+      cleanUpOldActionLogs();
+    }
+
     // Discord channel schedules — check every minute
     await runDiscordSchedules(now);
 
@@ -251,7 +298,7 @@ export function startScheduler() {
 
   }, 60 * 1000);
 
-  console.log('[Scheduler] Started — morning plan 7:00 AM daily, weekly patterns Sunday 3:00 AM, session cleanup 4:00 AM daily, memory TTL cleanup 4:30 AM daily, Discord schedules every minute');
+  console.log('[Scheduler] Started — morning plan 7:00 AM daily, weekly patterns Sunday 3:00 AM, session cleanup 4:00 AM daily, memory TTL cleanup 4:30 AM daily, interaction log cleanup 5:00 AM daily, action log cleanup 5:15 AM daily, Discord schedules every minute');
 }
 
 /**
