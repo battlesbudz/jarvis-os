@@ -4155,6 +4155,50 @@ Return ONLY the JSON object.`;
     }
   });
 
+  app.get("/api/memories/fading", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+      const rows = await db.select()
+        .from(userMemories)
+        .where(
+          sql`${userMemories.userId} = ${userId}
+            AND ${userMemories.tier} = 'long_term'
+            AND ${userMemories.relevanceScore} <= 30
+            AND COALESCE(${userMemories.lastReferencedAt}, ${userMemories.extractedAt}) < ${thirtyDaysAgo}`
+        )
+        .orderBy(userMemories.relevanceScore);
+      res.json({ memories: rows });
+    } catch (error) {
+      console.error("Error fetching fading memories:", error);
+      res.status(500).json({ error: "Failed to fetch fading memories" });
+    }
+  });
+
+  app.post("/api/memories/:id/keep", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const { id } = req.params;
+      const result = await db.execute(sql`
+        UPDATE user_memories
+        SET relevance_score = 50,
+            last_referenced_at = NOW()
+        WHERE id = ${id}
+          AND user_id = ${userId}
+        RETURNING id
+      `);
+      if ((result.rows ?? []).length === 0) {
+        return res.status(404).json({ error: "Memory not found" });
+      }
+      res.json({ ok: true });
+    } catch (error) {
+      console.error("Error keeping memory:", error);
+      res.status(500).json({ error: "Failed to keep memory" });
+    }
+  });
+
   app.delete("/api/memories/:id", async (req: Request, res: Response) => {
     try {
       const userId = req.userId;
