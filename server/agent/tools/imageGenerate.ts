@@ -151,20 +151,23 @@ async function generateGptImage(prompt: string, size: GptImage1Size): Promise<st
     });
     const b64 = response.data[0]?.b64_json;
     if (b64) return `data:image/png;base64,${b64}`;
-    // If b64_json wasn't returned, accept a URL too
-    const url = (response.data[0] as { url?: string })?.url;
-    if (url) return url;
+    // Normalize URL response to a base64 data URL so downstream delivery is consistent.
+    const remoteUrl = (response.data[0] as { url?: string })?.url;
+    if (remoteUrl) {
+      const buf = await fetchImageBuffer(remoteUrl);
+      if (buf) return `data:image/png;base64,${buf.toString("base64")}`;
+      return remoteUrl; // Last resort: return the URL if fetch fails
+    }
   } catch (dalle3Err) {
     const msg = dalle3Err instanceof Error ? dalle3Err.message : String(dalle3Err);
-    if (/auth|unauthorized|permission|quota|rate.?limit|billing/i.test(msg)) {
-      throw new Error(
-        "Image generation requires a direct OpenAI API key. " +
-        "The Replit AI integration proxy does not support image models. " +
-        "Add your own OPENAI_API_KEY as a Replit secret to enable image generation. " +
-        `(Original error: ${msg})`
-      );
-    }
-    throw new Error(`Image generation failed with both gpt-image-1 and dall-e-3: ${msg}`);
+    // Any failure at the dall-e-3 stage means neither model is accessible — provide
+    // actionable guidance regardless of the specific error type.
+    throw new Error(
+      "Image generation requires a direct OpenAI API key — " +
+      "the Replit AI integration proxy only supports chat/text models. " +
+      "Add your own OPENAI_API_KEY as a Replit secret to enable image generation. " +
+      `(Error: ${msg})`
+    );
   }
 
   throw new Error("No image data returned from gpt-image-1 or dall-e-3");
