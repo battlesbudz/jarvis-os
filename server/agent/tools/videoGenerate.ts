@@ -1,4 +1,4 @@
-import { inference } from "@inferencesh/sdk";
+// @inferencesh/sdk is loaded dynamically inside generateVideo() — see imageGenerate.ts comment.
 import { db } from "../../db";
 import { eq } from "drizzle-orm";
 import { telegramLinks } from "@shared/schema";
@@ -65,6 +65,8 @@ async function generateVideo(prompt: string, duration?: number): Promise<string>
       "INFSH_API_KEY is not configured. Add it as a Replit secret to enable AI video generation."
     );
   }
+  // Dynamic import so the module is never loaded when INFSH_API_KEY is absent.
+  const { inference } = await import("@inferencesh/sdk");
   const client = inference({ apiKey });
 
   const withTimeout = <T>(p: Promise<T>): Promise<T> =>
