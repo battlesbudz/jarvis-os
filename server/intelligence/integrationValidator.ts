@@ -24,6 +24,7 @@ import * as schema from "@shared/schema";
 import type { IntegrationName, IntegrationStatusValue } from "@shared/schema";
 import { emit as diagEmit } from "../diagnostics/diagnosticsService";
 import { logSystemError } from "../agent/errorLogger";
+import { ReplitConnectors } from "@replit/connectors-sdk";
 
 // Rate-limit automatic debug sessions: one per capability per hour
 const lastDebugTriggerAt = new Map<string, number>();
@@ -100,7 +101,12 @@ async function checkOAuthIntegration(
       LIMIT 1
     `);
     const row = (rows as SqlQueryResult<OAuthTokenRow>).rows?.[0] ?? (Array.isArray(rows) ? (rows as OAuthTokenRow[])[0] : null);
-    if (!row) return { status: "unconfigured" };
+    if (!row) {
+      // No entry in user_oauth_tokens — fall back to Replit-managed connector tokens.
+      if (provider === "google") return checkGoogleViaConnector();
+      if (provider === "microsoft") return checkOutlookViaConnector();
+      return { status: "unconfigured" };
+    }
 
     const expiresAt: Date | null = row.expires_at ? new Date(row.expires_at) : null;
     const now = Date.now();
@@ -184,6 +190,108 @@ async function pingOAuthProvider(
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
+}
+
+// ── Replit connector fallback helpers ─────────────────────────────────────────
+// When user_oauth_tokens has no row for a provider, these helpers check whether
+// a Replit-managed connector token exists and can successfully reach the API.
+// Uses @replit/connectors-sdk — the SDK handles token refresh automatically.
+
+/**
+ * Check whether a Replit connector is active by:
+ *   1. Confirming the connection exists via listConnections.
+ *   2. Doing a lightweight proxy ping to verify the token is still valid.
+ *
+ * Returns 'healthy'      — connection present and ping succeeds (HTTP 2xx).
+ * Returns 'unconfigured' — no connection found in this Repl.
+ * Returns 'broken'       — connection exists but ping returned non-2xx,
+ *                          meaning the token is revoked, expired, or the
+ *                          connector is misconfigured.
+ *
+ * The connector SDK handles token refresh and auth headers automatically;
+ * we never touch the raw access token.
+ */
+async function checkConnectorStatus(
+  connectorName: string,
+  pingPath: string,
+): Promise<CheckResult> {
+  try {
+    const connectors = new ReplitConnectors();
+
+    // Step 1: verify the connection exists in this Repl.
+    const connections = await connectors.listConnections({
+      connector_names: connectorName,
+      refresh_policy: "none",
+    });
+
+    if (!connections || connections.length === 0) {
+      return { status: "unconfigured" };
+    }
+
+    // Step 2: ping the provider API to confirm the token is still valid.
+    // Any non-2xx response is treated as broken — the connector is set up
+    // but its OAuth token is either expired or revoked.
+    const res = await connectors.proxy(connectorName, pingPath, { method: "GET" });
+    if (res.ok) return { status: "healthy" };
+
+    const text = await res.text().catch(() => "");
+    return {
+      status: "broken",
+      errorMessage: `${connectorName} connector token invalid (HTTP ${res.status}): ${text.slice(0, 120)}`,
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    // listConnections throws with a descriptive message when no connection
+    // exists for this connector in the current Repl. Only that case should
+    // be returned as unconfigured; infrastructure / auth failures are broken.
+    const isNoConnection =
+      msg.includes("not found") ||
+      msg.includes("no connection") ||
+      (msg.includes("404") && msg.includes("connection"));
+    if (isNoConnection) {
+      return { status: "unconfigured" };
+    }
+    return { status: "broken", errorMessage: `${connectorName} connector error: ${msg}` };
+  }
+}
+
+/**
+ * Check Google integration via Replit connectors (google-calendar + google-mail).
+ * Both connectors are pinged; both must be healthy for the integration to pass.
+ *
+ * Calendar ping:  GET /users/me/calendarList  (requires calendar scope)
+ * Gmail ping:     GET /gmail/v1/users/me/labels  (requires gmail.labels scope)
+ */
+async function checkGoogleViaConnector(): Promise<CheckResult> {
+  const [calendarResult, mailResult] = await Promise.all([
+    checkConnectorStatus("google-calendar", "/users/me/calendarList"),
+    checkConnectorStatus("google-mail", "/gmail/v1/users/me/labels"),
+  ]);
+
+  // Both unconfigured → no connector set up at all
+  if (calendarResult.status === "unconfigured" && mailResult.status === "unconfigured") {
+    return { status: "unconfigured" };
+  }
+  // Surface broken over unconfigured (more actionable)
+  if (calendarResult.status === "broken") return calendarResult;
+  if (mailResult.status === "broken") return mailResult;
+  // Both healthy → healthy
+  if (calendarResult.status === "healthy" && mailResult.status === "healthy") {
+    return { status: "healthy" };
+  }
+  // Partial — one connector missing
+  return {
+    status: "broken",
+    errorMessage: "One or more Google connectors (Calendar / Gmail) are not fully configured",
+  };
+}
+
+/**
+ * Check Outlook (Microsoft) integration via the Replit outlook connector.
+ * Pings GET /v1.0/me on the Microsoft Graph API to verify the token is valid.
+ */
+async function checkOutlookViaConnector(): Promise<CheckResult> {
+  return checkConnectorStatus("outlook", "/v1.0/me");
 }
 
 // ── Cached system-level credential checks (once per process start) ────────────
