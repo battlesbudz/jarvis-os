@@ -4,6 +4,7 @@ import * as schema from "@shared/schema";
 import { learnFromDismissal } from "./inboxRules";
 import { gmailModifyMessage } from "./integrations/gmail";
 import { getValidGoogleTokens } from "./userTokenStore";
+import { parseGmailMessageId } from "./utils/gmailSourceId";
 
 export interface ActionResult {
   success: boolean;
@@ -86,7 +87,7 @@ export async function executeInboxAction(
       if (item.sourceType !== "email") {
         return { success: false, message: "Archive only works for emails" };
       }
-      const rawId = (item.sourceId || "").replace(/^gmail:/, "");
+      const rawId = parseGmailMessageId(item.sourceId || "") || (item.sourceId || "").replace(/^gmail:/, "");
       const token = await getGoogleToken(userId);
       if (!token) {
         return { success: false, message: "No Google connection found" };
@@ -107,7 +108,7 @@ export async function executeInboxAction(
       if (item.sourceType !== "email") {
         return { success: false, message: "Only works for emails" };
       }
-      const rawId = (item.sourceId || "").replace(/^gmail:/, "");
+      const rawId = parseGmailMessageId(item.sourceId || "") || (item.sourceId || "").replace(/^gmail:/, "");
       const token = await getGoogleToken(userId);
       if (!token) {
         return { success: false, message: "No Google connection found" };

@@ -19,6 +19,7 @@ import { getEmailsSince } from "./integrations/gmail";
 import { tavilySearch, formatSearchResults } from "./integrations/search";
 import { createDriveTextFile } from "./integrations/googleDrive";
 import { getValidGoogleTokens } from "./userTokenStore";
+import { parseGmailMessageId } from "./utils/gmailSourceId";
 import { logInteraction } from "./interactionLog";
 import { logAction, isActionSuppressed } from "./intelligence/actionLog";
 import { emit as diagEmit } from "./diagnostics/diagnosticsService";
@@ -322,7 +323,7 @@ async function runEmailDrafts(
   let queued = 0;
 
   for (const item of urgentItems) {
-    const sourceMessageId = item.sourceId.startsWith("gmail:") ? item.sourceId.slice(6) : null;
+    const sourceMessageId = parseGmailMessageId(item.sourceId);
     if (!sourceMessageId) continue;
 
     // Idempotency: skip if we already have a draft for this message
