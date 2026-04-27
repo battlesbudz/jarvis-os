@@ -108,11 +108,18 @@ export class ToolCallHookRegistry {
       }
 
       // Terminal: require approval
+      // Use the accumulated rewrittenParams (not original ctx.params) so any
+      // earlier param-rewrite handlers are preserved in the approval context.
       if (result.requireApproval) {
-        const allowed = await runApprovalFlow(ctx, result.requireApproval);
+        const approvalCtx = rewrittenParams !== ctx.params
+          ? { ...ctx, params: rewrittenParams }
+          : ctx;
+        const allowed = await runApprovalFlow(approvalCtx, result.requireApproval);
         return {
           allowed,
           reason: allowed ? undefined : "User did not approve this action",
+          // Propagate rewritten params even when going through approval
+          params: allowed ? rewrittenParams : undefined,
         };
       }
 
