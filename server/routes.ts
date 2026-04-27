@@ -6688,6 +6688,22 @@ Extract up to 8 memories per batch.`;
     }
   });
 
+  /** GET /api/settings/env-var-check?key=VAR_NAME — reports whether a named env var is present.
+   *  Only accepts conventional env var names (uppercase letters, digits, underscores) so the
+   *  endpoint cannot be used to enumerate arbitrary process state.
+   */
+  app.get("/api/settings/env-var-check", async (req: Request, res: Response) => {
+    const userId = (req as any).userId as string | undefined;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    const key = typeof req.query.key === "string" ? req.query.key.trim() : "";
+    if (!key) return res.status(400).json({ error: "key query param is required" });
+    if (!/^[A-Z_][A-Z0-9_]{0,127}$/.test(key)) {
+      return res.status(400).json({ error: "key must be a valid env var name (uppercase letters, digits, underscores; max 128 chars)" });
+    }
+    const { envVarPresent } = await import("./lib/credentialResolver");
+    res.json({ present: envVarPresent(key) });
+  });
+
   /** GET /api/mcp-servers — list MCP servers visible to the current user. */
   app.get("/api/mcp-servers", async (req: Request, res: Response) => {
     const userId = (req as any).userId as string | undefined;
@@ -6708,6 +6724,8 @@ Extract up to 8 memories per batch.`;
           toolCount: s.toolCount,
           error: s.error,
           isSystem: s.server.userId === null,
+          credentialMode: s.server.credentialMode ?? "direct",
+          envKey: s.server.envKey ?? null,
         })),
       });
     } catch (err) {
@@ -6720,12 +6738,14 @@ Extract up to 8 memories per batch.`;
   app.post("/api/mcp-servers", async (req: Request, res: Response) => {
     const userId = (req as any).userId as string | undefined;
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
-    const { name, transport, command, url, authToken } = req.body as {
+    const { name, transport, command, url, authToken, credentialMode, envKey } = req.body as {
       name?: string;
       transport?: string;
       command?: string;
       url?: string;
       authToken?: string;
+      credentialMode?: string;
+      envKey?: string;
     };
     if (!name || typeof name !== "string") {
       return res.status(400).json({ error: "name is required" });
@@ -6737,6 +6757,16 @@ Extract up to 8 memories per batch.`;
     if (transport2 === "http" && !url) {
       return res.status(400).json({ error: "url is required for http transport" });
     }
+    const mode = credentialMode === "env-ref" ? "env-ref" : "direct";
+    if (transport2 === "http" && mode === "env-ref") {
+      const key = envKey?.trim() ?? "";
+      if (!key) {
+        return res.status(400).json({ error: "envKey is required when credentialMode is env-ref" });
+      }
+      if (!/^[A-Z_][A-Z0-9_]{0,127}$/.test(key)) {
+        return res.status(400).json({ error: "envKey must be a valid env var name (uppercase letters, digits, underscores; max 128 chars)" });
+      }
+    }
     try {
       const { mcpServerRegistry } = await import("./agent/mcp/mcpServerRegistry");
       const row = await mcpServerRegistry.addServer({
@@ -6745,7 +6775,9 @@ Extract up to 8 memories per batch.`;
         transport: transport2,
         command: command ?? null,
         url: url ?? null,
-        authToken: authToken ?? null,
+        authToken: mode === "direct" ? (authToken ?? null) : null,
+        credentialMode: mode,
+        envKey: mode === "env-ref" ? (envKey?.trim() ?? null) : null,
         enabled: true,
         isBuiltIn: false,
       });

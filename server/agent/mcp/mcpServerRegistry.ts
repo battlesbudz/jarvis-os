@@ -15,6 +15,7 @@ import { mcpServers } from "@shared/schema";
 import { eq, and } from "drizzle-orm";
 import { McpClient, McpToolDefinition, McpPromptDefinition } from "./mcpClient";
 import type { AgentTool } from "../types";
+import { resolveCredential } from "../../lib/credentialResolver";
 
 // ── SSRF deny-list ────────────────────────────────────────────────────────────
 
@@ -48,6 +49,8 @@ export interface McpServerRow {
   command: string | null;
   url: string | null;
   authToken: string | null;
+  credentialMode: string | null;
+  envKey: string | null;
   enabled: boolean;
   isBuiltIn: boolean;
   createdAt: Date;
@@ -111,10 +114,17 @@ class McpServerRegistry {
           return;
         }
         assertNotSsrf(row.url);
+        const cred = resolveCredential(row.credentialMode, row.authToken, row.envKey);
+        if (cred.missing && row.credentialMode === "env-ref") {
+          this.errors.set(row.id, cred.errorMessage ?? "Missing env-ref credential");
+          this.rows.set(row.id, row);
+          console.warn(`[McpRegistry] "${row.name}" env-ref credential missing: ${cred.errorMessage}`);
+          return;
+        }
         transport = {
           type: "http",
           url: row.url,
-          authToken: row.authToken ?? undefined,
+          authToken: cred.value ?? undefined,
         };
       }
 
@@ -358,6 +368,8 @@ class McpServerRegistry {
         command: data.command,
         url: data.url,
         authToken: data.authToken,
+        credentialMode: data.credentialMode ?? "direct",
+        envKey: data.envKey ?? null,
         enabled: data.enabled,
         isBuiltIn: data.isBuiltIn,
       })

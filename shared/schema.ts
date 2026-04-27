@@ -1271,6 +1271,14 @@ export type InsertCodeProposal = typeof codeProposals.$inferInsert;
 
 // ── MCP Server registry ────────────────────────────────────────────────────────
 
+/**
+ * SecretRef — instead of storing a raw token, point to an env var by name.
+ * credentialMode "direct"  → authToken stores the raw value (legacy default)
+ * credentialMode "env-ref" → authToken is ignored; envKey names the process.env var
+ */
+export const MCP_CREDENTIAL_MODES = ["direct", "env-ref"] as const;
+export type McpCredentialMode = typeof MCP_CREDENTIAL_MODES[number];
+
 export const mcpServers = pgTable("mcp_servers", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id").references(() => users.id, { onDelete: "cascade" }),
@@ -1279,6 +1287,8 @@ export const mcpServers = pgTable("mcp_servers", {
   command: text("command"),
   url: text("url"),
   authToken: text("auth_token"),
+  credentialMode: varchar("credential_mode").notNull().default("direct"),
+  envKey: varchar("env_key"),
   enabled: boolean("enabled").notNull().default(true),
   isBuiltIn: boolean("is_built_in").notNull().default(false),
   createdAt: timestamp("created_at").defaultNow().notNull(),
