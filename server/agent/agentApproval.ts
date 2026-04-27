@@ -45,6 +45,8 @@ export interface ApprovalRequest {
   description: string;
   /** TTL in ms, default 10 minutes */
   ttlMs?: number;
+  /** Whether this action was initiated by the user or by Jarvis autonomously */
+  initiatedBy?: 'user' | 'jarvis';
 }
 
 // ── Tools that always require approval ────────────────────────────────────────
@@ -92,6 +94,23 @@ const HIGH_RISK_TOOLS = new Set([
 export function requiresApproval(toolName: string): boolean {
   return HIGH_RISK_TOOLS.has(toolName);
 }
+
+/**
+ * Tools that must ALWAYS wait for human approval, even when Jarvis is the
+ * initiator.  Everything else in HIGH_RISK_TOOLS can be auto-approved when
+ * `initiatedBy === 'jarvis'`.
+ *
+ * Criteria: external side-effects that cannot be undone (sending messages /
+ * emails to other people, OS-level actions, live voice calls).
+ */
+const STRICTLY_IRREVERSIBLE_TOOLS = new Set([
+  "send_email",
+  "gmail_action",
+  "daemon_action",
+  "discord_post",
+  "speak",
+  "sessions_send",
+]);
 
 // ── In-memory EventEmitter (for awaitApproval) ────────────────────────────────
 
@@ -150,6 +169,10 @@ export async function requestApproval(req: ApprovalRequest): Promise<ApprovalGat
   const ttl = req.ttlMs ?? DEFAULT_TTL_MS;
   const expiresAt = new Date(now.getTime() + ttl);
 
+  const isJarvisInitiated = req.initiatedBy === 'jarvis';
+  const isStrictlyIrreversible = STRICTLY_IRREVERSIBLE_TOOLS.has(req.toolName);
+  const autoApprove = isJarvisInitiated && !isStrictlyIrreversible;
+
   await db.insert(agentApprovalGates).values({
     id,
     agentId: req.agentId,
@@ -157,14 +180,16 @@ export async function requestApproval(req: ApprovalRequest): Promise<ApprovalGat
     toolName: req.toolName,
     toolArgs: req.toolArgs,
     description: req.description,
-    status: "pending",
+    status: autoApprove ? "approved" : "pending",
+    initiatedBy: req.initiatedBy ?? "user",
     createdAt: now,
     expiresAt,
+    ...(autoApprove ? { resolvedAt: now, resolvedBy: "jarvis_triage" } : {}),
   });
 
   // Mirror the gate as a deliverable so it surfaces in the user's inbox.
-  // When the user approves/rejects from the inbox, the gate emitter fires
-  // and unblocks the waiting tool call.
+  // Auto-approved gates appear in the "Auto-handled" section rather than
+  // "Needs your review" — status is already approved and triageStatus set.
   try {
     const schema = await import("@shared/schema");
     await db.insert(schema.deliverables).values({
@@ -179,20 +204,40 @@ export async function requestApproval(req: ApprovalRequest): Promise<ApprovalGat
         agentId: req.agentId,
         toolName: req.toolName,
         toolArgs: req.toolArgs as Record<string, unknown>,
+        initiatedBy: req.initiatedBy ?? "user",
       },
-      status: "pending_approval",
+      status: autoApprove ? "approved" : "pending_approval",
+      triageStatus: autoApprove ? "auto_handled" : "needs_attention",
+      triageNote: autoApprove
+        ? `Auto-approved — Jarvis-initiated ${req.toolName}`
+        : undefined,
+      ...(autoApprove ? { actedAt: now } : {}),
     });
   } catch (delivErr) {
     // Non-fatal: gate still exists and is visible via /api/agents/approvals
     console.warn("[AgentApproval] failed to create deliverable for gate:", delivErr);
   }
 
-  logAgentEvent({
-    event: "tool_blocked",
-    agentId: req.agentId,
-    userId: req.userId,
-    detail: `gate=${id} tool=${req.toolName}`,
-  });
+  if (autoApprove) {
+    logAgentEvent({
+      event: "tool_auto_approved",
+      agentId: req.agentId,
+      userId: req.userId,
+      detail: `gate=${id} tool=${req.toolName} initiatedBy=jarvis`,
+    });
+    // Fire approval event after current call stack unwinds so awaitApproval()
+    // has time to register its listener first.
+    setImmediate(() => {
+      gateEmitter.emit(id, { approved: true });
+    });
+  } else {
+    logAgentEvent({
+      event: "tool_blocked",
+      agentId: req.agentId,
+      userId: req.userId,
+      detail: `gate=${id} tool=${req.toolName}`,
+    });
+  }
 
   return {
     id,
@@ -201,7 +246,7 @@ export async function requestApproval(req: ApprovalRequest): Promise<ApprovalGat
     toolName: req.toolName,
     toolArgs: req.toolArgs,
     description: req.description,
-    status: "pending",
+    status: autoApprove ? "approved" : "pending",
     createdAt: now,
     expiresAt,
   };

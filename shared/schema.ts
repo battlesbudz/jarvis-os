@@ -466,6 +466,8 @@ export const deliverables = pgTable("deliverables", {
   body: text("body").notNull(),
   meta: jsonb("meta").notNull().default(sql`'{}'::jsonb`),
   status: varchar("status").notNull().default("pending_approval"),
+  triageStatus: varchar("triage_status").notNull().default("needs_attention"),
+  triageNote: text("triage_note"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   actedAt: timestamp("acted_at"),
 });
@@ -761,6 +763,7 @@ export const agentApprovalGates = pgTable("agent_approval_gates", {
   expiresAt: timestamp("expires_at").notNull(),
   resolvedAt: timestamp("resolved_at"),
   resolvedBy: varchar("resolved_by"),
+  initiatedBy: varchar("initiated_by").notNull().default("user"),
 });
 
 export type AgentApprovalGate = typeof agentApprovalGates.$inferSelect;
