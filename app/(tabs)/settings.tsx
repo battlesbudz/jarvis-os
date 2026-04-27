@@ -290,12 +290,15 @@ export default function SettingsScreen() {
           setHealthReport(data);
           setHealthError(false);
         } else {
+          setHealthReport(null);
           setHealthError(true);
         }
       } else {
+        setHealthReport(null);
         setHealthError(true);
       }
     } catch {
+      setHealthReport(null);
       setHealthError(true);
     }
     setHealthLoading(false);
