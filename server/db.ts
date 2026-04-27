@@ -404,27 +404,31 @@ export async function ensureTablesExist() {
     `);
 
     await db.execute(sql`
-      ALTER TABLE inbox_items ADD COLUMN IF NOT EXISTS surfaced_at TIMESTAMP DEFAULT NOW()
+      ALTER TABLE inbox_items ADD COLUMN IF NOT EXISTS "surfacedAt" TIMESTAMP DEFAULT NOW()
     `);
 
+    // Dedup using post-rename camelCase column names ("userId", "sourceId").
+    // Non-fatal: if schema is still in transition the .catch() keeps startup alive.
     await db.execute(sql`
       DELETE FROM inbox_items a
       USING (
         SELECT id,
                ROW_NUMBER() OVER (
-                 PARTITION BY user_id, source_id
-                 ORDER BY surfaced_at ASC, id ASC
+                 PARTITION BY "userId", "sourceId"
+                 ORDER BY "createdAt" ASC, id ASC
                ) AS rn
         FROM inbox_items
       ) b
       WHERE a.id = b.id AND b.rn > 1
-    `).catch(() => {});
+    `).catch((err: Error) => {
+      console.warn("[DB] inbox_items dedup skipped (column mismatch — non-fatal):", err.message);
+    });
 
     await db.execute(sql`
       CREATE UNIQUE INDEX IF NOT EXISTS inbox_items_user_source_uidx
       ON inbox_items ("userId", "sourceId")
     `).catch(() => {
-      // Older DBs use snake_case column names — try that variant instead
+      // Index may already exist or column names may differ — non-fatal
     });
 
     await db.execute(sql`

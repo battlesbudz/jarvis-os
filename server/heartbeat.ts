@@ -22,6 +22,7 @@ import { getValidGoogleTokens } from "./userTokenStore";
 import { parseGmailMessageId } from "./utils/gmailSourceId";
 import { logInteraction } from "./interactionLog";
 import { logAction, isActionSuppressed } from "./intelligence/actionLog";
+import { claimAndMark } from "./lib/proactiveDedup";
 import { emit as diagEmit } from "./diagnostics/diagnosticsService";
 import OpenAI from "openai";
 
@@ -442,7 +443,11 @@ async function runEveningWrapUp(
 
   const localKey = localDateKey(now, tz);
   const messageType = "evening_wrapup";
-  if (await alreadyLogged(userId, messageType, localKey)) return false;
+  // Atomic INSERT … ON CONFLICT DO NOTHING claim — prevents duplicate sends
+  // on rapid server restarts (same TOCTOU fix applied to telegramRoutes.ts in
+  // task #542). claimAndMark returns true only for the one process that wins
+  // the INSERT; all racing restarts get false and skip.
+  if (!(await claimAndMark(userId, messageType, localKey))) return false;
 
   // ── Today's plan ──────────────────────────────────────────
   type PlanTask = { title: string; completed?: boolean; category?: string };
@@ -645,7 +650,8 @@ Return JSON:
     }
   }
 
-  await recordLog(userId, messageType, localKey);
+  // No recordLog() call here — the slot was already claimed atomically by
+  // claimAndMark() at the top of this function before any work began.
   return true;
 }
 
@@ -841,6 +847,12 @@ export async function runHeartbeatTick(): Promise<void> {
     // ── LLM-driven action jobs ─────────────────────────────────────────────
     // Run every tick; each job has its own eligibility and deduplication logic.
     // Not gated by the activation planner — see planner comment block above.
+    //
+    // Morning brief ownership note: heartbeat does NOT own a morning brief.
+    // The morning briefing (type: "morning") is owned entirely by the proactive
+    // scheduler in server/telegramRoutes.ts (startProactiveScheduler +
+    // runProactiveStartupCatchup). Both paths already use claimAndMark() from
+    // server/lib/proactiveDedup.ts. Do not add a duplicate morning send here.
     try {
       if (token && !await isActionSuppressed(link.userId, "meeting_brief"))
         actionsFired += await runMeetingBriefs(link.userId, link.chatId, token, memories, now, tz, userEmail);
