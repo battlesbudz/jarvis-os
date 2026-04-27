@@ -151,8 +151,13 @@ outboundMiddleware.use(
     let text = ctx.text;
     // Discord spoiler tags ||text|| → [text] (no Telegram plain-text equivalent)
     text = text.replace(/\|\|(.+?)\|\|/gs, "[$1]");
-    // **bold** → bold (double-asterisk)
+    // **bold** → bold (double-asterisk; must run before single-asterisk italic)
     text = text.replace(/\*\*(.+?)\*\*/gs, "$1");
+    // *italic* → italic (single-asterisk inline; excludes bullet-list `* item` by
+    // requiring the opening `*` not be followed by space or another `*`)
+    text = text.replace(/\*(?!\*| )([^\n*]+)\*(?!\*)/g, "$1");
+    // _italic_ → italic (underscore variant)
+    text = text.replace(/_(?!_)([^\n_]+)_(?!_)/g, "$1");
     // ~~strikethrough~~ → plain (Telegram has no plain-text equivalent)
     text = text.replace(/~~(.+?)~~/gs, "$1");
     // Markdown headings (e.g. "## Heading") → plain Heading
