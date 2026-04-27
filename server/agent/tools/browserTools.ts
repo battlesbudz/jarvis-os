@@ -5,7 +5,7 @@
  * Direct-wrap tools:
  *   browser_navigate, browser_click, browser_type, browser_screenshot,
  *   browser_extract, browser_close, browser_snapshot, browser_wait_for,
- *   browser_select, browser_tabs, browser_clear_session,
+ *   browser_select, browser_clear_session,
  *   browser_evaluate, browser_scroll, browser_hover, browser_drag,
  *   browser_check, browser_uncheck, browser_choose_file,
  *   browser_navigate_back, browser_navigate_forward, browser_reload,
@@ -605,58 +605,6 @@ export const browserSelectTool: AgentTool = {
     } catch (err) {
       const msg = err instanceof Error ? err.message.split("\n")[0] : String(err);
       return { ok: false, content: `browser_select failed: ${msg}`, label: "browser_select: error" };
-    }
-  },
-};
-
-// ── browser_tabs ──────────────────────────────────────────────────────────────
-
-export const browserTabsTool: AgentTool = {
-  name: "browser_tabs",
-  description:
-    "Manage browser tabs in the current session. " +
-    "Actions: `list` — return titles/URLs of all open tabs; " +
-    "`new` — open a new blank tab; " +
-    "`select` — switch to a tab by its index (0-based); " +
-    "`close` — close a tab by index, or the current tab if index is omitted.",
-  parameters: {
-    type: "object",
-    properties: {
-      action: {
-        type: "string",
-        enum: ["list", "new", "close", "select"],
-        description: "Operation to perform on tabs",
-      },
-      index: {
-        type: "number",
-        description: "Tab index (0-based). Required for `select`; optional for `close` (omit to close current tab).",
-      },
-    },
-    required: ["action"],
-  },
-  async execute(args, ctx) {
-    if (!await hasActiveBrowserContext(ctx.userId)) {
-      return { ok: false, content: "No active browser session. Call browser_navigate first.", label: "browser_tabs: no session" };
-    }
-    const action = String(args.action || "").trim();
-    if (!["list", "new", "close", "select"].includes(action)) {
-      return { ok: false, content: "action must be one of: list, new, close, select", label: "browser_tabs: bad action" };
-    }
-    const mcpArgs: Record<string, unknown> = { action };
-    if (args.index != null) mcpArgs.index = Number(args.index);
-
-    try {
-      const result = await callBrowserTool(ctx.userId, "browser_tabs", mcpArgs);
-      const text = mcpText(result.content);
-      console.log(`[${ctx.channel || "Agent"}] browser_tabs action=${action} index=${args.index ?? "–"}`);
-      return {
-        ok: !result.isError,
-        content: text || `Tab action '${action}' completed.`,
-        label: `Tabs: ${action}`,
-      };
-    } catch (err) {
-      const msg = err instanceof Error ? err.message.split("\n")[0] : String(err);
-      return { ok: false, content: `browser_tabs failed: ${msg}`, label: "browser_tabs: error" };
     }
   },
 };

@@ -87,7 +87,7 @@ isValidation = true
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "npm test"
+args = "npm test && tsx server/agent/__tests__/browserTabTools.test.ts"
 
 [userenv]
 

@@ -54,7 +54,8 @@ const PERMISSION_TOOL_MAP: Record<keyof AgentPermissions, string[]> = {
   can_use_browser: [
     "browser_navigate", "browser_click", "browser_type", "browser_screenshot",
     "browser_extract", "browser_close", "browser_snapshot", "browser_wait_for",
-    "browser_select", "browser_tabs", "browser_clear_session",
+    "browser_select", "browser_clear_session",
+    "browser_tab_new", "browser_tab_list", "browser_tab_select", "browser_tab_close",
   ],
   can_send_emails: ["send_email"],
   can_create_email_drafts: ["gmail_draft"],
