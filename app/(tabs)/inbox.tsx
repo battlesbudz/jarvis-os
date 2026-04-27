@@ -660,10 +660,12 @@ export default function InboxScreen() {
                 <Text style={[styles.subject, { color: Colors.textSecondary }]} numberOfLines={2}>
                   {item.subject || '(no subject)'}
                 </Text>
-                {item.snippet ? (
+                {(item.jarvisReason || item.snippet) ? (
                   <View style={styles.triageNoteRow}>
                     <Ionicons name="sparkles" size={11} color={Colors.textTertiary} />
-                    <Text style={styles.triageNoteText} numberOfLines={2}>{item.snippet}</Text>
+                    <Text style={styles.triageNoteText} numberOfLines={2}>
+                      {item.jarvisReason || item.snippet}
+                    </Text>
                   </View>
                 ) : null}
               </View>
