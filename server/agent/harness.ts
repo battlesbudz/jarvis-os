@@ -408,21 +408,31 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
   // each capability module owns its own dependency declaration rather than
   // being hard-coded here. The registry is lazily imported and cached by Node.
 
+  // Build reverse mapping unconditionally: toolName → integrationKey[] for integration error
+  // detection. This mapping comes from the capability registry (not per-user data), so it must
+  // be populated regardless of whether a userId is present. Without this, integration auth
+  // failures are not classified in headless / test-harness runs that lack a userId.
+  try {
+    const { capabilityRegistry } = await import("../capabilities/index");
+    const integrationDeps = capabilityRegistry.getIntegrationDeps();
+
+    // Multiple integrations can share a tool (e.g. send_email works with google/outlook),
+    // so we collect all candidate keys and resolve the broken one later via live status.
+    for (const [key, { toolNames }] of Object.entries(integrationDeps)) {
+      for (const toolName of toolNames) {
+        const existing = toolToIntegrationKey.get(toolName) ?? [];
+        if (!existing.includes(key)) existing.push(key);
+        toolToIntegrationKey.set(toolName, existing);
+      }
+    }
+  } catch {
+    // registry import is best-effort — never block an agent run
+  }
+
   if (context.userId) {
     try {
       const { capabilityRegistry } = await import("../capabilities/index");
       const integrationDeps = capabilityRegistry.getIntegrationDeps();
-
-      // Build reverse mapping: toolName → integrationKey[] for integration error detection.
-      // Multiple integrations can share a tool (e.g. send_email works with google/outlook),
-      // so we collect all candidate keys and resolve the broken one later via live status.
-      for (const [key, { toolNames }] of Object.entries(integrationDeps)) {
-        for (const toolName of toolNames) {
-          const existing = toolToIntegrationKey.get(toolName) ?? [];
-          if (!existing.includes(key)) existing.push(key);
-          toolToIntegrationKey.set(toolName, existing);
-        }
-      }
 
       const { getUserIntegrationStatuses } = await import("../intelligence/integrationValidator");
       const statuses = await getUserIntegrationStatuses(context.userId);
@@ -882,21 +892,25 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
             // Classify integration auth failures from { ok: false } tool returns.
             // Many tools return { ok: false, content: "..." } rather than throwing.
             // Apply the same validator + heuristic logic used in the catch block.
-            if (!result.ok && opts.onIntegrationError && context.userId) {
+            if (!result.ok && opts.onIntegrationError) {
               const errorText = result.content ?? "";
               const okFalseCandidates = toolToIntegrationKey.get(tc.function.name) ?? [];
               if (okFalseCandidates.length > 0) {
                 let okFalseIntegKey: string | null = null;
-                try {
-                  const { getUserIntegrationStatuses } = await import("../intelligence/integrationValidator");
-                  const liveStatuses = await getUserIntegrationStatuses(context.userId);
-                  for (const key of okFalseCandidates) {
-                    if (liveStatuses[key as keyof typeof liveStatuses] === "broken") {
-                      okFalseIntegKey = key;
-                      break;
+                // Primary: live validator (requires userId — skip in headless contexts)
+                if (context.userId) {
+                  try {
+                    const { getUserIntegrationStatuses } = await import("../intelligence/integrationValidator");
+                    const liveStatuses = await getUserIntegrationStatuses(context.userId);
+                    for (const key of okFalseCandidates) {
+                      if (liveStatuses[key as keyof typeof liveStatuses] === "broken") {
+                        okFalseIntegKey = key;
+                        break;
+                      }
                     }
-                  }
-                } catch { /* validator unavailable — fall through to heuristic */ }
+                  } catch { /* validator unavailable — fall through to heuristic */ }
+                }
+                // Heuristic fallback: works with or without userId
                 if (!okFalseIntegKey) {
                   okFalseIntegKey = detectIntegrationErrorKey(tc.function.name, errorText, toolToIntegrationKey);
                 }
@@ -942,20 +956,23 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
             // before the validator DB row has been updated.
             let integrationKey: string | null = null;
             const candidateKeys = toolToIntegrationKey.get(tc.function.name) ?? [];
-            if (candidateKeys.length > 0 && context.userId) {
-              try {
-                const { getUserIntegrationStatuses } = await import("../intelligence/integrationValidator");
-                const liveStatuses = await getUserIntegrationStatuses(context.userId);
-                for (const key of candidateKeys) {
-                  if (liveStatuses[key as keyof typeof liveStatuses] === "broken") {
-                    integrationKey = key;
-                    break;
+            if (candidateKeys.length > 0) {
+              // Primary: live validator (requires userId — skip in headless contexts)
+              if (context.userId) {
+                try {
+                  const { getUserIntegrationStatuses } = await import("../intelligence/integrationValidator");
+                  const liveStatuses = await getUserIntegrationStatuses(context.userId);
+                  for (const key of candidateKeys) {
+                    if (liveStatuses[key as keyof typeof liveStatuses] === "broken") {
+                      integrationKey = key;
+                      break;
+                    }
                   }
+                } catch {
+                  // Validator unavailable — fall through to heuristic
                 }
-              } catch {
-                // Validator unavailable — fall through to heuristic
               }
-              // Heuristic fallback: token expired mid-run (validator may lag reality)
+              // Heuristic fallback: token expired mid-run, or no userId available
               if (!integrationKey) {
                 integrationKey = detectIntegrationErrorKey(tc.function.name, detail, toolToIntegrationKey);
               }
