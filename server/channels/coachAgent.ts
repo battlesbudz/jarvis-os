@@ -587,7 +587,7 @@ When a user's request involves multi-step research, drafting a document or plan,
   } catch (orchErr) {
     console.error(`[${channelName}] orchestrator failed, falling back to direct harness:`, orchErr);
     const fallback = await runAgent({
-      model: "gpt-5-mini",
+      model: "gpt-4o-mini",
       messages: baseMessages,
       tools: scopedTools,
       context: agentCtx,
@@ -623,7 +623,7 @@ When a user's request involves multi-step research, drafting a document or plan,
         retried = true;
         try {
           const correction = await runAgent({
-            model: "gpt-5-mini",
+            model: "gpt-4o-mini",
             messages: correctionMessages,
             tools: scopedTools,
             context: agentCtx,

@@ -12,9 +12,9 @@ import { eq } from "drizzle-orm";
 export type ModelCategory = "chat" | "planning" | "memory" | "research" | "orchestrator";
 
 export const MODEL_DEFAULTS: Record<ModelCategory, string> = {
-  chat: "gpt-5-mini",
-  planning: "gpt-5-mini",
-  memory: "gpt-5-mini",
+  chat: "gpt-4o-mini",
+  planning: "gpt-4o-mini",
+  memory: "gpt-4o-mini",
   research: "gpt-4.1-mini",
   orchestrator: "claude-opus-4-7",
 };

@@ -393,7 +393,7 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
 async function isReplyToProactiveQuestion(userText: string, question: string): Promise<boolean> {
   try {
     const response = await openai.chat.completions.create({
-      model: "gpt-5-mini",
+      model: "gpt-4o-mini",
       messages: [{
         role: "user",
         content: `Is the following user message a reply to (or related to) this question? Only answer "yes" or "no".
@@ -1500,7 +1500,7 @@ Write a sharp weekly summary (3-4 sentences). What's the trend? What needs focus
   const isWeeklyPlanning = type === 'weekly' || type === 'weekly_planning';
   try {
     const resp = await openai.chat.completions.create({
-      model: 'gpt-5-mini',
+      model: 'gpt-4o-mini',
       messages: [
         {
           role: 'system',
@@ -1839,7 +1839,7 @@ Write a sharp 2-3 sentence meeting prep brief. Include what the meeting is about
 
             try {
               const resp = await openai.chat.completions.create({
-                model: 'gpt-5-mini',
+                model: 'gpt-4o-mini',
                 messages: [
                   {
                     role: 'system',
@@ -1994,7 +1994,7 @@ export async function startEmailAlertScanner(): Promise<void> {
           let flagged: { index: number; reason: string }[] = [];
           try {
             const classification = await openai.chat.completions.create({
-              model: 'gpt-5-mini',
+              model: 'gpt-4o-mini',
               messages: [
                 {
                   role: 'system',
