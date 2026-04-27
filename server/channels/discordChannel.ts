@@ -7,9 +7,9 @@ import type { Channel, ChannelSendOpts, ChannelSendResult } from "./types";
 
 export const discordChannel: Channel = {
   name: "discord",
-  // Research, posting, and document export — covers web search, Discord
-  // management, and PDF/PPTX export tools.
-  toolGroups: ["research", "discord", "memory", "documents"],
+  // Research, posting, document export, and media generation — covers web search,
+  // Discord management, PDF/PPTX export, and image/video generation tools.
+  toolGroups: ["research", "discord", "memory", "documents", "media"],
 
   isConfigured(): boolean {
     return true; // each user has their own bot token — always "configured" at system level
