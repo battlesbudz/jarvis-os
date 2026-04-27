@@ -6299,6 +6299,81 @@ Extract up to 8 memories per batch.`;
     }
   });
 
+  // ── TTS (text-to-speech) preferences ─────────────────────────────────────
+  /**
+   * GET /api/settings/tts
+   * Returns the user's TTS preferences: voice, enabled channels, and latency tier.
+   */
+  app.get("/api/settings/tts", async (req: any, res) => {
+    try {
+      const userId = req.userId as string;
+      if (!userId) return res.status(401).json({ error: "Authentication required" });
+      const { getUserTtsPrefs, getUserTtsChannels } = await import("./agent/tools/tts");
+      const [prefs, channels] = await Promise.all([
+        getUserTtsPrefs(userId),
+        getUserTtsChannels(userId),
+      ]);
+      return res.json({ voice: prefs.voice, latencyTier: prefs.latencyTier, ttsChannels: channels });
+    } catch (err) {
+      console.error("[TTS] GET settings failed:", err);
+      return res.status(500).json({ error: "Failed to fetch TTS settings" });
+    }
+  });
+
+  /**
+   * PATCH /api/settings/tts
+   * Update TTS preferences. Body fields (all optional):
+   *   voice        — OpenAI voice ID or ElevenLabs voice name
+   *   ttsChannels  — array of channel keys to enable auto-TTS on (e.g. ["telegram", "whatsapp"])
+   *   latencyTier  — 0-4 (ElevenLabs latency tier)
+   */
+  app.patch("/api/settings/tts", async (req: any, res) => {
+    try {
+      const userId = req.userId as string;
+      if (!userId) return res.status(401).json({ error: "Authentication required" });
+      const { setUserTtsPref, setTtsChannels } = await import("./agent/tools/tts");
+      const { voice, ttsChannels, latencyTier } = req.body as {
+        voice?: string;
+        ttsChannels?: string[];
+        latencyTier?: number;
+      };
+
+      const updates: Partial<{ voice: string; latencyTier: 0 | 1 | 2 | 3 | 4 }> = {};
+      if (voice !== undefined) updates.voice = voice;
+      if (latencyTier !== undefined && [0, 1, 2, 3, 4].includes(latencyTier)) {
+        updates.latencyTier = latencyTier as 0 | 1 | 2 | 3 | 4;
+      }
+      if (Object.keys(updates).length > 0) await setUserTtsPref(userId, updates);
+      if (Array.isArray(ttsChannels)) await setTtsChannels(userId, ttsChannels);
+
+      return res.json({ ok: true });
+    } catch (err) {
+      console.error("[TTS] PATCH settings failed:", err);
+      return res.status(500).json({ error: "Failed to save TTS settings" });
+    }
+  });
+
+  /**
+   * GET /api/tts/temp/:token
+   * Serve a short-lived audio file (MP3) generated for WhatsApp delivery.
+   * This endpoint is consumed by Twilio's media fetcher; the buffer is
+   * evicted immediately after the first successful read.
+   */
+  app.get("/api/tts/temp/:token", (req: any, res) => {
+    const { token } = req.params as { token: string };
+    // consumeTempAudio is a sync function imported at module init time
+    import("./agent/tools/tts").then(({ consumeTempAudio }) => {
+      const entry = consumeTempAudio(token);
+      if (!entry) {
+        return res.status(404).json({ error: "Audio file not found or expired" });
+      }
+      res.setHeader("Content-Type", entry.mimeType);
+      res.setHeader("Content-Length", entry.buffer.length);
+      res.setHeader("Cache-Control", "no-store");
+      return res.send(entry.buffer);
+    }).catch(() => res.status(500).json({ error: "Internal error" }));
+  });
+
   // ── Orchestration traces ─────────────────────────────────────────────────
   app.get("/api/orchestration-traces", async (req: any, res) => {
     try {

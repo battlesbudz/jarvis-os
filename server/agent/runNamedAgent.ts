@@ -438,6 +438,49 @@ export async function runNamedAgent(opts: RunNamedAgentOptions): Promise<NamedAg
       detail: `turns=${result.turns} tools=${result.toolCalls.length} session=${finalSessionId ? "active" : "none"}`,
     });
 
+    // ── Auto-TTS for named agents (Telegram / WhatsApp only) ──────────────────
+    // Trigger when:
+    //   (a) User explicitly asked to read/speak the reply, OR
+    //   (b) Auto-TTS is enabled for this channel in the user's preferences.
+    //
+    // Voice priority: agent config tts_voice → user's global ttsVoice → "nova".
+    // Fire-and-forget (non-blocking); never blocks the reply return.
+    const platformLower = platform.toLowerCase();
+    const isTgOrWa = platformLower === "telegram" || platformLower === "whatsapp";
+    if (isTgOrWa) {
+      const isExplicitTtsRequest = /\b(say\s+(that|it|this)|read\s+(that|it|this)\s*(out|aloud|to\s*me)?|speak\s+(that|it|this)|voice\s+message\s*(it|that|please)?|send\s+(as\s+)?(a\s+)?voice|read\s+out\s*(loud)?)\b/i.test(
+        userMessage,
+      );
+
+      (async () => {
+        try {
+          const { getUserTtsPrefs, getUserTtsChannels, speakToUser } = await import("./tools/tts");
+          const enabledChannels = await getUserTtsChannels(userId);
+          const shouldSpeak = isExplicitTtsRequest || enabledChannels.includes(platformLower);
+          if (!shouldSpeak) return;
+
+          // Agent persona voice takes priority over user's global preference
+          const configJson = (agent.configJson ?? {}) as Record<string, unknown>;
+          const agentVoice = typeof configJson.tts_voice === "string" ? configJson.tts_voice : null;
+          const prefs = await getUserTtsPrefs(userId);
+          const voice = agentVoice ?? prefs.voice ?? "nova";
+
+          const ttsResult = await speakToUser(userId, result.reply, voice, {
+            channel: platform,
+            serverBaseUrl: process.env.SERVER_BASE_URL,
+          });
+
+          if (!ttsResult.ok) {
+            console.warn(`[${agent.name}/auto-TTS] delivery failed: ${ttsResult.error}`);
+          } else {
+            console.log(`[${agent.name}/auto-TTS] voice note delivered (voice=${voice}, chars=${result.reply.length})`);
+          }
+        } catch (err) {
+          console.warn(`[${agent.name}/auto-TTS] error (non-blocking):`, err);
+        }
+      })();
+    }
+
     return {
       reply: result.reply,
       turns: result.turns,
