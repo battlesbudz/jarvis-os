@@ -190,35 +190,32 @@ export async function requestApproval(req: ApprovalRequest): Promise<ApprovalGat
     ...(autoApprove ? { resolvedAt: now, resolvedBy: "jarvis_triage" } : {}),
   });
 
-  // Mirror the gate as a deliverable so it surfaces in the user's inbox.
-  // Auto-approved gates appear in the "Auto-handled" section rather than
-  // "Needs your review" — status is already approved and triageStatus set.
-  try {
-    const schema = await import("@shared/schema");
-    await db.insert(schema.deliverables).values({
-      userId: req.userId,
-      agentType: "named_agent",
-      type: "approval_gate",
-      title: `Approve: ${req.toolName}`,
-      summary: req.description,
-      body: req.description,
-      meta: {
-        gateId: id,
-        agentId: req.agentId,
-        toolName: req.toolName,
-        toolArgs: req.toolArgs as Record<string, unknown>,
-        initiatedBy: req.initiatedBy ?? "user",
-      },
-      status: autoApprove ? "approved" : "pending_approval",
-      triageStatus: autoApprove ? "auto_handled" : "needs_attention",
-      triageNote: autoApprove
-        ? `Auto-approved — Jarvis-initiated ${req.toolName}`
-        : undefined,
-      ...(autoApprove ? { actedAt: now } : {}),
-    });
-  } catch (delivErr) {
-    // Non-fatal: gate still exists and is visible via /api/agents/approvals
-    console.warn("[AgentApproval] failed to create deliverable for gate:", delivErr);
+  // Only create a deliverable for gates that require user review.
+  // Auto-approved (Jarvis-initiated) gates are silently resolved — no inbox item created.
+  if (!autoApprove) {
+    try {
+      const schema = await import("@shared/schema");
+      await db.insert(schema.deliverables).values({
+        userId: req.userId,
+        agentType: "named_agent",
+        type: "approval_gate",
+        title: `Approve: ${req.toolName}`,
+        summary: req.description,
+        body: req.description,
+        meta: {
+          gateId: id,
+          agentId: req.agentId,
+          toolName: req.toolName,
+          toolArgs: req.toolArgs as Record<string, unknown>,
+          initiatedBy: req.initiatedBy ?? "user",
+        },
+        status: "pending_approval",
+        triageStatus: "needs_attention",
+      });
+    } catch (delivErr) {
+      // Non-fatal: gate still exists and is visible via /api/agents/approvals
+      console.warn("[AgentApproval] failed to create deliverable for gate:", delivErr);
+    }
   }
 
   if (autoApprove) {
