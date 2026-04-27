@@ -375,7 +375,9 @@ function MessageBubble({ message, isFirst, isLastAssistant, goals, onFollowup, o
         const screenshotActions = message.executedActions!.filter(ea => !ea.url && ea.screenshotUrl);
         const imageActions = message.executedActions!.filter(ea => !ea.url && !ea.screenshotUrl && ea.imageUrl);
         const videoActions = message.executedActions!.filter(ea => !ea.url && !ea.screenshotUrl && !ea.imageUrl && ea.videoUrl);
-        const nonUrlActions = message.executedActions!.filter(ea => !ea.url && !ea.screenshotUrl && !ea.imageUrl && !ea.videoUrl);
+        // MCP-attributed plain actions (server badge only — no rich attachments)
+        const mcpPlainActions = message.executedActions!.filter(ea => ea.mcpServerName);
+        const nonUrlActions = message.executedActions!.filter(ea => !ea.url && !ea.screenshotUrl && !ea.imageUrl && !ea.videoUrl && !ea.mcpServerName);
         return (
           <>
             {urlActions.map((ea, idx) => (
@@ -476,10 +478,95 @@ function MessageBubble({ message, isFirst, isLastAssistant, goals, onFollowup, o
                 </View>
               </Pressable>
             ))}
+            {/* MCP server attribution badges (plain results) */}
+            {mcpPlainActions.length > 0 && (() => {
+              const uniqueServers = Array.from(new Set(mcpPlainActions.map(ea => ea.mcpServerName!)));
+              return (
+                <View style={styles.mcpAttributionRow}>
+                  {uniqueServers.map((srv, idx) => (
+                    <View key={idx} style={styles.mcpAttributionBadge}>
+                      <Ionicons name="server-outline" size={10} color={Colors.primary} />
+                      <Text style={styles.mcpAttributionText}>via {srv}</Text>
+                    </View>
+                  ))}
+                </View>
+              );
+            })()}
           </>
         );
       })()}
 
+      {/* MCP rich content from mcp_attachments SSE events — ChannelAttachment-compatible contract */}
+      {!isUser && (message.mcpAttachments?.length ?? 0) > 0 && (() => {
+        const atts = message.mcpAttachments!;
+        const serverNames = Array.from(new Set(atts.map(a => a.mcpServerName).filter(Boolean)));
+        return (
+          <>
+            {serverNames.length > 0 && (
+              <View style={styles.mcpAttributionRow}>
+                {serverNames.map((srv, idx) => (
+                  <View key={idx} style={styles.mcpAttributionBadge}>
+                    <Ionicons name="server-outline" size={10} color={Colors.primary} />
+                    <Text style={styles.mcpAttributionText}>via {srv}</Text>
+                  </View>
+                ))}
+              </View>
+            )}
+            {atts.map((att, attIdx) => {
+              if (att.kind === 'image' && att.data) {
+                return (
+                  <View key={attIdx} style={styles.mcpImageContainer}>
+                    <Image
+                      source={{ uri: `data:${att.mimeType ?? 'image/png'};base64,${att.data}` }}
+                      style={styles.mcpImage}
+                      resizeMode="contain"
+                    />
+                  </View>
+                );
+              }
+              if (att.kind === 'markdown' && att.text) {
+                return (
+                  <View key={attIdx} style={styles.mcpMarkdownContainer}>
+                    <MarkdownText text={att.text} />
+                  </View>
+                );
+              }
+              if ((att.kind === 'file' || att.kind === 'document') && att.filename) {
+                const content = att.text ?? att.data;
+                const isText = !att.mimeType || att.mimeType.startsWith('text/') || att.mimeType === 'application/json' || att.mimeType === 'application/xml';
+                return (
+                  <Pressable
+                    key={attIdx}
+                    style={({ pressed }) => [styles.mcpFileCard, pressed && { opacity: 0.8 }]}
+                    onPress={() => {
+                      if (content && isText) {
+                        if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.clipboard) {
+                          navigator.clipboard.writeText(content);
+                          Alert.alert('Copied', `${att.filename} content copied to clipboard.`);
+                        } else {
+                          Alert.alert(att.filename!, content.slice(0, 500) + (content.length > 500 ? '\n…' : ''));
+                        }
+                      } else {
+                        Alert.alert('File returned', `${att.filename} was returned by ${att.mcpServerName ?? 'MCP'}. ${att.mimeType ? `Type: ${att.mimeType}` : ''}`);
+                      }
+                    }}
+                  >
+                    <Ionicons name="document-outline" size={20} color={Colors.primary} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.mcpFileName} numberOfLines={1}>{att.filename}</Text>
+                      <Text style={styles.mcpFileMime}>
+                        {[att.mimeType, att.size != null ? (att.size >= 1024 ? `${Math.round(att.size / 1024)} KB` : `${att.size} B`) : null].filter(Boolean).join(' · ')}
+                      </Text>
+                    </View>
+                    <Ionicons name="copy-outline" size={14} color={Colors.textSecondary} />
+                  </Pressable>
+                );
+              }
+              return null;
+            })}
+          </>
+        );
+      })()}
       {!isUser && isLastAssistant && !isStreaming && message.content.length > 0 && onSpeak && (
         <Pressable
           style={styles.speakBtn}
@@ -653,6 +740,18 @@ export default function InsightsScreen() {
   const initialScanDoneRef = useRef(false);
   const [commitments, setCommitments] = useState<Commitment[]>([]);
   const [commitmentsCollapsed, setCommitmentsCollapsed] = useState(false);
+  // MCP prompt browser state
+  interface McpPromptEntry {
+    serverName: string;
+    serverId: string;
+    name: string;
+    description?: string;
+    arguments?: { name: string; description?: string; required?: boolean }[];
+  }
+  const [showMcpSheet, setShowMcpSheet] = useState(false);
+  const [mcpPrompts, setMcpPrompts] = useState<McpPromptEntry[]>([]);
+  const [mcpPromptsLoading, setMcpPromptsLoading] = useState(false);
+
   const [weeklyInsights, setWeeklyInsights] = useState<{
     id: string;
     weekOf: string;
@@ -1743,8 +1842,58 @@ export default function InsightsScreen() {
     };
   }, []));
 
+  const fetchMcpPrompts = useCallback(async () => {
+    setMcpPromptsLoading(true);
+    try {
+      const url = new URL('/api/mcp-servers/prompts', getApiUrl());
+      const res = await authFetch(url.toString());
+      const data = await res.json();
+      setMcpPrompts(data.prompts || []);
+    } catch {
+      setMcpPrompts([]);
+    }
+    setMcpPromptsLoading(false);
+  }, []);
+
+  const openMcpSheet = useCallback(() => {
+    setShowMcpSheet(true);
+    fetchMcpPrompts();
+  }, [fetchMcpPrompts]);
+
+  const selectMcpPrompt = useCallback(async (prompt: { serverId: string; name: string; arguments?: { name: string; required?: boolean }[] }) => {
+    setShowMcpSheet(false);
+    // If all arguments are optional or absent, try to resolve the prompt immediately
+    const hasRequiredArgs = prompt.arguments?.some(a => a.required) ?? false;
+    if (!hasRequiredArgs) {
+      try {
+        const url = new URL('/api/mcp-servers/prompts/resolve', getApiUrl());
+        const res = await authFetch(url.toString(), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ serverId: prompt.serverId, name: prompt.name }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.resolvedText) {
+            setInput(data.resolvedText);
+            return;
+          }
+        }
+      } catch { /* fall through to name-only */ }
+    }
+    // For prompts with required arguments, insert the name so user can fill them in
+    const argHints = prompt.arguments?.filter(a => a.required).map(a => `[${a.name}]`).join(' ') ?? '';
+    setInput(prompt.name + (argHints ? ' ' + argHints : ''));
+  }, []);
+
   const sendMessage = useCallback(async (text: string) => {
     if (!text.trim() || isStreaming) return;
+    // Intercept /mcp command to open MCP prompt browser
+    if (text.trim().toLowerCase().startsWith('/mcp')) {
+      setInput('');
+      openMcpSheet();
+      return;
+    }
     const userMsg: ChatMessage = { id: generateId(), role: 'user', content: text.trim() };
     const assistantId = generateId();
 
@@ -1847,18 +1996,33 @@ export default function InsightsScreen() {
                 });
               } else if (parsed.type === 'searching') {
                 setIsSearchingWeb(true);
+              } else if (parsed.type === 'mcp_progress') {
+                const progressMsg = String(parsed.message || '');
+                if (progressMsg) {
+                  setIsWorkingOnPhone(true);
+                  setPhoneWorkingMessage(progressMsg);
+                }
               } else if (parsed.type === 'working') {
                 gotPhoneWorking = true;
                 setIsWorkingOnPhone(true);
                 setPhoneWorkingMessage(parsed.message || 'Working on your phone...');
               } else if (parsed.type === 'integration_error' && parsed.integration) {
                 setIntegrationError({ integration: parsed.integration });
-              } else if (parsed.type === 'actions' && Array.isArray(parsed.actions)) {
-                executedActions = parsed.actions;
+              } else if (parsed.type === 'actions' && (Array.isArray(parsed.actions) || Array.isArray(parsed.attachments))) {
+                executedActions = parsed.actions ?? [];
+                const parsedAtts = Array.isArray(parsed.attachments) ? parsed.attachments as import('@/lib/storage').McpAttachment[] : undefined;
                 setMessages(prev => {
                   const updated = [...prev];
                   const idx = updated.findIndex(m => m.id === assistantId);
-                  if (idx !== -1) updated[idx] = { ...updated[idx], executedActions };
+                  if (idx !== -1) {
+                    const update: Partial<import('@/lib/storage').ChatMessage> = { executedActions };
+                    if (parsedAtts && parsedAtts.length > 0) {
+                      const existing = updated[idx].mcpAttachments ?? [];
+                      update.mcpAttachments = [...existing, ...parsedAtts];
+                    }
+                    updated[idx] = { ...updated[idx], ...update };
+                    saveChatHistory(updated);
+                  }
                   return updated;
                 });
                 queryClient.invalidateQueries({ queryKey: ['/api/data/plans'] });
@@ -2714,6 +2878,70 @@ export default function InsightsScreen() {
           </Pressable>
         )}
       </View>
+      {/* MCP Prompt Browser Sheet */}
+      <Modal
+        visible={showMcpSheet}
+        animationType="slide"
+        presentationStyle="formSheet"
+        onRequestClose={() => setShowMcpSheet(false)}
+      >
+        <View style={styles.mcpModal}>
+          <View style={styles.mcpModalHeader}>
+            <Pressable onPress={() => setShowMcpSheet(false)} style={styles.mcpModalClose}>
+              <Ionicons name="close" size={22} color={Colors.text} />
+            </Pressable>
+            <Text style={styles.mcpModalTitle}>MCP Prompt Templates</Text>
+            <View style={{ width: 44 }} />
+          </View>
+          {mcpPromptsLoading ? (
+            <View style={styles.mcpModalLoading}>
+              <ActivityIndicator size="large" color={Colors.primary} />
+              <Text style={styles.mcpModalLoadingText}>Loading templates…</Text>
+            </View>
+          ) : mcpPrompts.length === 0 ? (
+            <View style={styles.mcpModalEmpty}>
+              <Ionicons name="server-outline" size={40} color={Colors.textSecondary} />
+              <Text style={styles.mcpModalEmptyTitle}>No prompt templates</Text>
+              <Text style={styles.mcpModalEmptyText}>Connect MCP servers in Settings to access their prompt templates here.</Text>
+            </View>
+          ) : (
+            <ScrollView contentContainerStyle={styles.mcpModalList} keyboardShouldPersistTaps="handled">
+              {mcpPrompts.map((prompt, idx) => (
+                <Pressable
+                  key={`${prompt.serverId}-${prompt.name}-${idx}`}
+                  style={({ pressed }) => [styles.mcpPromptCard, pressed && { opacity: 0.8 }]}
+                  onPress={() => selectMcpPrompt({ serverId: prompt.serverId, name: prompt.name, arguments: prompt.arguments })}
+                >
+                  <View style={styles.mcpPromptCardTop}>
+                    <View style={styles.mcpPromptServerBadge}>
+                      <Ionicons name="server-outline" size={10} color={Colors.primary} />
+                      <Text style={styles.mcpPromptServerName}>{prompt.serverName}</Text>
+                    </View>
+                    <Ionicons name="chevron-forward" size={14} color={Colors.textSecondary} />
+                  </View>
+                  <Text style={styles.mcpPromptName}>{prompt.name}</Text>
+                  {!!prompt.description && (
+                    <Text style={styles.mcpPromptDesc} numberOfLines={2}>{prompt.description}</Text>
+                  )}
+                  {prompt.arguments && prompt.arguments.length > 0 && (
+                    <View style={styles.mcpPromptArgsRow}>
+                      {prompt.arguments.slice(0, 3).map((arg, ai) => (
+                        <View key={ai} style={styles.mcpPromptArgChip}>
+                          <Text style={styles.mcpPromptArgText}>{arg.name}{arg.required ? '*' : ''}</Text>
+                        </View>
+                      ))}
+                      {prompt.arguments.length > 3 && (
+                        <Text style={styles.mcpPromptArgMore}>+{prompt.arguments.length - 3} more</Text>
+                      )}
+                    </View>
+                  )}
+                </Pressable>
+              ))}
+            </ScrollView>
+          )}
+        </View>
+      </Modal>
+
       <Modal
         visible={discordConnectVisible}
         animationType="slide"
@@ -3470,6 +3698,197 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter_400Regular',
     color: Colors.textSecondary,
     lineHeight: 17,
+  },
+  // MCP styles
+  mcpAttributionRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 8,
+  },
+  mcpAttributionBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 3,
+    paddingHorizontal: 8,
+    borderRadius: 10,
+    backgroundColor: `${Colors.primary}15`,
+    borderWidth: 1,
+    borderColor: `${Colors.primary}30`,
+  },
+  mcpAttributionText: {
+    fontSize: 10,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.primary,
+    letterSpacing: 0.2,
+  },
+  mcpImageContainer: {
+    marginTop: 8,
+    borderRadius: 10,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: Colors.border,
+    maxWidth: 280,
+  },
+  mcpImage: {
+    width: 280,
+    height: 200,
+  },
+  mcpMarkdownContainer: {
+    marginTop: 6,
+    padding: 10,
+    borderRadius: 10,
+    backgroundColor: Colors.surface,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    maxWidth: 300,
+  },
+  mcpFileCard: {
+    marginTop: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    padding: 10,
+    borderRadius: 10,
+    backgroundColor: Colors.surface,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    maxWidth: 280,
+  },
+  mcpFileName: {
+    fontSize: 13,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.text,
+  },
+  mcpFileMime: {
+    fontSize: 11,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+    marginTop: 2,
+  },
+  // MCP modal styles
+  mcpModal: {
+    flex: 1,
+    backgroundColor: Colors.background,
+  },
+  mcpModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+    backgroundColor: Colors.background,
+  },
+  mcpModalClose: {
+    padding: 6,
+    minWidth: 44,
+    alignItems: 'flex-start',
+  },
+  mcpModalTitle: {
+    fontSize: 17,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.text,
+    flex: 1,
+    textAlign: 'center',
+  },
+  mcpModalLoading: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+  },
+  mcpModalLoadingText: {
+    fontSize: 14,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+  },
+  mcpModalEmpty: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 32,
+    gap: 12,
+  },
+  mcpModalEmptyTitle: {
+    fontSize: 18,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.text,
+    textAlign: 'center',
+  },
+  mcpModalEmptyText: {
+    fontSize: 14,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  mcpModalList: {
+    padding: 16,
+    gap: 12,
+  },
+  mcpPromptCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    gap: 6,
+  },
+  mcpPromptCardTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  mcpPromptServerBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 2,
+    paddingHorizontal: 6,
+    borderRadius: 8,
+    backgroundColor: `${Colors.primary}15`,
+  },
+  mcpPromptServerName: {
+    fontSize: 10,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.primary,
+  },
+  mcpPromptName: {
+    fontSize: 15,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.text,
+  },
+  mcpPromptDesc: {
+    fontSize: 13,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+    lineHeight: 18,
+  },
+  mcpPromptArgsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 4,
+  },
+  mcpPromptArgChip: {
+    paddingVertical: 2,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+    backgroundColor: Colors.border,
+  },
+  mcpPromptArgText: {
+    fontSize: 11,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.textSecondary,
+  },
+  mcpPromptArgMore: {
+    fontSize: 11,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+    alignSelf: 'center',
   },
   confirmCard: {
     backgroundColor: Colors.surface,

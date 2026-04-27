@@ -2,12 +2,20 @@
 /** Pending artifact that a tool has produced and that the calling channel
  * (e.g. Telegram) should deliver to the user after the agent finishes. */
 export interface PendingAttachment {
-  kind: "document";
+  kind: "document" | "image" | "file" | "markdown";
   documentId?: string;
-  filename: string;
-  content: string | Buffer;
+  filename?: string;
+  content?: string | Buffer;
   caption?: string;
-  mimeType: string;
+  mimeType?: string;
+  /** For image kind: a URL or base64 data URI */
+  url?: string;
+  /** Raw base64 blob data (for image attachments from MCP) */
+  data?: string;
+  /** Text content for markdown kind */
+  text?: string;
+  /** Name of the MCP server that produced this attachment */
+  mcpServerName?: string;
 }
 
 /** Plan stored on the daily `plans` row (loose shape — owned by telegramRoutes). */
@@ -23,6 +31,8 @@ export interface AgentState {
   gmailMessageIds?: string[];
   pendingAttachments?: PendingAttachment[];
   lastCalendarFetch?: { startDate: string; days: number; totalEvents: number; fetchedAt: number };
+  /** Optional callback for streaming progress messages from long-running tools (e.g. MCP progress notifications). */
+  onProgress?: (message: string) => void;
   [k: string]: unknown;
 }
 

@@ -281,6 +281,25 @@ export interface CoachAction {
   buttonLabel?: string;
 }
 
+/**
+ * JSON-safe representation of a ChannelAttachment (no Buffer) for in-app chat rendering.
+ * Matches the discriminated-union shape from server/channels/types.ts ChannelAttachment,
+ * excluding Buffer content (not serialisable over JSON/SSE).
+ */
+export interface McpAttachment {
+  kind: 'image' | 'markdown' | 'file' | 'document';
+  filename?: string;
+  caption?: string;
+  mimeType?: string;
+  /** Base64 image data or raw file bytes encoded as base64 */
+  data?: string;
+  /** Text content for markdown or document attachments */
+  text?: string;
+  /** Approximate byte size of the attachment (base64-decoded) */
+  size?: number;
+  mcpServerName?: string;
+}
+
 export interface ExecutedAction {
   tool: string;
   result: 'success' | 'error';
@@ -294,6 +313,8 @@ export interface ExecutedAction {
   imageCaption?: string;
   videoUrl?: string;
   videoCaption?: string;
+  /** MCP server name for plain (text-only) tool result attribution */
+  mcpServerName?: string;
 }
 
 export interface PendingConfirm {
@@ -318,6 +339,12 @@ export interface ChatMessage {
   actions?: CoachAction[];
   followups?: string[];
   executedActions?: ExecutedAction[];
+  /**
+   * Rich MCP attachments delivered via the `mcp_attachments` SSE event.
+   * Uses the same McpAttachment (ChannelAttachment-compatible) shape as the
+   * channel attachment pipeline in coachAgent / runCoachAgent.
+   */
+  mcpAttachments?: McpAttachment[];
   pendingConfirm?: PendingConfirm;
   stopped?: boolean;
 }
