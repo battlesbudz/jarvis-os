@@ -99,14 +99,21 @@ async function snapshotAndResolve(
 
 // ── YouTube auth-gate detection ────────────────────────────────────────────────
 
-/** URL patterns that indicate YouTube has redirected to an authentication wall. */
-const YT_AUTH_PATTERNS = [
-  /accounts\.google\.com/,
+/** Patterns that indicate the final URL is a YouTube-specific auth/consent wall. */
+const YT_AUTH_URL_PATTERNS = [
   /youtube\.com\/signin/,
   /youtube\.com\/accounts\//,
   /consent\.youtube\.com/,
   /youtube\.com\/sorry/,
 ];
+
+/**
+ * Return true if the given URL looks like a YouTube watch/shorts/channel page
+ * (i.e. the navigation was intended for YouTube, not another Google service).
+ */
+function isYouTubeDomain(url: string): boolean {
+  return url.includes("youtube.com") || url.includes("youtu.be");
+}
 
 /**
  * Attempt to extract the browser's final navigated URL from MCP result text.
@@ -128,28 +135,36 @@ function extractFinalUrl(mcpResultText: string): string | null {
 }
 
 /**
- * Return true when the given URL or page-text indicates a YouTube auth/consent wall.
+ * Return true when a YouTube-targeted navigation has hit an auth/consent wall.
  *
- * Checks three signals in order:
- *   1. The **final navigated URL** (extracted from MCP result content) — catches redirects
- *      to accounts.google.com or youtube.com/signin even when the original URL looked fine.
- *   2. The **original requested URL** — catches direct navigation to known auth URLs.
- *   3. **Page text heuristics** — catches consent/age-gate overlays that stay on youtube.com.
+ * This function is intentionally scoped to YouTube navigations only to avoid
+ * false-positives on legitimate Google sign-in flows for other services.
+ *
+ * Detection signals (all require the original URL to be a YouTube domain):
+ *   1. Final navigated URL matches a YouTube-specific auth pattern or accounts.google.com.
+ *   2. Page text contains YouTube-specific sign-in / consent phrases.
  */
 function isYouTubeAuthGate(originalUrl: string, pageText: string, finalUrl?: string | null): boolean {
-  const urlsToCheck = [finalUrl, originalUrl].filter(Boolean) as string[];
-  if (urlsToCheck.some((u) => YT_AUTH_PATTERNS.some((rx) => rx.test(u)))) return true;
+  // Only apply auth-gate logic when the user was navigating to YouTube
+  if (!isYouTubeDomain(originalUrl)) return false;
 
-  // Text-based signals: covers consent overlays and age-gates that stay on youtube.com,
-  // and also catches Google sign-in pages regardless of the original URL.
+  // Check the final URL (post-redirect) first — catches redirects to accounts.google.com
+  // or youtube.com/signin that occur after following a normal YouTube video URL
+  if (finalUrl) {
+    if (/accounts\.google\.com/.test(finalUrl)) return true;
+    if (YT_AUTH_URL_PATTERNS.some((rx) => rx.test(finalUrl))) return true;
+  }
+
+  // Check the original URL for direct navigation to known YouTube auth patterns
+  if (YT_AUTH_URL_PATTERNS.some((rx) => rx.test(originalUrl))) return true;
+
+  // Page text heuristics — only applied when we already know this is a YouTube navigation
   const textLower = pageText.toLowerCase().slice(0, 3000);
   if (
-    textLower.includes("accounts.google.com") ||
     textLower.includes("sign in to confirm you're not a bot") ||
     textLower.includes("sign in to watch") ||
     textLower.includes("confirm your age") ||
-    textLower.includes("before you continue to youtube") ||
-    textLower.includes("to continue, google will share")
+    textLower.includes("before you continue to youtube")
   ) {
     return true;
   }
