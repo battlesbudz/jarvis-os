@@ -1254,12 +1254,39 @@ export const userSkillPacks = pgTable("user_skill_packs", {
   primaryKey({ columns: [table.userId, table.packId] }),
 ]);
 
+// ── System Error Log ──────────────────────────────────────────────────────────
+// Persists every unhandled error from Express, agent harness, and health checks.
+// Jarvis reads this table via the read_recent_errors tool to power its
+// self-debugging loop.
+
+export const systemErrorLog = pgTable("system_error_log", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  source: text("source").notNull(),
+  level: varchar("level").notNull().default("error"),
+  message: text("message").notNull(),
+  stackTrace: text("stack_trace"),
+  contextJson: jsonb("context_json").notNull().default(sql`'{}'::jsonb`),
+  investigated: boolean("investigated").notNull().default(false),
+  userId: varchar("user_id").references(() => users.id, { onDelete: "set null" }),
+});
+
+export type SystemErrorLogRow = typeof systemErrorLog.$inferSelect;
+export type InsertSystemErrorLog = typeof systemErrorLog.$inferInsert;
+
 // ── Code Proposals ─────────────────────────────────────────────────────────────
 // Jarvis self-inspection proposals — each row represents a proposed change to
 // a source file that the user must approve or reject before any write occurs.
 
 export const CODE_PROPOSAL_STATUSES = ["pending", "approved", "rejected"] as const;
 export type CodeProposalStatus = typeof CODE_PROPOSAL_STATUSES[number];
+
+export interface DebugContext {
+  errorMessage: string;
+  stackExcerpt?: string;
+  rootCauseSummary: string;
+  errorLogId?: string;
+}
 
 export const codeProposals = pgTable("code_proposals", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -1271,6 +1298,7 @@ export const codeProposals = pgTable("code_proposals", {
   proposedContent: text("proposed_content").notNull(),
   status: varchar("status").$type<CodeProposalStatus>().notNull().default("pending"),
   rejectionNote: text("rejection_note"),
+  debugContext: jsonb("debug_context").$type<DebugContext>(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   appliedAt: timestamp("applied_at"),
 });

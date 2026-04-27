@@ -11,10 +11,12 @@
 
 import type { AgentTool } from "../types";
 import { db } from "../../db";
-import { codeProposals, inboxItems } from "@shared/schema";
+import { codeProposals, inboxItems, systemErrorLog } from "@shared/schema";
+import type { DebugContext } from "@shared/schema";
 import fs from "fs/promises";
 import path from "path";
 import { isIntegrationOwner } from "../../integrationOwner";
+import { desc, and, eq, gte, sql as sqlTag } from "drizzle-orm";
 
 // ── Allow-listed source directories ────────────────────────────────────────────
 // Jarvis can only read files inside these relative directories.
@@ -196,6 +198,96 @@ export const readSourceFileTool: AgentTool = {
   },
 };
 
+// ── read_recent_errors ─────────────────────────────────────────────────────────
+
+export const readRecentErrorsTool: AgentTool = {
+  name: "read_recent_errors",
+  description:
+    "Read recent entries from the system error log. Use this as the first step in a debug session to understand what has been going wrong. " +
+    "You can filter by source module (e.g. 'integrationValidator', 'jobQueue', 'telegram') and choose a lookback window. " +
+    "Returns up to 20 entries by default. Use this when the user says a feature is broken or after a health check failure is reported.",
+  parameters: {
+    type: "object",
+    properties: {
+      source_filter: {
+        type: "string",
+        description: "Optional: filter errors whose source contains this string (case-insensitive). E.g. 'telegram', 'jobQueue', 'integrationValidator'.",
+      },
+      lookback_minutes: {
+        type: "number",
+        description: "Optional: only return errors from the last N minutes. Default: 60. Max: 1440 (24h).",
+      },
+      limit: {
+        type: "number",
+        description: "Optional: max number of rows to return. Default: 20. Max: 50.",
+      },
+    },
+    required: [],
+  },
+  async execute(args, ctx) {
+    if (!await isIntegrationOwner(ctx.userId)) {
+      return { ok: false, content: "Access denied: self-edit tools are only available to the account owner.", label: "read_recent_errors: forbidden" };
+    }
+
+    const lookbackMinutes = Math.min(Math.max(1, Number(args.lookback_minutes ?? 60)), 1440);
+    const limit = Math.min(Math.max(1, Number(args.limit ?? 20)), 50);
+    const sourceFilter = typeof args.source_filter === "string" ? args.source_filter.trim().toLowerCase() : null;
+
+    try {
+      const since = new Date(Date.now() - lookbackMinutes * 60 * 1000);
+      const rows = await db
+        .select()
+        .from(systemErrorLog)
+        .where(gte(systemErrorLog.createdAt, since))
+        .orderBy(desc(systemErrorLog.createdAt))
+        .limit(sourceFilter ? 200 : limit); // fetch more if filtering locally
+
+      const filtered = sourceFilter
+        ? rows.filter((r) => r.source.toLowerCase().includes(sourceFilter)).slice(0, limit)
+        : rows;
+
+      if (filtered.length === 0) {
+        return {
+          ok: true,
+          content: `No errors found in the last ${lookbackMinutes} minutes${sourceFilter ? ` matching source="${sourceFilter}"` : ""}.`,
+          label: "read_recent_errors: 0 results",
+        };
+      }
+
+      const formatted = filtered.map((r, i) => {
+        const lines = [
+          `[${i + 1}] ID: ${r.id}`,
+          `    Time: ${r.createdAt.toISOString()}`,
+          `    Source: ${r.source}`,
+          `    Level: ${r.level}`,
+          `    Message: ${r.message}`,
+        ];
+        if (r.stackTrace) {
+          lines.push(`    Stack: ${r.stackTrace.slice(0, 500)}`);
+        }
+        const ctx = r.contextJson as Record<string, unknown>;
+        if (ctx && Object.keys(ctx).length > 0) {
+          lines.push(`    Context: ${JSON.stringify(ctx).slice(0, 300)}`);
+        }
+        return lines.join("\n");
+      }).join("\n\n");
+
+      return {
+        ok: true,
+        content: `Found ${filtered.length} error(s) in the last ${lookbackMinutes}min:\n\n${formatted}`,
+        label: `read_recent_errors: ${filtered.length} result(s)`,
+        detail: `lookback=${lookbackMinutes}min source=${sourceFilter ?? "all"}`,
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        content: `Failed to query error log: ${err instanceof Error ? err.message : String(err)}`,
+        label: "read_recent_errors: error",
+      };
+    }
+  },
+};
+
 // ── propose_code_change ────────────────────────────────────────────────────────
 
 export const proposeCodeChangeTool: AgentTool = {
@@ -205,7 +297,8 @@ export const proposeCodeChangeTool: AgentTool = {
     "The user must approve the proposal in the 'Code Proposals' screen before any change is applied. " +
     "Use this after reading the file with read_source_file and formulating a minimal, targeted improvement. " +
     "Good reasons to propose: fixing a bug you encountered, adding a missing capability, improving a prompt, adding a tool. " +
-    "Bad reasons: cosmetic refactors, changes the user didn't ask for, modifying the approval gate itself.",
+    "Bad reasons: cosmetic refactors, changes the user didn't ask for, modifying the approval gate itself. " +
+    "IMPORTANT: Before creating a proposal for a file, check whether a pending proposal already exists for the same file — if one does, skip re-investigation and tell the user to review the existing proposal first.",
   parameters: {
     type: "object",
     properties: {
@@ -224,6 +317,16 @@ export const proposeCodeChangeTool: AgentTool = {
       proposed_content: {
         type: "string",
         description: "The complete proposed file content after the change. Must be a full file replacement, not a partial diff.",
+      },
+      debug_context: {
+        type: "object",
+        description: "Optional: attach debug information when this proposal originates from a self-debugging session. Include errorMessage, stackExcerpt, and rootCauseSummary.",
+        properties: {
+          error_message: { type: "string" },
+          stack_excerpt: { type: "string" },
+          root_cause_summary: { type: "string" },
+          error_log_id: { type: "string" },
+        },
       },
     },
     required: ["file_path", "title", "reason", "proposed_content"],
@@ -248,6 +351,30 @@ export const proposeCodeChangeTool: AgentTool = {
     if (!reason) return { ok: false, content: "reason is required.", label: "propose_code_change: error" };
     if (!proposedContent) return { ok: false, content: "proposed_content is required.", label: "propose_code_change: error" };
 
+    // ── Duplicate suppression: skip if a pending proposal already exists for the same file ──
+    try {
+      const existing = await db
+        .select({ id: codeProposals.id })
+        .from(codeProposals)
+        .where(
+          and(
+            eq(codeProposals.userId, ctx.userId),
+            eq(codeProposals.filePath, filePath),
+            eq(codeProposals.status, "pending"),
+          ),
+        )
+        .limit(1);
+      if (existing.length > 0) {
+        return {
+          ok: false,
+          content: `A pending proposal for '${filePath}' already exists (ID: ${existing[0].id}). The user must review and resolve that proposal before a new one can be created for the same file. Notify the user to check the Code Proposals screen.`,
+          label: "propose_code_change: duplicate suppressed",
+        };
+      }
+    } catch {
+      // Non-fatal — proceed without duplicate check if DB is unavailable
+    }
+
     let originalContent = "";
     try {
       const absPath = path.join(PROJECT_ROOT, filePath);
@@ -268,6 +395,20 @@ export const proposeCodeChangeTool: AgentTool = {
       };
     }
 
+    // Build optional debug_context from args
+    let debugCtx: DebugContext | undefined;
+    if (args.debug_context && typeof args.debug_context === "object") {
+      const dc = args.debug_context as Record<string, unknown>;
+      if (dc.error_message || dc.root_cause_summary) {
+        debugCtx = {
+          errorMessage: String(dc.error_message ?? ""),
+          stackExcerpt: dc.stack_excerpt ? String(dc.stack_excerpt).slice(0, 800) : undefined,
+          rootCauseSummary: String(dc.root_cause_summary ?? ""),
+          errorLogId: dc.error_log_id ? String(dc.error_log_id) : undefined,
+        };
+      }
+    }
+
     try {
       const [row] = await db
         .insert(codeProposals)
@@ -279,18 +420,22 @@ export const proposeCodeChangeTool: AgentTool = {
           originalContent,
           proposedContent,
           status: "pending",
+          debugContext: debugCtx ?? null,
         })
         .returning({ id: codeProposals.id });
 
       // Notify user via inbox
       const sourceId = `code_proposal:${row.id}`;
+      const isDebug = !!debugCtx;
       await db
         .insert(inboxItems)
         .values({
           userId: ctx.userId,
           sourceType: "other",
           sourceId,
-          subject: "Jarvis has a code suggestion ready for your review",
+          subject: isDebug
+            ? "Jarvis found a bug and has a fix ready for your review"
+            : "Jarvis has a code suggestion ready for your review",
           snippet: `${title} — ${reason.slice(0, 200)}`,
           jarvisReason: `Code proposal: ${filePath}`,
           suggestedActions: [{ label: "Review", actionType: "navigate", target: "/code-proposals" }],
@@ -298,7 +443,7 @@ export const proposeCodeChangeTool: AgentTool = {
         })
         .onConflictDoNothing();
 
-      console.log(`[SelfEdit] proposal ${row.id} created for user ${ctx.userId}: ${filePath}`);
+      console.log(`[SelfEdit] proposal ${row.id} created for user ${ctx.userId}: ${filePath}${isDebug ? " [debug]" : ""}`);
 
       return {
         ok: true,

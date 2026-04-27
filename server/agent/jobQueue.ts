@@ -11,6 +11,7 @@ import type { ToolContext } from "./types";
 import { notifyUser } from "../channels/registry";
 import { onWorkflowJobComplete, onWorkflowJobFail } from "./workflowEngine";
 import { emit as diagEmit } from "../diagnostics/diagnosticsService";
+import { logSystemError } from "./errorLogger";
 import { submitAgentJob as _submitAgentJob, getModelForJobType as _getModelForJobType, type SubmitJobInput, type AgentJobType as _AgentJobType } from "./jobClient";
 
 // Re-export from the shared client so existing callers don't break.
@@ -312,6 +313,16 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
     const jobInput = (job.input as Record<string, unknown>) ?? {};
     const retryCount = typeof jobInput.retryCount === "number" ? jobInput.retryCount : 0;
     const MAX_RETRIES = 2;
+
+    // Log persistent errors to system_error_log for Jarvis self-debugging
+    logSystemError({
+      source: `jobQueue/${job.agentType}`,
+      message: msg,
+      error: err,
+      level: "error",
+      context: { jobId: job.id, agentType: job.agentType, retryCount },
+      userId: job.userId,
+    }).catch(() => {});
 
     if (retryCount < MAX_RETRIES) {
       const nextRetry = retryCount + 1;
