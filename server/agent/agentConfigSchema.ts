@@ -76,6 +76,13 @@ export const AgentConfigFileSchema = z.object({
   allowed_users: z.array(z.string()).optional().default([]),
   allowed_conversations: z.array(z.string()).optional().default([]),
   tags: z.array(z.string()).optional(),
+  /**
+   * Optional TTS voice persona for this agent.
+   * When set, the agent's auto-TTS replies use this voice instead of the user's
+   * global preference. Accepts OpenAI voice IDs (alloy, echo, fable, onyx,
+   * nova, shimmer) or an ElevenLabs voice ID / name.
+   */
+  tts_voice: z.string().optional(),
   exported_at: z.string().datetime({ message: "exported_at must be a valid ISO 8601 datetime" }),
 });
 
@@ -120,6 +127,7 @@ export function validateAgentConfig(raw: unknown): ValidationResult {
 // ── Export ─────────────────────────────────────────────────────────────────────
 
 export function exportAgentConfig(agent: DiscordAgent): AgentConfigFile {
+  const configJson = (agent.configJson ?? {}) as Record<string, unknown>;
   return {
     version: "1",
     name: agent.name,
@@ -138,6 +146,7 @@ export function exportAgentConfig(agent: DiscordAgent): AgentConfigFile {
     platform_channels: (agent.platformChannels as Record<string, string[]>) ?? undefined,
     allowed_users: (agent.allowedUsers as string[]) ?? [],
     allowed_conversations: (agent.allowedConversations as string[]) ?? [],
+    tts_voice: typeof configJson.tts_voice === "string" ? configJson.tts_voice : undefined,
     exported_at: new Date().toISOString(),
   };
 }

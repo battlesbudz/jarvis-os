@@ -703,5 +703,49 @@ When a user's request involves multi-step research, drafting a document or plan,
     console.error("[coach] chat history persist failed:", err);
   }
 
+  // ── Auto-TTS: speak the reply on channels where it's enabled ──────────────
+  // Trigger conditions:
+  //   1. Explicit request: user message contains a phrase like "say that as a
+  //      voice message", "read it out", "speak that", "read that to me", etc.
+  //   2. Auto-TTS: the user has enabled auto-TTS for the current channel in
+  //      their preferences (ttsChannels contains the channel key).
+  //
+  // Fire-and-forget (non-blocking). Never throws / never blocks the reply.
+  const channelKey = channelLower.startsWith("discord") ? "discord"
+    : channelLower === "whatsapp" ? "whatsapp"
+    : channelLower === "telegram" ? "telegram"
+    : null;
+
+  if (channelKey && (channelKey === "telegram" || channelKey === "whatsapp")) {
+    const isExplicitTtsRequest = /\b(say\s+(that|it|this)|read\s+(that|it|this)\s*(out|aloud|to\s*me)?|speak\s+(that|it|this)|voice\s+message\s*(it|that|please)?|send\s+(as\s+)?(a\s+)?voice|read\s+out\s*(loud)?)\b/i.test(
+      userText,
+    );
+
+    (async () => {
+      try {
+        const { getUserTtsPrefs, getUserTtsChannels, speakToUser } = await import("../agent/tools/tts");
+        const enabledChannels = await getUserTtsChannels(userId);
+        const shouldSpeak = isExplicitTtsRequest || enabledChannels.includes(channelKey);
+        if (!shouldSpeak) return;
+
+        const prefs = await getUserTtsPrefs(userId);
+        const voice = prefs.voice || "nova";
+
+        const result = await speakToUser(userId, reply, voice, {
+          channel: channelName,
+          serverBaseUrl: process.env.SERVER_BASE_URL,
+        });
+
+        if (!result.ok) {
+          console.warn(`[${channelName}/auto-TTS] delivery failed: ${result.error}`);
+        } else {
+          console.log(`[${channelName}/auto-TTS] voice note delivered (voice=${voice}, chars=${reply.length})`);
+        }
+      } catch (err) {
+        console.warn(`[${channelName}/auto-TTS] error (non-blocking):`, err);
+      }
+    })();
+  }
+
   return { reply, rawReply, attachments, sdkSessionId: finalSessionId };
 }

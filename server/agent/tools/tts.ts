@@ -4,12 +4,47 @@ import { randomUUID } from "crypto";
 import { tmpdir } from "os";
 import { join } from "path";
 import { db } from "../../db";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import * as schema from "@shared/schema";
-import { telegramLinks } from "@shared/schema";
+import { telegramLinks, channelLinks } from "@shared/schema";
 import { sendVoice } from "../../integrations/telegram";
 import { textToSpeech, elevenlabsTts } from "../../replit_integrations/audio/client";
 import type { AgentTool } from "../types";
+
+/**
+ * In-memory store for short-lived audio files served to WhatsApp via Twilio.
+ * Twilio requires a publicly accessible URL for media messages; we generate a
+ * one-time token, store the MP3 buffer here for 5 minutes, and expose it via
+ * GET /api/tts/temp/:token. The buffer is evicted after first read or on TTL.
+ */
+interface TempAudioEntry {
+  buffer: Buffer;
+  mimeType: string;
+  expiresAt: number;
+}
+const tempAudioStore = new Map<string, TempAudioEntry>();
+
+/** Store an audio buffer and return a one-time serving token. */
+export function storeTempAudio(buffer: Buffer, mimeType = "audio/mpeg"): string {
+  const token = randomUUID();
+  tempAudioStore.set(token, { buffer, mimeType, expiresAt: Date.now() + 5 * 60_000 });
+  // Passive expiry sweep — remove tokens older than 5 minutes
+  for (const [k, v] of tempAudioStore) {
+    if (Date.now() > v.expiresAt) tempAudioStore.delete(k);
+  }
+  return token;
+}
+
+/** Retrieve and consume a stored audio buffer (one-time read). Returns null if expired/unknown. */
+export function consumeTempAudio(token: string): TempAudioEntry | null {
+  const entry = tempAudioStore.get(token);
+  if (!entry || Date.now() > entry.expiresAt) {
+    tempAudioStore.delete(token);
+    return null;
+  }
+  tempAudioStore.delete(token); // one-time read
+  return entry;
+}
 
 export type TtsVoice = "alloy" | "echo" | "fable" | "onyx" | "nova" | "shimmer" | string;
 
@@ -161,12 +196,71 @@ export async function setTtsChannels(userId: string, channels: string[]): Promis
 export interface SpeakOptions {
   channel?: string;
   discordChannelId?: string;
+  /** Public base URL of this server — required for WhatsApp media delivery via Twilio. */
+  serverBaseUrl?: string;
+}
+
+/** Look up the WhatsApp address for a user (needed to send Twilio media messages). */
+async function getWhatsAppAddress(userId: string): Promise<string | null> {
+  try {
+    const rows = await db.select({ address: channelLinks.address })
+      .from(channelLinks)
+      .where(and(eq(channelLinks.userId, userId), eq(channelLinks.channel, "whatsapp")))
+      .limit(1);
+    return rows[0]?.address ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Send an MP3 audio buffer to a WhatsApp number via Twilio media message. */
+async function sendWhatsAppAudio(
+  toAddress: string,
+  mp3Buffer: Buffer,
+  serverBaseUrl: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const TWILIO_SID = process.env.TWILIO_ACCOUNT_SID;
+  const TWILIO_TOKEN = process.env.TWILIO_AUTH_TOKEN;
+  const TWILIO_FROM = process.env.TWILIO_WHATSAPP_NUMBER;
+  if (!TWILIO_SID || !TWILIO_TOKEN || !TWILIO_FROM) {
+    return { ok: false, error: "Twilio not configured" };
+  }
+
+  // Store MP3 temporarily and build a public URL for Twilio to fetch
+  const token = storeTempAudio(mp3Buffer, "audio/mpeg");
+  const mediaUrl = `${serverBaseUrl.replace(/\/$/, "")}/api/tts/temp/${token}`;
+
+  const to = toAddress.startsWith("whatsapp:") ? toAddress : `whatsapp:${toAddress}`;
+  const url = `https://api.twilio.com/2010-04-01/Accounts/${TWILIO_SID}/Messages.json`;
+  const auth = Buffer.from(`${TWILIO_SID}:${TWILIO_TOKEN}`).toString("base64");
+  const params = new URLSearchParams({
+    From: TWILIO_FROM,
+    To: to,
+    MediaUrl: mediaUrl,
+    Body: "",
+  });
+
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { Authorization: `Basic ${auth}`, "Content-Type": "application/x-www-form-urlencoded" },
+      body: params.toString(),
+    });
+    const data = await res.json() as { sid?: string; message?: string; code?: number };
+    if (!res.ok) {
+      return { ok: false, error: `Twilio error: ${data.message || res.status}` };
+    }
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
 }
 
 /**
  * Generate a voice message from text and deliver it to the appropriate channel.
- * - "telegram" → Telegram sendVoice (round audio bubble)
- * - "discord" (requires discordChannelId) → OGG file attachment in the Discord channel
+ * - "telegram"  → Telegram sendVoice (round audio bubble)
+ * - "whatsapp"  → Twilio WhatsApp media message (MP3, requires public server URL)
+ * - "discord"   → OGG file attachment in the Discord channel (requires discordChannelId)
  * - anything else → returns error (graceful fallback, no crash)
  *
  * Uses dynamic import for the Discord manager to avoid a circular dependency chain:
@@ -180,6 +274,7 @@ export async function speakToUser(
 ): Promise<{ ok: boolean; error?: string }> {
   const channelRaw = (options?.channel || "telegram").toLowerCase();
   const isDiscord = channelRaw.startsWith("discord");
+  const isWhatsApp = channelRaw === "whatsapp";
 
   const snippedText = text.slice(0, 4000);
   const isElevenLabsVoice = !OPENAI_VOICES.has(voice);
@@ -189,6 +284,19 @@ export async function speakToUser(
   const mp3 = isElevenLabsVoice
     ? await elevenlabsTts(snippedText, voice)
     : await textToSpeech(snippedText, voice as "alloy" | "echo" | "fable" | "onyx" | "nova" | "shimmer", "mp3");
+
+  if (isWhatsApp) {
+    const address = await getWhatsAppAddress(userId);
+    if (!address) {
+      return { ok: false, error: "User has no linked WhatsApp account" };
+    }
+    const serverBaseUrl = options?.serverBaseUrl || process.env.SERVER_BASE_URL || "";
+    if (!serverBaseUrl) {
+      return { ok: false, error: "WhatsApp TTS requires SERVER_BASE_URL to be configured" };
+    }
+    return sendWhatsAppAudio(address, mp3, serverBaseUrl);
+  }
+
   const ogg = await mp3ToOggOpus(mp3);
 
   if (isDiscord) {

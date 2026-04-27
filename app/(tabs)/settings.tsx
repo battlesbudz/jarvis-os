@@ -278,6 +278,77 @@ export default function SettingsScreen() {
   const [mcpKeyCopied, setMcpKeyCopied] = useState(false);
   const [mcpUrlCopied, setMcpUrlCopied] = useState(false);
 
+  // ── TTS (voice responses) ──
+  const TTS_OPENAI_VOICES = [
+    { id: 'alloy',   label: 'Alloy',   desc: 'Neutral' },
+    { id: 'echo',    label: 'Echo',    desc: 'Male' },
+    { id: 'fable',   label: 'Fable',   desc: 'Expressive' },
+    { id: 'onyx',    label: 'Onyx',    desc: 'Deep' },
+    { id: 'nova',    label: 'Nova',    desc: 'Warm female' },
+    { id: 'shimmer', label: 'Shimmer', desc: 'Gentle female' },
+  ] as const;
+  type TtsVoiceId = typeof TTS_OPENAI_VOICES[number]['id'];
+  const [ttsVoice, setTtsVoice] = useState<TtsVoiceId>('nova');
+  const [ttsTelegramEnabled, setTtsTelegramEnabled] = useState(false);
+  const [ttsWhatsAppEnabled, setTtsWhatsAppEnabled] = useState(false);
+  const [ttsSaving, setTtsSaving] = useState(false);
+  const [ttsPreviewing, setTtsPreviewing] = useState(false);
+
+  const saveTtsSettings = useCallback(async (patch: { voice?: TtsVoiceId; ttsChannels?: string[] }) => {
+    setTtsSaving(true);
+    try {
+      await apiRequest('PATCH', '/api/settings/tts', patch);
+    } catch {}
+    setTtsSaving(false);
+  }, []);
+
+  const toggleTtsTelegram = useCallback(async (value: boolean) => {
+    setTtsTelegramEnabled(value);
+    const channels: string[] = [];
+    if (value) channels.push('telegram');
+    if (ttsWhatsAppEnabled) channels.push('whatsapp');
+    await saveTtsSettings({ ttsChannels: channels });
+  }, [ttsWhatsAppEnabled, saveTtsSettings]);
+
+  const toggleTtsWhatsApp = useCallback(async (value: boolean) => {
+    setTtsWhatsAppEnabled(value);
+    const channels: string[] = [];
+    if (ttsTelegramEnabled) channels.push('telegram');
+    if (value) channels.push('whatsapp');
+    await saveTtsSettings({ ttsChannels: channels });
+  }, [ttsTelegramEnabled, saveTtsSettings]);
+
+  const changeTtsVoice = useCallback(async (voice: TtsVoiceId) => {
+    setTtsVoice(voice);
+    await saveTtsSettings({ voice });
+  }, [saveTtsSettings]);
+
+  const previewTtsVoice = useCallback(async () => {
+    setTtsPreviewing(true);
+    try {
+      const res = await apiRequest('POST', '/api/coach/speak', {
+        text: "Hi, I'm Jarvis. This is what I sound like with this voice.",
+        voice: ttsVoice,
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.audio) {
+          const { Sound } = Audio;
+          const { sound } = await Sound.createAsync(
+            { uri: `data:audio/mp3;base64,${data.audio}` },
+            { shouldPlay: true },
+          );
+          sound.setOnPlaybackStatusUpdate((status) => {
+            if ('didJustFinish' in status && status.didJustFinish) {
+              sound.unloadAsync().catch(() => {});
+            }
+          });
+        }
+      }
+    } catch {}
+    setTtsPreviewing(false);
+  }, [ttsVoice]);
+
   // ── Build History ──
   const [buildHistory, setBuildHistory] = useState<BuildLogEntry[]>([]);
   const [buildHistoryExpanded, setBuildHistoryExpanded] = useState(false);
@@ -741,6 +812,17 @@ export default function SettingsScreen() {
         setWakeWordEnabled(wakeRes.wakeWordEnabled ?? false);
         setTalkModeEnabled(wakeRes.talkModeEnabled ?? false);
         setWakeWords(wakeRes.wakeWords ?? ['hey jarvis', 'jarvis', 'computer']);
+      }
+    } catch {}
+    try {
+      const ttsRes = await apiRequest('GET', '/api/settings/tts').then(r => r.json()).catch(() => null);
+      if (ttsRes) {
+        if (ttsRes.voice && ['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer'].includes(ttsRes.voice)) {
+          setTtsVoice(ttsRes.voice as TtsVoiceId);
+        }
+        const channels: string[] = Array.isArray(ttsRes.ttsChannels) ? ttsRes.ttsChannels : [];
+        setTtsTelegramEnabled(channels.includes('telegram'));
+        setTtsWhatsAppEnabled(channels.includes('whatsapp'));
       }
     } catch {}
     await loadModels();
@@ -1721,6 +1803,108 @@ export default function SettingsScreen() {
               </View>
             </View>
           )}
+        </View>
+
+        {/* ── VOICE RESPONSES (TTS) ── */}
+        <SectionHeader label="VOICE RESPONSES" accent="#7C3AED" />
+        <View style={styles.card}>
+          {/* Telegram auto-TTS toggle */}
+          <View style={[styles.connRow, { paddingVertical: 12 }]}>
+            <View style={[styles.connIconWrap, { backgroundColor: '#1a1a3e' }]}>
+              <Ionicons name="paper-plane-outline" size={18} color="#7C3AED" />
+            </View>
+            <View style={styles.connInfo}>
+              <Text style={styles.connName}>Auto-speak on Telegram</Text>
+              <Text style={styles.connSub}>Jarvis sends a voice note after every Telegram reply</Text>
+            </View>
+            <Switch
+              value={ttsTelegramEnabled}
+              onValueChange={toggleTtsTelegram}
+              disabled={ttsSaving}
+              trackColor={{ false: Colors.border, true: '#7C3AED' }}
+            />
+          </View>
+
+          {/* WhatsApp auto-TTS toggle */}
+          <View style={[styles.connRow, styles.connRowBorder, { paddingVertical: 12 }]}>
+            <View style={[styles.connIconWrap, { backgroundColor: '#0f2a1a' }]}>
+              <Ionicons name="logo-whatsapp" size={18} color={Colors.success} />
+            </View>
+            <View style={styles.connInfo}>
+              <Text style={styles.connName}>Auto-speak on WhatsApp</Text>
+              <Text style={styles.connSub}>Jarvis sends a voice note after every WhatsApp reply</Text>
+            </View>
+            <Switch
+              value={ttsWhatsAppEnabled}
+              onValueChange={toggleTtsWhatsApp}
+              disabled={ttsSaving}
+              trackColor={{ false: Colors.border, true: Colors.success }}
+            />
+          </View>
+
+          {/* Voice picker */}
+          <View style={{ paddingHorizontal: 14, paddingTop: 12, paddingBottom: 4 }}>
+            <Text style={{ fontSize: 11, color: Colors.textTertiary, fontFamily: 'Inter_500Medium', letterSpacing: 0.5, marginBottom: 10 }}>
+              JARVIS VOICE
+            </Text>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+              {TTS_OPENAI_VOICES.map(v => {
+                const active = ttsVoice === v.id;
+                return (
+                  <Pressable
+                    key={v.id}
+                    onPress={() => changeTtsVoice(v.id)}
+                    style={{
+                      paddingHorizontal: 12,
+                      paddingVertical: 7,
+                      borderRadius: 20,
+                      borderWidth: 1.5,
+                      borderColor: active ? '#7C3AED' : Colors.border,
+                      backgroundColor: active ? 'rgba(124,58,237,0.12)' : 'transparent',
+                    }}
+                  >
+                    <Text style={{ fontSize: 13, fontFamily: active ? 'Inter_600SemiBold' : 'Inter_400Regular', color: active ? '#7C3AED' : Colors.text }}>
+                      {v.label}
+                    </Text>
+                    <Text style={{ fontSize: 10, color: Colors.textTertiary, fontFamily: 'Inter_400Regular', textAlign: 'center' }}>
+                      {v.desc}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+
+          {/* Preview button */}
+          <View style={{ paddingHorizontal: 14, paddingVertical: 12 }}>
+            <Pressable
+              onPress={previewTtsVoice}
+              disabled={ttsPreviewing}
+              style={({ pressed }) => ({
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 6,
+                paddingVertical: 10,
+                borderRadius: 10,
+                backgroundColor: pressed ? 'rgba(124,58,237,0.18)' : 'rgba(124,58,237,0.10)',
+                borderWidth: 1,
+                borderColor: 'rgba(124,58,237,0.3)',
+                opacity: ttsPreviewing ? 0.6 : 1,
+              })}
+            >
+              {ttsPreviewing
+                ? <ActivityIndicator size="small" color="#7C3AED" />
+                : <Ionicons name="volume-medium-outline" size={16} color="#7C3AED" />
+              }
+              <Text style={{ fontSize: 13, fontFamily: 'Inter_500Medium', color: '#7C3AED' }}>
+                {ttsPreviewing ? 'Sending…' : `Preview ${TTS_OPENAI_VOICES.find(v => v.id === ttsVoice)?.label ?? ttsVoice} voice on Telegram`}
+              </Text>
+            </Pressable>
+            <Text style={{ fontSize: 11, color: Colors.textTertiary, fontFamily: 'Inter_400Regular', textAlign: 'center', marginTop: 6 }}>
+              You can also ask Jarvis to "read that out" or "say it as a voice message" at any time
+            </Text>
+          </View>
         </View>
 
         {/* ── BUILD HISTORY ── */}
