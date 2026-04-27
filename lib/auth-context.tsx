@@ -36,8 +36,13 @@ async function setAuthStorage(token: string, userId: string, username: string, e
     [AUTH_USER_ID_KEY, userId],
     [AUTH_USERNAME_KEY, username],
   ];
-  if (email) pairs.push([AUTH_USER_EMAIL_KEY, email]);
-  await AsyncStorage.multiSet(pairs);
+  if (email) {
+    pairs.push([AUTH_USER_EMAIL_KEY, email]);
+    await AsyncStorage.multiSet(pairs);
+  } else {
+    await AsyncStorage.multiSet(pairs);
+    await AsyncStorage.removeItem(AUTH_USER_EMAIL_KEY);
+  }
 }
 
 export async function clearAuthStorage() {

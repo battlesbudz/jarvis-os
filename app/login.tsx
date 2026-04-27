@@ -11,6 +11,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as WebBrowser from "expo-web-browser";
 import { useAuth, clearAuthStorage } from "@/lib/auth-context";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getApiUrl } from "@/lib/query-client";
 import { Ionicons } from "@expo/vector-icons";
 
@@ -59,9 +60,18 @@ export default function LoginScreen() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [gisReady, setGisReady] = useState(false);
+  const [hasPreviousAccount, setHasPreviousAccount] = useState(false);
   const gisInitialized = useRef(false);
   const isAuthenticatedRef = useRef(isAuthenticated);
   useEffect(() => { isAuthenticatedRef.current = isAuthenticated; }, [isAuthenticated]);
+
+  // Detect whether a previous account was signed in (token or email exists in storage)
+  useEffect(() => {
+    AsyncStorage.multiGet(["@gameplan_auth_token", "@gameplan_auth_user_email"]).then(pairs => {
+      const hasToken = !!(pairs[0][1] || pairs[1][1]);
+      setHasPreviousAccount(hasToken || sessionExpired);
+    });
+  }, [sessionExpired]);
 
   const topPadding = Platform.OS === "web" ? 67 : insets.top;
 
@@ -280,7 +290,7 @@ export default function LoginScreen() {
             )}
           </TouchableOpacity>
 
-          {Platform.OS !== "web" && (
+          {Platform.OS !== "web" && hasPreviousAccount && (
             <TouchableOpacity
               style={styles.switchAccountButton}
               onPress={async () => {
