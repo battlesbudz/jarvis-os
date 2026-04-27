@@ -389,21 +389,19 @@ export default function SettingsScreen() {
 
   const loadNervousSystem = useCallback(async () => {
     setNsLoading(true);
-    try {
-      const [watchRes, signalRes] = await Promise.all([
-        apiRequest('GET', '/api/nervous-system/watches').then(r => r.json()).catch(() => null),
-        apiRequest('GET', '/api/nervous-system/signals?limit=5').then(r => r.json()).catch(() => null),
-      ]);
-      if (watchRes === null && signalRes === null) {
-        setNervousSystemError(true);
-      } else {
-        setWatches(Array.isArray(watchRes) ? watchRes : []);
-        setRecentSignals(Array.isArray(signalRes) ? signalRes : []);
-        setNervousSystemError(false);
-      }
-    } catch {
-      setNervousSystemError(true);
-    }
+    const [watchResult, signalResult] = await Promise.allSettled([
+      apiRequest('GET', '/api/nervous-system/watches').then(r => r.ok ? r.json() : Promise.reject(r.status)),
+      apiRequest('GET', '/api/nervous-system/signals?limit=5').then(r => r.ok ? r.json() : Promise.reject(r.status)),
+    ]);
+
+    const watchRes = watchResult.status === 'fulfilled' ? watchResult.value : null;
+    const signalRes = signalResult.status === 'fulfilled' ? signalResult.value : null;
+
+    // Show error when the primary watches call fails
+    setNervousSystemError(watchResult.status === 'rejected');
+
+    if (watchRes !== null) setWatches(Array.isArray(watchRes) ? watchRes : []);
+    if (signalRes !== null) setRecentSignals(Array.isArray(signalRes) ? signalRes : []);
     setNsLoading(false);
   }, []);
 
@@ -437,59 +435,68 @@ export default function SettingsScreen() {
   // ── Load connections (OAuth, Telegram, Discord, integrations) ──
   const loadConnections = useCallback(async () => {
     setLoadingStatus(true);
-    try {
-      const [oauthRes, telegramRes, discordRes, integrationRes] = await Promise.all([
-        apiRequest('GET', '/api/oauth/status').then(r => r.json()).catch(() => null),
-        apiRequest('GET', '/api/telegram/status').then(r => r.json()).catch(() => null),
-        apiRequest('GET', '/api/discord/status').then(r => r.json()).catch(() => null),
-        apiRequest('GET', '/api/integrations/status').then(r => r.json()).catch(() => null),
-      ]);
-      if (oauthRes) setOAuthStatus({
-        google: oauthRes.google ?? { connected: false },
-        microsoft: oauthRes.microsoft ?? { connected: false },
-        slack: oauthRes.slack ?? { connected: false },
-      });
-      if (telegramRes) setTelegramStatus({
-        connected: telegramRes.connected ?? false,
-        username: telegramRes.username ?? null,
-        configured: telegramRes.configured ?? false,
-      });
-      setDiscordConnected(discordRes?.connected ?? false);
-      setDiscordUsername(discordRes?.discordUsername ?? null);
-      if (integrationRes && typeof integrationRes === 'object') {
-        const health: Record<string, string> = {};
-        const errors: Record<string, string | null> = {};
-        for (const [k, v] of Object.entries(integrationRes)) {
-          const entry = v as { status?: string; errorMessage?: string | null } | null;
-          health[k] = entry?.status ?? 'unconfigured';
-          errors[k] = entry?.errorMessage ?? null;
-        }
-        setIntegrationHealth(health);
-        setIntegrationErrors(errors);
+    // Each call is independent — a failure on one doesn't block others.
+    // We track per-call results to detect when required data is unavailable.
+    const [oauthResult, telegramResult, discordResult, integrationResult] = await Promise.allSettled([
+      apiRequest('GET', '/api/oauth/status').then(r => r.ok ? r.json() : Promise.reject(r.status)),
+      apiRequest('GET', '/api/telegram/status').then(r => r.ok ? r.json() : Promise.reject(r.status)),
+      apiRequest('GET', '/api/discord/status').then(r => r.ok ? r.json() : Promise.reject(r.status)),
+      apiRequest('GET', '/api/integrations/status').then(r => r.ok ? r.json() : Promise.reject(r.status)),
+    ]);
+
+    const oauthRes = oauthResult.status === 'fulfilled' ? oauthResult.value : null;
+    const telegramRes = telegramResult.status === 'fulfilled' ? telegramResult.value : null;
+    const discordRes = discordResult.status === 'fulfilled' ? discordResult.value : null;
+    const integrationRes = integrationResult.status === 'fulfilled' ? integrationResult.value : null;
+
+    // Show error row only when the primary connections data (OAuth status) failed.
+    const primaryFailed = oauthResult.status === 'rejected';
+    setConnectionsError(primaryFailed);
+
+    if (oauthRes) setOAuthStatus({
+      google: oauthRes.google ?? { connected: false },
+      microsoft: oauthRes.microsoft ?? { connected: false },
+      slack: oauthRes.slack ?? { connected: false },
+    });
+    if (telegramRes) setTelegramStatus({
+      connected: telegramRes.connected ?? false,
+      username: telegramRes.username ?? null,
+      configured: telegramRes.configured ?? false,
+    });
+    setDiscordConnected(discordRes?.connected ?? false);
+    setDiscordUsername(discordRes?.discordUsername ?? null);
+    if (integrationRes && typeof integrationRes === 'object') {
+      const health: Record<string, string> = {};
+      const errors: Record<string, string | null> = {};
+      for (const [k, v] of Object.entries(integrationRes)) {
+        const entry = v as { status?: string; errorMessage?: string | null } | null;
+        health[k] = entry?.status ?? 'unconfigured';
+        errors[k] = entry?.errorMessage ?? null;
       }
-      setConnectionsError(false);
-    } catch {
-      setConnectionsError(true);
+      setIntegrationHealth(health);
+      setIntegrationErrors(errors);
     }
     setLoadingStatus(false);
   }, []);
 
   // ── Load AI model preferences ──
   const loadModels = useCallback(async () => {
-    try {
-      const [modelRes, orchRes] = await Promise.all([
-        apiRequest('GET', '/api/settings/models').then(r => r.json()).catch(() => null),
-        apiRequest('GET', '/api/settings/orchestrator').then(r => r.json()).catch(() => null),
-      ]);
-      if (modelRes?.modelPreferences) setModelPrefs(modelRes.modelPreferences);
-      if (modelRes?.availableModels) setAvailableModels(modelRes.availableModels);
-      if (orchRes) {
-        setOrchestratorModel(orchRes.orchestratorModel ?? 'claude-opus-4-6');
-        setAvailableOrchestratorModels(orchRes.availableOrchestratorModels ?? []);
-      }
-      setModelsError(false);
-    } catch {
-      setModelsError(true);
+    const [modelResult, orchResult] = await Promise.allSettled([
+      apiRequest('GET', '/api/settings/models').then(r => r.ok ? r.json() : Promise.reject(r.status)),
+      apiRequest('GET', '/api/settings/orchestrator').then(r => r.ok ? r.json() : Promise.reject(r.status)),
+    ]);
+
+    const modelRes = modelResult.status === 'fulfilled' ? modelResult.value : null;
+    const orchRes = orchResult.status === 'fulfilled' ? orchResult.value : null;
+
+    // Show error row when the primary model preferences call failed.
+    setModelsError(modelResult.status === 'rejected');
+
+    if (modelRes?.modelPreferences) setModelPrefs(modelRes.modelPreferences);
+    if (modelRes?.availableModels) setAvailableModels(modelRes.availableModels);
+    if (orchRes) {
+      setOrchestratorModel(orchRes.orchestratorModel ?? 'claude-opus-4-6');
+      setAvailableOrchestratorModels(orchRes.availableOrchestratorModels ?? []);
     }
   }, []);
 
