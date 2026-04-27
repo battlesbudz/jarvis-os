@@ -16,7 +16,7 @@ export const MODEL_DEFAULTS: Record<ModelCategory, string> = {
   planning: "gpt-4o-mini",
   memory: "gpt-4o-mini",
   research: "gpt-4.1-mini",
-  orchestrator: "claude-opus-4-7",
+  orchestrator: "claude-opus-4-6",
 };
 
 export const AVAILABLE_MODELS = [
@@ -28,8 +28,8 @@ export const AVAILABLE_MODELS = [
 ] as const;
 
 export const ORCHESTRATOR_MODELS = [
-  { value: "claude-opus-4-7", label: "Claude Opus 4.7", description: "Most capable orchestrator — primary mainframe AI" },
-  { value: "claude-opus-4-6", label: "Claude Opus 4.6", description: "Previous flagship — reliable fallback" },
+  { value: "claude-opus-4-6", label: "Claude Opus 4.6", description: "Primary mainframe AI — orchestrates every task" },
+  { value: "claude-opus-4-7", label: "Claude Opus 4.7", description: "Newer flagship — alternative orchestrator" },
   { value: "claude-sonnet-4-6", label: "Claude Sonnet", description: "Balanced speed & quality" },
   { value: "claude-haiku-4-5", label: "Claude Haiku", description: "Fast, lightweight orchestration" },
 ] as const;
