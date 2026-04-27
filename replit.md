@@ -147,6 +147,14 @@ A learnable, user-configurable rules engine for filtering emails and calendar ev
 - **Frontend**: Inbox tab with badge count, Rules editor accessible from Profile settings
 - **Key files**: `server/inboxRules.ts`, `server/inboxActions.ts`, `app/(tabs)/inbox.tsx`, `app/inbox-rules.tsx`
 
+## Inbox Triage — Autonomous Classification (April 2026)
+Autonomous inbox triage layer that classifies deliverables every 3 minutes:
+- **Schema**: `deliverables` table now has `triage_status` (needs_attention / auto_handled / promoted_memory) and `triage_note`; `agent_approval_gates` has `initiated_by` (user / jarvis)
+- **Auto-approve gates**: When `initiatedBy === 'jarvis'` and tool is not in `STRICTLY_IRREVERSIBLE_TOOLS` (send_email, gmail_action, daemon_action, discord_post, speak, sessions_send), gates are auto-approved at creation time via `setImmediate` event fire
+- **Triage runner**: `server/inboxTriage.ts` — 3-min background loop, AI (gpt-4o-mini) classifies each pending deliverable as auto_handle / escalate / promote_memory; auto_handle marks approved, promote_memory writes to `user_memories` + marks soul stale
+- **API**: `GET /api/deliverables?triageSection=auto_handled` returns recently auto-handled / promoted-memory items (last 48h)
+- **Inbox UI**: "Needs your review" section for pending items; collapsible "Auto-handled" section showing handled items with triage badge + reason; badge count includes both inbox items + pending deliverables
+
 ## Jarvis Ego — Self-Awareness & Performance Tracking
 Jarvis now tracks its own performance and delivers weekly self-reports:
 - **Tables**: `jarvis_action_log` (every action Jarvis takes with outcome tracking), `ego_weekly_reports` (weekly analysis + natural-language self-report)
