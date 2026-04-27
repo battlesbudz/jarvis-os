@@ -636,11 +636,11 @@ export default function MissionControlScreen() {
     loadAll();
   }, [loadAll]));
 
-  // ── Auto-refresh every 60 seconds ──
-  useEffect(() => {
+  // ── Auto-refresh every 60 seconds (paused when screen is not focused) ──
+  useFocusEffect(useCallback(() => {
     autoRefreshRef.current = setInterval(() => { loadAll(); }, 60_000);
-    return () => { if (autoRefreshRef.current) clearInterval(autoRefreshRef.current); };
-  }, [loadAll]);
+    return () => { if (autoRefreshRef.current) { clearInterval(autoRefreshRef.current); autoRefreshRef.current = null; } };
+  }, [loadAll]));
 
   // ── Load accordion state from storage on mount ──
   useEffect(() => {
@@ -901,9 +901,11 @@ export default function MissionControlScreen() {
     return start >= now && start <= focusWindowEnd;
   });
 
-  const topPrediction = predictions.length > 0
-    ? [...predictions].sort((a, b) => b.confidenceScore - a.confidenceScore)[0]
-    : null;
+  const topPrediction = (() => {
+    const combined = [...predictions, ...weekPredictions];
+    if (combined.length === 0) return null;
+    return combined.sort((a, b) => b.confidenceScore - a.confidenceScore)[0];
+  })();
 
   const lastUpdatedDisplay = lastUpdated
     ? (() => {
