@@ -1018,7 +1018,63 @@ export async function runAgentHealthCheck(): Promise<void> {
         }
       }
 
-      // ── 4. Stuck active-job check (> 30 min) ────────────────────────────────
+      // ── 4. Channel/platform liveness check ──────────────────────────────────
+      // Verify that each platform the agent is registered on is actually
+      // connected/reachable, and that configured channelIds still exist.
+      const agentPlatforms = (agent.platforms as string[]) ?? ["discord"];
+      for (const platform of agentPlatforms) {
+        let live = false;
+        let reason = "";
+
+        if (platform === "discord") {
+          // Discord: check if bot token is set and the configured channel is accessible
+          const discordToken = process.env.DISCORD_BOT_TOKEN;
+          if (!discordToken) {
+            live = false;
+            reason = "DISCORD_BOT_TOKEN not configured";
+          } else if (agent.channelId) {
+            try {
+              const resp = await fetch(`https://discord.com/api/v10/channels/${agent.channelId}`, {
+                headers: { Authorization: `Bot ${discordToken}` },
+              });
+              if (resp.status === 200) {
+                live = true;
+              } else if (resp.status === 404) {
+                live = false;
+                reason = `Discord channel ${agent.channelId} not found (404)`;
+              } else if (resp.status === 403) {
+                live = false;
+                reason = `No permission to access Discord channel ${agent.channelId} (403)`;
+              } else {
+                live = true; // non-critical status — treat as live
+              }
+            } catch {
+              live = false;
+              reason = "Discord API unreachable";
+            }
+          } else {
+            live = true; // no channel assigned yet — not a failure
+          }
+        } else if (platform === "telegram") {
+          const { isTelegramConfigured } = await import("./integrations/telegram");
+          live = isTelegramConfigured();
+          if (!live) reason = "Telegram not configured";
+        } else {
+          live = true; // Other platforms (web, api, council) — not externally verifiable
+        }
+
+        if (!live) {
+          logAgentEvent({
+            event: "heartbeat_check",
+            agentId: agent.id,
+            userId: agent.userId,
+            detail: `platform_dead=${platform} reason=${reason}`,
+          });
+          addSummary(agent.userId, `⚠️ Agent "${agent.name}" — ${platform} connection issue: ${reason}`);
+        }
+      }
+
+      // ── 5. Stuck active-job check (> 30 min) ────────────────────────────────
       if (agent.stuckSince) {
         const stuckMs = now.getTime() - new Date(agent.stuckSince).getTime();
         if (stuckMs > THIRTY_MIN_MS) {

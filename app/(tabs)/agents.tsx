@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 import {
   View,
   Text,
@@ -11,6 +11,7 @@ import {
   Platform,
   Alert,
   RefreshControl,
+  Switch,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -19,6 +20,57 @@ import { apiRequest } from "@/lib/query-client";
 import Colors from "@/constants/colors";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
+
+interface AgentPermissions {
+  can_search_web: boolean;
+  can_use_browser: boolean;
+  can_send_emails: boolean;
+  can_create_email_drafts: boolean;
+  can_read_email: boolean;
+  can_send_messages: boolean;
+  can_access_files: boolean;
+  can_take_screenshots: boolean;
+  can_open_apps: boolean;
+  can_call_user: boolean;
+  can_use_voice: boolean;
+  can_create_tasks: boolean;
+  can_create_other_agents: boolean;
+  can_access_global_memory: boolean;
+}
+
+const DEFAULT_PERMISSIONS: AgentPermissions = {
+  can_search_web: true,
+  can_use_browser: false,
+  can_send_emails: false,
+  can_create_email_drafts: false,
+  can_read_email: false,
+  can_send_messages: true,
+  can_access_files: false,
+  can_take_screenshots: false,
+  can_open_apps: false,
+  can_call_user: false,
+  can_use_voice: false,
+  can_create_tasks: true,
+  can_create_other_agents: false,
+  can_access_global_memory: false,
+};
+
+const PERM_LABELS: Record<keyof AgentPermissions, { label: string; icon: keyof typeof Ionicons.glyphMap; danger?: boolean }> = {
+  can_search_web:          { label: "Search the web",           icon: "search-outline" },
+  can_use_browser:         { label: "Control browser",          icon: "globe-outline",    danger: true },
+  can_send_emails:         { label: "Send emails",              icon: "mail-outline",     danger: true },
+  can_create_email_drafts: { label: "Create email drafts",      icon: "create-outline",   danger: true },
+  can_read_email:          { label: "Read email",               icon: "mail-open-outline" },
+  can_send_messages:       { label: "Send messages",            icon: "chatbubble-outline" },
+  can_access_files:        { label: "Access files",             icon: "folder-outline" },
+  can_take_screenshots:    { label: "Take screenshots",         icon: "camera-outline" },
+  can_open_apps:           { label: "Open apps",                icon: "apps-outline" },
+  can_call_user:           { label: "Call user",                icon: "call-outline",     danger: true },
+  can_use_voice:           { label: "Use voice (TTS)",          icon: "mic-outline",      danger: true },
+  can_create_tasks:        { label: "Create tasks",             icon: "checkmark-circle-outline" },
+  can_create_other_agents: { label: "Create sub-agents",        icon: "people-outline",   danger: true },
+  can_access_global_memory:{ label: "Read global memory",       icon: "library-outline" },
+};
 
 interface Agent {
   id: string;
@@ -35,6 +87,7 @@ interface Agent {
   loopIntervalMinutes: number;
   heartbeatFailCount: number;
   stuckSince?: string;
+  permissions?: AgentPermissions;
 }
 
 const ROLE_ICONS: Record<string, keyof typeof Ionicons.glyphMap> = {
@@ -163,11 +216,13 @@ function AgentCard({
   onRun,
   onToggle,
   onDelete,
+  onDetail,
 }: {
   agent: Agent;
   onRun: (agent: Agent) => void;
   onToggle: (agent: Agent) => void;
   onDelete: (agent: Agent) => void;
+  onDetail: (agent: Agent) => void;
 }) {
   const roleColor = ROLE_COLORS[agent.role] || Colors.primary;
   const isActive = agent.isActive === 1;
@@ -191,6 +246,9 @@ function AgentCard({
           )}
           <TouchableOpacity style={[styles.iconBtn, { backgroundColor: Colors.background }]} onPress={() => onRun(agent)}>
             <Ionicons name="play-outline" size={16} color={Colors.primary} />
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.iconBtn, { backgroundColor: Colors.background }]} onPress={() => onDetail(agent)}>
+            <Ionicons name="settings-outline" size={16} color={Colors.textSecondary} />
           </TouchableOpacity>
           <TouchableOpacity style={[styles.iconBtn, { backgroundColor: Colors.background }]} onPress={() => onToggle(agent)}>
             <Ionicons
@@ -386,12 +444,247 @@ function CouncilModal({ visible, onClose }: { visible: boolean; onClose: () => v
 
 // ── Main screen ────────────────────────────────────────────────────────────────
 
+// ── AgentDetailSheet ───────────────────────────────────────────────────────────
+// Full config/permissions/memory editor for a named agent.
+
+function AgentDetailSheet({
+  agent,
+  onClose,
+  onSave,
+}: {
+  agent: Agent | null;
+  onClose: () => void;
+  onSave: (id: string, data: Partial<Agent> & { permissions: AgentPermissions }) => void;
+}) {
+  const [name, setName] = useState("");
+  const [role, setRole] = useState("custom");
+  const [persona, setPersona] = useState("");
+  const [channelId, setChannelId] = useState("");
+  const [perms, setPerms] = useState<AgentPermissions>({ ...DEFAULT_PERMISSIONS });
+  const [saving, setSaving] = useState(false);
+
+  // Memory management
+  const { data: memData, isLoading: memLoading, refetch: refetchMem } = useQuery<{ count: number }>({
+    queryKey: ["/api/agents", agent?.id, "memories"],
+    enabled: !!agent,
+  });
+  const memCount = memData?.count ?? 0;
+
+  // Load fresh state whenever the selected agent changes
+  useEffect(() => {
+    if (!agent) return;
+    setName(agent.name);
+    setRole(agent.role);
+    setPersona(agent.persona ?? "");
+    setChannelId(agent.channelId ?? "");
+    setPerms({ ...DEFAULT_PERMISSIONS, ...(agent.permissions ?? {}) });
+    setSaving(false);
+  }, [agent?.id]);
+
+  function togglePerm(key: keyof AgentPermissions) {
+    setPerms((prev) => ({ ...prev, [key]: !prev[key] }));
+  }
+
+  function handleSave() {
+    if (!agent || !name.trim()) return;
+    setSaving(true);
+    onSave(agent.id, {
+      name: name.trim(),
+      role,
+      persona: persona.trim() || undefined,
+      channelId: channelId.trim() || undefined,
+      permissions: perms,
+    });
+  }
+
+  function handleClearMemory() {
+    if (!agent) return;
+    Alert.alert(
+      "Clear all memories?",
+      `This will permanently delete all ${memCount} memories for ${agent.name}.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Clear",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await apiRequest("DELETE", `/api/agents/${agent.id}/memories`, {});
+              refetchMem();
+            } catch {
+              Alert.alert("Error", "Failed to clear memories.");
+            }
+          },
+        },
+      ],
+    );
+  }
+
+  return (
+    <Modal visible={!!agent} animationType="slide" presentationStyle="formSheet" onRequestClose={onClose}>
+      <View style={[styles.sheet, { backgroundColor: Colors.background }]}>
+        {/* Header */}
+        <View style={[styles.sheetHeader, { borderBottomColor: Colors.border }]}>
+          <TouchableOpacity onPress={onClose}>
+            <Text style={[styles.sheetCancel, { color: Colors.textSecondary }]}>Cancel</Text>
+          </TouchableOpacity>
+          <Text style={[styles.sheetTitle, { color: Colors.text }]}>{agent?.name ?? "Edit Agent"}</Text>
+          <TouchableOpacity onPress={handleSave} disabled={!name.trim() || saving}>
+            {saving ? (
+              <ActivityIndicator size="small" color={Colors.primary} />
+            ) : (
+              <Text style={[styles.sheetDone, { color: name.trim() ? Colors.primary : Colors.textTertiary }]}>Save</Text>
+            )}
+          </TouchableOpacity>
+        </View>
+
+        <ScrollView style={styles.sheetBody} keyboardShouldPersistTaps="handled">
+          {/* ── Config ──────────────────────────────────────────────────────── */}
+          <Text style={[styles.detailSectionLabel, { color: Colors.textSecondary }]}>CONFIGURATION</Text>
+
+          <Text style={[styles.fieldLabel, { color: Colors.textSecondary }]}>NAME</Text>
+          <TextInput
+            style={[styles.input, { backgroundColor: Colors.surface, borderColor: Colors.border, color: Colors.text }]}
+            value={name}
+            onChangeText={setName}
+            placeholder="Agent name"
+            placeholderTextColor={Colors.textTertiary}
+          />
+
+          <Text style={[styles.fieldLabel, { color: Colors.textSecondary }]}>ROLE</Text>
+          <View style={styles.roleGrid}>
+            {ROLES.map((r) => {
+              const isSelected = role === r;
+              const color = ROLE_COLORS[r] || Colors.primary;
+              return (
+                <TouchableOpacity
+                  key={r}
+                  style={[
+                    styles.roleChip,
+                    {
+                      backgroundColor: isSelected ? color + "22" : Colors.surface,
+                      borderColor: isSelected ? color : Colors.border,
+                    },
+                  ]}
+                  onPress={() => setRole(r)}
+                >
+                  <Ionicons
+                    name={ROLE_ICONS[r] ?? "person-outline"}
+                    size={14}
+                    color={isSelected ? color : Colors.textSecondary}
+                  />
+                  <Text style={[styles.roleChipText, { color: isSelected ? color : Colors.textSecondary }]}>
+                    {r}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          <Text style={[styles.fieldLabel, { color: Colors.textSecondary }]}>PERSONA</Text>
+          <TextInput
+            style={[styles.input, styles.inputMultiline, { backgroundColor: Colors.surface, borderColor: Colors.border, color: Colors.text }]}
+            value={persona}
+            onChangeText={setPersona}
+            placeholder="Describe how this agent should behave…"
+            placeholderTextColor={Colors.textTertiary}
+            multiline
+          />
+
+          <Text style={[styles.fieldLabel, { color: Colors.textSecondary }]}>DISCORD CHANNEL ID</Text>
+          <TextInput
+            style={[styles.input, { backgroundColor: Colors.surface, borderColor: Colors.border, color: Colors.text }]}
+            value={channelId}
+            onChangeText={setChannelId}
+            placeholder="e.g. 1234567890123456789"
+            placeholderTextColor={Colors.textTertiary}
+            keyboardType="number-pad"
+          />
+
+          {/* ── Permissions ─────────────────────────────────────────────────── */}
+          <View style={[styles.detailSectionDivider, { borderTopColor: Colors.border }]} />
+          <Text style={[styles.detailSectionLabel, { color: Colors.textSecondary }]}>PERMISSIONS</Text>
+          <Text style={[styles.detailSectionHint, { color: Colors.textTertiary }]}>
+            High-risk capabilities require approval gates before running.
+          </Text>
+
+          <View style={[styles.permsList, { backgroundColor: Colors.surface, borderColor: Colors.border }]}>
+            {(Object.keys(PERM_LABELS) as Array<keyof AgentPermissions>).map((key, idx, arr) => {
+              const { label, icon, danger } = PERM_LABELS[key];
+              const isLast = idx === arr.length - 1;
+              return (
+                <View key={key}>
+                  <View style={styles.permRow}>
+                    <View style={[styles.permIconWrap, { backgroundColor: (danger ? Colors.errorDim : Colors.background) }]}>
+                      <Ionicons name={icon} size={15} color={danger ? Colors.error : Colors.textSecondary} />
+                    </View>
+                    <Text style={[styles.permLabel, { color: Colors.text }]} numberOfLines={1}>{label}</Text>
+                    {danger && (
+                      <View style={[styles.dangerBadge, { backgroundColor: Colors.errorDim }]}>
+                        <Text style={[styles.dangerText, { color: Colors.error }]}>approval</Text>
+                      </View>
+                    )}
+                    <Switch
+                      value={perms[key]}
+                      onValueChange={() => togglePerm(key)}
+                      trackColor={{ false: Colors.border, true: Colors.primary + "55" }}
+                      thumbColor={perms[key] ? Colors.primary : Colors.textTertiary}
+                    />
+                  </View>
+                  {!isLast && <View style={[styles.permDivider, { backgroundColor: Colors.border }]} />}
+                </View>
+              );
+            })}
+          </View>
+
+          {/* ── Memory ──────────────────────────────────────────────────────── */}
+          <View style={[styles.detailSectionDivider, { borderTopColor: Colors.border }]} />
+          <Text style={[styles.detailSectionLabel, { color: Colors.textSecondary }]}>MEMORY</Text>
+
+          <View style={[styles.memoryCard, { backgroundColor: Colors.surface, borderColor: Colors.border }]}>
+            <View style={styles.memoryRow}>
+              <Ionicons name="library-outline" size={18} color={Colors.textSecondary} />
+              {memLoading ? (
+                <ActivityIndicator size="small" color={Colors.textSecondary} style={{ marginLeft: 8 }} />
+              ) : (
+                <Text style={[styles.memoryCount, { color: Colors.text }]}>
+                  {memCount} {memCount === 1 ? "memory" : "memories"}
+                </Text>
+              )}
+              <View style={{ flex: 1 }} />
+              <TouchableOpacity
+                onPress={handleClearMemory}
+                disabled={memCount === 0 || memLoading}
+                style={[styles.clearMemBtn, {
+                  backgroundColor: memCount > 0 ? Colors.errorDim : Colors.surface,
+                  borderColor: memCount > 0 ? Colors.error + "55" : Colors.border,
+                }]}
+              >
+                <Ionicons name="trash-outline" size={14} color={memCount > 0 ? Colors.error : Colors.textTertiary} />
+                <Text style={[styles.clearMemText, { color: memCount > 0 ? Colors.error : Colors.textTertiary }]}>
+                  Clear all
+                </Text>
+              </TouchableOpacity>
+            </View>
+            <Text style={[styles.memoryScopeText, { color: Colors.textTertiary }]}>
+              Scope: {agent?.memoryScope ?? "agent"}{agent?.accessGlobalMemory ? " · reads global" : ""}
+            </Text>
+          </View>
+
+          <View style={{ height: 40 }} />
+        </ScrollView>
+      </View>
+    </Modal>
+  );
+}
+
 export default function AgentsScreen() {
   const insets = useSafeAreaInsets();
   const queryClient = useQueryClient();
   const [showCreate, setShowCreate] = useState(false);
   const [runAgent, setRunAgent] = useState<Agent | null>(null);
   const [showCouncil, setShowCouncil] = useState(false);
+  const [detailAgent, setDetailAgent] = useState<Agent | null>(null);
 
   const topPad = Platform.OS === "web" ? 67 : insets.top;
   const bottomPad = Platform.OS === "web" ? 34 : insets.bottom;
@@ -421,6 +714,14 @@ export default function AgentsScreen() {
   const deleteMutation = useMutation({
     mutationFn: (id: string) => apiRequest("DELETE", `/api/agents/${id}`, {}),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/agents"] }),
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: ({ id, data }: { id: string; data: object }) => apiRequest("PUT", `/api/agents/${id}`, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/agents"] });
+      setDetailAgent(null);
+    },
   });
 
   function handleDelete(agent: Agent) {
@@ -496,6 +797,7 @@ export default function AgentsScreen() {
                   onRun={setRunAgent}
                   onToggle={(a) => toggleMutation.mutate({ id: a.id, enable: a.isActive !== 1 })}
                   onDelete={handleDelete}
+                  onDetail={setDetailAgent}
                 />
               ))}
             </>
@@ -510,6 +812,7 @@ export default function AgentsScreen() {
                   onRun={setRunAgent}
                   onToggle={(a) => toggleMutation.mutate({ id: a.id, enable: a.isActive !== 1 })}
                   onDelete={handleDelete}
+                  onDetail={setDetailAgent}
                 />
               ))}
             </>
@@ -525,6 +828,11 @@ export default function AgentsScreen() {
       />
       <RunModal agent={runAgent} onClose={() => setRunAgent(null)} />
       <CouncilModal visible={showCouncil} onClose={() => setShowCouncil(false)} />
+      <AgentDetailSheet
+        agent={detailAgent}
+        onClose={() => setDetailAgent(null)}
+        onSave={(id, data) => updateMutation.mutate({ id, data })}
+      />
     </View>
   );
 }
@@ -614,4 +922,34 @@ const styles = StyleSheet.create({
   councilDesc: { fontSize: 14, lineHeight: 20, marginBottom: 16 },
   loadingRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 12 },
   loadingText: { fontSize: 14 },
+
+  // Detail sheet
+  detailSectionLabel: {
+    fontSize: 11, fontWeight: "600" as const, letterSpacing: 0.8,
+    marginTop: 20, marginBottom: 8,
+  },
+  detailSectionDivider: { borderTopWidth: StyleSheet.hairlineWidth, marginTop: 24, marginBottom: 0 },
+  detailSectionHint: { fontSize: 12, lineHeight: 16, marginBottom: 10 },
+  permsList: { borderRadius: 12, borderWidth: 1, overflow: "hidden" },
+  permRow: {
+    flexDirection: "row", alignItems: "center",
+    paddingHorizontal: 14, paddingVertical: 10, gap: 10,
+  },
+  permIconWrap: { width: 28, height: 28, borderRadius: 8, alignItems: "center", justifyContent: "center" },
+  permLabel: { flex: 1, fontSize: 14 },
+  dangerBadge: {
+    borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2,
+  },
+  dangerText: { fontSize: 10, fontWeight: "600" as const },
+  permDivider: { height: StyleSheet.hairlineWidth, marginLeft: 52 },
+  memoryCard: { borderRadius: 12, borderWidth: 1, padding: 14 },
+  memoryRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  memoryCount: { fontSize: 15, fontWeight: "500" as const },
+  clearMemBtn: {
+    flexDirection: "row", alignItems: "center", gap: 5,
+    paddingHorizontal: 10, paddingVertical: 6,
+    borderRadius: 8, borderWidth: 1,
+  },
+  clearMemText: { fontSize: 13, fontWeight: "500" as const },
+  memoryScopeText: { fontSize: 12, marginTop: 8 },
 });
