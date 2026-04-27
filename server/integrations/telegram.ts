@@ -146,13 +146,18 @@ export async function sendMessageGetId(
  * Edits the text of a previously sent message in-place.
  * Silently ignores "message is not modified" errors (no visible change = no error).
  * Text is clamped to 4096 characters (Telegram's per-message limit).
+ *
+ * Returns `{ ok: true }` on success or `{ ok: false, retryAfter? }` on failure.
+ * When Telegram returns a 429 flood-wait the `retryAfter` field contains the
+ * number of seconds the caller should wait before retrying so the streaming
+ * interval can be adapted automatically.
  */
 export async function editMessage(
   chatId: string,
   messageId: number,
   text: string,
-): Promise<void> {
-  if (!BOT_TOKEN) return;
+): Promise<{ ok: boolean; retryAfter?: number }> {
+  if (!BOT_TOKEN) return { ok: false };
   const safeText = text.slice(0, 4096) || "…";
   try {
     const res = await fetch(`${BASE}/editMessageText`, {
@@ -161,13 +166,28 @@ export async function editMessage(
       body: JSON.stringify({ chat_id: chatId, message_id: messageId, text: safeText }),
     });
     if (!res.ok) {
-      const err = await res.text();
-      if (!err.includes('message is not modified')) {
-        console.warn('Telegram editMessage error:', err);
+      const errText = await res.text();
+      if (res.status === 429) {
+        // Parse retry_after from Telegram's flood-wait response body.
+        let retryAfter = 30;
+        try {
+          const body = JSON.parse(errText) as { parameters?: { retry_after?: number } };
+          if (body.parameters?.retry_after) retryAfter = body.parameters.retry_after;
+        } catch { /* ignore JSON parse errors */ }
+        console.warn(
+          `[Telegram] editMessage 429 flood-wait: chatId=${chatId} messageId=${messageId} retryAfter=${retryAfter}s`,
+        );
+        return { ok: false, retryAfter };
       }
+      if (!errText.includes('message is not modified')) {
+        console.warn('Telegram editMessage error:', errText);
+      }
+      return { ok: false };
     }
+    return { ok: true };
   } catch (e) {
     console.warn('Telegram editMessage threw:', String(e));
+    return { ok: false };
   }
 }
 

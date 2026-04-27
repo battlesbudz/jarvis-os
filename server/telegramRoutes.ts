@@ -186,15 +186,22 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
   // ── Streaming strategy (non-TTS only) ────────────────────────────────────────
   // Send a "Working on it…" placeholder immediately so the user sees something
   // within <1 second. As the LLM produces tokens we edit that message in-place
-  // every ~1.5 s (well within Telegram's ~20 edits/min rate limit). The final
-  // processed reply replaces the placeholder when the agent finishes.
+  // at a self-adjusting interval that starts at 3 s (≤20 edits/min, safely within
+  // Telegram's undocumented rate limit). If Telegram returns a 429 flood-wait the
+  // interval backs off to at least the requested retry_after; on sustained success
+  // it gradually recovers toward the 3 s baseline so users get responsive updates.
   //
   // TTS users are excluded — their reply will be sent as a voice bubble, so
   // we keep the typing indicator alone and skip the placeholder flow.
   let placeholderMsgId: number | null = null;
   let streamBuf = "";
   let lastEditAt = 0;
-  const STREAM_INTERVAL_MS = 1500;
+  // Self-adjusting interval: starts at a safe 3 s, backs off on 429, recovers on success.
+  // The max is 60 s so we always fully honour Telegram's retry_after instruction even
+  // on long flood-wait windows (Telegram can legitimately request up to 60 s or more).
+  const STREAM_INTERVAL_BASE_MS = 3000;
+  const STREAM_INTERVAL_MAX_MS = 60000;
+  let streamIntervalMs = STREAM_INTERVAL_BASE_MS;
   let ttsStillThinkingTimer: ReturnType<typeof setTimeout> | null = null;
   // Guard: once the final reply delivery begins we must stop any in-flight
   // token edits from overwriting the completed message (e.g. leaving " ▌").
@@ -209,8 +216,30 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
       streamBuf += chunk;
       const now = Date.now();
       // Only edit once we have a meaningful snippet (≥10 chars) and the interval has elapsed.
-      if (placeholderMsgId && now - lastEditAt >= STREAM_INTERVAL_MS && streamBuf.trim().length >= 10) {
-        editMessage(chatId, placeholderMsgId, streamBuf + " ▌").catch(() => {});
+      if (placeholderMsgId && now - lastEditAt >= streamIntervalMs && streamBuf.trim().length >= 10) {
+        const msgId = placeholderMsgId;
+        editMessage(chatId, msgId, streamBuf + " ▌").then((result) => {
+          if (!result.ok && result.retryAfter !== undefined) {
+            // 429 flood-wait: honour Telegram's requested delay plus a small buffer.
+            const backoffMs = result.retryAfter * 1000 + 500;
+            const prev = streamIntervalMs;
+            streamIntervalMs = Math.min(Math.max(streamIntervalMs, backoffMs), STREAM_INTERVAL_MAX_MS);
+            if (streamIntervalMs !== prev) {
+              console.warn(
+                `[Telegram] stream interval backed off: ${prev}ms → ${streamIntervalMs}ms (retryAfter=${result.retryAfter}s, chatId=${chatId})`,
+              );
+            }
+          } else if (result.ok && streamIntervalMs > STREAM_INTERVAL_BASE_MS) {
+            // Sustained success: nudge interval 10% back toward the baseline.
+            const prev = streamIntervalMs;
+            streamIntervalMs = Math.max(STREAM_INTERVAL_BASE_MS, Math.round(streamIntervalMs * 0.9));
+            if (streamIntervalMs !== prev) {
+              console.log(
+                `[Telegram] stream interval recovering: ${prev}ms → ${streamIntervalMs}ms (chatId=${chatId})`,
+              );
+            }
+          }
+        }).catch(() => {});
         lastEditAt = now;
       }
     };
