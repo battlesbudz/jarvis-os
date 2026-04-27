@@ -487,6 +487,19 @@ function setupErrorHandler(app: express.Application) {
         console.error("Failed to start skill watcher:", err);
       });
 
+      // Smoke-test AI providers on startup — catches broken API keys or SDK
+      // regressions before they silently fail during a real user turn.
+      import("./agent/providers/healthCheck").then(({ runProviderHealthChecks }) => {
+        runProviderHealthChecks().catch((err: Error) => {
+          console.error("[ProviderHealth] Startup check threw unexpectedly:", err.message);
+        });
+      }).catch((err: Error) => {
+        console.warn(
+          "[ProviderHealth] Could not load health-check module — provider smoke tests did NOT run.",
+          err?.message ?? err,
+        );
+      });
+
       // Verify Playwright/Chromium is usable on startup — logs a warning if not.
       import("playwright").then(({ chromium }) => {
         chromium.launch({ args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu", "--single-process"] })
