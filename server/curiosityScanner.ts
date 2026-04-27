@@ -15,6 +15,9 @@ const openai = new OpenAI({
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
 });
 
+let scanInProgress = false;
+let scannerStarted = false;
+
 async function getAlreadyAskedSourceIds(userId: string): Promise<Set<string>> {
   const rows = await db
     .select({ sourceId: schema.proactiveQuestionsSent.sourceId })
@@ -153,6 +156,11 @@ Return only items worth asking about. Return { "questions": [] } if nothing is i
 }
 
 export async function runCuriosityScan(): Promise<void> {
+  if (scanInProgress) {
+    console.log("[Curiosity] Scan already in progress — skipping concurrent run");
+    return;
+  }
+  scanInProgress = true;
   try {
     const telegramLinks = await db.select().from(schema.telegramLinks);
 
@@ -520,10 +528,17 @@ export async function runCuriosityScan(): Promise<void> {
     }
   } catch (err) {
     console.error("[Curiosity] Scanner error:", err);
+  } finally {
+    scanInProgress = false;
   }
 }
 
 export async function startCuriosityScanner(): Promise<void> {
+  if (scannerStarted) {
+    console.log("[Curiosity] Scanner already started — ignoring duplicate call");
+    return;
+  }
+  scannerStarted = true;
   console.log("[Curiosity] Scanner started — runs every 30 minutes");
 
   setInterval(
