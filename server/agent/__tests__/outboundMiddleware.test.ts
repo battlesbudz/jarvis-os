@@ -125,6 +125,63 @@ async function run() {
   });
   assert(noAgentName === "Reply text", "OM-8: no agentName → text unchanged by prefix handler");
 
+  // ── Markdown normaliser (priority 150) ────────────────────────────────────
+
+  // Telegram: **bold** stripped to plain text
+  const telegramBold = await outboundMiddleware.run({
+    text: "**Bold text** here",
+    platform: "telegram",
+    userId: "u1",
+  });
+  assert(
+    telegramBold !== null && !telegramBold.includes("**") && telegramBold.includes("Bold text"),
+    "OM-14: Telegram normaliser strips **bold** markers",
+  );
+
+  // Telegram: Discord spoilers ||text|| → [text]
+  const telegramSpoiler = await outboundMiddleware.run({
+    text: "Spoiler: ||secret content||",
+    platform: "telegram",
+    userId: "u1",
+  });
+  assert(
+    telegramSpoiler !== null && telegramSpoiler.includes("[secret content]") && !telegramSpoiler.includes("||"),
+    "OM-15: Telegram normaliser converts ||spoilers|| to [text]",
+  );
+
+  // Telegram: Markdown headings stripped
+  const telegramHeading = await outboundMiddleware.run({
+    text: "## Section Title\nBody text.",
+    platform: "telegram",
+    userId: "u1",
+  });
+  assert(
+    telegramHeading !== null && !telegramHeading.includes("##") && telegramHeading.includes("Section Title"),
+    "OM-16: Telegram normaliser strips ## heading markers",
+  );
+
+  // Discord: markdown passes through unchanged (no stripping on Discord)
+  const discordBold = await outboundMiddleware.run({
+    text: "**Bold text** here",
+    platform: "discord",
+    userId: "u1",
+  });
+  assert(
+    discordBold !== null && discordBold.includes("**Bold text**"),
+    "OM-17: Discord platform lets **bold** markdown pass through unchanged",
+  );
+
+  // in_app: markdown passes through unchanged
+  const inAppMarkdown = await outboundMiddleware.run({
+    text: "**Bold** and _italic_ text",
+    platform: "in_app",
+    userId: "u1",
+  });
+  assert(
+    inAppMarkdown !== null && inAppMarkdown.includes("**Bold**"),
+    "OM-18: in_app platform lets markdown pass through unchanged",
+  );
+
   // ── Custom registry (isolated from singleton) ──────────────────────────────
 
   // Cancel handler short-circuits chain

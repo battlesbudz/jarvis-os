@@ -15,6 +15,8 @@
  *   Priority 300 — Agent-name prefix (prepends "**AgentName:**" on Discord,
  *                  "AgentName:" on Telegram, only when ctx.agentName is set)
  *   Priority 200 — Length limiter (platform-specific hard caps + truncation notice)
+ *   Priority 150 — Markdown normaliser (strips Discord-flavour markdown for Telegram
+ *                  plain-text delivery; Discord and in_app pass through unchanged)
  *   Priority 100 — Trailing-whitespace / excess-newline cleaner
  *   Priority  50 — Empty-reply guard (substitutes a fallback when text is blank)
  *
@@ -134,6 +136,31 @@ outboundMiddleware.use(
     return { text: ctx.text.slice(0, limit - notice.length) + notice };
   },
   { priority: 200 },
+);
+
+// ── Priority 150: Markdown normaliser ──────────────────────────────────────────
+// Model output uses Discord-flavoured markdown. Normalise per platform before delivery:
+//   Telegram:  Messages are sent WITHOUT parse_mode (to avoid MarkdownV2 escape
+//              issues), so Discord markdown renders as raw literal characters.
+//              Strip/simplify to plain text so users see clean output.
+//   Discord:   Let markdown pass through — Discord natively renders it.
+//   in_app:    Mobile UI renders markdown — pass through unchanged.
+outboundMiddleware.use(
+  (ctx) => {
+    if (ctx.platform !== "telegram") return; // only normalise for Telegram
+    let text = ctx.text;
+    // Discord spoiler tags ||text|| → [text] (no Telegram plain-text equivalent)
+    text = text.replace(/\|\|(.+?)\|\|/gs, "[$1]");
+    // **bold** → bold (double-asterisk)
+    text = text.replace(/\*\*(.+?)\*\*/gs, "$1");
+    // ~~strikethrough~~ → plain (Telegram has no plain-text equivalent)
+    text = text.replace(/~~(.+?)~~/gs, "$1");
+    // Markdown headings (e.g. "## Heading") → plain Heading
+    text = text.replace(/^#{1,6}\s+/gm, "");
+    if (text === ctx.text) return;
+    return { text };
+  },
+  { priority: 150 },
 );
 
 // ── Priority 100: Whitespace cleaner ───────────────────────────────────────────
