@@ -10,7 +10,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as WebBrowser from "expo-web-browser";
-import { useAuth } from "@/lib/auth-context";
+import { useAuth, clearAuthStorage } from "@/lib/auth-context";
 import { getApiUrl } from "@/lib/query-client";
 import { Ionicons } from "@expo/vector-icons";
 
@@ -103,6 +103,10 @@ export default function LoginScreen() {
   }, [handleGisCredential]);
 
   async function handleNativeGoogleSignIn() {
+    // Always clear any stale token before starting a new OAuth flow so the
+    // wrong-account session can never silently survive into the new session.
+    await clearAuthStorage();
+
     const sessionId = Date.now().toString(36) + Math.random().toString(36).slice(2, 9);
     const baseUrl = getApiUrl();
     const startUrl = new URL(`/api/auth/mobile/start?session_id=${sessionId}`, baseUrl).toString();
@@ -275,6 +279,26 @@ export default function LoginScreen() {
               </>
             )}
           </TouchableOpacity>
+
+          {Platform.OS !== "web" && (
+            <TouchableOpacity
+              style={styles.switchAccountButton}
+              onPress={async () => {
+                setError("");
+                if (sessionExpired) clearSessionExpired();
+                setLoading(true);
+                try {
+                  await handleNativeGoogleSignIn();
+                } catch (e: any) {
+                  setError(e.message || "Could not start sign-in");
+                  setLoading(false);
+                }
+              }}
+              disabled={loading}
+            >
+              <Text style={styles.switchAccountText}>Sign in as a different account</Text>
+            </TouchableOpacity>
+          )}
         </View>
 
         <Text style={styles.footer}>
@@ -382,5 +406,15 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginTop: 24,
     paddingHorizontal: 20,
+  },
+  switchAccountButton: {
+    alignItems: "center",
+    paddingVertical: 8,
+  },
+  switchAccountText: {
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+    color: "#555",
+    textDecorationLine: "underline",
   },
 });
