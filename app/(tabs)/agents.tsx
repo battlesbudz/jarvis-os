@@ -554,6 +554,11 @@ interface ChatMessage {
 
 const CHAT_STORAGE_KEY = (agentId: string) => `agent_chat_history_${agentId}`;
 
+// Sliding-window limits for messages sent to the API per request.
+// Full history is still stored locally for display.
+const CHAT_HISTORY_WINDOW_MAIN = 50;   // core/main agents (Telegram Bot, Discord Bot, etc.)
+const CHAT_HISTORY_WINDOW_SUB  = 25;   // custom / sub-agents
+
 async function loadChatHistory(agentId: string): Promise<ChatMessage[]> {
   try {
     const raw = await AsyncStorage.getItem(CHAT_STORAGE_KEY(agentId));
@@ -594,7 +599,9 @@ function RunModal({ agent, onClose }: { agent: RosterAgent | null; onClose: () =
   }, [agent?.id]);
 
   function buildConversationHistory(msgs: ChatMessage[]): Array<{ role: string; content: string }> {
-    return msgs.map((m) => ({ role: m.role, content: m.content }));
+    const window = agent?.isCoreAgent ? CHAT_HISTORY_WINDOW_MAIN : CHAT_HISTORY_WINDOW_SUB;
+    const windowed = msgs.length > window ? msgs.slice(msgs.length - window) : msgs;
+    return windowed.map((m) => ({ role: m.role, content: m.content }));
   }
 
   async function handleRun() {
@@ -846,6 +853,17 @@ function RunModal({ agent, onClose }: { agent: RosterAgent | null; onClose: () =
             contentContainerStyle={styles.chatList}
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
+            ListFooterComponent={(() => {
+              const historyWindow = agent?.isCoreAgent ? CHAT_HISTORY_WINDOW_MAIN : CHAT_HISTORY_WINDOW_SUB;
+              return messages.length > historyWindow ? (
+                <View style={[styles.trimBanner, { backgroundColor: Colors.surface, borderColor: Colors.border }]}>
+                  <Ionicons name="information-circle-outline" size={14} color={Colors.textTertiary} />
+                  <Text style={[styles.trimBannerText, { color: Colors.textTertiary }]}>
+                    Conversation is long — only the most recent context is sent to the agent
+                  </Text>
+                </View>
+              ) : null;
+            })()}
           />
         )}
 
@@ -2039,4 +2057,11 @@ const styles = StyleSheet.create({
     width: 38, height: 38, borderRadius: 19,
     alignItems: "center", justifyContent: "center", flexShrink: 0,
   },
+  trimBanner: {
+    flexDirection: "row", alignItems: "center", gap: 6,
+    marginHorizontal: 16, marginBottom: 8, marginTop: 4,
+    paddingHorizontal: 12, paddingVertical: 8,
+    borderRadius: 10, borderWidth: StyleSheet.hairlineWidth,
+  },
+  trimBannerText: { flex: 1, fontSize: 12, lineHeight: 16 },
 });
