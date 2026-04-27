@@ -19,6 +19,7 @@ import { eq, and, lt } from "drizzle-orm";
 import { logAgentEvent } from "./agentLogger";
 import { EventEmitter } from "events";
 import { toolCallHooks, HOOK_PRIORITY } from "./toolCallHooks";
+import { evaluatePolicyForTool } from "./agentPolicyManager";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -175,7 +176,26 @@ export async function requestApproval(req: ApprovalRequest): Promise<ApprovalGat
 
   const isJarvisInitiated = req.initiatedBy === 'jarvis';
   const isStrictlyIrreversible = STRICTLY_IRREVERSIBLE_TOOLS.has(req.toolName);
-  const autoApprove = isJarvisInitiated && !isStrictlyIrreversible;
+
+  // ── Per-agent policy check ────────────────────────────────────────────────
+  // Evaluate custom policy BEFORE applying global defaults. The policy can
+  // force auto-approve (permissive, allowlist hit) or force require-approval
+  // (strict) regardless of the global Jarvis-initiated logic.
+  let autoApprove = isJarvisInitiated && !isStrictlyIrreversible;
+  let policyApplied = "global";
+  try {
+    const decision = await evaluatePolicyForTool(req.agentId, req.toolName, isStrictlyIrreversible);
+    if (decision.action === "auto_approve") {
+      autoApprove = true;
+      policyApplied = decision.reason;
+    } else if (decision.action === "require_approval") {
+      autoApprove = false;
+      policyApplied = decision.reason;
+    }
+    // "use_global" → leave autoApprove as computed above
+  } catch {
+    // Policy check failure is non-blocking — fall through to global logic
+  }
 
   await db.insert(agentApprovalGates).values({
     id,
@@ -188,7 +208,7 @@ export async function requestApproval(req: ApprovalRequest): Promise<ApprovalGat
     initiatedBy: req.initiatedBy ?? "user",
     createdAt: now,
     expiresAt,
-    ...(autoApprove ? { resolvedAt: now, resolvedBy: "jarvis_triage" } : {}),
+    ...(autoApprove ? { resolvedAt: now, resolvedBy: autoApprove && policyApplied !== "global" ? `policy:${policyApplied}` : "jarvis_triage" } : {}),
   });
 
   // Only create a deliverable for gates that require user review.
@@ -209,6 +229,7 @@ export async function requestApproval(req: ApprovalRequest): Promise<ApprovalGat
           toolName: req.toolName,
           toolArgs: req.toolArgs as Record<string, unknown>,
           initiatedBy: req.initiatedBy ?? "user",
+          policyApplied,
         },
         status: "pending_approval",
         triageStatus: "needs_attention",
@@ -224,7 +245,7 @@ export async function requestApproval(req: ApprovalRequest): Promise<ApprovalGat
       event: "tool_approved",
       agentId: req.agentId,
       userId: req.userId,
-      detail: `gate=${id} tool=${req.toolName} auto-approved (jarvis-initiated)`,
+      detail: `gate=${id} tool=${req.toolName} auto-approved policy=${policyApplied}`,
     });
     // Fire approval event after current call stack unwinds so awaitApproval()
     // has time to register its listener first.
