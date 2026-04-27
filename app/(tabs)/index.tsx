@@ -10,7 +10,6 @@ import {
   Modal,
   FlatList,
   TextInput,
-  RefreshControl,
   Alert,
   DimensionValue,
 } from 'react-native';
@@ -441,7 +440,6 @@ export default function MissionControlScreen() {
   const [plan, setPlan] = useState<DayPlan | null>(null);
   const [goals, setGoals] = useState<Goal[]>([]);
   const [tasksLoading, setTasksLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
 
   // ── Connection Status ──
   const [oauthStatus, setOAuthStatus] = useState<{
@@ -501,7 +499,6 @@ export default function MissionControlScreen() {
     deliverables: false, foresight: false, docs: false, memory: false,
   };
   const [expandedPanels, setExpandedPanels] = useState<Record<string, boolean>>(PANEL_DEFAULTS);
-  const accordionLoaded = useRef(false);
 
   // ── Predictions (Jarvis Foresight) ──
   const [predictions, setPredictions] = useState<Prediction[]>([]);
@@ -654,15 +651,8 @@ export default function MissionControlScreen() {
           setExpandedPanels(prev => ({ ...prev, ...parsed }));
         } catch {}
       }
-      accordionLoaded.current = true;
     });
   }, []);
-
-  const handleRefresh = useCallback(async () => {
-    setRefreshing(true);
-    await loadAll();
-    setRefreshing(false);
-  }, [loadAll]);
 
   const handleTogglePanel = useCallback((id: string) => {
     setExpandedPanels(prev => {
@@ -1225,7 +1215,7 @@ export default function MissionControlScreen() {
 
             {/* Focus: Next calendar event */}
             {nextCalEvent ? (
-              <View style={styles.focusCard}>
+              <Pressable style={({ pressed }) => [styles.focusCard, pressed && { opacity: 0.7 }]} onPress={() => handleTogglePanel('schedule')}>
                 <View style={[styles.focusCardIcon, { backgroundColor: nextCalEvent.source === 'google' ? '#4285F420' : '#0078D420' }]}>
                   <Ionicons name="calendar" size={18} color={nextCalEvent.source === 'google' ? '#4285F4' : '#0078D4'} />
                 </View>
@@ -1235,7 +1225,7 @@ export default function MissionControlScreen() {
                   <Text style={styles.focusCardMeta}>{formatScheduledAt(nextCalEvent.start)}</Text>
                 </View>
                 <Ionicons name="chevron-forward" size={14} color={Colors.textTertiary} />
-              </View>
+              </Pressable>
             ) : (
               <View style={[styles.focusCard, { opacity: 0.35 }]}>
                 <View style={[styles.focusCardIcon, { backgroundColor: Colors.cyanDim }]}>
@@ -1250,7 +1240,7 @@ export default function MissionControlScreen() {
 
             {/* Focus: Top Jarvis signal */}
             {topPrediction ? (
-              <View style={styles.focusCard}>
+              <Pressable style={({ pressed }) => [styles.focusCard, { borderBottomWidth: 0 }, pressed && { opacity: 0.7 }]} onPress={() => handleTogglePanel('foresight')}>
                 {(() => {
                   const cfg = PREDICTION_TYPE_CONFIG[topPrediction.predictionType] ?? { icon: 'telescope-outline' as const, color: Colors.violet, label: 'SIGNAL' };
                   return (
@@ -1267,10 +1257,11 @@ export default function MissionControlScreen() {
                           <Text style={styles.focusCardMeta} numberOfLines={1}>→ {topPrediction.actionSuggestion}</Text>
                         )}
                       </View>
+                      <Ionicons name="chevron-forward" size={14} color={Colors.textTertiary} />
                     </>
                   );
                 })()}
-              </View>
+              </Pressable>
             ) : null}
           </View>
         </Animated.View>
