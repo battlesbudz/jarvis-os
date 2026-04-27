@@ -228,6 +228,14 @@ export async function executeInboxAction(
       return { success: true, message: "Saved to your life context" };
     }
 
+    case "navigate_telegram_health": {
+      await db
+        .update(schema.inboxItems)
+        .set({ status: "dismissed", actedAt: new Date() })
+        .where(eq(schema.inboxItems.id, itemId));
+      return { success: true, message: "Opening Telegram health check" };
+    }
+
     default:
       return { success: false, message: `Unknown action: ${actionType}` };
   }
