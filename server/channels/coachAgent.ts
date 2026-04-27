@@ -16,6 +16,9 @@ import type { ChannelAttachment } from "./types";
 import { runOrchestrator } from "../agent/orchestrator";
 import { preThink, postCheck } from "../agent/qualityLoop";
 import { getModel, MODEL_DEFAULTS } from "../lib/modelPrefs";
+import { contextRegistry } from "../agent/contextRegistry";
+// Side-effect import: registers workspace topic context provider.
+import "../agent/providers/topicContext";
 
 export interface CoachReplyInput {
   userId: string;
@@ -447,7 +450,22 @@ When a user's request involves multi-step research, drafting a document or plan,
   const turnStrategyBlock = turnGuidance
     ? `\n\n## Turn Strategy\n${turnGuidance}`
     : "";
-  const effectiveSystemPrompt = systemPrompt + youtubeInlineConstraint + turnStrategyBlock;
+  const effectiveSystemPromptBase = systemPrompt + youtubeInlineConstraint + turnStrategyBlock;
+
+  // ── Context registry: inject registered provider context ────────────────────
+  // Derive a normalised platform string for providers that need it.
+  const registryPlatform = channelName.toLowerCase().startsWith("discord")
+    ? "discord"
+    : channelName.toLowerCase();
+  const registryCtx = await contextRegistry.build({
+    userId,
+    platform: registryPlatform,
+    channelId: discordChannelId || undefined,
+    userMessage: enrichedUserText,
+  }).catch(() => ({ systemContext: "", prependContext: "", appendContext: "" }));
+  const effectiveSystemPrompt = registryCtx.systemContext
+    ? `${effectiveSystemPromptBase}\n\n${registryCtx.systemContext}`
+    : effectiveSystemPromptBase;
 
   const userMessageContent = imageUrl
     ? [

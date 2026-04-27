@@ -21,7 +21,9 @@ export type AgentEventType =
   | "council_completed"
   | "heartbeat_check"
   | "agent_disabled_stuck"
-  | "approval_gate_triggered";
+  | "approval_gate_triggered"
+  | "quality_revision_triggered"
+  | "quality_revision_completed";
 
 export interface AgentLogEvent {
   event: AgentEventType;

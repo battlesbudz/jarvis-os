@@ -9,6 +9,7 @@ import { setupWorkspace as _setupWorkspace, postToTopicChannel as _postToTopicCh
 import { getUserTtsChannels, getUserTtsPrefs, speakToUser } from "../agent/tools/tts";
 import { getSession as getCoachSession, setSession as setCoachSession } from "../channels/sessionStore";
 import { attachmentToBuffer, collectMarkdownExtras, imageFilename } from "../channels/attachmentHelpers";
+import { outboundMiddleware } from "../channels/outboundMiddleware";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -509,9 +510,9 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
     const channelLabel = topicForChannel
       ? `Discord #${topicForChannel.emoji}${topicForChannel.name}`
       : "Discord";
-    const topicContext = topicForChannel
-      ? `\n\n[Workspace channel: ${topicForChannel.emoji} ${topicForChannel.name.charAt(0).toUpperCase() + topicForChannel.name.slice(1)}. ${topicForChannel.description} Keep your response focused on this life area unless the user explicitly asks about something else.]`
-      : "";
+    // Note: topicContext string previously appended to userText was removed —
+    // the workspace topic is now provided by the context registry (topicContext provider)
+    // which injects it into the system prompt inside runCoachAgent.
 
     // ── Phase 6: Named agent routing ───────────────────────────────────
     // Check if this channel is assigned to a named agent (new agent system).
@@ -540,10 +541,19 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
         namedReply = namedReply ? `${namedReply}\n\n${namedMarkdownExtra}` : namedMarkdownExtra;
       }
 
-      if (placeholder) {
-        await editOrSendLong(placeholder, namedReply);
-      } else {
-        await sendLong(message.channel as { send(t: string): Promise<unknown> }, namedReply);
+      const namedFinalText = await outboundMiddleware.run({
+        text: namedReply,
+        platform: "discord",
+        userId,
+        channelId: message.channelId,
+        agentId: namedAgentResult.agentId,
+      });
+      if (namedFinalText !== null) {
+        if (placeholder) {
+          await editOrSendLong(placeholder, namedFinalText);
+        } else {
+          await sendLong(message.channel as { send(t: string): Promise<unknown> }, namedFinalText);
+        }
       }
 
       // Deliver binary attachments (images, files, documents) produced by agent tool calls.
@@ -622,7 +632,10 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
       }
     };
 
-    const fullUserText = personaPrefix + (topicContext ? userText + topicContext : userText);
+    // Note: workspace topic context is now injected by the contextRegistry
+    // (via server/agent/providers/topicContext.ts) into the system prompt inside
+    // runCoachAgent — no longer appended to the user message here.
+    const fullUserText = personaPrefix + userText;
 
     try {
       // First attempt: streaming (onToken drives live placeholder edits).
@@ -692,10 +705,18 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
         reply = reply ? `${reply}\n\n${markdownExtra}` : markdownExtra;
       }
 
-      if (placeholder) {
-        await editOrSendLong(placeholder, reply);
-      } else {
-        await sendLong(message.channel as { send(t: string): Promise<unknown> }, reply);
+      const coachFinalText = await outboundMiddleware.run({
+        text: reply,
+        platform: "discord",
+        userId,
+        channelId: message.channelId,
+      });
+      if (coachFinalText !== null) {
+        if (placeholder) {
+          await editOrSendLong(placeholder, coachFinalText);
+        } else {
+          await sendLong(message.channel as { send(t: string): Promise<unknown> }, coachFinalText);
+        }
       }
 
       // Deliver binary attachments produced by agent tools (documents, images, files).
