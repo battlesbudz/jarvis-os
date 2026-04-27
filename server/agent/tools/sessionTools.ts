@@ -291,6 +291,86 @@ export const sessionsSendTool: AgentTool = {
   },
 };
 
+export const sessionsCancelTool: AgentTool = {
+  name: "sessions_cancel",
+  description:
+    "Cancel a background agent session (job) by its ID. Use when the user asks to stop, abort, or cancel a running or queued background job. " +
+    "Queued jobs are cancelled immediately (they never started). " +
+    "Running jobs are marked as 'cancelling' — they stop at the next checkpoint. " +
+    "First call sessions_list if you need to look up the job ID.",
+  parameters: {
+    type: "object",
+    properties: {
+      job_id: {
+        type: "string",
+        description: "The job ID to cancel. Get this from sessions_list output.",
+      },
+    },
+    required: ["job_id"],
+  },
+  async execute(args, ctx) {
+    const jobId = String(args.job_id || "").trim();
+    if (!jobId) {
+      return { ok: false, content: "No job_id provided.", label: "sessions_cancel: no ID" };
+    }
+
+    try {
+      const [job] = await db
+        .select()
+        .from(schema.agentJobs)
+        .where(and(eq(schema.agentJobs.id, jobId), eq(schema.agentJobs.userId, ctx.userId)))
+        .limit(1);
+
+      if (!job) {
+        return {
+          ok: false,
+          content: `No job found with ID "${jobId}" for this user.`,
+          label: "sessions_cancel: not found",
+        };
+      }
+
+      if (job.status === "complete" || job.status === "failed") {
+        return {
+          ok: true,
+          content: `Job "${job.title}" already finished with status "${job.status}" — nothing to cancel.`,
+          label: "sessions_cancel: already finished",
+        };
+      }
+
+      if (job.status === "cancelled" || job.status === "cancelling") {
+        return {
+          ok: true,
+          content: `Job "${job.title}" is already being cancelled (status: ${job.status}).`,
+          label: "sessions_cancel: already cancelling",
+        };
+      }
+
+      const newStatus = job.status === "queued" ? "cancelled" : "cancelling";
+      await db
+        .update(schema.agentJobs)
+        .set({
+          status: newStatus,
+          completedAt: newStatus === "cancelled" ? new Date() : undefined,
+        })
+        .where(eq(schema.agentJobs.id, jobId));
+
+      const msg =
+        newStatus === "cancelled"
+          ? `Job "${job.title}" cancelled immediately — it was still queued and never started.`
+          : `Job "${job.title}" marked for cancellation. It will stop at the next checkpoint (usually within seconds).`;
+
+      console.log(
+        `[${ctx.channel || "Agent"}] sessions_cancel job=${jobId} "${job.title}" → ${newStatus}`
+      );
+
+      return { ok: true, content: msg, label: `sessions_cancel: ${newStatus}` };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { ok: false, content: `sessions_cancel failed: ${msg}`, label: "sessions_cancel error" };
+    }
+  },
+};
+
 function formatAge(date: Date | null): string {
   if (!date) return "unknown";
   const diffMs = Date.now() - new Date(date).getTime();

@@ -10,7 +10,8 @@
  */
 
 import type { AgentTool, ToolArgs, ToolContext, ToolResult } from "../types";
-import { fetchTranscriptCached } from "../../lib/transcriptCache";
+import { fetchTranscriptCached, extractVideoId, parseTimedTextXml } from "../../lib/transcriptCache";
+import { callBrowserTool } from "../mcp/playwrightMcpClient";
 
 /** Maximum characters returned before truncation (≈ ~150k tokens safe limit). */
 const MAX_CHARS = 120_000;
@@ -25,6 +26,71 @@ function formatTimestamp(ms: number): string {
     return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
   }
   return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+/**
+ * Browser-based transcript fallback.
+ *
+ * Uses the Playwright MCP browser to fetch YouTube's timedtext API endpoint
+ * with real browser cookies and headers — bypasses server-side IP blocks that
+ * YouTube applies to cloud providers like Replit.
+ *
+ * Returns an empty array (not throws) on any failure so callers can degrade
+ * gracefully.
+ */
+async function fetchTranscriptViaBrowser(
+  input: string,
+  userId: string,
+): Promise<Array<{ text: string; offset: number; duration: number }>> {
+  type McpContent = { type: string; text?: string };
+  const extractText = (result: { content?: McpContent[]; isError?: boolean }) =>
+    ((result.content as McpContent[]) || []).map((c) => c.text || "").join("");
+
+  const videoId = extractVideoId(input) ?? input.trim();
+
+  try {
+    // Step 1: Visit the watch page to establish YouTube session cookies.
+    await callBrowserTool(userId, "browser_navigate", {
+      url: `https://www.youtube.com/watch?v=${videoId}`,
+    });
+
+    // Step 2: Try different language variants of the timedtext endpoint.
+    for (const lang of ["en", "en-US", "a.en"]) {
+      const timedtextUrl = `https://www.youtube.com/api/timedtext?v=${encodeURIComponent(videoId)}&lang=${lang}&fmt=srv3`;
+
+      await callBrowserTool(userId, "browser_navigate", { url: timedtextUrl });
+      const snap = await callBrowserTool(userId, "browser_snapshot", {});
+
+      if (snap.isError) continue;
+
+      const raw = extractText(snap);
+
+      // The browser snapshot of an XML page contains the raw XML text.
+      if (!raw.includes("<text ")) continue;
+
+      const elements = parseTimedTextXml(raw);
+      if (elements.length === 0) continue;
+
+      console.log(
+        `[get_youtube_transcript] browser fallback OK lang=${lang} videoId=${videoId} — ${elements.length} segs`,
+      );
+
+      return elements.map((el) => ({
+        text: el.text,
+        offset: parseFloat(el.start) * 1000,
+        duration: parseFloat(el.dur) * 1000,
+      }));
+    }
+
+    return [];
+  } catch (err) {
+    console.warn(
+      `[get_youtube_transcript] browser fallback failed for ${videoId}: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+    return [];
+  }
 }
 
 export const youtubeTranscriptTool: AgentTool = {
@@ -65,41 +131,25 @@ export const youtubeTranscriptTool: AgentTool = {
       `[get_youtube_transcript] fetching transcript for "${input}" (user=${ctx.userId}, bypassCache=${bypassCache})`
     );
 
-    try {
-      const segments = await fetchTranscriptCached(input, { bypassCache });
-
-      if (!segments || segments.length === 0) {
-        return {
-          ok: false,
-          content: "No transcript segments were returned. The video may have captions disabled.",
-          label: "get_youtube_transcript: empty transcript",
-        };
-      }
-
-      // ── Normalise offsets to milliseconds ──────────────────────────────────
-      // The library returns two formats depending on caption track type:
-      //   • srv3 (<p t="32453" d="2500">):  offsets/durations are integers in ms
-      //   • classic (<text start="32.453" dur="2.5">): floats in seconds
-      //
-      // Detection: average (lastOffset / segmentCount). Real segments are ≥ 0.5s
-      // each, so seconds-format averages stay < 100 while ms-format averages are
-      // always ≥ 100 (≥ 500ms per segment minimum).
-      const lastSeg = segments[segments.length - 1];
+    // ── Shared formatter: segments → readable timestamped transcript ──────────
+    const buildResult = (
+      rawSegments: Array<{ text: string; offset: number; duration?: number | null }>
+    ): ToolResult => {
+      // Normalise offsets: InnerTube ms vs. classic library seconds detection.
+      const lastSeg = rawSegments[rawSegments.length - 1];
       const lastRawOffset = lastSeg.offset + (lastSeg.duration ?? 0);
-      const avgRawPerSegment = lastRawOffset / segments.length;
-      const toMs = avgRawPerSegment < 100 ? 1000 : 1; // multiply seconds→ms when needed
+      const avgRawPerSegment = lastRawOffset / rawSegments.length;
+      const toMs = avgRawPerSegment < 100 ? 1000 : 1;
 
-      // Build timestamped lines. Group into ~30s chunks for readability.
       const CHUNK_MS = 30_000;
       const lines: string[] = [];
-      let chunkStartMs = segments[0].offset * toMs;
+      let chunkStartMs = rawSegments[0].offset * toMs;
       let chunkText: string[] = [];
 
-      for (const seg of segments) {
+      for (const seg of rawSegments) {
         const text = seg.text.trim();
         if (!text) continue;
         const offsetMs = seg.offset * toMs;
-        // Start a new chunk every 30 seconds
         if (offsetMs - chunkStartMs >= CHUNK_MS && chunkText.length > 0) {
           lines.push(`[${formatTimestamp(chunkStartMs)}] ${chunkText.join(" ")}`);
           chunkStartMs = offsetMs;
@@ -107,36 +157,51 @@ export const youtubeTranscriptTool: AgentTool = {
         }
         chunkText.push(text);
       }
-      // Flush final chunk
       if (chunkText.length > 0) {
         lines.push(`[${formatTimestamp(chunkStartMs)}] ${chunkText.join(" ")}`);
       }
 
-      const fullTranscript = lines.join("\n");
-      const totalDurationMs = lastRawOffset * toMs;
-      const totalDuration = formatTimestamp(totalDurationMs);
-
-      // Truncate if unusually large
-      let body = fullTranscript;
+      let body = lines.join("\n");
       let truncationNote = "";
       if (body.length > MAX_CHARS) {
         body = body.slice(0, MAX_CHARS);
         truncationNote = `\n\n[Transcript truncated at ${MAX_CHARS.toLocaleString()} characters. The video is very long — the above covers the first portion.]`;
       }
 
-      const header = `Transcript (${segments.length} segments, ~${totalDuration} duration)\n${"─".repeat(60)}\n`;
-      const content = header + body + truncationNote;
+      const totalDuration = formatTimestamp(lastRawOffset * toMs);
+      const header = `Transcript (${rawSegments.length} segments, ~${totalDuration} duration)\n${"─".repeat(60)}\n`;
 
       return {
         ok: true,
-        content,
-        label: `get_youtube_transcript: ${segments.length} segments, ~${totalDuration}`,
+        content: header + body + truncationNote,
+        label: `get_youtube_transcript: ${rawSegments.length} segments, ~${totalDuration}`,
       };
+    };
+
+    try {
+      let segments = await fetchTranscriptCached(input, { bypassCache });
+
+      // ── Strategy 4: browser fallback if server-side got nothing ──────────────
+      // YouTube increasingly blocks server-side requests from cloud IPs. Running
+      // the same fetch through a real browser (Playwright) bypasses that block.
+      if (!segments || segments.length === 0) {
+        console.log(`[get_youtube_transcript] server strategies returned 0 segs — trying browser fallback`);
+        const browserSegs = await fetchTranscriptViaBrowser(input, ctx.userId);
+        if (browserSegs.length > 0) return buildResult(browserSegs);
+        return {
+          ok: false,
+          content: "No transcript segments were returned. The video may have captions disabled.",
+          label: "get_youtube_transcript: empty transcript",
+        };
+      }
+
+      return buildResult(segments);
+
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       const lower = msg.toLowerCase();
 
-      // ── InnerTube-specific terminal errors (checked first) ──────────────────
+      // ── Terminal errors — no fallback will help ─────────────────────────────
       if (msg.startsWith("LOGIN_REQUIRED")) {
         return {
           ok: false,
@@ -151,32 +216,14 @@ export const youtubeTranscriptTool: AgentTool = {
           label: "get_youtube_transcript: content restricted",
         };
       }
-      if (msg.startsWith("TOO_MANY_REQUESTS")) {
+      if (msg.startsWith("TOO_MANY_REQUESTS") || lower.includes("too many requests") || lower.includes("429")) {
         return {
           ok: false,
           content: "YouTube is rate-limiting transcript requests right now. Please wait a moment and try again.",
           label: "get_youtube_transcript: rate limited",
         };
       }
-
-      // ── Generic / non-terminal errors ───────────────────────────────────────
-      // Avoid mirroring library error messages that may falsely imply the video
-      // is private, restricted, or requires sign-in when it doesn't.
-      // Only report "no captions" for clear no-transcript signals; all other
-      // failures get a generic "try again" message.
-      if (lower.includes("too many requests") || lower.includes("429")) {
-        return {
-          ok: false,
-          content: "YouTube is rate-limiting transcript requests right now. Please wait a moment and try again.",
-          label: "get_youtube_transcript: rate limited",
-        };
-      }
-      // Genuine no-captions signals from the library
-      if (
-        lower.includes("disabled") ||
-        lower.includes("no transcript") ||
-        lower === "transcript is disabled on this video"
-      ) {
+      if (lower.includes("disabled") || lower.includes("no transcript") || lower === "transcript is disabled on this video") {
         return {
           ok: false,
           content: "This video doesn't have captions available. The creator may have disabled transcripts, or it may be a live stream.",
@@ -184,9 +231,12 @@ export const youtubeTranscriptTool: AgentTool = {
         };
       }
 
-      // For everything else — transient network failures, unexpected XML, etc.
-      // — don't imply the video is private or that the user did anything wrong.
-      console.error(`[get_youtube_transcript] non-terminal error: ${msg}`);
+      // ── Non-terminal: try browser fallback before giving up ─────────────────
+      console.log(`[get_youtube_transcript] non-terminal error (${msg}) — trying browser fallback`);
+      const browserSegs = await fetchTranscriptViaBrowser(input, ctx.userId);
+      if (browserSegs.length > 0) return buildResult(browserSegs);
+
+      console.error(`[get_youtube_transcript] all strategies exhausted: ${msg}`);
       return {
         ok: false,
         content: "Couldn't read the captions for this video right now — please try again in a moment.",

@@ -62,7 +62,7 @@ import { setupContentPipelineTool } from "./setupContentPipeline";
 import { setupDiscordWorkspaceTool } from "./setupDiscordWorkspace";
 import { memorySearchTool, memoryGetTool } from "./memorySearch";
 import { webFetchTool } from "./webFetch";
-import { sessionsListTool, sessionsHistoryTool, sessionsSendTool } from "./sessionTools";
+import { sessionsListTool, sessionsHistoryTool, sessionsSendTool, sessionsCancelTool } from "./sessionTools";
 import { speakTool } from "./tts";
 import { imageGenerateTool } from "./imageGenerate";
 import { videoGenerateTool } from "./videoGenerate";
@@ -218,6 +218,7 @@ export {
   sessionsListTool,
   sessionsHistoryTool,
   sessionsSendTool,
+  sessionsCancelTool,
   speakTool,
   cronCreateTool,
   cronListTool,
