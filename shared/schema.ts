@@ -1220,6 +1220,30 @@ export const userSkillPacks = pgTable("user_skill_packs", {
   primaryKey({ columns: [table.userId, table.packId] }),
 ]);
 
+// ── Code Proposals ─────────────────────────────────────────────────────────────
+// Jarvis self-inspection proposals — each row represents a proposed change to
+// a source file that the user must approve or reject before any write occurs.
+
+export const CODE_PROPOSAL_STATUSES = ["pending", "approved", "rejected"] as const;
+export type CodeProposalStatus = typeof CODE_PROPOSAL_STATUSES[number];
+
+export const codeProposals = pgTable("code_proposals", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  title: text("title").notNull(),
+  reason: text("reason").notNull(),
+  filePath: text("file_path").notNull(),
+  originalContent: text("original_content").notNull(),
+  proposedContent: text("proposed_content").notNull(),
+  status: varchar("status").$type<CodeProposalStatus>().notNull().default("pending"),
+  rejectionNote: text("rejection_note"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  appliedAt: timestamp("applied_at"),
+});
+
+export type CodeProposal = typeof codeProposals.$inferSelect;
+export type InsertCodeProposal = typeof codeProposals.$inferInsert;
+
 // ── MCP Server registry ────────────────────────────────────────────────────────
 
 export const mcpServers = pgTable("mcp_servers", {

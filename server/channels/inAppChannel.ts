@@ -21,7 +21,7 @@ const SELF_MANAGED_INBOX_TYPES = new Set(["nervous_system"]);
 export const inAppChannel: Channel = {
   name: "in_app",
   // Rich in-app chat — full coaching + email/calendar + research + media.
-  toolGroups: ["coaching", "calendar", "email", "memory", "documents", "research", "connections", "scheduling", "media", "system", "browser", "mcp"],
+  toolGroups: ["coaching", "calendar", "email", "memory", "documents", "research", "connections", "scheduling", "media", "system", "self_edit", "browser", "mcp"],
   isConfigured: () => true,
   isLinkedFor: async (_userId) => true,
   async sendMessage(userId, text, opts: ChannelSendOpts = {}): Promise<ChannelSendResult> {

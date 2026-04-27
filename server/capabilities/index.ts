@@ -30,6 +30,7 @@ import { mediaCapability }        from "./mediaCapability";
 import { memoryCapability }       from "./memoryCapability";
 import { connectionsCapability }  from "./connectionsCapability";
 import { agentDelegationCapability } from "./agentDelegationCapability";
+import { selfEditCapability }       from "./selfEditCapability";
 
 capabilityRegistry.register(calendarCapability);
 capabilityRegistry.register(emailCapability);
@@ -45,3 +46,4 @@ capabilityRegistry.register(mediaCapability);
 capabilityRegistry.register(memoryCapability);
 capabilityRegistry.register(connectionsCapability);
 capabilityRegistry.register(agentDelegationCapability);
+capabilityRegistry.register(selfEditCapability);

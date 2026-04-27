@@ -113,6 +113,7 @@ import {
   initToolResolver,
 } from "./buildFeatureTool";
 import { selfDiagnoseTool } from "./selfDiagnoseTool";
+import { listSourceFilesTool, readSourceFileTool, proposeCodeChangeTool } from "./selfEditTools";
 
 // ── Tool Groups ────────────────────────────────────────────────────────────────
 // Each group represents a functional capability cluster. Channels declare which
@@ -129,6 +130,7 @@ export type ToolGroup =
   | "scheduling"  // schedule_jarvis_task, cron_*, workflow_*
   | "browser"     // browser_navigate, browser_click, …
   | "system"      // spawn_subagent, sessions_*, register_approval, build_feature, test_tool
+  | "self_edit"   // list_source_files, read_source_file, propose_code_change
   | "media"       // speak, image_generate, generate_video
   | "connections" // check_connections, generate_reconnect_link, connect_channel
   | "mcp"         // auto-discovered tools from connected MCP servers
@@ -302,4 +304,7 @@ export {
   selfDiagnoseTool,
   exportDocumentPdfTool,
   createPresentationTool,
+  listSourceFilesTool,
+  readSourceFileTool,
+  proposeCodeChangeTool,
 };
