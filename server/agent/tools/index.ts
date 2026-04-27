@@ -31,6 +31,8 @@ import { webSearchTool, researchTopicTool } from "./webSearch";
 import { gmailActionTool, gmailDraftTool } from "./gmailActions";
 import { manageTasksTool } from "./manageTasks";
 import { createDocumentTool, listDocumentsTool, readDocumentTool } from "./documents";
+import { exportDocumentPdfTool } from "./exportPdf";
+import { createPresentationTool } from "./createPresentation";
 import { driveCreateFileTool, driveListFilesTool, driveReadFileTool } from "./googleDriveTools";
 import { fetchCalendarTool } from "./calendar";
 import { spawnSubagentTool } from "./spawnSubagent";
@@ -243,4 +245,6 @@ export {
   imageGenerateTool,
   videoGenerateTool,
   selfDiagnoseTool,
+  exportDocumentPdfTool,
+  createPresentationTool,
 };

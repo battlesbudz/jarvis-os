@@ -3,9 +3,9 @@
  * (e.g. Telegram) should deliver to the user after the agent finishes. */
 export interface PendingAttachment {
   kind: "document";
-  documentId: string;
+  documentId?: string;
   filename: string;
-  content: string;
+  content: string | Buffer;
   caption?: string;
   mimeType: string;
 }

@@ -154,6 +154,45 @@ export async function readDriveFile(
   return { name, mimeType, content: String(res.data || "") };
 }
 
+/**
+ * Upload a binary file (e.g. PDF, PPTX) inside the Jarvis folder.
+ * Unlike createDriveTextFile, this accepts a Buffer and does not attempt
+ * format conversion — the file is stored as-is.
+ */
+export async function createDriveBinaryFile(
+  accessToken: string,
+  name: string,
+  buffer: Buffer,
+  mimeType: string,
+  options: { folderId?: string } = {}
+): Promise<CreatedDriveFile> {
+  const drive = buildDriveClient(accessToken);
+  const folderId = options.folderId || await ensureJarvisFolder(accessToken);
+
+  const res = await drive.files.create({
+    requestBody: {
+      name,
+      mimeType,
+      parents: [folderId],
+    },
+    media: {
+      mimeType,
+      body: Readable.from([buffer]),
+    },
+    fields: "id,name,mimeType,webViewLink",
+    supportsAllDrives: false,
+  });
+
+  if (!res.data.id) throw new Error("Drive binary file create returned no id");
+
+  return {
+    fileId: res.data.id,
+    name: res.data.name || name,
+    mimeType: res.data.mimeType || mimeType,
+    webViewLink: res.data.webViewLink || `https://drive.google.com/file/d/${res.data.id}/view`,
+  };
+}
+
 export async function checkDriveScope(accessToken: string): Promise<boolean> {
   try {
     const drive = buildDriveClient(accessToken);
