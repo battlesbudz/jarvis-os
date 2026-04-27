@@ -16,11 +16,15 @@ export interface WakeEvent {
 interface WakeWordContextValue {
   pendingWakeEvent: WakeEvent | null;
   clearWakeEvent: () => void;
+  /** Call this from insights.tsx whenever Talk Mode is toggled so the provider
+   *  can route wake events to the correct UX path. */
+  setTalkModeActive: (active: boolean) => void;
 }
 
 const WakeWordContext = createContext<WakeWordContextValue>({
   pendingWakeEvent: null,
   clearWakeEvent: () => {},
+  setTalkModeActive: () => {},
 });
 
 export function useWakeWord(): WakeWordContextValue {
@@ -56,17 +60,26 @@ function parseSseEvents(buffer: string): [Array<Record<string, string>>, string]
  * App-level provider that maintains a persistent SSE connection to
  * /api/voice/wake-events regardless of which screen is active.
  *
- * When a wake word fires:
- *  1. Navigates to the Insights tab so the mic UI is visible
- *  2. Stores the event in pendingWakeEvent so insights.tsx starts recording
+ * Context-aware routing when a wake event fires:
+ *  - daemonHandling: true  → daemon owns the voice turn; app stays quiet.
+ *  - daemonHandling: false + Talk Mode active → route to /(tabs)/insights so
+ *    the pending wake event triggers the in-app mic recording loop.
+ *  - daemonHandling: false + Talk Mode inactive → route to /voice-realtime for
+ *    a full OpenAI Realtime voice conversation.
  */
 export function WakeWordProvider({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuth();
   const [pendingWakeEvent, setPendingWakeEvent] = useState<WakeEvent | null>(null);
   const abortedRef = useRef(false);
   const connectingRef = useRef(false);
+  /** Tracks whether insights.tsx Talk Mode is currently active. */
+  const talkModeActiveRef = useRef(false);
 
   const clearWakeEvent = useCallback(() => setPendingWakeEvent(null), []);
+
+  const setTalkModeActive = useCallback((active: boolean) => {
+    talkModeActiveRef.current = active;
+  }, []);
 
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -102,16 +115,28 @@ export function WakeWordProvider({ children }: { children: React.ReactNode }) {
                   if (fields['data']) {
                     try {
                       const ev = JSON.parse(fields['data']);
-                      if (ev.phrase) {
-                        // Navigate to Insights tab so the wake UI is visible
+                      if (!ev.phrase) continue;
+                      if (ev.daemonHandling) {
+                        // Daemon owns the voice turn end-to-end — app stays quiet.
+                        // Optionally store the event so insights.tsx can show
+                        // a visual indicator, but do NOT start any mic session.
+                        setPendingWakeEvent({
+                          phrase: ev.phrase,
+                          transcript: ev.transcript ?? '',
+                          daemonHandling: true,
+                        });
+                      } else if (talkModeActiveRef.current) {
+                        // Talk Mode is active on insights — route there so the
+                        // useWakeWord effect in insights.tsx triggers recording.
                         router.push('/(tabs)/insights');
                         setPendingWakeEvent({
                           phrase: ev.phrase,
                           transcript: ev.transcript ?? '',
-                          // When true the daemon is handling the voice turn end-to-end;
-                          // insights.tsx should NOT start its own mic capture session
-                          daemonHandling: !!ev.daemonHandling,
+                          daemonHandling: false,
                         });
+                      } else {
+                        // Talk Mode not active — open the full realtime voice screen.
+                        router.push('/voice-realtime');
                       }
                     } catch { /* malformed JSON in data field */ }
                   }
@@ -142,7 +167,7 @@ export function WakeWordProvider({ children }: { children: React.ReactNode }) {
   }, [isAuthenticated]);
 
   return (
-    <WakeWordContext.Provider value={{ pendingWakeEvent, clearWakeEvent }}>
+    <WakeWordContext.Provider value={{ pendingWakeEvent, clearWakeEvent, setTalkModeActive }}>
       {children}
     </WakeWordContext.Provider>
   );

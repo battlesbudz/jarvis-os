@@ -1069,7 +1069,14 @@ export default function InsightsScreen() {
   useEffect(() => { isRecordingRef.current = isRecording; }, [isRecording]);
 
   // App-level wake word events — fired by WakeWordContext even when insights is not focused
-  const { pendingWakeEvent, clearWakeEvent } = useWakeWord();
+  const { pendingWakeEvent, clearWakeEvent, setTalkModeActive } = useWakeWord();
+
+  // Keep the WakeWordProvider informed of the current Talk Mode state so it can
+  // route wake events to the right UX path (insights recording vs voice-realtime).
+  useEffect(() => {
+    setTalkModeActive(talkModeEnabled);
+  }, [talkModeEnabled, setTalkModeActive]);
+
   useEffect(() => {
     if (!pendingWakeEvent) return;
     clearWakeEvent();
