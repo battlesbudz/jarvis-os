@@ -12,7 +12,12 @@ export const calendarCapability: Capability = {
     {
       integrationId: "google",
       label: "Google (Gmail + Calendar + Drive)",
-      toolNames: ["fetch_calendar"],
+      toolNames: ["fetch_calendar", "create_calendar_event"],
+    },
+    {
+      integrationId: "outlook",
+      label: "Microsoft Outlook",
+      toolNames: ["create_calendar_event"],
     },
   ],
   configRequirements: [

@@ -44,6 +44,16 @@ export interface RunAgentOptions {
     toolArgs: Record<string, unknown>,
   ) => Promise<{ allowed: boolean; reason?: string }>;
   /**
+   * Optional callback fired when a tool fails due to an integration auth/
+   * connectivity issue. The caller (e.g. the SSE route) can use this to
+   * emit a structured `integration_error` event to the client so the UI
+   * can surface an actionable "Reconnect <integration>" prompt.
+   *
+   * integrationKey — one of: google | outlook | telegram | discord | slack | whatsapp
+   * message        — the raw error detail from the tool throw
+   */
+  onIntegrationError?: (integrationKey: string, message: string) => void;
+  /**
    * Pre-computed activation plan from the ActivationPlanner.
    *
    * When provided, three things happen inside runAgent:
@@ -73,6 +83,42 @@ export interface AgentRunResult {
   toolCalls: AgentToolCallRecord[];
   finishReason: string | null;
   messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[];
+}
+
+/**
+ * Detects whether a tool throw was caused by an integration auth/connectivity
+ * failure. Returns the integration key (e.g. "google", "outlook") if the
+ * error message contains known auth signals and the tool is mapped to an
+ * integration; returns null otherwise.
+ */
+function detectIntegrationErrorKey(
+  toolName: string,
+  errorMsg: string,
+  toolToIntegration: Map<string, string[]>,
+): string | null {
+  const candidates = toolToIntegration.get(toolName);
+  if (!candidates || candidates.length === 0) return null;
+
+  const lower = errorMsg.toLowerCase();
+  const authSignals = [
+    "401", "403",
+    "unauthorized", "forbidden",
+    "expired", "invalid_grant", "revoked",
+    "token", "authentication", "oauth",
+    "permission denied", "scope", "credentials",
+    "unauthenticated", "access denied",
+  ];
+  if (!authSignals.some((s) => lower.includes(s))) return null;
+
+  // For multi-provider tools, only return a key if the error text contains a
+  // clear provider hint. Without one, suppress (return null) — guessing the
+  // first candidate risks sending users to the wrong reconnect flow.
+  if (candidates.length > 1) {
+    if (/microsoft|outlook|office365/i.test(lower) && candidates.includes("outlook")) return "outlook";
+    if (/google|gmail/i.test(lower) && candidates.includes("google")) return "google";
+    return null; // ambiguous — suppress rather than misattribute
+  }
+  return candidates[0];
 }
 
 function toOpenAITool(t: AgentTool): OpenAI.Chat.Completions.ChatCompletionTool {
@@ -200,6 +246,12 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
   // Tools hard-excluded by integration health (broken integrations).
   // Pack boosts MUST NOT re-add these — they are unavailable at runtime.
   const hardExcludedToolNames = new Set<string>();
+
+  // Reverse map: toolName → integrationKey[] — built during the pre-flight
+  // integration health check below. Multi-provider tools (e.g. send_email,
+  // fetch_emails) may depend on more than one integration, so we store all
+  // candidate keys and resolve the broken one via live validator status.
+  const toolToIntegrationKey = new Map<string, string[]>();
 
   const { getModel } = await import("../lib/modelPrefs");
   const model = modelOpt ?? (await getModel(context.userId, "chat"));
@@ -360,6 +412,18 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
     try {
       const { capabilityRegistry } = await import("../capabilities/index");
       const integrationDeps = capabilityRegistry.getIntegrationDeps();
+
+      // Build reverse mapping: toolName → integrationKey[] for integration error detection.
+      // Multiple integrations can share a tool (e.g. send_email works with google/outlook),
+      // so we collect all candidate keys and resolve the broken one later via live status.
+      for (const [key, { toolNames }] of Object.entries(integrationDeps)) {
+        for (const toolName of toolNames) {
+          const existing = toolToIntegrationKey.get(toolName) ?? [];
+          if (!existing.includes(key)) existing.push(key);
+          toolToIntegrationKey.set(toolName, existing);
+        }
+      }
+
       const { getUserIntegrationStatuses } = await import("../intelligence/integrationValidator");
       const statuses = await getUserIntegrationStatuses(context.userId);
 
@@ -377,6 +441,37 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
           } else {
             brokenChannelOnly.push(label);
           }
+        }
+      }
+
+      // Post-process: multi-provider tools (e.g. send_email, fetch_emails,
+      // create_calendar_event) are listed in toolNames for both Google and Outlook.
+      // The loop above adds them to toolsToExclude when ANY provider is broken, but
+      // they should only be excluded when ALL their mapped providers are unavailable.
+      // "Operational" = healthy or expiring_soon (token still valid).
+      for (const toolName of [...toolsToExclude]) {
+        const candidates = toolToIntegrationKey.get(toolName) ?? [];
+        if (candidates.length <= 1) continue; // single-provider — exclusion is correct
+        const hasOperationalProvider = candidates.some((k) => {
+          const s = statuses[k as keyof typeof statuses];
+          return s === "healthy" || s === "expiring_soon";
+        });
+        if (hasOperationalProvider) toolsToExclude.delete(toolName);
+      }
+
+      // Reconcile brokenWithTools: if all dep tools for an integration were
+      // restored by the multi-provider post-processing step above, that integration
+      // no longer has any tools disabled — remove it from brokenWithTools so the
+      // system prompt does not falsely claim tools were removed.
+      for (const [key, { label, toolNames: depTools }] of Object.entries(integrationDeps)) {
+        const idx = brokenWithTools.indexOf(label);
+        if (idx === -1) continue; // not in brokenWithTools
+        if (depTools.length === 0) continue; // channel-only — skip
+        const stillExcluded = depTools.some((t) => toolsToExclude.has(t));
+        if (!stillExcluded) {
+          // All tools restored via another provider — no longer tool-disabling broken
+          brokenWithTools.splice(idx, 1);
+          if (!brokenChannelOnly.includes(label)) brokenChannelOnly.push(label);
         }
       }
 
@@ -784,6 +879,40 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
             console.log(
               `[${channel}/Agent] tool=${tc.function.name} ok=${result.ok}${result.label ? ` label="${result.label}"` : ""} ${Date.now() - start}ms`,
             );
+            // Classify integration auth failures from { ok: false } tool returns.
+            // Many tools return { ok: false, content: "..." } rather than throwing.
+            // Apply the same validator + heuristic logic used in the catch block.
+            if (!result.ok && opts.onIntegrationError && context.userId) {
+              const errorText = result.content ?? "";
+              const okFalseCandidates = toolToIntegrationKey.get(tc.function.name) ?? [];
+              if (okFalseCandidates.length > 0) {
+                let okFalseIntegKey: string | null = null;
+                try {
+                  const { getUserIntegrationStatuses } = await import("../intelligence/integrationValidator");
+                  const liveStatuses = await getUserIntegrationStatuses(context.userId);
+                  for (const key of okFalseCandidates) {
+                    if (liveStatuses[key as keyof typeof liveStatuses] === "broken") {
+                      okFalseIntegKey = key;
+                      break;
+                    }
+                  }
+                } catch { /* validator unavailable — fall through to heuristic */ }
+                if (!okFalseIntegKey) {
+                  okFalseIntegKey = detectIntegrationErrorKey(tc.function.name, errorText, toolToIntegrationKey);
+                }
+                if (okFalseIntegKey) {
+                  console.warn(`[${channel}/Agent] integration_error (ok=false): tool=${tc.function.name} integration=${okFalseIntegKey}`);
+                  diagEmit({
+                    userId: context.userId,
+                    subsystem: "integration",
+                    severity: "error",
+                    message: `Integration ${okFalseIntegKey} auth failure (ok=false) from tool ${tc.function.name}: ${errorText.slice(0, 200)}`,
+                    metadata: { toolName: tc.function.name, integrationKey: okFalseIntegKey, source: "tool_ok_false" },
+                  }).catch(() => {});
+                  opts.onIntegrationError(okFalseIntegKey, errorText);
+                }
+              }
+            }
             return { tc, content: result.content };
           } catch (err) {
             const detail = err instanceof Error ? err.message : String(err);
@@ -803,13 +932,58 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
               `[${channel}/Agent] tool=${tc.function.name} threw:`,
               err,
             );
-            diagEmit({
-              userId: context.userId,
-              subsystem: "agent_harness",
-              severity: "warning",
-              message: `Tool ${tc.function.name} threw: ${detail.slice(0, 200)}`,
-              metadata: { toolName: tc.function.name, channel: context.channel ?? "unknown" },
-            }).catch(() => {});
+
+            // Check if this is an integration auth failure.
+            // Primary signal: re-check the live status for all candidate integrations
+            // from the validator (grounded in DB state, not error-text heuristics).
+            // Multi-provider tools (send_email, fetch_emails) may depend on more than
+            // one integration — we iterate all candidates and emit for the first broken.
+            // Falls back to heuristic text matching for tokens that expire mid-run
+            // before the validator DB row has been updated.
+            let integrationKey: string | null = null;
+            const candidateKeys = toolToIntegrationKey.get(tc.function.name) ?? [];
+            if (candidateKeys.length > 0 && context.userId) {
+              try {
+                const { getUserIntegrationStatuses } = await import("../intelligence/integrationValidator");
+                const liveStatuses = await getUserIntegrationStatuses(context.userId);
+                for (const key of candidateKeys) {
+                  if (liveStatuses[key as keyof typeof liveStatuses] === "broken") {
+                    integrationKey = key;
+                    break;
+                  }
+                }
+              } catch {
+                // Validator unavailable — fall through to heuristic
+              }
+              // Heuristic fallback: token expired mid-run (validator may lag reality)
+              if (!integrationKey) {
+                integrationKey = detectIntegrationErrorKey(tc.function.name, detail, toolToIntegrationKey);
+              }
+            }
+            if (integrationKey) {
+              console.warn(
+                `[${channel}/Agent] integration_error: tool=${tc.function.name} integration=${integrationKey}`,
+              );
+              diagEmit({
+                userId: context.userId,
+                subsystem: "integration",
+                severity: "error",
+                message: `Integration ${integrationKey} auth failure from tool ${tc.function.name}: ${detail.slice(0, 200)}`,
+                metadata: { toolName: tc.function.name, integrationKey, source: "tool_throw" },
+              }).catch(() => {});
+              if (opts.onIntegrationError) {
+                opts.onIntegrationError(integrationKey, detail);
+              }
+            } else {
+              diagEmit({
+                userId: context.userId,
+                subsystem: "agent_harness",
+                severity: "warning",
+                message: `Tool ${tc.function.name} threw: ${detail.slice(0, 200)}`,
+                metadata: { toolName: tc.function.name, channel: context.channel ?? "unknown" },
+              }).catch(() => {});
+            }
+
             return { tc, content: result.content };
           }
         }),

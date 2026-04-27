@@ -13,12 +13,12 @@ export const emailCapability: Capability = {
     {
       integrationId: "google",
       label: "Google (Gmail + Calendar + Drive)",
-      toolNames: ["gmail_action", "create_gmail_draft"],
+      toolNames: ["gmail_action", "create_gmail_draft", "send_email", "fetch_emails"],
     },
     {
       integrationId: "outlook",
       label: "Microsoft Outlook",
-      toolNames: [],
+      toolNames: ["send_email", "fetch_emails"],
     },
   ],
   configRequirements: [

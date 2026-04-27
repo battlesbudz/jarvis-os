@@ -23,6 +23,7 @@ import { Audio } from 'expo-av';
 import * as FileSystem from 'expo-file-system/legacy';
 import Colors from '@/constants/colors';
 import MarkdownText from '@/components/MarkdownText';
+import { IntegrationErrorCard } from '@/components/IntegrationErrorCard';
 import {
   getGoals,
   getStats,
@@ -109,6 +110,7 @@ function parseEmailDraft(content: string): ParsedDraft | null {
     body: bodyMatch ? bodyMatch[1].trim() : '',
   };
 }
+
 
 function TypingDots() {
   return (
@@ -569,6 +571,7 @@ function MessageBubble({ message, isFirst, isLastAssistant, goals, onFollowup, o
 
 export default function InsightsScreen() {
   const insets = useSafeAreaInsets();
+  const router = useRouter();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
@@ -588,6 +591,7 @@ export default function InsightsScreen() {
   const [telegramMessages, setTelegramMessages] = useState<any[]>([]);
   const [telegramConnected, setTelegramConnected] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
+  const [integrationError, setIntegrationError] = useState<{ integration: string } | null>(null);
   const [discordConnectVisible, setDiscordConnectVisible] = useState(false);
   const [discordPhase, setDiscordPhase] = useState<'loading' | 'setup_bot' | 'pair' | 'done' | 'discord_os'>('loading');
   const [discordPairInput, setDiscordPairInput] = useState('');
@@ -1717,6 +1721,7 @@ export default function InsightsScreen() {
       return updated;
     });
     setInput('');
+    setIntegrationError(null);
     setShowTyping(true);
     setIsStreaming(true);
     setConfirmClear(false);
@@ -1800,6 +1805,8 @@ export default function InsightsScreen() {
                 gotPhoneWorking = true;
                 setIsWorkingOnPhone(true);
                 setPhoneWorkingMessage(parsed.message || 'Working on your phone...');
+              } else if (parsed.type === 'integration_error' && parsed.integration) {
+                setIntegrationError({ integration: parsed.integration });
               } else if (parsed.type === 'actions' && Array.isArray(parsed.actions)) {
                 executedActions = parsed.actions;
                 setMessages(prev => {
@@ -2486,6 +2493,19 @@ export default function InsightsScreen() {
           />
         )}
       </View>
+
+      {integrationError ? (
+        <IntegrationErrorCard
+          integrationKey={integrationError.integration}
+          cardStyle={{ marginHorizontal: 12, marginBottom: 8 }}
+          onDismiss={() => setIntegrationError(null)}
+          onGoToSettings={() => {
+            const integration = integrationError.integration;
+            setIntegrationError(null);
+            router.push({ pathname: '/(tabs)/settings', params: { scrollTo: integration } });
+          }}
+        />
+      ) : null}
 
       <View style={[styles.inputContainer, { paddingBottom: tabBarHeight + 8 }]}>
         <Pressable

@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Link, useFocusEffect } from 'expo-router';
+import { Link, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import Colors from '@/constants/colors';
 import * as Haptics from 'expo-haptics';
 import * as WebBrowser from 'expo-web-browser';
@@ -164,6 +164,9 @@ export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
   const { logout, username: authUsername } = useAuth();
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
+  const { scrollTo } = useLocalSearchParams<{ scrollTo?: string }>();
+  const scrollViewRef = useRef<ScrollView>(null);
+  const [highlightedIntegration, setHighlightedIntegration] = useState<string | null>(null);
 
   // ── Auth state ──
   const [oauthStatus, setOAuthStatus] = useState<OAuthStatus>({
@@ -561,6 +564,24 @@ export default function SettingsScreen() {
     };
   }, []);
 
+  // Scroll to the CONNECTIONS section and highlight the integration when
+  // the screen is opened with a `scrollTo` route param (e.g. from the
+  // IntegrationErrorCard "Go to Settings → Connections" CTA).
+  useEffect(() => {
+    if (!scrollTo) return;
+    setHighlightedIntegration(scrollTo);
+    // CONNECTIONS is the first section, so scroll to top to reveal it.
+    const timer = setTimeout(() => {
+      scrollViewRef.current?.scrollTo({ y: 0, animated: true });
+    }, 400);
+    // Clear the highlight after 3 s so it fades without user action.
+    const clearTimer = setTimeout(() => setHighlightedIntegration(null), 3400);
+    return () => {
+      clearTimeout(timer);
+      clearTimeout(clearTimer);
+    };
+  }, [scrollTo]);
+
   // ── Helpers ──
   // Triggers an immediate server-side re-validation for the current user so
   // the DB integration_status rows are fresh before loadAll() re-reads them.
@@ -808,6 +829,7 @@ export default function SettingsScreen() {
       </View>
 
       <ScrollView
+        ref={scrollViewRef}
         style={styles.scroll}
         contentContainerStyle={[styles.scrollContent, { paddingBottom: (Platform.OS === 'web' ? 34 : insets.bottom) + 90 }]}
         showsVerticalScrollIndicator={false}
@@ -828,8 +850,9 @@ export default function SettingsScreen() {
             const health = healthKey ? integrationHealth[healthKey] : undefined;
             const isBroken = health === 'broken';
             const isExpiring = health === 'expiring_soon';
+            const isHighlighted = healthKey ? highlightedIntegration === healthKey : false;
             return (
-              <View key={p.id} style={[styles.connRow, idx > 0 && styles.connRowBorder]}>
+              <View key={p.id} style={[styles.connRow, idx > 0 && styles.connRowBorder, isHighlighted && { backgroundColor: '#FEF3C7' }]}>
                 <View style={[styles.connIconWrap, { backgroundColor: p.color + '20' }]}>
                   <Ionicons name={p.icon} size={18} color={p.color} />
                 </View>
@@ -878,7 +901,7 @@ export default function SettingsScreen() {
             const telegramBroken = integrationHealth['telegram'] === 'broken';
             const telegramErrMsg = integrationErrors['telegram'];
             return (
-              <View style={[styles.connRow, styles.connRowBorder]}>
+              <View style={[styles.connRow, styles.connRowBorder, highlightedIntegration === 'telegram' && { backgroundColor: '#FEF3C7' }]}>
                 <View style={[styles.connIconWrap, { backgroundColor: '#0088CC20' }]}>
                   <Ionicons name="paper-plane-outline" size={18} color="#0088CC" />
                 </View>
@@ -929,7 +952,7 @@ export default function SettingsScreen() {
             const discordErrMsg = integrationErrors['discord'];
             return (
               <Pressable
-                style={[styles.connRow, styles.connRowBorder]}
+                style={[styles.connRow, styles.connRowBorder, highlightedIntegration === 'discord' && { backgroundColor: '#FEF3C7' }]}
                 onPress={() => {
                   if (discordBroken || !discordConnected) setDiscordPairExpanded(v => !v);
                 }}
