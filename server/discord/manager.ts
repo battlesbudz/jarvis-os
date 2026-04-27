@@ -567,21 +567,20 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
       // Merge any markdown attachments into the text reply.
       const namedMarkdownExtra = collectMarkdownExtras(namedAtts);
       let namedReply = namedAgentResult.reply || "Sorry, the agent couldn't generate a response right now.";
-      // Prepend agent name label when routed via mention-pattern so the channel
-      // clearly shows which sub-agent responded.
-      if (mentionMatchedAgent) {
-        namedReply = `**${mentionMatchedAgent.name}:** ${namedReply}`;
-      }
       if (namedMarkdownExtra) {
         namedReply = namedReply ? `${namedReply}\n\n${namedMarkdownExtra}` : namedMarkdownExtra;
       }
 
+      // Agent-name prefix is delegated to the priority-300 outbound middleware handler.
+      // Pass agentName only for mention-pattern matches (channel-assigned agents
+      // don't need a prefix because the channel is already dedicated to that agent).
       const namedFinalText = await outboundMiddleware.run({
         text: namedReply,
         platform: "discord",
         userId,
         channelId: message.channelId,
         agentId: namedAgentResult.agentId,
+        agentName: mentionMatchedAgent?.name,
       });
       if (namedFinalText !== null) {
         if (placeholder) {
