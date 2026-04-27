@@ -206,6 +206,55 @@ function SettingsFallback({ error, resetError }: { error: Error; resetError: () 
   );
 }
 
+function SectionFallback({ error, resetError }: { error: Error; resetError: () => void }) {
+  return (
+    <View style={[sectionFallbackStyles.card]}>
+      <Ionicons name="alert-circle-outline" size={16} color={Colors.textTertiary} />
+      <Text style={sectionFallbackStyles.message} numberOfLines={1}>
+        {error?.message || "This section couldn't load"}
+      </Text>
+      <Pressable onPress={resetError} style={sectionFallbackStyles.retryBtn}>
+        <Text style={sectionFallbackStyles.retryText}>Retry</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+const sectionFallbackStyles = StyleSheet.create({
+  card: {
+    marginHorizontal: 16,
+    marginTop: 4,
+    marginBottom: 2,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    backgroundColor: Colors.surface,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  message: {
+    flex: 1,
+    fontSize: 13,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textTertiary,
+  },
+  retryBtn: {
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  retryText: {
+    fontSize: 12,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.text,
+  },
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Main Screen
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1147,6 +1196,7 @@ export default function SettingsScreen() {
         showsVerticalScrollIndicator={false}
       >
 
+        <ErrorBoundary FallbackComponent={SectionFallback}>
         {/* ── CONNECTIONS ── */}
         <SectionHeader label="CONNECTIONS" accent={Colors.cyan} />
 
@@ -1354,7 +1404,9 @@ export default function SettingsScreen() {
             </View>
           )}
         </View>
+        </ErrorBoundary>
 
+        <ErrorBoundary FallbackComponent={SectionFallback}>
         {/* ── CONNECTED TOOLS (MCP) ── */}
         <SectionHeader label="CONNECTED TOOLS" accent="#10B981" />
         <View style={styles.card}>
@@ -1609,7 +1661,9 @@ export default function SettingsScreen() {
             </View>
           </View>
         )}
+        </ErrorBoundary>
 
+        <ErrorBoundary FallbackComponent={SectionFallback}>
         {/* ── MCP SERVER (Jarvis as MCP server) ── */}
         <SectionHeader label="MCP SERVER" accent="#8B5CF6" />
         <View style={styles.card}>
@@ -1753,7 +1807,9 @@ export default function SettingsScreen() {
             </View>
           )}
         </View>
+        </ErrorBoundary>
 
+        <ErrorBoundary FallbackComponent={SectionFallback}>
         {/* ── WAKE WORD ── */}
         <SectionHeader label="WAKE WORD" accent={Colors.primary} />
         <View style={styles.card}>
@@ -1827,7 +1883,9 @@ export default function SettingsScreen() {
             </View>
           )}
         </View>
+        </ErrorBoundary>
 
+        <ErrorBoundary FallbackComponent={SectionFallback}>
         {/* ── VOICE RESPONSES (TTS) ── */}
         <SectionHeader label="VOICE RESPONSES" accent="#7C3AED" />
         <View style={styles.card}>
@@ -1929,7 +1987,9 @@ export default function SettingsScreen() {
             </Text>
           </View>}
         </View>
+        </ErrorBoundary>
 
+        <ErrorBoundary FallbackComponent={SectionFallback}>
         {/* ── BUILD HISTORY ── */}
         {buildHistory.length > 0 && (
           <>
@@ -2039,7 +2099,9 @@ export default function SettingsScreen() {
             </View>
           </>
         )}
+        </ErrorBoundary>
 
+        <ErrorBoundary FallbackComponent={SectionFallback}>
         {/* ── PREFERENCES ── */}
         <SectionHeader label="PREFERENCES" accent={Colors.violet} />
         <View style={styles.card}>
@@ -2126,7 +2188,9 @@ export default function SettingsScreen() {
             </View>
           </View>
         </View>
+        </ErrorBoundary>
 
+        <ErrorBoundary FallbackComponent={SectionFallback}>
         {/* ── NERVOUS SYSTEM ── */}
         <SectionHeader label="NERVOUS SYSTEM" accent="#F59E0B" />
         <View style={styles.card}>
@@ -2234,7 +2298,9 @@ export default function SettingsScreen() {
             </View>
           )}
         </View>
+        </ErrorBoundary>
 
+        <ErrorBoundary FallbackComponent={SectionFallback}>
         {/* ── ACHIEVEMENTS ── */}
         <SectionHeader label="ACHIEVEMENTS" accent={Colors.cyan} />
         <View style={styles.card}>
@@ -2305,7 +2371,9 @@ export default function SettingsScreen() {
             </View>
           )}
         </View>
+        </ErrorBoundary>
 
+        <ErrorBoundary FallbackComponent={SectionFallback}>
         {/* ── JARVIS GUT — THREAT LOG ── */}
         <SectionHeader label="THREAT LOG" accent="#F59E0B" />
         <View style={styles.card}>
@@ -2369,7 +2437,9 @@ export default function SettingsScreen() {
             ))
           )}
         </View>
+        </ErrorBoundary>
 
+        <ErrorBoundary FallbackComponent={SectionFallback}>
         {/* ── MODEL PREFERENCES ── */}
         <SectionHeader label="AI MODELS" accent={Colors.violet} />
         <View style={styles.card}>
@@ -2422,7 +2492,9 @@ export default function SettingsScreen() {
             </>
           )}
         </View>
+        </ErrorBoundary>
 
+        <ErrorBoundary FallbackComponent={SectionFallback}>
         {/* ── ORCHESTRATOR MODE ── */}
         <SectionHeader label="ORCHESTRATOR MODE" accent={Colors.violet} />
         <View style={styles.card}>
@@ -2466,7 +2538,9 @@ export default function SettingsScreen() {
           </Pressable>
           )}
         </View>
+        </ErrorBoundary>
 
+        <ErrorBoundary FallbackComponent={SectionFallback}>
         {/* ── JARVIS INTELLIGENCE ── */}
         <SectionHeader label="JARVIS INTELLIGENCE" accent={Colors.cyan} />
         <View style={styles.card}>
@@ -2507,7 +2581,9 @@ export default function SettingsScreen() {
             </Pressable>
           </Link>
         </View>
+        </ErrorBoundary>
 
+        <ErrorBoundary FallbackComponent={SectionFallback}>
         {/* ── JARVIS HEALTH ── */}
         <SectionHeader label="JARVIS HEALTH" accent="#10B981" />
         <View style={[styles.card, { gap: 0 }]}>
@@ -2637,7 +2713,9 @@ export default function SettingsScreen() {
             )}
           </View>
         </View>
+        </ErrorBoundary>
 
+        <ErrorBoundary FallbackComponent={SectionFallback}>
         {/* ── DIAGNOSTICS ── */}
         <SectionHeader label="DIAGNOSTICS" accent="#10B981" />
         <View style={[styles.card, { gap: 0 }]}>
@@ -2718,7 +2796,9 @@ export default function SettingsScreen() {
             </View>
           )}
         </View>
+        </ErrorBoundary>
 
+        <ErrorBoundary FallbackComponent={SectionFallback}>
         <SectionHeader label="ACCOUNT" accent={Colors.textTertiary} />
         <View style={styles.card}>
           <Pressable style={styles.prefRow} onPress={() => {
@@ -2734,6 +2814,7 @@ export default function SettingsScreen() {
             <Ionicons name="chevron-forward" size={16} color={Colors.textTertiary} />
           </Pressable>
         </View>
+        </ErrorBoundary>
 
       </ScrollView>
       </ErrorBoundary>
