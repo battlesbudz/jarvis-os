@@ -1,5 +1,5 @@
 import type { AgentTool } from "../types";
-import { retrieveRelevantMemories } from "../../memory/retrieve";
+import { retrieveRelevantMemories, batchIncrementAccessCount } from "../../memory/retrieve";
 import { db } from "../../db";
 import { sql } from "drizzle-orm";
 
@@ -7,14 +7,17 @@ interface MemoryRow {
   id: string;
   content: string;
   category: string;
+  tier: string;
+  memory_type: string;
   relevance_score: number;
   confidence: number;
+  access_count: number;
 }
 
 export const memorySearchTool: AgentTool = {
   name: "memory_search",
   description:
-    "Search your long-term memory for facts, preferences, and context about this user. Use this mid-task to look up specific things ('what are their preferred work hours?', 'what did they say about their goals?') without loading everything. Returns the most relevant memories ranked by semantic + keyword match.",
+    "Search memory for facts, preferences, and context about this user. Use mid-task to look up specific things ('what are their preferred work hours?', 'what did they say about their goals?'). Returns the most relevant memories ranked by semantic + keyword match, each labeled with a tier (working/short_term/long_term) and type (episodic/semantic/procedural/contextual) so you can reason about how fresh and how stable each piece of knowledge is.",
   parameters: {
     type: "object",
     properties: {
@@ -26,6 +29,11 @@ export const memorySearchTool: AgentTool = {
         type: "string",
         description:
           "Optional — filter to a specific category: work_patterns, values, blockers, goals, relationships, preferences, health, communication_style, or any other label",
+      },
+      tier: {
+        type: "string",
+        description:
+          "Optional — filter by memory tier: 'working' (minutes-fresh), 'short_term' (hours/days), or 'long_term' (permanent facts)",
       },
       limit: {
         type: "number",
@@ -42,9 +50,11 @@ export const memorySearchTool: AgentTool = {
 
     const limit = Math.min(25, Math.max(1, Number(args.limit) || 10));
     const category = args.category ? String(args.category).trim() : null;
+    const tierFilter = args.tier ? String(args.tier).trim() : null;
 
     try {
-      let memories = await retrieveRelevantMemories(ctx.userId, query, limit * 2);
+      // skipAccessUpdate=true so we only count accesses for the final filtered set.
+      let memories = await retrieveRelevantMemories(ctx.userId, query, limit * 2, true);
 
       if (category) {
         memories = memories.filter(
@@ -52,21 +62,30 @@ export const memorySearchTool: AgentTool = {
         );
       }
 
+      if (tierFilter) {
+        memories = memories.filter(
+          (m) => m.tier.toLowerCase() === tierFilter.toLowerCase(),
+        );
+      }
+
       const top = memories.slice(0, limit);
+
+      // Increment access_count only for memories actually returned to the agent.
+      batchIncrementAccessCount(top.map((m) => m.id));
 
       if (top.length === 0) {
         return {
           ok: true,
-          content: `No memories found for query: "${query}"${category ? ` (category: ${category})` : ""}.`,
+          content: `No memories found for query: "${query}"${category ? ` (category: ${category})` : ""}${tierFilter ? ` (tier: ${tierFilter})` : ""}.`,
           label: "Memory search: no results",
         };
       }
 
       const formatted = top
-        .map((m, i) => `[${i + 1}] (${m.category}, confidence: ${m.confidence}%) ${m.content}`)
+        .map((m, i) => `[${i + 1}] [${m.tier}/${m.memoryType}] (${m.category}, confidence: ${m.confidence}%) ${m.content}`)
         .join("\n");
 
-      const content = `Found ${top.length} relevant memories for: "${query}"\n\n${formatted}`;
+      const content = `Found ${top.length} relevant memories for: "${query}"\n\nFormat: [tier/type] (category, confidence%)\n\n${formatted}`;
 
       console.log(
         `[${ctx.channel || "Agent"}] memory_search "${query}" → ${top.length} result(s)`,
@@ -114,10 +133,11 @@ export const memoryGetTool: AgentTool = {
 
     try {
       const rows = await db.execute<MemoryRow>(sql`
-        SELECT id, content, category, relevance_score, confidence
+        SELECT id, content, category, tier, memory_type, relevance_score, confidence, access_count
         FROM user_memories
         WHERE user_id = ${ctx.userId}
           AND LOWER(category) = LOWER(${category})
+          AND (expires_at IS NULL OR expires_at >= NOW())
         ORDER BY confidence DESC, relevance_score DESC
         LIMIT ${limit}
       `);
@@ -132,8 +152,17 @@ export const memoryGetTool: AgentTool = {
         };
       }
 
+      // Increment access_count and last_referenced_at for all returned rows.
+      const ids = memories.map((m) => m.id);
+      db.execute(sql`
+        UPDATE user_memories
+        SET access_count = access_count + 1,
+            last_referenced_at = NOW()
+        WHERE id = ANY(${ids})
+      `).catch((err) => console.error("[MemoryGet] access_count update failed:", err));
+
       const formatted = memories
-        .map((m, i) => `[${i + 1}] (${m.confidence}% confidence) ${m.content}`)
+        .map((m, i) => `[${i + 1}] [${m.tier || "long_term"}/${m.memory_type || "semantic"}] (${m.confidence}% confidence) ${m.content}`)
         .join("\n");
 
       const content = `${memories.length} memories in category "${category}":\n\n${formatted}`;

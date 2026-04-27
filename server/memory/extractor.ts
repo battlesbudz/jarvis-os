@@ -26,12 +26,16 @@ interface RawExtractedMemory {
   content: unknown;
   category: unknown;
   confidence?: unknown;
+  tier?: unknown;
+  memory_type?: unknown;
 }
 
 interface ExtractedMemory {
   content: string;
   category: schema.MemoryCategory;
   confidence: number;
+  tier: schema.MemoryTier;
+  memoryType: schema.MemoryType;
 }
 
 function normalizeForDedup(s: string): string {
@@ -42,6 +46,23 @@ function clampInt(value: unknown, min: number, max: number, fallback: number): n
   const n = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(n)) return fallback;
   return Math.max(min, Math.min(max, Math.round(n)));
+}
+
+function normalizeTier(raw: string | null): schema.MemoryTier {
+  if (raw === "working" || raw === "short_term" || raw === "long_term") return raw;
+  return "long_term";
+}
+
+function normalizeMemoryType(raw: string | null): schema.MemoryType {
+  if (raw === "episodic" || raw === "semantic" || raw === "procedural" || raw === "contextual") return raw;
+  return "semantic";
+}
+
+function expiresAtForTier(tier: schema.MemoryTier): Date | null {
+  const now = Date.now();
+  if (tier === "working") return new Date(now + 3 * 60 * 60 * 1000); // 3 hours
+  if (tier === "short_term") return new Date(now + 60 * 60 * 1000 * 60); // 60 hours (~2.5 days)
+  return null; // long_term never expires
 }
 
 function parseExtraction(raw: string): RawExtractedMemory[] {
@@ -80,8 +101,8 @@ export async function extractAndStore(input: ExtractInput): Promise<ExtractedMem
         : "";
     const contextNote = contextHint ? `\nContext: ${contextHint}` : "";
 
-    const prompt = `You extract durable profile facts about a single user from one source.
-Output JSON: { "memories": [{"content": string, "category": one-of-categories, "confidence": 0-100}] }
+    const prompt = `You extract profile facts about a single user from one source.
+Output JSON: { "memories": [{"content": string, "category": one-of-categories, "confidence": 0-100, "tier": one-of-tiers, "memory_type": one-of-types}] }
 
 Categories (pick ONE per memory):
 - work_patterns       — when/how they focus, schedule habits, tools, deep-work timing
@@ -95,9 +116,27 @@ Categories (pick ONE per memory):
 - preferences         — explicit preferences (meeting times, channels)
 - fact                — anything else durable and specific
 
+Memory Tiers (pick ONE per memory):
+- working     — fleeting context valid for minutes only (e.g. "user is currently stressed about X")
+- short_term  — conversational facts valid for 48-72 hours (e.g. "user said they're busy today")
+- long_term   — stable, durable patterns and facts that persist indefinitely
+
+Memory Types (pick ONE per memory):
+- episodic    — an event, action, or fact tied to a specific moment ("user finished the project on Friday", "user said they are busy today")
+- semantic    — a general fact or stable preference that holds across time ("user prefers morning deep work")
+- procedural  — a repeated behavioral habit or workflow ("user reviews email at 9am daily")
+- contextual  — momentary internal state with no factual claim ("user seems stressed right now")
+
+Tier/Type canonical assignments — follow these exactly:
+- Facts from the current conversation  → short_term + episodic  (expires 48-72 h)
+- Current fleeting/emotional state     → working    + contextual (expires 2-4 h)
+- Inferred stable patterns/preferences → long_term  + semantic
+- Specific past events                 → long_term  + episodic
+- Repeated behavioral habits           → long_term  + procedural
+
 Rules:
-- Only extract facts that are SPECIFIC, DURABLE, and not already captured.
-- Skip emotional venting, one-off events, or generic statements.
+- Only extract facts that are SPECIFIC and not already captured.
+- Skip emotional venting or generic statements unless they reveal a stable pattern.
 - Confidence: 90+ user stated explicitly; 70-89 strongly implied; 50-69 plausible inference.
 - Skip anything below 50.
 - Return at most ${maxNew} new memories.${contextNote}
@@ -130,6 +169,9 @@ Return { "memories": [] } if nothing new and high-confidence was learned.`;
       const category = normalizeCategory(typeof r.category === "string" ? r.category : null);
       const confidence = clampInt(r.confidence, 0, 100, 70);
       if (confidence < 50) continue;
+      const tier = normalizeTier(typeof r.tier === "string" ? r.tier : null);
+      const memoryType = normalizeMemoryType(typeof r.memory_type === "string" ? r.memory_type : null);
+      const expiresAt = expiresAtForTier(tier);
 
       let embedding: number[] | null = null;
       try {
@@ -147,10 +189,13 @@ Return { "memories": [] } if nothing new and high-confidence was learned.`;
         sourceType,
         sourceRef: sourceRef || null,
         embedding: embedding ?? undefined,
+        tier,
+        memoryType,
+        expiresAt: expiresAt ?? undefined,
       });
       seen.add(norm);
-      stored.push({ content: text, category, confidence });
-      console.log(`[Memory] +${sourceType} [${category} c=${confidence}${embedding ? " e" : ""}] ${text.slice(0, 70)}`);
+      stored.push({ content: text, category, confidence, tier, memoryType });
+      console.log(`[Memory] +${sourceType} [${category} ${tier}/${memoryType} c=${confidence}${embedding ? " e" : ""}${expiresAt ? " ttl" : ""}] ${text.slice(0, 70)}`);
     }
   } catch (err) {
     console.error("[Memory] extract failed:", err);

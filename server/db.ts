@@ -171,6 +171,11 @@ export async function ensureTablesExist() {
     await db.execute(sql`ALTER TABLE user_memories ADD COLUMN IF NOT EXISTS last_referenced_at TIMESTAMP`).catch(() => {});
     await db.execute(sql`ALTER TABLE user_memories ADD COLUMN IF NOT EXISTS embedding JSONB`).catch(() => {});
     await db.execute(sql`CREATE INDEX IF NOT EXISTS user_memories_fts_idx ON user_memories USING gin(to_tsvector('english', content))`).catch(() => {});
+    // Biomimetic memory tier & type system migration.
+    await db.execute(sql`ALTER TABLE user_memories ADD COLUMN IF NOT EXISTS tier VARCHAR NOT NULL DEFAULT 'long_term'`).catch(() => {});
+    await db.execute(sql`ALTER TABLE user_memories ADD COLUMN IF NOT EXISTS memory_type VARCHAR NOT NULL DEFAULT 'semantic'`).catch(() => {});
+    await db.execute(sql`ALTER TABLE user_memories ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP`).catch(() => {});
+    await db.execute(sql`ALTER TABLE user_memories ADD COLUMN IF NOT EXISTS access_count INTEGER NOT NULL DEFAULT 0`).catch(() => {});
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS people (
         id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),

@@ -1,5 +1,5 @@
 import { db } from './db';
-import { eq, and, lt } from 'drizzle-orm';
+import { eq, and, lt, sql } from 'drizzle-orm';
 import * as schema from '@shared/schema';
 import { notifyUser } from './channels/registry';
 import { logInteraction } from './interactionLog';
@@ -130,6 +130,21 @@ async function runDailyDigests(): Promise<void> {
   }
 }
 
+/** Hard-delete user_memories rows whose expires_at has passed (working/short_term TTL). */
+async function cleanUpExpiredMemories(): Promise<void> {
+  try {
+    const result = await db.execute(sql`
+      DELETE FROM user_memories
+      WHERE expires_at IS NOT NULL AND expires_at < NOW()
+      RETURNING id
+    `);
+    const count = (result.rows ?? []).length;
+    console.log(`[Scheduler] Expired memory cleanup: ${count} row(s) deleted`);
+  } catch (err) {
+    console.error('[Scheduler] cleanUpExpiredMemories failed:', err);
+  }
+}
+
 /** Delete agent_chat_sessions rows that have passed their expires_at timestamp. */
 async function cleanUpExpiredAgentChatSessions(): Promise<void> {
   const startedAt = new Date();
@@ -223,6 +238,11 @@ export function startScheduler() {
       cleanUpExpiredAgentChatSessions();
     }
 
+    // Daily 04:30 — hard-delete memories whose expires_at has passed (working/short_term TTL).
+    if (h === 4 && m === 30) {
+      cleanUpExpiredMemories();
+    }
+
     // Discord channel schedules — check every minute
     await runDiscordSchedules(now);
 
@@ -231,7 +251,7 @@ export function startScheduler() {
 
   }, 60 * 1000);
 
-  console.log('[Scheduler] Started — morning plan 7:00 AM daily, weekly patterns Sunday 3:00 AM, session cleanup 4:00 AM daily, Discord schedules every minute');
+  console.log('[Scheduler] Started — morning plan 7:00 AM daily, weekly patterns Sunday 3:00 AM, session cleanup 4:00 AM daily, memory TTL cleanup 4:30 AM daily, Discord schedules every minute');
 }
 
 /**

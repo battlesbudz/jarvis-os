@@ -161,7 +161,24 @@ export const userMemories = pgTable("user_memories", {
   // so we don't require the pgvector extension; FTS handles primary recall.
   embedding: jsonb("embedding"),
   extractedAt: timestamp("extracted_at").defaultNow().notNull(),
+  // Biomimetic memory tier & type system (Phase 5).
+  // tier: working (minutes) | short_term (hours/days) | long_term (permanent)
+  // memory_type: episodic (events) | semantic (facts) | procedural (habits) | contextual (conversation context)
+  // expires_at: nullable TTL timestamp — set for working/short_term memories; null = never expires
+  // access_count: incremented each retrieval, used by scorer to surface frequently-recalled memories
+  tier: varchar("tier").notNull().default("long_term"),
+  memoryType: varchar("memory_type").notNull().default("semantic"),
+  expiresAt: timestamp("expires_at"),
+  accessCount: integer("access_count").notNull().default(0),
 });
+
+// Biomimetic memory tiers — mirrors human memory architecture.
+export const MEMORY_TIERS = ["working", "short_term", "long_term"] as const;
+export type MemoryTier = typeof MEMORY_TIERS[number];
+
+// Biomimetic memory types — mirrors human memory classification.
+export const MEMORY_TYPES = ["episodic", "semantic", "procedural", "contextual"] as const;
+export type MemoryType = typeof MEMORY_TYPES[number];
 
 // Phase 4 — canonical memory categories. Stored as plain varchar so we can
 // migrate forward without an enum, but the extractor + UI both clamp to this
