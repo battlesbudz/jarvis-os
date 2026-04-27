@@ -319,6 +319,7 @@ export interface ChatMessage {
   followups?: string[];
   executedActions?: ExecutedAction[];
   pendingConfirm?: PendingConfirm;
+  stopped?: boolean;
 }
 
 export interface Commitment {
