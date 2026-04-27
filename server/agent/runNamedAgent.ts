@@ -214,8 +214,8 @@ export async function runNamedAgent(opts: RunNamedAgentOptions): Promise<NamedAg
 
         logAgentEvent({ event: "tool_blocked", agentId, userId, toolName, detail: `gate=${gate.id}` });
 
-        // Suspend until user approves/rejects (up to 10 min)
-        const approved = await awaitApproval(gate.id);
+        // Suspend until user approves/rejects (up to 10 min), or the run is cancelled
+        const approved = await awaitApproval(gate.id, undefined, signal);
 
         if (approved) {
           logAgentEvent({ event: "tool_approved", agentId, userId, toolName, detail: `gate=${gate.id}` });

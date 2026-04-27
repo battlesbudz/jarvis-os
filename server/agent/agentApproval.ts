@@ -257,17 +257,34 @@ export async function requestApproval(req: ApprovalRequest): Promise<ApprovalGat
 /**
  * Block the calling async context until the gate is approved/rejected or expires.
  * Returns true if approved, false otherwise.
+ *
+ * When an AbortSignal is provided, the gate resolves immediately with false
+ * (denied) as soon as the signal fires — e.g. when the user stops the run.
  */
-export function awaitApproval(gateId: string, ttlMs?: number): Promise<boolean> {
+export function awaitApproval(gateId: string, ttlMs?: number, signal?: AbortSignal): Promise<boolean> {
   return new Promise((resolve) => {
-    const timeout = ttlMs ?? DEFAULT_TTL_MS + 5_000;
-    const timer = setTimeout(() => {
-      gateEmitter.removeAllListeners(gateId);
+    if (signal?.aborted) {
       resolve(false);
-    }, timeout);
+      return;
+    }
+
+    const timeout = ttlMs ?? DEFAULT_TTL_MS + 5_000;
+
+    const cleanup = (result: boolean) => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      gateEmitter.removeAllListeners(gateId);
+      resolve(result);
+    };
+
+    const timer = setTimeout(() => cleanup(false), timeout);
+
+    const onAbort = () => cleanup(false);
+    signal?.addEventListener("abort", onAbort, { once: true });
 
     gateEmitter.once(gateId, (result: { approved: boolean }) => {
       clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
       resolve(result.approved);
     });
   });
