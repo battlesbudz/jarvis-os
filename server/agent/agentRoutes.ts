@@ -40,6 +40,9 @@ import {
   removeChannel,
 } from "./agentManager";
 import { readAgentMemories, clearAgentMemory, getAgentMemoryCount } from "./agentMemory";
+import { db } from "../db";
+import { agentMemories, agentJobs } from "@shared/schema";
+import { eq, sql, desc, and, or, inArray } from "drizzle-orm";
 import { getAgentMessages, getMessageStats } from "./agentBus";
 import { runNamedAgent } from "./runNamedAgent";
 import { runCouncil } from "./council";
@@ -58,6 +61,17 @@ import {
 import type { AgentConfigFile } from "./agentConfigSchema";
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
+
+function formatRelative(date: Date): string {
+  const diffMs = Date.now() - date.getTime();
+  const diffMin = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMs / 3600000);
+  const diffDays = Math.floor(diffMs / 86400000);
+  if (diffMin < 1) return "just now";
+  if (diffMin < 60) return `${diffMin}m ago`;
+  if (diffHours < 24) return `${diffHours}h ago`;
+  return `${diffDays}d ago`;
+}
 
 async function ownerCheck(agentId: string, userId: string): Promise<boolean> {
   const agent = await getAgent(agentId);
@@ -83,6 +97,129 @@ function handleError(res: Response, err: unknown): void {
 // ── Route registration ─────────────────────────────────────────────────────────
 
 export function registerAgentRoutes(app: Express): void {
+
+  // ── 0. GET /api/agents/roster — enriched living roster (BEFORE /:id) ────────
+  // Returns all named agents enriched with memoryCount, status, jobs, etc.
+  // Also returns recent agent jobs (last 24h) for dynamic task cards.
+  app.get("/api/agents/roster", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId!;
+
+      // Seed core bots for new users (lazy seeding as fallback)
+      const { seedCoreAgentsForUser, CORE_AGENT_NAMES } = await import("./coreAgentSeed");
+      await seedCoreAgentsForUser(userId).catch(() => {});
+
+      const agents = await listAgents(userId, true /* includeDisabled */);
+
+      // Memory counts in one query
+      const memoryCounts = await db
+        .select({
+          agentId: agentMemories.agentId,
+          count: sql<number>`cast(count(*) as int)`,
+        })
+        .from(agentMemories)
+        .where(eq(agentMemories.userId, userId))
+        .groupBy(agentMemories.agentId);
+
+      const memoryCountMap = new Map<string, number>();
+      for (const row of memoryCounts) {
+        memoryCountMap.set(row.agentId, Number(row.count));
+      }
+
+      // Recent named-agent jobs (last 48h or running)
+      const recentJobs = await db
+        .select()
+        .from(agentJobs)
+        .where(
+          and(
+            eq(agentJobs.userId, userId),
+            eq(agentJobs.agentType, "named_agent_task"),
+          ),
+        )
+        .orderBy(desc(agentJobs.createdAt))
+        .limit(50);
+
+      const now = Date.now();
+
+      const enriched = agents.map((agent) => {
+        const lastRun = agent.lastLoopRun?.getTime() ?? 0;
+        const msSinceRun = lastRun > 0 ? now - lastRun : Infinity;
+        const isCoreAgent = CORE_AGENT_NAMES.has(agent.name.toLowerCase());
+
+        let status: "online" | "idle" | "dormant" | "stuck";
+        if (agent.heartbeatFailCount > 0) {
+          status = "stuck";
+        } else if (msSinceRun < 30 * 60 * 1000) {
+          status = "online";
+        } else if (msSinceRun < 24 * 60 * 60 * 1000) {
+          status = "idle";
+        } else if (isCoreAgent && !agent.loopEnabled) {
+          // Core platform bots don't loop but are always listening — show as idle
+          status = "idle";
+        } else {
+          status = "dormant";
+        }
+
+        // Human-readable last action
+        let lastAction: string | null = null;
+        if (agent.lastLoopRun) {
+          lastAction = `Loop ran ${formatRelative(agent.lastLoopRun)}`;
+        } else if (agent.loopEnabled) {
+          lastAction = "Waiting for first loop";
+        } else if (isCoreAgent) {
+          lastAction = "Always listening";
+        } else {
+          lastAction = "Standing by";
+        }
+
+        // Find the most recent job for this agent
+        const agentJobs2 = recentJobs.filter(
+          (j) => (j.input as Record<string, unknown>)?.namedAgentId === agent.id,
+        );
+        const currentJob = agentJobs2.find((j) => ["queued", "running"].includes(j.status)) ?? null;
+
+        return {
+          ...agent,
+          memoryCount: memoryCountMap.get(agent.id) ?? 0,
+          status,
+          lastAction,
+          lastActivityAt: agent.lastLoopRun?.toISOString() ?? null,
+          isCoreAgent,
+          currentJob: currentJob
+            ? {
+                id: currentJob.id,
+                title: currentJob.title,
+                status: currentJob.status,
+                createdAt: currentJob.createdAt.toISOString(),
+                iterationCount: (currentJob.input as Record<string, unknown>)?.iterationCount ?? 0,
+              }
+            : null,
+        };
+      });
+
+      // Shape recent jobs for the "ACTIVE TASKS" section
+      const activeTasks = recentJobs.map((j) => {
+        const inp = (j.input as Record<string, unknown>) ?? {};
+        return {
+          id: j.id,
+          title: j.title,
+          status: j.status,
+          agentId: String(inp.namedAgentId ?? ""),
+          agentName: String(inp.agentName ?? "Agent"),
+          iterationCount: Number(inp.iterationCount ?? 0),
+          createdAt: j.createdAt.toISOString(),
+          startedAt: j.startedAt?.toISOString() ?? null,
+          completedAt: j.completedAt?.toISOString() ?? null,
+          error: j.error ?? null,
+          output: j.status === "complete" || j.status === "delivered"
+            ? String((j.result as Record<string, unknown>)?.output ?? "").slice(0, 400)
+            : null,
+        };
+      });
+
+      res.json({ agents: enriched, activeTasks });
+    } catch (err) { handleError(res, err); }
+  });
 
   // ── 1. POST /api/agents/import (BEFORE /:id) ──────────────────────────────
   app.post("/api/agents/import", async (req: Request, res: Response) => {

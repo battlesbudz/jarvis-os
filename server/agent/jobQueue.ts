@@ -4,6 +4,7 @@ import * as schema from "@shared/schema";
 import type { SubAgentType } from "./subagents";
 import { runSubAgent } from "./subagents";
 import { runGoalDecomposition } from "./goalDecomposer";
+import { runNamedAgent } from "./runNamedAgent";
 import { runWeeklyPatternJob } from "../memory/weeklyJob";
 import { getValidGoogleTokens } from "../userTokenStore";
 import type { ToolContext } from "./types";
@@ -150,6 +151,59 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
       );
       if (hasWorkflow) {
         await onWorkflowJobComplete(wfId!, wfStep!, job.id, result.summary || weeklyMsg).catch((e) =>
+          console.error("[JobQueue] workflow hook failed:", e),
+        );
+      }
+      return;
+    }
+
+    // ── Named-agent task (orchestrator-dispatched) ─────────────────────────
+    if (job.agentType === "named_agent_task") {
+      const input = (job.input as Record<string, unknown>) ?? {};
+      const namedAgentId = String(input.namedAgentId ?? "");
+      const agentName = String(input.agentName ?? "Agent");
+      const iterationCount = typeof input.iterationCount === "number" ? input.iterationCount : 0;
+
+      if (!namedAgentId) throw new Error("named_agent_task job missing namedAgentId");
+
+      console.log(
+        `[JobQueue] named_agent_task agent=${agentName}(${namedAgentId}) iteration=${iterationCount + 1}`,
+      );
+
+      const result = await runNamedAgent({
+        agentId: namedAgentId,
+        userId: job.userId,
+        userMessage: job.prompt,
+        platform: "orchestrator",
+        initiatedBy: "jarvis",
+      });
+
+      await completeJob(job.id, {
+        result: {
+          output: result.reply,
+          agentId: namedAgentId,
+          agentName,
+          iterationCount,
+        },
+        turns: result.turns,
+        toolCallsCount: result.toolCalls?.length ?? 0,
+      });
+
+      console.log(
+        `[JobQueue] named_agent_task complete: agent=${agentName} job=${job.id} ` +
+          `turns=${result.turns} iteration=${iterationCount + 1}`,
+      );
+
+      const snippet = result.reply.slice(0, 280);
+      await notifyJobComplete(
+        job.userId,
+        "named_agent_task",
+        `${agentName} — ${job.title}`,
+        `Iteration ${iterationCount + 1} complete. Review output and approve or request a revision.\n\n${snippet}${result.reply.length > 280 ? "…" : ""}`,
+      );
+
+      if (hasWorkflow) {
+        await onWorkflowJobComplete(wfId!, wfStep!, job.id, result.reply.slice(0, 1200)).catch((e) =>
           console.error("[JobQueue] workflow hook failed:", e),
         );
       }
