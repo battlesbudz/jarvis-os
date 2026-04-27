@@ -363,6 +363,13 @@ function MessageBubble({ message, isFirst, isLastAssistant, goals, onFollowup, o
         </View>
       )}
 
+      {!isUser && message.stopped && (
+        <View style={styles.stoppedPill}>
+          <Ionicons name="stop-circle-outline" size={12} color={Colors.textSecondary} />
+          <Text style={styles.stoppedPillText}>stopped</Text>
+        </View>
+      )}
+
       {!isUser && message.executedActions && message.executedActions.length > 0 && (() => {
         const urlActions = message.executedActions!.filter(ea => ea.url);
         const screenshotActions = message.executedActions!.filter(ea => !ea.url && ea.screenshotUrl);
@@ -636,6 +643,7 @@ export default function InsightsScreen() {
   const speakAbortRef = useRef<AbortController | null>(null);
   const chatAbortControllerRef = useRef<AbortController | null>(null);
   const chatRunIdRef = useRef<string | null>(null);
+  const streamingAssistantIdRef = useRef<string | null>(null);
   const isSpeakingRef = useRef(false);
   const webRecorderRef = useRef<MediaRecorder | null>(null);
   const webChunksRef = useRef<Blob[]>([]);
@@ -1790,6 +1798,7 @@ export default function InsightsScreen() {
 
       setShowTyping(false);
       const assistantMsg: ChatMessage = { id: assistantId, role: 'assistant', content: '' };
+      streamingAssistantIdRef.current = assistantId;
 
       setMessages(prev => {
         const updated = [assistantMsg, ...prev];
@@ -1875,11 +1884,24 @@ export default function InsightsScreen() {
 
       chatAbortControllerRef.current = null;
       chatRunIdRef.current = null;
+      streamingAssistantIdRef.current = null;
       setIsStreaming(false);
       setIsSearchingWeb(false);
       setIsWorkingOnPhone(false);
 
       if (streamAborted) {
+        if (fullContent.length > 0) {
+          setMessages(prev => {
+            const idx = prev.findIndex(m => m.id === assistantId);
+            if (idx !== -1) {
+              const updated = [...prev];
+              updated[idx] = { ...updated[idx], stopped: true };
+              saveChatHistory(updated);
+              return updated;
+            }
+            return prev;
+          });
+        }
         return;
       }
 
@@ -1957,6 +1979,17 @@ export default function InsightsScreen() {
       setIsSearchingWeb(false);
       setIsWorkingOnPhone(false);
       if (error instanceof Error && (error.name === 'AbortError' || error.message?.includes('aborted'))) {
+        streamingAssistantIdRef.current = null;
+        setMessages(prev => {
+          const idx = prev.findIndex(m => m.id === assistantId);
+          if (idx !== -1 && prev[idx].content.length > 0) {
+            const updated = [...prev];
+            updated[idx] = { ...updated[idx], stopped: true };
+            saveChatHistory(updated);
+            return updated;
+          }
+          return prev;
+        });
         return;
       }
       // If Jarvis already sent partial content (e.g. a multi-step phone task that completed
@@ -3764,6 +3797,24 @@ const styles = StyleSheet.create({
     marginTop: 4,
     padding: 6,
     alignSelf: 'flex-start',
+  },
+  stoppedPill: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: 4,
+    alignSelf: 'flex-start' as const,
+    marginTop: 6,
+    paddingVertical: 3,
+    paddingHorizontal: 9,
+    borderRadius: 20,
+    backgroundColor: Colors.surface,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  stoppedPillText: {
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
   },
   inboxSection: {
     marginTop: 12,
