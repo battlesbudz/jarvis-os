@@ -2,7 +2,7 @@ import type { Express, Request, Response } from "express";
 import { db } from "./db";
 import { eq, and, desc, sql, gte, lte } from "drizzle-orm";
 import * as schema from "@shared/schema";
-import { sendMessage, sendLongMessage, sendMessageWithButtons, sendTelegramDocument, sendPhoto, sendVoice, answerCallbackQuery, isTelegramConfigured, getUpdates, downloadTelegramFile, downloadTelegramFileBuffer, getWebhookHealth, ensureWebhook, getExpectedWebhookUrl } from "./integrations/telegram";
+import { sendMessage, sendLongMessage, sendMessageWithButtons, sendTelegramDocument, sendPhoto, sendVoice, sendChatAction, answerCallbackQuery, isTelegramConfigured, getUpdates, downloadTelegramFile, downloadTelegramFileBuffer, getWebhookHealth, ensureWebhook, getExpectedWebhookUrl } from "./integrations/telegram";
 import { attachmentToBuffer, collectMarkdownExtras } from "./channels/attachmentHelpers";
 import { outboundMiddleware } from "./channels/outboundMiddleware";
 import type { ChannelAttachment } from "./channels/types";
@@ -141,11 +141,34 @@ async function deliverNamedAgentResult(
 }
 
 async function handleCoachReply(userId: string, chatId: string, userText: string, imageUrl?: string): Promise<void> {
+  // Send an immediate typing indicator so the user knows the message was received.
+  sendChatAction(chatId, "typing").catch(() => {});
+
+  // Refresh the typing indicator every 4 seconds while the LLM is working
+  // (Telegram clears it automatically after ~5 s).
+  const typingInterval = setInterval(() => {
+    sendChatAction(chatId, "typing").catch(() => {});
+  }, 4000);
+
+  // After 15 seconds of silence, send a brief "still working" message so the
+  // user knows the bot hasn't stalled. We cancel both timers once the reply arrives.
+  const stillThinkingTimer = setTimeout(async () => {
+    try {
+      await sendMessage(chatId, "Still working on it…");
+    } catch { /* non-blocking */ }
+  }, 15000);
+
+  const clearTimers = () => {
+    clearInterval(typingInterval);
+    clearTimeout(stillThinkingTimer);
+  };
+
   try {
     // Check if this Telegram chatId is assigned to a named agent first.
     // routeToNamedAgent returns null when no agent is configured for the channel.
     const namedResult = await routeToNamedAgent(userId, "telegram", chatId, userText).catch(() => null);
     if (namedResult !== null) {
+      clearTimers();
       await deliverNamedAgentResult(chatId, userId, null, namedResult);
       return;
     }
@@ -178,6 +201,9 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
       userId,
     });
     let textReply = coachProcessed ?? "";
+
+    // Stop typing indicator and "still thinking" timer — the reply is ready.
+    clearTimers();
 
     // Non-markdown attachments (images, documents, files) require the text to be
     // sent first so message ordering is natural (text → media).
@@ -248,6 +274,7 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
     });
     return;
   } catch (error) {
+    clearTimers();
     console.error("Error handling Telegram coach reply:", error);
     await sendMessage(chatId, "Sorry, I encountered an error. Please try again.");
     return;
@@ -1402,28 +1429,32 @@ const PROACTIVE_SCHEDULE: ScheduleEntry[] = [
   { type: 'weekly_planning', dayOfWeek: 0, hour: 19, minute: 0 },
 ];
 
-async function hasAlreadySent(userId: string, messageType: string, dateKey: string): Promise<boolean> {
+/**
+ * Atomically claim a proactive send slot.
+ *
+ * Tries to INSERT a row into proactive_schedule_log with ON CONFLICT DO NOTHING.
+ * Returns `true` if this call won the race (new row inserted — safe to send),
+ * or `false` if the row already existed (already sent by another instance or
+ * an earlier restart — skip this send).
+ *
+ * This replaces the previous two-step hasAlreadySent + markAsSent pattern which
+ * had a TOCTOU race: two rapid server restarts could both read "not sent" before
+ * either write, causing the message to be delivered twice.  The unique index on
+ * (userId, messageType, sentDate) acts as the database-level hard stop.
+ */
+async function claimAndMark(userId: string, messageType: string, dateKey: string): Promise<boolean> {
   try {
-    const rows = await db.select({ id: schema.proactiveScheduleLog.id })
-      .from(schema.proactiveScheduleLog)
-      .where(
-        and(
-          eq(schema.proactiveScheduleLog.userId, userId),
-          eq(schema.proactiveScheduleLog.messageType, messageType),
-          eq(schema.proactiveScheduleLog.sentDate, dateKey)
-        )
-      )
-      .limit(1);
+    const rows = await db
+      .insert(schema.proactiveScheduleLog)
+      .values({ userId, messageType, sentDate: dateKey })
+      .onConflictDoNothing()
+      .returning({ id: schema.proactiveScheduleLog.id });
     return rows.length > 0;
   } catch {
+    // Any unexpected error (e.g. DB outage) → treat conservatively as "already sent"
+    // so we don't spam the user in a degraded state.
     return false;
   }
-}
-
-async function markAsSent(userId: string, messageType: string, dateKey: string): Promise<void> {
-  try {
-    await db.insert(schema.proactiveScheduleLog).values({ userId, messageType, sentDate: dateKey }).catch(() => {});
-  } catch {}
 }
 
 // Returns one entry per user with any linked channel (telegram chatId may be
@@ -1572,12 +1603,12 @@ export async function runProactiveStartupCatchup(): Promise<void> {
 
         if (minutesSinceScheduled < 0 || minutesSinceScheduled > 120) continue;
 
-        const alreadySent = await hasAlreadySent(link.userId, schedule.type, dateKey);
-        if (alreadySent) continue;
+        // Atomic claim: INSERT ... ON CONFLICT DO NOTHING.
+        // Only the process that wins the insert proceeds; any parallel
+        // restart that races here will get rows.length === 0 and skip.
+        const claimed = await claimAndMark(link.userId, schedule.type, dateKey);
+        if (!claimed) continue;
 
-        // Claim the slot BEFORE sending so a concurrent scheduler tick
-        // can't also pass the hasAlreadySent check and send a duplicate.
-        await markAsSent(link.userId, schedule.type, dateKey);
         console.log(`[Proactive] Catchup: sending missed ${schedule.type} to user ${link.userId}`);
         try {
           await sendScheduledMessage(link, schedule, dateKey, timezone);
@@ -1617,11 +1648,12 @@ export async function startProactiveScheduler(): Promise<void> {
           if (localHour !== schedule.hour || localMinute !== schedule.minute) continue;
           if (schedule.type === 'weekly_planning' && localDay !== (schedule.dayOfWeek ?? -1)) continue;
 
-          const alreadySent = await hasAlreadySent(link.userId, schedule.type, dateKey);
-          if (alreadySent) continue;
+          // Atomic claim: INSERT ... ON CONFLICT DO NOTHING.
+          // Prevents the scheduler tick and the startup catchup from both
+          // sneaking past a read-before-write race on rapid restarts.
+          const claimed = await claimAndMark(link.userId, schedule.type, dateKey);
+          if (!claimed) continue;
 
-          // Claim the slot before sending to prevent catchup/scheduler races
-          await markAsSent(link.userId, schedule.type, dateKey);
           try {
             await sendScheduledMessage(link, schedule, dateKey, timezone);
           } catch (err) {
