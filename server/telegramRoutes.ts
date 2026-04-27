@@ -448,7 +448,7 @@ async function processUpdate(update: any): Promise<void> {
 
         try {
           const {
-            listAgents, createAgent, assignChannel,
+            listAgents, createAgent, assignChannel, removeChannel,
             enableAgent, disableAgent, deleteAgent, updateAgent,
           } = await import("./agent/agentManager");
           const { runNamedAgent } = await import("./agent/runNamedAgent");
@@ -479,18 +479,19 @@ async function processUpdate(update: any): Promise<void> {
 
           if (!sub || sub === "help") {
             await sendMessage(chatId,
-              `*Agent commands*\n\n` +
-              `/agent list — your agents\n` +
-              `/agent run <name> <message> — run an agent\n` +
-              `/agent council <question> — ask all agents\n` +
-              `/agent create <name> <role> — create agent\n` +
-              `/agent assign <name> — assign this chat\n` +
-              `/agent disable <name> — disable agent\n` +
-              `/agent enable <name> — enable agent\n` +
-              `/agent delete <name> — delete agent\n` +
-              `/agent memory <name> — show memories\n` +
-              `/agent clear-memory <name> — wipe memories\n` +
-              `/agent approvals — pending approvals\n` +
+              `*Agent commands* (also: /agents)\n\n` +
+              `/agents list — your agents\n` +
+              `/agents run <name> <message> — run an agent\n` +
+              `/agents council <question> — ask all agents\n` +
+              `/agents create <name> <role> — create agent\n` +
+              `/agents assign <name> — assign this chat\n` +
+              `/agents unassign <name> — remove this chat from agent\n` +
+              `/agents disable <name> — disable agent\n` +
+              `/agents enable <name> — enable agent\n` +
+              `/agents delete <name> — delete agent\n` +
+              `/agents memory <name> — show memories\n` +
+              `/agents clear-memory <name> — wipe memories\n` +
+              `/agents approvals — pending approvals\n` +
               `/ask <name> <question> — quick query`,
               { parse_mode: "Markdown" },
             );
@@ -546,12 +547,23 @@ async function processUpdate(update: any): Promise<void> {
 
           if (sub === "assign") {
             const name = parts[2] ?? "";
-            if (!name) { await sendMessage(chatId, "Usage: /agent assign <name>"); return; }
+            if (!name) { await sendMessage(chatId, "Usage: /agents assign <name>"); return; }
             const agents = await listAgents(userId, true);
             const agent = agents.find((a) => a.name.toLowerCase() === name.toLowerCase());
             if (!agent) { await sendMessage(chatId, `Agent "${name}" not found.`); return; }
             await assignChannel(agent.id, "telegram", String(chatId));
             await sendMessage(chatId, `✅ This chat is now assigned to *${name}*.`, { parse_mode: "Markdown" });
+            return;
+          }
+
+          if (sub === "unassign") {
+            const name = parts[2] ?? "";
+            if (!name) { await sendMessage(chatId, "Usage: /agents unassign <name>"); return; }
+            const agents = await listAgents(userId, true);
+            const agent = agents.find((a) => a.name.toLowerCase() === name.toLowerCase());
+            if (!agent) { await sendMessage(chatId, `Agent "${name}" not found.`); return; }
+            await removeChannel(agent.id, "telegram", String(chatId));
+            await sendMessage(chatId, `✅ This chat has been removed from *${name}*.`, { parse_mode: "Markdown" });
             return;
           }
 

@@ -162,6 +162,31 @@ export async function requestApproval(req: ApprovalRequest): Promise<ApprovalGat
     expiresAt,
   });
 
+  // Mirror the gate as a deliverable so it surfaces in the user's inbox.
+  // When the user approves/rejects from the inbox, the gate emitter fires
+  // and unblocks the waiting tool call.
+  try {
+    const schema = await import("@shared/schema");
+    await db.insert(schema.deliverables).values({
+      userId: req.userId,
+      agentType: "named_agent",
+      type: "approval_gate",
+      title: `Approve: ${req.toolName}`,
+      summary: req.description,
+      body: req.description,
+      meta: {
+        gateId: id,
+        agentId: req.agentId,
+        toolName: req.toolName,
+        toolArgs: req.toolArgs as Record<string, unknown>,
+      },
+      status: "pending_approval",
+    });
+  } catch (delivErr) {
+    // Non-fatal: gate still exists and is visible via /api/agents/approvals
+    console.warn("[AgentApproval] failed to create deliverable for gate:", delivErr);
+  }
+
   logAgentEvent({
     event: "tool_blocked",
     agentId: req.agentId,

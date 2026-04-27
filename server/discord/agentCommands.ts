@@ -25,6 +25,7 @@ import {
   listAgents,
   createAgent,
   assignChannel,
+  removeChannel,
   enableAgent,
   disableAgent,
   deleteAgent,
@@ -94,6 +95,12 @@ export const AGENT_COMMAND = {
       type: 1,
       name: "assign",
       description: "Assign this channel to a named agent (messages here go to that agent)",
+      options: [{ type: 3, name: "name", description: "Agent name", required: true }],
+    },
+    {
+      type: 1,
+      name: "unassign",
+      description: "Remove this channel from a named agent (stops routing here)",
       options: [{ type: 3, name: "name", description: "Agent name", required: true }],
     },
     {
@@ -258,6 +265,17 @@ export async function handleAgentCommand(
         if (!channelId) return { content: "Could not determine channel ID.", flags: EPHEMERAL };
         await assignChannel(agent.id, "discord", channelId);
         return { content: `✅ This channel is now assigned to **${name}**. Messages here will go to this agent.` };
+      }
+
+      // ── unassign ─────────────────────────────────────────────────────────────
+      case "unassign": {
+        const name = opt("name");
+        const agent = await findAgent(name);
+        if (!agent) return { content: `Agent "${name}" not found.`, flags: EPHEMERAL };
+        const channelId = (interaction as Record<string, unknown>).channel_id as string | undefined;
+        if (!channelId) return { content: "Could not determine channel ID.", flags: EPHEMERAL };
+        await removeChannel(agent.id, "discord", channelId);
+        return { content: `✅ This channel has been removed from **${name}**.`, flags: EPHEMERAL };
       }
 
       // ── disable ─────────────────────────────────────────────────────────────
