@@ -218,32 +218,56 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
     if (message.author.bot) return;
     if (client.user && message.author.id === client.user.id) return;
 
-    // ── Deduplication: drop re-delivered events for the same message ID ────
-    // Fast path: in-memory map (same process, zero latency).
+    // ── Deduplication fast path: in-memory map (zero latency) ────────────
     if (seenMessageIds.has(message.id)) {
       console.log(`[DiscordManager] duplicate message dropped (in-memory, id=${message.id})`);
       return;
     }
-    // Atomic DB claim: INSERT ... RETURNING — only the first process to
-    // insert wins ownership; concurrent processes see zero rows and drop.
-    const claimed = await claimMessageId(message.id);
-    if (!claimed) {
-      console.log(`[DiscordManager] duplicate message dropped (db atomic claim, id=${message.id})`);
-      return;
-    }
 
+    // Extract basic info immediately — all available in the Discord.js message
+    // object with no DB or network calls.
     const isDM = message.channel.isDMBased();
     const discordUserId = message.author.id;
     const discordUsername = message.author.tag || message.author.username;
 
     console.log(`[DiscordManager] message from ${discordUsername} (${discordUserId}) isDM=${isDM} contentLen=${message.content?.length ?? 0} mentionsBot=${message.mentions.users.has(client.user?.id ?? "")}`);
 
+    // ── Send placeholder FIRST, then claim dedup ownership ──────────────
+    // The "Thinking…" message is sent before any DB work so the user sees a
+    // response token within ~100 ms. Voice messages skip this (transcription
+    // path sends its own placeholder).
+    const _hasAudioAtt = [...message.attachments.values()].some(
+      (a) => a.contentType?.startsWith("audio/") || a.contentType?.startsWith("video/"),
+    );
+    let earlyPlaceholder: Message | null = null;
+    if (!_hasAudioAtt) {
+      try {
+        earlyPlaceholder = await message.channel.send("_Thinking…_");
+      } catch {
+        // ignore — reply will still be delivered
+      }
+    }
+
+    // Atomic DB claim: INSERT ... RETURNING — only the first process to
+    // insert wins ownership; concurrent processes see zero rows and drop.
+    const claimed = await claimMessageId(message.id);
+    if (!claimed) {
+      console.log(`[DiscordManager] duplicate message dropped (db atomic claim, id=${message.id})`);
+      if (earlyPlaceholder) earlyPlaceholder.delete().catch(() => {});
+      return;
+    }
+
     // ── Determine if we should respond ──────────────────────────────────
+    // Hoist the lookup result so the DM/pairing path below can reuse it
+    // without a second DB round-trip.
+    let hoistedPairedLookup: { userId: string; meta: DiscordLinkMeta } | null | undefined = undefined;
+
     if (!isDM) {
       if (botOwnerId === SHARED_BOT_KEY) {
         // Shared bot: look up the sender's paired Jarvis user to apply their
         // allowlist settings.  If not yet paired, fall through to pairing flow.
         const sharedPaired = await lookupUserByDiscordId(discordUserId);
+        hoistedPairedLookup = sharedPaired;
         if (sharedPaired) {
           const allowed = sharedPaired.meta.allowlistedGuilds || [];
           const guildId = (message.guild?.id) ?? "";
@@ -256,10 +280,12 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
             const guildEntry = allowed.find((g) => g.guildId === guildId && g.channelId === channelId);
             if (!guildEntry) {
               console.log(`[DiscordManager] shared guild msg ignored — channel ${channelId} not in allowlist`);
+              if (earlyPlaceholder) earlyPlaceholder.delete().catch(() => {});
               return;
             }
             if (guildEntry.requireMention && !mentioned) {
               console.log(`[DiscordManager] shared guild msg ignored — requireMention=true but bot not @mentioned`);
+              if (earlyPlaceholder) earlyPlaceholder.delete().catch(() => {});
               return;
             }
           }
@@ -272,6 +298,7 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
         if (link) {
           if (link.address !== discordUserId) {
             console.log(`[DiscordManager] guild msg ignored — sender ${discordUserId} != paired ${link.address}`);
+            if (earlyPlaceholder) earlyPlaceholder.delete().catch(() => {});
             return;
           }
           const allowed = link.meta.allowlistedGuilds || [];
@@ -285,10 +312,12 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
             const guildEntry = allowed.find((g) => g.guildId === guildId && g.channelId === channelId);
             if (!guildEntry) {
               console.log(`[DiscordManager] guild msg ignored — channel ${channelId} not in allowlist`);
+              if (earlyPlaceholder) earlyPlaceholder.delete().catch(() => {});
               return;
             }
             if (guildEntry.requireMention && !mentioned) {
               console.log(`[DiscordManager] guild msg ignored — requireMention=true but bot not @mentioned`);
+              if (earlyPlaceholder) earlyPlaceholder.delete().catch(() => {});
               return;
             }
           }
@@ -299,7 +328,11 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
     }
 
     // ── DM / pairing path: check if user is paired to this bot ──────────
-    const pairedUser = await lookupUserByDiscordId(discordUserId);
+    // Reuse the result already fetched in the shared-bot guild path (if any)
+    // to avoid a duplicate DB round-trip.
+    const pairedUser = hoistedPairedLookup !== undefined
+      ? hoistedPairedLookup
+      : await lookupUserByDiscordId(discordUserId);
     console.log(`[DiscordManager] pairedUser lookup for ${discordUserId}: ${pairedUser ? `userId=${pairedUser.userId}` : "not found"}`);
 
     // For the shared bot any paired Discord user is valid; for per-user bots
@@ -324,6 +357,9 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
           expiresAt: Date.now() + 60 * 60 * 1000,
         });
       }
+      // Delete the early placeholder before sending the pairing code so
+      // the user only sees one bot message (the pairing reply below).
+      if (earlyPlaceholder) earlyPlaceholder.delete().catch(() => {});
       await message
         .reply(
           `👋 Hey! I'm Jarvis, your AI productivity coach.\n\n` +
@@ -449,10 +485,17 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
 
     if (!userText) {
       console.log(`[DiscordManager] msg dropped — empty content (MessageContent intent may not be enabled in Discord Developer Portal for guild messages)`);
+      if (earlyPlaceholder) earlyPlaceholder.delete().catch(() => {});
       return;
     }
 
     console.log(`[DiscordManager] processing message: "${userText.slice(0, 80)}…"`);
+
+    // ── Resolve placeholder ─────────────────────────────────────────────
+    // Priority: voice transcription placeholder (typingMsg) → early text
+    // placeholder sent before DB lookups (earlyPlaceholder) → null.
+    // No new send needed here — both cases are already covered above.
+    let placeholder: Message | null = typingMsg ?? earlyPlaceholder;
 
     // ── Detect workspace topic channel ─────────────────────────────────
     // Use the resolved per-user userId (not botOwnerId which may be '__shared__')
@@ -486,8 +529,8 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
     if (namedAgentResult !== null) {
       // Named agent handled the message — send the reply and skip coach pipeline.
       const reply = namedAgentResult.reply || "Sorry, the agent couldn't generate a response right now.";
-      if (typingMsg) {
-        await editOrSendLong(typingMsg, reply);
+      if (placeholder) {
+        await editOrSendLong(placeholder, reply);
       } else {
         await sendLong(message.channel as { send(t: string): Promise<unknown> }, reply);
       }
@@ -496,8 +539,8 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
 
     // If the named agent threw, let the user know something went wrong then
     // continue with the standard coach pipeline so they still get a response.
-    if (namedAgentFailed && typingMsg) {
-      await typingMsg.edit("_Agent encountered an issue — routing to Jarvis instead…_").catch(() => {});
+    if (namedAgentFailed && placeholder) {
+      await placeholder.edit("_Agent encountered an issue — routing to Jarvis instead…_").catch(() => {});
     }
 
     // ── Phase 6b: Legacy persona injection (pre-new-agent-system rows) ────
@@ -507,23 +550,15 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
       : "";
 
     // ── Route through coach pipeline with streaming edits ──────────────
-    // Reuse the voice-transcription message as the thinking placeholder so
-    // voice messages only ever produce ONE bot message.  For text messages
-    // (typingMsg is null) send a fresh placeholder as before.
-    let placeholder: Message | null = typingMsg;
-    if (!placeholder) {
-      try {
-        placeholder = await message.channel.send("_Thinking…_");
-      } catch {
-        // ignore send failure for placeholder
-      }
-    }
+    // placeholder was already sent above (before routeToNamedAgent) so it
+    // is always set by this point — no second send needed here.
 
     // Streaming: accumulate chunks and edit the placeholder at most once
-    // per ~900 ms to stay well within Discord's edit rate limits.
+    // per ~400 ms — fast enough to feel live while staying within Discord's
+    // edit rate limits.
     let streamBuf = "";
     let lastEditAt = 0;
-    const STREAM_INTERVAL = 900;
+    const STREAM_INTERVAL = 400;
     const onToken = (chunk: string) => {
       streamBuf += chunk;
       const now = Date.now();

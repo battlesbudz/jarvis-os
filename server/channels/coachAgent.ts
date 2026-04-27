@@ -142,7 +142,30 @@ export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyR
   const _preThinkPromise = _orchestratorModelPromise.then((m) =>
     preThink(userText || "", channelName + " " + _quickDateStr, m),
   );
-  const [goalsRow, statsRow, lcRow, chatRow, commitmentsRows, googleTokens, prefsRow, recentInteractionsResult, surfacedItemsResult, orchestratorModelResult, preThinkResult] = await Promise.allSettled([
+
+  // ── Fire Google token lookup immediately so Gmail/Calendar API calls can
+  // start in parallel with the main DB batch instead of waiting for it. ──
+  const googleTokensPromise = getValidGoogleTokens(userId);
+  // Tentative date key using UTC — close enough for most users to start
+  // calendar fetches early; the real dateKey (timezone-adjusted) is
+  // computed after prefs resolve and used for everything else.
+  const _nowUtc = new Date();
+  const tentativeDateKey = `${_nowUtc.getUTCFullYear()}-${String(_nowUtc.getUTCMonth() + 1).padStart(2, "0")}-${String(_nowUtc.getUTCDate()).padStart(2, "0")}`;
+  // Non-throwing: any failure in token lookup or API calls degrades Gmail/Calendar
+  // context gracefully instead of propagating up and failing the whole coach turn.
+  const googleDataPromise = googleTokensPromise.then(async (tokens) => {
+    if (!tokens || tokens.length === 0) return null;
+    const [emailResult, ...calResults] = await Promise.allSettled([
+      getRecentEmailCommitments(14, tokens[0]),
+      ...tokens.map((t) => getGoogleCalendarEvents(tentativeDateKey, undefined, undefined, t)),
+    ]);
+    return { tokens, emailResult, calResults };
+  }).catch((err) => {
+    console.error("[coach] googleDataPromise error (non-fatal, degraded context):", err);
+    return null;
+  });
+
+  const [goalsRow, statsRow, lcRow, chatRow, commitmentsRows, prefsRow, recentInteractionsResult, surfacedItemsResult, soulBlockResult, websiteCrawlResult, todayPlanRow, orchestratorModelResult, preThinkResult] = await Promise.allSettled([
     db.select().from(schema.goals).where(eq(schema.goals.userId, userId)).limit(1),
     db.select().from(schema.stats).where(eq(schema.stats.userId, userId)).limit(1),
     db.select().from(schema.lifeContext).where(eq(schema.lifeContext.userId, userId)).limit(1),
@@ -154,7 +177,6 @@ export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyR
     db.select().from(schema.commitments)
       .where(and(eq(schema.commitments.userId, userId), eq(schema.commitments.status, "pending")))
       .orderBy(desc(schema.commitments.extractedAt)).limit(10),
-    getValidGoogleTokens(userId),
     db.select().from(schema.userPreferences).where(eq(schema.userPreferences.userId, userId)).limit(1),
     getRecentInteractions(userId, 20),
     db.select({
@@ -172,6 +194,21 @@ export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyR
       ))
       .orderBy(desc(schema.inboxItems.surfacedAt))
       .limit(5),
+    // Soul and website crawl blocks are independent of DB results — run them
+    // concurrently with the rest of the batch instead of serially after it.
+    getSoulPromptBlock(userId),
+    (async () => {
+      try {
+        const { getWebsiteCrawlSummaryBlock } = await import("../websiteCrawler");
+        return await getWebsiteCrawlSummaryBlock(userId);
+      } catch { return ""; }
+    })(),
+    // todayPlan — fetched with tentative UTC date key so it runs in the
+    // parallel batch; reconciled below if the user's timezone-adjusted date
+    // differs from the UTC date (rare, only near day boundaries).
+    db.select().from(schema.plans)
+      .where(and(eq(schema.plans.userId, userId), eq(schema.plans.date, tentativeDateKey)))
+      .limit(1),
     // Resolved per-user orchestrator model (already fired above).
     _orchestratorModelPromise,
     // Pre-think fires as soon as the model resolves (already chained above).
@@ -202,26 +239,36 @@ export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyR
   const turnGuidance: string =
     preThinkResult.status === "fulfilled" ? (preThinkResult.value as string) : "";
 
+  // Soul and website crawl blocks were fetched in the parallel batch above.
+  const soulBlock = soulBlockResult.status === "fulfilled" ? soulBlockResult.value : "";
+  let websiteCrawlBlock = websiteCrawlResult.status === "fulfilled" ? websiteCrawlResult.value : "";
+
   const localForDateKey = new Date(new Date().toLocaleString("en-US", { timeZone: userTimezone }));
   const dateKey = `${localForDateKey.getFullYear()}-${String(localForDateKey.getMonth() + 1).padStart(2, "0")}-${String(localForDateKey.getDate()).padStart(2, "0")}`;
 
+  // todayPlan was fetched in the parallel batch with tentativeDateKey (UTC).
+  // Use that result directly in the common case; re-fetch only when the user's
+  // real timezone-adjusted date differs (rare — only near UTC day boundaries).
   let todayPlan: any = null;
-  try {
-    const planRows = await db.select().from(schema.plans)
-      .where(and(eq(schema.plans.userId, userId), eq(schema.plans.date, dateKey))).limit(1);
-    todayPlan = planRows[0]?.data as any || null;
-  } catch (err) {
-    console.error("[coach] plan fetch failed:", err);
+  if (todayPlanRow.status === "fulfilled") {
+    todayPlan = (todayPlanRow.value[0]?.data as any) || null;
+  }
+  if (dateKey !== tentativeDateKey) {
+    try {
+      const planRows = await db.select().from(schema.plans)
+        .where(and(eq(schema.plans.userId, userId), eq(schema.plans.date, dateKey))).limit(1);
+      todayPlan = (planRows[0]?.data as any) || null;
+    } catch (err) {
+      console.error("[coach] plan re-fetch (timezone reconcile) failed:", err);
+    }
   }
 
-  if (googleTokens.status === "fulfilled" && googleTokens.value.length > 0) {
+  // Join the Google data promise that was fired in parallel with the DB batch.
+  const googleRaw = await googleDataPromise;
+  if (googleRaw) {
     gmailConnected = true;
-    const tokens = googleTokens.value;
-    googleAccessToken = tokens[0];
-    const [emailResult, ...calResults] = await Promise.allSettled([
-      getRecentEmailCommitments(14, tokens[0]),
-      ...tokens.map(t => getGoogleCalendarEvents(dateKey, undefined, undefined, t)),
-    ]);
+    googleAccessToken = googleRaw.tokens[0];
+    const { emailResult, calResults } = googleRaw;
     if (emailResult.status === "fulfilled") gmailItems = emailResult.value;
     const seenEventIds = new Set<string>();
     for (const calResult of calResults) {
@@ -232,6 +279,30 @@ export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyR
             calendarEvents.push(ev);
           }
         }
+      }
+    }
+    // If the user's real date differs from the UTC tentative key used to kick
+    // off the early calendar fetch, re-fetch with the correct date so events
+    // from the right day are shown (affects users near timezone day boundaries).
+    if (dateKey !== tentativeDateKey) {
+      try {
+        const reCalResults = await Promise.allSettled(
+          googleRaw.tokens.map((t) => getGoogleCalendarEvents(dateKey, undefined, undefined, t)),
+        );
+        calendarEvents = [];
+        const seenIds2 = new Set<string>();
+        for (const calResult of reCalResults) {
+          if (calResult.status === "fulfilled") {
+            for (const ev of calResult.value) {
+              if (!seenIds2.has(ev.id)) {
+                seenIds2.add(ev.id);
+                calendarEvents.push(ev);
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.error("[coach] calendar re-fetch (timezone reconcile) failed:", err);
       }
     }
   }
@@ -287,14 +358,6 @@ export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyR
         return `- [${item.sourceType || "item"}${timestamp ? ` @ ${timestamp}` : ""}] ${parts.join(" | ")}`;
       }).join("\n")
     : "";
-
-  const soulBlock = await getSoulPromptBlock(userId);
-
-  let websiteCrawlBlock = '';
-  try {
-    const { getWebsiteCrawlSummaryBlock } = await import("../websiteCrawler");
-    websiteCrawlBlock = await getWebsiteCrawlSummaryBlock(userId);
-  } catch {}
 
   const formatHintKey = Object.keys(FORMAT_HINTS).find((k) => channelName.startsWith(k)) ?? "Telegram";
   const formatHint = FORMAT_HINTS[formatHintKey];
