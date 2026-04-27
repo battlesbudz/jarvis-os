@@ -4,13 +4,43 @@ import type { ToolGroup } from "../agent/tools";
 export type { ChannelName, NotificationType };
 export type { ToolGroup };
 
-export interface ChannelAttachment {
-  kind: "document";
-  filename: string;
-  content: string | Buffer;
-  caption?: string;
-  mimeType?: string;
-}
+/** Attachment sent from the agent to a channel after a tool run. */
+export type ChannelAttachment =
+  | {
+      kind: "document";
+      filename: string;
+      content: string | Buffer;
+      caption?: string;
+      mimeType?: string;
+      mcpServerName?: string;
+    }
+  | {
+      kind: "image";
+      /** URL or base64 data URI for the image */
+      url?: string;
+      /** Raw base64 blob data */
+      data?: string;
+      mimeType?: string;
+      caption?: string;
+      mcpServerName?: string;
+    }
+  | {
+      kind: "file";
+      filename: string;
+      url?: string;
+      data?: string;
+      mimeType?: string;
+      caption?: string;
+      /** Size in bytes (optional) */
+      size?: number;
+      mcpServerName?: string;
+    }
+  | {
+      kind: "markdown";
+      text: string;
+      caption?: string;
+      mcpServerName?: string;
+    };
 
 export interface ChannelSendOpts {
   attachments?: ChannelAttachment[];

@@ -13,7 +13,7 @@
 import { db } from "../../db";
 import { mcpServers } from "@shared/schema";
 import { eq, and } from "drizzle-orm";
-import { McpClient, McpToolDefinition } from "./mcpClient";
+import { McpClient, McpToolDefinition, McpPromptDefinition } from "./mcpClient";
 import type { AgentTool } from "../types";
 
 // ── SSRF deny-list ────────────────────────────────────────────────────────────
@@ -58,6 +58,12 @@ export interface McpServerStatus {
   connected: boolean;
   toolCount: number;
   error?: string;
+}
+
+export interface McpPromptEntry {
+  serverName: string;
+  serverId: string;
+  prompt: McpPromptDefinition;
 }
 
 // Max tools we accept from a single server to prevent tool flooding.
@@ -168,6 +174,17 @@ class McpServerRegistry {
     return tools;
   }
 
+  /**
+   * Returns the McpClient for the given server ID if it is accessible to the user.
+   * Accessible = system-scoped (userId = null) OR owned by the user.
+   */
+  getClientForUser(userId: string, serverId: string): import("./mcpClient").McpClient | undefined {
+    const row = this.rows.get(serverId);
+    if (!row || !row.enabled) return undefined;
+    if (row.userId !== null && row.userId !== userId) return undefined;
+    return this.clients.get(serverId);
+  }
+
   private _safeName(serverName: string): string {
     return serverName.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
   }
@@ -179,7 +196,7 @@ class McpServerRegistry {
       name: toolName,
       description: `[MCP: ${serverName}] ${def.description ?? def.name}`,
       parameters: def.inputSchema ?? { type: "object", properties: {} },
-      async execute(args) {
+      async execute(args, ctx) {
         try {
           if (args && typeof args === "object") scanForPrivateUrls(args);
 
@@ -192,17 +209,82 @@ class McpServerRegistry {
             };
           }
 
-          const result = await client.callTool(def.name, args as Record<string, unknown>);
-          const text = result.content
-            .filter((c) => c.type === "text")
-            .map((c) => c.text ?? "")
-            .join("\n")
-            .trim();
+          // Wire up progress notifications through the context's onProgress callback
+          const progressCallback = ctx.state.onProgress
+            ? (message: string, progress?: number, total?: number) => {
+                const fullMsg = `[MCP ${serverName}] ${message}`;
+                ctx.state.onProgress!(fullMsg);
+              }
+            : undefined;
+
+          const result = await client.callTool(
+            def.name,
+            args as Record<string, unknown>,
+            progressCallback,
+          );
+
+          // ── Structured content handling ──────────────────────────────────
+          // Extract image and non-text content from the result and attach to ctx
+          const textParts: string[] = [];
+          for (const item of result.content) {
+            if (item.type === "text") {
+              textParts.push(item.text ?? "");
+            } else if (item.type === "image" && item.data) {
+              // Attach image blob as a PendingAttachment
+              if (!ctx.state.pendingAttachments) ctx.state.pendingAttachments = [];
+              ctx.state.pendingAttachments.push({
+                kind: "image",
+                data: item.data,
+                mimeType: item.mimeType ?? "image/png",
+                mcpServerName: serverName,
+              });
+            } else if (item.type === "resource" && item.resource) {
+              // Treat embedded resource as a file attachment
+              const res = item.resource as { uri?: string; mimeType?: string; text?: string; blob?: string };
+              if (!ctx.state.pendingAttachments) ctx.state.pendingAttachments = [];
+              if (res.text) {
+                // Text resource — render as markdown
+                ctx.state.pendingAttachments.push({
+                  kind: "markdown",
+                  text: res.text,
+                  mcpServerName: serverName,
+                });
+                textParts.push(`[Resource: ${res.uri ?? "embedded"}]`);
+              } else if (res.blob) {
+                ctx.state.pendingAttachments.push({
+                  kind: "file",
+                  filename: res.uri ?? "resource",
+                  data: res.blob,
+                  mimeType: res.mimeType ?? "application/octet-stream",
+                  mcpServerName: serverName,
+                });
+              } else if (res.uri) {
+                // URI-only reference — attempt to fetch resource content via resources/read
+                try {
+                  const contents = await client.readResource(res.uri);
+                  for (const rc of contents) {
+                    if (rc.text) {
+                      ctx.state.pendingAttachments!.push({ kind: "markdown", text: rc.text, mcpServerName: serverName });
+                    } else if (rc.blob) {
+                      const filename = res.uri.split("/").pop() ?? "resource";
+                      ctx.state.pendingAttachments!.push({ kind: "file", filename, data: rc.blob, mimeType: res.mimeType, mcpServerName: serverName });
+                    }
+                  }
+                } catch { /* readResource failed — skip silently */ }
+              }
+            }
+          }
+
+          const text = textParts.join("\n").trim();
 
           return {
             ok: !result.isError,
             content: text || (result.isError ? "MCP tool returned an error with no message." : "Done."),
             label: `mcp:${serverName}/${def.name}`,
+            detail: JSON.stringify({
+              mcpServerName: serverName,
+              hasAttachments: (ctx.state.pendingAttachments?.length ?? 0) > 0,
+            }),
           };
         } catch (err) {
           return {
@@ -213,6 +295,50 @@ class McpServerRegistry {
         }
       },
     };
+  }
+
+  // ── Prompts ───────────────────────────────────────────────────────────────
+
+  /**
+   * Fetch prompt templates from all servers visible to the given user.
+   * Returns a flat list with server attribution.
+   */
+  async listPromptsForUser(userId: string): Promise<McpPromptEntry[]> {
+    const results: McpPromptEntry[] = [];
+    for (const [id, row] of this.rows.entries()) {
+      if (!row.enabled) continue;
+      if (row.userId !== null && row.userId !== userId) continue;
+      const client = this.clients.get(id);
+      if (!client) continue;
+      try {
+        const prompts = await client.listPrompts();
+        for (const p of prompts) {
+          results.push({ serverName: row.name, serverId: id, prompt: p });
+        }
+      } catch (err) {
+        console.warn(`[McpRegistry] listPrompts failed for "${row.name}":`, (err as Error).message);
+      }
+    }
+    return results;
+  }
+
+  /**
+   * Fetch prompt templates from all system-scoped servers (userId = null).
+   */
+  async listSystemPrompts(): Promise<McpPromptEntry[]> {
+    const results: McpPromptEntry[] = [];
+    for (const [id, row] of this.rows.entries()) {
+      if (row.userId !== null || !row.enabled) continue;
+      const client = this.clients.get(id);
+      if (!client) continue;
+      try {
+        const prompts = await client.listPrompts();
+        for (const p of prompts) {
+          results.push({ serverName: row.name, serverId: id, prompt: p });
+        }
+      } catch {}
+    }
+    return results;
   }
 
   // ── CRUD ─────────────────────────────────────────────────────────────────────

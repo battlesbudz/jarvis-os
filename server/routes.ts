@@ -2491,7 +2491,12 @@ You can extend yourself by building new tools directly. Generate the complete Ty
         }),
       ];
 
-      const actionResults: { tool: string; result: 'success' | 'error'; label: string; url?: string; buttonLabel?: string }[] = [];
+      const actionResults: { tool: string; result: 'success' | 'error'; label: string; url?: string; buttonLabel?: string; code?: string; channel?: string; screenshotUrl?: string; imageUrl?: string; imageCaption?: string; videoUrl?: string; videoCaption?: string; mcpServerName?: string }[] = [];
+      // Accumulates MCP rich attachments across all tool calls in this request.
+      // Emitted alongside executedActions in the type:'actions' SSE event to
+      // mirror the CoachReplyResult { executedActions, attachments } contract.
+      type McpAttachmentSse = { kind: 'image'|'markdown'|'file'|'document'; filename?: string; caption?: string; mimeType?: string; data?: string; text?: string; size?: number; mcpServerName?: string };
+      const allMcpAttachments: McpAttachmentSse[] = [];
       let toolMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [];
 
       // Track whether the client disconnected mid-stream (e.g. switched to camera app).
@@ -2545,6 +2550,45 @@ You can extend yourself by building new tools directly. Generate the complete Ty
         const MAX_TOOL_TURNS = 20;
         let loopFinalText: string | null = null; // text returned by model mid-loop
 
+        // Build per-request tool list including MCP tools for this user
+        let requestTools: OpenAI.Chat.Completions.ChatCompletionTool[] = [...coachTools];
+        const mcpAgentToolsMap = new Map<string, import("./agent/types").AgentTool>();
+        try {
+          const { mcpServerRegistry } = await import("./agent/mcp/mcpServerRegistry");
+          const mcpAgentTools = mcpServerRegistry.getToolsForUser(userId);
+          for (const agentTool of mcpAgentTools) {
+            mcpAgentToolsMap.set(agentTool.name, agentTool);
+            requestTools.push({
+              type: "function",
+              function: {
+                name: agentTool.name,
+                description: agentTool.description,
+                parameters: agentTool.parameters as Record<string, unknown>,
+              },
+            });
+          }
+        } catch (err) {
+          console.warn("[Coach/MCP] failed to load MCP tools:", (err as Error).message);
+        }
+
+        // Shared MCP tool context (pendingAttachments accumulate across turns)
+        const mcpToolCtx: import("./agent/types").ToolContext = {
+          userId,
+          state: {
+            pendingAttachments: [],
+            onProgress: (msg: string) => {
+              if (!res.headersSent) {
+                res.setHeader('Content-Type', 'text/event-stream');
+                res.setHeader('Cache-Control', 'no-cache, no-transform');
+                res.setHeader('X-Accel-Buffering', 'no');
+                res.setHeader('Access-Control-Allow-Origin', '*');
+                res.flushHeaders();
+              }
+              try { res.write(`data: ${JSON.stringify({ type: 'mcp_progress', message: msg })}\n\n`); } catch {}
+            },
+          },
+        };
+
         for (let turn = 0; turn < MAX_TOOL_TURNS; turn++) {
           if (signal.aborted) break;
           const currentMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
@@ -2554,7 +2598,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
           const phase1 = await openai.chat.completions.create({
             model: "gpt-5-mini",
             messages: currentMessages,
-            tools: coachTools,
+            tools: requestTools,
             // Force a tool call on turn 0 for device-control requests.
             // Subsequent turns use "auto" so the model can stop and respond.
             tool_choice: (turn === 0 && isDeviceControlRequest) ? "required" : "auto",
@@ -2756,7 +2800,79 @@ You can extend yourself by building new tools directly. Generate the complete Ty
               }
             }
 
-            const execResult = await executeCoachTool(tc.function.name, args, userId);
+            // MCP tools are executed via the agent tool registry (not executeCoachTool)
+            let execResult: { result: 'success' | 'error'; label: string; detail: string };
+            let plainMcpServerName: string | undefined;
+            if (tc.function.name.startsWith('mcp__') && mcpAgentToolsMap.has(tc.function.name)) {
+              const mcpAgentTool = mcpAgentToolsMap.get(tc.function.name)!;
+              // Clear pending attachments from previous turns on this context
+              mcpToolCtx.state.pendingAttachments = [];
+              if (!res.headersSent) {
+                res.setHeader('Content-Type', 'text/event-stream');
+                res.setHeader('Cache-Control', 'no-cache, no-transform');
+                res.setHeader('X-Accel-Buffering', 'no');
+                res.setHeader('Access-Control-Allow-Origin', '*');
+                res.flushHeaders();
+              }
+              // Emit a "working" indicator for MCP tools
+              const mcpServerDisplayName = (() => {
+                const parts = tc.function.name.split('__');
+                return parts.length >= 2 ? parts[1].replace(/_/g, ' ') : 'MCP';
+              })();
+              plainMcpServerName = mcpServerDisplayName;
+              res.write(`data: ${JSON.stringify({ type: 'working', message: `Calling ${mcpServerDisplayName}...` })}\n\n`);
+              try {
+                const toolResult = await mcpAgentTool.execute(args, mcpToolCtx);
+                execResult = {
+                  result: toolResult.ok ? 'success' : 'error',
+                  label: toolResult.ok
+                    ? (toolResult.label ?? `Done via ${mcpServerDisplayName}`)
+                    : (toolResult.label ?? 'MCP tool error'),
+                  detail: toolResult.content ?? toolResult.detail ?? '',
+                };
+                // Map pendingAttachments to ChannelAttachment-compatible JSON shape.
+                // McpAttachmentSse (declared above) mirrors lib/storage.ts McpAttachment.
+                const sseAttachments: McpAttachmentSse[] = mcpToolCtx.state.pendingAttachments.map(att => {
+                  const serverName = att.mcpServerName ?? mcpServerDisplayName;
+                  const approxSize = (data: string | undefined, text: string | undefined): number | undefined => {
+                    if (data) return Math.round(data.length * 0.75);
+                    if (text) return Buffer.byteLength(text, 'utf8');
+                    return undefined;
+                  };
+                  if (att.kind === 'image') {
+                    return { kind: 'image' as const, data: att.data, mimeType: att.mimeType ?? 'image/png', caption: att.caption, size: approxSize(att.data, undefined), mcpServerName: serverName };
+                  } else if (att.kind === 'markdown') {
+                    return { kind: 'markdown' as const, text: att.text, size: approxSize(undefined, att.text), mcpServerName: serverName };
+                  } else {
+                    const textContent = typeof att.content === 'string' ? att.content : undefined;
+                    return {
+                      kind: (att.kind === 'document' ? 'document' : 'file') as 'document' | 'file',
+                      filename: att.filename,
+                      text: textContent,
+                      data: att.data,
+                      mimeType: att.mimeType,
+                      size: approxSize(att.data, textContent),
+                      mcpServerName: serverName,
+                    };
+                  }
+                });
+                if (sseAttachments.length > 0) {
+                  // Accumulate into allMcpAttachments — emitted with type:'actions' at the end
+                  // to mirror CoachReplyResult { executedActions, attachments } in one event.
+                  allMcpAttachments.push(...sseAttachments);
+                  // Clear plainMcpServerName so we don't also emit a plain attribution action.
+                  plainMcpServerName = undefined;
+                }
+              } catch (err) {
+                execResult = {
+                  result: 'error',
+                  label: 'MCP tool error',
+                  detail: err instanceof Error ? err.message : String(err),
+                };
+              }
+            } else {
+              execResult = await executeCoachTool(tc.function.name, args, userId);
+            }
 
             // Detect integration connectivity errors in the primary chat and emit
             // a structured integration_error SSE event so the UI can show an
@@ -2849,7 +2965,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
                 if (parsed.caption) linkData.videoCaption = parsed.caption;
               } catch {}
             }
-            actionResults.push({ tool: tc.function.name, result: execResult.result, label: execResult.label, ...linkData });
+            actionResults.push({ tool: tc.function.name, result: execResult.result, label: execResult.label, ...linkData, ...(plainMcpServerName ? { mcpServerName: plainMcpServerName } : {}) });
             let toolResultContent: string;
             if (tc.function.name === 'daemon_action' && execResult.result === 'error') {
               toolResultContent = `⛔ DAEMON ACTION FAILED — THE PHONE DID NOT EXECUTE THIS COMMAND.\nAction attempted: ${String(args.action || 'unknown')}\nError: ${execResult.detail || execResult.label}\n\nYou MUST tell the user this specific action FAILED. Do NOT describe it as successful. Do NOT invent what the phone showed or did.`;
@@ -2875,9 +2991,13 @@ You can extend yourself by building new tools directly. Generate the complete Ty
             res.setHeader('Access-Control-Allow-Origin', '*');
             res.flushHeaders();
           }
-          if (actionResults.length > 0) {
+          if (actionResults.length > 0 || allMcpAttachments.length > 0) {
             const nonSearchActions = actionResults.filter(a => a.tool !== 'web_search');
-            if (nonSearchActions.length > 0) res.write(`data: ${JSON.stringify({ type: 'actions', actions: nonSearchActions })}\n\n`);
+            if (nonSearchActions.length > 0 || allMcpAttachments.length > 0) {
+              const actionsPayload: Record<string, unknown> = { type: 'actions', actions: nonSearchActions };
+              if (allMcpAttachments.length > 0) actionsPayload.attachments = allMcpAttachments;
+              res.write(`data: ${JSON.stringify(actionsPayload)}\n\n`);
+            }
           }
           stopKeepalive();
           // Persist the response if daemon actions were involved — survives client disconnect
@@ -2907,10 +3027,12 @@ You can extend yourself by building new tools directly. Generate the complete Ty
         res.flushHeaders();
       }
 
-      if (actionResults.length > 0) {
+      if (actionResults.length > 0 || allMcpAttachments.length > 0) {
         const nonSearchActions = actionResults.filter(a => a.tool !== 'web_search');
-        if (nonSearchActions.length > 0) {
-          res.write(`data: ${JSON.stringify({ type: 'actions', actions: nonSearchActions })}\n\n`);
+        if (nonSearchActions.length > 0 || allMcpAttachments.length > 0) {
+          const actionsPayload: Record<string, unknown> = { type: 'actions', actions: nonSearchActions };
+          if (allMcpAttachments.length > 0) actionsPayload.attachments = allMcpAttachments;
+          res.write(`data: ${JSON.stringify(actionsPayload)}\n\n`);
         }
       }
 
@@ -6487,6 +6609,51 @@ Extract up to 8 memories per batch.`;
   });
 
   // ── MCP server management ────────────────────────────────────────────────────
+
+  /** GET /api/mcp-servers/prompts — list MCP prompt templates across all connected servers for the user. */
+  app.get("/api/mcp-servers/prompts", async (req: Request, res: Response) => {
+    const userId = (req as any).userId as string | undefined;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    try {
+      const { mcpServerRegistry } = await import("./agent/mcp/mcpServerRegistry");
+      const prompts = await mcpServerRegistry.listPromptsForUser(userId);
+      res.json({
+        prompts: prompts.map((entry) => ({
+          serverName: entry.serverName,
+          serverId: entry.serverId,
+          name: entry.prompt.name,
+          description: entry.prompt.description,
+          arguments: entry.prompt.arguments ?? [],
+        })),
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /** POST /api/mcp-servers/prompts/resolve — expand a prompt template to its rendered text. */
+  app.post("/api/mcp-servers/prompts/resolve", async (req: Request, res: Response) => {
+    const userId = (req as any).userId as string | undefined;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    const { serverId, name, args } = req.body as { serverId: string; name: string; args?: Record<string, string> };
+    if (!serverId || !name) return res.status(400).json({ error: "serverId and name are required" });
+    try {
+      const { mcpServerRegistry } = await import("./agent/mcp/mcpServerRegistry");
+      const client = mcpServerRegistry.getClientForUser(userId, serverId);
+      if (!client) return res.status(404).json({ error: "MCP server not found or not accessible" });
+      const result = await client.getPrompt(name, args);
+      // Collapse all message text parts into a single resolved prompt string
+      const resolvedText = result.messages
+        .map(m => (typeof m.content === 'object' && 'text' in m.content ? m.content.text ?? '' : ''))
+        .filter(Boolean)
+        .join('\n\n');
+      res.json({ resolvedText: resolvedText || name, description: result.description });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: msg });
+    }
+  });
 
   /** GET /api/mcp-servers — list MCP servers visible to the current user. */
   app.get("/api/mcp-servers", async (req: Request, res: Response) => {

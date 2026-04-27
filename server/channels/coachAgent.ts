@@ -483,6 +483,8 @@ When a user's request involves multi-step research, drafting a document or plan,
       todayPlan,
       gmailMessageIds: gmailItems.map((i: { id?: string }) => i.id).filter((id): id is string => !!id),
       pendingAttachments: [],
+      // Forward MCP progress notifications as streaming tokens so channels show live progress
+      onProgress: onToken ? (msg: string) => onToken(`[progress] ${msg}`) : undefined,
     },
   };
 
