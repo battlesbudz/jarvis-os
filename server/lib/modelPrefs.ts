@@ -80,21 +80,3 @@ export async function getModel(userId: string, category: ModelCategory): Promise
   }
   return MODEL_DEFAULTS[category];
 }
-
-/**
- * Check whether orchestrator mode is enabled for a user.
- */
-export async function isOrchestratorEnabled(userId: string): Promise<boolean> {
-  if (!userId) return false;
-  try {
-    const rows = await db
-      .select({ data: userPreferences.data })
-      .from(userPreferences)
-      .where(eq(userPreferences.userId, userId))
-      .limit(1);
-    const prefs = rows[0]?.data as Record<string, unknown> | undefined;
-    return Boolean(prefs?.orchestratorEnabled);
-  } catch {
-    return false;
-  }
-}
