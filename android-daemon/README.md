@@ -1,6 +1,6 @@
 # Jarvis Android Daemon
 
-An Android app that gives Jarvis autonomous control over your Android phone — open apps, browse the web, read the screen, take screenshots, tap/type, and access any file.
+An Android app that gives Jarvis autonomous control over your Android phone — open apps, browse the web, read the screen, take screenshots, tap/type, access files, snap photos/video, get GPS location, send SMS, and record your screen.
 
 ## Device Requirements
 
@@ -10,6 +10,10 @@ An Android app that gives Jarvis autonomous control over your Android phone — 
 | **Screenshot** | **Android 11 (API 30)** — `AccessibilityService.takeScreenshot()` is not available on older versions |
 | File manager access | Android 11 (API 30) — MANAGE_EXTERNAL_STORAGE |
 | Boot auto-reconnect | Android 8.0 (API 26) |
+| **Camera snap/clip** | **Android 8.0 (API 26)** — Camera2 API, requires CAMERA + RECORD_AUDIO grant |
+| **GPS location** | **Android 8.0 (API 26)** — FusedLocationProviderClient (Play Services required) |
+| **Send SMS** | **Android 8.0 (API 26)** — SEND_SMS; agent always asks for explicit user approval |
+| **Screen recording** | **Android 8.0 (API 26)** — MediaProjection; one-time grant from the daemon app UI |
 
 > The app installs on Android 8+ but screenshot will return an error on devices below Android 11.
 
@@ -79,6 +83,11 @@ Once connected, you can tell Jarvis via Telegram or the app:
 - "Press home" → presses the home button
 - "List files in my Downloads folder" → lists all files in Downloads
 - "Read the file invoice.pdf in my Downloads" → reads the file content
+- "Take a photo with the front camera" → captures a JPEG still from the selfie or rear camera
+- "Record a 10-second video clip with the back camera" → records an MP4 clip up to 30 s
+- "Where am I right now?" → returns GPS coordinates (lat/lng/accuracy/altitude)
+- "Text John that I'll be 10 minutes late" → sends an SMS after explicit agent confirmation
+- "Record my screen for the next 30 seconds" → records a MediaProjection MP4 up to 60 s (requires one-time grant from the daemon app)
 
 ## Permissions Explained
 
@@ -89,13 +98,29 @@ Once connected, you can tell Jarvis via Telegram or the app:
 | FOREGROUND_SERVICE | Keeps the daemon alive as a persistent background service |
 | INTERNET | WebSocket connection to the Jarvis server |
 | RECEIVE_BOOT_COMPLETED | Auto-starts after device reboot (once paired) |
+| CAMERA | Photo still capture and video clip recording via Camera2 API |
+| RECORD_AUDIO | Audio track for camera video clips and screen recordings |
+| ACCESS_FINE_LOCATION | Precise GPS fix via FusedLocationProviderClient |
+| ACCESS_COARSE_LOCATION | Fallback coarse location when GPS is unavailable |
+| SEND_SMS | Sends text messages (always requires agent confirmation before sending) |
+| FOREGROUND_SERVICE_MEDIA_PROJECTION | Required on Android 14+ for screen recording foreground service |
+
+## Setup — New Permissions
+
+After updating to this version, open the Jarvis Daemon app to grant the new permissions:
+
+1. **Camera** — tap "Grant" next to Camera; Android will prompt for permission
+2. **Screen Recording** — tap "Allow" next to Screen Recording; Android will show the MediaProjection consent dialog. This must be done before Jarvis can record your screen.
+3. **Location & SMS** — granted automatically via the standard Android runtime permission flow the first time Jarvis requests them
 
 ## Architecture
 
 - **`WebSocketService`** — Foreground service that maintains the WebSocket connection to `/api/daemon/ws`, handles the pair/op/result protocol, and auto-reconnects on Wi-Fi drops
 - **`JarvisAccessibilityService`** — Android Accessibility Service that reads the UI tree, performs gestures (tap/swipe), types text, presses system keys, and takes screenshots
-- **`OpHandler`** — Routes incoming ops to the correct implementation (open app, browse, read file, etc.)
-- **`MainActivity`** — Single-screen pairing UI with permission status and connection status
+- **`OpHandler`** — Routes incoming ops to the correct implementation (open app, browse, read file, camera, location, SMS, screen record, etc.)
+- **`CameraHandler`** — Camera2 API still capture (JPEG) and video clip (MP4) with front/rear camera selection
+- **`ScreenRecordHandler`** — MediaProjection-based screen recording returning base64 MP4; requires stored projection intent from MainActivity
+- **`MainActivity`** — Single-screen pairing UI with permission status (including camera and screen recording grants)
 - **`BootReceiver`** — Auto-starts the service after boot if the device was previously paired
 
 ## Security
@@ -103,4 +128,6 @@ Once connected, you can tell Jarvis via Telegram or the app:
 - The daemon only executes ops sent by the Jarvis server after you authenticate via pairing code
 - Each action type has a per-permission toggle in the Jarvis app (Profile → Connected Channels → Android Device)
 - Screenshot and screen reading are on by default; tap/type requires explicit opt-in
+- Camera and location are on by default; SMS is off by default and requires explicit opt-in
+- Camera clips, SMS sends, and screen recordings always require an additional agent-level approval prompt before executing
 - The service is not exported and cannot be controlled by other apps

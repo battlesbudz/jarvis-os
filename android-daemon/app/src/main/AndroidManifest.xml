@@ -23,6 +23,25 @@
          Safe to include in sideloaded APKs — only restricted on Play Store submissions. -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
 
+    <!-- Camera: photo capture and video recording -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
+
+    <!-- Location: GPS coordinates via FusedLocationProviderClient -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+
+    <!-- SMS: send text messages on behalf of the user -->
+    <uses-permission android:name="android.permission.SEND_SMS" />
+
+    <!-- Camera foreground service type (Android 14+ enforcement) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+
+    <!-- Screen recording: MediaProjection foreground service -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
@@ -46,7 +65,7 @@
             android:name=".WebSocketService"
             android:enabled="true"
             android:exported="false"
-            android:foregroundServiceType="dataSync" />
+            android:foregroundServiceType="dataSync|camera|mediaProjection" />
 
         <service
             android:name=".WakeWordService"

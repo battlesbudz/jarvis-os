@@ -1,11 +1,13 @@
 package com.jarvis.daemon
 
+import android.app.Activity
 import android.app.AlertDialog
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.content.SharedPreferences
+import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -44,6 +46,28 @@ class MainActivity : AppCompatActivity() {
         checkPermissionsStatus()
         if (!granted) {
             Toast.makeText(this, "Microphone permission is required for wake word detection ('Hey Jarvis'). Grant it in Settings → Apps → Jarvis Daemon → Permissions.", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private val requestCameraPermission = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        checkPermissionsStatus()
+        if (!granted) {
+            Toast.makeText(this, "Camera permission is required for photo/video capture. Grant it in Settings → Apps → Jarvis Daemon → Permissions.", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private val requestScreenCapture = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK && result.data != null) {
+            ScreenRecordHandler.projectionIntent = result.data
+            checkPermissionsStatus()
+            Toast.makeText(this, "Screen recording granted ✓", Toast.LENGTH_SHORT).show()
+        } else {
+            checkPermissionsStatus()
+            Toast.makeText(this, "Screen recording permission denied", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -116,6 +140,15 @@ class MainActivity : AppCompatActivity() {
 
         binding.btnGrantMicrophone.setOnClickListener {
             requestMicrophonePermissionIfNeeded()
+        }
+
+        binding.btnGrantCamera.setOnClickListener {
+            requestCameraPermission.launch(android.Manifest.permission.CAMERA)
+        }
+
+        binding.btnGrantScreenRecord.setOnClickListener {
+            val mpm = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+            requestScreenCapture.launch(mpm.createScreenCaptureIntent())
         }
 
         requestNotificationPermissionIfNeeded()
@@ -211,11 +244,20 @@ class MainActivity : AppCompatActivity() {
         binding.layoutPairInput.visibility = if (serviceActive) View.GONE else View.VISIBLE
     }
 
+    private fun isCameraGranted(): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
+        checkSelfPermission(android.Manifest.permission.CAMERA) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+
+    private fun isScreenRecordGranted(): Boolean = ScreenRecordHandler.projectionIntent != null
+
     private fun checkPermissionsStatus() {
         val accessibilityEnabled = isAccessibilityEnabled()
         val storageGranted = isStorageGranted()
         val notificationListenerEnabled = isNotificationListenerEnabled()
         val micGranted = isMicrophoneGranted()
+        val cameraGranted = isCameraGranted()
+        val screenRecordGranted = isScreenRecordGranted()
 
         binding.tvAccessibilityStatus.text = if (accessibilityEnabled) "✓ Enabled — phone control active" else "✗ Not enabled — tap Fix (REQUIRED for screen control)"
         binding.tvAccessibilityStatus.setTextColor(
@@ -237,6 +279,17 @@ class MainActivity : AppCompatActivity() {
             if (micGranted) getColor(R.color.status_ok) else getColor(R.color.status_warn)
         )
         binding.btnGrantMicrophone.visibility = if (micGranted) View.GONE else View.VISIBLE
+
+        binding.tvCameraStatus.text = if (cameraGranted) "✓ Granted — camera capture enabled" else "✗ Not granted — tap Grant to enable photos/video"
+        binding.tvCameraStatus.setTextColor(
+            if (cameraGranted) getColor(R.color.status_ok) else getColor(R.color.status_warn)
+        )
+        binding.btnGrantCamera.visibility = if (cameraGranted) View.GONE else View.VISIBLE
+
+        binding.tvScreenRecordStatus.text = if (screenRecordGranted) "✓ Granted — screen recording enabled" else "Not granted — tap Allow to enable screen recording"
+        binding.tvScreenRecordStatus.setTextColor(
+            if (screenRecordGranted) getColor(R.color.status_ok) else getColor(R.color.status_warn)
+        )
     }
 
     private fun isAccessibilityEnabled(): Boolean {
