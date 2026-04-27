@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import type { Express, Request, Response } from "express";
 import { db } from "./db";
 import { eq, and, desc, sql, gte, lte } from "drizzle-orm";
@@ -1874,7 +1875,7 @@ export async function startEmailAlertScanner(): Promise<void> {
             await db.insert(schema.inboxItems).values({
               userId: link.userId,
               sourceType: "email",
-              sourceId: email.messageId ? `gmail:${email.messageId}` : `gmail:${email.subject}`,
+              sourceId: email.messageId ? `gmail:${email.messageId}` : `gmail:fallback:${createHash('sha256').update(JSON.stringify({ subject: email.subject, from: email.from || '', receivedAt: email.receivedAt || '' })).digest('hex').slice(0, 16)}`,
               subject: email.subject,
               sender: email.from,
               snippet: email.snippet,
@@ -1957,7 +1958,7 @@ Return [] if nothing is urgent.`,
             await db.insert(schema.inboxItems).values({
               userId: link.userId,
               sourceType: "email",
-              sourceId: email.messageId ? `gmail:${email.messageId}` : `gmail:${email.subject}`,
+              sourceId: email.messageId ? `gmail:${email.messageId}` : `gmail:fallback:${createHash('sha256').update(JSON.stringify({ subject: email.subject, from: email.from || '', receivedAt: email.receivedAt || '' })).digest('hex').slice(0, 16)}`,
               subject: email.subject,
               sender: email.from,
               snippet: email.snippet,
