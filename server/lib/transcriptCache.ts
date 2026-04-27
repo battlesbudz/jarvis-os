@@ -57,164 +57,224 @@ function evictOldest(): void {
 
 // ── InnerTube transcript fetching ─────────────────────────────────────────────
 
-/** InnerTube API client key (public, browser-level key used by YouTube web client). */
+/** InnerTube API key (public WEB client key, same as YouTube's web player). */
 const INNERTUBE_KEY = "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8";
-const INNERTUBE_CLIENT_VERSION = "2.20240101.00.00";
+const INNERTUBE_CLIENT_VERSION = "2.20241107.04.00";
 
-/**
- * Known InnerTube API error statuses that indicate no transcript is available
- * and a fallback to youtube-transcript would also fail.
- * These are propagated immediately as clear user-facing errors.
- */
+const INNERTUBE_HEADERS = {
+  "Content-Type": "application/json",
+  "User-Agent":
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+  "X-YouTube-Client-Name": "1",
+  "X-YouTube-Client-Version": INNERTUBE_CLIENT_VERSION,
+  Origin: "https://www.youtube.com",
+  "Accept-Language": "en-US,en;q=0.9",
+};
+
+const INNERTUBE_CONTEXT = {
+  client: {
+    clientName: "WEB",
+    clientVersion: INNERTUBE_CLIENT_VERSION,
+    hl: "en",
+    gl: "US",
+  },
+};
+
+/** Playability statuses that mean no fallback will help. */
 const INNERTUBE_TERMINAL_STATUSES = new Set([
   "LOGIN_REQUIRED",
   "CONTENT_RESTRICTED",
-  "AGE_RESTRICTED",
+  "AGE_CHECK_REQUIRED",
+  "AGE_VERIFICATION_REQUIRED",
   "UNPLAYABLE",
 ]);
 
-// ── InnerTube response type interfaces ───────────────────────────────────────
-
-interface InnerTubeSnippetRun {
-  text: string;
-}
-
-interface InnerTubeTranscriptSegmentRenderer {
-  startMs: string;
-  endMs: string;
-  snippet: { runs: InnerTubeSnippetRun[] };
-}
-
-interface InnerTubeTranscriptSegmentItem {
-  transcriptSegmentRenderer?: InnerTubeTranscriptSegmentRenderer;
-}
-
-interface InnerTubeTranscriptSegmentListRenderer {
-  initialSegments: InnerTubeTranscriptSegmentItem[];
-}
+// ── InnerTube typed interfaces ────────────────────────────────────────────────
 
 interface InnerTubePlayabilityStatus {
   status: string;
+  reason?: string;
 }
 
-interface InnerTubeResponse {
+interface InnerTubeCaptionTrack {
+  baseUrl: string;
+  name: { simpleText: string };
+  vssId: string;
+  languageCode: string;
+  kind?: string;
+}
+
+interface InnerTubeCaptionTrackListRenderer {
+  captionTracks?: InnerTubeCaptionTrack[];
+}
+
+interface InnerTubePlayerResponse {
   playabilityStatus?: InnerTubePlayabilityStatus;
-  actions?: Array<{
-    updateEngagementPanelAction?: {
-      content?: {
-        transcriptRenderer?: {
-          content?: {
-            transcriptSearchPanelRenderer?: {
-              body?: {
-                transcriptSegmentListRenderer?: InnerTubeTranscriptSegmentListRenderer;
-              };
-            };
-          };
-        };
-      };
-    };
-  }>;
+  captions?: {
+    playerCaptionsTracklistRenderer?: InnerTubeCaptionTrackListRenderer;
+  };
 }
 
-/** Safely read a string property from an unknown value, returning undefined if not a string. */
+/** A single <text> element parsed from YouTube's timed-text XML caption format. */
+interface CaptionTextElement {
+  start: string;
+  dur: string;
+  text: string;
+}
+
+/** Safely read a string property from an unknown value. */
 function safeStr(v: unknown): string | undefined {
   return typeof v === "string" ? v : undefined;
 }
 
 /**
- * Fetch a transcript via YouTube's InnerTube API (`/youtubei/v1/get_transcript`).
- * Works for public videos without authentication.
- * Returns an empty array when no captions track is found (triggers fallback).
- * Throws with a clear message for terminal errors (private, restricted, etc.).
+ * Parse YouTube's timed-text XML (srv3 / timedtext format) into
+ * a list of caption elements with start/dur/text.
  */
-async function fetchInnerTubeTranscript(videoId: string): Promise<TranscriptResponse[]> {
-  const payload = {
-    context: {
-      client: {
-        clientName: "WEB",
-        clientVersion: INNERTUBE_CLIENT_VERSION,
-        hl: "en",
-        gl: "US",
-      },
-    },
-    params: Buffer.from(`\n\x0b${videoId}`).toString("base64"),
-  };
+function parseTimedTextXml(xml: string): CaptionTextElement[] {
+  const results: CaptionTextElement[] = [];
+  const textTagRx = /<text\s+([^>]*)>([\s\S]*?)<\/text>/g;
+  const attrRx = /(\w+)="([^"]*)"/g;
+  let match: RegExpExecArray | null;
 
-  const res = await fetch(
-    `https://www.youtube.com/youtubei/v1/get_transcript?key=${INNERTUBE_KEY}`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "X-YouTube-Client-Name": "1",
-        "X-YouTube-Client-Version": INNERTUBE_CLIENT_VERSION,
-        Origin: "https://www.youtube.com",
-        Referer: `https://www.youtube.com/watch?v=${videoId}`,
-      },
-      body: JSON.stringify(payload),
+  while ((match = textTagRx.exec(xml)) !== null) {
+    const attrs: Record<string, string> = {};
+    let attrMatch: RegExpExecArray | null;
+    while ((attrMatch = attrRx.exec(match[1])) !== null) {
+      attrs[attrMatch[1]] = attrMatch[2];
     }
-  );
-
-  if (!res.ok) {
-    if (res.status === 429) {
-      throw new Error("TOO_MANY_REQUESTS: YouTube is rate-limiting transcript access. Please try again shortly.");
-    }
-    throw new Error(`InnerTube HTTP ${res.status} for video ${videoId}`);
-  }
-
-  const json = (await res.json()) as InnerTubeResponse;
-
-  // Check for terminal playability errors
-  const errorStatus = safeStr(json.playabilityStatus?.status);
-  if (errorStatus && INNERTUBE_TERMINAL_STATUSES.has(errorStatus)) {
-    if (errorStatus === "LOGIN_REQUIRED") {
-      throw new Error("LOGIN_REQUIRED: This video requires a signed-in YouTube account to access.");
-    }
-    if (errorStatus === "AGE_RESTRICTED") {
-      throw new Error("CONTENT_RESTRICTED: This video is age-restricted and cannot be accessed without sign-in.");
-    }
-    throw new Error(`CONTENT_RESTRICTED: YouTube reports this video is restricted (${errorStatus}).`);
-  }
-
-  // Navigate the InnerTube response tree to the transcript segment list
-  const transcriptBody =
-    json.actions?.[0]
-      ?.updateEngagementPanelAction
-      ?.content
-      ?.transcriptRenderer
-      ?.content
-      ?.transcriptSearchPanelRenderer
-      ?.body
-      ?.transcriptSegmentListRenderer
-      ?.initialSegments;
-
-  if (!transcriptBody || !Array.isArray(transcriptBody)) {
-    // No transcript track present — return empty so the fallback is tried
-    return [];
-  }
-
-  const segments: TranscriptResponse[] = [];
-  for (const item of transcriptBody) {
-    const seg = item.transcriptSegmentRenderer;
-    if (!seg) continue;
-    const startMs = parseInt(safeStr(seg.startMs) ?? "0", 10);
-    const endMs = parseInt(safeStr(seg.endMs) ?? safeStr(seg.startMs) ?? "0", 10);
-    const durationMs = endMs - startMs;
-    const runs: InnerTubeSnippetRun[] = Array.isArray(seg.snippet?.runs) ? seg.snippet.runs : [];
-    const rawText = runs.map((r) => safeStr(r.text) ?? "").join("");
-    const text = rawText.replace(/\n/g, " ").trim();
-    if (!text) continue;
-    segments.push({
-      text,
-      offset: startMs,      // milliseconds
-      duration: durationMs, // milliseconds
-      lang: "en",
+    attrRx.lastIndex = 0;
+    const rawText = match[2]
+      .replace(/&#39;/g, "'")
+      .replace(/&amp;/g, "&")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"')
+      .replace(/<[^>]+>/g, "")
+      .trim();
+    if (!rawText) continue;
+    results.push({
+      start: attrs.start ?? "0",
+      dur: attrs.dur ?? "0",
+      text: rawText,
     });
   }
 
-  return segments;
+  return results;
+}
+
+/**
+ * Rank caption tracks: prefer English manual captions, then ASR, then any other language.
+ * Returns tracks sorted best-first.
+ */
+function rankCaptionTracks(tracks: InnerTubeCaptionTrack[]): InnerTubeCaptionTrack[] {
+  return [...tracks].sort((a, b) => {
+    const aEn = a.languageCode.startsWith("en");
+    const bEn = b.languageCode.startsWith("en");
+    const aAsr = a.kind === "asr";
+    const bAsr = b.kind === "asr";
+    if (aEn && !aAsr && (!bEn || bAsr)) return -1;
+    if (bEn && !bAsr && (!aEn || aAsr)) return 1;
+    if (aEn && !bEn) return -1;
+    if (bEn && !aEn) return 1;
+    return 0;
+  });
+}
+
+/**
+ * Fetch a transcript via YouTube's InnerTube player API.
+ *
+ * Strategy:
+ *   1. POST /youtubei/v1/player with the videoId to get a player response.
+ *   2. Extract available caption tracks from captions.playerCaptionsTracklistRenderer.
+ *   3. Choose the best track (English manual > English ASR > other).
+ *   4. Append fmt=srv3&tlang=en to the track's baseUrl and download the XML captions.
+ *   5. Parse the timed-text XML into TranscriptResponse[].
+ *
+ * Returns empty array when no caption tracks are present (triggers fallback).
+ * Throws terminal errors for private/restricted videos.
+ */
+async function fetchInnerTubeTranscript(videoId: string): Promise<TranscriptResponse[]> {
+  // Step 1: Call /youtubei/v1/player to get caption track metadata
+  const playerRes = await fetch(
+    `https://www.youtube.com/youtubei/v1/player?key=${INNERTUBE_KEY}`,
+    {
+      method: "POST",
+      headers: INNERTUBE_HEADERS,
+      body: JSON.stringify({
+        context: INNERTUBE_CONTEXT,
+        videoId,
+        playbackContext: {
+          contentPlaybackContext: { signatureTimestamp: 0 },
+        },
+      }),
+    }
+  );
+
+  if (!playerRes.ok) {
+    if (playerRes.status === 429) {
+      throw new Error("TOO_MANY_REQUESTS: YouTube is rate-limiting requests. Please try again shortly.");
+    }
+    throw new Error(`InnerTube player request failed with HTTP ${playerRes.status}`);
+  }
+
+  const player = (await playerRes.json()) as InnerTubePlayerResponse;
+
+  // Step 2: Check terminal playability errors
+  const status = safeStr(player.playabilityStatus?.status);
+  if (status && INNERTUBE_TERMINAL_STATUSES.has(status)) {
+    if (status === "LOGIN_REQUIRED") {
+      throw new Error("LOGIN_REQUIRED: This video requires a signed-in YouTube account to access.");
+    }
+    if (status === "AGE_CHECK_REQUIRED" || status === "AGE_VERIFICATION_REQUIRED") {
+      throw new Error("CONTENT_RESTRICTED: This video is age-restricted and cannot be accessed without sign-in.");
+    }
+    const reason = safeStr(player.playabilityStatus?.reason) ?? status;
+    throw new Error(`CONTENT_RESTRICTED: YouTube reports this video is restricted — ${reason}`);
+  }
+
+  // Step 3: Extract and rank caption tracks
+  const tracks =
+    player.captions?.playerCaptionsTracklistRenderer?.captionTracks ?? [];
+  if (tracks.length === 0) {
+    // No captions available at all — return empty so the fallback is tried
+    return [];
+  }
+
+  const ranked = rankCaptionTracks(tracks);
+  const best = ranked[0];
+  if (!best.baseUrl) return [];
+
+  // Step 4: Download the timed-text XML (srv3 format)
+  const captionUrl = new URL(best.baseUrl);
+  captionUrl.searchParams.set("fmt", "srv3");
+  captionUrl.searchParams.set("tlang", "en");
+
+  const captionRes = await fetch(captionUrl.toString(), {
+    headers: { "User-Agent": INNERTUBE_HEADERS["User-Agent"] },
+  });
+  if (!captionRes.ok) {
+    // Non-fatal — return empty to trigger fallback
+    console.warn(`[transcriptCache] InnerTube caption download returned HTTP ${captionRes.status} for ${videoId}`);
+    return [];
+  }
+
+  const xml = await captionRes.text();
+
+  // Step 5: Parse XML into TranscriptResponse[]
+  const elements = parseTimedTextXml(xml);
+  if (elements.length === 0) return [];
+
+  return elements.map((el) => {
+    const offsetSec = parseFloat(el.start);
+    const durSec = parseFloat(el.dur);
+    return {
+      text: el.text,
+      offset: offsetSec * 1000,  // convert seconds → milliseconds
+      duration: durSec * 1000,   // convert seconds → milliseconds
+      lang: best.languageCode,
+    };
+  });
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
