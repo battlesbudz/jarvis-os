@@ -415,7 +415,8 @@ export const imageGenerateTool: AgentTool = {
         };
       }
 
-      const sent = await sendPhoto(chatId, fetched.buffer, caption, fetched.mimeType);
+      const telegramFilename = buildImageFilename(prompt, fetched.mimeType);
+      const sent = await sendPhoto(chatId, fetched.buffer, caption, fetched.mimeType, telegramFilename);
       if (!sent) {
         return {
           ok: false,
