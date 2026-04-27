@@ -118,19 +118,32 @@ async function checkAnthropicKeyPresence(): Promise<DoctorResult> {
   const id = "anthropic_key_presence";
   const label = "Anthropic API Key";
   const key = process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY;
+  const baseUrl = process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL;
   const settingsPath = "/(tabs)/settings";
 
   if (!key) {
     return warn(id, label, "Anthropic API key is not set — orchestrator mode will be unavailable.", settingsPath);
   }
 
+  // When Replit AI Integrations is active it injects both env vars:
+  //   AI_INTEGRATIONS_ANTHROPIC_API_KEY  — a dummy key for SDK compatibility
+  //   AI_INTEGRATIONS_ANTHROPIC_BASE_URL — the proxy URL that authenticates calls
+  // The dummy key is intentionally invalid against api.anthropic.com; direct HTTP
+  // checks against that endpoint always return 401 even when the integration works.
+  // Presence of both vars is the correct indicator that the integration is wired.
+  // Runtime validation (actual API call) is handled by the ProviderHealth startup
+  // check which smoke-tests ClaudeProvider at every boot.
+  if (baseUrl) {
+    return pass(id, label, "Anthropic integration is active — API key and proxy URL are both configured.");
+  }
+
+  // Direct (non-proxy) API key path: validate against api.anthropic.com.
   try {
     const result = await httpsGet(
       "https://api.anthropic.com/v1/models",
       8000,
       { "x-api-key": key, "anthropic-version": "2023-06-01" }
     );
-
     if (result.networkError) return warn(id, label, "Could not reach Anthropic API — network issue or CA drift.", settingsPath);
     if (result.statusCode === 200) return pass(id, label, "Anthropic API key is valid and responding.");
     if (result.statusCode === 401) return fail(id, label, "Anthropic API key is invalid or revoked.", settingsPath);
