@@ -192,7 +192,7 @@ async function scanWatchTopic(
     const inboxSourceId = `nervous_system:${hash}`;
     let inboxInserted = false;
     try {
-      await db.insert(schema.inboxItems).values({
+      const [inserted] = await db.insert(schema.inboxItems).values({
         userId,
         sourceType: "nervous_system",
         sourceId: inboxSourceId,
@@ -202,12 +202,10 @@ async function scanWatchTopic(
         jarvisReason: hit.relevanceExplanation,
         suggestedActions: [{ label: "Dismiss", actionType: "dismiss" }],
         status: "pending",
-      });
-      inboxInserted = true;
+      }).onConflictDoNothing().returning({ id: schema.inboxItems.id });
+      inboxInserted = !!inserted;
     } catch (err: unknown) {
-      const code = (err as { code?: string })?.code;
-      if (code !== "23505") console.error("[NervousSystem] inbox insert failed:", err);
-      // 23505 = duplicate — inbox item already exists, treat as already-surfaced
+      console.error("[NervousSystem] inbox insert failed:", err);
     }
 
     // Log the proactive_message action only when the inbox item was actually
