@@ -1,6 +1,32 @@
 /**
- * Claude session provider — native session resumption for named agent chats.
+ * ClaudeProvider — implements BaseProvider using the Anthropic Messages API,
+ * plus native session-resumption helpers for named agent chats.
  *
+ * === Provider layer (BaseProvider) ===
+ * Message format bridge:
+ *   The harness works entirely in OpenAI ChatCompletionMessageParam format.
+ *   This provider converts to Anthropic's format before each call and converts
+ *   tool-use responses back to the canonical chunk format so the harness is
+ *   unaware of the underlying SDK.
+ *
+ * Conversion rules (OpenAI → Anthropic):
+ *   system   → extracted into `system` param (all system messages concatenated)
+ *   user     → { role: "user", content: string }
+ *   assistant (text) → { role: "assistant", content: string }
+ *   assistant (tool_calls) → { role: "assistant", content: ContentBlockParam[] }
+ *   tool (tool_call_id, content) → grouped into a single user message as
+ *                                  ToolResultBlockParam[] (Anthropic requires
+ *                                  tool results to be in user turns)
+ *
+ * Tool definition conversion (OpenAI → Anthropic):
+ *   { type: "function", function: { name, description, parameters } }
+ *   → { name, description, input_schema: parameters }
+ *
+ * toolChoice "none" handling:
+ *   Anthropic has no direct "none" equivalent. When toolChoice is "none",
+ *   we omit the tools array entirely so the model cannot call any tool.
+ *
+ * === Session layer ===
  * Instead of re-injecting the full conversation history into the prompt on
  * every turn, this module maintains a server-side session cache keyed by a
  * `sdkSessionId`. The session stores the accumulated OpenAI-format message
@@ -19,12 +45,17 @@
  * survive process bounces within their TTL.
  */
 
+import Anthropic from "@anthropic-ai/sdk";
+import type OpenAI from "openai";
 import { randomUUID } from "crypto";
 import { db } from "../../db";
 import { eq, and, gt } from "drizzle-orm";
 import { agentChatSessions } from "@shared/schema";
 import type { AgentChatMessage } from "@shared/schema";
-import type OpenAI from "openai";
+import { BaseProvider } from "./base";
+import type { ProviderChunk, ProviderQueryParams } from "./base";
+
+// ── Session types & helpers ────────────────────────────────────────────────────
 
 const SESSION_TTL_HOURS = parseInt(process.env.AGENT_SESSION_TTL_HOURS ?? "24", 10);
 const SESSION_TTL_MS = (isNaN(SESSION_TTL_HOURS) || SESSION_TTL_HOURS <= 0 ? 24 : SESSION_TTL_HOURS) * 60 * 60 * 1000;
@@ -44,7 +75,7 @@ function fromAgentMessage(m: AgentChatMessage): OAIMessage {
   const base: Record<string, unknown> = { role: m.role, content: m.content ?? null };
   if (m.tool_calls) base.tool_calls = m.tool_calls;
   if (m.tool_call_id) base.tool_call_id = m.tool_call_id;
-  return base as OAIMessage;
+  return base as unknown as OAIMessage;
 }
 
 // ── In-process LRU-lite cache (avoids round-trips for active sessions) ─────────
@@ -71,7 +102,7 @@ function cacheGet(sessionId: string): AgentChatMessage[] | null {
   return entry.messages;
 }
 
-// ── Public API ─────────────────────────────────────────────────────────────────
+// ── Session public API ─────────────────────────────────────────────────────────
 
 export interface ResumeResult {
   messages: OAIMessage[];
@@ -86,9 +117,9 @@ export interface ResumeResult {
  * found and still valid. The caller should pass `messages` directly to the
  * harness (they already include the full accumulated context).
  *
- * Returns `{ messages: [], sdkSessionId: existing, resumed: false }` when the
- * session has expired or is not found — the caller falls back to full history
- * injection and should call `initSession` afterwards to start a fresh session.
+ * Returns null when the session has expired or is not found — the caller
+ * falls back to full history injection and should call `initSession`
+ * afterwards to start a fresh session.
  */
 export async function resumeSession(
   sdkSessionId: string,
@@ -151,10 +182,6 @@ export async function resumeSession(
  *
  * Returns the new `sdkSessionId` (UUID) to be forwarded to the client so it
  * can resume on the next turn.
- *
- * This mirrors the "capture session_id from the system init event" pattern:
- * the first successful model response is the init event; we record the
- * session at that point so it always reflects at least one exchange.
  */
 export async function initSession(
   agentId: string,
@@ -237,5 +264,327 @@ export async function expireSession(sdkSessionId: string): Promise<void> {
       .where(eq(agentChatSessions.sdkSessionId, sdkSessionId));
   } catch {
     // best-effort
+  }
+}
+
+// ── ClaudeProvider class ───────────────────────────────────────────────────────
+
+export class ClaudeProvider extends BaseProvider {
+  private client: Anthropic;
+
+  constructor() {
+    super();
+    this.client = new Anthropic({
+      apiKey: process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY,
+      baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL,
+    });
+  }
+
+  async initialize(): Promise<void> {
+    // Client is created in the constructor; nothing async to do.
+  }
+
+  async cleanup(): Promise<void> {
+    // No persistent resources to release.
+  }
+
+  async *query(params: ProviderQueryParams): AsyncGenerator<ProviderChunk> {
+    if (params.stream) {
+      yield* this._streamTurn(params);
+    } else {
+      yield* this._completeTurn(params);
+    }
+  }
+
+  // ── Format conversions ────────────────────────────────────────────────────
+
+  /**
+   * Extract the system prompt from the OpenAI messages array.
+   * All system messages are concatenated with a newline separator.
+   */
+  private _extractSystem(
+    messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
+  ): string {
+    return messages
+      .filter((m) => m.role === "system")
+      .map((m) => (typeof m.content === "string" ? m.content : ""))
+      .join("\n\n");
+  }
+
+  /**
+   * Convert OpenAI messages to Anthropic MessageParam[].
+   *
+   * Handles three tricky cases:
+   *   1. system messages — skipped here (extracted separately via _extractSystem)
+   *   2. assistant messages with tool_calls — converted to tool_use content blocks
+   *   3. tool result messages — grouped into a single user turn per Anthropic's
+   *      requirement that all tool_result blocks for a given assistant turn are
+   *      in one user message.
+   */
+  private _convertMessages(
+    messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
+  ): Anthropic.MessageParam[] {
+    const result: Anthropic.MessageParam[] = [];
+
+    let i = 0;
+    while (i < messages.length) {
+      const msg = messages[i];
+
+      // System messages are handled separately — skip.
+      if (msg.role === "system") {
+        i++;
+        continue;
+      }
+
+      // Tool result messages: collect all consecutive ones into one user turn.
+      if (msg.role === "tool") {
+        const toolResults: Anthropic.ToolResultBlockParam[] = [];
+        while (i < messages.length && messages[i].role === "tool") {
+          const tm = messages[i] as OpenAI.Chat.Completions.ChatCompletionToolMessageParam;
+          toolResults.push({
+            type: "tool_result",
+            tool_use_id: tm.tool_call_id,
+            content:
+              typeof tm.content === "string"
+                ? tm.content
+                : JSON.stringify(tm.content),
+          });
+          i++;
+        }
+        result.push({ role: "user", content: toolResults });
+        continue;
+      }
+
+      // Assistant message with tool calls.
+      if (msg.role === "assistant") {
+        const am = msg as OpenAI.Chat.Completions.ChatCompletionAssistantMessageParam;
+        const functionToolCalls = (am.tool_calls ?? []).filter(
+          (
+            tc,
+          ): tc is OpenAI.Chat.Completions.ChatCompletionMessageToolCall & {
+            type: "function";
+          } => tc.type === "function",
+        );
+
+        if (functionToolCalls.length > 0) {
+          const content: Anthropic.ContentBlockParam[] = [];
+          if (am.content) {
+            content.push({
+              type: "text",
+              text: typeof am.content === "string" ? am.content : "",
+            });
+          }
+          for (const tc of functionToolCalls) {
+            let parsedInput: Record<string, unknown> = {};
+            try {
+              const raw = JSON.parse(tc.function.arguments || "{}");
+              if (raw && typeof raw === "object")
+                parsedInput = raw as Record<string, unknown>;
+            } catch {
+              /* leave as empty object */
+            }
+            content.push({
+              type: "tool_use",
+              id: tc.id,
+              name: tc.function.name,
+              input: parsedInput,
+            });
+          }
+          result.push({ role: "assistant", content });
+          i++;
+          continue;
+        }
+
+        // Plain text assistant message.
+        result.push({
+          role: "assistant",
+          content: typeof am.content === "string" ? am.content : "",
+        });
+        i++;
+        continue;
+      }
+
+      // User message.
+      if (msg.role === "user") {
+        const um =
+          msg as OpenAI.Chat.Completions.ChatCompletionUserMessageParam;
+        result.push({
+          role: "user",
+          content:
+            typeof um.content === "string"
+              ? um.content
+              : JSON.stringify(um.content),
+        });
+        i++;
+        continue;
+      }
+
+      i++;
+    }
+
+    return result;
+  }
+
+  /**
+   * Convert OpenAI tool definitions to Anthropic tool format.
+   * Only "function" type tools are supported; custom tools are skipped.
+   */
+  private _convertTools(
+    tools: OpenAI.Chat.Completions.ChatCompletionTool[],
+  ): Anthropic.Tool[] {
+    const result: Anthropic.Tool[] = [];
+    for (const t of tools) {
+      if (t.type !== "function") continue;
+      result.push({
+        name: t.function.name,
+        description: t.function.description ?? "",
+        input_schema: t.function.parameters as Anthropic.Tool["input_schema"],
+      });
+    }
+    return result;
+  }
+
+  /**
+   * Build Anthropic request params for tools and tool_choice.
+   *
+   * toolChoice "none" is handled by omitting tools entirely — Anthropic has
+   * no equivalent "none" mode, but without any tools in the payload the model
+   * cannot call any tool. This matches the OpenAI "none" semantic.
+   */
+  private _resolveToolParams(
+    tools: OpenAI.Chat.Completions.ChatCompletionTool[] | undefined,
+    toolChoice: "auto" | "required" | "none",
+  ): {
+    tools: Anthropic.Tool[] | undefined;
+    toolChoice: Anthropic.MessageCreateParams["tool_choice"] | undefined;
+  } {
+    if (!tools || tools.length === 0 || toolChoice === "none") {
+      // "none" → omit tools entirely so the model cannot call any function.
+      return { tools: undefined, toolChoice: undefined };
+    }
+    const converted = this._convertTools(tools);
+    const choice: Anthropic.MessageCreateParams["tool_choice"] =
+      toolChoice === "required" ? { type: "any" } : { type: "auto" };
+    return { tools: converted, toolChoice: choice };
+  }
+
+  // ── Non-streaming path ────────────────────────────────────────────────────
+
+  private async *_completeTurn(
+    params: ProviderQueryParams,
+  ): AsyncGenerator<ProviderChunk> {
+    const system = this._extractSystem(params.messages);
+    const messages = this._convertMessages(params.messages);
+    const { tools, toolChoice } = this._resolveToolParams(
+      params.tools,
+      params.toolChoice,
+    );
+
+    const response = await this.client.messages.create(
+      {
+        model: params.model,
+        system: system || undefined,
+        messages,
+        tools,
+        tool_choice: toolChoice,
+        max_tokens: params.maxCompletionTokens,
+      },
+      { signal: params.signal ?? undefined },
+    );
+
+    for (const block of response.content) {
+      if (block.type === "text") {
+        yield { type: "text", delta: block.text };
+      } else if (block.type === "tool_use") {
+        const idx = response.content.indexOf(block);
+        yield { type: "tool_call_start", index: idx, id: block.id, name: block.name };
+        yield {
+          type: "tool_call_args",
+          index: idx,
+          args: JSON.stringify(block.input),
+        };
+      }
+    }
+
+    const finishReason =
+      response.stop_reason === "tool_use"
+        ? "tool_calls"
+        : response.stop_reason ?? null;
+    yield { type: "finish", reason: finishReason };
+  }
+
+  // ── Streaming path ────────────────────────────────────────────────────────
+
+  private async *_streamTurn(
+    params: ProviderQueryParams,
+  ): AsyncGenerator<ProviderChunk> {
+    const system = this._extractSystem(params.messages);
+    const messages = this._convertMessages(params.messages);
+    const { tools, toolChoice } = this._resolveToolParams(
+      params.tools,
+      params.toolChoice,
+    );
+
+    // Anthropic's streaming API returns an AsyncIterable of events.
+    // We pass signal via the request options second argument.
+    const stream = await this.client.messages.create(
+      {
+        model: params.model,
+        system: system || undefined,
+        messages,
+        tools,
+        tool_choice: toolChoice,
+        max_tokens: params.maxCompletionTokens,
+        stream: true,
+      },
+      { signal: params.signal ?? undefined },
+    );
+
+    // Per-block tracking: tool_use blocks need a stable index.
+    const blockIndexById = new Map<string, number>();
+    let nextBlockIndex = 0;
+    let currentBlockId: string | null = null;
+    let finishReason: string | null = null;
+
+    for await (const event of stream) {
+      if (event.type === "content_block_start") {
+        const block = event.content_block;
+        if (block.type === "tool_use") {
+          const idx = nextBlockIndex++;
+          blockIndexById.set(block.id, idx);
+          currentBlockId = block.id;
+          yield {
+            type: "tool_call_start",
+            index: idx,
+            id: block.id,
+            name: block.name,
+          };
+        } else if (block.type === "text") {
+          currentBlockId = null;
+        }
+      } else if (event.type === "content_block_delta") {
+        const delta = event.delta;
+        if (delta.type === "text_delta") {
+          yield { type: "text", delta: delta.text };
+        } else if (delta.type === "input_json_delta") {
+          const id = currentBlockId;
+          if (id !== null) {
+            const idx = blockIndexById.get(id);
+            if (idx !== undefined) {
+              yield { type: "tool_call_args", index: idx, args: delta.partial_json };
+            }
+          }
+        }
+      } else if (event.type === "message_delta") {
+        if (event.delta.stop_reason) {
+          finishReason =
+            event.delta.stop_reason === "tool_use"
+              ? "tool_calls"
+              : event.delta.stop_reason;
+        }
+      }
+    }
+
+    yield { type: "finish", reason: finishReason };
   }
 }
