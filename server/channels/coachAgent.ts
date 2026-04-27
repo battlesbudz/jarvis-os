@@ -13,6 +13,8 @@ import { getSoulPromptBlock } from "../memory/soul";
 import { isUserPaired, isAndroidDaemonActive, isDesktopDaemonActive } from "../daemon/bridge";
 import { buildYouTubeContextBlock } from "../utils/youtubeAutoFetch";
 import type { ChannelAttachment } from "./types";
+import { isOrchestratorEnabled } from "../lib/modelPrefs";
+import { runOrchestrator } from "../agent/orchestrator";
 
 export interface CoachReplyInput {
   userId: string;
@@ -360,20 +362,57 @@ When a user's request involves multi-step research, drafting a document or plan,
     console.warn(`[${channelName}] activation planner failed (non-fatal):`, err);
   }
 
-  const agentResult = await runAgent({
-    model: "gpt-5-mini",
-    messages: baseMessages,
-    tools: scopedTools,
-    context: agentCtx,
-    maxTurns: 6,
-    maxCompletionTokens: getMaxTokensForChannel(channelName),
-    onToken,
-    activationPlan: channelActivationPlan,
-  });
+  // ── Orchestrator mode (opt-in) ────────────────────────────────────────────
+  // When enabled, route through Claude Opus orchestrator instead of direct harness.
+  // Falls back to direct harness on any orchestrator error.
+  const useOrchestrator = await isOrchestratorEnabled(userId).catch(() => false);
 
-  console.log(`[${channelName}] coach agent — turns=${agentResult.turns}, tools_used=${agentResult.toolCalls.length}, finish=${agentResult.finishReason}`);
+  let rawReply: string;
 
-  const rawReply = agentResult.reply;
+  if (useOrchestrator) {
+    console.log(`[${channelName}] orchestrator mode ON — routing through Claude Opus`);
+    try {
+      const orchResult = await runOrchestrator({
+        userId,
+        userRequest: userText,
+        systemContext: systemPrompt,
+        tools: scopedTools,
+        toolContext: agentCtx,
+        maxCompletionTokens: getMaxTokensForChannel(channelName),
+      });
+      rawReply = orchResult.finalAnswer;
+      console.log(
+        `[${channelName}] orchestrator done — tasks=${orchResult.subtaskCount}, retries=${orchResult.retryCount}, traceId=${orchResult.traceId}`,
+      );
+    } catch (orchErr) {
+      console.error(`[${channelName}] orchestrator failed, falling back to direct harness:`, orchErr);
+      const fallback = await runAgent({
+        model: "gpt-5-mini",
+        messages: baseMessages,
+        tools: scopedTools,
+        context: agentCtx,
+        maxTurns: 6,
+        maxCompletionTokens: getMaxTokensForChannel(channelName),
+        onToken,
+        activationPlan: channelActivationPlan,
+      });
+      rawReply = fallback.reply;
+    }
+  } else {
+    const agentResult = await runAgent({
+      model: "gpt-5-mini",
+      messages: baseMessages,
+      tools: scopedTools,
+      context: agentCtx,
+      maxTurns: 6,
+      maxCompletionTokens: getMaxTokensForChannel(channelName),
+      onToken,
+      activationPlan: channelActivationPlan,
+    });
+    rawReply = agentResult.reply;
+    console.log(`[${channelName}] coach agent — turns=${agentResult.turns}, tools_used=${agentResult.toolCalls.length}, finish=${agentResult.finishReason}`);
+  }
+
   const reply = rawReply || "Sorry, I couldn't generate a response right now.";
   const attachments = (agentCtx.state.pendingAttachments || []) as ChannelAttachment[];
 

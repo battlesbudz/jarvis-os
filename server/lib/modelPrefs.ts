@@ -9,13 +9,14 @@ import { db } from "../db";
 import { userPreferences } from "@shared/schema";
 import { eq } from "drizzle-orm";
 
-export type ModelCategory = "chat" | "planning" | "memory" | "research";
+export type ModelCategory = "chat" | "planning" | "memory" | "research" | "orchestrator";
 
 export const MODEL_DEFAULTS: Record<ModelCategory, string> = {
   chat: "gpt-5-mini",
   planning: "gpt-5-mini",
   memory: "gpt-5-mini",
   research: "gpt-4o-mini",
+  orchestrator: "claude-opus-4-6",
 };
 
 export const AVAILABLE_MODELS = [
@@ -25,11 +26,21 @@ export const AVAILABLE_MODELS = [
   { value: "gpt-4o-mini", label: "Lightweight", description: "Efficient for high-volume tasks" },
 ] as const;
 
+export const ORCHESTRATOR_MODELS = [
+  { value: "claude-opus-4-6", label: "Claude Opus", description: "Best reasoning for orchestration" },
+  { value: "claude-sonnet-4-6", label: "Claude Sonnet", description: "Balanced speed & quality" },
+  { value: "claude-haiku-4-5", label: "Claude Haiku", description: "Fast, lightweight orchestration" },
+] as const;
+
 export type AvailableModel = (typeof AVAILABLE_MODELS)[number]["value"];
+export type OrchestratorModel = (typeof ORCHESTRATOR_MODELS)[number]["value"];
 
-const VALID_MODEL_VALUES = new Set(AVAILABLE_MODELS.map((m) => m.value));
+const VALID_MODEL_VALUES = new Set([
+  ...AVAILABLE_MODELS.map((m) => m.value),
+  ...ORCHESTRATOR_MODELS.map((m) => m.value),
+]);
 
-export function isValidModel(value: unknown): value is AvailableModel {
+export function isValidModel(value: unknown): value is AvailableModel | OrchestratorModel {
   return typeof value === "string" && VALID_MODEL_VALUES.has(value as AvailableModel);
 }
 
@@ -53,4 +64,22 @@ export async function getModel(userId: string, category: ModelCategory): Promise
     // silently fall through
   }
   return MODEL_DEFAULTS[category];
+}
+
+/**
+ * Check whether orchestrator mode is enabled for a user.
+ */
+export async function isOrchestratorEnabled(userId: string): Promise<boolean> {
+  if (!userId) return false;
+  try {
+    const rows = await db
+      .select({ data: userPreferences.data })
+      .from(userPreferences)
+      .where(eq(userPreferences.userId, userId))
+      .limit(1);
+    const prefs = rows[0]?.data as Record<string, unknown> | undefined;
+    return Boolean(prefs?.orchestratorEnabled);
+  } catch {
+    return false;
+  }
 }

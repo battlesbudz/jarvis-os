@@ -5655,6 +5655,78 @@ Extract up to 8 memories per batch.`;
     }
   });
 
+  // ─── Orchestrator settings ────────────────────────────────────────────────
+  app.get("/api/settings/orchestrator", async (req: any, res) => {
+    try {
+      const userId = req.userId as string;
+      if (!userId) return res.status(401).json({ error: "Authentication required" });
+      const { ORCHESTRATOR_MODELS, MODEL_DEFAULTS } = await import("./lib/modelPrefs");
+      const rows = await db
+        .select({ data: schema.userPreferences.data })
+        .from(schema.userPreferences)
+        .where(eq(schema.userPreferences.userId, userId))
+        .limit(1);
+      const prefs = rows[0]?.data as Record<string, unknown> | undefined;
+      const orchestratorEnabled = Boolean(prefs?.orchestratorEnabled);
+      const storedModel = (prefs?.modelPreferences as Record<string, string> | undefined)?.orchestrator;
+      const orchestratorModel = ORCHESTRATOR_MODELS.find(m => m.value === storedModel)
+        ? storedModel
+        : MODEL_DEFAULTS.orchestrator;
+      res.json({ orchestratorEnabled, orchestratorModel, availableOrchestratorModels: ORCHESTRATOR_MODELS });
+    } catch (err) {
+      console.error("[Orchestrator] GET failed:", err);
+      res.status(500).json({ error: "Failed to fetch orchestrator settings" });
+    }
+  });
+
+  app.patch("/api/settings/orchestrator", async (req: any, res) => {
+    try {
+      const userId = req.userId as string;
+      if (!userId) return res.status(401).json({ error: "Authentication required" });
+      const { enabled, model } = req.body as { enabled?: boolean; model?: string };
+      const { ORCHESTRATOR_MODELS, MODEL_DEFAULTS } = await import("./lib/modelPrefs");
+      const rows = await db
+        .select({ data: schema.userPreferences.data })
+        .from(schema.userPreferences)
+        .where(eq(schema.userPreferences.userId, userId))
+        .limit(1);
+      const existing = (rows[0]?.data ?? {}) as Record<string, unknown>;
+      const existingModelPrefs = (existing.modelPreferences ?? {}) as Record<string, string>;
+      const update: Record<string, unknown> = { ...existing };
+      if (typeof enabled === "boolean") update.orchestratorEnabled = enabled;
+      if (model) {
+        const validModel = ORCHESTRATOR_MODELS.find(m => m.value === model)?.value ?? MODEL_DEFAULTS.orchestrator;
+        update.modelPreferences = { ...existingModelPrefs, orchestrator: validModel };
+      }
+      await db
+        .insert(schema.userPreferences)
+        .values({ userId, data: update })
+        .onConflictDoUpdate({ target: schema.userPreferences.userId, set: { data: update } });
+      res.json({ ok: true });
+    } catch (err) {
+      console.error("[Orchestrator] PATCH failed:", err);
+      res.status(500).json({ error: "Failed to save orchestrator settings" });
+    }
+  });
+
+  // ── Orchestration traces ─────────────────────────────────────────────────
+  app.get("/api/orchestration-traces", async (req: any, res) => {
+    try {
+      const userId = req.userId as string;
+      if (!userId) return res.status(401).json({ error: "Authentication required" });
+      const traces = await db
+        .select()
+        .from(schema.orchestrationTraces)
+        .where(eq(schema.orchestrationTraces.userId, userId))
+        .orderBy(desc(schema.orchestrationTraces.createdAt))
+        .limit(20);
+      res.json({ traces });
+    } catch (err) {
+      console.error("[Orchestrator] traces GET failed:", err);
+      res.status(500).json({ error: "Failed to fetch traces" });
+    }
+  });
+
   // ── Skill endpoints ──────────────────────────────────────────────────────
   app.get("/api/skills", async (req: Request, res: Response) => {
     const userId = (req as any).userId as string | undefined;

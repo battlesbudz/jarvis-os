@@ -183,6 +183,12 @@ export default function SettingsScreen() {
   const [availableModels, setAvailableModels] = useState<AvailableModel[]>([]);
   const [savingModel, setSavingModel] = useState<ModelCategory | null>(null);
 
+  // ── Orchestrator ──
+  const [orchestratorEnabled, setOrchestratorEnabled] = useState(false);
+  const [orchestratorModel, setOrchestratorModel] = useState('claude-opus-4-6');
+  const [availableOrchestratorModels, setAvailableOrchestratorModels] = useState<AvailableModel[]>([]);
+  const [savingOrchestrator, setSavingOrchestrator] = useState(false);
+
   // ── Build History ──
   const [buildHistory, setBuildHistory] = useState<BuildLogEntry[]>([]);
   const [buildHistoryExpanded, setBuildHistoryExpanded] = useState(false);
@@ -263,6 +269,26 @@ export default function SettingsScreen() {
       setModelPrefs(prev => ({ ...prev, [category]: model }));
     } catch {}
     setSavingModel(null);
+  }, []);
+
+  const saveOrchestratorEnabled = useCallback(async (enabled: boolean) => {
+    setSavingOrchestrator(true);
+    setOrchestratorEnabled(enabled);
+    try {
+      await apiRequest('PATCH', '/api/settings/orchestrator', { enabled });
+    } catch {
+      setOrchestratorEnabled(!enabled);
+    }
+    setSavingOrchestrator(false);
+  }, []);
+
+  const saveOrchestratorModel = useCallback(async (model: string) => {
+    setSavingOrchestrator(true);
+    try {
+      await apiRequest('PATCH', '/api/settings/orchestrator', { model });
+      setOrchestratorModel(model);
+    } catch {}
+    setSavingOrchestrator(false);
   }, []);
 
   // ── Nervous System ──
@@ -422,6 +448,14 @@ export default function SettingsScreen() {
       const modelRes = await apiRequest('GET', '/api/settings/models').then(r => r.json()).catch(() => null);
       if (modelRes?.modelPreferences) setModelPrefs(modelRes.modelPreferences);
       if (modelRes?.availableModels) setAvailableModels(modelRes.availableModels);
+    } catch {}
+    try {
+      const orchRes = await apiRequest('GET', '/api/settings/orchestrator').then(r => r.json()).catch(() => null);
+      if (orchRes) {
+        setOrchestratorEnabled(orchRes.orchestratorEnabled ?? false);
+        setOrchestratorModel(orchRes.orchestratorModel ?? 'claude-opus-4-6');
+        setAvailableOrchestratorModels(orchRes.availableOrchestratorModels ?? []);
+      }
     } catch {}
   }, []);
 
@@ -1449,6 +1483,63 @@ export default function SettingsScreen() {
               </Pressable>
             );
           })}
+        </View>
+
+        {/* ── ORCHESTRATOR MODE ── */}
+        <SectionHeader label="ORCHESTRATOR MODE" accent={Colors.violet} />
+        <View style={styles.card}>
+          <View style={styles.prefRow}>
+            <View style={styles.prefLeft}>
+              <Ionicons name="git-network-outline" size={16} color={Colors.violet} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.prefTitle}>Claude Opus Orchestrator</Text>
+                <Text style={styles.prefSub}>
+                  {orchestratorEnabled
+                    ? 'Requests are decomposed, delegated and verified by Claude Opus'
+                    : 'Direct mode — no decomposition (default)'}
+                </Text>
+              </View>
+            </View>
+            {savingOrchestrator
+              ? <ActivityIndicator size="small" color={Colors.violet} />
+              : <Switch
+                  value={orchestratorEnabled}
+                  onValueChange={saveOrchestratorEnabled}
+                  trackColor={{ false: Colors.border, true: Colors.violet }}
+                  thumbColor={Colors.white}
+                />}
+          </View>
+          {orchestratorEnabled && (
+            <Pressable
+              style={[styles.prefRow, styles.prefRowBorder]}
+              onPress={() => {
+                if (savingOrchestrator || availableOrchestratorModels.length === 0) return;
+                Alert.alert(
+                  'Orchestrator Model',
+                  'Choose the Claude model used for task decomposition and verification',
+                  [
+                    ...availableOrchestratorModels.map((m: AvailableModel) => ({
+                      text: `${m.label}  —  ${m.description}`,
+                      style: (m.value === orchestratorModel ? 'destructive' : 'default') as 'destructive' | 'default',
+                      onPress: () => saveOrchestratorModel(m.value),
+                    })),
+                    { text: 'Cancel', style: 'cancel' as const },
+                  ]
+                );
+              }}
+            >
+              <View style={styles.prefLeft}>
+                <Ionicons name="sparkles-outline" size={16} color={Colors.violet} />
+                <View>
+                  <Text style={styles.prefTitle}>Orchestrator Model</Text>
+                  <Text style={styles.prefSub}>
+                    {availableOrchestratorModels.find((m: AvailableModel) => m.value === orchestratorModel)?.label ?? orchestratorModel}
+                  </Text>
+                </View>
+              </View>
+              <Ionicons name="chevron-forward" size={16} color={Colors.textTertiary} />
+            </Pressable>
+          )}
         </View>
 
         {/* ── JARVIS INTELLIGENCE ── */}
