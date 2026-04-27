@@ -50,6 +50,7 @@ import { connectChannelTool } from "./agent/tools/connectChannel";
 import { YoutubeTranscript } from "youtube-transcript/dist/youtube-transcript.esm.js";
 import ytSearch from "yt-search";
 import { buildYouTubeContextBlock } from "./utils/youtubeAutoFetch";
+import { getPromptData, setPromptData } from "./coachSessionPromptCache";
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
@@ -2264,96 +2265,148 @@ Answer (yes/no):`,
         return res.status(400).json({ error: "messages array is required" });
       }
 
-      let resolvedGmailConnected = gmailConnected ?? false;
-      let resolvedGmailItems = gmailItems || [];
-
-      if (!resolvedGmailConnected && userId) {
-        try {
-          const userTokens = await getUserTokens(userId, 'google');
-          if (userTokens.length > 0) {
-            resolvedGmailConnected = true;
-            const perAccountItems = await Promise.all(
-              userTokens.map(async (t) => {
-                const emails = await getRecentEmailCommitments(7, t.accessToken).catch(() => []);
-                return emails.map((e: any) => ({ ...e, accountEmail: t.accountEmail }));
-              })
-            );
-            resolvedGmailItems = perAccountItems.flat();
-          }
-        } catch {}
+      // ── Session-aware system-prompt data ──────────────────────────────────────
+      // On warm (resumed) sessions skip the expensive per-turn DB/API fetches
+      // and serve data from the in-process prompt cache instead.  On cold starts
+      // (or cache misses) the data is fetched normally and stored in the cache
+      // once the session ID is known (see the initSession block further below).
+      const cachedPromptData = getPromptData(userId ?? undefined, incomingAppSessionId ?? undefined);
+      if (incomingAppSessionId) {
+        console.log(`[CoachPromptCache] userId=${userId} session=${incomingAppSessionId} ${cachedPromptData ? 'HIT' : 'MISS'}`);
       }
 
-      let userCommitments: any[] = [];
-      if (userId) {
-        try {
-          userCommitments = await db
-            .select()
-            .from(schema.commitments)
-            .where(and(eq(schema.commitments.userId, userId), eq(schema.commitments.status, 'pending')))
-            .orderBy(desc(schema.commitments.extractedAt))
-            .limit(20);
-        } catch {}
-      }
+      let resolvedGmailConnected: boolean;
+      let resolvedGmailItems: any[];
+      let resolvedCalendarEvents: any[];
+      let userCommitments: any[];
+      let memories: { content: string; category: string }[];
+      let morningNoteSummary: string;
+      let documentsContext: string;
+      let proactiveQuestionContext: string;
+      let crossChannelContext: string;
+      let soulBlock: string;
+      let emotionalStateBlock: string;
+      let websiteContext: string;
 
-      let memories: { content: string; category: string }[] = [];
-      let morningNoteSummary = '';
-      let documentsContext = '';
-      if (userId) {
-        try {
-          const [rows, noteSummary, docsCtx] = await Promise.all([
-            db.select({ content: userMemories.content, category: userMemories.category })
-              .from(userMemories)
-              .where(eq(userMemories.userId, userId))
-              .orderBy(desc(userMemories.extractedAt))
-              .limit(50),
-            getMorningNoteSummary(userId),
-            getUserDocumentContext(userId),
-          ]);
-          memories = rows;
-          morningNoteSummary = noteSummary;
-          documentsContext = docsCtx;
-        } catch {}
-      }
+      if (cachedPromptData) {
+        // Warm session — use cached values, skip all DB/API round-trips.
+        ({ resolvedGmailConnected, resolvedGmailItems, calendarEvents: resolvedCalendarEvents,
+           userCommitments, memories, morningNoteSummary, documentsContext,
+           proactiveQuestionContext, crossChannelContext, soulBlock,
+           emotionalStateBlock, websiteContext } = cachedPromptData);
+      } else {
+        // Cold start or cache miss — fetch everything fresh.
+        resolvedGmailConnected = gmailConnected ?? false;
+        resolvedGmailItems = gmailItems || [];
+        resolvedCalendarEvents = calendarEvents || [];
 
-      let proactiveQuestionContext = '';
-      if (userId) {
-        try {
-          const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-          const recentUnanswered = await db.select()
-            .from(proactiveQuestionsSent)
-            .where(
-              and(
-                eq(proactiveQuestionsSent.userId, userId),
-                sql`${proactiveQuestionsSent.answeredAt} IS NULL`,
-                sql`${proactiveQuestionsSent.sentAt} > ${twentyFourHoursAgo}`
+        if (!resolvedGmailConnected && userId) {
+          try {
+            const userTokens = await getUserTokens(userId, 'google');
+            if (userTokens.length > 0) {
+              resolvedGmailConnected = true;
+              const perAccountItems = await Promise.all(
+                userTokens.map(async (t) => {
+                  const emails = await getRecentEmailCommitments(7, t.accessToken).catch(() => []);
+                  return emails.map((e: any) => ({ ...e, accountEmail: t.accountEmail }));
+                })
+              );
+              resolvedGmailItems = perAccountItems.flat();
+            }
+          } catch {}
+        }
+
+        userCommitments = [];
+        if (userId) {
+          try {
+            userCommitments = await db
+              .select()
+              .from(schema.commitments)
+              .where(and(eq(schema.commitments.userId, userId), eq(schema.commitments.status, 'pending')))
+              .orderBy(desc(schema.commitments.extractedAt))
+              .limit(20);
+          } catch {}
+        }
+
+        memories = [];
+        morningNoteSummary = '';
+        documentsContext = '';
+        if (userId) {
+          try {
+            const [rows, noteSummary, docsCtx] = await Promise.all([
+              db.select({ content: userMemories.content, category: userMemories.category })
+                .from(userMemories)
+                .where(eq(userMemories.userId, userId))
+                .orderBy(desc(userMemories.extractedAt))
+                .limit(50),
+              getMorningNoteSummary(userId),
+              getUserDocumentContext(userId),
+            ]);
+            memories = rows;
+            morningNoteSummary = noteSummary;
+            documentsContext = docsCtx;
+          } catch {}
+        }
+
+        proactiveQuestionContext = '';
+        if (userId) {
+          try {
+            const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+            const recentUnanswered = await db.select()
+              .from(proactiveQuestionsSent)
+              .where(
+                and(
+                  eq(proactiveQuestionsSent.userId, userId),
+                  sql`${proactiveQuestionsSent.answeredAt} IS NULL`,
+                  sql`${proactiveQuestionsSent.sentAt} > ${twentyFourHoursAgo}`
+                )
               )
-            )
-            .orderBy(desc(proactiveQuestionsSent.sentAt))
-            .limit(3);
-          if (recentUnanswered.length > 0) {
-            proactiveQuestionContext = `\n## Recent Proactive Questions You Asked (unanswered)\nYou recently sent these curiosity-driven questions via Telegram. If the user's message seems to be answering one of them, acknowledge it warmly and ask a brief follow-up to learn more about them.\n` +
-              recentUnanswered.map(q => `- "${q.question}"`).join('\n');
-          }
-        } catch {}
-      }
+              .orderBy(desc(proactiveQuestionsSent.sentAt))
+              .limit(3);
+            if (recentUnanswered.length > 0) {
+              proactiveQuestionContext = `\n## Recent Proactive Questions You Asked (unanswered)\nYou recently sent these curiosity-driven questions via Telegram. If the user's message seems to be answering one of them, acknowledge it warmly and ask a brief follow-up to learn more about them.\n` +
+                recentUnanswered.map(q => `- "${q.question}"`).join('\n');
+            }
+          } catch {}
+        }
 
-      let crossChannelContext = '';
-      if (userId) {
-        try {
-          const recentInteractions = await getRecentInteractions(userId, 20);
-          crossChannelContext = formatInteractionTimeline(recentInteractions);
-        } catch {}
-      }
+        crossChannelContext = '';
+        if (userId) {
+          try {
+            const recentInteractions = await getRecentInteractions(userId, 20);
+            crossChannelContext = formatInteractionTimeline(recentInteractions);
+          } catch {}
+        }
 
-      const soulBlock = await getSoulPromptBlock(userId);
+        soulBlock = await getSoulPromptBlock(userId);
 
-      let emotionalStateBlock = '';
-      if (userId) {
-        try {
-          const { getEmotionalState, buildEmotionalStatePromptBlock } = await import("./intelligence/emotional-state");
-          const emotionalState = await getEmotionalState(userId);
-          if (emotionalState) emotionalStateBlock = buildEmotionalStatePromptBlock(emotionalState);
-        } catch {}
+        emotionalStateBlock = '';
+        if (userId) {
+          try {
+            const { getEmotionalState, buildEmotionalStatePromptBlock } = await import("./intelligence/emotional-state");
+            const emotionalState = await getEmotionalState(userId);
+            if (emotionalState) emotionalStateBlock = buildEmotionalStatePromptBlock(emotionalState);
+          } catch {}
+        }
+
+        websiteContext = '';
+        if (userId) {
+          try {
+            const { getWebsiteCrawlSummaryBlock } = await import("./websiteCrawler");
+            websiteContext = await getWebsiteCrawlSummaryBlock(userId);
+          } catch {}
+        }
+
+        // Re-seed cache for resumed sessions that suffered a cache miss (e.g.
+        // after a server restart) so subsequent turns skip the fetch cost.
+        if (userId && incomingAppSessionId) {
+          setPromptData(userId, incomingAppSessionId, {
+            resolvedGmailConnected, resolvedGmailItems, calendarEvents: resolvedCalendarEvents,
+            userCommitments, memories, morningNoteSummary, documentsContext,
+            proactiveQuestionContext, crossChannelContext,
+            soulBlock, emotionalStateBlock, websiteContext,
+          });
+        }
       }
 
       const daemonPaired = userId ? isUserPaired(userId) : false;
@@ -2387,15 +2440,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
 
 **After building**: The server restarts automatically so the new tool becomes active. Use \`test_tool\` to manually re-test any built tool. All builds are logged in Settings → Build History.`;
 
-      let websiteContext = '';
-      if (userId) {
-        try {
-          const { getWebsiteCrawlSummaryBlock } = await import("./websiteCrawler");
-          websiteContext = await getWebsiteCrawlSummaryBlock(userId);
-        } catch {}
-      }
-
-      const systemPrompt = buildCoachSystemPrompt(goals || [], stats || {}, history || [], calendarEvents || [], lifeContext || null, resolvedGmailItems, resolvedGmailConnected, slackMessages || [], slackConnected ?? false, userCommitments, coachingMode, memories, telegramMessages || [], telegramConnected ?? false, morningNoteSummary, documentsContext, crossChannelContext, soulBlock, daemonSection, emotionalStateBlock, selfImprovementSection, websiteContext);
+      const systemPrompt = buildCoachSystemPrompt(goals || [], stats || {}, history || [], resolvedCalendarEvents, lifeContext || null, resolvedGmailItems, resolvedGmailConnected, slackMessages || [], slackConnected ?? false, userCommitments, coachingMode, memories, telegramMessages || [], telegramConnected ?? false, morningNoteSummary, documentsContext, crossChannelContext, soulBlock, daemonSection, emotionalStateBlock, selfImprovementSection, websiteContext);
 
       // Detect if the user's current message is a device-control request so we can
       // force tool use rather than letting the model respond with plain text.
@@ -2586,6 +2631,15 @@ You can extend yourself by building new tools directly. Generate the complete Ty
                     appSessionId = incomingAppSessionId;
                   } else {
                     appSessionId = await initSession(COACH_APP_AGENT_ID, userId, [...chatMessages, { role: "assistant" as const, content: responseText }]);
+                    // Seed the prompt cache so subsequent turns skip DB/API lookups.
+                    if (appSessionId && !cachedPromptData) {
+                      setPromptData(userId, appSessionId, {
+                        resolvedGmailConnected, resolvedGmailItems, calendarEvents: resolvedCalendarEvents,
+                        userCommitments, memories, morningNoteSummary, documentsContext,
+                        proactiveQuestionContext, crossChannelContext,
+                        soulBlock, emotionalStateBlock, websiteContext,
+                      });
+                    }
                   }
                   if (appSessionId) {
                     res.write(`data: ${JSON.stringify({ type: "session_init", sdkSessionId: appSessionId })}\n\n`);
@@ -2917,6 +2971,15 @@ You can extend yourself by building new tools directly. Generate the complete Ty
             appSessionId = incomingAppSessionId;
           } else {
             appSessionId = await initSession(COACH_APP_AGENT_ID, userId, [...chatMessages, { role: "assistant" as const, content: fullStreamedReply }]);
+            // Seed the prompt cache so subsequent turns skip DB/API lookups.
+            if (appSessionId && !cachedPromptData) {
+              setPromptData(userId, appSessionId, {
+                resolvedGmailConnected, resolvedGmailItems, calendarEvents: resolvedCalendarEvents,
+                userCommitments, memories, morningNoteSummary, documentsContext,
+                proactiveQuestionContext, crossChannelContext,
+                soulBlock, emotionalStateBlock, websiteContext,
+              });
+            }
           }
           if (appSessionId) {
             try { res.write(`data: ${JSON.stringify({ type: "session_init", sdkSessionId: appSessionId })}\n\n`); } catch {}
