@@ -135,6 +135,7 @@ export type ToolGroup =
   | "media"       // speak, image_generate, generate_video
   | "connections" // check_connections, generate_reconnect_link, connect_channel
   | "mcp"         // auto-discovered tools from connected MCP servers
+  | "compute"     // run_python — sandboxed code execution
 
 // ── Registry-derived data (single source of truth for capability tools) ────────
 // GOOGLE_GATED and TOOL_GROUP_MAP come entirely from the capability registry.

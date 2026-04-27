@@ -46,6 +46,7 @@ interface AgentPermissions {
   can_create_tasks: boolean;
   can_create_other_agents: boolean;
   can_access_global_memory: boolean;
+  can_run_code: boolean;
 }
 
 const DEFAULT_PERMISSIONS: AgentPermissions = {
@@ -63,6 +64,7 @@ const DEFAULT_PERMISSIONS: AgentPermissions = {
   can_create_tasks: true,
   can_create_other_agents: false,
   can_access_global_memory: false,
+  can_run_code: false,
 };
 
 const PERM_LABELS: Record<keyof AgentPermissions, { label: string; icon: keyof typeof Ionicons.glyphMap; danger?: boolean }> = {
@@ -80,6 +82,7 @@ const PERM_LABELS: Record<keyof AgentPermissions, { label: string; icon: keyof t
   can_create_tasks:        { label: "Create tasks",             icon: "checkmark-circle-outline" },
   can_create_other_agents: { label: "Create sub-agents",        icon: "people-outline",   danger: true },
   can_access_global_memory:{ label: "Read global memory",       icon: "library-outline" },
+  can_run_code:            { label: "Run Python code",          icon: "code-slash-outline" },
 };
 
 export interface AgentTask {

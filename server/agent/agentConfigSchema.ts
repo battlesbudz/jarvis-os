@@ -28,6 +28,7 @@ export const AgentPermissionsSchema = z.object({
   can_create_tasks: z.boolean().default(true),
   can_create_other_agents: z.boolean().default(false),
   can_access_global_memory: z.boolean().default(false),
+  can_run_code: z.boolean().default(false),
 });
 
 // ── Zod schema for agent config file ──────────────────────────────────────────
