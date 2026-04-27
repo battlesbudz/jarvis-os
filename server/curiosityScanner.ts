@@ -1,5 +1,5 @@
 import { db } from "./db";
-import { eq, and } from "drizzle-orm";
+import { eq, and, gt, inArray } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { notifyUser } from "./channels/registry";
 import { getGoogleCalendarEvents } from "./integrations/googleCalendar";
@@ -23,6 +23,53 @@ async function getAlreadyAskedSourceIds(userId: string): Promise<Set<string>> {
   return new Set(rows.map((r) => r.sourceId));
 }
 
+function extractSenderKey(sender: string | null | undefined): string | null {
+  if (!sender) return null;
+  const match = sender.match(/<([^>]+)>/);
+  const email = match ? match[1] : sender;
+  const atIdx = email.indexOf("@");
+  if (atIdx > 0) {
+    return email.slice(atIdx + 1).toLowerCase().trim();
+  }
+  return email.toLowerCase().trim();
+}
+
+const EMAIL_SOURCE_TYPES = ["email", "gmail", "outlook_email"] as const;
+
+async function getRecentlySurfacedSenders(userId: string, since: Date): Promise<Set<string>> {
+  const sentRows = await db
+    .select({ sourceId: schema.proactiveQuestionsSent.sourceId })
+    .from(schema.proactiveQuestionsSent)
+    .where(
+      and(
+        eq(schema.proactiveQuestionsSent.userId, userId),
+        gt(schema.proactiveQuestionsSent.sentAt, since)
+      )
+    );
+
+  if (sentRows.length === 0) return new Set();
+
+  const sentSourceIds = sentRows.map((r) => r.sourceId);
+
+  const inboxRows = await db
+    .select({ sender: schema.inboxItems.sender })
+    .from(schema.inboxItems)
+    .where(
+      and(
+        eq(schema.inboxItems.userId, userId),
+        inArray(schema.inboxItems.sourceId, sentSourceIds),
+        inArray(schema.inboxItems.sourceType, EMAIL_SOURCE_TYPES)
+      )
+    );
+
+  const keys = new Set<string>();
+  for (const row of inboxRows) {
+    const key = extractSenderKey(row.sender);
+    if (key) keys.add(key);
+  }
+  return keys;
+}
+
 async function getUserMemories(
   userId: string
 ): Promise<{ content: string; category: string }[]> {
@@ -39,6 +86,7 @@ interface CuriosityItem {
   sourceType: "google_calendar" | "outlook_calendar" | "gmail" | "outlook_email";
   sourceId: string;
   summary: string;
+  senderKey?: string | null;
 }
 
 async function generateCuriosityQuestions(
@@ -134,6 +182,8 @@ export async function runCuriosityScan(): Promise<void> {
         if (!googleToken && !msToken) continue;
 
         const alreadyAsked = await getAlreadyAskedSourceIds(userId);
+        const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+        const recentlySurfacedSenders = await getRecentlySurfacedSenders(userId, oneDayAgo);
         const memories = await getUserMemories(userId);
 
         const now = new Date();
@@ -172,8 +222,8 @@ export async function runCuriosityScan(): Promise<void> {
         let recentEmails: any[] = [];
         if (googleToken) {
           try {
-            const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-            recentEmails = await getEmailsSince(oneDayAgo.getTime(), googleToken);
+            const emailsSince = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+            recentEmails = await getEmailsSince(emailsSince.getTime(), googleToken);
           } catch (err) {
             console.error(`[Curiosity] Email fetch failed for user ${userId}:`, err);
           }
@@ -183,10 +233,10 @@ export async function runCuriosityScan(): Promise<void> {
         if (msToken) {
           try {
             recentOutlookEmails = await getRecentOutlookEmails(msToken, 25);
-            const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+            const emailsSince = new Date(now.getTime() - 24 * 60 * 60 * 1000);
             recentOutlookEmails = recentOutlookEmails.filter((m) => {
               if (!m.date) return false;
-              return new Date(m.date).getTime() >= oneDayAgo.getTime();
+              return new Date(m.date).getTime() >= emailsSince.getTime();
             });
           } catch (err) {
             console.error(`[Curiosity] Outlook email fetch failed for user ${userId}:`, err);
@@ -224,7 +274,14 @@ export async function runCuriosityScan(): Promise<void> {
                   { label: "Dismiss", actionType: "dismiss" },
                 ],
                 matchedRuleId: ruleResult.matchedRuleId || null,
-              });
+              }).onConflictDoNothing();
+              alreadyAsked.add(eventId);
+              await db.insert(schema.proactiveQuestionsSent).values({
+                userId,
+                sourceType: provider,
+                sourceId: eventId,
+                question: "Surfaced by inbox rule",
+              }).onConflictDoNothing();
               console.log(`[Curiosity] Surfaced ${provider} event for user ${userId}: ${ev.title}`);
             } catch (err) {
               console.error(`[Curiosity] context-rule surface failed for ${userId}:`, err);
@@ -245,6 +302,8 @@ export async function runCuriosityScan(): Promise<void> {
         for (const email of recentEmails) {
           const emailId = email.messageId ? `gmail:${email.messageId}` : `gmail:${email.subject}:${email.from || ''}`;
           if (alreadyAsked.has(emailId)) continue;
+
+          const senderKey = extractSenderKey(email.from);
 
           const ruleResult = matchItemAgainstRules(
             { sourceType: "email", sourceId: emailId, sender: email.from, subject: email.subject, snippet: email.snippet },
@@ -269,10 +328,23 @@ export async function runCuriosityScan(): Promise<void> {
                 ],
                 matchedRuleId: ruleResult.matchedRuleId || null,
               }).onConflictDoNothing();
+              alreadyAsked.add(emailId);
+              if (senderKey) recentlySurfacedSenders.add(senderKey);
+              await db.insert(schema.proactiveQuestionsSent).values({
+                userId,
+                sourceType: "email",
+                sourceId: emailId,
+                question: "Surfaced by inbox rule",
+              }).onConflictDoNothing();
               console.log(`[Curiosity] Surfaced email for user ${userId}: ${email.subject}`);
             } catch (err) {
               console.error(`[Curiosity] inbox_items insert failed for email ${emailId}:`, err);
             }
+            continue;
+          }
+
+          if (senderKey && recentlySurfacedSenders.has(senderKey)) {
+            console.log(`[Curiosity] Skipping gmail email from already-surfaced sender (${senderKey}): ${email.subject}`);
             continue;
           }
 
@@ -282,12 +354,15 @@ export async function runCuriosityScan(): Promise<void> {
             summary: `From: ${email.from || "unknown"} | Subject: "${
               email.subject || "no subject"
             }"${email.snippet ? " — " + email.snippet : ""}`,
+            senderKey,
           });
         }
 
         for (const email of recentOutlookEmails) {
           const emailId = `outlook_email:${email.id || email.subject + ':' + (email.from || '')}`;
           if (alreadyAsked.has(emailId)) continue;
+
+          const senderKey = extractSenderKey(email.from);
 
           const ruleResult = matchItemAgainstRules(
             { sourceType: "email", sourceId: emailId, sender: email.from, subject: email.subject, snippet: email.snippet },
@@ -312,10 +387,23 @@ export async function runCuriosityScan(): Promise<void> {
                 ],
                 matchedRuleId: ruleResult.matchedRuleId || null,
               }).onConflictDoNothing();
+              alreadyAsked.add(emailId);
+              if (senderKey) recentlySurfacedSenders.add(senderKey);
+              await db.insert(schema.proactiveQuestionsSent).values({
+                userId,
+                sourceType: "outlook_email",
+                sourceId: emailId,
+                question: "Surfaced by inbox rule",
+              }).onConflictDoNothing();
               console.log(`[Curiosity] Surfaced Outlook email for user ${userId}: ${email.subject}`);
             } catch (err) {
               console.error(`[Curiosity] inbox_items insert failed for Outlook email ${emailId}:`, err);
             }
+            continue;
+          }
+
+          if (senderKey && recentlySurfacedSenders.has(senderKey)) {
+            console.log(`[Curiosity] Skipping Outlook email from already-surfaced sender (${senderKey}): ${email.subject}`);
             continue;
           }
 
@@ -325,6 +413,7 @@ export async function runCuriosityScan(): Promise<void> {
             summary: `From: ${email.from || "unknown"} | Subject: "${
               email.subject || "no subject"
             }"${email.snippet ? " — " + email.snippet : ""}`,
+            senderKey,
           });
         }
 
@@ -352,6 +441,12 @@ export async function runCuriosityScan(): Promise<void> {
 
           const canonicalSourceType = srcItem?.sourceType ?? q.sourceType;
 
+          const srcSenderKey = srcItem?.senderKey ?? null;
+          if (srcSenderKey && recentlySurfacedSenders.has(srcSenderKey)) {
+            console.log(`[Curiosity] Skipping curiosity question — sender already notified (${srcSenderKey})`);
+            continue;
+          }
+
           try {
             await db.insert(schema.proactiveQuestionsSent).values({
               userId,
@@ -369,7 +464,8 @@ export async function runCuriosityScan(): Promise<void> {
             }
           }
 
-          // Self-correction: skip surfacing if proactive_message is suppressed.
+          if (srcSenderKey) recentlySurfacedSenders.add(srcSenderKey);
+
           const isProactiveSuppressed = await isActionSuppressed(userId, "proactive_message").catch(() => false);
           if (isProactiveSuppressed) {
             console.log(`[Curiosity] proactive_message suppressed for user ${userId} (self-correction) — skipping inbox surface`);
@@ -383,6 +479,7 @@ export async function runCuriosityScan(): Promise<void> {
               sourceType: canonicalSourceType as "google_calendar" | "outlook_calendar" | "outlook_email" | "email" | "telegram" | "slack" | "discord" | "whatsapp" | "other",
               sourceId: q.sourceId,
               subject: srcItem?.summary?.slice(0, 200) ?? q.question.slice(0, 200),
+              sender: srcItem?.senderKey ?? null,
               snippet: q.question,
               jarvisReason: "Jarvis noticed something worth your attention",
               suggestedActions: [
@@ -390,15 +487,11 @@ export async function runCuriosityScan(): Promise<void> {
                 { label: "Dismiss", actionType: "dismiss" },
               ],
             }).onConflictDoNothing().returning({ id: schema.inboxItems.id });
-            // Drizzle onConflictDoNothing returns an empty array on conflict
             inboxInserted = result.length > 0;
           } catch (inboxErr) {
             console.error(`[Curiosity] inbox_items insert failed for ${q.sourceId}:`, inboxErr);
           }
 
-          // Log proactive_message only when the inbox item was newly inserted.
-          // Skips duplicates and failed inserts so Ego engagement metrics stay accurate.
-          // sourceId matches the inbox_items row for targeted outcome resolution.
           if (inboxInserted) {
             logAction(userId, "proactive_message", { type: "curiosity_question", sourceId: q.sourceId }).catch(() => {});
           }
