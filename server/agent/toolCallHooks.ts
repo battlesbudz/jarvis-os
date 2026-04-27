@@ -45,7 +45,13 @@ export type ToolCallHookResult = {
     severity?: "info" | "warning" | "critical";
     /** TTL in ms (default: 10 min). */
     timeoutMs?: number;
-    /** Fired after the user resolves the approval gate. */
+    /**
+     * Fired after the user resolves the approval gate.
+     * Note: "timeout" is currently not distinguished from "deny" — awaitApproval
+     * returns a boolean and cannot distinguish user rejection from TTL expiry.
+     * Both cases emit "deny". Distinguishing them requires an awaitApproval
+     * signature change (future enhancement).
+     */
     onResolution?: (decision: "allow" | "deny" | "timeout") => void;
   };
 };
@@ -97,6 +103,11 @@ export class ToolCallHookRegistry {
         continue;
       }
 
+      // Handler-level exceptions above are swallowed and treated as pass-through
+      // (fail-open per-handler). This is intentional: non-critical hooks (logging,
+      // analytics) should not crash agent runs. Security-critical hooks (approval,
+      // permission) must never rely on exception-based blocking — they catch their
+      // own errors and return { block: true } explicitly so they remain fail-closed.
       if (!result) continue;
 
       // Terminal: block
