@@ -5990,6 +5990,85 @@ Extract up to 8 memories per batch.`;
     }
   });
 
+  // ── Local Worker API ────────────────────────────────────────────────────────
+  // Allows a worker process running on the user's PC to receive transcript
+  // jobs, fetch them locally (with yt-dlp or any other method), and return
+  // results. This bypasses IP-level blocks YouTube applies to cloud providers.
+
+  /** GET /api/local-worker/token
+   *  Returns (or generates) the current user's local-worker auth token.
+   *  Requires normal session auth. */
+  app.get("/api/local-worker/token", async (req: Request, res: Response) => {
+    const userId = (req as any).userId as string | undefined;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    const { getOrCreateWorkerToken } = await import("./lib/localWorkerQueue");
+    const token = getOrCreateWorkerToken(userId);
+    const baseUrl = `${req.protocol}://${req.get("host")}`;
+    res.json({
+      token,
+      instructions: {
+        poll: `GET  ${baseUrl}/api/local-worker/jobs/next?token=${token}`,
+        complete: `POST ${baseUrl}/api/local-worker/jobs/:id/complete?token=${token}`,
+        fail: `POST ${baseUrl}/api/local-worker/jobs/:id/fail?token=${token}`,
+        heartbeat: `POST ${baseUrl}/api/local-worker/heartbeat?token=${token}`,
+      },
+    });
+  });
+
+  /** POST /api/local-worker/heartbeat?token=XXX
+   *  Keep-alive ping from the local worker. Must be called at least once every
+   *  2 minutes for the server to consider the worker online. */
+  app.post("/api/local-worker/heartbeat", async (req: Request, res: Response) => {
+    const token = String(req.query.token || req.body?.token || "");
+    if (!token) return res.status(400).json({ error: "token required" });
+    const { heartbeat } = await import("./lib/localWorkerQueue");
+    if (!heartbeat(token)) return res.status(401).json({ error: "invalid token" });
+    res.json({ ok: true });
+  });
+
+  /** GET /api/local-worker/jobs/next?token=XXX
+   *  Claim the next pending job for the worker. Returns 204 when there is
+   *  nothing to do (worker should poll again in a few seconds). */
+  app.get("/api/local-worker/jobs/next", async (req: Request, res: Response) => {
+    const token = String(req.query.token || "");
+    if (!token) return res.status(400).json({ error: "token required" });
+    const { claimNextJob } = await import("./lib/localWorkerQueue");
+    const job = claimNextJob(token);
+    if (!job) return res.status(204).end();
+    res.json(job);
+  });
+
+  /** POST /api/local-worker/jobs/:id/complete?token=XXX
+   *  Submit transcript segments for a completed job.
+   *  Body: { segments: Array<{ text, offset, duration }> } */
+  app.post("/api/local-worker/jobs/:id/complete", async (req: Request, res: Response) => {
+    const token = String(req.query.token || req.body?.token || "");
+    const jobId = req.params.id;
+    if (!token || !jobId) return res.status(400).json({ error: "token and id required" });
+    const segments = req.body?.segments;
+    if (!Array.isArray(segments)) return res.status(400).json({ error: "segments array required" });
+    const { completeJob } = await import("./lib/localWorkerQueue");
+    if (!completeJob(jobId, token, segments)) {
+      return res.status(404).json({ error: "job not found or token mismatch" });
+    }
+    res.json({ ok: true });
+  });
+
+  /** POST /api/local-worker/jobs/:id/fail?token=XXX
+   *  Report a job failure from the local worker.
+   *  Body: { error: "description" } */
+  app.post("/api/local-worker/jobs/:id/fail", async (req: Request, res: Response) => {
+    const token = String(req.query.token || req.body?.token || "");
+    const jobId = req.params.id;
+    if (!token || !jobId) return res.status(400).json({ error: "token and id required" });
+    const error = String(req.body?.error || "unknown error");
+    const { failJob } = await import("./lib/localWorkerQueue");
+    if (!failJob(jobId, token, error)) {
+      return res.status(404).json({ error: "job not found or token mismatch" });
+    }
+    res.json({ ok: true });
+  });
+
   const httpServer = createServer(app);
   return httpServer;
 }
