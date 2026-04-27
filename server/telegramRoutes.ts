@@ -26,6 +26,7 @@ import { routeToNamedAgent } from "./agent/runNamedAgent";
 import { completePairing as completeDiscordPairing } from "./discord/manager";
 import { getSession as getCoachSession, setSession as setCoachSession } from "./channels/sessionStore";
 import OpenAI from "openai";
+import { claimAndMark } from "./lib/proactiveDedup";
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
@@ -1508,33 +1509,9 @@ const PROACTIVE_SCHEDULE: ScheduleEntry[] = [
   { type: 'weekly_planning', dayOfWeek: 0, hour: 19, minute: 0 },
 ];
 
-/**
- * Atomically claim a proactive send slot.
- *
- * Tries to INSERT a row into proactive_schedule_log with ON CONFLICT DO NOTHING.
- * Returns `true` if this call won the race (new row inserted — safe to send),
- * or `false` if the row already existed (already sent by another instance or
- * an earlier restart — skip this send).
- *
- * This replaces the previous two-step hasAlreadySent + markAsSent pattern which
- * had a TOCTOU race: two rapid server restarts could both read "not sent" before
- * either write, causing the message to be delivered twice.  The unique index on
- * (userId, messageType, sentDate) acts as the database-level hard stop.
- */
-async function claimAndMark(userId: string, messageType: string, dateKey: string): Promise<boolean> {
-  try {
-    const rows = await db
-      .insert(schema.proactiveScheduleLog)
-      .values({ userId, messageType, sentDate: dateKey })
-      .onConflictDoNothing()
-      .returning({ id: schema.proactiveScheduleLog.id });
-    return rows.length > 0;
-  } catch {
-    // Any unexpected error (e.g. DB outage) → treat conservatively as "already sent"
-    // so we don't spam the user in a degraded state.
-    return false;
-  }
-}
+// claimAndMark lives in server/lib/proactiveDedup.ts — imported below at the
+// top of this file so heartbeat.ts can share the same helper without importing
+// the entire route module.
 
 // Returns one entry per user with any linked channel (telegram chatId may be
 // missing for WhatsApp/Slack/daemon-only users). Used by proactive engines so
