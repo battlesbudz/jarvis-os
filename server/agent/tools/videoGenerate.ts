@@ -156,12 +156,47 @@ export const videoGenerateTool: AgentTool = {
       ...(caption ? { caption } : {}),
     });
 
+    const channelRaw = (ctx.channel || "app").toLowerCase();
+    const isTelegram = channelRaw === "telegram";
+    const isDiscord = channelRaw.startsWith("discord");
+
+    // ── Discord: post a "generating…" placeholder before the long wait ──────
+    // Video generation takes 2-6 minutes. Send an immediate status message so
+    // the user knows their request was received and work is underway.
+    let discordPlaceholderId: string | null = null;
+    if (isDiscord && ctx.discordChannelId) {
+      try {
+        const { sendDiscordMessage } = await import("../../discord/manager");
+        discordPlaceholderId = await sendDiscordMessage(
+          ctx.userId,
+          ctx.discordChannelId,
+          "🎬 Generating your video — this takes 2-6 minutes, hang tight...",
+        );
+      } catch {
+        // Non-fatal — generation proceeds even if the placeholder fails
+      }
+    }
+
     let videoUrl: string;
     try {
       videoUrl = await generateVideo(prompt, duration);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error("[generate_video] Generation error:", err);
+      // Edit the Discord placeholder to reflect the failure
+      if (discordPlaceholderId && ctx.discordChannelId) {
+        try {
+          const { editDiscordMessage } = await import("../../discord/manager");
+          await editDiscordMessage(
+            ctx.userId,
+            ctx.discordChannelId,
+            discordPlaceholderId,
+            "❌ Video generation failed — please try again.",
+          );
+        } catch {
+          // ignore
+        }
+      }
       return {
         ok: false,
         content: `Video generation failed: ${msg}`,
@@ -169,10 +204,6 @@ export const videoGenerateTool: AgentTool = {
         detail: msg,
       };
     }
-
-    const channelRaw = (ctx.channel || "app").toLowerCase();
-    const isTelegram = channelRaw === "telegram";
-    const isDiscord = channelRaw.startsWith("discord");
 
     if (isTelegram) {
       const chatId = await getTelegramChatId(ctx.userId);
@@ -229,6 +260,15 @@ export const videoGenerateTool: AgentTool = {
 
       const buf = await fetchVideoBuffer(videoUrl);
       if (!buf) {
+        if (discordPlaceholderId) {
+          const { editDiscordMessage } = await import("../../discord/manager");
+          await editDiscordMessage(
+            ctx.userId,
+            discordChannelId,
+            discordPlaceholderId,
+            `❌ Video generated but could not be downloaded for delivery. [View it here](${videoUrl})`,
+          ).catch(() => {});
+        }
         return {
           ok: true,
           content: `Video generated but could not download it for delivery. View it here: ${videoUrl}`,
@@ -237,15 +277,33 @@ export const videoGenerateTool: AgentTool = {
         };
       }
 
-      const { sendDiscordVideo } = await import("../../discord/manager");
+      const { sendDiscordVideo, editDiscordMessage } = await import("../../discord/manager");
       const sent = await sendDiscordVideo(ctx.userId, discordChannelId, buf, "video.mp4", caption);
       if (!sent) {
+        if (discordPlaceholderId) {
+          await editDiscordMessage(
+            ctx.userId,
+            discordChannelId,
+            discordPlaceholderId,
+            "❌ Video generated but failed to send — please try again.",
+          ).catch(() => {});
+        }
         return {
           ok: false,
           content: `Video generated but failed to send to Discord. View it here: ${videoUrl}`,
           label: "Video generated (Discord send failed)",
           detail: JSON.stringify({ videoUrl, ...detailMeta() }),
         };
+      }
+
+      // Update the placeholder to confirm the video is ready
+      if (discordPlaceholderId) {
+        await editDiscordMessage(
+          ctx.userId,
+          discordChannelId,
+          discordPlaceholderId,
+          "✅ Your video is ready — see below!",
+        ).catch(() => {});
       }
 
       console.log(`[generate_video] Video sent to Discord user=${ctx.userId} duration=${duration ?? "default"}`);

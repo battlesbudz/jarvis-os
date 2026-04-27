@@ -156,6 +156,7 @@ export async function runNamedAgent(opts: RunNamedAgentOptions): Promise<NamedAg
       userId,
       channel: `${platform}/${agent.name}`,
       state: { pendingAttachments: [] },
+      ...(platform === "discord" && opts.channelId ? { discordChannelId: opts.channelId } : {}),
     };
 
     // ── Native session resumption ─────────────────────────────────────────────
