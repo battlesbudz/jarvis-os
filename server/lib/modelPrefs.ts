@@ -35,13 +35,26 @@ export const ORCHESTRATOR_MODELS = [
 export type AvailableModel = (typeof AVAILABLE_MODELS)[number]["value"];
 export type OrchestratorModel = (typeof ORCHESTRATOR_MODELS)[number]["value"];
 
-const VALID_MODEL_VALUES = new Set([
-  ...AVAILABLE_MODELS.map((m) => m.value),
-  ...ORCHESTRATOR_MODELS.map((m) => m.value),
-]);
+const VALID_OPENAI_MODEL_VALUES = new Set(AVAILABLE_MODELS.map((m) => m.value));
+const VALID_ORCHESTRATOR_MODEL_VALUES = new Set(ORCHESTRATOR_MODELS.map((m) => m.value));
 
-export function isValidModel(value: unknown): value is AvailableModel | OrchestratorModel {
-  return typeof value === "string" && VALID_MODEL_VALUES.has(value as AvailableModel);
+/** True only for OpenAI models (used by chat/planning/memory/research categories). */
+export function isValidModel(value: unknown): value is AvailableModel {
+  return typeof value === "string" && VALID_OPENAI_MODEL_VALUES.has(value as AvailableModel);
+}
+
+/** True only for Anthropic/orchestrator models. */
+export function isValidOrchestratorModel(value: unknown): value is OrchestratorModel {
+  return typeof value === "string" && VALID_ORCHESTRATOR_MODEL_VALUES.has(value as OrchestratorModel);
+}
+
+/**
+ * Validate a model value for a given category.
+ * OpenAI categories only accept OpenAI models; orchestrator only accepts Claude models.
+ */
+export function isValidModelForCategory(value: unknown, category: ModelCategory): boolean {
+  if (category === "orchestrator") return isValidOrchestratorModel(value);
+  return isValidModel(value);
 }
 
 /**

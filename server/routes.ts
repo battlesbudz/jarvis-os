@@ -5624,14 +5624,16 @@ Extract up to 8 memories per batch.`;
     try {
       const userId = req.userId as string;
       if (!userId) return res.status(401).json({ error: "Authentication required" });
-      const { isValidModel, MODEL_DEFAULTS } = await import("./lib/modelPrefs");
+      const { isValidModelForCategory, MODEL_DEFAULTS } = await import("./lib/modelPrefs");
       const { category, model } = req.body as { category?: string; model?: string };
-      const validCategories = Object.keys(MODEL_DEFAULTS);
-      if (!category || !validCategories.includes(category)) {
+      // Only OpenAI categories (chat/planning/memory/research) are permitted here;
+      // the 'orchestrator' category is handled exclusively by /api/settings/orchestrator.
+      const openAiCategories = Object.keys(MODEL_DEFAULTS).filter(c => c !== "orchestrator");
+      if (!category || !openAiCategories.includes(category)) {
         return res.status(400).json({ error: "Invalid category" });
       }
-      if (!isValidModel(model)) {
-        return res.status(400).json({ error: "Invalid model" });
+      if (!isValidModelForCategory(model, category as import("./lib/modelPrefs").ModelCategory)) {
+        return res.status(400).json({ error: "Invalid model for this category" });
       }
       const rows = await db
         .select({ data: schema.userPreferences.data })
