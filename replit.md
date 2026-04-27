@@ -190,6 +190,7 @@ The agent harness no longer hard-codes the integration-to-tool dependency map. I
   - `mediaCapability` — TTS (ElevenLabs) + image generation
   - `memoryCapability` — Memory search/get
   - `connectionsCapability` — Reconnect tools + channel-only integrations (Telegram/Slack/WhatsApp/Outlook)
+  - `codeCapability` — Sandboxed Python execution (`run_python` tool), gated behind `can_run_code` permission
 
 **Harness integration**: `harness.ts` dynamically imports `capabilityRegistry` and calls `getIntegrationDeps()` to build the tool-exclusion map at runtime — no hardcoded map in harness.
 **Validator integration**: `runValidationCycle()` calls `capabilityRegistry.getHealthStatuses()` at boot to log config-level issues (missing env vars) before the per-user OAuth pings run.

@@ -650,6 +650,7 @@ export interface AgentPermissions {
   can_create_tasks: boolean;
   can_create_other_agents: boolean;
   can_access_global_memory: boolean;
+  can_run_code: boolean;
 }
 
 export const DEFAULT_AGENT_PERMISSIONS: AgentPermissions = {
@@ -667,6 +668,7 @@ export const DEFAULT_AGENT_PERMISSIONS: AgentPermissions = {
   can_create_tasks: true,
   can_create_other_agents: false,
   can_access_global_memory: false,
+  can_run_code: false,
 };
 
 export type AgentMemoryScope = "agent_private" | "shared" | "global";

@@ -373,7 +373,35 @@ export async function ensureTablesExist() {
       )
     `);
 
-    await db.execute(sql`ALTER TABLE inbox_items ADD COLUMN IF NOT EXISTS "createdAt" TIMESTAMP DEFAULT NOW()`).catch(() => {});
+    // Migrate inbox_items columns from snake_case to camelCase (if old schema)
+    const inboxCols = await db.execute(sql`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_name = 'inbox_items'
+    `);
+    const inboxColNames = inboxCols.rows.map((r: any) => r.column_name as string);
+    const inboxRenames: Array<[string, string]> = [
+      ['user_id',          '"userId"'],
+      ['source_type',      '"sourceType"'],
+      ['source_id',        '"sourceId"'],
+      ['jarvis_reason',    '"jarvisReason"'],
+      ['suggested_actions','"suggestedActions"'],
+      ['dismiss_count',    '"dismissCount"'],
+      ['matched_rule_id',  '"matchedRuleId"'],
+      ['acted_at',         '"actedAt"'],
+      ['surfaced_at',      '"surfacedAt"'],
+    ];
+    for (const [oldCol, newCol] of inboxRenames) {
+      if (inboxColNames.includes(oldCol)) {
+        // Use pool directly for DDL with dynamic identifiers (drizzle sql tag
+        // does not support parameterized DDL with dynamic column names)
+        await pool.query(`ALTER TABLE inbox_items RENAME COLUMN ${oldCol} TO ${newCol}`);
+      }
+    }
+    // Add createdAt if missing
+    await db.execute(sql`
+      ALTER TABLE inbox_items
+      ADD COLUMN IF NOT EXISTS "createdAt" TIMESTAMP DEFAULT NOW()
+    `);
 
     await db.execute(sql`
       DELETE FROM inbox_items a
