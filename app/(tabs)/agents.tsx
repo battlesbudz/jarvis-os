@@ -550,6 +550,8 @@ interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   timestamp: number;
+  /** True when the assistant reply was shaped by a non-integration tool failure. */
+  isToolError?: boolean;
 }
 
 const CHAT_STORAGE_KEY = (agentId: string) => `agent_chat_history_${agentId}`;
@@ -736,6 +738,7 @@ function RunModal({ agent, onClose }: { agent: RosterAgent | null; onClose: () =
       const decoder = new TextDecoder();
       let buffer = "";
       let accumulated = "";
+      let hadToolError = false;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -750,7 +753,7 @@ function RunModal({ agent, onClose }: { agent: RosterAgent | null; onClose: () =
           const data = line.slice(6);
           if (data === "[DONE]") break;
           try {
-            const parsed = JSON.parse(data) as { content?: string; type?: string; integration?: string; message?: string; sdkSessionId?: string };
+            const parsed = JSON.parse(data) as { content?: string; type?: string; integration?: string; message?: string; sdkSessionId?: string; tool?: string };
             if (parsed.type === "aborted") {
               accumulated += "\n\n[Stopped]";
               setStreamingContent(accumulated.trim());
@@ -762,6 +765,9 @@ function RunModal({ agent, onClose }: { agent: RosterAgent | null; onClose: () =
             }
             if (parsed.type === "integration_error" && parsed.integration) {
               setIntegrationError({ integration: parsed.integration });
+            }
+            if (parsed.type === "tool_error") {
+              hadToolError = true;
             }
             if (parsed.content) {
               accumulated += parsed.content;
@@ -777,6 +783,7 @@ function RunModal({ agent, onClose }: { agent: RosterAgent | null; onClose: () =
           role: "assistant",
           content: accumulated,
           timestamp: Date.now(),
+          isToolError: hadToolError || undefined,
         };
         const finalMessages = [...updatedMessages, assistantMsg];
         setMessages(finalMessages);
@@ -860,11 +867,23 @@ function RunModal({ agent, onClose }: { agent: RosterAgent | null; onClose: () =
   function renderMessage({ item }: { item: ChatMessage }) {
     const isUser = item.role === "user";
     const isStreaming = item.id === "__streaming__";
+    const isToolError = !isUser && !!item.isToolError;
     return (
       <View style={[styles.chatBubbleRow, isUser ? styles.chatBubbleRowUser : styles.chatBubbleRowAgent]}>
         {!isUser && (
-          <View style={[styles.chatAvatar, { backgroundColor: Colors.primary + "22" }]}>
-            <Ionicons name="flash-outline" size={12} color={Colors.primary} />
+          <View
+            style={[
+              styles.chatAvatar,
+              isToolError
+                ? { backgroundColor: Colors.warningDim }
+                : { backgroundColor: Colors.primary + "22" },
+            ]}
+          >
+            <Ionicons
+              name={isToolError ? "warning-outline" : "flash-outline"}
+              size={12}
+              color={isToolError ? Colors.warning : Colors.primary}
+            />
           </View>
         )}
         <View
@@ -872,9 +891,19 @@ function RunModal({ agent, onClose }: { agent: RosterAgent | null; onClose: () =
             styles.chatBubble,
             isUser
               ? [styles.chatBubbleUser, { backgroundColor: Colors.primary }]
+              : isToolError
+              ? [styles.chatBubbleAgent, { backgroundColor: Colors.surface, borderColor: Colors.warning + "80" }]
               : [styles.chatBubbleAgent, { backgroundColor: Colors.surface, borderColor: Colors.border }],
           ]}
         >
+          {isToolError && (
+            <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 4, gap: 4 }}>
+              <Ionicons name="warning-outline" size={12} color={Colors.warning} />
+              <Text style={{ fontSize: 11, color: Colors.warning, fontWeight: "600" as const }}>
+                Tool failed
+              </Text>
+            </View>
+          )}
           <Text style={[styles.chatBubbleText, { color: isUser ? Colors.white : Colors.text }]}>
             {item.content}
           </Text>

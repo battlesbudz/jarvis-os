@@ -610,6 +610,15 @@ export function registerAgentRoutes(app: Express): void {
                 );
               }
             },
+            onToolError: (toolName: string, errorMessage: string) => {
+              if (!res.writableEnded) {
+                console.warn(`[AgentRoutes/SSE] tool_error: tool=${toolName}`);
+                console.debug(`[AgentRoutes/SSE] tool_error detail: ${errorMessage.slice(0, 300)}`);
+                res.write(
+                  `data: ${JSON.stringify({ type: "tool_error", tool: toolName })}\n\n`,
+                );
+              }
+            },
           });
 
           // Persist user message + assistant reply to the permanent history table.

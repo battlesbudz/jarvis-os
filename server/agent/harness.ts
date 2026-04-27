@@ -92,6 +92,16 @@ export interface RunAgentOptions {
    */
   providerFallbackModels?: Partial<Record<ProviderName, string>>;
   /**
+   * Optional callback fired when a non-integration tool failure occurs
+   * (i.e. the tool threw or returned ok=false for a reason unrelated to auth).
+   * The SSE route wires this to a `tool_error` event so the mobile UI can
+   * show a distinct error state on the chat bubble.
+   *
+   * toolName — name of the tool that failed
+   * message  — the error detail from the throw or ok=false content
+   */
+  onToolError?: (toolName: string, message: string) => void;
+  /**
    * Pre-computed activation plan from the ActivationPlanner.
    *
    * When provided, three things happen inside runAgent:
@@ -779,6 +789,9 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
   const toolCalls: AgentToolCallRecord[] = [];
   let lastFinish: string | null = null;
   let reply = "";
+  // Set to true whenever a non-integration tool error occurs so callers
+  // (e.g. the SSE route) know the reply may be an error-recovery response.
+  let hadToolError = false;
 
   for (let turn = 0; turn < maxTurns; turn++) {
     // ── Abort check — honour caller cancellation before each turn ───────
@@ -910,6 +923,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
             // Classify integration auth failures from { ok: false } tool returns.
             // Many tools return { ok: false, content: "..." } rather than throwing.
             // Apply the same validator + heuristic logic used in the catch block.
+            let okFalseIntegFired = false;
             if (!result.ok && opts.onIntegrationError) {
               const errorText = result.content ?? "";
               const okFalseCandidates = toolToIntegrationKey.get(tc.function.name) ?? [];
@@ -942,8 +956,15 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
                     metadata: { toolName: tc.function.name, integrationKey: okFalseIntegKey, source: "tool_ok_false" },
                   }).catch(() => {});
                   opts.onIntegrationError(okFalseIntegKey, errorText);
+                  okFalseIntegFired = true;
                 }
               }
+            }
+            // Non-integration tool failure — inform caller so the UI can surface
+            // a distinct error state rather than silently showing a partial reply.
+            if (!result.ok && !okFalseIntegFired) {
+              hadToolError = true;
+              opts.onToolError?.(tc.function.name, result.content ?? "tool returned an error");
             }
             return { tc, content: result.content };
           } catch (err) {
@@ -1017,6 +1038,10 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
                 message: `Tool ${tc.function.name} threw: ${detail.slice(0, 200)}`,
                 metadata: { toolName: tc.function.name, channel: context.channel ?? "unknown" },
               }).catch(() => {});
+              // Non-integration throw — fire onToolError so the UI can show a
+              // distinct error state instead of silently returning an empty reply.
+              hadToolError = true;
+              opts.onToolError?.(tc.function.name, detail);
             }
 
             return { tc, content: result.content };
@@ -1036,7 +1061,18 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
 
     // ── Text reply — no tool calls ─────────────────────────────────────
     reply = msgContent || "";
-    return { reply, turns: turn + 1, toolCalls, finishReason: lastFinish, messages: conversationMessages };
+    // If tools failed (non-integration) and the model returned nothing, provide
+    // a minimal fallback so the user never sees a blank assistant bubble.
+    if (!reply && hadToolError) {
+      reply = "I couldn't complete that action. Let me try a different approach.";
+    }
+    return {
+      reply,
+      turns: turn + 1,
+      toolCalls,
+      finishReason: hadToolError ? "tool_error" : lastFinish,
+      messages: conversationMessages,
+    };
   }
 
   // Hit max turns. Force a final answer with tools disabled.
@@ -1063,5 +1099,11 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
     console.error(`[${channel}/Agent] final-answer call failed:`, err);
   }
 
-  return { reply, turns: maxTurns, toolCalls, finishReason: lastFinish, messages: conversationMessages };
+  return {
+    reply,
+    turns: maxTurns,
+    toolCalls,
+    finishReason: hadToolError ? "tool_error" : lastFinish,
+    messages: conversationMessages,
+  };
 }

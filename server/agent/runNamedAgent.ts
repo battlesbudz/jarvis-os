@@ -84,6 +84,12 @@ export interface RunNamedAgentOptions {
    */
   onIntegrationError?: (integrationKey: string, message: string) => void;
   /**
+   * Optional callback fired when a non-integration tool failure occurs.
+   * Threaded through to runAgent so the SSE route can emit a `tool_error`
+   * event and the mobile UI can show a distinct error state on the chat bubble.
+   */
+  onToolError?: (toolName: string, message: string) => void;
+  /**
    * Per-request model override. Resolution order (first wins):
    *   1. opts.model (caller override)
    *   2. agent.preferredModel (per-agent DB setting)
@@ -334,6 +340,7 @@ export async function runNamedAgent(opts: RunNamedAgentOptions): Promise<NamedAg
       onBeforeTool,
       signal,
       onIntegrationError: opts.onIntegrationError,
+      onToolError: opts.onToolError,
     });
 
     // ── Session management — update or initialise after successful run ─────────
