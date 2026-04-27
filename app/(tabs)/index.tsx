@@ -30,7 +30,7 @@ import {
   type DayPlan,
 } from '@/lib/storage';
 import { apiRequest, getApiUrl } from '@/lib/query-client';
-import { authFetch, getAuthToken } from '@/lib/auth-context';
+import { authFetch } from '@/lib/auth-context';
 import BrainDumpModal from '@/components/BrainDumpModal';
 import BlockerModal from '@/components/BlockerModal';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -737,57 +737,6 @@ export default function MissionControlScreen() {
       if (importantTimerRef.current) clearTimeout(importantTimerRef.current);
     };
   }, []);
-
-  // ── Wake word SSE listener ──────────────────────────────────────────────
-  // Subscribes to /api/voice/wake-events and navigates to the voice-realtime
-  // screen when the daemon fires a wake word and daemonHandling is false.
-  useEffect(() => {
-    const abortController = new AbortController();
-    let active = true;
-
-    (async () => {
-      try {
-        const token = await getAuthToken();
-        if (!token || !active) return;
-        const url = new URL('/api/voice/wake-events', getApiUrl()).toString();
-        const res = await fetch(url, {
-          headers: { Authorization: `Bearer ${token}` },
-          signal: abortController.signal,
-        });
-        if (!res.ok || !res.body) return;
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let lineBuffer = '';
-        while (active) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          lineBuffer += decoder.decode(value, { stream: true });
-          const lines = lineBuffer.split('\n');
-          lineBuffer = lines.pop() ?? '';
-          for (const line of lines) {
-            if (!line.startsWith('data:')) continue;
-            const raw = line.slice(5).trim();
-            if (!raw) continue;
-            try {
-              const event = JSON.parse(raw) as { phrase?: string; transcript?: string; daemonHandling?: boolean };
-              if (!event.daemonHandling) {
-                router.push('/voice-realtime');
-              }
-            } catch {}
-          }
-        }
-      } catch (err: unknown) {
-        if (err instanceof Error && err.name === 'AbortError') return;
-        // Reconnect after 5 s on transient failures
-        if (active) setTimeout(() => {}, 5000);
-      }
-    })();
-
-    return () => {
-      active = false;
-      abortController.abort();
-    };
-  }, [router]);
 
   const handleMarkImportant = useCallback(async (item: InboxItem) => {
     setImportantConfirmId(item.id);
