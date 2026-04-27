@@ -232,28 +232,16 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
 
     console.log(`[DiscordManager] message from ${discordUsername} (${discordUserId}) isDM=${isDM} contentLen=${message.content?.length ?? 0} mentionsBot=${message.mentions.users.has(client.user?.id ?? "")}`);
 
-    // ── Send placeholder FIRST, then claim dedup ownership ──────────────
-    // The "Thinking…" message is sent before any DB work so the user sees a
-    // response token within ~100 ms. Voice messages skip this (transcription
-    // path sends its own placeholder).
+    // Detect audio attachments early — used below to skip the text placeholder.
     const _hasAudioAtt = [...message.attachments.values()].some(
       (a) => a.contentType?.startsWith("audio/") || a.contentType?.startsWith("video/"),
     );
-    let earlyPlaceholder: Message | null = null;
-    if (!_hasAudioAtt) {
-      try {
-        earlyPlaceholder = await message.channel.send("_Thinking…_");
-      } catch {
-        // ignore — reply will still be delivered
-      }
-    }
 
     // Atomic DB claim: INSERT ... RETURNING — only the first process to
     // insert wins ownership; concurrent processes see zero rows and drop.
     const claimed = await claimMessageId(message.id);
     if (!claimed) {
       console.log(`[DiscordManager] duplicate message dropped (db atomic claim, id=${message.id})`);
-      if (earlyPlaceholder) earlyPlaceholder.delete().catch(() => {});
       return;
     }
 
@@ -280,12 +268,10 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
             const guildEntry = allowed.find((g) => g.guildId === guildId && g.channelId === channelId);
             if (!guildEntry) {
               console.log(`[DiscordManager] shared guild msg ignored — channel ${channelId} not in allowlist`);
-              if (earlyPlaceholder) earlyPlaceholder.delete().catch(() => {});
               return;
             }
             if (guildEntry.requireMention && !mentioned) {
               console.log(`[DiscordManager] shared guild msg ignored — requireMention=true but bot not @mentioned`);
-              if (earlyPlaceholder) earlyPlaceholder.delete().catch(() => {});
               return;
             }
           }
@@ -298,7 +284,6 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
         if (link) {
           if (link.address !== discordUserId) {
             console.log(`[DiscordManager] guild msg ignored — sender ${discordUserId} != paired ${link.address}`);
-            if (earlyPlaceholder) earlyPlaceholder.delete().catch(() => {});
             return;
           }
           const allowed = link.meta.allowlistedGuilds || [];
@@ -312,12 +297,10 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
             const guildEntry = allowed.find((g) => g.guildId === guildId && g.channelId === channelId);
             if (!guildEntry) {
               console.log(`[DiscordManager] guild msg ignored — channel ${channelId} not in allowlist`);
-              if (earlyPlaceholder) earlyPlaceholder.delete().catch(() => {});
               return;
             }
             if (guildEntry.requireMention && !mentioned) {
               console.log(`[DiscordManager] guild msg ignored — requireMention=true but bot not @mentioned`);
-              if (earlyPlaceholder) earlyPlaceholder.delete().catch(() => {});
               return;
             }
           }
@@ -357,9 +340,6 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
           expiresAt: Date.now() + 60 * 60 * 1000,
         });
       }
-      // Delete the early placeholder before sending the pairing code so
-      // the user only sees one bot message (the pairing reply below).
-      if (earlyPlaceholder) earlyPlaceholder.delete().catch(() => {});
       await message
         .reply(
           `👋 Hey! I'm Jarvis, your AI productivity coach.\n\n` +
@@ -375,6 +355,22 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
     }
 
     const userId = pairedUser.userId;
+
+    // ── Send "Thinking…" placeholder ─────────────────────────────────────
+    // Sent HERE — after claimMessageId won the atomic DB race AND after we
+    // have confirmed the sender is a paired user.  This guarantees exactly
+    // ONE placeholder per incoming message, even when both the shared bot
+    // and a per-user bot are running simultaneously: the bot that loses the
+    // claimMessageId race returns before reaching this line.
+    // Audio messages skip this because they show their own transcription msg.
+    let earlyPlaceholder: Message | null = null;
+    if (!_hasAudioAtt) {
+      try {
+        earlyPlaceholder = await message.channel.send("_Thinking…_");
+      } catch {
+        // Non-fatal — reply will still be delivered even if placeholder fails.
+      }
+    }
 
     // ── Per-user async lock ────────────────────────────────────────────
     // Queue messages from the same user so they are processed sequentially,

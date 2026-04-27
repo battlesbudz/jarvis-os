@@ -404,7 +404,7 @@ export async function runCuriosityScan(): Promise<void> {
           }
 
           try {
-            const results = await notifyUser(userId, "general", q.question);
+            const results = await notifyUser(userId, "general", q.question, { skipIfDiscordActive: true });
             const delivered = results.some(r => r.result.ok);
             sentCount++;
             if (delivered) {
