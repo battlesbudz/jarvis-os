@@ -745,10 +745,65 @@ export async function sendDiscordImage(
 }
 
 /**
- * Send a video buffer as a file attachment to a Discord text channel.
- * Used by the `generate_video` tool when the conversation originates from Discord.
- * Returns true on success, false on any failure (logs internally).
+ * Send a plain text message to a Discord channel.
+ * Returns the sent message ID on success, or null on failure.
  */
+export async function sendDiscordMessage(
+  userId: string,
+  channelId: string,
+  content: string,
+): Promise<string | null> {
+  const client = getClientForUser(userId);
+  if (!client) {
+    console.warn(`[DiscordManager] sendDiscordMessage: no bot client for user ${userId}`);
+    return null;
+  }
+  try {
+    const channel = await client.channels.fetch(channelId);
+    if (!channel || !("send" in channel)) {
+      console.warn(`[DiscordManager] sendDiscordMessage: channel ${channelId} not found or not sendable`);
+      return null;
+    }
+    const ch = channel as TextChannel | DMChannel;
+    const msg = await ch.send(content);
+    return msg.id;
+  } catch (err) {
+    console.error("[DiscordManager] sendDiscordMessage failed:", err);
+    return null;
+  }
+}
+
+/**
+ * Edit an existing Discord message by ID.
+ * Returns true on success, false on failure.
+ */
+export async function editDiscordMessage(
+  userId: string,
+  channelId: string,
+  messageId: string,
+  content: string,
+): Promise<boolean> {
+  const client = getClientForUser(userId);
+  if (!client) {
+    console.warn(`[DiscordManager] editDiscordMessage: no bot client for user ${userId}`);
+    return false;
+  }
+  try {
+    const channel = await client.channels.fetch(channelId);
+    if (!channel || !("messages" in channel)) {
+      console.warn(`[DiscordManager] editDiscordMessage: channel ${channelId} not found or not text-based`);
+      return false;
+    }
+    const ch = channel as TextChannel | DMChannel;
+    const msg = await ch.messages.fetch(messageId);
+    await msg.edit(content);
+    return true;
+  } catch (err) {
+    console.error("[DiscordManager] editDiscordMessage failed:", err);
+    return false;
+  }
+}
+
 export async function sendDiscordVideo(
   userId: string,
   channelId: string,

@@ -229,7 +229,13 @@ export async function handleAgentCommand(
         const agent = await findAgent(name);
         if (!agent) return { content: `Agent "${name}" not found.`, flags: EPHEMERAL };
         if (!agent.isActive) return { content: `Agent "${name}" is currently disabled.`, flags: EPHEMERAL };
-        const result = await runNamedAgent({ agentId: agent.id, userId, userMessage: message, platform: "discord" });
+        const result = await runNamedAgent({
+          agentId: agent.id,
+          userId,
+          userMessage: message,
+          platform: "discord",
+          channelId: typeof interaction.channel_id === "string" ? interaction.channel_id : undefined,
+        });
         return { content: `**${agent.name}:** ${result.reply.slice(0, 1900)}` };
       }
 
@@ -417,6 +423,7 @@ export async function handleAskCommand(
       userId,
       userMessage: question,
       platform: "discord",
+      channelId: typeof interaction.channel_id === "string" ? interaction.channel_id : undefined,
     });
     return { content: `**${agent.name}:** ${result.reply.slice(0, 1900)}` };
   } catch (err) {
