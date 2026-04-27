@@ -1,4 +1,4 @@
-import { Client, GatewayIntentBits, Events, Partials, Message, DMChannel, type GuildBasedChannel, type TextChannel, type MessageReaction, type PartialMessageReaction, type User as DiscordUser, type PartialUser } from "discord.js";
+import { Client, GatewayIntentBits, Events, Partials, Message, DMChannel, AttachmentBuilder, type GuildBasedChannel, type TextChannel, type MessageReaction, type PartialMessageReaction, type User as DiscordUser, type PartialUser } from "discord.js";
 import { db } from "../db";
 import { eq, and, sql } from "drizzle-orm";
 import { channelLinks, users, discordPendingApprovals, discordAgents } from "@shared/schema";
@@ -593,6 +593,23 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
         await sendLong(message.channel as { send(t: string): Promise<unknown> }, reply);
       }
 
+      // Deliver file attachments produced by agent tools (e.g. export_document_pdf,
+      // create_presentation). Send after the text reply so the message order is natural.
+      if (result?.attachments && result.attachments.length > 0) {
+        for (const att of result.attachments) {
+          if (att.kind === "document") {
+            try {
+              const fileContent = Buffer.isBuffer(att.content)
+                ? att.content
+                : Buffer.from(att.content);
+              await sendFileToDiscordUser(userId, att.filename, fileContent, att.caption);
+            } catch (attErr) {
+              console.warn(`[DiscordManager] attachment send failed: ${att.filename}`, attErr);
+            }
+          }
+        }
+      }
+
       // Auto-voice mode: if "discord" is enabled in user's ttsChannels, also
       // send every reply as an OGG audio attachment (additive — text still sent).
       try {
@@ -965,6 +982,48 @@ export async function sendToDiscordUser(userId: string, text: string): Promise<b
     return true;
   } catch (err) {
     console.error(`[DiscordManager] sendToDiscordUser failed for ${userId}:`, err);
+    return false;
+  }
+}
+
+/**
+ * Send a file attachment to a Discord user via their DM channel.
+ * Returns true when the message was sent successfully.
+ */
+export async function sendFileToDiscordUser(
+  userId: string,
+  filename: string,
+  content: Buffer,
+  description?: string,
+): Promise<boolean> {
+  const client = getClientForUser(userId);
+  if (!client || !client.isReady()) return false;
+
+  const link = await lookupLink(userId);
+  if (!link) return false;
+
+  let dmChannelId = link.meta.dmChannelId;
+  const discordUserId = link.address;
+
+  try {
+    if (!dmChannelId) {
+      const discordUser = await client.users.fetch(discordUserId);
+      const dm = await discordUser.createDM();
+      dmChannelId = dm.id;
+      await db
+        .update(channelLinks)
+        .set({ metadata: { ...link.meta, dmChannelId } })
+        .where(and(eq(channelLinks.userId, userId), eq(channelLinks.channel, "discord")));
+    }
+
+    const channel = await client.channels.fetch(dmChannelId) as DMChannel | null;
+    if (!channel) return false;
+
+    const attachment = new AttachmentBuilder(content, { name: filename, description });
+    await channel.send({ files: [attachment] });
+    return true;
+  } catch (err) {
+    console.error(`[DiscordManager] sendFileToDiscordUser failed for ${userId}:`, err);
     return false;
   }
 }
