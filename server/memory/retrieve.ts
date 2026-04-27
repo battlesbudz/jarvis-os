@@ -1,5 +1,6 @@
 import { db } from "../db";
-import { sql } from "drizzle-orm";
+import { sql, inArray } from "drizzle-orm";
+import { userMemories } from "@shared/schema";
 import OpenAI from "openai";
 
 const openai = new OpenAI({
@@ -45,8 +46,17 @@ export async function embedText(text: string): Promise<number[] | null> {
     });
     const v = res.data[0]?.embedding;
     return Array.isArray(v) ? v : null;
-  } catch (err) {
-    console.error("[MemoryRetrieve] embedText failed:", err);
+  } catch (err: unknown) {
+    const status = (err as { status?: number })?.status;
+    const message = err instanceof Error ? err.message : String(err);
+    const isEndpointUnsupported =
+      message.includes("INVALID_ENDPOINT") ||
+      (status === 400 && message.toLowerCase().includes("embeddings"));
+    if (isEndpointUnsupported) {
+      console.debug("[MemoryRetrieve] embedText unavailable (embeddings endpoint not supported by proxy):", message);
+    } else {
+      console.error("[MemoryRetrieve] embedText failed:", err);
+    }
     return null;
   }
 }
@@ -97,12 +107,14 @@ function tierBoost(tier: string, extractedAt: string | null): number {
  */
 export function batchIncrementAccessCount(ids: string[]): void {
   if (ids.length === 0) return;
-  db.execute(sql`
-    UPDATE user_memories
-    SET access_count = access_count + 1,
-        last_referenced_at = NOW()
-    WHERE id = ANY(${ids})
-  `).catch((err) => console.error("[MemoryRetrieve] access_count update failed:", err));
+  db
+    .update(userMemories)
+    .set({
+      accessCount: sql`access_count + 1`,
+      lastReferencedAt: sql`NOW()`,
+    })
+    .where(inArray(userMemories.id, ids))
+    .catch((err) => console.error("[MemoryRetrieve] access_count update failed:", err));
 }
 
 /**

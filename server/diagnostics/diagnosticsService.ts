@@ -23,10 +23,16 @@ import type { SQL } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import type { DiagnosticSubsystem, DiagnosticSeverity } from "@shared/schema";
 import OpenAI from "openai";
+import Anthropic from "@anthropic-ai/sdk";
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
+});
+
+const anthropic = new Anthropic({
+  apiKey: process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY,
+  baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL,
 });
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -654,22 +660,44 @@ Write a concise report:
 
 Plain text, no markdown headers, 4-6 sentences max. Be calm and informative, not alarmist.`;
 
+  // Try OpenAI first.
   try {
     const resp = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [{ role: "user", content: prompt }],
       max_completion_tokens: 400,
     });
-    const diagnosis = resp.choices[0]?.message?.content?.trim() || "Unable to generate diagnosis — OpenAI unavailable.";
-    return { diagnosis, report };
-  } catch {
-    const lines: string[] = ["Diagnosis summary:"];
-    lines.push(`Overall: ${report.overallStatus}`);
-    if (!report.openAiReachable) lines.push("OpenAI API is unreachable — AI features are unavailable.");
-    if (!report.dbReachable) lines.push("Database is unreachable — all data operations are failing.");
-    if (report.staleJobCount > 0) lines.push(`${report.staleJobCount} background job(s) appear stuck.`);
-    if (report.stuckWorkflowCount > 0) lines.push(`${report.stuckWorkflowCount} workflow(s) appear stuck.`);
-    if (report.degradedSubsystems.length === 0) lines.push("No major subsystem issues detected.");
-    return { diagnosis: lines.join(" "), report };
+    const diagnosis = resp.choices[0]?.message?.content?.trim();
+    if (diagnosis) return { diagnosis, report };
+  } catch (openAiErr) {
+    console.debug("[Diagnostics] OpenAI diagnosis failed, trying Anthropic fallback:", openAiErr instanceof Error ? openAiErr.message : openAiErr);
   }
+
+  // Fallback: try Anthropic.
+  try {
+    const msg = await anthropic.messages.create({
+      model: "claude-haiku-4-5",
+      max_tokens: 400,
+      messages: [{ role: "user", content: prompt }],
+    });
+    const block = msg.content.find((b) => b.type === "text");
+    const diagnosis = block && block.type === "text" ? block.text.trim() : null;
+    if (diagnosis) return { diagnosis, report };
+  } catch (anthropicErr) {
+    console.debug("[Diagnostics] Anthropic diagnosis fallback also failed:", anthropicErr instanceof Error ? anthropicErr.message : anthropicErr);
+  }
+
+  // Both AI providers unavailable — return a clear plain-text summary.
+  const issueLines: string[] = [];
+  if (!report.openAiReachable) issueLines.push("OpenAI API is unreachable — AI features are temporarily unavailable.");
+  if (!report.dbReachable) issueLines.push("Database is unreachable — all data operations are failing.");
+  if (report.staleJobCount > 0) issueLines.push(`${report.staleJobCount} background job(s) appear stuck and have been re-enqueued.`);
+  if (report.stuckWorkflowCount > 0) issueLines.push(`${report.stuckWorkflowCount} workflow(s) appear stuck.`);
+  const degradedLabels = report.subsystems.filter((s) => s.status !== "healthy" && s.status !== "unknown").map((s) => s.label);
+  if (degradedLabels.length > 0) issueLines.push(`Degraded subsystems: ${degradedLabels.join(", ")}.`);
+
+  const overallLine = `Overall status: ${report.overallStatus.toUpperCase()}.`;
+  const aiNote = "The AI diagnosis service is temporarily unavailable — this summary was generated automatically.";
+  const bodyLines = issueLines.length > 0 ? issueLines : ["No major subsystem issues detected."];
+  return { diagnosis: [overallLine, aiNote, ...bodyLines].join(" "), report };
 }
