@@ -126,13 +126,51 @@ function partLabel(i: number, total: number): string {
 }
 
 /**
+ * Find the last position of a sentence-ending boundary (`. `, `? `, `! `,
+ * sentence-end before newline, or sentence-end at string end) at or before
+ * `maxPos`. Returns the position just after the terminator+space, or -1 if
+ * no sentence boundary was found.
+ */
+function lastSentenceBoundary(text: string, maxPos: number): number {
+  // Walk backwards from maxPos looking for '. ', '? ', '! '
+  // We want the position *after* the punctuation+space so the chunk
+  // includes the terminating punctuation.
+  for (let i = Math.min(maxPos, text.length - 1); i >= 0; i--) {
+    const ch = text[i];
+    if (ch === " " && i > 0) {
+      const prev = text[i - 1];
+      if (prev === "." || prev === "?" || prev === "!") {
+        return i + 1; // include the space
+      }
+    }
+    // Sentence end immediately before a newline
+    if ((ch === "\n" || ch === "\r") && i > 0) {
+      const prev = text[i - 1];
+      if (prev === "." || prev === "?" || prev === "!") {
+        return i + 1;
+      }
+    }
+  }
+  return -1;
+}
+
+/**
  * Split `text` into raw chunks using `limit` as the per-chunk character budget.
- * Cuts prefer double-newlines (paragraph breaks), then single newlines, then
- * word spaces, then hard-cut at the limit.
+ *
+ * Boundary preference order (highest to lowest):
+ *   1. Double-newline (paragraph break)
+ *   2. Sentence terminator (`. `, `? `, `! ` or sentence-end before newline)
+ *   3. Single newline
+ *   4. Word boundary (space)
+ *   5. Hard-cut at limit (last resort, avoids mid-word only when a space exists)
+ *
+ * The minimum chunk size guard is 200 chars (or 5 % of limit, whichever is
+ * smaller), ensuring we never produce excessively tiny leading chunks.
  */
 function splitIntoChunks(text: string, limit: number): string[] {
   if (text.length <= limit) return [text];
 
+  const minChunk = Math.min(200, Math.floor(limit * 0.05));
   const chunks: string[] = [];
   let remaining = text;
 
@@ -144,22 +182,28 @@ function splitIntoChunks(text: string, limit: number): string[] {
 
     let cutAt = limit;
 
-    // Prefer paragraph boundary (double newline)
+    // 1. Paragraph boundary (double newline)
     const dnl = remaining.lastIndexOf("\n\n", cutAt);
-    if (dnl > limit / 2) {
+    if (dnl >= minChunk) {
       cutAt = dnl + 2;
     } else {
-      // Try single newline
-      const nl = remaining.lastIndexOf("\n", cutAt);
-      if (nl > limit / 2) {
-        cutAt = nl + 1;
+      // 2. Sentence boundary
+      const sb = lastSentenceBoundary(remaining, cutAt);
+      if (sb >= minChunk) {
+        cutAt = sb;
       } else {
-        // Try word boundary (space)
-        const sp = remaining.lastIndexOf(" ", cutAt);
-        if (sp > limit / 2) {
-          cutAt = sp + 1;
+        // 3. Single newline
+        const nl = remaining.lastIndexOf("\n", cutAt);
+        if (nl >= minChunk) {
+          cutAt = nl + 1;
+        } else {
+          // 4. Word boundary (space)
+          const sp = remaining.lastIndexOf(" ", cutAt);
+          if (sp >= minChunk) {
+            cutAt = sp + 1;
+          }
+          // 5. Hard-cut at limit (avoids infinite loop on no-space text)
         }
-        // Hard-cut at limit if no boundary found
       }
     }
 
