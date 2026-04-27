@@ -12,6 +12,23 @@ export async function getIntegrationOwnerId(): Promise<string | null> {
       cachedOwnerId = row.owner_user_id;
       return cachedOwnerId;
     }
+
+    // No owner claimed yet — auto-seed from the earliest registered user.
+    // This handles single-user deployments where Google/Outlook OAuth has
+    // never been connected (the only previous trigger for claiming ownership),
+    // so self-edit tools and integrations work out of the box.
+    const userResult = await db.execute(
+      sql`SELECT id FROM users ORDER BY created_at ASC LIMIT 1`
+    );
+    const firstUser = (userResult as any).rows?.[0];
+    if (firstUser?.id) {
+      await db.execute(
+        sql`INSERT INTO integration_owner (owner_user_id) VALUES (${firstUser.id}) ON CONFLICT DO NOTHING`
+      );
+      cachedOwnerId = firstUser.id;
+      return cachedOwnerId;
+    }
+
     return null;
   } catch {
     return null;
