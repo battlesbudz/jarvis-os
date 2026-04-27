@@ -1324,7 +1324,7 @@ Rules:
       function: {
         name: "image_generate",
         description:
-          "Generate an image from a text prompt using DALL-E 3 and display it inline in the chat. " +
+          "Generate an image from a text prompt using GPT Image and display it inline in the chat. " +
           "Use for concept illustrations, motivational visuals, meal plan photos, mind maps, or any explicit image request. " +
           "Do NOT call this for text-only answers — only when the user explicitly asks for an image or a visual would meaningfully enhance the response.",
         parameters: {
@@ -2101,28 +2101,50 @@ Rules:
           const prompt = String(args.prompt || '').trim();
           if (!prompt) return { result: 'error', label: 'prompt required', detail: 'Provide a prompt for image_generate.' };
           const caption = args.caption ? String(args.caption).trim() : undefined;
-          const sizeMap: Record<string, string> = { square: '1024x1024', landscape: '1792x1024', portrait: '1024x1792' };
-          const size = sizeMap[String(args.size || 'square')] ?? '1024x1024';
+          // gpt-image-1 supported sizes (not DALL-E 3 sizes)
+          const sizeMap: Record<string, '1024x1024' | '1536x1024' | '1024x1536'> = {
+            square: '1024x1024',
+            landscape: '1536x1024',
+            portrait: '1024x1536',
+          };
+          const preferredSize = sizeMap[String(args.size || 'square')] ?? '1024x1024';
           try {
             const { default: OpenAI } = await import('openai');
             const imgClient = new OpenAI({
               apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
               baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
             });
-            const response = await imgClient.images.generate({
-              model: 'dall-e-3',
-              prompt,
-              n: 1,
-              size: size as '1024x1024' | '1792x1024' | '1024x1792',
-              response_format: 'url',
-            });
-            const imageUrl = response.data[0]?.url;
-            if (!imageUrl) throw new Error('No image URL returned');
+            let b64: string | undefined;
+            try {
+              const response = await imgClient.images.generate({
+                model: 'gpt-image-1',
+                prompt,
+                n: 1,
+                size: preferredSize,
+              });
+              b64 = response.data[0]?.b64_json;
+            } catch (sizeErr) {
+              // If the preferred size fails, fall back to square 1024x1024
+              if (preferredSize !== '1024x1024') {
+                console.warn('[image_generate] preferred size failed, retrying with 1024x1024:', sizeErr);
+                const fallback = await imgClient.images.generate({
+                  model: 'gpt-image-1',
+                  prompt,
+                  n: 1,
+                  size: '1024x1024',
+                });
+                b64 = fallback.data[0]?.b64_json;
+              } else {
+                throw sizeErr;
+              }
+            }
+            if (!b64) throw new Error('No image data returned from gpt-image-1');
+            const imageUrl = `data:image/png;base64,${b64}`;
             return { result: 'success', label: 'Image generated', detail: JSON.stringify({ imageUrl, caption }) };
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
-            console.error('[image_generate] DALL-E 3 error in routes:', err);
-            return { result: 'error', label: 'Image generation failed', detail: msg };
+            console.error('[image_generate] gpt-image-1 error in routes:', err);
+            return { result: 'error', label: 'Image generation failed', detail: `Image generation failed: ${msg}` };
           }
         }
         default:
