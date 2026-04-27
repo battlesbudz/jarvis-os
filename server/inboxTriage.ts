@@ -182,7 +182,7 @@ export function startTriageRunner(): void {
 
   const INTERVAL_MS = 3 * 60 * 1000;
 
-  setInterval(async () => {
+  const timer = setInterval(async () => {
     try {
       const users = await db
         .select({ id: schema.users.id })
@@ -196,7 +196,10 @@ export function startTriageRunner(): void {
     } catch (err) {
       console.error("[InboxTriage] runner error:", err);
     }
-  }, INTERVAL_MS).unref();
+  }, INTERVAL_MS);
+  if (typeof (timer as unknown as { unref?: () => void }).unref === "function") {
+    (timer as unknown as { unref: () => void }).unref();
+  }
 
   console.log("[InboxTriage] Triage runner started — 3-minute pass interval");
 }

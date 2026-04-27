@@ -139,7 +139,7 @@ function rowToGate(row: typeof agentApprovalGates.$inferSelect): ApprovalGate {
 // ── Periodic cleanup ──────────────────────────────────────────────────────────
 
 // Mark overdue pending gates as expired every 2 minutes
-setInterval(async () => {
+const _cleanupTimer = setInterval(async () => {
   try {
     const now = new Date();
     const expired = await db
@@ -154,7 +154,10 @@ setInterval(async () => {
   } catch {
     // silently ignore cleanup errors
   }
-}, 2 * 60 * 1000).unref();
+}, 2 * 60 * 1000);
+if (typeof (_cleanupTimer as unknown as { unref?: () => void }).unref === "function") {
+  (_cleanupTimer as unknown as { unref: () => void }).unref();
+}
 
 // ── requestApproval ────────────────────────────────────────────────────────────
 
@@ -220,10 +223,10 @@ export async function requestApproval(req: ApprovalRequest): Promise<ApprovalGat
 
   if (autoApprove) {
     logAgentEvent({
-      event: "tool_auto_approved",
+      event: "tool_approved",
       agentId: req.agentId,
       userId: req.userId,
-      detail: `gate=${id} tool=${req.toolName} initiatedBy=jarvis`,
+      detail: `gate=${id} tool=${req.toolName} auto-approved (jarvis-initiated)`,
     });
     // Fire approval event after current call stack unwinds so awaitApproval()
     // has time to register its listener first.
