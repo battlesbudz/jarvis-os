@@ -48,16 +48,44 @@ export interface ApprovalRequest {
 }
 
 // ── Tools that always require approval ────────────────────────────────────────
+// Any tool in this set triggers a user approval gate before execution.
+// Categories covered:
+//   EMAIL          — any outbound email action or draft creation
+//   PUBLIC POSTING — Discord/Slack/Telegram posts, general messaging
+//   VOICE / CALL   — TTS speech or direct call to user
+//   MEMORY CLEAR   — permanent deletion of agent or global memories
+//   BROWSER        — headless browser actions (navigate, click, fill, submit)
+//   FILESYSTEM     — creating/uploading/deleting files or Drive documents
+//   AGENT MGMT     — creating new sub-agents or assigning channels
+//   DAEMON         — any OS-level system action via the daemon bridge
 
 const HIGH_RISK_TOOLS = new Set([
+  // Email
   "send_email",
   "gmail_action",
-  "daemon_action",
+  "gmail_draft",
+  // Public posting / messaging
+  "discord_post",
+  "connect_channel",
+  "sessions_send",
+  // Voice / call user
+  "speak",
+  // Memory clear (permanent, irreversible)
+  "clear_memory",
+  "agent_memory_clear",
+  // Browser control
   "browser_navigate",
   "browser_click",
   "browser_type",
+  "browser_select",
+  "browser_clear_session",
+  // File / cloud storage
+  "create_document",
+  "drive_create_file",
+  // Agent management (creating new agents)
   "setup_named_agent",
-  "connect_channel",
+  // OS / system actions via daemon
+  "daemon_action",
 ]);
 
 /** Return true if this tool requires an approval gate before running. */
@@ -186,9 +214,17 @@ export function awaitApproval(gateId: string, ttlMs?: number): Promise<boolean> 
 export async function approveGate(gateId: string, resolvedBy: string): Promise<boolean> {
   const now = new Date();
   try {
+    // Enforce owner-only at the data layer: WHERE id=? AND user_id=? AND status='pending'
+    // This makes the function safe for internal callers too, not just the route layer.
     const result = await db.update(agentApprovalGates)
       .set({ status: "approved", resolvedAt: now, resolvedBy })
-      .where(and(eq(agentApprovalGates.id, gateId), eq(agentApprovalGates.status, "pending")));
+      .where(
+        and(
+          eq(agentApprovalGates.id, gateId),
+          eq(agentApprovalGates.userId, resolvedBy),
+          eq(agentApprovalGates.status, "pending"),
+        ),
+      );
     const rows = result.rowCount ?? 0;
     if (rows === 0) {
       // Gate not found or already resolved — no event emitted
@@ -215,9 +251,16 @@ export async function approveGate(gateId: string, resolvedBy: string): Promise<b
 export async function rejectGate(gateId: string, resolvedBy: string): Promise<boolean> {
   const now = new Date();
   try {
+    // Enforce owner-only at the data layer: WHERE id=? AND user_id=? AND status='pending'
     const result = await db.update(agentApprovalGates)
       .set({ status: "rejected", resolvedAt: now, resolvedBy })
-      .where(and(eq(agentApprovalGates.id, gateId), eq(agentApprovalGates.status, "pending")));
+      .where(
+        and(
+          eq(agentApprovalGates.id, gateId),
+          eq(agentApprovalGates.userId, resolvedBy),
+          eq(agentApprovalGates.status, "pending"),
+        ),
+      );
     const rows = result.rowCount ?? 0;
     if (rows === 0) {
       return false;
