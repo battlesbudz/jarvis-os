@@ -196,11 +196,21 @@ export async function runTriagePassForUser(userId: string): Promise<void> {
       const { verdict, note } = await classifyDeliverable(d);
 
       if (verdict === "auto_handle") {
+        // For approval_gate deliverables, only approve if the underlying gate succeeds.
+        // For other deliverable types there's no gate to approve.
         if (d.type === "approval_gate") {
           const meta = (d.meta as { gateId?: string }) || {};
           if (meta.gateId) {
             const { approveGate } = await import("./agent/agentApproval");
-            await approveGate(meta.gateId, userId).catch(() => {});
+            const gateOk = await approveGate(meta.gateId, userId).then(() => true).catch(() => false);
+            if (!gateOk) {
+              await db
+                .update(schema.deliverables)
+                .set({ triageNote: "Auto-approve attempted but gate not found / already resolved" })
+                .where(eq(schema.deliverables.id, d.id));
+              console.warn(`[InboxTriage] approveGate failed for ${d.id} — gate may already be resolved`);
+              continue;
+            }
           }
         }
         await db
