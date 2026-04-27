@@ -677,6 +677,10 @@ export default function InsightsScreen() {
   const tabBarCtx = useContext(BottomTabBarHeightContext);
   const tabBarHeight = tabBarCtx ?? (Platform.OS === 'web' ? 84 : 50 + insets.bottom);
   const micPulse = useSharedValue(1);
+  const waveBar1 = useSharedValue(0.3);
+  const waveBar2 = useSharedValue(0.3);
+  const waveBar3 = useSharedValue(0.3);
+  const waveBar4 = useSharedValue(0.3);
 
   useEffect(() => {
     if (isRecording) {
@@ -689,6 +693,25 @@ export default function InsightsScreen() {
       micPulse.value = withTiming(1, { duration: 200 });
     }
   }, [isRecording, micPulse]);
+
+  useEffect(() => {
+    if (isSpeaking) {
+      waveBar1.value = withRepeat(withTiming(1, { duration: 400, easing: Easing.inOut(Easing.ease) }), -1, true);
+      waveBar2.value = withRepeat(withTiming(1, { duration: 550, easing: Easing.inOut(Easing.ease) }), -1, true);
+      waveBar3.value = withRepeat(withTiming(1, { duration: 350, easing: Easing.inOut(Easing.ease) }), -1, true);
+      waveBar4.value = withRepeat(withTiming(1, { duration: 480, easing: Easing.inOut(Easing.ease) }), -1, true);
+    } else {
+      waveBar1.value = withTiming(0.3, { duration: 200 });
+      waveBar2.value = withTiming(0.3, { duration: 200 });
+      waveBar3.value = withTiming(0.3, { duration: 200 });
+      waveBar4.value = withTiming(0.3, { duration: 200 });
+    }
+  }, [isSpeaking]);
+
+  const waveBarStyle1 = useAnimatedStyle(() => ({ transform: [{ scaleY: waveBar1.value }] }));
+  const waveBarStyle2 = useAnimatedStyle(() => ({ transform: [{ scaleY: waveBar2.value }] }));
+  const waveBarStyle3 = useAnimatedStyle(() => ({ transform: [{ scaleY: waveBar3.value }] }));
+  const waveBarStyle4 = useAnimatedStyle(() => ({ transform: [{ scaleY: waveBar4.value }] }));
 
   const micPulseStyle = useAnimatedStyle(() => ({
     opacity: micPulse.value,
@@ -2637,9 +2660,17 @@ export default function InsightsScreen() {
             <Ionicons name="stop" size={16} color="#fff" />
           </Pressable>
         ) : isSpeaking ? (
-          <Pressable style={styles.stopBtn} onPress={stopSpeaking}>
-            <Ionicons name="stop" size={16} color="#fff" />
-          </Pressable>
+          <View style={styles.speakingRow}>
+            <View style={styles.waveform}>
+              <Animated.View style={[styles.waveBar, waveBarStyle1]} />
+              <Animated.View style={[styles.waveBar, styles.waveBarTall, waveBarStyle2]} />
+              <Animated.View style={[styles.waveBar, waveBarStyle3]} />
+              <Animated.View style={[styles.waveBar, styles.waveBarTall, waveBarStyle4]} />
+            </View>
+            <Pressable style={styles.stopBtn} onPress={stopSpeaking}>
+              <Ionicons name="stop" size={16} color="#fff" />
+            </Pressable>
+          </View>
         ) : (
           <Pressable
             style={[styles.sendBtn, (!input.trim() || isBaseLoading) && styles.sendBtnDisabled]}
@@ -3708,6 +3739,26 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.error,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  speakingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  waveform: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    height: 24,
+  },
+  waveBar: {
+    width: 3,
+    height: 14,
+    borderRadius: 2,
+    backgroundColor: Colors.primary,
+  },
+  waveBarTall: {
+    height: 22,
   },
   speakBtn: {
     marginTop: 4,
