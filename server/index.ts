@@ -333,6 +333,15 @@ function setupErrorHandler(app: express.Application) {
     console.warn("[Startup] skill pack seeding failed (non-fatal):", err);
   }
 
+  // Seed core always-on agents (Telegram bot, Discord bot, Discord channel agent)
+  // for every existing user. Idempotent — skips agents that already exist.
+  try {
+    const { seedCoreAgentsForAllUsers } = await import("./agent/coreAgentSeed");
+    await seedCoreAgentsForAllUsers();
+  } catch (err) {
+    console.warn("[Startup] core agent seeding failed (non-fatal):", err);
+  }
+
   logTelegramStatus();
 
   setupCors(app);
