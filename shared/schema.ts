@@ -1097,6 +1097,20 @@ export interface EgoInstructionOverrides {
   updatedAt?: string;
 }
 
+export const orchestrationTraces = pgTable("orchestration_traces", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  traceId: varchar("trace_id").notNull().unique(),
+  userRequest: text("user_request").notNull(),
+  subtasks: jsonb("subtasks").notNull().default(sql`'[]'::jsonb`),
+  results: jsonb("results").notNull().default(sql`'[]'::jsonb`),
+  finalAnswer: text("final_answer").notNull().default(""),
+  totalRetries: integer("total_retries").notNull().default(0),
+  completedAt: timestamp("completed_at"),
+  durationMs: integer("duration_ms"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
 export const userSkillPacks = pgTable("user_skill_packs", {
   userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   packId: varchar("pack_id").notNull().references(() => skillPacks.id, { onDelete: "cascade" }),

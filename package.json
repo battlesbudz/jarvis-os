@@ -16,6 +16,7 @@
     "lint:fix": "npx expo lint --fix"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.91.1",
     "@expo-google-fonts/inter": "^0.4.0",
     "@expo/vector-icons": "^15.0.3",
     "@microsoft/microsoft-graph-client": "^3.0.7",
