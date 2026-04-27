@@ -202,7 +202,7 @@ export async function runTriagePassForUser(userId: string): Promise<void> {
           const meta = (d.meta as { gateId?: string }) || {};
           if (meta.gateId) {
             const { approveGate } = await import("./agent/agentApproval");
-            const gateOk = await approveGate(meta.gateId, userId).then(() => true).catch(() => false);
+            const gateOk = await approveGate(meta.gateId, userId).catch(() => false);
             if (!gateOk) {
               await db
                 .update(schema.deliverables)
@@ -265,8 +265,7 @@ export function startTriageRunner(): void {
     try {
       const users = await db
         .select({ id: schema.users.id })
-        .from(schema.users)
-        .limit(100);
+        .from(schema.users);
       for (const user of users) {
         await runTriagePassForUser(user.id).catch((err) => {
           console.error(`[InboxTriage] pass failed for user ${user.id}:`, err);
