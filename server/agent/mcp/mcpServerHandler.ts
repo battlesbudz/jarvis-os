@@ -27,6 +27,7 @@
 
 import type { Request, Response } from "express";
 import { verifyMcpApiKey, checkRateLimit } from "./mcpApiKeys";
+import type { VerifiedKey } from "./mcpApiKeys";
 import { filterToolsByGroups } from "../tools/index";
 import { wrapToolsForAgent } from "../agentPermissions";
 import type { ToolGroup } from "../tools/index";
@@ -167,20 +168,33 @@ type AuthResult =
   | { ok: true; userId: string; keyId: string }
   | { ok: false; status: 401 | 429; message: string };
 
-async function authenticate(req: Request): Promise<AuthResult> {
+/**
+ * Optional test-only dependency overrides for handleMcpRequest.
+ * Mirrors the _testOnlyIntegrationDeps pattern used in harness.ts.
+ * Production code never passes this — tests inject mocks to avoid DB/bcrypt.
+ */
+export interface McpTestDeps {
+  verifyMcpApiKey?: (rawKey: string) => Promise<VerifiedKey | null>;
+  checkRateLimit?: (keyId: string) => Promise<boolean>;
+  buildPermittedTools?: (userId: string) => Promise<AgentTool[]>;
+}
+
+async function authenticate(req: Request, deps?: McpTestDeps): Promise<AuthResult> {
   const authHeader = req.headers["authorization"];
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
     return { ok: false, status: 401, message: "Unauthorized: missing or invalid MCP API key" };
   }
 
   const rawKey = authHeader.slice(7).trim();
-  const verified = await verifyMcpApiKey(rawKey);
+  const verify = deps?.verifyMcpApiKey ?? verifyMcpApiKey;
+  const verified = await verify(rawKey);
   if (!verified) {
     return { ok: false, status: 401, message: "Unauthorized: missing or invalid MCP API key" };
   }
 
   // Post-auth rate limit: keyed by DB row UUID (unique per key, no cross-user coupling)
-  if (!(await checkRateLimit(verified.keyId))) {
+  const rateCheck = deps?.checkRateLimit ?? checkRateLimit;
+  if (!(await rateCheck(verified.keyId))) {
     return { ok: false, status: 429, message: "Rate limit exceeded: 120 requests/minute" };
   }
 
@@ -240,9 +254,13 @@ async function buildToolContext(
 
 // ── Main handler ──────────────────────────────────────────────────────────────
 
-export async function handleMcpRequest(req: Request, res: Response): Promise<void> {
+export async function handleMcpRequest(
+  req: Request,
+  res: Response,
+  _testOnlyDeps?: McpTestDeps,
+): Promise<void> {
   // Authenticate (pre-auth bcrypt-DoS guard is in verifyMcpApiKey)
-  const auth = await authenticate(req);
+  const auth = await authenticate(req, _testOnlyDeps);
   if (!auth.ok) {
     res.status(auth.status).json(
       jsonRpcError(null, -32000, auth.message)
@@ -261,6 +279,9 @@ export async function handleMcpRequest(req: Request, res: Response): Promise<voi
   }
 
   const { id, method, params } = body;
+
+  // Resolve the permitted-tools builder (real or test-injected)
+  const getPermittedTools = _testOnlyDeps?.buildPermittedTools ?? buildPermittedTools;
 
   // ── initialize ────────────────────────────────────────────────────────────
   if (method === "initialize") {
@@ -284,7 +305,7 @@ export async function handleMcpRequest(req: Request, res: Response): Promise<voi
 
   // ── tools/list ────────────────────────────────────────────────────────────
   if (method === "tools/list") {
-    const tools = await buildPermittedTools(userId);
+    const tools = await getPermittedTools(userId);
     res.json(
       jsonRpcResult(id, {
         tools: tools.map(toMcpTool),
@@ -305,7 +326,7 @@ export async function handleMcpRequest(req: Request, res: Response): Promise<voi
     }
 
     // Build permitted tool set and resolve tool — only permitted tools can be called.
-    const permittedTools = await buildPermittedTools(userId);
+    const permittedTools = await getPermittedTools(userId);
     const tool = permittedTools.find((t) => t.name === toolName);
     if (!tool) {
       res.status(404).json(
