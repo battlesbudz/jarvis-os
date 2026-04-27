@@ -40,6 +40,10 @@ author = "agent"
 task = "workflow.run"
 args = "Start App"
 
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "test"
+
 [[workflows.workflow]]
 name = "Start App"
 author = "agent"
@@ -73,6 +77,17 @@ task = "shell.exec"
 args = "npm run expo:dev"
 waitForPort = 8081
 ensurePreviewReachable = "/status"
+
+[[workflows.workflow]]
+name = "test"
+author = "agent"
+
+[workflows.workflow.metadata]
+isValidation = true
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "npm test"
 
 [userenv]
 
