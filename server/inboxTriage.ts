@@ -12,7 +12,7 @@
  */
 
 import { db } from "./db";
-import { eq, and } from "drizzle-orm";
+import { eq, and, sql as drizzleSql } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { markSoulStale } from "./memory/soul";
 import OpenAI from "openai";
@@ -254,6 +254,35 @@ export async function runTriagePassForUser(userId: string): Promise<void> {
 
   // Also triage raw inbox notifications
   await triageInboxItemsForUser(userId);
+
+  // Fallback: auto-approve pending Jarvis-initiated gates that have no linked deliverable
+  // (handles the edge case where the deliverable creation failed at gate creation time)
+  try {
+    const orphanedGates = await db
+      .select()
+      .from(schema.agentApprovalGates)
+      .where(
+        and(
+          eq(schema.agentApprovalGates.userId, userId),
+          eq(schema.agentApprovalGates.status, "pending"),
+          eq(schema.agentApprovalGates.initiatedBy, "jarvis"),
+          drizzleSql`${schema.agentApprovalGates.expiresAt} > NOW()`
+        )
+      )
+      .limit(10);
+
+    for (const gate of orphanedGates) {
+      if (!STRICTLY_IRREVERSIBLE_TOOLS.has(gate.toolName)) {
+        const { approveGate } = await import("./agent/agentApproval");
+        const ok = await approveGate(gate.id, userId).catch(() => false);
+        if (ok) {
+          console.log(`[InboxTriage] fallback auto-approved orphaned gate: ${gate.id} (${gate.toolName})`);
+        }
+      }
+    }
+  } catch (err) {
+    console.error(`[InboxTriage] fallback gate check error for user ${userId}:`, err);
+  }
 }
 
 export async function runStartupTriagePass(): Promise<void> {

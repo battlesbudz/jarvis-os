@@ -4401,10 +4401,20 @@ Return ONLY the JSON object.`;
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const statusFilter = typeof req.query.status === "string" ? req.query.status : "pending";
+      // When fetching dismissed items, only return triage-auto-dismissed ones
+      // (jarvisReason IS NOT NULL) to avoid surfacing user-manually-dismissed items
+      // in the "Auto-handled" section.
+      const whereClause = statusFilter === "dismissed"
+        ? and(
+            eq(schema.inboxItems.userId, userId),
+            eq(schema.inboxItems.status, statusFilter),
+            sql`${schema.inboxItems.jarvisReason} IS NOT NULL`
+          )
+        : and(eq(schema.inboxItems.userId, userId), eq(schema.inboxItems.status, statusFilter));
       const items = await db
         .select()
         .from(schema.inboxItems)
-        .where(and(eq(schema.inboxItems.userId, userId), eq(schema.inboxItems.status, statusFilter)))
+        .where(whereClause)
         .orderBy(desc(schema.inboxItems.surfacedAt))
         .limit(50);
       res.json(items);
