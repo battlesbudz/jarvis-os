@@ -532,9 +532,10 @@ export function registerAgentRoutes(app: Express): void {
         res.status(404).json({ error: "Agent not found" });
         return;
       }
-      const { message, conversationHistory } = req.body as {
+      const { message, conversationHistory, sdkSessionId: incomingSessionId } = req.body as {
         message: string;
         conversationHistory?: any[];
+        sdkSessionId?: string;
       };
       if (!message) {
         res.status(400).json({ error: "message is required" });
@@ -584,6 +585,7 @@ export function registerAgentRoutes(app: Express): void {
             conversationHistory: conversationHistory ?? [],
             platform: "in_app",
             signal: abortController.signal,
+            sdkSessionId: incomingSessionId,
             onToken: (chunk: string) => {
               fullReply += chunk;
               if (!res.writableEnded) {
@@ -606,6 +608,12 @@ export function registerAgentRoutes(app: Express): void {
               }
             },
           });
+
+          // Forward the session ID to the client via both a header (first turn)
+          // and an SSE event (all turns) so it can resume on the next message.
+          if (result.sdkSessionId && !res.writableEnded) {
+            res.write(`data: ${JSON.stringify({ type: "session_init", sdkSessionId: result.sdkSessionId })}\n\n`);
+          }
 
           if (!res.writableEnded) {
             // Ensure final reply is flushed (handles non-streaming fallback inside runNamedAgent)
@@ -636,8 +644,14 @@ export function registerAgentRoutes(app: Express): void {
           userMessage: message,
           conversationHistory: conversationHistory ?? [],
           platform: "in_app",
+          sdkSessionId: incomingSessionId,
         });
-        res.json({ reply: result.reply, turns: result.turns, toolCalls: result.toolCalls.length });
+        res.json({
+          reply: result.reply,
+          turns: result.turns,
+          toolCalls: result.toolCalls.length,
+          sdkSessionId: result.sdkSessionId,
+        });
       }
     } catch (err) { handleError(res, err); }
   });

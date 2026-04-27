@@ -90,6 +90,19 @@ export interface RunNamedAgentOptions {
    *   3. getModel(userId, "chat") (global user preference / system default)
    */
   model?: string;
+  /**
+   * SDK session ID for native session resumption.
+   *
+   * When provided the agent looks up the cached conversation state from the
+   * DB/in-process cache and resumes from there instead of re-injecting the
+   * full message history. On the first message this field is absent; the
+   * harness initialises a new session and the caller receives the new
+   * `sdkSessionId` via `NamedAgentResult.sdkSessionId`.
+   *
+   * If the session has expired or cannot be found the harness falls back
+   * gracefully to full history injection and starts a fresh session.
+   */
+  sdkSessionId?: string;
 }
 
 export interface NamedAgentResult {
@@ -98,6 +111,15 @@ export interface NamedAgentResult {
   toolCalls: AgentRunResult["toolCalls"];
   agentName: string;
   agentId: string;
+  /**
+   * SDK session ID for the next turn.
+   *
+   * Always returned — either the newly created session (first turn) or the
+   * existing session ID passed in by the caller (continuation turns). The
+   * client should store this and send it back on the next message so the
+   * agent can resume without re-injecting the full history.
+   */
+  sdkSessionId?: string;
 }
 
 export async function runNamedAgent(opts: RunNamedAgentOptions): Promise<NamedAgentResult> {
@@ -130,52 +152,102 @@ export async function runNamedAgent(opts: RunNamedAgentOptions): Promise<NamedAg
       state: { pendingAttachments: [] },
     };
 
-    // ── Retrieve agent memories ──────────────────────────────────────────────
-    let memoryBlock = "";
-    try {
-      const memories = await readAgentMemories(agentId, userId, userMessage, 8);
-      if (memories.length > 0) {
-        memoryBlock = `\n\n## My Memory (${agent.name})\n` +
-          memories.map((m) => `- [${m.category}] ${m.content}`).join("\n");
-      }
-    } catch { /* non-blocking */ }
+    // ── Native session resumption ─────────────────────────────────────────────
+    // When the caller provides a sdkSessionId, attempt to resume the cached
+    // conversation rather than rebuilding the full message history. This skips
+    // the expensive history-injection path for all turns after the first.
+    //
+    // The resumeSession() call is the equivalent of passing `resume: sessionId`
+    // to the Claude Agent SDK — it fetches the accumulated message list from the
+    // server-side session store (in-process cache → DB) and returns it directly.
+    //
+    // On failure (expired or missing session) the code falls back to the
+    // standard history-injection path and starts a fresh session.
 
-    // ── Optionally include global soul ───────────────────────────────────────
-    let soulBlock = "";
-    if (agent.accessGlobalMemory) {
+    let messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[];
+    let activeSessionId: string | undefined = opts.sdkSessionId;
+    let sessionResumed = false;
+
+    if (opts.sdkSessionId) {
       try {
-        const { getSoulPromptBlock } = await import("../memory/soul");
-        const soul = await getSoulPromptBlock(userId);
-        if (soul) soulBlock = `\n\n## User Context (Global)\n${soul.trim()}`;
-      } catch { /* non-blocking */ }
-    }
-
-    // ── Compose system prompt ────────────────────────────────────────────────
-    const persona = agent.persona ?? `You are ${agent.name}, a ${agent.role} assistant.`;
-    const systemPrompt = `${persona}${soulBlock}${memoryBlock}`;
-
-    // ── Build messages ───────────────────────────────────────────────────────
-    const history = opts.conversationHistory ?? [];
-    let totalHistoryTokens = history.reduce((acc, m) => acc + estimateTokens(String((m as { content?: string }).content ?? "")), 0);
-
-    // Trim history if it exceeds ~6000 tokens
-    let trimmedHistory = history;
-    if (totalHistoryTokens > 6000) {
-      trimmedHistory = [];
-      let accumTokens = 0;
-      for (const msg of [...history].reverse()) {
-        const t = estimateTokens(String((msg as { content?: string }).content ?? ""));
-        if (accumTokens + t > 5000) break;
-        trimmedHistory.unshift(msg);
-        accumTokens += t;
+        const { resumeSession } = await import("./providers/claude");
+        const resumed = await resumeSession(opts.sdkSessionId, agentId, userId);
+        if (resumed) {
+          // Session found — append the new user message and skip full rebuild.
+          messages = [...resumed.messages, { role: "user", content: userMessage }];
+          sessionResumed = true;
+          console.log(
+            `[RunNamedAgent] session resumed: sdkSessionId=${opts.sdkSessionId} messages=${resumed.messages.length}`,
+          );
+        } else {
+          // Session expired/missing — fall back and reset so we start fresh below.
+          console.warn(
+            `[RunNamedAgent] session not found, falling back to history injection: sdkSessionId=${opts.sdkSessionId}`,
+          );
+          activeSessionId = undefined;
+          messages = [];
+        }
+      } catch (err) {
+        console.warn("[RunNamedAgent] session resume error, falling back:", err);
+        activeSessionId = undefined;
+        messages = [];
       }
+    } else {
+      messages = [];
     }
 
-    const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-      { role: "system", content: systemPrompt },
-      ...trimmedHistory,
-      { role: "user", content: userMessage },
-    ];
+    // ── Full history injection (first turn or fallback) ──────────────────────
+    if (!sessionResumed) {
+      // ── Retrieve agent memories ────────────────────────────────────────────
+      let memoryBlock = "";
+      try {
+        const memories = await readAgentMemories(agentId, userId, userMessage, 8);
+        if (memories.length > 0) {
+          memoryBlock = `\n\n## My Memory (${agent.name})\n` +
+            memories.map((m) => `- [${m.category}] ${m.content}`).join("\n");
+        }
+      } catch { /* non-blocking */ }
+
+      // ── Optionally include global soul ───────────────────────────────────────
+      let soulBlock = "";
+      if (agent.accessGlobalMemory) {
+        try {
+          const { getSoulPromptBlock } = await import("../memory/soul");
+          const soul = await getSoulPromptBlock(userId);
+          if (soul) soulBlock = `\n\n## User Context (Global)\n${soul.trim()}`;
+        } catch { /* non-blocking */ }
+      }
+
+      // ── Compose system prompt ──────────────────────────────────────────────
+      const persona = agent.persona ?? `You are ${agent.name}, a ${agent.role} assistant.`;
+      const systemPrompt = `${persona}${soulBlock}${memoryBlock}`;
+
+      // ── Build messages from history ────────────────────────────────────────
+      const history = opts.conversationHistory ?? [];
+      let totalHistoryTokens = history.reduce((acc, m) => acc + estimateTokens(String((m as { content?: string }).content ?? "")), 0);
+
+      // Trim history if it exceeds ~6000 tokens
+      let trimmedHistory = history;
+      if (totalHistoryTokens > 6000) {
+        trimmedHistory = [];
+        let accumTokens = 0;
+        for (const msg of [...history].reverse()) {
+          const t = estimateTokens(String((msg as { content?: string }).content ?? ""));
+          if (accumTokens + t > 5000) break;
+          trimmedHistory.unshift(msg);
+          accumTokens += t;
+        }
+      }
+
+      messages = [
+        { role: "system", content: systemPrompt },
+        ...trimmedHistory,
+        { role: "user", content: userMessage },
+      ];
+    } else {
+      // Session resumed — memories and soul are already in the cached system prompt.
+      // We only need the new user message (already appended above).
+    }
 
     // ── Resolve model (caller override → agent preferredModel → global pref) ──
     const { getModel, AVAILABLE_MODELS, ORCHESTRATOR_MODELS } = await import("../lib/modelPrefs");
@@ -264,6 +336,33 @@ export async function runNamedAgent(opts: RunNamedAgentOptions): Promise<NamedAg
       onIntegrationError: opts.onIntegrationError,
     });
 
+    // ── Session management — update or initialise after successful run ─────────
+    // Mirror the Claude Agent SDK session pattern:
+    //   • First turn (no sdkSessionId or fallback): init a new session from the
+    //     full message list returned by the harness. This is the "system init"
+    //     event — the session is recorded once the model has replied successfully.
+    //   • Continuation turns (sessionResumed): append the new exchange (user
+    //     message + assistant reply) to the existing session so the next turn
+    //     can resume without re-injecting history.
+    let finalSessionId: string | undefined = activeSessionId;
+    try {
+      const { initSession, appendToSession } = await import("./providers/claude");
+      if (sessionResumed && activeSessionId) {
+        // Append only the new exchange: the messages the harness added after the
+        // resumption point (user message + assistant reply + any tool messages).
+        const resumedBase = messages.slice(0, messages.length - 1); // exclude the user msg we just added
+        const newMessages = result.messages.slice(resumedBase.length);
+        if (newMessages.length > 0) {
+          appendToSession(activeSessionId, agentId, userId, newMessages).catch(() => {});
+        }
+      } else {
+        // First turn or fallback — init a fresh session from the complete message list.
+        finalSessionId = await initSession(agentId, userId, result.messages);
+      }
+    } catch (err) {
+      console.error("[RunNamedAgent] session update failed (non-blocking):", err);
+    }
+
     // ── Write extracted memories ──────────────────────────────────────────────
     extractAndWriteMemories(agentId, userId, userMessage, result.reply).catch(() => {});
 
@@ -272,7 +371,7 @@ export async function runNamedAgent(opts: RunNamedAgentOptions): Promise<NamedAg
       agentId,
       userId,
       durationMs: Date.now() - start,
-      detail: `turns=${result.turns} tools=${result.toolCalls.length}`,
+      detail: `turns=${result.turns} tools=${result.toolCalls.length} session=${finalSessionId ? "active" : "none"}`,
     });
 
     return {
@@ -281,6 +380,7 @@ export async function runNamedAgent(opts: RunNamedAgentOptions): Promise<NamedAg
       toolCalls: result.toolCalls,
       agentName: agent.name,
       agentId,
+      sdkSessionId: finalSessionId,
     };
   } catch (err) {
     logAgentEvent({
