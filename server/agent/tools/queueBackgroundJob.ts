@@ -69,8 +69,8 @@ Do NOT use for: quick one-sentence answers, reading today's tasks, anything answ
 
     try {
       // Inject per-type model routing so the job queue uses the appropriate
-      // model for each sub-agent workload (research/planning → claude-sonnet-4-6,
-      // writing/email → claude-haiku-4-5).
+      // GPT mini for each sub-agent workload (research/planning → gpt-4.1-mini,
+      // writing/email → gpt-4o-mini).
       const routedModel = getModelForJobType(agentType as AgentJobType);
       const jobId = await submitAgentJob({
         userId: ctx.userId,

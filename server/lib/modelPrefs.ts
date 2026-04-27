@@ -15,13 +15,14 @@ export const MODEL_DEFAULTS: Record<ModelCategory, string> = {
   chat: "gpt-5-mini",
   planning: "gpt-5-mini",
   memory: "gpt-5-mini",
-  research: "gpt-4o-mini",
+  research: "gpt-4.1-mini",
   orchestrator: "claude-opus-4-6",
 };
 
 export const AVAILABLE_MODELS = [
   { value: "gpt-5-mini", label: "Fast", description: "Quick responses, great for most tasks" },
   { value: "gpt-5.1", label: "Smart", description: "Better reasoning with balanced speed" },
+  { value: "gpt-4.1-mini", label: "Capable", description: "Strong reasoning in a compact model" },
   { value: "gpt-4o", label: "Powerful", description: "Highest quality for complex tasks" },
   { value: "gpt-4o-mini", label: "Lightweight", description: "Efficient for high-volume tasks" },
 ] as const;
