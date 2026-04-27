@@ -282,6 +282,13 @@ When a user's request involves multi-step research, drafting a document or plan,
   const youtubeCtx = await buildYouTubeContextBlock(userText || "").catch(() => "");
   const enrichedUserText = userText + youtubeCtx;
 
+  // When a transcript was auto-fetched, append a hard constraint to the system
+  // context so the orchestrator's decompose/execute/synthesize steps all see it.
+  const youtubeInlineConstraint = youtubeCtx
+    ? "\n\n## MANDATORY: YouTube transcript inline reply\nA YouTube transcript has been pre-loaded in this request (marked TRANSCRIPT AUTO-FETCHED). You MUST summarise or answer the question inline in this single reply. NEVER call queue_background_job for this request."
+    : "";
+  const effectiveSystemPrompt = systemPrompt + youtubeInlineConstraint;
+
   const userMessageContent = imageUrl
     ? [
         { type: "text" as const, text: enrichedUserText || "What do you see in this image?" },
@@ -377,8 +384,8 @@ When a user's request involves multi-step research, drafting a document or plan,
   try {
     const orchResult = await runOrchestrator({
       userId,
-      userRequest: userText,
-      systemContext: systemPrompt,
+      userRequest: enrichedUserText,
+      systemContext: effectiveSystemPrompt,
       tools: scopedTools,
       toolContext: agentCtx,
       maxCompletionTokens: getMaxTokensForChannel(channelName),
