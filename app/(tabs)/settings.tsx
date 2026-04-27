@@ -508,18 +508,20 @@ export default function SettingsScreen() {
   const loadAll = useCallback(async () => {
     await loadConnections();
 
-    const [s, lc, name, notif, cm] = await Promise.all([
-      getStats(),
-      getLifeContext(),
-      getUserName(),
-      areNotificationsEnabled(),
-      getCoachingMode(),
-    ]);
-    setStats(s);
-    setLifeContext(lc);
-    setUserName(name ?? '');
-    setNotificationsEnabledState(notif);
-    setCoachingModeState(cm);
+    try {
+      const [s, lc, name, notif, cm] = await Promise.all([
+        getStats(),
+        getLifeContext(),
+        getUserName(),
+        areNotificationsEnabled(),
+        getCoachingMode(),
+      ]);
+      setStats(s);
+      setLifeContext(lc);
+      setUserName(name ?? '');
+      setNotificationsEnabledState(notif);
+      setCoachingModeState(cm);
+    } catch {}
     try {
       const prefsRes = await apiRequest('GET', '/api/data/user-preferences').then(r => r.json()).catch(() => null);
       if (prefsRes?.data?.timezone) setTimezone(prefsRes.data.timezone);
