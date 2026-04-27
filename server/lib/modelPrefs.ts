@@ -59,6 +59,8 @@ export function isValidModelForCategory(value: unknown, category: ModelCategory)
 
 /**
  * Return the model string for a given user + category.
+ * Uses category-aware validation: orchestrator-category preferences are validated against
+ * the Anthropic model set; all other categories are validated against the OpenAI model set.
  * Falls back to MODEL_DEFAULTS[category] if the preference is missing or the DB call fails.
  */
 export async function getModel(userId: string, category: ModelCategory): Promise<string> {
@@ -72,7 +74,7 @@ export async function getModel(userId: string, category: ModelCategory): Promise
     const prefs = rows[0]?.data as Record<string, unknown> | undefined;
     const modelPrefs = prefs?.modelPreferences as Record<string, string> | undefined;
     const pref = modelPrefs?.[category];
-    if (isValidModel(pref)) return pref;
+    if (isValidModelForCategory(pref, category)) return pref as string;
   } catch {
     // silently fall through
   }
