@@ -1134,6 +1134,11 @@ export async function ensureTablesExist() {
     await db.execute(sql`
       CREATE INDEX IF NOT EXISTS mcp_servers_user_idx ON mcp_servers (user_id)
     `).catch(() => {});
+    await db.execute(sql`
+      ALTER TABLE mcp_servers
+        ADD COLUMN IF NOT EXISTS credential_mode VARCHAR NOT NULL DEFAULT 'direct',
+        ADD COLUMN IF NOT EXISTS env_key VARCHAR
+    `).catch(() => {});
 
     // ── Code Proposals (Task #452) ──────────────────────────────────────────────
     await db.execute(sql`

@@ -89,6 +89,8 @@ interface McpServerInfo {
   toolCount: number;
   error?: string;
   isSystem: boolean;
+  credentialMode?: 'direct' | 'env-ref';
+  envKey?: string | null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -258,6 +260,10 @@ export default function SettingsScreen() {
   const [mcpAddCommand, setMcpAddCommand] = useState('');
   const [mcpAddUrl, setMcpAddUrl] = useState('');
   const [mcpAddToken, setMcpAddToken] = useState('');
+  const [mcpAddCredMode, setMcpAddCredMode] = useState<'direct' | 'env-ref'>('direct');
+  const [mcpAddEnvKey, setMcpAddEnvKey] = useState('');
+  const [mcpAddEnvPresent, setMcpAddEnvPresent] = useState<boolean | null>(null);
+  const [mcpEnvGuideExpanded, setMcpEnvGuideExpanded] = useState(false);
   const [mcpAddError, setMcpAddError] = useState('');
   const [mcpAddSaving, setMcpAddSaving] = useState(false);
 
@@ -574,6 +580,9 @@ export default function SettingsScreen() {
     if (!mcpAddName.trim()) { setMcpAddError('Name is required'); return; }
     if (mcpAddTransport === 'stdio' && !mcpAddCommand.trim()) { setMcpAddError('Command is required for stdio'); return; }
     if (mcpAddTransport === 'http' && !mcpAddUrl.trim()) { setMcpAddError('URL is required for HTTP'); return; }
+    if (mcpAddTransport === 'http' && mcpAddCredMode === 'env-ref' && !mcpAddEnvKey.trim()) {
+      setMcpAddError('Env var name is required when using env-ref mode'); return;
+    }
     setMcpAddSaving(true);
     try {
       const res = await apiRequest('POST', '/api/mcp-servers', {
@@ -581,7 +590,9 @@ export default function SettingsScreen() {
         transport: mcpAddTransport,
         command: mcpAddTransport === 'stdio' ? mcpAddCommand.trim() : undefined,
         url: mcpAddTransport === 'http' ? mcpAddUrl.trim() : undefined,
-        authToken: mcpAddToken.trim() || undefined,
+        authToken: mcpAddTransport === 'http' && mcpAddCredMode === 'direct' ? (mcpAddToken.trim() || undefined) : undefined,
+        credentialMode: mcpAddTransport === 'http' ? mcpAddCredMode : 'direct',
+        envKey: mcpAddTransport === 'http' && mcpAddCredMode === 'env-ref' ? mcpAddEnvKey.trim() : undefined,
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
@@ -589,6 +600,7 @@ export default function SettingsScreen() {
       } else {
         setMcpAddVisible(false);
         setMcpAddName(''); setMcpAddCommand(''); setMcpAddUrl(''); setMcpAddToken('');
+        setMcpAddCredMode('direct'); setMcpAddEnvKey(''); setMcpAddEnvPresent(null);
         await loadMcpServers();
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       }
@@ -597,7 +609,20 @@ export default function SettingsScreen() {
     } finally {
       setMcpAddSaving(false);
     }
-  }, [mcpAddName, mcpAddTransport, mcpAddCommand, mcpAddUrl, mcpAddToken, loadMcpServers]);
+  }, [mcpAddName, mcpAddTransport, mcpAddCommand, mcpAddUrl, mcpAddToken, mcpAddCredMode, mcpAddEnvKey, loadMcpServers]);
+
+  const checkEnvVar = useCallback(async (key: string) => {
+    if (!key.trim()) { setMcpAddEnvPresent(null); return; }
+    try {
+      const res = await apiRequest('GET', `/api/settings/env-var-check?key=${encodeURIComponent(key.trim())}`);
+      if (res.ok) {
+        const data = await res.json();
+        setMcpAddEnvPresent(data.present === true);
+      }
+    } catch {
+      setMcpAddEnvPresent(null);
+    }
+  }, []);
 
   // ── MCP Server key management ──
   const loadMcpServerKey = useCallback(async () => {
@@ -1219,9 +1244,16 @@ export default function SettingsScreen() {
                         ? `Error: ${server.error.slice(0, 60)}`
                         : 'Disconnected'}
                   </Text>
-                  {server.isSystem && (
-                    <Text style={[styles.connSub, { color: '#10B981', fontSize: 10 }]}>System</Text>
-                  )}
+                  <View style={{ flexDirection: 'row', gap: 6, marginTop: 2 }}>
+                    {server.isSystem && (
+                      <Text style={[styles.connSub, { color: '#10B981', fontSize: 10 }]}>System</Text>
+                    )}
+                    {server.credentialMode === 'env-ref' && server.envKey && (
+                      <Text style={{ fontSize: 10, color: server.error ? Colors.error : '#8B5CF6', fontFamily: 'Inter_500Medium' }}>
+                        {`ENV: ${server.envKey}`}
+                      </Text>
+                    )}
+                  </View>
                 </View>
                 {!server.isBuiltIn && !server.isSystem && (
                   <Pressable
@@ -1314,19 +1346,100 @@ export default function SettingsScreen() {
                   autoCorrect={false}
                   keyboardType="url"
                 />
-                <TextInput
-                  style={{
-                    backgroundColor: Colors.surface, color: Colors.text, borderRadius: 8,
-                    padding: 12, fontSize: 13, borderWidth: 1, borderColor: Colors.border, marginBottom: 10,
-                  }}
-                  placeholder="Auth token (optional)"
-                  placeholderTextColor={Colors.textMuted}
-                  value={mcpAddToken}
-                  onChangeText={setMcpAddToken}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  secureTextEntry
-                />
+
+                {/* Credential mode toggle */}
+                <View style={{ marginBottom: 8 }}>
+                  <Text style={{ color: Colors.textTertiary, fontSize: 11, fontFamily: 'Inter_500Medium', marginBottom: 6, letterSpacing: 0.5 }}>
+                    AUTH TOKEN MODE
+                  </Text>
+                  <View style={{ flexDirection: 'row', gap: 8 }}>
+                    {(['direct', 'env-ref'] as const).map(m => (
+                      <Pressable
+                        key={m}
+                        onPress={() => { setMcpAddCredMode(m); setMcpAddEnvPresent(null); }}
+                        style={{
+                          flex: 1, paddingVertical: 7, borderRadius: 8, alignItems: 'center',
+                          backgroundColor: mcpAddCredMode === m ? '#10B981' : Colors.surface,
+                          borderWidth: 1, borderColor: mcpAddCredMode === m ? '#10B981' : Colors.border,
+                        }}
+                      >
+                        <Text style={{ color: mcpAddCredMode === m ? '#000' : Colors.text, fontWeight: '600', fontSize: 12 }}>
+                          {m === 'direct' ? 'Direct' : 'Env Ref'}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                </View>
+
+                {mcpAddCredMode === 'direct' ? (
+                  <TextInput
+                    style={{
+                      backgroundColor: Colors.surface, color: Colors.text, borderRadius: 8,
+                      padding: 12, fontSize: 13, borderWidth: 1, borderColor: Colors.border, marginBottom: 10,
+                    }}
+                    placeholder="Auth token (optional)"
+                    placeholderTextColor={Colors.textMuted}
+                    value={mcpAddToken}
+                    onChangeText={setMcpAddToken}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    secureTextEntry
+                  />
+                ) : (
+                  <>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10, gap: 8 }}>
+                      <TextInput
+                        style={{
+                          flex: 1, backgroundColor: Colors.surface, color: Colors.text, borderRadius: 8,
+                          padding: 12, fontSize: 13, borderWidth: 1,
+                          borderColor: mcpAddEnvPresent === true ? '#10B981' : mcpAddEnvPresent === false ? Colors.error : Colors.border,
+                          fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+                        }}
+                        placeholder="ENV_VAR_NAME"
+                        placeholderTextColor={Colors.textMuted}
+                        value={mcpAddEnvKey}
+                        onChangeText={(v) => {
+                          const normalized = v.toUpperCase().replace(/[^A-Z0-9_]/g, '');
+                          setMcpAddEnvKey(normalized);
+                          setMcpAddEnvPresent(null);
+                        }}
+                        onBlur={() => checkEnvVar(mcpAddEnvKey)}
+                        autoCapitalize="characters"
+                        autoCorrect={false}
+                      />
+                      {mcpAddEnvPresent === true && <Ionicons name="checkmark-circle" size={22} color="#10B981" />}
+                      {mcpAddEnvPresent === false && <Ionicons name="close-circle" size={22} color={Colors.error} />}
+                    </View>
+                    {mcpAddEnvPresent === false && (
+                      <Text style={{ color: Colors.error, fontSize: 11, marginBottom: 8, marginTop: -4 }}>
+                        Variable not found — add it to Replit Secrets first.
+                      </Text>
+                    )}
+                    {mcpAddEnvPresent === true && (
+                      <Text style={{ color: '#10B981', fontSize: 11, marginBottom: 8, marginTop: -4 }}>
+                        Variable found in environment.
+                      </Text>
+                    )}
+
+                    {/* How to set env vars guide */}
+                    <Pressable
+                      onPress={() => setMcpEnvGuideExpanded(v => !v)}
+                      style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8, gap: 4 }}
+                    >
+                      <Ionicons name={mcpEnvGuideExpanded ? 'chevron-down' : 'chevron-forward'} size={14} color={Colors.textTertiary} />
+                      <Text style={{ fontSize: 12, color: Colors.textTertiary, fontFamily: 'Inter_500Medium' }}>
+                        How to add an env var
+                      </Text>
+                    </Pressable>
+                    {mcpEnvGuideExpanded && (
+                      <View style={{ backgroundColor: Colors.surface, borderRadius: 8, padding: 12, marginBottom: 10, borderWidth: 1, borderColor: Colors.border }}>
+                        <Text style={{ color: Colors.text, fontSize: 12, fontFamily: 'Inter_400Regular', lineHeight: 18 }}>
+                          {`1. Open your Replit project.\n2. Click the padlock icon (Secrets) in the left sidebar.\n3. Add a new secret with your chosen name (e.g. MY_API_TOKEN) and paste the value.\n4. The variable will be available in this dropdown immediately — no restart needed.\n\nUsing Secrets keeps raw keys out of your database and lets you rotate them without changing the app.`}
+                        </Text>
+                      </View>
+                    )}
+                  </>
+                )}
               </>
             )}
 
