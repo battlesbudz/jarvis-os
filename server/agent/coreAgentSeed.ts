@@ -8,7 +8,7 @@
  * Idempotent: checks by (userId, name) before inserting.
  */
 import { db } from "../db";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { discordAgents, users } from "@shared/schema";
 import { DEFAULT_AGENT_PERMISSIONS } from "@shared/schema";
 
@@ -35,7 +35,7 @@ const CORE_AGENTS: CoreAgentDef[] = [
     platforms: ["telegram"],
     loopEnabled: false,
     loopIntervalMinutes: 60,
-    preferredModel: "claude-sonnet-4-6",
+    preferredModel: "gpt-4.1-mini",
   },
   {
     name: "Jarvis Discord Bot",
@@ -45,7 +45,7 @@ const CORE_AGENTS: CoreAgentDef[] = [
     platforms: ["discord"],
     loopEnabled: false,
     loopIntervalMinutes: 60,
-    preferredModel: "claude-sonnet-4-6",
+    preferredModel: "gpt-4.1-mini",
   },
   {
     name: "Discord Channel Agent",
@@ -55,7 +55,7 @@ const CORE_AGENTS: CoreAgentDef[] = [
     platforms: ["discord"],
     loopEnabled: false,
     loopIntervalMinutes: 60,
-    preferredModel: "claude-sonnet-4-6",
+    preferredModel: "gpt-4.1-mini",
   },
 ];
 
@@ -71,7 +71,8 @@ export async function seedCoreAgentsForUser(userId: string): Promise<void> {
 
   for (const def of CORE_AGENTS) {
     if (existingNames.has(def.name.toLowerCase())) {
-      // Backfill preferredModel for agents that predate this feature.
+      // Always sync preferredModel so model routing changes propagate to
+      // existing agents (not just newly-seeded ones).
       if (def.preferredModel) {
         await db
           .update(discordAgents)
@@ -80,7 +81,6 @@ export async function seedCoreAgentsForUser(userId: string): Promise<void> {
             and(
               eq(discordAgents.userId, userId),
               eq(discordAgents.name, def.name),
-              isNull(discordAgents.preferredModel),
             ),
           )
           .catch(() => {});
