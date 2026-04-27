@@ -4,7 +4,7 @@ import { db } from "../db";
 import { eq, and, sql } from "drizzle-orm";
 import { channelLinks, channelLinkCodes, userPreferences } from "@shared/schema";
 import { randomBytes, createHash } from "crypto";
-import { SessionCache } from "../sessionCache";
+import { getSession as _getCoachSession, setSession as _setCoachSession } from "../channels/sessionStore";
 
 interface PairMsg { type: "pair"; code: string; hostname?: string; platform?: string }
 interface ReconnectMsg { type: "reconnect"; daemonId: string; reconnectSecret: string; hostname?: string; platform?: string }
@@ -87,12 +87,9 @@ export function subscribeWakeWordTrigger(
 }
 
 // ── Per-user session ID store for daemon (Voice) coach conversations ────────
-// Volatile in-process cache keyed by userId. Lost on server restart but the
-// coach pipeline gracefully falls back to full history injection on cache miss,
-// so there is no data loss — only a minor efficiency cost for the first turn
-// after a restart.  Entries unused for 24 h are evicted automatically.
-const daemonCoachSessions = new SessionCache("daemon");
-daemonCoachSessions.startSweep();
+// Backed by the shared persistent sessionStore so sessions survive server
+// restarts. The store keeps an in-process Map as a fast path with the DB as
+// the durable backing layer.
 
 /**
  * Handles a voice utterance captured by the Android daemon in Talk Mode.
@@ -108,16 +105,15 @@ async function processDaemonUtterance(userId: string, utterance: string): Promis
     const { runCoachAgent } = await import("../channels/coachAgent");
     const { textToSpeech } = await import("../replit_integrations/audio/client");
 
-    const storedSessionId = daemonCoachSessions.get(userId);
+    const storedSessionId = await _getCoachSession(userId, "Voice");
     const result = await runCoachAgent({
       userId,
       userText: utterance,
       channelName: "Voice",
       sdkSessionId: storedSessionId,
     });
-    // Persist the session ID so the next turn can resume without a DB chat_history fetch.
     if (result.sdkSessionId) {
-      daemonCoachSessions.set(userId, result.sdkSessionId);
+      _setCoachSession(userId, "Voice", result.sdkSessionId);
     }
 
     const responseText = result.reply.trim() || "I'm not sure how to help with that.";

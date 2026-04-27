@@ -14,6 +14,7 @@ import { startIntegrationValidator } from "./intelligence/integrationValidator";
 import { initChannels } from "./channels";
 import { registerWhatsAppWebhook } from "./channels/whatsappWebhook";
 import { registerSlackWebhook } from "./channels/slackWebhook";
+import { seedAllSessions } from "./channels/sessionStore";
 import { startDaemonBridge } from "./daemon/bridge";
 import { bootAllBots as bootDiscordBots, bootSharedBot } from "./discord/manager";
 import { telegramLinks, inboxItems } from "@shared/schema";
@@ -323,6 +324,12 @@ function setupErrorHandler(app: express.Application) {
 
 (async () => {
   await ensureTablesExist();
+
+  // Pre-warm the coach channel session cache from the DB so the first message
+  // after a server restart still benefits from session resumption.
+  seedAllSessions().catch((err) =>
+    console.warn("[Startup] seedAllSessions failed (non-fatal):", err),
+  );
 
   // Seed first-party skill packs (idempotent — skips existing rows).
   // Awaited so the catalogue is populated before the first request arrives.

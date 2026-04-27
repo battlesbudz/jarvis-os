@@ -1072,6 +1072,21 @@ export async function ensureTablesExist() {
         ON agent_chat_messages(agent_id, user_id, created_at ASC)
     `).catch(() => {});
 
+    // ── Coach channel sessions (persist sdkSessionId across server restarts) ──
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS coach_channel_sessions (
+        user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        channel VARCHAR NOT NULL,
+        sdk_session_id VARCHAR NOT NULL,
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (user_id, channel)
+      )
+    `).catch(() => {});
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS coach_channel_sessions_user_idx
+        ON coach_channel_sessions (user_id)
+    `).catch(() => {});
+
     console.log("Database tables verified");
   } catch (error) {
     console.error("Failed to ensure database tables exist:", error);

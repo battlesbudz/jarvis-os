@@ -20,8 +20,8 @@ import { telegramCoachTools } from "./agent/tools";
 import { runCoachAgent } from "./channels/coachAgent";
 import { routeToNamedAgent } from "./agent/runNamedAgent";
 import { completePairing as completeDiscordPairing } from "./discord/manager";
+import { getSession as getCoachSession, setSession as setCoachSession } from "./channels/sessionStore";
 import OpenAI from "openai";
-import { SessionCache } from "./sessionCache";
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
@@ -38,67 +38,6 @@ function generateLinkCode(): string {
 }
 
 
-// ── Per-user session ID store for Telegram coach conversations ─────────────────
-// Two-layer cache: in-process SessionCache (fast path, entries unused for 24 h
-// are evicted automatically) backed by agent_chat_sessions (source of truth).
-// On a cache miss after a server restart the DB is queried for the latest
-// non-expired coach session so session-resumption survives deploys without any
-// separate pointer table.
-const telegramCoachSessions = new SessionCache("telegram");
-telegramCoachSessions.startSweep();
-
-/** agentId used by runCoachAgent / claude provider for main coach turns. */
-const TELEGRAM_COACH_AGENT_ID = "coach";
-
-/**
- * Return the coach sdkSessionId for a Telegram user.
- *
- * Fast path: in-process Map (zero DB cost for consecutive turns).
- * Fallback: queries agent_chat_sessions for the latest non-expired coach
- *           session for this user so the optimisation survives server restarts.
- */
-async function getTelegramSessionId(userId: string): Promise<string | undefined> {
-  const cached = telegramCoachSessions.get(userId);
-  if (cached) return cached;
-
-  try {
-    const now = new Date();
-    const rows = await db
-      .select({ sdkSessionId: schema.agentChatSessions.sdkSessionId })
-      .from(schema.agentChatSessions)
-      .where(
-        and(
-          eq(schema.agentChatSessions.agentId, TELEGRAM_COACH_AGENT_ID),
-          eq(schema.agentChatSessions.userId, userId),
-          gte(schema.agentChatSessions.expiresAt, now),
-        ),
-      )
-      .orderBy(desc(schema.agentChatSessions.updatedAt))
-      .limit(1);
-
-    const sessionId = rows[0]?.sdkSessionId;
-    if (sessionId) {
-      telegramCoachSessions.set(userId, sessionId);
-      console.log(`[Telegram] Loaded coach session from DB after restart: sdkSessionId=${sessionId}`);
-      return sessionId;
-    }
-  } catch (err) {
-    console.warn("[Telegram] Failed to load coach session from DB:", err);
-  }
-
-  return undefined;
-}
-
-/**
- * Cache the active coach sdkSessionId for a Telegram user in the in-process
- * Map. The underlying session row in agent_chat_sessions is already written
- * by the claude provider (initSession / appendToSession), so no additional
- * DB write is needed here.
- */
-function cacheTelegramSessionId(userId: string, sessionId: string): void {
-  telegramCoachSessions.set(userId, sessionId);
-}
-
 async function handleCoachReply(userId: string, chatId: string, userText: string, imageUrl?: string): Promise<void> {
   try {
     // Check if this Telegram chatId is assigned to a named agent first.
@@ -110,7 +49,7 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
       return;
     }
 
-    const storedSessionId = await getTelegramSessionId(userId);
+    const storedSessionId = await getCoachSession(userId, "Telegram");
     const { reply, attachments, sdkSessionId } = await runCoachAgent({
       userId,
       userText,
@@ -119,12 +58,8 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
       sdkSessionId: storedSessionId,
     });
 
-    // Cache the session ID in-process for the next turn.
-    // The underlying session row is already persisted to agent_chat_sessions by
-    // the claude provider (initSession / appendToSession), so no additional DB
-    // write is needed — agent_chat_sessions is the source of truth.
     if (sdkSessionId) {
-      cacheTelegramSessionId(userId, sdkSessionId);
+      setCoachSession(userId, "Telegram", sdkSessionId);
     }
 
     // Check if user has TTS / voice mode enabled
