@@ -4337,11 +4337,18 @@ Return ONLY the JSON object.`;
         return res.status(429).json({ error: "Dream cycle already run today. Try again tomorrow." });
       }
       const { runDreamForUser } = await import("./memory/dream");
-      const count = await runDreamForUser(userId, dreamDate);
+      const dreamResult = await runDreamForUser(userId, dreamDate);
       await db.insert(schema.proactiveScheduleLog).values({
         userId, messageType: manualKey, sentDate: dreamDate,
       }).catch(() => {});
-      return res.json({ count, dreamDate });
+      return res.json({
+        count: dreamResult.insightsStored,
+        dreamDate,
+        consolidation: dreamResult.consolidation,
+        semanticExtraction: dreamResult.semanticExtraction,
+        decay: dreamResult.decay,
+        reinforcement: dreamResult.reinforcement,
+      });
     } catch (error) {
       console.error("Error running dream cycle:", error);
       return res.status(500).json({ error: "Failed to run dream cycle" });
