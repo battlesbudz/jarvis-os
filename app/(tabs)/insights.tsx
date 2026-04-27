@@ -365,7 +365,8 @@ function MessageBubble({ message, isFirst, isLastAssistant, goals, onFollowup, o
         const urlActions = message.executedActions!.filter(ea => ea.url);
         const screenshotActions = message.executedActions!.filter(ea => !ea.url && ea.screenshotUrl);
         const imageActions = message.executedActions!.filter(ea => !ea.url && !ea.screenshotUrl && ea.imageUrl);
-        const nonUrlActions = message.executedActions!.filter(ea => !ea.url && !ea.screenshotUrl && !ea.imageUrl);
+        const videoActions = message.executedActions!.filter(ea => !ea.url && !ea.screenshotUrl && !ea.imageUrl && ea.videoUrl);
+        const nonUrlActions = message.executedActions!.filter(ea => !ea.url && !ea.screenshotUrl && !ea.imageUrl && !ea.videoUrl);
         return (
           <>
             {urlActions.map((ea, idx) => (
@@ -448,6 +449,23 @@ function MessageBubble({ message, isFirst, isLastAssistant, goals, onFollowup, o
                   <Text style={styles.generatedImageCaption}>{ea.imageCaption}</Text>
                 )}
               </View>
+            ))}
+            {videoActions.map((ea, idx) => (
+              <Pressable
+                key={`video-${idx}`}
+                style={({ pressed }) => [styles.generatedVideoCard, pressed && { opacity: 0.85 }]}
+                onPress={() => Linking.openURL(ea.videoUrl!)}
+              >
+                <View style={styles.generatedVideoThumb}>
+                  <Ionicons name="play-circle" size={44} color="rgba(255,255,255,0.9)" />
+                </View>
+                <View style={styles.generatedVideoFooter}>
+                  <Ionicons name="videocam-outline" size={13} color={Colors.textSecondary} />
+                  <Text style={styles.generatedVideoLabel} numberOfLines={1}>
+                    {ea.videoCaption || ea.label || 'Generated video — tap to play'}
+                  </Text>
+                </View>
+              </Pressable>
             ))}
           </>
         );
@@ -3290,6 +3308,36 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
     paddingHorizontal: 10,
     paddingVertical: 7,
+    lineHeight: 17,
+  },
+  generatedVideoCard: {
+    marginTop: 10,
+    borderRadius: 12,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: Colors.border,
+    maxWidth: 280,
+  },
+  generatedVideoThumb: {
+    width: 280,
+    height: 158,
+    backgroundColor: '#111',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  generatedVideoFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    backgroundColor: Colors.surface,
+  },
+  generatedVideoLabel: {
+    flex: 1,
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
     lineHeight: 17,
   },
   confirmCard: {

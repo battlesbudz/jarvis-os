@@ -292,6 +292,8 @@ export interface ExecutedAction {
   screenshotUrl?: string;
   imageUrl?: string;
   imageCaption?: string;
+  videoUrl?: string;
+  videoCaption?: string;
 }
 
 export interface PendingConfirm {

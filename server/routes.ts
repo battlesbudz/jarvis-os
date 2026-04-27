@@ -2614,7 +2614,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
             }
 
             const execResult = await executeCoachTool(tc.function.name, args, userId);
-            let linkData: { url?: string; buttonLabel?: string; code?: string; channel?: string; screenshotUrl?: string; imageUrl?: string; imageCaption?: string } = {};
+            let linkData: { url?: string; buttonLabel?: string; code?: string; channel?: string; screenshotUrl?: string; imageUrl?: string; imageCaption?: string; videoUrl?: string; videoCaption?: string } = {};
             if ((tc.function.name === 'generate_reconnect_link' || tc.function.name === 'connect_channel') && execResult.result === 'success') {
               try { linkData = JSON.parse(execResult.detail); } catch {}
             }
@@ -2626,6 +2626,13 @@ You can extend yourself by building new tools directly. Generate the complete Ty
                 const parsed = JSON.parse(execResult.detail);
                 if (parsed.imageUrl) linkData.imageUrl = parsed.imageUrl;
                 if (parsed.caption) linkData.imageCaption = parsed.caption;
+              } catch {}
+            }
+            if (tc.function.name === 'generate_video' && execResult.result === 'success') {
+              try {
+                const parsed = JSON.parse(execResult.detail);
+                if (parsed.videoUrl) linkData.videoUrl = parsed.videoUrl;
+                if (parsed.caption) linkData.videoCaption = parsed.caption;
               } catch {}
             }
             actionResults.push({ tool: tc.function.name, result: execResult.result, label: execResult.label, ...linkData });
