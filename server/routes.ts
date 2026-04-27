@@ -617,6 +617,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use("/api/oauth", oauthCallbackRouter);
   registerDownloadRoutes(app);
 
+  // Health-check — unauthenticated, used by the UI to detect when the server has
+  // come back up after a self-applied code-proposal restart.
+  app.get("/api/ping", (_req: Request, res: Response) => {
+    res.json({ ok: true, ts: Date.now() });
+  });
+
+  // Owner-only: trigger a graceful backend restart (writes nothing to disk).
+  // Used by the UI as a one-tap "Restart Backend" button when auto-restart is
+  // not available. authMiddleware applied inline since this route is mounted
+  // before the global app.use(authMiddleware).
+  app.post("/api/admin/restart-backend", authMiddleware, async (req: Request, res: Response) => {
+    const userId = (req as any).userId as string | undefined;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    const ok = await isIntegrationOwner(userId);
+    if (!ok) return res.status(403).json({ error: "Forbidden" });
+    res.json({ ok: true, message: "Backend is restarting…" });
+    setTimeout(() => {
+      console.log("[Admin] Graceful restart triggered by owner.");
+      process.exit(0);
+    }, 300);
+  });
+
   // Public screenshot endpoint — IDs are random/opaque with 30-min TTL (no auth header needed by Image component)
   app.get("/api/daemon/screenshot/:id", (req: Request, res: Response) => {
     const entry = screenshotStore.get(req.params.id);
