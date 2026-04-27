@@ -260,7 +260,9 @@ export const proactiveQuestionsSent = pgTable("proactive_questions_sent", {
   question: text("question").notNull(),
   sentAt: timestamp("sent_at").defaultNow(),
   answeredAt: timestamp("answered_at"),
-});
+}, (t) => ({
+  userSourceUniq: uniqueIndex("proactive_questions_sent_user_source_idx").on(t.userId, t.sourceId),
+}));
 
 export const inboxRules = pgTable("inbox_rules", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -333,7 +335,9 @@ export const proactiveScheduleLog = pgTable("proactive_schedule_log", {
   messageType: varchar("message_type").notNull(),
   sentDate: varchar("sent_date").notNull(),
   sentAt: timestamp("sent_at").defaultNow(),
-});
+}, (t) => [
+  uniqueIndex("proactive_schedule_log_uniq").on(t.userId, t.messageType, t.sentDate),
+]);
 
 export interface MomentumStepData {
   text: string;

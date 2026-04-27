@@ -509,10 +509,20 @@ export async function runMorningPlanBuild() {
             target: [schema.userPreferences.userId],
             set: { data: prefsWithGut, updatedAt: new Date() },
           });
-          // Also send as a channel notification for Telegram/Discord users
+          // Also send as a channel notification for Telegram/Discord users.
+          // Insert the log row first (atomic claim); only send if newly inserted.
           const gutMsg = `👁 Jarvis noticed:\n${flagLines}`;
           const { notifyUser: notifyGut } = await import('./channels/registry');
-          await notifyGut(user.id, 'morning_briefing', gutMsg);
+          const gutLogInserted = await db
+            .insert(schema.proactiveScheduleLog)
+            .values({ userId: user.id, messageType: 'morning_gut_flags', sentDate: today })
+            .onConflictDoNothing()
+            .returning({ id: schema.proactiveScheduleLog.id })
+            .then(rows => rows.length > 0)
+            .catch(() => false);
+          if (gutLogInserted) {
+            await notifyGut(user.id, 'morning_briefing', gutMsg);
+          }
           console.log(`[Scheduler] ${gutFlags.length} gut flag(s) embedded in morning brief for ${user.id}`);
         }
       } catch (gutErr) {
@@ -520,10 +530,20 @@ export async function runMorningPlanBuild() {
       }
 
       // Send the morning briefing notification via the user's preferred channel.
+      // Insert the log row first (atomic claim); only send if newly inserted.
       try {
-        const taskListLines = newTasks.slice(0, 5).map((t, i) => `${i + 1}. ${t.title}`).join('\n');
-        const morningMsg = `☀️ Good morning! Your plan for today:\n\n${taskListLines}${newTasks.length > 5 ? `\n…and ${newTasks.length - 5} more` : ''}\n\n📌 Focus first: ${topTask.title}${predictionText ? `\n${predictionText}` : ''}`;
-        await notifyUser(user.id, 'morning_briefing', morningMsg);
+        const briefingLogInserted = await db
+          .insert(schema.proactiveScheduleLog)
+          .values({ userId: user.id, messageType: 'morning_briefing', sentDate: today })
+          .onConflictDoNothing()
+          .returning({ id: schema.proactiveScheduleLog.id })
+          .then(rows => rows.length > 0)
+          .catch(() => false);
+        if (briefingLogInserted) {
+          const taskListLines = newTasks.slice(0, 5).map((t, i) => `${i + 1}. ${t.title}`).join('\n');
+          const morningMsg = `☀️ Good morning! Your plan for today:\n\n${taskListLines}${newTasks.length > 5 ? `\n…and ${newTasks.length - 5} more` : ''}\n\n📌 Focus first: ${topTask.title}${predictionText ? `\n${predictionText}` : ''}`;
+          await notifyUser(user.id, 'morning_briefing', morningMsg);
+        }
       } catch (notifyErr) {
         console.error(`[Scheduler] Morning notification failed for ${user.id}:`, notifyErr);
       }
