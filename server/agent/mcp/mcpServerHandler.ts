@@ -180,7 +180,7 @@ async function authenticate(req: Request): Promise<AuthResult> {
   }
 
   // Post-auth rate limit: keyed by DB row UUID (unique per key, no cross-user coupling)
-  if (!checkRateLimit(verified.keyId)) {
+  if (!(await checkRateLimit(verified.keyId))) {
     return { ok: false, status: 429, message: "Rate limit exceeded: 120 requests/minute" };
   }
 

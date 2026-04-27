@@ -922,6 +922,15 @@ export async function ensureTablesExist() {
       CREATE INDEX IF NOT EXISTS mcp_api_keys_user_idx ON mcp_api_keys (user_id)
     `).catch(() => {});
 
+    // ── MCP Rate Limits — DB-backed sliding-window counters ──────────────────
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS mcp_rate_limits (
+        bucket       TEXT PRIMARY KEY,
+        count        INTEGER NOT NULL,
+        window_start BIGINT  NOT NULL
+      )
+    `).catch(() => {});
+
     // openclaw_build_log — created via migration 005; ensure new columns exist
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS openclaw_build_log (
