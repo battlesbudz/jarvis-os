@@ -297,7 +297,7 @@ When a user's request involves multi-step research, drafting a document or plan,
     : enrichedUserText;
 
   const baseMessages: import("openai").default.Chat.Completions.ChatCompletionMessageParam[] = [
-    { role: "system", content: systemPrompt },
+    { role: "system", content: effectiveSystemPrompt },
     ...recentMessages.map((m: { role: string; content: string }) => ({
       role: m.role === "assistant" ? ("assistant" as const) : ("user" as const),
       content: m.content,
