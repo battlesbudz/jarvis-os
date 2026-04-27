@@ -282,12 +282,13 @@ export async function runNamedAgent(opts: RunNamedAgentOptions): Promise<NamedAg
     // ── Tool-call hook gate ──────────────────────────────────────────────────
     // Runs the composable toolCallHooks registry before each tool execution.
     // Registered handlers (in priority order) can block, require approval,
-    // or silently rewrite parameters. The built-in approval hook (priority 100)
-    // is registered by agentApproval.ts at module-load time.
+    // or silently rewrite parameters. Built-in hook priorities:
+    //   200 — permission check (agentPermissions.ts) — always runs first
+    //   100 — approval gate (agentApproval.ts) — only for HIGH_RISK_TOOLS
     const onBeforeTool = async (
       toolName: string,
       toolArgs: Record<string, unknown>,
-    ): Promise<{ allowed: boolean; reason?: string }> => {
+    ): Promise<{ allowed: boolean; reason?: string; params?: Record<string, unknown> }> => {
       const result = await toolCallHooks.run({
         toolName,
         params: toolArgs,
