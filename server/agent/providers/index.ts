@@ -51,3 +51,10 @@ export function getProvider(name: ProviderName): BaseProvider {
 
 export { BaseProvider, accumulateTurn };
 export type { ProviderQueryParams, ProviderTurnResult, ProviderChunk } from "./base";
+export {
+  queryWithFallback,
+  isRetriableProviderError,
+  getGlobalFallbackChain,
+  DEFAULT_PROVIDER_MODELS,
+} from "./fallback";
+export type { FallbackChainEntry } from "./fallback";
