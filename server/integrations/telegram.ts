@@ -510,19 +510,24 @@ export async function downloadTelegramFileBuffer(fileId: string): Promise<{ buff
 
 /**
  * Sends a photo to a Telegram chat as an inline image.
- * Accepts a Buffer (PNG/JPEG) and an optional caption.
+ * Accepts a Buffer (PNG/JPEG), an optional caption, and optional MIME type + filename.
+ * The MIME type defaults to "image/png" for backward compatibility.
  */
 export async function sendPhoto(
   chatId: string,
   imageBuffer: Buffer,
   caption?: string,
+  mimeType?: string,
+  filename?: string,
 ): Promise<boolean> {
   if (!BOT_TOKEN) return false;
+  const actualMime = mimeType || "image/png";
+  const actualFilename = filename || (actualMime === "image/jpeg" ? "image.jpg" : "image.png");
   try {
     const form = new FormData();
     form.append("chat_id", chatId);
     if (caption) form.append("caption", caption.slice(0, 1024));
-    form.append("photo", new Blob([imageBuffer], { type: "image/png" }), "image.png");
+    form.append("photo", new Blob([imageBuffer], { type: actualMime }), actualFilename);
     const res = await fetch(`${BASE}/sendPhoto`, { method: "POST", body: form });
     if (!res.ok) {
       console.error("Telegram sendPhoto error:", await res.text());

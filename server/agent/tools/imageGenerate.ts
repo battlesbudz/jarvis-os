@@ -361,7 +361,15 @@ export const imageGenerateTool: AgentTool = {
       } else {
         if (hasOpenAiKey) {
           const size: GptImage1Size = SIZE_MAP[sizeKey] ?? "1024x1024";
-          imageUrl = await generateGptImage(prompt, size);
+          try {
+            imageUrl = await generateGptImage(prompt, size);
+          } catch (openaiErr) {
+            // OpenAI image generation failed (model tier, quota, key issue, etc.).
+            // Always fall back to Pollinations so the user gets an image regardless.
+            const openaiMsg = openaiErr instanceof Error ? openaiErr.message : String(openaiErr);
+            console.warn(`[image_generate] OpenAI failed (${openaiMsg}), falling back to Pollinations`);
+            imageUrl = await generatePollinations(prompt, sizeKey);
+          }
         } else {
           imageUrl = await generatePollinations(prompt, sizeKey);
         }
@@ -407,7 +415,7 @@ export const imageGenerateTool: AgentTool = {
         };
       }
 
-      const sent = await sendPhoto(chatId, fetched.buffer, caption);
+      const sent = await sendPhoto(chatId, fetched.buffer, caption, fetched.mimeType);
       if (!sent) {
         return {
           ok: false,
