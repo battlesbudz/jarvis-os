@@ -136,7 +136,30 @@ export const youtubeTranscriptTool: AgentTool = {
       const msg = err instanceof Error ? err.message : String(err);
       const lower = msg.toLowerCase();
 
-      // Provide user-friendly error messages for known failure modes.
+      // ── InnerTube-specific terminal errors (checked first) ──────────────────
+      if (msg.startsWith("LOGIN_REQUIRED")) {
+        return {
+          ok: false,
+          content: "This video requires a signed-in YouTube account to access (private or members-only video). I can't retrieve its transcript.",
+          label: "get_youtube_transcript: login required",
+        };
+      }
+      if (msg.startsWith("CONTENT_RESTRICTED")) {
+        return {
+          ok: false,
+          content: "This video is restricted (age-restricted, region-locked, or not available). I can't retrieve its transcript without a logged-in account.",
+          label: "get_youtube_transcript: content restricted",
+        };
+      }
+      if (msg.startsWith("TOO_MANY_REQUESTS")) {
+        return {
+          ok: false,
+          content: "YouTube is rate-limiting transcript requests right now. Please wait a moment and try again.",
+          label: "get_youtube_transcript: rate limited",
+        };
+      }
+
+      // ── Generic / youtube-transcript library errors ─────────────────────────
       // Check video-level errors first — "unavailable" text overlaps with caption errors.
       if (lower.includes("unavailable") || lower.includes("not found") || lower.includes("private")) {
         return {

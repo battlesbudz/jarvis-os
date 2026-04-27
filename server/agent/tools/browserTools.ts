@@ -97,6 +97,37 @@ async function snapshotAndResolve(
   return { ref, snapshot };
 }
 
+// ── YouTube auth-gate detection ────────────────────────────────────────────────
+
+/** URL patterns that indicate YouTube has redirected to an authentication wall. */
+const YT_AUTH_PATTERNS = [
+  /accounts\.google\.com/,
+  /youtube\.com\/signin/,
+  /youtube\.com\/accounts\//,
+  /consent\.youtube\.com/,
+  /youtube\.com\/sorry/,
+];
+
+/**
+ * Return true when the given URL or page-text looks like a YouTube sign-in /
+ * consent wall so we can surface a clear message instead of proceeding.
+ */
+function isYouTubeAuthGate(url: string, pageText: string): boolean {
+  if (YT_AUTH_PATTERNS.some((rx) => rx.test(url))) return true;
+  // YouTube renders "Sign in" prominently on auth-wall pages
+  const textLower = pageText.toLowerCase().slice(0, 2000);
+  if (
+    (url.includes("youtube.com") || url.includes("youtu.be")) &&
+    (textLower.includes("sign in to confirm you're not a bot") ||
+      textLower.includes("sign in to watch") ||
+      textLower.includes("confirm your age") ||
+      textLower.includes("before you continue to youtube"))
+  ) {
+    return true;
+  }
+  return false;
+}
+
 // ── browser_navigate ───────────────────────────────────────────────────────────
 
 export const browserNavigateTool: AgentTool = {
@@ -133,6 +164,22 @@ export const browserNavigateTool: AgentTool = {
 
       const snapResult = await callBrowserTool(ctx.userId, "browser_snapshot", {});
       const pageText = (mcpText(snapResult.content) || mcpText(navResult.content)).slice(0, 4000);
+
+      // Detect YouTube authentication / consent walls and return a clear message
+      // instead of presenting a broken or empty session to the agent.
+      if (isYouTubeAuthGate(url, pageText)) {
+        const isYtUrl = url.includes("youtube.com") || url.includes("youtu.be");
+        const ytNote = isYtUrl
+          ? " If you were trying to read this video's transcript, use the get_youtube_transcript tool instead — it doesn't require a browser session."
+          : "";
+        console.warn(`[${ctx.channel || "Agent"}] browser_navigate hit YouTube auth gate → ${url}`);
+        return {
+          ok: false,
+          content:
+            `YouTube is asking for a sign-in on this page and the headless browser cannot proceed.${ytNote}`,
+          label: "browser_navigate: YouTube auth gate",
+        };
+      }
 
       console.log(`[${ctx.channel || "Agent"}] browser_navigate → ${url}`);
       return {
