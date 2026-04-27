@@ -8,6 +8,7 @@ import { routeToNamedAgent } from "../agent/runNamedAgent";
 import { setupWorkspace as _setupWorkspace, postToTopicChannel as _postToTopicChannel, classifyTopic, getTopicForChannel, WORKSPACE_TOPICS, type WorkspaceMeta } from "./workspace";
 import { getUserTtsChannels, getUserTtsPrefs, speakToUser } from "../agent/tools/tts";
 import { getSession as getCoachSession, setSession as setCoachSession } from "../channels/sessionStore";
+import { attachmentToBuffer, collectMarkdownExtras, imageFilename } from "../channels/attachmentHelpers";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -630,7 +631,15 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
 
       // Use streamed buffer as final reply when result is unavailable but
       // streaming produced visible content (avoids second agent call).
-      const reply = result?.reply || (streamBuf.length > 0 ? streamBuf : "Sorry, I couldn't generate a response right now.");
+      let reply = result?.reply || (streamBuf.length > 0 ? streamBuf : "Sorry, I couldn't generate a response right now.");
+
+      // Append markdown attachments inline so they appear as formatted text
+      // in the Discord message rather than as a separate file upload.
+      const allAtts = result?.attachments || [];
+      const markdownExtra = collectMarkdownExtras(allAtts);
+      if (markdownExtra) {
+        reply = reply ? `${reply}\n\n${markdownExtra}` : markdownExtra;
+      }
 
       if (placeholder) {
         await editOrSendLong(placeholder, reply);
@@ -638,20 +647,49 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
         await sendLong(message.channel as { send(t: string): Promise<unknown> }, reply);
       }
 
-      // Deliver file attachments produced by agent tools (e.g. export_document_pdf,
-      // create_presentation). Send after the text reply so the message order is natural.
-      if (result?.attachments && result.attachments.length > 0) {
-        for (const att of result.attachments) {
+      // Deliver binary attachments produced by agent tools (documents, images, files).
+      // Send directly to message.channel so guild-channel replies stay in-channel and DM
+      // replies stay in the DM — avoids routing mismatches from sendFileToDiscordUser.
+      const sendBinaryToChannel = async (buf: Buffer, filename: string, caption?: string) => {
+        const fileAtt = new AttachmentBuilder(buf, { name: filename, description: caption?.slice(0, 1024) });
+        await (message.channel as { send(opts: unknown): Promise<unknown> }).send({ files: [fileAtt] });
+      };
+
+      if (allAtts.length > 0) {
+        for (const att of allAtts) {
           if (att.kind === "document") {
             try {
               const fileContent = Buffer.isBuffer(att.content)
                 ? att.content
                 : Buffer.from(att.content);
-              await sendFileToDiscordUser(userId, att.filename, fileContent, att.caption);
+              await sendBinaryToChannel(fileContent, att.filename, att.caption);
             } catch (attErr) {
-              console.warn(`[DiscordManager] attachment send failed: ${att.filename}`, attErr);
+              console.warn(`[DiscordManager] document attachment send failed: ${att.filename}`, attErr);
+            }
+          } else if (att.kind === "image") {
+            try {
+              const buf = await attachmentToBuffer(att);
+              if (buf) {
+                await sendBinaryToChannel(buf, imageFilename(att.mimeType), att.caption);
+              } else {
+                console.warn("[DiscordManager] image attachment had no usable source — skipping");
+              }
+            } catch (attErr) {
+              console.warn("[DiscordManager] image attachment send failed (non-blocking):", attErr);
+            }
+          } else if (att.kind === "file") {
+            try {
+              const buf = await attachmentToBuffer(att);
+              if (buf) {
+                await sendBinaryToChannel(buf, att.filename, att.caption);
+              } else {
+                console.warn(`[DiscordManager] file attachment ${att.filename} had no usable source — skipping`);
+              }
+            } catch (attErr) {
+              console.warn(`[DiscordManager] file attachment send failed: ${att.filename}`, attErr);
             }
           }
+          // markdown kind already merged into the text reply above
         }
       }
 

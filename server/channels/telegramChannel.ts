@@ -1,8 +1,9 @@
 import { db } from "../db";
 import { eq } from "drizzle-orm";
 import { telegramLinks } from "@shared/schema";
-import { sendLongMessage, sendTelegramDocument, isTelegramConfigured } from "../integrations/telegram";
+import { sendLongMessage, sendTelegramDocument, sendPhoto, isTelegramConfigured } from "../integrations/telegram";
 import type { Channel, ChannelSendOpts, ChannelSendResult } from "./types";
+import { attachmentToBuffer, collectMarkdownExtras } from "./attachmentHelpers";
 
 const linkCache = new Map<string, string | null>();
 const LINK_CACHE_TTL = 60_000;
@@ -37,11 +38,33 @@ export const telegramChannel: Channel = {
     const chatId = await lookupChatId(userId);
     if (!chatId) return { ok: false, error: "no telegram link" };
     try {
-      if (text && text.trim()) await sendLongMessage(chatId, text);
-      for (const att of opts.attachments || []) {
+      const attachments = opts.attachments || [];
+
+      // Append markdown attachments to the text message
+      const markdownExtra = collectMarkdownExtras(attachments);
+      const fullText = markdownExtra ? (text ? `${text}\n\n${markdownExtra}` : markdownExtra) : text;
+
+      if (fullText && fullText.trim()) await sendLongMessage(chatId, fullText);
+
+      for (const att of attachments) {
         if (att.kind === "document") {
           await sendTelegramDocument(chatId, att.filename, att.content, att.caption, att.mimeType);
+        } else if (att.kind === "image") {
+          const buf = await attachmentToBuffer(att).catch(() => null);
+          if (buf) {
+            await sendPhoto(chatId, buf, att.caption); // sendPhoto uses inline Telegram photo bubble regardless of filename
+          } else {
+            console.warn("[telegramChannel] image attachment had no usable source — skipping");
+          }
+        } else if (att.kind === "file") {
+          const buf = await attachmentToBuffer(att).catch(() => null);
+          if (buf) {
+            await sendTelegramDocument(chatId, att.filename, buf, att.caption, att.mimeType);
+          } else {
+            console.warn(`[telegramChannel] file attachment ${att.filename} had no usable source — skipping`);
+          }
         }
+        // markdown already merged into text above
       }
       return { ok: true, messageId: chatId };
     } catch (err) {

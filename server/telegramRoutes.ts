@@ -2,7 +2,8 @@ import type { Express, Request, Response } from "express";
 import { db } from "./db";
 import { eq, and, desc, sql, gte, lte } from "drizzle-orm";
 import * as schema from "@shared/schema";
-import { sendMessage, sendMessageWithButtons, sendTelegramDocument, sendVoice, answerCallbackQuery, isTelegramConfigured, getUpdates, downloadTelegramFile, downloadTelegramFileBuffer, getWebhookHealth, ensureWebhook, getExpectedWebhookUrl } from "./integrations/telegram";
+import { sendMessage, sendMessageWithButtons, sendTelegramDocument, sendPhoto, sendVoice, answerCallbackQuery, isTelegramConfigured, getUpdates, downloadTelegramFile, downloadTelegramFileBuffer, getWebhookHealth, ensureWebhook, getExpectedWebhookUrl } from "./integrations/telegram";
+import { attachmentToBuffer, collectMarkdownExtras } from "./channels/attachmentHelpers";
 import { isIngestableDocument, extractTelegramDocument, buildDocumentContextBlock } from "./telegramDocumentExtractor";
 import { getUserTtsPrefs, setUserTtsPref, speakToUser, getUserTtsChannels, setTtsChannels, ELEVENLABS_VOICES } from "./agent/tools/tts";
 import { notifyUser, getChannel } from "./channels/registry";
@@ -65,10 +66,16 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
     // Check if user has TTS / voice mode enabled
     const ttsPrefs = await getUserTtsPrefs(userId);
 
-    let textReply = reply;
+    // Collect markdown attachments and append to the text reply so they are
+    // delivered inline (markdown attachments have no binary payload to send separately).
+    const markdownExtra = collectMarkdownExtras(attachments);
+    let textReply = markdownExtra ? (reply ? `${reply}\n\n${markdownExtra}` : markdownExtra) : reply;
 
-    // Send any file attachments — always as text/documents regardless of TTS mode
-    if (attachments.length > 0 && textReply && textReply.trim()) {
+    // Non-markdown attachments (images, documents, files) require the text to be
+    // sent first so message ordering is natural (text → media).
+    const mediaAtts = attachments.filter((a) => a.kind !== "markdown");
+
+    if (mediaAtts.length > 0 && textReply && textReply.trim()) {
       if (!ttsPrefs.enabled) {
         try { await sendMessage(chatId, textReply); } catch (sendErr) {
           console.error("[Telegram] failed to send text before attachment:", sendErr);
@@ -78,10 +85,34 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
       textReply = "";
     }
 
-    for (const att of attachments) {
+    for (const att of mediaAtts) {
       if (att.kind === "document") {
         const ok = await sendTelegramDocument(chatId, att.filename, att.content, att.caption, att.mimeType);
-        console.log(`[Telegram] Delivered attachment ${att.filename} ok=${ok}`);
+        console.log(`[Telegram] Delivered document attachment ${att.filename} ok=${ok}`);
+      } else if (att.kind === "image") {
+        try {
+          const buf = await attachmentToBuffer(att);
+          if (buf) {
+            const ok = await sendPhoto(chatId, buf, att.caption);
+            console.log(`[Telegram] Delivered image attachment ok=${ok}`);
+          } else {
+            console.warn("[Telegram] image attachment had no usable source — skipping");
+          }
+        } catch (imgErr) {
+          console.warn("[Telegram] image attachment send failed (non-blocking):", imgErr);
+        }
+      } else if (att.kind === "file") {
+        try {
+          const buf = await attachmentToBuffer(att);
+          if (buf) {
+            const ok = await sendTelegramDocument(chatId, att.filename, buf, att.caption, att.mimeType);
+            console.log(`[Telegram] Delivered file attachment ${att.filename} ok=${ok}`);
+          } else {
+            console.warn(`[Telegram] file attachment ${att.filename} had no usable source — skipping`);
+          }
+        } catch (fileErr) {
+          console.warn(`[Telegram] file attachment ${att.filename} send failed (non-blocking):`, fileErr);
+        }
       }
     }
 

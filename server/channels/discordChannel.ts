@@ -4,6 +4,7 @@ import { channelLinks } from "@shared/schema";
 import { getUserToken } from "../userTokenStore";
 import { getBotStatus, sendToDiscordUser, sendFileToDiscordUser } from "../discord/manager";
 import type { Channel, ChannelSendOpts, ChannelSendResult } from "./types";
+import { attachmentToBuffer, collectMarkdownExtras, imageFilename } from "./attachmentHelpers";
 
 const DISCORD_ACTIVE_TTL_MS = 3 * 60 * 1000; // 3 minutes
 
@@ -56,24 +57,49 @@ export const discordChannel: Channel = {
       return { ok: false, error: "user_active_in_discord" };
     }
 
+    const attachments = opts.attachments || [];
+
+    // Append markdown attachments to the text message
+    const markdownExtra = collectMarkdownExtras(attachments);
+    const fullText = markdownExtra ? (text ? `${text}\n\n${markdownExtra}` : markdownExtra) : text;
+
     let anySent = false;
 
-    if (text?.trim()) {
-      const sent = await sendToDiscordUser(userId, text);
+    if (fullText?.trim()) {
+      const sent = await sendToDiscordUser(userId, fullText);
       if (!sent) return { ok: false, error: "Discord send failed — bot not running or user not linked" };
       anySent = true;
     }
 
-    for (const att of opts.attachments || []) {
+    for (const att of attachments) {
       if (att.kind === "document") {
         const fileContent = Buffer.isBuffer(att.content) ? att.content : Buffer.from(att.content);
         const sent = await sendFileToDiscordUser(userId, att.filename, fileContent, att.caption);
         if (sent) anySent = true;
         else console.warn(`[discordChannel] file send failed for user ${userId}: ${att.filename}`);
+      } else if (att.kind === "image") {
+        const buf = await attachmentToBuffer(att).catch(() => null);
+        if (buf) {
+          const sent = await sendFileToDiscordUser(userId, imageFilename(att.mimeType), buf, att.caption);
+          if (sent) anySent = true;
+          else console.warn(`[discordChannel] image send failed for user ${userId}`);
+        } else {
+          console.warn(`[discordChannel] image attachment had no usable source for user ${userId} — skipping`);
+        }
+      } else if (att.kind === "file") {
+        const buf = await attachmentToBuffer(att).catch(() => null);
+        if (buf) {
+          const sent = await sendFileToDiscordUser(userId, att.filename, buf, att.caption);
+          if (sent) anySent = true;
+          else console.warn(`[discordChannel] file send failed for user ${userId}: ${att.filename}`);
+        } else {
+          console.warn(`[discordChannel] file attachment ${att.filename} had no usable source for user ${userId} — skipping`);
+        }
       }
+      // markdown already merged into fullText above
     }
 
-    if (!anySent && !text?.trim()) return { ok: true };
+    if (!anySent && !fullText?.trim()) return { ok: true };
     return { ok: true };
   },
 };
