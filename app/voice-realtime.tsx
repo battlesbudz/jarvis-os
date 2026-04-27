@@ -23,7 +23,14 @@ import Animated, {
   FadeOut,
 } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
-import { Audio } from 'expo-av';
+import {
+  useAudioRecorder,
+  createAudioPlayer,
+  setAudioModeAsync,
+  requestRecordingPermissionsAsync,
+  AudioQuality,
+} from 'expo-audio';
+import type { AudioPlayer } from 'expo-audio';
 import * as FileSystem from 'expo-file-system/legacy';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
@@ -127,8 +134,16 @@ export default function VoiceRealtimeScreen() {
   const localStreamRef = useRef<MediaStream | null>(null);
 
   // ── Native refs ──────────────────────────────────────────────────────────
-  const nativeRecordingRef = useRef<Audio.Recording | null>(null);
-  const nativeSoundRef = useRef<Audio.Sound | null>(null);
+  const nativeRecorder = useAudioRecorder({
+    extension: Platform.OS === 'android' ? '.wav' : '.caf',
+    sampleRate: 24000,
+    numberOfChannels: 1,
+    bitRate: 48000,
+    android: { outputFormat: 'aac_adts', audioEncoder: 'he_aac' },
+    ios: { audioQuality: AudioQuality.LOW, linearPCMBitDepth: 16, linearPCMIsBigEndian: false, linearPCMIsFloat: false },
+    web: { mimeType: 'audio/webm', bitsPerSecond: 48000 },
+  });
+  const nativeSoundRef = useRef<AudioPlayer | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const audioPcmChunksRef = useRef<string[]>([]);
   const currentUserTextRef = useRef('');
@@ -407,8 +422,8 @@ export default function VoiceRealtimeScreen() {
   const startNativeSession = useCallback(async () => {
     setState('connecting');
 
-    const { status } = await Audio.requestPermissionsAsync();
-    if (status !== 'granted') {
+    const { granted } = await requestRecordingPermissionsAsync();
+    if (!granted) {
       Alert.alert('Microphone needed', 'Please grant microphone access to use voice mode.');
       setState('idle');
       return;
@@ -421,9 +436,9 @@ export default function VoiceRealtimeScreen() {
       return;
     }
 
-    await Audio.setAudioModeAsync({
-      allowsRecordingIOS: true,
-      playsInSilentModeIOS: true,
+    await setAudioModeAsync({
+      allowsRecording: true,
+      playsInSilentMode: true,
     });
 
     const ws = new WebSocket(
@@ -463,24 +478,18 @@ export default function VoiceRealtimeScreen() {
 
     while (nativeRecordLoopRef.current && wsRef.current?.readyState === WebSocket.OPEN) {
       try {
-        const { recording } = await Audio.Recording.createAsync({
-          android: { extension: '.wav', outputFormat: 6, audioEncoder: 4, sampleRate: 24000, numberOfChannels: 1, bitRate: 48000 },
-          ios: { extension: '.caf', audioQuality: 70, sampleRate: 24000, numberOfChannels: 1, bitRate: 48000, linearPCMBitDepth: 16, linearPCMIsBigEndian: false, linearPCMIsFloat: false },
-          web: { mimeType: 'audio/webm', bitsPerSecond: 48000 },
-        });
-        nativeRecordingRef.current = recording;
+        await nativeRecorder.prepareToRecordAsync();
+        nativeRecorder.record();
         await new Promise<void>(r => setTimeout(r, 250));
 
         if (!nativeRecordLoopRef.current) {
-          await recording.stopAndUnloadAsync();
-          nativeRecordingRef.current = null;
+          if (nativeRecorder.isRecording) await nativeRecorder.stop();
           break;
         }
 
-        await recording.stopAndUnloadAsync();
-        nativeRecordingRef.current = null;
+        if (nativeRecorder.isRecording) await nativeRecorder.stop();
 
-        const uri = recording.getURI();
+        const uri = nativeRecorder.uri;
         if (!uri || wsRef.current?.readyState !== WebSocket.OPEN) break;
 
         const fileInfo = await FileSystem.getInfoAsync(uri);
@@ -509,7 +518,7 @@ export default function VoiceRealtimeScreen() {
       if (type === 'input_audio_buffer.speech_started') {
         setState('listening');
         audioPcmChunksRef.current = [];
-        nativeSoundRef.current?.stopAsync().catch(() => {});
+        nativeSoundRef.current?.pause();
       } else if (type === 'input_audio_buffer.speech_stopped') {
         setState('thinking');
       } else if (type === 'response.created') {
@@ -575,20 +584,21 @@ export default function VoiceRealtimeScreen() {
       await FileSystem.writeAsStringAsync(uri, wavBase64, { encoding: FileSystem.EncodingType.Base64 });
 
       if (nativeSoundRef.current) {
-        await nativeSoundRef.current.unloadAsync().catch(() => {});
+        nativeSoundRef.current.remove();
         nativeSoundRef.current = null;
       }
 
-      await Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true });
-      const { sound } = await Audio.Sound.createAsync({ uri }, { shouldPlay: true });
+      await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true });
+      const sound = createAudioPlayer({ uri });
       nativeSoundRef.current = sound;
+      sound.play();
 
-      sound.setOnPlaybackStatusUpdate(async (status) => {
-        if (status.isLoaded && status.didJustFinish) {
-          await sound.unloadAsync().catch(() => {});
+      sound.addListener('playbackStatusUpdate', async (status) => {
+        if (status.didJustFinish) {
+          sound.remove();
           nativeSoundRef.current = null;
           FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
-          await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
+          await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
           setState('listening');
         }
       });
@@ -600,18 +610,17 @@ export default function VoiceRealtimeScreen() {
 
   const cleanupNativeSession = useCallback(async () => {
     nativeRecordLoopRef.current = false;
-    if (nativeRecordingRef.current) {
-      await nativeRecordingRef.current.stopAndUnloadAsync().catch(() => {});
-      nativeRecordingRef.current = null;
+    if (nativeRecorder.isRecording) {
+      await nativeRecorder.stop().catch(() => {});
     }
     wsRef.current?.close();
     wsRef.current = null;
     if (nativeSoundRef.current) {
-      await nativeSoundRef.current.unloadAsync().catch(() => {});
+      nativeSoundRef.current.remove();
       nativeSoundRef.current = null;
     }
-    await Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: false }).catch(() => {});
-  }, []);
+    await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: false }).catch(() => {});
+  }, [nativeRecorder]);
 
   // ── Mute toggle ───────────────────────────────────────────────────────────
   const toggleMute = useCallback(() => {
@@ -622,8 +631,7 @@ export default function VoiceRealtimeScreen() {
     } else {
       if (newMuted) {
         nativeRecordLoopRef.current = false;
-        nativeRecordingRef.current?.stopAndUnloadAsync().catch(() => {});
-        nativeRecordingRef.current = null;
+        if (nativeRecorder.isRecording) nativeRecorder.stop().catch(() => {});
         setState('muted');
       } else {
         startNativeRecordingLoop();
@@ -631,7 +639,7 @@ export default function VoiceRealtimeScreen() {
       }
     }
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-  }, [muted, startNativeRecordingLoop]);
+  }, [muted, nativeRecorder, startNativeRecordingLoop]);
 
   // ── Session end ───────────────────────────────────────────────────────────
   const saveTranscript = useCallback(async (entries: TranscriptEntry[]) => {
@@ -686,10 +694,10 @@ export default function VoiceRealtimeScreen() {
         cleanupWebSession();
       } else {
         nativeRecordLoopRef.current = false;
-        nativeRecordingRef.current?.stopAndUnloadAsync().catch(() => {});
+        if (nativeRecorder.isRecording) nativeRecorder.stop().catch(() => {});
         wsRef.current?.close();
-        nativeSoundRef.current?.unloadAsync().catch(() => {});
-        Audio.setAudioModeAsync({ allowsRecordingIOS: false }).catch(() => {});
+        nativeSoundRef.current?.remove();
+        setAudioModeAsync({ allowsRecording: false, playsInSilentMode: false }).catch(() => {});
       }
     };
   }, []);

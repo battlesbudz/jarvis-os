@@ -13,7 +13,12 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import { Audio } from 'expo-av';
+import {
+  useAudioRecorder,
+  RecordingPresets,
+  setAudioModeAsync,
+  requestRecordingPermissionsAsync,
+} from 'expo-audio';
 import * as FileSystem from 'expo-file-system/legacy';
 import Animated, { useSharedValue, withRepeat, withTiming, Easing, useAnimatedStyle } from 'react-native-reanimated';
 import { getApiUrl } from '@/lib/query-client';
@@ -37,7 +42,7 @@ export default function BrainDumpModal({
   const [loading, setLoading] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
-  const recordingRef = useRef<Audio.Recording | null>(null);
+  const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const webRecorderRef = useRef<MediaRecorder | null>(null);
   const webChunksRef = useRef<Blob[]>([]);
   const micPulse = useSharedValue(1);
@@ -60,20 +65,21 @@ export default function BrainDumpModal({
 
   const cleanupRecording = useCallback(() => {
     if (Platform.OS === 'web') {
-      const recorder = webRecorderRef.current;
-      if (recorder && recorder.state !== 'inactive') {
+      const webRec = webRecorderRef.current;
+      if (webRec && webRec.state !== 'inactive') {
         try {
-          recorder.stop();
-          recorder.stream.getTracks().forEach(t => t.stop());
+          webRec.stop();
+          webRec.stream.getTracks().forEach(t => t.stop());
         } catch {}
       }
       webRecorderRef.current = null;
     } else {
-      recordingRef.current?.stopAndUnloadAsync().catch(() => {});
-      recordingRef.current = null;
+      if (audioRecorder.isRecording) {
+        audioRecorder.stop().catch(() => {});
+      }
     }
     setIsRecording(false);
-  }, []);
+  }, [audioRecorder]);
 
   useEffect(() => {
     if (!visible) {
@@ -133,16 +139,14 @@ export default function BrainDumpModal({
         webRecorderRef.current = recorder;
         setIsRecording(true);
       } else {
-        const { status } = await Audio.requestPermissionsAsync();
-        if (status !== 'granted') {
+        const { granted } = await requestRecordingPermissionsAsync();
+        if (!granted) {
           Alert.alert('Permission Required', 'Microphone access is needed to use voice input.');
           return;
         }
-        await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
-        const { recording } = await Audio.Recording.createAsync(
-          Audio.RecordingOptionsPresets.HIGH_QUALITY
-        );
-        recordingRef.current = recording;
+        await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+        await audioRecorder.prepareToRecordAsync();
+        audioRecorder.record();
         setIsRecording(true);
       }
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -179,14 +183,12 @@ export default function BrainDumpModal({
       });
       transcribeAudio(base64);
     } else {
-      const recording = recordingRef.current;
-      if (!recording) return;
-      recordingRef.current = null;
+      if (!audioRecorder.isRecording) return;
 
       try {
-        await recording.stopAndUnloadAsync();
-        await Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true });
-        const uri = recording.getURI();
+        await audioRecorder.stop();
+        await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true });
+        const uri = audioRecorder.uri;
         if (!uri) throw new Error('No recording URI');
         const base64 = await FileSystem.readAsStringAsync(uri, { encoding: 'base64' });
         transcribeAudio(base64);
@@ -195,7 +197,7 @@ export default function BrainDumpModal({
         setIsTranscribing(false);
       }
     }
-  }, [transcribeAudio]);
+  }, [audioRecorder, transcribeAudio]);
 
   const handleMicPress = useCallback(() => {
     if (isRecording) {

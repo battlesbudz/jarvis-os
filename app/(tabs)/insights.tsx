@@ -19,7 +19,14 @@ import { BottomTabBarHeightContext } from '@react-navigation/bottom-tabs';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import Animated, { FadeInDown, FadeIn, useSharedValue, useAnimatedStyle, withRepeat, withTiming, Easing } from 'react-native-reanimated';
-import { Audio } from 'expo-av';
+import {
+  useAudioRecorder,
+  RecordingPresets,
+  createAudioPlayer,
+  setAudioModeAsync,
+  requestRecordingPermissionsAsync,
+} from 'expo-audio';
+import type { AudioPlayer } from 'expo-audio';
 import * as FileSystem from 'expo-file-system/legacy';
 import Colors from '@/constants/colors';
 import MarkdownText from '@/components/MarkdownText';
@@ -722,9 +729,9 @@ export default function InsightsScreen() {
   const [isTTSLoading, setIsTTSLoading] = useState(false);
   const speakingTextRef = useRef<string | null>(null);
   const [isTranscribing, setIsTranscribing] = useState(false);
-  const recordingRef = useRef<Audio.Recording | null>(null);
+  const audioRecorder = useAudioRecorder({ ...RecordingPresets.HIGH_QUALITY, isMeteringEnabled: true });
   const silencePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const soundRef = useRef<Audio.Sound | null>(null);
+  const soundRef = useRef<AudioPlayer | null>(null);
   const webAudioRef = useRef<HTMLAudioElement | null>(null);
   const webAudioCtxRef = useRef<AudioContext | null>(null);
   const speakAbortRef = useRef<AbortController | null>(null);
@@ -841,15 +848,14 @@ export default function InsightsScreen() {
 
   useEffect(() => {
     return () => {
-      if (recordingRef.current) {
-        recordingRef.current.stopAndUnloadAsync().catch(() => {});
-        recordingRef.current = null;
+      if (audioRecorder.isRecording) {
+        audioRecorder.stop().catch(() => {});
         // Always release exclusive audio focus so other apps can use the mic
         if (Platform.OS !== 'web') {
-          Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true }).catch(() => {});
+          setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => {});
         }
       }
-      soundRef.current?.unloadAsync().catch(() => {});
+      soundRef.current?.remove();
       speakAbortRef.current?.abort();
       if (Platform.OS === 'web') {
         webAudioRef.current?.pause();
@@ -944,21 +950,19 @@ export default function InsightsScreen() {
           }, POLL_MS);
         }
       } else {
-        const { status } = await Audio.requestPermissionsAsync();
-        if (status !== 'granted') {
+        const { granted } = await requestRecordingPermissionsAsync();
+        if (!granted) {
           Alert.alert('Permission Required', 'Microphone access is needed to use voice input.');
           return;
         }
         if (soundRef.current) {
-          await soundRef.current.stopAsync().catch(() => {});
-          await soundRef.current.unloadAsync().catch(() => {});
+          soundRef.current.pause();
+          soundRef.current.remove();
           soundRef.current = null;
         }
-        await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
-        const { recording } = await Audio.Recording.createAsync(
-          { ...Audio.RecordingOptionsPresets.HIGH_QUALITY, isMeteringEnabled: true }
-        );
-        recordingRef.current = recording;
+        await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+        await audioRecorder.prepareToRecordAsync();
+        audioRecorder.record();
         setIsRecording(true);
 
         // Native Talk Mode: poll metering and auto-submit after sustained silence
@@ -967,15 +971,15 @@ export default function InsightsScreen() {
           const SILENCE_THRESHOLD_DB = -40;
           const SILENCE_DURATION_MS = 1500;
           const POLL_MS = 250;
-          silencePollRef.current = setInterval(async () => {
-            if (!talkModeRef.current || !recordingRef.current) {
+          silencePollRef.current = setInterval(() => {
+            if (!talkModeRef.current || !audioRecorder.isRecording) {
               clearInterval(silencePollRef.current!);
               silencePollRef.current = null;
               return;
             }
             try {
-              const status = await recordingRef.current.getStatusAsync();
-              if ('metering' in status && typeof status.metering === 'number') {
+              const status = audioRecorder.getStatus();
+              if (typeof status.metering === 'number') {
                 if (status.metering < SILENCE_THRESHOLD_DB) {
                   silenceMs += POLL_MS;
                   if (silenceMs >= SILENCE_DURATION_MS) {
@@ -1029,18 +1033,16 @@ export default function InsightsScreen() {
       });
       transcribeAndSend(base64);
     } else {
-      const recording = recordingRef.current;
-      if (!recording) {
+      if (!audioRecorder.isRecording) {
         Alert.alert('Recording Error', 'No active recording found. Please try again.');
         return;
       }
-      recordingRef.current = null;
       setIsTranscribing(true);
 
       try {
-        await recording.stopAndUnloadAsync();
-        await Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true });
-        const uri = recording.getURI();
+        await audioRecorder.stop();
+        await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true });
+        const uri = audioRecorder.uri;
         if (!uri) {
           throw new Error('Recording produced no audio file');
         }
@@ -1055,7 +1057,7 @@ export default function InsightsScreen() {
         console.error('Failed to process recording:', msg);
         setIsTranscribing(false);
         // Release audio focus even on error so other apps can use the mic
-        Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true }).catch(() => {});
+        setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => {});
         Alert.alert('Recording Error', `Could not process your recording: ${msg}. Please try again.`);
       }
     }
@@ -1088,8 +1090,8 @@ export default function InsightsScreen() {
       webAudioCtxRef.current?.close().catch(() => {});
       webAudioCtxRef.current = null;
     } else {
-      soundRef.current?.stopAsync().catch(() => {});
-      soundRef.current?.unloadAsync().catch(() => {});
+      soundRef.current?.pause();
+      soundRef.current?.remove();
       soundRef.current = null;
     }
     setIsSpeaking(false);
@@ -1324,28 +1326,28 @@ export default function InsightsScreen() {
 
         // Playback loop runs concurrently with streaming
         const playbackDone = (async () => {
-          await Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true });
+          await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true });
           let playIdx = 0;
           while (!abortController.signal.aborted && isSpeakingRef.current) {
             if (playIdx < segWritePromises.length) {
               await segWritePromises[playIdx]; // Wait until this segment is written
               if (!isSpeakingRef.current || abortController.signal.aborted) break;
-              const { sound } = await Audio.Sound.createAsync({ uri: segUris[playIdx] }, { shouldPlay: true });
+              const sound = createAudioPlayer({ uri: segUris[playIdx] });
               soundRef.current = sound;
               const segUri = segUris[playIdx];
               playIdx++;
+              sound.play();
               await new Promise<void>((resolve) => {
                 let started = false;
-                sound.setOnPlaybackStatusUpdate((status) => {
-                  if (!('isLoaded' in status)) { resolve(); return; }
-                  if (status.isLoaded && status.isPlaying) started = true;
-                  if ('didJustFinish' in status && status.didJustFinish) {
-                    sound.unloadAsync().catch(() => {});
+                sound.addListener('playbackStatusUpdate', (status) => {
+                  if (status.isLoaded && status.playing) started = true;
+                  if (status.didJustFinish) {
+                    sound.remove();
                     FileSystem.deleteAsync(segUri, { idempotent: true }).catch(() => {});
                     resolve();
-                  } else if (started && status.isLoaded && !status.isPlaying) {
+                  } else if (started && status.isLoaded && !status.playing) {
                     // Sound was stopped externally (abort/stop) — resolve to unblock loop
-                    sound.unloadAsync().catch(() => {});
+                    sound.remove();
                     FileSystem.deleteAsync(segUri, { idempotent: true }).catch(() => {});
                     resolve();
                   }
@@ -1445,14 +1447,15 @@ export default function InsightsScreen() {
           audioEl.onerror = () => { onError(); };
           await audioEl.play();
         } else {
-          await Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true });
+          await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true });
           const tmpUri = (FileSystem.cacheDirectory ?? '') + 'coach_speech.mp3';
           await FileSystem.writeAsStringAsync(tmpUri, data.audio, { encoding: FileSystem.EncodingType.Base64 });
-          const { sound } = await Audio.Sound.createAsync({ uri: tmpUri }, { shouldPlay: true });
+          const sound = createAudioPlayer({ uri: tmpUri });
           soundRef.current = sound;
-          sound.setOnPlaybackStatusUpdate((status) => {
-            if ('didJustFinish' in status && status.didJustFinish) { onPlaybackEnd(); }
+          sound.addListener('playbackStatusUpdate', (status) => {
+            if (status.didJustFinish) { onPlaybackEnd(); }
           });
+          sound.play();
         }
       } catch (fallbackErr: unknown) {
         if (fallbackErr instanceof Error && fallbackErr.name === 'AbortError') return;
@@ -1838,9 +1841,10 @@ export default function InsightsScreen() {
         // Cancel the in-progress recording without sending it (user navigated away)
         setIsRecording(false);
         if (Platform.OS !== 'web') {
-          recordingRef.current?.stopAndUnloadAsync().catch(() => {});
-          recordingRef.current = null;
-          Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true }).catch(() => {});
+          if (audioRecorder.isRecording) {
+            audioRecorder.stop().catch(() => {});
+          }
+          setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => {});
         } else {
           webRecorderRef.current?.stop();
           webRecorderRef.current = null;
@@ -2783,8 +2787,8 @@ export default function InsightsScreen() {
             if (next) {
               // Enabling Talk Mode — request mic permission first
               if (Platform.OS !== 'web') {
-                const { status } = await Audio.requestPermissionsAsync();
-                if (status !== 'granted') {
+                const { granted } = await requestRecordingPermissionsAsync();
+                if (!granted) {
                   Alert.alert(
                     'Microphone Required',
                     'Talk Mode needs microphone access to listen for your voice. Please allow microphone access in Settings.',
@@ -2807,9 +2811,10 @@ export default function InsightsScreen() {
               // Immediately disarm the active loop
               setIsRecording(false);
               if (Platform.OS !== 'web') {
-                recordingRef.current?.stopAndUnloadAsync().catch(() => {});
-                recordingRef.current = null;
-                Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true }).catch(() => {});
+                if (audioRecorder.isRecording) {
+                  audioRecorder.stop().catch(() => {});
+                }
+                setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => {});
               } else {
                 webRecorderRef.current?.stop();
                 webRecorderRef.current = null;
