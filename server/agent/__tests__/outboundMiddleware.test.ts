@@ -160,6 +160,32 @@ async function run() {
     "OM-16: Telegram normaliser strips ## heading markers",
   );
 
+  // Telegram: *italic* stripped to plain text (not bullet points)
+  const telegramItalic = await outboundMiddleware.run({
+    text: "This is *italic* text\n* bullet item stays",
+    platform: "telegram",
+    userId: "u1",
+  });
+  assert(
+    telegramItalic !== null &&
+      telegramItalic.includes("This is italic text") &&
+      telegramItalic.includes("* bullet item stays"),
+    "OM-19: Telegram normaliser strips *italic* but preserves bullet-list asterisks",
+  );
+
+  // Telegram: _italic_ (underscore variant) stripped to plain text
+  const telegramUnderscoreItalic = await outboundMiddleware.run({
+    text: "This is _italic_ text",
+    platform: "telegram",
+    userId: "u1",
+  });
+  assert(
+    telegramUnderscoreItalic !== null &&
+      telegramUnderscoreItalic.includes("This is italic text") &&
+      !telegramUnderscoreItalic.includes("_italic_"),
+    "OM-20: Telegram normaliser strips _italic_ underscore markers",
+  );
+
   // Discord: markdown passes through unchanged (no stripping on Discord)
   const discordBold = await outboundMiddleware.run({
     text: "**Bold text** here",
