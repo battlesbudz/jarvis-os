@@ -193,6 +193,40 @@ export async function createDriveBinaryFile(
   };
 }
 
+/**
+ * Ensure a named subfolder exists inside a parent Drive folder.
+ * Creates it if absent; returns its ID either way.
+ */
+export async function ensureJarvisSubfolder(
+  accessToken: string,
+  parentFolderId: string,
+  name: string,
+): Promise<string> {
+  const drive = buildDriveClient(accessToken);
+
+  const list = await drive.files.list({
+    q: `mimeType='application/vnd.google-apps.folder' and name='${name}' and '${parentFolderId}' in parents and trashed=false`,
+    fields: "files(id,name)",
+    spaces: "drive",
+    pageSize: 1,
+  });
+
+  const existing = list.data.files?.[0];
+  if (existing?.id) return existing.id;
+
+  const created = await drive.files.create({
+    requestBody: {
+      name,
+      mimeType: "application/vnd.google-apps.folder",
+      parents: [parentFolderId],
+    },
+    fields: "id",
+  });
+
+  if (!created.data.id) throw new Error(`Failed to create Drive subfolder "${name}"`);
+  return created.data.id;
+}
+
 export async function checkDriveScope(accessToken: string): Promise<boolean> {
   try {
     const drive = buildDriveClient(accessToken);

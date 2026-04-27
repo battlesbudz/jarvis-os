@@ -4,6 +4,11 @@ import { db } from "../../db";
 import { eq } from "drizzle-orm";
 import { telegramLinks } from "@shared/schema";
 import { sendPhoto } from "../../integrations/telegram";
+import {
+  ensureJarvisFolder,
+  ensureJarvisSubfolder,
+  createDriveBinaryFile,
+} from "../../integrations/googleDrive";
 import type { AgentTool } from "../types";
 
 // Chat/text completions — routes through the Replit AI integration proxy.
@@ -44,6 +49,8 @@ const FLUX_SIZE_MAP: Record<string, string> = {
   portrait:  "portrait_16_9",
 };
 
+const GENERATED_IMAGES_FOLDER = "Generated Images";
+
 async function getTelegramChatId(userId: string): Promise<string | null> {
   try {
     const rows = await db
@@ -57,17 +64,30 @@ async function getTelegramChatId(userId: string): Promise<string | null> {
   }
 }
 
-async function fetchImageBuffer(url: string): Promise<Buffer | null> {
+interface FetchedImage {
+  buffer: Buffer;
+  /** MIME type inferred from data URL prefix or HTTP content-type header. */
+  mimeType: string;
+}
+
+async function fetchImageBuffer(url: string): Promise<FetchedImage | null> {
   // gpt-image-1 / dall-e-3 (b64_json mode) return base64 data URLs — decode directly.
   if (url.startsWith("data:")) {
     const b64 = url.split(",")[1];
-    return b64 ? Buffer.from(b64, "base64") : null;
+    if (!b64) return null;
+    // Parse mime from "data:<mime>;base64,..."
+    const mimeMatch = url.match(/^data:([^;]+);/);
+    const mimeType = mimeMatch?.[1] ?? "image/png";
+    return { buffer: Buffer.from(b64, "base64"), mimeType };
   }
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(30000) });
     if (!res.ok) return null;
     const arr = await res.arrayBuffer();
-    return Buffer.from(arr);
+    // Use the actual content-type from the response so Drive metadata is accurate.
+    const ct = res.headers.get("content-type") ?? "image/png";
+    const mimeType = ct.split(";")[0].trim() || "image/png";
+    return { buffer: Buffer.from(arr), mimeType };
   } catch {
     return null;
   }
@@ -102,7 +122,7 @@ async function generateGptImage(prompt: string, size: GptImage1Size): Promise<st
       n: 1,
       size,
     });
-    const b64 = response.data[0]?.b64_json;
+    const b64 = (response.data ?? [])[0]?.b64_json;
     if (b64) return `data:image/png;base64,${b64}`;
   } catch (err) {
     if (!isModelNotFoundError(err)) {
@@ -117,7 +137,7 @@ async function generateGptImage(prompt: string, size: GptImage1Size): Promise<st
             n: 1,
             size: "1024x1024",
           });
-          const b64 = retry.data[0]?.b64_json;
+          const b64 = (retry.data ?? [])[0]?.b64_json;
           if (b64) return `data:image/png;base64,${b64}`;
         } catch {
           // fall through to dall-e-3 below
@@ -149,13 +169,13 @@ async function generateGptImage(prompt: string, size: GptImage1Size): Promise<st
       size: dalle3Size,
       response_format: "b64_json",
     });
-    const b64 = response.data[0]?.b64_json;
+    const b64 = (response.data ?? [])[0]?.b64_json;
     if (b64) return `data:image/png;base64,${b64}`;
     // Normalize URL response to a base64 data URL so downstream delivery is consistent.
-    const remoteUrl = (response.data[0] as { url?: string })?.url;
+    const remoteUrl = ((response.data ?? [])[0] as { url?: string } | undefined)?.url;
     if (remoteUrl) {
-      const buf = await fetchImageBuffer(remoteUrl);
-      if (buf) return `data:image/png;base64,${buf.toString("base64")}`;
+      const fetched = await fetchImageBuffer(remoteUrl);
+      if (fetched) return `data:image/png;base64,${fetched.buffer.toString("base64")}`;
       return remoteUrl; // Last resort: return the URL if fetch fails
     }
   } catch (dalle3Err) {
@@ -224,6 +244,46 @@ async function generateFlux(prompt: string, imageSize: string): Promise<string> 
   return url;
 }
 
+/** Build a Drive-friendly filename from a prompt and the actual MIME type. */
+function buildImageFilename(prompt: string, mimeType: string): string {
+  const extMap: Record<string, string> = {
+    "image/jpeg": "jpg",
+    "image/jpg": "jpg",
+    "image/webp": "webp",
+    "image/gif": "gif",
+  };
+  const ext = extMap[mimeType] ?? "png";
+  const slug = prompt
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, "")
+    .trim()
+    .replace(/\s+/g, "-")
+    .slice(0, 40);
+  const ts = new Date().toISOString().slice(0, 10);
+  return `${slug || "generated-image"}-${ts}.${ext}`;
+}
+
+/**
+ * Upload an image buffer to the user's Google Drive under
+ * "Jarvis Workspace / Generated Images". Returns the web view link, or null on failure.
+ */
+async function saveImageToDrive(
+  accessToken: string,
+  buf: Buffer,
+  filename: string,
+  mimeType: string,
+): Promise<string | null> {
+  try {
+    const parentFolderId = await ensureJarvisFolder(accessToken);
+    const folderId = await ensureJarvisSubfolder(accessToken, parentFolderId, GENERATED_IMAGES_FOLDER);
+    const file = await createDriveBinaryFile(accessToken, filename, buf, mimeType, { folderId });
+    return file.webViewLink;
+  } catch (err) {
+    console.error("[image_generate] Drive upload failed:", err);
+    return null;
+  }
+}
+
 export const imageGenerateTool: AgentTool = {
   name: "image_generate",
   description:
@@ -232,6 +292,7 @@ export const imageGenerateTool: AgentTool = {
     "FLUX (high-quality, photorealistic and artistic outputs — requires INFSH_API_KEY). " +
     "On Telegram: sends the image inline as a photo bubble. On Discord: sends as an embedded image attachment. " +
     "In the app: displays the image inline in the chat bubble. " +
+    "Can optionally save the generated image to the user's Google Drive under 'Jarvis Workspace / Generated Images'. " +
     "Use for concept illustrations, motivational visuals, meal plan photos, or any explicit image request. " +
     "Default model is GPT Image (use 'dalle' as the model parameter value) unless the user specifically asks for FLUX or higher quality/photorealistic output.",
   parameters: {
@@ -258,6 +319,11 @@ export const imageGenerateTool: AgentTool = {
         type: "string",
         description: "Optional short caption to accompany the image on Telegram or Discord (max 200 chars).",
       },
+      save_to_drive: {
+        type: "boolean",
+        description:
+          "If true and the user has Google Drive connected, save the generated image to their Google Drive under 'Jarvis Workspace / Generated Images'.",
+      },
     },
     required: ["prompt"],
   },
@@ -268,10 +334,13 @@ export const imageGenerateTool: AgentTool = {
       return { ok: false, content: "No prompt provided.", label: "image_generate: no prompt" };
     }
 
-    const sizeKey  = String(args.size  || "square").toLowerCase();
-    const modelKey = String(args.model || "dalle").toLowerCase();
-    const useFlux  = modelKey === "flux";
-    const caption  = args.caption ? String(args.caption).slice(0, 200) : undefined;
+    const sizeKey       = String(args.size  || "square").toLowerCase();
+    const modelKey      = String(args.model || "dalle").toLowerCase();
+    const useFlux       = modelKey === "flux";
+    const caption       = args.caption ? String(args.caption).slice(0, 200) : undefined;
+    const wantDriveSave = !!(args as { save_to_drive?: boolean }).save_to_drive;
+    // Drive save is only possible when the user's Google token is available.
+    const saveToDrive   = wantDriveSave && !!ctx.googleAccessToken;
 
     const hasInfshKey   = !!process.env.INFSH_API_KEY;
     const hasOpenAiKey  = !!(process.env.OPENAI_API_KEY?.startsWith("sk-"));
@@ -308,6 +377,11 @@ export const imageGenerateTool: AgentTool = {
       };
     }
 
+    // Surface a clear note when the user asked for Drive save but Google is not connected.
+    const driveUnavailableNote = wantDriveSave && !saveToDrive
+      ? " (Google Drive not connected — reconnect Google from the Profile screen to enable Drive saves)"
+      : "";
+
     const channelRaw = (ctx.channel || "app").toLowerCase();
     const isTelegram = channelRaw === "telegram";
     const isDiscord  = channelRaw.startsWith("discord");
@@ -323,8 +397,8 @@ export const imageGenerateTool: AgentTool = {
         };
       }
 
-      const buf = await fetchImageBuffer(imageUrl);
-      if (!buf) {
+      const fetched = await fetchImageBuffer(imageUrl);
+      if (!fetched) {
         return {
           ok: true,
           content: `Image generated (${modelLabel}) but could not download it for delivery. View it here: ${imageUrl}`,
@@ -333,7 +407,7 @@ export const imageGenerateTool: AgentTool = {
         };
       }
 
-      const sent = await sendPhoto(chatId, buf, caption);
+      const sent = await sendPhoto(chatId, fetched.buffer, caption);
       if (!sent) {
         return {
           ok: false,
@@ -344,13 +418,28 @@ export const imageGenerateTool: AgentTool = {
       }
 
       console.log(`[image_generate] Photo sent to Telegram user=${ctx.userId} model=${modelLabel} size=${sizeKey}`);
+
+      const drivePart = saveToDrive
+        ? await saveImageToDrive(
+            ctx.googleAccessToken!,
+            fetched.buffer,
+            buildImageFilename(prompt, fetched.mimeType),
+            fetched.mimeType,
+          )
+        : null;
+
+      const baseContent = caption
+        ? `Image sent to Telegram with caption: "${caption}". (Generated with ${modelLabel})`
+        : `Image sent to Telegram. (Generated with ${modelLabel})`;
       return {
         ok: true,
-        content: caption
-          ? `Image sent to Telegram with caption: "${caption}". (Generated with ${modelLabel})`
-          : `Image sent to Telegram. (Generated with ${modelLabel})`,
-        label: `Image sent to Telegram (${modelLabel})`,
-        detail: JSON.stringify({ imageUrl, model: modelLabel }),
+        content: drivePart
+          ? `${baseContent} Also saved to Google Drive: ${drivePart}`
+          : `${baseContent}${driveUnavailableNote}`,
+        label: drivePart
+          ? `Image sent to Telegram + saved to Drive (${modelLabel})`
+          : `Image sent to Telegram (${modelLabel})`,
+        detail: JSON.stringify({ imageUrl, model: modelLabel, ...(drivePart ? { driveLink: drivePart } : {}) }),
       };
     }
 
@@ -365,8 +454,8 @@ export const imageGenerateTool: AgentTool = {
         };
       }
 
-      const buf = await fetchImageBuffer(imageUrl);
-      if (!buf) {
+      const fetched = await fetchImageBuffer(imageUrl);
+      if (!fetched) {
         return {
           ok: true,
           content: `Image generated (${modelLabel}) but could not download it for delivery. View it here: ${imageUrl}`,
@@ -376,7 +465,7 @@ export const imageGenerateTool: AgentTool = {
       }
 
       const { sendDiscordImage } = await import("../../discord/manager");
-      const sent = await sendDiscordImage(ctx.userId, discordChannelId, buf, "image.png", caption);
+      const sent = await sendDiscordImage(ctx.userId, discordChannelId, fetched.buffer, "image.png", caption);
       if (!sent) {
         return {
           ok: false,
@@ -387,24 +476,59 @@ export const imageGenerateTool: AgentTool = {
       }
 
       console.log(`[image_generate] Image sent to Discord user=${ctx.userId} model=${modelLabel} size=${sizeKey}`);
+
+      const drivePart = saveToDrive
+        ? await saveImageToDrive(
+            ctx.googleAccessToken!,
+            fetched.buffer,
+            buildImageFilename(prompt, fetched.mimeType),
+            fetched.mimeType,
+          )
+        : null;
+
+      const baseContent = caption
+        ? `Image sent to Discord with caption: "${caption}". (Generated with ${modelLabel})`
+        : `Image sent to Discord. (Generated with ${modelLabel})`;
       return {
         ok: true,
-        content: caption
-          ? `Image sent to Discord with caption: "${caption}". (Generated with ${modelLabel})`
-          : `Image sent to Discord. (Generated with ${modelLabel})`,
-        label: `Image sent to Discord (${modelLabel})`,
-        detail: JSON.stringify({ imageUrl, model: modelLabel }),
+        content: drivePart
+          ? `${baseContent} Also saved to Google Drive: ${drivePart}`
+          : `${baseContent}${driveUnavailableNote}`,
+        label: drivePart
+          ? `Image sent to Discord + saved to Drive (${modelLabel})`
+          : `Image sent to Discord (${modelLabel})`,
+        detail: JSON.stringify({ imageUrl, model: modelLabel, ...(drivePart ? { driveLink: drivePart } : {}) }),
       };
     }
 
+    // ── In-app delivery ────────────────────────────────────────────────────────
     console.log(`[image_generate] Generated image for in-app user=${ctx.userId} model=${modelLabel} size=${sizeKey}`);
+
+    let drivePart: string | null = null;
+    if (saveToDrive) {
+      const fetched = await fetchImageBuffer(imageUrl);
+      if (fetched) {
+        drivePart = await saveImageToDrive(
+          ctx.googleAccessToken!,
+          fetched.buffer,
+          buildImageFilename(prompt, fetched.mimeType),
+          fetched.mimeType,
+        );
+      }
+    }
+
+    const baseContent = caption
+      ? `Here's your generated image — "${caption}". (Generated with ${modelLabel})`
+      : `Here's the generated image. (Generated with ${modelLabel})`;
     return {
       ok: true,
-      content: caption
-        ? `Here's your generated image — "${caption}". (Generated with ${modelLabel})`
-        : `Here's the generated image. (Generated with ${modelLabel})`,
-      label: `Image generated (${modelLabel})`,
-      detail: JSON.stringify({ imageUrl, model: modelLabel }),
+      content: drivePart
+        ? `${baseContent} Also saved to Google Drive: ${drivePart}`
+        : `${baseContent}${driveUnavailableNote}`,
+      label: drivePart
+        ? `Image generated + saved to Drive (${modelLabel})`
+        : `Image generated (${modelLabel})`,
+      detail: JSON.stringify({ imageUrl, model: modelLabel, ...(drivePart ? { driveLink: drivePart } : {}) }),
     };
   },
 };
