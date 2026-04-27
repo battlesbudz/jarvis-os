@@ -290,6 +290,7 @@ export default function SettingsScreen() {
   const [loadingStatus, setLoadingStatus] = useState(true);
   const [connectingId, setConnectingId] = useState<string | null>(null);
   const [androidDaemonCode, setAndroidDaemonCode] = useState<string | null>(null);
+  const [androidDaemonConnected, setAndroidDaemonConnected] = useState(false);
 
   // ── Per-section error states ──
   const [connectionsError, setConnectionsError] = useState(false);
@@ -666,20 +667,22 @@ export default function SettingsScreen() {
     setLoadingStatus(true);
     // Each call is independent — a failure on one doesn't block others.
     // We track per-call results to detect when required data is unavailable.
-    const [oauthResult, telegramResult, discordResult, integrationResult] = await Promise.allSettled([
+    const [oauthResult, telegramResult, discordResult, integrationResult, channelsResult] = await Promise.allSettled([
       apiRequest('GET', '/api/oauth/status').then(r => r.ok ? r.json() : Promise.reject(r.status)),
       apiRequest('GET', '/api/telegram/status').then(r => r.ok ? r.json() : Promise.reject(r.status)),
       apiRequest('GET', '/api/discord/status').then(r => r.ok ? r.json() : Promise.reject(r.status)),
       apiRequest('GET', '/api/integrations/status').then(r => r.ok ? r.json() : Promise.reject(r.status)),
+      apiRequest('GET', '/api/channels').then(r => r.ok ? r.json() : Promise.reject(r.status)),
     ]);
 
     const oauthRes = oauthResult.status === 'fulfilled' ? oauthResult.value : null;
     const telegramRes = telegramResult.status === 'fulfilled' ? telegramResult.value : null;
     const discordRes = discordResult.status === 'fulfilled' ? discordResult.value : null;
     const integrationRes = integrationResult.status === 'fulfilled' ? integrationResult.value : null;
+    const channelsRes = channelsResult.status === 'fulfilled' ? channelsResult.value : null;
 
     // Show error row when any connections endpoint fails.
-    const anyConnectionFailed = [oauthResult, telegramResult, discordResult, integrationResult]
+    const anyConnectionFailed = [oauthResult, telegramResult, discordResult, integrationResult, channelsResult]
       .some(r => r.status === 'rejected');
     setConnectionsError(anyConnectionFailed);
 
@@ -695,6 +698,9 @@ export default function SettingsScreen() {
     });
     setDiscordConnected(discordRes?.connected ?? false);
     setDiscordUsername(discordRes?.discordUsername ?? null);
+    setAndroidDaemonConnected(
+      channelsRes?.meta?.android_daemon?.connected ?? channelsRes?.android_daemon_connected ?? false
+    );
     if (integrationRes && typeof integrationRes === 'object') {
       const health: Record<string, string> = {};
       const errors: Record<string, string | null> = {};
@@ -1044,7 +1050,7 @@ export default function SettingsScreen() {
   const handleAndroidDaemon = useCallback(async () => {
     if (androidDaemonCode) { setAndroidDaemonCode(null); return; }
     try {
-      const res = await apiRequest('POST', '/api/daemon/link-code');
+      const res = await apiRequest('POST', '/api/channels/daemon/code');
       const data = await res.json();
       setAndroidDaemonCode(data.code ?? null);
     } catch {}
@@ -1386,13 +1392,15 @@ export default function SettingsScreen() {
             </View>
             <View style={styles.connInfo}>
               <Text style={styles.connName}>Android Daemon</Text>
-              <Text style={styles.connSub}>Let Jarvis act on your Android device</Text>
+              <Text style={styles.connSub}>
+                {androidDaemonConnected ? 'Connected' : 'Not connected'}
+              </Text>
             </View>
             <Pressable
-              style={[styles.connBtn, androidDaemonCode ? styles.connBtnConnected : styles.connBtnDisconnected]}
+              style={[styles.connBtn, androidDaemonConnected ? styles.connBtnConnected : (androidDaemonCode ? styles.connBtnConnected : styles.connBtnDisconnected)]}
               onPress={handleAndroidDaemon}
             >
-              <Text style={[styles.connBtnText, androidDaemonCode && styles.connBtnTextConnected]}>
+              <Text style={[styles.connBtnText, (androidDaemonConnected || androidDaemonCode) && styles.connBtnTextConnected]}>
                 {androidDaemonCode ? 'Hide' : 'Set Up'}
               </Text>
             </Pressable>
