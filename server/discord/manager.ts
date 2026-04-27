@@ -4,7 +4,9 @@ import { eq, and, sql } from "drizzle-orm";
 import { channelLinks, users, discordPendingApprovals, discordAgents } from "@shared/schema";
 import { getUserToken, saveUserToken, deleteUserToken } from "../userTokenStore";
 import { runCoachAgent } from "../channels/coachAgent";
-import { routeToNamedAgent, type NamedAgentResult } from "../agent/runNamedAgent";
+import { routeToNamedAgent, runNamedAgent, type NamedAgentResult } from "../agent/runNamedAgent";
+import { getActiveAgentsForUser } from "../agent/agentManager";
+import { matchMentionPattern } from "../agent/mentionMatcher";
 import { setupWorkspace as _setupWorkspace, postToTopicChannel as _postToTopicChannel, classifyTopic, getTopicForChannel, WORKSPACE_TOPICS, type WorkspaceMeta } from "./workspace";
 import { getUserTtsChannels, getUserTtsPrefs, speakToUser } from "../agent/tools/tts";
 import { getSession as getCoachSession, setSession as setCoachSession } from "../channels/sessionStore";
@@ -514,6 +516,23 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
     // the workspace topic is now provided by the context registry (topicContext provider)
     // which injects it into the system prompt inside runCoachAgent.
 
+    // ── Phase 5.5: Mention-pattern routing ─────────────────────────────
+    // Check if the message body matches any active agent's mention patterns.
+    // Applies to guild messages only (DMs are never affected).
+    // First match wins; if matched, Phase 6 channel-assignment check is skipped.
+    let mentionMatchedAgent: import("@shared/schema").DiscordAgent | null = null;
+    if (!isDM) {
+      try {
+        const allAgents = await getActiveAgentsForUser(userId);
+        mentionMatchedAgent = matchMentionPattern(userText, allAgents);
+        if (mentionMatchedAgent) {
+          console.log(`[DiscordManager] mention-pattern matched agent "${mentionMatchedAgent.name}" (${mentionMatchedAgent.id}) for text="${userText.slice(0, 60)}…"`);
+        }
+      } catch (mpErr) {
+        console.warn("[DiscordManager] mention-pattern check failed (non-fatal):", mpErr);
+      }
+    }
+
     // ── Phase 6: Named agent routing ───────────────────────────────────
     // Check if this channel is assigned to a named agent (new agent system).
     // If so, route directly to runNamedAgent. If not (or if it throws), fall
@@ -522,7 +541,18 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
     let namedAgentFailed = false;
     if (!isDM) {
       try {
-        namedAgentResult = await routeToNamedAgent(userId, "discord", message.channelId, userText);
+        if (mentionMatchedAgent) {
+          namedAgentResult = await runNamedAgent({
+            agentId: mentionMatchedAgent.id,
+            userId,
+            userMessage: userText,
+            platform: "discord",
+            channelId: message.channelId,
+            conversationHistory: undefined,
+          });
+        } else {
+          namedAgentResult = await routeToNamedAgent(userId, "discord", message.channelId, userText);
+        }
       } catch (agentErr) {
         console.error("[DiscordManager] routeToNamedAgent failed — falling back to coach:", agentErr);
         namedAgentFailed = true;
@@ -537,6 +567,11 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
       // Merge any markdown attachments into the text reply.
       const namedMarkdownExtra = collectMarkdownExtras(namedAtts);
       let namedReply = namedAgentResult.reply || "Sorry, the agent couldn't generate a response right now.";
+      // Prepend agent name label when routed via mention-pattern so the channel
+      // clearly shows which sub-agent responded.
+      if (mentionMatchedAgent) {
+        namedReply = `**${mentionMatchedAgent.name}:** ${namedReply}`;
+      }
       if (namedMarkdownExtra) {
         namedReply = namedReply ? `${namedReply}\n\n${namedMarkdownExtra}` : namedMarkdownExtra;
       }

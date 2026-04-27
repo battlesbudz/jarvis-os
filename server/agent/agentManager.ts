@@ -29,6 +29,7 @@ export interface CreateAgentConfig {
   loopPrompt?: string;
   platformChannels?: Record<string, string[]>;
   configJson?: Record<string, unknown>;
+  mentionPatterns?: string[];
 }
 
 export interface UpdateAgentPatch {
@@ -47,6 +48,7 @@ export interface UpdateAgentPatch {
   loopPrompt?: string;
   platformChannels?: Record<string, string[]>;
   isActive?: boolean;
+  mentionPatterns?: string[];
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -100,6 +102,7 @@ export async function createAgent(userId: string, config: CreateAgentConfig): Pr
     platformChannels: config.platformChannels ?? {},
     configJson: config.configJson,
     heartbeatFailCount: 0,
+    mentionPatterns: config.mentionPatterns ?? [],
   };
 
   const [row] = await db.insert(discordAgents).values(values).returning({ id: discordAgents.id });
@@ -162,6 +165,7 @@ export async function updateAgent(agentId: string, patch: UpdateAgentPatch): Pro
   if (patch.loopPrompt !== undefined) updates.loopPrompt = patch.loopPrompt;
   if (patch.platformChannels !== undefined) updates.platformChannels = patch.platformChannels;
   if (patch.isActive !== undefined) updates.isActive = patch.isActive ? 1 : 0;
+  if (patch.mentionPatterns !== undefined) updates.mentionPatterns = patch.mentionPatterns;
 
   if (Object.keys(updates).length === 0) return;
 
@@ -225,6 +229,19 @@ export async function removeChannel(agentId: string, platform: string, channelId
   console.log(`[AgentManager] removed ${platform}:${channelId} from agent ${agentId}`);
 }
 
+// ── getActiveAgentsForUser ─────────────────────────────────────────────────────
+
+/**
+ * Return all active agents for a user. Used by mention-pattern routing so the
+ * caller can scan every agent's patterns in one pass.
+ */
+export async function getActiveAgentsForUser(userId: string): Promise<DiscordAgent[]> {
+  return db
+    .select()
+    .from(discordAgents)
+    .where(and(eq(discordAgents.userId, userId), eq(discordAgents.isActive, 1)));
+}
+
 // ── getAgentForChannel ─────────────────────────────────────────────────────────
 
 /**
@@ -237,10 +254,7 @@ export async function getAgentForChannel(
   platform: string,
   channelId: string,
 ): Promise<DiscordAgent | null> {
-  const agents = await db
-    .select()
-    .from(discordAgents)
-    .where(and(eq(discordAgents.userId, userId), eq(discordAgents.isActive, 1)));
+  const agents = await getActiveAgentsForUser(userId);
 
   for (const agent of agents) {
     // Legacy flat channelId match (Discord)

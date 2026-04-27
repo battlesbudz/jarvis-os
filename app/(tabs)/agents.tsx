@@ -111,6 +111,7 @@ export interface RosterAgent {
   heartbeatFailCount: number;
   stuckSince?: string;
   permissions?: AgentPermissions;
+  mentionPatterns?: string[];
   // enriched
   memoryCount: number;
   status: "online" | "idle" | "dormant" | "stuck";
@@ -1252,6 +1253,8 @@ function AgentDetailSheet({
   const [loopInterval, setLoopInterval] = useState("60");
   const [loopPrompt, setLoopPrompt] = useState("");
   const [perms, setPerms] = useState<AgentPermissions>({ ...DEFAULT_PERMISSIONS });
+  const [mentionPatterns, setMentionPatterns] = useState<string[]>([]);
+  const [mentionPatternInput, setMentionPatternInput] = useState("");
   const [saving, setSaving] = useState(false);
 
   const { data: memData, isLoading: memLoading } = useQuery<{ memories: MemoryItem[]; count: number }>({
@@ -1269,6 +1272,8 @@ function AgentDetailSheet({
     setLoopInterval(String(agent.loopIntervalMinutes ?? 60));
     setLoopPrompt(agent.loopPrompt ?? "");
     setPerms({ ...DEFAULT_PERMISSIONS, ...(agent.permissions ?? {}) });
+    setMentionPatterns(agent.mentionPatterns ?? []);
+    setMentionPatternInput("");
     setSaving(false);
     setActiveTab("overview");
   }, [agent?.id]);
@@ -1289,7 +1294,19 @@ function AgentDetailSheet({
       loopIntervalMinutes: parseInt(loopInterval, 10) || 60,
       loopPrompt: loopPrompt.trim() || undefined,
       permissions: perms,
+      mentionPatterns,
     });
+  }
+
+  function handleAddPattern() {
+    const trimmed = mentionPatternInput.trim();
+    if (!trimmed) return;
+    setMentionPatterns((prev) => [...prev, trimmed]);
+    setMentionPatternInput("");
+  }
+
+  function handleRemovePattern(idx: number) {
+    setMentionPatterns((prev) => prev.filter((_, i) => i !== idx));
   }
 
   if (!agent) return null;
@@ -1636,6 +1653,45 @@ function AgentDetailSheet({
                 />
               </>
             )}
+
+            <View style={[styles.detailSectionDivider, { borderTopColor: Colors.border }]} />
+            <Text style={[styles.sectionLabel, { color: Colors.textSecondary }]}>MENTION PATTERNS</Text>
+            <Text style={[styles.detailSectionHint, { color: Colors.textTertiary }]}>
+              Messages containing these words or patterns will always route to this agent, regardless of which channel they arrive in. Wrap in /slashes/ for regex, e.g. /^@research/i
+            </Text>
+
+            {mentionPatterns.map((pattern, idx) => (
+              <View
+                key={idx}
+                style={[styles.mentionChip, { backgroundColor: Colors.surface, borderColor: Colors.border }]}
+              >
+                <Text style={[styles.mentionChipText, { color: Colors.text }]} numberOfLines={1}>
+                  {pattern}
+                </Text>
+                <TouchableOpacity onPress={() => handleRemovePattern(idx)} style={styles.mentionChipRemove}>
+                  <Ionicons name="close-circle" size={16} color={Colors.textTertiary} />
+                </TouchableOpacity>
+              </View>
+            ))}
+
+            <View style={styles.mentionInputRow}>
+              <TextInput
+                style={[styles.mentionInput, { backgroundColor: Colors.surface, borderColor: Colors.border, color: Colors.text }]}
+                value={mentionPatternInput}
+                onChangeText={setMentionPatternInput}
+                placeholder="e.g. @research or /^hey jarvis/i"
+                placeholderTextColor={Colors.textTertiary}
+                onSubmitEditing={handleAddPattern}
+                returnKeyType="done"
+              />
+              <TouchableOpacity
+                style={[styles.mentionAddBtn, { backgroundColor: Colors.primary, opacity: mentionPatternInput.trim() ? 1 : 0.4 }]}
+                onPress={handleAddPattern}
+                disabled={!mentionPatternInput.trim()}
+              >
+                <Text style={styles.mentionAddBtnText}>Add</Text>
+              </TouchableOpacity>
+            </View>
 
             <View style={[styles.detailSectionDivider, { borderTopColor: Colors.border }]} />
             <Text style={[styles.sectionLabel, { color: Colors.textSecondary }]}>PERMISSIONS</Text>
@@ -2183,4 +2239,22 @@ const styles = StyleSheet.create({
     borderRadius: 10, borderWidth: StyleSheet.hairlineWidth,
   },
   trimBannerText: { flex: 1, fontSize: 12, lineHeight: 16 },
+  mentionChip: {
+    flexDirection: "row", alignItems: "center",
+    borderRadius: 8, borderWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 10, paddingVertical: 7,
+    marginBottom: 6, gap: 6,
+  },
+  mentionChipText: { flex: 1, fontSize: 14 },
+  mentionChipRemove: { padding: 2 },
+  mentionInputRow: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 4 },
+  mentionInput: {
+    flex: 1, borderRadius: 8, borderWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 12, paddingVertical: 9, fontSize: 14,
+  },
+  mentionAddBtn: {
+    paddingHorizontal: 14, paddingVertical: 9,
+    borderRadius: 8, alignItems: "center", justifyContent: "center",
+  },
+  mentionAddBtnText: { color: "#fff", fontSize: 14, fontWeight: "600" },
 });
