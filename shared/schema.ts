@@ -1130,6 +1130,23 @@ export const orchestrationTraces = pgTable("orchestration_traces", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+// ── Agent Chat Messages — permanent per-agent conversation log ─────────────────
+// Stores every user / assistant exchange in a durable table with no TTL.
+// Written on every chat turn so history survives session expiry and app
+// reinstalls. The mobile RunModal uses GET /api/agents/:id/history to fetch
+// these; it falls back to AsyncStorage for offline-first behaviour.
+
+export const agentChatMessages = pgTable("agent_chat_messages", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  agentId: varchar("agent_id").notNull().references(() => discordAgents.id, { onDelete: "cascade" }),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  role: varchar("role").$type<"user" | "assistant">().notNull(),
+  content: text("content").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export type AgentChatMessageRow = typeof agentChatMessages.$inferSelect;
+
 // ── Agent Chat Sessions — native session resumption ───────────────────────────
 // Stores server-side conversation state for named agent chats so that
 // subsequent turns can resume from cached messages instead of re-injecting
