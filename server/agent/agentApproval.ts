@@ -103,7 +103,7 @@ export function requiresApproval(toolName: string): boolean {
  * Criteria: external side-effects that cannot be undone (sending messages /
  * emails to other people, OS-level actions, live voice calls).
  */
-const STRICTLY_IRREVERSIBLE_TOOLS = new Set([
+export const STRICTLY_IRREVERSIBLE_TOOLS = new Set([
   "send_email",
   "gmail_action",
   "daemon_action",

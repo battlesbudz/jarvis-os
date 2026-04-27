@@ -15,6 +15,7 @@ import { db } from "./db";
 import { eq, and, sql as drizzleSql } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { markSoulStale } from "./memory/soul";
+import { STRICTLY_IRREVERSIBLE_TOOLS, approveGate } from "./agent/agentApproval";
 import OpenAI from "openai";
 
 const openai = new OpenAI({
@@ -205,7 +206,6 @@ export async function runTriagePassForUser(userId: string): Promise<void> {
         if (d.type === "approval_gate") {
           const meta = (d.meta as { gateId?: string }) || {};
           if (meta.gateId) {
-            const { approveGate } = await import("./agent/agentApproval");
             const gateOk = await approveGate(meta.gateId, userId).catch(() => false);
             if (!gateOk) {
               await db
@@ -273,7 +273,6 @@ export async function runTriagePassForUser(userId: string): Promise<void> {
 
     for (const gate of orphanedGates) {
       if (!STRICTLY_IRREVERSIBLE_TOOLS.has(gate.toolName)) {
-        const { approveGate } = await import("./agent/agentApproval");
         const ok = await approveGate(gate.id, userId).catch(() => false);
         if (ok) {
           console.log(`[InboxTriage] fallback auto-approved orphaned gate: ${gate.id} (${gate.toolName})`);
