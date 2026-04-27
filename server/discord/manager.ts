@@ -7,13 +7,15 @@ import { runCoachAgent } from "../channels/coachAgent";
 import { routeToNamedAgent } from "../agent/runNamedAgent";
 import { setupWorkspace as _setupWorkspace, postToTopicChannel as _postToTopicChannel, classifyTopic, getTopicForChannel, WORKSPACE_TOPICS, type WorkspaceMeta } from "./workspace";
 import { getUserTtsChannels, getUserTtsPrefs, speakToUser } from "../agent/tools/tts";
+import { SessionCache } from "../sessionCache";
 
 // ── Per-user session ID store for Discord coach conversations ───────────────
 // Volatile in-process cache keyed by userId. Lost on server restart but the
 // coach pipeline gracefully falls back to full history injection on cache miss,
 // so there is no data loss — only a minor efficiency cost for the first turn
-// after a restart.
-const discordCoachSessions = new Map<string, string>();
+// after a restart.  Entries unused for 24 h are evicted automatically.
+const discordCoachSessions = new SessionCache("discord");
+discordCoachSessions.startSweep();
 
 // ── Types ──────────────────────────────────────────────────────────────────
 

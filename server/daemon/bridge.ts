@@ -4,6 +4,7 @@ import { db } from "../db";
 import { eq, and, sql } from "drizzle-orm";
 import { channelLinks, channelLinkCodes, userPreferences } from "@shared/schema";
 import { randomBytes, createHash } from "crypto";
+import { SessionCache } from "../sessionCache";
 
 interface PairMsg { type: "pair"; code: string; hostname?: string; platform?: string }
 interface ReconnectMsg { type: "reconnect"; daemonId: string; reconnectSecret: string; hostname?: string; platform?: string }
@@ -89,8 +90,9 @@ export function subscribeWakeWordTrigger(
 // Volatile in-process cache keyed by userId. Lost on server restart but the
 // coach pipeline gracefully falls back to full history injection on cache miss,
 // so there is no data loss — only a minor efficiency cost for the first turn
-// after a restart.
-const daemonCoachSessions = new Map<string, string>();
+// after a restart.  Entries unused for 24 h are evicted automatically.
+const daemonCoachSessions = new SessionCache("daemon");
+daemonCoachSessions.startSweep();
 
 /**
  * Handles a voice utterance captured by the Android daemon in Talk Mode.

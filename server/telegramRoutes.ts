@@ -21,6 +21,7 @@ import { runCoachAgent } from "./channels/coachAgent";
 import { routeToNamedAgent } from "./agent/runNamedAgent";
 import { completePairing as completeDiscordPairing } from "./discord/manager";
 import OpenAI from "openai";
+import { SessionCache } from "./sessionCache";
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
@@ -38,12 +39,13 @@ function generateLinkCode(): string {
 
 
 // ── Per-user session ID store for Telegram coach conversations ─────────────────
-// Two-layer cache: in-process Map (fast path) backed by agent_chat_sessions
-// (source of truth). On a cache miss after a server restart, the DB is queried
-// for the latest non-expired coach session for the user, so the
-// session-resumption optimisation survives deploys without any separate
-// pointer table.
-const telegramCoachSessions = new Map<string, string>();
+// Two-layer cache: in-process SessionCache (fast path, entries unused for 24 h
+// are evicted automatically) backed by agent_chat_sessions (source of truth).
+// On a cache miss after a server restart the DB is queried for the latest
+// non-expired coach session so session-resumption survives deploys without any
+// separate pointer table.
+const telegramCoachSessions = new SessionCache("telegram");
+telegramCoachSessions.startSweep();
 
 /** agentId used by runCoachAgent / claude provider for main coach turns. */
 const TELEGRAM_COACH_AGENT_ID = "coach";

@@ -7,13 +7,15 @@ import { channelLinks } from "@shared/schema";
 import { runCoachAgent } from "./coachAgent";
 import { postSlackMessage, getSlackBotToken } from "./slackChannel";
 import { buildPlanFromInputs } from "../routes";
+import { SessionCache } from "../sessionCache";
 
 // ── Per-user session ID store for Slack coach conversations ─────────────────
 // Volatile in-process cache keyed by userId. Lost on server restart but the
 // coach pipeline gracefully falls back to full history injection on cache miss,
 // so there is no data loss — only a minor efficiency cost for the first turn
-// after a restart.
-const slackCoachSessions = new Map<string, string>();
+// after a restart.  Entries unused for 24 h are evicted automatically.
+const slackCoachSessions = new SessionCache("slack");
+slackCoachSessions.startSweep();
 
 const SLACK_SIGNING_SECRET = process.env.SLACK_SIGNING_SECRET;
 
