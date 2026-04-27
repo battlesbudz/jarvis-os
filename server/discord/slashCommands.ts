@@ -176,10 +176,13 @@ export async function registerSlashCommands(): Promise<void> {
       }
     }
 
-    // Build the merged command list: keep all existing non-jarvis/non-agent/non-ask
-    // commands, then add/replace the /jarvis, /agent, and /ask commands. Non-destructive.
+    // Build the merged command list: keep all existing non-jarvis/non-agent(s)/non-ask
+    // commands, then add/replace the /jarvis, /agents, and /ask commands.
+    // Filter out both "agent" (old) and "agents" (new) so we cleanly replace either.
     const { AGENT_COMMAND, ASK_COMMAND } = await import("./agentCommands");
-    const otherCommands = existing.filter((c) => c.name !== "jarvis" && c.name !== "agent" && c.name !== "ask");
+    const otherCommands = existing.filter(
+      (c) => c.name !== "jarvis" && c.name !== "agent" && c.name !== "agents" && c.name !== "ask",
+    );
     const mergedCommands = [...otherCommands, JARVIS_COMMAND, AGENT_COMMAND, ASK_COMMAND];
 
     const putRes = await fetch(url, {
@@ -465,8 +468,8 @@ export async function handleInteraction(interaction: any): Promise<object> {
 
   // ── Slash command ───────────────────────────────────────────────────────
   if (interaction.type === InteractionType.APPLICATION_COMMAND) {
-    // ── /agent command ────────────────────────────────────────────────────
-    if (interaction.data?.name === "agent") {
+    // ── /agents command (also handles legacy /agent name during guild transition) ─
+    if (interaction.data?.name === "agents" || interaction.data?.name === "agent") {
       const memberUser = interaction.member?.user ?? interaction.user ?? {};
       const discordUserId: string = memberUser.id ?? "";
       const paired = await lookupUserByDiscordId(discordUserId);

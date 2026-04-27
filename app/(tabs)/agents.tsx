@@ -308,8 +308,9 @@ function RunModal({ agent, onClose }: { agent: Agent | null; onClose: () => void
     setRunning(true);
     setReply("");
     try {
-      const data = await apiRequest<{ reply: string }>("POST", `/api/agents/${agent.id}/run`, { message, platform: "mobile" });
-      setReply(data.reply);
+      const res = await apiRequest("POST", `/api/agents/${agent.id}/run`, { message, platform: "mobile" });
+      const data = await res.json() as { reply: string };
+      setReply(data.reply ?? "");
     } catch (err) {
       setReply(`Error: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
@@ -376,9 +377,8 @@ function CouncilModal({ visible, onClose }: { visible: boolean; onClose: () => v
     setRunning(true);
     setResult(null);
     try {
-      const data = await apiRequest<{ synthesis: string; succeededCount: number; agentCount: number }>(
-        "POST", "/api/agents/council", { question },
-      );
+      const res = await apiRequest("POST", "/api/agents/council", { question });
+      const data = await res.json() as { synthesis: string; succeededCount: number; agentCount: number };
       setResult(data);
     } catch (err) {
       setResult({ synthesis: `Error: ${err instanceof Error ? err.message : String(err)}`, succeededCount: 0, agentCount: 0 });
