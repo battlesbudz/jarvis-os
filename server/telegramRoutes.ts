@@ -2,8 +2,9 @@ import type { Express, Request, Response } from "express";
 import { db } from "./db";
 import { eq, and, desc, sql, gte, lte } from "drizzle-orm";
 import * as schema from "@shared/schema";
-import { sendMessage, sendMessageWithButtons, sendTelegramDocument, sendPhoto, sendVoice, answerCallbackQuery, isTelegramConfigured, getUpdates, downloadTelegramFile, downloadTelegramFileBuffer, getWebhookHealth, ensureWebhook, getExpectedWebhookUrl } from "./integrations/telegram";
+import { sendMessage, sendLongMessage, sendMessageWithButtons, sendTelegramDocument, sendPhoto, sendVoice, answerCallbackQuery, isTelegramConfigured, getUpdates, downloadTelegramFile, downloadTelegramFileBuffer, getWebhookHealth, ensureWebhook, getExpectedWebhookUrl } from "./integrations/telegram";
 import { attachmentToBuffer, collectMarkdownExtras } from "./channels/attachmentHelpers";
+import type { ChannelAttachment } from "./channels/types";
 import { isIngestableDocument, extractTelegramDocument, buildDocumentContextBlock } from "./telegramDocumentExtractor";
 import { getUserTtsPrefs, setUserTtsPref, speakToUser, getUserTtsChannels, setTtsChannels, ELEVENLABS_VOICES } from "./agent/tools/tts";
 import { notifyUser, getChannel } from "./channels/registry";
@@ -39,14 +40,107 @@ function generateLinkCode(): string {
 }
 
 
+/**
+ * Deliver the reply and any attachments from a named-agent result to a Telegram chat.
+ * Mirrors the attachment-delivery logic used by the coach agent path so that
+ * images, documents, and files produced by MCP tool calls are not silently dropped.
+ *
+ * Design notes:
+ * - Model-generated text is NOT sent with parse_mode:"Markdown" to avoid parse
+ *   errors on unescaped characters. sendLongMessage handles chunking at 4096 chars.
+ * - Text is only cleared (and logged) after a confirmed successful send; if sending
+ *   text before media fails, text is sent again after media so it is never lost.
+ * - agentLabel is sent as a separate plain-text header when provided.
+ */
+async function deliverNamedAgentResult(
+  chatId: string,
+  userId: string,
+  agentLabel: string | null,
+  result: { reply: string; attachments?: ChannelAttachment[] },
+): Promise<void> {
+  const atts = result.attachments ?? [];
+  const mediaAttsCount = atts.filter((a) => a.kind !== "markdown").length;
+
+  // Merge markdown attachments into the text reply (no binary payload to send).
+  const markdownExtra = collectMarkdownExtras(atts);
+  // Only use the fallback apology when nothing at all was produced — if binary
+  // attachments were generated, omit the apology so the user isn't confused.
+  let textReply = result.reply
+    || (mediaAttsCount === 0 ? "Sorry, the agent couldn't respond right now." : "");
+  if (markdownExtra) {
+    textReply = textReply ? `${textReply}\n\n${markdownExtra}` : markdownExtra;
+  }
+
+  // If there is a named label, prefix it onto the text reply (one message, no
+  // extra header send) so the chat stays tidy.
+  if (agentLabel && textReply) {
+    textReply = `${agentLabel}: ${textReply}`;
+  } else if (agentLabel) {
+    // No text to prefix — send the label as a standalone header before media.
+    try { await sendMessage(chatId, `${agentLabel}:`); } catch (_) { /* non-blocking */ }
+  }
+
+  // Non-markdown attachments need text sent first so ordering is natural (text → media).
+  const mediaAtts = atts.filter((a) => a.kind !== "markdown");
+  let textSent = false;
+  if (mediaAtts.length > 0 && textReply.trim()) {
+    try {
+      await sendLongMessage(chatId, textReply);
+      logInteraction(userId, "telegram", "outbound", textReply).catch(() => {});
+      textSent = true;
+    } catch (sendErr) {
+      console.error("[Telegram] named agent: failed to send text before attachment:", sendErr);
+      // text not sent — will retry after media below
+    }
+  }
+
+  // Deliver binary attachments produced by the agent.
+  for (const att of mediaAtts) {
+    if (att.kind === "document") {
+      const ok = await sendTelegramDocument(chatId, att.filename, att.content, att.caption, att.mimeType);
+      console.log(`[Telegram] named agent: delivered document ${att.filename} ok=${ok}`);
+    } else if (att.kind === "image") {
+      try {
+        const buf = await attachmentToBuffer(att);
+        if (buf) {
+          const ok = await sendPhoto(chatId, buf, att.caption);
+          console.log(`[Telegram] named agent: delivered image ok=${ok}`);
+        } else {
+          console.warn("[Telegram] named agent: image attachment had no usable source — skipping");
+        }
+      } catch (imgErr) {
+        console.warn("[Telegram] named agent: image send failed (non-blocking):", imgErr);
+      }
+    } else if (att.kind === "file") {
+      try {
+        const buf = await attachmentToBuffer(att);
+        if (buf) {
+          const ok = await sendTelegramDocument(chatId, att.filename, buf, att.caption, att.mimeType);
+          console.log(`[Telegram] named agent: delivered file ${att.filename} ok=${ok}`);
+        } else {
+          console.warn(`[Telegram] named agent: file ${att.filename} had no usable source — skipping`);
+        }
+      } catch (fileErr) {
+        console.warn(`[Telegram] named agent: file ${att.filename} send failed (non-blocking):`, fileErr);
+      }
+    }
+  }
+
+  // Send text that hasn't been sent yet — either because there were no media
+  // attachments, or because the pre-media send failed.
+  if (!textSent && textReply.trim()) {
+    await sendLongMessage(chatId, textReply);
+    logInteraction(userId, "telegram", "outbound", textReply).catch(() => {});
+  }
+}
+
 async function handleCoachReply(userId: string, chatId: string, userText: string, imageUrl?: string): Promise<void> {
   try {
     // Check if this Telegram chatId is assigned to a named agent first.
     // routeToNamedAgent returns null when no agent is configured for the channel.
     const namedResult = await routeToNamedAgent(userId, "telegram", chatId, userText).catch(() => null);
     if (namedResult !== null) {
-      const namedReply = namedResult.reply || "Sorry, the agent couldn't respond right now.";
-      await sendMessage(chatId, namedReply);
+      await deliverNamedAgentResult(chatId, userId, null, namedResult);
       return;
     }
 
@@ -509,7 +603,7 @@ async function processUpdate(update: any): Promise<void> {
               return;
             }
             const result = await runNamedAgent({ agentId: agent.id, userId, userMessage: question, platform: "telegram" });
-            await sendMessage(chatId, `*${agent.name}:* ${result.reply.slice(0, 4000)}`);
+            await deliverNamedAgentResult(chatId, userId, agent.name, result);
             return;
           }
 
@@ -561,7 +655,7 @@ async function processUpdate(update: any): Promise<void> {
             const agent = agents.find((a) => a.name.toLowerCase() === agentName.toLowerCase());
             if (!agent) { await sendMessage(chatId, `Agent "${agentName}" not found.`); return; }
             const result = await runNamedAgent({ agentId: agent.id, userId, userMessage: message, platform: "telegram" });
-            await sendMessage(chatId, `*${agent.name}:* ${result.reply.slice(0, 4000)}`, { parse_mode: "Markdown" });
+            await deliverNamedAgentResult(chatId, userId, agent.name, result);
             return;
           }
 
