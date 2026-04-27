@@ -651,6 +651,27 @@ export function registerAgentRoutes(app: Express): void {
             res.write(`data: ${JSON.stringify({ type: "session_init", sdkSessionId: result.sdkSessionId })}\n\n`);
           }
 
+          // Emit attachment events so the mobile UI can render images/files inline.
+          for (const att of result.attachments ?? []) {
+            if (res.writableEnded) break;
+            let payload: Record<string, unknown> = { type: "attachment", kind: att.kind };
+            if (att.kind === "image") {
+              payload = { ...payload, url: att.url, data: att.data, mimeType: att.mimeType, caption: att.caption };
+            } else if (att.kind === "file") {
+              payload = { ...payload, filename: att.filename, url: att.url, data: att.data, mimeType: att.mimeType, caption: att.caption };
+            } else if (att.kind === "document") {
+              // Convert Buffer content to base64 string so it's JSON-serialisable.
+              const rawContent = (att as { content?: string | Buffer }).content;
+              const content = Buffer.isBuffer(rawContent)
+                ? rawContent.toString("base64")
+                : typeof rawContent === "string" ? rawContent : undefined;
+              payload = { ...payload, filename: att.filename, content, mimeType: att.mimeType, caption: att.caption };
+            } else if (att.kind === "markdown") {
+              payload = { ...payload, text: att.text, caption: att.caption };
+            }
+            res.write(`data: ${JSON.stringify(payload)}\n\n`);
+          }
+
           if (!res.writableEnded) {
             // Ensure final reply is flushed (handles non-streaming fallback inside runNamedAgent)
             if (!fullReply && result.reply) {
@@ -697,6 +718,19 @@ export function registerAgentRoutes(app: Express): void {
           turns: result.turns,
           toolCalls: result.toolCalls.length,
           sdkSessionId: result.sdkSessionId,
+          attachments: result.attachments.map((att) => {
+            // Serialise Buffer content fields so JSON.stringify handles them.
+            if (att.kind === "document") {
+              const rawContent = (att as { content?: string | Buffer }).content;
+              return {
+                ...att,
+                content: Buffer.isBuffer(rawContent)
+                  ? rawContent.toString("base64")
+                  : rawContent,
+              };
+            }
+            return att;
+          }),
         });
       }
     } catch (err) { handleError(res, err); }

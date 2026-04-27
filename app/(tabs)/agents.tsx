@@ -15,6 +15,8 @@ import {
   Switch,
   Animated,
   KeyboardAvoidingView,
+  Image,
+  Linking,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -546,6 +548,19 @@ function CreateAgentSheet({
 
 // ── RunModal ───────────────────────────────────────────────────────────────────
 
+interface InAppAttachment {
+  kind: "image" | "file" | "document" | "markdown";
+  url?: string;
+  /** Base64 payload for image/file attachments */
+  data?: string;
+  /** Base64 payload for document attachments (converted from Buffer server-side) */
+  content?: string;
+  mimeType?: string;
+  caption?: string;
+  filename?: string;
+  text?: string;
+}
+
 interface ChatMessage {
   id: string;
   role: "user" | "assistant";
@@ -553,6 +568,8 @@ interface ChatMessage {
   timestamp: number;
   /** True when the assistant reply was shaped by a non-integration tool failure. */
   isToolError?: boolean;
+  /** Attachments (images, files, markdown) produced by the agent during this turn. */
+  attachments?: InAppAttachment[];
 }
 
 const CHAT_STORAGE_KEY = (agentId: string) => `agent_chat_history_${agentId}`;
@@ -573,9 +590,47 @@ async function loadChatHistory(agentId: string): Promise<ChatMessage[]> {
   }
 }
 
+/**
+ * Cross-runtime base64 decode. React Native 0.71+ exposes `atob` globally via JSI;
+ * older runtimes may not. We fall back to `Buffer` (available in Node/Hermes via
+ * the `buffer` polyfill) and finally return `null` so callers can degrade gracefully.
+ */
+function safeAtob(base64: string): string | null {
+  try {
+    if (typeof atob === "function") return atob(base64);
+    if (typeof Buffer !== "undefined") return Buffer.from(base64, "base64").toString("utf8");
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// Strip oversized base64 payloads before persisting to AsyncStorage to avoid
+// exhausting the local storage quota on devices with many agent conversations.
+const MAX_ATTACHMENT_BASE64_CHARS = 100 * 1024; // ~75 KB binary
+
+function sanitizeAttachmentsForStorage(messages: ChatMessage[]): ChatMessage[] {
+  return messages.map((msg) => {
+    if (!msg.attachments?.length) return msg;
+    return {
+      ...msg,
+      attachments: msg.attachments.map((att) => {
+        const a = { ...att };
+        if (a.data && a.data.length > MAX_ATTACHMENT_BASE64_CHARS) {
+          delete a.data;
+        }
+        if (a.content && a.content.length > MAX_ATTACHMENT_BASE64_CHARS) {
+          delete a.content;
+        }
+        return a;
+      }),
+    };
+  });
+}
+
 async function saveChatHistory(agentId: string, messages: ChatMessage[]): Promise<void> {
   try {
-    await AsyncStorage.setItem(CHAT_STORAGE_KEY(agentId), JSON.stringify(messages));
+    await AsyncStorage.setItem(CHAT_STORAGE_KEY(agentId), JSON.stringify(sanitizeAttachmentsForStorage(messages)));
   } catch { /* best-effort */ }
 }
 
@@ -740,6 +795,7 @@ function RunModal({ agent, onClose }: { agent: RosterAgent | null; onClose: () =
       let buffer = "";
       let accumulated = "";
       let hadToolError = false;
+      const pendingAttachments: InAppAttachment[] = [];
 
       while (true) {
         const { done, value } = await reader.read();
@@ -754,7 +810,21 @@ function RunModal({ agent, onClose }: { agent: RosterAgent | null; onClose: () =
           const data = line.slice(6);
           if (data === "[DONE]") break;
           try {
-            const parsed = JSON.parse(data) as { content?: string; type?: string; integration?: string; message?: string; sdkSessionId?: string; tool?: string };
+            const parsed = JSON.parse(data) as {
+              content?: string;
+              type?: string;
+              integration?: string;
+              message?: string;
+              sdkSessionId?: string;
+              tool?: string;
+              kind?: string;
+              url?: string;
+              data?: string;
+              mimeType?: string;
+              caption?: string;
+              filename?: string;
+              text?: string;
+            };
             if (parsed.type === "aborted") {
               accumulated += "\n\n[Stopped]";
               setStreamingContent(accumulated.trim());
@@ -770,7 +840,18 @@ function RunModal({ agent, onClose }: { agent: RosterAgent | null; onClose: () =
             if (parsed.type === "tool_error") {
               hadToolError = true;
             }
-            if (parsed.content) {
+            if (parsed.type === "attachment" && parsed.kind) {
+              pendingAttachments.push({
+                kind: parsed.kind as InAppAttachment["kind"],
+                url: parsed.url,
+                data: parsed.data,
+                content: parsed.content,
+                mimeType: parsed.mimeType,
+                caption: parsed.caption,
+                filename: parsed.filename,
+                text: parsed.text,
+              });
+            } else if (!parsed.type && parsed.content) {
               accumulated += parsed.content;
               setStreamingContent(accumulated);
             }
@@ -778,13 +859,14 @@ function RunModal({ agent, onClose }: { agent: RosterAgent | null; onClose: () =
         }
       }
 
-      if (accumulated) {
+      if (accumulated || pendingAttachments.length > 0) {
         const assistantMsg: ChatMessage = {
           id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
           role: "assistant",
           content: accumulated,
           timestamp: Date.now(),
           isToolError: hadToolError || undefined,
+          attachments: pendingAttachments.length > 0 ? pendingAttachments : undefined,
         };
         const finalMessages = [...updatedMessages, assistantMsg];
         setMessages(finalMessages);
@@ -865,10 +947,99 @@ function RunModal({ agent, onClose }: { agent: RosterAgent | null; onClose: () =
   // Inverted FlatList: newest at bottom
   const invertedMessages = [...displayMessages].reverse();
 
+  function renderAttachment(att: InAppAttachment, idx: number) {
+    if (att.kind === "image") {
+      const source = att.url
+        ? { uri: att.url }
+        : att.data
+        ? { uri: `data:${att.mimeType ?? "image/png"};base64,${att.data}` }
+        : null;
+      if (!source) return null;
+      return (
+        <View key={idx} style={{ marginTop: 8 }}>
+          <Image
+            source={source}
+            style={{ width: "100%", height: 200, borderRadius: 8 }}
+            resizeMode="contain"
+          />
+          {!!att.caption && (
+            <Text style={{ fontSize: 12, color: Colors.textSecondary, marginTop: 4 }}>
+              {att.caption}
+            </Text>
+          )}
+        </View>
+      );
+    }
+
+    if (att.kind === "markdown" && att.text) {
+      return (
+        <View key={idx} style={{ marginTop: 8, padding: 8, backgroundColor: Colors.background, borderRadius: 6, borderWidth: 1, borderColor: Colors.border }}>
+          {!!att.caption && (
+            <Text style={{ fontSize: 11, color: Colors.textSecondary, marginBottom: 4 }}>{att.caption}</Text>
+          )}
+          <Text style={{ fontSize: 13, color: Colors.text, fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace" }}>
+            {att.text}
+          </Text>
+        </View>
+      );
+    }
+
+    if (att.kind === "file" || att.kind === "document") {
+      const name = att.filename ?? "File";
+      const hasLink = !!att.url;
+      const rawPayload = att.data ?? att.content;
+      const mimeType = att.mimeType ?? "";
+      const isText = mimeType.includes("text") || mimeType.includes("json") || mimeType.includes("xml") || mimeType.includes("csv") || mimeType.includes("markdown");
+
+      let textPreview: string | null = null;
+      if (!hasLink && rawPayload && isText) {
+        const decoded = safeAtob(rawPayload);
+        if (decoded !== null) textPreview = decoded.slice(0, 500);
+      }
+
+      return (
+        <View key={idx} style={{ marginTop: 8 }}>
+          <TouchableOpacity
+            activeOpacity={hasLink ? 0.7 : 1}
+            onPress={hasLink ? () => {
+              const u = att.url!;
+              if (u.startsWith("https://") || u.startsWith("http://")) {
+                Linking.openURL(u);
+              }
+            } : undefined}
+            style={{ flexDirection: "row", alignItems: "center", padding: 10, backgroundColor: Colors.background, borderRadius: 8, borderWidth: 1, borderColor: Colors.border, gap: 8 }}
+          >
+            <Ionicons name="document-outline" size={20} color={Colors.primary} />
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 13, color: Colors.text, fontWeight: "500" as const }} numberOfLines={1}>{name}</Text>
+              {!!att.caption && (
+                <Text style={{ fontSize: 11, color: Colors.textSecondary }} numberOfLines={1}>{att.caption}</Text>
+              )}
+              {!hasLink && !!rawPayload && !isText && (
+                <Text style={{ fontSize: 11, color: Colors.textTertiary }}>File content available</Text>
+              )}
+            </View>
+            {hasLink && <Ionicons name="open-outline" size={14} color={Colors.textSecondary} />}
+          </TouchableOpacity>
+          {!!textPreview && (
+            <View style={{ marginTop: 4, padding: 8, backgroundColor: Colors.background, borderRadius: 6, borderWidth: 1, borderColor: Colors.border }}>
+              <Text style={{ fontSize: 12, color: Colors.text, fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace" }} numberOfLines={12}>
+                {textPreview}
+              </Text>
+            </View>
+          )}
+        </View>
+      );
+    }
+
+    return null;
+  }
+
   function renderMessage({ item }: { item: ChatMessage }) {
     const isUser = item.role === "user";
     const isStreaming = item.id === "__streaming__";
     const isToolError = !isUser && !!item.isToolError;
+    const attachments = !isUser ? (item.attachments ?? []) : [];
     return (
       <View style={[styles.chatBubbleRow, isUser ? styles.chatBubbleRowUser : styles.chatBubbleRowAgent]}>
         {!isUser && (
@@ -905,9 +1076,12 @@ function RunModal({ agent, onClose }: { agent: RosterAgent | null; onClose: () =
               </Text>
             </View>
           )}
-          <Text style={[styles.chatBubbleText, { color: isUser ? Colors.white : Colors.text }]}>
-            {item.content}
-          </Text>
+          {(item.content || isStreaming) && (
+            <Text style={[styles.chatBubbleText, { color: isUser ? Colors.white : Colors.text }]}>
+              {item.content}
+            </Text>
+          )}
+          {attachments.map((att, idx) => renderAttachment(att, idx))}
           {isStreaming && (
             <ActivityIndicator size="small" color={Colors.primary} style={{ marginTop: 4, alignSelf: "flex-start" }} />
           )}
