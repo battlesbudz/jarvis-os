@@ -964,6 +964,19 @@ export const dreamInsights = pgTable("dream_insights", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+// ── MCP API Keys — per-user bearer tokens for the MCP server endpoint ────────
+// Only the bcrypt hash is stored. The raw key is returned once on generation.
+export const mcpApiKeys = pgTable("mcp_api_keys", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  keyHash: text("key_hash").notNull(),
+  keyPrefix: varchar("key_prefix").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  lastUsedAt: timestamp("last_used_at"),
+});
+
+export type McpApiKey = typeof mcpApiKeys.$inferSelect;
+
 // ── Jarvis Ego — Action Log ───────────────────────────────────────────────────
 // Every significant action Jarvis takes is recorded here so the Ego analyser
 // can compute completion rates, engagement rates, and relationship health.

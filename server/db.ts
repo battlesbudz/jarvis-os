@@ -907,6 +907,21 @@ export async function ensureTablesExist() {
         ON discord_seen_messages (seen_at)
     `).catch(() => {});
 
+    // ── MCP API Keys — per-user bearer tokens for the Jarvis MCP server ─────
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS mcp_api_keys (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        key_hash TEXT NOT NULL,
+        key_prefix VARCHAR NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        last_used_at TIMESTAMP
+      )
+    `).catch(() => {});
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS mcp_api_keys_user_idx ON mcp_api_keys (user_id)
+    `).catch(() => {});
+
     // openclaw_build_log — created via migration 005; ensure new columns exist
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS openclaw_build_log (

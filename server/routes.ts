@@ -6770,6 +6770,51 @@ Extract up to 8 memories per batch.`;
     }
   });
 
+  // ── MCP API Key Management ────────────────────────────────────────────────
+  /** GET /api/mcp-key — return key info (prefix, created_at) for the current user. */
+  app.get("/api/mcp-key", authMiddleware, async (req: Request, res: Response) => {
+    const userId = (req as any).userId as string;
+    try {
+      const { getMcpKeyInfo } = await import("./agent/mcp/mcpApiKeys");
+      const info = await getMcpKeyInfo(userId);
+      if (!info) return res.json({ hasKey: false });
+      res.json({ hasKey: true, prefix: info.prefix, createdAt: info.createdAt, lastUsedAt: info.lastUsedAt });
+    } catch (err) {
+      res.status(500).json({ error: "Failed to get key info" });
+    }
+  });
+
+  /** POST /api/mcp-key/generate — create a new API key (revokes any existing). */
+  app.post("/api/mcp-key/generate", authMiddleware, async (req: Request, res: Response) => {
+    const userId = (req as any).userId as string;
+    try {
+      const { generateMcpApiKey } = await import("./agent/mcp/mcpApiKeys");
+      const { rawKey, prefix } = await generateMcpApiKey(userId);
+      res.json({ rawKey, prefix });
+    } catch (err) {
+      res.status(500).json({ error: "Failed to generate key" });
+    }
+  });
+
+  /** DELETE /api/mcp-key — revoke all MCP API keys for the current user. */
+  app.delete("/api/mcp-key", authMiddleware, async (req: Request, res: Response) => {
+    const userId = (req as any).userId as string;
+    try {
+      const { revokeMcpApiKeys } = await import("./agent/mcp/mcpApiKeys");
+      await revokeMcpApiKeys(userId);
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(500).json({ error: "Failed to revoke keys" });
+    }
+  });
+
+  /** POST /api/mcp — Jarvis MCP server endpoint (Streamable HTTP transport). */
+  // No authMiddleware — uses MCP API key from Authorization: Bearer header.
+  app.post("/api/mcp", async (req: Request, res: Response) => {
+    const { handleMcpRequest } = await import("./agent/mcp/mcpServerHandler");
+    await handleMcpRequest(req, res);
+  });
+
   const httpServer = createServer(app);
   return httpServer;
 }
