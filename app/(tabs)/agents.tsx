@@ -17,7 +17,9 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/query-client";
+import { fetch as expoFetch } from "expo/fetch";
+import { apiRequest, getApiUrl } from "@/lib/query-client";
+import { getAuthToken } from "@/lib/auth-context";
 import Colors from "@/constants/colors";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -542,23 +544,107 @@ function RunModal({ agent, onClose }: { agent: RosterAgent | null; onClose: () =
   const [message, setMessage] = useState("");
   const [reply, setReply] = useState("");
   const [running, setRunning] = useState(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const runIdRef = useRef<string | null>(null);
 
   async function handleRun() {
     if (!agent || !message.trim()) return;
+
+    // Cancel any in-flight run before starting a new one.
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+    runIdRef.current = null;
+
     setRunning(true);
     setReply("");
+
     try {
-      const res = await apiRequest("POST", `/api/agents/${agent.id}/run`, { message, platform: "mobile" });
-      const data = await res.json() as { reply: string };
-      setReply(data.reply ?? "");
+      const token = await getAuthToken();
+
+      const url = new URL(`/api/agents/${agent.id}/chat`, getApiUrl());
+      const response = await expoFetch(url.toString(), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "text/event-stream",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ message }),
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        throw new Error(`Server error: ${response.status}`);
+      }
+
+      // Capture the run ID so the Stop button can call the abort endpoint.
+      const serverRunId = response.headers.get("X-Run-Id");
+      if (serverRunId) runIdRef.current = serverRunId;
+
+      // Read the SSE stream.
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error("No response body");
+
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let accumulated = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          const data = line.slice(6);
+          if (data === "[DONE]") break;
+          try {
+            const parsed = JSON.parse(data) as { content?: string; type?: string };
+            if (parsed.type === "aborted") {
+              accumulated += "\n\n[Stopped]";
+              setReply(accumulated.trim());
+              break;
+            }
+            if (parsed.content) {
+              accumulated += parsed.content;
+              setReply(accumulated);
+            }
+          } catch { /* skip malformed lines */ }
+        }
+      }
     } catch (err) {
-      setReply(`Error: ${err instanceof Error ? err.message : String(err)}`);
+      if (err instanceof Error && err.name === "AbortError") {
+        // Client-side abort — reply may already be partially set.
+      } else {
+        setReply(`Error: ${err instanceof Error ? err.message : String(err)}`);
+      }
     } finally {
       setRunning(false);
+      abortControllerRef.current = null;
+      runIdRef.current = null;
     }
   }
 
+  async function handleStop() {
+    if (!agent) return;
+    // Signal the server first (stops the model loop), then cancel the fetch.
+    if (runIdRef.current) {
+      try {
+        await apiRequest("POST", `/api/agents/${agent.id}/abort`, { runId: runIdRef.current });
+      } catch { /* best-effort */ }
+    }
+    abortControllerRef.current?.abort();
+  }
+
   function handleClose() {
+    handleStop();
     setMessage("");
     setReply("");
     setRunning(false);
@@ -573,11 +659,17 @@ function RunModal({ agent, onClose }: { agent: RosterAgent | null; onClose: () =
             <Text style={[styles.sheetCancel, { color: Colors.textSecondary }]}>Close</Text>
           </TouchableOpacity>
           <Text style={[styles.sheetTitle, { color: Colors.text }]}>{agent?.name ?? ""}</Text>
-          <TouchableOpacity onPress={handleRun} disabled={!message.trim() || running}>
-            <Text style={[styles.sheetDone, { color: message.trim() && !running ? Colors.primary : Colors.textTertiary }]}>
-              {running ? "Running…" : "Run"}
-            </Text>
-          </TouchableOpacity>
+          {running ? (
+            <TouchableOpacity onPress={handleStop}>
+              <Text style={[styles.sheetDone, { color: Colors.error }]}>Stop</Text>
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity onPress={handleRun} disabled={!message.trim()}>
+              <Text style={[styles.sheetDone, { color: message.trim() ? Colors.primary : Colors.textTertiary }]}>
+                Run
+              </Text>
+            </TouchableOpacity>
+          )}
         </View>
 
         <ScrollView style={styles.sheetBody} keyboardShouldPersistTaps="handled">
@@ -589,8 +681,14 @@ function RunModal({ agent, onClose }: { agent: RosterAgent | null; onClose: () =
             placeholderTextColor={Colors.textTertiary}
             multiline
             numberOfLines={3}
+            editable={!running}
           />
-          {running && <ActivityIndicator size="small" color={Colors.primary} style={{ marginTop: 12 }} />}
+          {running && (
+            <View style={styles.loadingRow}>
+              <ActivityIndicator size="small" color={Colors.primary} />
+              <Text style={[styles.loadingText, { color: Colors.textSecondary }]}>Thinking…</Text>
+            </View>
+          )}
           {reply ? (
             <View style={[styles.replyBox, { backgroundColor: Colors.surface, borderColor: Colors.border }]}>
               <Text style={[styles.replyLabel, { color: Colors.textSecondary }]}>Reply</Text>

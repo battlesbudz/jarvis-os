@@ -25,6 +25,13 @@ export interface RunAgentOptions {
    */
   onToken?: (chunk: string) => void;
   /**
+   * Optional AbortSignal. When the signal fires the agent loop exits cleanly
+   * after the current turn completes, throwing a DOMException('AbortError').
+   * Callers (e.g. the SSE chat route) can wire this to an AbortController so
+   * a client-initiated cancel actually stops the running model loop.
+   */
+  signal?: AbortSignal;
+  /**
    * Optional pre-execution hook called before each tool is invoked.
    * Return { allowed: true } to allow execution.
    * Return { allowed: false, reason } to block execution — the tool call
@@ -95,6 +102,7 @@ async function runStreamingTurn(params: {
   openAITools: OpenAI.Chat.Completions.ChatCompletionTool[] | undefined;
   toolChoice: "auto" | "required" | "none";
   maxCompletionTokens: number;
+  signal?: AbortSignal;
 }): Promise<{
   textContent: string;
   textChunks: string[];
@@ -108,7 +116,7 @@ async function runStreamingTurn(params: {
     tool_choice: params.openAITools ? params.toolChoice : undefined,
     max_completion_tokens: params.maxCompletionTokens,
     stream: true,
-  });
+  }, { signal: params.signal });
 
   let textContent = "";
   const textChunks: string[] = [];
@@ -178,6 +186,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
     maxCompletionTokens = 2000,
     toolChoice = "auto",
     onToken,
+    signal,
   } = opts;
 
   // `tools` is mutable so the channel-scope gate below can reassign it.
@@ -623,6 +632,11 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
   let reply = "";
 
   for (let turn = 0; turn < maxTurns; turn++) {
+    // ── Abort check — honour caller cancellation before each turn ───────
+    if (signal?.aborted) {
+      throw new DOMException("Agent run aborted by caller", "AbortError");
+    }
+
     // ── Non-streaming path (default, tool-call turns) ───────────────────
     let msgContent: string | null = null;
     let msgToolCalls: OpenAI.Chat.Completions.ChatCompletionMessageToolCall[] | undefined;
@@ -635,7 +649,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
         tools: openAITools,
         tool_choice: openAITools ? toolChoice : undefined,
         max_completion_tokens: maxCompletionTokens,
-      });
+      }, { signal });
 
       const choice = completion.choices[0];
       lastFinish = choice?.finish_reason || null;
@@ -659,6 +673,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
         openAITools,
         toolChoice,
         maxCompletionTokens,
+        signal,
       });
 
       lastFinish = streamResult.finishReason;
@@ -825,6 +840,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
         openAITools: undefined, // no tools — force text reply
         toolChoice: "none",
         maxCompletionTokens,
+        signal,
       });
       reply = streamResult.textContent;
       lastFinish = streamResult.finishReason;
@@ -837,7 +853,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
         model,
         messages: conversationMessages,
         max_completion_tokens: maxCompletionTokens,
-      });
+      }, { signal });
       reply = final.choices[0]?.message?.content || "";
       lastFinish = final.choices[0]?.finish_reason || lastFinish;
     }
