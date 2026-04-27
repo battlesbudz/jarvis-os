@@ -331,9 +331,9 @@ export async function ensureTablesExist() {
 
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS chatgpt_imports (
-        "userId" VARCHAR PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-        "importedAt" TIMESTAMP DEFAULT NOW(),
-        "memoriesAdded" INTEGER DEFAULT 0
+        user_id VARCHAR PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        imported_at TIMESTAMP DEFAULT NOW(),
+        memories_added INTEGER DEFAULT 0
       )
     `);
 
