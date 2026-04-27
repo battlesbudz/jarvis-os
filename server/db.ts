@@ -1160,6 +1160,29 @@ export async function ensureTablesExist() {
       CREATE INDEX IF NOT EXISTS code_proposals_user_idx ON code_proposals (user_id)
     `).catch(() => {});
 
+    // ── User Skills (Task #502) ────────────────────────────────────────────────
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS user_skills (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        emoji VARCHAR NOT NULL DEFAULT '⚡',
+        description TEXT NOT NULL,
+        instructions TEXT NOT NULL,
+        is_built_in BOOLEAN NOT NULL DEFAULT FALSE,
+        is_active BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `).catch(() => {});
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS user_skills_user_idx ON user_skills (user_id)
+    `).catch(() => {});
+    await db.execute(sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS user_skills_builtin_name_uniq
+        ON user_skills (user_id, name) WHERE is_built_in = TRUE
+    `).catch(() => {});
+
     console.log("Database tables verified");
   } catch (error) {
     console.error("Failed to ensure database tables exist:", error);

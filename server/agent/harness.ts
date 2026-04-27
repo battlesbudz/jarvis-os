@@ -262,6 +262,34 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
       // skills are best-effort — never block an agent run
     }
 
+    // ── Inject DB-backed user skills (Task #502) ───────────────────────────────
+    // Load active skills from the user_skills table and prepend them to the
+    // system prompt under an ## Active Skills block.
+    try {
+      const { userSkills: userSkillsTable } = await import("@shared/schema");
+      const { eq, and } = await import("drizzle-orm");
+      const { db: dbImport } = await import("../db");
+      const activeSkills = await dbImport
+        .select()
+        .from(userSkillsTable)
+        .where(and(eq(userSkillsTable.userId, context.userId), eq(userSkillsTable.isActive, true)));
+      if (activeSkills.length > 0) {
+        const skillBlock = activeSkills
+          .map((s) => `### ${s.emoji} ${s.name}\n${s.instructions}`)
+          .join("\n\n");
+        const injected = `\n\n---\n## Active Skills\nThe user has enabled the following personal skills. You MUST follow their instructions:\n\n${skillBlock}`;
+        messages = messages.map((m, i) => {
+          if (i === 0 && m.role === "system") {
+            return { ...m, content: (m.content ?? "") + injected };
+          }
+          return m;
+        });
+        console.log(`[${channel}/Harness] injected ${activeSkills.length} user skill(s)`);
+      }
+    } catch {
+      // DB skills are best-effort — never block an agent run
+    }
+
     // ── Inject operator skill packs + Ego instruction overrides ───────────────
     // Load versioned instruction packs published by the Jarvis team and any
     // per-user overrides written by the Ego self-correction loop. Packs are

@@ -201,6 +201,27 @@ A background service (`server/curiosityScanner.ts`) runs every 30 minutes to pro
 - Sends questions via Telegram (max 2 per scan to avoid spam)
 - Tracks sent questions in `proactive_questions_sent` table to prevent repeats
 - When user replies to a proactive question, the system marks it as answered and extracts profile facts from the response
+## User Skills — Personalised Behaviour Instructions (Task #502)
+
+Users can install or author their own "skills" — reusable instruction sets that Jarvis follows every session. Built-in skills cover common patterns (Morning Ritual, Stoic Coach, Deep Work Mode, etc.); custom skills let users write freeform instructions in plain English.
+
+### Architecture
+- **`shared/schema.ts`** — New `user_skills` table: `id, user_id, name, emoji, description, instructions, is_built_in, is_active, created_at, updated_at`.
+- **`server/db.ts`** — `CREATE TABLE IF NOT EXISTS user_skills` DDL added to `ensureTablesExist()`.
+- **`server/routes.ts`** — Four new endpoints under `/api/user-skills`:
+  - `GET /api/user-skills` — List all skills; seeds the 10-skill built-in library for new users on first call (idempotent).
+  - `POST /api/user-skills` — Create a custom skill (name, emoji, description, instructions).
+  - `PATCH /api/user-skills/:id/toggle` — Toggle `is_active` on/off.
+  - `DELETE /api/user-skills/:id` — Delete a custom skill (built-in skills are protected).
+- **`server/agent/harness.ts`** — New injection block after the learnt-skills block: queries `user_skills` for `is_active=true` and appends `## Active Skills` section to the first system message every session.
+- **`app/skills.tsx`** — Completely rewritten Skills screen with two sections: **Built-In Library** (10 curated skills with emoji, name, description, toggle) and **My Skills** (custom, with delete). "+ Create Skill" button opens a slide-up modal with emoji picker, name, description, and instructions fields plus a live system-prompt preview. Accessible from Settings → Skills.
+
+### Built-In Skill Library
+🌅 Morning Ritual · 💰 Finance Awareness · 🏛️ Stoic Coach · 🦅 Deadline Hawk · 🎯 Deep Work Mode · 📊 Weekly Review · 🙏 Gratitude Practice · 💪 Fitness Check-in · 🔍 Communication Filter · ⚡ Energy Management
+
+### How Injection Works
+Active DB skills are fetched in `runAgent()` inside `harness.ts` and appended to the first system message as an `## Active Skills` block. This runs after the existing learnt-skills (crystallized file-based) and before the behaviour-packs blocks, so user skills layer cleanly on top of the platform defaults. Injection is best-effort (wrapped in try/catch) so failures never block a conversation.
+
 ## Jarvis Self-Inspection & Code Proposals (Task #452)
 
 Jarvis can now read its own source code, reason about it, propose targeted improvements, and apply approved changes — with the user always in the approval gate.

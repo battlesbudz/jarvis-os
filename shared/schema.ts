@@ -1316,6 +1316,26 @@ export type InsertCodeProposal = typeof codeProposals.$inferInsert;
 export const MCP_CREDENTIAL_MODES = ["direct", "env-ref"] as const;
 export type McpCredentialMode = typeof MCP_CREDENTIAL_MODES[number];
 
+// ── User Skills (Task #502) ────────────────────────────────────────────────────
+// Database-backed skills that users can toggle on/off. Built-in skills are
+// seeded per-user on first load; custom skills are user-authored.
+// Active skills are injected into Jarvis's system prompt at session start.
+export const userSkills = pgTable("user_skills", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  emoji: varchar("emoji").notNull().default("⚡"),
+  description: text("description").notNull(),
+  instructions: text("instructions").notNull(),
+  isBuiltIn: boolean("is_built_in").notNull().default(false),
+  isActive: boolean("is_active").notNull().default(false),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export type UserSkill = typeof userSkills.$inferSelect;
+export type InsertUserSkill = typeof userSkills.$inferInsert;
+
 export const mcpServers = pgTable("mcp_servers", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id").references(() => users.id, { onDelete: "cascade" }),
