@@ -466,7 +466,7 @@ Return JSON: { "reasoning": "2-3 sentences on your planning logic — always nam
 Return ONLY the JSON object.`;
 
   const response = await openai.chat.completions.create({
-    model: "gpt-5-mini",
+    model: "gpt-4o-mini",
     messages: [{ role: "user", content: prompt }],
     response_format: { type: "json_object" },
     max_completion_tokens: 2000,
@@ -2259,7 +2259,7 @@ Rules:
         if (!lastUserMessage?.content) return;
 
         const checkResponse = await openai.chat.completions.create({
-          model: "gpt-5-mini",
+          model: "gpt-4o-mini",
           messages: [{
             role: "user",
             content: `Is the following user message a reply to (or related to) this question? Only answer "yes" or "no".
@@ -2624,7 +2624,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
             ...toolMessages,
           ];
           const phase1 = await openai.chat.completions.create({
-            model: "gpt-5-mini",
+            model: "gpt-4o-mini",
             messages: currentMessages,
             tools: requestTools,
             // Force a tool call on turn 0 for device-control requests.
@@ -3080,7 +3080,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
         : chatMessages;
 
       const stream = await openai.chat.completions.create({
-        model: "gpt-5-mini",
+        model: "gpt-4o-mini",
         messages: streamMessages,
         stream: true,
         max_completion_tokens: 8192,
@@ -3246,7 +3246,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
         : `running a terminal command (${preview.cmd || preview.action || 'shell'})`;
       const prompt = `The user has just declined an action you proposed. You were about to ${toolLabel} but they cancelled. Acknowledge briefly and naturally in one sentence — do not re-propose the action. Stay in your coaching persona.`;
       const resp = await openai.chat.completions.create({
-        model: 'gpt-5-mini',
+        model: 'gpt-4o-mini',
         messages: [{ role: 'user', content: prompt }],
         max_completion_tokens: 80,
       });
@@ -3284,7 +3284,7 @@ Return a JSON object with:
 Return ONLY the JSON object.`;
 
       const response = await openai.chat.completions.create({
-        model: "gpt-5-mini",
+        model: "gpt-4o-mini",
         messages: [{ role: "user", content: prompt }],
         response_format: { type: "json_object" },
         max_completion_tokens: 600,
@@ -3329,7 +3329,7 @@ For each task provide:
 Return ONLY a JSON object with a "tasks" array. No other text.`;
 
       const response = await openai.chat.completions.create({
-        model: "gpt-5-mini",
+        model: "gpt-4o-mini",
         messages: [{ role: "user", content: prompt }],
         response_format: { type: "json_object" },
         max_completion_tokens: 8192,
@@ -3399,7 +3399,7 @@ Write ONE short, specific coaching observation. Be direct — name what's workin
 Return JSON: { "note": "your 1-2 sentence note here" }`;
 
       const response = await openai.chat.completions.create({
-        model: "gpt-5-mini",
+        model: "gpt-4o-mini",
         messages: [{ role: "user", content: prompt }],
         response_format: { type: "json_object" },
         max_completion_tokens: 200,
@@ -3625,7 +3625,7 @@ Return JSON:
 Only return the JSON object, no extra text.`;
 
       const response = await openai.chat.completions.create({
-        model: "gpt-5-mini",
+        model: "gpt-4o-mini",
         messages: [{ role: "user", content: prompt }],
         response_format: { type: "json_object" },
         max_completion_tokens: 1000,
@@ -3832,7 +3832,7 @@ taskOrder: Return up to 3 task IDs from the task list above, reordered optimally
 Return ONLY the JSON object.`;
 
       const response = await openai.chat.completions.create({
-        model: "gpt-5-mini",
+        model: "gpt-4o-mini",
         messages: [{ role: "user", content: prompt }],
         response_format: { type: "json_object" },
         max_completion_tokens: 300,
@@ -4086,7 +4086,7 @@ User message: "${message}"
 Return ONLY JSON: { "hasCommitment": boolean, "commitment": "the thing they committed to" or null, "dueDate": "YYYY-MM-DD" or null }`;
 
       const response = await openai.chat.completions.create({
-        model: "gpt-5-mini",
+        model: "gpt-4o-mini",
         messages: [{ role: "user", content: prompt }],
         response_format: { type: "json_object" },
         max_completion_tokens: 200,
@@ -4139,7 +4139,7 @@ Return ONLY JSON: { "hasCommitment": boolean, "commitment": "the thing they comm
       res.flushHeaders();
 
       const stream = await openai.chat.completions.create({
-        model: "gpt-5-mini",
+        model: "gpt-4o-mini",
         messages: [
           { role: "system", content: systemPrompt + `\n\nIMPORTANT: You are initiating the conversation proactively — the user hasn't said anything yet. Address the following accountability context directly. Be brief (2-3 sentences max). Don't greet — get right to the point.\n\nAccountability context:\n${context}` },
           { role: "user", content: "[Jarvis is checking in proactively — no user message. Address the accountability context above.]" },
@@ -4278,7 +4278,7 @@ Return JSON:
 Return ONLY the JSON object.`;
 
       const response = await openai.chat.completions.create({
-        model: "gpt-5-mini",
+        model: "gpt-4o-mini",
         messages: [{ role: "user", content: prompt }],
         response_format: { type: "json_object" },
         max_completion_tokens: 500,
@@ -4766,7 +4766,7 @@ Return JSON: { "moodSignal": "...", "themes": [...], "blockers": [...], "wins": 
 Return ONLY the JSON object.`;
 
     const extraction = await openai.chat.completions.create({
-      model: "gpt-5-mini",
+      model: "gpt-4o-mini",
       messages: [{ role: "user", content: extractionPrompt }],
       response_format: { type: "json_object" },
       max_completion_tokens: 400,
@@ -5955,7 +5955,7 @@ Extract up to 8 memories per batch.`;
 
         try {
           const response = await openai.chat.completions.create({
-            model: "gpt-5-mini",
+            model: "gpt-4o-mini",
             messages: [{ role: "user", content: prompt }],
             response_format: { type: "json_object" },
             max_completion_tokens: 800,

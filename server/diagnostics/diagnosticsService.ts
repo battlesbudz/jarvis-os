@@ -426,21 +426,27 @@ export async function runHealthCheck(userId?: string): Promise<HealthReport> {
     dbReachable = false;
   }
 
-  // OpenAI probe — measure latency with a lightweight models.list() call.
+  // OpenAI probe — measure latency with a minimal chat completion (1 token).
+  // Avoids models.list() which is unsupported by the Replit AI proxy and causes 500s.
   let openAiReachable = true;
   let openAiLatencyMs: number | null = null;
   const openAiProbeStart = Date.now();
   try {
-    await openai.models.list();
+    await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [{ role: "user", content: "ping" }],
+      max_completion_tokens: 1,
+    });
     openAiLatencyMs = Date.now() - openAiProbeStart;
-  } catch {
+  } catch (probeErr) {
     openAiReachable = false;
     openAiLatencyMs = null;
+    const detail = probeErr instanceof Error ? probeErr.message : String(probeErr);
     await emit({
       userId,
       subsystem: "agent_harness",
       severity: "error",
-      message: "OpenAI API unreachable during health check",
+      message: `OpenAI API health check failed: ${detail}`,
       metadata: { healthCheck: true },
     }).catch(() => {});
   }

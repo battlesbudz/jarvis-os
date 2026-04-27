@@ -342,7 +342,7 @@ Tone: direct, self-aware, honest. Not corporate, not sycophantic. Under 250 word
 
   try {
     const resp = await openai.chat.completions.create({
-      model: "gpt-5-mini",
+      model: "gpt-4o-mini",
       messages: [{ role: "user", content: prompt }],
       max_completion_tokens: 600,
     });

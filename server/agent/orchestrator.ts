@@ -270,7 +270,7 @@ async function executeSubTask(
     : `${task.instruction}${depContext}`;
 
   const result = await runAgent({
-    model: "gpt-5-mini",
+    model: "gpt-4o-mini",
     messages: [
       { role: "user", content: instruction },
     ],
