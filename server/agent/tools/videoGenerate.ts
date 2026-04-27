@@ -54,8 +54,11 @@ function extractVideoUrl(output: unknown): string | null {
 /**
  * Generate a short AI video using Veo 3.1 Fast (primary) or Seedance 1.5 (fallback).
  * Returns the video URL on success, throws on error.
+ * @param prompt  Text description of the video to generate.
+ * @param duration Optional duration hint in seconds (e.g. 5, 8). Passed to the model as-is;
+ *                 not all models honour it — it is a best-effort hint.
  */
-async function generateVideo(prompt: string): Promise<string> {
+async function generateVideo(prompt: string, duration?: number): Promise<string> {
   const apiKey = process.env.INFSH_API_KEY;
   if (!apiKey) {
     throw new Error(
@@ -75,13 +78,20 @@ async function generateVideo(prompt: string): Promise<string> {
       ),
     ]);
 
+  const baseInput: Record<string, unknown> = { prompt };
+  if (duration != null && duration > 0) {
+    baseInput.duration = duration;
+  }
+
   let lastError: Error | null = null;
 
   for (const app of ["google/veo-3-1-fast", "bytedance/seedance-1-5-pro"] as const) {
     try {
-      console.log(`[generate_video] Trying model=${app} prompt="${prompt.slice(0, 60)}..."`);
+      console.log(
+        `[generate_video] Trying model=${app} duration=${duration ?? "default"} prompt="${prompt.slice(0, 60)}..."`
+      );
       const result = await withTimeout(
-        client.run({ app, input: { prompt } })
+        client.run({ app, input: baseInput })
       );
       const url = extractVideoUrl((result as { output?: unknown }).output);
       if (url) {
@@ -117,6 +127,12 @@ export const videoGenerateTool: AgentTool = {
           "A detailed description of the video to generate. Include motion, camera style, lighting, subject, and mood. " +
           "More detail produces better results. Example: 'Slow drone shot over a misty forest at sunrise, golden light filtering through trees, cinematic.'",
       },
+      duration: {
+        type: "number",
+        description:
+          "Optional duration hint in seconds (e.g. 5 or 8). Best-effort — not all models guarantee an exact length. " +
+          "Omit to use the model default.",
+      },
       caption: {
         type: "string",
         description: "Optional short caption to accompany the video on Telegram or Discord (max 200 chars).",
@@ -130,11 +146,15 @@ export const videoGenerateTool: AgentTool = {
     if (!prompt) {
       return { ok: false, content: "No prompt provided.", label: "generate_video: no prompt" };
     }
+    const duration =
+      args.duration != null && Number.isFinite(Number(args.duration)) && Number(args.duration) > 0
+        ? Math.round(Number(args.duration))
+        : undefined;
     const caption = args.caption ? String(args.caption).slice(0, 200) : undefined;
 
     let videoUrl: string;
     try {
-      videoUrl = await generateVideo(prompt);
+      videoUrl = await generateVideo(prompt, duration);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error("[generate_video] Generation error:", err);
@@ -157,7 +177,7 @@ export const videoGenerateTool: AgentTool = {
           ok: true,
           content: `Video generated but Telegram is not linked. View it here: ${videoUrl}`,
           label: "Video generated (Telegram not linked)",
-          detail: JSON.stringify({ videoUrl }),
+          detail: JSON.stringify({ videoUrl, ...(duration != null ? { duration } : {}) }),
         };
       }
 
@@ -167,7 +187,7 @@ export const videoGenerateTool: AgentTool = {
           ok: true,
           content: `Video generated but could not download it for delivery. View it here: ${videoUrl}`,
           label: "Video generated (download failed)",
-          detail: JSON.stringify({ videoUrl }),
+          detail: JSON.stringify({ videoUrl, ...(duration != null ? { duration } : {}) }),
         };
       }
 
@@ -177,18 +197,18 @@ export const videoGenerateTool: AgentTool = {
           ok: false,
           content: `Video generated but failed to send to Telegram. View it here: ${videoUrl}`,
           label: "Video generated (Telegram send failed)",
-          detail: JSON.stringify({ videoUrl }),
+          detail: JSON.stringify({ videoUrl, ...(duration != null ? { duration } : {}) }),
         };
       }
 
-      console.log(`[generate_video] Video sent to Telegram user=${ctx.userId}`);
+      console.log(`[generate_video] Video sent to Telegram user=${ctx.userId} duration=${duration ?? "default"}`);
       return {
         ok: true,
         content: caption
           ? `Video sent to Telegram with caption: "${caption}".`
           : "Video sent to Telegram.",
         label: "Video sent to Telegram",
-        detail: JSON.stringify({ videoUrl }),
+        detail: JSON.stringify({ videoUrl, ...(duration != null ? { duration } : {}) }),
       };
     }
 
@@ -199,7 +219,7 @@ export const videoGenerateTool: AgentTool = {
           ok: true,
           content: `Video generated: ${videoUrl}`,
           label: "Video generated (Discord channel ID unavailable)",
-          detail: JSON.stringify({ videoUrl }),
+          detail: JSON.stringify({ videoUrl, ...(duration != null ? { duration } : {}) }),
         };
       }
 
@@ -209,7 +229,7 @@ export const videoGenerateTool: AgentTool = {
           ok: true,
           content: `Video generated but could not download it for delivery. View it here: ${videoUrl}`,
           label: "Video generated (download failed)",
-          detail: JSON.stringify({ videoUrl }),
+          detail: JSON.stringify({ videoUrl, ...(duration != null ? { duration } : {}) }),
         };
       }
 
@@ -220,29 +240,29 @@ export const videoGenerateTool: AgentTool = {
           ok: false,
           content: `Video generated but failed to send to Discord. View it here: ${videoUrl}`,
           label: "Video generated (Discord send failed)",
-          detail: JSON.stringify({ videoUrl }),
+          detail: JSON.stringify({ videoUrl, ...(duration != null ? { duration } : {}) }),
         };
       }
 
-      console.log(`[generate_video] Video sent to Discord user=${ctx.userId}`);
+      console.log(`[generate_video] Video sent to Discord user=${ctx.userId} duration=${duration ?? "default"}`);
       return {
         ok: true,
         content: caption
           ? `Video sent to Discord with caption: "${caption}".`
           : "Video sent to Discord.",
         label: "Video sent to Discord",
-        detail: JSON.stringify({ videoUrl }),
+        detail: JSON.stringify({ videoUrl, ...(duration != null ? { duration } : {}) }),
       };
     }
 
-    console.log(`[generate_video] Generated video for in-app user=${ctx.userId}`);
+    console.log(`[generate_video] Generated video for in-app user=${ctx.userId} duration=${duration ?? "default"}`);
     return {
       ok: true,
       content: caption
         ? `Here's your generated video — "${caption}".`
         : "Here's the generated video.",
       label: "Video generated",
-      detail: JSON.stringify({ videoUrl }),
+      detail: JSON.stringify({ videoUrl, ...(duration != null ? { duration } : {}) }),
     };
   },
 };
