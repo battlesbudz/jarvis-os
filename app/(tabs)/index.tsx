@@ -34,6 +34,7 @@ import { apiRequest, getApiUrl } from '@/lib/query-client';
 import { authFetch } from '@/lib/auth-context';
 import BrainDumpModal from '@/components/BrainDumpModal';
 import BlockerModal from '@/components/BlockerModal';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Types
 
@@ -366,6 +367,68 @@ function PredictionCard({ pred, compact = false }: { pred: Prediction; compact?:
   );
 }
 
+// Accordion panel with collapsible body and persisted expanded state
+
+interface CollapsiblePanelProps {
+  panelId: string;
+  title: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  accent: string;
+  summary: string;
+  expanded: boolean;
+  onToggle: (id: string) => void;
+  children: React.ReactNode;
+  onViewAll?: () => void;
+  onAdd?: () => void;
+  count?: number;
+  loading?: boolean;
+}
+
+function CollapsiblePanel({
+  panelId, title, icon, accent, summary, expanded, onToggle,
+  children, onViewAll, onAdd, count, loading,
+}: CollapsiblePanelProps) {
+  return (
+    <View style={[styles.panel, { borderLeftColor: accent }]}>
+      <Pressable style={styles.panelHeader} onPress={() => onToggle(panelId)}>
+        <View style={styles.panelHeaderLeft}>
+          <Ionicons name={icon} size={14} color={accent} />
+          <Text style={[styles.panelTitle, { color: accent }]}>{title}</Text>
+          {count !== undefined && count > 0 && (
+            <View style={[styles.countBadge, { backgroundColor: accent + '25' }]}>
+              <Text style={[styles.countBadgeText, { color: accent }]}>{count}</Text>
+            </View>
+          )}
+        </View>
+        <View style={styles.panelHeaderRight}>
+          {!expanded && (
+            <Text style={styles.accordionSummary} numberOfLines={1}>{summary}</Text>
+          )}
+          {expanded && onAdd && (
+            <Pressable onPress={onAdd} style={styles.panelAddBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <Ionicons name="add" size={16} color={accent} />
+            </Pressable>
+          )}
+          {expanded && onViewAll && (
+            <Pressable onPress={onViewAll} style={styles.panelViewAll} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <Text style={[styles.panelViewAllText, { color: accent }]}>ALL</Text>
+              <Ionicons name="chevron-forward" size={11} color={accent} />
+            </Pressable>
+          )}
+          <Ionicons name={expanded ? 'chevron-up' : 'chevron-down'} size={14} color={Colors.textTertiary} />
+        </View>
+      </Pressable>
+      {expanded && (
+        <View style={styles.panelBody}>
+          {loading ? (
+            <ActivityIndicator size="small" color={accent} style={{ margin: 12 }} />
+          ) : children}
+        </View>
+      )}
+    </View>
+  );
+}
+
 // Main Screen
 
 export default function MissionControlScreen() {
@@ -426,6 +489,19 @@ export default function MissionControlScreen() {
   const [newDate, setNewDate] = useState('');
   const [newRecurrence, setNewRecurrence] = useState('');
   const [savingTask, setSavingTask] = useState(false);
+
+  // ── Auto-refresh & last-updated tracking ──
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const autoRefreshRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // ── Accordion state (collapsed by default, persisted to AsyncStorage) ──
+  const ACCORDION_KEY = 'mc_accordion_v2';
+  const PANEL_DEFAULTS: Record<string, boolean> = {
+    tasks: false, schedule: false, inbox: false,
+    deliverables: false, foresight: false, docs: false, memory: false,
+  };
+  const [expandedPanels, setExpandedPanels] = useState<Record<string, boolean>>(PANEL_DEFAULTS);
+  const accordionLoaded = useRef(false);
 
   // ── Predictions (Jarvis Foresight) ──
   const [predictions, setPredictions] = useState<Prediction[]>([]);
@@ -556,17 +632,45 @@ export default function MissionControlScreen() {
 
   const loadAll = useCallback(async () => {
     await Promise.all([loadLocal(), loadApi()]);
+    setLastUpdated(new Date());
   }, [loadLocal, loadApi]);
 
   useFocusEffect(useCallback(() => {
     loadAll();
   }, [loadAll]));
 
+  // ── Auto-refresh every 60 seconds ──
+  useEffect(() => {
+    autoRefreshRef.current = setInterval(() => { loadAll(); }, 60_000);
+    return () => { if (autoRefreshRef.current) clearInterval(autoRefreshRef.current); };
+  }, [loadAll]);
+
+  // ── Load accordion state from storage on mount ──
+  useEffect(() => {
+    AsyncStorage.getItem(ACCORDION_KEY).then(raw => {
+      if (raw) {
+        try {
+          const parsed = JSON.parse(raw) as Record<string, boolean>;
+          setExpandedPanels(prev => ({ ...prev, ...parsed }));
+        } catch {}
+      }
+      accordionLoaded.current = true;
+    });
+  }, []);
+
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
     await loadAll();
     setRefreshing(false);
   }, [loadAll]);
+
+  const handleTogglePanel = useCallback((id: string) => {
+    setExpandedPanels(prev => {
+      const next = { ...prev, [id]: !prev[id] };
+      AsyncStorage.setItem(ACCORDION_KEY, JSON.stringify(next)).catch(() => {});
+      return next;
+    });
+  }, []);
 
   // ── Toggle task completion ──
   const handleToggleTask = useCallback(async (task: Task, idx: number) => {
@@ -796,6 +900,72 @@ export default function MissionControlScreen() {
     ...todayData.jTasks.map(t => ({ hour: new Date(t.scheduledAt).getHours(), minute: new Date(t.scheduledAt).getMinutes(), kind: 'jarvis' as const, data: t })),
   ].sort((a, b) => a.hour * 60 + a.minute - (b.hour * 60 + b.minute));
 
+  // ── Today's Focus computed values ──
+  const mostUrgentTask = todayTasks.find(t => !t.completed && t.priority === 'high')
+    ?? todayTasks.find(t => !t.completed && t.priority === 'medium')
+    ?? todayTasks.find(t => !t.completed);
+
+  const focusWindowEnd = new Date(Date.now() + 3 * 60 * 60 * 1000);
+  const nextCalEvent = calendarEvents.find(e => {
+    const start = new Date(e.start);
+    return start >= now && start <= focusWindowEnd;
+  });
+
+  const topPrediction = predictions.length > 0
+    ? [...predictions].sort((a, b) => b.confidenceScore - a.confidenceScore)[0]
+    : null;
+
+  const lastUpdatedDisplay = lastUpdated
+    ? (() => {
+        const secs = Math.floor((now.getTime() - lastUpdated.getTime()) / 1000);
+        if (secs < 5) return 'live';
+        if (secs < 60) return `${secs}s ago`;
+        return `${Math.floor(secs / 60)}m ago`;
+      })()
+    : null;
+
+  // ── Accordion summaries ──
+  const tasksSummary = totalCount === 0
+    ? 'No tasks today'
+    : completedCount === totalCount
+    ? `All ${totalCount} done`
+    : `${totalCount - completedCount} of ${totalCount} remaining`;
+
+  const scheduleSummary = todayScheduleItems.length === 0
+    ? 'Nothing scheduled'
+    : (() => {
+        const next = todayScheduleItems.find(i => {
+          if (i.kind === 'calendar') return new Date((i.data as CalendarEvent).start) >= now;
+          if (i.kind === 'jarvis') return new Date((i.data as ScheduledTask).scheduledAt) >= now;
+          return false;
+        });
+        if (next) {
+          if (next.kind === 'calendar') return `Next: ${(next.data as CalendarEvent).title}`;
+          if (next.kind === 'jarvis') return `Next: ${(next.data as ScheduledTask).title}`;
+        }
+        return `${todayScheduleItems.length} item${todayScheduleItems.length !== 1 ? 's' : ''} today`;
+      })();
+
+  const inboxSummary = inboxItems.length === 0
+    ? 'No flagged items'
+    : `${inboxItems.length} item${inboxItems.length !== 1 ? 's' : ''} waiting`;
+
+  const deliverablesSummary = deliverables.length === 0
+    ? 'Nothing pending'
+    : `${deliverables.length} pending review`;
+
+  const foresightSummary = predictions.length === 0 && weekPredictions.length === 0
+    ? 'No predictions yet'
+    : `${predictions.length + weekPredictions.length} signal${predictions.length + weekPredictions.length !== 1 ? 's' : ''}`;
+
+  const docsSummary = documents.length === 0
+    ? 'No documents'
+    : `${documents.length} document${documents.length !== 1 ? 's' : ''}`;
+
+  const memorySummary = memories.length === 0
+    ? 'Nothing remembered yet'
+    : `${memories.length} memor${memories.length !== 1 ? 'ies' : 'y'}`;
+
   // Connection pill statuses
   const connections = [
     { label: 'Google', connected: oauthStatus.google.connected, color: '#4285F4' },
@@ -809,12 +979,28 @@ export default function MissionControlScreen() {
     <View style={[styles.root, { paddingTop: topPad }]}>
       {/* ── Header ── */}
       <View style={styles.header}>
-        <View>
+        <View style={{ flex: 1 }}>
           <Text style={styles.headerLabel}>{formatDate(now)}</Text>
-          <Text style={styles.headerClock}>{formatClockTime(now)}</Text>
+          <View style={styles.headerClockRow}>
+            <Text style={styles.headerClock}>{formatClockTime(now)}</Text>
+            {emotionalState && (
+              <Pressable
+                onPress={() => setEmotionalStateModal(true)}
+                style={[styles.emotionalBadge, { backgroundColor: getEmotionalColor(emotionalState.label) + '20', borderColor: getEmotionalColor(emotionalState.label) + '40' }]}
+              >
+                <View style={[styles.emotionalDot, { backgroundColor: getEmotionalColor(emotionalState.label) }]} />
+                <Text style={[styles.emotionalBadgeText, { color: getEmotionalColor(emotionalState.label) }]}>
+                  {emotionalState.label.toUpperCase()}
+                </Text>
+              </Pressable>
+            )}
+          </View>
         </View>
         <View style={styles.headerRight}>
           <Text style={styles.headerTitle}>MISSION{'\n'}CONTROL</Text>
+          {lastUpdatedDisplay && (
+            <Text style={styles.headerUpdated}>{lastUpdatedDisplay}</Text>
+          )}
         </View>
       </View>
 
@@ -831,26 +1017,6 @@ export default function MissionControlScreen() {
           <Text style={styles.pillSettingsText}>Manage</Text>
         </Pressable>
       </ScrollView>
-
-      {/* ── Status line ── */}
-      <View style={styles.statusLine}>
-        <Text style={styles.statusLineText}>
-          {totalCount - completedCount > 0 ? `${totalCount - completedCount} tasks left` : 'All tasks done'}
-          {inboxItems.length > 0 ? `  ·  ${inboxItems.length} inbox` : ''}
-          {pendingScheduled.length > 0 ? `  ·  ${pendingScheduled.length} scheduled` : ''}
-        </Text>
-        {emotionalState && (
-          <Pressable
-            onPress={() => setEmotionalStateModal(true)}
-            style={[styles.emotionalBadge, { backgroundColor: getEmotionalColor(emotionalState.label) + '25', borderColor: getEmotionalColor(emotionalState.label) + '60' }]}
-          >
-            <View style={[styles.emotionalDot, { backgroundColor: getEmotionalColor(emotionalState.label) }]} />
-            <Text style={[styles.emotionalBadgeText, { color: getEmotionalColor(emotionalState.label) }]}>
-              {emotionalState.label.toUpperCase()}
-            </Text>
-          </Pressable>
-        )}
-      </View>
 
       {/* ── Emotional State Override Modal ── */}
       <Modal visible={emotionalStateModal} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setEmotionalStateModal(false)}>
@@ -1014,21 +1180,152 @@ export default function MissionControlScreen() {
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={[styles.scrollContent, { paddingBottom: (Platform.OS === 'web' ? 34 : insets.bottom) + 90 }]}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={Colors.cyan} />}
         showsVerticalScrollIndicator={false}
       >
-        {/* SCHEDULE — weekly calendar */}
-        <Animated.View entering={FadeInDown.delay(0).duration(400)}>
-          <Panel
+        {/* ════ TODAY'S FOCUS ════ */}
+        <Animated.View entering={FadeInDown.delay(0).duration(350)}>
+          <View style={styles.focusSection}>
+            <View style={styles.focusSectionHeader}>
+              <Ionicons name="flash" size={13} color={Colors.cyan} />
+              <Text style={styles.focusSectionTitle}>TODAY'S FOCUS</Text>
+            </View>
+
+            {/* Focus: Most urgent task */}
+            {mostUrgentTask ? (
+              <Pressable style={styles.focusCard} onPress={() => setTasksModal(true)}>
+                <View style={[styles.focusCardIcon, { backgroundColor: Colors.violetDim }]}>
+                  <Ionicons name="checkmark-circle-outline" size={18} color={Colors.violet} />
+                </View>
+                <View style={styles.focusCardContent}>
+                  <Text style={styles.focusCardType}>TOP TASK</Text>
+                  <Text style={styles.focusCardTitle} numberOfLines={2}>{mostUrgentTask.title}</Text>
+                  <Text style={styles.focusCardMeta}>
+                    {mostUrgentTask.priority.toUpperCase()} · {mostUrgentTask.category}
+                    {mostUrgentTask.time ? ` · ${mostUrgentTask.time}` : ''}
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={14} color={Colors.textTertiary} />
+              </Pressable>
+            ) : tasksLoading ? (
+              <View style={styles.focusCardEmpty}>
+                <ActivityIndicator size="small" color={Colors.violet} />
+              </View>
+            ) : (
+              <Pressable style={[styles.focusCard, { opacity: 0.5 }]} onPress={() => router.push('/(tabs)/insights')}>
+                <View style={[styles.focusCardIcon, { backgroundColor: Colors.violetDim }]}>
+                  <Ionicons name="checkmark-circle-outline" size={18} color={Colors.violet} />
+                </View>
+                <View style={styles.focusCardContent}>
+                  <Text style={styles.focusCardType}>TOP TASK</Text>
+                  <Text style={styles.focusCardMeta}>Ask Jarvis to build your day</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={14} color={Colors.textTertiary} />
+              </Pressable>
+            )}
+
+            {/* Focus: Next calendar event */}
+            {nextCalEvent ? (
+              <View style={styles.focusCard}>
+                <View style={[styles.focusCardIcon, { backgroundColor: nextCalEvent.source === 'google' ? '#4285F420' : '#0078D420' }]}>
+                  <Ionicons name="calendar" size={18} color={nextCalEvent.source === 'google' ? '#4285F4' : '#0078D4'} />
+                </View>
+                <View style={styles.focusCardContent}>
+                  <Text style={styles.focusCardType}>NEXT EVENT</Text>
+                  <Text style={styles.focusCardTitle} numberOfLines={1}>{nextCalEvent.title}</Text>
+                  <Text style={styles.focusCardMeta}>{formatScheduledAt(nextCalEvent.start)}</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={14} color={Colors.textTertiary} />
+              </View>
+            ) : (
+              <View style={[styles.focusCard, { opacity: 0.35 }]}>
+                <View style={[styles.focusCardIcon, { backgroundColor: Colors.cyanDim }]}>
+                  <Ionicons name="calendar-outline" size={18} color={Colors.cyan} />
+                </View>
+                <View style={styles.focusCardContent}>
+                  <Text style={styles.focusCardType}>NEXT EVENT</Text>
+                  <Text style={styles.focusCardMeta}>No events in the next 3 hours</Text>
+                </View>
+              </View>
+            )}
+
+            {/* Focus: Top Jarvis signal */}
+            {topPrediction ? (
+              <View style={styles.focusCard}>
+                <View style={[styles.focusCardIcon, { backgroundColor: PREDICTION_TYPE_CONFIG[topPrediction.predictionType]?.color + '20' ?? Colors.violetDim }]}>
+                  <Ionicons name={PREDICTION_TYPE_CONFIG[topPrediction.predictionType]?.icon ?? 'telescope-outline'} size={18} color={PREDICTION_TYPE_CONFIG[topPrediction.predictionType]?.color ?? Colors.violet} />
+                </View>
+                <View style={styles.focusCardContent}>
+                  <Text style={[styles.focusCardType, { color: PREDICTION_TYPE_CONFIG[topPrediction.predictionType]?.color ?? Colors.violet }]}>
+                    JARVIS SIGNAL · {topPrediction.confidenceScore}%
+                  </Text>
+                  <Text style={styles.focusCardTitle} numberOfLines={2}>{topPrediction.humanReadable}</Text>
+                  {topPrediction.actionSuggestion && (
+                    <Text style={styles.focusCardMeta} numberOfLines={1}>→ {topPrediction.actionSuggestion}</Text>
+                  )}
+                </View>
+              </View>
+            ) : null}
+          </View>
+        </Animated.View>
+
+        {/* ════ COLLAPSIBLE SECONDARY PANELS ════ */}
+
+        {/* TASKS */}
+        <Animated.View entering={FadeInDown.delay(60).duration(350)}>
+          <CollapsiblePanel
+            panelId="tasks"
+            title="TASKS"
+            icon="checkmark-circle-outline"
+            accent={Colors.violet}
+            summary={tasksSummary}
+            expanded={!!expandedPanels.tasks}
+            onToggle={handleTogglePanel}
+            count={totalCount - completedCount}
+            loading={tasksLoading}
+            onViewAll={() => setTasksModal(true)}
+          >
+            {goals.length > 0 && (
+              <Pressable style={styles.goalsSummaryRow} onPress={() => setTasksModal(true)}>
+                <Ionicons name="flag-outline" size={12} color={Colors.violet} />
+                <Text style={styles.goalsSummaryText}>
+                  {goals.length} active {goals.length === 1 ? 'goal' : 'goals'}
+                </Text>
+                <Text style={styles.goalsSummarySub}>Manage →</Text>
+              </Pressable>
+            )}
+            {totalCount === 0 ? (
+              <Text style={styles.emptyText}>No tasks for today. Ask Jarvis to build your day in the Jarvis tab.</Text>
+            ) : (
+              <>
+                <View style={styles.progressRow}>
+                  <View style={styles.progressBar}>
+                    <View style={[styles.progressFill, { width: `${completionPct}%`, backgroundColor: Colors.violet }]} />
+                  </View>
+                  <Text style={[styles.progressPct, { color: Colors.violet }]}>{completionPct}%</Text>
+                </View>
+                {todayTasks.slice(0, 5).map((t, i) => (
+                  <TaskRow key={t.id} task={t} onToggle={() => handleToggleTask(t, i)} />
+                ))}
+              </>
+            )}
+          </CollapsiblePanel>
+        </Animated.View>
+
+        {/* SCHEDULE */}
+        <Animated.View entering={FadeInDown.delay(80).duration(350)}>
+          <CollapsiblePanel
+            panelId="schedule"
             title="SCHEDULE"
             icon="calendar-outline"
             accent={Colors.cyan}
+            summary={scheduleSummary}
+            expanded={!!expandedPanels.schedule}
+            onToggle={handleTogglePanel}
             count={todayScheduleItems.length}
             loading={scheduledLoading}
             onViewAll={() => setScheduleModal(true)}
             onAdd={() => setNewTaskModal(true)}
           >
-            {/* Day strip */}
             <View style={styles.dayStrip}>
               {weekData.map(wd => (
                 <View key={wd.dateStr} style={[styles.dayCell, wd.isToday && styles.dayCellToday]}>
@@ -1040,9 +1337,8 @@ export default function MissionControlScreen() {
                 </View>
               ))}
             </View>
-            {/* Today's schedule items */}
             {todayScheduleItems.length === 0 ? (
-              <Text style={styles.emptyText}>Nothing scheduled today. Ask Jarvis to schedule tasks, or view all to see the full week.</Text>
+              <Text style={styles.emptyText}>Nothing scheduled today.</Text>
             ) : (
               todayScheduleItems.slice(0, 5).map((item, idx) => {
                 if (item.kind === 'system') {
@@ -1090,91 +1386,19 @@ export default function MissionControlScreen() {
                 );
               })
             )}
-          </Panel>
-        </Animated.View>
-
-        {/* FORESIGHT */}
-        {(predictionsLoading || predictions.length > 0 || weekPredictions.length > 0) && (
-          <Animated.View entering={FadeInDown.delay(40).duration(400)}>
-            <Panel
-              title="JARVIS FORESIGHT"
-              icon="telescope-outline"
-              accent="#9b59b6"
-              loading={predictionsLoading}
-            >
-              {predictions.length === 0 && weekPredictions.length === 0 && !predictionsLoading ? (
-                <Text style={styles.emptyText}>No predictions yet. Jarvis needs more historical data to build forecasts.</Text>
-              ) : (
-                <>
-                  {predictions.length > 0 && (
-                    <>
-                      <Text style={styles.predictionSectionLabel}>TODAY</Text>
-                      {predictions.slice(0, 4).map((pred) => <PredictionCard key={pred.id} pred={pred} />)}
-                    </>
-                  )}
-                  {weekPredictions.length > 0 && (
-                    <>
-                      <Text style={[styles.predictionSectionLabel, { marginTop: predictions.length > 0 ? 10 : 0 }]}>THIS WEEK</Text>
-                      {weekPredictions.slice(0, 3).map((pred) => <PredictionCard key={pred.id} pred={pred} compact />)}
-                    </>
-                  )}
-                  {predictionAccuracy && predictionAccuracy.validated >= 3 && (
-                    <View style={styles.predictionAccuracyRow}>
-                      <Ionicons name="analytics-outline" size={11} color="#9b59b6" />
-                      <Text style={styles.predictionAccuracyText}>
-                        {Math.round(predictionAccuracy.accuracyRate * 100)}% accurate over {predictionAccuracy.validated} auto-validated prediction{predictionAccuracy.validated === 1 ? '' : 's'}{predictionAccuracy.autoSkipped > 0 ? ` · ${predictionAccuracy.autoSkipped} pending manual review` : ''}
-                      </Text>
-                    </View>
-                  )}
-                </>
-              )}
-            </Panel>
-          </Animated.View>
-        )}
-
-        {/* TODAY */}
-        <Animated.View entering={FadeInDown.delay(60).duration(400)}>
-          <Panel
-            title="TODAY"
-            icon="checkmark-circle-outline"
-            accent={Colors.violet}
-            count={totalCount - completedCount}
-            loading={tasksLoading}
-            onViewAll={() => setTasksModal(true)}
-          >
-            {goals.length > 0 && (
-              <Pressable style={styles.goalsSummaryRow} onPress={() => setTasksModal(true)}>
-                <Ionicons name="flag-outline" size={12} color={Colors.violet} />
-                <Text style={styles.goalsSummaryText}>
-                  {goals.length} active {goals.length === 1 ? 'goal' : 'goals'}
-                </Text>
-                <Text style={styles.goalsSummarySub}>Tap to manage day →</Text>
-              </Pressable>
-            )}
-            {totalCount === 0 ? (
-              <Text style={styles.emptyText}>No tasks for today. Ask Jarvis to build your day in the Jarvis tab.</Text>
-            ) : (
-              <>
-                <View style={styles.progressRow}>
-                  <View style={styles.progressBar}>
-                    <View style={[styles.progressFill, { width: `${completionPct}%`, backgroundColor: Colors.violet }]} />
-                  </View>
-                  <Text style={[styles.progressPct, { color: Colors.violet }]}>{completionPct}%</Text>
-                </View>
-                {todayTasks.slice(0, 5).map((t, i) => (
-                  <TaskRow key={t.id} task={t} onToggle={() => handleToggleTask(t, i)} />
-                ))}
-              </>
-            )}
-          </Panel>
+          </CollapsiblePanel>
         </Animated.View>
 
         {/* INBOX */}
-        <Animated.View entering={FadeInDown.delay(120).duration(400)}>
-          <Panel
+        <Animated.View entering={FadeInDown.delay(100).duration(350)}>
+          <CollapsiblePanel
+            panelId="inbox"
             title="INBOX"
             icon="mail-open-outline"
             accent={Colors.cyan}
+            summary={inboxSummary}
+            expanded={!!expandedPanels.inbox}
+            onToggle={handleTogglePanel}
             count={inboxItems.length}
             loading={inboxLoading}
             onViewAll={() => setInboxModal(true)}
@@ -1185,35 +1409,39 @@ export default function MissionControlScreen() {
               inboxItems.slice(0, 3).map(item => {
                 const srcIcon = getInboxSourceIcon(item.sourceType);
                 return (
-                <View key={item.id} style={styles.inboxRow}>
-                  <Ionicons name={srcIcon.icon} size={13} color={srcIcon.color} style={{ marginTop: 2 }} />
-                  <View style={styles.inboxContent}>
-                    <Text style={styles.inboxSubject} numberOfLines={1}>{item.subject ?? item.itemType}</Text>
-                    {item.sender && <Text style={styles.inboxSender} numberOfLines={1}>{item.sender}</Text>}
-                    {item.jarvisReason && <Text style={styles.inboxReason} numberOfLines={1}>{item.jarvisReason}</Text>}
-                    <View style={styles.inboxInlineActions}>
-                      <Pressable onPress={() => handleReplyWithJarvis(item)} style={styles.inboxInlineReply}>
-                        <Ionicons name="chatbubble-outline" size={11} color={Colors.cyan} />
-                        <Text style={styles.inboxInlineReplyText}>Reply</Text>
-                      </Pressable>
-                      <Pressable onPress={() => handleDismissInbox(item)} style={styles.inboxInlineDismiss}>
-                        <Ionicons name="close" size={11} color={Colors.textTertiary} />
-                      </Pressable>
+                  <View key={item.id} style={styles.inboxRow}>
+                    <Ionicons name={srcIcon.icon} size={13} color={srcIcon.color} style={{ marginTop: 2 }} />
+                    <View style={styles.inboxContent}>
+                      <Text style={styles.inboxSubject} numberOfLines={1}>{item.subject ?? item.itemType}</Text>
+                      {item.sender && <Text style={styles.inboxSender} numberOfLines={1}>{item.sender}</Text>}
+                      {item.jarvisReason && <Text style={styles.inboxReason} numberOfLines={1}>{item.jarvisReason}</Text>}
+                      <View style={styles.inboxInlineActions}>
+                        <Pressable onPress={() => handleReplyWithJarvis(item)} style={styles.inboxInlineReply}>
+                          <Ionicons name="chatbubble-outline" size={11} color={Colors.cyan} />
+                          <Text style={styles.inboxInlineReplyText}>Reply</Text>
+                        </Pressable>
+                        <Pressable onPress={() => handleDismissInbox(item)} style={styles.inboxInlineDismiss}>
+                          <Ionicons name="close" size={11} color={Colors.textTertiary} />
+                        </Pressable>
+                      </View>
                     </View>
                   </View>
-                </View>
                 );
               })
             )}
-          </Panel>
+          </CollapsiblePanel>
         </Animated.View>
 
         {/* DELIVERABLES */}
-        <Animated.View entering={FadeInDown.delay(180).duration(400)}>
-          <Panel
+        <Animated.View entering={FadeInDown.delay(120).duration(350)}>
+          <CollapsiblePanel
+            panelId="deliverables"
             title="DELIVERABLES"
             icon="document-text-outline"
             accent={Colors.violet}
+            summary={deliverablesSummary}
+            expanded={!!expandedPanels.deliverables}
+            onToggle={handleTogglePanel}
             count={deliverables.length}
             loading={deliverablesLoading}
             onViewAll={() => setDeliverablesModal(true)}
@@ -1242,15 +1470,62 @@ export default function MissionControlScreen() {
                 </View>
               ))
             )}
-          </Panel>
+          </CollapsiblePanel>
         </Animated.View>
 
+        {/* FORESIGHT */}
+        {(predictionsLoading || predictions.length > 0 || weekPredictions.length > 0) && (
+          <Animated.View entering={FadeInDown.delay(140).duration(350)}>
+            <CollapsiblePanel
+              panelId="foresight"
+              title="JARVIS FORESIGHT"
+              icon="telescope-outline"
+              accent="#9b59b6"
+              summary={foresightSummary}
+              expanded={!!expandedPanels.foresight}
+              onToggle={handleTogglePanel}
+              loading={predictionsLoading}
+            >
+              {predictions.length === 0 && weekPredictions.length === 0 ? (
+                <Text style={styles.emptyText}>No predictions yet.</Text>
+              ) : (
+                <>
+                  {predictions.length > 0 && (
+                    <>
+                      <Text style={styles.predictionSectionLabel}>TODAY</Text>
+                      {predictions.slice(0, 4).map((pred) => <PredictionCard key={pred.id} pred={pred} />)}
+                    </>
+                  )}
+                  {weekPredictions.length > 0 && (
+                    <>
+                      <Text style={[styles.predictionSectionLabel, { marginTop: predictions.length > 0 ? 10 : 0 }]}>THIS WEEK</Text>
+                      {weekPredictions.slice(0, 3).map((pred) => <PredictionCard key={pred.id} pred={pred} compact />)}
+                    </>
+                  )}
+                  {predictionAccuracy && predictionAccuracy.validated >= 3 && (
+                    <View style={styles.predictionAccuracyRow}>
+                      <Ionicons name="analytics-outline" size={11} color="#9b59b6" />
+                      <Text style={styles.predictionAccuracyText}>
+                        {Math.round(predictionAccuracy.accuracyRate * 100)}% accurate · {predictionAccuracy.validated} validated
+                      </Text>
+                    </View>
+                  )}
+                </>
+              )}
+            </CollapsiblePanel>
+          </Animated.View>
+        )}
+
         {/* DOCS */}
-        <Animated.View entering={FadeInDown.delay(240).duration(400)}>
-          <Panel
+        <Animated.View entering={FadeInDown.delay(160).duration(350)}>
+          <CollapsiblePanel
+            panelId="docs"
             title="DOCS"
             icon="folder-open-outline"
             accent={Colors.cyan}
+            summary={docsSummary}
+            expanded={!!expandedPanels.docs}
+            onToggle={handleTogglePanel}
             count={documents.length}
             loading={documentsLoading}
             onViewAll={() => setDocsModal(true)}
@@ -1271,15 +1546,19 @@ export default function MissionControlScreen() {
                 </Pressable>
               ))
             )}
-          </Panel>
+          </CollapsiblePanel>
         </Animated.View>
 
         {/* MEMORY */}
-        <Animated.View entering={FadeInDown.delay(300).duration(400)}>
-          <Panel
+        <Animated.View entering={FadeInDown.delay(180).duration(350)}>
+          <CollapsiblePanel
+            panelId="memory"
             title="MEMORY"
             icon="bookmark-outline"
             accent={Colors.violet}
+            summary={memorySummary}
+            expanded={!!expandedPanels.memory}
+            onToggle={handleTogglePanel}
             count={memories.length}
             loading={memoriesLoading}
             onViewAll={() => setMemoriesModal(true)}
@@ -1296,7 +1575,7 @@ export default function MissionControlScreen() {
                 </View>
               ))
             )}
-          </Panel>
+          </CollapsiblePanel>
         </Animated.View>
       </ScrollView>
 
