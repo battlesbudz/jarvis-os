@@ -2,7 +2,12 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { StyleSheet, View, Text, Pressable, ActivityIndicator, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import { Audio } from 'expo-av';
+import {
+  useAudioRecorder,
+  AudioQuality,
+  setAudioModeAsync,
+  requestRecordingPermissionsAsync,
+} from 'expo-audio';
 import { File as ExpoFile } from 'expo-file-system';
 import Animated, { FadeInDown, useSharedValue, useAnimatedStyle, withRepeat, withTiming, Easing } from 'react-native-reanimated';
 import Colors from '@/constants/colors';
@@ -57,9 +62,28 @@ export default function MorningNoteRecorder({ onComplete, onSkip }: MorningNoteR
   } | null>(null);
   const [submitted, setSubmitted] = useState(false);
 
+  const audioRecorder = useAudioRecorder({
+    extension: '.m4a',
+    sampleRate: 44100,
+    numberOfChannels: 1,
+    bitRate: 128000,
+    android: {
+      outputFormat: 'mpeg4',
+      audioEncoder: 'aac',
+    },
+    ios: {
+      audioQuality: AudioQuality.MAX,
+      linearPCMBitDepth: 16 as const,
+      linearPCMIsBigEndian: false,
+      linearPCMIsFloat: false,
+    },
+    web: {
+      mimeType: 'audio/webm',
+      bitsPerSecond: 128000,
+    },
+  });
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
-  const nativeRecordingRef = useRef<Audio.Recording | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pulseScale = useSharedValue(1);
 
@@ -101,42 +125,19 @@ export default function MorningNoteRecorder({ onComplete, onSkip }: MorningNoteR
 
   const startNativeRecording = useCallback(async () => {
     try {
-      const { status } = await Audio.requestPermissionsAsync();
-      if (status !== 'granted') {
+      const { granted } = await requestRecordingPermissionsAsync();
+      if (!granted) {
         console.error('Microphone permission not granted');
         return;
       }
 
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: true,
-        playsInSilentModeIOS: true,
+      await setAudioModeAsync({
+        allowsRecording: true,
+        playsInSilentMode: true,
       });
 
-      const { recording: rec } = await Audio.Recording.createAsync(
-        {
-          android: {
-            extension: '.m4a',
-            outputFormat: 2,
-            audioEncoder: 3,
-            sampleRate: 44100,
-            numberOfChannels: 1,
-            bitRate: 128000,
-          },
-          ios: {
-            extension: '.m4a',
-            audioQuality: 127,
-            sampleRate: 44100,
-            numberOfChannels: 1,
-            bitRate: 128000,
-            outputFormat: 'aac',
-          },
-          web: {
-            mimeType: 'audio/webm',
-            bitsPerSecond: 128000,
-          },
-        }
-      );
-      nativeRecordingRef.current = rec;
+      await audioRecorder.prepareToRecordAsync();
+      audioRecorder.record();
       setRecording(true);
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
@@ -144,21 +145,19 @@ export default function MorningNoteRecorder({ onComplete, onSkip }: MorningNoteR
     } catch (err) {
       console.error('Failed to start native recording:', err);
     }
-  }, []);
+  }, [audioRecorder]);
 
   const stopNativeRecording = useCallback(async () => {
     clearTimer();
     setRecording(false);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
-    const rec = nativeRecordingRef.current;
-    if (!rec) return;
-    nativeRecordingRef.current = null;
+    if (!audioRecorder.isRecording) return;
 
     try {
-      await rec.stopAndUnloadAsync();
-      await Audio.setAudioModeAsync({ allowsRecordingIOS: false });
-      const uri = rec.getURI();
+      await audioRecorder.stop();
+      await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true });
+      const uri = audioRecorder.uri;
       if (!uri) {
         setTranscript('');
         return;
@@ -187,7 +186,7 @@ export default function MorningNoteRecorder({ onComplete, onSkip }: MorningNoteR
     } finally {
       setTranscribing(false);
     }
-  }, []);
+  }, [audioRecorder]);
 
   const startWebRecording = useCallback(async () => {
     try {
@@ -326,11 +325,11 @@ export default function MorningNoteRecorder({ onComplete, onSkip }: MorningNoteR
   useEffect(() => {
     return () => {
       clearTimer();
-      if (nativeRecordingRef.current) {
-        nativeRecordingRef.current.stopAndUnloadAsync().catch(() => {});
+      if (audioRecorder.isRecording) {
+        audioRecorder.stop().catch(() => {});
       }
     };
-  }, []);
+  }, [audioRecorder]);
 
   if (submitted && extractedData) {
     return (
