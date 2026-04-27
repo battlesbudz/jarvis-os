@@ -76,6 +76,20 @@ interface TelegramStatus {
   configured: boolean;
 }
 
+interface McpServerInfo {
+  id: string;
+  name: string;
+  transport: 'stdio' | 'http';
+  command: string | null;
+  url: string | null;
+  enabled: boolean;
+  isBuiltIn: boolean;
+  connected: boolean;
+  toolCount: number;
+  error?: string;
+  isSystem: boolean;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Section header component
 // ─────────────────────────────────────────────────────────────────────────────
@@ -233,6 +247,18 @@ export default function SettingsScreen() {
   const [orchestratorModel, setOrchestratorModel] = useState('claude-opus-4-7');
   const [availableOrchestratorModels, setAvailableOrchestratorModels] = useState<AvailableModel[]>([]);
   const [savingOrchestrator, setSavingOrchestrator] = useState(false);
+
+  // ── MCP Servers ──
+  const [mcpServers, setMcpServers] = useState<McpServerInfo[]>([]);
+  const [mcpLoading, setMcpLoading] = useState(false);
+  const [mcpAddVisible, setMcpAddVisible] = useState(false);
+  const [mcpAddTransport, setMcpAddTransport] = useState<'stdio' | 'http'>('stdio');
+  const [mcpAddName, setMcpAddName] = useState('');
+  const [mcpAddCommand, setMcpAddCommand] = useState('');
+  const [mcpAddUrl, setMcpAddUrl] = useState('');
+  const [mcpAddToken, setMcpAddToken] = useState('');
+  const [mcpAddError, setMcpAddError] = useState('');
+  const [mcpAddSaving, setMcpAddSaving] = useState(false);
 
   // ── Build History ──
   const [buildHistory, setBuildHistory] = useState<BuildLogEntry[]>([]);
@@ -508,6 +534,60 @@ export default function SettingsScreen() {
     }
   }, []);
 
+  // ── MCP servers ──
+  const loadMcpServers = useCallback(async () => {
+    setMcpLoading(true);
+    try {
+      const res = await apiRequest('GET', '/api/mcp-servers');
+      if (res.ok) {
+        const data = await res.json();
+        setMcpServers(data.servers ?? []);
+      }
+    } catch { /* non-fatal */ } finally {
+      setMcpLoading(false);
+    }
+  }, []);
+
+  const handleMcpDelete = useCallback(async (id: string) => {
+    try {
+      await apiRequest('DELETE', `/api/mcp-servers/${id}`);
+      setMcpServers(prev => prev.filter(s => s.id !== id));
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    } catch (err) {
+      Alert.alert('Error', 'Could not delete server');
+    }
+  }, []);
+
+  const handleMcpAdd = useCallback(async () => {
+    setMcpAddError('');
+    if (!mcpAddName.trim()) { setMcpAddError('Name is required'); return; }
+    if (mcpAddTransport === 'stdio' && !mcpAddCommand.trim()) { setMcpAddError('Command is required for stdio'); return; }
+    if (mcpAddTransport === 'http' && !mcpAddUrl.trim()) { setMcpAddError('URL is required for HTTP'); return; }
+    setMcpAddSaving(true);
+    try {
+      const res = await apiRequest('POST', '/api/mcp-servers', {
+        name: mcpAddName.trim(),
+        transport: mcpAddTransport,
+        command: mcpAddTransport === 'stdio' ? mcpAddCommand.trim() : undefined,
+        url: mcpAddTransport === 'http' ? mcpAddUrl.trim() : undefined,
+        authToken: mcpAddToken.trim() || undefined,
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        setMcpAddError(err.error ?? 'Failed to add server');
+      } else {
+        setMcpAddVisible(false);
+        setMcpAddName(''); setMcpAddCommand(''); setMcpAddUrl(''); setMcpAddToken('');
+        await loadMcpServers();
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      }
+    } catch (err) {
+      setMcpAddError('Network error');
+    } finally {
+      setMcpAddSaving(false);
+    }
+  }, [mcpAddName, mcpAddTransport, mcpAddCommand, mcpAddUrl, mcpAddToken, loadMcpServers]);
+
   // ── Load everything ──
   const loadAll = useCallback(async () => {
     await loadConnections();
@@ -547,13 +627,14 @@ export default function SettingsScreen() {
     loadThreatLog();
     loadBuildHistory();
     loadHealth();
+    loadMcpServers();
     return () => {
       if (telegramPollRef.current) {
         clearInterval(telegramPollRef.current);
         telegramPollRef.current = null;
       }
     };
-  }, [loadAll, loadNervousSystem, loadThreatLog, loadBuildHistory, loadHealth]));
+  }, [loadAll, loadNervousSystem, loadThreatLog, loadBuildHistory, loadHealth, loadMcpServers]));
 
   useEffect(() => {
     return () => {
@@ -1042,6 +1123,173 @@ export default function SettingsScreen() {
             </View>
           )}
         </View>
+
+        {/* ── CONNECTED TOOLS (MCP) ── */}
+        <SectionHeader label="CONNECTED TOOLS" accent="#10B981" />
+        <View style={styles.card}>
+          {mcpLoading && mcpServers.length === 0 ? (
+            <ActivityIndicator size="small" color="#10B981" style={{ padding: 16 }} />
+          ) : mcpServers.length === 0 ? (
+            <View style={{ padding: 16, alignItems: 'center' }}>
+              <Ionicons name="extension-puzzle-outline" size={28} color={Colors.textMuted} style={{ marginBottom: 8 }} />
+              <Text style={[styles.connSub, { textAlign: 'center' }]}>
+                No MCP servers connected.{'\n'}Add a server to extend Jarvis with new tools.
+              </Text>
+            </View>
+          ) : (
+            mcpServers.map((server, idx) => (
+              <View key={server.id} style={[styles.connRow, idx < mcpServers.length - 1 && { borderBottomWidth: 1, borderBottomColor: Colors.border }]}>
+                <View style={[styles.connIconWrap, { backgroundColor: server.connected ? '#052e16' : '#1a1a1a' }]}>
+                  <Ionicons
+                    name={server.transport === 'http' ? 'cloud-outline' : 'terminal-outline'}
+                    size={18}
+                    color={server.connected ? '#10B981' : Colors.textMuted}
+                  />
+                </View>
+                <View style={styles.connInfo}>
+                  <Text style={styles.connName}>{server.name}</Text>
+                  <Text style={styles.connSub}>
+                    {server.connected
+                      ? `${server.toolCount} tool${server.toolCount !== 1 ? 's' : ''} available`
+                      : server.error
+                        ? `Error: ${server.error.slice(0, 60)}`
+                        : 'Disconnected'}
+                  </Text>
+                  {server.isSystem && (
+                    <Text style={[styles.connSub, { color: '#10B981', fontSize: 10 }]}>System</Text>
+                  )}
+                </View>
+                {!server.isBuiltIn && !server.isSystem && (
+                  <Pressable
+                    onPress={() => {
+                      Alert.alert('Remove Server', `Remove "${server.name}"?`, [
+                        { text: 'Cancel', style: 'cancel' },
+                        { text: 'Remove', style: 'destructive', onPress: () => handleMcpDelete(server.id) },
+                      ]);
+                    }}
+                    style={{ padding: 8 }}
+                  >
+                    <Ionicons name="trash-outline" size={18} color={Colors.error} />
+                  </Pressable>
+                )}
+              </View>
+            ))
+          )}
+
+          {/* Add Server button */}
+          <Pressable
+            style={[styles.connRow, { justifyContent: 'center', borderTopWidth: mcpServers.length > 0 ? 1 : 0, borderTopColor: Colors.border }]}
+            onPress={() => setMcpAddVisible(true)}
+          >
+            <Ionicons name="add-circle-outline" size={18} color="#10B981" style={{ marginRight: 8 }} />
+            <Text style={{ color: '#10B981', fontSize: 14, fontWeight: '600' }}>Add MCP Server</Text>
+          </Pressable>
+        </View>
+
+        {/* ── MCP Add Modal ── */}
+        {mcpAddVisible && (
+          <View style={[styles.card, { borderColor: '#10B981', borderWidth: 1 }]}>
+            <Text style={[styles.connName, { marginBottom: 12, color: '#10B981' }]}>Add MCP Server</Text>
+
+            {/* Transport selector */}
+            <View style={{ flexDirection: 'row', marginBottom: 12, gap: 8 }}>
+              {(['stdio', 'http'] as const).map(t => (
+                <Pressable
+                  key={t}
+                  onPress={() => setMcpAddTransport(t)}
+                  style={{
+                    flex: 1, paddingVertical: 8, borderRadius: 8, alignItems: 'center',
+                    backgroundColor: mcpAddTransport === t ? '#10B981' : Colors.surface,
+                    borderWidth: 1, borderColor: mcpAddTransport === t ? '#10B981' : Colors.border,
+                  }}
+                >
+                  <Text style={{ color: mcpAddTransport === t ? '#000' : Colors.text, fontWeight: '600', fontSize: 12 }}>
+                    {t.toUpperCase()}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+
+            <TextInput
+              style={{
+                backgroundColor: Colors.surface, color: Colors.text, borderRadius: 8,
+                padding: 12, fontSize: 14, borderWidth: 1, borderColor: Colors.border, marginBottom: 10,
+              }}
+              placeholder="Name (e.g. Filesystem)"
+              placeholderTextColor={Colors.textMuted}
+              value={mcpAddName}
+              onChangeText={setMcpAddName}
+            />
+
+            {mcpAddTransport === 'stdio' ? (
+              <TextInput
+                style={[{
+                  backgroundColor: Colors.surface, color: Colors.text, borderRadius: 8,
+                  padding: 12, fontSize: 13, borderWidth: 1, borderColor: Colors.border, marginBottom: 10,
+                  fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+                }]}
+                placeholder="Command (e.g. node /path/to/server.js)"
+                placeholderTextColor={Colors.textMuted}
+                value={mcpAddCommand}
+                onChangeText={setMcpAddCommand}
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+            ) : (
+              <>
+                <TextInput
+                  style={{
+                    backgroundColor: Colors.surface, color: Colors.text, borderRadius: 8,
+                    padding: 12, fontSize: 13, borderWidth: 1, borderColor: Colors.border, marginBottom: 10,
+                  }}
+                  placeholder="URL (https://...)"
+                  placeholderTextColor={Colors.textMuted}
+                  value={mcpAddUrl}
+                  onChangeText={setMcpAddUrl}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  keyboardType="url"
+                />
+                <TextInput
+                  style={{
+                    backgroundColor: Colors.surface, color: Colors.text, borderRadius: 8,
+                    padding: 12, fontSize: 13, borderWidth: 1, borderColor: Colors.border, marginBottom: 10,
+                  }}
+                  placeholder="Auth token (optional)"
+                  placeholderTextColor={Colors.textMuted}
+                  value={mcpAddToken}
+                  onChangeText={setMcpAddToken}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  secureTextEntry
+                />
+              </>
+            )}
+
+            {!!mcpAddError && (
+              <Text style={{ color: Colors.error, fontSize: 12, marginBottom: 10 }}>{mcpAddError}</Text>
+            )}
+
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              <Pressable
+                onPress={() => { setMcpAddVisible(false); setMcpAddError(''); }}
+                style={{ flex: 1, padding: 12, borderRadius: 8, backgroundColor: Colors.surface, alignItems: 'center', borderWidth: 1, borderColor: Colors.border }}
+              >
+                <Text style={{ color: Colors.text, fontWeight: '600' }}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                onPress={handleMcpAdd}
+                disabled={mcpAddSaving}
+                style={{ flex: 1, padding: 12, borderRadius: 8, backgroundColor: '#10B981', alignItems: 'center' }}
+              >
+                {mcpAddSaving
+                  ? <ActivityIndicator size="small" color="#000" />
+                  : <Text style={{ color: '#000', fontWeight: '700' }}>Connect</Text>
+                }
+              </Pressable>
+            </View>
+          </View>
+        )}
 
         {/* ── WAKE WORD ── */}
         <SectionHeader label="WAKE WORD" accent={Colors.primary} />

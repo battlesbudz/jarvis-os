@@ -131,6 +131,7 @@ export type ToolGroup =
   | "system"      // spawn_subagent, sessions_*, register_approval, build_feature, test_tool
   | "media"       // speak, image_generate, generate_video
   | "connections" // check_connections, generate_reconnect_link, connect_channel
+  | "mcp"         // auto-discovered tools from connected MCP servers
 
 // ── Registry-derived data (single source of truth for capability tools) ────────
 // GOOGLE_GATED and TOOL_GROUP_MAP come entirely from the capability registry.
@@ -174,6 +175,21 @@ initToolResolver((name) => TOOL_INDEX.get(name));
 
 export function getTool(name: string): AgentTool | undefined {
   return TOOL_INDEX.get(name);
+}
+
+/**
+ * Register MCP tools discovered post-startup into ALL_TOOLS, TOOL_INDEX, and
+ * TOOL_GROUP_MAP so that filterToolsByGroups picks them up for channel-scoped
+ * tool lists.  Called once from server/index.ts after mcpServerRegistry.start().
+ */
+export function registerMcpTools(tools: AgentTool[]): void {
+  for (const tool of tools) {
+    if (!TOOL_INDEX.has(tool.name)) {
+      ALL_TOOLS.push(tool);
+      TOOL_INDEX.set(tool.name, tool);
+      TOOL_GROUP_MAP[tool.name] = ["mcp"];
+    }
+  }
 }
 
 // ── telegramCoachTools ────────────────────────────────────────────────────────
