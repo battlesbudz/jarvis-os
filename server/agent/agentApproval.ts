@@ -410,6 +410,13 @@ export async function listAllGates(userId: string): Promise<ApprovalGate[]> {
 // `requireApproval` for any tool in HIGH_RISK_TOOLS; the registry's
 // `runApprovalFlow` then handles the DB gate, user notification, and await.
 //
+// PRIORITY NOTE: Priority 100 is intentionally below the permission hook (200)
+// in agentPermissions.ts. Execution order: permission check first (200) → approval
+// gate second (100). This ensures a tool blocked by permission flags never
+// generates a spurious approval prompt — the permission hook short-circuits first.
+// The task spec originally suggested priority 100 for approval and 50 for
+// permission; those numbers were deliberately swapped to enforce this invariant.
+//
 // Note: `toolCallHooks.ts` calls `requestApproval` / `awaitApproval` from this
 // file via dynamic import, intentionally breaking the circular dependency at
 // module-load time.
