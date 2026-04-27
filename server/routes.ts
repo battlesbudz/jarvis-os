@@ -5001,6 +5001,18 @@ Return ONLY the JSON object.`;
 
       let resultExtra: Record<string, unknown> = {};
 
+      // ── Approval gate: unblock the waiting agent tool call ───────────────
+      if (d.type === "approval_gate") {
+        const { approveGate } = await import("./agent/agentApproval");
+        const meta = (d.meta as { gateId?: string }) || {};
+        if (meta.gateId) await approveGate(meta.gateId, userId);
+        await db
+          .update(schema.deliverables)
+          .set({ status: "approved", actedAt: new Date() })
+          .where(eq(schema.deliverables.id, id));
+        return res.json({ ok: true });
+      }
+
       if (d.type === "email_draft") {
         // Push to Gmail Drafts
         const meta = (d.meta as { to?: string; subject?: string; emailBody?: string }) || {};
@@ -5042,6 +5054,38 @@ Return ONLY the JSON object.`;
     } catch (err) {
       console.error("Error approving deliverable:", err);
       res.status(500).json({ error: "Failed to approve deliverable" });
+    }
+  });
+
+  app.post("/api/deliverables/:id/reject", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const id = req.params.id;
+      const [d] = await db
+        .select()
+        .from(schema.deliverables)
+        .where(and(eq(schema.deliverables.id, id), eq(schema.deliverables.userId, userId)))
+        .limit(1);
+      if (!d) return res.status(404).json({ error: "Deliverable not found" });
+      if (d.status !== "pending_approval") {
+        return res.status(400).json({ error: "Already actioned" });
+      }
+      // If this is an approval gate, fire the reject event to unblock the
+      // waiting tool call so it receives a "rejected" result.
+      if (d.type === "approval_gate") {
+        const { rejectGate } = await import("./agent/agentApproval");
+        const meta = (d.meta as { gateId?: string }) || {};
+        if (meta.gateId) await rejectGate(meta.gateId, userId);
+      }
+      await db
+        .update(schema.deliverables)
+        .set({ status: "rejected", actedAt: new Date() })
+        .where(eq(schema.deliverables.id, id));
+      res.json({ ok: true });
+    } catch (err) {
+      console.error("Error rejecting deliverable:", err);
+      res.status(500).json({ error: "Failed to reject deliverable" });
     }
   });
 

@@ -33,6 +33,7 @@ export interface CreateAgentConfig {
 
 export interface UpdateAgentPatch {
   name?: string;
+  role?: string;
   persona?: string;
   platforms?: string[];
   permissions?: Partial<AgentPermissions>;
@@ -142,6 +143,7 @@ export async function listAgents(userId: string, includeDisabled = false): Promi
 export async function updateAgent(agentId: string, patch: UpdateAgentPatch): Promise<void> {
   const updates: Partial<InsertDiscordAgent> = {};
   if (patch.name !== undefined) updates.name = patch.name;
+  if (patch.role !== undefined) updates.role = patch.role;
   if (patch.persona !== undefined) updates.persona = patch.persona;
   if (patch.platforms !== undefined) updates.platforms = patch.platforms;
   if (patch.permissions !== undefined) {
