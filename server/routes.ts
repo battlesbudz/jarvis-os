@@ -1358,6 +1358,7 @@ Rules:
   }
 
   const pendingConfirmations = new Map<string, { userId: string; tool: string; args: any; expiresAt: number }>();
+  const activeCoachRuns = new Map<string, { controller: AbortController; userId: string }>();
   setInterval(() => {
     const now = Date.now();
     for (const [token, entry] of pendingConfirmations.entries()) {
@@ -2432,6 +2433,21 @@ You can extend yourself by building new tools directly. Generate the complete Ty
 
       // Track whether the client disconnected mid-stream (e.g. switched to camera app).
       // If so, the full streamed response is saved to DB so it survives the disconnect.
+      // Per-run abort support: register an AbortController so the client can stop mid-stream
+      const runId = `coach_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 9)}`;
+      const abortController = new AbortController();
+      const { signal } = abortController;
+      activeCoachRuns.set(runId, { controller: abortController, userId: userId ?? '' });
+      const cleanupRun = () => {
+        abortController.abort();
+        activeCoachRuns.delete(runId);
+      };
+      req.on('close', cleanupRun);
+
+      // Expose runId to client via response header (set before first flushHeaders call)
+      res.setHeader('X-Run-Id', runId);
+      res.setHeader('Access-Control-Expose-Headers', 'X-Run-Id');
+
       let clientDisconnected = false;
       let hasDaemonActions = false;
       req.on('close', () => {
@@ -2467,6 +2483,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
         let loopFinalText: string | null = null; // text returned by model mid-loop
 
         for (let turn = 0; turn < MAX_TOOL_TURNS; turn++) {
+          if (signal.aborted) break;
           const currentMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
             ...chatMessages,
             ...toolMessages,
@@ -2479,7 +2496,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
             // Subsequent turns use "auto" so the model can stop and respond.
             tool_choice: (turn === 0 && isDeviceControlRequest) ? "required" : "auto",
             max_completion_tokens: 2048,
-          });
+          }, { signal });
 
           const choice = phase1.choices[0];
 
@@ -2525,6 +2542,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
                 res.write(`data: ${JSON.stringify({ content: correctedResponse })}\n\n`);
                 res.write('data: [DONE]\n\n');
                 res.end();
+                cleanupRun();
                 return;
               }
               // Normal conversational response with no tools needed — stream it directly
@@ -2542,6 +2560,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
               const lastUserMsg0 = [...messages].reverse().find((m: any) => m.role === 'user');
               if (lastUserMsg0?.content) logInteraction(userId, "app_chat", "inbound", typeof lastUserMsg0.content === 'string' ? lastUserMsg0.content : JSON.stringify(lastUserMsg0.content)).catch(() => {});
               logInteraction(userId, "app_chat", "outbound", responseText).catch(() => {});
+              cleanupRun();
               return;
             }
             // turn > 0: model has finished tool calls and returned its final text.
@@ -2782,6 +2801,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
           const lastUserMsgLoop = [...messages].reverse().find((m: any) => m.role === 'user');
           if (lastUserMsgLoop?.content) logInteraction(userId, "app_chat", "inbound", typeof lastUserMsgLoop.content === 'string' ? lastUserMsgLoop.content : JSON.stringify(lastUserMsgLoop.content)).catch(() => {});
           logInteraction(userId, "app_chat", "outbound", loopFinalText).catch(() => {});
+          cleanupRun();
           return;
         }
       }
@@ -2821,11 +2841,12 @@ You can extend yourself by building new tools directly. Generate the complete Ty
         messages: streamMessages,
         stream: true,
         max_completion_tokens: 8192,
-      });
+      }, { signal });
 
       stopKeepalive();
       let fullStreamedReply = '';
       for await (const chunk of stream) {
+        if (signal.aborted) break;
         const content = chunk.choices[0]?.delta?.content || '';
         if (content) {
           fullStreamedReply += content;
@@ -2841,8 +2862,13 @@ You can extend yourself by building new tools directly. Generate the complete Ty
         savePendingResponse(userId, fullStreamedReply, screenshotUrl).catch(() => {});
       }
 
+      cleanupRun();
       if (!clientDisconnected) {
-        res.write('data: [DONE]\n\n');
+        if (signal.aborted) {
+          res.write(`data: ${JSON.stringify({ type: 'aborted' })}\n\n`);
+        } else {
+          res.write('data: [DONE]\n\n');
+        }
         res.end();
       }
       if (userId) {
@@ -2855,6 +2881,22 @@ You can extend yourself by building new tools directly. Generate the complete Ty
       }
     } catch (error) {
       stopKeepalive();
+      cleanupRun();
+      // Graceful abort — user pressed Stop
+      if (error instanceof Error && (error.name === 'AbortError' || error.message?.includes('aborted'))) {
+        if (!res.headersSent) {
+          res.setHeader('Content-Type', 'text/event-stream');
+          res.setHeader('Cache-Control', 'no-cache, no-transform');
+          res.setHeader('X-Accel-Buffering', 'no');
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          res.flushHeaders();
+        }
+        if (!res.writableEnded) {
+          res.write(`data: ${JSON.stringify({ type: 'aborted' })}\n\n`);
+          res.end();
+        }
+        return;
+      }
       console.error("Error in coach chat:", error);
       // Push a failure banner to the phone so the user isn't left waiting silently
       if (userId && isUserPaired(userId)) {
@@ -2871,6 +2913,19 @@ You can extend yourself by building new tools directly. Generate the complete Ty
         res.end();
       }
     }
+  });
+
+  app.post("/api/chat/abort", async (req: Request, res: Response) => {
+    const callerId = req.userId;
+    if (!callerId) return res.status(401).json({ error: "Unauthorized" });
+    const { runId } = req.body;
+    if (!runId) return res.status(400).json({ error: "runId required" });
+    const run = activeCoachRuns.get(runId);
+    if (!run) return res.json({ ok: true });
+    if (run.userId !== callerId) return res.status(403).json({ error: "Forbidden" });
+    run.controller.abort();
+    activeCoachRuns.delete(runId);
+    return res.json({ ok: true });
   });
 
   app.post("/api/coach/execute-confirmed", async (req: Request, res: Response) => {

@@ -634,6 +634,8 @@ export default function InsightsScreen() {
   const webAudioRef = useRef<HTMLAudioElement | null>(null);
   const webAudioCtxRef = useRef<AudioContext | null>(null);
   const speakAbortRef = useRef<AbortController | null>(null);
+  const chatAbortControllerRef = useRef<AbortController | null>(null);
+  const chatRunIdRef = useRef<string | null>(null);
   const isSpeakingRef = useRef(false);
   const webRecorderRef = useRef<MediaRecorder | null>(null);
   const webChunksRef = useRef<Blob[]>([]);
@@ -1726,6 +1728,10 @@ export default function InsightsScreen() {
     setIsStreaming(true);
     setConfirmClear(false);
 
+    const fetchAbort = new AbortController();
+    chatAbortControllerRef.current = fetchAbort;
+    chatRunIdRef.current = null;
+
     try {
       const contextMessages = [userMsg, ...messagesRef.current].slice(0, CONTEXT_WINDOW);
       const apiMessages = contextMessages.map(m => ({ role: m.role, content: m.content })).reverse();
@@ -1753,7 +1759,11 @@ export default function InsightsScreen() {
           commitments: commitmentsRef.current,
           coachingMode: coachingModeRef.current,
         }),
+        signal: fetchAbort.signal,
       });
+
+      const serverRunId = response.headers.get('X-Run-Id');
+      if (serverRunId) chatRunIdRef.current = serverRunId;
 
       setShowTyping(false);
       const assistantMsg: ChatMessage = { id: assistantId, role: 'assistant', content: '' };
@@ -1771,8 +1781,9 @@ export default function InsightsScreen() {
       let executedActions: ExecutedAction[] = [];
       let gotConfirmRequired = false;
       let gotPhoneWorking = false;
+      let streamAborted = false;
 
-      while (true) {
+      outer: while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
@@ -1785,7 +1796,10 @@ export default function InsightsScreen() {
             if (data === '[DONE]') continue;
             try {
               const parsed = JSON.parse(data);
-              if (parsed.type === 'confirm_required') {
+              if (parsed.type === 'aborted') {
+                streamAborted = true;
+                break outer;
+              } else if (parsed.type === 'confirm_required') {
                 gotConfirmRequired = true;
                 const pendingConfirm: PendingConfirm = {
                   token: parsed.token,
@@ -1836,9 +1850,15 @@ export default function InsightsScreen() {
         }
       }
 
+      chatAbortControllerRef.current = null;
+      chatRunIdRef.current = null;
       setIsStreaming(false);
       setIsSearchingWeb(false);
       setIsWorkingOnPhone(false);
+
+      if (streamAborted) {
+        return;
+      }
 
       if (gotConfirmRequired) {
         return;
@@ -1907,10 +1927,15 @@ export default function InsightsScreen() {
       }).catch(() => {});
 
     } catch (error) {
+      chatAbortControllerRef.current = null;
+      chatRunIdRef.current = null;
       setShowTyping(false);
       setIsStreaming(false);
       setIsSearchingWeb(false);
       setIsWorkingOnPhone(false);
+      if (error instanceof Error && (error.name === 'AbortError' || error.message?.includes('aborted'))) {
+        return;
+      }
       // If Jarvis already sent partial content (e.g. a multi-step phone task that completed
       // but whose SSE stream was cut by a network hiccup), keep that content rather than
       // replacing the whole message with a generic error. Only show the error string when
@@ -1944,6 +1969,22 @@ export default function InsightsScreen() {
   useEffect(() => {
     sendMessageRef.current = sendMessage;
   }, [sendMessage]);
+
+  const handleStop = useCallback(async () => {
+    const runId = chatRunIdRef.current;
+    if (runId) {
+      try {
+        await apiRequest('POST', '/api/chat/abort', { runId });
+      } catch {}
+    }
+    chatAbortControllerRef.current?.abort();
+    chatAbortControllerRef.current = null;
+    chatRunIdRef.current = null;
+    setIsStreaming(false);
+    setShowTyping(false);
+    setIsSearchingWeb(false);
+    setIsWorkingOnPhone(false);
+  }, []);
 
   const handleConfirmAction = useCallback(async (msgId: string, confirmed: boolean) => {
     const msg = messagesRef.current.find(m => m.id === msgId);
@@ -2591,17 +2632,19 @@ export default function InsightsScreen() {
           blurOnSubmit={false}
           onSubmitEditing={() => sendMessage(input)}
         />
-        <Pressable
-          style={[styles.sendBtn, (!input.trim() || isStreaming || isBaseLoading) && styles.sendBtnDisabled]}
-          onPress={() => sendMessage(input)}
-          disabled={!input.trim() || isStreaming || isBaseLoading}
-        >
-          {isStreaming ? (
-            <ActivityIndicator size="small" color="#fff" />
-          ) : (
+        {isStreaming ? (
+          <Pressable style={styles.stopBtn} onPress={handleStop}>
+            <Ionicons name="stop" size={16} color="#fff" />
+          </Pressable>
+        ) : (
+          <Pressable
+            style={[styles.sendBtn, (!input.trim() || isBaseLoading) && styles.sendBtnDisabled]}
+            onPress={() => sendMessage(input)}
+            disabled={!input.trim() || isBaseLoading}
+          >
             <Ionicons name="arrow-up" size={18} color="#fff" />
-          )}
-        </Pressable>
+          </Pressable>
+        )}
       </View>
       <Modal
         visible={discordConnectVisible}
@@ -3653,6 +3696,14 @@ const styles = StyleSheet.create({
   },
   sendBtnDisabled: {
     backgroundColor: Colors.border,
+  },
+  stopBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: Colors.error,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   speakBtn: {
     marginTop: 4,
