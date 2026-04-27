@@ -367,6 +367,11 @@ export default function SettingsScreen() {
         const data = await res.json();
         if (data.audio && Platform.OS !== 'web') {
           const player = createAudioPlayer({ uri: `data:audio/mp3;base64,${data.audio}` });
+          player.addListener('playbackStatusUpdate', (status) => {
+            if (status.didJustFinish) {
+              player.remove();
+            }
+          });
           player.play();
         }
       }
