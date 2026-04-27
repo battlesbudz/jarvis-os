@@ -6,13 +6,15 @@ import express from "express";
 import * as crypto from "crypto";
 import { runCoachAgent } from "./coachAgent";
 import { sendWhatsAppMessage, isTwilioConfigured } from "./whatsappChannel";
+import { SessionCache } from "../sessionCache";
 
 // ── Per-user session ID store for WhatsApp coach conversations ───────────────
 // Volatile in-process cache keyed by userId. Lost on server restart but the
 // coach pipeline gracefully falls back to full history injection on cache miss,
 // so there is no data loss — only a minor efficiency cost for the first turn
-// after a restart.
-const whatsappCoachSessions = new Map<string, string>();
+// after a restart.  Entries unused for 24 h are evicted automatically.
+const whatsappCoachSessions = new SessionCache("whatsapp");
+whatsappCoachSessions.startSweep();
 
 // Twilio signs every webhook request with X-Twilio-Signature, computed as
 // HMAC-SHA1(authToken, fullUrl + concat(sorted(paramKey + paramValue)))
