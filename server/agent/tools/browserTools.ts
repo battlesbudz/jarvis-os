@@ -109,22 +109,51 @@ const YT_AUTH_PATTERNS = [
 ];
 
 /**
- * Return true when the given URL or page-text looks like a YouTube sign-in /
- * consent wall so we can surface a clear message instead of proceeding.
+ * Attempt to extract the browser's final navigated URL from MCP result text.
+ * Playwright MCP often emits lines like "Navigated to https://…" or
+ * "Page URL: https://…" in the result content.
+ * Returns the extracted URL, or null if none is found.
  */
-function isYouTubeAuthGate(url: string, pageText: string): boolean {
-  if (YT_AUTH_PATTERNS.some((rx) => rx.test(url))) return true;
-  // YouTube renders "Sign in" prominently on auth-wall pages
-  const textLower = pageText.toLowerCase().slice(0, 2000);
+function extractFinalUrl(mcpResultText: string): string | null {
+  const patterns = [
+    /Navigated to (https?:\/\/[^\s"']+)/i,
+    /Page URL[:\s]+(https?:\/\/[^\s"']+)/i,
+    /Current URL[:\s]+(https?:\/\/[^\s"']+)/i,
+  ];
+  for (const rx of patterns) {
+    const m = rx.exec(mcpResultText);
+    if (m) return m[1];
+  }
+  return null;
+}
+
+/**
+ * Return true when the given URL or page-text indicates a YouTube auth/consent wall.
+ *
+ * Checks three signals in order:
+ *   1. The **final navigated URL** (extracted from MCP result content) — catches redirects
+ *      to accounts.google.com or youtube.com/signin even when the original URL looked fine.
+ *   2. The **original requested URL** — catches direct navigation to known auth URLs.
+ *   3. **Page text heuristics** — catches consent/age-gate overlays that stay on youtube.com.
+ */
+function isYouTubeAuthGate(originalUrl: string, pageText: string, finalUrl?: string | null): boolean {
+  const urlsToCheck = [finalUrl, originalUrl].filter(Boolean) as string[];
+  if (urlsToCheck.some((u) => YT_AUTH_PATTERNS.some((rx) => rx.test(u)))) return true;
+
+  // Text-based signals: covers consent overlays and age-gates that stay on youtube.com,
+  // and also catches Google sign-in pages regardless of the original URL.
+  const textLower = pageText.toLowerCase().slice(0, 3000);
   if (
-    (url.includes("youtube.com") || url.includes("youtu.be")) &&
-    (textLower.includes("sign in to confirm you're not a bot") ||
-      textLower.includes("sign in to watch") ||
-      textLower.includes("confirm your age") ||
-      textLower.includes("before you continue to youtube"))
+    textLower.includes("accounts.google.com") ||
+    textLower.includes("sign in to confirm you're not a bot") ||
+    textLower.includes("sign in to watch") ||
+    textLower.includes("confirm your age") ||
+    textLower.includes("before you continue to youtube") ||
+    textLower.includes("to continue, google will share")
   ) {
     return true;
   }
+
   return false;
 }
 
@@ -163,16 +192,23 @@ export const browserNavigateTool: AgentTool = {
       }
 
       const snapResult = await callBrowserTool(ctx.userId, "browser_snapshot", {});
-      const pageText = (mcpText(snapResult.content) || mcpText(navResult.content)).slice(0, 4000);
+      const navText = mcpText(navResult.content);
+      const pageText = (mcpText(snapResult.content) || navText).slice(0, 4000);
+
+      // Extract the final URL the browser actually landed on after any redirects
+      // so auth-gate detection works even when the original URL looked like a normal video.
+      const finalUrl = extractFinalUrl(navText) ?? extractFinalUrl(pageText);
 
       // Detect YouTube authentication / consent walls and return a clear message
       // instead of presenting a broken or empty session to the agent.
-      if (isYouTubeAuthGate(url, pageText)) {
-        const isYtUrl = url.includes("youtube.com") || url.includes("youtu.be");
-        const ytNote = isYtUrl
+      if (isYouTubeAuthGate(url, pageText, finalUrl)) {
+        const effectiveUrl = finalUrl ?? url;
+        const isYtRelated = url.includes("youtube.com") || url.includes("youtu.be") ||
+          (finalUrl !== null && finalUrl !== undefined && (finalUrl.includes("youtube.com") || finalUrl.includes("accounts.google.com")));
+        const ytNote = isYtRelated
           ? " If you were trying to read this video's transcript, use the get_youtube_transcript tool instead — it doesn't require a browser session."
           : "";
-        console.warn(`[${ctx.channel || "Agent"}] browser_navigate hit YouTube auth gate → ${url}`);
+        console.warn(`[${ctx.channel || "Agent"}] browser_navigate hit YouTube auth gate → ${effectiveUrl}`);
         return {
           ok: false,
           content:
