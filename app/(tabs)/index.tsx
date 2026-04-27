@@ -1251,18 +1251,25 @@ export default function MissionControlScreen() {
             {/* Focus: Top Jarvis signal */}
             {topPrediction ? (
               <View style={styles.focusCard}>
-                <View style={[styles.focusCardIcon, { backgroundColor: PREDICTION_TYPE_CONFIG[topPrediction.predictionType]?.color + '20' ?? Colors.violetDim }]}>
-                  <Ionicons name={PREDICTION_TYPE_CONFIG[topPrediction.predictionType]?.icon ?? 'telescope-outline'} size={18} color={PREDICTION_TYPE_CONFIG[topPrediction.predictionType]?.color ?? Colors.violet} />
-                </View>
-                <View style={styles.focusCardContent}>
-                  <Text style={[styles.focusCardType, { color: PREDICTION_TYPE_CONFIG[topPrediction.predictionType]?.color ?? Colors.violet }]}>
-                    JARVIS SIGNAL · {topPrediction.confidenceScore}%
-                  </Text>
-                  <Text style={styles.focusCardTitle} numberOfLines={2}>{topPrediction.humanReadable}</Text>
-                  {topPrediction.actionSuggestion && (
-                    <Text style={styles.focusCardMeta} numberOfLines={1}>→ {topPrediction.actionSuggestion}</Text>
-                  )}
-                </View>
+                {(() => {
+                  const cfg = PREDICTION_TYPE_CONFIG[topPrediction.predictionType] ?? { icon: 'telescope-outline' as const, color: Colors.violet, label: 'SIGNAL' };
+                  return (
+                    <>
+                      <View style={[styles.focusCardIcon, { backgroundColor: cfg.color + '20' }]}>
+                        <Ionicons name={cfg.icon} size={18} color={cfg.color} />
+                      </View>
+                      <View style={styles.focusCardContent}>
+                        <Text style={[styles.focusCardType, { color: cfg.color }]}>
+                          JARVIS SIGNAL · {topPrediction.confidenceScore}%
+                        </Text>
+                        <Text style={styles.focusCardTitle} numberOfLines={2}>{topPrediction.humanReadable}</Text>
+                        {topPrediction.actionSuggestion && (
+                          <Text style={styles.focusCardMeta} numberOfLines={1}>→ {topPrediction.actionSuggestion}</Text>
+                        )}
+                      </View>
+                    </>
+                  );
+                })()}
               </View>
             ) : null}
           </View>
@@ -3229,5 +3236,91 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontFamily: 'Inter_400Regular',
     color: Colors.textTertiary,
+  },
+  // ── Header updates ──
+  headerClockRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 2,
+  },
+  headerUpdated: {
+    fontSize: 9,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textTertiary,
+    letterSpacing: 0.5,
+    textAlign: 'right',
+    marginTop: 3,
+  },
+  // ── Today's Focus section ──
+  focusSection: {
+    backgroundColor: Colors.surface,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: Colors.borderGlow,
+    padding: 14,
+    gap: 2,
+  },
+  focusSectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 10,
+  },
+  focusSectionTitle: {
+    fontSize: 10,
+    fontFamily: 'Inter_700Bold',
+    color: Colors.cyan,
+    letterSpacing: 2,
+  },
+  focusCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  focusCardIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  focusCardContent: {
+    flex: 1,
+    gap: 2,
+  },
+  focusCardType: {
+    fontSize: 9,
+    fontFamily: 'Inter_700Bold',
+    color: Colors.textTertiary,
+    letterSpacing: 1.2,
+  },
+  focusCardTitle: {
+    fontSize: 14,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.text,
+    lineHeight: 20,
+  },
+  focusCardMeta: {
+    fontSize: 11,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+  },
+  focusCardEmpty: {
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  // ── Accordion summary text ──
+  accordionSummary: {
+    fontSize: 11,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textTertiary,
+    maxWidth: 160,
+    textAlign: 'right',
   },
 });
