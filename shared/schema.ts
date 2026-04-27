@@ -1390,3 +1390,18 @@ export const mcpServers = pgTable("mcp_servers", {
   isBuiltIn: boolean("is_built_in").notNull().default(false),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
+
+// Chat integration tables — used by server/replit_integrations/chat
+export const conversations = pgTable("conversations", {
+  id: serial("id").primaryKey(),
+  title: text("title").notNull().default("New Chat"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const messages = pgTable("messages", {
+  id: serial("id").primaryKey(),
+  conversationId: integer("conversation_id").notNull().references(() => conversations.id, { onDelete: "cascade" }),
+  role: varchar("role").notNull(),
+  content: text("content").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
