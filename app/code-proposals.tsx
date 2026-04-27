@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
   StyleSheet,
   View,
@@ -15,7 +15,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { apiRequest } from '@/lib/query-client';
+import { apiRequest, getApiUrl } from '@/lib/query-client';
 import Colors from '@/constants/colors';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -147,7 +147,7 @@ function DetailModal({
 }: {
   proposalId: string;
   onClose: () => void;
-  onApproved: () => void;
+  onApproved: (restarting: boolean) => void;
   onRejected: () => void;
 }) {
   const insets = useSafeAreaInsets();
@@ -160,10 +160,13 @@ function DetailModal({
   });
 
   const approveMutation = useMutation({
-    mutationFn: () => apiRequest('POST', `/api/code-proposals/${proposalId}/approve`, {}),
-    onSuccess: () => {
+    mutationFn: async (): Promise<{ ok: boolean; restarting: boolean }> => {
+      const res = await apiRequest('POST', `/api/code-proposals/${proposalId}/approve`, {});
+      return res.json();
+    },
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['/api/code-proposals', proposalId] });
-      onApproved();
+      onApproved(data.restarting === true);
       onClose();
     },
     onError: (err: Error) => Alert.alert('Error', err.message),
@@ -400,6 +403,47 @@ const cardStyles = StyleSheet.create({
   actionHintText: { fontSize: 12, color: Colors.violet },
 });
 
+// ── Restart banner ─────────────────────────────────────────────────────────────
+
+type RestartState = 'idle' | 'restarting' | 'active';
+
+function RestartBanner({ state, onDismiss }: { state: RestartState; onDismiss: () => void }) {
+  if (state === 'idle') return null;
+  const isRestarting = state === 'restarting';
+  const bg = isRestarting ? '#F59E0B22' : '#10B98122';
+  const border = isRestarting ? '#F59E0B44' : '#10B98144';
+  const color = isRestarting ? '#F59E0B' : '#10B981';
+  const label = isRestarting ? 'Restarting backend…' : 'Backend is active — change is live';
+  return (
+    <View style={[bannerStyles.container, { backgroundColor: bg, borderColor: border }]}>
+      {isRestarting
+        ? <ActivityIndicator size="small" color={color} />
+        : <Ionicons name="checkmark-circle-outline" size={16} color={color} />}
+      <Text style={[bannerStyles.text, { color }]}>{label}</Text>
+      {!isRestarting && (
+        <Pressable onPress={onDismiss} hitSlop={8}>
+          <Ionicons name="close" size={16} color={color} />
+        </Pressable>
+      )}
+    </View>
+  );
+}
+
+const bannerStyles = StyleSheet.create({
+  container: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginHorizontal: 16,
+    marginTop: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  text: { flex: 1, fontSize: 13, fontWeight: '500' },
+});
+
 // ── Main screen ────────────────────────────────────────────────────────────────
 
 export default function CodeProposalsScreen() {
@@ -408,6 +452,8 @@ export default function CodeProposalsScreen() {
   const queryClient = useQueryClient();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [filter, setFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('all');
+  const [restartState, setRestartState] = useState<RestartState>('idle');
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const { data: proposals = [], isLoading, refetch } = useQuery<ProposalSummary[]>({
     queryKey: ['/api/code-proposals'],
@@ -415,9 +461,38 @@ export default function CodeProposalsScreen() {
 
   const filtered = proposals.filter((p) => filter === 'all' ? true : p.status === filter);
 
-  const handleApproved = useCallback(() => {
+  const stopPolling = useCallback(() => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  }, []);
+
+  const startPolling = useCallback(() => {
+    stopPolling();
+    pollRef.current = setInterval(async () => {
+      try {
+        const res = await apiRequest('GET', '/api/ping');
+        if (res.ok) {
+          stopPolling();
+          setRestartState('active');
+          queryClient.invalidateQueries({ queryKey: ['/api/code-proposals'] });
+        }
+      } catch {
+        // server still restarting — keep polling
+      }
+    }, 2000);
+  }, [stopPolling, queryClient]);
+
+  useEffect(() => () => stopPolling(), [stopPolling]);
+
+  const handleApproved = useCallback((restarting: boolean) => {
     queryClient.invalidateQueries({ queryKey: ['/api/code-proposals'] });
-  }, [queryClient]);
+    if (restarting) {
+      setRestartState('restarting');
+      startPolling();
+    }
+  }, [queryClient, startPolling]);
 
   const handleRejected = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ['/api/code-proposals'] });
@@ -435,6 +510,9 @@ export default function CodeProposalsScreen() {
           <Text style={styles.subtitle}>Review Jarvis's suggested improvements</Text>
         </View>
       </View>
+
+      {/* Restart banner */}
+      <RestartBanner state={restartState} onDismiss={() => setRestartState('idle')} />
 
       {/* Filter tabs */}
       <View style={styles.tabs}>

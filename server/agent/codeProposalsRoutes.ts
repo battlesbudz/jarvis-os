@@ -155,7 +155,14 @@ export function registerCodeProposalsRoutes(app: Express): void {
         .where(eq(codeProposals.id, row.id));
 
       console.log(`[CodeProposals] approved proposal ${row.id} → wrote ${row.filePath}`);
-      return res.json({ ok: true, filePath: row.filePath });
+      res.json({ ok: true, filePath: row.filePath, restarting: true });
+
+      // Gracefully restart so the newly-written file is loaded immediately.
+      // The Replit workflow manager will relaunch the process automatically.
+      setTimeout(() => {
+        console.log("[CodeProposals] Restarting backend to apply code change…");
+        process.exit(0);
+      }, 400);
     } catch (err) {
       console.error("[CodeProposals] approve error:", err);
       return res.status(500).json({ error: "Failed to apply proposal" });
