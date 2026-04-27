@@ -24,7 +24,15 @@ import { orchestrationTraces } from "@shared/schema";
 import type { ToolContext } from "./types";
 import type { AgentTool } from "./types";
 
-const MAX_RETRIES = 3;
+/** Default maximum retries per sub-task when not overridden by caller or env. */
+const DEFAULT_MAX_RETRIES = 3;
+
+/** Read configurable retry limit from environment (ORCHESTRATOR_MAX_RETRIES), default 3. */
+function resolveMaxRetries(override?: number): number {
+  if (override !== undefined && override >= 0) return override;
+  const env = parseInt(process.env.ORCHESTRATOR_MAX_RETRIES ?? "", 10);
+  return Number.isFinite(env) && env >= 0 ? env : DEFAULT_MAX_RETRIES;
+}
 
 export interface OrchestratorInput {
   userId: string;
@@ -33,6 +41,11 @@ export interface OrchestratorInput {
   tools: AgentTool[];
   toolContext: ToolContext;
   maxCompletionTokens?: number;
+  /**
+   * Maximum number of sub-task retries before orchestration fails.
+   * Defaults to ORCHESTRATOR_MAX_RETRIES env var, then 3.
+   */
+  maxRetries?: number;
   /** Progress callback called when each sub-task completes */
   onSubtaskComplete?: (index: number, total: number, taskLabel: string, passed: boolean) => void;
 }
@@ -311,7 +324,8 @@ function topologicalSort(tasks: SubTask[]): SubTask[] {
  * Throws if any sub-task cannot be verified after all retries.
  */
 export async function runOrchestrator(input: OrchestratorInput): Promise<OrchestratorResult> {
-  const { userId, userRequest, systemContext, tools, toolContext, maxCompletionTokens, onSubtaskComplete } = input;
+  const { userId, userRequest, systemContext, tools, toolContext, maxCompletionTokens, maxRetries: maxRetriesOverride, onSubtaskComplete } = input;
+  const MAX_RETRIES = resolveMaxRetries(maxRetriesOverride);
 
   const traceId = `orch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const startedAt = new Date();
