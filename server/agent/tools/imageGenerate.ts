@@ -102,7 +102,7 @@ export const imageGenerateTool: AgentTool = {
     "On Telegram: sends the image inline as a photo bubble. On Discord: sends as an embedded image attachment. " +
     "In the app: displays the image inline in the chat bubble. " +
     "Use for concept illustrations, motivational visuals, meal plan photos, or any explicit image request. " +
-    "Default model is dalle unless the user specifically asks for FLUX or higher quality/photorealistic output.",
+    "Default model is GPT Image (use 'dalle' as the model parameter value) unless the user specifically asks for FLUX or higher quality/photorealistic output.",
   parameters: {
     type: "object",
     properties: {
