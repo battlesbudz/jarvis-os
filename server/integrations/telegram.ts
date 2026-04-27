@@ -118,54 +118,100 @@ export async function sendMessage(
 const TG_MAX_CHARS = 4096;
 
 /**
- * Split a long text into chunks that each fit within Telegram's 4096-character
- * message limit. Chunks are cut preferring double-newlines (paragraph breaks),
- * then single newlines, then the last space before the limit.
- *
- * If only one chunk is produced, no part labels are added.
- * If multiple chunks are produced, each is prefixed with "(Part N of M)".
+ * Build the "(Part N of M)\n\n" label for chunk index i (0-based) out of total.
+ * Returns an empty string when total === 1 (no label needed).
  */
-export function splitTelegramMessage(text: string): string[] {
-  if (text.length <= TG_MAX_CHARS) return [text];
+function partLabel(i: number, total: number): string {
+  return total > 1 ? `(Part ${i + 1} of ${total})\n\n` : "";
+}
+
+/**
+ * Split `text` into raw chunks using `limit` as the per-chunk character budget.
+ * Cuts prefer double-newlines (paragraph breaks), then single newlines, then
+ * word spaces, then hard-cut at the limit.
+ */
+function splitIntoChunks(text: string, limit: number): string[] {
+  if (text.length <= limit) return [text];
 
   const chunks: string[] = [];
   let remaining = text;
 
   while (remaining.length > 0) {
-    if (remaining.length <= TG_MAX_CHARS) {
+    if (remaining.length <= limit) {
       chunks.push(remaining);
       break;
     }
 
-    let cutAt = TG_MAX_CHARS;
+    let cutAt = limit;
 
-    // Try to cut at a paragraph boundary (double newline)
+    // Prefer paragraph boundary (double newline)
     const dnl = remaining.lastIndexOf("\n\n", cutAt);
-    if (dnl > TG_MAX_CHARS / 2) {
-      cutAt = dnl + 2; // keep the blank line with the previous chunk
+    if (dnl > limit / 2) {
+      cutAt = dnl + 2;
     } else {
-      // Try to cut at a single newline
+      // Try single newline
       const nl = remaining.lastIndexOf("\n", cutAt);
-      if (nl > TG_MAX_CHARS / 2) {
+      if (nl > limit / 2) {
         cutAt = nl + 1;
       } else {
-        // Fall back to the last space (word boundary)
+        // Try word boundary (space)
         const sp = remaining.lastIndexOf(" ", cutAt);
-        if (sp > TG_MAX_CHARS / 2) {
+        if (sp > limit / 2) {
           cutAt = sp + 1;
         }
-        // If no good boundary found, hard-cut at the limit
+        // Hard-cut at limit if no boundary found
       }
     }
 
     chunks.push(remaining.slice(0, cutAt).trimEnd());
-    remaining = remaining.slice(cutAt);
+    remaining = remaining.slice(cutAt).trimStart();
   }
 
-  if (chunks.length === 1) return chunks;
+  return chunks;
+}
 
-  // Label multi-part messages so the user knows more is coming
-  return chunks.map((chunk, i) => `(Part ${i + 1} of ${chunks.length})\n\n${chunk}`);
+/**
+ * Split a long text into messages that each fit within Telegram's 4096-character
+ * limit, including any "(Part N of M)" label overhead.
+ *
+ * Strategy:
+ *   1. Quick path: if the whole text fits in 4096 chars, return it as-is.
+ *   2. Estimate the total number of parts using TG_MAX_CHARS (no label overhead yet).
+ *   3. Compute the exact label size for that part count, then re-split using the
+ *      reduced budget (TG_MAX_CHARS − label length) so every labelled chunk is
+ *      guaranteed to be ≤ 4096 characters.
+ *   4. If step 3 produces a different part count, iterate once more with the
+ *      updated label size to ensure accuracy.
+ *
+ * Returns an array of ready-to-send message strings, each ≤ 4096 chars.
+ */
+export function splitTelegramMessage(text: string): string[] {
+  if (text.length <= TG_MAX_CHARS) return [text];
+
+  // First pass: estimate part count without reserving label space
+  const estimatedChunks = splitIntoChunks(text, TG_MAX_CHARS);
+  const estimatedTotal = estimatedChunks.length;
+  if (estimatedTotal <= 1) return estimatedChunks;
+
+  // Compute the label length for the estimated total (worst-case: last part)
+  const labelLen = partLabel(estimatedTotal - 1, estimatedTotal).length;
+  const budget = TG_MAX_CHARS - labelLen;
+
+  // Second pass: split using the label-adjusted budget
+  let finalChunks = splitIntoChunks(text, budget);
+
+  // If the part count grew (more parts than estimated), re-adjust label size
+  if (finalChunks.length !== estimatedTotal) {
+    const revisedLabelLen = partLabel(finalChunks.length - 1, finalChunks.length).length;
+    const revisedBudget = TG_MAX_CHARS - revisedLabelLen;
+    if (revisedBudget < budget) {
+      finalChunks = splitIntoChunks(text, revisedBudget);
+    }
+  }
+
+  // Prepend "(Part N of M)" to each chunk
+  const total = finalChunks.length;
+  return finalChunks.map((chunk, i) => `${partLabel(i, total)}${chunk}`);
 }
 
 /**
