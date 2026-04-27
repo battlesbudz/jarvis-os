@@ -10,7 +10,7 @@ import type { AgentTool } from "./types";
 import type { DiscordAgent, AgentPermissions } from "@shared/schema";
 import { DEFAULT_AGENT_PERMISSIONS } from "@shared/schema";
 import { logAgentEvent } from "./agentLogger";
-import { toolCallHooks } from "./toolCallHooks";
+import { toolCallHooks, HOOK_PRIORITY } from "./toolCallHooks";
 
 // ── Error ──────────────────────────────────────────────────────────────────────
 
@@ -258,5 +258,5 @@ toolCallHooks.register(
       return { block: true, blockReason: `Permission check failed for ${ctx.toolName}` };
     }
   },
-  { priority: 200 },
+  { priority: HOOK_PRIORITY.PERMISSION },
 );

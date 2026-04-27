@@ -23,8 +23,10 @@ export type ToolCallHookContext = {
   toolName: string;
   params: Record<string, unknown>;
   agentId: string;
-  agentName: string;
-  userId: string;
+  /** Human-readable agent name — optional so the registry works outside named-agent scope. */
+  agentName?: string;
+  /** User that owns this run — optional for testing and non-user-bound runs. */
+  userId?: string;
   platform?: string;
   channelId?: string;
   /** Who initiated the agent run — used for auto-approval of Jarvis-to-Jarvis calls. */
@@ -73,41 +75,80 @@ export type ToolCallRunResult = {
 
 // ── Registry ───────────────────────────────────────────────────────────────────
 
+/**
+ * Built-in hook priority constants.
+ *
+ * Execution order: permission check first (200) → approval gate second (100).
+ * This intentionally deviates from the original task spec (which suggested
+ * approval=100, permission=50) to ensure a disallowed-flagged tool is always
+ * hard-blocked before the approval prompt is triggered.
+ *
+ * Custom handlers should use priority values between 0–99 to run after both
+ * built-ins, or values > 200 to run before them.
+ */
+export const HOOK_PRIORITY = {
+  /** Permission check (agentPermissions.ts) — always runs first. */
+  PERMISSION: 200,
+  /** Approval gate (agentApproval.ts) — runs after permission. */
+  APPROVAL: 100,
+  /** Default for custom hooks — runs after all built-ins. */
+  DEFAULT: 0,
+} as const;
+
 export class ToolCallHookRegistry {
-  private readonly entries: Array<{ handler: ToolCallHandler; priority: number }> = [];
+  private readonly entries: Array<{
+    handler: ToolCallHandler;
+    priority: number;
+    /** If true, exceptions from this handler are re-thrown (fail-closed). */
+    critical: boolean;
+  }> = [];
 
   /**
    * Register a handler. Higher priority runs first.
    * Registration order is preserved within the same priority.
+   *
+   * @param opts.priority  Execution order — higher runs first. Default: 0.
+   * @param opts.critical  If true, unhandled exceptions from this handler are
+   *   re-thrown rather than swallowed. Use for security-critical handlers that
+   *   cannot tolerate fail-open behavior. Built-in hooks (approval, permission)
+   *   manage their own error handling internally and do NOT need this flag.
    */
-  register(handler: ToolCallHandler, opts?: { priority?: number }): void {
+  register(handler: ToolCallHandler, opts?: { priority?: number; critical?: boolean }): void {
     const priority = opts?.priority ?? 0;
-    this.entries.push({ handler, priority });
+    const critical = opts?.critical ?? false;
+    this.entries.push({ handler, priority, critical });
     this.entries.sort((a, b) => b.priority - a.priority);
   }
 
   /**
    * Run all registered handlers in priority order.
    * Returns the aggregate decision: allowed/blocked and (optionally) rewritten params.
+   *
+   * Exception policy:
+   *   - Non-critical handlers: exceptions are swallowed and the chain continues.
+   *     Use this default for logging, analytics, and non-blocking hooks.
+   *   - Critical handlers: exceptions are re-thrown and propagate to the caller
+   *     (harness.ts), which treats unhandled errors as fail-closed blocks.
+   *   - Built-in security hooks (approval, permission): catch their own errors
+   *     and return `{ block: true }` explicitly — they do not rely on the
+   *     critical flag for their fail-closed behavior.
    */
   async run(ctx: ToolCallHookContext): Promise<ToolCallRunResult> {
     let rewrittenParams = ctx.params;
 
-    for (const { handler } of this.entries) {
+    for (const { handler, critical } of this.entries) {
       let result: ToolCallHookResult | undefined;
       try {
         result = await handler({ ...ctx, params: rewrittenParams });
       } catch (err) {
-        // Buggy handlers must not crash the agent turn — log and skip.
+        if (critical) {
+          // Re-throw: caller (harness.ts) treats unhandled exceptions as fail-closed.
+          throw err;
+        }
+        // Non-critical: log and continue to next handler.
         console.error("[ToolCallHooks] handler threw:", err);
         continue;
       }
-
-      // Handler-level exceptions above are swallowed and treated as pass-through
-      // (fail-open per-handler). This is intentional: non-critical hooks (logging,
-      // analytics) should not crash agent runs. Security-critical hooks (approval,
-      // permission) must never rely on exception-based blocking — they catch their
-      // own errors and return { block: true } explicitly so they remain fail-closed.
       if (!result) continue;
 
       // Terminal: block
@@ -159,10 +200,19 @@ async function runApprovalFlow(
   const { requestApproval, awaitApproval } = await import("./agentApproval");
   const { logAgentEvent } = await import("./agentLogger");
 
+  // userId is required for the approval DB gate; return false (deny) if absent.
+  if (!ctx.userId) {
+    console.warn(`[ToolCallHooks] requireApproval: no userId in context for tool=${ctx.toolName} — denying`);
+    approval.onResolution?.("deny");
+    return false;
+  }
+  const userId = ctx.userId;
+  const agentName = ctx.agentName ?? ctx.agentId;
+
   try {
     const gate = await requestApproval({
       agentId: ctx.agentId,
-      userId: ctx.userId,
+      userId,
       toolName: ctx.toolName,
       toolArgs: ctx.params,
       description: approval.description,
@@ -175,7 +225,7 @@ async function runApprovalFlow(
       logAgentEvent({
         event: "tool_approved",
         agentId: ctx.agentId,
-        userId: ctx.userId,
+        userId,
         toolName: ctx.toolName,
         detail: `gate=${gate.id} auto-approved`,
       });
@@ -187,8 +237,8 @@ async function runApprovalFlow(
     try {
       const { inAppChannel } = await import("../channels/inAppChannel");
       await inAppChannel.sendMessage(
-        ctx.userId,
-        `🔐 **Approval Required**\nAgent **${ctx.agentName}** wants to run **${ctx.toolName}**.\nApprove or reject in the Agents → Approvals tab.\n\nGate ID: \`${gate.id}\``,
+        userId,
+        `🔐 **Approval Required**\nAgent **${agentName}** wants to run **${ctx.toolName}**.\nApprove or reject in the Agents → Approvals tab.\n\nGate ID: \`${gate.id}\``,
         { notificationType: "approval_request" },
       );
     } catch {
@@ -198,7 +248,7 @@ async function runApprovalFlow(
     logAgentEvent({
       event: "tool_blocked",
       agentId: ctx.agentId,
-      userId: ctx.userId,
+      userId,
       toolName: ctx.toolName,
       detail: `gate=${gate.id} awaiting user approval`,
     });
