@@ -572,11 +572,24 @@ async function checkWhatsApp(userId: string): Promise<CheckResult> {
 
 // ── Write result to DB ────────────────────────────────────────────────────────
 
+/**
+ * Write a check result to the integration_status table.
+ * Reads the current status from the DB BEFORE upserting and returns it so
+ * callers can detect non-broken→broken transitions without an extra query.
+ */
 async function writeStatus(
   userId: string,
   integration: IntegrationName,
   result: CheckResult,
-): Promise<void> {
+): Promise<IntegrationStatusValue | null> {
+  interface StatusRow { status: string }
+  const raw = await db.execute(sql`
+    SELECT status FROM integration_status
+    WHERE user_id = ${userId} AND integration = ${integration}
+  `);
+  const rows = (raw as SqlQueryResult<StatusRow>).rows ?? (Array.isArray(raw) ? (raw as StatusRow[]) : []);
+  const previousStatus: IntegrationStatusValue | null = (rows[0]?.status as IntegrationStatusValue) ?? null;
+
   await db.execute(sql`
     INSERT INTO integration_status (user_id, integration, status, last_checked_at, error_message, expires_at)
     VALUES (
@@ -593,6 +606,8 @@ async function writeStatus(
       error_message   = EXCLUDED.error_message,
       expires_at      = EXCLUDED.expires_at
   `);
+
+  return previousStatus;
 }
 
 // ── Automatic debug session trigger ───────────────────────────────────────────
@@ -719,6 +734,10 @@ export async function validateUserIntegrations(userId: string): Promise<void> {
         if (result.status !== "broken") {
           // Success or unconfigured — reset failure streak and write status as-is.
           consecutiveFailures.delete(failureKey);
+          // Clear the rate-limit entry on recovery so that a future re-break
+          // (after reconnecting) will generate a fresh notification.
+          const rateKeyRecovery = `${integration}:${userId}`;
+          lastDebugTriggerAt.delete(rateKeyRecovery);
           await writeStatus(userId, integration, result);
           return;
         }
@@ -737,7 +756,12 @@ export async function validateUserIntegrations(userId: string): Promise<void> {
         }
 
         // Two or more consecutive failures — escalate to "broken".
-        await writeStatus(userId, integration, result);
+        // Read the previous DB status (returned by writeStatus) to detect whether
+        // this is a new disconnection event (transition to broken) or the integration
+        // has been broken across multiple cycles (user was already told).
+        const previousStatus = await writeStatus(userId, integration, result);
+        const wasAlreadyBroken = previousStatus === "broken";
+
         diagEmit({
           userId,
           subsystem: "integration",
@@ -755,10 +779,15 @@ export async function validateUserIntegrations(userId: string): Promise<void> {
           userId,
         });
 
-        // Trigger notification (rate-limited to 1 per capability per hour)
+        // Fire notification only on transition (non-broken → broken) AND within
+        // the 24-hour secondary rate-limit.  The transition guard is the primary
+        // defence; the rate-limit is the secondary defence against edge cases
+        // (e.g. the warmup only covers broken, not degraded, so a post-restart
+        // degraded→broken transition is blocked by the 24h cooldown that was
+        // set by warmupRateLimitCache at startup).
         const rateKey = `${integration}:${userId}`;
         const last = lastDebugTriggerAt.get(rateKey) ?? 0;
-        if (Date.now() - last > DEBUG_TRIGGER_COOLDOWN_MS) {
+        if (!wasAlreadyBroken && Date.now() - last > DEBUG_TRIGGER_COOLDOWN_MS) {
           lastDebugTriggerAt.set(rateKey, Date.now());
 
           const directMsg = buildDirectNotification(integration, errMsg);
@@ -778,6 +807,8 @@ export async function validateUserIntegrations(userId: string): Promise<void> {
               errorLogId: errorLogId ?? undefined,
             }).catch((e) => console.error("[IntegrationValidator] auto debug trigger failed:", e));
           }
+        } else if (wasAlreadyBroken) {
+          console.log(`[IntegrationValidator] ${integration} still broken for ${userId} — skipping repeat notification (already told)`);
         }
       } catch (err) {
         console.error(`[IntegrationValidator] ${integration} check failed for ${userId}:`, err);
@@ -793,10 +824,12 @@ export async function validateUserIntegrations(userId: string): Promise<void> {
           return;
         }
 
-        await writeStatus(userId, integration, {
+        const crashPreviousStatus = await writeStatus(userId, integration, {
           status: "broken",
           errorMessage: errMsg,
-        }).catch(() => {});
+        }).catch(() => null);
+        const crashWasAlreadyBroken = crashPreviousStatus === "broken";
+
         diagEmit({
           userId,
           subsystem: "integration",
@@ -815,12 +848,11 @@ export async function validateUserIntegrations(userId: string): Promise<void> {
           userId,
         });
 
-        // Trigger alert (rate-limited to 1 per capability per hour — same gate as
-        // the normal broken path).  Crashed validators produce opaque error messages
-        // that don't match any known pattern, so we always use the auto-debug path.
+        // Trigger alert only on transition (non-broken → broken) AND within the
+        // 24-hour secondary rate-limit, mirroring the normal broken path.
         const rateKey = `${integration}:${userId}`;
         const last = lastDebugTriggerAt.get(rateKey) ?? 0;
-        if (Date.now() - last > DEBUG_TRIGGER_COOLDOWN_MS) {
+        if (!crashWasAlreadyBroken && Date.now() - last > DEBUG_TRIGGER_COOLDOWN_MS) {
           lastDebugTriggerAt.set(rateKey, Date.now());
           triggerAutoDebugSession({
             userId,
@@ -828,6 +860,8 @@ export async function validateUserIntegrations(userId: string): Promise<void> {
             errorMessage: errMsg,
             source: `integrationValidator/${integration}`,
           }).catch((e) => console.error("[IntegrationValidator] auto debug trigger failed:", e));
+        } else if (crashWasAlreadyBroken) {
+          console.log(`[IntegrationValidator] ${integration} crash still broken for ${userId} — skipping repeat alert`);
         }
       }
     }),
@@ -941,7 +975,7 @@ async function warmupRateLimitCache(): Promise<void> {
     const raw = await db.execute(sql`
       SELECT user_id, integration
       FROM integration_status
-      WHERE status IN ('broken', 'degraded')
+      WHERE status = 'broken'
     `);
     const rows: BrokenRow[] = (raw as BrokenResult).rows ?? (Array.isArray(raw) ? (raw as BrokenRow[]) : []);
     const now = Date.now();
@@ -950,7 +984,7 @@ async function warmupRateLimitCache(): Promise<void> {
       lastDebugTriggerAt.set(key, now);
     }
     if (rows.length > 0) {
-      console.log(`[IntegrationValidator] warmed rate-limit cache: ${rows.length} broken/degraded integration(s) will not re-alert until cooldown expires`);
+      console.log(`[IntegrationValidator] warmed rate-limit cache: ${rows.length} already-broken integration(s) — cooldown active, no repeat alert until ${new Date(now + DEBUG_TRIGGER_COOLDOWN_MS).toISOString()}`);
     }
   } catch (err) {
     // Non-fatal: if the DB is unavailable at startup, the cache starts cold.
@@ -1029,6 +1063,12 @@ export { checkSystemCredential as _checkSystemCredentialForTest };
  * Injectable-dependency shape for _applyCircuitBreakerForTest.
  * Tests supply minimal stubs for writeStatus, notifyUser, and the two alert
  * paths so that no real DB or notification calls are made.
+ *
+ * previousStatus: simulates what writeStatus reads from the DB before upserting.
+ *   - null  → no prior record (fresh integration, first ever break)
+ *   - "healthy" / "degraded" / etc. → was good before this cycle
+ *   - "broken" → integration was ALREADY broken; transition guard blocks notification
+ * Defaults to null when not provided (simulates a fresh integration).
  */
 export interface _CircuitBreakerDeps {
   writeStatus: (
@@ -1040,6 +1080,8 @@ export interface _CircuitBreakerDeps {
   diagEmit: (opts: object) => Promise<void>;
   logSystemError: (opts: object) => Promise<string | null>;
   triggerAutoDebugSession: (opts: AutoDebugOptions) => Promise<void>;
+  /** What was in the DB before writing the "broken" status. Defaults to null. */
+  previousStatus?: IntegrationStatusValue | null;
 }
 
 /**
@@ -1058,6 +1100,8 @@ export async function _applyCircuitBreakerForTest(
 
   if (checkResult.status !== "broken") {
     consecutiveFailures.delete(failureKey);
+    // Mirror production: clear rate-limit on recovery so a future re-break notifies.
+    lastDebugTriggerAt.delete(`${integration}:${userId}`);
     await deps.writeStatus(userId, integration, checkResult);
     return;
   }
@@ -1088,9 +1132,14 @@ export async function _applyCircuitBreakerForTest(
     userId,
   });
 
+  // Transition guard: only notify if the integration was not already broken.
+  // In production this comes from writeStatus()'s return value; in the test
+  // helper it is injected via deps.previousStatus (defaults to null = fresh).
+  const wasAlreadyBroken = (deps.previousStatus ?? null) === "broken";
+
   const rateKey = `${integration}:${userId}`;
   const last = lastDebugTriggerAt.get(rateKey) ?? 0;
-  if (Date.now() - last > DEBUG_TRIGGER_COOLDOWN_MS) {
+  if (!wasAlreadyBroken && Date.now() - last > DEBUG_TRIGGER_COOLDOWN_MS) {
     lastDebugTriggerAt.set(rateKey, Date.now());
 
     const directMsg = buildDirectNotification(integration, errMsg);
@@ -1163,9 +1212,12 @@ export async function _applyCircuitBreakerCrashForTest(
     userId,
   });
 
+  // Transition guard — same logic as the normal broken path.
+  const crashWasAlreadyBroken = (deps.previousStatus ?? null) === "broken";
+
   const rateKey = `${integration}:${userId}`;
   const last = lastDebugTriggerAt.get(rateKey) ?? 0;
-  if (Date.now() - last > DEBUG_TRIGGER_COOLDOWN_MS) {
+  if (!crashWasAlreadyBroken && Date.now() - last > DEBUG_TRIGGER_COOLDOWN_MS) {
     lastDebugTriggerAt.set(rateKey, Date.now());
     await deps.triggerAutoDebugSession({
       userId,
