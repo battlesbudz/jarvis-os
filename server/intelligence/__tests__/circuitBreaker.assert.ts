@@ -49,7 +49,7 @@ interface StubRecord {
   triggerAutoDebugCalls: number;
 }
 
-function makeStubs(): { deps: _CircuitBreakerDeps; record: StubRecord } {
+function makeStubs(overrides?: Partial<_CircuitBreakerDeps>): { deps: _CircuitBreakerDeps; record: StubRecord } {
   const record: StubRecord = {
     writeStatusCalls: [],
     notifyUserCalls: [],
@@ -59,6 +59,7 @@ function makeStubs(): { deps: _CircuitBreakerDeps; record: StubRecord } {
   };
 
   const deps: _CircuitBreakerDeps = {
+    previousStatus: null, // default: no prior record — simulates fresh integration
     writeStatus: async (userId, integration, result) => {
       record.writeStatusCalls.push({ userId, integration, status: result.status, errorMessage: result.errorMessage });
     },
@@ -75,6 +76,7 @@ function makeStubs(): { deps: _CircuitBreakerDeps; record: StubRecord } {
     triggerAutoDebugSession: async () => {
       record.triggerAutoDebugCalls += 1;
     },
+    ...overrides,
   };
 
   return { deps, record };
@@ -442,6 +444,63 @@ const TEST_INTEGRATION = "google" as const;
     console.log(
       "✓ I3: cooldown gate applies on crash path — repeated crash within 1 h fires only one auto-debug",
     );
+  }
+
+  // ── Test K: Transition guard — broken → broken produces NO notification ───────
+  // previousStatus = "broken" means the integration was already broken in the DB
+  // before this cycle (e.g. persisted from a previous cycle before a restart).
+  // Even though the circuit-breaker escalates again to "broken", the transition
+  // guard must block the notification because the user was already told.
+  {
+    _resetConsecutiveFailuresForTest();
+    _resetLastDebugTriggerAtForTest();
+    // Inject previousStatus = "broken" to simulate the DB having "broken" already
+    const { deps, record } = makeStubs({ previousStatus: "broken" });
+
+    // Cycle 1: streak=1 → degraded (no notification regardless)
+    await _applyCircuitBreakerForTest(TEST_USER, TEST_INTEGRATION, BROKEN_RESULT_NOTIFY, deps);
+    // Cycle 2: streak=2 → broken, but previousStatus = "broken" → transition guard blocks
+    await _applyCircuitBreakerForTest(TEST_USER, TEST_INTEGRATION, BROKEN_RESULT_NOTIFY, deps);
+
+    const statuses = record.writeStatusCalls.map((c) => c.status);
+    assert.ok(statuses.includes("broken"), "K: 'broken' status written to DB");
+    assert.equal(
+      record.notifyUserCalls.length,
+      0,
+      "K: NO notification fired — integration was already broken (broken→broken transition blocked)",
+    );
+    assert.equal(
+      record.triggerAutoDebugCalls,
+      0,
+      "K: NO auto-debug session triggered — broken→broken transition blocked",
+    );
+    console.log("✓ K: broken→broken transition — no notification (user was already told)");
+  }
+
+  // ── Test L: Transition guard — degraded → broken DOES fire notification ──────
+  // previousStatus = "degraded" means the integration failed once before but had
+  // NOT yet been confirmed broken.  Escalating to "broken" IS a new event —
+  // the user should be notified.
+  {
+    _resetConsecutiveFailuresForTest();
+    _resetLastDebugTriggerAtForTest();
+    // Inject previousStatus = "degraded" (was in a partial-failure state)
+    const { deps, record } = makeStubs({ previousStatus: "degraded" });
+
+    // Cycle 1: streak=1 → degraded (no notification regardless)
+    await _applyCircuitBreakerForTest(TEST_USER, TEST_INTEGRATION, BROKEN_RESULT_NOTIFY, deps);
+    // Cycle 2: streak=2 → broken; previousStatus = "degraded" (not "broken") → notify
+    await _applyCircuitBreakerForTest(TEST_USER, TEST_INTEGRATION, BROKEN_RESULT_NOTIFY, deps);
+
+    const statuses = record.writeStatusCalls.map((c) => c.status);
+    assert.ok(statuses.includes("broken"), "L: 'broken' status written to DB");
+    assert.equal(
+      record.notifyUserCalls.length,
+      1,
+      "L: notification fires — degraded→broken IS a new disconnect event",
+    );
+    assert.equal(record.notifyUserCalls[0].userId, TEST_USER, "L: notification addressed to correct user");
+    console.log("✓ L: degraded→broken transition — notification fires (this is a new disconnect event)");
   }
 
   // ── Test J: Warmup simulation — pre-populated rate-limit blocks re-alert ─────
