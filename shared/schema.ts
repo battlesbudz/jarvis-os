@@ -1401,6 +1401,15 @@ export const writeBudgetLog = pgTable("write_budget_log", {
   writtenAt: timestamp("written_at").defaultNow().notNull(),
 });
 
+// Single-row state table that tracks when the last write-budget warning was
+// sent.  The UPDATE-based claim in safeWritePolicy.ts takes a Postgres
+// row-level lock, ensuring at most one warning fires per 60-minute window
+// even under concurrent writes.  The row (id=1) is seeded at startup.
+export const writeBudgetWarnings = pgTable("write_budget_warnings", {
+  id: integer("id").primaryKey().default(1),
+  warnedAt: timestamp("warned_at").notNull().default(sql`'1970-01-01'`),
+});
+
 // Chat integration tables — used by server/replit_integrations/chat
 export const conversations = pgTable("conversations", {
   id: serial("id").primaryKey(),
