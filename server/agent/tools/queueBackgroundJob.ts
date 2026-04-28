@@ -1,10 +1,7 @@
 import type { AgentTool } from "../types";
 import { submitAgentJob, type AgentJobType, getModelForJobType } from "../jobQueue";
 import { SUB_AGENT_TYPES, type SubAgentType } from "../subagents";
-import { db } from "../../db";
-import { eq, and, gte, inArray } from "drizzle-orm";
-import * as schema from "@shared/schema";
-import { normalizeTitle, titlesAreSimilar } from "./jobDuplicateGuard";
+import { findDuplicateJob } from "./jobDuplicateGuard";
 
 interface QueueJobArgs {
   agent_type?: string;
@@ -77,39 +74,20 @@ Do NOT use for: quick one-sentence answers, reading today's tasks, anything answ
     const title = String(a.title || "").trim() || deriveTitle(agentType, prompt);
 
     // ── Duplicate-job guard ─────────────────────────────────────────────────
-    // Before queuing, check whether an active job with the same agent_type and
-    // a similar title was recently created for this user. If so, skip the
-    // duplicate to avoid flooding the user with multiple notifications.
     try {
-      const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
-      const activeJobs = await db
-        .select({ id: schema.agentJobs.id, title: schema.agentJobs.title })
-        .from(schema.agentJobs)
-        .where(
-          and(
-            eq(schema.agentJobs.userId, ctx.userId),
-            eq(schema.agentJobs.agentType, agentType),
-            inArray(schema.agentJobs.status, ["queued", "running"]),
-            gte(schema.agentJobs.createdAt, tenMinutesAgo),
-          ),
+      const duplicate = await findDuplicateJob(ctx.userId, agentType, title);
+      if (duplicate) {
+        console.log(
+          `[${ctx.channel || "Coach"}] queue_background_job DUPLICATE SKIPPED type=${agentType} existing="${duplicate.title}" new="${title}"`,
         );
-
-      if (activeJobs.length > 0) {
-        const normalizedNew = normalizeTitle(title);
-        const duplicate = activeJobs.find((j) => titlesAreSimilar(normalizeTitle(j.title), normalizedNew));
-        if (duplicate) {
-          console.log(
-            `[${ctx.channel || "Coach"}] queue_background_job DUPLICATE SKIPPED type=${agentType} existing="${duplicate.title}" new="${title}"`,
-          );
-          return {
-            // Return ok:true so the coach treats this as a successful no-op
-            // rather than a tool failure that might trigger retry behaviour.
-            ok: true,
-            content: `A ${agentType} job for this topic is already running (id=${duplicate.id}, title="${duplicate.title}") — skipped creating a duplicate. The user will be notified when the existing job completes.`,
-            label: `Duplicate ${agentType} job skipped`,
-            detail: duplicate.id,
-          };
-        }
+        return {
+          // Return ok:true so the coach treats this as a successful no-op
+          // rather than a tool failure that might trigger retry behaviour.
+          ok: true,
+          content: `A ${agentType} job for this topic is already running (id=${duplicate.id}, title="${duplicate.title}") — skipped creating a duplicate. The user will be notified when the existing job completes.`,
+          label: `Duplicate ${agentType} job skipped`,
+          detail: duplicate.id,
+        };
       }
     } catch (dupErr) {
       // Non-fatal: if the guard query fails, proceed with queueing normally.

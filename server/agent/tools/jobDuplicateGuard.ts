@@ -1,3 +1,7 @@
+import { db } from "../../db";
+import { eq, and, gte, inArray } from "drizzle-orm";
+import * as schema from "@shared/schema";
+
 /** Lowercase, strip punctuation, collapse whitespace for comparison. */
 export function normalizeTitle(title: string): string {
   return title
@@ -30,4 +34,37 @@ export function titlesAreSimilar(a: string, b: string): boolean {
   }
   const similarity = overlap / Math.max(wordsA.size, wordsB.size);
   return similarity >= 0.6;
+}
+
+/**
+ * Query the DB for an active (queued or running) job belonging to `userId`
+ * with the same `agentType` and a title similar to `title`, created within
+ * the last `windowMs` milliseconds (default 10 minutes).
+ *
+ * Returns the matching job `{ id, title }` if a duplicate exists, or `null`.
+ * Throws on DB error — callers should catch and treat as non-fatal.
+ */
+export async function findDuplicateJob(
+  userId: string,
+  agentType: string,
+  title: string,
+  windowMs = 10 * 60 * 1000,
+): Promise<{ id: string; title: string } | null> {
+  const since = new Date(Date.now() - windowMs);
+  const activeJobs = await db
+    .select({ id: schema.agentJobs.id, title: schema.agentJobs.title })
+    .from(schema.agentJobs)
+    .where(
+      and(
+        eq(schema.agentJobs.userId, userId),
+        eq(schema.agentJobs.agentType, agentType),
+        inArray(schema.agentJobs.status, ["queued", "running"]),
+        gte(schema.agentJobs.createdAt, since),
+      ),
+    );
+
+  if (activeJobs.length === 0) return null;
+
+  const normalizedNew = normalizeTitle(title);
+  return activeJobs.find((j) => titlesAreSimilar(normalizeTitle(j.title), normalizedNew)) ?? null;
 }
