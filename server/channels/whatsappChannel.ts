@@ -52,7 +52,7 @@ async function lookupAddress(userId: string): Promise<string | null> {
 export const whatsappChannel: Channel = {
   name: "whatsapp",
   // Lightweight coaching — tasks, calendar reminders, quick memory lookups.
-  toolGroups: ["coaching", "calendar", "memory", "connections"],
+  toolGroups: ["coaching", "calendar", "memory", "connections", "scheduling"],
   isConfigured: () => isTwilioConfigured(),
   isLinkedFor: async (userId) => !!(await lookupAddress(userId)),
   async sendMessage(userId, text, opts: ChannelSendOpts = {}) {

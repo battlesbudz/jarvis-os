@@ -77,7 +77,7 @@ export async function getSlackBotToken(userId: string): Promise<string | null> {
 export const slackChannel: Channel = {
   name: "slack",
   // Coaching + comms — task/calendar/email management over Slack DM.
-  toolGroups: ["coaching", "calendar", "email", "memory", "connections"],
+  toolGroups: ["coaching", "calendar", "email", "memory", "connections", "scheduling"],
   // "Configured" if any user has a slack OAuth — we check on demand per user.
   isConfigured: () => true,
   async isLinkedFor(userId) {

@@ -8,14 +8,14 @@ import { getSession as _getCoachSession, setSession as _setCoachSession } from "
 
 interface PairMsg { type: "pair"; code: string; hostname?: string; platform?: string }
 interface ReconnectMsg { type: "reconnect"; daemonId: string; reconnectSecret: string; hostname?: string; platform?: string }
-interface ResultMsg { type: "result"; id: string; ok: boolean; data?: unknown; error?: string }
+interface ResultMsg { type: "result"; id: string; ok: boolean; data?: unknown; error?: string; [key: string]: unknown }
 interface HelloMsg { type: "hello"; ok: boolean; userId?: string; error?: string }
 interface PingMsg { type: "ping" }
 interface NotificationEventMsg { type: "notification_event"; notification: PhoneNotification }
 
 export type DaemonOp =
   | { type: "ping" }
-  | { type: "shell"; cmd: string; cwd?: string; timeoutMs?: number }
+  | { type: "shell"; cmd: string; cwd?: string; timeoutMs?: number; allowOutsideRoot?: boolean }
   | { type: "notify"; title: string; body: string }
   | { type: "file_read"; path: string }
   | { type: "file_write"; path: string; content: string }
@@ -224,7 +224,7 @@ export function closeUserDaemon(userId: string, platform?: string): boolean {
 // Stored in channel_links.metadata.permissions for the user's daemon row.
 // Defaults: notify/file_read/file_list/desktop_screenshot/desktop_read_screen ON,
 //           shell/file_write OFF.
-export type DaemonAction = "shell" | "notify" | "file_read" | "file_write" | "file_list" | "desktop_screenshot" | "desktop_read_screen" | "browser_local";
+export type DaemonAction = "shell" | "notify" | "file_read" | "file_write" | "file_list" | "desktop_screenshot" | "desktop_read_screen" | "browser_local" | "allow_outside_root";
 export type DaemonPermissions = Record<DaemonAction, boolean>;
 
 export const DEFAULT_DAEMON_PERMISSIONS: DaemonPermissions = {
@@ -236,6 +236,7 @@ export const DEFAULT_DAEMON_PERMISSIONS: DaemonPermissions = {
   desktop_screenshot: true,
   desktop_read_screen: true,
   browser_local: false,
+  allow_outside_root: false,
 };
 
 // ───── Per-action permission model (Android) ────────────────────────────
@@ -300,6 +301,20 @@ export async function getDaemonDeviceMeta(userId: string, platform?: string): Pr
     };
   } catch {
     return { hostname: null, platform: null };
+  }
+}
+
+/**
+ * Return the ISO string of the last time the daemon for this userId+platform
+ * was seen (from channel_links.lastSeenAt), or null if no row exists.
+ */
+export async function getDaemonLastSeen(userId: string, platform: string): Promise<string | null> {
+  try {
+    const row = await findUserDaemonRow(userId, platform);
+    if (!row?.lastSeenAt) return null;
+    return new Date(row.lastSeenAt).toISOString();
+  } catch {
+    return null;
   }
 }
 
@@ -781,7 +796,11 @@ export function startDaemonBridge(server: HttpServer): void {
         if (pending) {
           clearTimeout(pending.timer);
           userMap!.delete(m.id);
-          pending.resolve({ ok: m.ok, data: m.data, error: m.error });
+          // Daemon spreads result fields at the top level (stdout, stderr, content, etc.).
+          // If `data` is absent, collect those extra fields so callers can access them.
+          const { type: _t, id: _i, ok, data, error, ...rest } = m as ResultMsg;
+          const resolvedData = data !== undefined ? data : (Object.keys(rest).length > 0 ? rest : undefined);
+          pending.resolve({ ok, data: resolvedData, error });
         }
         // Update last_seen
         db.update(channelLinks)
