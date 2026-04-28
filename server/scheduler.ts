@@ -264,7 +264,7 @@ export function startScheduler() {
         lastSynthesisRunKey = key;
         import('./intelligence/learningSynthesiser').then(({ synthesiseLearnings }) => {
           console.log('[Scheduler] Running weekly learning synthesis...');
-          synthesiseLearnings(true).then((result) => {
+          synthesiseLearnings(true, 'scheduler').then((result) => {
             if (result.skipped) {
               console.log(`[Scheduler] Weekly synthesis skipped: ${result.skipReason}`);
               console.log(`[Audit] workspace_synthesise triggered=weekly skipped=true reason="${result.skipReason}"`);

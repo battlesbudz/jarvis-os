@@ -4503,6 +4503,30 @@ Return ONLY the JSON object.`;
     }
   });
 
+  // GET /api/workspace/synthesise-history — last 5 synthesis runs (owner only)
+  app.get("/api/workspace/synthesise-history", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+
+      const { isIntegrationOwner } = await import("./integrationOwner");
+      if (!await isIntegrationOwner(userId)) {
+        return res.status(403).json({ error: "Owner access required" });
+      }
+
+      const rows = await db
+        .select()
+        .from(schema.learningSynthesisLog)
+        .orderBy(desc(schema.learningSynthesisLog.createdAt))
+        .limit(5);
+
+      res.json({ runs: rows });
+    } catch (error) {
+      console.error("[Workspace] synthesise-history error:", error);
+      res.status(500).json({ error: "Failed to fetch synthesis history" });
+    }
+  });
+
   app.get("/api/workspace/:file", async (req: Request, res: Response) => {
     try {
       const userId = req.userId;

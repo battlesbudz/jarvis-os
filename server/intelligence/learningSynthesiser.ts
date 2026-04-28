@@ -9,10 +9,14 @@
  *   2. Automatically — Sunday 04:30 via the scheduler
  *
  * Results are appended to MEMORY.md and logged to the console audit trail.
+ * Each run is persisted to the `learning_synthesis_log` DB table so users
+ * can review their synthesis history in the app.
  */
 
 import OpenAI from "openai";
 import { readWorkspaceFile, writeWorkspaceFile } from "../workspace/loader";
+import { db } from "../db";
+import { learningSynthesisLog } from "@shared/schema";
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
@@ -33,9 +37,11 @@ export interface SynthesisResult {
  *
  * @param applyToMemory  If true, appends distilled bullets to MEMORY.md.
  *                       If false, returns them without writing (dry-run / preview).
+ * @param triggeredBy    'manual' (default) or 'scheduler'
  */
 export async function synthesiseLearnings(
   applyToMemory = true,
+  triggeredBy: "manual" | "scheduler" = "manual",
 ): Promise<SynthesisResult> {
   const [corrections, errors] = await Promise.all([
     readWorkspaceFile("corrections"),
@@ -47,7 +53,7 @@ export async function synthesiseLearnings(
 
   if (correctionLines === 0 && errorLines === 0) {
     console.log("[LearningSynthesiser] No learnings content to synthesise — skipping");
-    return {
+    const result: SynthesisResult = {
       bullets: [],
       appendedToMemory: false,
       correctionLines: 0,
@@ -55,6 +61,8 @@ export async function synthesiseLearnings(
       skipped: true,
       skipReason: "CORRECTIONS.md and ERRORS.md are empty — nothing to synthesise yet.",
     };
+    await logSynthesisRun(result, triggeredBy);
+    return result;
   }
 
   const prompt = `You are an AI assistant helping the Jarvis personal AI to improve itself over time.
@@ -100,7 +108,7 @@ Instructions:
 
   if (bullets.length === 0) {
     console.warn("[LearningSynthesiser] LLM returned no usable bullets");
-    return {
+    const result: SynthesisResult = {
       bullets: [],
       appendedToMemory: false,
       correctionLines,
@@ -108,6 +116,8 @@ Instructions:
       skipped: true,
       skipReason: "LLM did not return any usable bullet points.",
     };
+    await logSynthesisRun(result, triggeredBy);
+    return result;
   }
 
   let appendedToMemory = false;
@@ -125,5 +135,24 @@ Instructions:
     `[LearningSynthesiser] Synthesis complete — ${bullets.length} bullets, correctionLines=${correctionLines}, errorLines=${errorLines}, applied=${appendedToMemory}`,
   );
 
-  return { bullets, appendedToMemory, correctionLines, errorLines, skipped: false };
+  const result: SynthesisResult = { bullets, appendedToMemory, correctionLines, errorLines, skipped: false };
+  await logSynthesisRun(result, triggeredBy);
+  return result;
+}
+
+async function logSynthesisRun(
+  result: SynthesisResult,
+  triggeredBy: "manual" | "scheduler",
+): Promise<void> {
+  try {
+    await db.insert(learningSynthesisLog).values({
+      bulletCount: result.bullets.length,
+      bullets: result.bullets as unknown as typeof learningSynthesisLog.$inferInsert["bullets"],
+      triggeredBy,
+      skipped: result.skipped,
+      skipReason: result.skipReason ?? null,
+    });
+  } catch (err) {
+    console.error("[LearningSynthesiser] Failed to write synthesis log to DB:", err);
+  }
 }

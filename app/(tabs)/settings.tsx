@@ -551,6 +551,26 @@ export default function SettingsScreen() {
   const [workspaceLoading, setWorkspaceLoading] = useState(false);
   const [workspaceIsOwner, setWorkspaceIsOwner] = useState(false);
   const [synthesising, setSynthesising] = useState(false);
+  const [synthesisHistory, setSynthesisHistory] = useState<Array<{
+    id: number;
+    createdAt: string;
+    bulletCount: number;
+    bullets: string[];
+    triggeredBy: string;
+    skipped: boolean;
+    skipReason?: string | null;
+  }>>([]);
+  const [historyExpanded, setHistoryExpanded] = useState(false);
+
+  const loadSynthesisHistory = useCallback(async () => {
+    try {
+      const res = await apiRequest('GET', '/api/workspace/synthesise-history');
+      if (res.ok) {
+        const data = await res.json() as { runs: typeof synthesisHistory };
+        setSynthesisHistory(data.runs ?? []);
+      }
+    } catch {}
+  }, []);
 
   const loadWorkspaceFiles = useCallback(async () => {
     setWorkspaceLoading(true);
@@ -567,10 +587,11 @@ export default function SettingsScreen() {
         if (soulRes.ok) { const d = await soulRes.json(); setWorkspaceSoul(d.content ?? ''); }
         if (agentsRes.ok) { const d = await agentsRes.json(); setWorkspaceAgents(d.content ?? ''); }
         if (memoryRes.ok) { const d = await memoryRes.json(); setWorkspaceMemory(d.content ?? ''); }
+        loadSynthesisHistory();
       }
     } catch {}
     setWorkspaceLoading(false);
-  }, []);
+  }, [loadSynthesisHistory]);
 
   const saveWorkspaceFile = useCallback(async (key: string, content: string) => {
     setWorkspaceSaving(prev => ({ ...prev, [key]: true }));
@@ -609,12 +630,13 @@ export default function SettingsScreen() {
           [{ text: 'View MEMORY.md', onPress: () => { setWorkspaceExpanded(prev => ({ ...prev, memory: true })); loadWorkspaceFiles(); } }, { text: 'Done', style: 'cancel' }],
         );
       }
+      loadSynthesisHistory();
     } catch {
       Alert.alert('Error', 'Failed to synthesise learnings.');
     } finally {
       setSynthesising(false);
     }
-  }, [loadWorkspaceFiles]);
+  }, [loadWorkspaceFiles, loadSynthesisHistory]);
 
   const loadHealth = useCallback(async () => {
     setHealthLoading(true);
@@ -3147,6 +3169,75 @@ export default function SettingsScreen() {
                   </Text>
                 </Pressable>
               </View>
+              {synthesisHistory.length > 0 && (
+                <View style={{ borderTopWidth: 1, borderTopColor: Colors.border }}>
+                  <Pressable
+                    style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 10, gap: 8 }}
+                    onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setHistoryExpanded(prev => !prev); }}
+                  >
+                    <Ionicons name="time-outline" size={14} color={Colors.textTertiary} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 12, fontFamily: 'Inter_500Medium', color: Colors.textSecondary }}>
+                        Last synthesised{' '}
+                        {(() => {
+                          const latest = synthesisHistory[0];
+                          if (!latest) return '';
+                          const d = new Date(latest.createdAt);
+                          return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+                        })()}
+                      </Text>
+                      {synthesisHistory[0] && !synthesisHistory[0].skipped && (
+                        <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: Colors.textTertiary }}>
+                          {synthesisHistory[0].bulletCount} lesson{synthesisHistory[0].bulletCount === 1 ? '' : 's'} · {synthesisHistory[0].triggeredBy}
+                        </Text>
+                      )}
+                      {synthesisHistory[0]?.skipped && (
+                        <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: Colors.textTertiary }}>
+                          Skipped — {synthesisHistory[0].skipReason ?? 'nothing to synthesise'}
+                        </Text>
+                      )}
+                    </View>
+                    <Ionicons name={historyExpanded ? 'chevron-up' : 'chevron-down'} size={13} color={Colors.textTertiary} />
+                  </Pressable>
+                  {historyExpanded && (
+                    <View style={{ paddingHorizontal: 14, paddingBottom: 12, gap: 10 }}>
+                      {synthesisHistory.map((run, idx) => {
+                        const d = new Date(run.createdAt);
+                        const label = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+                        return (
+                          <View key={run.id} style={{ gap: 4 }}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                              <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: Colors.textSecondary }}>
+                                {idx === 0 ? 'Latest — ' : ''}{label}
+                              </Text>
+                              <Text style={{ fontSize: 10, fontFamily: 'Inter_400Regular', color: Colors.textTertiary }}>
+                                · {run.triggeredBy}
+                              </Text>
+                            </View>
+                            {run.skipped ? (
+                              <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: Colors.textTertiary, fontStyle: 'italic' }}>
+                                Skipped — {run.skipReason ?? 'nothing to synthesise'}
+                              </Text>
+                            ) : (
+                              run.bullets.map((bullet, bi) => (
+                                <View key={bi} style={{ flexDirection: 'row', gap: 6, paddingLeft: 4 }}>
+                                  <Text style={{ fontSize: 11, color: '#8B5CF6', fontFamily: 'Inter_400Regular' }}>•</Text>
+                                  <Text style={{ flex: 1, fontSize: 11, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, lineHeight: 16 }}>
+                                    {bullet.replace(/^- /, '')}
+                                  </Text>
+                                </View>
+                              ))
+                            )}
+                            {idx < synthesisHistory.length - 1 && (
+                              <View style={{ height: 1, backgroundColor: Colors.border, marginTop: 4 }} />
+                            )}
+                          </View>
+                        );
+                      })}
+                    </View>
+                  )}
+                </View>
+              )}
             </>
           )}
         </View>

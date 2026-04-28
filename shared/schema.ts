@@ -1425,6 +1425,20 @@ export const messages = pgTable("messages", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+// ── Learning synthesis log — persists each synthesis run for history display ──
+export const learningSynthesisLog = pgTable("learning_synthesis_log", {
+  id: serial("id").primaryKey(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  bulletCount: integer("bullet_count").notNull().default(0),
+  bullets: jsonb("bullets").notNull().default(sql`'[]'::jsonb`),
+  triggeredBy: varchar("triggered_by", { length: 32 }).notNull().default("manual"),
+  skipped: boolean("skipped").notNull().default(false),
+  skipReason: text("skip_reason"),
+});
+
+export type LearningSynthesisLog = typeof learningSynthesisLog.$inferSelect;
+export type InsertLearningSynthesisLog = typeof learningSynthesisLog.$inferInsert;
+
 // ── Self-heal audit log — persists autonomous-write history across restarts ──
 // Each row mirrors one block from server/self-heal-audit.log.  On container
 // restart, selfHealAudit.ts restores the flat file from these rows so audit
