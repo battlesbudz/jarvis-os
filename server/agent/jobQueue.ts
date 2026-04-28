@@ -35,7 +35,7 @@ async function notifyJobComplete(
     await notifyUser(
       userId,
       "approval_request",
-      `Jarvis (${agentType}): ${title}\n\n${body}`.slice(0, 3500),
+      `Jarvis (${agentType}): ${title}\n\n${body}`,
     );
   } catch (err) {
     console.error("[JobQueue] notify failed:", err);
@@ -285,7 +285,7 @@ writing a clear inbox message explaining what is broken and what the user should
       console.log(`[JobQueue] complete general job ${job.id} turns=${result.turns}`);
 
       const generalReply = result.reply?.trim()
-        ? result.reply.slice(0, 1200)
+        ? result.reply.slice(0, 3000)
         : "Auto-debug ran but produced no summary. Please check the Proposals tab or review recent error logs for details.";
       await notifyJobComplete(job.userId, "general", job.title, generalReply);
 
