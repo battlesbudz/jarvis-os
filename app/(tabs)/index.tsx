@@ -495,6 +495,7 @@ export default function MissionControlScreen() {
   const [scheduledTasks, setScheduledTasks] = useState<ScheduledTask[]>([]);
   const [scheduledLoading, setScheduledLoading] = useState(true);
   const [expandedShellTask, setExpandedShellTask] = useState<string | null>(null);
+  const [runningShellTasks, setRunningShellTasks] = useState<Set<string>>(new Set());
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
   const [systemSchedule, setSystemSchedule] = useState<SystemTask[]>([]);
 
@@ -751,6 +752,22 @@ export default function MissionControlScreen() {
       await apiRequest('DELETE', `/api/jarvis/scheduled-tasks/${id}`);
       setScheduledTasks(prev => prev.filter(t => t.id !== id));
     } catch {}
+  }, []);
+
+  // ── Run shell task now ──
+  const handleRunShellNow = useCallback(async (id: string) => {
+    setRunningShellTasks(prev => new Set(prev).add(id));
+    try {
+      const res = await apiRequest('POST', `/api/jarvis/scheduled-tasks/${id}/run`);
+      const data = await res.json() as { ok?: boolean; result?: { exitCode: number; stdout: string; stderr: string; durationMs: number; ranAt: string }; error?: string };
+      if (data?.result) {
+        setScheduledTasks(prev => prev.map(t => t.id === id ? { ...t, lastShellResult: data.result! } : t));
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Could not run the task. Make sure your desktop daemon is connected and shell access is enabled.';
+      Alert.alert('Run failed', msg);
+    }
+    setRunningShellTasks(prev => { const next = new Set(prev); next.delete(id); return next; });
   }, []);
 
   const handleDismissInbox = useCallback(async (item: InboxItem) => {
@@ -1788,6 +1805,20 @@ export default function MissionControlScreen() {
                           )}
                         </View>
                       </Pressable>
+                      {isShell && (
+                        <Pressable
+                          onPress={() => !runningShellTasks.has(t.id) && handleRunShellNow(t.id)}
+                          style={[styles.modalItemDelete, { marginRight: 4 }]}
+                          disabled={runningShellTasks.has(t.id)}
+                          accessibilityLabel="Run now"
+                          accessibilityRole="button"
+                        >
+                          {runningShellTasks.has(t.id)
+                            ? <ActivityIndicator size="small" color={Colors.violet} />
+                            : <Ionicons name="play-outline" size={15} color={Colors.violet} />
+                          }
+                        </Pressable>
+                      )}
                       {!done && (
                         <Pressable onPress={() => handleDeleteScheduledTask(t.id)} style={styles.modalItemDelete}>
                           <Ionicons name="trash-outline" size={15} color={Colors.error} />
