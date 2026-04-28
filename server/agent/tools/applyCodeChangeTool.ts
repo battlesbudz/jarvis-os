@@ -38,11 +38,37 @@ const PROJECT_ROOT   = process.cwd();
 const AUDIT_LOG_PATH = path.join(PROJECT_ROOT, "server/self-heal-audit.log");
 const AUDIT_MAX_DIFF_LINES = 300;
 
+/** Maximum size (in bytes) the audit log may reach before it is rotated. */
+const AUDIT_LOG_MAX_BYTES = 5 * 1024 * 1024; // 5 MB
+
 // Module-level map: filePath → timestamp of the most recent audit entry written for it.
 // Allows recordVerificationResult() to emit a verification update without knowing the timestamp.
 const lastAuditTimestamp = new Map<string, string>();
 
 // ── Audit log helpers ─────────────────────────────────────────────────────────
+
+/**
+ * If the audit log file is at or above AUDIT_LOG_MAX_BYTES, rename it to
+ * `self-heal-audit.<ISO-timestamp>.log` so no history is lost, then let the
+ * caller create a fresh file by appending normally.  Errors are swallowed so
+ * that rotation failures never block the write that follows.
+ */
+async function rotateAuditLogIfNeeded(): Promise<void> {
+  try {
+    const stat = await fs.stat(AUDIT_LOG_PATH).catch(() => null);
+    if (!stat || stat.size < AUDIT_LOG_MAX_BYTES) return;
+
+    const ts = new Date().toISOString().replace(/[:.]/g, "-");
+    const rotatedPath = path.join(
+      PROJECT_ROOT,
+      `server/self-heal-audit.${ts}.log`,
+    );
+    await fs.rename(AUDIT_LOG_PATH, rotatedPath);
+    console.log(`[SelfHeal] audit log rotated → ${rotatedPath}`);
+  } catch {
+    // Non-fatal — rotation failure must not block the write
+  }
+}
 
 function computeSimpleDiff(before: string, after: string): string[] {
   const bs = before.split("\n");
@@ -88,6 +114,7 @@ async function appendAuditLog(entry: {
   ].join("\n");
 
   try {
+    await rotateAuditLogIfNeeded();
     await fs.appendFile(AUDIT_LOG_PATH, block, "utf-8");
     lastAuditTimestamp.set(entry.filePath, ts);
   } catch {
@@ -133,6 +160,7 @@ export async function recordVerificationResult(
   if (updates.length === 0) return;
   const block = updates.join("\n") + "\n";
   try {
+    await rotateAuditLogIfNeeded();
     await fs.appendFile(AUDIT_LOG_PATH, block, "utf-8");
   } catch {
     // Non-fatal
