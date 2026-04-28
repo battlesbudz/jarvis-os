@@ -10,6 +10,7 @@ import {
   Switch,
   Alert,
   TextInput,
+  Modal,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -506,6 +507,14 @@ export default function SettingsScreen() {
     message: string;
     createdAt: string;
   }
+  interface MemoryDiagEvent {
+    id: string;
+    subsystem: string;
+    severity: string;
+    message: string;
+    metadata: Record<string, unknown>;
+    createdAt: string;
+  }
   interface HealthReport {
     overallStatus: 'healthy' | 'degraded' | 'down';
     subsystems: SubsystemStatus[];
@@ -525,6 +534,9 @@ export default function SettingsScreen() {
   const [healthLoading, setHealthLoading] = useState(false);
   const [diagnosisText, setDiagnosisText] = useState<string | null>(null);
   const [diagnosisLoading, setDiagnosisLoading] = useState(false);
+  const [memoryErrorSheetVisible, setMemoryErrorSheetVisible] = useState(false);
+  const [memoryEvents, setMemoryEvents] = useState<MemoryDiagEvent[]>([]);
+  const [memoryEventsLoading, setMemoryEventsLoading] = useState(false);
 
   const loadHealth = useCallback(async () => {
     setHealthLoading(true);
@@ -567,6 +579,23 @@ export default function SettingsScreen() {
       setDiagnosisText('Failed to run diagnosis. Please try again.');
     }
     setDiagnosisLoading(false);
+  }, []);
+
+  const openMemoryErrorSheet = useCallback(async () => {
+    setMemoryErrorSheetVisible(true);
+    setMemoryEventsLoading(true);
+    try {
+      const res = await apiRequest('GET', '/api/diagnostics/memory-events');
+      if (res.ok) {
+        const data = await res.json();
+        setMemoryEvents(Array.isArray(data) ? data : []);
+      } else {
+        setMemoryEvents([]);
+      }
+    } catch {
+      setMemoryEvents([]);
+    }
+    setMemoryEventsLoading(false);
   }, []);
 
   const saveModel = useCallback(async (category: ModelCategory, model: string) => {
@@ -2684,8 +2713,8 @@ export default function SettingsScreen() {
             </View>
           )}
 
-          {/* Memory pipeline error counts — shown whenever either write or read errors are non-zero
-              so users get an at-a-glance view without needing a full AI diagnosis. */}
+          {/* Memory pipeline health banner — shown whenever write or read errors are non-zero.
+              Tapping opens the memory error detail sheet. */}
           {healthReport && (() => {
             const writeErr = healthReport.memoryWriteErrors15m ?? 0;
             const readErr = healthReport.memoryReadErrors15m ?? 0;
@@ -2697,20 +2726,32 @@ export default function SettingsScreen() {
             return (
               <View style={healthStyles.memoryBannerSection}>
                 {showWrite && (
-                  <View style={[healthStyles.memoryBanner, { borderLeftColor: '#F59E0B' }]}>
+                  <Pressable
+                    style={({ pressed }) => [healthStyles.memoryBanner, { borderLeftColor: '#F59E0B', opacity: pressed ? 0.75 : 1 }]}
+                    onPress={openMemoryErrorSheet}
+                    accessibilityRole="button"
+                    accessibilityLabel="View memory learning error details"
+                  >
                     <Ionicons name="cloud-offline-outline" size={14} color="#F59E0B" style={{ marginTop: 1 }} />
-                    <Text style={[healthStyles.memoryBannerText, { color: '#F59E0B' }]}>
-                      {`Memory learning errors — ${writeErr} in the last 15 minutes`}
+                    <Text style={[healthStyles.memoryBannerText, { color: '#F59E0B', flex: 1 }]}>
+                      {`Memory learning paused — ${writeErr} error${writeErr === 1 ? '' : 's'} in the last 15 minutes`}
                     </Text>
-                  </View>
+                    <Ionicons name="chevron-forward" size={12} color="#F59E0B" style={{ marginTop: 1, opacity: 0.7 }} />
+                  </Pressable>
                 )}
                 {showRead && (
-                  <View style={[healthStyles.memoryBanner, { borderLeftColor: Colors.error }]}>
+                  <Pressable
+                    style={({ pressed }) => [healthStyles.memoryBanner, { borderLeftColor: Colors.error, opacity: pressed ? 0.75 : 1 }]}
+                    onPress={openMemoryErrorSheet}
+                    accessibilityRole="button"
+                    accessibilityLabel="View memory recall error details"
+                  >
                     <Ionicons name="search-outline" size={14} color={Colors.error} style={{ marginTop: 1 }} />
-                    <Text style={[healthStyles.memoryBannerText, { color: Colors.error }]}>
-                      {`Memory recall errors — ${readErr} in the last 15 minutes`}
+                    <Text style={[healthStyles.memoryBannerText, { color: Colors.error, flex: 1 }]}>
+                      {`Memory recall degraded — ${readErr} error${readErr === 1 ? '' : 's'} in the last 15 minutes`}
                     </Text>
-                  </View>
+                    <Ionicons name="chevron-forward" size={12} color={Colors.error} style={{ marginTop: 1, opacity: 0.7 }} />
+                  </Pressable>
                 )}
               </View>
             );
@@ -2897,6 +2938,71 @@ export default function SettingsScreen() {
         dailyXpRequired={0}
         claimedToday={false}
       />
+
+      {/* Memory Error Detail Sheet */}
+      <Modal
+        visible={memoryErrorSheetVisible}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setMemoryErrorSheetVisible(false)}
+      >
+        <Pressable
+          style={memSheetStyles.backdrop}
+          onPress={() => setMemoryErrorSheetVisible(false)}
+        />
+        <View style={memSheetStyles.sheet}>
+          <View style={memSheetStyles.handle} />
+          <View style={memSheetStyles.header}>
+            <Ionicons name="warning-outline" size={16} color="#F59E0B" />
+            <Text style={memSheetStyles.title}>Memory Error Details</Text>
+            <Pressable onPress={() => setMemoryErrorSheetVisible(false)} hitSlop={10}>
+              <Ionicons name="close" size={20} color={Colors.textSecondary} />
+            </Pressable>
+          </View>
+          <Text style={memSheetStyles.subtitle}>Recent errors from the memory subsystem (last 60 minutes)</Text>
+          {memoryEventsLoading ? (
+            <View style={memSheetStyles.loadingRow}>
+              <ActivityIndicator size="small" color={Colors.textSecondary} />
+              <Text style={memSheetStyles.loadingText}>Loading events…</Text>
+            </View>
+          ) : memoryEvents.length === 0 ? (
+            <View style={memSheetStyles.emptyRow}>
+              <Ionicons name="checkmark-circle-outline" size={24} color="#10B981" />
+              <Text style={memSheetStyles.emptyText}>No memory errors in the last hour</Text>
+            </View>
+          ) : (
+            <ScrollView style={memSheetStyles.eventList} showsVerticalScrollIndicator={false}>
+              {memoryEvents.map((ev) => {
+                const sevColor = ev.severity === 'critical' || ev.severity === 'error' ? Colors.error : '#F59E0B';
+                const operation = typeof ev.metadata?.operation === 'string' ? ev.metadata.operation : null;
+                const timeAgo = (() => {
+                  const diffMs = Date.now() - new Date(ev.createdAt ?? '').getTime();
+                  const m = Math.floor(diffMs / 60000);
+                  if (m < 1) return 'just now';
+                  if (m < 60) return `${m}m ago`;
+                  return `${Math.floor(m / 60)}h ago`;
+                })();
+                return (
+                  <View key={ev.id} style={memSheetStyles.eventRow}>
+                    <View style={[memSheetStyles.severityDot, { backgroundColor: sevColor }]} />
+                    <View style={memSheetStyles.eventContent}>
+                      <View style={memSheetStyles.eventMeta}>
+                        {operation ? (
+                          <Text style={[memSheetStyles.operationTag, { color: sevColor }]}>{operation}</Text>
+                        ) : (
+                          <Text style={[memSheetStyles.operationTag, { color: Colors.textTertiary }]}>memory</Text>
+                        )}
+                        <Text style={memSheetStyles.eventTime}>{timeAgo}</Text>
+                      </View>
+                      <Text style={memSheetStyles.eventMessage}>{ev.message}</Text>
+                    </View>
+                  </View>
+                );
+              })}
+            </ScrollView>
+          )}
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -3883,5 +3989,114 @@ const healthStyles = StyleSheet.create({
     fontFamily: 'Inter_400Regular',
     color: Colors.textSecondary,
     lineHeight: 15,
+  },
+});
+
+const memSheetStyles = StyleSheet.create({
+  backdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+  },
+  sheet: {
+    backgroundColor: Colors.surface,
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    paddingHorizontal: 16,
+    paddingBottom: Platform.OS === 'ios' ? 34 : 16,
+    maxHeight: '70%',
+  },
+  handle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: Colors.border,
+    alignSelf: 'center',
+    marginTop: 10,
+    marginBottom: 14,
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 6,
+  },
+  title: {
+    flex: 1,
+    fontSize: 15,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.text,
+  },
+  subtitle: {
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+    marginBottom: 14,
+    lineHeight: 17,
+  },
+  loadingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 24,
+    justifyContent: 'center',
+  },
+  loadingText: {
+    fontSize: 13,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+  },
+  emptyRow: {
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 28,
+  },
+  emptyText: {
+    fontSize: 13,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+  },
+  eventList: {
+    flexGrow: 0,
+  },
+  eventRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: Colors.border,
+  },
+  severityDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginTop: 4,
+    flexShrink: 0,
+  },
+  eventContent: {
+    flex: 1,
+    gap: 3,
+  },
+  eventMeta: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  operationTag: {
+    fontSize: 10,
+    fontFamily: 'Inter_600SemiBold',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  eventTime: {
+    fontSize: 10,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textTertiary,
+  },
+  eventMessage: {
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+    lineHeight: 17,
   },
 });
