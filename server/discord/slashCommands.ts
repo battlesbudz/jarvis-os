@@ -87,6 +87,11 @@ const JARVIS_COMMAND = {
     },
     {
       type: 1,
+      name: "reset_budget",
+      description: "Reset the autonomous write counter (owner only)",
+    },
+    {
+      type: 1,
       name: "help",
       description: "Show all available Jarvis slash commands",
     },
@@ -494,6 +499,42 @@ async function handleAudit(
   }
 }
 
+async function handleResetBudget(
+  appId: string,
+  interaction: any,
+  userId: string,
+): Promise<void> {
+  try {
+    const { isIntegrationOwner } = await import("../integrationOwner");
+    if (!(await isIntegrationOwner(userId))) {
+      await editInteractionReply(
+        appId,
+        interaction.token,
+        "⛔ This command is only available to the Jarvis owner.",
+        EPHEMERAL,
+      );
+      return;
+    }
+    const { resetCircuitBreaker, writeBudgetSummary } = await import("../agent/safeWritePolicy");
+    await resetCircuitBreaker();
+    const summary = await writeBudgetSummary();
+    await editInteractionReply(
+      appId,
+      interaction.token,
+      `✅ Write counter reset. Current status: ${summary}`,
+      EPHEMERAL,
+    );
+  } catch (err) {
+    console.error("[SlashCommands] reset_budget handler error:", err);
+    await editInteractionReply(
+      appId,
+      interaction.token,
+      "Sorry, I couldn't reset the write counter right now.",
+      EPHEMERAL,
+    );
+  }
+}
+
 async function handleHelp(appId: string, interaction: any): Promise<void> {
   const help = [
     "**Jarvis Slash Commands**",
@@ -502,6 +543,7 @@ async function handleHelp(appId: string, interaction: any): Promise<void> {
     "`/jarvis plan` — Generate your personalized daily plan.",
     "`/jarvis status` — Check the status of active background jobs.",
     "`/jarvis audit` — Show recent autonomous self-repairs Jarvis made.",
+    "`/jarvis reset_budget` — Reset the autonomous write counter (owner only).",
     "`/jarvis help` — Show this message.",
     "",
     "💡 Replies are private by default (only you see them).",
@@ -640,6 +682,15 @@ export async function handleInteraction(interaction: any): Promise<object> {
         setImmediate(() => {
           handleAudit(appId, interaction, userId).catch((err) =>
             console.error("[SlashCommands] handleAudit background error:", err),
+          );
+        });
+        return deferredEphemeral();
+      }
+
+      if (subcommand === "reset_budget") {
+        setImmediate(() => {
+          handleResetBudget(appId, interaction, userId).catch((err) =>
+            console.error("[SlashCommands] handleResetBudget background error:", err),
           );
         });
         return deferredEphemeral();
