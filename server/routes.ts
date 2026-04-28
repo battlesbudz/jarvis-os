@@ -4461,12 +4461,47 @@ Return ONLY the JSON object.`;
   // ── Workspace file API ────────────────────────────────────────────────────
   // GET  /api/workspace/:file   — read a workspace file (owner only)
   // POST /api/workspace/:file   — write a workspace file (owner only)
+  //
+  // IMPORTANT: specific literal routes (e.g. /synthesise) MUST be registered
+  // BEFORE the /:file wildcard so Express resolves them correctly.
 
   const WORKSPACE_VALID_KEYS = ["soul", "agents", "memory", "errors", "corrections", "feature_requests"] as const;
   type WFKey = typeof WORKSPACE_VALID_KEYS[number];
   function isWFKey(k: string): k is WFKey {
     return (WORKSPACE_VALID_KEYS as readonly string[]).includes(k);
   }
+
+  // ── Workspace synthesis endpoint — registered BEFORE /:file wildcard ──────
+  // POST /api/workspace/synthesise — owner-only, triggers LLM learning review
+  app.post("/api/workspace/synthesise", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+
+      const { isIntegrationOwner } = await import("./integrationOwner");
+      if (!await isIntegrationOwner(userId)) {
+        return res.status(403).json({ error: "Owner access required" });
+      }
+
+      const body = req.body as { dryRun?: boolean };
+      const applyToMemory = body.dryRun !== true;
+
+      const { synthesiseLearnings } = await import("./intelligence/learningSynthesiser");
+      const result = await synthesiseLearnings(applyToMemory);
+
+      // Structured audit entry — written to the server's persistent audit trail.
+      console.log(
+        `[Audit] workspace_synthesise user=${userId} triggered=manual bullets=${result.bullets.length} ` +
+        `skipped=${result.skipped} applied=${result.appendedToMemory} ` +
+        `correctionLines=${result.correctionLines} errorLines=${result.errorLines}`,
+      );
+
+      res.json({ ok: true, ...result });
+    } catch (error) {
+      console.error("[Workspace] synthesise error:", error);
+      res.status(500).json({ error: "Failed to synthesise learnings" });
+    }
+  });
 
   app.get("/api/workspace/:file", async (req: Request, res: Response) => {
     try {
