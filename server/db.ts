@@ -1367,6 +1367,18 @@ export async function ensureTablesExist() {
       )
     `).catch(() => {});
 
+    // ── Discord Confirm Tokens ───────────────────────────────────────────────
+    // Persists pending Discord action confirmation tokens so they survive
+    // server restarts.  One row per user; upserted on each new token.
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS discord_confirm_tokens (
+        user_id    VARCHAR NOT NULL PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        action     VARCHAR(64) NOT NULL,
+        expires_at TIMESTAMP   NOT NULL,
+        created_at TIMESTAMP   NOT NULL DEFAULT NOW()
+      )
+    `).catch(() => {});
+
     console.log("Database tables verified");
   } catch (error) {
     console.error("Failed to ensure database tables exist:", error);

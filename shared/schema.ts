@@ -1443,6 +1443,20 @@ export const learningSynthesisLog = pgTable("learning_synthesis_log", {
 export type LearningSynthesisLog = typeof learningSynthesisLog.$inferSelect;
 export type InsertLearningSynthesisLog = typeof learningSynthesisLog.$inferInsert;
 
+// ── Discord Confirm Tokens ─────────────────────────────────────────────────────
+// Persists pending Discord action confirmation tokens across server restarts.
+// One row per user; overwritten when a new token is issued.  TTL is stored in
+// `expires_at` so the nightly cleanup job can prune expired rows.
+export const discordConfirmTokens = pgTable("discord_confirm_tokens", {
+  userId: varchar("user_id").notNull().primaryKey().references(() => users.id, { onDelete: "cascade" }),
+  action: varchar("action", { length: 64 }).notNull(),
+  expiresAt: timestamp("expires_at").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export type DiscordConfirmToken = typeof discordConfirmTokens.$inferSelect;
+export type InsertDiscordConfirmToken = typeof discordConfirmTokens.$inferInsert;
+
 // ── Self-heal audit log — persists autonomous-write history across restarts ──
 // Each row mirrors one block from server/self-heal-audit.log.  On container
 // restart, selfHealAudit.ts restores the flat file from these rows so audit

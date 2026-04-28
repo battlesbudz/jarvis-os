@@ -614,6 +614,15 @@ export function startScheduler() {
       cleanUpExpiredAgentChatSessions();
     }
 
+    // Daily 04:05 — prune expired Discord confirmation tokens
+    if (h === 4 && m === 5) {
+      import('./agent/discordConfirmStore').then(({ cleanUpExpiredDiscordConfirmTokens }) => {
+        cleanUpExpiredDiscordConfirmTokens().catch((err) =>
+          console.error('[Scheduler] Discord confirm token cleanup failed:', err),
+        );
+      }).catch((err) => console.error('[Scheduler] Discord confirm store import failed:', err));
+    }
+
     // Daily 04:30 — hard-delete memories whose expires_at has passed (working/short_term TTL).
     if (h === 4 && m === 30) {
       cleanUpExpiredMemories();
@@ -654,7 +663,7 @@ export function startScheduler() {
 
   }, 60 * 1000);
 
-  console.log('[Scheduler] Started — morning plan 7:00 AM daily, weekly patterns Sunday 3:00 AM, learning synthesis Sunday 4:30 AM, session cleanup 4:00 AM daily, memory TTL cleanup 4:30 AM daily, interaction log cleanup 5:00 AM daily, action log cleanup 5:15 AM daily, embedding backfill 6:00 AM daily, Discord schedules every minute');
+  console.log('[Scheduler] Started — morning plan 7:00 AM daily, weekly patterns Sunday 3:00 AM, learning synthesis Sunday 4:30 AM, session cleanup 4:00 AM daily, Discord confirm token cleanup 4:05 AM daily, memory TTL cleanup 4:30 AM daily, interaction log cleanup 5:00 AM daily, action log cleanup 5:15 AM daily, embedding backfill 6:00 AM daily, Discord schedules every minute');
 }
 
 /**

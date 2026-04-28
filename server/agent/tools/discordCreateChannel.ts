@@ -37,7 +37,7 @@ export const discordCreateChannelTool: AgentTool = {
   async execute(args: { channelName: string; topic?: string; categoryName?: string; pinMessage?: string }, ctx) {
     const { userId } = ctx;
 
-    if (!consumeConfirmToken(userId, "create_channel")) {
+    if (!await consumeConfirmToken(userId, "create_channel")) {
       return {
         ok: false,
         content:

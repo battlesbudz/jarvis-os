@@ -38,7 +38,7 @@ export const discordPostTool: AgentTool = {
   async execute(args: { message: string; topic?: string }, ctx) {
     const { userId } = ctx;
 
-    if (!consumeConfirmToken(userId, "post")) {
+    if (!await consumeConfirmToken(userId, "post")) {
       return {
         ok: false,
         content:
