@@ -9,9 +9,9 @@
  *   A. safeWritePolicy — isPathAllowed: blocks absolute paths, path traversal,
  *      protected files, and paths outside the allow-listed directories.
  *   B. safeWritePolicy — Circuit breaker: trips at 10 autonomous writes within
- *      60 min; window slides as old timestamps age out; resetCircuitBreaker()
+ *      60 min; window slides as old timestamps age out; _resetForTests()
  *      clears the counter; warning deduplication ensures at most one alert fires
- *      per 60-minute window. (DB-backed, async)
+ *      per 60-minute window. (AsyncLocalStorage-isolated in-memory store, async)
  *   C. applyCodeChangeTool — schema integrity, access-control gate, protected-
  *      file rejection, and over-budget (circuit-tripped) rejection at the tool level.
  *   D. runShellTool — command enum only contains the hard-coded safe set; invalid-
@@ -36,9 +36,10 @@ import {
   isDangerousPath,
   checkCircuitBreaker,
   recordAutonomousWrite,
-  resetCircuitBreaker,
   _injectTimestampForTest,
   _claimWarningSlotForTest,
+  _resetForTests,
+  _withTestCircuitBreaker,
   ALLOWED_SOURCE_DIRS,
   PROTECTED_FILES,
 } from "../safeWritePolicy";
@@ -185,87 +186,96 @@ assert.equal(runShellTool.name, "run_shell", "D2a: correct tool name");
 
 (async () => {
 
-  // ── Section B: Circuit breaker (DB-backed, async) ────────────────────────────
+  // ── Section B: Circuit breaker (AsyncLocalStorage-isolated store) ────────────
+  //
+  // _withTestCircuitBreaker() establishes an AsyncLocalStorage context whose
+  // isolated Date[] is used by all circuit-breaker operations for the duration
+  // of the callback.  Production code running outside this async context (the
+  // backend server) always uses the DB — it is completely invisible here.
+  // _resetForTests() clears the context's array between sub-tests.
+  // The context ends automatically when the callback resolves.
 
-  console.log("\n── Section B: Circuit breaker (DB-backed) ───────────────────");
+  await _withTestCircuitBreaker(async () => {
+    console.log("\n── Section B: Circuit breaker (isolated in-memory store) ────");
 
-  // B1. Start from a known-clean state. resetCircuitBreaker deletes all records.
-  await resetCircuitBreaker();
-  {
-    const status = await checkCircuitBreaker();
-    assert.equal(status.tripped, false, "B1a: fresh circuit — not tripped");
-    assert.equal(status.count, 0,     "B1b: fresh circuit — count is 0");
-    assert.equal(status.resetAt, undefined, "B1c: fresh circuit — no resetAt");
-    console.log("✓ B1: fresh circuit is not tripped with count 0");
-  }
+    // B1. Start from a clean state.  _withTestCircuitBreaker initialises the
+    //     context's array to []; _resetForTests() enforces that within sub-tests.
+    {
+      _resetForTests();
+      const status = await checkCircuitBreaker();
+      assert.equal(status.tripped, false,     "B1a: fresh store — not tripped");
+      assert.equal(status.count,   0,         "B1b: fresh store — count is 0");
+      assert.equal(status.resetAt, undefined, "B1c: fresh store — no resetAt");
+      console.log("✓ B1: fresh isolated store is not tripped with count 0");
+    }
 
-  // B2. Nine writes do not trip the breaker (limit is 10).
-  await resetCircuitBreaker();
-  for (let i = 0; i < 9; i++) await recordAutonomousWrite();
-  {
-    const status = await checkCircuitBreaker();
-    assert.equal(status.tripped, false, "B2a: 9 writes — not tripped");
-    assert.equal(status.count, 9,      "B2b: 9 writes — count is 9");
-    console.log("✓ B2: nine writes in the window do not trip the circuit");
-  }
+    // B2. Nine writes do not trip the breaker (limit is 10).
+    {
+      _resetForTests();
+      for (let i = 0; i < 9; i++) await recordAutonomousWrite();
+      const status = await checkCircuitBreaker();
+      assert.equal(status.tripped, false, "B2a: 9 writes — not tripped");
+      assert.equal(status.count,   9,     "B2b: 9 writes — count is 9");
+      console.log("✓ B2: nine writes in the window do not trip the circuit");
+    }
 
-  // B3. The 10th write trips the breaker (state carries over from B2).
-  await recordAutonomousWrite(); // 10th
-  {
-    const status = await checkCircuitBreaker();
-    assert.equal(status.tripped, true,  "B3a: 10 writes — tripped");
-    assert.equal(status.count, 10,      "B3b: 10 writes — count is 10");
-    assert.ok(status.resetAt instanceof Date, "B3c: resetAt is a Date when tripped");
-    assert.ok(status.resetAt!.getTime() > Date.now(), "B3d: resetAt is in the future");
-    console.log("✓ B3: tenth write trips the circuit; resetAt is set to a future time");
-  }
+    // B3. The 10th write trips the breaker (state carries over from B2).
+    await recordAutonomousWrite(); // 10th — same context as B2
+    {
+      const status = await checkCircuitBreaker();
+      assert.equal(status.tripped, true,  "B3a: 10 writes — tripped");
+      assert.equal(status.count,   10,    "B3b: 10 writes — count is 10");
+      assert.ok(status.resetAt instanceof Date, "B3c: resetAt is a Date when tripped");
+      assert.ok(status.resetAt!.getTime() > Date.now(), "B3d: resetAt is in the future");
+      console.log("✓ B3: tenth write trips the circuit; resetAt is set to a future time");
+    }
 
-  // B4. checkCircuitBreaker is non-mutating and idempotent.
-  {
-    const s1 = await checkCircuitBreaker();
-    const s2 = await checkCircuitBreaker();
-    assert.equal(s1.tripped, s2.tripped, "B4a: idempotent — tripped flag consistent");
-    assert.equal(s1.count,   s2.count,   "B4b: idempotent — count consistent");
-    console.log("✓ B4: checkCircuitBreaker is non-mutating and idempotent");
-  }
+    // B4. checkCircuitBreaker is non-mutating and idempotent.
+    {
+      const s1 = await checkCircuitBreaker();
+      const s2 = await checkCircuitBreaker();
+      assert.equal(s1.tripped, s2.tripped, "B4a: idempotent — tripped flag consistent");
+      assert.equal(s1.count,   s2.count,   "B4b: idempotent — count consistent");
+      console.log("✓ B4: checkCircuitBreaker is non-mutating and idempotent");
+    }
 
-  // B5. resetCircuitBreaker() clears the counter; the breaker is no longer tripped.
-  await resetCircuitBreaker();
-  {
-    const status = await checkCircuitBreaker();
-    assert.equal(status.tripped, false,     "B5a: after reset — not tripped");
-    assert.equal(status.count,   0,         "B5b: after reset — count is 0");
-    assert.equal(status.resetAt, undefined, "B5c: after reset — no resetAt");
-    console.log("✓ B5: resetCircuitBreaker() clears the counter and untrips the circuit");
-  }
+    // B5. _resetForTests() clears the store; the breaker is no longer tripped.
+    {
+      _resetForTests();
+      const status = await checkCircuitBreaker();
+      assert.equal(status.tripped, false,     "B5a: after reset — not tripped");
+      assert.equal(status.count,   0,         "B5b: after reset — count is 0");
+      assert.equal(status.resetAt, undefined, "B5c: after reset — no resetAt");
+      console.log("✓ B5: _resetForTests() clears the isolated store and untrips the circuit");
+    }
 
-  // B6. Sliding-window eviction: records with written_at < (now − 60 min) are
-  //     excluded by the WHERE clause in checkCircuitBreaker().
-  //     Inject 5 timestamps 61 minutes in the past, then record 3 recent writes.
-  //     checkCircuitBreaker() must count only the 3 recent ones (not 8).
-  await resetCircuitBreaker();
-  const staleTs = new Date(Date.now() - (61 * 60 * 1000)); // 61 min ago
-  for (let i = 0; i < 5; i++) await _injectTimestampForTest(staleTs);
-  for (let i = 0; i < 3; i++) await recordAutonomousWrite();
-  {
-    const status = await checkCircuitBreaker();
-    assert.equal(status.tripped, false, "B6a: 5 stale + 3 recent → only 3 in window — not tripped");
-    assert.equal(status.count,   3,     "B6b: stale timestamps excluded — count is 3 (not 8)");
-    await resetCircuitBreaker();
-    console.log("✓ B6: sliding-window excludes timestamps older than 60 min; stale writes don't count");
-  }
+    // B6. Sliding-window eviction: records with written_at < (now − 60 min) are
+    //     excluded by checkCircuitBreaker().  Inject 5 stale + 3 recent → count 3.
+    const staleTs = new Date(Date.now() - (61 * 60 * 1000)); // 61 min ago
+    {
+      _resetForTests();
+      for (let i = 0; i < 5; i++) await _injectTimestampForTest(staleTs);
+      for (let i = 0; i < 3; i++) await recordAutonomousWrite();
+      const status = await checkCircuitBreaker();
+      assert.equal(status.tripped, false, "B6a: 5 stale + 3 recent → not tripped");
+      assert.equal(status.count,   3,     "B6b: stale timestamps excluded — count is 3 (not 8)");
+      console.log("✓ B6: sliding-window excludes timestamps older than 60 min; stale writes don't count");
+    }
 
-  // B7. 1 stale write + 9 recent writes = 9 in the window → not tripped.
-  await resetCircuitBreaker();
-  await _injectTimestampForTest(staleTs);      // 1 stale (61 min ago)
-  for (let i = 0; i < 9; i++) await recordAutonomousWrite(); // 9 recent
-  {
-    const status = await checkCircuitBreaker();
-    assert.equal(status.count,   9,     "B7a: 1 stale + 9 recent = 9 in window (stale excluded)");
-    assert.equal(status.tripped, false, "B7b: 9 in-window writes — not tripped");
-    await resetCircuitBreaker();
-    console.log("✓ B7: stale write excluded; circuit does not trip on 1 stale + 9 recent");
-  }
+    // B7. 1 stale write + 9 recent writes = 9 in the window → not tripped.
+    {
+      _resetForTests();
+      await _injectTimestampForTest(staleTs);           // 1 stale (61 min ago)
+      for (let i = 0; i < 9; i++) await recordAutonomousWrite(); // 9 recent
+      const status = await checkCircuitBreaker();
+      assert.equal(status.count,   9,     "B7a: 1 stale + 9 recent = 9 in window (stale excluded)");
+      assert.equal(status.tripped, false, "B7b: 9 in-window writes — not tripped");
+      console.log("✓ B7: stale write excluded; circuit does not trip on 1 stale + 9 recent");
+    }
+  }); // ← AsyncLocalStorage context ends; DB-backed operation resumes automatically
+
+  // B8 & B9 test the warning deduplication slot, which is DB-backed and
+  // independent of the circuit-breaker write count — no CB context needed.
 
   // B8. Warning deduplication — first claim in a fresh window succeeds;
   //     the second claim in the SAME window is rejected.
@@ -295,7 +305,7 @@ assert.equal(runShellTool.name, "run_shell", "D2a: correct tool name");
 
   console.log("\n── Section C: applyCodeChangeTool ───────────────────────────");
 
-  // C1. Tool metadata and parameter schema.
+  // C1. Tool metadata and parameter schema (no circuit breaker involvement).
   assert.equal(applyCodeChangeTool.name, "apply_code_change", "C1a: correct tool name");
   {
     const props = applyCodeChangeTool.parameters.properties as Record<string, { type: string }>;
@@ -309,7 +319,7 @@ assert.equal(runShellTool.name, "run_shell", "D2a: correct tool name");
     console.log("✓ C1: applyCodeChangeTool schema has correct name and required parameters");
   }
 
-  // C2. Non-owner access-control gate.
+  // C2. Non-owner access-control gate (fires before circuit check — no CB context needed).
   _setOwnerIdForTest(null); // clear owner cache → isIntegrationOwner returns false
   {
     const result = await applyCodeChangeTool.execute(
@@ -324,54 +334,57 @@ assert.equal(runShellTool.name, "run_shell", "D2a: correct tool name");
     console.log("✓ C2: applyCodeChangeTool non-owner call is denied (access-control gate fires first)");
   }
 
-  // C3. Protected-file rejection at the tool level.
-  _setOwnerIdForTest(TEST_OWNER_ID); // authorize as owner
-  await resetCircuitBreaker();       // ensure circuit is not tripped
-  {
+  // C3 & C4 exercise the circuit breaker inside the tool — wrap in their own context.
+  _setOwnerIdForTest(TEST_OWNER_ID); // authorize as owner for the remaining C tests
+  await _withTestCircuitBreaker(async () => {
+    // C3. Protected-file rejection at the tool level.
     // server/auth.ts is in PROTECTED_FILES — the tool must refuse to write it
     // autonomously and return ok: false with a label indicating the file was
     // routed to a proposal (or proposal failed because the test DB may not have
     // the proposals table populated; either way the autonomous write is rejected).
-    const result = await applyCodeChangeTool.execute(
-      {
-        file_path:   "server/auth.ts",
-        new_content: "// test placeholder — must never be written to disk",
-        reason:      "selfHeal test: protected-file rejection",
-      },
-      OWNER_CTX,
-    );
-    assert.equal(result.ok, false, "C3a: protected file → ok: false");
-    assert.ok(
-      result.label?.includes("protected"),
-      `C3b: protected file → label includes 'protected' (got '${result.label}')`,
-    );
-    console.log(`✓ C3: applyCodeChangeTool rejects protected file (label='${result.label}')`);
-  }
+    // _resetForTests() ensures the circuit is not tripped before this call.
+    _resetForTests();
+    {
+      const result = await applyCodeChangeTool.execute(
+        {
+          file_path:   "server/auth.ts",
+          new_content: "// test placeholder — must never be written to disk",
+          reason:      "selfHeal test: protected-file rejection",
+        },
+        OWNER_CTX,
+      );
+      assert.equal(result.ok, false, "C3a: protected file → ok: false");
+      assert.ok(
+        result.label?.includes("protected"),
+        `C3b: protected file → label includes 'protected' (got '${result.label}')`,
+      );
+      console.log(`✓ C3: applyCodeChangeTool rejects protected file (label='${result.label}')`);
+    }
 
-  // C4. Over-budget (circuit-tripped) rejection at the tool level.
-  // Trip the circuit with 10 writes, then call the tool with an allowed path.
-  // The circuit check runs before any file I/O, so the file need not exist.
-  await resetCircuitBreaker();
-  for (let i = 0; i < 10; i++) await recordAutonomousWrite();
-  {
-    const result = await applyCodeChangeTool.execute(
-      {
-        file_path:   "server/agent/tools/selfHealTestTemp.ts",
-        new_content: "// test placeholder — must never be written to disk",
-        reason:      "selfHeal test: circuit-tripped rejection",
-      },
-      OWNER_CTX,
-    );
-    assert.equal(result.ok, false, "C4a: circuit tripped → ok: false");
-    assert.ok(
-      result.label?.includes("circuit"),
-      `C4b: circuit tripped → label includes 'circuit' (got '${result.label}')`,
-    );
-    console.log(`✓ C4: applyCodeChangeTool rejects over-budget writes (label='${result.label}')`);
-  }
+    // C4. Over-budget (circuit-tripped) rejection at the tool level.
+    // Trip the circuit with 10 writes, then call the tool with an allowed path.
+    // The circuit check runs before any file I/O, so the file need not exist.
+    _resetForTests();
+    for (let i = 0; i < 10; i++) await recordAutonomousWrite();
+    {
+      const result = await applyCodeChangeTool.execute(
+        {
+          file_path:   "server/agent/tools/selfHealTestTemp.ts",
+          new_content: "// test placeholder — must never be written to disk",
+          reason:      "selfHeal test: circuit-tripped rejection",
+        },
+        OWNER_CTX,
+      );
+      assert.equal(result.ok, false, "C4a: circuit tripped → ok: false");
+      assert.ok(
+        result.label?.includes("circuit"),
+        `C4b: circuit tripped → label includes 'circuit' (got '${result.label}')`,
+      );
+      console.log(`✓ C4: applyCodeChangeTool rejects over-budget writes (label='${result.label}')`);
+    }
+  }); // ← AsyncLocalStorage context ends; DB-backed operation resumes automatically
 
-  // Clean up: reset circuit and clear owner override.
-  await resetCircuitBreaker();
+  // Clear the owner override.
   _setOwnerIdForTest(null);
 
   // ── Section D (tool-level): runShellTool ─────────────────────────────────────

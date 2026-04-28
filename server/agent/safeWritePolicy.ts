@@ -12,6 +12,7 @@
  */
 
 import path from "path";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { db } from "../db";
 import { sql } from "drizzle-orm";
 import { getIntegrationOwnerId } from "../integrationOwner";
@@ -136,8 +137,45 @@ export interface CircuitStatus {
   resetAt?: Date;
 }
 
+// ── Test-mode in-memory store (AsyncLocalStorage-scoped) ─────────────────────
+// When tests are running inside a _withTestCircuitBreaker() context, all
+// circuit-breaker operations (check, record, inject, reset) automatically use
+// an isolated Date[] for that async context.  Code running outside the context
+// — including the production server — always uses the DB path and is entirely
+// invisible to the test store.  This provides true isolation even when the
+// backend server is running in the same Node.js process as the test suite.
+//
+// Usage:
+//   await _withTestCircuitBreaker(async () => {
+//     _resetForTests();                // clear the context's timestamp array
+//     for (...) await recordAutonomousWrite(); // writes to the local array
+//     const s = await checkCircuitBreaker();   // reads from the local array
+//   });
+//   // Caller is back to DB-backed operation automatically.
+
+interface _TestStore { timestamps: Date[] }
+const _testStoreContext = new AsyncLocalStorage<_TestStore>();
+
+/** Compute CircuitStatus from a timestamp array (shared by DB and test paths). */
+function _statusFromTimestamps(timestamps: Date[]): CircuitStatus {
+  const windowStart = new Date(Date.now() - CIRCUIT_WINDOW_MS);
+  const recent = timestamps
+    .filter(ts => ts >= windowStart)
+    .sort((a, b) => a.getTime() - b.getTime());
+  const count = recent.length;
+  if (count >= CIRCUIT_MAX_WRITES) {
+    const resetAt = new Date(recent[0].getTime() + CIRCUIT_WINDOW_MS);
+    return { tripped: true, count, resetAt };
+  }
+  return { tripped: false, count };
+}
+
 /** Check the circuit breaker without recording a write. Non-mutating. */
 export async function checkCircuitBreaker(): Promise<CircuitStatus> {
+  const testCtx = _testStoreContext.getStore();
+  if (testCtx) {
+    return _statusFromTimestamps(testCtx.timestamps);
+  }
   try {
     const windowStart = new Date(Date.now() - CIRCUIT_WINDOW_MS);
     const rows = await db.execute(sql`
@@ -161,6 +199,14 @@ export async function checkCircuitBreaker(): Promise<CircuitStatus> {
 
 /** Record one autonomous write. Call AFTER a successful fs.writeFile. */
 export async function recordAutonomousWrite(): Promise<void> {
+  const testCtx = _testStoreContext.getStore();
+  if (testCtx) {
+    // In test mode: push to the context's isolated array.  No warning
+    // notifications are sent.  No pruning needed — checkCircuitBreaker() filters
+    // by the sliding window on every read.
+    testCtx.timestamps.push(new Date());
+    return;
+  }
   try {
     const now = new Date();
     const pruneOlderThan = new Date(now.getTime() - CIRCUIT_WINDOW_MS);
@@ -288,7 +334,13 @@ export async function resetCircuitBreaker(): Promise<void> {
 }
 
 /**
- * TEST-ONLY: Insert a write record at an arbitrary timestamp into the DB.
+ * TEST-ONLY: Insert a write record at an arbitrary timestamp.
+ *
+ * When called inside a _withTestCircuitBreaker() context, pushes directly into
+ * the context's isolated array so the injected timestamp is completely separated
+ * from the production DB.  When called outside such a context (not recommended
+ * outside tests), falls back to writing to the DB.
+ *
  * Allows tests to simulate writes at specific points in time (e.g. 61 minutes
  * ago) to exercise the sliding-window eviction logic without waiting.
  * Never call this from production code.
@@ -296,6 +348,11 @@ export async function resetCircuitBreaker(): Promise<void> {
 export async function _injectTimestampForTest(ts: Date): Promise<void> {
   if (process.env.NODE_ENV === "production") {
     throw new Error("_injectTimestampForTest must not be called in production");
+  }
+  const testCtx = _testStoreContext.getStore();
+  if (testCtx) {
+    testCtx.timestamps.push(ts);
+    return;
   }
   await db.execute(sql`INSERT INTO write_budget_log (written_at) VALUES (${ts})`);
 }
@@ -315,4 +372,51 @@ export async function _claimWarningSlotForTest(): Promise<boolean> {
     throw new Error("_claimWarningSlotForTest must not be called in production");
   }
   return _claimWarningSlot();
+}
+
+/**
+ * TEST-ONLY: Reset the current test context's timestamp array to empty.
+ *
+ * Must be called inside a _withTestCircuitBreaker() context.  Each call gives
+ * the next sub-test a clean slate without exiting the context (so the context
+ * overhead is only paid once per test suite section, not per sub-test).
+ *
+ * Throws in production and throws if called outside _withTestCircuitBreaker().
+ */
+export function _resetForTests(): void {
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("_resetForTests must not be called in production");
+  }
+  const testCtx = _testStoreContext.getStore();
+  if (!testCtx) {
+    throw new Error("_resetForTests() must be called inside _withTestCircuitBreaker()");
+  }
+  testCtx.timestamps = [];
+}
+
+/**
+ * TEST-ONLY: Run a test callback with a fresh, isolated circuit-breaker store.
+ *
+ * For the duration of the async callback, ALL circuit-breaker operations
+ * (checkCircuitBreaker, recordAutonomousWrite, _injectTimestampForTest,
+ * _resetForTests) use a context-local Date[] scoped to this invocation via
+ * AsyncLocalStorage.  Code running outside this context — including production
+ * server code running in the same Node.js process — continues to use the DB
+ * and is entirely invisible to the test store.
+ *
+ * The context ends automatically when the callback resolves or rejects; no
+ * explicit teardown is required.
+ *
+ *   await _withTestCircuitBreaker(async () => {
+ *     _resetForTests();
+ *     for (let i = 0; i < 9; i++) await recordAutonomousWrite();
+ *     const status = await checkCircuitBreaker();
+ *     assert.equal(status.count, 9);
+ *   });
+ */
+export async function _withTestCircuitBreaker<T>(fn: () => Promise<T>): Promise<T> {
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("_withTestCircuitBreaker must not be called in production");
+  }
+  return _testStoreContext.run({ timestamps: [] }, fn);
 }
