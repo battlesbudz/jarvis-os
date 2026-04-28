@@ -11,7 +11,10 @@
  *   B. safeWritePolicy — Circuit breaker: trips at 10 autonomous writes within
  *      60 min; window slides as old timestamps age out; _resetForTests()
  *      clears the counter; warning deduplication ensures at most one alert fires
- *      per 60-minute window. (AsyncLocalStorage-isolated in-memory store, async)
+ *      per 60-minute window; trip-notification deduplication (B10) ensures the
+ *      circuit-trip alert also fires exactly once per window; end-to-end trip
+ *      dispatch from recordAutonomousWrite() verified via the trip slot proxy
+ *      (B11). (AsyncLocalStorage-isolated store for CB writes; DB path for dedup)
  *   C. applyCodeChangeTool — schema integrity, access-control gate, protected-
  *      file rejection, and over-budget (circuit-tripped) rejection at the tool level.
  *   D. runShellTool — command enum only contains the hard-coded safe set; invalid-
@@ -39,6 +42,7 @@ import {
   resetCircuitBreaker,
   _injectTimestampForTest,
   _claimWarningSlotForTest,
+  _claimTripSlotForTest,
   _resetForTests,
   _withTestCircuitBreaker,
   ALLOWED_SOURCE_DIRS,
@@ -301,6 +305,54 @@ assert.equal(runShellTool.name, "run_shell", "D2a: correct tool name");
     await resetCircuitBreaker(); // leave clean for subsequent sections
     console.log("✓ B9: resetCircuitBreaker() clears the warning slot; fresh claim succeeds");
   }
+
+  // B10. Trip-notification deduplication — the tripped_at column on the id=1
+  //      singleton row in write_budget_warnings tracks trip-slot state
+  //      independently from the warned_at warning slot.
+  //      resetCircuitBreaker() resets tripped_at to epoch so the first claim
+  //      in a fresh window always succeeds.
+  await resetCircuitBreaker(); // ensures tripped_at = '1970-01-01'
+  {
+    // First claim in a fresh window: trip alert has not yet been sent.
+    const firstTrip  = await _claimTripSlotForTest();
+    // Second claim in the same window: alert already dispatched — must be deduped.
+    const secondTrip = await _claimTripSlotForTest();
+    assert.equal(firstTrip,  true,  "B10a: first trip-slot claim in fresh window → true");
+    assert.equal(secondTrip, false, "B10b: second trip-slot claim in same window → false (deduplicated)");
+    console.log("✓ B10a: trip alert dedup — only the first claim per 60-minute window succeeds");
+  }
+  // B10c. After resetCircuitBreaker(), the trip slot is cleared so a fresh claim
+  //       succeeds again — confirming that an owner reset re-arms both slots.
+  await resetCircuitBreaker(); // tripped_at reset to '1970-01-01'
+  {
+    const claimAfterTripReset = await _claimTripSlotForTest();
+    assert.equal(claimAfterTripReset, true, "B10c: trip-slot claim after resetCircuitBreaker() → true (slot re-armed)");
+    await resetCircuitBreaker(); // leave clean for subsequent sections
+    console.log("✓ B10b: resetCircuitBreaker() re-arms the trip slot; fresh claim succeeds");
+  }
+
+  // B11. recordAutonomousWrite() triggers the trip-alert path on the 10th write
+  //      when using the real DB path (outside the AsyncLocalStorage test context).
+  //      The notification itself is a no-op in tests (getIntegrationOwnerId
+  //      returns null), but _maybeSendBudgetTripped still claims the trip slot
+  //      via _claimTripSlot.  If _claimTripSlotForTest() returns false after the
+  //      10th write, the trip-alert path ran and deduplication is working
+  //      end-to-end inside recordAutonomousWrite().
+  await resetCircuitBreaker(); // clean slate — tripped_at = '1970-01-01'
+  for (let i = 0; i < 10; i++) await recordAutonomousWrite();
+  // _maybeSendBudgetTripped is fire-and-forget inside recordAutonomousWrite().
+  // Allow up to 500 ms for the async DB UPDATE on tripped_at to settle.
+  await new Promise<void>(r => setTimeout(r, 500));
+  {
+    const slotClaimedByWrite = await _claimTripSlotForTest();
+    assert.equal(
+      slotClaimedByWrite,
+      false,
+      "B11a: trip slot claimed by 10th recordAutonomousWrite() — trip-alert path executed and dedup working",
+    );
+    console.log("✓ B11: recordAutonomousWrite() triggers the trip-alert path; trip slot is claimed on the 10th write");
+  }
+  await resetCircuitBreaker(); // leave clean for subsequent sections
 
   // ── Section C: applyCodeChangeTool ───────────────────────────────────────────
 
