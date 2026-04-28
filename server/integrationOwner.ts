@@ -52,3 +52,16 @@ export async function isIntegrationOwner(userId: string): Promise<boolean> {
   if (!ownerId) return false;
   return ownerId === userId;
 }
+
+/**
+ * TEST-ONLY: Directly set the cached owner ID so tests can exercise owner-gated
+ * tool behaviour without a real database connection.
+ * Pass null to clear the cache (simulates no owner claimed).
+ * Never call this from production code.
+ */
+export function _setOwnerIdForTest(id: string | null): void {
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("_setOwnerIdForTest must not be called in production");
+  }
+  cachedOwnerId = id;
+}
