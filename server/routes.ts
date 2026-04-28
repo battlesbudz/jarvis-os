@@ -4483,16 +4483,17 @@ Return ONLY the JSON object.`;
         return res.status(403).json({ error: "Owner access required" });
       }
 
-      const body = req.body as { dryRun?: boolean };
+      const body = req.body as { dryRun?: boolean; archiveAfter?: boolean };
       const applyToMemory = body.dryRun !== true;
+      const archiveAfter = applyToMemory && body.archiveAfter === true;
 
       const { synthesiseLearnings } = await import("./intelligence/learningSynthesiser");
-      const result = await synthesiseLearnings(applyToMemory);
+      const result = await synthesiseLearnings(applyToMemory, archiveAfter);
 
       // Structured audit entry — written to the server's persistent audit trail.
       console.log(
         `[Audit] workspace_synthesise user=${userId} triggered=manual bullets=${result.bullets.length} ` +
-        `skipped=${result.skipped} applied=${result.appendedToMemory} ` +
+        `skipped=${result.skipped} applied=${result.appendedToMemory} archived=${result.archived} ` +
         `correctionLines=${result.correctionLines} errorLines=${result.errorLines}`,
       );
 

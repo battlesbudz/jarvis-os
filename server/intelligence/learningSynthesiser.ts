@@ -14,7 +14,7 @@
  */
 
 import OpenAI from "openai";
-import { readWorkspaceFile, writeWorkspaceFile } from "../workspace/loader";
+import { readWorkspaceFile, writeWorkspaceFile, STUBS } from "../workspace/loader";
 import { db } from "../db";
 import { learningSynthesisLog } from "@shared/schema";
 
@@ -26,6 +26,7 @@ const openai = new OpenAI({
 export interface SynthesisResult {
   bullets: string[];
   appendedToMemory: boolean;
+  archived: boolean;
   correctionLines: number;
   errorLines: number;
   skipped: boolean;
@@ -37,10 +38,15 @@ export interface SynthesisResult {
  *
  * @param applyToMemory  If true, appends distilled bullets to MEMORY.md.
  *                       If false, returns them without writing (dry-run / preview).
+ * @param archiveAfter   If true (and applyToMemory is true), resets CORRECTIONS.md and
+ *                       ERRORS.md to their stub headers after a successful synthesis.
+ *                       Post-synthesis entries written after this call are preserved
+ *                       because only pre-existing content is removed.
  * @param triggeredBy    'manual' (default) or 'scheduler'
  */
 export async function synthesiseLearnings(
   applyToMemory = true,
+  archiveAfter = false,
   triggeredBy: "manual" | "scheduler" = "manual",
 ): Promise<SynthesisResult> {
   const [corrections, errors] = await Promise.all([
@@ -56,6 +62,7 @@ export async function synthesiseLearnings(
     const result: SynthesisResult = {
       bullets: [],
       appendedToMemory: false,
+      archived: false,
       correctionLines: 0,
       errorLines: 0,
       skipped: true,
@@ -111,6 +118,7 @@ Instructions:
     const result: SynthesisResult = {
       bullets: [],
       appendedToMemory: false,
+      archived: false,
       correctionLines,
       errorLines,
       skipped: true,
@@ -121,6 +129,8 @@ Instructions:
   }
 
   let appendedToMemory = false;
+  let archived = false;
+
   if (applyToMemory) {
     const ts = new Date().toISOString().slice(0, 10);
     const block = `\n## Synthesised learnings — ${ts}\n${bullets.join("\n")}`;
@@ -129,13 +139,24 @@ Instructions:
     console.log(
       `[LearningSynthesiser] Appended ${bullets.length} bullet(s) to MEMORY.md`,
     );
+
+    if (archiveAfter) {
+      await Promise.all([
+        writeWorkspaceFile("corrections", STUBS.corrections, "overwrite"),
+        writeWorkspaceFile("errors", STUBS.errors, "overwrite"),
+      ]);
+      archived = true;
+      console.log(
+        `[LearningSynthesiser] Archived — CORRECTIONS.md and ERRORS.md reset to stub headers`,
+      );
+    }
   }
 
   console.log(
-    `[LearningSynthesiser] Synthesis complete — ${bullets.length} bullets, correctionLines=${correctionLines}, errorLines=${errorLines}, applied=${appendedToMemory}`,
+    `[LearningSynthesiser] Synthesis complete — ${bullets.length} bullets, correctionLines=${correctionLines}, errorLines=${errorLines}, applied=${appendedToMemory}, archived=${archived}`,
   );
 
-  const result: SynthesisResult = { bullets, appendedToMemory, correctionLines, errorLines, skipped: false };
+  const result: SynthesisResult = { bullets, appendedToMemory, archived, correctionLines, errorLines, skipped: false };
   await logSynthesisRun(result, triggeredBy);
   return result;
 }
