@@ -39,6 +39,62 @@ const execAsync = promisify(exec);
 
 import type { TranscriptConfig, TranscriptResponse } from "youtube-transcript";
 
+// ── One-time yt-dlp upgrade ───────────────────────────────────────────────────
+// Runs lazily on the first audio-transcription attempt so both the dev workflow
+// and the production server (npm run server:prod) always use the latest yt-dlp.
+//
+// Strategy:
+//   1. pip install --user -U yt-dlp (--break-system-packages required in Nix)
+//   2. Check the installed package version via `python3 -m yt_dlp --version`
+//      This works even when the ~/.local/bin binary PATH isn't picked up because
+//      Python's sys.path includes ~/.local/lib/.../site-packages before the Nix store.
+//   3. If pip succeeded, switch the ytdlpCmd to `python3 -m yt_dlp` so subsequent
+//      exec() calls use the newer package regardless of which binary is on PATH.
+
+let ytdlpUpgradePromise: Promise<void> | null = null;
+/** The yt-dlp invocation to use — updated to `python3 -m yt_dlp` if pip succeeds. */
+let ytdlpCmd = "yt-dlp";
+
+async function ensureYtdlpUpgraded(): Promise<void> {
+  if (ytdlpUpgradePromise) return ytdlpUpgradePromise;
+  ytdlpUpgradePromise = (async () => {
+    try {
+      // Run pip upgrade — non-fatal. --break-system-packages is needed in
+      // Nix/PEP-668 environments; with --user it only touches ~/.local.
+      await execAsync(
+        "python3 -m pip install --user -U yt-dlp --quiet --disable-pip-version-check --break-system-packages",
+        { timeout: 60_000 }
+      ).catch(() => null); // best-effort
+
+      // Verify via the Python module path (works even if ~/.local/bin isn't on PATH)
+      const { stdout: modVer } = await execAsync(
+        "python3 -m yt_dlp --version",
+        { timeout: 10_000 }
+      );
+      const version = modVer.trim();
+      // If pip installed something newer than the stale Nix binary, use the module
+      if (version && version !== "2024.05.27") {
+        ytdlpCmd = "python3 -m yt_dlp";
+        console.log(`[transcriptCache] yt-dlp upgraded to ${version} (using python3 -m yt_dlp)`);
+      } else {
+        // pip didn't help — also try updating PATH in case binary landed in ~/.local/bin
+        const { stdout: base } = await execAsync("python3 -m site --user-base", { timeout: 5_000 });
+        const userBin = `${base.trim()}/bin`;
+        if (!process.env.PATH?.startsWith(userBin)) {
+          process.env.PATH = `${userBin}:${process.env.PATH ?? ""}`;
+        }
+        const { stdout: binVer } = await execAsync("yt-dlp --version", { timeout: 10_000 });
+        console.log(`[transcriptCache] yt-dlp version: ${binVer.trim()} (using Nix binary)`);
+      }
+    } catch (err) {
+      console.warn(
+        `[transcriptCache] yt-dlp upgrade skipped: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  })();
+  return ytdlpUpgradePromise;
+}
+
 const TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_ENTRIES = 500;
 
@@ -230,8 +286,11 @@ async function transcribeBuffer(buf: Buffer, ext: "wav" | "mp3"): Promise<string
   return typeof resp === "string" ? resp : ((resp as { text?: string }).text ?? "");
 }
 
-async function fetchAudioTranscript(videoId: string): Promise<TranscriptResponse[]> {
+async function fetchAudioTranscript(videoId: string, originalInput?: string): Promise<TranscriptResponse[]> {
   if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) return [];
+
+  // Ensure the latest yt-dlp is on PATH (runs once per process, covers prod too)
+  await ensureYtdlpUpgraded();
 
   let tmpDir: string;
   try {
@@ -241,21 +300,65 @@ async function fetchAudioTranscript(videoId: string): Promise<TranscriptResponse
   }
 
   try {
-    const url = `https://www.youtube.com/watch?v=${videoId}`;
     const outputTemplate = path.join(tmpDir, "%(id)s.%(ext)s");
 
-    // Download audio only — cap at AUDIO_MAX_BYTES to reject very long videos
-    await execAsync(
-      `yt-dlp -f "bestaudio[filesize<80M]/bestaudio" --extract-audio --audio-format mp3 ` +
-        `--no-playlist --no-warnings --quiet --no-progress ` +
-        `--max-filesize 80M ` +
-        `--output "${outputTemplate}" -- "${url}"`,
-      { timeout: 120_000 }
-    );
+    // Build URL candidates. When the original input was a Shorts URL, try the
+    // /shorts/ path first — YouTube often serves audio more reliably that way.
+    const isShorts = originalInput ? /\/shorts\//i.test(originalInput) : false;
+    const urlCandidates: string[] = isShorts
+      ? [
+          `https://www.youtube.com/shorts/${videoId}`,
+          `https://www.youtube.com/watch?v=${videoId}`,
+        ]
+      : [`https://www.youtube.com/watch?v=${videoId}`];
 
-    const files = await readdir(tmpDir).catch(() => [] as string[]);
-    const mp3File = files.find((f) => f.endsWith(".mp3")) ?? files.find((f) => f.endsWith(".m4a"));
-    if (!mp3File) return [];
+    let downloadedFile: string | undefined;
+
+    for (const url of urlCandidates) {
+      try {
+        // Download audio only — cap at AUDIO_MAX_BYTES to reject very long videos.
+        // ytdlpCmd is set to `python3 -m yt_dlp` if pip upgrade succeeded; falls
+        // back to the Nix binary otherwise.
+        await execAsync(
+          `${ytdlpCmd} -f "bestaudio[filesize<80M]/bestaudio" --extract-audio --audio-format mp3 ` +
+            `--no-playlist --no-warnings --quiet --no-progress ` +
+            `--max-filesize 80M ` +
+            `--output "${outputTemplate}" -- "${url}"`,
+          { timeout: 120_000 }
+        );
+      } catch (dlErr) {
+        // Capture stderr from yt-dlp so failures are visible in the logs
+        const errObj = dlErr as { stderr?: string; stdout?: string; message?: string };
+        const stderrMsg = (errObj.stderr ?? "").trim() || (dlErr instanceof Error ? dlErr.message : String(dlErr));
+        console.warn(
+          `[transcriptCache] yt-dlp audio download failed for ${videoId} (url=${url}): ${stderrMsg}`
+        );
+        // Surface terminal errors immediately — no further URL will help
+        const lower = stderrMsg.toLowerCase();
+        if (lower.includes("private video") || lower.includes("video unavailable")) {
+          throw new Error(`LOGIN_REQUIRED: ${stderrMsg}`);
+        }
+        if (lower.includes("age-restricted") || lower.includes("sign in to confirm")) {
+          throw new Error(`CONTENT_RESTRICTED: ${stderrMsg}`);
+        }
+        if (lower.includes("429") || lower.includes("too many requests")) {
+          throw new Error(`TOO_MANY_REQUESTS: ${stderrMsg}`);
+        }
+        // Non-terminal: try the next URL candidate
+        continue;
+      }
+
+      // Download succeeded — check if a file was actually written
+      const filesAfter = await readdir(tmpDir).catch(() => [] as string[]);
+      const mp3Candidate = filesAfter.find((f) => f.endsWith(".mp3")) ?? filesAfter.find((f) => f.endsWith(".m4a"));
+      if (mp3Candidate) {
+        downloadedFile = mp3Candidate;
+        break;
+      }
+    }
+
+    if (!downloadedFile) return [];
+    const mp3File = downloadedFile;
 
     const mp3Path = path.join(tmpDir, mp3File);
     const mp3Stat = await fsStat(mp3Path);
@@ -327,6 +430,8 @@ async function fetchAudioTranscript(videoId: string): Promise<TranscriptResponse
     ];
   } catch (err) {
     const raw = err instanceof Error ? err.message : String(err);
+    // Re-throw terminal errors that were already tagged by the download loop
+    if (/^(LOGIN_REQUIRED|CONTENT_RESTRICTED|TOO_MANY_REQUESTS):/.test(raw)) throw err;
     const lower = raw.toLowerCase();
     if (lower.includes("private video") || lower.includes("video unavailable")) {
       throw new Error(`LOGIN_REQUIRED: ${raw}`);
@@ -984,7 +1089,7 @@ export async function fetchTranscriptCached(
       : "all subtitle strategies failed — trying audio transcription";
     console.log(`[transcriptCache] ${reason} for ${resolvedId}`);
     try {
-      const audioSegs = await fetchAudioTranscript(resolvedId);
+      const audioSegs = await fetchAudioTranscript(resolvedId, input);
       if (audioSegs.length > 0) {
         segments = audioSegs;
         source = "audio-transcription";
