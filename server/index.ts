@@ -505,15 +505,29 @@ function setupErrorHandler(app: express.Application) {
         }
       }
 
-      // Boot Discord bots for users who have saved a bot token
-      bootDiscordBots().catch(err => {
-        console.error("Failed to boot Discord bots:", err);
-      });
+      // Discord bots only run in production.
+      // In dev, skip booting — two Discord WebSocket connections with the same
+      // token compete for the gateway session and both would send proactive
+      // notifications (integration alerts, heartbeats) to the user's real
+      // Discord channel.  The pattern mirrors how Telegram skips polling in dev
+      // unless TELEGRAM_BOT_TOKEN_DEV is set.
+      const isDiscordProduction = process.env.NODE_ENV === 'production';
+      if (isDiscordProduction) {
+        // Boot Discord bots for users who have saved a bot token
+        bootDiscordBots().catch(err => {
+          console.error("Failed to boot Discord bots:", err);
+        });
 
-      // Boot the shared Jarvis Discord bot (DISCORD_BOT_TOKEN + DISCORD_CLIENT_ID)
-      bootSharedBot().catch(err => {
-        console.error("Failed to boot shared Discord bot:", err);
-      });
+        // Boot the shared Jarvis Discord bot (DISCORD_BOT_TOKEN + DISCORD_CLIENT_ID)
+        bootSharedBot().catch(err => {
+          console.error("Failed to boot shared Discord bot:", err);
+        });
+      } else {
+        console.warn(
+          "[Discord] ⚠ Dev mode — Discord bots NOT started to avoid competing with " +
+          "the production bot and sending duplicate notifications to your real Discord channel."
+        );
+      }
 
       // Channel-agnostic proactive engines — iterate every user with any
       // linked channel (telegram/whatsapp/slack/daemon/discord) and route through
