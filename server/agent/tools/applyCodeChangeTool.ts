@@ -20,7 +20,7 @@
 import type { AgentTool } from "../types";
 import fs from "fs/promises";
 import path from "path";
-import { isIntegrationOwner } from "../../integrationOwner";
+import { isIntegrationOwner, getIntegrationOwnerId } from "../../integrationOwner";
 import {
   isPathAllowed,
   isProtectedFile,
@@ -226,7 +226,14 @@ export async function recordVerificationResult(
   }
 
   // ── Follow-up notification ────────────────────────────────────────────────
-  if (!userId) return;
+  // For failed/error repairs we must always alert someone even when the caller
+  // did not thread a userId through (e.g. a background daemon cycle).  Fall
+  // back to the integration owner so the inbox item is never silently dropped.
+  let resolvedUserId = userId;
+  if (!resolvedUserId && result !== "passed") {
+    resolvedUserId = (await getIntegrationOwnerId()) ?? undefined;
+  }
+  if (!resolvedUserId) return;
 
   const fileList = filePaths.join(", ");
   const summaryLine = summary ? `\nDetails: ${summary}` : "";
@@ -266,7 +273,7 @@ export async function recordVerificationResult(
     const inboxSnippet = snippetLines.join("\n");
 
     db.insert(inboxItems).values({
-      userId,
+      userId: resolvedUserId,
       sourceType: "other",
       sourceId: inboxSourceId,
       subject: `Self-repair ${result}: ${firstFile ?? fileList}`,
@@ -280,7 +287,7 @@ export async function recordVerificationResult(
     }).onConflictDoNothing().catch(() => {});
   }
 
-  notifyUser(userId, "self_repair", notifyText).catch(() => {});
+  notifyUser(resolvedUserId, "self_repair", notifyText).catch(() => {});
 }
 
 // ── Tool definition ───────────────────────────────────────────────────────────
