@@ -29,6 +29,9 @@ import type { _CircuitBreakerDeps } from "../integrationValidator";
 import {
   _resetConsecutiveFailuresForTest,
   _resetSystemPingCacheForTest,
+  _resetLastDebugTriggerAtForTest,
+  _setLastDebugTriggerAtForTest,
+  _DEBUG_TRIGGER_COOLDOWN_MS_FOR_TEST,
   _applyCircuitBreakerForTest,
   _checkSystemCredentialForTest,
 } from "../integrationValidator";
@@ -211,6 +214,63 @@ const TEST_INTEGRATION = "google" as const;
     assert.equal(successPingCount, 1, "D(bonus): successful ping IS cached — second call skips re-ping");
 
     console.log("✓ D: failed pings not cached — re-runs ping on next call; success pings are cached");
+  }
+
+  // ── Test E: Duplicate-alert rate-limit — second broken cycle within cooldown
+  //            fires NO additional notification ─────────────────────────────────
+  // The 1-hour cooldown in lastDebugTriggerAt must prevent the second identical
+  // alert from reaching the user when the integration stays broken across cycles.
+  {
+    _resetConsecutiveFailuresForTest();
+    _resetLastDebugTriggerAtForTest();
+    const { deps, record } = makeStubs();
+
+    // Cycle 1: streak=1 → degraded, no notification
+    await _applyCircuitBreakerForTest(TEST_USER, TEST_INTEGRATION, BROKEN_RESULT_NOTIFY, deps);
+    // Cycle 2: streak=2 → broken, notification fires and rate-limit timestamp is set
+    await _applyCircuitBreakerForTest(TEST_USER, TEST_INTEGRATION, BROKEN_RESULT_NOTIFY, deps);
+    // Cycle 3: streak=3, still within 1-hour cooldown → notification must NOT fire again
+    await _applyCircuitBreakerForTest(TEST_USER, TEST_INTEGRATION, BROKEN_RESULT_NOTIFY, deps);
+
+    const brokenStatuses = record.writeStatusCalls.filter((c) => c.status === "broken");
+    assert.ok(brokenStatuses.length >= 2, "E: 'broken' written on cycles 2 and 3");
+    assert.equal(
+      record.notifyUserCalls.length,
+      1,
+      "E: only ONE notification fired across three broken cycles (second blocked by cooldown)",
+    );
+    console.log("✓ E: duplicate-alert gate — second broken cycle within cooldown fires no additional notification");
+  }
+
+  // ── Test F: After cooldown expires, a fresh notification IS fired ──────────
+  // Simulates an hour passing by backdating the rate-limit timestamp so the gate
+  // opens again and the next broken cycle sends a new alert.
+  {
+    _resetConsecutiveFailuresForTest();
+    _resetLastDebugTriggerAtForTest();
+    const { deps, record } = makeStubs();
+
+    // Cycle 1: streak=1 → degraded
+    await _applyCircuitBreakerForTest(TEST_USER, TEST_INTEGRATION, BROKEN_RESULT_NOTIFY, deps);
+    // Cycle 2: streak=2 → broken, first notification fires
+    await _applyCircuitBreakerForTest(TEST_USER, TEST_INTEGRATION, BROKEN_RESULT_NOTIFY, deps);
+
+    assert.equal(record.notifyUserCalls.length, 1, "F: first notification fired");
+
+    // Simulate the cooldown expiring by backdating the rate-limit entry by just
+    // over one hour so Date.now() - last > DEBUG_TRIGGER_COOLDOWN_MS.
+    const expiredTimestamp = Date.now() - _DEBUG_TRIGGER_COOLDOWN_MS_FOR_TEST - 1;
+    _setLastDebugTriggerAtForTest(`${TEST_INTEGRATION}:${TEST_USER}`, expiredTimestamp);
+
+    // Cycle 3 after cooldown: streak=3 → broken, second notification must now fire
+    await _applyCircuitBreakerForTest(TEST_USER, TEST_INTEGRATION, BROKEN_RESULT_NOTIFY, deps);
+
+    assert.equal(
+      record.notifyUserCalls.length,
+      2,
+      "F: second notification fired after cooldown window expired",
+    );
+    console.log("✓ F: after cooldown expires, a subsequent broken cycle fires a fresh notification");
   }
 
   console.log("\nAll circuit-breaker assertions passed. ✓");

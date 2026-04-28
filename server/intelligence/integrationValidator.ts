@@ -923,6 +923,23 @@ export function _resetSystemPingCacheForTest(): void {
   systemPingCache.clear();
 }
 
+/** Clears the duplicate-alert rate-limit map so tests start from a clean state. */
+export function _resetLastDebugTriggerAtForTest(): void {
+  lastDebugTriggerAt.clear();
+}
+
+/**
+ * Directly sets a timestamp in the duplicate-alert rate-limit map.
+ * Use this in tests to simulate an expired cooldown without actually waiting an hour.
+ * Pass `Date.now() - DEBUG_TRIGGER_COOLDOWN_MS - 1` to simulate just-expired.
+ */
+export function _setLastDebugTriggerAtForTest(key: string, timestamp: number): void {
+  lastDebugTriggerAt.set(key, timestamp);
+}
+
+/** Exposes the cooldown constant so tests can compute expired timestamps precisely. */
+export const _DEBUG_TRIGGER_COOLDOWN_MS_FOR_TEST = DEBUG_TRIGGER_COOLDOWN_MS;
+
 /**
  * Re-exports checkSystemCredential for test assertions.
  * Allows tests to call checkSystemCredential with an injected ping function and
@@ -993,20 +1010,26 @@ export async function _applyCircuitBreakerForTest(
     userId,
   });
 
-  const directMsg = buildDirectNotification(integration, errMsg);
-  if (directMsg) {
-    await deps.notifyUser(
-      userId,
-      "approval_request",
-      `Jarvis (integration alert): ${integration} disconnected\n\n${directMsg}`,
-    );
-  } else {
-    await deps.triggerAutoDebugSession({
-      userId,
-      capability: integration,
-      errorMessage: errMsg,
-      source: `integrationValidator/${integration}`,
-      errorLogId: errorLogId ?? undefined,
-    });
+  const rateKey = `${integration}:${userId}`;
+  const last = lastDebugTriggerAt.get(rateKey) ?? 0;
+  if (Date.now() - last > DEBUG_TRIGGER_COOLDOWN_MS) {
+    lastDebugTriggerAt.set(rateKey, Date.now());
+
+    const directMsg = buildDirectNotification(integration, errMsg);
+    if (directMsg) {
+      await deps.notifyUser(
+        userId,
+        "approval_request",
+        `Jarvis (integration alert): ${integration} disconnected\n\n${directMsg}`,
+      );
+    } else {
+      await deps.triggerAutoDebugSession({
+        userId,
+        capability: integration,
+        errorMessage: errMsg,
+        source: `integrationValidator/${integration}`,
+        errorLogId: errorLogId ?? undefined,
+      });
+    }
   }
 }
