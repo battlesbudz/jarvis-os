@@ -55,6 +55,11 @@ let ytdlpUpgradePromise: Promise<void> | null = null;
 /** The yt-dlp invocation to use — updated to `python3 -m yt_dlp` if pip succeeds. */
 let ytdlpCmd = "yt-dlp";
 
+/** Returns the resolved yt-dlp command after any pip upgrade. Call after ensureYtdlpUpgraded(). */
+export function getYtdlpCmd(): string { return ytdlpCmd; }
+/** Ensures yt-dlp is up-to-date and sets ytdlpCmd appropriately. Safe to call multiple times. */
+export { ensureYtdlpUpgraded };
+
 async function ensureYtdlpUpgraded(): Promise<void> {
   if (ytdlpUpgradePromise) return ytdlpUpgradePromise;
   ytdlpUpgradePromise = (async () => {
