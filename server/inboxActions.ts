@@ -245,6 +245,14 @@ export async function executeInboxAction(
       return { success: true, message: "Opening Self-Repair Log" };
     }
 
+    case "review_approval": {
+      await db
+        .update(schema.inboxItems)
+        .set({ status: "dismissed", actedAt: new Date() })
+        .where(eq(schema.inboxItems.id, itemId));
+      return { success: true, message: "Opening approval request" };
+    }
+
     default:
       return { success: false, message: `Unknown action: ${actionType}` };
   }

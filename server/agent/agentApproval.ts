@@ -118,7 +118,7 @@ export const STRICTLY_IRREVERSIBLE_TOOLS = new Set([
 
 const gateEmitter = new EventEmitter();
 gateEmitter.setMaxListeners(200);
-const DEFAULT_TTL_MS = 10 * 60 * 1000; // 10 minutes
+const DEFAULT_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 // ── Helper: DB row → ApprovalGate ─────────────────────────────────────────────
 
@@ -450,7 +450,6 @@ toolCallHooks.register(
         title: `Approve: ${ctx.toolName}`,
         description: `Agent "${ctx.agentName}" wants to run tool: ${ctx.toolName}`,
         severity: "info" as const,
-        timeoutMs: 10 * 60 * 1000,
       },
     };
   },

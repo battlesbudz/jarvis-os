@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -30,7 +30,7 @@ interface InboxItem {
   sender: string | null;
   snippet: string | null;
   jarvisReason: string | null;
-  suggestedActions: { label: string; actionType: string }[] | null;
+  suggestedActions: { label: string; actionType: string; payload?: Record<string, unknown> }[] | null;
   status: string;
   surfacedAt: string;
   actedAt: string | null;
@@ -168,7 +168,7 @@ const GUT_TYPE_LABEL: Record<string, string> = {
 const SUPPORTED_ACTION_TYPES = new Set([
   'dismiss', 'never_again', 'archive', 'mark_important',
   'save_as_task', 'add_prep_time', 'save_to_focus', 'navigate_telegram_health', 'reply',
-  'navigate_self_repair',
+  'navigate_self_repair', 'review_approval',
 ]);
 
 export default function InboxScreen() {
@@ -176,6 +176,7 @@ export default function InboxScreen() {
   const insets = useSafeAreaInsets();
   const isWeb = Platform.OS === 'web';
   const queryClient = useQueryClient();
+  const listRef = useRef<FlatList>(null);
 
   const { data: items = [], isLoading, refetch } = useQuery<InboxItem[]>({
     queryKey: ['/api/inbox/items'],
@@ -265,9 +266,14 @@ export default function InboxScreen() {
       const res = await apiRequest('POST', `/api/deliverables/${id}/approve`, {});
       return res.json() as Promise<{ ok: boolean; gmailDraftUrl?: string }>;
     },
-    onSuccess: (data) => {
+    onSuccess: (data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['/api/deliverables'] });
       queryClient.invalidateQueries({ queryKey: ['/api/deliverables?triageSection=auto_handled'] });
+      const approvedItem = deliverables.find(d => d.id === variables);
+      if (approvedItem?.type === 'approval_gate') {
+        Alert.alert('Approved', 'The action has been approved and will continue.');
+        return;
+      }
       Alert.alert(
         'Approved',
         data?.gmailDraftUrl
@@ -288,6 +294,20 @@ export default function InboxScreen() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/deliverables'] });
       queryClient.invalidateQueries({ queryKey: ['/api/deliverables?triageSection=auto_handled'] });
+    },
+  });
+
+  const rejectGateMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await apiRequest('POST', `/api/deliverables/${id}/reject`, {});
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/deliverables'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/deliverables?triageSection=auto_handled'] });
+    },
+    onError: () => {
+      Alert.alert('Error', 'Could not decline this request.');
     },
   });
 
@@ -396,7 +416,7 @@ export default function InboxScreen() {
     }, [refetch, refetchDrafts, refetchDeliverables, refetchAutoHandled, refetchActiveJobs, refetchGut])
   );
 
-  const handleAction = (itemId: string, actionType: string, sourceId?: string) => {
+  const handleAction = (itemId: string, actionType: string, sourceId?: string, payload?: Record<string, unknown>) => {
     if (actionType === 'never_again') {
       Alert.alert(
         'Never show again?',
@@ -437,6 +457,20 @@ export default function InboxScreen() {
         }
       }
       router.push({ pathname: '/(tabs)/agents', params });
+      return;
+    }
+    if (actionType === 'review_approval') {
+      actionMutation.mutate({ itemId, actionType });
+      listRef.current?.scrollToOffset({ offset: 0, animated: true });
+      const gateId = payload?.gateId as string | undefined;
+      if (gateId) {
+        const matchingDeliverable = deliverables.find(
+          d => d.type === 'approval_gate' && (d.meta as { gateId?: string } | null)?.gateId === gateId
+        );
+        if (matchingDeliverable) {
+          setTimeout(() => listRef.current?.scrollToOffset({ offset: 0, animated: true }), 100);
+        }
+      }
       return;
     }
     actionMutation.mutate({ itemId, actionType });
@@ -496,7 +530,7 @@ export default function InboxScreen() {
                 <Pressable
                   key={i}
                   style={[styles.actionButton, isDismiss && styles.actionButtonDismiss]}
-                  onPress={() => handleAction(item.id, action.actionType, item.sourceId)}
+                  onPress={() => handleAction(item.id, action.actionType, item.sourceId, action.payload)}
                   disabled={actionMutation.isPending}
                 >
                   <Text style={[styles.actionText, isDismiss && styles.actionTextDismiss]}>
@@ -533,7 +567,8 @@ export default function InboxScreen() {
           const typeLabel = DELIVERABLE_LABEL[d.type] || d.type;
           const busy =
             (approveDeliverableMutation.isPending && approveDeliverableMutation.variables === d.id) ||
-            (discardDeliverableMutation.isPending && discardDeliverableMutation.variables === d.id);
+            (discardDeliverableMutation.isPending && discardDeliverableMutation.variables === d.id) ||
+            (rejectGateMutation.isPending && rejectGateMutation.variables === d.id);
           const meta = d.meta as { to?: string; subject?: string; noSourceUrls?: boolean } | null;
           return (
             <Animated.View key={d.id} entering={FadeInDown.duration(300).delay(index * 60)}>
@@ -588,32 +623,55 @@ export default function InboxScreen() {
                 </View>
 
                 <View style={styles.actionsRow}>
-                  <Pressable
-                    style={styles.actionButton}
-                    onPress={() => approveDeliverableMutation.mutate(d.id)}
-                    disabled={busy}
-                    testID={`deliverable-approve-${d.id}`}
-                  >
-                    <Text style={styles.actionText}>
-                      {d.type === 'email_draft' ? 'Save to Gmail' : 'Save to Documents'}
-                    </Text>
-                  </Pressable>
-                  <Pressable
-                    style={[styles.actionButton, styles.actionButtonDismiss]}
-                    onPress={() => openEditDeliverable(d)}
-                    disabled={busy}
-                    testID={`deliverable-edit-${d.id}`}
-                  >
-                    <Text style={[styles.actionText, styles.actionTextDismiss]}>Edit</Text>
-                  </Pressable>
-                  <Pressable
-                    style={[styles.actionButton, styles.actionButtonDismiss]}
-                    onPress={() => discardDeliverableMutation.mutate(d.id)}
-                    disabled={busy}
-                    testID={`deliverable-discard-${d.id}`}
-                  >
-                    <Text style={[styles.actionText, styles.actionTextDismiss]}>Discard</Text>
-                  </Pressable>
+                  {d.type === 'approval_gate' ? (
+                    <>
+                      <Pressable
+                        style={styles.actionButton}
+                        onPress={() => approveDeliverableMutation.mutate(d.id)}
+                        disabled={busy}
+                        testID={`deliverable-approve-${d.id}`}
+                      >
+                        <Text style={styles.actionText}>Approve</Text>
+                      </Pressable>
+                      <Pressable
+                        style={[styles.actionButton, styles.actionButtonDismiss]}
+                        onPress={() => rejectGateMutation.mutate(d.id)}
+                        disabled={busy}
+                        testID={`deliverable-decline-${d.id}`}
+                      >
+                        <Text style={[styles.actionText, styles.actionTextDismiss]}>Decline</Text>
+                      </Pressable>
+                    </>
+                  ) : (
+                    <>
+                      <Pressable
+                        style={styles.actionButton}
+                        onPress={() => approveDeliverableMutation.mutate(d.id)}
+                        disabled={busy}
+                        testID={`deliverable-approve-${d.id}`}
+                      >
+                        <Text style={styles.actionText}>
+                          {d.type === 'email_draft' ? 'Save to Gmail' : 'Save to Documents'}
+                        </Text>
+                      </Pressable>
+                      <Pressable
+                        style={[styles.actionButton, styles.actionButtonDismiss]}
+                        onPress={() => openEditDeliverable(d)}
+                        disabled={busy}
+                        testID={`deliverable-edit-${d.id}`}
+                      >
+                        <Text style={[styles.actionText, styles.actionTextDismiss]}>Edit</Text>
+                      </Pressable>
+                      <Pressable
+                        style={[styles.actionButton, styles.actionButtonDismiss]}
+                        onPress={() => discardDeliverableMutation.mutate(d.id)}
+                        disabled={busy}
+                        testID={`deliverable-discard-${d.id}`}
+                      >
+                        <Text style={[styles.actionText, styles.actionTextDismiss]}>Discard</Text>
+                      </Pressable>
+                    </>
+                  )}
                 </View>
               </View>
             </Animated.View>
@@ -829,9 +887,9 @@ export default function InboxScreen() {
 
   const renderListHeader = () => (
     <View>
+      {renderDeliverables()}
       {renderGutNoticed()}
       {renderRunningJobs()}
-      {renderDeliverables()}
       {renderAutoHandledDeliverables()}
       {renderDraftQueue()}
     </View>
@@ -939,6 +997,7 @@ export default function InboxScreen() {
         </View>
       ) : (
         <FlatList
+          ref={listRef}
           data={items}
           renderItem={renderItem}
           keyExtractor={(item) => item.id}
