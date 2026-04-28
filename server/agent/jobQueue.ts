@@ -1,5 +1,5 @@
 import { db } from "../db";
-import { eq, and, sql, asc } from "drizzle-orm";
+import { eq, and, sql, gte } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import type { SubAgentType } from "./subagents";
 import { runSubAgent } from "./subagents";
@@ -42,6 +42,193 @@ async function notifyJobComplete(
     console.error("[JobQueue] notify failed:", err);
   }
 }
+
+// ── Research notification coordinator ────────────────────────────────────────
+// Research jobs queued in the same 60-second window belong to the same
+// "batch" (typically one user message that caused the coach to queue multiple
+// jobs). We group them by finding an existing batch whose anchor createdAt is
+// within 60 seconds of the incoming job's createdAt (true sliding window, not
+// a floor-divided bucket, so minute-boundary jobs are handled correctly).
+//
+// When a research job completes it registers itself with the coordinator. The
+// coordinator waits up to NOTIFICATION_FLUSH_DELAY_MS for more sibling jobs
+// to complete. Once the timer fires it also queries the DB for any sibling
+// research jobs that completed in that window but were not registered
+// (e.g. processed in parallel or before a restart). It then sends exactly ONE
+// notification for the whole batch.
+//
+// Safety guarantee: the timer always fires (even if siblings fail/cancel),
+// so no completed research job is ever left without a notification.
+
+interface BatchedResearchNotification {
+  userId: string;
+  /** createdAt of the first job in this batch (ms since epoch). Used for window matching. */
+  anchorTime: number;
+  jobs: Array<{ title: string; body: string }>;
+  timer: ReturnType<typeof setTimeout>;
+}
+
+/** key: `${userId}:research:${anchorTime}` */
+const researchNotificationBatches = new Map<string, BatchedResearchNotification>();
+
+/**
+ * Tracks anchor times of already-flushed research batches per user so that
+ * late-completing siblings in the same window are suppressed rather than
+ * triggering a second notification.
+ * Map: userId → [{anchorTime, flushedAt}]
+ */
+const flushedResearchBatches = new Map<string, Array<{ anchorTime: number; flushedAt: number }>>();
+
+/** True sibling window — must match the guard in queueBackgroundJob. */
+const SIBLING_WINDOW_MS = 60 * 1000;
+
+/** How long we keep flushed-batch records to suppress late arrivals. */
+const FLUSHED_BATCH_TTL_MS = 10 * 60 * 1000;
+
+/**
+ * How long we wait after the first job in a batch completes before flushing.
+ * Long enough for a sibling completing seconds later to join; short enough
+ * that the user doesn't wait excessively after a solo research job finishes.
+ */
+const NOTIFICATION_FLUSH_DELAY_MS = 30 * 1000;
+
+async function flushResearchBatch(key: string): Promise<void> {
+  const batch = researchNotificationBatches.get(key);
+  if (!batch) return;
+  researchNotificationBatches.delete(key);
+
+  const { userId, anchorTime, jobs } = batch;
+  if (jobs.length === 0) return;
+
+  // Before sending, query the DB for sibling research jobs that completed in
+  // the same ±60 s window but were never registered with the in-memory
+  // coordinator (e.g. processed in a parallel worker tick or a prior restart).
+  // Merge any extras into the total count so the combined notification is
+  // accurate. This is best-effort — failures fall through safely.
+  try {
+    const windowStart = new Date(anchorTime - SIBLING_WINDOW_MS);
+    const windowEnd   = new Date(anchorTime + SIBLING_WINDOW_MS);
+    const allSiblings = await db
+      .select({ title: schema.agentJobs.title })
+      .from(schema.agentJobs)
+      .where(
+        and(
+          eq(schema.agentJobs.userId, userId),
+          eq(schema.agentJobs.agentType, "research"),
+          eq(schema.agentJobs.status, "complete"),
+          gte(schema.agentJobs.createdAt, windowStart),
+          sql`${schema.agentJobs.createdAt} <= ${windowEnd}`,
+        ),
+      );
+    const knownTitles = new Set(jobs.map((j) => j.title));
+    for (const row of allSiblings) {
+      const t = row.title ?? "";
+      if (!knownTitles.has(t)) {
+        jobs.push({ title: t, body: "" });
+        knownTitles.add(t);
+      }
+    }
+  } catch {
+    // Non-fatal: flush with only the in-memory jobs.
+  }
+
+  // Record this window as flushed so any late-completing siblings are suppressed.
+  const now = Date.now();
+  const userFlushed = flushedResearchBatches.get(userId) ?? [];
+  // Evict stale entries before appending.
+  const fresh = userFlushed.filter((f) => now - f.flushedAt < FLUSHED_BATCH_TTL_MS);
+  fresh.push({ anchorTime, flushedAt: now });
+  flushedResearchBatches.set(userId, fresh);
+
+  if (jobs.length === 1) {
+    await notifyJobComplete(userId, "research", jobs[0].title, jobs[0].body);
+  } else {
+    // Only count jobs with a body (real completions, not extra DB-only siblings).
+    const bodiedJobs = jobs.filter((j) => j.body);
+    const notifyBody = bodiedJobs[0]?.body ?? jobs[0].body;
+    const combinedTitle = `Research complete (${jobs.length} results) — ${jobs[0].title}`;
+    console.log(`[JobQueue] flushing batched research notification: ${jobs.length} job(s) → userId=${userId}`);
+    await notifyJobComplete(userId, "research", combinedTitle, notifyBody);
+  }
+}
+
+/**
+ * Register a completed research job with the notification coordinator.
+ * Uses true sliding-window matching (±60 s on actual createdAt ms) so
+ * minute-boundary jobs are correctly batched together.
+ *
+ * If the sibling window was already flushed (notification already sent), the
+ * late arrival is suppressed to prevent a second notification for the same
+ * research request.
+ */
+function scheduleResearchNotification(
+  userId: string,
+  createdAt: Date,
+  deliverableTitle: string,
+  notifyBody: string,
+): void {
+  const newTime = createdAt.getTime();
+  const now = Date.now();
+
+  // Check whether a batch for this window was already flushed (notification sent).
+  const userFlushed = flushedResearchBatches.get(userId) ?? [];
+  const alreadyFlushed = userFlushed.some(
+    (f) =>
+      Math.abs(f.anchorTime - newTime) <= SIBLING_WINDOW_MS &&
+      now - f.flushedAt < FLUSHED_BATCH_TTL_MS,
+  );
+  if (alreadyFlushed) {
+    console.log(
+      `[JobQueue] suppressing late research notification (batch already sent) for userId=${userId} title="${deliverableTitle.slice(0, 60)}"`,
+    );
+    return;
+  }
+
+  // Find an existing pending batch for this user whose anchor is within 60 s.
+  for (const [key, batch] of researchNotificationBatches.entries()) {
+    if (batch.userId !== userId) continue;
+    if (Math.abs(batch.anchorTime - newTime) <= SIBLING_WINDOW_MS) {
+      batch.jobs.push({ title: deliverableTitle, body: notifyBody });
+      // Debounce: extend the flush timer so it fires after the last arrival.
+      clearTimeout(batch.timer);
+      batch.timer = setTimeout(() => flushResearchBatch(key).catch((e) =>
+        console.error("[JobQueue] flushResearchBatch failed:", e),
+      ), NOTIFICATION_FLUSH_DELAY_MS);
+      return;
+    }
+  }
+
+  // No matching batch — start a new one.
+  const key = `${userId}:research:${newTime}`;
+  const timer = setTimeout(() => flushResearchBatch(key).catch((e) =>
+    console.error("[JobQueue] flushResearchBatch failed:", e),
+  ), NOTIFICATION_FLUSH_DELAY_MS);
+  researchNotificationBatches.set(key, {
+    userId,
+    anchorTime: newTime,
+    jobs: [{ title: deliverableTitle, body: notifyBody }],
+    timer,
+  });
+}
+
+/**
+ * Notify the user that a sub-agent job completed.
+ * Research jobs are batched within a 60-second sibling window — exactly one
+ * Telegram/inbox notification is sent per batch via a debounced coordinator.
+ * All other agent types receive an immediate individual notification.
+ */
+async function notifySubAgentJobComplete(
+  job: typeof schema.agentJobs.$inferSelect,
+  deliverableTitle: string,
+  notifyBody: string,
+): Promise<void> {
+  if (job.agentType !== "research" || !job.createdAt) {
+    await notifyJobComplete(job.userId, job.agentType as AgentJobType, deliverableTitle, notifyBody);
+    return;
+  }
+  scheduleResearchNotification(job.userId, new Date(job.createdAt), deliverableTitle, notifyBody);
+}
+// ─────────────────────────────────────────────────────────────────────────────
 
 const TICK_MS = 15 * 1000;
 const MAX_JOB_DURATION_MS = 5 * 60 * 1000;
@@ -361,12 +548,9 @@ writing a clear inbox message explaining what is broken and what the user should
     }).catch(() => {});
     console.log(`[JobQueue] complete ${job.agentType} job ${job.id} → deliverable ${deliverableId}`);
     const subNotifyMsg = `${sub.summary || "Ready for review"} — open Inbox to approve, edit, or discard.`;
-    await notifyJobComplete(
-      job.userId,
-      job.agentType as AgentJobType,
-      sub.title,
-      subNotifyMsg,
-    );
+    // Use sibling-aware notification: if another job from the same batch is
+    // still running, defer so the last one to finish sends one notification.
+    await notifySubAgentJobComplete(job, sub.title, subNotifyMsg);
     if (hasWorkflow) {
       const wfOutput = `${sub.title}\n\n${sub.summary || ""}\n\n${sub.body?.slice(0, 1200) || ""}`.trim();
       await onWorkflowJobComplete(wfId!, wfStep!, job.id, wfOutput).catch((e) =>
