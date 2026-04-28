@@ -3,6 +3,7 @@ import { sql } from "drizzle-orm";
 import { getSoulPromptBlock } from "./soul";
 import { retrieveRelevantMemories } from "./retrieve";
 import { getEmotionalState, buildEmotionalStatePromptBlock } from "../intelligence/emotional-state";
+import { emit as diagEmit } from "../diagnostics/diagnosticsService";
 
 interface PatternRow {
   patterns: unknown;
@@ -40,7 +41,15 @@ export async function buildAiContextSections(
       out.soulSection = `\n\nWhat I know about this person (JARVIS Soul):\n${soulText.trim()}\n`;
     }
   } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
     console.error("[promptContext] soul load failed", err);
+    diagEmit({
+      userId,
+      subsystem: "memory",
+      severity: "warning",
+      message: `Memory soul context load failed (optional enrichment): ${detail.slice(0, 300)}`,
+      metadata: { operation: "getSoulPromptBlock", classification: "optional_enrichment" },
+    }).catch(() => {});
   }
 
   try {
@@ -63,7 +72,15 @@ export async function buildAiContextSections(
       }
     }
   } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
     console.error("[promptContext] patterns load failed", err);
+    diagEmit({
+      userId,
+      subsystem: "memory",
+      severity: "warning",
+      message: `Memory patterns context load failed (optional enrichment): ${detail.slice(0, 300)}`,
+      metadata: { operation: "weeklyInsightsQuery", classification: "optional_enrichment" },
+    }).catch(() => {});
   }
 
   try {
@@ -78,7 +95,15 @@ export async function buildAiContextSections(
       }
     }
   } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
     console.error("[promptContext] retrieve failed", err);
+    diagEmit({
+      userId,
+      subsystem: "memory",
+      severity: "error",
+      message: `Memory retrieval failed: ${detail.slice(0, 300)}`,
+      metadata: { operation: "retrieveRelevantMemories" },
+    }).catch(() => {});
   }
 
   try {
