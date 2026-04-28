@@ -23,7 +23,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { fetch as expoFetch } from "expo/fetch";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import { apiRequest, getApiUrl } from "@/lib/query-client";
 import { getAuthToken } from "@/lib/auth-context";
 import Colors from "@/constants/colors";
@@ -2308,6 +2308,10 @@ export default function AgentsScreen() {
   const [qualityCheckEnabled, setQualityCheckEnabled] = useState(true);
   const [auditEntry, setAuditEntry] = useState<AuditEntry | null>(null);
 
+  // Deep-link params: auditTs + auditFile are set when the user taps a
+  // self-repair failure notification that includes a gameplan://agents?auditTs=...&auditFile=... link.
+  const { auditTs, auditFile } = useLocalSearchParams<{ auditTs?: string; auditFile?: string }>();
+
   const topPad = Platform.OS === "web" ? 67 : insets.top;
   const bottomPad = Platform.OS === "web" ? 34 : insets.bottom;
 
@@ -2336,6 +2340,18 @@ export default function AgentsScreen() {
       setQualityCheckEnabled(prefs.responseQualityCheck !== false);
     }
   }, [prefs]);
+
+  // When the screen is opened via a deep link (gameplan://agents?auditTs=...&auditFile=...),
+  // find the matching audit entry and open its detail modal automatically.
+  useEffect(() => {
+    if (!auditTs || !auditData?.entries) return;
+    const match = auditData.entries.find(
+      (e) =>
+        e.timestamp === auditTs &&
+        (!auditFile || e.file === auditFile),
+    );
+    if (match) setAuditEntry(match);
+  }, [auditTs, auditFile, auditData]);
 
   const prefMutation = useMutation({
     mutationFn: (value: boolean) =>
