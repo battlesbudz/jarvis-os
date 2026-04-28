@@ -2684,16 +2684,14 @@ export default function SettingsScreen() {
             </View>
           )}
 
-          {/* Memory pipeline health banner — only visible when memory subsystem is degraded/down.
-              Clears immediately when the recovery signal is emitted (subsystem returns to healthy). */}
+          {/* Memory pipeline error counts — shown whenever either write or read errors are non-zero
+              so users get an at-a-glance view without needing a full AI diagnosis. */}
           {healthReport && (() => {
-            const memSub = (healthReport.subsystems ?? []).find((s) => s.name === 'memory');
-            const isDegraded = !!(memSub && (memSub.status === 'degraded' || memSub.status === 'down'));
-            if (!isDegraded) return null;
-
             const writeErr = healthReport.memoryWriteErrors15m ?? 0;
             const readErr = healthReport.memoryReadErrors15m ?? 0;
-            const showWrite = writeErr > 0 || (readErr === 0);
+            if (writeErr === 0 && readErr === 0) return null;
+
+            const showWrite = writeErr > 0;
             const showRead = readErr > 0;
 
             return (
@@ -2702,9 +2700,7 @@ export default function SettingsScreen() {
                   <View style={[healthStyles.memoryBanner, { borderLeftColor: '#F59E0B' }]}>
                     <Ionicons name="cloud-offline-outline" size={14} color="#F59E0B" style={{ marginTop: 1 }} />
                     <Text style={[healthStyles.memoryBannerText, { color: '#F59E0B' }]}>
-                      {writeErr > 0
-                        ? `Memory learning paused — ${writeErr} error${writeErr === 1 ? '' : 's'} in the last 15 minutes`
-                        : 'Memory learning may be paused — pipeline errors detected'}
+                      {`Memory learning errors — ${writeErr} in the last 15 minutes`}
                     </Text>
                   </View>
                 )}
@@ -2712,7 +2708,7 @@ export default function SettingsScreen() {
                   <View style={[healthStyles.memoryBanner, { borderLeftColor: Colors.error }]}>
                     <Ionicons name="search-outline" size={14} color={Colors.error} style={{ marginTop: 1 }} />
                     <Text style={[healthStyles.memoryBannerText, { color: Colors.error }]}>
-                      {`Memory recall degraded — ${readErr} error${readErr === 1 ? '' : 's'} in the last 15 minutes`}
+                      {`Memory recall errors — ${readErr} in the last 15 minutes`}
                     </Text>
                   </View>
                 )}
