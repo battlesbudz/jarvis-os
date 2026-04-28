@@ -722,6 +722,21 @@ async function processUpdate(update: any): Promise<void> {
         return;
       }
 
+      // ── /reset_budget command (owner-only) ────────────────────────────────
+      if (text.startsWith("/reset_budget") || text.startsWith("/reset_circuit_breaker")) {
+        const userId = link[0].userId;
+        const { isIntegrationOwner } = await import("./integrationOwner");
+        if (!(await isIntegrationOwner(userId))) {
+          await sendMessage(chatId, "⛔ This command is only available to the Jarvis owner.");
+          return;
+        }
+        const { resetCircuitBreaker, writeBudgetSummary } = await import("./agent/safeWritePolicy");
+        await resetCircuitBreaker();
+        const summary = await writeBudgetSummary();
+        await sendMessage(chatId, `✅ Write counter reset. Current status: ${summary}`);
+        return;
+      }
+
       // ── /agent and /ask commands (Telegram parity with Discord) ───────────
       if (text.startsWith("/agent") || text.startsWith("/ask")) {
         const userId = link[0].userId;
