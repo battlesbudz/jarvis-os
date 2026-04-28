@@ -363,6 +363,15 @@ function setupErrorHandler(app: express.Application) {
     console.warn("[Startup] core agent seeding failed (non-fatal):", err);
   }
 
+  // Pre-warm the Discord confirm-token cache from the DB so the first
+  // consumeConfirmToken call after a restart hits the in-memory L1 path.
+  try {
+    const { seedConfirmTokenCache } = await import("./agent/discordConfirmStore");
+    await seedConfirmTokenCache();
+  } catch (err) {
+    console.warn("[Startup] seedConfirmTokenCache failed (non-fatal):", err);
+  }
+
   // Start the generic MCP server registry — connects all enabled MCP servers
   // and registers their discovered tools into the agent's tool system.
   // Non-blocking; connection failures are non-fatal.
