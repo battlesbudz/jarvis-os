@@ -518,6 +518,8 @@ export default function SettingsScreen() {
     channelStatuses: Record<string, { configured: boolean; linked?: boolean }>;
     recentErrors: DiagEventEntry[];
     generatedAt: string;
+    memoryWriteErrors15m: number;
+    memoryReadErrors15m: number;
   }
   const [healthReport, setHealthReport] = useState<HealthReport | null>(null);
   const [healthLoading, setHealthLoading] = useState(false);
@@ -2682,6 +2684,42 @@ export default function SettingsScreen() {
             </View>
           )}
 
+          {/* Memory pipeline health banner — only visible when memory subsystem is degraded/down.
+              Clears immediately when the recovery signal is emitted (subsystem returns to healthy). */}
+          {healthReport && (() => {
+            const memSub = (healthReport.subsystems ?? []).find((s) => s.name === 'memory');
+            const isDegraded = !!(memSub && (memSub.status === 'degraded' || memSub.status === 'down'));
+            if (!isDegraded) return null;
+
+            const writeErr = healthReport.memoryWriteErrors15m ?? 0;
+            const readErr = healthReport.memoryReadErrors15m ?? 0;
+            const showWrite = writeErr > 0 || (readErr === 0);
+            const showRead = readErr > 0;
+
+            return (
+              <View style={healthStyles.memoryBannerSection}>
+                {showWrite && (
+                  <View style={[healthStyles.memoryBanner, { borderLeftColor: '#F59E0B' }]}>
+                    <Ionicons name="cloud-offline-outline" size={14} color="#F59E0B" style={{ marginTop: 1 }} />
+                    <Text style={[healthStyles.memoryBannerText, { color: '#F59E0B' }]}>
+                      {writeErr > 0
+                        ? `Memory learning paused — ${writeErr} error${writeErr === 1 ? '' : 's'} in the last 15 minutes`
+                        : 'Memory learning may be paused — pipeline errors detected'}
+                    </Text>
+                  </View>
+                )}
+                {showRead && (
+                  <View style={[healthStyles.memoryBanner, { borderLeftColor: Colors.error }]}>
+                    <Ionicons name="search-outline" size={14} color={Colors.error} style={{ marginTop: 1 }} />
+                    <Text style={[healthStyles.memoryBannerText, { color: Colors.error }]}>
+                      {`Memory recall degraded — ${readErr} error${readErr === 1 ? '' : 's'} in the last 15 minutes`}
+                    </Text>
+                  </View>
+                )}
+              </View>
+            );
+          })()}
+
           {/* Recent error timeline */}
           {healthReport && healthReport.recentErrors && healthReport.recentErrors.length > 0 && (
             <View style={healthStyles.timelineSection}>
@@ -3737,6 +3775,31 @@ const healthStyles = StyleSheet.create({
     fontFamily: 'Inter_500Medium',
     color: Colors.textSecondary,
     maxWidth: 90,
+  },
+  memoryBannerSection: {
+    paddingHorizontal: 12,
+    paddingTop: 10,
+    paddingBottom: 2,
+    gap: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  memoryBanner: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    borderLeftWidth: 3,
+    backgroundColor: Colors.surfaceAlt,
+    marginBottom: 4,
+  },
+  memoryBannerText: {
+    flex: 1,
+    fontSize: 12,
+    fontFamily: 'Inter_500Medium',
+    lineHeight: 17,
   },
   diagSection: {
     padding: 12,
