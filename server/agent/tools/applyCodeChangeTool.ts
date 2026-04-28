@@ -108,17 +108,20 @@ async function appendAuditLog(entry: {
 }
 
 /**
- * Append a compact verification-result update to the audit log.
- * Called by selfHealTool after type-check + test suite + smoke-tests complete.
+ * Append a compact verification-result update to the audit log and, when a
+ * userId is provided, send a follow-up notification via the user's self_repair
+ * channel preference so they learn whether the fix actually compiled / tested.
  *
  * @param filePaths - The file paths that were changed in the preceding apply step.
  * @param result    - 'passed' | 'failed' | 'error'
  * @param summary   - Optional short description of the outcome.
+ * @param userId    - When supplied, a follow-up notification is sent to the user.
  */
 export async function recordVerificationResult(
   filePaths: string[],
   result: "passed" | "failed" | "error",
   summary?: string,
+  userId?: string,
 ): Promise<void> {
   const updates: string[] = [];
   for (const fp of filePaths) {
@@ -145,6 +148,27 @@ export async function recordVerificationResult(
       .where(and(eq(selfHealAuditLog.timestamp, ts), eq(selfHealAuditLog.file, fp)))
       .catch(() => {});
   }
+
+  // ── Follow-up notification ────────────────────────────────────────────────
+  if (!userId) return;
+
+  const fileList = filePaths.join(", ");
+  const summaryLine = summary ? `\nDetails: ${summary}` : "";
+
+  let notifyText: string;
+  if (result === "passed") {
+    notifyText =
+      `[Self-repair ✅] Verification passed for ${fileList}` +
+      summaryLine;
+  } else {
+    const cta = "\nOpen the audit log (server/self-heal-audit.log) to review.";
+    notifyText =
+      `[Self-repair ⚠] Verification ${result} for ${fileList}` +
+      summaryLine +
+      cta;
+  }
+
+  notifyUser(userId, "self_repair", notifyText).catch(() => {});
 }
 
 // ── Tool definition ───────────────────────────────────────────────────────────
