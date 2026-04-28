@@ -2,6 +2,7 @@ import { db } from "../db";
 import { sql, inArray } from "drizzle-orm";
 import { userMemories } from "@shared/schema";
 import OpenAI from "openai";
+import { emit as diagEmit } from "../diagnostics/diagnosticsService";
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
@@ -55,7 +56,7 @@ export async function embedText(text: string): Promise<number[] | null> {
     if (isEndpointUnsupported) {
       console.debug("[MemoryRetrieve] embedText unavailable (embeddings endpoint not supported by proxy):", message);
     } else {
-      console.error("[MemoryRetrieve] embedText failed:", err);
+      console.warn("[MemoryRetrieve] embedText failed (optional enrichment):", message);
     }
     return null;
   }
@@ -73,7 +74,7 @@ export async function backfillEmbedding(memoryId: string, content: string): Prom
     await db.execute(sql`UPDATE user_memories SET embedding = ${JSON.stringify(v)}::jsonb WHERE id = ${memoryId}`);
     return true;
   } catch (err) {
-    console.error("[MemoryRetrieve] backfillEmbedding failed:", err);
+    console.warn("[MemoryRetrieve] backfillEmbedding failed (optional enrichment):", err);
     return false;
   }
 }
@@ -147,15 +148,29 @@ export async function retrieveRelevantMemories(
   // about user-typed natural language. Limit candidates to 60 so the
   // re-rank stays cheap.
   // Excludes memories where expires_at IS NOT NULL AND expires_at < NOW().
-  const rows = await db.execute<MemoryRow>(sql`
-    SELECT id, content, category, tier, memory_type, relevance_score, confidence, access_count, embedding, extracted_at,
-           ts_rank(to_tsvector('english', content), plainto_tsquery('english', ${q})) AS fts_rank
-    FROM user_memories
-    WHERE user_id = ${userId}
-      AND (expires_at IS NULL OR expires_at >= NOW())
-    ORDER BY fts_rank DESC NULLS LAST, relevance_score DESC
-    LIMIT 60
-  `);
+  let rows: { rows: MemoryRow[] };
+  try {
+    rows = await db.execute<MemoryRow>(sql`
+      SELECT id, content, category, tier, memory_type, relevance_score, confidence, access_count, embedding, extracted_at,
+             ts_rank(to_tsvector('english', content), plainto_tsquery('english', ${q})) AS fts_rank
+      FROM user_memories
+      WHERE user_id = ${userId}
+        AND (expires_at IS NULL OR expires_at >= NOW())
+      ORDER BY fts_rank DESC NULLS LAST, relevance_score DESC
+      LIMIT 60
+    `);
+  } catch (dbErr) {
+    const detail = dbErr instanceof Error ? dbErr.message : String(dbErr);
+    console.error("[MemoryRetrieve] DB query failed:", dbErr);
+    diagEmit({
+      userId,
+      subsystem: "memory",
+      severity: "error",
+      message: `Memory retrieval DB query failed: ${detail.slice(0, 300)}`,
+      metadata: { operation: "retrieveRelevantMemories" },
+    }).catch(() => {});
+    return [];
+  }
 
   const scored: RetrievedMemory[] = (rows.rows ?? []).map((r) => {
     const ftsRank = Math.min(1, Number(r.fts_rank) || 0);
