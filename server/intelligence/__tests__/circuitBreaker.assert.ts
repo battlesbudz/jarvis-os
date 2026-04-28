@@ -535,6 +535,48 @@ const TEST_INTEGRATION = "google" as const;
     console.log("✓ J: warmup simulation — pre-populated rate-limit blocks re-alert after restart");
   }
 
+  // ── Test M: HTML connector error pages are classified as unconfigured ─────────
+  // When the Replit connector proxy returns an HTML error page (e.g. HTTP 404
+  // with <!DOCTYPE html>), checkConnectorStatus must return "unconfigured" rather
+  // than "broken", so no user alert is fired.  This test exercises the string
+  // detection logic directly (same guard used in checkConnectorStatus).
+  {
+    // Mirror the exact condition from checkConnectorStatus:
+    // text.trimStart().startsWith("<!DOCTYPE") || text.trimStart().startsWith("<html")
+    const isHtmlErrorPage = (text: string): boolean =>
+      text.trimStart().startsWith("<!DOCTYPE") || text.trimStart().startsWith("<html");
+
+    // Positive cases — these should be classified as HTML (proxy errors)
+    assert.ok(
+      isHtmlErrorPage("<!DOCTYPE html>\n<html lang=en>"),
+      "M: uppercase DOCTYPE is classified as HTML error page",
+    );
+    assert.ok(
+      isHtmlErrorPage("\n<!DOCTYPE html>\n<html lang=en>"),
+      "M: leading whitespace before DOCTYPE is normalised by trimStart",
+    );
+    assert.ok(
+      isHtmlErrorPage("<html lang=en>\n  <meta charset=utf-8>"),
+      "M: lowercase <html> tag is classified as HTML error page",
+    );
+
+    // Negative cases — genuine JSON API errors must NOT be treated as unconfigured
+    assert.ok(
+      !isHtmlErrorPage('{"error":"invalid_grant","error_description":"Token has been expired"}'),
+      "M: JSON error body is NOT classified as HTML (should escalate to broken)",
+    );
+    assert.ok(
+      !isHtmlErrorPage('{"error":"unauthorized","message":"Access denied"}'),
+      "M: JSON unauthorized body is NOT classified as HTML",
+    );
+    assert.ok(
+      !isHtmlErrorPage(""),
+      "M: empty response body is NOT classified as HTML",
+    );
+
+    console.log("✓ M: HTML connector error page detection — proxy errors classified as unconfigured; JSON errors escalate normally");
+  }
+
   console.log("\nAll circuit-breaker assertions passed. ✓");
 })().catch((err) => {
   console.error("Test failed:", err);
