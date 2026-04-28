@@ -1,9 +1,10 @@
 import type { AgentTool } from "../types";
 import { db } from "../../db";
-import { eq, and, desc, sql } from "drizzle-orm";
+import { eq, and, desc, gte, inArray, sql } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { submitAgentJob } from "../jobQueue";
 import type { AgentJobType } from "../jobQueue";
+import { normalizeTitle, titlesAreSimilar } from "./jobDuplicateGuard";
 
 export const sessionsListTool: AgentTool = {
   name: "sessions_list",
@@ -264,6 +265,41 @@ export const sessionsSendTool: AgentTool = {
         label: "sessions_send: invalid type",
       };
     }
+
+    // ── Duplicate-job guard ─────────────────────────────────────────────────
+    try {
+      const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
+      const activeJobs = await db
+        .select({ id: schema.agentJobs.id, title: schema.agentJobs.title })
+        .from(schema.agentJobs)
+        .where(
+          and(
+            eq(schema.agentJobs.userId, ctx.userId),
+            eq(schema.agentJobs.agentType, agentType),
+            inArray(schema.agentJobs.status, ["queued", "running"]),
+            gte(schema.agentJobs.createdAt, tenMinutesAgo),
+          ),
+        );
+
+      if (activeJobs.length > 0) {
+        const normalizedNew = normalizeTitle(title);
+        const duplicate = activeJobs.find((j) => titlesAreSimilar(normalizeTitle(j.title), normalizedNew));
+        if (duplicate) {
+          console.log(
+            `[${ctx.channel || "Agent"}] sessions_send DUPLICATE SKIPPED type=${agentType} existing="${duplicate.title}" new="${title}"`,
+          );
+          return {
+            ok: true,
+            content: `A ${agentType} job for this topic is already running (id=${duplicate.id}, title="${duplicate.title}") — skipped creating a duplicate. The user will be notified when the existing job completes.`,
+            label: `Duplicate ${agentType} job skipped`,
+            detail: duplicate.id,
+          };
+        }
+      }
+    } catch (dupErr) {
+      console.warn(`[sessions_send] duplicate guard query failed:`, dupErr);
+    }
+    // ────────────────────────────────────────────────────────────────────────
 
     try {
       const jobId = await submitAgentJob({

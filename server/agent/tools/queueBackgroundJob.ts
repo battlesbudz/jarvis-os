@@ -4,6 +4,7 @@ import { SUB_AGENT_TYPES, type SubAgentType } from "../subagents";
 import { db } from "../../db";
 import { eq, and, gte, inArray } from "drizzle-orm";
 import * as schema from "@shared/schema";
+import { normalizeTitle, titlesAreSimilar } from "./jobDuplicateGuard";
 
 interface QueueJobArgs {
   agent_type?: string;
@@ -162,39 +163,3 @@ function deriveTitle(agentType: SubAgentType, prompt: string): string {
   return `${prefix} ${snippet}${prompt.length > 60 ? "…" : ""}`;
 }
 
-/** Lowercase, strip punctuation, collapse whitespace for comparison. */
-function normalizeTitle(title: string): string {
-  return title
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-/**
- * Two titles are considered similar if:
- * 1. Their normalized forms are exactly equal, OR
- * 2. The first 25 normalized characters match (catches minor suffix differences), OR
- * 3. They share ≥60% word overlap (catches reordered or paraphrased titles).
- */
-function titlesAreSimilar(a: string, b: string): boolean {
-  // 1. Exact normalized match (handles short titles too).
-  if (a === b) return true;
-
-  // 2. Prefix check for longer titles.
-  const prefixLen = 25;
-  if (a.length >= prefixLen && b.length >= prefixLen && a.slice(0, prefixLen) === b.slice(0, prefixLen)) {
-    return true;
-  }
-
-  // 3. Word overlap (ignores short stop-words ≤2 chars).
-  const wordsA = new Set(a.split(" ").filter((w) => w.length > 2));
-  const wordsB = new Set(b.split(" ").filter((w) => w.length > 2));
-  if (wordsA.size === 0 || wordsB.size === 0) return false;
-  let overlap = 0;
-  for (const w of wordsA) {
-    if (wordsB.has(w)) overlap++;
-  }
-  const similarity = overlap / Math.max(wordsA.size, wordsB.size);
-  return similarity >= 0.6;
-}
