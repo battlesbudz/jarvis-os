@@ -67,6 +67,8 @@ export interface HealthReport {
   staleJobCount: number;
   channelStatuses: Record<string, { configured: boolean; linked?: boolean }>;
   stuckWorkflowCount: number;
+  memoryWriteErrors15m: number;
+  memoryReadErrors15m: number;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -579,6 +581,60 @@ export async function runHealthCheck(userId?: string): Promise<HealthReport> {
   if (subsystems.some((s) => s.status === "down")) overallStatus = "down";
   else if (degradedSubsystems.length > 0) overallStatus = "degraded";
 
+  // Memory pipeline split: write-path (learning/ingestion) vs read-path (recall/retrieval).
+  const MEMORY_WRITE_OPS = [
+    "extractAndStore",
+    "extractAndStore_insert",
+    "embedOnInsert",
+    "runConsolidationPass",
+    "runSemanticExtractionPass",
+    "runRelevanceDecayPass",
+    "runAccessReinforcementPass",
+    "runDreamForUser_synthesis",
+    "runDreamForUser_insertInsight",
+    "seedSoulFromDream",
+  ];
+  const MEMORY_READ_OPS = [
+    "retrieveRelevantMemories",
+    "promptContext",
+    "promptContextBuild",
+  ];
+
+  let memoryWriteErrors15m = 0;
+  let memoryReadErrors15m = 0;
+  try {
+    const memWriteConditions: SQL<unknown>[] = [
+      eq(schema.diagnosticEvents.subsystem, "memory"),
+      sqlExpr`${schema.diagnosticEvents.severity} IN ('error', 'critical')`,
+      gte(schema.diagnosticEvents.createdAt, windowStart),
+      sqlExpr`(${schema.diagnosticEvents.metadata}->>'type') IS DISTINCT FROM 'pattern_detected'`,
+      sqlExpr`(${schema.diagnosticEvents.metadata}->>'operation') = ANY(ARRAY[${MEMORY_WRITE_OPS.map((op) => `'${op}'`).join(",")}])`,
+    ];
+    const memReadConditions: SQL<unknown>[] = [
+      eq(schema.diagnosticEvents.subsystem, "memory"),
+      sqlExpr`${schema.diagnosticEvents.severity} IN ('error', 'critical')`,
+      gte(schema.diagnosticEvents.createdAt, windowStart),
+      sqlExpr`(${schema.diagnosticEvents.metadata}->>'type') IS DISTINCT FROM 'pattern_detected'`,
+      sqlExpr`(${schema.diagnosticEvents.metadata}->>'operation') = ANY(ARRAY[${MEMORY_READ_OPS.map((op) => `'${op}'`).join(",")}])`,
+    ];
+    if (userId) {
+      memWriteConditions.push(eq(schema.diagnosticEvents.userId, userId));
+      memReadConditions.push(eq(schema.diagnosticEvents.userId, userId));
+    }
+    const [writeRows, readRows] = await Promise.all([
+      db.select({ count: sqlExpr<number>`count(*)::int` })
+        .from(schema.diagnosticEvents)
+        .where(and(...memWriteConditions)),
+      db.select({ count: sqlExpr<number>`count(*)::int` })
+        .from(schema.diagnosticEvents)
+        .where(and(...memReadConditions)),
+    ]);
+    memoryWriteErrors15m = writeRows[0]?.count ?? 0;
+    memoryReadErrors15m = readRows[0]?.count ?? 0;
+  } catch {
+    // Best-effort — leave counts at 0
+  }
+
   return {
     overallStatus,
     subsystems: Array.isArray(subsystems) ? subsystems : [],
@@ -592,6 +648,8 @@ export async function runHealthCheck(userId?: string): Promise<HealthReport> {
     staleJobCount,
     channelStatuses: channelStatuses ?? {},
     stuckWorkflowCount,
+    memoryWriteErrors15m,
+    memoryReadErrors15m,
   };
 }
 
