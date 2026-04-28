@@ -561,6 +561,7 @@ export default function SettingsScreen() {
     skipReason?: string | null;
   }>>([]);
   const [historyExpanded, setHistoryExpanded] = useState(false);
+  const [archiveAfterSynth, setArchiveAfterSynth] = useState(false);
 
   const loadSynthesisHistory = useCallback(async () => {
     try {
@@ -604,10 +605,10 @@ export default function SettingsScreen() {
     setWorkspaceSaving(prev => ({ ...prev, [key]: false }));
   }, []);
 
-  const synthesiseLearnings = useCallback(async () => {
+  const runSynthesis = useCallback(async (archiveAfter: boolean) => {
     setSynthesising(true);
     try {
-      const res = await apiRequest('POST', '/api/workspace/synthesise', {});
+      const res = await apiRequest('POST', '/api/workspace/synthesise', { archiveAfter });
       if (!res.ok) {
         Alert.alert('Synthesis failed', 'Could not synthesise learnings. Please try again.');
         return;
@@ -617,6 +618,7 @@ export default function SettingsScreen() {
         skipReason?: string;
         bullets?: string[];
         appendedToMemory?: boolean;
+        archived?: boolean;
         correctionLines?: number;
         errorLines?: number;
       };
@@ -624,9 +626,12 @@ export default function SettingsScreen() {
         Alert.alert('Nothing to synthesise', data.skipReason ?? 'No correction or error data found yet.');
       } else {
         const count = data.bullets?.length ?? 0;
+        const archiveNote = data.archived
+          ? '\n\nCorrection and error logs have been cleared — only new entries will accumulate from here.'
+          : '';
         Alert.alert(
           'Learnings synthesised',
-          `${count} lesson${count === 1 ? '' : 's'} distilled from your correction and error logs and appended to MEMORY.md.\n\nJarvis will apply these in all future sessions.`,
+          `${count} lesson${count === 1 ? '' : 's'} distilled from your correction and error logs and appended to MEMORY.md.\n\nJarvis will apply these in all future sessions.${archiveNote}`,
           [{ text: 'View MEMORY.md', onPress: () => { setWorkspaceExpanded(prev => ({ ...prev, memory: true })); loadWorkspaceFiles(); } }, { text: 'Done', style: 'cancel' }],
         );
       }
@@ -637,6 +642,21 @@ export default function SettingsScreen() {
       setSynthesising(false);
     }
   }, [loadWorkspaceFiles, loadSynthesisHistory]);
+
+  const synthesiseLearnings = useCallback(() => {
+    if (archiveAfterSynth) {
+      Alert.alert(
+        'Clear logs after synthesis?',
+        'Jarvis will distil your correction and error logs into MEMORY.md, then reset both log files. New entries will accumulate from scratch.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Synthesise & Clear', style: 'destructive', onPress: () => runSynthesis(true) },
+        ],
+      );
+    } else {
+      runSynthesis(false);
+    }
+  }, [archiveAfterSynth, runSynthesis]);
 
   const loadHealth = useCallback(async () => {
     setHealthLoading(true);
@@ -3141,12 +3161,26 @@ export default function SettingsScreen() {
                   </View>
                 );
               })}
-              <View style={{ padding: 12, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+              <View style={{ paddingHorizontal: 12, paddingTop: 10, paddingBottom: 4, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1, flexShrink: 1 }}>
+                  <Ionicons name="trash-outline" size={13} color={archiveAfterSynth ? '#EF4444' : Colors.textTertiary} />
+                  <Text style={{ fontSize: 12, fontFamily: 'Inter_500Medium', color: archiveAfterSynth ? '#EF4444' : Colors.textSecondary, flexShrink: 1 }}>
+                    Clear logs after synthesis
+                  </Text>
+                </View>
+                <Switch
+                  value={archiveAfterSynth}
+                  onValueChange={(v) => { Haptics.selectionAsync(); setArchiveAfterSynth(v); }}
+                  trackColor={{ false: Colors.border, true: '#EF444460' }}
+                  thumbColor={archiveAfterSynth ? '#EF4444' : Colors.textTertiary}
+                  ios_backgroundColor={Colors.border}
+                />
+              </View>
+              <View style={{ paddingHorizontal: 12, paddingBottom: 12 }}>
                 <Pressable
                   onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); synthesiseLearnings(); }}
                   disabled={synthesising}
                   style={[{
-                    flex: 1,
                     flexDirection: 'row',
                     alignItems: 'center',
                     justifyContent: 'center',

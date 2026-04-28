@@ -37,7 +37,7 @@ export type WorkspaceFileKey = keyof typeof WORKSPACE_FILES;
 
 // ── Stub content written on first initialisation ──────────────────────────────
 
-const STUBS: Record<WorkspaceFileKey, string> = {
+export const STUBS: Record<WorkspaceFileKey, string> = {
   soul: `# Jarvis Workspace — SOUL.md
 <!-- Edit this file to give Jarvis a custom persona or standing character instructions. -->
 <!-- These instructions are injected into EVERY agent session alongside the generated Soul. -->
