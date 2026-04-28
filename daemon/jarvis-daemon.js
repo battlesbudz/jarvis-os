@@ -78,10 +78,113 @@ function notify(title, body) {
   });
 }
 
+// Default shell timeout: 30 seconds (matches daemon_shell tool default), configurable per-op.
+const SHELL_DEFAULT_TIMEOUT_MS = 30000;
+
+// Special device files that are always safe to reference in shell commands.
+const SAFE_DEVICE_FILES = new Set(['/dev/null', '/dev/stdin', '/dev/stdout', '/dev/stderr', '/dev/zero']);
+
+// Command binary prefixes — when the first token of a shell segment is an absolute
+// path, it is the executable itself (not a file arg), and may live in system bin dirs.
+// File arguments (non-first tokens) must resolve inside ROOT.
+const CMD_BIN_PREFIXES = [
+  '/usr/', '/bin/', '/sbin/', '/opt/homebrew/', '/usr/local/',
+  '/nix/', '/home/linuxbrew/', '/home/runner/.nix-profile/',
+  '/Applications/', '/System/', '/Library/',
+];
+
+/** True if an absolute path resolves within JARVIS_DAEMON_ROOT (or is a device file). */
+function isInsideRoot(p) {
+  const norm = path.normalize(p); // collapses '..' segments, e.g. /usr/../etc → /etc
+  if (SAFE_DEVICE_FILES.has(norm)) return true;
+  return norm === ROOT || norm.startsWith(ROOT + path.sep);
+}
+
+/** True if an absolute path is a known system command binary location. */
+function isSystemBin(p) {
+  const norm = path.normalize(p);
+  return CMD_BIN_PREFIXES.some((prefix) => norm.startsWith(prefix));
+}
+
+/**
+ * Returns true if the shell command appears to access paths outside JARVIS_DAEMON_ROOT.
+ *
+ * Enforcement strategy (authoritative security boundary):
+ *  1. Reject known-dangerous patterns (cd .., rm -rf /, sudo rm, etc.)
+ *  2. Split on shell operators into pipe/chain segments; for each segment:
+ *     - The first non-flag token may be a command binary (absolute system-bin path or bare name)
+ *     - All other absolute-path tokens must resolve INSIDE ROOT (via path.normalize)
+ *     - Relative tokens containing '..' are resolved via path.resolve(ROOT, token)
+ *  3. Redirection targets (anything after >) to absolute non-ROOT paths are blocked.
+ *
+ * Bypassed entirely when the user grants allow_outside_root permission.
+ */
+function commandEscapesRoot(cmd) {
+  // ── Always-block patterns (before expansion) ──────────────────────────────
+  if (/\bcd\s+\.\./.test(cmd)) return true;       // cd .. traversal
+  if (/\bsudo\s+rm/.test(cmd)) return true;        // sudo rm anything
+  if (/\brm\s+-rf\s+\//.test(cmd)) return true;   // rm -rf /
+
+  // ── Tilde / $HOME expansion ───────────────────────────────────────────────
+  // Expand ~ and $HOME so their resolved paths can be checked against ROOT.
+  // If HOME is unavailable, conservatively block any ~ or $HOME reference.
+  const HOME = process.env.HOME || process.env.USERPROFILE || '';
+  if (!HOME && /~|\$\{?HOME\}?/.test(cmd)) return true;
+  const expanded = HOME
+    ? cmd
+        .replace(/\$\{HOME\}/g, HOME)            // ${HOME}  →  /home/user
+        .replace(/\$HOME(?=[/\s;|&>'")\x60]|$)/g, HOME) // $HOME/... → /home/user/...
+        .replace(/~/g, HOME)                     // ~/...     → /home/user/...
+    : cmd;
+
+  // ── cd to absolute path (checked on expanded command) ────────────────────
+  if (/\bcd\s+\//.test(expanded)) return true;
+
+  // ── Redirection targets ───────────────────────────────────────────────────
+  const redirectMatch = expanded.match(/>\s*(\/[^\s;|&]*)/g) || [];
+  for (const redir of redirectMatch) {
+    const target = redir.replace(/^>\s*/, '');
+    if (!isInsideRoot(target)) return true;
+  }
+
+  // ── Token-level path enforcement (on expanded command) ────────────────────
+  // Split on pipe, semicolon, &&, || to process each segment independently.
+  const segments = expanded.split(/[|;]|&&|\|\|/);
+  for (const segment of segments) {
+    // Tokenise on whitespace and common shell metacharacters.
+    const tokens = segment.trim().split(/[\s<>()$\x60]+/).map((t) => t.replace(/^['"\x60]|['"\x60]$/g, ''));
+    // isCmd tracks whether the next meaningful token is the command binary.
+    let isCmd = true;
+    for (const token of tokens) {
+      if (!token) continue;
+      if (/^-/.test(token)) continue; // option flags are not paths
+
+      if (token.startsWith('/')) {
+        const norm = path.normalize(token); // collapses /usr/../etc → /etc
+        if (!SAFE_DEVICE_FILES.has(norm)) {
+          if (isCmd && isSystemBin(norm)) {
+            // First token is a system command binary — allowed.
+          } else if (!isInsideRoot(norm)) {
+            return true; // absolute path escapes ROOT
+          }
+        }
+      } else if (token.includes('..')) {
+        // Relative traversal: resolve against ROOT and verify containment.
+        const resolved = path.resolve(ROOT, token);
+        if (resolved !== ROOT && !resolved.startsWith(ROOT + path.sep)) return true;
+      }
+
+      isCmd = false;
+    }
+  }
+
+  return false;
+}
+
 function runShell(cmd, cwd, timeoutMs) {
   const workCwd = cwd ? safePath(cwd) : ROOT;
   return new Promise((resolve) => {
-    exec(cmd, { cwd: workCwd, timeout: timeoutMs || 15000, maxBuffer: 1024 * 1024 }, (err, stdout, stderr) => {
+    exec(cmd, { cwd: workCwd, timeout: timeoutMs || SHELL_DEFAULT_TIMEOUT_MS, maxBuffer: 1024 * 1024 }, (err, stdout, stderr) => {
       const out = (stdout || "").toString().slice(0, 16000);
       const errOut = (stderr || "").toString().slice(0, 8000);
       if (err && err.killed) resolve({ ok: false, error: "timeout", stdout: out, stderr: errOut });
@@ -97,6 +200,16 @@ async function handleOp(op) {
       return await notify(op.title || "GamePlan", op.body || "");
     }
     if (op.type === "shell") {
+      // Daemon-side outside-root enforcement: if allowOutsideRoot is not granted,
+      // reject commands that appear to escape JARVIS_DAEMON_ROOT.
+      // This is the authoritative security boundary (server also does preflight checks).
+      if (!op.allowOutsideRoot && commandEscapesRoot(String(op.cmd))) {
+        return {
+          ok: false,
+          error: "Command blocked by daemon: navigates outside workspace root (" + ROOT + "). " +
+            "Enable 'allow_outside_root' in daemon permissions to allow unrestricted shell access.",
+        };
+      }
       return await runShell(String(op.cmd), op.cwd, op.timeoutMs);
     }
     if (op.type === "file_read") {

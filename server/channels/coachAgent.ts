@@ -10,7 +10,7 @@ import { getRecentEmailCommitments } from "../integrations/gmail";
 import { getGoogleCalendarEvents } from "../integrations/googleCalendar";
 import { getRecentInteractions, formatInteractionTimeline, logInteraction } from "../interactionLog";
 import { getSoulPromptBlock } from "../memory/soul";
-import { isUserPaired, isAndroidDaemonActive, isDesktopDaemonActive } from "../daemon/bridge";
+import { isUserPaired, isAndroidDaemonActive, isDesktopDaemonActive, isDaemonActionAllowed } from "../daemon/bridge";
 import { buildYouTubeContextBlock } from "../utils/youtubeAutoFetch";
 import type { ChannelAttachment } from "./types";
 import { runOrchestrator } from "../agent/orchestrator";
@@ -382,11 +382,18 @@ You can extend yourself by building new tools directly. Generate the complete Ty
   const androidActive = isAndroidDaemonActive(userId);
   const desktopActive = isDesktopDaemonActive(userId);
   const daemonPaired = isUserPaired(userId);
+  const shellAllowed = desktopActive ? await isDaemonActionAllowed(userId, "shell").catch(() => false) : false;
   const daemonLines: string[] = [];
-  if (desktopActive) daemonLines.push("- Desktop daemon is ACTIVE. You can run shell commands, send desktop notifications, and read/write files in the user's workspace.");
+  if (desktopActive) {
+    if (shellAllowed) {
+      daemonLines.push("- Desktop daemon is ACTIVE with shell execution enabled. Use **daemon_shell** to run scripts, build apps, run tests, execute local automation, or do any computation on the user's machine. Prefer daemon_shell over daemon_action for shell commands — it surfaces stdout, stderr, and exit code cleanly. Use daemon_action for file reads, desktop notifications, and screenshots.");
+    } else {
+      daemonLines.push("- Desktop daemon is ACTIVE. You can send desktop notifications, read/write files in the workspace, and take screenshots. Shell execution is disabled — the user can enable it in Profile → Connected Channels → Desktop Daemon → Permissions.");
+    }
+  }
   if (androidActive) daemonLines.push("- Android device daemon is ACTIVE. You can open apps (android_open_app), take screenshots (android_screenshot), read the screen (android_read_screen), browse URLs (android_browse), list/read files on the device (android_file_list/android_file_read). Tap/type/swipe actions are available when user enables them. Proactively mention Android capabilities when relevant.");
   const daemonSection = daemonPaired
-    ? `## Connected Devices\n${daemonLines.join("\n")}`
+    ? `## Connected Devices\n${daemonLines.join("\n")}${shellAllowed ? "\n\n**daemon_shell usage**: Call daemon_shell proactively when the user asks to run a script, build an app, run tests, read a local log, execute a cron job, or do any local computation. Don't describe what you'd do — just run the command and show the result." : ""}`
     : "## Android Daemon Setup Guidance (no daemon paired)\nIf the user asks how to install or set up the Android daemon, give them these steps:\n1. In the Jarvis app → Profile → Connected Channels → Android Device → tap Pair to get an 8-character code.\n2. Build the APK: open android-daemon/ in Android Studio → Build → Generate Signed Bundle/APK → APK → debug. Or run `gradle wrapper --gradle-version 8.4` then `./gradlew assembleDebug` from the android-daemon/ directory.\n3. Transfer the APK to the Android phone and install it (Settings → Apps → Special app access → Install unknown apps → allow your file manager).\n4. Open the app → enter the server URL + the 8-character code → tap Connect.\n5. Grant the two permissions the app requests: Accessibility Service (Settings → Accessibility → Jarvis Daemon → enable) and All Files Access.\n6. The app stays connected in the background and reconnects automatically after reboots or Wi-Fi drops.";
 
   const systemPrompt = `You are GamePlan Coach Jarvis — a sharp, supportive personal productivity coach. ${formatHint}
@@ -437,7 +444,7 @@ When a user's request involves multi-step research, drafting a document or plan,
 ## Critical rules — no empty promises
 **Act, don't announce**: If you say you will do something (create a document, save data, log an entry, send a message, post to a channel), you MUST call the relevant tool in that same response. Never say you will do something and then fail to do it. There is no "I'll do that now" without an immediate tool call.
 
-**Discord channel creation and cross-channel posting are exceptions to 'Act, don't announce'**: For discord_create_channel and discord_post (posting to channels other than the current one), you MUST ask for confirmation in one turn and wait for an explicit 'yes'/'confirm'/'go ahead' before calling the tool in the next turn. 'A', 'B', or a choice between options does NOT count as confirmation for channel creation.
+**Discord channel creation and cross-channel posting are exceptions to 'Act, don't announce'**: For \`discord_create_channel\` and \`discord_post\` (posting to channels other than the current one), you MUST ask for confirmation in one turn and wait for an explicit 'yes'/'confirm'/'go ahead' before calling the tool in the next turn. 'A', 'B', or a choice between options does NOT count as confirmation for channel creation.
 
 **If you can't act yet**: If you are genuinely missing required data to take the action, say exactly what one piece of information is missing and ask for only that. Do not say "I'll do it" and then ask five clarifying questions. One missing piece = one question, then act.
 

@@ -37,6 +37,7 @@ import { driveCreateFileTool, driveListFilesTool, driveReadFileTool } from "./go
 import { fetchCalendarTool } from "./calendar";
 import { spawnSubagentTool } from "./spawnSubagent";
 import { daemonActionTool } from "./daemon";
+import { daemonShellTool, daemonStatusTool } from "./daemonShellTool";
 import { checkConnectionsTool, generateReconnectLinkTool } from "./connections";
 import { createCalendarEventTool } from "./calendarCreate";
 import { sendEmailTool } from "./sendEmail";
@@ -235,6 +236,8 @@ export {
   driveReadFileTool,
   spawnSubagentTool,
   daemonActionTool,
+  daemonShellTool,
+  daemonStatusTool,
   checkConnectionsTool,
   generateReconnectLinkTool,
   sendEmailTool,

@@ -27,7 +27,7 @@ export const discordChannel: Channel = {
   name: "discord",
   // Research, posting, document export, and media generation — covers web search,
   // Discord management, PDF/PPTX export, and image/video generation tools.
-  toolGroups: ["research", "discord", "memory", "documents", "media", "self_edit"],
+  toolGroups: ["research", "discord", "memory", "documents", "scheduling", "media", "self_edit"],
 
   isConfigured(): boolean {
     return true; // each user has their own bot token — always "configured" at system level
