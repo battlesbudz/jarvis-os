@@ -960,13 +960,15 @@ export async function runValidationCycle(): Promise<void> {
 /**
  * Warm up the in-memory rate-limit cache from the DB on server startup.
  *
- * Any integration that is currently "broken" or "degraded" in the DB was
- * already flagged before this server process started.  Pre-populate
- * lastDebugTriggerAt with the current timestamp so the normal 24-hour cooldown
- * window applies from now, preventing the very next validation cycle from
- * re-firing an alert just because the server was restarted.
+ * Any integration with status = 'broken' in the DB was already flagged before
+ * this server process started.  Pre-populate lastDebugTriggerAt with the current
+ * timestamp so the 24-hour secondary cooldown applies from now, preventing
+ * the post-restart degraded→broken cycle from re-firing an alert within the
+ * cooldown window.
  *
- * This is the primary defence against restart-induced notification spam.
+ * Only 'broken' rows (not 'degraded') are warmed — degraded integrations have
+ * not yet been confirmed broken, so their first confirmed break should still
+ * notify the user as expected.
  */
 async function warmupRateLimitCache(): Promise<void> {
   try {
