@@ -26,6 +26,7 @@ const ACTION_LOG_RETENTION_DAYS = 90;
 
 let schedulerRunning = false;
 let lastWeeklyRunKey = '';
+let lastSynthesisRunKey = '';
 
 function sundayKey(d: Date): string {
   // Identify the Sunday-of-week so we only run weekly_pattern once per week
@@ -253,6 +254,34 @@ export function startScheduler() {
       }
     }
 
+    // Sunday 04:30 — synthesise learnings from CORRECTIONS.md & ERRORS.md.
+    // Operates on the owner's global workspace files (a single shared file set,
+    // not per-user). Runs after the weekly pattern job pass (03:00). Deduped
+    // per week via lastSynthesisRunKey so restarts within the same minute are safe.
+    if (dow === 0 && h === 4 && m === 30) {
+      const key = sundayKey(now);
+      if (key !== lastSynthesisRunKey) {
+        lastSynthesisRunKey = key;
+        import('./intelligence/learningSynthesiser').then(({ synthesiseLearnings }) => {
+          console.log('[Scheduler] Running weekly learning synthesis...');
+          synthesiseLearnings(true).then((result) => {
+            if (result.skipped) {
+              console.log(`[Scheduler] Weekly synthesis skipped: ${result.skipReason}`);
+              console.log(`[Audit] workspace_synthesise triggered=weekly skipped=true reason="${result.skipReason}"`);
+            } else {
+              console.log(`[Scheduler] Weekly synthesis complete — ${result.bullets.length} bullet(s) appended to MEMORY.md`);
+              console.log(
+                `[Audit] workspace_synthesise triggered=weekly bullets=${result.bullets.length} ` +
+                `applied=${result.appendedToMemory} correctionLines=${result.correctionLines} errorLines=${result.errorLines}`,
+              );
+            }
+          }).catch((err) => {
+            console.error('[Scheduler] Weekly learning synthesis failed:', err);
+          });
+        }).catch((err) => console.error('[Scheduler] learningSynthesiser import failed:', err));
+      }
+    }
+
     // Sunday 18:00 UTC — run Ego weekly self-report for all users.
     if (dow === 0 && h === 18 && m === 0) {
       // weekOf is anchored to Monday-start so longitudinal history is consistent.
@@ -310,7 +339,7 @@ export function startScheduler() {
 
   }, 60 * 1000);
 
-  console.log('[Scheduler] Started — morning plan 7:00 AM daily, weekly patterns Sunday 3:00 AM, session cleanup 4:00 AM daily, memory TTL cleanup 4:30 AM daily, interaction log cleanup 5:00 AM daily, action log cleanup 5:15 AM daily, embedding backfill 6:00 AM daily, Discord schedules every minute');
+  console.log('[Scheduler] Started — morning plan 7:00 AM daily, weekly patterns Sunday 3:00 AM, learning synthesis Sunday 4:30 AM, session cleanup 4:00 AM daily, memory TTL cleanup 4:30 AM daily, interaction log cleanup 5:00 AM daily, action log cleanup 5:15 AM daily, embedding backfill 6:00 AM daily, Discord schedules every minute');
 }
 
 /**

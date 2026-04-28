@@ -550,6 +550,7 @@ export default function SettingsScreen() {
   const [workspaceSaving, setWorkspaceSaving] = useState<Record<string, boolean>>({});
   const [workspaceLoading, setWorkspaceLoading] = useState(false);
   const [workspaceIsOwner, setWorkspaceIsOwner] = useState(false);
+  const [synthesising, setSynthesising] = useState(false);
 
   const loadWorkspaceFiles = useCallback(async () => {
     setWorkspaceLoading(true);
@@ -581,6 +582,39 @@ export default function SettingsScreen() {
     } catch {}
     setWorkspaceSaving(prev => ({ ...prev, [key]: false }));
   }, []);
+
+  const synthesiseLearnings = useCallback(async () => {
+    setSynthesising(true);
+    try {
+      const res = await apiRequest('POST', '/api/workspace/synthesise', {});
+      if (!res.ok) {
+        Alert.alert('Synthesis failed', 'Could not synthesise learnings. Please try again.');
+        return;
+      }
+      const data = await res.json() as {
+        skipped?: boolean;
+        skipReason?: string;
+        bullets?: string[];
+        appendedToMemory?: boolean;
+        correctionLines?: number;
+        errorLines?: number;
+      };
+      if (data.skipped) {
+        Alert.alert('Nothing to synthesise', data.skipReason ?? 'No correction or error data found yet.');
+      } else {
+        const count = data.bullets?.length ?? 0;
+        Alert.alert(
+          'Learnings synthesised',
+          `${count} lesson${count === 1 ? '' : 's'} distilled from your correction and error logs and appended to MEMORY.md.\n\nJarvis will apply these in all future sessions.`,
+          [{ text: 'View MEMORY.md', onPress: () => { setWorkspaceExpanded(prev => ({ ...prev, memory: true })); loadWorkspaceFiles(); } }, { text: 'Done', style: 'cancel' }],
+        );
+      }
+    } catch {
+      Alert.alert('Error', 'Failed to synthesise learnings.');
+    } finally {
+      setSynthesising(false);
+    }
+  }, [loadWorkspaceFiles]);
 
   const loadHealth = useCallback(async () => {
     setHealthLoading(true);
@@ -3085,6 +3119,34 @@ export default function SettingsScreen() {
                   </View>
                 );
               })}
+              <View style={{ padding: 12, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                <Pressable
+                  onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); synthesiseLearnings(); }}
+                  disabled={synthesising}
+                  style={[{
+                    flex: 1,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 7,
+                    backgroundColor: '#1E1B4B',
+                    borderRadius: 8,
+                    borderWidth: 1,
+                    borderColor: '#8B5CF6',
+                    paddingVertical: 10,
+                    paddingHorizontal: 14,
+                  }, synthesising && { opacity: 0.6 }]}
+                >
+                  {synthesising ? (
+                    <ActivityIndicator size="small" color="#8B5CF6" />
+                  ) : (
+                    <Ionicons name="sparkles-outline" size={14} color="#8B5CF6" />
+                  )}
+                  <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: '#8B5CF6' }}>
+                    {synthesising ? 'Synthesising…' : 'Synthesise learnings'}
+                  </Text>
+                </Pressable>
+              </View>
             </>
           )}
         </View>
