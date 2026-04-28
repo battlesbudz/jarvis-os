@@ -82,12 +82,12 @@ ensurePreviewReachable = "/status"
 name = "test"
 author = "agent"
 
+[workflows.workflow.metadata]
+outputType = "console"
+
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "npm test && tsx server/agent/__tests__/mcp.assert.ts && tsx server/agent/__tests__/browserTabTools.test.ts && tsx server/agent/__tests__/toolCallHooks.test.ts && tsx server/agent/__tests__/outboundMiddleware.test.ts && tsx server/agent/__tests__/responseQuality.test.ts"
-
-[workflows.workflow.metadata]
-outputType = "console"
 
 [userenv]
 
