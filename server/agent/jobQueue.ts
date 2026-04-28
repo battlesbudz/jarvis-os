@@ -325,6 +325,11 @@ writing a clear inbox message explaining what is broken and what the user should
 
     if (job.agentType === "research" && !researchHasSourceUrls(sub.body)) {
       sub.meta.noSourceUrls = true;
+      const NO_SOURCES_BANNER =
+        "> ⚠️ **No cited sources.** This result does not contain a ## Sources section with real URLs. " +
+        "The research agent may not have performed a live web search. Verify any claims before acting on them.\n\n";
+      sub.body = NO_SOURCES_BANNER + sub.body;
+      sub.summary = "⚠️ No cited sources — " + sub.summary;
     }
 
     const inserted = await db
