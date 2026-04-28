@@ -492,6 +492,10 @@ function setupErrorHandler(app: express.Application) {
               "[Telegram] ⚠ Dev polling SKIPPED — set TELEGRAM_BOT_TOKEN_DEV as a Replit secret " +
               "(create a test bot via BotFather) to enable polling without conflicting with the production bot."
             );
+            console.warn(
+              "[Telegram] ⚠ Dev outbound sends SKIPPED — all sendMessage/sendMessageGetId calls " +
+              "are no-ops in dev mode when TELEGRAM_BOT_TOKEN_DEV is not set."
+            );
           } else {
             // Delete any previously-set webhook (e.g. from a production deploy)
             // before starting polling — Telegram only delivers to ONE endpoint,

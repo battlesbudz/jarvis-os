@@ -9,11 +9,16 @@ const BOT_TOKEN = (!isProduction && process.env.TELEGRAM_BOT_TOKEN_DEV)
   ? process.env.TELEGRAM_BOT_TOKEN_DEV
   : process.env.TELEGRAM_BOT_TOKEN;
 
+// In dev mode without a dedicated dev token, outbound sends are blocked entirely.
+// Both polling (index.ts) and sending would otherwise use the production token,
+// causing every proactive notification to fire twice — once from dev, once from prod.
+const devSendBlocked = !isProduction && !process.env.TELEGRAM_BOT_TOKEN_DEV;
+
 if (!isProduction && process.env.TELEGRAM_BOT_TOKEN_DEV) {
   console.log('[Telegram] Using DEV bot token (TELEGRAM_BOT_TOKEN_DEV)');
 } else if (!isProduction) {
-  // No dev token set — index.ts will skip polling and log the warning.
-  console.log('[Telegram] Dev mode: no TELEGRAM_BOT_TOKEN_DEV set — falling back to TELEGRAM_BOT_TOKEN (polling will be skipped to avoid conflicting with production)');
+  // No dev token set — index.ts will skip polling and outbound sends are blocked below.
+  console.log('[Telegram] Dev mode: no TELEGRAM_BOT_TOKEN_DEV set — falling back to TELEGRAM_BOT_TOKEN (polling and outbound sends will be skipped to avoid conflicting with production)');
 } else {
   console.log('[Telegram] Using production bot token (TELEGRAM_BOT_TOKEN)');
 }
@@ -95,6 +100,7 @@ export async function sendMessage(
   replyMarkupOrOpts?: InlineKeyboardMarkup | { parse_mode?: string }
 ): Promise<void> {
   if (!BOT_TOKEN) return;
+  if (devSendBlocked) return;
   const body: Record<string, unknown> = { chat_id: chatId, text };
   if (replyMarkupOrOpts) {
     if ("inline_keyboard" in replyMarkupOrOpts) {
@@ -124,6 +130,7 @@ export async function sendMessageGetId(
   text: string,
 ): Promise<number | null> {
   if (!BOT_TOKEN) return null;
+  if (devSendBlocked) return null;
   try {
     const res = await fetch(`${BASE}/sendMessage`, {
       method: 'POST',
@@ -158,6 +165,7 @@ export async function editMessage(
   text: string,
 ): Promise<{ ok: boolean; retryAfter?: number }> {
   if (!BOT_TOKEN) return { ok: false };
+  if (devSendBlocked) return { ok: false };
   const safeText = text.slice(0, 4096) || "…";
   try {
     const res = await fetch(`${BASE}/editMessageText`, {
@@ -361,6 +369,7 @@ export async function sendTelegramDocument(
   mimeType: string = 'text/markdown',
 ): Promise<boolean> {
   if (!BOT_TOKEN) return false;
+  if (devSendBlocked) return false;
   try {
     const buf = typeof content === 'string' ? Buffer.from(content, 'utf8') : content;
     const form: FormData = new FormData();
@@ -526,6 +535,7 @@ export async function sendVoice(
   caption?: string,
 ): Promise<boolean> {
   if (!BOT_TOKEN) return false;
+  if (devSendBlocked) return false;
   try {
     const form = new FormData();
     form.append("chat_id", chatId);
@@ -598,6 +608,7 @@ export async function sendPhoto(
   filename?: string,
 ): Promise<boolean> {
   if (!BOT_TOKEN) return false;
+  if (devSendBlocked) return false;
   const actualMime = mimeType || "image/png";
   const actualFilename = filename || (actualMime === "image/jpeg" ? "image.jpg" : "image.png");
   try {
@@ -627,6 +638,7 @@ export async function sendVideo(
   caption?: string,
 ): Promise<boolean> {
   if (!BOT_TOKEN) return false;
+  if (devSendBlocked) return false;
   try {
     const form = new FormData();
     form.append("chat_id", chatId);
@@ -654,6 +666,7 @@ export async function sendChatAction(
   action: "typing" | "upload_document" | "upload_photo" | "upload_voice" = "typing",
 ): Promise<void> {
   if (!BOT_TOKEN) return;
+  if (devSendBlocked) return;
   try {
     await fetch(`${BASE}/sendChatAction`, {
       method: "POST",
