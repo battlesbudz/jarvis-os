@@ -85,6 +85,7 @@ export async function extractAndStore(input: ExtractInput): Promise<ExtractedMem
   if (!source.trim()) return [];
 
   let stored: ExtractedMemory[] = [];
+  let hadAnyError = false;
 
   try {
     const existingRows = await db
@@ -206,6 +207,7 @@ Return { "memories": [] } if nothing new and high-confidence was learned.`;
         stored.push({ content: text, category, confidence, tier, memoryType });
         console.log(`[Memory] +${sourceType} [${category} ${tier}/${memoryType} c=${confidence}${embedding ? " e" : ""}${expiresAt ? " ttl" : ""}] ${text.slice(0, 70)}`);
       } catch (insertErr) {
+        hadAnyError = true;
         console.error("[Memory] DB insert failed:", insertErr);
         diagEmit({
           userId,
@@ -217,6 +219,7 @@ Return { "memories": [] } if nothing new and high-confidence was learned.`;
       }
     }
   } catch (err) {
+    hadAnyError = true;
     console.error("[Memory] extract failed:", err);
     diagEmit({
       userId,
@@ -230,6 +233,17 @@ Return { "memories": [] } if nothing new and high-confidence was learned.`;
   if (stored.length > 0) {
     markSoulStale(userId).catch((err) => console.error("[Memory] markSoulStale:", err));
   }
+
+  if (!hadAnyError) {
+    diagEmit({
+      userId,
+      subsystem: "memory",
+      severity: "info",
+      message: "Memory extraction completed successfully",
+      metadata: { recovery: true, operation: "extractAndStore", sourceType, stored: stored.length },
+    }).catch(() => {});
+  }
+
   return stored;
 }
 

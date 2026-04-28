@@ -663,12 +663,26 @@ export async function runDreamForUser(
     console.log(
       `[Dream] user ${userId} has insufficient data for synthesis (<${MINIMUM_MEMORY_AGE_DAYS} days) — consolidation passes ran`,
     );
+    diagEmit({
+      userId,
+      subsystem: "memory",
+      severity: "info",
+      message: "Dream cycle completed successfully (skipped synthesis: insufficient history)",
+      metadata: { recovery: true, operation: "runDreamForUser", reason: "insufficient_data" },
+    }).catch(() => {});
     return { insightsStored: 0, consolidation, semanticExtraction, decay, reinforcement };
   }
 
   const corpus = await buildCorpus(userId);
   if (!corpus.text.trim()) {
     console.log(`[Dream] empty corpus for user ${userId} — consolidation passes ran`);
+    diagEmit({
+      userId,
+      subsystem: "memory",
+      severity: "info",
+      message: "Dream cycle completed successfully (skipped synthesis: empty corpus)",
+      metadata: { recovery: true, operation: "runDreamForUser", reason: "empty_corpus" },
+    }).catch(() => {});
     return { insightsStored: 0, consolidation, semanticExtraction, decay, reinforcement };
   }
 
@@ -731,12 +745,20 @@ ${corpus.text.slice(0, 12000)}`;
 
   if (rawInsights.length === 0) {
     console.log(`[Dream] no insights generated for ${userId} on ${dreamDate}`);
+    diagEmit({
+      userId,
+      subsystem: "memory",
+      severity: "info",
+      message: "Dream cycle completed successfully (no new insights generated)",
+      metadata: { recovery: true, operation: "runDreamForUser", reason: "no_insights" },
+    }).catch(() => {});
     return { insightsStored: 0, consolidation, semanticExtraction, decay, reinforcement };
   }
 
   const sourceIds = corpus.memoryIds.slice(0, 50);
 
   let stored = 0;
+  let hadInsertError = false;
   for (const raw of rawInsights) {
     const text = raw.insight.trim();
     if (!text) continue;
@@ -755,6 +777,7 @@ ${corpus.text.slice(0, 12000)}`;
       stored++;
       console.log(`[Dream] +insight [c=${confidence}] ${text.slice(0, 80)}`);
     } catch (err) {
+      hadInsertError = true;
       console.error(`[Dream] insert failed:`, err);
       diagEmit({
         userId,
@@ -781,6 +804,16 @@ ${corpus.text.slice(0, 12000)}`;
   console.log(
     `[Dream] Cycle complete for ${userId} — insights=${stored} promoted=${consolidation.promoted} discarded=${consolidation.discarded} factsExtracted=${semanticExtraction.factsExtracted} decayed=${decay.decayed} deleted=${decay.hardDeleted} boosted=${reinforcement.boosted}`,
   );
+
+  if (!hadInsertError) {
+    diagEmit({
+      userId,
+      subsystem: "memory",
+      severity: "info",
+      message: "Dream cycle completed successfully",
+      metadata: { recovery: true, operation: "runDreamForUser", insightsStored: stored },
+    }).catch(() => {});
+  }
 
   return result;
 }
