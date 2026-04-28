@@ -1303,6 +1303,18 @@ export async function ensureTablesExist() {
       )
     `).catch(() => {});
 
+    // ── Write-budget log — circuit-breaker persistence across restarts ────────
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS write_budget_log (
+        id         SERIAL PRIMARY KEY,
+        written_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `).catch(() => {});
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS write_budget_log_written_at_idx
+        ON write_budget_log (written_at DESC)
+    `).catch(() => {});
+
     console.log("Database tables verified");
   } catch (error) {
     console.error("Failed to ensure database tables exist:", error);

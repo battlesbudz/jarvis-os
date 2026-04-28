@@ -12,6 +12,8 @@
  */
 
 import path from "path";
+import { db } from "../db";
+import { sql } from "drizzle-orm";
 
 // ── Allow-listed source directories ──────────────────────────────────────────
 // Jarvis may only read or write files inside these relative directories.
@@ -112,14 +114,13 @@ export function isPathAllowedForProposal(filePath: string): boolean {
 }
 
 // ── Runtime circuit breaker ───────────────────────────────────────────────────
-// In-memory sliding-window counter. Resets naturally as the window slides.
-// If the server restarts the counter resets — this is intentional: a restart
-// is itself a natural break-point for review.
+// DB-backed sliding-window counter. Timestamps are stored in `write_budget_log`
+// so the budget survives server restarts and cannot be bypassed by restarting.
+// Rows older than the 60-minute window are pruned on each write to keep the
+// table small.
 
 const CIRCUIT_MAX_WRITES = 10;
 const CIRCUIT_WINDOW_MS  = 60 * 60 * 1000; // 60 minutes
-
-const _writeTimestamps: number[] = [];
 
 export interface CircuitStatus {
   tripped: boolean;
@@ -129,29 +130,48 @@ export interface CircuitStatus {
 }
 
 /** Check the circuit breaker without recording a write. Non-mutating. */
-export function checkCircuitBreaker(): CircuitStatus {
-  const now        = Date.now();
-  const windowStart = now - CIRCUIT_WINDOW_MS;
-  // Evict timestamps outside the current window
-  while (_writeTimestamps.length > 0 && _writeTimestamps[0] < windowStart) {
-    _writeTimestamps.shift();
+export async function checkCircuitBreaker(): Promise<CircuitStatus> {
+  try {
+    const windowStart = new Date(Date.now() - CIRCUIT_WINDOW_MS);
+    const rows = await db.execute(sql`
+      SELECT written_at FROM write_budget_log
+      WHERE written_at >= ${windowStart}
+      ORDER BY written_at ASC
+    `);
+    const timestamps: Date[] = (rows.rows as Array<{ written_at: Date }>).map(r => new Date(r.written_at));
+    const count = timestamps.length;
+    if (count >= CIRCUIT_MAX_WRITES) {
+      const resetAt = new Date(timestamps[0].getTime() + CIRCUIT_WINDOW_MS);
+      return { tripped: true, count, resetAt };
+    }
+    return { tripped: false, count };
+  } catch {
+    // If the DB is unavailable, fail open (don't block writes) but log a warning.
+    console.warn("[safeWritePolicy] write_budget_log query failed — circuit breaker bypassed");
+    return { tripped: false, count: 0 };
   }
-  const count = _writeTimestamps.length;
-  if (count >= CIRCUIT_MAX_WRITES) {
-    const resetAt = new Date(_writeTimestamps[0] + CIRCUIT_WINDOW_MS);
-    return { tripped: true, count, resetAt };
-  }
-  return { tripped: false, count };
 }
 
 /** Record one autonomous write. Call AFTER a successful fs.writeFile. */
-export function recordAutonomousWrite(): void {
-  _writeTimestamps.push(Date.now());
+export async function recordAutonomousWrite(): Promise<void> {
+  try {
+    const now = new Date();
+    const pruneOlderThan = new Date(now.getTime() - CIRCUIT_WINDOW_MS);
+    // Insert this write and prune expired rows in one round-trip.
+    await db.execute(sql`
+      WITH inserted AS (
+        INSERT INTO write_budget_log (written_at) VALUES (${now})
+      )
+      DELETE FROM write_budget_log WHERE written_at < ${pruneOlderThan}
+    `);
+  } catch (err) {
+    console.error("[safeWritePolicy] Failed to record autonomous write in DB:", err);
+  }
 }
 
 /** Return a human-readable description of the current write budget. */
-export function writeBudgetSummary(): string {
-  const status = checkCircuitBreaker();
+export async function writeBudgetSummary(): Promise<string> {
+  const status = await checkCircuitBreaker();
   if (status.tripped) {
     return `Circuit breaker OPEN — ${status.count}/${CIRCUIT_MAX_WRITES} writes in the last 60 min. Resets at ${status.resetAt?.toISOString()}.`;
   }
@@ -163,6 +183,10 @@ export function writeBudgetSummary(): string {
  * Owner-only action — intended for use after the owner has reviewed the audit
  * log and is satisfied that the recent writes were correct.
  */
-export function resetCircuitBreaker(): void {
-  _writeTimestamps.length = 0;
+export async function resetCircuitBreaker(): Promise<void> {
+  try {
+    await db.execute(sql`DELETE FROM write_budget_log`);
+  } catch (err) {
+    console.error("[safeWritePolicy] Failed to reset write_budget_log:", err);
+  }
 }

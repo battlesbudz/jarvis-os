@@ -1391,6 +1391,15 @@ export const mcpServers = pgTable("mcp_servers", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+// ── Write-budget log — persists autonomous write timestamps across restarts ────
+// Each row represents one autonomous file write recorded by the circuit
+// breaker. Only rows within the last 60-minute window are relevant; older
+// rows are pruned opportunistically on each insert.
+export const writeBudgetLog = pgTable("write_budget_log", {
+  id: serial("id").primaryKey(),
+  writtenAt: timestamp("written_at").defaultNow().notNull(),
+});
+
 // Chat integration tables — used by server/replit_integrations/chat
 export const conversations = pgTable("conversations", {
   id: serial("id").primaryKey(),

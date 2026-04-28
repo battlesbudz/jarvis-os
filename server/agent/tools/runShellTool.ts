@@ -185,10 +185,10 @@ export const runShellTool: AgentTool = {
 
     if (command === "reset_circuit_breaker") {
       console.log("[SelfHeal] run_shell: reset_circuit_breaker — clearing write counter");
-      resetCircuitBreaker();
+      await resetCircuitBreaker();
       return {
         ok: true,
-        content: `Circuit-breaker write counter cleared. ${writeBudgetSummary()}`,
+        content: `Circuit-breaker write counter cleared. ${await writeBudgetSummary()}`,
         label: "run_shell: reset_circuit_breaker",
       };
     }
