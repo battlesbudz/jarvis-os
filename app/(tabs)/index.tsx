@@ -131,6 +131,14 @@ interface UserDocument {
   uploadedAt: string;
 }
 
+interface LastShellResult {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+  durationMs: number;
+  ranAt: string;
+}
+
 interface ScheduledTask {
   id: string;
   title: string;
@@ -139,6 +147,8 @@ interface ScheduledTask {
   recurrence: string | null;
   completedAt: string | null;
   createdAt: string;
+  shellCommand: string | null;
+  lastShellResult: LastShellResult | null;
 }
 
 interface CalendarEvent {
@@ -196,6 +206,25 @@ function formatScheduledAt(dt: string) {
 
 function isOverdue(dt: string) {
   return new Date(dt) < new Date();
+}
+
+function formatTimeAgo(dt: string) {
+  const diff = Date.now() - new Date(dt).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  return `${days}d ago`;
+}
+
+function shellResultColor(exitCode: number): string {
+  return exitCode === 0 ? Colors.success : Colors.error;
+}
+
+function shellResultDim(exitCode: number): string {
+  return exitCode === 0 ? Colors.successDim : Colors.errorDim;
 }
 
 function getCategoryColor(cat: string) {
@@ -465,6 +494,7 @@ export default function MissionControlScreen() {
   const [documentsLoading, setDocumentsLoading] = useState(true);
   const [scheduledTasks, setScheduledTasks] = useState<ScheduledTask[]>([]);
   const [scheduledLoading, setScheduledLoading] = useState(true);
+  const [expandedShellTask, setExpandedShellTask] = useState<string | null>(null);
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
   const [systemSchedule, setSystemSchedule] = useState<SystemTask[]>([]);
 
@@ -1402,16 +1432,26 @@ export default function MissionControlScreen() {
                   );
                 }
                 const jt = item.data as ScheduledTask;
+                const jLast = jt.lastShellResult;
                 return (
                   <View key={jt.id + idx} style={styles.scheduleRow}>
                     <View style={[styles.scheduleIcon, { backgroundColor: isOverdue(jt.scheduledAt) ? Colors.errorDim : Colors.violetDim }]}>
-                      <Ionicons name="sparkles-outline" size={13} color={isOverdue(jt.scheduledAt) ? Colors.error : Colors.violet} />
+                      <Ionicons name={jt.shellCommand ? 'terminal-outline' : 'sparkles-outline'} size={13} color={isOverdue(jt.scheduledAt) ? Colors.error : Colors.violet} />
                     </View>
                     <View style={styles.scheduleContent}>
                       <Text style={styles.scheduleTitle} numberOfLines={1}>{jt.title}</Text>
-                      <Text style={[styles.scheduleWhen, isOverdue(jt.scheduledAt) && { color: Colors.error }]}>
-                        {formatScheduledAt(jt.scheduledAt)} · TASK
-                      </Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                        <Text style={[styles.scheduleWhen, isOverdue(jt.scheduledAt) && { color: Colors.error }]}>
+                          {formatScheduledAt(jt.scheduledAt)} · {jt.shellCommand ? 'SHELL' : 'TASK'}
+                        </Text>
+                        {jLast && (
+                          <View style={[styles.shellBadge, { backgroundColor: shellResultDim(jLast.exitCode), borderColor: shellResultColor(jLast.exitCode) + '40' }]}>
+                            <Text style={[styles.shellBadgeText, { color: shellResultColor(jLast.exitCode) }]}>
+                              exit {jLast.exitCode} · {formatTimeAgo(jLast.ranAt)}
+                            </Text>
+                          </View>
+                        )}
+                      </View>
                     </View>
                   </View>
                 );
@@ -1670,7 +1710,7 @@ export default function MissionControlScreen() {
       </Modal>
 
       {/* Schedule Modal — merged weekly calendar */}
-      <FullModal visible={scheduleModal} title="WEEKLY SCHEDULE" accent={Colors.cyan} onClose={() => setScheduleModal(false)}>
+      <FullModal visible={scheduleModal} title="WEEKLY SCHEDULE" accent={Colors.cyan} onClose={() => { setScheduleModal(false); setExpandedShellTask(null); }}>
         {weekData.map(wd => {
           const allItems = [
             ...wd.sysTasks.map(s => ({ kind: 'system' as const, data: s, hour: s.hour, minute: s.minute })),
@@ -1714,22 +1754,64 @@ export default function MissionControlScreen() {
                 const t = item.data as ScheduledTask;
                 const done = !!t.completedAt;
                 const overdue = !done && isOverdue(t.scheduledAt);
-                const statusIcon = done ? 'checkmark-circle' : overdue ? 'warning' : 'sparkles-outline';
+                const isShell = !!t.shellCommand;
+                const statusIcon = done ? 'checkmark-circle' : overdue ? 'warning' : isShell ? 'terminal-outline' : 'sparkles-outline';
                 const statusColor = done ? Colors.success : overdue ? Colors.error : Colors.violet;
+                const lastResult = t.lastShellResult;
+                const shellExpanded = expandedShellTask === t.id + idx;
+                const taskKey = t.id + idx;
                 return (
-                  <View key={t.id + idx} style={[styles.modalItemRow, { borderLeftColor: done ? Colors.success : overdue ? Colors.error : Colors.violet }]}>
-                    <View style={{ alignItems: 'center', justifyContent: 'center', marginRight: 8 }}>
-                      <Ionicons name={statusIcon as any} size={14} color={statusColor} />
-                    </View>
-                    <View style={styles.modalItemContent}>
-                      <Text style={[styles.modalItemTitle, done && { opacity: 0.5, textDecorationLine: 'line-through' }]}>{t.title}</Text>
-                      {t.description && <Text style={styles.modalItemSub}>{t.description}</Text>}
-                      <Text style={[styles.modalItemMeta, overdue && { color: Colors.error }]}>{formatScheduledAt(t.scheduledAt)}{t.recurrence ? ` · ${t.recurrence}` : ''} · TASK</Text>
-                    </View>
-                    {!done && (
-                      <Pressable onPress={() => handleDeleteScheduledTask(t.id)} style={styles.modalItemDelete}>
-                        <Ionicons name="trash-outline" size={15} color={Colors.error} />
+                  <View key={taskKey}>
+                    <View style={[styles.modalItemRow, { borderLeftColor: done ? Colors.success : overdue ? Colors.error : Colors.violet }]}>
+                      <Pressable
+                        style={{ flex: 1, flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}
+                        onPress={() => isShell && lastResult ? setExpandedShellTask(shellExpanded ? null : taskKey) : undefined}
+                      >
+                        <View style={{ alignItems: 'center', justifyContent: 'center', marginRight: 8 }}>
+                          <Ionicons name={statusIcon as any} size={14} color={statusColor} />
+                        </View>
+                        <View style={styles.modalItemContent}>
+                          <Text style={[styles.modalItemTitle, done && { opacity: 0.5, textDecorationLine: 'line-through' }]}>{t.title}</Text>
+                          {t.description && <Text style={styles.modalItemSub}>{t.description}</Text>}
+                          <Text style={[styles.modalItemMeta, overdue && { color: Colors.error }]}>
+                            {formatScheduledAt(t.scheduledAt)}{t.recurrence ? ` · ${t.recurrence}` : ''} · {isShell ? 'SHELL' : 'TASK'}
+                          </Text>
+                          {lastResult && (
+                            <View style={[styles.shellBadge, { backgroundColor: shellResultDim(lastResult.exitCode), borderColor: shellResultColor(lastResult.exitCode) + '40', marginTop: 5 }]}>
+                              <Ionicons name={lastResult.exitCode === 0 ? 'checkmark-circle-outline' : 'close-circle-outline'} size={11} color={shellResultColor(lastResult.exitCode)} />
+                              <Text style={[styles.shellBadgeText, { color: shellResultColor(lastResult.exitCode) }]}>
+                                Last run: exit {lastResult.exitCode} · {formatTimeAgo(lastResult.ranAt)}
+                                {lastResult.durationMs ? ` · ${(lastResult.durationMs / 1000).toFixed(1)}s` : ''}
+                              </Text>
+                              {isShell && <Ionicons name={shellExpanded ? 'chevron-up' : 'chevron-down'} size={11} color={Colors.textTertiary} />}
+                            </View>
+                          )}
+                        </View>
                       </Pressable>
+                      {!done && (
+                        <Pressable onPress={() => handleDeleteScheduledTask(t.id)} style={styles.modalItemDelete}>
+                          <Ionicons name="trash-outline" size={15} color={Colors.error} />
+                        </Pressable>
+                      )}
+                    </View>
+                    {shellExpanded && lastResult && (
+                      <View style={styles.shellOutputBlock}>
+                        {!!lastResult.stdout && (
+                          <View style={styles.shellOutputSection}>
+                            <Text style={styles.shellOutputLabel}>STDOUT</Text>
+                            <Text style={styles.shellOutputText}>{lastResult.stdout.trim()}</Text>
+                          </View>
+                        )}
+                        {!!lastResult.stderr && (
+                          <View style={styles.shellOutputSection}>
+                            <Text style={[styles.shellOutputLabel, { color: Colors.error }]}>STDERR</Text>
+                            <Text style={[styles.shellOutputText, { color: Colors.error + 'CC' }]}>{lastResult.stderr.trim()}</Text>
+                          </View>
+                        )}
+                        {!lastResult.stdout && !lastResult.stderr && (
+                          <Text style={styles.shellOutputText}>(no output)</Text>
+                        )}
+                      </View>
                     )}
                   </View>
                 );
@@ -2482,6 +2564,48 @@ const styles = StyleSheet.create({
   },
   modalItemDelete: {
     padding: 4,
+  },
+  shellBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    alignSelf: 'flex-start',
+  },
+  shellBadgeText: {
+    fontSize: 10,
+    fontFamily: 'Inter_500Medium',
+    letterSpacing: 0.2,
+    flexShrink: 1,
+  },
+  shellOutputBlock: {
+    marginHorizontal: 16,
+    marginTop: -2,
+    marginBottom: 6,
+    backgroundColor: '#0A0C14',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    padding: 12,
+    gap: 10,
+  },
+  shellOutputSection: {
+    gap: 4,
+  },
+  shellOutputLabel: {
+    fontSize: 9,
+    fontFamily: 'Inter_700Bold',
+    color: Colors.textTertiary,
+    letterSpacing: 1.2,
+  },
+  shellOutputText: {
+    fontSize: 11,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+    lineHeight: 17,
   },
   fadingBadgeRow: {
     flexDirection: 'row',
