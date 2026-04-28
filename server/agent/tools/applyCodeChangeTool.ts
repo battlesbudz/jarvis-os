@@ -41,6 +41,9 @@ const AUDIT_MAX_DIFF_LINES = 300;
 /** Maximum size (in bytes) the audit log may reach before it is rotated. */
 const AUDIT_LOG_MAX_BYTES = 5 * 1024 * 1024; // 5 MB
 
+/** Number of rotated archive files to keep; older ones are deleted automatically. */
+const AUDIT_LOG_MAX_ARCHIVES = 5;
+
 // Module-level map: filePath → timestamp of the most recent audit entry written for it.
 // Allows recordVerificationResult() to emit a verification update without knowing the timestamp.
 const lastAuditTimestamp = new Map<string, string>();
@@ -65,6 +68,24 @@ async function rotateAuditLogIfNeeded(): Promise<void> {
     );
     await fs.rename(AUDIT_LOG_PATH, rotatedPath);
     console.log(`[SelfHeal] audit log rotated → ${rotatedPath}`);
+
+    // ── Prune old archives ─────────────────────────────────────────────────
+    try {
+      const serverDir = path.join(PROJECT_ROOT, "server");
+      const entries = await fs.readdir(serverDir);
+      const archives = entries
+        .filter((name) => /^self-heal-audit\..+\.log$/.test(name))
+        .sort() // ISO timestamps sort lexicographically = chronologically
+        .map((name) => path.join(serverDir, name));
+
+      const toDelete = archives.slice(0, Math.max(0, archives.length - AUDIT_LOG_MAX_ARCHIVES));
+      for (const archivePath of toDelete) {
+        await fs.unlink(archivePath);
+        console.log(`[SelfHeal] deleted old audit archive → ${archivePath}`);
+      }
+    } catch {
+      // Non-fatal — pruning failure must not block the write
+    }
   } catch {
     // Non-fatal — rotation failure must not block the write
   }
