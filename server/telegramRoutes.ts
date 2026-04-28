@@ -533,6 +533,14 @@ async function processUpdate(update: any): Promise<void> {
     let imageUrl: string | undefined;
     let text = message.text?.trim() || message.caption?.trim() || '';
 
+    // Inject context when the user replies to a specific Jarvis message, so the
+    // agent knows what the reply is referring to without needing conversation history.
+    const repliedToText = (message.reply_to_message as { text?: string } | undefined)?.text?.trim();
+    if (repliedToText && text) {
+      const preview = repliedToText.length > 600 ? repliedToText.slice(0, 600) + '…' : repliedToText;
+      text = `[Replying to Jarvis's message: "${preview}"]\n\n${text}`;
+    }
+
     if (message.photo) {
       const largest = message.photo[message.photo.length - 1];
       const downloaded = await downloadTelegramFile(largest.file_id).catch(() => null);
