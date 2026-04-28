@@ -534,9 +534,12 @@ export default function SettingsScreen() {
   const [healthLoading, setHealthLoading] = useState(false);
   const [diagnosisText, setDiagnosisText] = useState<string | null>(null);
   const [diagnosisLoading, setDiagnosisLoading] = useState(false);
-  const [memoryErrorSheetVisible, setMemoryErrorSheetVisible] = useState(false);
-  const [memoryEvents, setMemoryEvents] = useState<MemoryDiagEvent[]>([]);
-  const [memoryEventsLoading, setMemoryEventsLoading] = useState(false);
+  const [subsystemSheetVisible, setSubsystemSheetVisible] = useState(false);
+  const [subsystemSheetName, setSubsystemSheetName] = useState<string>('memory');
+  const [subsystemSheetLabel, setSubsystemSheetLabel] = useState<string>('Memory');
+  const [subsystemEvents, setSubsystemEvents] = useState<MemoryDiagEvent[]>([]);
+  const [subsystemEventsLoading, setSubsystemEventsLoading] = useState(false);
+  const subsystemRequestSeqRef = useRef(0);
 
   const loadHealth = useCallback(async () => {
     setHealthLoading(true);
@@ -581,21 +584,27 @@ export default function SettingsScreen() {
     setDiagnosisLoading(false);
   }, []);
 
-  const openMemoryErrorSheet = useCallback(async () => {
-    setMemoryErrorSheetVisible(true);
-    setMemoryEventsLoading(true);
+  const openSubsystemErrorSheet = useCallback(async (name: string, label: string) => {
+    subsystemRequestSeqRef.current += 1;
+    const mySeq = subsystemRequestSeqRef.current;
+    setSubsystemSheetName(name);
+    setSubsystemSheetLabel(label);
+    setSubsystemSheetVisible(true);
+    setSubsystemEventsLoading(true);
     try {
-      const res = await apiRequest('GET', '/api/diagnostics/memory-events');
+      const res = await apiRequest('GET', `/api/diagnostics/events?subsystem=${encodeURIComponent(name)}`);
+      if (mySeq !== subsystemRequestSeqRef.current) return;
       if (res.ok) {
         const data = await res.json();
-        setMemoryEvents(Array.isArray(data) ? data : []);
+        setSubsystemEvents(Array.isArray(data) ? data : []);
       } else {
-        setMemoryEvents([]);
+        setSubsystemEvents([]);
       }
     } catch {
-      setMemoryEvents([]);
+      if (mySeq !== subsystemRequestSeqRef.current) return;
+      setSubsystemEvents([]);
     }
-    setMemoryEventsLoading(false);
+    if (mySeq === subsystemRequestSeqRef.current) setSubsystemEventsLoading(false);
   }, []);
 
   const saveModel = useCallback(async (category: ModelCategory, model: string) => {
@@ -2698,18 +2707,31 @@ export default function SettingsScreen() {
           {/* Subsystem grid */}
           {healthReport && (healthReport.subsystems ?? []).length > 0 && (
             <View style={healthStyles.subsystemGrid}>
-              {(healthReport.subsystems ?? []).map((s) => (
-                <View key={s.name} style={healthStyles.subsystemCell}>
-                  <View style={[
-                    healthStyles.subsystemDot,
-                    s.status === 'healthy' && { backgroundColor: '#10B981' },
-                    s.status === 'degraded' && { backgroundColor: '#F59E0B' },
-                    s.status === 'down' && { backgroundColor: Colors.error },
-                    s.status === 'unknown' && { backgroundColor: Colors.textTertiary },
-                  ]} />
-                  <Text style={healthStyles.subsystemLabel} numberOfLines={1}>{s.label}</Text>
-                </View>
-              ))}
+              {(healthReport.subsystems ?? []).map((s) => {
+                const isActionable = s.status === 'degraded' || s.status === 'down';
+                const dotColor = s.status === 'healthy' ? '#10B981'
+                  : s.status === 'degraded' ? '#F59E0B'
+                  : s.status === 'down' ? Colors.error
+                  : Colors.textTertiary;
+                return isActionable ? (
+                  <Pressable
+                    key={s.name}
+                    style={({ pressed }) => [healthStyles.subsystemCell, { opacity: pressed ? 0.7 : 1 }]}
+                    onPress={() => openSubsystemErrorSheet(s.name, s.label)}
+                    accessibilityRole="button"
+                    accessibilityLabel={`View ${s.label} error details`}
+                  >
+                    <View style={[healthStyles.subsystemDot, { backgroundColor: dotColor }]} />
+                    <Text style={healthStyles.subsystemLabel} numberOfLines={1}>{s.label}</Text>
+                    <Ionicons name="chevron-forward" size={10} color={dotColor} style={{ marginLeft: 1, opacity: 0.8 }} />
+                  </Pressable>
+                ) : (
+                  <View key={s.name} style={healthStyles.subsystemCell}>
+                    <View style={[healthStyles.subsystemDot, { backgroundColor: dotColor }]} />
+                    <Text style={healthStyles.subsystemLabel} numberOfLines={1}>{s.label}</Text>
+                  </View>
+                );
+              })}
             </View>
           )}
 
@@ -2728,7 +2750,7 @@ export default function SettingsScreen() {
                 {showWrite && (
                   <Pressable
                     style={({ pressed }) => [healthStyles.memoryBanner, { borderLeftColor: '#F59E0B', opacity: pressed ? 0.75 : 1 }]}
-                    onPress={openMemoryErrorSheet}
+                    onPress={() => openSubsystemErrorSheet('memory', 'Memory')}
                     accessibilityRole="button"
                     accessibilityLabel="View memory learning error details"
                   >
@@ -2742,7 +2764,7 @@ export default function SettingsScreen() {
                 {showRead && (
                   <Pressable
                     style={({ pressed }) => [healthStyles.memoryBanner, { borderLeftColor: Colors.error, opacity: pressed ? 0.75 : 1 }]}
-                    onPress={openMemoryErrorSheet}
+                    onPress={() => openSubsystemErrorSheet('memory', 'Memory')}
                     accessibilityRole="button"
                     accessibilityLabel="View memory recall error details"
                   >
@@ -2939,40 +2961,40 @@ export default function SettingsScreen() {
         claimedToday={false}
       />
 
-      {/* Memory Error Detail Sheet */}
+      {/* Subsystem Error Detail Sheet */}
       <Modal
-        visible={memoryErrorSheetVisible}
+        visible={subsystemSheetVisible}
         animationType="slide"
         transparent
-        onRequestClose={() => setMemoryErrorSheetVisible(false)}
+        onRequestClose={() => setSubsystemSheetVisible(false)}
       >
         <Pressable
           style={memSheetStyles.backdrop}
-          onPress={() => setMemoryErrorSheetVisible(false)}
+          onPress={() => setSubsystemSheetVisible(false)}
         />
         <View style={memSheetStyles.sheet}>
           <View style={memSheetStyles.handle} />
           <View style={memSheetStyles.header}>
             <Ionicons name="warning-outline" size={16} color="#F59E0B" />
-            <Text style={memSheetStyles.title}>Memory Error Details</Text>
-            <Pressable onPress={() => setMemoryErrorSheetVisible(false)} hitSlop={10}>
+            <Text style={memSheetStyles.title}>{subsystemSheetLabel} Error Details</Text>
+            <Pressable onPress={() => setSubsystemSheetVisible(false)} hitSlop={10}>
               <Ionicons name="close" size={20} color={Colors.textSecondary} />
             </Pressable>
           </View>
-          <Text style={memSheetStyles.subtitle}>Recent errors from the memory subsystem (last 60 minutes)</Text>
-          {memoryEventsLoading ? (
+          <Text style={memSheetStyles.subtitle}>Recent errors from the {subsystemSheetLabel.toLowerCase()} subsystem (last 60 minutes)</Text>
+          {subsystemEventsLoading ? (
             <View style={memSheetStyles.loadingRow}>
               <ActivityIndicator size="small" color={Colors.textSecondary} />
               <Text style={memSheetStyles.loadingText}>Loading events…</Text>
             </View>
-          ) : memoryEvents.length === 0 ? (
+          ) : subsystemEvents.length === 0 ? (
             <View style={memSheetStyles.emptyRow}>
               <Ionicons name="checkmark-circle-outline" size={24} color="#10B981" />
-              <Text style={memSheetStyles.emptyText}>No memory errors in the last hour</Text>
+              <Text style={memSheetStyles.emptyText}>No {subsystemSheetLabel.toLowerCase()} errors in the last hour</Text>
             </View>
           ) : (
             <ScrollView style={memSheetStyles.eventList} showsVerticalScrollIndicator={false}>
-              {memoryEvents.map((ev) => {
+              {subsystemEvents.map((ev) => {
                 const sevColor = ev.severity === 'critical' || ev.severity === 'error' ? Colors.error : '#F59E0B';
                 const operation = typeof ev.metadata?.operation === 'string' ? ev.metadata.operation : null;
                 const timeAgo = (() => {
@@ -2990,7 +3012,7 @@ export default function SettingsScreen() {
                         {operation ? (
                           <Text style={[memSheetStyles.operationTag, { color: sevColor }]}>{operation}</Text>
                         ) : (
-                          <Text style={[memSheetStyles.operationTag, { color: Colors.textTertiary }]}>memory</Text>
+                          <Text style={[memSheetStyles.operationTag, { color: Colors.textTertiary }]}>{subsystemSheetName}</Text>
                         )}
                         <Text style={memSheetStyles.eventTime}>{timeAgo}</Text>
                       </View>
