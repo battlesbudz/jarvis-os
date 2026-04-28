@@ -32,6 +32,7 @@ import { connectionsCapability }  from "./connectionsCapability";
 import { agentDelegationCapability } from "./agentDelegationCapability";
 import { selfEditCapability }       from "./selfEditCapability";
 import { codeCapability }           from "./codeCapability";
+import { workspaceCapability }      from "./workspaceCapability";
 
 capabilityRegistry.register(calendarCapability);
 capabilityRegistry.register(emailCapability);
@@ -49,3 +50,4 @@ capabilityRegistry.register(connectionsCapability);
 capabilityRegistry.register(agentDelegationCapability);
 capabilityRegistry.register(selfEditCapability);
 capabilityRegistry.register(codeCapability);
+capabilityRegistry.register(workspaceCapability);

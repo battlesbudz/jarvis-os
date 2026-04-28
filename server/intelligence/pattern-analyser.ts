@@ -530,6 +530,15 @@ export function detectBehaviorSignals(
       type: "correction",
       example: `User corrected Jarvis's ${category}: "${truncate(userText, 80)}"`,
     });
+
+    // Append structured entry to workspace .learnings/CORRECTIONS.md
+    // Fire-and-forget to keep detectBehaviorSignals synchronous.
+    const rawText = typeof lastUser.content === "string" ? lastUser.content : "";
+    const correctionEntry = `\n---\n**${new Date().toISOString()}** | category: ${category}\n> ${truncate(rawText, 200)}\n`;
+    Promise.resolve().then(async () => {
+      const { writeWorkspaceFile } = await import("../workspace/loader");
+      await writeWorkspaceFile("corrections", correctionEntry, "append");
+    }).catch(() => { /* Non-fatal */ });
   }
 
   // ── Standing preference detection ─────────────────────────────────────────

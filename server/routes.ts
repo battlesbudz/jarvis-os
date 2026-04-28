@@ -4458,6 +4458,69 @@ Return ONLY the JSON object.`;
     }
   });
 
+  // ── Workspace file API ────────────────────────────────────────────────────
+  // GET  /api/workspace/:file   — read a workspace file (owner only)
+  // POST /api/workspace/:file   — write a workspace file (owner only)
+
+  const WORKSPACE_VALID_KEYS = ["soul", "agents", "memory", "errors", "corrections", "feature_requests"] as const;
+  type WFKey = typeof WORKSPACE_VALID_KEYS[number];
+  function isWFKey(k: string): k is WFKey {
+    return (WORKSPACE_VALID_KEYS as readonly string[]).includes(k);
+  }
+
+  app.get("/api/workspace/:file", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+
+      const { isIntegrationOwner } = await import("./integrationOwner");
+      if (!await isIntegrationOwner(userId)) {
+        return res.status(403).json({ error: "Owner access required" });
+      }
+
+      const fileParam = req.params.file;
+      if (!isWFKey(fileParam)) {
+        return res.status(400).json({ error: `Invalid file key: ${fileParam}` });
+      }
+
+      const { readWorkspaceFile } = await import("./workspace/loader");
+      const content = await readWorkspaceFile(fileParam);
+      res.json({ file: fileParam, content });
+    } catch (error) {
+      console.error("[Workspace] GET error:", error);
+      res.status(500).json({ error: "Failed to read workspace file" });
+    }
+  });
+
+  app.post("/api/workspace/:file", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+
+      const { isIntegrationOwner } = await import("./integrationOwner");
+      if (!await isIntegrationOwner(userId)) {
+        return res.status(403).json({ error: "Owner access required" });
+      }
+
+      const fileParam = req.params.file;
+      if (!isWFKey(fileParam)) {
+        return res.status(400).json({ error: `Invalid file key: ${fileParam}` });
+      }
+
+      const body = req.body as { content?: unknown; mode?: unknown };
+      const content = typeof body.content === "string" ? body.content : "";
+      const mode = body.mode === "append" ? "append" : "overwrite";
+
+      const { writeWorkspaceFile } = await import("./workspace/loader");
+      await writeWorkspaceFile(fileParam, content, mode);
+
+      res.json({ ok: true, file: fileParam, mode });
+    } catch (error) {
+      console.error("[Workspace] POST error:", error);
+      res.status(500).json({ error: "Failed to write workspace file" });
+    }
+  });
+
   app.get("/api/people", async (req: Request, res: Response) => {
     try {
       const userId = req.userId;

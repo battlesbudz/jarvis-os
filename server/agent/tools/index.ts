@@ -118,6 +118,7 @@ import { listSourceFilesTool, readSourceFileTool, proposeCodeChangeTool } from "
 import { applyCodeChangeTool } from "./applyCodeChangeTool";
 import { runShellTool } from "./runShellTool";
 import { selfHealTool } from "./selfHealTool";
+import { workspaceUpdateTool } from "./workspaceUpdateTool";
 
 // ── Tool Groups ────────────────────────────────────────────────────────────────
 // Each group represents a functional capability cluster. Channels declare which
@@ -316,4 +317,5 @@ export {
   applyCodeChangeTool,
   runShellTool,
   selfHealTool,
+  workspaceUpdateTool,
 };

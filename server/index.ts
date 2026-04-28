@@ -525,6 +525,13 @@ function setupErrorHandler(app: express.Application) {
       startHeartbeat();
       startIntegrationValidator();
 
+      // Initialise workspace file system (~/.jarvis/workspace/).
+      import("./workspace/loader").then(({ initWorkspace, startWorkspaceWatcher }) => {
+        initWorkspace().then(() => startWorkspaceWatcher());
+      }).catch(err => {
+        console.error("Failed to initialise workspace:", err);
+      });
+
       // Watch for newly crystallised skill files and hot-reload the cache.
       import("./intelligence/skillWriter").then(({ startSkillWatcher }) => {
         startSkillWatcher();
