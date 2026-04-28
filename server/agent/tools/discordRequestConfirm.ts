@@ -28,7 +28,7 @@ export const discordRequestConfirmTool: AgentTool = {
   },
   async execute(args: { action: DiscordConfirmAction; question: string }, ctx) {
     const { userId } = ctx;
-    setConfirmToken(userId, args.action);
+    await setConfirmToken(userId, args.action);
     return {
       ok: true,
       content: args.question,
