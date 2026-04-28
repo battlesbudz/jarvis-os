@@ -16,42 +16,9 @@ import { eq, and, desc } from "drizzle-orm";
 import fs from "fs/promises";
 import path from "path";
 import { isIntegrationOwner } from "../integrationOwner";
+import { isPathAllowedForProposal } from "./safeWritePolicy";
 
 const PROJECT_ROOT = process.cwd();
-
-// Re-declare allow-list here so the approve endpoint independently validates paths.
-const ALLOWED_SOURCE_DIRS = [
-  "server",
-  "shared",
-  "app",
-  "components",
-  "hooks",
-  "constants",
-  "lib",
-];
-
-// Files that must NEVER be overwritten via the approval endpoint, regardless of
-// allow-list membership. This prevents Jarvis from modifying its own approval
-// gate, auth system, or deployment pipeline through the self-edit tool.
-const PROTECTED_FILES = new Set([
-  "server/agent/codeProposalsRoutes.ts",
-  "server/db.ts",
-  "server/auth.ts",
-  "server/routes.ts",
-  "server/agent/harness.ts",
-  "server/integrationOwner.ts",
-  "server/index.ts",
-  "shared/schema.ts",
-]);
-
-function isPathAllowed(filePath: string): boolean {
-  const normalised = path.normalize(filePath);
-  if (path.isAbsolute(normalised)) return false;
-  if (normalised.startsWith("..")) return false;
-  if (PROTECTED_FILES.has(normalised)) return false;
-  const firstSegment = normalised.split(path.sep)[0];
-  return ALLOWED_SOURCE_DIRS.includes(firstSegment);
-}
 
 /**
  * Schedules a post-fix verification job after a debug-originated proposal is approved.
@@ -187,8 +154,10 @@ export function registerCodeProposalsRoutes(app: Express): void {
         return res.status(409).json({ error: `Proposal is already ${row.status}` });
       }
 
-      // Re-validate allow-list on the server side — never trust stored data blindly.
-      if (!isPathAllowed(row.filePath)) {
+      // Re-validate path allow-list on the server side — never trust stored data blindly.
+      // Protected files CAN be written here because the user explicitly approved the proposal;
+      // user approval is the override mechanism for the autonomous-write protection.
+      if (!isPathAllowedForProposal(row.filePath)) {
         return res.status(403).json({ error: "Stored file path is outside the allowed source directories. This proposal cannot be applied." });
       }
 
