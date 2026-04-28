@@ -1,13 +1,17 @@
 import type { AgentTool } from "../types";
 import { createDiscordChannel } from "../../discord/manager";
+import { consumeConfirmToken } from "../discordConfirmStore";
 
 export const discordCreateChannelTool: AgentTool = {
   name: "discord_create_channel",
   description:
     "Create a new text channel in the user's Discord server. Jarvis CAN create Discord channels — do not tell users otherwise. " +
     "You must provide a channel name (lowercase, hyphens instead of spaces). Optionally set a topic/description and a category name to nest it under. " +
-    "After creating the channel, use discord_send_to_channel to post content into it by passing the exact channelName. " +
-    "IMPORTANT: Only call this after the user has replied 'yes', 'confirm', 'go ahead', 'create it', or equivalent explicit confirmation in response to your question 'Should I create the channel #<name>?'. Do not call this in the same turn as asking for confirmation.",
+    "IMPORTANT CONFIRMATION FLOW: Before calling this tool you MUST first call discord_request_confirm (action='create_channel') " +
+    "to register a server-side confirmation token and get the question to ask the user. " +
+    "Only call this tool after the user has replied 'yes', 'confirm', 'go ahead', 'create it', or equivalent explicit confirmation. " +
+    "Do not call this in the same turn as discord_request_confirm. " +
+    "If you attempt to call this tool without a valid pending confirmation token, it will be rejected.",
   parameters: {
     type: "object",
     properties: {
@@ -32,6 +36,17 @@ export const discordCreateChannelTool: AgentTool = {
   },
   async execute(args: { channelName: string; topic?: string; categoryName?: string; pinMessage?: string }, ctx) {
     const { userId } = ctx;
+
+    if (!consumeConfirmToken(userId, "create_channel")) {
+      return {
+        ok: false,
+        content:
+          "No valid confirmation token found. You must call discord_request_confirm (action='create_channel') first, " +
+          "wait for the user's explicit 'yes', and then call this tool. Please start the confirmation flow again.",
+        label: "Discord channel creation blocked — no confirmation token",
+      };
+    }
+
     const result = await createDiscordChannel(userId, {
       channelName: args.channelName,
       topic: args.topic,

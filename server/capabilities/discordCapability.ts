@@ -5,6 +5,7 @@ import { discordDeleteChannelTool } from "../agent/tools/discordDeleteChannel";
 import { discordListChannelsTool } from "../agent/tools/discordListChannels";
 import { discordPinMessageTool } from "../agent/tools/discordPinMessage";
 import { discordSendToChannelTool } from "../agent/tools/discordSendToChannel";
+import { discordRequestConfirmTool } from "../agent/tools/discordRequestConfirm";
 import { setupNamedAgentTool } from "../agent/tools/setupNamedAgent";
 import { setupContentPipelineTool } from "../agent/tools/setupContentPipeline";
 import { setupDiscordWorkspaceTool } from "../agent/tools/setupDiscordWorkspace";
@@ -15,6 +16,7 @@ import {
 } from "../agent/tools/scheduleChannelReport";
 
 const DISCORD_TOOL_NAMES = [
+  "discord_request_confirm",
   "discord_post",
   "discord_create_channel",
   "discord_send_to_channel",
@@ -40,6 +42,7 @@ export const discordCapability: Capability = {
     delete_channel_schedule: ["discord", "scheduling"],
   },
   tools: [
+    discordRequestConfirmTool,
     discordPostTool,
     discordCreateChannelTool,
     discordSendToChannelTool,

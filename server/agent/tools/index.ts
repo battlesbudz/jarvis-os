@@ -45,6 +45,7 @@ import { fetchEmailsTool } from "./fetchEmails";
 import { connectChannelTool } from "./connectChannel";
 import { discordPostTool } from "./discordPost";
 import { discordCreateChannelTool } from "./discordCreateChannel";
+import { discordRequestConfirmTool } from "./discordRequestConfirm";
 import { discordDeleteChannelTool } from "./discordDeleteChannel";
 import { discordListChannelsTool } from "./discordListChannels";
 import { scheduleJarvisTaskTool } from "./scheduleJarvisTask";
@@ -243,6 +244,7 @@ export {
   sendEmailTool,
   fetchEmailsTool,
   connectChannelTool,
+  discordRequestConfirmTool,
   discordPostTool,
   discordCreateChannelTool,
   discordDeleteChannelTool,
