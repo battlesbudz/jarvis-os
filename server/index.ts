@@ -493,8 +493,8 @@ function setupErrorHandler(app: express.Application) {
               "(create a test bot via BotFather) to enable polling without conflicting with the production bot."
             );
             console.warn(
-              "[Telegram] ⚠ Dev outbound sends SKIPPED — all sendMessage/sendMessageGetId calls " +
-              "are no-ops in dev mode when TELEGRAM_BOT_TOKEN_DEV is not set."
+              "[Telegram] ⚠ Dev mode — outbound sends SKIPPED " +
+              "(set TELEGRAM_BOT_TOKEN_DEV to enable sending from the dev server)."
             );
           } else {
             // Delete any previously-set webhook (e.g. from a production deploy)
