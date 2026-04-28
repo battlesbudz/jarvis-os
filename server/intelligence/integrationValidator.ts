@@ -908,3 +908,105 @@ export function startIntegrationValidator(): void {
 
   console.log("[IntegrationValidator] started — boot check in 10s, then every 30 min");
 }
+
+// ── Test-only exports ─────────────────────────────────────────────────────────
+// These are used exclusively by server/intelligence/__tests__/circuitBreaker.assert.ts.
+// They MUST NOT be called from production code.
+
+/** Clears the consecutive-failure streak map so tests start from a clean state. */
+export function _resetConsecutiveFailuresForTest(): void {
+  consecutiveFailures.clear();
+}
+
+/** Clears the system-ping result cache so tests can observe re-execution. */
+export function _resetSystemPingCacheForTest(): void {
+  systemPingCache.clear();
+}
+
+/**
+ * Re-exports checkSystemCredential for test assertions.
+ * Allows tests to call checkSystemCredential with an injected ping function and
+ * observe caching/no-caching behaviour without any real network calls.
+ */
+export { checkSystemCredential as _checkSystemCredentialForTest };
+
+/**
+ * Injectable-dependency shape for _applyCircuitBreakerForTest.
+ * Tests supply minimal stubs for writeStatus, notifyUser, and the two alert
+ * paths so that no real DB or notification calls are made.
+ */
+export interface _CircuitBreakerDeps {
+  writeStatus: (
+    userId: string,
+    integration: IntegrationName,
+    result: CheckResult,
+  ) => Promise<void>;
+  notifyUser: (userId: string, type: string, message: string) => Promise<void>;
+  diagEmit: (opts: object) => Promise<void>;
+  logSystemError: (opts: object) => Promise<string | null>;
+  triggerAutoDebugSession: (opts: AutoDebugOptions) => Promise<void>;
+}
+
+/**
+ * Runs the circuit-breaker logic for a single integration check with fully
+ * injectable side-effect dependencies.  This mirrors the inner map-callback
+ * inside validateUserIntegrations but is decoupled from the real DB, notifyUser,
+ * diagEmit, and auto-debug wiring so it can be exercised in pure unit tests.
+ */
+export async function _applyCircuitBreakerForTest(
+  userId: string,
+  integration: IntegrationName,
+  checkResult: CheckResult,
+  deps: _CircuitBreakerDeps,
+): Promise<void> {
+  const failureKey = `${integration}:${userId}`;
+
+  if (checkResult.status !== "broken") {
+    consecutiveFailures.delete(failureKey);
+    await deps.writeStatus(userId, integration, checkResult);
+    return;
+  }
+
+  const streak = (consecutiveFailures.get(failureKey) ?? 0) + 1;
+  consecutiveFailures.set(failureKey, streak);
+  const errMsg = checkResult.errorMessage ?? "unknown error";
+
+  if (streak < 2) {
+    await deps.writeStatus(userId, integration, { status: "degraded", errorMessage: errMsg });
+    return;
+  }
+
+  await deps.writeStatus(userId, integration, checkResult);
+  await deps.diagEmit({
+    userId,
+    subsystem: "integration",
+    severity: "error",
+    message: `Integration ${integration} broken: ${errMsg}`,
+    metadata: { integration },
+  });
+
+  const errorLogId = await deps.logSystemError({
+    source: `integrationValidator/${integration}`,
+    message: `Health check failure: ${errMsg}`,
+    level: "error",
+    context: { integration, userId, status: checkResult.status },
+    userId,
+  });
+
+  const directMsg = buildDirectNotification(integration, errMsg);
+  if (directMsg) {
+    await deps.notifyUser(
+      userId,
+      "approval_request",
+      `Jarvis (integration alert): ${integration} disconnected\n\n${directMsg}`,
+    );
+  } else {
+    await deps.triggerAutoDebugSession({
+      userId,
+      capability: integration,
+      errorMessage: errMsg,
+      source: `integrationValidator/${integration}`,
+      errorLogId: errorLogId ?? undefined,
+    });
+  }
+}
