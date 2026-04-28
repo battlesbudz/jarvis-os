@@ -640,6 +640,7 @@ export const selfHealTool: AgentTool = {
           applyResults.filter((r) => r.ok).map((r) => r.filePath),
           "failed",
           `type-check failed (iteration ${iter + 1})`,
+          ctx.userId,
         ).catch(() => {});
         continue; // loop back to diagnose with the type-check errors as context
       }
@@ -661,6 +662,7 @@ export const selfHealTool: AgentTool = {
           applyResults.filter((r) => r.ok).map((r) => r.filePath),
           "failed",
           `tests failed (iteration ${iter + 1})`,
+          ctx.userId,
         ).catch(() => {});
         continue;
       }
@@ -720,6 +722,7 @@ export const selfHealTool: AgentTool = {
             applyResults.filter((r) => r.ok).map((r) => r.filePath),
             "failed",
             `smoke-tests failed (iteration ${iter + 1}, retrying)`,
+            ctx.userId,
           ).catch(() => {});
           continue; // loop back to diagnose with smoke-test context
         }
@@ -728,6 +731,7 @@ export const selfHealTool: AgentTool = {
           applyResults.filter((r) => r.ok).map((r) => r.filePath),
           "failed",
           `smoke-tests failed after ${maxIterations} iteration(s)`,
+          ctx.userId,
         ).catch(() => {});
         return {
           ok: false,
@@ -752,6 +756,7 @@ export const selfHealTool: AgentTool = {
         applyResults.filter((r) => r.ok).map((r) => r.filePath),
         "passed",
         `type-check ✓, tests ✓${allToolNames.length > 0 ? `, smoke-tests ✓ (${allToolNames.length})` : ""}`,
+        ctx.userId,
       ).catch(() => {});
 
       // ── Phase 5: Verify current server is still healthy before activation ──
