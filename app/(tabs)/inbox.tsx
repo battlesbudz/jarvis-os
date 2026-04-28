@@ -534,7 +534,7 @@ export default function InboxScreen() {
           const busy =
             (approveDeliverableMutation.isPending && approveDeliverableMutation.variables === d.id) ||
             (discardDeliverableMutation.isPending && discardDeliverableMutation.variables === d.id);
-          const meta = d.meta as { to?: string; subject?: string } | null;
+          const meta = d.meta as { to?: string; subject?: string; noSourceUrls?: boolean } | null;
           return (
             <Animated.View key={d.id} entering={FadeInDown.duration(300).delay(index * 60)}>
               <View style={styles.draftCard}>
@@ -571,6 +571,15 @@ export default function InboxScreen() {
                     </View>
                   );
                 })()}
+
+                {meta?.noSourceUrls && (
+                  <View style={styles.noSourcesWarning}>
+                    <Ionicons name="warning-outline" size={13} color="#B45309" />
+                    <Text style={styles.noSourcesWarningText}>
+                      This research may not include live web data — treat findings with caution.
+                    </Text>
+                  </View>
+                )}
 
                 <View style={styles.draftBodyBox}>
                   <Text style={styles.draftBodyText} numberOfLines={8}>
@@ -1288,6 +1297,25 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     borderWidth: 1,
     borderColor: Colors.primary + '40',
+  },
+  noSourcesWarning: {
+    flexDirection: 'row' as const,
+    alignItems: 'flex-start' as const,
+    gap: 6,
+    backgroundColor: '#FFFBEB',
+    borderWidth: 1,
+    borderColor: '#FCD34D',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    marginBottom: 10,
+  },
+  noSourcesWarningText: {
+    flex: 1,
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    color: '#92400E',
+    lineHeight: 17,
   },
   draftBodyBox: {
     backgroundColor: Colors.surfaceAlt,

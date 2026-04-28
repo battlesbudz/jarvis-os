@@ -15,6 +15,7 @@ import { logSystemError } from "./errorLogger";
 import { submitAgentJob as _submitAgentJob, getModelForJobType as _getModelForJobType, type SubmitJobInput, type AgentJobType as _AgentJobType } from "./jobClient";
 import { runAgent } from "./harness";
 import { readRecentErrorsTool, listSourceFilesTool, readSourceFileTool, proposeCodeChangeTool } from "./tools/selfEditTools";
+import { researchHasSourceUrls } from "./researchUtils";
 
 // Re-export from the shared client so existing callers don't break.
 export type AgentJobType = _AgentJobType;
@@ -321,6 +322,10 @@ writing a clear inbox message explaining what is broken and what the user should
       context: ctx,
       model: subAgentModelOverride,
     });
+
+    if (job.agentType === "research" && !researchHasSourceUrls(sub.body)) {
+      sub.meta.noSourceUrls = true;
+    }
 
     const inserted = await db
       .insert(schema.deliverables)
