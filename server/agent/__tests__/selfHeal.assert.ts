@@ -84,6 +84,7 @@ assert.equal(isPathAllowed("server/db.ts"), false, "A3a: server/db.ts is protect
 assert.equal(isPathAllowed("server/auth.ts"), false, "A3b: server/auth.ts is protected");
 assert.equal(isPathAllowed("server/agent/safeWritePolicy.ts"), false, "A3c: policy file is self-protected");
 assert.equal(isPathAllowed("shared/schema.ts"), false, "A3d: shared/schema.ts is protected");
+assert.equal(isPathAllowed("server/self-heal-audit.log"), false, "A3e: audit log is protected from autonomous writes");
 console.log("✓ A3: all hard-protected files are blocked from autonomous writes");
 
 // A4. Paths whose first segment is not in ALLOWED_SOURCE_DIRS are rejected.
@@ -116,13 +117,16 @@ assert.equal(isDangerousPath(".env").dangerous, true, "A6b: .env → dangerous")
 assert.equal(isDangerousPath(".env.local").dangerous, true, "A6c: .env.local → dangerous");
 assert.equal(isDangerousPath("drizzle.config.ts").dangerous, true, "A6d: drizzle.config → dangerous");
 assert.equal(isDangerousPath("server/agent/tools/newTool.ts").dangerous, false, "A6e: ordinary file → not dangerous");
-console.log("✓ A6: dangerous-path heuristic flags migrations and credential files");
+assert.equal(isDangerousPath("server/self-heal-audit.log").dangerous, true, "A6f: audit log → dangerous (protected from any overwrite)");
+assert.equal(isDangerousPath("server/self-heal-audit.log.bak").dangerous, true, "A6g: audit log backup variant → dangerous");
+console.log("✓ A6: dangerous-path heuristic flags migrations, credential files, and the audit log");
 
 // A7. isProtectedFile reflects the PROTECTED_FILES set (normalised comparison).
 assert.equal(isProtectedFile("server/db.ts"), true, "A7a: server/db.ts is protected");
 assert.equal(isProtectedFile("server/auth.ts"), true, "A7b: server/auth.ts is protected");
 assert.equal(isProtectedFile("server/agent/tools/newTool.ts"), false, "A7c: new tool is not protected");
 assert.equal(isProtectedFile("server/./db.ts"), true, "A7d: server/./db.ts normalises to protected path");
+assert.equal(isProtectedFile("server/self-heal-audit.log"), true, "A7e: audit log is in the protected set");
 console.log("✓ A7: isProtectedFile matches the hard-protected set after normalisation");
 
 // ── Section D: runShellTool schema (synchronous) ──────────────────────────────

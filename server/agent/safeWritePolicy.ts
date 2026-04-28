@@ -43,6 +43,9 @@ export const PROTECTED_FILES = new Set([
   "shared/schema.ts",
   // Self-modification guard: the policy file itself is protected.
   "server/agent/safeWritePolicy.ts",
+  // Forensic audit log — must never be overwritten or cleared autonomously;
+  // appends via fs.appendFile in applyCodeChangeTool are exempt from this guard.
+  "server/self-heal-audit.log",
 ]);
 
 // ── Dangerous patterns — catch additional risky paths by regex ────────────────
@@ -52,6 +55,7 @@ const DANGEROUS_PATTERNS: Array<{ re: RegExp; reason: string }> = [
   { re: /migration/i,                          reason: "database migration file" },
   { re: /\.env(\.|$)/,                         reason: "environment variables file" },
   { re: /drizzle\.config/,                     reason: "Drizzle ORM config" },
+  { re: /self-heal-audit/,                     reason: "self-heal forensic audit log" },
 ];
 
 // ── Path validation helpers ───────────────────────────────────────────────────
