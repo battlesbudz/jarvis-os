@@ -540,6 +540,7 @@ export default function SettingsScreen() {
   const [subsystemEvents, setSubsystemEvents] = useState<MemoryDiagEvent[]>([]);
   const [subsystemEventsLoading, setSubsystemEventsLoading] = useState(false);
   const subsystemRequestSeqRef = useRef(0);
+  const [subsystemEventsLastUpdated, setSubsystemEventsLastUpdated] = useState<Date | null>(null);
 
   const loadHealth = useCallback(async () => {
     setHealthLoading(true);
@@ -591,12 +592,14 @@ export default function SettingsScreen() {
     setSubsystemSheetLabel(label);
     setSubsystemSheetVisible(true);
     setSubsystemEventsLoading(true);
+    setSubsystemEventsLastUpdated(null);
     try {
       const res = await apiRequest('GET', `/api/diagnostics/events?subsystem=${encodeURIComponent(name)}`);
       if (mySeq !== subsystemRequestSeqRef.current) return;
       if (res.ok) {
         const data = await res.json();
         setSubsystemEvents(Array.isArray(data) ? data : []);
+        setSubsystemEventsLastUpdated(new Date());
       } else {
         setSubsystemEvents([]);
       }
@@ -606,6 +609,27 @@ export default function SettingsScreen() {
     }
     if (mySeq === subsystemRequestSeqRef.current) setSubsystemEventsLoading(false);
   }, []);
+
+  const fetchSubsystemEventsBackground = useCallback(async (name: string) => {
+    try {
+      const res = await apiRequest('GET', `/api/diagnostics/events?subsystem=${encodeURIComponent(name)}`);
+      if (res.ok) {
+        const data = await res.json();
+        setSubsystemEvents(Array.isArray(data) ? data : []);
+        setSubsystemEventsLastUpdated(new Date());
+      }
+    } catch {
+      // leave timestamp unchanged on failure so label doesn't mislead
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!subsystemSheetVisible) return;
+    const id = setInterval(() => {
+      fetchSubsystemEventsBackground(subsystemSheetName);
+    }, 20000);
+    return () => clearInterval(id);
+  }, [subsystemSheetVisible, subsystemSheetName, fetchSubsystemEventsBackground]);
 
   const saveModel = useCallback(async (category: ModelCategory, model: string) => {
     setSavingModel(category);
@@ -2982,6 +3006,17 @@ export default function SettingsScreen() {
             </Pressable>
           </View>
           <Text style={memSheetStyles.subtitle}>Recent errors from the {subsystemSheetLabel.toLowerCase()} subsystem (last 60 minutes)</Text>
+          {subsystemEventsLastUpdated != null && (
+            <Text style={memSheetStyles.lastUpdated}>
+              {(() => {
+                const diffMs = Date.now() - subsystemEventsLastUpdated.getTime();
+                const m = Math.floor(diffMs / 60000);
+                if (m < 1) return 'Updated just now';
+                if (m < 60) return `Updated ${m}m ago`;
+                return `Updated ${Math.floor(m / 60)}h ago`;
+              })()}
+            </Text>
+          )}
           {subsystemEventsLoading ? (
             <View style={memSheetStyles.loadingRow}>
               <ActivityIndicator size="small" color={Colors.textSecondary} />
@@ -4052,8 +4087,14 @@ const memSheetStyles = StyleSheet.create({
     fontSize: 12,
     fontFamily: 'Inter_400Regular',
     color: Colors.textSecondary,
-    marginBottom: 14,
+    marginBottom: 4,
     lineHeight: 17,
+  },
+  lastUpdated: {
+    fontSize: 11,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textTertiary,
+    marginBottom: 12,
   },
   loadingRow: {
     flexDirection: 'row',
