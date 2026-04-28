@@ -504,7 +504,7 @@ export const selfHealTool: AgentTool = {
               `Diagnosis: ${plan.diagnosis}\n\n` +
               `The LLM may need a more specific description, or the fix may require a protected file. ` +
               `Try describing the bug more precisely or use propose_code_change.\n\n` +
-              `${writeBudgetSummary()}`,
+              `${await writeBudgetSummary()}`,
             label: "self_heal: no-changes-max-iterations",
           };
         }
@@ -717,7 +717,7 @@ export const selfHealTool: AgentTool = {
             `**Failing tools:**\n${failureSummary}\n\n` +
             `**Iterations:**\n${iterationSummaries.join("\n")}\n\n` +
             `Review the smoke-test errors and fix manually, or use propose_code_change.\n\n` +
-            `${writeBudgetSummary()}`,
+            `${await writeBudgetSummary()}`,
           label: `self_heal: smoke-test-failed-max-iterations`,
         };
       }
@@ -803,7 +803,7 @@ export const selfHealTool: AgentTool = {
           `\n**Stage B (post-restart health — in progress):**\n` +
           `- Server restart: triggered — workflow manager relaunching\n` +
           `- Post-restart health check: ${stageB === "queued" ? "✓ persisted to job queue — inbox message coming within ~30 s" : `⚠ ${stageB} — run \`run_shell check_health\` manually after restart`}\n` +
-          `\n${writeBudgetSummary()}`,
+          `\n${await writeBudgetSummary()}`,
         label: `self_heal: stage-A-complete iter-${iter + 1}`,
         detail: plan.diagnosis,
       };
@@ -818,7 +818,7 @@ export const selfHealTool: AgentTool = {
         `**Most recent type-check output:**\n${lastTypeCheckOutput ?? "No type-check output captured."}\n\n` +
         `**Next steps:** Review the changes in server/self-heal-audit.log, fix the remaining errors ` +
         `manually, or use propose_code_change to request a review.\n\n` +
-        `${writeBudgetSummary()}`,
+        `${await writeBudgetSummary()}`,
       label: `self_heal: max-iterations-${maxIterations}`,
     };
   },

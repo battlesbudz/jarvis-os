@@ -199,7 +199,7 @@ export const applyCodeChangeTool: AgentTool = {
     }
 
     // ── Circuit-breaker check ─────────────────────────────────────────────────
-    const circuit = checkCircuitBreaker();
+    const circuit = await checkCircuitBreaker();
     if (circuit.tripped) {
       return {
         ok: false,
@@ -235,7 +235,7 @@ export const applyCodeChangeTool: AgentTool = {
       const absPath = path.join(PROJECT_ROOT, filePath);
       await fs.mkdir(path.dirname(absPath), { recursive: true });
       await fs.writeFile(absPath, newContent, "utf-8");
-      recordAutonomousWrite();
+      await recordAutonomousWrite();
       const newCount = circuit.count + 1;
       console.log(`[SelfHeal] wrote '${filePath}' (circuit: ${newCount}/10 in last 60 min)`);
     } catch (err) {
