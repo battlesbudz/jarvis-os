@@ -27,9 +27,11 @@ import { logSystemError } from "../agent/errorLogger";
 import { ReplitConnectors } from "@replit/connectors-sdk";
 import { notifyUser } from "../channels/registry";
 
-// Rate-limit automatic debug sessions: one per capability per hour
+// Rate-limit automatic debug sessions: at most once per 24 hours per capability.
+// IMPORTANT: This map is populated from the DB on server startup (warmupRateLimitCache)
+// so that server restarts do not reset the cooldown for already-broken integrations.
 const lastDebugTriggerAt = new Map<string, number>();
-const DEBUG_TRIGGER_COOLDOWN_MS = 60 * 60 * 1000;
+const DEBUG_TRIGGER_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 
 const EXPIRY_WARNING_MS = 24 * 60 * 60 * 1000; // 24 hours
 
@@ -241,6 +243,17 @@ async function checkConnectorStatus(
     if (res.status === 429) return { status: "healthy" };
 
     const text = await res.text().catch(() => "");
+
+    // If the response body is an HTML error page (e.g. the Replit connector proxy
+    // returned a 404 with <!DOCTYPE html>) it means the connector infrastructure
+    // itself is failing — NOT the user's OAuth token.  Treat as unconfigured so
+    // no user alert is fired (it is not actionable by the user).
+    const isHtmlErrorPage = text.trimStart().startsWith("<!DOCTYPE") || text.trimStart().startsWith("<html");
+    if (isHtmlErrorPage) {
+      console.warn(`[IntegrationValidator] ${connectorName} connector returned HTML ${res.status} — treating as unconfigured (proxy error)`);
+      return { status: "unconfigured" };
+    }
+
     return {
       status: "broken",
       errorMessage: `${connectorName} connector token invalid (HTTP ${res.status}): ${text.slice(0, 120)}`,
@@ -910,11 +923,54 @@ export async function runValidationCycle(): Promise<void> {
   }
 }
 
+/**
+ * Warm up the in-memory rate-limit cache from the DB on server startup.
+ *
+ * Any integration that is currently "broken" or "degraded" in the DB was
+ * already flagged before this server process started.  Pre-populate
+ * lastDebugTriggerAt with the current timestamp so the normal 24-hour cooldown
+ * window applies from now, preventing the very next validation cycle from
+ * re-firing an alert just because the server was restarted.
+ *
+ * This is the primary defence against restart-induced notification spam.
+ */
+async function warmupRateLimitCache(): Promise<void> {
+  try {
+    interface BrokenRow { user_id: string; integration: string }
+    type BrokenResult = SqlQueryResult<BrokenRow>;
+    const raw = await db.execute(sql`
+      SELECT user_id, integration
+      FROM integration_status
+      WHERE status IN ('broken', 'degraded')
+    `);
+    const rows: BrokenRow[] = (raw as BrokenResult).rows ?? (Array.isArray(raw) ? (raw as BrokenRow[]) : []);
+    const now = Date.now();
+    for (const row of rows) {
+      const key = `${row.integration}:${row.user_id}`;
+      lastDebugTriggerAt.set(key, now);
+    }
+    if (rows.length > 0) {
+      console.log(`[IntegrationValidator] warmed rate-limit cache: ${rows.length} broken/degraded integration(s) will not re-alert until cooldown expires`);
+    }
+  } catch (err) {
+    // Non-fatal: if the DB is unavailable at startup, the cache starts cold.
+    // The 24h cooldown still limits spam to at most one per day.
+    console.warn("[IntegrationValidator] could not warm rate-limit cache:", err);
+  }
+}
+
 export function startIntegrationValidator(): void {
   // Delay first run by 10 seconds to let DB connections warm up on boot.
   // Recurring 30-min cycles are driven exclusively by the heartbeat's
   // runHeartbeatTick() → runValidationCycle() call (with lastValidationRunAt
   // throttle) so there is a single scheduler source of truth.
+
+  // Warm rate-limit cache immediately so any currently-broken integrations
+  // don't re-alert on the first validation cycle after this restart.
+  warmupRateLimitCache().catch((err) =>
+    console.warn("[IntegrationValidator] warmup failed (non-fatal):", err),
+  );
+
   setTimeout(() => {
     runValidationCycle().catch((err) =>
       console.error("[IntegrationValidator] initial run failed:", err),

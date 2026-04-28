@@ -444,6 +444,38 @@ const TEST_INTEGRATION = "google" as const;
     );
   }
 
+  // ── Test J: Warmup simulation — pre-populated rate-limit blocks re-alert ─────
+  // Simulates what happens after a server restart when warmupRateLimitCache()
+  // has already set lastDebugTriggerAt to Date.now() for a broken integration.
+  // The circuit-breaker resets (in-memory consecutiveFailures cleared), so it
+  // will escalate to "broken" after 2 cycles — but the pre-populated cooldown
+  // timestamp must block the notification from firing.
+  {
+    _resetConsecutiveFailuresForTest();
+    _resetLastDebugTriggerAtForTest();
+
+    // Simulate warmupRateLimitCache() having run: stamp the rate-limit key now
+    // (exactly as if the warmup read a "broken" row from the DB).
+    const warmupTimestamp = Date.now();
+    _setLastDebugTriggerAtForTest(`${TEST_INTEGRATION}:${TEST_USER}`, warmupTimestamp);
+
+    const { deps, record } = makeStubs();
+
+    // Cycle 1 after restart: streak=1 → degraded, no notification (expected)
+    await _applyCircuitBreakerForTest(TEST_USER, TEST_INTEGRATION, BROKEN_RESULT_NOTIFY, deps);
+    // Cycle 2 after restart: streak=2 → broken, but warmup timestamp blocks notification
+    await _applyCircuitBreakerForTest(TEST_USER, TEST_INTEGRATION, BROKEN_RESULT_NOTIFY, deps);
+
+    const statuses = record.writeStatusCalls.map((c) => c.status);
+    assert.ok(statuses.includes("broken"), "J: broken status was written to DB");
+    assert.equal(
+      record.notifyUserCalls.length,
+      0,
+      "J: no notification fired — warmup pre-populated the cooldown timestamp (restart-safe)",
+    );
+    console.log("✓ J: warmup simulation — pre-populated rate-limit blocks re-alert after restart");
+  }
+
   console.log("\nAll circuit-breaker assertions passed. ✓");
 })().catch((err) => {
   console.error("Test failed:", err);
