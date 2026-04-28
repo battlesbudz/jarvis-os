@@ -25,6 +25,38 @@ import { ensureYtdlpUpgraded, getYtdlpCmd } from "./transcriptCache";
 
 const execAsync = promisify(exec);
 
+// ── Visual summary in-memory cache ───────────────────────────────────────────
+// Mirrors the transcript cache: 24-hour TTL, max 500 entries (oldest evicted).
+
+const VISUAL_TTL_MS = 24 * 60 * 60 * 1000;
+const VISUAL_MAX_ENTRIES = 500;
+
+interface VisualCacheEntry {
+  summary: string;
+  cachedAt: number;
+}
+
+const visualSummaryCache = new Map<string, VisualCacheEntry>();
+
+function evictExpiredVisual(): void {
+  const now = Date.now();
+  for (const [id, entry] of visualSummaryCache) {
+    if (now - entry.cachedAt >= VISUAL_TTL_MS) visualSummaryCache.delete(id);
+  }
+}
+
+function evictOldestVisual(): void {
+  let oldestKey: string | undefined;
+  let oldestTime = Infinity;
+  for (const [id, entry] of visualSummaryCache) {
+    if (entry.cachedAt < oldestTime) {
+      oldestTime = entry.cachedAt;
+      oldestKey = id;
+    }
+  }
+  if (oldestKey) visualSummaryCache.delete(oldestKey);
+}
+
 export interface Keyframe {
   timestampSec: number;
   jpegBuffer: Buffer;
@@ -311,15 +343,33 @@ export async function describeFrames(frames: Keyframe[]): Promise<VisualObservat
  * Returns a formatted "Visual Summary" string ready to append to a transcript,
  * or null if the pipeline fails or produces no output.
  *
- * @param videoId       11-char YouTube video ID
- * @param intervalSecs  Optional override for long-video keyframe interval
+ * Results are cached in memory for 24 hours (max 500 entries) so repeat calls
+ * for the same video are instant and free.
+ *
+ * @param videoId            11-char YouTube video ID
+ * @param intervalSecs       Optional override for long-video keyframe interval
+ * @param bypassVisualCache  When true, skips the cache and forces a fresh analysis
  */
 export async function buildVisualSummary(
   videoId: string,
-  intervalSecs?: number
+  intervalSecs?: number,
+  bypassVisualCache = false
 ): Promise<string | null> {
   // Short-circuit early: no point downloading video if we can't describe it
   if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) return null;
+
+  // ── Cache read ─────────────────────────────────────────────────────────────
+  if (!bypassVisualCache) {
+    evictExpiredVisual();
+    const hit = visualSummaryCache.get(videoId);
+    if (hit) {
+      const ageSec = Math.round((Date.now() - hit.cachedAt) / 1000);
+      console.log(`[videoFrames] cache HIT ${videoId} — visual summary cached ${ageSec}s ago`);
+      return hit.summary;
+    }
+  } else {
+    console.log(`[videoFrames] cache BYPASS ${videoId} — forcing fresh visual analysis`);
+  }
 
   try {
     const frames = await extractKeyframes(videoId, intervalSecs);
@@ -329,11 +379,20 @@ export async function buildVisualSummary(
     if (observations.length === 0) return null;
 
     const lines = observations.map((o) => `[${o.timestamp}] ${o.description}`);
-    return (
+    const summary =
       `Visual Summary\n` +
       `${"─".repeat(60)}\n` +
-      lines.join("\n")
-    );
+      lines.join("\n");
+
+    // ── Cache write ──────────────────────────────────────────────────────────
+    evictExpiredVisual();
+    if (!visualSummaryCache.has(videoId) && visualSummaryCache.size >= VISUAL_MAX_ENTRIES) {
+      evictOldestVisual();
+    }
+    visualSummaryCache.set(videoId, { summary, cachedAt: Date.now() });
+    console.log(`[videoFrames] cache SET ${videoId} — visual summary stored`);
+
+    return summary;
   } catch (err) {
     console.warn(
       `[videoFrames] buildVisualSummary failed for ${videoId}: ` +

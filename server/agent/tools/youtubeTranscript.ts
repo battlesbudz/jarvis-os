@@ -253,7 +253,7 @@ export const youtubeTranscriptTool: AgentTool = {
     // transcript result is available. Failures are silently swallowed.
     const visualPromise: Promise<string | null> =
       includeVisuals && videoId
-        ? buildVisualSummary(videoId).catch(() => null)
+        ? buildVisualSummary(videoId, undefined, bypassCache).catch(() => null)
         : Promise.resolve(null);
 
     // ── Shared formatter: segments → readable timestamped transcript ──────────
