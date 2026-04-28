@@ -218,13 +218,19 @@ export async function recordAutonomousWrite(): Promise<void> {
       DELETE FROM write_budget_log WHERE written_at < ${pruneOlderThan}
     `);
 
-    // Check whether the new count has crossed the warning threshold.
-    // Use >= (not ===) so a concurrent burst that jumps past the exact threshold
-    // still triggers the alert.  Deduplication (one alert per 60-minute window)
-    // is enforced via a conditional UPDATE on the singleton write_budget_warnings
-    // row, which takes a Postgres row-level lock — safe under concurrent writes.
+    // Check whether the new count has crossed the warning threshold or tripped
+    // the circuit.  Use >= (not ===) so a concurrent burst that jumps past the
+    // exact threshold still triggers the alert.  Deduplication (one alert per
+    // 60-minute window) is enforced via conditional UPDATEs on the id=1
+    // singleton row in write_budget_warnings, using the warned_at column for
+    // the early-warning slot and the tripped_at column for the trip slot.
+    // Both take Postgres row-level locks — safe under concurrent writes.
     const status = await checkCircuitBreaker();
-    if (status.count >= CIRCUIT_WARNING_THRESHOLD && status.count < CIRCUIT_MAX_WRITES) {
+    if (status.tripped) {
+      _maybeSendBudgetTripped(status.count).catch((err) =>
+        console.error("[safeWritePolicy] Failed to send write-budget trip alert:", err)
+      );
+    } else if (status.count >= CIRCUIT_WARNING_THRESHOLD) {
       _maybeSendBudgetWarning(status.count).catch((err) =>
         console.error("[safeWritePolicy] Failed to send write-budget warning:", err)
       );
@@ -306,6 +312,87 @@ async function _sendBudgetWarning(count: number): Promise<void> {
   await notifyUser(ownerId, "general", msg);
 }
 
+/**
+ * Lazily add a `tripped_at` column to the existing write_budget_warnings
+ * singleton row (id=1) so the trip dedup slot is stored without touching the
+ * protected schema.ts file or requiring a separate migration file.
+ * Safe to call multiple times — ADD COLUMN IF NOT EXISTS is idempotent.
+ */
+let _tripColumnEnsured = false;
+async function _ensureTripColumn(): Promise<void> {
+  if (_tripColumnEnsured) return;
+  await db.execute(sql`
+    ALTER TABLE write_budget_warnings
+    ADD COLUMN IF NOT EXISTS tripped_at TIMESTAMPTZ NOT NULL DEFAULT '1970-01-01'
+  `);
+  _tripColumnEnsured = true;
+}
+
+/**
+ * Attempt to claim the "trip slot" for the current 60-minute window.
+ *
+ * Uses the same conditional-UPDATE / row-level-lock pattern as _claimWarningSlot,
+ * but operates on the `tripped_at` column of the id=1 singleton row so warning
+ * and trip dedup are independent — a warning sent at write #7 does not block
+ * the trip alert at #10.
+ *
+ * Returns true if this caller won the slot, false if a trip alert was already
+ * dispatched in this window.
+ */
+async function _claimTripSlot(): Promise<boolean> {
+  await _ensureTripColumn();
+  const windowStart = new Date(Date.now() - CIRCUIT_WINDOW_MS);
+  const result = await db.execute(sql`
+    UPDATE write_budget_warnings
+    SET    tripped_at = NOW()
+    WHERE  id = 1 AND tripped_at < ${windowStart}
+    RETURNING id
+  `);
+  return (result.rowCount ?? 0) > 0;
+}
+
+/**
+ * Deduplication wrapper — sends a trip alert only if no trip alert has already
+ * been dispatched in the current 60-minute window.
+ *
+ * If notification delivery fails, the slot is rolled back so the next write
+ * (if any) can retry sending the alert.
+ */
+async function _maybeSendBudgetTripped(count: number): Promise<void> {
+  const claimed = await _claimTripSlot();
+  if (!claimed) return; // Alert already sent for this window.
+  try {
+    await _sendBudgetTripped(count);
+  } catch (err) {
+    // Delivery failed — reset the trip slot so a future call in this window
+    // can retry rather than silently dropping the alert for 60 min.
+    await db
+      .execute(sql`UPDATE write_budget_warnings SET tripped_at = '1970-01-01' WHERE id = 1`)
+      .catch((resetErr) =>
+        console.error("[safeWritePolicy] Failed to reset trip slot after delivery failure:", resetErr)
+      );
+    throw err;
+  }
+}
+
+/**
+ * Fire-and-forget helper — sends a distinct circuit-trip notification to the
+ * owner when the circuit breaker transitions from closed to open (10/10 writes).
+ */
+async function _sendBudgetTripped(count: number): Promise<void> {
+  const ownerId = await getIntegrationOwnerId();
+  if (!ownerId) return;
+
+  // Lazy-load the channel registry to avoid a circular import at module load time.
+  const { notifyUser } = await import("../channels/registry");
+  const msg =
+    `🚨 *Circuit breaker tripped* — Jarvis has reached ${count}/${CIRCUIT_MAX_WRITES} autonomous writes in the last hour. ` +
+    `All further autonomous writes are now blocked until the window resets or an owner manually resets the counter. ` +
+    `Review the audit log and run \`reset_circuit_breaker\` when satisfied.`;
+
+  await notifyUser(ownerId, "general", msg);
+}
+
 /** Return a human-readable description of the current write budget. */
 export async function writeBudgetSummary(): Promise<string> {
   const status = await checkCircuitBreaker();
@@ -323,10 +410,14 @@ export async function writeBudgetSummary(): Promise<string> {
 export async function resetCircuitBreaker(): Promise<void> {
   try {
     await db.execute(sql`DELETE FROM write_budget_log`);
-    // Reset the warning deduplication state so a fresh warning can be sent
-    // if autonomous writes ramp up again after this manual reset.
+    // Reset both the warning and the trip deduplication slots so fresh
+    // notifications can be sent if autonomous writes ramp up again after this
+    // manual reset.
+    await _ensureTripColumn();
     await db.execute(sql`
-      UPDATE write_budget_warnings SET warned_at = '1970-01-01' WHERE id = 1
+      UPDATE write_budget_warnings
+      SET warned_at = '1970-01-01', tripped_at = '1970-01-01'
+      WHERE id = 1
     `);
   } catch (err) {
     console.error("[safeWritePolicy] Failed to reset write_budget_log:", err);
@@ -372,6 +463,23 @@ export async function _claimWarningSlotForTest(): Promise<boolean> {
     throw new Error("_claimWarningSlotForTest must not be called in production");
   }
   return _claimWarningSlot();
+}
+
+/**
+ * TEST-ONLY: Expose _claimTripSlot so tests can verify the one-per-window
+ * trip-alert deduplication behaviour without going through a full
+ * recordAutonomousWrite() call.
+ *
+ * Returns true when the trip slot was claimed (first trip alert in the window),
+ * false when a trip alert was already dispatched in the current window.
+ *
+ * Never call this from production code.
+ */
+export async function _claimTripSlotForTest(): Promise<boolean> {
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("_claimTripSlotForTest must not be called in production");
+  }
+  return _claimTripSlot();
 }
 
 /**
