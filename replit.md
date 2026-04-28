@@ -36,6 +36,10 @@ Named sub-agents allow creating multiple specialized AI personas, each with isol
 - **`server/agent/agentConfigSchema.ts`** — JSON export/import schema for agent configs. `validateAgentConfig`, `exportAgentConfig`, `importConfigToCreateArgs`.
 - **`server/agent/agentRoutes.ts`** — Full REST API mounted at `/api/agents` (list, create, get, update, delete, enable/disable, channel assignment, run, memories, messages, export/import, council, approvals).
 - **`server/discord/agentCommands.ts`** — Discord `/agent` slash command (list, run, council, create, assign).
+- **`server/agent/selfHealAudit.ts`** — Parser for `server/self-heal-audit.log`. Exports `readAuditEntries(limit)` and `countAuditEntries()`. Parses the append-only audit log written by `applyCodeChangeTool`.
+- **`GET /api/self-heal/audit`** — REST endpoint returning last N parsed audit entries + total count. Protected by auth middleware.
+- **Self-Repair History UI** — `SELF-REPAIRS` section on the Agents screen shows cards for each repair (file, reason, change summary, timestamp). Tapping a card opens a detail sheet with the full diff.
+- **`/jarvis audit [count]`** — Discord slash command showing the last N self-repairs (default 5, max 10).
 
 ### Schema Extensions
 - `discord_agents` extended with 11 new columns: `platforms`, `permissions`, `memory_scope`, `access_global_memory`, `allowed_users`, `allowed_conversations`, `private_mode`, `platform_channels`, `config_json`, `last_heartbeat_at`, `stuck_since`, `heartbeat_fail_count`.

@@ -72,6 +72,21 @@ const JARVIS_COMMAND = {
     },
     {
       type: 1,
+      name: "audit",
+      description: "Show the last self-repairs Jarvis made automatically",
+      options: [
+        {
+          type: 4, // INTEGER
+          name: "count",
+          description: "Number of entries to show (1–10, default 5)",
+          required: false,
+          min_value: 1,
+          max_value: 10,
+        },
+      ],
+    },
+    {
+      type: 1,
       name: "help",
       description: "Show all available Jarvis slash commands",
     },
@@ -422,6 +437,63 @@ async function handleStatus(
   }
 }
 
+async function handleAudit(
+  appId: string,
+  interaction: any,
+  userId: string,
+): Promise<void> {
+  const opts: any[] = interaction.data?.options?.[0]?.options ?? [];
+  const count = Math.min(Math.max(Number(opts.find((o: any) => o.name === "count")?.value ?? 5), 1), 10);
+
+  try {
+    const { isIntegrationOwner } = await import("../integrationOwner");
+    if (!(await isIntegrationOwner(userId))) {
+      await editInteractionReply(
+        appId,
+        interaction.token,
+        "⛔ Self-repair audit is only visible to the Jarvis owner.",
+        EPHEMERAL,
+      );
+      return;
+    }
+    const { readAuditEntries, countAuditEntries } = await import("../agent/selfHealAudit");
+    const [entries, total] = await Promise.all([readAuditEntries(count), countAuditEntries()]);
+
+    if (entries.length === 0) {
+      await editInteractionReply(
+        appId,
+        interaction.token,
+        "🔧 No self-repairs recorded yet. Jarvis will log changes here whenever it autonomously fixes code.",
+        EPHEMERAL,
+      );
+      return;
+    }
+
+    const lines: string[] = [`**Self-Repair History** (${entries.length} of ${total} shown)`, ""];
+    for (const entry of entries) {
+      const ts = new Date(entry.timestamp).toLocaleString();
+      const changes = entry.changesSummary ? ` · ${entry.changesSummary}` : "";
+      const v = (entry.verified ?? "pending").toLowerCase();
+      const verifyIcon = v.startsWith("passed") ? "✅" : v.startsWith("failed") || v.startsWith("error") ? "❌" : "⏳";
+      const verifyLabel = v.startsWith("passed") ? "passed" : v.startsWith("failed") || v.startsWith("error") ? "failed" : "pending";
+      lines.push(`🔧 **${entry.file}** ${verifyIcon} ${verifyLabel}`);
+      lines.push(`  _${entry.reason}_`);
+      lines.push(`  \`${ts}${changes}\``);
+      lines.push("");
+    }
+
+    await editInteractionReply(appId, interaction.token, lines.join("\n").slice(0, 2000), EPHEMERAL);
+  } catch (err) {
+    console.error("[SlashCommands] audit handler error:", err);
+    await editInteractionReply(
+      appId,
+      interaction.token,
+      "Sorry, I couldn't fetch the audit log right now.",
+      EPHEMERAL,
+    );
+  }
+}
+
 async function handleHelp(appId: string, interaction: any): Promise<void> {
   const help = [
     "**Jarvis Slash Commands**",
@@ -429,6 +501,7 @@ async function handleHelp(appId: string, interaction: any): Promise<void> {
     "`/jarvis chat <message>` — Chat with Jarvis from any channel. Add `public:True` to share the reply.",
     "`/jarvis plan` — Generate your personalized daily plan.",
     "`/jarvis status` — Check the status of active background jobs.",
+    "`/jarvis audit` — Show recent autonomous self-repairs Jarvis made.",
     "`/jarvis help` — Show this message.",
     "",
     "💡 Replies are private by default (only you see them).",
@@ -558,6 +631,15 @@ export async function handleInteraction(interaction: any): Promise<object> {
         setImmediate(() => {
           handleStatus(appId, interaction, userId).catch((err) =>
             console.error("[SlashCommands] handleStatus background error:", err),
+          );
+        });
+        return deferredEphemeral();
+      }
+
+      if (subcommand === "audit") {
+        setImmediate(() => {
+          handleAudit(appId, interaction, userId).catch((err) =>
+            console.error("[SlashCommands] handleAudit background error:", err),
           );
         });
         return deferredEphemeral();

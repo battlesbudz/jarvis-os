@@ -24,7 +24,7 @@ import { isIntegrationOwner } from "../../integrationOwner";
 import { anthropic, ORCHESTRATOR_MODEL } from "../../lib/anthropicClient";
 import { isPathAllowed, isProtectedFile, writeBudgetSummary, PROTECTED_FILES } from "../safeWritePolicy";
 import { readRecentErrorsTool, proposeCodeChangeTool } from "./selfEditTools";
-import { applyCodeChangeTool } from "./applyCodeChangeTool";
+import { applyCodeChangeTool, recordVerificationResult } from "./applyCodeChangeTool";
 import { runShellTool } from "./runShellTool";
 import { testToolTool } from "./buildFeatureTool";
 
@@ -636,6 +636,11 @@ export const selfHealTool: AgentTool = {
         const iterSummary = `${iterLabel}: applied ${applyResults.filter((r) => r.ok).length}/${plan.changes.length} change(s), type-check FAILED`;
         iterationSummaries.push(iterSummary);
         sendProgress(`[${iterLabel}] ✗ Type-check failed — ${iter + 1 < maxIterations ? "retrying…" : "max iterations reached."}`);
+        await recordVerificationResult(
+          applyResults.filter((r) => r.ok).map((r) => r.filePath),
+          "failed",
+          `type-check failed (iteration ${iter + 1})`,
+        ).catch(() => {});
         continue; // loop back to diagnose with the type-check errors as context
       }
 
@@ -652,6 +657,11 @@ export const selfHealTool: AgentTool = {
       if (!testPassed) {
         // Feed test failure output back into next iteration context
         lastTypeCheckOutput = `Type-check: PASSED\n\nTest suite output (FAILED):\n${testResult.content}`;
+        await recordVerificationResult(
+          applyResults.filter((r) => r.ok).map((r) => r.filePath),
+          "failed",
+          `tests failed (iteration ${iter + 1})`,
+        ).catch(() => {});
         continue;
       }
 
@@ -706,9 +716,19 @@ export const selfHealTool: AgentTool = {
         if (iter + 1 < maxIterations) {
           lastTypeCheckOutput =
             `Type-check: PASSED\nTests: PASSED\nSmoke-test failures (verify these tools work after your fixes):\n${failureSummary}`;
+          await recordVerificationResult(
+            applyResults.filter((r) => r.ok).map((r) => r.filePath),
+            "failed",
+            `smoke-tests failed (iteration ${iter + 1}, retrying)`,
+          ).catch(() => {});
           continue; // loop back to diagnose with smoke-test context
         }
         // Max iterations reached with smoke-test failures — escalate
+        await recordVerificationResult(
+          applyResults.filter((r) => r.ok).map((r) => r.filePath),
+          "failed",
+          `smoke-tests failed after ${maxIterations} iteration(s)`,
+        ).catch(() => {});
         return {
           ok: false,
           content:
@@ -726,6 +746,13 @@ export const selfHealTool: AgentTool = {
       if (allToolNames.length > 0) {
         sendProgress(`[${iterLabel}] ✓ All ${allToolNames.length} smoke-test(s) passed.`);
       }
+
+      // ── Phase 4e: Record verification success ─────────────────────────────
+      await recordVerificationResult(
+        applyResults.filter((r) => r.ok).map((r) => r.filePath),
+        "passed",
+        `type-check ✓, tests ✓${allToolNames.length > 0 ? `, smoke-tests ✓ (${allToolNames.length})` : ""}`,
+      ).catch(() => {});
 
       // ── Phase 5: Verify current server is still healthy before activation ──
       sendProgress(`[${iterLabel}] All code checks passed. Confirming server health before activation…`);

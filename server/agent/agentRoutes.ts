@@ -73,6 +73,8 @@ import {
 } from "./agentPolicyManager";
 import type { AgentPolicyScope } from "@shared/schema";
 import { AGENT_POLICY_SCOPES } from "@shared/schema";
+import { readAuditEntries, countAuditEntries } from "./selfHealAudit";
+import { isIntegrationOwner } from "../integrationOwner";
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -122,6 +124,24 @@ const activeRuns = new Map<string, ActiveRun>();
 // ── Route registration ─────────────────────────────────────────────────────────
 
 export function registerAgentRoutes(app: Express): void {
+
+  // ── GET /api/self-heal/audit — self-repair history (BEFORE /:id) ─────────────
+  // Restricted to the integration owner — audit log contains internal code diffs.
+  app.get("/api/self-heal/audit", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId!;
+      if (!(await isIntegrationOwner(userId))) {
+        return res.status(403).json({ error: "Forbidden: self-repair audit is only visible to the owner." });
+      }
+      const rawLimit = Number(req.query.limit ?? 20);
+      const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(Math.floor(rawLimit), 1), 100) : 20;
+      const [entries, total] = await Promise.all([
+        readAuditEntries(limit),
+        countAuditEntries(),
+      ]);
+      res.json({ entries, total });
+    } catch (err) { handleError(res, err); }
+  });
 
   // ── 0. GET /api/agents/roster — enriched living roster (BEFORE /:id) ────────
   // Returns all named agents enriched with memoryCount, status, jobs, etc.

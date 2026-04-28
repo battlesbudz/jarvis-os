@@ -109,6 +109,15 @@ const PERM_LABELS: Record<keyof AgentPermissions, { label: string; icon: keyof t
   can_run_code:            { label: "Run Python code",          icon: "code-slash-outline" },
 };
 
+export interface AuditEntry {
+  timestamp: string;
+  file: string;
+  reason: string;
+  verified: string;
+  changesSummary: string;
+  diff: string;
+}
+
 export interface AgentTask {
   id: string;
   title: string;
@@ -1247,6 +1256,170 @@ function RunModal({ agent, onClose }: { agent: RosterAgent | null; onClose: () =
   );
 }
 
+// ── SelfRepairAuditModal ───────────────────────────────────────────────────────
+
+function SelfRepairAuditModal({
+  entry,
+  onClose,
+}: {
+  entry: AuditEntry | null;
+  onClose: () => void;
+}) {
+  if (!entry) return null;
+
+  const ts = new Date(entry.timestamp).toLocaleString();
+
+  return (
+    <Modal visible={!!entry} animationType="slide" presentationStyle="formSheet" onRequestClose={onClose}>
+      <View style={[styles.sheet, { backgroundColor: Colors.background }]}>
+        <View style={[styles.sheetHeader, { borderBottomColor: Colors.border }]}>
+          <TouchableOpacity onPress={onClose}>
+            <Text style={[styles.sheetCancel, { color: Colors.textSecondary }]}>Close</Text>
+          </TouchableOpacity>
+          <Text style={[styles.sheetTitle, { color: Colors.text }]}>Self-Repair</Text>
+          <View style={{ width: 48 }} />
+        </View>
+
+        <ScrollView style={styles.sheetBody} showsVerticalScrollIndicator={false}>
+          {/* File + timestamp */}
+          <View style={[styles.personaCard, { backgroundColor: Colors.surface, borderColor: Colors.border, gap: 6 }]}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+              <View style={[styles.roleIconWrap, { backgroundColor: Colors.primary + "22" }]}>
+                <Ionicons name="code-slash-outline" size={16} color={Colors.primary} />
+              </View>
+              <Text style={[styles.cardName, { color: Colors.text, flex: 1 }]} numberOfLines={2}>
+                {entry.file}
+              </Text>
+            </View>
+            <Text style={[styles.metaText, { color: Colors.textTertiary }]}>{ts}</Text>
+            {entry.changesSummary ? (
+              <View style={[styles.coreBadge, { backgroundColor: Colors.primary + "22", alignSelf: "flex-start" }]}>
+                <Text style={[styles.coreBadgeText, { color: Colors.primary }]}>{entry.changesSummary}</Text>
+              </View>
+            ) : null}
+          </View>
+
+          {/* Verification result */}
+          {(() => {
+            const v = (entry.verified ?? "pending").toLowerCase();
+            const passed = v.startsWith("passed");
+            const failed = v.startsWith("failed") || v.startsWith("error");
+            const bg = passed ? "#16a34a22" : failed ? "#dc262622" : "#78716c22";
+            const fg = passed ? "#16a34a" : failed ? "#dc2626" : Colors.textSecondary;
+            const verifyIcons: Record<string, keyof typeof Ionicons.glyphMap> = {
+              passed: "checkmark-circle-outline",
+              failed: "close-circle-outline",
+              pending: "time-outline",
+            };
+            const iconKey = passed ? "passed" : failed ? "failed" : "pending";
+            const label = passed ? "Passed" : failed ? "Failed" : "Pending";
+            return (
+              <>
+                <Text style={[styles.fieldLabel, { color: Colors.textSecondary, marginTop: 16 }]}>VERIFICATION</Text>
+                <View style={[styles.personaCard, { backgroundColor: bg, borderColor: Colors.border, flexDirection: "row", alignItems: "center", gap: 8 }]}>
+                  <Ionicons name={verifyIcons[iconKey]} size={18} color={fg} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.cardName, { color: fg, fontSize: 14 }]}>{label}</Text>
+                    {entry.verified && entry.verified !== "pending" && entry.verified !== "not recorded" ? (
+                      <Text style={[styles.metaText, { color: fg, opacity: 0.8 }]} numberOfLines={2}>{entry.verified}</Text>
+                    ) : null}
+                  </View>
+                </View>
+              </>
+            );
+          })()}
+
+          {/* Reason */}
+          <Text style={[styles.fieldLabel, { color: Colors.textSecondary, marginTop: 16 }]}>REASON</Text>
+          <View style={[styles.personaCard, { backgroundColor: Colors.surface, borderColor: Colors.border }]}>
+            <Text style={[styles.personaText, { color: Colors.text }]}>{entry.reason || "No reason recorded"}</Text>
+          </View>
+
+          {/* Diff */}
+          {entry.diff ? (
+            <>
+              <Text style={[styles.fieldLabel, { color: Colors.textSecondary, marginTop: 16 }]}>CHANGES</Text>
+              <View style={[styles.personaCard, { backgroundColor: Colors.surface, borderColor: Colors.border }]}>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                  <Text
+                    style={{
+                      fontSize: 11,
+                      color: Colors.textSecondary,
+                      fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+                      lineHeight: 18,
+                    }}
+                  >
+                    {entry.diff}
+                  </Text>
+                </ScrollView>
+              </View>
+            </>
+          ) : null}
+
+          <View style={{ height: 40 }} />
+        </ScrollView>
+      </View>
+    </Modal>
+  );
+}
+
+// ── SelfRepairAuditCard — inline card for one audit entry ─────────────────────
+
+function SelfRepairAuditCard({
+  entry,
+  onPress,
+}: {
+  entry: AuditEntry;
+  onPress: () => void;
+}) {
+  const ts = new Date(entry.timestamp).toLocaleString();
+  const shortFile = entry.file.split("/").pop() ?? entry.file;
+
+  return (
+    <TouchableOpacity
+      activeOpacity={0.75}
+      onPress={onPress}
+      style={[styles.jobCard, { backgroundColor: Colors.surface, borderColor: Colors.border }]}
+    >
+      <View style={styles.jobCardHeader}>
+        <View style={[styles.jobIconWrap, { backgroundColor: Colors.primary + "22" }]}>
+          <Ionicons name="construct-outline" size={16} color={Colors.primary} />
+        </View>
+        <View style={styles.jobCardTitle}>
+          <Text style={[styles.jobTitle, { color: Colors.text }]} numberOfLines={1}>
+            {shortFile}
+          </Text>
+          <Text style={[styles.jobAgent, { color: Colors.textSecondary }]} numberOfLines={1}>
+            {entry.reason}
+          </Text>
+        </View>
+        {(() => {
+          const v = (entry.verified ?? "pending").toLowerCase();
+          const passed = v.startsWith("passed");
+          const failed = v.startsWith("failed") || v.startsWith("error");
+          const bg = passed ? "#16a34a22" : failed ? "#dc262622" : "#78716c22";
+          const fg = passed ? "#16a34a" : failed ? "#dc2626" : Colors.textSecondary;
+          const verifyIcons: Record<string, keyof typeof Ionicons.glyphMap> = {
+            passed: "checkmark-circle-outline",
+            failed: "close-circle-outline",
+            pending: "time-outline",
+          };
+          const iconKey = passed ? "passed" : failed ? "failed" : "pending";
+          return (
+            <View style={[styles.coreBadge, { backgroundColor: bg, flexDirection: "row", alignItems: "center", gap: 3 }]}>
+              <Ionicons name={verifyIcons[iconKey]} size={11} color={fg} />
+              <Text style={[styles.coreBadgeText, { color: fg }]}>
+                {iconKey}
+              </Text>
+            </View>
+          );
+        })()}
+      </View>
+      <Text style={[styles.jobMeta, { color: Colors.textTertiary }]}>{ts}</Text>
+    </TouchableOpacity>
+  );
+}
+
 // ── CouncilModal ───────────────────────────────────────────────────────────────
 
 function CouncilModal({ visible, onClose }: { visible: boolean; onClose: () => void }) {
@@ -2133,6 +2306,7 @@ export default function AgentsScreen() {
   const [detailAgent, setDetailAgent] = useState<RosterAgent | null>(null);
   const [detailTask, setDetailTask] = useState<AgentTask | null>(null);
   const [qualityCheckEnabled, setQualityCheckEnabled] = useState(true);
+  const [auditEntry, setAuditEntry] = useState<AuditEntry | null>(null);
 
   const topPad = Platform.OS === "web" ? 67 : insets.top;
   const bottomPad = Platform.OS === "web" ? 34 : insets.bottom;
@@ -2149,6 +2323,12 @@ export default function AgentsScreen() {
     queryKey: ["/api/preferences"],
     select: (d) => d,
     staleTime: 60_000,
+  });
+
+  const { data: auditData } = useQuery<{ entries: AuditEntry[]; total: number }>({
+    queryKey: ["/api/self-heal/audit"],
+    staleTime: 30_000,
+    refetchInterval: 60_000,
   });
 
   useEffect(() => {
@@ -2350,6 +2530,29 @@ export default function AgentsScreen() {
             </>
           )}
 
+          {/* Self-repair audit history */}
+          {(auditData?.entries?.length ?? 0) > 0 && (
+            <>
+              <View style={[styles.sectionHeader, { marginTop: 20 }]}>
+                <Text style={[styles.sectionLabel, { color: Colors.textSecondary }]}>SELF-REPAIRS</Text>
+                {(auditData?.total ?? 0) > 0 && (
+                  <View style={[styles.sectionBadge, { backgroundColor: Colors.primary + "22" }]}>
+                    <Text style={[styles.sectionBadgeText, { color: Colors.primary }]}>
+                      {auditData!.total} total
+                    </Text>
+                  </View>
+                )}
+              </View>
+              {auditData!.entries.map((entry, idx) => (
+                <SelfRepairAuditCard
+                  key={`${entry.timestamp}-${idx}`}
+                  entry={entry}
+                  onPress={() => setAuditEntry(entry)}
+                />
+              ))}
+            </>
+          )}
+
           {/* Quality review preference */}
           <View style={[styles.sectionHeader, { marginTop: 20 }]}>
             <Text style={[styles.sectionLabel, { color: Colors.textSecondary }]}>QUALITY REVIEW</Text>
@@ -2398,6 +2601,7 @@ export default function AgentsScreen() {
         onToggle={(a) => toggleMutation.mutate({ id: a.id, enable: a.isActive !== 1 })}
       />
       <TaskDetailSheet task={detailTask} onClose={() => setDetailTask(null)} />
+      <SelfRepairAuditModal entry={auditEntry} onClose={() => setAuditEntry(null)} />
     </View>
   );
 }
