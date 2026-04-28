@@ -10,7 +10,8 @@ export const discordPostTool: AgentTool = {
     `Use this to log useful thoughts, plans, or progress notes that belong in a particular life area — ` +
     `so the user has an organised record in Discord. ` +
     `Available topics: ${topicList}. ` +
-    `If unsure which topic fits, omit the topic and it will be auto-classified.`,
+    `If unsure which topic fits, omit the topic and it will be auto-classified. ` +
+    `Only post content that has been generated from real tool results (research_topic, web_search, etc). Never post hallucinated content. Never post to #general or announcement channels without explicit user instruction.`,
   parameters: {
     type: "object",
     properties: {
