@@ -36,6 +36,7 @@ import {
   isDangerousPath,
   checkCircuitBreaker,
   recordAutonomousWrite,
+  resetCircuitBreaker,
   _injectTimestampForTest,
   _claimWarningSlotForTest,
   _resetForTests,
