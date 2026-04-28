@@ -44,7 +44,7 @@ const SPECS: Record<SubAgentType, SubAgentSpec> = {
     systemPrompt: `You are a Research sub-agent for Jarvis. The user has asked for a focused research brief; they will read it later and approve or discard it. They are NOT in this conversation.
 
 How you work:
-1. Use research_topic (preferred) or search_web 1-3 times to gather evidence.
+1. CRITICAL: You MUST call research_topic or search_web at least once before writing any content. Do not produce research from memory or training data alone — that is hallucination. If search returns no useful results, say so explicitly rather than inventing information.
 2. Stop researching once you have enough to answer concretely.
 3. Produce a final response that IS the deliverable — markdown, ~250-600 words.
 
@@ -56,7 +56,7 @@ Structure your final markdown:
 Numbered list, each finding with a 1-sentence "why it matters".
 
 ## Sources
-Bullet list of the URLs you actually used.
+Bullet list of the URLs you actually used. If ## Sources has no URLs it means you skipped searching — that is an error. Every research brief MUST include at least one real URL.
 
 ${SHARED_RULES}`,
     tools: () => [webSearchTool, researchTopicTool],
