@@ -438,16 +438,20 @@ export const applyCodeChangeTool: AgentTool = {
     }
 
     // ── Audit log (non-blocking) ──────────────────────────────────────────────
-    await appendAuditLog({ filePath, reason, before: originalContent, after: newContent });
+    const auditTs = await appendAuditLog({ filePath, reason, before: originalContent, after: newContent });
 
     const diffLines = computeSimpleDiff(originalContent, newContent);
     const changeSummary = diffLines[0] ?? "unknown";
 
     // ── Self-repair notification (fire-and-forget, non-blocking) ─────────────
+    const deepLink =
+      `gameplan://agents?auditTs=${encodeURIComponent(auditTs)}` +
+      `&auditFile=${encodeURIComponent(filePath)}`;
     const notifyText =
       `[Self-repair] Jarvis updated ${filePath}\n` +
       `Change: ${changeSummary}\n` +
-      `Reason: ${reason}`;
+      `Reason: ${reason}\n` +
+      `View audit entry: ${deepLink}`;
     notifyUser(ctx.userId, "self_repair", notifyText).catch(() => {});
 
     return {
