@@ -6805,6 +6805,25 @@ Extract up to 8 memories per batch.`;
     }
   });
 
+  app.get("/api/diagnostics/memory-events", async (req: Request, res: Response) => {
+    const userId = (req as any).userId as string | undefined;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    try {
+      const { getRecentEvents } = await import("./diagnostics/diagnosticsService");
+      const events = await getRecentEvents({
+        userId,
+        subsystem: "memory",
+        limit: 20,
+        sinceMinutes: 60,
+        excludePatternDetected: true,
+      });
+      res.json(events);
+    } catch (err) {
+      console.error("[Diagnostics] GET /api/diagnostics/memory-events failed:", err);
+      res.status(500).json({ error: "Failed to fetch memory events" });
+    }
+  });
+
   // ── Local Worker API ────────────────────────────────────────────────────────
   // Allows a worker process running on the user's PC to receive transcript
   // jobs, fetch them locally (with yt-dlp or any other method), and return
