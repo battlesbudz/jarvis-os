@@ -91,6 +91,33 @@ async function rotateAuditLogIfNeeded(): Promise<void> {
   }
 }
 
+/**
+ * Prune excess audit log archives unconditionally.  Call once on server
+ * startup so archives that accumulated before auto-cleanup shipped are
+ * removed immediately, without waiting for the next rotation event.
+ */
+export async function pruneAuditLogArchivesOnStartup(): Promise<void> {
+  try {
+    const serverDir = path.join(PROJECT_ROOT, "server");
+    const entries = await fs.readdir(serverDir);
+    const archives = entries
+      .filter((name) => /^self-heal-audit\..+\.log$/.test(name))
+      .sort()
+      .map((name) => path.join(serverDir, name));
+
+    const toDelete = archives.slice(0, Math.max(0, archives.length - AUDIT_LOG_MAX_ARCHIVES));
+    for (const archivePath of toDelete) {
+      await fs.unlink(archivePath);
+      console.log(`[SelfHeal] startup: deleted old audit archive → ${archivePath}`);
+    }
+    if (toDelete.length === 0) {
+      console.log(`[SelfHeal] startup: audit archive count OK (${archives.length}/${AUDIT_LOG_MAX_ARCHIVES} max)`);
+    }
+  } catch (err) {
+    console.warn("[SelfHeal] startup archive prune failed (non-fatal):", err);
+  }
+}
+
 function computeSimpleDiff(before: string, after: string): string[] {
   const bs = before.split("\n");
   const as = after.split("\n");
