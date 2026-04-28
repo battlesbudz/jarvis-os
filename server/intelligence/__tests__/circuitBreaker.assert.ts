@@ -273,6 +273,74 @@ const TEST_INTEGRATION = "google" as const;
     console.log("✓ F: after cooldown expires, a subsequent broken cycle fires a fresh notification");
   }
 
+  // ── Test G: Duplicate auto-debug rate-limit — second broken cycle within
+  //            cooldown fires NO additional triggerAutoDebugSession call ──────
+  // Mirrors Test E but exercises the unknown-error path (BROKEN_RESULT_UNKNOWN)
+  // where buildDirectNotification returns null and triggerAutoDebugSession is
+  // called instead of notifyUser.  The 1-hour cooldown must cap this path too.
+  {
+    _resetConsecutiveFailuresForTest();
+    _resetLastDebugTriggerAtForTest();
+    const { deps, record } = makeStubs();
+
+    // Cycle 1: streak=1 → degraded, no auto-debug
+    await _applyCircuitBreakerForTest(TEST_USER, TEST_INTEGRATION, BROKEN_RESULT_UNKNOWN, deps);
+    // Cycle 2: streak=2 → broken, auto-debug fires and rate-limit timestamp set
+    await _applyCircuitBreakerForTest(TEST_USER, TEST_INTEGRATION, BROKEN_RESULT_UNKNOWN, deps);
+    // Cycle 3: streak=3, still within 1-hour cooldown → auto-debug must NOT fire again
+    await _applyCircuitBreakerForTest(TEST_USER, TEST_INTEGRATION, BROKEN_RESULT_UNKNOWN, deps);
+
+    const brokenStatuses = record.writeStatusCalls.filter((c) => c.status === "broken");
+    assert.ok(brokenStatuses.length >= 2, "G: 'broken' written on cycles 2 and 3");
+    assert.equal(
+      record.notifyUserCalls.length,
+      0,
+      "G: no direct notifications for unknown errors (auto-debug path)",
+    );
+    assert.equal(
+      record.triggerAutoDebugCalls,
+      1,
+      "G: only ONE auto-debug session triggered across three broken cycles (second blocked by cooldown)",
+    );
+    console.log("✓ G: duplicate auto-debug gate — second broken cycle within cooldown fires no additional auto-debug session");
+  }
+
+  // ── Test H: After cooldown expires, a fresh auto-debug session IS triggered ─
+  // Simulates an hour passing by backdating the rate-limit timestamp so the gate
+  // opens again and the next broken cycle queues a new auto-debug job.
+  {
+    _resetConsecutiveFailuresForTest();
+    _resetLastDebugTriggerAtForTest();
+    const { deps, record } = makeStubs();
+
+    // Cycle 1: streak=1 → degraded
+    await _applyCircuitBreakerForTest(TEST_USER, TEST_INTEGRATION, BROKEN_RESULT_UNKNOWN, deps);
+    // Cycle 2: streak=2 → broken, first auto-debug session fires
+    await _applyCircuitBreakerForTest(TEST_USER, TEST_INTEGRATION, BROKEN_RESULT_UNKNOWN, deps);
+
+    assert.equal(record.triggerAutoDebugCalls, 1, "H: first auto-debug session triggered");
+
+    // Simulate the cooldown expiring by backdating the rate-limit entry by just
+    // over one hour so Date.now() - last > DEBUG_TRIGGER_COOLDOWN_MS.
+    const expiredTimestamp = Date.now() - _DEBUG_TRIGGER_COOLDOWN_MS_FOR_TEST - 1;
+    _setLastDebugTriggerAtForTest(`${TEST_INTEGRATION}:${TEST_USER}`, expiredTimestamp);
+
+    // Cycle 3 after cooldown: streak=3 → broken, second auto-debug session must now fire
+    await _applyCircuitBreakerForTest(TEST_USER, TEST_INTEGRATION, BROKEN_RESULT_UNKNOWN, deps);
+
+    assert.equal(
+      record.triggerAutoDebugCalls,
+      2,
+      "H: second auto-debug session fired after cooldown window expired",
+    );
+    assert.equal(
+      record.notifyUserCalls.length,
+      0,
+      "H: no direct notifications throughout (unknown error stays on auto-debug path)",
+    );
+    console.log("✓ H: after cooldown expires, a subsequent broken cycle fires a fresh auto-debug session");
+  }
+
   console.log("\nAll circuit-breaker assertions passed. ✓");
 })().catch((err) => {
   console.error("Test failed:", err);
