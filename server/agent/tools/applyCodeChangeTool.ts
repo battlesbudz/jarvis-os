@@ -210,7 +210,19 @@ export async function recordVerificationResult(
       `[Self-repair ✅] Verification passed for ${fileList}` +
       summaryLine;
   } else {
-    const cta = "\nOpen the audit log (server/self-heal-audit.log) to review.";
+    // Build a deep link to the specific audit log entry so the user can tap
+    // straight into the relevant entry without hunting through the log.
+    const firstFile = filePaths[0];
+    const firstTs   = firstFile ? lastAuditTimestamp.get(firstFile) : undefined;
+    let cta: string;
+    if (firstFile && firstTs) {
+      const deepLink =
+        `gameplan://agents?auditTs=${encodeURIComponent(firstTs)}` +
+        `&auditFile=${encodeURIComponent(firstFile)}`;
+      cta = `\nView audit entry: ${deepLink}`;
+    } else {
+      cta = "\nOpen the Agents tab and check the Self-Repairs section.";
+    }
     notifyText =
       `[Self-repair ⚠] Verification ${result} for ${fileList}` +
       summaryLine +
