@@ -25,6 +25,7 @@ import type { IntegrationName, IntegrationStatusValue } from "@shared/schema";
 import { emit as diagEmit } from "../diagnostics/diagnosticsService";
 import { logSystemError } from "../agent/errorLogger";
 import { ReplitConnectors } from "@replit/connectors-sdk";
+import { notifyUser } from "../channels/registry";
 
 // Rate-limit automatic debug sessions: one per capability per hour
 const lastDebugTriggerAt = new Map<string, number>();
@@ -584,6 +585,50 @@ interface AutoDebugOptions {
   errorLogId?: string;
 }
 
+/**
+ * For errors that are completely self-explanatory and user-actionable
+ * (expired token, revoked access, etc.) return a ready-to-send message so
+ * we can skip the LLM auto-debug session entirely.
+ *
+ * Returns null for genuine unknowns that still warrant LLM investigation.
+ */
+function buildDirectNotification(integration: string, errorMessage: string): string | null {
+  const msg = errorMessage.toLowerCase();
+
+  // Expired OAuth token — user needs to reconnect
+  if (msg.includes("token expired") || msg.includes("please reconnect")) {
+    const label = integration === "google" ? "Google (Gmail + Calendar)" : integration.charAt(0).toUpperCase() + integration.slice(1);
+    return (
+      `Your ${label} integration token has expired and needs to be reconnected.\n\n` +
+      `To fix: open Jarvis → Settings → Connections → reconnect ${label}.\n\n` +
+      `This will restore full email, calendar, and related features.`
+    );
+  }
+
+  // Revoked / invalid token (401, 403 from connector proxy)
+  if (msg.includes("http 401") || msg.includes("http 403") ||
+      msg.includes("token invalid") || msg.includes("token revoked") ||
+      msg.includes("access denied") || msg.includes("unauthorized")) {
+    const label = integration.charAt(0).toUpperCase() + integration.slice(1);
+    return (
+      `Your ${label} integration appears to have been disconnected or its access revoked.\n\n` +
+      `To fix: open Jarvis → Settings → Connections → reconnect ${label}.`
+    );
+  }
+
+  // Bot token misconfigured
+  if (msg.includes("bot token missing") || msg.includes("bot token") && msg.includes("invalid")) {
+    const label = integration.charAt(0).toUpperCase() + integration.slice(1);
+    return (
+      `The ${label} bot token is missing or invalid. ` +
+      `Check that the bot token is correctly set in your environment configuration.`
+    );
+  }
+
+  // Unknown — let the LLM investigate
+  return null;
+}
+
 async function triggerAutoDebugSession(opts: AutoDebugOptions): Promise<void> {
   try {
     const { submitAgentJob } = await import("../agent/jobQueue");
@@ -660,18 +705,29 @@ export async function validateUserIntegrations(userId: string): Promise<void> {
             userId,
           });
 
-          // Trigger automatic debug session (rate-limited to 1 per capability per hour)
+          // Trigger notification (rate-limited to 1 per capability per hour)
           const rateKey = `${integration}:${userId}`;
           const last = lastDebugTriggerAt.get(rateKey) ?? 0;
           if (Date.now() - last > DEBUG_TRIGGER_COOLDOWN_MS) {
             lastDebugTriggerAt.set(rateKey, Date.now());
-            triggerAutoDebugSession({
-              userId,
-              capability: integration,
-              errorMessage: errMsg,
-              source: `integrationValidator/${integration}`,
-              errorLogId: errorLogId ?? undefined,
-            }).catch((e) => console.error("[IntegrationValidator] auto debug trigger failed:", e));
+
+            const directMsg = buildDirectNotification(integration, errMsg);
+            if (directMsg) {
+              // Known, self-explanatory error — send a clean direct notification,
+              // no LLM session needed (avoids hallucinated "investigation steps").
+              notifyUser(userId, "approval_request", `Jarvis (integration alert): ${integration} disconnected\n\n${directMsg}`)
+                .catch((e) => console.error("[IntegrationValidator] direct notify failed:", e));
+              console.log(`[IntegrationValidator] direct notify for "${integration}" (user ${userId}): ${errMsg}`);
+            } else {
+              // Unknown error — spin up LLM auto-debug session to investigate.
+              triggerAutoDebugSession({
+                userId,
+                capability: integration,
+                errorMessage: errMsg,
+                source: `integrationValidator/${integration}`,
+                errorLogId: errorLogId ?? undefined,
+              }).catch((e) => console.error("[IntegrationValidator] auto debug trigger failed:", e));
+            }
           }
         }
       } catch (err) {
