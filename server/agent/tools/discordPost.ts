@@ -1,5 +1,6 @@
 import type { AgentTool } from "../types";
 import { postToDiscordWorkspace, classifyTopic, WORKSPACE_TOPICS } from "../../discord/manager";
+import { consumeConfirmToken } from "../discordConfirmStore";
 
 const topicList = WORKSPACE_TOPICS.map((t) => `\`${t.key}\` (${t.emoji} ${t.name})`).join(", ");
 
@@ -11,7 +12,12 @@ export const discordPostTool: AgentTool = {
     `so the user has an organised record in Discord. ` +
     `Available topics: ${topicList}. ` +
     `If unsure which topic fits, omit the topic and it will be auto-classified. ` +
-    `Only post content that has been generated from real tool results (research_topic, web_search, etc). Never post hallucinated content. Never post to #general or announcement channels without explicit user instruction.`,
+    `Only post content that has been generated from real tool results (research_topic, web_search, etc). Never post hallucinated content. Never post to #general or announcement channels without explicit user instruction. ` +
+    `IMPORTANT CONFIRMATION FLOW: Before calling this tool you MUST first call discord_request_confirm (action='post') ` +
+    `to register a server-side confirmation token and get the question to ask the user. ` +
+    `Only call this tool after the user has replied with explicit confirmation. ` +
+    `Do not call this in the same turn as discord_request_confirm. ` +
+    `If you attempt to call this tool without a valid pending confirmation token, it will be rejected.`,
   parameters: {
     type: "object",
     properties: {
@@ -31,6 +37,17 @@ export const discordPostTool: AgentTool = {
   },
   async execute(args: { message: string; topic?: string }, ctx) {
     const { userId } = ctx;
+
+    if (!consumeConfirmToken(userId, "post")) {
+      return {
+        ok: false,
+        content:
+          "No valid confirmation token found. You must call discord_request_confirm (action='post') first, " +
+          "wait for the user's explicit confirmation, and then call this tool. Please start the confirmation flow again.",
+        label: "Discord post blocked — no confirmation token",
+      };
+    }
+
     const topicKey = args.topic ?? classifyTopic(args.message);
     const topicMeta = WORKSPACE_TOPICS.find((t) => t.key === topicKey);
 
