@@ -127,6 +127,33 @@ function _deleteFromDb(userId: string): void {
     .catch((err) => console.error('[DiscordConfirmStore] DB delete failed:', err));
 }
 
+/**
+ * Pre-warm the in-memory cache from the DB on server startup.
+ * Loads all non-expired rows so the first `consumeConfirmToken` call after a
+ * restart hits L1 rather than falling through to the DB.
+ * Called from server/index.ts during boot; failures are non-fatal.
+ */
+export async function seedConfirmTokenCache(): Promise<void> {
+  try {
+    const now = new Date();
+    const rows = await db
+      .select()
+      .from(discordConfirmTokens)
+      .where(gt(discordConfirmTokens.expiresAt, now));
+
+    for (const row of rows) {
+      _cache.set(row.userId, {
+        action: row.action as DiscordConfirmAction,
+        expiresAt: row.expiresAt.getTime(),
+      });
+    }
+
+    console.log(`[DiscordConfirmStore] Cache seeded with ${rows.length} token(s)`);
+  } catch (err) {
+    console.error('[DiscordConfirmStore] seedConfirmTokenCache failed:', err);
+  }
+}
+
 /** Called by the nightly scheduler — removes all rows whose TTL has expired. */
 export async function cleanUpExpiredDiscordConfirmTokens(): Promise<void> {
   try {
