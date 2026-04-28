@@ -34,6 +34,10 @@ const PROJECT_ROOT   = process.cwd();
 const AUDIT_LOG_PATH = path.join(PROJECT_ROOT, "server/self-heal-audit.log");
 const AUDIT_MAX_DIFF_LINES = 300;
 
+// Module-level map: filePath → timestamp of the most recent audit entry written for it.
+// Allows recordVerificationResult() to emit a verification update without knowing the timestamp.
+const lastAuditTimestamp = new Map<string, string>();
+
 // ── Audit log helpers ─────────────────────────────────────────────────────────
 
 function computeSimpleDiff(before: string, after: string): string[] {
@@ -59,8 +63,9 @@ async function appendAuditLog(entry: {
   reason: string;
   before: string;
   after: string;
-}): Promise<void> {
+}): Promise<string> {
   const sep   = "─".repeat(72);
+  const ts    = new Date().toISOString();
   const diff  = computeSimpleDiff(entry.before, entry.after);
   const capped = diff.length > AUDIT_MAX_DIFF_LINES
     ? [...diff.slice(0, AUDIT_MAX_DIFF_LINES), `…[diff truncated at ${AUDIT_MAX_DIFF_LINES} lines]`]
@@ -68,9 +73,10 @@ async function appendAuditLog(entry: {
 
   const block = [
     sep,
-    `Timestamp : ${new Date().toISOString()}`,
+    `Timestamp : ${ts}`,
     `File      : ${entry.filePath}`,
     `Reason    : ${entry.reason}`,
+    `Verified  : pending`,
     `Changes   : ${capped[0]}`,
     "",
     ...capped.slice(1),
@@ -79,8 +85,39 @@ async function appendAuditLog(entry: {
 
   try {
     await fs.appendFile(AUDIT_LOG_PATH, block, "utf-8");
+    lastAuditTimestamp.set(entry.filePath, ts);
   } catch {
     // Non-fatal — audit log failure must not block the write
+  }
+  return ts;
+}
+
+/**
+ * Append a compact verification-result update to the audit log.
+ * Called by selfHealTool after type-check + test suite + smoke-tests complete.
+ *
+ * @param filePaths - The file paths that were changed in the preceding apply step.
+ * @param result    - 'passed' | 'failed' | 'error'
+ * @param summary   - Optional short description of the outcome.
+ */
+export async function recordVerificationResult(
+  filePaths: string[],
+  result: "passed" | "failed" | "error",
+  summary?: string,
+): Promise<void> {
+  const updates: string[] = [];
+  for (const fp of filePaths) {
+    const ts = lastAuditTimestamp.get(fp);
+    if (!ts) continue;
+    const summaryPart = summary ? ` — ${summary}` : "";
+    updates.push(`[VERIFY] ${ts} ${fp}: ${result}${summaryPart}`);
+  }
+  if (updates.length === 0) return;
+  const block = updates.join("\n") + "\n";
+  try {
+    await fs.appendFile(AUDIT_LOG_PATH, block, "utf-8");
+  } catch {
+    // Non-fatal
   }
 }
 
