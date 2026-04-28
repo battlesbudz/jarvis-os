@@ -695,6 +695,15 @@ export async function runAIDiagnosis(
     ? `${report.openAiLatencyMs}ms`
     : "unreachable";
 
+  const memoryErrorLines: string[] = [];
+  if (report.memoryWriteErrors15m > 0)
+    memoryErrorLines.push(`memoryWriteErrors15m: ${report.memoryWriteErrors15m} (write-path — learning/ingestion pipeline)`);
+  if (report.memoryReadErrors15m > 0)
+    memoryErrorLines.push(`memoryReadErrors15m: ${report.memoryReadErrors15m} (read-path — recall/retrieval pipeline)`);
+  const memorySection = memoryErrorLines.length > 0
+    ? `\nMemory pipeline errors (last 15m):\n${memoryErrorLines.join("\n")}`
+    : "";
+
   const prompt = `You are Jarvis, performing a self-diagnosis. Analyze the system health data and write a clear, plain-English report for the user.
 
 Overall status: ${report.overallStatus.toUpperCase()}
@@ -702,7 +711,7 @@ OpenAI reachable: ${report.openAiReachable} (latency: ${latencyNote})
 Database reachable: ${report.dbReachable}
 Job queue depth: ${report.jobQueueDepth} (${report.staleJobCount} stale/re-enqueued)
 Stuck workflows: ${report.stuckWorkflowCount}
-Channel issues: ${channelNote || "none"}
+Channel issues: ${channelNote || "none"}${memorySection}
 
 Subsystem issues:
 ${subsystemSummary}
@@ -712,7 +721,7 @@ ${eventLog}
 
 Write a concise report:
 1. Overall health (1 sentence)
-2. What's broken or degraded and the likely root cause (if anything)
+2. What's broken or degraded and the likely root cause (if anything) — if memoryWriteErrors15m or memoryReadErrors15m are present, name the specific pipeline (learning/ingestion for write-path, recall/retrieval for read-path) and suggest the likely cause (e.g. OpenAI quota exhausted for write-path errors, embedding index issue for read-path errors)
 3. What I already tried to fix automatically
 4. What the user should do (if anything) — e.g. reconnect an integration, or "nothing needed"
 
@@ -751,6 +760,10 @@ Plain text, no markdown headers, 4-6 sentences max. Be calm and informative, not
   if (!report.dbReachable) issueLines.push("Database is unreachable — all data operations are failing.");
   if (report.staleJobCount > 0) issueLines.push(`${report.staleJobCount} background job(s) appear stuck and have been re-enqueued.`);
   if (report.stuckWorkflowCount > 0) issueLines.push(`${report.stuckWorkflowCount} workflow(s) appear stuck.`);
+  if (report.memoryWriteErrors15m > 0)
+    issueLines.push(`Memory learning pipeline (write-path) has ${report.memoryWriteErrors15m} error(s) in the last 15 minutes — check OpenAI quota or ingestion configuration.`);
+  if (report.memoryReadErrors15m > 0)
+    issueLines.push(`Memory recall pipeline (read-path) has ${report.memoryReadErrors15m} error(s) in the last 15 minutes — check the embedding index or retrieval configuration.`);
   const degradedLabels = report.subsystems.filter((s) => s.status !== "healthy" && s.status !== "unknown").map((s) => s.label);
   if (degradedLabels.length > 0) issueLines.push(`Degraded subsystems: ${degradedLabels.join(", ")}.`);
 
