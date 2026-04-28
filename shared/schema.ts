@@ -1424,3 +1424,23 @@ export const messages = pgTable("messages", {
   content: text("content").notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
+
+// ── Self-heal audit log — persists autonomous-write history across restarts ──
+// Each row mirrors one block from server/self-heal-audit.log.  On container
+// restart, selfHealAudit.ts restores the flat file from these rows so audit
+// history is never lost.
+export const selfHealAuditLog = pgTable("self_heal_audit_log", {
+  id: serial("id").primaryKey(),
+  /** ISO timestamp written at change time — matches the flat-file header. */
+  timestamp: varchar("timestamp", { length: 64 }).notNull(),
+  /** Relative file path from project root. */
+  file: text("file").notNull(),
+  reason: text("reason").notNull().default(""),
+  /** 'pending' | 'passed' | 'failed' | 'error' (with optional summary suffix). */
+  verified: varchar("verified", { length: 256 }).notNull().default("pending"),
+  /** e.g. '+3 -2 lines' */
+  changesSummary: varchar("changes_summary", { length: 256 }).notNull().default(""),
+  /** The +/- diff body lines, newline-separated (without the summary line). */
+  diff: text("diff").notNull().default(""),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});

@@ -30,6 +30,9 @@ import {
 } from "../safeWritePolicy";
 import { proposeCodeChangeTool } from "./selfEditTools";
 import { notifyUser } from "../../channels/registry";
+import { db } from "../../db";
+import { selfHealAuditLog } from "../../../shared/schema";
+import { and, eq } from "drizzle-orm";
 
 const PROJECT_ROOT   = process.cwd();
 const AUDIT_LOG_PATH = path.join(PROJECT_ROOT, "server/self-heal-audit.log");
@@ -90,6 +93,17 @@ async function appendAuditLog(entry: {
   } catch {
     // Non-fatal — audit log failure must not block the write
   }
+
+  // Mirror to DB so the history survives container restarts (fire-and-forget).
+  db.insert(selfHealAuditLog).values({
+    timestamp: ts,
+    file: entry.filePath,
+    reason: entry.reason,
+    verified: "pending",
+    changesSummary: capped[0] ?? "",
+    diff: capped.slice(1).join("\n"),
+  }).catch(() => {});
+
   return ts;
 }
 
@@ -119,6 +133,17 @@ export async function recordVerificationResult(
     await fs.appendFile(AUDIT_LOG_PATH, block, "utf-8");
   } catch {
     // Non-fatal
+  }
+
+  // Mirror verification status update to DB (fire-and-forget).
+  for (const fp of filePaths) {
+    const ts = lastAuditTimestamp.get(fp);
+    if (!ts) continue;
+    const summaryPart = summary ? ` — ${summary}` : "";
+    db.update(selfHealAuditLog)
+      .set({ verified: `${result}${summaryPart}` })
+      .where(and(eq(selfHealAuditLog.timestamp, ts), eq(selfHealAuditLog.file, fp)))
+      .catch(() => {});
   }
 }
 
