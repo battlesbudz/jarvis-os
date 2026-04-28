@@ -578,6 +578,7 @@ export const NOTIFICATION_TYPES = [
   "stress_checkin",
   "ego_report",
   "general",
+  "self_repair",
 ] as const;
 export type NotificationType = typeof NOTIFICATION_TYPES[number];
 

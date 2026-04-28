@@ -3,7 +3,7 @@ import { db } from "../db";
 import { eq, and } from "drizzle-orm";
 import { channelLinks, channelLinkCodes, telegramLinks, NOTIFICATION_TYPES, CHANNEL_NAMES, userPreferences, type ChannelName, type NotificationType } from "@shared/schema";
 import { authMiddleware } from "../auth";
-import { getAllPreferences, setPreference, getChannel, listChannels } from "./registry";
+import { getAllPreferences, setPreference, getChannel, listChannels, MUTE_SENTINEL } from "./registry";
 import { createDaemonPairingCode, isUserPaired, closeUserDaemon, getDaemonPermissions, setDaemonPermissions, isDaemonActionAllowed, DEFAULT_DAEMON_PERMISSIONS, getAndroidDaemonPermissions, setAndroidDaemonPermissions, DEFAULT_ANDROID_DAEMON_PERMISSIONS, isAndroidDaemonActive, isDesktopDaemonActive, sendDaemonOp, subscribeWakeWordTrigger, type DaemonAction, type DaemonPermissions, type AndroidDaemonAction, type AndroidDaemonPermissions } from "../daemon/bridge";
 import { startUserBot, stopUserBot, getBotStatus, completePairing, getGuildsForUser, getChannelsForGuild, setupDiscordWorkspace, type AllowlistedGuild, type DiscordLinkMeta, WORKSPACE_TOPICS } from "../discord/manager";
 import { saveUserToken, getUserToken, deleteUserToken } from "../userTokenStore";
@@ -125,36 +125,43 @@ export function registerChannelRoutes(app: Express): void {
     }
   });
 
-  // PUT /api/channels/preferences — body: { notificationType, channels: ChannelName[] }
+  // PUT /api/channels/preferences — body: { notificationType, channels: ChannelName[] | ["__muted__"] }
   app.put("/api/channels/preferences", authMiddleware, async (req: Request, res: Response) => {
     const userId = (req as any).userId;
     const { notificationType, channels } = req.body || {};
     if (!NOTIFICATION_TYPES.includes(notificationType)) {
       return res.status(400).json({ error: "invalid notificationType" });
     }
-    if (!Array.isArray(channels) || channels.some((c) => !CHANNEL_NAMES.includes(c))) {
+    if (!Array.isArray(channels)) {
+      return res.status(400).json({ error: "invalid channels" });
+    }
+    // Allow the mute sentinel; all other values must be valid ChannelNames
+    const isMute = channels.length === 1 && channels[0] === MUTE_SENTINEL;
+    if (!isMute && channels.some((c: string) => !CHANNEL_NAMES.includes(c as ChannelName))) {
       return res.status(400).json({ error: "invalid channels" });
     }
     try {
-      // Validate that all selected channels are actually connected for this user
-      const [tgRows, chRows] = await Promise.all([
-        db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq(telegramLinks.userId, userId)).limit(1).catch(() => []),
-        db.select({ channel: channelLinks.channel }).from(channelLinks).where(eq(channelLinks.userId, userId)).catch(() => []),
-      ]);
-      const connectedSet = new Set<ChannelName>(["in_app"]);
-      if (tgRows.length > 0) connectedSet.add("telegram");
-      for (const row of chRows) {
-        const ch = row.channel as ChannelName;
-        if (ch === "daemon") { if (isUserPaired(userId)) connectedSet.add("daemon"); }
-        else if (CHANNEL_NAMES.includes(ch)) connectedSet.add(ch);
+      if (!isMute) {
+        // Validate that all selected channels are actually connected for this user
+        const [tgRows, chRows] = await Promise.all([
+          db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq(telegramLinks.userId, userId)).limit(1).catch(() => []),
+          db.select({ channel: channelLinks.channel }).from(channelLinks).where(eq(channelLinks.userId, userId)).catch(() => []),
+        ]);
+        const connectedSet = new Set<ChannelName>(["in_app"]);
+        if (tgRows.length > 0) connectedSet.add("telegram");
+        for (const row of chRows) {
+          const ch = row.channel as ChannelName;
+          if (ch === "daemon") { if (isUserPaired(userId)) connectedSet.add("daemon"); }
+          else if (CHANNEL_NAMES.includes(ch)) connectedSet.add(ch);
+        }
+        const disconnected = channels.filter((c: string) => !connectedSet.has(c as ChannelName));
+        if (disconnected.length > 0) {
+          return res.status(400).json({ error: `channels not connected: ${disconnected.join(", ")} — connect them first in Profile` });
+        }
       }
-      const disconnected = channels.filter((c: string) => !connectedSet.has(c as ChannelName));
-      if (disconnected.length > 0) {
-        return res.status(400).json({ error: `channels not connected: ${disconnected.join(", ")} — connect them first in Profile` });
-      }
-      const unique = [...new Set(channels)] as ChannelName[];
-      await setPreference(userId, notificationType as NotificationType, unique);
-      res.json({ ok: true, notificationType, channels: unique });
+      const unique = isMute ? [MUTE_SENTINEL] : ([...new Set(channels)] as ChannelName[]);
+      await setPreference(userId, notificationType as NotificationType, unique as ChannelName[]);
+      res.json({ ok: true, notificationType, channels: unique, muted: isMute });
     } catch (err) {
       console.error("[channels] preference update failed:", err);
       res.status(500).json({ error: "failed to update preference" });
@@ -202,18 +209,25 @@ export function registerChannelRoutes(app: Express): void {
         errors.push(`unknown notificationType: ${nt}`);
         continue;
       }
-      if (!Array.isArray(chs) || chs.some((c) => !CHANNEL_NAMES.includes(c as typeof CHANNEL_NAMES[number]))) {
+      if (!Array.isArray(chs)) {
         errors.push(`invalid channels for ${nt}`);
         continue;
       }
-      const disconnected = chs.filter((c) => !connectedSet.has(c as ChannelName));
-      if (disconnected.length > 0) {
-        errors.push(`channels not connected for ${nt}: ${disconnected.join(", ")} — connect them first in Profile`);
+      const isMute = chs.length === 1 && chs[0] === MUTE_SENTINEL;
+      if (!isMute && chs.some((c) => !CHANNEL_NAMES.includes(c as typeof CHANNEL_NAMES[number]))) {
+        errors.push(`invalid channels for ${nt}`);
         continue;
       }
-      const unique = [...new Set(chs)] as ChannelName[];
+      if (!isMute) {
+        const disconnected = chs.filter((c) => !connectedSet.has(c as ChannelName));
+        if (disconnected.length > 0) {
+          errors.push(`channels not connected for ${nt}: ${disconnected.join(", ")} — connect them first in Profile`);
+          continue;
+        }
+      }
+      const unique = isMute ? [MUTE_SENTINEL] : ([...new Set(chs)] as ChannelName[]);
       try {
-        await setPreference(userId, nt as NotificationType, unique);
+        await setPreference(userId, nt as NotificationType, unique as ChannelName[]);
         saved[nt] = unique;
       } catch (err) {
         errors.push(`failed to save ${nt}`);
