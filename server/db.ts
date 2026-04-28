@@ -1350,6 +1350,18 @@ export async function ensureTablesExist() {
         ON self_heal_audit_log (timestamp DESC)
     `).catch(() => {});
 
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS learning_synthesis_log (
+        id           SERIAL       PRIMARY KEY,
+        created_at   TIMESTAMP    NOT NULL DEFAULT NOW(),
+        bullet_count INTEGER      NOT NULL DEFAULT 0,
+        bullets      JSONB        NOT NULL DEFAULT '[]'::jsonb,
+        triggered_by VARCHAR(32)  NOT NULL DEFAULT 'manual',
+        skipped      BOOLEAN      NOT NULL DEFAULT false,
+        skip_reason  TEXT
+      )
+    `).catch(() => {});
+
     console.log("Database tables verified");
   } catch (error) {
     console.error("Failed to ensure database tables exist:", error);
