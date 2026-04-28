@@ -224,3 +224,16 @@ export async function resetCircuitBreaker(): Promise<void> {
     console.error("[safeWritePolicy] Failed to reset write_budget_log:", err);
   }
 }
+
+/**
+ * TEST-ONLY: Insert a write record at an arbitrary timestamp into the DB.
+ * Allows tests to simulate writes at specific points in time (e.g. 61 minutes
+ * ago) to exercise the sliding-window eviction logic without waiting.
+ * Never call this from production code.
+ */
+export async function _injectTimestampForTest(ts: Date): Promise<void> {
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("_injectTimestampForTest must not be called in production");
+  }
+  await db.execute(sql`INSERT INTO write_budget_log (written_at) VALUES (${ts})`);
+}

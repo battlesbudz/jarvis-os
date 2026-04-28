@@ -176,24 +176,32 @@ export const applyCodeChangeTool: AgentTool = {
     // ── Protected file → route to propose_code_change ─────────────────────────
     if (isProtectedFile(filePath)) {
       console.log(`[SelfHeal] apply_code_change: '${filePath}' is protected → routing to proposal`);
-      const proposalResult = await proposeCodeChangeTool.execute(
-        {
-          file_path:        filePath,
-          title:            `Self-heal: ${reason}`,
-          reason:           `Autonomous self-heal routed to proposal — '${filePath}' is a protected file that requires explicit user approval. ${reason}`,
-          proposed_content: newContent,
-        },
-        ctx,
-      );
+      let proposalOk = false;
+      let proposalContent = "";
+      try {
+        const proposalResult = await proposeCodeChangeTool.execute(
+          {
+            file_path:        filePath,
+            title:            `Self-heal: ${reason}`,
+            reason:           `Autonomous self-heal routed to proposal — '${filePath}' is a protected file that requires explicit user approval. ${reason}`,
+            proposed_content: newContent,
+          },
+          ctx,
+        );
+        proposalOk = proposalResult.ok;
+        proposalContent = proposalResult.content;
+      } catch (err) {
+        proposalContent = err instanceof Error ? err.message : String(err);
+      }
       return {
         ok: false,
-        content: proposalResult.ok
+        content: proposalOk
           ? `'${filePath}' is a hard-protected file and cannot be written autonomously. ` +
-            `A code proposal has been created for your review instead.\n\n${proposalResult.content}`
+            `A code proposal has been created for your review instead.\n\n${proposalContent}`
           : `'${filePath}' is a hard-protected file and cannot be written autonomously. ` +
-            `Proposal creation also failed: ${proposalResult.content}. ` +
+            `Proposal creation also failed: ${proposalContent}. ` +
             `Please use propose_code_change manually to submit this change for review.`,
-        label: proposalResult.ok ? "apply_code_change: protected→proposal" : "apply_code_change: protected→proposal-failed",
+        label: proposalOk ? "apply_code_change: protected→proposal" : "apply_code_change: protected→proposal-failed",
         detail: filePath,
       };
     }
@@ -202,24 +210,32 @@ export const applyCodeChangeTool: AgentTool = {
     const danger = isDangerousPath(filePath);
     if (danger.dangerous) {
       console.log(`[SelfHeal] apply_code_change: '${filePath}' is dangerous (${danger.reason}) → routing to proposal`);
-      const proposalResult = await proposeCodeChangeTool.execute(
-        {
-          file_path:        filePath,
-          title:            `Self-heal (dangerous file): ${reason}`,
-          reason:           `Autonomous self-heal routed to proposal — '${filePath}' matches a dangerous-change heuristic ("${danger.reason}") and requires explicit user approval. ${reason}`,
-          proposed_content: newContent,
-        },
-        ctx,
-      );
+      let proposalOk = false;
+      let proposalContent = "";
+      try {
+        const proposalResult = await proposeCodeChangeTool.execute(
+          {
+            file_path:        filePath,
+            title:            `Self-heal (dangerous file): ${reason}`,
+            reason:           `Autonomous self-heal routed to proposal — '${filePath}' matches a dangerous-change heuristic ("${danger.reason}") and requires explicit user approval. ${reason}`,
+            proposed_content: newContent,
+          },
+          ctx,
+        );
+        proposalOk = proposalResult.ok;
+        proposalContent = proposalResult.content;
+      } catch (err) {
+        proposalContent = err instanceof Error ? err.message : String(err);
+      }
       return {
         ok: false,
-        content: proposalResult.ok
+        content: proposalOk
           ? `'${filePath}' matches a dangerous-change pattern ("${danger.reason}") and cannot be written autonomously. ` +
-            `A code proposal has been created for your review:\n\n${proposalResult.content}`
+            `A code proposal has been created for your review:\n\n${proposalContent}`
           : `'${filePath}' matches a dangerous-change pattern ("${danger.reason}") and cannot be written autonomously. ` +
-            `Proposal creation also failed: ${proposalResult.content}. ` +
+            `Proposal creation also failed: ${proposalContent}. ` +
             `Please use propose_code_change manually to submit this change for review.`,
-        label: proposalResult.ok ? "apply_code_change: dangerous→proposal" : "apply_code_change: dangerous→proposal-failed",
+        label: proposalOk ? "apply_code_change: dangerous→proposal" : "apply_code_change: dangerous→proposal-failed",
         detail: danger.reason,
       };
     }
