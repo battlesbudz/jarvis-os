@@ -3611,7 +3611,8 @@ export default function ProfileScreen() {
                   weekly_planning:  { label: 'Weekly planning',  desc: 'Sunday pattern insights and week preview' },
                   approval_request: { label: 'Approval requests', desc: 'Deliverables from Jarvis waiting for review' },
                   general:          { label: 'General messages', desc: 'Curiosity questions and miscellaneous nudges' },
-                  self_repair:      { label: 'Self-repair alerts', desc: 'Notified whenever Jarvis autonomously fixes a file' },
+                  self_repair:          { label: 'Self-repair alerts',     desc: 'Notified whenever Jarvis autonomously fixes a file' },
+                  scheduled_task_result:{ label: 'Scheduled task results', desc: 'Shell output and exit codes from scheduled tasks' },
                 };
 
                 const info = NICE[nt] || { label: nt, desc: '' };
