@@ -78,6 +78,24 @@ const bodyWithMultipleH2s = `## TL;DR
 - Do something.
 `;
 
+const bodyUnableNoSearch = `I'm unable to execute this request because it requires real-time access to external systems that I do not have.
+
+I cannot retrieve live stock prices or financial data.
+
+This task is not possible within my current capabilities.`;
+
+const bodyUnableWithSources = `## TL;DR
+- I cannot directly execute this action, but here are alternatives I found.
+
+## Findings
+1. Service A handles this via API (matters because it automates the workflow).
+2. Service B offers a free tier (matters because cost is low).
+
+## Sources
+- https://servicea.com/docs
+- https://serviceb.io/pricing
+`;
+
 assert("A: body with real https URL in Sources → true", researchHasSourceUrls(bodyWithUrl), true);
 assert("B: body with no Sources heading at all → false", researchHasSourceUrls(bodyWithNoSourcesSection), false);
 assert("C: Sources section exists but has no URL → false", researchHasSourceUrls(bodyWithEmptySourcesSection), false);
@@ -86,6 +104,8 @@ assert("E: http:// (non-https) URL in Sources → true", researchHasSourceUrls(b
 assert("F: URL in Sources followed by another ## heading → true", researchHasSourceUrls(bodyWithSourcesAfterOtherHeading), true);
 assert("G: multiple headings, URL appears in Sources section → true", researchHasSourceUrls(bodyWithMultipleH2s), true);
 assert("H: empty string → false", researchHasSourceUrls(""), false);
+assert("I: 'I'm unable / I cannot' response with no Sources section → false (should be rejected by pipeline)", researchHasSourceUrls(bodyUnableNoSearch), false);
+assert("J: 'I cannot' response that still searched and cited URLs in Sources → true (valid fallback)", researchHasSourceUrls(bodyUnableWithSources), true);
 
 if (failed > 0) {
   console.error(`\n${failed} assertion(s) failed.`);
