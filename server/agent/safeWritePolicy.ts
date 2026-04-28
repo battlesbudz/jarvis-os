@@ -295,3 +295,20 @@ export async function _injectTimestampForTest(ts: Date): Promise<void> {
   }
   await db.execute(sql`INSERT INTO write_budget_log (written_at) VALUES (${ts})`);
 }
+
+/**
+ * TEST-ONLY: Expose _claimWarningSlot so tests can verify the one-per-window
+ * deduplication behaviour without going through a full recordAutonomousWrite()
+ * call (which would also add a write_budget_log row and potentially notify).
+ *
+ * Returns true when the slot was claimed (first call in the window), false when
+ * a warning was already sent in the current window.
+ *
+ * Never call this from production code.
+ */
+export async function _claimWarningSlotForTest(): Promise<boolean> {
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("_claimWarningSlotForTest must not be called in production");
+  }
+  return _claimWarningSlot();
+}
