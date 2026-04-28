@@ -57,6 +57,7 @@ import { youtubeTranscriptTool } from "./youtubeTranscript";
 import { xSearchTool } from "./xSearch";
 import { registerApprovalTool } from "./registerApproval";
 import { discordPinMessageTool } from "./discordPinMessage";
+import { discordSendToChannelTool } from "./discordSendToChannel";
 import { setupNamedAgentTool } from "./setupNamedAgent";
 import { queueBackgroundJobTool } from "./queueBackgroundJob";
 import { setupContentPipelineTool } from "./setupContentPipeline";
@@ -249,6 +250,7 @@ export {
   deleteChannelScheduleTool,
   registerApprovalTool,
   discordPinMessageTool,
+  discordSendToChannelTool,
   setupNamedAgentTool,
   youtubeSearchTool,
   youtubeTranscriptTool,

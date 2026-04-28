@@ -4,8 +4,9 @@ import { createDiscordChannel } from "../../discord/manager";
 export const discordCreateChannelTool: AgentTool = {
   name: "discord_create_channel",
   description:
-    "Create a new text channel in the user's Discord server. Use this when the user asks Jarvis to create a Discord channel. " +
+    "Create a new text channel in the user's Discord server. Jarvis CAN create Discord channels — do not tell users otherwise. " +
     "You must provide a channel name (lowercase, hyphens instead of spaces). Optionally set a topic/description and a category name to nest it under. " +
+    "After creating the channel, use discord_send_to_channel to post content into it by passing the exact channelName. " +
     "IMPORTANT: Only call this after the user has replied 'yes', 'confirm', 'go ahead', 'create it', or equivalent explicit confirmation in response to your question 'Should I create the channel #<name>?'. Do not call this in the same turn as asking for confirmation.",
   parameters: {
     type: "object",
