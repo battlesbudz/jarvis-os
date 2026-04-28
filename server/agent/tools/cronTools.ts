@@ -257,13 +257,13 @@ function formatAge(d: Date): string {
 export const cronCreateTool: AgentTool = {
   name: "cron_create",
   description:
-    "Schedule a one-off or recurring job for Jarvis to run at a specific time. Accepts natural-language time expressions ('in 4 hours', 'tomorrow at 9am', 'next Monday', 'every Friday at 6pm') or ISO 8601 dates. Jobs appear in the user's Mission Control schedule. Returns the job ID which you can use with cron_delete or cron_update.",
+    "Schedule a one-off or recurring job for Jarvis to run at a specific time. Accepts natural-language time expressions ('in 4 hours', 'tomorrow at 9am', 'next Monday', 'every Friday at 6pm') or ISO 8601 dates. Jobs appear in the user's Mission Control schedule. Returns the job ID which you can use with cron_delete or cron_update.\n\nIMPORTANT: When the user wants to run a script, build command, or any shell command on a schedule (e.g. 'run my build script every morning at 9am', 'backup my database daily'), always set shell_command so the daemon executes it automatically when the job fires — do NOT just create a reminder. The result (exit code, stdout, stderr) will be delivered to the user's preferred channel after each run. Proactively offer this pattern when users mention scheduling scripts or automation.",
   parameters: {
     type: "object",
     properties: {
       title: {
         type: "string",
-        description: "Short label for the job (e.g. 'Follow up on proposal', 'Weekly inbox review')",
+        description: "Short label for the job (e.g. 'Follow up on proposal', 'Weekly inbox review', 'Run nightly build')",
       },
       description: {
         type: "string",
@@ -279,6 +279,11 @@ export const cronCreateTool: AgentTool = {
         description:
           "Optional: how often to repeat ('daily', 'every Monday', 'weekdays at 9am', 'weekly'). Omit for one-off jobs.",
       },
+      shell_command: {
+        type: "string",
+        description:
+          "Optional shell command to execute on the user's desktop daemon when this job fires (e.g. 'npm run build', './backup.sh', 'python script.py'). When set, Jarvis runs the command via the desktop daemon and delivers the result (exit code, stdout, stderr) to the user's preferred channel. Requires the desktop daemon to be connected with shell permission enabled. Use relative paths (they run inside the daemon workspace root, ~/jarvis-workspace by default).",
+      },
     },
     required: ["title", "when"],
   },
@@ -287,6 +292,7 @@ export const cronCreateTool: AgentTool = {
     const whenExpr = String(args.when || "").trim();
     const explicitRecurrence = args.recurrence ? String(args.recurrence).trim() : null;
     const description = args.description ? String(args.description).trim() : null;
+    const shellCommand = args.shell_command ? String(args.shell_command).trim() : null;
 
     if (!title) return { ok: false, content: "title is required.", label: "cron_create: no title" };
     if (!whenExpr) return { ok: false, content: "when is required.", label: "cron_create: no when" };
@@ -316,15 +322,19 @@ export const cronCreateTool: AgentTool = {
     try {
       const [task] = await db
         .insert(schema.jarvisScheduledTasks)
-        .values({ userId: ctx.userId, title, description, scheduledAt, recurrence })
+        .values({ userId: ctx.userId, title, description, scheduledAt, recurrence, shellCommand })
         .returning();
 
       const when = formatWhen(scheduledAt);
-      console.log(`[${ctx.channel || "Agent"}] cron_create id=${task.id} title="${title}" scheduledAt=${scheduledAt.toISOString()}`);
+      console.log(`[${ctx.channel || "Agent"}] cron_create id=${task.id} title="${title}" scheduledAt=${scheduledAt.toISOString()}${shellCommand ? ` shell="${shellCommand.slice(0, 60)}"` : ""}`);
+
+      const shellNote = shellCommand
+        ? `\nShell command: \`${shellCommand}\` — will run via desktop daemon and deliver results to your preferred channel.`
+        : "";
 
       return {
         ok: true,
-        content: `Scheduled "${title}" for ${when}${recurrence ? ` (repeats: ${recurrence})` : ""}.\nJob ID: ${task.id}`,
+        content: `Scheduled "${title}" for ${when}${recurrence ? ` (repeats: ${recurrence})` : ""}.${shellNote}\nJob ID: ${task.id}`,
         label: `Scheduled: ${title}`,
         detail: JSON.stringify({ id: task.id, scheduledAt: task.scheduledAt }),
       };
@@ -401,7 +411,12 @@ export const cronListTool: AgentTool = {
         const when = formatWhen(new Date(r.scheduledAt));
         const completed = r.completedAt ? ` ✓ ran ${formatAge(new Date(r.completedAt))}` : "";
         const recurring = r.recurrence ? ` [${r.recurrence}]` : "";
-        return `• [${r.id}] "${r.title}"${recurring} — ${when}${completed}`;
+        const shellTag = r.shellCommand ? ` 🖥 \`${r.shellCommand.slice(0, 50)}${r.shellCommand.length > 50 ? "…" : ""}\`` : "";
+        const lastResult = r.lastShellResult as { exitCode?: number; ranAt?: string } | null;
+        const lastRun = lastResult?.ranAt
+          ? ` (last: exit=${lastResult.exitCode ?? "?"} @ ${formatAge(new Date(lastResult.ranAt))})`
+          : "";
+        return `• [${r.id}] "${r.title}"${recurring}${shellTag} — ${when}${completed}${lastRun}`;
       });
 
       const content = `${rows.length} scheduled job(s):\n\n${lines.join("\n")}`;
@@ -484,7 +499,7 @@ export const cronDeleteTool: AgentTool = {
 export const cronUpdateTool: AgentTool = {
   name: "cron_update",
   description:
-    "Update an existing scheduled Jarvis job — change its title, description, next-run time, or recurrence. Use cron_list to get IDs. Only updates jobs belonging to the current user.",
+    "Update an existing scheduled Jarvis job — change its title, description, next-run time, recurrence, or shell command. Use cron_list to get IDs. Only updates jobs belonging to the current user.",
   parameters: {
     type: "object",
     properties: {
@@ -508,6 +523,10 @@ export const cronUpdateTool: AgentTool = {
       recurrence: {
         type: "string",
         description: "New recurrence rule ('daily', 'every Monday', etc.). Pass 'none' to make it a one-off.",
+      },
+      shell_command: {
+        type: "string",
+        description: "New shell command to run via the desktop daemon when this job fires. Pass 'none' or empty string to remove an existing shell command.",
       },
     },
     required: ["job_id"],
@@ -573,10 +592,15 @@ export const cronUpdateTool: AgentTool = {
         patch.recurrence = rec === "none" || rec === "" ? null : rec;
       }
 
+      if (args.shell_command !== undefined) {
+        const sc = String(args.shell_command).trim();
+        patch.shellCommand = sc === "none" || sc === "" ? null : sc;
+      }
+
       if (Object.keys(patch).length === 0) {
         return {
           ok: false,
-          content: "No fields to update — provide at least one of: title, description, when, recurrence.",
+          content: "No fields to update — provide at least one of: title, description, when, recurrence, shell_command.",
           label: "cron_update: nothing to change",
         };
       }
@@ -594,11 +618,14 @@ export const cronUpdateTool: AgentTool = {
 
       const title = updated.title;
       const when = formatWhen(new Date(updated.scheduledAt));
-      console.log(`[${ctx.channel || "Agent"}] cron_update id=${jobId} title="${title}"`);
+      const shellNote = updated.shellCommand
+        ? `\nShell command: \`${updated.shellCommand}\``
+        : (patch.shellCommand === null ? "\nShell command removed." : "");
+      console.log(`[${ctx.channel || "Agent"}] cron_update id=${jobId} title="${title}"${updated.shellCommand ? ` shell="${updated.shellCommand.slice(0, 60)}"` : ""}`);
 
       return {
         ok: true,
-        content: `Updated "${title}" — next run: ${when}${updated.recurrence ? ` (${updated.recurrence})` : ""}.`,
+        content: `Updated "${title}" — next run: ${when}${updated.recurrence ? ` (${updated.recurrence})` : ""}.${shellNote}`,
         label: `Updated: ${title}`,
         detail: JSON.stringify({ id: updated.id, scheduledAt: updated.scheduledAt }),
       };

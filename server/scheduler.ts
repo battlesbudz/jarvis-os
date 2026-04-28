@@ -1,5 +1,5 @@
 import { db } from './db';
-import { eq, and, lt, sql } from 'drizzle-orm';
+import { eq, and, lt, lte, or, sql, isNull } from 'drizzle-orm';
 import * as schema from '@shared/schema';
 
 import { notifyUser } from './channels/registry';
@@ -198,6 +198,315 @@ async function cleanUpOldActionLogs(): Promise<void> {
   }
 }
 
+// ─── Cron + daemon_shell integration ─────────────────────────────────────────
+// Computes the next scheduled time for a recurring job based on the recurrence
+// string stored in jarvis_scheduled_tasks.recurrence. Handles all recurrence
+// formats produced by parseRecurringExpr in cronTools.ts.
+
+const WEEKDAY_MAP: Record<string, number> = {
+  sunday: 0, sun: 0,
+  monday: 1, mon: 1,
+  tuesday: 2, tue: 2,
+  wednesday: 3, wed: 3,
+  thursday: 4, thu: 4,
+  friday: 5, fri: 5,
+  saturday: 6, sat: 6,
+};
+
+function extractTimeFromRecurrence(s: string): { hours: number; minutes: number } | null {
+  const m = s.match(/at\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/i);
+  if (!m) return null;
+  let h = parseInt(m[1], 10);
+  const min = m[2] ? parseInt(m[2], 10) : 0;
+  const mer = (m[3] || '').toLowerCase();
+  if (mer === 'pm' && h !== 12) h += 12;
+  if (mer === 'am' && h === 12) h = 0;
+  return { hours: h, minutes: min };
+}
+
+function applyTime(d: Date, t: { hours: number; minutes: number } | null, defaultHour = 9): Date {
+  if (t) d.setHours(t.hours, t.minutes, 0, 0);
+  else d.setHours(defaultHour, 0, 0, 0);
+  return d;
+}
+
+function computeNextRun(recurrence: string, from: Date): Date | null {
+  const lower = recurrence.trim().toLowerCase();
+
+  // "every N minutes/hours/days"
+  const intervalM = lower.match(/^every\s+(\d+)\s+(minute|hour|day)s?$/);
+  if (intervalM) {
+    const n = parseInt(intervalM[1], 10);
+    const unit = intervalM[2];
+    const d = new Date(from);
+    if (unit === 'minute') d.setMinutes(d.getMinutes() + n);
+    else if (unit === 'hour') d.setTime(d.getTime() + n * 3_600_000);
+    else d.setDate(d.getDate() + n);
+    return d;
+  }
+
+  // "daily" or "daily at X"
+  if (lower === 'daily' || lower.startsWith('daily at ')) {
+    const t = extractTimeFromRecurrence(lower);
+    const d = new Date(from);
+    d.setDate(d.getDate() + 1);
+    return applyTime(d, t);
+  }
+
+  // "weekly" or "weekly at X"
+  if (lower === 'weekly' || lower.startsWith('weekly at ')) {
+    const t = extractTimeFromRecurrence(lower);
+    const d = new Date(from);
+    d.setDate(d.getDate() + 7);
+    return applyTime(d, t);
+  }
+
+  // "monthly" or "monthly at X"
+  if (lower === 'monthly' || lower.startsWith('monthly at ')) {
+    const t = extractTimeFromRecurrence(lower);
+    const d = new Date(from);
+    d.setMonth(d.getMonth() + 1);
+    return applyTime(d, t);
+  }
+
+  // "weekdays" or "weekdays at X"
+  if (lower === 'weekdays' || lower.startsWith('weekdays at ')) {
+    const t = extractTimeFromRecurrence(lower);
+    const d = new Date(from);
+    do { d.setDate(d.getDate() + 1); } while ([0, 6].includes(d.getDay()));
+    return applyTime(d, t);
+  }
+
+  // "weekends" or "weekends at X"
+  if (lower === 'weekends' || lower.startsWith('weekends at ')) {
+    const t = extractTimeFromRecurrence(lower);
+    const d = new Date(from);
+    do { d.setDate(d.getDate() + 1); } while (![0, 6].includes(d.getDay()));
+    return applyTime(d, t, 10);
+  }
+
+  // "every Monday [at X]"
+  const namedM = lower.match(/^every\s+(\w+)(?:\s+at\s+(.+))?$/);
+  if (namedM) {
+    const dayIndex = WEEKDAY_MAP[namedM[1]];
+    if (dayIndex !== undefined) {
+      const d = new Date(from);
+      const currentDay = d.getDay();
+      let daysUntil = (dayIndex - currentDay + 7) % 7;
+      if (daysUntil === 0) daysUntil = 7;
+      d.setDate(d.getDate() + daysUntil);
+      const t = namedM[2] ? extractTimeFromRecurrence(`at ${namedM[2]}`) : null;
+      return applyTime(d, t);
+    }
+  }
+
+  return null;
+}
+
+/** Execute a shell command via the desktop daemon for a scheduled task. */
+async function executeScheduledShellCommand(
+  userId: string,
+  command: string,
+): Promise<{ ok: boolean; exitCode: number; stdout: string; stderr: string; durationMs: number; error?: string }> {
+  const { sendDaemonOp, isDesktopDaemonActive, isDaemonActionAllowed } = await import('./daemon/bridge');
+
+  if (!isDesktopDaemonActive(userId)) {
+    return { ok: false, exitCode: -1, stdout: '', stderr: '', durationMs: 0, error: 'Desktop daemon is not connected.' };
+  }
+
+  const shellAllowed = await isDaemonActionAllowed(userId, 'shell');
+  if (!shellAllowed) {
+    return { ok: false, exitCode: -1, stdout: '', stderr: '', durationMs: 0, error: 'Shell execution is not permitted on this daemon.' };
+  }
+
+  const allowOutsideRoot = await isDaemonActionAllowed(userId, 'allow_outside_root');
+  const timeoutMs = 120_000;
+  const startedAt = Date.now();
+
+  try {
+    const result = await sendDaemonOp(
+      userId,
+      { type: 'shell', cmd: command, timeoutMs, allowOutsideRoot },
+      timeoutMs + 5_000,
+    );
+
+    const durationMs = Date.now() - startedAt;
+    const data = (result.data || {}) as Record<string, unknown>;
+    const stdout = typeof data.stdout === 'string' ? data.stdout : '';
+    const stderr = typeof data.stderr === 'string' ? data.stderr : '';
+    const exitCode = typeof data.code === 'number' ? data.code : (result.ok ? 0 : 1);
+
+    return { ok: result.ok, exitCode, stdout, stderr, durationMs };
+  } catch (err) {
+    return {
+      ok: false,
+      exitCode: -1,
+      stdout: '',
+      stderr: '',
+      durationMs: Date.now() - startedAt,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+// Tasks stuck for >5 minutes (server crash mid-execution) are eligible for re-claim.
+const TASK_STALE_THRESHOLD_MS = 5 * 60 * 1000;
+
+/** Check and fire any jarvis_scheduled_tasks that are due right now.
+ *
+ * Uses an atomic UPDATE ... RETURNING to claim tasks before executing them,
+ * so concurrent scheduler ticks (or long-running commands that span multiple
+ * ticks) cannot double-execute the same job.
+ */
+async function runDueScheduledTasks(now: Date): Promise<void> {
+  const staleThreshold = new Date(now.getTime() - TASK_STALE_THRESHOLD_MS);
+  let claimed: (typeof schema.jarvisScheduledTasks.$inferSelect)[] = [];
+  try {
+    // Atomically mark matching tasks as in-progress.
+    // Eligible tasks: due now, not yet completed, and either not claimed yet OR
+    // claimed so long ago that the server must have crashed (stale claim).
+    claimed = await db
+      .update(schema.jarvisScheduledTasks)
+      .set({ inProgressAt: now })
+      .where(
+        and(
+          lte(schema.jarvisScheduledTasks.scheduledAt, now),
+          isNull(schema.jarvisScheduledTasks.completedAt),
+          or(
+            isNull(schema.jarvisScheduledTasks.inProgressAt),
+            lt(schema.jarvisScheduledTasks.inProgressAt, staleThreshold),
+          ),
+        ),
+      )
+      .returning();
+  } catch (err) {
+    console.error('[Scheduler] runDueScheduledTasks claim failed:', err);
+    return;
+  }
+
+  for (const task of claimed) {
+    handleDueTask(task, now).catch((err) => {
+      console.error(`[Scheduler] handleDueTask id=${task.id} failed:`, err);
+      // Release the claim so the task can be retried on the next tick.
+      db.update(schema.jarvisScheduledTasks)
+        .set({ inProgressAt: null })
+        .where(eq(schema.jarvisScheduledTasks.id, task.id))
+        .catch(() => {});
+    });
+  }
+}
+
+async function handleDueTask(
+  task: typeof schema.jarvisScheduledTasks.$inferSelect,
+  firedAt: Date,
+): Promise<void> {
+  console.log(`[Scheduler] Firing scheduled task id=${task.id} title="${task.title}" shell=${!!task.shellCommand}`);
+
+  const isRecurring = !!task.recurrence;
+
+  if (task.shellCommand) {
+    // ── Shell-command path ────────────────────────────────────────────────────
+    const result = await executeScheduledShellCommand(task.userId, task.shellCommand);
+    const ranAt = new Date().toISOString();
+
+    const shellResult = {
+      exitCode: result.exitCode,
+      stdout: result.stdout.slice(0, 8000),
+      stderr: result.stderr.slice(0, 2000),
+      durationMs: result.durationMs,
+      ranAt,
+    };
+
+    // Advance or complete the task — always clear inProgressAt so the task
+    // is no longer held and the stale-claim check stays accurate.
+    if (isRecurring) {
+      const nextRun = computeNextRun(task.recurrence!, firedAt);
+      if (nextRun) {
+        await db.update(schema.jarvisScheduledTasks)
+          .set({ scheduledAt: nextRun, lastShellResult: shellResult, inProgressAt: null })
+          .where(eq(schema.jarvisScheduledTasks.id, task.id));
+      } else {
+        await db.update(schema.jarvisScheduledTasks)
+          .set({ completedAt: firedAt, lastShellResult: shellResult, inProgressAt: null })
+          .where(eq(schema.jarvisScheduledTasks.id, task.id));
+      }
+    } else {
+      await db.update(schema.jarvisScheduledTasks)
+        .set({ completedAt: firedAt, lastShellResult: shellResult, inProgressAt: null })
+        .where(eq(schema.jarvisScheduledTasks.id, task.id));
+    }
+
+    // Deliver result to user's preferred channel
+    let notifText: string;
+    if (!result.ok && result.error) {
+      notifText = `⚠️ Scheduled task **${task.title}** could not run.\nReason: ${result.error}`;
+    } else {
+      const status = result.exitCode === 0 ? '✅' : '❌';
+      const parts: string[] = [`${status} **${task.title}** — exit code ${result.exitCode} (${result.durationMs}ms)`];
+      if (result.stdout.trim()) parts.push(`\`\`\`\n${result.stdout.trim().slice(0, 1500)}\n\`\`\``);
+      if (result.stderr.trim()) parts.push(`stderr:\n\`\`\`\n${result.stderr.trim().slice(0, 500)}\n\`\`\``);
+      if (isRecurring && task.recurrence) {
+        const next = computeNextRun(task.recurrence, firedAt);
+        if (next) parts.push(`Next run: ${next.toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`);
+      }
+      notifText = parts.join('\n');
+    }
+
+    try {
+      await notifyUser(task.userId, 'scheduled_task_result', notifText);
+    } catch (err) {
+      console.error(`[Scheduler] notifyUser failed for task ${task.id}:`, err);
+    }
+
+    console.log(`[Scheduler] Shell task id=${task.id} exit=${result.exitCode} dur=${result.durationMs}ms`);
+  } else {
+    // ── Agent-prompt path ─────────────────────────────────────────────────────
+    // Re-run the agent with the task's description as a prompt
+    const { runCoachAgent } = await import('./channels/coachAgent');
+
+    const prompt = task.description || `You have a scheduled task: "${task.title}". Please complete this action now and summarise what you did.`;
+    let agentReply = '';
+    try {
+      const agentResult = await runCoachAgent({
+        userId: task.userId,
+        userText: `[Scheduled task: ${task.title}]\n\n${prompt}`,
+        channelName: 'Scheduled Task',
+      });
+      agentReply = agentResult.reply || '';
+    } catch (err) {
+      agentReply = `⚠️ Scheduled task "${task.title}" encountered an error: ${err instanceof Error ? err.message : String(err)}`;
+    }
+
+    // Advance or complete the task — always clear inProgressAt.
+    if (isRecurring) {
+      const nextRun = computeNextRun(task.recurrence!, firedAt);
+      if (nextRun) {
+        await db.update(schema.jarvisScheduledTasks)
+          .set({ scheduledAt: nextRun, inProgressAt: null })
+          .where(eq(schema.jarvisScheduledTasks.id, task.id));
+      } else {
+        await db.update(schema.jarvisScheduledTasks)
+          .set({ completedAt: firedAt, inProgressAt: null })
+          .where(eq(schema.jarvisScheduledTasks.id, task.id));
+      }
+    } else {
+      await db.update(schema.jarvisScheduledTasks)
+        .set({ completedAt: firedAt, inProgressAt: null })
+        .where(eq(schema.jarvisScheduledTasks.id, task.id));
+    }
+
+    if (agentReply) {
+      try {
+        await notifyUser(task.userId, 'scheduled_task_result', agentReply);
+      } catch (err) {
+        console.error(`[Scheduler] notifyUser (agent) failed for task ${task.id}:`, err);
+      }
+    }
+
+    console.log(`[Scheduler] Agent task id=${task.id} replied=${agentReply.length} chars`);
+  }
+}
+
 export function startScheduler() {
   if (schedulerRunning) return;
   schedulerRunning = true;
@@ -336,6 +645,12 @@ export function startScheduler() {
 
     // Named agent autonomous loops — check every minute
     await runAgentLoops(now);
+
+    // User-scheduled tasks (cron_create) — check every minute; shell-command
+    // tasks run via the desktop daemon; prompt-based tasks re-invoke the agent
+    runDueScheduledTasks(now).catch((err) =>
+      console.error('[Scheduler] runDueScheduledTasks failed:', err),
+    );
 
   }, 60 * 1000);
 

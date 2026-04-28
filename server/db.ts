@@ -946,6 +946,11 @@ export async function ensureTablesExist() {
         created_at TIMESTAMP NOT NULL DEFAULT NOW()
       )
     `);
+    // Shell command integration — cron + daemon_shell
+    await db.execute(sql`ALTER TABLE jarvis_scheduled_tasks ADD COLUMN IF NOT EXISTS shell_command TEXT`).catch(() => {});
+    await db.execute(sql`ALTER TABLE jarvis_scheduled_tasks ADD COLUMN IF NOT EXISTS last_shell_result JSONB`).catch(() => {});
+    // Atomic claim column — prevents duplicate execution when tasks take >1 scheduler tick
+    await db.execute(sql`ALTER TABLE jarvis_scheduled_tasks ADD COLUMN IF NOT EXISTS in_progress_at TIMESTAMP`).catch(() => {});
 
     // ── Prediction Engine (Task #156) ─────────────────────────────────────────
     await db.execute(sql`
