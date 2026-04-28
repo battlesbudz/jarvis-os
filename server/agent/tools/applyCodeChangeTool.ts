@@ -48,6 +48,48 @@ const AUDIT_LOG_MAX_ARCHIVES = 5;
 // Allows recordVerificationResult() to emit a verification update without knowing the timestamp.
 const lastAuditTimestamp = new Map<string, string>();
 
+// ── Test-only interceptors ─────────────────────────────────────────────────────
+// These are only used in tests — production code never sets them.
+
+let _testInboxInsertFn: ((values: Record<string, unknown>) => void) | null = null;
+let _testNotifyUserFn: ((userId: string, channel: string, text: string) => void) | null = null;
+let _testOwnerLookupFn: (() => Promise<string | null>) | null = null;
+
+/** TEST-ONLY: Set a timestamp in the internal map so recordVerificationResult can find it. */
+export function _setAuditTimestampForTest(fp: string, ts: string): void {
+  lastAuditTimestamp.set(fp, ts);
+}
+
+/** TEST-ONLY: Clear all entries from the internal timestamp map. */
+export function _clearAuditTimestampsForTest(): void {
+  lastAuditTimestamp.clear();
+}
+
+/** TEST-ONLY: Register a function to capture inbox insert calls; pass null to clear. */
+export function _interceptInboxInsertForTest(
+  fn: ((values: Record<string, unknown>) => void) | null,
+): void {
+  _testInboxInsertFn = fn;
+}
+
+/** TEST-ONLY: Register a function to capture notifyUser calls; pass null to clear. */
+export function _interceptNotifyUserForTest(
+  fn: ((userId: string, channel: string, text: string) => void) | null,
+): void {
+  _testNotifyUserFn = fn;
+}
+
+/**
+ * TEST-ONLY: Replace the owner-lookup function used inside recordVerificationResult.
+ * Pass null to restore the real getIntegrationOwnerId.
+ * This lets tests assert whether owner lookup was or was not called.
+ */
+export function _interceptOwnerLookupForTest(
+  fn: (() => Promise<string | null>) | null,
+): void {
+  _testOwnerLookupFn = fn;
+}
+
 // ── Audit log helpers ─────────────────────────────────────────────────────────
 
 /**
@@ -231,7 +273,8 @@ export async function recordVerificationResult(
   // back to the integration owner so the inbox item is never silently dropped.
   let resolvedUserId = userId;
   if (!resolvedUserId && result !== "passed") {
-    resolvedUserId = (await getIntegrationOwnerId()) ?? undefined;
+    const lookupFn = _testOwnerLookupFn ?? getIntegrationOwnerId;
+    resolvedUserId = (await lookupFn()) ?? undefined;
   }
   if (!resolvedUserId) return;
 
@@ -272,7 +315,7 @@ export async function recordVerificationResult(
     snippetLines.push("Open the Self-Repair Log in the Agents tab for the full diff.");
     const inboxSnippet = snippetLines.join("\n");
 
-    db.insert(inboxItems).values({
+    const inboxValues = {
       userId: resolvedUserId,
       sourceType: "other",
       sourceId: inboxSourceId,
@@ -284,10 +327,19 @@ export async function recordVerificationResult(
         { label: "Dismiss", actionType: "dismiss" },
       ],
       status: "pending",
-    }).onConflictDoNothing().catch(() => {});
+    };
+    if (_testInboxInsertFn) {
+      _testInboxInsertFn(inboxValues as Record<string, unknown>);
+    } else {
+      db.insert(inboxItems).values(inboxValues).onConflictDoNothing().catch(() => {});
+    }
   }
 
-  notifyUser(resolvedUserId, "self_repair", notifyText).catch(() => {});
+  if (_testNotifyUserFn) {
+    _testNotifyUserFn(resolvedUserId, "self_repair", notifyText);
+  } else {
+    notifyUser(resolvedUserId, "self_repair", notifyText).catch(() => {});
+  }
 }
 
 // ── Tool definition ───────────────────────────────────────────────────────────
