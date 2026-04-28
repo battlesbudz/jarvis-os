@@ -910,8 +910,15 @@ export function startIntegrationValidator(): void {
 }
 
 // ── Test-only exports ─────────────────────────────────────────────────────────
-// These are used exclusively by server/intelligence/__tests__/circuitBreaker.assert.ts.
+// These are used exclusively by server/intelligence/__tests__/*.assert.ts files.
 // They MUST NOT be called from production code.
+
+/**
+ * Re-exports buildDirectNotification for unit tests.
+ * Allows tests to exercise all three known-error branches and the null/LLM path
+ * without spinning up any real services.
+ */
+export { buildDirectNotification as _buildDirectNotificationForTest };
 
 /** Clears the consecutive-failure streak map so tests start from a clean state. */
 export function _resetConsecutiveFailuresForTest(): void {
