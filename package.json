@@ -14,12 +14,13 @@
     "start": "npx expo start",
     "lint": "npx expo lint",
     "lint:fix": "npx expo lint --fix",
-"test": "tsx server/agent/__tests__/manifestFilter.assert.ts && tsx server/agent/__tests__/integrationError.assert.ts && tsx server/agent/__tests__/selfHeal.assert.ts && tsx server/agent/__tests__/writeBudget.assert.ts && tsx server/agent/__tests__/mcp.assert.ts && tsx server/agent/__tests__/browserTabTools.test.ts && tsx server/agent/__tests__/toolCallHooks.test.ts && tsx server/agent/__tests__/outboundMiddleware.test.ts && tsx server/agent/__tests__/responseQuality.test.ts"
+    "test": "tsx server/agent/__tests__/manifestFilter.assert.ts && tsx server/agent/__tests__/integrationError.assert.ts && tsx server/agent/__tests__/selfHeal.assert.ts && tsx server/agent/__tests__/writeBudget.assert.ts && tsx server/agent/__tests__/mcp.assert.ts && tsx server/agent/__tests__/browserTabTools.test.ts && tsx server/agent/__tests__/toolCallHooks.test.ts && tsx server/agent/__tests__/outboundMiddleware.test.ts && tsx server/agent/__tests__/responseQuality.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.1",
     "@expo-google-fonts/inter": "^0.4.0",
     "@expo/vector-icons": "^15.0.3",
+    "@google/genai": "^1.50.1",
     "@inferencesh/sdk": "^0.5.16",
     "@microsoft/microsoft-graph-client": "^3.0.7",
     "@napi-rs/canvas": "^0.1.99",
