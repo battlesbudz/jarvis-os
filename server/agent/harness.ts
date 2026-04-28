@@ -500,13 +500,13 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
       // create_calendar_event) are listed in toolNames for both Google and Outlook.
       // The loop above adds them to toolsToExclude when ANY provider is broken, but
       // they should only be excluded when ALL their mapped providers are unavailable.
-      // "Operational" = healthy or expiring_soon (token still valid).
+      // "Operational" = healthy, expiring_soon, or degraded (first-failure grace period).
       for (const toolName of [...toolsToExclude]) {
         const candidates = toolToIntegrationKey.get(toolName) ?? [];
         if (candidates.length <= 1) continue; // single-provider — exclusion is correct
         const hasOperationalProvider = candidates.some((k) => {
           const s = statuses[k as keyof typeof statuses];
-          return s === "healthy" || s === "expiring_soon";
+          return s === "healthy" || s === "expiring_soon" || s === "degraded";
         });
         if (hasOperationalProvider) toolsToExclude.delete(toolName);
       }
@@ -528,11 +528,12 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
       }
 
       // send_email and fetch_emails require at least one operational email provider.
-      // "Operational" = healthy or expiring_soon (token still works).
+      // "Operational" = healthy, expiring_soon, or degraded (first-failure grace period —
+      // tools stay active while we wait for a second consecutive failure to confirm broken).
       // "Non-operational" = broken OR unconfigured — treat both as unavailable
       // for fallback decisions so {google: broken, outlook: unconfigured} → excluded.
-      const googleOperational = statuses.google === "healthy" || statuses.google === "expiring_soon";
-      const outlookOperational = statuses.outlook === "healthy" || statuses.outlook === "expiring_soon";
+      const googleOperational = statuses.google === "healthy" || statuses.google === "expiring_soon" || statuses.google === "degraded";
+      const outlookOperational = statuses.outlook === "healthy" || statuses.outlook === "expiring_soon" || statuses.outlook === "degraded";
       if (!googleOperational && !outlookOperational) {
         toolsToExclude.add("send_email");
         toolsToExclude.add("fetch_emails");
