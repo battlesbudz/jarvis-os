@@ -14,7 +14,7 @@
     "start": "npx expo start",
     "lint": "npx expo lint",
     "lint:fix": "npx expo lint --fix",
-    "test": "tsx server/agent/__tests__/manifestFilter.assert.ts && tsx server/agent/__tests__/integrationError.assert.ts"
+    "test": "tsx server/agent/__tests__/manifestFilter.assert.ts && tsx server/agent/__tests__/integrationError.assert.ts && tsx server/agent/__tests__/writeBudget.assert.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.1",
