@@ -31,7 +31,7 @@ import {
 import { proposeCodeChangeTool } from "./selfEditTools";
 import { notifyUser } from "../../channels/registry";
 import { db } from "../../db";
-import { selfHealAuditLog } from "../../../shared/schema";
+import { selfHealAuditLog, inboxItems } from "../../../shared/schema";
 import { and, eq } from "drizzle-orm";
 
 const PROJECT_ROOT   = process.cwd();
@@ -254,6 +254,30 @@ export async function recordVerificationResult(
       `[Self-repair ⚠] Verification ${result} for ${fileList}` +
       summaryLine +
       cta;
+
+    // ── Inbox alert for failed/error repairs ──────────────────────────────
+    // Passing repairs are intentionally excluded to avoid noise.
+    const inboxSourceId = `self-repair:${result}:${firstTs ?? Date.now()}:${firstFile ?? "unknown"}`;
+    const snippetLines: string[] = [
+      `Verification ${result} for: ${fileList}`,
+    ];
+    if (summary) snippetLines.push(`Details: ${summary}`);
+    snippetLines.push("Open the Self-Repair Log in the Agents tab for the full diff.");
+    const inboxSnippet = snippetLines.join("\n");
+
+    db.insert(inboxItems).values({
+      userId,
+      sourceType: "other",
+      sourceId: inboxSourceId,
+      subject: `Self-repair ${result}: ${firstFile ?? fileList}`,
+      snippet: inboxSnippet.slice(0, 600),
+      jarvisReason: "A self-repair change failed its verification step and needs your attention.",
+      suggestedActions: [
+        { label: "View Self-Repair Log", actionType: "navigate_self_repair" },
+        { label: "Dismiss", actionType: "dismiss" },
+      ],
+      status: "pending",
+    }).onConflictDoNothing().catch(() => {});
   }
 
   notifyUser(userId, "self_repair", notifyText).catch(() => {});
