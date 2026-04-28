@@ -6824,6 +6824,31 @@ Extract up to 8 memories per batch.`;
     }
   });
 
+  app.get("/api/diagnostics/events", async (req: Request, res: Response) => {
+    const userId = (req as any).userId as string | undefined;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    const subsystem = typeof req.query.subsystem === "string" ? req.query.subsystem : undefined;
+    if (!subsystem) return res.status(400).json({ error: "subsystem query param required" });
+    const validSubsystems: readonly string[] = schema.DIAGNOSTIC_SUBSYSTEMS;
+    if (!validSubsystems.includes(subsystem)) {
+      return res.status(400).json({ error: `Invalid subsystem. Must be one of: ${schema.DIAGNOSTIC_SUBSYSTEMS.join(", ")}` });
+    }
+    try {
+      const { getRecentEvents } = await import("./diagnostics/diagnosticsService");
+      const events = await getRecentEvents({
+        userId,
+        subsystem,
+        limit: 20,
+        sinceMinutes: 60,
+        excludePatternDetected: true,
+      });
+      res.json(events);
+    } catch (err) {
+      console.error("[Diagnostics] GET /api/diagnostics/events failed:", err);
+      res.status(500).json({ error: "Failed to fetch subsystem events" });
+    }
+  });
+
   // ── Local Worker API ────────────────────────────────────────────────────────
   // Allows a worker process running on the user's PC to receive transcript
   // jobs, fetch them locally (with yt-dlp or any other method), and return
