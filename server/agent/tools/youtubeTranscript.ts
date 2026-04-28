@@ -5,6 +5,10 @@
  * official captions, auto-generated subtitles, audio transcription, or
  * web-search as a last resort — no API key required for basic usage.
  *
+ * Also performs visual analysis: keyframe extraction + GPT-4o vision
+ * produces a "Visual Summary" section describing what is shown on screen
+ * at key moments, run in parallel with transcript fetching.
+ *
  * Strategy order:
  *   1-4. Server-side (InnerTube → yt-dlp subs → timedtext → yt-transcript lib → audio transcription)
  *   5.   Browser fallback (Playwright with real cookies)
@@ -19,6 +23,7 @@ import {
   parseTimedTextXml,
   isPlaylistUrl,
 } from "../../lib/transcriptCache";
+import { buildVisualSummary } from "../../lib/videoFrames";
 import { callBrowserTool } from "../mcp/playwrightMcpClient";
 import {
   isWorkerOnline,
@@ -182,11 +187,15 @@ async function fetchViaTavily(input: string): Promise<ToolResult | null> {
 export const youtubeTranscriptTool: AgentTool = {
   name: "get_youtube_transcript",
   description:
-    "Retrieve the full spoken transcript from a YouTube video — manual captions or auto-generated. " +
-    "Returns timestamped segments so you can cite specific moments. " +
-    "Works for short clips and videos over an hour long. " +
-    "Use this when the user shares a YouTube URL and wants you to read, summarize, quote, or extract insights from it. " +
+    "Retrieve the full spoken transcript AND visual context from a YouTube video. " +
+    "Returns timestamped transcript segments so you can cite specific moments, " +
+    "plus a Visual Summary describing what is shown on screen at key moments — " +
+    "diagrams, code, slides, people, text on screen, settings, and visual demonstrations. " +
+    "Works for short clips, YouTube Shorts, and videos over an hour long. " +
+    "Use this when the user shares a YouTube URL and wants you to read, summarize, quote, " +
+    "analyse, or extract insights from it — including visual or on-screen content. " +
     "Set refresh=true when the user asks to re-read, refresh, or get the latest version of a video. " +
+    "Set includeVisuals=false only if the user explicitly wants transcript text only with no visual analysis. " +
     "Returns a clear error message if the video has no captions available.",
   parameters: {
     type: "object",
@@ -201,6 +210,12 @@ export const youtubeTranscriptTool: AgentTool = {
         description:
           "Set to true to bypass the transcript cache and fetch a fresh copy directly from YouTube. " +
           "Use when the user explicitly asks to re-read, refresh, or get an updated transcript.",
+      },
+      includeVisuals: {
+        type: "boolean",
+        description:
+          "Whether to include a visual summary of keyframes (default: true). " +
+          "Set to false only when the user explicitly wants transcript text only.",
       },
     },
     required: ["url"],
@@ -224,9 +239,22 @@ export const youtubeTranscriptTool: AgentTool = {
     }
 
     const bypassCache = args.refresh === true;
+    const includeVisuals = args.includeVisuals !== false;
+    const videoId = extractVideoId(input);
+
     console.log(
-      `[get_youtube_transcript] fetching transcript for "${input}" (user=${ctx.userId}, bypassCache=${bypassCache})`
+      `[get_youtube_transcript] fetching transcript for "${input}" (user=${ctx.userId}, bypassCache=${bypassCache}, includeVisuals=${includeVisuals})`
     );
+
+    // ── Start visual pipeline concurrently with transcript retrieval ──────────
+    // Kicked off immediately so keyframe download + vision analysis runs in
+    // parallel with the (potentially slow) transcript fetch pipeline.
+    // The promise is awaited only inside withVisuals() when a successful
+    // transcript result is available. Failures are silently swallowed.
+    const visualPromise: Promise<string | null> =
+      includeVisuals && videoId
+        ? buildVisualSummary(videoId).catch(() => null)
+        : Promise.resolve(null);
 
     // ── Shared formatter: segments → readable timestamped transcript ──────────
     // Long transcripts (> 40 000 chars, roughly a 1 h+ video) are sent as a
@@ -357,6 +385,25 @@ export const youtubeTranscriptTool: AgentTool = {
       };
     };
 
+    // ── Helper: join visual summary into a successful ToolResult ─────────────
+    // Awaits the pre-started visualPromise and appends its output (if any).
+    // No-ops on error results or when visualPromise resolved to null.
+    const withVisuals = async (result: ToolResult): Promise<ToolResult> => {
+      if (!result.ok) return result;
+      try {
+        const visualSummary = await visualPromise;
+        if (visualSummary) {
+          return {
+            ...result,
+            content: result.content + `\n\n${"─".repeat(60)}\n` + visualSummary,
+          };
+        }
+      } catch {
+        // Silently ignore — visual pipeline failure never surfaces to the user
+      }
+      return result;
+    };
+
     try {
       let segments = await fetchTranscriptCached(input, { bypassCache });
 
@@ -366,7 +413,7 @@ export const youtubeTranscriptTool: AgentTool = {
       if (!segments || segments.length === 0) {
         console.log(`[get_youtube_transcript] server strategies returned 0 segs — trying browser fallback`);
         const browserSegs = await fetchTranscriptViaBrowser(input, ctx.userId);
-        if (browserSegs.length > 0) return buildResult(browserSegs, "browser");
+        if (browserSegs.length > 0) return withVisuals(buildResult(browserSegs, "browser"));
 
         // ── Strategy 6: local worker ─────────────────────────────────────────
         // If the user has a local agent running on their PC, forward the job to
@@ -375,7 +422,7 @@ export const youtubeTranscriptTool: AgentTool = {
           console.log(`[get_youtube_transcript] browser fallback empty — forwarding to local worker`);
           try {
             const localSegs = await queueTranscriptJob(ctx.userId, input);
-            if (localSegs.length > 0) return buildResult(localSegs, "local-worker");
+            if (localSegs.length > 0) return withVisuals(buildResult(localSegs, "local-worker"));
           } catch (lwErr) {
             console.warn(`[get_youtube_transcript] local worker failed: ${lwErr instanceof Error ? lwErr.message : String(lwErr)}`);
           }
@@ -384,6 +431,9 @@ export const youtubeTranscriptTool: AgentTool = {
         // ── Strategy 7: Tavily web-search ────────────────────────────────────
         // All transcript methods exhausted — search the web for any available
         // summaries or third-party transcripts instead.
+        // Note: visual summary is NOT appended to Tavily results — they are web
+        // search output, not an actual video transcript, so the combination would
+        // be semantically misleading.
         console.log(`[get_youtube_transcript] all strategies empty — trying Tavily web search`);
         const tavilyResult = await fetchViaTavily(input);
         if (tavilyResult) return tavilyResult;
@@ -398,7 +448,7 @@ export const youtubeTranscriptTool: AgentTool = {
         };
       }
 
-      return buildResult(segments);
+      return withVisuals(buildResult(segments));
 
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -437,20 +487,22 @@ export const youtubeTranscriptTool: AgentTool = {
       // ── Non-terminal: try browser fallback before giving up ─────────────────
       console.log(`[get_youtube_transcript] non-terminal error (${msg}) — trying browser fallback`);
       const browserSegs = await fetchTranscriptViaBrowser(input, ctx.userId);
-      if (browserSegs.length > 0) return buildResult(browserSegs, "browser");
+      if (browserSegs.length > 0) return withVisuals(buildResult(browserSegs, "browser"));
 
       // ── Local worker ──────────────────────────────────────────────────────
       if (isWorkerOnline(ctx.userId)) {
         console.log(`[get_youtube_transcript] browser also failed — forwarding to local worker`);
         try {
           const localSegs = await queueTranscriptJob(ctx.userId, input);
-          if (localSegs.length > 0) return buildResult(localSegs, "local-worker");
+          if (localSegs.length > 0) return withVisuals(buildResult(localSegs, "local-worker"));
         } catch (lwErr) {
           console.warn(`[get_youtube_transcript] local worker also failed: ${lwErr instanceof Error ? lwErr.message : String(lwErr)}`);
         }
       }
 
       // ── Tavily web search (absolute last resort) ───────────────────────────
+      // Note: visual summary is NOT appended to Tavily results — web search
+      // output is not an actual transcript and the combination is misleading.
       console.log(`[get_youtube_transcript] all strategies failed — trying Tavily web search`);
       const tavilyFallback = await fetchViaTavily(input);
       if (tavilyFallback) return tavilyFallback;
