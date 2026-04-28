@@ -10,7 +10,8 @@
  *      protected files, and paths outside the allow-listed directories.
  *   B. safeWritePolicy — Circuit breaker: trips at 10 autonomous writes within
  *      60 min; window slides as old timestamps age out; resetCircuitBreaker()
- *      clears the counter. (DB-backed, async)
+ *      clears the counter; warning deduplication ensures at most one alert fires
+ *      per 60-minute window. (DB-backed, async)
  *   C. applyCodeChangeTool — schema integrity, access-control gate, protected-
  *      file rejection, and over-budget (circuit-tripped) rejection at the tool level.
  *   D. runShellTool — command enum only contains the hard-coded safe set; invalid-
@@ -37,6 +38,7 @@ import {
   recordAutonomousWrite,
   resetCircuitBreaker,
   _injectTimestampForTest,
+  _claimWarningSlotForTest,
   ALLOWED_SOURCE_DIRS,
   PROTECTED_FILES,
 } from "../safeWritePolicy";
@@ -259,6 +261,30 @@ assert.equal(runShellTool.name, "run_shell", "D2a: correct tool name");
     assert.equal(status.tripped, false, "B7b: 9 in-window writes — not tripped");
     await resetCircuitBreaker();
     console.log("✓ B7: stale write excluded; circuit does not trip on 1 stale + 9 recent");
+  }
+
+  // B8. Warning deduplication — first claim in a fresh window succeeds;
+  //     the second claim in the SAME window is rejected.
+  //     resetCircuitBreaker() resets warned_at to '1970-01-01' (pre-epoch),
+  //     so windowStart (NOW − 60 min) is always after it → first claim passes.
+  //     After claiming, warned_at = NOW, which is NOT before windowStart → second fails.
+  await resetCircuitBreaker(); // warned_at = '1970-01-01'
+  {
+    const first  = await _claimWarningSlotForTest();
+    const second = await _claimWarningSlotForTest();
+    assert.equal(first,  true,  "B8a: first claim in fresh window → true");
+    assert.equal(second, false, "B8b: second claim in same window → false (deduplicated)");
+    console.log("✓ B8: warning dedup — only the first claim per 60-minute window succeeds");
+  }
+
+  // B9. After resetCircuitBreaker(), the warning slot is cleared so a new claim
+  //     immediately succeeds in the next notional window.
+  await resetCircuitBreaker(); // warned_at reset to '1970-01-01'
+  {
+    const claimAfterReset = await _claimWarningSlotForTest();
+    assert.equal(claimAfterReset, true, "B9a: claim after resetCircuitBreaker() → true (slot cleared)");
+    await resetCircuitBreaker(); // leave clean for subsequent sections
+    console.log("✓ B9: resetCircuitBreaker() clears the warning slot; fresh claim succeeds");
   }
 
   // ── Section C: applyCodeChangeTool ───────────────────────────────────────────
