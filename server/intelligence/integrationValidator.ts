@@ -162,11 +162,12 @@ async function pingOAuthProvider(
           headers: { Authorization: `Bearer ${accessToken}` },
         }),
       ]);
-      if (!gmailRes.ok) {
+      // 429 = rate-limited but token is valid — treat as healthy.
+      if (!gmailRes.ok && gmailRes.status !== 429) {
         const body = await gmailRes.json() as GoogleApiErrorBody;
         return { ok: false, error: body?.error?.message ?? `Gmail HTTP ${gmailRes.status}` };
       }
-      if (!calendarRes.ok) {
+      if (!calendarRes.ok && calendarRes.status !== 429) {
         const body = await calendarRes.json() as GoogleApiErrorBody;
         return { ok: false, error: body?.error?.message ?? `Calendar HTTP ${calendarRes.status}` };
       }
@@ -177,7 +178,8 @@ async function pingOAuthProvider(
       const res = await fetch("https://graph.microsoft.com/v1.0/me", {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
-      if (res.ok) return { ok: true };
+      // 429 = rate-limited but token is valid — treat as healthy.
+      if (res.ok || res.status === 429) return { ok: true };
       const body = await res.json() as MicrosoftApiErrorBody;
       return {
         ok: false,
@@ -231,8 +233,11 @@ async function checkConnectorStatus(
     // Step 2: ping the provider API to confirm the token is still valid.
     // Any non-2xx response is treated as broken — the connector is set up
     // but its OAuth token is either expired or revoked.
+    // Exception: 429 (Too Many Requests) means the token is valid but rate-limited;
+    // treat as healthy so we don't fire false-positive broken alerts.
     const res = await connectors.proxy(connectorName, pingPath, { method: "GET" });
     if (res.ok) return { status: "healthy" };
+    if (res.status === 429) return { status: "healthy" };
 
     const text = await res.text().catch(() => "");
     return {
@@ -586,11 +591,16 @@ async function triggerAutoDebugSession(opts: AutoDebugOptions): Promise<void> {
       `Health check for the "${opts.capability}" integration has failed.`,
       `Error: ${opts.errorMessage}`,
       ``,
-      `Please investigate this failure:`,
+      `CRITICAL RULES — you must follow these before responding:`,
+      `- Do NOT speculate, infer, or guess about the root cause. Only report what you have confirmed by actually calling the investigation tools below.`,
+      `- If you cannot call the tools (e.g. the integration is excluded from your tool set), respond with ONLY: "I was unable to investigate this automatically because the ${opts.capability} integration is currently excluded from my tools. The raw error is: ${opts.errorMessage}"`,
+      `- Do NOT describe steps you plan to take — only describe steps you have already taken and what they returned.`,
+      ``,
+      `If you do have investigation tools, follow these steps in order:`,
       `1. Call read_recent_errors with source_filter="${opts.capability}" to read the error log.`,
       `2. Call list_source_files and read_source_file to inspect the relevant code.`,
       `3. If you identify a code fix, call propose_code_change with the fix and include debug_context.`,
-      `4. If no code fix is appropriate, send a plain-English diagnosis to the user's inbox explaining the root cause.`,
+      `4. If no code fix is appropriate, send a plain-English diagnosis to the user's inbox explaining the confirmed root cause.`,
       ``,
       `Error log ID for reference: ${opts.errorLogId ?? "N/A"}`,
     ].join("\n");
