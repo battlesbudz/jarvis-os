@@ -2665,6 +2665,18 @@ export default function SettingsScreen() {
               <Ionicons name="chevron-forward" size={16} color={Colors.textTertiary} />
             </Pressable>
           </Link>
+          <Link href="/self-repair-history" asChild>
+            <Pressable style={[styles.prefRow, styles.prefRowBorder]}>
+              <View style={styles.prefLeft}>
+                <Ionicons name="construct-outline" size={16} color={Colors.violet} />
+                <View>
+                  <Text style={styles.prefTitle}>Self-Repair Log</Text>
+                  <Text style={styles.prefSub}>Autonomous code changes Jarvis applied</Text>
+                </View>
+              </View>
+              <Ionicons name="chevron-forward" size={16} color={Colors.textTertiary} />
+            </Pressable>
+          </Link>
         </View>
         </ErrorBoundary>
 
