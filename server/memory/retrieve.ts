@@ -159,6 +159,13 @@ export async function retrieveRelevantMemories(
       ORDER BY fts_rank DESC NULLS LAST, relevance_score DESC
       LIMIT 60
     `);
+    diagEmit({
+      userId,
+      subsystem: "memory",
+      severity: "info",
+      message: "Memory retrieval completed successfully",
+      metadata: { recovery: true, operation: "retrieveRelevantMemories" },
+    }).catch(() => {});
   } catch (dbErr) {
     const detail = dbErr instanceof Error ? dbErr.message : String(dbErr);
     console.error("[MemoryRetrieve] DB query failed:", dbErr);
