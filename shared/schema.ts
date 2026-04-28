@@ -1111,7 +1111,7 @@ export const INTEGRATION_NAMES = [
   "whatsapp",
 ] as const;
 export type IntegrationName = typeof INTEGRATION_NAMES[number];
-export type IntegrationStatusValue = "healthy" | "expiring_soon" | "broken" | "unconfigured";
+export type IntegrationStatusValue = "healthy" | "expiring_soon" | "broken" | "degraded" | "unconfigured";
 
 export const integrationStatus = pgTable("integration_status", {
   userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),

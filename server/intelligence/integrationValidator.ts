@@ -317,7 +317,14 @@ async function checkSystemCredential(
   }
   let ok = false;
   try { ok = await pingFn(); } catch { ok = false; }
-  systemPingCache.set(key, { ok, checkedAt: Date.now() });
+  // Only cache successes — a failure should be retried on the very next cycle
+  // so that startup race conditions (Discord/Telegram WS not yet connected) do
+  // not freeze a "broken" result in memory for the entire 30-minute window.
+  if (ok) {
+    systemPingCache.set(key, { ok: true, checkedAt: Date.now() });
+  } else {
+    systemPingCache.delete(key);
+  }
   return ok;
 }
 
@@ -669,6 +676,15 @@ async function triggerAutoDebugSession(opts: AutoDebugOptions): Promise<void> {
   }
 }
 
+// ── Consecutive-failure circuit breaker ───────────────────────────────────────
+// Keyed by "<integration>:<userId>". Incremented on each failed ping; reset to
+// 0 on success or unconfigured. A single failure writes "degraded" (tools kept
+// available). Only ≥2 consecutive failures escalate to "broken" (tools excluded,
+// alert fired). This eliminates false positives from startup race conditions and
+// transient network blips.
+
+const consecutiveFailures = new Map<string, number>();
+
 // ── Run all checks for one user ───────────────────────────────────────────────
 
 export async function validateUserIntegrations(userId: string): Promise<void> {
@@ -683,56 +699,87 @@ export async function validateUserIntegrations(userId: string): Promise<void> {
 
   await Promise.all(
     checks.map(async ({ integration, check }) => {
+      const failureKey = `${integration}:${userId}`;
       try {
         const result = await check();
+
+        if (result.status !== "broken") {
+          // Success or unconfigured — reset failure streak and write status as-is.
+          consecutiveFailures.delete(failureKey);
+          await writeStatus(userId, integration, result);
+          return;
+        }
+
+        // ── Failed ping — apply circuit-breaker logic ─────────────────────────
+        const streak = (consecutiveFailures.get(failureKey) ?? 0) + 1;
+        consecutiveFailures.set(failureKey, streak);
+        const errMsg = result.errorMessage ?? "unknown error";
+
+        if (streak < 2) {
+          // First failure — write silent "degraded" state. Tools remain active;
+          // no alert is fired. The next cycle will either recover or escalate.
+          console.log(`[IntegrationValidator] ${integration} degraded (streak=${streak}) for ${userId}: ${errMsg}`);
+          await writeStatus(userId, integration, { status: "degraded", errorMessage: errMsg });
+          return;
+        }
+
+        // Two or more consecutive failures — escalate to "broken".
         await writeStatus(userId, integration, result);
-        if (result.status === "broken") {
-          const errMsg = result.errorMessage ?? "unknown error";
-          diagEmit({
-            userId,
-            subsystem: "integration",
-            severity: "error",
-            message: `Integration ${integration} broken: ${errMsg}`,
-            metadata: { integration },
-          }).catch(() => {});
+        diagEmit({
+          userId,
+          subsystem: "integration",
+          severity: "error",
+          message: `Integration ${integration} broken: ${errMsg}`,
+          metadata: { integration },
+        }).catch(() => {});
 
-          // Persist to system_error_log for Jarvis self-debugging
-          const errorLogId = await logSystemError({
-            source: `integrationValidator/${integration}`,
-            message: `Health check failure: ${errMsg}`,
-            level: "error",
-            context: { integration, userId, status: result.status },
-            userId,
-          });
+        // Persist to system_error_log for Jarvis self-debugging
+        const errorLogId = await logSystemError({
+          source: `integrationValidator/${integration}`,
+          message: `Health check failure: ${errMsg}`,
+          level: "error",
+          context: { integration, userId, status: result.status },
+          userId,
+        });
 
-          // Trigger notification (rate-limited to 1 per capability per hour)
-          const rateKey = `${integration}:${userId}`;
-          const last = lastDebugTriggerAt.get(rateKey) ?? 0;
-          if (Date.now() - last > DEBUG_TRIGGER_COOLDOWN_MS) {
-            lastDebugTriggerAt.set(rateKey, Date.now());
+        // Trigger notification (rate-limited to 1 per capability per hour)
+        const rateKey = `${integration}:${userId}`;
+        const last = lastDebugTriggerAt.get(rateKey) ?? 0;
+        if (Date.now() - last > DEBUG_TRIGGER_COOLDOWN_MS) {
+          lastDebugTriggerAt.set(rateKey, Date.now());
 
-            const directMsg = buildDirectNotification(integration, errMsg);
-            if (directMsg) {
-              // Known, self-explanatory error — send a clean direct notification,
-              // no LLM session needed (avoids hallucinated "investigation steps").
-              notifyUser(userId, "approval_request", `Jarvis (integration alert): ${integration} disconnected\n\n${directMsg}`)
-                .catch((e) => console.error("[IntegrationValidator] direct notify failed:", e));
-              console.log(`[IntegrationValidator] direct notify for "${integration}" (user ${userId}): ${errMsg}`);
-            } else {
-              // Unknown error — spin up LLM auto-debug session to investigate.
-              triggerAutoDebugSession({
-                userId,
-                capability: integration,
-                errorMessage: errMsg,
-                source: `integrationValidator/${integration}`,
-                errorLogId: errorLogId ?? undefined,
-              }).catch((e) => console.error("[IntegrationValidator] auto debug trigger failed:", e));
-            }
+          const directMsg = buildDirectNotification(integration, errMsg);
+          if (directMsg) {
+            // Known, self-explanatory error — send a clean direct notification,
+            // no LLM session needed (avoids hallucinated "investigation steps").
+            notifyUser(userId, "approval_request", `Jarvis (integration alert): ${integration} disconnected\n\n${directMsg}`)
+              .catch((e) => console.error("[IntegrationValidator] direct notify failed:", e));
+            console.log(`[IntegrationValidator] direct notify for "${integration}" (user ${userId}): ${errMsg}`);
+          } else {
+            // Unknown error — spin up LLM auto-debug session to investigate.
+            triggerAutoDebugSession({
+              userId,
+              capability: integration,
+              errorMessage: errMsg,
+              source: `integrationValidator/${integration}`,
+              errorLogId: errorLogId ?? undefined,
+            }).catch((e) => console.error("[IntegrationValidator] auto debug trigger failed:", e));
           }
         }
       } catch (err) {
         console.error(`[IntegrationValidator] ${integration} check failed for ${userId}:`, err);
         const errMsg = `Validator crashed: ${err instanceof Error ? err.message : String(err)}`;
+
+        // Apply same circuit-breaker: first crash → degraded, repeat crash → broken.
+        const streak = (consecutiveFailures.get(failureKey) ?? 0) + 1;
+        consecutiveFailures.set(failureKey, streak);
+
+        if (streak < 2) {
+          console.log(`[IntegrationValidator] ${integration} crash degraded (streak=${streak}) for ${userId}`);
+          await writeStatus(userId, integration, { status: "degraded", errorMessage: errMsg }).catch(() => {});
+          return;
+        }
+
         await writeStatus(userId, integration, {
           status: "broken",
           errorMessage: errMsg,
