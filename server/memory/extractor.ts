@@ -9,6 +9,7 @@ const openai = new OpenAI({
 });
 import { normalizeCategory, MEMORY_CATEGORIES } from "./categories";
 import { markSoulStale } from "./soul";
+import { emit as diagEmit } from "../diagnostics/diagnosticsService";
 
 export interface ExtractInput {
   userId: string;
@@ -179,26 +180,51 @@ Return { "memories": [] } if nothing new and high-confidence was learned.`;
         embedding = await embedText(text);
       } catch (embedErr) {
         console.error("[Memory] embed on insert failed:", embedErr);
+        diagEmit({
+          userId,
+          subsystem: "memory",
+          severity: "warning",
+          message: `Memory embedding failed on insert: ${embedErr instanceof Error ? embedErr.message : String(embedErr)}`.slice(0, 300),
+          metadata: { operation: "embedOnInsert", sourceType },
+        }).catch(() => {});
       }
-      await db.insert(schema.userMemories).values({
-        userId,
-        content: text,
-        category,
-        confidence,
-        relevanceScore: 50,
-        sourceType,
-        sourceRef: sourceRef || null,
-        embedding: embedding ?? undefined,
-        tier,
-        memoryType,
-        expiresAt: expiresAt ?? undefined,
-      });
-      seen.add(norm);
-      stored.push({ content: text, category, confidence, tier, memoryType });
-      console.log(`[Memory] +${sourceType} [${category} ${tier}/${memoryType} c=${confidence}${embedding ? " e" : ""}${expiresAt ? " ttl" : ""}] ${text.slice(0, 70)}`);
+      try {
+        await db.insert(schema.userMemories).values({
+          userId,
+          content: text,
+          category,
+          confidence,
+          relevanceScore: 50,
+          sourceType,
+          sourceRef: sourceRef || null,
+          embedding: embedding ?? undefined,
+          tier,
+          memoryType,
+          expiresAt: expiresAt ?? undefined,
+        });
+        seen.add(norm);
+        stored.push({ content: text, category, confidence, tier, memoryType });
+        console.log(`[Memory] +${sourceType} [${category} ${tier}/${memoryType} c=${confidence}${embedding ? " e" : ""}${expiresAt ? " ttl" : ""}] ${text.slice(0, 70)}`);
+      } catch (insertErr) {
+        console.error("[Memory] DB insert failed:", insertErr);
+        diagEmit({
+          userId,
+          subsystem: "memory",
+          severity: "error",
+          message: `Memory DB insert failed: ${insertErr instanceof Error ? insertErr.message : String(insertErr)}`.slice(0, 300),
+          metadata: { operation: "extractAndStore_insert", sourceType, category, tier },
+        }).catch(() => {});
+      }
     }
   } catch (err) {
     console.error("[Memory] extract failed:", err);
+    diagEmit({
+      userId,
+      subsystem: "memory",
+      severity: "error",
+      message: `Memory extraction failed: ${err instanceof Error ? err.message : String(err)}`.slice(0, 300),
+      metadata: { operation: "extractAndStore", sourceType },
+    }).catch(() => {});
   }
 
   if (stored.length > 0) {

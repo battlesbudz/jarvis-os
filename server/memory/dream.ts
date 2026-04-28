@@ -19,6 +19,7 @@ import * as schema from "@shared/schema";
 import OpenAI from "openai";
 import { extractAndStore } from "./extractor";
 import { markSoulStale } from "./soul";
+import { emit as diagEmit } from "../diagnostics/diagnosticsService";
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
@@ -366,6 +367,13 @@ Output JSON:
       }
     } catch (err) {
       console.error(`[Dream] consolidation batch ${i}–${i + CONSOLIDATION_BATCH_SIZE} failed for ${userId}:`, err);
+      diagEmit({
+        userId,
+        subsystem: "memory",
+        severity: "error",
+        message: `Dream consolidation batch failed: ${err instanceof Error ? err.message : String(err)}`.slice(0, 300),
+        metadata: { operation: "runConsolidationPass", batchStart: i },
+      }).catch(() => {});
     }
   }
 
@@ -485,6 +493,13 @@ Rules:
       factsExtracted += stored.length;
     } catch (err) {
       console.error(`[Dream] semantic extraction failed for category ${category}, user ${userId}:`, err);
+      diagEmit({
+        userId,
+        subsystem: "memory",
+        severity: "error",
+        message: `Dream semantic extraction failed for category "${category}": ${err instanceof Error ? err.message : String(err)}`.slice(0, 300),
+        metadata: { operation: "runSemanticExtractionPass", category },
+      }).catch(() => {});
     }
   }
 
@@ -531,6 +546,13 @@ async function runRelevanceDecayPass(
     return { decayed, hardDeleted: softDeleted };
   } catch (err) {
     console.error(`[Dream] relevance decay pass failed for ${userId}:`, err);
+    diagEmit({
+      userId,
+      subsystem: "memory",
+      severity: "error",
+      message: `Dream relevance decay pass failed: ${err instanceof Error ? err.message : String(err)}`.slice(0, 300),
+      metadata: { operation: "runRelevanceDecayPass" },
+    }).catch(() => {});
     return { decayed: 0, hardDeleted: 0 };
   }
 }
@@ -599,6 +621,13 @@ async function runAccessReinforcementPass(
     return { boosted: boostIds.length };
   } catch (err) {
     console.error(`[Dream] access reinforcement pass failed for ${userId}:`, err);
+    diagEmit({
+      userId,
+      subsystem: "memory",
+      severity: "error",
+      message: `Dream access reinforcement pass failed: ${err instanceof Error ? err.message : String(err)}`.slice(0, 300),
+      metadata: { operation: "runAccessReinforcementPass" },
+    }).catch(() => {});
     return { boosted: 0 };
   }
 }
@@ -690,6 +719,13 @@ ${corpus.text.slice(0, 12000)}`;
     rawInsights = parseDreamResponse(raw).slice(0, 3);
   } catch (err) {
     console.error(`[Dream] LLM synthesis failed for ${userId}:`, err);
+    diagEmit({
+      userId,
+      subsystem: "memory",
+      severity: "error",
+      message: `Dream LLM synthesis failed: ${err instanceof Error ? err.message : String(err)}`.slice(0, 300),
+      metadata: { operation: "runDreamForUser_synthesis" },
+    }).catch(() => {});
     return { insightsStored: 0, consolidation, semanticExtraction, decay, reinforcement };
   }
 
@@ -720,6 +756,13 @@ ${corpus.text.slice(0, 12000)}`;
       console.log(`[Dream] +insight [c=${confidence}] ${text.slice(0, 80)}`);
     } catch (err) {
       console.error(`[Dream] insert failed:`, err);
+      diagEmit({
+        userId,
+        subsystem: "memory",
+        severity: "error",
+        message: `Dream insight DB insert failed: ${err instanceof Error ? err.message : String(err)}`.slice(0, 300),
+        metadata: { operation: "runDreamForUser_insertInsight" },
+      }).catch(() => {});
     }
   }
 
@@ -769,6 +812,13 @@ async function seedSoulFromDream(userId: string, insights: DreamInsightRaw[]): P
     console.log(`[Dream] soul seeded and marked stale for ${userId}`);
   } catch (err) {
     console.error(`[Dream] soul seeding failed:`, err);
+    diagEmit({
+      userId,
+      subsystem: "memory",
+      severity: "error",
+      message: `Dream soul seeding failed: ${err instanceof Error ? err.message : String(err)}`.slice(0, 300),
+      metadata: { operation: "seedSoulFromDream" },
+    }).catch(() => {});
   }
 }
 
