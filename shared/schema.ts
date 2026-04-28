@@ -437,6 +437,9 @@ export const jarvisScheduledTasks = pgTable("jarvis_scheduled_tasks", {
   recurrence: varchar("recurrence"),
   completedAt: timestamp("completed_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
+  shellCommand: text("shell_command"),
+  lastShellResult: jsonb("last_shell_result").$type<{ exitCode: number; stdout: string; stderr: string; durationMs: number; ranAt: string } | null>(),
+  inProgressAt: timestamp("in_progress_at"),
 });
 
 // ── Workflow Engine ────────────────────────────────────────────────────────────
@@ -579,6 +582,7 @@ export const NOTIFICATION_TYPES = [
   "ego_report",
   "general",
   "self_repair",
+  "scheduled_task_result",
 ] as const;
 export type NotificationType = typeof NOTIFICATION_TYPES[number];
 
