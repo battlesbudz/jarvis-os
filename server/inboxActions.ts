@@ -237,6 +237,14 @@ export async function executeInboxAction(
       return { success: true, message: "Opening Telegram health check" };
     }
 
+    case "navigate_self_repair": {
+      await db
+        .update(schema.inboxItems)
+        .set({ status: "dismissed", actedAt: new Date() })
+        .where(eq(schema.inboxItems.id, itemId));
+      return { success: true, message: "Opening Self-Repair Log" };
+    }
+
     default:
       return { success: false, message: `Unknown action: ${actionType}` };
   }

@@ -168,6 +168,7 @@ const GUT_TYPE_LABEL: Record<string, string> = {
 const SUPPORTED_ACTION_TYPES = new Set([
   'dismiss', 'never_again', 'archive', 'mark_important',
   'save_as_task', 'add_prep_time', 'save_to_focus', 'navigate_telegram_health', 'reply',
+  'navigate_self_repair',
 ]);
 
 export default function InboxScreen() {
@@ -410,6 +411,11 @@ export default function InboxScreen() {
     if (actionType === 'navigate_telegram_health') {
       actionMutation.mutate({ itemId, actionType });
       router.push({ pathname: '/(tabs)/profile', params: { focus: 'telegram_webhook' } });
+      return;
+    }
+    if (actionType === 'navigate_self_repair') {
+      actionMutation.mutate({ itemId, actionType });
+      router.push({ pathname: '/(tabs)/agents', params: { focus: 'self_repair' } });
       return;
     }
     actionMutation.mutate({ itemId, actionType });
