@@ -426,7 +426,7 @@ export const applyCodeChangeTool: AgentTool = {
       const absPath = path.join(PROJECT_ROOT, filePath);
       await fs.mkdir(path.dirname(absPath), { recursive: true });
       await fs.writeFile(absPath, newContent, "utf-8");
-      await recordAutonomousWrite();
+      await recordAutonomousWrite(filePath);
       const newCount = circuit.count + 1;
       console.log(`[SelfHeal] wrote '${filePath}' (circuit: ${newCount}/10 in last 60 min)`);
     } catch (err) {
