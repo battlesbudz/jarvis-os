@@ -7347,6 +7347,46 @@ Extract up to 8 memories per batch.`;
     }
   });
 
+  // ── Write-budget endpoints ──────────────────────────────────────────────────
+  // GET  /api/write-budget        — returns current count, max, and tripped state.
+  // POST /api/write-budget/reset  — owner-only; clears the circuit-breaker counter.
+
+  app.get("/api/write-budget", authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const {
+        checkCircuitBreaker,
+        CIRCUIT_MAX_WRITES,
+        writeBudgetSummary,
+      } = await import("./agent/safeWritePolicy");
+      const [status, summary] = await Promise.all([checkCircuitBreaker(), writeBudgetSummary()]);
+      res.json({
+        count:   status.count,
+        max:     CIRCUIT_MAX_WRITES,
+        tripped: status.tripped,
+        resetAt: status.resetAt?.toISOString() ?? null,
+        summary,
+      });
+    } catch (err) {
+      console.error("[write-budget] GET error:", err);
+      res.status(500).json({ error: "Failed to fetch write budget" });
+    }
+  });
+
+  app.post("/api/write-budget/reset", authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const userId = (req as any).userId as string;
+      if (!(await isIntegrationOwner(userId))) {
+        return res.status(403).json({ error: "Only the account owner can reset the write budget" });
+      }
+      const { resetCircuitBreaker } = await import("./agent/safeWritePolicy");
+      await resetCircuitBreaker();
+      res.json({ ok: true });
+    } catch (err) {
+      console.error("[write-budget] POST /reset error:", err);
+      res.status(500).json({ error: "Failed to reset write budget" });
+    }
+  });
+
   const httpServer = createServer(app);
   return httpServer;
 }

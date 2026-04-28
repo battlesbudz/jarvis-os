@@ -306,6 +306,15 @@ export default function ProfileScreen() {
   const [driveLoading, setDriveLoading] = useState(false);
   const [driveEnabling, setDriveEnabling] = useState(false);
 
+  const [writeBudget, setWriteBudget] = useState<{
+    count: number;
+    max: number;
+    tripped: boolean;
+    resetAt: string | null;
+    summary: string;
+  } | null>(null);
+  const [writeBudgetResetting, setWriteBudgetResetting] = useState(false);
+
   const [websiteCrawl, setWebsiteCrawl] = useState<{
     status: 'idle' | 'crawling' | 'done' | 'error';
     url?: string;
@@ -316,6 +325,44 @@ export default function ProfileScreen() {
   const [websiteUrlInput, setWebsiteUrlInput] = useState('');
   const [websiteCrawling, setWebsiteCrawling] = useState(false);
   const websitePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const loadWriteBudget = useCallback(async () => {
+    try {
+      const res = await apiRequest('GET', '/api/write-budget');
+      const data = await res.json();
+      setWriteBudget(data);
+    } catch {}
+  }, []);
+
+  const handleResetWriteBudget = useCallback(async () => {
+    Alert.alert(
+      'Reset Write Budget',
+      'This clears the autonomous write counter for the current hour. Only the account owner can do this.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Reset', style: 'destructive',
+          onPress: async () => {
+            setWriteBudgetResetting(true);
+            try {
+              const res = await apiRequest('POST', '/api/write-budget/reset');
+              if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                Alert.alert('Error', (err as any).error || 'Could not reset the write budget.');
+              } else {
+                await loadWriteBudget();
+                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+              }
+            } catch {
+              Alert.alert('Error', 'Could not reach the server.');
+            } finally {
+              setWriteBudgetResetting(false);
+            }
+          },
+        },
+      ],
+    );
+  }, [loadWriteBudget]);
 
   const loadWebsiteCrawl = useCallback(async () => {
     try {
@@ -779,7 +826,7 @@ export default function ProfileScreen() {
     setLifeContext(lc);
     setNotificationsEnabledState(notifications);
     setUserName(name);
-    await Promise.all([loadOAuthStatus(), loadMemories(), loadTelegramStatus(), loadMorningNotes(), loadDocuments(), loadSoul(), loadPeople(), loadChannels(), loadDaemonPerms(), loadAndroidDaemonPerms(), loadDriveStatus(), loadDreamInsights(), loadWebsiteCrawl()]);
+    await Promise.all([loadOAuthStatus(), loadMemories(), loadTelegramStatus(), loadMorningNotes(), loadDocuments(), loadSoul(), loadPeople(), loadChannels(), loadDaemonPerms(), loadAndroidDaemonPerms(), loadDriveStatus(), loadDreamInsights(), loadWebsiteCrawl(), loadWriteBudget()]);
     try {
       const importRes = await apiRequest('GET', '/api/chatgpt-import/status');
       const importData = await importRes.json();
@@ -3940,8 +3987,35 @@ export default function ProfileScreen() {
               </View>
               <Ionicons name="chevron-forward" size={18} color={Colors.textTertiary} />
             </Pressable>
+            {writeBudget !== null && (
+              <View style={[styles.platformRow, styles.platformRowBorder]}>
+                <View style={[styles.platformIcon, { backgroundColor: writeBudget.tripped ? '#EF444415' : '#F59E0B15' }]}>
+                  <Ionicons name="shield-outline" size={20} color={writeBudget.tripped ? '#EF4444' : '#F59E0B'} />
+                </View>
+                <View style={styles.platformInfo}>
+                  <Text style={styles.platformName}>Write Budget</Text>
+                  <Text style={styles.platformStatus}>
+                    {writeBudget.tripped
+                      ? `Circuit tripped — ${writeBudget.count}/${writeBudget.max} writes`
+                      : `${writeBudget.count}/${writeBudget.max} writes in the last hour`}
+                  </Text>
+                </View>
+                {writeBudget.count > 0 && (
+                  <Pressable
+                    onPress={handleResetWriteBudget}
+                    disabled={writeBudgetResetting}
+                    style={{ paddingHorizontal: 10, paddingVertical: 6, backgroundColor: '#EF444415', borderRadius: 6, minWidth: 52, alignItems: 'center' }}
+                  >
+                    {writeBudgetResetting
+                      ? <ActivityIndicator size="small" color="#EF4444" />
+                      : <Text style={{ fontSize: 12, color: '#EF4444', fontWeight: '600' }}>Reset</Text>
+                    }
+                  </Pressable>
+                )}
+              </View>
+            )}
             <Pressable 
-              style={styles.platformRow}
+              style={[styles.platformRow, styles.platformRowBorder]}
               onPress={logout}
             >
               <View style={[styles.platformIcon, { backgroundColor: '#FF3B3015' }]}>

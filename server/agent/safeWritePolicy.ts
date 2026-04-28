@@ -120,7 +120,7 @@ export function isPathAllowedForProposal(filePath: string): boolean {
 // Rows older than the 60-minute window are pruned on each write to keep the
 // table small.
 
-const CIRCUIT_MAX_WRITES       = 10;
+export const CIRCUIT_MAX_WRITES = 10;
 const CIRCUIT_WINDOW_MS        = 60 * 60 * 1000; // 60 minutes
 /** Send an early-warning notification to the owner when the write count reaches this value. */
 export const CIRCUIT_WARNING_THRESHOLD = 7;
