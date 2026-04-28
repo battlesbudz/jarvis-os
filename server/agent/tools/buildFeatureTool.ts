@@ -64,7 +64,7 @@ async function applyToolCode(
   try {
     await fs.mkdir(path.resolve(process.cwd(), "server/agent/tools"), { recursive: true });
     await fs.writeFile(path.resolve(process.cwd(), toolFilePath), toolCode, "utf8");
-    await recordAutonomousWrite();
+    await recordAutonomousWrite(toolFilePath);
     applied.push(toolFilePath);
   } catch (err) {
     warnings.push(
@@ -77,7 +77,7 @@ async function applyToolCode(
     try {
       await fs.mkdir(path.resolve(process.cwd(), "server"), { recursive: true });
       await fs.writeFile(path.resolve(process.cwd(), routeFilePath), routeCode, "utf8");
-      await recordAutonomousWrite();
+      await recordAutonomousWrite(routeFilePath);
       applied.push(routeFilePath);
     } catch (err) {
       warnings.push(
@@ -183,7 +183,7 @@ async function applyToolCode(
 
     if (modified) {
       await fs.writeFile(indexAbsPath, idx, "utf8");
-      await recordAutonomousWrite();
+      await recordAutonomousWrite("server/agent/tools/index.ts");
       applied.push("server/agent/tools/index.ts");
     } else {
       warnings.push(`index.ts already contains ${actualExportName} entries — no changes made.`);

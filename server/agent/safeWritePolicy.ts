@@ -197,8 +197,15 @@ export async function checkCircuitBreaker(): Promise<CircuitStatus> {
   }
 }
 
-/** Record one autonomous write. Call AFTER a successful fs.writeFile. */
-export async function recordAutonomousWrite(): Promise<void> {
+/**
+ * Record one autonomous write. Call AFTER a successful fs.writeFile.
+ *
+ * @param filePath - Optional file path of the write that was just recorded.
+ *   When provided and the write trips the circuit breaker, the path is
+ *   included in the trip notification so owners know exactly which file
+ *   pushed the count over the limit.
+ */
+export async function recordAutonomousWrite(filePath?: string): Promise<void> {
   const testCtx = _testStoreContext.getStore();
   if (testCtx) {
     // In test mode: push to the context's isolated array.  No warning
@@ -227,7 +234,7 @@ export async function recordAutonomousWrite(): Promise<void> {
     // Both take Postgres row-level locks — safe under concurrent writes.
     const status = await checkCircuitBreaker();
     if (status.tripped) {
-      _maybeSendBudgetTripped(status.count).catch((err) =>
+      _maybeSendBudgetTripped(status.count, filePath).catch((err) =>
         console.error("[safeWritePolicy] Failed to send write-budget trip alert:", err)
       );
     } else if (status.count >= CIRCUIT_WARNING_THRESHOLD) {
@@ -357,12 +364,15 @@ async function _claimTripSlot(): Promise<boolean> {
  *
  * If notification delivery fails, the slot is rolled back so the next write
  * (if any) can retry sending the alert.
+ *
+ * @param filePath - The file path that caused the final write, included in the
+ *   alert so the owner knows exactly which write tripped the circuit.
  */
-async function _maybeSendBudgetTripped(count: number): Promise<void> {
+async function _maybeSendBudgetTripped(count: number, filePath?: string): Promise<void> {
   const claimed = await _claimTripSlot();
   if (!claimed) return; // Alert already sent for this window.
   try {
-    await _sendBudgetTripped(count);
+    await _sendBudgetTripped(count, filePath);
   } catch (err) {
     // Delivery failed — reset the trip slot so a future call in this window
     // can retry rather than silently dropping the alert for 60 min.
@@ -378,16 +388,24 @@ async function _maybeSendBudgetTripped(count: number): Promise<void> {
 /**
  * Fire-and-forget helper — sends a distinct circuit-trip notification to the
  * owner when the circuit breaker transitions from closed to open (10/10 writes).
+ *
+ * @param filePath - The file path that caused the final write. When provided it
+ *   is included in the alert message so owners know exactly which write pushed
+ *   the budget over the limit.
  */
-async function _sendBudgetTripped(count: number): Promise<void> {
+async function _sendBudgetTripped(count: number, filePath?: string): Promise<void> {
   const ownerId = await getIntegrationOwnerId();
   if (!ownerId) return;
 
   // Lazy-load the channel registry to avoid a circular import at module load time.
   const { notifyUser } = await import("../channels/registry");
+  const triggerLine = filePath
+    ? ` The write that tripped it was \`${filePath}\`.`
+    : "";
   const msg =
-    `🚨 *Circuit breaker tripped* — Jarvis has reached ${count}/${CIRCUIT_MAX_WRITES} autonomous writes in the last hour. ` +
-    `All further autonomous writes are now blocked until the window resets or an owner manually resets the counter. ` +
+    `🚨 *Circuit breaker tripped* — Jarvis has reached ${count}/${CIRCUIT_MAX_WRITES} autonomous writes in the last hour.` +
+    triggerLine +
+    ` All further autonomous writes are now blocked until the window resets or an owner manually resets the counter. ` +
     `Review the audit log and run \`reset_circuit_breaker\` when satisfied.`;
 
   await notifyUser(ownerId, "general", msg);
