@@ -7412,6 +7412,27 @@ Extract up to 8 memories per batch.`;
     }
   });
 
+  // ── Self-heal audit log API ───────────────────────────────────────────────
+  app.get("/api/self-heal-audit", authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const userId = (req as any).userId as string;
+      if (!(await isIntegrationOwner(userId))) {
+        return res.status(403).json({ error: "Only the account owner can view the self-heal audit log" });
+      }
+      const parsedLimit = parseInt(String(req.query.limit ?? ""), 10);
+      const limit = Number.isNaN(parsedLimit) ? 50 : Math.max(1, Math.min(parsedLimit, 200));
+      const entries = await db
+        .select()
+        .from(schema.selfHealAuditLog)
+        .orderBy(desc(schema.selfHealAuditLog.createdAt))
+        .limit(limit);
+      res.json({ entries });
+    } catch (err) {
+      console.error("[self-heal-audit] GET error:", err);
+      res.status(500).json({ error: "Failed to fetch self-heal audit log" });
+    }
+  });
+
   const httpServer = createServer(app);
   return httpServer;
 }
