@@ -2,6 +2,10 @@ import type { AgentTool, ToolResult, JsonSchema } from "../types";
 import { db } from "../../db";
 import { and, desc, eq, isNotNull } from "drizzle-orm";
 import { openclawBuildLog } from "@shared/schema";
+import {
+  checkCircuitBreaker,
+  recordAutonomousWrite,
+} from "../safeWritePolicy";
 
 // ── Tool resolver injection ───────────────────────────────────────────────────
 // Populated by index.ts after all tools are registered to avoid circular imports.
@@ -40,6 +44,19 @@ async function applyToolCode(
   const applied: string[] = [];
   const warnings: string[] = [];
 
+  // ── Circuit-breaker guard ────────────────────────────────────────────────
+  // build_feature writes are autonomous (LLM-generated), so they count
+  // against the same write budget as apply_code_change.
+  const circuit = checkCircuitBreaker();
+  if (circuit.tripped) {
+    warnings.push(
+      `Circuit breaker tripped (${circuit.count}/10 autonomous writes in the last 60 min). ` +
+      `Disk writes skipped — budget resets at ${circuit.resetAt?.toISOString() ?? "unknown"}. ` +
+      `Ask Jarvis to "reset the write budget" once you have reviewed the recent changes.`
+    );
+    return { applied, warnings };
+  }
+
   const toolFilePath = `server/agent/tools/${featureName}.ts`;
   const routeFilePath = `server/${featureName}Routes.ts`;
 
@@ -47,6 +64,7 @@ async function applyToolCode(
   try {
     await fs.mkdir(path.resolve(process.cwd(), "server/agent/tools"), { recursive: true });
     await fs.writeFile(path.resolve(process.cwd(), toolFilePath), toolCode, "utf8");
+    recordAutonomousWrite();
     applied.push(toolFilePath);
   } catch (err) {
     warnings.push(
@@ -59,6 +77,7 @@ async function applyToolCode(
     try {
       await fs.mkdir(path.resolve(process.cwd(), "server"), { recursive: true });
       await fs.writeFile(path.resolve(process.cwd(), routeFilePath), routeCode, "utf8");
+      recordAutonomousWrite();
       applied.push(routeFilePath);
     } catch (err) {
       warnings.push(
@@ -164,6 +183,7 @@ async function applyToolCode(
 
     if (modified) {
       await fs.writeFile(indexAbsPath, idx, "utf8");
+      recordAutonomousWrite();
       applied.push("server/agent/tools/index.ts");
     } else {
       warnings.push(`index.ts already contains ${actualExportName} entries — no changes made.`);

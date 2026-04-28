@@ -16,47 +16,15 @@ import type { DebugContext } from "@shared/schema";
 import fs from "fs/promises";
 import path from "path";
 import { isIntegrationOwner } from "../../integrationOwner";
-import { desc, and, eq, gte, sql as sqlTag } from "drizzle-orm";
-
-// ── Allow-listed source directories ────────────────────────────────────────────
-// Jarvis can only read files inside these relative directories.
-// Paths outside this list are always denied.
-const ALLOWED_SOURCE_DIRS = [
-  "server",
-  "shared",
-  "app",
-  "components",
-  "hooks",
-  "constants",
-  "lib",
-];
-
-// ── Hard-protected files — never readable or proposable ────────────────────────
-// These files are excluded from proposals (and from reads) to prevent Jarvis
-// from inadvertently modifying its own approval gate, auth system, or
-// deployment pipeline.  Keep this list in sync with codeProposalsRoutes.ts.
-const PROTECTED_FILES = new Set([
-  "server/agent/codeProposalsRoutes.ts",
-  "server/db.ts",
-  "server/auth.ts",
-  "server/routes.ts",
-  "server/agent/harness.ts",
-  "server/integrationOwner.ts",
-  "server/index.ts",
-  "shared/schema.ts",
-]);
+import { desc, and, eq, gte } from "drizzle-orm";
+import {
+  ALLOWED_SOURCE_DIRS,
+  isPathAllowed,
+  isPathAllowedForProposal,
+} from "../safeWritePolicy";
 
 const MAX_FILE_LINES = 600;
 const PROJECT_ROOT = process.cwd();
-
-function isPathAllowed(filePath: string): boolean {
-  const normalised = path.normalize(filePath);
-  if (path.isAbsolute(normalised)) return false;
-  if (normalised.startsWith("..")) return false;
-  if (PROTECTED_FILES.has(normalised)) return false;
-  const firstSegment = normalised.split(path.sep)[0];
-  return ALLOWED_SOURCE_DIRS.includes(firstSegment);
-}
 
 // ── list_source_files ──────────────────────────────────────────────────────────
 
@@ -340,7 +308,10 @@ export const proposeCodeChangeTool: AgentTool = {
     const reason = String(args.reason ?? "").trim();
     const proposedContent = String(args.proposed_content ?? "");
 
-    if (!isPathAllowed(filePath)) {
+    // Proposals write only to the database (never to disk until user approves),
+    // so protected files are allowed here. The approve endpoint enforces a
+    // secondary path check and will refuse to write protected files autonomously.
+    if (!isPathAllowedForProposal(filePath)) {
       return {
         ok: false,
         content: `Access denied: '${filePath}' is outside the allowed source directories. Proposals can only target server/, shared/, app/, components/, hooks/, constants/, or lib/.`,
