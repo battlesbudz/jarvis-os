@@ -14,6 +14,7 @@
 import path from "path";
 import { db } from "../db";
 import { sql } from "drizzle-orm";
+import { getIntegrationOwnerId } from "../integrationOwner";
 
 // ── Allow-listed source directories ──────────────────────────────────────────
 // Jarvis may only read or write files inside these relative directories.
@@ -119,8 +120,10 @@ export function isPathAllowedForProposal(filePath: string): boolean {
 // Rows older than the 60-minute window are pruned on each write to keep the
 // table small.
 
-const CIRCUIT_MAX_WRITES = 10;
-const CIRCUIT_WINDOW_MS  = 60 * 60 * 1000; // 60 minutes
+const CIRCUIT_MAX_WRITES       = 10;
+const CIRCUIT_WINDOW_MS        = 60 * 60 * 1000; // 60 minutes
+/** Send an early-warning notification to the owner when the write count reaches this value. */
+export const CIRCUIT_WARNING_THRESHOLD = 7;
 
 export interface CircuitStatus {
   tripped: boolean;
@@ -164,9 +167,40 @@ export async function recordAutonomousWrite(): Promise<void> {
       )
       DELETE FROM write_budget_log WHERE written_at < ${pruneOlderThan}
     `);
+
+    // Check whether the new count has crossed the warning threshold.
+    // Use >= (not ===) so a concurrent burst that jumps past the exact threshold
+    // value still triggers the alert.  Deduplication (one alert per window) is
+    // tracked by a follow-up task; for now multiple alerts (at 7, 8, 9) are
+    // acceptable and give the owner escalating urgency.
+    const status = await checkCircuitBreaker();
+    if (status.count >= CIRCUIT_WARNING_THRESHOLD && status.count < CIRCUIT_MAX_WRITES) {
+      _sendBudgetWarning(status.count).catch((err) =>
+        console.error("[safeWritePolicy] Failed to send write-budget warning:", err)
+      );
+    }
   } catch (err) {
     console.error("[safeWritePolicy] Failed to record autonomous write in DB:", err);
   }
+}
+
+/**
+ * Fire-and-forget helper — sends an early-warning notification to the owner
+ * when the write count reaches CIRCUIT_WARNING_THRESHOLD.
+ */
+async function _sendBudgetWarning(count: number): Promise<void> {
+  const ownerId = await getIntegrationOwnerId();
+  if (!ownerId) return;
+
+  // Lazy-load the channel registry to avoid a circular import at module load time.
+  const { notifyUser } = await import("../channels/registry");
+  const remaining = CIRCUIT_MAX_WRITES - count;
+  const msg =
+    `⚠️ *Write budget warning* — Jarvis has used ${count}/${CIRCUIT_MAX_WRITES} autonomous writes in the last hour. ` +
+    `Only ${remaining} write${remaining === 1 ? "" : "s"} left before the circuit breaker trips. ` +
+    `Review the audit log or reset the counter if needed.`;
+
+  await notifyUser(ownerId, "general", msg);
 }
 
 /** Return a human-readable description of the current write budget. */
