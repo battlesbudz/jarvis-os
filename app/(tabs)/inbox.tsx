@@ -396,7 +396,7 @@ export default function InboxScreen() {
     }, [refetch, refetchDrafts, refetchDeliverables, refetchAutoHandled, refetchActiveJobs, refetchGut])
   );
 
-  const handleAction = (itemId: string, actionType: string) => {
+  const handleAction = (itemId: string, actionType: string, sourceId?: string) => {
     if (actionType === 'never_again') {
       Alert.alert(
         'Never show again?',
@@ -415,7 +415,28 @@ export default function InboxScreen() {
     }
     if (actionType === 'navigate_self_repair') {
       actionMutation.mutate({ itemId, actionType });
-      router.push({ pathname: '/(tabs)/agents', params: { focus: 'self_repair' } });
+      const params: Record<string, string> = { focus: 'self_repair' };
+      if (sourceId) {
+        // sourceId format: self-repair:<result>:<ts>:<file>
+        // The <ts> may be an ISO timestamp (which itself contains colons).
+        const parts = sourceId.split(':');
+        if (parts.length >= 4 && parts[0] === 'self-repair') {
+          let auditTs: string;
+          let auditFile: string;
+          if (parts[2].includes('T')) {
+            // ISO timestamp spans parts[2], parts[3], parts[4] (e.g. "2024-04-28T12", "30", "45.123Z")
+            auditTs = parts.slice(2, 5).join(':');
+            auditFile = parts.slice(5).join(':');
+          } else {
+            // Numeric Date.now() timestamp
+            auditTs = parts[2];
+            auditFile = parts.slice(3).join(':');
+          }
+          if (auditTs) params.auditTs = auditTs;
+          if (auditFile) params.auditFile = auditFile;
+        }
+      }
+      router.push({ pathname: '/(tabs)/agents', params });
       return;
     }
     actionMutation.mutate({ itemId, actionType });
@@ -475,7 +496,7 @@ export default function InboxScreen() {
                 <Pressable
                   key={i}
                   style={[styles.actionButton, isDismiss && styles.actionButtonDismiss]}
-                  onPress={() => handleAction(item.id, action.actionType)}
+                  onPress={() => handleAction(item.id, action.actionType, item.sourceId)}
                   disabled={actionMutation.isPending}
                 >
                   <Text style={[styles.actionText, isDismiss && styles.actionTextDismiss]}>
