@@ -801,6 +801,21 @@ export async function validateUserIntegrations(userId: string): Promise<void> {
           context: { integration, userId },
           userId,
         });
+
+        // Trigger alert (rate-limited to 1 per capability per hour — same gate as
+        // the normal broken path).  Crashed validators produce opaque error messages
+        // that don't match any known pattern, so we always use the auto-debug path.
+        const rateKey = `${integration}:${userId}`;
+        const last = lastDebugTriggerAt.get(rateKey) ?? 0;
+        if (Date.now() - last > DEBUG_TRIGGER_COOLDOWN_MS) {
+          lastDebugTriggerAt.set(rateKey, Date.now());
+          triggerAutoDebugSession({
+            userId,
+            capability: integration,
+            errorMessage: errMsg,
+            source: `integrationValidator/${integration}`,
+          }).catch((e) => console.error("[IntegrationValidator] auto debug trigger failed:", e));
+        }
       }
     }),
   );
@@ -1038,5 +1053,69 @@ export async function _applyCircuitBreakerForTest(
         errorLogId: errorLogId ?? undefined,
       });
     }
+  }
+}
+
+/**
+ * Mirrors the catch-block inside validateUserIntegrations with fully injectable
+ * side-effect dependencies.  Call this in tests instead of exercising the real
+ * catch block directly (which pulls in live DB and notification wiring).
+ *
+ * Pass `thrownError` as the value that the check() function would have thrown —
+ * it may be any type, mirroring the production `catch (err)` which handles both
+ * `Error` instances and primitive throws via `String(err)`.
+ *
+ * IMPORTANT: This function must remain behaviorally identical to the catch block
+ * inside validateUserIntegrations.  Whenever the production catch block changes,
+ * update this helper to match.
+ *
+ * The function applies the same crash circuit-breaker logic as the catch block:
+ *   streak=1 → "degraded", no alert
+ *   streak≥2 → "broken", cooldown-gated triggerAutoDebugSession
+ */
+export async function _applyCircuitBreakerCrashForTest(
+  userId: string,
+  integration: IntegrationName,
+  thrownError: unknown,
+  deps: _CircuitBreakerDeps,
+): Promise<void> {
+  const failureKey = `${integration}:${userId}`;
+  const errMsg = `Validator crashed: ${thrownError instanceof Error ? thrownError.message : String(thrownError)}`;
+
+  const streak = (consecutiveFailures.get(failureKey) ?? 0) + 1;
+  consecutiveFailures.set(failureKey, streak);
+
+  if (streak < 2) {
+    await deps.writeStatus(userId, integration, { status: "degraded", errorMessage: errMsg });
+    return;
+  }
+
+  await deps.writeStatus(userId, integration, { status: "broken", errorMessage: errMsg });
+  await deps.diagEmit({
+    userId,
+    subsystem: "integration",
+    severity: "error",
+    message: `Integration ${integration} validator crashed: ${errMsg.slice(0, 200)}`,
+    metadata: { integration },
+  });
+
+  await deps.logSystemError({
+    source: `integrationValidator/${integration}`,
+    message: errMsg,
+    level: "error",
+    context: { integration, userId },
+    userId,
+  });
+
+  const rateKey = `${integration}:${userId}`;
+  const last = lastDebugTriggerAt.get(rateKey) ?? 0;
+  if (Date.now() - last > DEBUG_TRIGGER_COOLDOWN_MS) {
+    lastDebugTriggerAt.set(rateKey, Date.now());
+    await deps.triggerAutoDebugSession({
+      userId,
+      capability: integration,
+      errorMessage: errMsg,
+      source: `integrationValidator/${integration}`,
+    });
   }
 }

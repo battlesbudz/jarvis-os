@@ -33,6 +33,7 @@ import {
   _setLastDebugTriggerAtForTest,
   _DEBUG_TRIGGER_COOLDOWN_MS_FOR_TEST,
   _applyCircuitBreakerForTest,
+  _applyCircuitBreakerCrashForTest,
   _checkSystemCredentialForTest,
 } from "../integrationValidator";
 
@@ -41,7 +42,7 @@ import {
 // leak between test cases.
 
 interface StubRecord {
-  writeStatusCalls: Array<{ userId: string; integration: string; status: string }>;
+  writeStatusCalls: Array<{ userId: string; integration: string; status: string; errorMessage?: string }>;
   notifyUserCalls: Array<{ userId: string; type: string; message: string }>;
   diagEmitCalls: number;
   logSystemErrorCalls: number;
@@ -59,7 +60,7 @@ function makeStubs(): { deps: _CircuitBreakerDeps; record: StubRecord } {
 
   const deps: _CircuitBreakerDeps = {
     writeStatus: async (userId, integration, result) => {
-      record.writeStatusCalls.push({ userId, integration, status: result.status });
+      record.writeStatusCalls.push({ userId, integration, status: result.status, errorMessage: result.errorMessage });
     },
     notifyUser: async (userId, type, message) => {
       record.notifyUserCalls.push({ userId, type, message });
@@ -339,6 +340,108 @@ const TEST_INTEGRATION = "google" as const;
       "H: no direct notifications throughout (unknown error stays on auto-debug path)",
     );
     console.log("✓ H: after cooldown expires, a subsequent broken cycle fires a fresh auto-debug session");
+  }
+
+  // ── Test I: Crash path circuit-breaker ────────────────────────────────────
+  // Simulates a check() function that throws (e.g. unexpected runtime error)
+  // and verifies the catch-block applies the same streak/cooldown logic as the
+  // normal broken path.
+
+  // I1: First crash → "degraded", no alert ──────────────────────────────────
+  {
+    _resetConsecutiveFailuresForTest();
+    _resetLastDebugTriggerAtForTest();
+    const { deps, record } = makeStubs();
+
+    await _applyCircuitBreakerCrashForTest(
+      TEST_USER,
+      TEST_INTEGRATION,
+      new Error("network timeout"),
+      deps,
+    );
+
+    assert.equal(record.writeStatusCalls.length, 1, "I1: writeStatus called once on first crash");
+    assert.equal(
+      record.writeStatusCalls[0].status,
+      "degraded",
+      "I1: first crash writes 'degraded'",
+    );
+    assert.equal(
+      record.triggerAutoDebugCalls,
+      0,
+      "I1: no auto-debug session triggered on first crash",
+    );
+    assert.equal(record.notifyUserCalls.length, 0, "I1: no direct notification on first crash");
+    console.log("✓ I1: first validator crash → 'degraded', no alert");
+  }
+
+  // I2: Two consecutive crashes → "broken", auto-debug fires once ───────────
+  {
+    _resetConsecutiveFailuresForTest();
+    _resetLastDebugTriggerAtForTest();
+    const { deps, record } = makeStubs();
+
+    const crashErr = new Error("unexpected null pointer");
+    // First crash — streak=1, degraded
+    await _applyCircuitBreakerCrashForTest(TEST_USER, TEST_INTEGRATION, crashErr, deps);
+    // Second crash — streak=2, broken, alert fires
+    await _applyCircuitBreakerCrashForTest(TEST_USER, TEST_INTEGRATION, crashErr, deps);
+
+    const statuses = record.writeStatusCalls.map((c) => c.status);
+    assert.ok(statuses.includes("degraded"), "I2: first crash wrote 'degraded'");
+    assert.ok(statuses.includes("broken"), "I2: second crash wrote 'broken'");
+    assert.equal(
+      record.triggerAutoDebugCalls,
+      1,
+      "I2: auto-debug session fired exactly once on second crash",
+    );
+    assert.equal(record.notifyUserCalls.length, 0, "I2: crash path uses auto-debug, not direct notify");
+    console.log("✓ I2: two consecutive validator crashes → 'broken' + auto-debug fired once");
+  }
+
+  // I2b: Non-Error thrown value is handled — errMsg uses String() fallback ───
+  {
+    _resetConsecutiveFailuresForTest();
+    _resetLastDebugTriggerAtForTest();
+    const { deps, record } = makeStubs();
+
+    // Throw a plain string (not an Error instance), mirroring e.g. `throw "oops"`
+    await _applyCircuitBreakerCrashForTest(TEST_USER, TEST_INTEGRATION, "plain string thrown", deps);
+    await _applyCircuitBreakerCrashForTest(TEST_USER, TEST_INTEGRATION, "plain string thrown", deps);
+
+    assert.equal(record.writeStatusCalls[1].status, "broken", "I2b: non-Error throw still escalates to broken");
+    assert.ok(
+      record.writeStatusCalls[1].errorMessage?.includes("plain string thrown"),
+      "I2b: String() fallback is used for non-Error thrown values",
+    );
+    assert.equal(record.triggerAutoDebugCalls, 1, "I2b: auto-debug fires on second non-Error crash");
+    console.log("✓ I2b: non-Error thrown values handled correctly via String() fallback");
+  }
+
+  // I3: Cooldown gate — third crash within window fires NO second alert ──────
+  {
+    _resetConsecutiveFailuresForTest();
+    _resetLastDebugTriggerAtForTest();
+    const { deps, record } = makeStubs();
+
+    const crashErr = new Error("database connection lost");
+    // Cycle 1: streak=1 → degraded, no alert
+    await _applyCircuitBreakerCrashForTest(TEST_USER, TEST_INTEGRATION, crashErr, deps);
+    // Cycle 2: streak=2 → broken, auto-debug fires and cooldown timestamp set
+    await _applyCircuitBreakerCrashForTest(TEST_USER, TEST_INTEGRATION, crashErr, deps);
+    // Cycle 3: streak=3, still within cooldown → auto-debug must NOT fire again
+    await _applyCircuitBreakerCrashForTest(TEST_USER, TEST_INTEGRATION, crashErr, deps);
+
+    const brokenStatuses = record.writeStatusCalls.filter((c) => c.status === "broken");
+    assert.ok(brokenStatuses.length >= 2, "I3: 'broken' written on cycles 2 and 3");
+    assert.equal(
+      record.triggerAutoDebugCalls,
+      1,
+      "I3: cooldown gate blocks second auto-debug within the same hour",
+    );
+    console.log(
+      "✓ I3: cooldown gate applies on crash path — repeated crash within 1 h fires only one auto-debug",
+    );
   }
 
   console.log("\nAll circuit-breaker assertions passed. ✓");
