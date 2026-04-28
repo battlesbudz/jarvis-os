@@ -1332,6 +1332,24 @@ export async function ensureTablesExist() {
       ON CONFLICT DO NOTHING
     `).catch(() => {});
 
+    // ── Self-heal audit log — persists audit history across container restarts ─
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS self_heal_audit_log (
+        id              SERIAL PRIMARY KEY,
+        timestamp       VARCHAR(64)  NOT NULL,
+        file            TEXT         NOT NULL,
+        reason          TEXT         NOT NULL DEFAULT '',
+        verified        VARCHAR(256) NOT NULL DEFAULT 'pending',
+        changes_summary VARCHAR(256) NOT NULL DEFAULT '',
+        diff            TEXT         NOT NULL DEFAULT '',
+        created_at      TIMESTAMP    NOT NULL DEFAULT NOW()
+      )
+    `).catch(() => {});
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS self_heal_audit_log_ts_idx
+        ON self_heal_audit_log (timestamp DESC)
+    `).catch(() => {});
+
     console.log("Database tables verified");
   } catch (error) {
     console.error("Failed to ensure database tables exist:", error);

@@ -16,10 +16,18 @@
  *
  * Verification update lines (appended after verification completes):
  *   [VERIFY] 2024-01-01T00:00:00.000Z server/agent/tools/myTool.ts: passed — type-check + tests
+ *
+ * Persistence: every audit entry is also mirrored to the `self_heal_audit_log`
+ * DB table by applyCodeChangeTool.  When the flat file is absent (e.g. after a
+ * container restart), readAuditEntries() rebuilds it automatically from the DB
+ * so audit history is never lost.
  */
 
 import fs from "fs/promises";
 import path from "path";
+import { db } from "../db";
+import { selfHealAuditLog } from "../../shared/schema";
+import { asc } from "drizzle-orm";
 
 const AUDIT_LOG_PATH = path.join(process.cwd(), "server/self-heal-audit.log");
 const SEPARATOR_CHAR = "─";
@@ -105,8 +113,74 @@ function parseAuditLog(raw: string): AuditEntry[] {
 }
 
 /**
+ * Reconstruct the flat audit log file from the DB backup.
+ * Called automatically when the log file is missing (e.g. after a container
+ * restart). Entries are written oldest-first so the file matches the natural
+ * append order.
+ */
+async function restoreFromDB(): Promise<void> {
+  let rows: Array<{
+    timestamp: string;
+    file: string;
+    reason: string;
+    verified: string;
+    changesSummary: string;
+    diff: string;
+  }>;
+  try {
+    rows = await db
+      .select({
+        timestamp: selfHealAuditLog.timestamp,
+        file: selfHealAuditLog.file,
+        reason: selfHealAuditLog.reason,
+        verified: selfHealAuditLog.verified,
+        changesSummary: selfHealAuditLog.changesSummary,
+        diff: selfHealAuditLog.diff,
+      })
+      .from(selfHealAuditLog)
+      .orderBy(asc(selfHealAuditLog.createdAt));
+  } catch {
+    // DB unavailable — nothing to restore
+    return;
+  }
+
+  if (rows.length === 0) return;
+
+  const blocks: string[] = [];
+  for (const row of rows) {
+    // Filter to only +/- lines in case the stored diff has stray content
+    const diffLines = row.diff
+      ? row.diff.split("\n").filter(
+          (l) => l.startsWith("+") || l.startsWith("-") || l.startsWith("…"),
+        )
+      : [];
+
+    const block = [
+      SEPARATOR,
+      `Timestamp : ${row.timestamp}`,
+      `File      : ${row.file}`,
+      `Reason    : ${row.reason}`,
+      `Verified  : ${row.verified}`,
+      `Changes   : ${row.changesSummary}`,
+      "",
+      ...diffLines,
+      "",
+    ].join("\n");
+
+    blocks.push(block);
+  }
+
+  // Ensure the server/ directory exists (it always does, but guard anyway)
+  await fs.mkdir(path.dirname(AUDIT_LOG_PATH), { recursive: true });
+  await fs.writeFile(AUDIT_LOG_PATH, blocks.join(""), "utf-8");
+  console.log(`[selfHealAudit] Restored ${rows.length} audit entries from DB.`);
+}
+
+/**
  * Read and parse the last N audit entries from the audit log.
- * Returns an empty array if the log doesn't exist yet.
+ * If the log file is absent (e.g. after a container restart), it is
+ * automatically rebuilt from the DB backup before parsing.
+ * Returns an empty array if both the file and the DB are empty.
  */
 export async function readAuditEntries(limit = 20): Promise<AuditEntry[]> {
   try {
@@ -115,7 +189,14 @@ export async function readAuditEntries(limit = 20): Promise<AuditEntry[]> {
     return all.slice(0, limit);
   } catch (err: unknown) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-      return [];
+      // Flat file is missing — attempt to restore from DB, then re-read.
+      try {
+        await restoreFromDB();
+        const raw = await fs.readFile(AUDIT_LOG_PATH, "utf-8");
+        return parseAuditLog(raw).slice(0, limit);
+      } catch {
+        return [];
+      }
     }
     throw err;
   }
@@ -128,7 +209,18 @@ export async function countAuditEntries(): Promise<number> {
   try {
     const raw = await fs.readFile(AUDIT_LOG_PATH, "utf-8");
     return parseAuditLog(raw).length;
-  } catch {
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      // Count from DB when flat file is absent
+      try {
+        const rows = await db
+          .select({ id: selfHealAuditLog.id })
+          .from(selfHealAuditLog);
+        return rows.length;
+      } catch {
+        return 0;
+      }
+    }
     return 0;
   }
 }
