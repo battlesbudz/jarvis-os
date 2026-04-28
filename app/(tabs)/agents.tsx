@@ -17,6 +17,7 @@ import {
   KeyboardAvoidingView,
   Image,
   Linking,
+  LayoutChangeEvent,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -1368,55 +1369,80 @@ function SelfRepairAuditModal({
 function SelfRepairAuditCard({
   entry,
   onPress,
+  highlighted = false,
+  onLayout,
 }: {
   entry: AuditEntry;
   onPress: () => void;
+  highlighted?: boolean;
+  onLayout?: (event: LayoutChangeEvent) => void;
 }) {
   const ts = new Date(entry.timestamp).toLocaleString();
   const shortFile = entry.file.split("/").pop() ?? entry.file;
+  const flashAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (!highlighted) return;
+    Animated.sequence([
+      Animated.timing(flashAnim, { toValue: 1, duration: 250, useNativeDriver: false }),
+      Animated.timing(flashAnim, { toValue: 0, duration: 300, useNativeDriver: false }),
+      Animated.timing(flashAnim, { toValue: 1, duration: 250, useNativeDriver: false }),
+      Animated.timing(flashAnim, { toValue: 0, duration: 400, useNativeDriver: false }),
+    ]).start();
+  }, [highlighted]);
+
+  const animatedBg = flashAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [Colors.surface, Colors.primary + "44"],
+  });
+  const animatedBorder = flashAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [Colors.border, Colors.primary],
+  });
 
   return (
-    <TouchableOpacity
-      activeOpacity={0.75}
-      onPress={onPress}
-      style={[styles.jobCard, { backgroundColor: Colors.surface, borderColor: Colors.border }]}
+    <Animated.View
+      onLayout={onLayout}
+      style={[styles.jobCard, { backgroundColor: animatedBg, borderColor: animatedBorder }]}
     >
-      <View style={styles.jobCardHeader}>
-        <View style={[styles.jobIconWrap, { backgroundColor: Colors.primary + "22" }]}>
-          <Ionicons name="construct-outline" size={16} color={Colors.primary} />
+      <TouchableOpacity activeOpacity={0.75} onPress={onPress}>
+        <View style={styles.jobCardHeader}>
+          <View style={[styles.jobIconWrap, { backgroundColor: Colors.primary + "22" }]}>
+            <Ionicons name="construct-outline" size={16} color={Colors.primary} />
+          </View>
+          <View style={styles.jobCardTitle}>
+            <Text style={[styles.jobTitle, { color: Colors.text }]} numberOfLines={1}>
+              {shortFile}
+            </Text>
+            <Text style={[styles.jobAgent, { color: Colors.textSecondary }]} numberOfLines={1}>
+              {entry.reason}
+            </Text>
+          </View>
+          {(() => {
+            const v = (entry.verified ?? "pending").toLowerCase();
+            const passed = v.startsWith("passed");
+            const failed = v.startsWith("failed") || v.startsWith("error");
+            const bg = passed ? "#16a34a22" : failed ? "#dc262622" : "#78716c22";
+            const fg = passed ? "#16a34a" : failed ? "#dc2626" : Colors.textSecondary;
+            const verifyIcons: Record<string, keyof typeof Ionicons.glyphMap> = {
+              passed: "checkmark-circle-outline",
+              failed: "close-circle-outline",
+              pending: "time-outline",
+            };
+            const iconKey = passed ? "passed" : failed ? "failed" : "pending";
+            return (
+              <View style={[styles.coreBadge, { backgroundColor: bg, flexDirection: "row", alignItems: "center", gap: 3 }]}>
+                <Ionicons name={verifyIcons[iconKey]} size={11} color={fg} />
+                <Text style={[styles.coreBadgeText, { color: fg }]}>
+                  {iconKey}
+                </Text>
+              </View>
+            );
+          })()}
         </View>
-        <View style={styles.jobCardTitle}>
-          <Text style={[styles.jobTitle, { color: Colors.text }]} numberOfLines={1}>
-            {shortFile}
-          </Text>
-          <Text style={[styles.jobAgent, { color: Colors.textSecondary }]} numberOfLines={1}>
-            {entry.reason}
-          </Text>
-        </View>
-        {(() => {
-          const v = (entry.verified ?? "pending").toLowerCase();
-          const passed = v.startsWith("passed");
-          const failed = v.startsWith("failed") || v.startsWith("error");
-          const bg = passed ? "#16a34a22" : failed ? "#dc262622" : "#78716c22";
-          const fg = passed ? "#16a34a" : failed ? "#dc2626" : Colors.textSecondary;
-          const verifyIcons: Record<string, keyof typeof Ionicons.glyphMap> = {
-            passed: "checkmark-circle-outline",
-            failed: "close-circle-outline",
-            pending: "time-outline",
-          };
-          const iconKey = passed ? "passed" : failed ? "failed" : "pending";
-          return (
-            <View style={[styles.coreBadge, { backgroundColor: bg, flexDirection: "row", alignItems: "center", gap: 3 }]}>
-              <Ionicons name={verifyIcons[iconKey]} size={11} color={fg} />
-              <Text style={[styles.coreBadgeText, { color: fg }]}>
-                {iconKey}
-              </Text>
-            </View>
-          );
-        })()}
-      </View>
-      <Text style={[styles.jobMeta, { color: Colors.textTertiary }]}>{ts}</Text>
-    </TouchableOpacity>
+        <Text style={[styles.jobMeta, { color: Colors.textTertiary }]}>{ts}</Text>
+      </TouchableOpacity>
+    </Animated.View>
   );
 }
 
@@ -2307,6 +2333,11 @@ export default function AgentsScreen() {
   const [detailTask, setDetailTask] = useState<AgentTask | null>(null);
   const [qualityCheckEnabled, setQualityCheckEnabled] = useState(true);
   const [auditEntry, setAuditEntry] = useState<AuditEntry | null>(null);
+  const [highlightedAuditKey, setHighlightedAuditKey] = useState<string | null>(null);
+  const pendingHighlightKeyRef = useRef<string | null>(null);
+
+  const scrollRef = useRef<ScrollView>(null);
+  const cardLayoutsRef = useRef<Record<string, number>>({});
 
   // Deep-link params: auditTs + auditFile are set when the user taps a
   // self-repair failure notification that includes a gameplan://agents?auditTs=...&auditFile=... link.
@@ -2342,7 +2373,8 @@ export default function AgentsScreen() {
   }, [prefs]);
 
   // When the screen is opened via a deep link (gameplan://agents?auditTs=...&auditFile=...),
-  // find the matching audit entry and open its detail modal automatically.
+  // find the matching audit entry and open its detail modal. The highlight + scroll is deferred
+  // until the modal is dismissed so the user actually sees the animated card.
   useEffect(() => {
     if (!auditTs || !auditData?.entries) return;
     const match = auditData.entries.find(
@@ -2350,8 +2382,49 @@ export default function AgentsScreen() {
         e.timestamp === auditTs &&
         (!auditFile || e.file === auditFile),
     );
-    if (match) setAuditEntry(match);
+    if (match) {
+      const key = `${match.timestamp}|${match.file}`;
+      pendingHighlightKeyRef.current = key;
+      setAuditEntry(match);
+    }
   }, [auditTs, auditFile, auditData]);
+
+  useEffect(() => {
+    if (!highlightedAuditKey) return;
+    let cancelled = false;
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    const tryScroll = (attempts = 0) => {
+      if (cancelled) return;
+      const y = cardLayoutsRef.current[highlightedAuditKey];
+      if (y !== undefined) {
+        scrollRef.current?.scrollTo({ y: Math.max(0, y - 80), animated: true });
+      } else if (attempts < 6) {
+        const t = setTimeout(() => tryScroll(attempts + 1), 150);
+        timers.push(t);
+      }
+    };
+    const t = setTimeout(() => tryScroll(), 200);
+    timers.push(t);
+    return () => {
+      cancelled = true;
+      timers.forEach(clearTimeout);
+    };
+  }, [highlightedAuditKey]);
+
+  function handleAuditCardLayout(ts: string, file: string, event: LayoutChangeEvent) {
+    cardLayoutsRef.current[`${ts}|${file}`] = event.nativeEvent.layout.y;
+  }
+
+  function handleAuditModalClose() {
+    setAuditEntry(null);
+    if (pendingHighlightKeyRef.current) {
+      const key = pendingHighlightKeyRef.current;
+      pendingHighlightKeyRef.current = null;
+      // Reset to null first so repeated deep links always retrigger the effect
+      setHighlightedAuditKey(null);
+      setTimeout(() => setHighlightedAuditKey(key), 0);
+    }
+  }
 
   const prefMutation = useMutation({
     mutationFn: (value: boolean) =>
@@ -2460,6 +2533,7 @@ export default function AgentsScreen() {
         </View>
       ) : (
         <ScrollView
+          ref={scrollRef}
           style={styles.list}
           contentContainerStyle={{ padding: 16, paddingBottom: bottomPad + 100 }}
           refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor={Colors.primary} />}
@@ -2564,6 +2638,8 @@ export default function AgentsScreen() {
                   key={`${entry.timestamp}-${idx}`}
                   entry={entry}
                   onPress={() => setAuditEntry(entry)}
+                  highlighted={highlightedAuditKey === `${entry.timestamp}|${entry.file}`}
+                  onLayout={(e) => handleAuditCardLayout(entry.timestamp, entry.file, e)}
                 />
               ))}
             </>
@@ -2617,7 +2693,7 @@ export default function AgentsScreen() {
         onToggle={(a) => toggleMutation.mutate({ id: a.id, enable: a.isActive !== 1 })}
       />
       <TaskDetailSheet task={detailTask} onClose={() => setDetailTask(null)} />
-      <SelfRepairAuditModal entry={auditEntry} onClose={() => setAuditEntry(null)} />
+      <SelfRepairAuditModal entry={auditEntry} onClose={handleAuditModalClose} />
     </View>
   );
 }
