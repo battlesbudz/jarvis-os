@@ -17,6 +17,7 @@ import { registerSlackWebhook } from "./channels/slackWebhook";
 import { seedAllSessions } from "./channels/sessionStore";
 import { startDaemonBridge } from "./daemon/bridge";
 import { bootAllBots as bootDiscordBots, bootSharedBot } from "./discord/manager";
+import { pruneAuditLogArchivesOnStartup } from "./agent/tools/applyCodeChangeTool";
 import { telegramLinks, inboxItems } from "@shared/schema";
 import { eq, and } from "drizzle-orm";
 import * as fs from "fs";
@@ -414,6 +415,10 @@ function setupErrorHandler(app: express.Application) {
 
   initChannels();
   startDaemonBridge(server);
+
+  // One-time cleanup: remove excess audit log archives that built up before
+  // auto-pruning was added (non-blocking, errors are swallowed inside helper).
+  pruneAuditLogArchivesOnStartup().catch(() => {});
 
   startScheduler();
   startTriageRunner();
