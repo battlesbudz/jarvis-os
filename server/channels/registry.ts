@@ -21,6 +21,13 @@ export function listChannels(): Channel[] {
 
 const DEFAULT_FALLBACK: ChannelName[] = ["telegram", "in_app"];
 
+/**
+ * Sentinel stored in channel_preferences.channels to mean "user has explicitly
+ * muted this notification type — do not deliver, even via fallback".
+ * Distinct from an absent row (never configured → use DEFAULT_FALLBACK).
+ */
+export const MUTE_SENTINEL = "__muted__";
+
 export async function getActiveChannelsFor(
   userId: string,
   notificationType: NotificationType,
@@ -33,11 +40,19 @@ export async function getActiveChannelsFor(
         eq(channelPreferences.notificationType, notificationType),
       ))
       .limit(1);
-    const prefs = rows[0]?.channels as ChannelName[] | undefined;
-    if (prefs && prefs.length > 0) return prefs;
+    const row = rows[0];
+    if (row) {
+      const prefs = row.channels as string[] | undefined;
+      // Explicit mute sentinel — user opted out; return empty so notifyUser skips delivery
+      if (prefs && prefs.includes(MUTE_SENTINEL)) return [];
+      // Explicit non-empty channel selection
+      if (prefs && prefs.length > 0) return prefs as ChannelName[];
+      // Row exists but channels is [] — treated the same as "no row" (fallback)
+    }
   } catch (err) {
     console.error("[channels] preference lookup failed:", err);
   }
+  // No row (or row with empty channels) → use fallback
   return DEFAULT_FALLBACK;
 }
 
@@ -126,6 +141,8 @@ export async function notifyUser(
   opts: ChannelSendOpts = {},
 ): Promise<{ channel: ChannelName; result: ChannelSendResult }[]> {
   const targets = await getActiveChannelsFor(userId, notificationType);
+  // Empty targets means the user explicitly muted this type — skip delivery and fallback
+  if (targets.length === 0) return [];
   const results = await Promise.all(
     targets.map((name) => trySendOnChannel(userId, name, text, opts, notificationType)),
   );

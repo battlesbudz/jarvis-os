@@ -29,6 +29,7 @@ import {
   recordAutonomousWrite,
 } from "../safeWritePolicy";
 import { proposeCodeChangeTool } from "./selfEditTools";
+import { notifyUser } from "../../channels/registry";
 
 const PROJECT_ROOT   = process.cwd();
 const AUDIT_LOG_PATH = path.join(PROJECT_ROOT, "server/self-heal-audit.log");
@@ -304,6 +305,13 @@ export const applyCodeChangeTool: AgentTool = {
 
     const diffLines = computeSimpleDiff(originalContent, newContent);
     const changeSummary = diffLines[0] ?? "unknown";
+
+    // ── Self-repair notification (fire-and-forget, non-blocking) ─────────────
+    const notifyText =
+      `[Self-repair] Jarvis updated ${filePath}\n` +
+      `Change: ${changeSummary}\n` +
+      `Reason: ${reason}`;
+    notifyUser(ctx.userId, "self_repair", notifyText).catch(() => {});
 
     return {
       ok: true,

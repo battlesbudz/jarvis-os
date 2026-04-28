@@ -1283,9 +1283,13 @@ export default function ProfileScreen() {
     setDiscordWorkspaceBusy(false);
   }, [loadChannels]);
 
+  const MUTE_SENTINEL = '__muted__';
+
   const handleTogglePreference = useCallback(async (notificationType: string, channel: string) => {
     if (!channelData) return;
-    const current = channelData.preferences[notificationType] || ['telegram', 'in_app'];
+    const storedPref = channelData.preferences[notificationType] || [];
+    if (storedPref.includes(MUTE_SENTINEL)) return; // cannot toggle channels while muted
+    const current = storedPref.length > 0 ? storedPref : ['telegram', 'in_app'];
     const next = current.includes(channel)
       ? current.filter(c => c !== channel)
       : [...current, channel];
@@ -1300,6 +1304,26 @@ export default function ProfileScreen() {
       });
     } catch (err) {
       console.error('[channels] preference toggle failed:', err);
+      await loadChannels();
+    }
+  }, [channelData, loadChannels]);
+
+  const handleMuteToggle = useCallback(async (notificationType: string) => {
+    if (!channelData) return;
+    const storedPref = channelData.preferences[notificationType] || [];
+    const isMuted = storedPref.includes(MUTE_SENTINEL);
+    const next = isMuted ? [] : [MUTE_SENTINEL];
+    setChannelData({
+      ...channelData,
+      preferences: { ...channelData.preferences, [notificationType]: next },
+    });
+    try {
+      await apiRequest('PUT', '/api/channels/preferences', {
+        notificationType,
+        channels: next,
+      });
+    } catch (err) {
+      console.error('[channels] mute toggle failed:', err);
       await loadChannels();
     }
   }, [channelData, loadChannels]);
@@ -3526,8 +3550,10 @@ export default function ProfileScreen() {
               </View>
               {channelData.notificationTypes.map((nt) => {
                 const prefChannels = channelData.preferences[nt] || [];
-                const selected = new Set(prefChannels.length > 0 ? prefChannels : ['telegram']);
-                const usingDefault = prefChannels.length === 0;
+                const isMuted = prefChannels.length === 1 && prefChannels[0] === MUTE_SENTINEL;
+                const activeChannels = isMuted ? [] : prefChannels;
+                const selected = new Set(activeChannels.length > 0 ? activeChannels : ['telegram']);
+                const usingDefault = !isMuted && activeChannels.length === 0;
 
                 const NICE: Record<string, { label: string; desc: string }> = {
                   morning_briefing: { label: 'Morning briefing', desc: 'Daily plan summary sent each morning' },
@@ -3538,18 +3564,19 @@ export default function ProfileScreen() {
                   weekly_planning:  { label: 'Weekly planning',  desc: 'Sunday pattern insights and week preview' },
                   approval_request: { label: 'Approval requests', desc: 'Deliverables from Jarvis waiting for review' },
                   general:          { label: 'General messages', desc: 'Curiosity questions and miscellaneous nudges' },
+                  self_repair:      { label: 'Self-repair alerts', desc: 'Notified whenever Jarvis autonomously fixes a file' },
                 };
 
                 const info = NICE[nt] || { label: nt, desc: '' };
 
-                const hasNoActiveChannel = prefChannels.length > 0 &&
-                  !prefChannels.some(ch => ch === 'in_app' || channelData.connected[ch]);
+                const hasNoActiveChannel = !isMuted && activeChannels.length > 0 &&
+                  !activeChannels.some((ch: string) => ch === 'in_app' || channelData.connected[ch]);
 
                 return (
                   <View key={nt} style={{ paddingHorizontal: 16, paddingVertical: 12, borderTopWidth: 1, borderTopColor: Colors.border }}>
                     <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: 8 }}>
                       <View style={{ flex: 1 }}>
-                        <Text style={{ fontSize: 13, fontFamily: 'Inter_500Medium', color: Colors.text }}>
+                        <Text style={{ fontSize: 13, fontFamily: 'Inter_500Medium', color: isMuted ? Colors.textTertiary : Colors.text }}>
                           {info.label}
                         </Text>
                         {info.desc ? (
@@ -3558,6 +3585,12 @@ export default function ProfileScreen() {
                           </Text>
                         ) : null}
                       </View>
+                      {isMuted && (
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: Colors.border, paddingHorizontal: 7, paddingVertical: 3, borderRadius: 10, marginLeft: 8 }}>
+                          <Ionicons name="notifications-off-outline" size={11} color={Colors.textTertiary} />
+                          <Text style={{ fontSize: 10, fontFamily: 'Inter_500Medium', color: Colors.textTertiary }}>Muted</Text>
+                        </View>
+                      )}
                       {hasNoActiveChannel && (
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: '#FEF3C7', paddingHorizontal: 7, paddingVertical: 3, borderRadius: 10, marginLeft: 8 }}>
                           <Ionicons name="warning-outline" size={11} color="#D97706" />
@@ -3569,11 +3602,22 @@ export default function ProfileScreen() {
                           <Text style={{ fontSize: 10, fontFamily: 'Inter_400Regular', color: Colors.textTertiary }}>default</Text>
                         </View>
                       )}
+                      <Pressable
+                        onPress={() => handleMuteToggle(nt)}
+                        style={{ marginLeft: 6, padding: 3 }}
+                        hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                      >
+                        <Ionicons
+                          name={isMuted ? 'notifications-outline' : 'notifications-off-outline'}
+                          size={15}
+                          color={isMuted ? Colors.accent : Colors.textTertiary}
+                        />
+                      </Pressable>
                     </View>
-                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, opacity: isMuted ? 0.35 : 1 }}>
                       {(['in_app', 'telegram', 'slack', 'discord', 'whatsapp', 'daemon'] as const).map((ch) => {
                         const connected = ch === 'in_app' ? true : !!channelData.connected[ch];
-                        const isSelected = selected.has(ch) && !usingDefault;
+                        const isSelected = !isMuted && selected.has(ch) && !usingDefault;
                         const isDefaultSelected = usingDefault && (ch === 'telegram' || ch === 'in_app');
                         const LABELS: Record<string, string> = {
                           in_app: 'In-App', telegram: 'Telegram', whatsapp: 'WhatsApp', slack: 'Slack',
@@ -3583,10 +3627,10 @@ export default function ProfileScreen() {
                           <Pressable
                             key={ch}
                             onPress={() => {
-                              if (!connected) return;
+                              if (!connected || isMuted) return;
                               handleTogglePreference(nt, ch);
                             }}
-                            disabled={!connected}
+                            disabled={!connected || isMuted}
                             style={{
                               paddingHorizontal: 10,
                               paddingVertical: 5,
