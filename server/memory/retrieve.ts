@@ -61,13 +61,20 @@ export async function embedText(text: string): Promise<number[] | null> {
   }
 }
 
-export async function backfillEmbedding(memoryId: string, content: string): Promise<void> {
+/**
+ * Generate and persist an embedding vector for the given memory row.
+ * Returns true if the embedding was written, false if it was skipped
+ * (endpoint unavailable) or if the DB write failed.
+ */
+export async function backfillEmbedding(memoryId: string, content: string): Promise<boolean> {
   const v = await embedText(content);
-  if (!v) return;
+  if (!v) return false;
   try {
     await db.execute(sql`UPDATE user_memories SET embedding = ${JSON.stringify(v)}::jsonb WHERE id = ${memoryId}`);
+    return true;
   } catch (err) {
     console.error("[MemoryRetrieve] backfillEmbedding failed:", err);
+    return false;
   }
 }
 

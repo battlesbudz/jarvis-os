@@ -14,6 +14,7 @@ import { postToDiscordChannel } from './discord/manager';
 import { DIGEST_CHANNEL_KEY } from './discord/workspace';
 import { getUserDriveSettings } from './driveRoutes';
 import { createDriveTextFile } from './integrations/googleDrive';
+import { runBackfillEmbeddings } from './jobs/backfillEmbeddings';
 
 // ---------------------------------------------------------------------------
 // Retention windows — edit these constants to tune how long high-growth logs
@@ -290,6 +291,17 @@ export function startScheduler() {
       cleanUpOldActionLogs();
     }
 
+    // Daily 06:00 — backfill embedding vectors for any user_memories rows that
+    // still have embedding IS NULL.  The job is incremental (batched) and
+    // aborts early if the embeddings endpoint is unavailable, so it is safe to
+    // run every day without risk of overwhelming the API.
+    if (h === 6 && m === 0) {
+      console.log('[Scheduler] Running nightly embedding backfill...');
+      runBackfillEmbeddings().catch((err) =>
+        console.error('[Scheduler] Embedding backfill failed:', err),
+      );
+    }
+
     // Discord channel schedules — check every minute
     await runDiscordSchedules(now);
 
@@ -298,7 +310,7 @@ export function startScheduler() {
 
   }, 60 * 1000);
 
-  console.log('[Scheduler] Started — morning plan 7:00 AM daily, weekly patterns Sunday 3:00 AM, session cleanup 4:00 AM daily, memory TTL cleanup 4:30 AM daily, interaction log cleanup 5:00 AM daily, action log cleanup 5:15 AM daily, Discord schedules every minute');
+  console.log('[Scheduler] Started — morning plan 7:00 AM daily, weekly patterns Sunday 3:00 AM, session cleanup 4:00 AM daily, memory TTL cleanup 4:30 AM daily, interaction log cleanup 5:00 AM daily, action log cleanup 5:15 AM daily, embedding backfill 6:00 AM daily, Discord schedules every minute');
 }
 
 /**
