@@ -47,6 +47,8 @@ export interface ChannelSendOpts {
   notificationType?: NotificationType;
   buttons?: { text: string; callbackData: string }[];
   threadKey?: string;
+  /** Gate ID for approval_request notifications — included in the Review action payload. */
+  gateId?: string;
   /**
    * When true, Discord delivery is skipped if the user sent a Discord message
    * within the last 3 minutes (they are actively chatting).  The notifyUser

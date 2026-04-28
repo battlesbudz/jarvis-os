@@ -216,7 +216,7 @@ async function runApprovalFlow(
       toolName: ctx.toolName,
       toolArgs: ctx.params,
       description: approval.description,
-      ttlMs: approval.timeoutMs ?? 10 * 60 * 1000,
+      ttlMs: approval.timeoutMs,
       initiatedBy: ctx.initiatedBy,
     });
 
@@ -238,8 +238,8 @@ async function runApprovalFlow(
       const { inAppChannel } = await import("../channels/inAppChannel");
       await inAppChannel.sendMessage(
         userId,
-        `🔐 **Approval Required**\nAgent **${agentName}** wants to run **${ctx.toolName}**.\nApprove or reject in the Agents → Approvals tab.\n\nGate ID: \`${gate.id}\``,
-        { notificationType: "approval_request" },
+        `🔐 **Approval Required**\nAgent **${agentName}** wants to run **${ctx.toolName}**.\nTap **Review →** below to approve or decline in your inbox.\n\nGate ID: \`${gate.id}\``,
+        { notificationType: "approval_request", gateId: gate.id },
       );
     } catch {
       /* non-blocking: gate still exists even if notification fails */

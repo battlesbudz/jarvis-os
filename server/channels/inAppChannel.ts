@@ -10,7 +10,7 @@ const NOTIFICATION_SUBJECTS: Record<string, string> = {
   evening_wrap: "Evening wrap-up",
   commitment_check: "Commitment check",
   weekly_planning: "Weekly planning",
-  approval_request: "Approval request",
+  approval_request: "Notification",
   dream_insight: "Jarvis dreamed about you",
   general: "Jarvis notification",
 };
@@ -41,6 +41,13 @@ export const inAppChannel: Channel = {
       }
       const sourceId = `in_app:${notifType}:${Date.now()}:${Math.random().toString(36).slice(2, 7)}`;
       const subject = NOTIFICATION_SUBJECTS[notifType] ?? "Jarvis notification";
+      const suggestedActions: { label: string; actionType: string; payload?: Record<string, unknown> }[] =
+        notifType === "approval_request" && opts.gateId
+          ? [
+              { label: "Review →", actionType: "review_approval", payload: { gateId: opts.gateId } },
+              { label: "Dismiss", actionType: "dismiss" },
+            ]
+          : [{ label: "Dismiss", actionType: "dismiss" }];
       await db.insert(inboxItems).values({
         userId,
         sourceType: "other",
@@ -48,7 +55,7 @@ export const inAppChannel: Channel = {
         subject,
         snippet: processedText.slice(0, 600),
         jarvisReason: `Notification (${notifType})`,
-        suggestedActions: [{ label: "Dismiss", actionType: "dismiss" }],
+        suggestedActions,
         status: "pending",
       }).onConflictDoNothing();
       return { ok: true, messageId: sourceId };
