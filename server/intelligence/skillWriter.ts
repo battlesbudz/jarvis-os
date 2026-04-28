@@ -289,6 +289,19 @@ Reply with ONLY valid JSON.`;
 
   invalidateSkillCache(userId);
   console.log(`[SkillWriter] crystallised skill "${skill.name}" for user ${userId} (pattern: ${patternId})`);
+
+  // HOT memory promotion — distil the crystallised lesson as a single bullet
+  // into MEMORY.md so the agent always carries it as a high-priority reminder.
+  try {
+    const { writeWorkspaceFile } = await import("../workspace/loader");
+    const ts = new Date().toISOString().slice(0, 10);
+    const bullet = `- [${ts}] ${skill.name}: ${skill.description}`;
+    await writeWorkspaceFile("memory", bullet, "append");
+    console.log(`[SkillWriter] promoted lesson to MEMORY.md: "${skill.name}"`);
+  } catch (err) {
+    // Non-fatal — HOT memory promotion is best-effort
+    console.error("[SkillWriter] MEMORY.md promotion failed (non-fatal):", err);
+  }
 }
 
 // ── Hot-reload watcher ───────────────────────────────────────────────────────

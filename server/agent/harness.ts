@@ -238,10 +238,31 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
 
   const channel = context.channel || "Agent";
 
+  // ── Inject workspace context into system prompt ────────────────────────────
+  // Load SOUL.md, AGENTS.md, and MEMORY.md from ~/.jarvis/workspace/ and
+  // prepend them to the first system message under a "Workspace Instructions"
+  // heading. This runs before all other injections so workspace rules take
+  // highest precedence.
+  let messages = opts.messages;
+  try {
+    const { getWorkspaceContext } = await import("../workspace/loader");
+    const workspaceBlock = await getWorkspaceContext();
+    if (workspaceBlock) {
+      messages = messages.map((m, i) => {
+        if (i === 0 && m.role === "system") {
+          return { ...m, content: workspaceBlock + (m.content ?? "") };
+        }
+        return m;
+      });
+      console.log(`[${channel}/Harness] workspace context injected`);
+    }
+  } catch {
+    // Best-effort — never block an agent run
+  }
+
   // ── Inject user skills into system prompt ──────────────────────────────────
   // Load active skill files for this user and append their instructions to the
   // first system message so the agent follows learnt behaviour patterns.
-  let messages = opts.messages;
   if (context.userId) {
     try {
       const { loadUserSkills } = await import("../intelligence/skillWriter");

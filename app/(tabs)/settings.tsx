@@ -542,6 +542,46 @@ export default function SettingsScreen() {
   const subsystemRequestSeqRef = useRef(0);
   const [subsystemEventsLastUpdated, setSubsystemEventsLastUpdated] = useState<Date | null>(null);
 
+  // ── Workspace Files ──
+  const [workspaceSoul, setWorkspaceSoul] = useState('');
+  const [workspaceAgents, setWorkspaceAgents] = useState('');
+  const [workspaceMemory, setWorkspaceMemory] = useState('');
+  const [workspaceExpanded, setWorkspaceExpanded] = useState<Record<string, boolean>>({});
+  const [workspaceSaving, setWorkspaceSaving] = useState<Record<string, boolean>>({});
+  const [workspaceLoading, setWorkspaceLoading] = useState(false);
+  const [workspaceIsOwner, setWorkspaceIsOwner] = useState(false);
+
+  const loadWorkspaceFiles = useCallback(async () => {
+    setWorkspaceLoading(true);
+    try {
+      const [soulRes, agentsRes, memoryRes] = await Promise.all([
+        apiRequest('GET', '/api/workspace/soul'),
+        apiRequest('GET', '/api/workspace/agents'),
+        apiRequest('GET', '/api/workspace/memory'),
+      ]);
+      if (soulRes.status === 403 || agentsRes.status === 403 || memoryRes.status === 403) {
+        setWorkspaceIsOwner(false);
+      } else {
+        setWorkspaceIsOwner(true);
+        if (soulRes.ok) { const d = await soulRes.json(); setWorkspaceSoul(d.content ?? ''); }
+        if (agentsRes.ok) { const d = await agentsRes.json(); setWorkspaceAgents(d.content ?? ''); }
+        if (memoryRes.ok) { const d = await memoryRes.json(); setWorkspaceMemory(d.content ?? ''); }
+      }
+    } catch {}
+    setWorkspaceLoading(false);
+  }, []);
+
+  const saveWorkspaceFile = useCallback(async (key: string, content: string) => {
+    setWorkspaceSaving(prev => ({ ...prev, [key]: true }));
+    try {
+      await apiRequest('POST', `/api/workspace/${key}`, { content, mode: 'overwrite' });
+      if (key === 'soul') setWorkspaceSoul(content);
+      if (key === 'agents') setWorkspaceAgents(content);
+      if (key === 'memory') setWorkspaceMemory(content);
+    } catch {}
+    setWorkspaceSaving(prev => ({ ...prev, [key]: false }));
+  }, []);
+
   const loadHealth = useCallback(async () => {
     setHealthLoading(true);
     setHealthError(false);
@@ -990,13 +1030,14 @@ export default function SettingsScreen() {
     loadHealth();
     loadMcpServers();
     loadMcpServerKey();
+    loadWorkspaceFiles();
     return () => {
       if (telegramPollRef.current) {
         clearInterval(telegramPollRef.current);
         telegramPollRef.current = null;
       }
     };
-  }, [loadAll, loadNervousSystem, loadThreatLog, loadBuildHistory, loadHealth, loadMcpServers, loadMcpServerKey]));
+  }, [loadAll, loadNervousSystem, loadThreatLog, loadBuildHistory, loadHealth, loadMcpServers, loadMcpServerKey, loadWorkspaceFiles]));
 
   useEffect(() => {
     return () => {
@@ -2948,6 +2989,103 @@ export default function SettingsScreen() {
             <View style={drStyles.emptyHint}>
               <Text style={drStyles.emptyHintText}>Tap Run to check your Jarvis configuration</Text>
             </View>
+          )}
+        </View>
+        </ErrorBoundary>
+
+        <ErrorBoundary FallbackComponent={SectionFallback}>
+        <SectionHeader label="WORKSPACE FILES" accent="#8B5CF6" />
+        <View style={[styles.card, { gap: 0 }]}>
+          {workspaceLoading ? (
+            <View style={{ padding: 20, alignItems: 'center' }}>
+              <ActivityIndicator size="small" color="#8B5CF6" />
+            </View>
+          ) : !workspaceIsOwner ? (
+            <View style={{ padding: 16 }}>
+              <Text style={{ color: Colors.textSecondary, fontSize: 13, fontFamily: 'Inter_400Regular', textAlign: 'center' }}>
+                Workspace files are only accessible to the account owner.
+              </Text>
+            </View>
+          ) : (
+            <>
+              <View style={{ padding: 12, borderBottomWidth: 1, borderBottomColor: Colors.border }}>
+                <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, lineHeight: 17 }}>
+                  Plain-text files that compound over time — injected into every Jarvis session.
+                </Text>
+              </View>
+              {([
+                { key: 'soul', label: 'SOUL.md', icon: 'sparkles-outline' as const, desc: 'Persona & standing character instructions', value: workspaceSoul, setter: setWorkspaceSoul },
+                { key: 'agents', label: 'AGENTS.md', icon: 'git-branch-outline' as const, desc: 'Operating principles & agent behaviour rules', value: workspaceAgents, setter: setWorkspaceAgents },
+                { key: 'memory', label: 'MEMORY.md', icon: 'flash-outline' as const, desc: 'HOT memory — always loaded, auto-updated by agent', value: workspaceMemory, setter: setWorkspaceMemory },
+              ] as const).map(({ key, label, icon, desc, value, setter }) => {
+                const expanded = !!workspaceExpanded[key];
+                const saving = !!workspaceSaving[key];
+                return (
+                  <View key={key} style={{ borderBottomWidth: 1, borderBottomColor: Colors.border }}>
+                    <Pressable
+                      style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 12, gap: 10 }}
+                      onPress={() => {
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                        setWorkspaceExpanded(prev => ({ ...prev, [key]: !prev[key] }));
+                      }}
+                    >
+                      <Ionicons name={icon} size={16} color="#8B5CF6" />
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: Colors.text }}>{label}</Text>
+                        <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: Colors.textTertiary }}>{desc}</Text>
+                      </View>
+                      <Ionicons name={expanded ? 'chevron-up' : 'chevron-down'} size={14} color={Colors.textTertiary} />
+                    </Pressable>
+                    {expanded && (
+                      <View style={{ paddingHorizontal: 14, paddingBottom: 14, gap: 8 }}>
+                        <TextInput
+                          value={value}
+                          onChangeText={setter}
+                          multiline
+                          style={{
+                            backgroundColor: Colors.surfaceAlt,
+                            borderRadius: 8,
+                            borderWidth: 1,
+                            borderColor: Colors.border,
+                            padding: 10,
+                            fontSize: 12,
+                            fontFamily: 'Inter_400Regular',
+                            color: Colors.text,
+                            minHeight: 120,
+                            textAlignVertical: 'top',
+                          }}
+                          placeholderTextColor={Colors.textTertiary}
+                          placeholder={`Edit ${label}...`}
+                        />
+                        <Pressable
+                          style={[{
+                            backgroundColor: '#8B5CF6',
+                            borderRadius: 8,
+                            paddingVertical: 9,
+                            paddingHorizontal: 16,
+                            alignSelf: 'flex-end',
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            gap: 6,
+                          }, saving && { opacity: 0.6 }]}
+                          onPress={() => saveWorkspaceFile(key, value)}
+                          disabled={saving}
+                        >
+                          {saving ? (
+                            <ActivityIndicator size="small" color="#fff" />
+                          ) : (
+                            <Ionicons name="checkmark" size={14} color="#fff" />
+                          )}
+                          <Text style={{ color: '#fff', fontSize: 13, fontFamily: 'Inter_600SemiBold' }}>
+                            {saving ? 'Saving…' : 'Save'}
+                          </Text>
+                        </Pressable>
+                      </View>
+                    )}
+                  </View>
+                );
+              })}
+            </>
           )}
         </View>
         </ErrorBoundary>
