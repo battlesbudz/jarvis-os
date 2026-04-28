@@ -170,17 +170,70 @@ export async function recordAutonomousWrite(): Promise<void> {
 
     // Check whether the new count has crossed the warning threshold.
     // Use >= (not ===) so a concurrent burst that jumps past the exact threshold
-    // value still triggers the alert.  Deduplication (one alert per window) is
-    // tracked by a follow-up task; for now multiple alerts (at 7, 8, 9) are
-    // acceptable and give the owner escalating urgency.
+    // still triggers the alert.  Deduplication (one alert per 60-minute window)
+    // is enforced via a conditional UPDATE on the singleton write_budget_warnings
+    // row, which takes a Postgres row-level lock — safe under concurrent writes.
     const status = await checkCircuitBreaker();
     if (status.count >= CIRCUIT_WARNING_THRESHOLD && status.count < CIRCUIT_MAX_WRITES) {
-      _sendBudgetWarning(status.count).catch((err) =>
+      _maybeSendBudgetWarning(status.count).catch((err) =>
         console.error("[safeWritePolicy] Failed to send write-budget warning:", err)
       );
     }
   } catch (err) {
     console.error("[safeWritePolicy] Failed to record autonomous write in DB:", err);
+  }
+}
+
+/**
+ * Attempt to claim the "warning slot" for the current 60-minute window.
+ *
+ * Uses a single-row UPDATE with a Postgres row-level lock so concurrent
+ * callers serialize: only the first one whose UPDATE satisfies the WHERE
+ * clause (warned_at < windowStart) will get rowCount > 0 and proceed to send
+ * the notification.  All subsequent concurrent callers see the updated row
+ * (warned_at = NOW()) and return false — no duplicate notifications.
+ *
+ * This is safe at Postgres's default READ COMMITTED isolation because the row
+ * lock acquired by the UPDATE prevents a second caller from evaluating the
+ * WHERE clause against a stale snapshot.
+ *
+ * Returns true if this caller won the slot, false if a warning was already
+ * dispatched in this window.
+ */
+async function _claimWarningSlot(): Promise<boolean> {
+  const windowStart = new Date(Date.now() - CIRCUIT_WINDOW_MS);
+  // UPDATE the singleton row only when no warning has been sent in this window.
+  // The row-level lock makes this race-condition-safe under concurrent writes.
+  const result = await db.execute(sql`
+    UPDATE write_budget_warnings
+    SET    warned_at = NOW()
+    WHERE  id = 1 AND warned_at < ${windowStart}
+    RETURNING id
+  `);
+  return (result.rowCount ?? 0) > 0;
+}
+
+/**
+ * Deduplication wrapper — sends a budget warning only if no warning has
+ * already been dispatched in the current 60-minute window.
+ *
+ * If notification delivery fails, the slot is rolled back so the next write
+ * that crosses the threshold can retry sending the warning.
+ */
+async function _maybeSendBudgetWarning(count: number): Promise<void> {
+  const claimed = await _claimWarningSlot();
+  if (!claimed) return; // Another concurrent call already sent the warning.
+  try {
+    await _sendBudgetWarning(count);
+  } catch (err) {
+    // Delivery failed — reset the slot so a subsequent write in this window
+    // can retry the notification rather than silently dropping it for 60 min.
+    await db
+      .execute(sql`UPDATE write_budget_warnings SET warned_at = '1970-01-01' WHERE id = 1`)
+      .catch((resetErr) =>
+        console.error("[safeWritePolicy] Failed to reset warning slot after delivery failure:", resetErr)
+      );
+    throw err;
   }
 }
 
@@ -220,6 +273,11 @@ export async function writeBudgetSummary(): Promise<string> {
 export async function resetCircuitBreaker(): Promise<void> {
   try {
     await db.execute(sql`DELETE FROM write_budget_log`);
+    // Reset the warning deduplication state so a fresh warning can be sent
+    // if autonomous writes ramp up again after this manual reset.
+    await db.execute(sql`
+      UPDATE write_budget_warnings SET warned_at = '1970-01-01' WHERE id = 1
+    `);
   } catch (err) {
     console.error("[safeWritePolicy] Failed to reset write_budget_log:", err);
   }

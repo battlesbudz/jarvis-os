@@ -1315,6 +1315,23 @@ export async function ensureTablesExist() {
         ON write_budget_log (written_at DESC)
     `).catch(() => {});
 
+    // ── Write-budget warning deduplication — one alert per 60-minute window ──
+    // Single-row state table (id always = 1).  The UPDATE-based claim in
+    // safeWritePolicy.ts takes a row-level lock, making deduplication safe
+    // under concurrent writes at Postgres's default READ COMMITTED isolation.
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS write_budget_warnings (
+        id        INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+        warned_at TIMESTAMP NOT NULL DEFAULT '1970-01-01'
+      )
+    `).catch(() => {});
+    // Ensure the singleton row exists (idempotent on restart).
+    await db.execute(sql`
+      INSERT INTO write_budget_warnings (id, warned_at)
+      VALUES (1, '1970-01-01')
+      ON CONFLICT DO NOTHING
+    `).catch(() => {});
+
     console.log("Database tables verified");
   } catch (error) {
     console.error("Failed to ensure database tables exist:", error);
