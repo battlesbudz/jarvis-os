@@ -597,6 +597,14 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
     const buildPrompt = userText;
     const buildInput: Record<string, unknown> = { originChannel: channelName };
     if (discordChannelId) buildInput.originDiscordChannelId = discordChannelId;
+    // Carry the last 6 messages (stored newest-first) into the job so the build
+    // agent can understand follow-up requests like "now add error handling".
+    const recentForBuild = chatMessages
+      .slice(0, 6)
+      .reverse()
+      .map((m: { role: string; content: string }) => `${m.role === "assistant" ? "Assistant" : "User"}: ${m.content}`)
+      .join("\n");
+    if (recentForBuild) buildInput.conversationContext = recentForBuild;
     try {
       const jobId = await submitAgentJob({
         userId,
