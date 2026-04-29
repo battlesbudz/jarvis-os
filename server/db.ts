@@ -1456,6 +1456,18 @@ export async function ensureTablesExist() {
         ON jarvis_project_sessions (project_id, session_number DESC)
     `).catch(() => {});
 
+    // ── Search-bar coordinate persistence ────────────────────────────────────
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS search_bar_locations (
+        user_id     VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        app_package VARCHAR(256) NOT NULL,
+        coordinates_x INTEGER NOT NULL,
+        coordinates_y INTEGER NOT NULL,
+        updated_at  TIMESTAMP NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (user_id, app_package)
+      )
+    `);
+
     console.log("Database tables verified");
   } catch (error) {
     console.error("Failed to ensure database tables exist:", error);

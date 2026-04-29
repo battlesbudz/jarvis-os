@@ -16,8 +16,8 @@ import {
 import { anthropic, ORCHESTRATOR_MODEL } from "../../lib/anthropicClient";
 import { screenshotDiff } from "../../lib/screenshotDiff";
 import { db } from "../../db";
-import { buttonLocations } from "@shared/schema";
-import { eq, and, desc } from "drizzle-orm";
+import { buttonLocations, searchBarLocations } from "@shared/schema";
+import { eq, and, desc, sql as drizzleSql } from "drizzle-orm";
 import { notifyUser } from "../../channels/registry";
 
 //        Shell safety: server-side preflight for early UX feedback                                                    
@@ -328,11 +328,28 @@ const screenMapCache = new Map<string, ScreenMapEntry>();
 // After a successful discovery, coordinates are written here so repeat searches skip the
 // 3-attempt locate loop entirely. The entry is invalidated (overwritten) when discovery
 // finds coordinates that differ by more than 30 px, indicating an app layout change.
+// The in-memory Map is seeded from the DB on server startup so the speed benefit
+// survives restarts. All writes and deletes are mirrored to the DB.
 interface SearchBarCacheEntry {
   x: number;
   y: number;
 }
 const searchBarCoordCache = new Map<string, SearchBarCacheEntry>();
+
+// Seed the in-memory cache from the DB immediately when this module is first loaded.
+// The promise is awaited before the first cache read in android_search_in_app so that
+// the very first search after a restart already benefits from persisted coordinates.
+const searchBarCacheReady: Promise<void> = (async () => {
+  try {
+    const rows = await db.select().from(searchBarLocations);
+    for (const row of rows) {
+      searchBarCoordCache.set(`${row.userId}:${row.appPackage}`, { x: row.coordinatesX, y: row.coordinatesY });
+    }
+    console.log(`[searchBarCache] seeded ${rows.length} entr${rows.length === 1 ? "y" : "ies"} from DB`);
+  } catch (err) {
+    console.warn("[searchBarCache] DB seed failed (non-fatal):", err);
+  }
+})();
 
 export interface ScreenElement {
   label: string;
@@ -1175,6 +1192,9 @@ export const androidSearchInAppTool: AgentTool = {
       // When the agent retries step 2 it means the cached coords failed step 3
       // focus verification — the entry is stale and must be cleared so the
       // discovery loop can locate the correct position.
+      // Ensure the DB seed has completed so the very first search after a restart
+      // already benefits from persisted coordinates.
+      await searchBarCacheReady;
       if (!resumeFromStep) {
         const cachedSearchCoords = searchBarCoordCache.get(coordCacheKey);
         if (cachedSearchCoords) {
@@ -1192,6 +1212,9 @@ export const androidSearchInAppTool: AgentTool = {
         const hadEntry = searchBarCoordCache.delete(coordCacheKey);
         if (hadEntry) {
           console.log(`[${label}] step 2 — stale cache cleared for ${appPackage} (retry path)`);
+          db.delete(searchBarLocations)
+            .where(and(eq(searchBarLocations.userId, ctx.userId), eq(searchBarLocations.appPackage, appPackage)))
+            .catch((err: unknown) => console.warn(`[searchBarCache] DB delete failed for ${appPackage}:`, err));
         }
       }
 
@@ -1314,6 +1337,16 @@ export const androidSearchInAppTool: AgentTool = {
         if (isFirstWrite || coordsDiffer) {
           searchBarCoordCache.set(coordCacheKey, { x: searchX, y: searchY });
           console.log(`[${label}] step 2 — ${isFirstWrite ? "cached" : "cache refreshed"}: (${searchX}, ${searchY}) for ${appPackage}`);
+          // Mirror to DB so the cache survives server restarts.
+          const finalX = searchX;
+          const finalY = searchY;
+          db.insert(searchBarLocations)
+            .values({ userId: ctx.userId, appPackage, coordinatesX: finalX, coordinatesY: finalY })
+            .onConflictDoUpdate({
+              target: [searchBarLocations.userId, searchBarLocations.appPackage],
+              set: { coordinatesX: finalX, coordinatesY: finalY, updatedAt: drizzleSql`NOW()` },
+            })
+            .catch((err: unknown) => console.warn(`[searchBarCache] DB upsert failed for ${appPackage}:`, err));
         }
       }
 
