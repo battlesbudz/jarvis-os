@@ -357,17 +357,41 @@ async function fetchAudioTranscript(videoId: string, originalInput?: string): Pr
         // --impersonate chrome + realistic UA makes YouTube treat the request
         // as a real browser rather than a bot (requires yt-dlp >= 2023.11.16).
         // --retries 3 handles transient network errors without hard-failing.
-        const impersonateFlag = ytdlpSupportsImpersonate ? "--impersonate chrome " : "";
-        await execAsync(
-          `${ytdlpCmd} -f "bestaudio[filesize<80M]/bestaudio" --extract-audio --audio-format mp3 ` +
+        const buildCmd = (withImpersonate: boolean) => {
+          const impersonateFlag = withImpersonate ? "--impersonate chrome " : "";
+          return (
+            `${ytdlpCmd} -f "bestaudio[filesize<80M]/bestaudio" --extract-audio --audio-format mp3 ` +
             `--no-playlist --no-warnings --quiet --no-progress ` +
             `--max-filesize 80M ` +
             `--retries 3 ` +
             `${impersonateFlag}` +
             `--user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" ` +
-            `--output "${outputTemplate}" -- "${url}"`,
-          { timeout: 120_000 }
-        );
+            `--output "${outputTemplate}" -- "${url}"`
+          );
+        };
+        try {
+          await execAsync(buildCmd(ytdlpSupportsImpersonate), { timeout: 120_000 });
+        } catch (firstErr) {
+          const firstErrObj = firstErr as { stderr?: string; message?: string };
+          const firstStderr = (firstErrObj.stderr ?? "").trim() || (firstErr instanceof Error ? firstErr.message : String(firstErr));
+          const firstLower = firstStderr.toLowerCase();
+          // Non-standard or distro-patched yt-dlp builds may reject --impersonate
+          // even when the reported version passes the version gate. Detect this at
+          // runtime and retry once without the flag so the download can still succeed.
+          if (
+            ytdlpSupportsImpersonate &&
+            (firstLower.includes("unrecognised option") || firstLower.includes("invalid option"))
+          ) {
+            console.warn(
+              `[transcriptCache] yt-dlp rejected --impersonate for ${videoId} — ` +
+                `disabling flag and retrying without it. stderr: ${firstStderr}`
+            );
+            ytdlpSupportsImpersonate = false;
+            await execAsync(buildCmd(false), { timeout: 120_000 });
+          } else {
+            throw firstErr;
+          }
+        }
       } catch (dlErr) {
         // Capture full stderr from yt-dlp so failures are visible in the logs
         const errObj = dlErr as { stderr?: string; stdout?: string; message?: string };
