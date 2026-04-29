@@ -1648,14 +1648,17 @@ export const androidTapElementTool: AgentTool = {
   description: `Tap an Android screen element by name instead of raw coordinates.
 Accepts a human-readable label or description string, fuzzy-matches it against the current ScreenMap (Vision-based, calling android_screen_understand internally with a 500 ms cache), fires android_tap at the best-matching element's center coordinates, then verifies the tap landed via screenshot pixel diff (≥15%) and/or accessibility hierarchy change. Retries up to 4 times.
 
+If the element is not visible on the initial screen, the tool automatically scrolls down (up to max_scroll_attempts times) and re-reads the screen after each scroll until the element appears or the scroll limit is reached.
+
 Use this tool instead of manually extracting center_x/center_y from android_screen_understand results:
 - Faster: one tool call instead of two
 - More reliable: coordinate copy-paste errors eliminated, tap verified
 - Handles unlabeled or icon-only buttons via description matching
+- Automatically scrolls to find off-screen elements
 
 The label is matched (case-insensitive) against each element's label, description, and resource_id. The highest-confidence match is tapped.
 
-Returns the matched element details, tap coordinates, and verification status.
+Returns the matched element details, tap coordinates, verification status, and how many scroll passes were needed.
 
 Requires: android_screenshot and android_read_screen permissions (same as android_screen_understand), plus android_tap_type permission for the tap action.`,
   parameters: {
@@ -1672,6 +1675,14 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       verify_with_screenshot: {
         type: "boolean",
         description: "Whether to take before/after screenshots to verify the tap (default true). Set false to rely only on accessibility hierarchy comparison (faster but less reliable).",
+      },
+      max_scroll_attempts: {
+        type: "number",
+        description: "Maximum number of downward scroll passes to perform when the element is not visible on the initial screen (default 5). Set to 0 to disable automatic scrolling.",
+      },
+      scroll_distance: {
+        type: "number",
+        description: "Pixel distance for each scroll swipe (default 600). Larger values scroll further per swipe.",
       },
     },
     required: ["label"],
@@ -1756,13 +1767,67 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       }
     }
 
+    // ── Scroll-to-find: swipe down the page until the element appears ─────────
+    const rawMaxScrollAttempts = typeof args.max_scroll_attempts === "number" ? args.max_scroll_attempts : 5;
+    const maxScrollAttempts = Number.isFinite(rawMaxScrollAttempts) ? Math.max(0, Math.floor(rawMaxScrollAttempts)) : 5;
+    const rawScrollDistance = typeof args.scroll_distance === "number" ? args.scroll_distance : 600;
+    const scrollDistance = Number.isFinite(rawScrollDistance) ? Math.min(Math.max(100, Math.floor(rawScrollDistance)), 1800) : 600;
+    let scrollsPerformed = 0;
+
+    if ((!bestElement || bestScore === 0) && maxScrollAttempts > 0) {
+      for (let scroll = 0; scroll < maxScrollAttempts; scroll++) {
+        console.log(`[android_tap_element] element not found, scrolling down (pass ${scroll + 1}/${maxScrollAttempts})`);
+
+        // Swipe upward (y1 > y2) to scroll the page down
+        const screenMidX = 540;
+        const swipeY1 = 1400;
+        const swipeY2 = Math.max(100, swipeY1 - scrollDistance);
+        const swipeResult = await sendDaemonOp(
+          ctx.userId,
+          { type: "android_swipe", x1: screenMidX, y1: swipeY1, x2: screenMidX, y2: swipeY2, durationMs: 400 },
+          10000,
+        );
+        if (!swipeResult.ok) {
+          console.log(`[android_tap_element] swipe failed on pass ${scroll + 1}: ${swipeResult.error}`);
+          break;
+        }
+
+        scrollsPerformed = scroll + 1;
+
+        // Brief pause so the page settles before re-reading
+        await new Promise((resolve) => setTimeout(resolve, 500));
+
+        const refreshed = await buildScreenMapElements(ctx.userId);
+        if (!refreshed.ok) break;
+
+        bestElement = null;
+        bestScore = 0;
+        for (const el of refreshed.elements) {
+          const score = scoreElement(el, label);
+          if (score > bestScore) {
+            bestScore = score;
+            bestElement = el;
+          }
+        }
+        screenElements = refreshed.elements;
+
+        if (bestElement && bestScore > 0) {
+          console.log(`[android_tap_element] found "${label}" after ${scrollsPerformed} scroll(s), score=${bestScore}`);
+          break;
+        }
+      }
+    }
+
     if (!bestElement || bestScore === 0) {
       const elementList = screenElements
         .map((el) => `  • ${el.label}${el.description ? ` — ${el.description}` : ""}`)
         .join("\n");
+      const scrollNote = maxScrollAttempts > 0
+        ? ` Scrolled ${scrollsPerformed} time(s) looking for it.`
+        : "";
       return {
         ok: false,
-        content: `No element matching "${label}" was found on screen.\n\nAvailable elements:\n${elementList || "  (none)"}`,
+        content: `No element matching "${label}" was found on screen.${scrollNote}\n\nAvailable elements:\n${elementList || "  (none)"}`,
         label: `android_tap_element: no match for "${label}"`,
       };
     }
@@ -1849,7 +1914,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       console.log(`[android_tap_element] attempt ${attempt} unverified at (${tapX},${tapY}), retrying...`);
     }
 
-    console.log(`[android_tap_element] userId=${ctx.userId} label="${label}" verified=${verified} attempts=${actualAttempts} at=${JSON.stringify(tapped_at)} score=${bestScore}`);
+    console.log(`[android_tap_element] userId=${ctx.userId} label="${label}" verified=${verified} attempts=${actualAttempts} scrolls=${scrollsPerformed} at=${JSON.stringify(tapped_at)} score=${bestScore}`);
 
     if (!verified) {
       return {
@@ -1860,6 +1925,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
           matched: bestElement.label,
           tapped_at,
           attempts: actualAttempts,
+          scrolls_performed: scrollsPerformed,
           verified: false,
           reason: `Element "${bestElement.label}" was located (score=${bestScore}) and tapped ${actualAttempts} time(s) but the UI did not detectably change. The tap may have missed or the action may require a different interaction. Try calling android_read_screen to confirm the current screen state.`,
         }),
@@ -1880,10 +1946,11 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
           match_score: bestScore,
         },
         attempts: actualAttempts,
+        scrolls_performed: scrollsPerformed,
         verified: true,
       }),
       label: `Tapped "${bestElement.label}" at (${tapped_at!.x}, ${tapped_at!.y})`,
-      detail: `match_score=${bestScore} bounds=${bestElement.bounds} attempts=${actualAttempts}`,
+      detail: `match_score=${bestScore} bounds=${bestElement.bounds} attempts=${actualAttempts} scrolls=${scrollsPerformed}`,
     };
   },
 };
