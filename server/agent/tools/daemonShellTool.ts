@@ -2389,7 +2389,7 @@ Parameters:
   - distance_px: how far to swipe in pixels (default 400)
   - max_age_ms: max age of cached ScreenMap to reuse (default 500, 0 = always fresh)
 
-Returns the matched element details and the swipe coordinates used.
+Returns the matched element details, the swipe coordinates used, a screen_changed field (true/false) indicating whether the screen visually changed after the swipe (based on perceptual hash comparison), and hash_distance (the raw Hamming distance between hashes, or null if screenshot was unavailable). If screen_changed is false the element may already be at the scroll boundary, or the swipe may not have landed on a scrollable region.
 
 Requires: android_screenshot and android_read_screen permissions (same as android_screen_understand), plus android_tap_type permission for the swipe action.`,
   parameters: {
@@ -2553,8 +2553,12 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
     x2 = Math.max(0, Math.round(x2));
     y2 = Math.max(0, Math.round(y2));
 
-    // ── Capture pre-swipe state (screenshot fast-path + hierarchy fallback) ───
+    // ── Capture pre-swipe state (perceptual hash fast-path + hierarchy fallback) ─
     const preSwipeScreenshot: string | null = await captureScreenshot(ctx.userId);
+    let preSwipeHash: string | null = null;
+    if (preSwipeScreenshot) {
+      try { preSwipeHash = await computeScreenshotHash(preSwipeScreenshot); } catch { /* best-effort */ }
+    }
     const preSwipeClickable = await readScreen(ctx.userId);
     const preSwipeCount = preSwipeClickable.length;
     const preSwipeLabels = new Set(preSwipeClickable.map((el) => el.label));
@@ -2573,50 +2577,52 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       };
     }
 
-    // ── Post-swipe verification — screenshot fast-path then hierarchy fallback ─
+    // ── Post-swipe verification — perceptual hash fast-path then hierarchy fallback ─
     const SWIPE_SETTLE_MS = 400;
     await new Promise((resolve) => setTimeout(resolve, SWIPE_SETTLE_MS));
 
-    let swipeVerified = false;
+    let screenChanged = false;
+    let hashDistance: number | null = null;
 
-    // Fast-path: screenshot pixel diff (≥ 0.15 change ratio confirms the swipe).
+    // Fast-path: perceptual hash comparison (distance > 5 out of 64 bits confirms the swipe).
     // When conclusive this saves one readScreen round-trip. Skipped on FLAG_SECURE
     // apps where captureScreenshot returns null.
-    if (preSwipeScreenshot) {
-      const postSwipeScreenshot = await captureScreenshot(ctx.userId);
-      if (postSwipeScreenshot) {
-        try {
-          const changeRatio = await screenshotDiff(preSwipeScreenshot, postSwipeScreenshot);
-          if (changeRatio >= 0.15) {
-            swipeVerified = true;
-            console.log(`[android_swipe_element] screenshot diff verified (ratio=${changeRatio.toFixed(4)})`);
+    if (preSwipeHash !== null) {
+      try {
+        const postSwipeScreenshot = await captureScreenshot(ctx.userId);
+        if (postSwipeScreenshot) {
+          const postSwipeHash = await computeScreenshotHash(postSwipeScreenshot);
+          hashDistance = hammingDistance(preSwipeHash, postSwipeHash);
+          if (hashDistance > 5) {
+            screenChanged = true;
+            console.log(`[android_swipe_element] perceptual hash verified (hash_distance=${hashDistance})`);
           }
-        } catch { /* screenshot diff is best-effort */ }
-      }
+        }
+      } catch { /* hash comparison is best-effort */ }
     }
 
-    // Hierarchy fallback: runs only when screenshot diff is inconclusive (e.g. FLAG_SECURE app
-    // or pixel change below threshold due to re-used resource IDs in scrolled content).
-    if (!swipeVerified) {
+    // Hierarchy fallback: runs only when hash check is inconclusive (e.g. FLAG_SECURE app
+    // or visual change below threshold due to re-used resource IDs in scrolled content).
+    if (!screenChanged) {
       const postSwipeClickable = await readScreen(ctx.userId);
       if (postSwipeClickable.length !== preSwipeCount) {
-        swipeVerified = true;
+        screenChanged = true;
       } else {
         const postSwipeLabels = new Set(postSwipeClickable.map((el) => el.label));
-        if ([...postSwipeLabels].some((l) => !preSwipeLabels.has(l))) swipeVerified = true;
-        if (!swipeVerified) {
+        if ([...postSwipeLabels].some((l) => !preSwipeLabels.has(l))) screenChanged = true;
+        if (!screenChanged) {
           const postSwipeResourceIds = new Set(
             postSwipeClickable.map((el) => el.resourceId).filter((id): id is string => !!id),
           );
-          if ([...postSwipeResourceIds].some((id) => !preSwipeResourceIds.has(id))) swipeVerified = true;
-          if (!swipeVerified && preSwipeResourceIds.size > 0) {
-            if ([...preSwipeResourceIds].some((id) => !postSwipeResourceIds.has(id))) swipeVerified = true;
+          if ([...postSwipeResourceIds].some((id) => !preSwipeResourceIds.has(id))) screenChanged = true;
+          if (!screenChanged && preSwipeResourceIds.size > 0) {
+            if ([...preSwipeResourceIds].some((id) => !postSwipeResourceIds.has(id))) screenChanged = true;
           }
         }
       }
     }
 
-    console.log(`[android_swipe_element] userId=${ctx.userId} swiped ${direction} on "${bestElement.label}" from (${x1},${y1}) to (${x2},${y2}) score=${bestScore} verified=${swipeVerified}`);
+    console.log(`[android_swipe_element] userId=${ctx.userId} swiped ${direction} on "${bestElement.label}" from (${x1},${y1}) to (${x2},${y2}) score=${bestScore} screen_changed=${screenChanged} hash_distance=${hashDistance}`);
 
     return {
       ok: true,
@@ -2634,13 +2640,14 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
           from: { x: x1, y: y1 },
           to: { x: x2, y: y2 },
         },
-        verified: swipeVerified,
-        verified_note: swipeVerified
+        screen_changed: screenChanged,
+        hash_distance: hashDistance,
+        screen_changed_note: screenChanged
           ? undefined
-          : "The UI hierarchy did not detectably change after the swipe. The element may already be at the scroll boundary, or the swipe may not have landed on a scrollable region.",
+          : "The UI did not detectably change after the swipe. The element may already be at the scroll boundary, or the swipe may not have landed on a scrollable region.",
       }),
       label: `Swiped ${direction} on "${bestElement.label}" from (${x1},${y1}) to (${x2},${y2})`,
-      detail: `match_score=${bestScore} bounds=${bestElement.bounds} verified=${swipeVerified}`,
+      detail: `match_score=${bestScore} bounds=${bestElement.bounds} screen_changed=${screenChanged}${hashDistance !== null ? ` hash_dist=${hashDistance}` : ""}`,
     };
   },
 };
@@ -3041,7 +3048,7 @@ Returns the number of swipes performed.`,
 export const androidTapElementTool: AgentTool = {
   name: "android_tap_element",
   description: `Tap an Android screen element by name instead of raw coordinates.
-Accepts a human-readable label or description string, fuzzy-matches it against the current ScreenMap (Vision-based, calling android_screen_understand internally with a 500 ms cache), fires android_tap at the best-matching element's center coordinates, then verifies the tap landed via screenshot pixel diff (≥15%) and/or accessibility hierarchy change. Retries up to 4 times.
+Accepts a human-readable label or description string, fuzzy-matches it against the current ScreenMap (Vision-based, calling android_screen_understand internally with a 500 ms cache), fires android_tap at the best-matching element's center coordinates, then verifies the tap landed via perceptual hash comparison (hash_distance > 5 out of 64 bits) and/or accessibility hierarchy change. Retries up to 4 times.
 
 If the element is not visible on the initial screen, the tool automatically scrolls down (up to max_scroll_attempts times) and re-reads the screen after each scroll until the element appears or the scroll limit is reached.
 
@@ -3053,7 +3060,7 @@ Use this tool instead of manually extracting center_x/center_y from android_scre
 
 The label is matched (case-insensitive) against each element's label, description, and resource_id. The highest-confidence match is tapped.
 
-Returns the matched element details, tap coordinates, verification status, and how many scroll passes were needed.
+Returns the matched element details, tap coordinates, a screen_changed field (true/false) indicating whether the screen visually changed after the tap (based on perceptual hash comparison), hash_distance (the raw Hamming distance between hashes, or null if screenshot was unavailable), and how many scroll passes were needed.
 
 Requires: android_screenshot and android_read_screen permissions (same as android_screen_understand), plus android_tap_type permission for the tap action.`,
   parameters: {
@@ -3294,6 +3301,10 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
 
     // ── Capture pre-tap baselines (once, before any tap) ─────────────────────
     const preScreenshot: string | null = useScreenshot ? await captureScreenshot(ctx.userId) : null;
+    let preTapHash: string | null = null;
+    if (preScreenshot) {
+      try { preTapHash = await computeScreenshotHash(preScreenshot); } catch { /* best-effort */ }
+    }
     const preHierarchyClickable = await readScreen(ctx.userId);
     const preHierarchyCount = preHierarchyClickable.length;
     const preHierarchyLabels = new Set(preHierarchyClickable.map((el) => el.label));
@@ -3319,6 +3330,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
     let tapped_at: { x: number; y: number } | null = null;
     let verified = false;
     let actualAttempts = 0;
+    let finalHashDistance: number | null = null;
 
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       actualAttempts = attempt;
@@ -3356,13 +3368,18 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
 
       await new Promise((resolve) => setTimeout(resolve, SETTLE_MS));
 
-      // Primary: pixel diff verification
-      if (useScreenshot && preScreenshot) {
-        const postScreenshot = await captureScreenshot(ctx.userId);
-        if (postScreenshot) {
-          const changeRatio = await screenshotDiff(preScreenshot, postScreenshot).catch(() => 0);
-          if (changeRatio >= 0.15) verified = true;
-        }
+      // Primary: perceptual hash verification
+      if (preTapHash !== null) {
+        try {
+          const postScreenshot = await captureScreenshot(ctx.userId);
+          if (postScreenshot) {
+            const postHash = await computeScreenshotHash(postScreenshot);
+            const dist = hammingDistance(preTapHash, postHash);
+            finalHashDistance = dist;
+            // A distance > 5 out of 64 bits indicates a meaningful visual change
+            if (dist > 5) verified = true;
+          }
+        } catch { /* best-effort */ }
       }
 
       // Secondary: accessibility hierarchy change vs. pre-tap baseline.
@@ -3405,7 +3422,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       console.log(`[android_tap_element] attempt ${attempt} unverified at (${tapX},${tapY}), retrying...`);
     }
 
-    console.log(`[android_tap_element] userId=${ctx.userId} label="${label}" verified=${verified} attempts=${actualAttempts} scrolls=${scrollsPerformed} at=${JSON.stringify(tapped_at)} score=${bestScore}`);
+    console.log(`[android_tap_element] userId=${ctx.userId} label="${label}" screen_changed=${verified} hash_distance=${finalHashDistance} attempts=${actualAttempts} scrolls=${scrollsPerformed} at=${JSON.stringify(tapped_at)} score=${bestScore}`);
 
     if (!verified) {
       return {
@@ -3417,7 +3434,8 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
           tapped_at,
           attempts: actualAttempts,
           scrolls_performed: scrollsPerformed,
-          verified: false,
+          screen_changed: false,
+          hash_distance: finalHashDistance,
           reason: `Element "${bestElement.label}" was located (score=${bestScore}) and tapped ${actualAttempts} time(s) but the UI did not detectably change. The tap may have missed or the action may require a different interaction. Try calling android_read_screen to confirm the current screen state.`,
         }),
         label: `android_tap_element: unverified tap on "${bestElement.label}"`,
@@ -3438,10 +3456,11 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
         },
         attempts: actualAttempts,
         scrolls_performed: scrollsPerformed,
-        verified: true,
+        screen_changed: true,
+        hash_distance: finalHashDistance,
       }),
       label: `Tapped "${bestElement.label}" at (${tapped_at!.x}, ${tapped_at!.y})`,
-      detail: `match_score=${bestScore} bounds=${bestElement.bounds} attempts=${actualAttempts} scrolls=${scrollsPerformed}`,
+      detail: `match_score=${bestScore} bounds=${bestElement.bounds} attempts=${actualAttempts} scrolls=${scrollsPerformed}${finalHashDistance !== null ? ` hash_dist=${finalHashDistance}` : ""}`,
     };
   },
 };
