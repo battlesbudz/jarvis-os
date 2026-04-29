@@ -56,6 +56,14 @@ export const SLASH_COMMANDS: SlashCommandDef[] = [
     argRequired: false,
   },
   {
+    name: "build",
+    description: "Queue a build-feature job to implement something new",
+    agentType: "build_feature",
+    argName: "description",
+    argDescription: "What to build (e.g. 'add a weather tool')",
+    argRequired: true,
+  },
+  {
     name: "help",
     description: "Show all available slash commands",
     agentType: null,
@@ -73,6 +81,8 @@ function ackText(agentType: AgentJobType, args: string): string {
       return `Got it — writing job queued${snippet ? ` for "${snippet}"` : ""}. I'll post the draft here when done.`;
     case "morning_brief":
       return "Got it — generating your morning briefing. I'll post it here when done.";
+    case "build_feature":
+      return `Got it — build job queued${snippet ? ` for "${snippet}"` : ""}. I'll post the result here when done.`;
     default:
       return "Got it — job queued. I'll post the result here when done.";
   }
@@ -188,6 +198,10 @@ export async function routeSlashCommand(
       prompt =
         "Generate the user's morning briefing: summarize today's goals, any upcoming calendar events, and recent inbox items. Keep it concise and actionable.";
       title = "Morning Briefing";
+      break;
+    case "build_feature":
+      prompt = `Build the following feature or improvement:\n\n${trimmedArgs}`;
+      title = `Build: ${trimmedArgs.slice(0, 60)}${trimmedArgs.length > 60 ? "…" : ""}`;
       break;
     default:
       prompt = trimmedArgs || `Run the ${def.name} command.`;
