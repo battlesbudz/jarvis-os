@@ -1379,6 +1379,11 @@ export async function ensureTablesExist() {
       )
     `).catch(() => {});
 
+    // ── Deliverables — drive_link column ────────────────────────────────────
+    await db.execute(sql`
+      ALTER TABLE deliverables ADD COLUMN IF NOT EXISTS drive_link TEXT
+    `).catch(() => {});
+
     console.log("Database tables verified");
   } catch (error) {
     console.error("Failed to ensure database tables exist:", error);

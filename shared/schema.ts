@@ -502,6 +502,7 @@ export const deliverables = pgTable("deliverables", {
   status: varchar("status").notNull().default("pending_approval"),
   triageStatus: varchar("triage_status").$type<"needs_attention" | "escalated" | "auto_handled" | "promoted_memory">().notNull().default("needs_attention"),
   triageNote: text("triage_note"),
+  driveLink: text("drive_link"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   actedAt: timestamp("acted_at"),
 });
