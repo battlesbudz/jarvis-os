@@ -196,6 +196,9 @@ export const youtubeTranscriptTool: AgentTool = {
     "analyse, or extract insights from it — including visual or on-screen content. " +
     "Set refresh=true when the user asks to re-read, refresh, or get the latest version of a video. " +
     "Set includeVisuals=false only if the user explicitly wants transcript text only with no visual analysis. " +
+    "Set force_audio=true to skip caption lookups entirely and transcribe the audio directly via Whisper — " +
+    "this is the best option when official captions are unavailable (e.g. Alex Hormozi videos, " +
+    "channels that disable captions) or when previous attempts returned empty results. " +
     "Returns a clear error message if the video has no captions available.",
   parameters: {
     type: "object",
@@ -216,6 +219,14 @@ export const youtubeTranscriptTool: AgentTool = {
         description:
           "Whether to include a visual summary of keyframes (default: true). " +
           "Set to false only when the user explicitly wants transcript text only.",
+      },
+      force_audio: {
+        type: "boolean",
+        description:
+          "Skip all caption-fetching strategies and go straight to audio download + Whisper transcription. " +
+          "Use this when official captions are unavailable, the channel has captions disabled, " +
+          "or previous transcript attempts returned empty or unhelpful results. " +
+          "Produces a word-for-word AI-generated transcript from the actual audio.",
       },
     },
     required: ["url"],
@@ -240,10 +251,11 @@ export const youtubeTranscriptTool: AgentTool = {
 
     const bypassCache = args.refresh === true;
     const includeVisuals = args.includeVisuals !== false;
+    const forceAudio = args.force_audio === true;
     const videoId = extractVideoId(input);
 
     console.log(
-      `[get_youtube_transcript] fetching transcript for "${input}" (user=${ctx.userId}, bypassCache=${bypassCache}, includeVisuals=${includeVisuals})`
+      `[get_youtube_transcript] fetching transcript for "${input}" (user=${ctx.userId}, bypassCache=${bypassCache}, includeVisuals=${includeVisuals}, forceAudio=${forceAudio})`
     );
 
     // ── Start visual pipeline concurrently with transcript retrieval ──────────
@@ -405,7 +417,7 @@ export const youtubeTranscriptTool: AgentTool = {
     };
 
     try {
-      let segments = await fetchTranscriptCached(input, { bypassCache });
+      let segments = await fetchTranscriptCached(input, { bypassCache, audioOnly: forceAudio });
 
       // ── Strategy 5: browser fallback if server-side got nothing ──────────────
       // YouTube increasingly blocks server-side requests from cloud IPs. Running
@@ -481,6 +493,16 @@ export const youtubeTranscriptTool: AgentTool = {
           ok: false,
           content: "This video doesn't have captions available. The creator may have disabled transcripts, or it may be a live stream.",
           label: "get_youtube_transcript: no captions",
+        };
+      }
+      if (msg.startsWith("AUDIO_DOWNLOAD_FAILED:")) {
+        console.warn(`[get_youtube_transcript] audio-download-failed for ${videoId ?? input}: ${msg}`);
+        return {
+          ok: false,
+          content:
+            "The audio download failed — YouTube may be blocking this request from the server. " +
+            "You can try again in a moment, or start the local worker on your PC for better results.",
+          label: "get_youtube_transcript: audio-download-failed",
         };
       }
 

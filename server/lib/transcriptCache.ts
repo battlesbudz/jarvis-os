@@ -318,25 +318,32 @@ async function fetchAudioTranscript(videoId: string, originalInput?: string): Pr
       : [`https://www.youtube.com/watch?v=${videoId}`];
 
     let downloadedFile: string | undefined;
+    let lastNonTerminalStderr = "";
 
     for (const url of urlCandidates) {
       try {
         // Download audio only — cap at AUDIO_MAX_BYTES to reject very long videos.
         // ytdlpCmd is set to `python3 -m yt_dlp` if pip upgrade succeeded; falls
         // back to the Nix binary otherwise.
+        // --impersonate chrome + realistic UA makes YouTube treat the request
+        // as a real browser rather than a bot. --retries 3 handles transient
+        // network errors without hard-failing.
         await execAsync(
           `${ytdlpCmd} -f "bestaudio[filesize<80M]/bestaudio" --extract-audio --audio-format mp3 ` +
             `--no-playlist --no-warnings --quiet --no-progress ` +
             `--max-filesize 80M ` +
+            `--retries 3 ` +
+            `--impersonate chrome ` +
+            `--user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" ` +
             `--output "${outputTemplate}" -- "${url}"`,
           { timeout: 120_000 }
         );
       } catch (dlErr) {
-        // Capture stderr from yt-dlp so failures are visible in the logs
+        // Capture full stderr from yt-dlp so failures are visible in the logs
         const errObj = dlErr as { stderr?: string; stdout?: string; message?: string };
         const stderrMsg = (errObj.stderr ?? "").trim() || (dlErr instanceof Error ? dlErr.message : String(dlErr));
         console.warn(
-          `[transcriptCache] yt-dlp audio download failed for ${videoId} (url=${url}): ${stderrMsg}`
+          `[transcriptCache] yt-dlp audio download failed for ${videoId} (url=${url}):\n${stderrMsg}`
         );
         // Surface terminal errors immediately — no further URL will help
         const lower = stderrMsg.toLowerCase();
@@ -349,7 +356,8 @@ async function fetchAudioTranscript(videoId: string, originalInput?: string): Pr
         if (lower.includes("429") || lower.includes("too many requests")) {
           throw new Error(`TOO_MANY_REQUESTS: ${stderrMsg}`);
         }
-        // Non-terminal: try the next URL candidate
+        // Non-terminal: record stderr and try the next URL candidate
+        lastNonTerminalStderr = stderrMsg;
         continue;
       }
 
@@ -362,7 +370,12 @@ async function fetchAudioTranscript(videoId: string, originalInput?: string): Pr
       }
     }
 
-    if (!downloadedFile) return [];
+    if (!downloadedFile) {
+      if (lastNonTerminalStderr) {
+        throw new Error(`AUDIO_DOWNLOAD_FAILED: ${lastNonTerminalStderr}`);
+      }
+      return [];
+    }
     const mp3File = downloadedFile;
 
     const mp3Path = path.join(tmpDir, mp3File);
@@ -930,6 +943,12 @@ export interface FetchTranscriptOptions {
   bypassCache?: boolean;
   /** youtube-transcript library config (language, custom fetch). */
   config?: TranscriptConfig;
+  /**
+   * When true, skip all caption-fetching strategies (Phases 1 & 2) and go
+   * straight to audio download + Whisper transcription. Use when official
+   * captions are known to be unavailable or previous runs returned empty results.
+   */
+  audioOnly?: boolean;
 }
 
 /**
@@ -962,10 +981,12 @@ export async function fetchTranscriptCached(
   input: string,
   options: FetchTranscriptOptions = {}
 ): Promise<TranscriptResponse[]> {
-  const { bypassCache = false, config } = options;
+  const { bypassCache = false, config, audioOnly = false } = options;
   const videoId = extractVideoId(input);
 
-  if (videoId && !bypassCache) {
+  // audioOnly=true skips the cache read so audio transcription always runs,
+  // regardless of any previously cached caption-based transcript.
+  if (videoId && !bypassCache && !audioOnly) {
     evictExpired();
     const hit = cache.get(videoId);
     if (hit) {
@@ -982,6 +1003,42 @@ export async function fetchTranscriptCached(
   const resolvedId = videoId ?? input.trim();
   let segments: TranscriptResponse[] = [];
   let source = "unknown";
+
+  // ── audioOnly fast-path: skip Phases 1 & 2 entirely ──────────────────────
+  if (audioOnly) {
+    console.log(`[transcriptCache] audioOnly=true for ${resolvedId} — going straight to audio transcription`);
+    try {
+      const audioSegs = await fetchAudioTranscript(resolvedId, input);
+      if (audioSegs.length > 0) {
+        segments = audioSegs;
+        source = "audio-transcription";
+        console.log(
+          `[transcriptCache] yt-dlp audio download OK ${resolvedId} — ` +
+            `${audioSegs.reduce((n, s) => n + s.text.length, 0)} chars`
+        );
+      }
+    } catch (audioErr) {
+      const msg = audioErr instanceof Error ? audioErr.message : String(audioErr);
+      if (/^(LOGIN_REQUIRED|CONTENT_RESTRICTED|TOO_MANY_REQUESTS):/.test(msg)) throw audioErr;
+      if (msg.startsWith("AUDIO_DOWNLOAD_FAILED:")) {
+        console.warn(`[transcriptCache] audio-download-failed for ${resolvedId}: ${msg.slice("AUDIO_DOWNLOAD_FAILED:".length).trim()}`);
+        throw audioErr;
+      }
+      console.warn(`[transcriptCache] audio transcription failed for ${resolvedId}: ${msg}`);
+    }
+
+    if (videoId && segments.length > 0) {
+      evictExpired();
+      if (!cache.has(videoId) && cache.size >= MAX_ENTRIES) evictOldest();
+      cache.set(videoId, { segments, cachedAt: Date.now() });
+      const reason = bypassCache ? "BYPASS→stored" : "MISS→stored";
+      console.log(
+        `[transcriptCache] ${reason} ${videoId} via ${source} — ${segments.length} segs (cache size: ${cache.size})`
+      );
+    }
+
+    return segments;
+  }
 
   // ── Phase 1: InnerTube metadata check ────────────────────────────────────
   // One lightweight API call that tells us: captions exist / don't exist / terminal / blocked.
@@ -1087,7 +1144,9 @@ export async function fetchTranscriptCached(
   // Reached when:
   //   • Captions confirmed absent (noCaptions) — fastest path into here
   //   • All subtitle strategies returned nothing
-  // Downloads audio via yt-dlp, converts to WAV, transcribes via Whisper.
+  // Downloads audio via yt-dlp (with --impersonate chrome), converts to WAV,
+  // transcribes via Whisper. Runs BEFORE the browser and local-worker fallbacks
+  // so the one path that works is tried as the third option, not the last.
   if (segments.length === 0) {
     const reason = noCaptions
       ? "no captions — going straight to audio transcription"
@@ -1099,14 +1158,20 @@ export async function fetchTranscriptCached(
         segments = audioSegs;
         source = "audio-transcription";
         console.log(
-          `[transcriptCache] audio transcription OK ${resolvedId} — ` +
+          `[transcriptCache] yt-dlp audio download OK ${resolvedId} — ` +
             `${audioSegs.reduce((n, s) => n + s.text.length, 0)} chars`
         );
       }
     } catch (audioErr) {
       const msg = audioErr instanceof Error ? audioErr.message : String(audioErr);
       if (/^(LOGIN_REQUIRED|CONTENT_RESTRICTED|TOO_MANY_REQUESTS):/.test(msg)) throw audioErr;
-      console.warn(`[transcriptCache] audio transcription failed for ${resolvedId}: ${msg}`);
+      if (msg.startsWith("AUDIO_DOWNLOAD_FAILED:")) {
+        console.warn(
+          `[transcriptCache] audio-download-failed for ${resolvedId}: ${msg.slice("AUDIO_DOWNLOAD_FAILED:".length).trim()}`
+        );
+        throw audioErr;
+      }
+      console.warn(`[transcriptCache] audio transcription non-terminal failure for ${resolvedId}: ${msg}`);
     }
   }
 
