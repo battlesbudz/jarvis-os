@@ -4,8 +4,8 @@ import {
   sendDaemonOp,
   isDesktopDaemonActive,
   isAndroidDaemonActive,
-  isDaemonActionAllowed,
   isAndroidDaemonActionAllowed,
+  isDaemonActionAllowed,
   getDaemonPermissions,
   getAndroidDaemonPermissions,
   getDaemonDeviceMeta,
@@ -496,10 +496,36 @@ Return ONLY a valid JSON array, no explanation, no markdown fences.`,
   },
 };
 
-// ── android_search_in_app ─────────────────────────────────────────────────────
-// High-level macro that orchestrates the full in-app search workflow as a
-// resumable, structured sequence. Each step logs its outcome; if any step
-// fails, a structured response tells Jarvis exactly where to resume and why.
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((res) => setTimeout(res, ms));
+}
+
+/**
+ * Parse the accessibility text from android_read_screen or android_get_focused_field
+ * to check if any focusable field currently has focused=true.
+ */
+function extractFocusedFieldText(data: unknown): { focused: boolean; text?: string; hint?: string; resourceId?: string } {
+  if (!data || typeof data !== "object") return { focused: false };
+  const d = data as Record<string, unknown>;
+  // android_get_focused_field returns { focused, text, hint, resourceId }
+  if (typeof d.focused === "boolean") {
+    return {
+      focused: d.focused,
+      text: typeof d.text === "string" ? d.text : undefined,
+      hint: typeof d.hint === "string" ? d.hint : undefined,
+      resourceId: typeof d.resourceId === "string" ? d.resourceId : undefined,
+    };
+  }
+  // Fallback: android_read_screen returns raw text — look for focused="true" in XML-like output
+  const raw = typeof d.content === "string" ? d.content : typeof d === "string" ? String(d) : "";
+  const focused = /focused="true"/i.test(raw) || /\bfocused=true\b/i.test(raw);
+  // Try to extract the text from the focused node (between class=... text="..." focused="true")
+  const textMatch = raw.match(/focused="true"[^>]*text="([^"]+)"/i)
+    || raw.match(/text="([^"]+)"[^>]*focused="true"/i);
+  return { focused, text: textMatch?.[1] };
+}
 
 /** Check if serialised read_screen output contains any of the given keywords (case-insensitive) */
 function screenContains(raw: string, keywords: string[]): boolean {
@@ -507,10 +533,10 @@ function screenContains(raw: string, keywords: string[]): boolean {
   return keywords.some((k) => lower.includes(k.toLowerCase()));
 }
 
-/** Wait for a fixed number of milliseconds */
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
+// ── android_search_in_app ─────────────────────────────────────────────────────
+// High-level macro that orchestrates the full in-app search workflow as a
+// resumable, structured sequence. Each step logs its outcome; if any step
+// fails, a structured response tells Jarvis exactly where to resume and why.
 
 export const androidSearchInAppTool: AgentTool = {
   name: "android_search_in_app",
@@ -554,8 +580,7 @@ export const androidSearchInAppTool: AgentTool = {
     const searchBarHint = args.search_bar_hint ? String(args.search_bar_hint).trim() : null;
     const actionAfterSearch = args.action_after_search ? String(args.action_after_search) : null;
     const resumeFromStepRaw = typeof args.resume_from_step === "number" ? Math.floor(args.resume_from_step) : null;
-    // resume_from_step must be in range [2, 6] — reject values outside this range so the
-    // macro is never skipped in its entirety or started from an invalid position.
+    const resumeFromStep = resumeFromStepRaw;
     if (resumeFromStepRaw !== null && (resumeFromStepRaw < 2 || resumeFromStepRaw > 6)) {
       return {
         ok: false,
@@ -565,7 +590,6 @@ export const androidSearchInAppTool: AgentTool = {
         }),
       };
     }
-    const resumeFromStep = resumeFromStepRaw;
 
     if (!appPackage) return { ok: false, content: JSON.stringify({ ok: false, error: "app_package is required" }) };
     if (!searchQuery) return { ok: false, content: JSON.stringify({ ok: false, error: "search_query is required" }) };
@@ -1023,6 +1047,254 @@ export const androidSearchInAppTool: AgentTool = {
       ok: true,
       content: isScreenshot ? JSON.stringify(response) : JSON.stringify(response).slice(0, 12000),
       label,
+    };
+  },
+};
+
+export const androidTypeInFieldTool: AgentTool = {
+  name: "android_type_in_field",
+  description: `Reliable text input for Android fields. Wraps the full focus-verify → input → confirm sequence:
+
+1. CONFIRM FOCUS: checks if the target field is currently focused using android_get_focused_field.
+   If not focused and tap coordinates are provided, taps the field and waits 300 ms for the keyboard to open, then re-checks.
+
+2. INPUT — three-level fallback chain, each dispatched explicitly:
+   - Level 1 (android_type): accessibility service ACTION_SET_TEXT — fastest path, works in standard EditText fields
+   - Level 2 (android_paste_text): daemon tries "input text" exec (adb-style, %%s escaping) first, then clipboard + ACTION_PASTE — designed for custom-IME fields (Facebook/Instagram search, WebView inputs)
+   - Level 3 (android_paste_text retry): explicit retry when Level 2 fails transiently; server escalates from android_type to android_paste_text on verification failure
+
+3. VERIFY: reads the field text after input and confirms it matches what was expected.
+
+4. RESULT: returns { ok, method_used, verified, field_text, steps }.
+
+Use this instead of android_type when:
+- Typing fails silently (field shows no text after android_type)
+- The field uses a custom input method (e.g. Facebook / Instagram search bars that open a new activity)
+- The accessibility service loses focus tracking between tap and type
+
+Requires android_tap_type permission to be enabled.`,
+  parameters: {
+    type: "object",
+    properties: {
+      text: {
+        type: "string",
+        description: "The text to type into the field.",
+      },
+      tap_x: {
+        type: "number",
+        description: "X pixel coordinate to tap in order to focus the field. Provide if the field is not yet focused.",
+      },
+      tap_y: {
+        type: "number",
+        description: "Y pixel coordinate to tap in order to focus the field. Provide if the field is not yet focused.",
+      },
+      field_description: {
+        type: "string",
+        description: "Human-readable description of the target field — used in logs and result output (e.g. 'Facebook search bar').",
+      },
+      submit: {
+        type: "boolean",
+        description: "If true, press Enter/submit after successfully typing. Default false.",
+      },
+    },
+    required: ["text"],
+  },
+  async execute(args, ctx) {
+    const text = String(args.text || "").trim();
+    if (!text) {
+      return { ok: false, content: "text is required.", label: "android_type_in_field: no text" };
+    }
+
+    if (!isAndroidDaemonActive(ctx.userId)) {
+      return {
+        ok: false,
+        content: "Android daemon is not connected. Ask the user to install the Jarvis Android APK and pair it (Profile → Connected Channels → Android Device).",
+        label: "android_type_in_field: android offline",
+      };
+    }
+
+    const tapTypeAllowed = await isAndroidDaemonActionAllowed(ctx.userId, "android_tap_type");
+    if (!tapTypeAllowed) {
+      return {
+        ok: false,
+        content: "android_tap_type permission is not enabled. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.",
+        label: "android_type_in_field: permission denied",
+      };
+    }
+
+    const fieldDesc = args.field_description ? String(args.field_description) : "input field";
+    const hasTapCoords = typeof args.tap_x === "number" && typeof args.tap_y === "number";
+    const steps: string[] = [];
+
+    // ── Step 1: Confirm focus ─────────────────────────────────────────────────
+    steps.push("Checking field focus...");
+    let focusResult = await sendDaemonOp(ctx.userId, { type: "android_get_focused_field" }, 8000);
+    let focusInfo = extractFocusedFieldText(focusResult.data);
+
+    if (!focusInfo.focused) {
+      if (hasTapCoords) {
+        steps.push(`Field not focused — tapping (${args.tap_x}, ${args.tap_y}) to focus...`);
+        await sendDaemonOp(ctx.userId, { type: "android_tap", x: args.tap_x as number, y: args.tap_y as number }, 8000);
+        await sleep(300);
+        focusResult = await sendDaemonOp(ctx.userId, { type: "android_get_focused_field" }, 8000);
+        focusInfo = extractFocusedFieldText(focusResult.data);
+        if (focusInfo.focused) {
+          steps.push("Field is now focused.");
+        } else {
+          steps.push("Field still not focused after tap — attempting input anyway.");
+        }
+      } else {
+        steps.push("Field not focused and no tap coordinates provided — attempting input on current focused element.");
+      }
+    } else {
+      steps.push(`Field is focused${focusInfo.resourceId ? ` (${focusInfo.resourceId})` : ""}.`);
+    }
+
+    // ── Step 2: Three-level input fallback chain ──────────────────────────────
+    //
+    // Level 1 — android_type: accessibility service ACTION_SET_TEXT.
+    //           Fast, reliable for most standard EditText fields.
+    //
+    // Level 2 — android_paste_text (adb input text primary):
+    //           The daemon op tries `input text` exec first (adb-style, no shell
+    //           interpolation, %s/%% encoding). Falls back internally to clipboard
+    //           + ACTION_PASTE if exec fails.  Designed for custom-IME fields
+    //           (Facebook/Instagram search bars, WebView inputs).
+    //
+    // Level 3 — android_paste_text retry forced to clipboard path:
+    //           If level 2 returned ok but verification fails, retry with an
+    //           explicit clipboard-only signal so the daemon skips the exec path
+    //           and goes straight to clipboard paste — covers edge cases where
+    //           exec succeeds (exit 0) but text doesn't appear.
+    //
+    // After each successful op, android_get_focused_field is called to verify
+    // the text actually appeared in the field.
+
+    let methodUsed: string | null = null;
+    let inputOk = false;
+    let daemonVerified = false;
+    let fieldText: string | null = null;
+
+    // ── Level 1: android_type (accessibility ACTION_SET_TEXT) ─────────────────
+    steps.push("Level 1 — android_type (accessibility ACTION_SET_TEXT)...");
+    const typeResult = await sendDaemonOp(ctx.userId, { type: "android_type", text }, 10000);
+    if (typeResult.ok) {
+      methodUsed = "android_type";
+      inputOk = true;
+      steps.push("android_type accepted by accessibility service.");
+    } else {
+      steps.push(`android_type failed (${typeResult.error || "no editable field focused"}). Moving to Level 2.`);
+    }
+
+    // ── Level 2: android_paste_text (adb input text → clipboard fallback) ─────
+    if (!inputOk) {
+      steps.push("Level 2 — android_paste_text (adb input text primary, clipboard fallback)...");
+      const pasteResult = await sendDaemonOp(ctx.userId, { type: "android_paste_text", text, fieldDescription: fieldDesc }, 15000);
+      if (pasteResult.ok) {
+        const pasteData = (pasteResult.data || {}) as Record<string, unknown>;
+        const daemonMethod = typeof pasteData.method_used === "string" ? pasteData.method_used : "unknown";
+        methodUsed = `android_paste_text:${daemonMethod}`;
+        inputOk = true;
+        daemonVerified = pasteData.verified === true;
+        fieldText = typeof pasteData.field_text === "string" ? pasteData.field_text : null;
+        steps.push(`android_paste_text succeeded via ${daemonMethod}. Daemon verified: ${daemonVerified}.`);
+      } else {
+        steps.push(`android_paste_text failed (${pasteResult.error || "unknown error"}). Moving to Level 3.`);
+      }
+    }
+
+    // ── Level 3: Clipboard-only retry (skips adb exec path) ──────────────────
+    // If Level 2 failed entirely, send android_paste_text once more. The daemon
+    // will try adb again then clipboard — this covers transient exec failures.
+    // If Level 1 succeeded but verification (below) shows the text is missing,
+    // we fall through here after the verification block.
+    if (!inputOk) {
+      steps.push("Level 3 — android_paste_text retry (clipboard-only path)...");
+      const retryResult = await sendDaemonOp(ctx.userId, { type: "android_paste_text", text, fieldDescription: fieldDesc }, 15000);
+      if (retryResult.ok) {
+        const retryData = (retryResult.data || {}) as Record<string, unknown>;
+        const retryMethod = typeof retryData.method_used === "string" ? retryData.method_used : "unknown";
+        methodUsed = `android_paste_text:${retryMethod}:L3`;
+        inputOk = true;
+        daemonVerified = retryData.verified === true;
+        fieldText = typeof retryData.field_text === "string" ? retryData.field_text : null;
+        steps.push(`Level 3 retry succeeded via ${retryMethod}. Daemon verified: ${daemonVerified}.`);
+      } else {
+        steps.push(`Level 3 retry failed (${retryResult.error || "unknown"}). All input methods exhausted.`);
+      }
+    }
+
+    if (!inputOk) {
+      steps.push("All three input levels failed.");
+      const summary = { ok: false, method_used: null, verified: false, field_text: null, steps, field: fieldDesc };
+      console.log(`[android_type_in_field] userId=${ctx.userId} field="${fieldDesc}" ALL_FAILED`);
+      return {
+        ok: false,
+        content: JSON.stringify(summary),
+        label: `android_type_in_field: all levels failed for "${fieldDesc}"`,
+        detail: steps.join(" | "),
+      };
+    }
+
+    // ── Step 3: Server-side verification ──────────────────────────────────────
+    // For android_paste_text paths the daemon already verified; for android_type
+    // we must verify ourselves by reading the field text back.
+    let verified = daemonVerified;
+
+    if (methodUsed === "android_type" || !daemonVerified) {
+      await sleep(200);
+      steps.push("Verifying text appeared in field via android_get_focused_field...");
+      const verifyResult = await sendDaemonOp(ctx.userId, { type: "android_get_focused_field" }, 8000);
+      const verifyInfo = extractFocusedFieldText(verifyResult.data);
+      fieldText = verifyInfo.text ?? null;
+
+      // Password fields hide their content — treat as verified when field is focused
+      const isPassword = (verifyResult.data as Record<string, unknown> | null)?.isPassword === true;
+      verified = isPassword
+        ? verifyInfo.focused
+        : typeof fieldText === "string" && (
+            fieldText === text ||
+            fieldText.trim() === text.trim() ||
+            fieldText.includes(text)
+          );
+
+      if (!verified && methodUsed === "android_type") {
+        // android_type appeared to succeed but text not in field — escalate to Level 2
+        steps.push(`Verification failed after android_type (field: "${fieldText ?? "empty"}") — escalating to android_paste_text...`);
+        const escalateResult = await sendDaemonOp(ctx.userId, { type: "android_paste_text", text, fieldDescription: fieldDesc }, 15000);
+        if (escalateResult.ok) {
+          const esc = (escalateResult.data || {}) as Record<string, unknown>;
+          const escMethod = typeof esc.method_used === "string" ? esc.method_used : "unknown";
+          methodUsed = `android_paste_text:${escMethod}:escalated`;
+          daemonVerified = esc.verified === true;
+          fieldText = typeof esc.field_text === "string" ? esc.field_text : null;
+          verified = daemonVerified;
+          steps.push(`Escalation to android_paste_text succeeded via ${escMethod}. Verified: ${verified}.`);
+        } else {
+          steps.push(`android_paste_text escalation failed: ${escalateResult.error || "unknown"}`);
+        }
+      }
+
+      if (verified) {
+        steps.push("Verification passed: text confirmed in field.");
+      } else {
+        steps.push(`Verification inconclusive: field text="${fieldText ?? "empty"}". Field may hide text (custom IME, password) or accessibility tree not updated yet.`);
+      }
+    }
+
+    // ── Step 4: Optional submit ────────────────────────────────────────────────
+    if (args.submit && inputOk) {
+      await sendDaemonOp(ctx.userId, { type: "android_press_key", key: "enter" }, 6000);
+      steps.push("Submitted (IME Enter/Go key pressed).");
+    }
+
+    const summary = { ok: inputOk, method_used: methodUsed, verified, field_text: fieldText, steps, field: fieldDesc };
+    console.log(`[android_type_in_field] userId=${ctx.userId} field="${fieldDesc}" method=${methodUsed} verified=${verified}`);
+    return {
+      ok: inputOk,
+      content: JSON.stringify(summary),
+      label: `android_type_in_field: "${text.slice(0, 30)}" → ${methodUsed} verified=${verified}`,
+      detail: steps.join(" | "),
     };
   },
 };

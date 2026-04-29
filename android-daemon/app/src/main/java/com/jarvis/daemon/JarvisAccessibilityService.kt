@@ -491,6 +491,67 @@ class JarvisAccessibilityService : AccessibilityService() {
         return null
     }
 
+    // ── Focused field info — for android_get_focused_field ───────────────────
+    data class FocusedFieldInfo(
+        val focused: Boolean,
+        val text: String?,
+        val hint: String?,
+        val resourceId: String?,
+        val className: String?,
+        val isPassword: Boolean
+    )
+
+    fun getFocusedFieldInfo(): FocusedFieldInfo {
+        val root = rootInActiveWindow
+            ?: return FocusedFieldInfo(false, null, null, null, null, false)
+        val node = findFocusedEditable(root)
+            ?: return FocusedFieldInfo(false, null, null, null, null, false)
+        val hint = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            node.hintText?.toString()
+        } else null
+        return FocusedFieldInfo(
+            focused = true,
+            text = node.text?.toString(),
+            hint = hint,
+            resourceId = node.viewIdResourceName,
+            className = node.className?.toString(),
+            isPassword = node.isPassword
+        )
+    }
+
+    // ── Paste text via clipboard + ACTION_PASTE ──────────────────────────────
+    /** Copy [text] to the system clipboard and issue ACTION_PASTE on the
+     *  focused (or first) editable field.  Returns true when ACTION_PASTE
+     *  was accepted by the field node. */
+    fun pasteFromClipboard(text: String): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val node = findFocusedEditable(root) ?: findFirstEditable(root) ?: return false
+
+        // Build a plain-text clip and set it on the primary clipboard slot.
+        // We must dispatch this to the main thread on Android 10+ — background
+        // threads cannot write to the clipboard on Android 10+ (the write is
+        // silently dropped).
+        val latch = CountDownLatch(1)
+        var clipSet = false
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            try {
+                val cm = getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                val clip = android.content.ClipData.newPlainText("jarvis_input", text)
+                cm.setPrimaryClip(clip)
+                clipSet = true
+            } catch (e: Exception) {
+                Log.w(TAG, "pasteFromClipboard: clipboard set failed: ${e.message}")
+            } finally {
+                latch.countDown()
+            }
+        }
+        latch.await(2, TimeUnit.SECONDS)
+        if (!clipSet) return false
+
+        Thread.sleep(100) // Let clipboard propagate
+        return node.performAction(AccessibilityNodeInfo.ACTION_PASTE)
+    }
+
     // ── Swipe ────────────────────────────────────────────────────────────────
     fun performSwipe(x1: Float, y1: Float, x2: Float, y2: Float, durationMs: Long) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return
