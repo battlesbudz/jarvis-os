@@ -123,6 +123,7 @@ import { runShellTool } from "./runShellTool";
 import { selfHealTool } from "./selfHealTool";
 import { workspaceUpdateTool } from "./workspaceUpdateTool";
 import { listCustomAgentsTool } from "./listCustomAgents";
+import { runTournamentTool } from "./runTournamentTool";
 
 // ── Tool Groups ────────────────────────────────────────────────────────────────
 // Each group represents a functional capability cluster. Channels declare which
@@ -178,6 +179,7 @@ export function filterToolsByGroups(
 export const ALL_TOOLS: AgentTool[] = [
   ...capabilityRegistry.getAllTools(),
   listCustomAgentsTool,
+  runTournamentTool,
 ];
 
 // ── Tool index + resolver ──────────────────────────────────────────────────────
@@ -185,6 +187,7 @@ const TOOL_INDEX = new Map(ALL_TOOLS.map((t) => [t.name, t]));
 
 // Register custom-agent tools in the group map so filterToolsByGroups includes them.
 TOOL_GROUP_MAP[listCustomAgentsTool.name] = ["coaching"];
+TOOL_GROUP_MAP[runTournamentTool.name] = ["system"];
 
 // Wire the resolver so testToolTool can look up tools without a circular import.
 initToolResolver((name) => TOOL_INDEX.get(name));
@@ -218,6 +221,7 @@ export function telegramCoachTools(opts: { hasGoogle: boolean }): AgentTool[] {
       (t) => t.name !== "spawn_subagent" && !GOOGLE_GATED.has(t.name)
     ),
     listCustomAgentsTool,
+    runTournamentTool,
   ];
   if (opts.hasGoogle) {
     base.push(gmailActionTool, gmailDraftTool, fetchCalendarTool, driveCreateFileTool, driveListFilesTool, driveReadFileTool);
@@ -347,4 +351,5 @@ export {
   selfHealTool,
   workspaceUpdateTool,
   listCustomAgentsTool,
+  runTournamentTool,
 };

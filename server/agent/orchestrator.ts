@@ -23,6 +23,7 @@ import { db } from "../db";
 import { orchestrationTraces } from "@shared/schema";
 import type { ToolContext } from "./types";
 import type { AgentTool } from "./types";
+import { detectTournamentSignals } from "./tournamentRunner";
 
 /** Default maximum retries per sub-task when not overridden by caller or env. */
 const DEFAULT_MAX_RETRIES = 3;
@@ -323,6 +324,20 @@ function topologicalSort(tasks: SubTask[]): SubTask[] {
  * Main orchestration loop.
  * Throws if any sub-task cannot be verified after all retries.
  */
+// Phrases that indicate the user wants to see runners-up from a prior tournament.
+const RUNNERS_UP_PATTERNS = [
+  /show.*others/i, /see.*others/i, /show.*runner/i, /see.*runner/i,
+  /compare.*version/i, /compare.*output/i, /other.*version/i, /other.*answer/i,
+  /show.*alternatives/i, /see.*alternatives/i,
+];
+
+/**
+ * Returns true if the request looks like a follow-up for tournament runners-up.
+ */
+function isRunnersUpRequest(text: string): boolean {
+  return RUNNERS_UP_PATTERNS.some((r) => r.test(text));
+}
+
 export async function runOrchestrator(input: OrchestratorInput): Promise<OrchestratorResult> {
   const { userId, userRequest, systemContext, tools, toolContext, maxCompletionTokens, maxRetries: maxRetriesOverride, onSubtaskComplete } = input;
   const MAX_RETRIES = resolveMaxRetries(maxRetriesOverride);
@@ -330,6 +345,41 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<Orchest
   const traceId = `orch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const startedAt = new Date();
   let totalRetries = 0;
+
+  // ── Short-circuit: runners-up recall ──────────────────────────────────────
+  // If the user says "show me the others", "compare versions", etc., look up
+  // the most recent tournament run and return the runners-up immediately without
+  // running the full orchestration pipeline.
+  if (isRunnersUpRequest(userRequest)) {
+    try {
+      const { getTournamentRunners } = await import("./tournamentRunner");
+      const { found, run } = await getTournamentRunners(userId);
+      if (found && run) {
+        const outputs = (run.outputs as Array<{ agentIndex: number; approach: string; body: string }>) || [];
+        const scores = (run.scores as Array<{ agentIndex: number; score: number; reasoning: string }>) || [];
+        const winnerId = run.winnerId;
+        const runnersUp = outputs
+          .filter((o) => o.approach !== winnerId)
+          .map((o, idx) => {
+            const score = scores.find((s) => s.agentIndex === o.agentIndex);
+            return [
+              `## Runner-up ${idx + 1} — ${o.approach} (score: ${score?.score ?? "n/a"}/100)`,
+              score ? `> ${score.reasoning}` : "",
+              "",
+              o.body,
+            ].filter(Boolean).join("\n");
+          });
+        if (runnersUp.length > 0) {
+          const finalAnswer =
+            `Here are the runners-up from your most recent ${run.agentType} tournament:\n\n` +
+            runnersUp.join("\n\n---\n\n");
+          return { finalAnswer, subtaskCount: 0, retryCount: 0, traceId };
+        }
+      }
+    } catch {
+      // Non-fatal — fall through to normal orchestration
+    }
+  }
 
   // Resolve orchestrator model from user preferences
   const orchestratorModel = await getModel(userId, "orchestrator");
@@ -465,6 +515,16 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<Orchest
     });
   } catch (err) {
     console.error("[orchestrator] trace persist failed (non-fatal):", err);
+  }
+
+  // ── Proactive tournament offer ────────────────────────────────────────────
+  // When the original request shows high-stakes signals (important emails,
+  // strategy docs, legal/financial analysis) AND tournament mode was not
+  // already used, offer it as a follow-up option.
+  if (detectTournamentSignals(userRequest)) {
+    finalAnswer =
+      '_Tip: I can run this as a tournament across 3 independent agents for a higher-quality result — just say "run as tournament" if you\'d like that._\n\n' +
+      finalAnswer;
   }
 
   return {
