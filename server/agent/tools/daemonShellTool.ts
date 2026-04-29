@@ -2223,6 +2223,267 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
   },
 };
 
+// ── android_pinch_element ──────────────────────────────────────────────────────
+// Pinch-to-zoom gesture centred on a named element, without requiring raw pixel
+// coordinates. Resolves the element via the same ScreenMap cache used by
+// android_tap_element and android_swipe_element, then fires two sequential
+// android_swipe operations that simulate the two fingers of a pinch gesture.
+//
+// Geometry (diagonal pinch along the 45° axis through the element centre):
+//   zoom_in  (spread): finger 1 moves from centre → upper-left
+//                       finger 2 moves from centre → lower-right
+//   zoom_out (pinch) : finger 1 moves from upper-left → centre
+//                       finger 2 moves from lower-right → centre
+//
+// The reach of each finger from the centre = base_offset_px * scale_factor.
+// base_offset_px defaults to 150 px; scale_factor defaults to 2.0.
+export const androidPinchElementTool: AgentTool = {
+  name: "android_pinch_element",
+  description: `Perform a pinch-to-zoom (two-finger spread or pinch) gesture on an Android screen element by name instead of raw coordinates.
+Accepts a human-readable label or description string, fuzzy-matches it against the current ScreenMap (calling android_screen_understand internally, with a 500 ms cache hit if available), and fires two sequential android_swipe gestures that simulate the two fingers of a pinch gesture centred on the best-matching element.
+
+Use this tool to zoom in or out on maps, photos, PDFs, or any element that responds to pinch gestures:
+  - "zoom in on the map" — spreads two fingers outward on the map element
+  - "zoom out on the photo" — pinches two fingers inward on the photo
+  - "zoom in on the document" with scale_factor: 3 — larger spread for more aggressive zoom
+
+Parameters:
+  - label: human-readable name of the element to gesture on
+  - action: "zoom_in" (spread / pinch-out) or "zoom_out" (pinch / pinch-in)
+  - scale_factor: multiplier controlling how far the fingers travel from the element centre (default 2.0; higher = larger gesture)
+  - max_age_ms: max age of cached ScreenMap to reuse (default 500, 0 = always fresh)
+
+The gesture is simulated as two sequential diagonal swipe strokes along the 45° axis through the element centre. True simultaneous multi-touch is not yet supported by the daemon; sequential strokes work for most zoom-capable views.
+
+Returns the matched element details and the swipe coordinates used for both fingers.
+
+Requires: android_screenshot and android_read_screen permissions (same as android_screen_understand), plus android_tap_type permission for the swipe actions.`,
+  parameters: {
+    type: "object",
+    properties: {
+      label: {
+        type: "string",
+        description: "The label, description, or resource_id (or part thereof) of the element to pinch. Case-insensitive fuzzy match.",
+      },
+      action: {
+        type: "string",
+        enum: ["zoom_in", "zoom_out"],
+        description: "'zoom_in' spreads two fingers outward from the element centre (pinch-out). 'zoom_out' moves two fingers inward toward the centre (pinch-in).",
+      },
+      scale_factor: {
+        type: "number",
+        description: "How far each finger travels from the element centre, as a multiple of the base offset (150 px). Default 2.0. Higher values produce a larger, more aggressive gesture.",
+      },
+      max_age_ms: {
+        type: "number",
+        description: "Maximum age in milliseconds for a cached ScreenMap to be reused (default 500). Set to 0 to always capture a fresh screen.",
+      },
+    },
+    required: ["label", "action"],
+  },
+  async execute(args, ctx) {
+    const label = String(args.label || "").trim();
+    if (!label) {
+      return { ok: false, content: "label is required.", label: "android_pinch_element: no label" };
+    }
+
+    const action = String(args.action || "").toLowerCase().trim();
+    if (action !== "zoom_in" && action !== "zoom_out") {
+      return {
+        ok: false,
+        content: `action must be "zoom_in" or "zoom_out". Got: "${action}"`,
+        label: "android_pinch_element: invalid action",
+      };
+    }
+
+    if (!isAndroidDaemonActive(ctx.userId)) {
+      return {
+        ok: false,
+        content: "Android daemon is not connected. Ask the user to install the Jarvis Android APK and pair it (Profile → Connected Channels → Android Device).",
+        label: "android_pinch_element: android offline",
+      };
+    }
+
+    // Permission checks
+    const [screenshotAllowed, readAllowed, swipeAllowed] = await Promise.all([
+      isAndroidDaemonActionAllowed(ctx.userId, "android_screenshot"),
+      isAndroidDaemonActionAllowed(ctx.userId, "android_read_screen"),
+      isAndroidDaemonActionAllowed(ctx.userId, "android_tap_type"),
+    ]);
+    if (!screenshotAllowed) {
+      return {
+        ok: false,
+        content: "android_screenshot permission is not enabled. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.",
+        label: "android_pinch_element: screenshot permission denied",
+      };
+    }
+    if (!readAllowed) {
+      return {
+        ok: false,
+        content: "android_read_screen permission is not enabled. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.",
+        label: "android_pinch_element: read_screen permission denied",
+      };
+    }
+    if (!swipeAllowed) {
+      return {
+        ok: false,
+        content: "android_tap_type permission is not enabled. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.",
+        label: "android_pinch_element: swipe permission denied",
+      };
+    }
+
+    // ── Resolve ScreenMap (cache or fresh) ────────────────────────────────────
+    const maxAge = typeof args.max_age_ms === "number" ? args.max_age_ms : 500;
+    let screenElements: ScreenElement[] = [];
+
+    const cached = screenMapCache.get(ctx.userId);
+    if (cached && maxAge > 0 && Date.now() - cached.ts <= maxAge) {
+      console.log(`[android_pinch_element] userId=${ctx.userId} using cached ScreenMap`);
+      try {
+        const parsed = JSON.parse(cached.result) as { elements?: unknown[] };
+        screenElements = normalizeScreenElements(Array.isArray(parsed.elements) ? parsed.elements : []);
+      } catch {
+        screenElements = [];
+      }
+    }
+
+    if (screenElements.length === 0) {
+      const buildResult = await buildScreenMapElements(ctx.userId);
+      if (!buildResult.ok) {
+        return { ok: false, content: buildResult.content, label: `android_pinch_element: ${buildResult.label}` };
+      }
+      screenElements = buildResult.elements;
+      console.log(`[android_pinch_element] userId=${ctx.userId} fresh ScreenMap: ${screenElements.length} elements`);
+    }
+
+    // ── Fuzzy-match ───────────────────────────────────────────────────────────
+    let bestElement: ScreenElement | null = null;
+    let bestScore = 0;
+
+    for (const el of screenElements) {
+      const score = scoreElement(el, label);
+      if (score > bestScore) {
+        bestScore = score;
+        bestElement = el;
+      }
+    }
+
+    if (!bestElement || bestScore === 0) {
+      const elementList = screenElements
+        .map((el) => `  • ${el.label}${el.description ? ` — ${el.description}` : ""}`)
+        .join("\n");
+      return {
+        ok: false,
+        content: `No element matching "${label}" was found on screen.\n\nAvailable elements:\n${elementList || "  (none)"}`,
+        label: `android_pinch_element: no match for "${label}"`,
+      };
+    }
+
+    // ── Compute two-finger swipe coordinates ──────────────────────────────────
+    // The gesture is performed along the 45° diagonal through the element centre.
+    // BASE_OFFSET_PX is the resting half-distance between the two fingers.
+    // Each finger travels BASE_OFFSET_PX * scale_factor pixels from the centre.
+    const BASE_OFFSET_PX = 150;
+    // Clamp scale_factor to a sane range so that even a very large value cannot
+    // generate coordinates so far off-screen that the daemon rejects or no-ops them.
+    const MAX_SCALE_FACTOR = 8;
+    const rawScale = typeof args.scale_factor === "number" && args.scale_factor > 0 ? args.scale_factor : 2.0;
+    const scaleFactor = Math.min(rawScale, MAX_SCALE_FACTOR);
+    const reach = Math.round(BASE_OFFSET_PX * scaleFactor);
+
+    const { center_x, center_y } = bestElement;
+
+    // Finger positions at the "far" end (upper-left and lower-right of centre).
+    // All coordinates are clamped to >= 0 and rounded to integer pixels so that
+    // swipe ops never receive negative or fractional values. (Upper-bound clamping
+    // against the physical screen size is deferred: we don't have device dimensions
+    // at call time and the daemon tolerates over-reach better than negative values.)
+    const farUpperLeft  = {
+      x: Math.max(0, Math.round(center_x - reach)),
+      y: Math.max(0, Math.round(center_y - reach)),
+    };
+    const farLowerRight = {
+      x: Math.max(0, Math.round(center_x + reach)),
+      y: Math.max(0, Math.round(center_y + reach)),
+    };
+    const centreRounded = {
+      x: Math.max(0, Math.round(center_x)),
+      y: Math.max(0, Math.round(center_y)),
+    };
+
+    // For zoom_in (spread): fingers move centre → outer corners
+    // For zoom_out (pinch): fingers move outer corners → centre
+    let finger1: { x1: number; y1: number; x2: number; y2: number };
+    let finger2: { x1: number; y1: number; x2: number; y2: number };
+
+    if (action === "zoom_in") {
+      finger1 = { x1: centreRounded.x, y1: centreRounded.y, x2: farUpperLeft.x,  y2: farUpperLeft.y  };
+      finger2 = { x1: centreRounded.x, y1: centreRounded.y, x2: farLowerRight.x, y2: farLowerRight.y };
+    } else {
+      finger1 = { x1: farUpperLeft.x,  y1: farUpperLeft.y,  x2: centreRounded.x, y2: centreRounded.y };
+      finger2 = { x1: farLowerRight.x, y1: farLowerRight.y, x2: centreRounded.x, y2: centreRounded.y };
+    }
+
+    // ── Fire the two swipe strokes sequentially ───────────────────────────────
+    const SWIPE_DURATION_MS = 300;
+
+    const result1 = await sendDaemonOp(
+      ctx.userId,
+      { type: "android_swipe", x1: finger1.x1, y1: finger1.y1, x2: finger1.x2, y2: finger1.y2, durationMs: SWIPE_DURATION_MS },
+      15000,
+    );
+
+    if (!result1.ok) {
+      return {
+        ok: false,
+        content: `Matched element "${bestElement.label}" at (${center_x}, ${center_y}) but the first finger swipe failed: ${result1.error || "unknown error"}`,
+        label: "android_pinch_element: finger1 swipe failed",
+      };
+    }
+
+    const result2 = await sendDaemonOp(
+      ctx.userId,
+      { type: "android_swipe", x1: finger2.x1, y1: finger2.y1, x2: finger2.x2, y2: finger2.y2, durationMs: SWIPE_DURATION_MS },
+      15000,
+    );
+
+    if (!result2.ok) {
+      return {
+        ok: false,
+        content: `Matched element "${bestElement.label}" at (${center_x}, ${center_y}) but the second finger swipe failed: ${result2.error || "unknown error"}`,
+        label: "android_pinch_element: finger2 swipe failed",
+      };
+    }
+
+    console.log(
+      `[android_pinch_element] userId=${ctx.userId} action=${action} on "${bestElement.label}" ` +
+      `centre=(${centreRounded.x},${centreRounded.y}) reach=${reach}px scale=${scaleFactor} score=${bestScore}`,
+    );
+
+    return {
+      ok: true,
+      content: JSON.stringify({
+        pinched: {
+          label: bestElement.label,
+          description: bestElement.description,
+          resource_id: bestElement.resource_id,
+          center_x: centreRounded.x,
+          center_y: centreRounded.y,
+          bounds: bestElement.bounds,
+          match_score: bestScore,
+          action,
+          scale_factor: scaleFactor,
+          reach_px: reach,
+          finger1: { from: { x: finger1.x1, y: finger1.y1 }, to: { x: finger1.x2, y: finger1.y2 } },
+          finger2: { from: { x: finger2.x1, y: finger2.y1 }, to: { x: finger2.x2, y: finger2.y2 } },
+        },
+      }),
+      label: `${action === "zoom_in" ? "Zoomed in" : "Zoomed out"} on "${bestElement.label}" (reach=${reach}px)`,
+      detail: `match_score=${bestScore} scale_factor=${scaleFactor} bounds=${bestElement.bounds}`,
+    };
+  },
+};
+
 // ── android_scroll_to_top ─────────────────────────────────────────────────────
 // Scrolls the current Android screen back to the very top by performing a
 // series of rapid downward swipes (finger from top → bottom so content moves up).
