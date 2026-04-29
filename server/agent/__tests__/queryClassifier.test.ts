@@ -11,6 +11,7 @@ import {
   classifyBuildFollowUp,
   classifyBuildResume,
   findBuildDescription,
+  classifyQueryIntent,
   BUILD_ACK_MARKER,
 } from "../queryClassifier";
 
@@ -572,6 +573,266 @@ assert(
     { role: "user", content: "build me a weather lookup tool" },
   ]),
   "INT-1: refinement after resume ack is routed as a build follow-up → true",
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// classifyQueryIntent — research phrases (must return "research")
+// ─────────────────────────────────────────────────────────────────────────────
+
+assert(
+  classifyQueryIntent("search for the latest AI papers") === "research",
+  "QI-R1: 'search for the latest AI papers' → research",
+);
+assert(
+  classifyQueryIntent("look up the TypeScript docs") === "research",
+  "QI-R2: 'look up the TypeScript docs' → research",
+);
+assert(
+  classifyQueryIntent("lookup best practices for React") === "research",
+  "QI-R3: 'lookup best practices for React' → research",
+);
+assert(
+  classifyQueryIntent("google how to reverse a linked list") === "research",
+  "QI-R4: 'google how to reverse a linked list' → research",
+);
+assert(
+  classifyQueryIntent("find me an article about climate change") === "research",
+  "QI-R5: 'find me an article about climate change' → research",
+);
+assert(
+  classifyQueryIntent("browse to github.com and show me the readme") === "research",
+  "QI-R6: 'browse to github.com' → research",
+);
+assert(
+  classifyQueryIntent("research the history of the Roman Empire") === "research",
+  "QI-R7: 'research the history of the Roman Empire' → research",
+);
+assert(
+  classifyQueryIntent("investigate why the server is slow") === "research",
+  "QI-R8: 'investigate why the server is slow' → research",
+);
+assert(
+  classifyQueryIntent("there is a link here https://example.com") === "research",
+  "QI-R9: message containing a URL → research",
+);
+assert(
+  classifyQueryIntent("open https://news.ycombinator.com for me") === "research",
+  "QI-R10: bare https:// URL in message → research",
+);
+assert(
+  classifyQueryIntent("fetch the documentation from that page") === "research",
+  "QI-R11: 'fetch the documentation' → research",
+);
+assert(
+  classifyQueryIntent("scrape the product listing from that website") === "research",
+  "QI-R12: 'scrape the product listing' → research",
+);
+assert(
+  classifyQueryIntent("crawl this site and extract all headings") === "research",
+  "QI-R13: 'crawl this site' → research",
+);
+assert(
+  classifyQueryIntent("what is quantum computing?") === "research",
+  "QI-R14: 'what is quantum computing?' → research",
+);
+assert(
+  classifyQueryIntent("what are the best practices for TypeScript?") === "research",
+  "QI-R15: 'what are the best practices for TypeScript?' → research",
+);
+assert(
+  classifyQueryIntent("who is the CEO of Apple?") === "research",
+  "QI-R16: 'who is the CEO of Apple?' → research",
+);
+assert(
+  classifyQueryIntent("where is the Eiffel Tower located?") === "research",
+  "QI-R17: 'where is the Eiffel Tower located?' → research",
+);
+assert(
+  classifyQueryIntent("how does photosynthesis work?") === "research",
+  "QI-R18: 'how does photosynthesis work?' → research",
+);
+assert(
+  classifyQueryIntent("how do I set up a PostgreSQL database?") === "research",
+  "QI-R19: 'how do I set up a PostgreSQL database?' → research",
+);
+assert(
+  classifyQueryIntent("explain the difference between TCP and UDP") === "research",
+  "QI-R20: 'explain the difference between TCP and UDP' → research",
+);
+assert(
+  classifyQueryIntent("define the term 'idempotent'") === "research",
+  "QI-R21: 'define the term idempotent' → research",
+);
+assert(
+  classifyQueryIntent("tell me about the history of the internet") === "research",
+  "QI-R22: 'tell me about the history of the internet' → research",
+);
+assert(
+  classifyQueryIntent("youtube video about meditation techniques") === "research",
+  "QI-R23: 'youtube video about meditation' → research",
+);
+assert(
+  classifyQueryIntent("watch the latest video from this channel") === "research",
+  "QI-R24: 'watch the latest video' → research",
+);
+assert(
+  classifyQueryIntent("get the transcript of this video") === "research",
+  "QI-R25: 'get the transcript of this video' → research",
+);
+assert(
+  classifyQueryIntent("summarize this article for me") === "research",
+  "QI-R26: 'summarize this article' → research",
+);
+assert(
+  classifyQueryIntent("latest news about SpaceX") === "research",
+  "QI-R27: 'latest news about SpaceX' → research",
+);
+assert(
+  classifyQueryIntent("news about the upcoming election") === "research",
+  "QI-R28: 'news about the upcoming election' → research",
+);
+assert(
+  classifyQueryIntent("read about the new iPhone release") === "research",
+  "QI-R29: 'read about the new iPhone release' → research",
+);
+assert(
+  classifyQueryIntent("show me the source for that claim") === "research",
+  "QI-R30: 'show me the source' → research",
+);
+assert(
+  classifyQueryIntent("find the documentation for this library") === "research",
+  "QI-R31: 'find the documentation for this library' → research",
+);
+assert(
+  classifyQueryIntent("where can I find the docs for Expo Router?") === "research",
+  "QI-R32: 'find the docs for Expo Router' → research",
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// classifyQueryIntent — general phrases (must return "general")
+// ─────────────────────────────────────────────────────────────────────────────
+
+assert(
+  classifyQueryIntent("remind me to call John at 3pm") === "general",
+  "QI-G1: 'remind me to call John at 3pm' → general",
+);
+assert(
+  classifyQueryIntent("set a reminder for tomorrow morning") === "general",
+  "QI-G2: 'set a reminder for tomorrow morning' → general",
+);
+assert(
+  classifyQueryIntent("add a task to review the proposal") === "general",
+  "QI-G3: 'add a task to review the proposal' → general",
+);
+assert(
+  classifyQueryIntent("show me my tasks for today") === "general",
+  "QI-G4: 'show me my tasks for today' → general",
+);
+assert(
+  classifyQueryIntent("mark the gym task as done") === "general",
+  "QI-G5: 'mark the gym task as done' → general",
+);
+assert(
+  classifyQueryIntent("what meetings do I have today?") === "general",
+  "QI-G6: 'what meetings do I have today?' → general",
+);
+assert(
+  classifyQueryIntent("schedule a call with Alice for Friday") === "general",
+  "QI-G7: 'schedule a call with Alice for Friday' → general",
+);
+assert(
+  classifyQueryIntent("what's on my calendar this week?") === "general",
+  "QI-G8: 'what's on my calendar this week?' → general",
+);
+assert(
+  classifyQueryIntent("check my email") === "general",
+  "QI-G9: 'check my email' → general",
+);
+assert(
+  classifyQueryIntent("send a message to my team") === "general",
+  "QI-G10: 'send a message to my team' → general",
+);
+assert(
+  classifyQueryIntent("I'm feeling stressed today") === "general",
+  "QI-G11: 'I'm feeling stressed today' → general (conversational)",
+);
+assert(
+  classifyQueryIntent("how am I doing with my goals?") === "general",
+  "QI-G12: 'how am I doing with my goals?' → general (coaching check-in)",
+);
+assert(
+  classifyQueryIntent("hey, good morning!") === "general",
+  "QI-G13: greeting → general",
+);
+assert(
+  classifyQueryIntent("thanks, that's all for now") === "general",
+  "QI-G14: sign-off phrase → general",
+);
+assert(
+  classifyQueryIntent("can you help me prioritise my day?") === "general",
+  "QI-G15: 'prioritise my day' → general (planning, not research)",
+);
+assert(
+  classifyQueryIntent("log a reflection about my morning routine") === "general",
+  "QI-G16: 'log a reflection' → general",
+);
+assert(
+  classifyQueryIntent("what should I focus on this afternoon?") === "general",
+  "QI-G17: 'what should I focus on this afternoon?' → general",
+);
+assert(
+  classifyQueryIntent("block 2 hours on my calendar for deep work") === "general",
+  "QI-G18: 'block 2 hours on my calendar' → general",
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// classifyQueryIntent — edge cases
+// ─────────────────────────────────────────────────────────────────────────────
+
+assert(
+  classifyQueryIntent("") === "general",
+  "QI-E1: empty string → general",
+);
+assert(
+  classifyQueryIntent("   ") === "general",
+  "QI-E2: whitespace-only string → general",
+);
+assert(
+  classifyQueryIntent("\t\n") === "general",
+  "QI-E3: tab and newline only → general",
+);
+
+// Mixed intent: message combines a research signal with a task/calendar request.
+// The research pattern should win (any match → "research").
+assert(
+  classifyQueryIntent("remind me to read this article https://example.com") === "research",
+  "QI-MX1: URL in a reminder message → research (URL pattern wins)",
+);
+assert(
+  classifyQueryIntent("remind me to search for flights later") === "research",
+  "QI-MX2: 'search' keyword in a reminder → research (search pattern wins)",
+);
+assert(
+  classifyQueryIntent("add a task to look up the pricing page") === "research",
+  "QI-MX3: 'look up' embedded in a task request → research",
+);
+assert(
+  classifyQueryIntent("what is the meeting about?") === "research",
+  "QI-MX4: 'what is' pattern fires even in meeting context → research",
+);
+
+// Case-insensitivity checks
+assert(
+  classifyQueryIntent("SEARCH for the latest news") === "research",
+  "QI-CI1: uppercase SEARCH → research (case-insensitive)",
+);
+assert(
+  classifyQueryIntent("YouTube video about productivity") === "research",
+  "QI-CI2: mixed-case YouTube → research",
+);
+assert(
+  classifyQueryIntent("What Is machine learning?") === "research",
+  "QI-CI3: 'What Is' mixed case → research",
 );
 
 // ── Print summary ─────────────────────────────────────────────────────────────
