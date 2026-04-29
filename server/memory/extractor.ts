@@ -3,6 +3,21 @@ import { eq, desc } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import OpenAI from "openai";
 
+async function isMemoryReviewEnabledForUser(userId: string): Promise<boolean> {
+  try {
+    const rows = await db
+      .select({ data: schema.lifeContext.data })
+      .from(schema.lifeContext)
+      .where(eq(schema.lifeContext.userId, userId))
+      .limit(1);
+    const data = rows[0]?.data as Record<string, unknown> | undefined;
+    if (data && typeof data.memoryReviewEnabled === "boolean") return data.memoryReviewEnabled;
+    return true;
+  } catch {
+    return true;
+  }
+}
+
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
@@ -175,6 +190,17 @@ Return { "memories": [] } if nothing new and high-confidence was learned.`;
       const memoryType = normalizeMemoryType(typeof r.memory_type === "string" ? r.memory_type : null);
       const expiresAt = expiresAtForTier(tier);
 
+      // Determine if this memory needs human review before becoming active.
+      let pendingReview = false;
+      let reviewStatus = "active";
+      if (tier === "long_term" && (memoryType === "semantic" || memoryType === "procedural")) {
+        const reviewEnabled = await isMemoryReviewEnabledForUser(userId);
+        if (reviewEnabled) {
+          pendingReview = true;
+          reviewStatus = "pending";
+        }
+      }
+
       let embedding: number[] | null = null;
       try {
         const { embedText } = await import("./retrieve");
@@ -202,6 +228,8 @@ Return { "memories": [] } if nothing new and high-confidence was learned.`;
           tier,
           memoryType,
           expiresAt: expiresAt ?? undefined,
+          pendingReview,
+          reviewStatus,
         });
         seen.add(norm);
         stored.push({ content: text, category, confidence, tier, memoryType });

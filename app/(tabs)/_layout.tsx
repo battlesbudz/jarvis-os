@@ -16,9 +16,19 @@ function useInboxBadge(): number {
   return data?.length ?? 0;
 }
 
+function usePendingMemoryBadge(): number {
+  const { data } = useQuery<{ memories: { id: string }[] }>({
+    queryKey: ["/api/memory/pending-review"],
+    refetchInterval: 60000,
+  });
+  return data?.memories?.length ?? 0;
+}
+
 function NativeTabLayout() {
   const count = useInboxBadge();
+  const pendingMemoryCount = usePendingMemoryBadge();
   const inboxLabel = count > 0 ? `Inbox (${count})` : "Inbox";
+  const profileLabel = pendingMemoryCount > 0 ? `Profile (${pendingMemoryCount})` : "Profile";
   return (
     <NativeTabs>
       <NativeTabs.Trigger name="index">
@@ -49,6 +59,10 @@ function NativeTabLayout() {
         <Icon sf={{ default: "gearshape", selected: "gearshape.fill" }} />
         <Label>Settings</Label>
       </NativeTabs.Trigger>
+      <NativeTabs.Trigger name="profile">
+        <Icon sf={{ default: "person.circle", selected: "person.circle.fill" }} />
+        <Label>{profileLabel}</Label>
+      </NativeTabs.Trigger>
     </NativeTabs>
   );
 }
@@ -57,6 +71,7 @@ function ClassicTabLayout() {
   const isWeb = Platform.OS === "web";
   const isIOS = Platform.OS === "ios";
   const count = useInboxBadge();
+  const pendingMemoryCount = usePendingMemoryBadge();
 
   return (
     <Tabs
@@ -178,7 +193,21 @@ function ClassicTabLayout() {
         }}
       />
       <Tabs.Screen name="goals" options={{ href: null }} />
-      <Tabs.Screen name="profile" options={{ href: null }} />
+      <Tabs.Screen
+        name="profile"
+        options={{
+          title: "Profile",
+          tabBarBadge: pendingMemoryCount > 0 ? pendingMemoryCount : undefined,
+          tabBarBadgeStyle: { backgroundColor: Colors.primary, color: '#fff', fontSize: 10 },
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons
+              name={focused ? "person-circle" : "person-circle-outline"}
+              size={24}
+              color={color}
+            />
+          ),
+        }}
+      />
     </Tabs>
   );
 }

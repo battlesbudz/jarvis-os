@@ -4556,6 +4556,80 @@ Return ONLY the JSON object.`;
     }
   });
 
+  app.get("/api/memory/pending-review", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const rows = await db.execute<{
+        id: string; content: string; category: string; memory_type: string;
+        tier: string; confidence: number; extracted_at: string;
+      }>(sql`
+        SELECT id, content, category, memory_type, tier, confidence, extracted_at
+        FROM user_memories
+        WHERE user_id = ${userId}
+          AND pending_review = TRUE
+          AND review_status = 'pending'
+        ORDER BY extracted_at DESC
+        LIMIT 50
+      `);
+      res.json({ memories: rows.rows ?? [] });
+    } catch (error) {
+      console.error("Error fetching pending-review memories:", error);
+      res.status(500).json({ error: "Failed to fetch pending memories" });
+    }
+  });
+
+  app.patch("/api/memory/:id/review", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const { id } = req.params;
+      const { action, updatedContent } = req.body as { action: "keep" | "edit" | "discard"; updatedContent?: string };
+      if (!["keep", "edit", "discard"].includes(action)) {
+        return res.status(400).json({ error: "action must be keep, edit, or discard" });
+      }
+      if (action === "discard") {
+        // Soft-delete: mark as discarded so the audit trail is preserved.
+        // pending_review stays TRUE for the discard case to indicate this was reviewed but rejected.
+        const result = await db.execute(sql`
+          UPDATE user_memories
+          SET review_status = 'discarded'
+          WHERE id = ${id} AND user_id = ${userId} AND pending_review = TRUE AND review_status = 'pending'
+          RETURNING id
+        `);
+        if ((result.rows ?? []).length === 0) return res.status(404).json({ error: "Memory not found" });
+        return res.json({ ok: true });
+      }
+      if (action === "edit") {
+        if (!updatedContent || typeof updatedContent !== "string" || !updatedContent.trim()) {
+          return res.status(400).json({ error: "updatedContent is required for edit action" });
+        }
+        const result = await db.execute(sql`
+          UPDATE user_memories
+          SET content = ${updatedContent.trim()}, pending_review = FALSE, review_status = 'edited'
+          WHERE id = ${id} AND user_id = ${userId} AND pending_review = TRUE
+          RETURNING id
+        `);
+        if ((result.rows ?? []).length === 0) return res.status(404).json({ error: "Memory not found" });
+        markSoulStale(userId).catch(() => {});
+        return res.json({ ok: true });
+      }
+      // action === "keep"
+      const result = await db.execute(sql`
+        UPDATE user_memories
+        SET pending_review = FALSE, review_status = 'kept'
+        WHERE id = ${id} AND user_id = ${userId} AND pending_review = TRUE
+        RETURNING id
+      `);
+      if ((result.rows ?? []).length === 0) return res.status(404).json({ error: "Memory not found" });
+      markSoulStale(userId).catch(() => {});
+      return res.json({ ok: true });
+    } catch (error) {
+      console.error("Error reviewing memory:", error);
+      res.status(500).json({ error: "Failed to review memory" });
+    }
+  });
+
   app.get("/api/memories/fading", async (req: Request, res: Response) => {
     try {
       const userId = req.userId;

@@ -6,6 +6,21 @@ import { normalizeCategory } from "./categories";
 import type { WeeklyPattern, MemoryCategory } from "@shared/schema";
 import { regenerateSoul } from "./soul";
 
+async function isMemoryReviewEnabledForUser(userId: string): Promise<boolean> {
+  try {
+    const rows = await db
+      .select({ data: schema.lifeContext.data })
+      .from(schema.lifeContext)
+      .where(eq(schema.lifeContext.userId, userId))
+      .limit(1);
+    const data = rows[0]?.data as Record<string, unknown> | undefined;
+    if (data && typeof data.memoryReviewEnabled === "boolean") return data.memoryReviewEnabled;
+    return true;
+  } catch {
+    return true;
+  }
+}
+
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
@@ -79,6 +94,8 @@ interface WeeklyJobResult {
   weekOf: string;
   patternCount: number;
   promotedMemories: number;
+  pendingReviewCount: number;
+  pendingReviewPreviews: string[];
   summary: string;
   driveLink?: string | null;
 }
@@ -235,7 +252,7 @@ ${energyText || "(none)"}`;
   const signalCount = recentCompletions.length + brainData.length + chatData.length + telegramData.length + energyData.length;
   if (signalCount < 5) {
     console.log(`[WeeklyPattern] user=${userId} week=${weekOf} skipped — only ${signalCount} signal(s) in 30-day window`);
-    return { weekOf, patternCount: 0, promotedMemories: 0, summary: "" };
+    return { weekOf, patternCount: 0, promotedMemories: 0, pendingReviewCount: 0, pendingReviewPreviews: [], summary: "" };
   }
 
   // DB-backed dedupe via unique (user_id, week_of); restart-safe.
@@ -250,9 +267,14 @@ ${energyText || "(none)"}`;
   // Promote high-confidence patterns into user_memories so they show
   // up in the SOUL even after this week's row is rotated out of view.
   let promoted = 0;
+  const promotedContents: string[] = [];
+  const reviewEnabled = await isMemoryReviewEnabledForUser(userId);
   for (const p of patterns) {
     if (p.confidence < 80) continue;
     const cat = p.category === "fact" ? "fact" : p.category;
+    // All weekly patterns are long_term semantic memories and are subject to the review gate.
+    const pendingReview = reviewEnabled;
+    const reviewStatus = reviewEnabled ? "pending" : "active";
     try {
       await db.insert(schema.userMemories).values({
         userId,
@@ -262,8 +284,13 @@ ${energyText || "(none)"}`;
         relevanceScore: 70,
         sourceType: "weekly_pattern",
         sourceRef: weekOf,
+        tier: "long_term",
+        memoryType: "semantic",
+        pendingReview,
+        reviewStatus,
       });
       promoted += 1;
+      if (reviewEnabled) promotedContents.push(p.observation);
     } catch (err) {
       console.error("[WeeklyPattern] promote failed:", err);
     }
@@ -277,6 +304,18 @@ ${energyText || "(none)"}`;
   }
 
   const finalSummary = summary || (patterns.length === 0 ? "No notable patterns this week." : `${patterns.length} pattern(s) identified.`);
+
+  // Count pending-review memories so the weekly message can include a nudge.
+  let pendingReviewCount = 0;
+  try {
+    const pendingResult = await db.execute<{ cnt: string }>(sql`
+      SELECT count(*)::text AS cnt FROM user_memories
+      WHERE user_id = ${userId} AND pending_review = TRUE AND review_status = 'pending'
+    `);
+    pendingReviewCount = parseInt((pendingResult.rows ?? [])[0]?.cnt ?? "0", 10) || 0;
+  } catch {
+    // non-fatal
+  }
 
   // Auto-save weekly review to Google Drive if enabled.
   let driveLink: string | null = null;
@@ -300,12 +339,14 @@ ${energyText || "(none)"}`;
   }
 
   console.log(
-    `[WeeklyPattern] user=${userId} week=${weekOf} patterns=${patterns.length} promoted=${promoted}`,
+    `[WeeklyPattern] user=${userId} week=${weekOf} patterns=${patterns.length} promoted=${promoted} pendingReview=${pendingReviewCount}`,
   );
   return {
     weekOf,
     patternCount: patterns.length,
     promotedMemories: promoted,
+    pendingReviewCount,
+    pendingReviewPreviews: promotedContents,
     summary: finalSummary,
     driveLink,
   };
