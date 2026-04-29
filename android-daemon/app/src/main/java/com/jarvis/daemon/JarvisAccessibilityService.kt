@@ -398,6 +398,23 @@ class JarvisAccessibilityService : AccessibilityService() {
 
             val bytes = latestFile.readBytes()
             Log.i(TAG, "Global action screenshot via filesystem: ${bytes.size} bytes from ${latestFile.name}")
+
+            // Delete the file from disk first.
+            val fileDeleted = latestFile.delete()
+            Log.i(TAG, "Deleted fallback screenshot from gallery (filesystem): ${latestFile.name} (deleted=$fileDeleted)")
+
+            // Also remove the MediaStore entry so the gallery doesn't show a broken thumbnail.
+            try {
+                val rowsDeleted = contentResolver.delete(
+                    MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                    "${MediaStore.Images.Media.DATA} = ?",
+                    arrayOf(latestFile.absolutePath)
+                )
+                Log.i(TAG, "Deleted fallback screenshot from gallery (MediaStore by path): ${latestFile.name} (rows=$rowsDeleted)")
+            } catch (e: Exception) {
+                Log.w(TAG, "MediaStore delete by path failed: ${e.message}")
+            }
+
             Base64.encodeToString(bytes, Base64.NO_WRAP)
         } catch (oom: OutOfMemoryError) {
             Log.e(TAG, "takeScreenshotViaGlobalAction OOM")
@@ -408,26 +425,64 @@ class JarvisAccessibilityService : AccessibilityService() {
         }
     }
 
-    // Query MediaStore for the most recently added image created after `afterSec` (epoch seconds).
-    // Returns the raw bytes of the file, or null if nothing is found.
+    // Query MediaStore for the most recently added *screenshot* image created after
+    // `afterSec` (epoch seconds). Returns the raw bytes, or null if nothing is found.
+    // On API 29+ we constrain the query to screenshot directories via RELATIVE_PATH so
+    // only files inside a Screenshots folder are matched. On older APIs only the timestamp
+    // guard is applied (RELATIVE_PATH is unavailable).
+    // After a successful read the MediaStore entry (and its underlying file) is deleted
+    // immediately so no gallery photo is left behind.
     private fun readNewestImageFromMediaStore(afterSec: Long): ByteArray? {
         return try {
-            val projection = arrayOf(
-                MediaStore.Images.Media._ID,
-                MediaStore.Images.Media.DATE_ADDED,
-                MediaStore.Images.Media.DISPLAY_NAME
-            )
-            val selection = "${MediaStore.Images.Media.DATE_ADDED} >= ?"
-            val selectionArgs = arrayOf(afterSec.toString())
+            // On API 29+ include RELATIVE_PATH in the projection and WHERE clause so we
+            // only touch files inside a Screenshots directory.
+            val useRelativePath = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
+
+            val projection = if (useRelativePath) {
+                arrayOf(
+                    MediaStore.Images.Media._ID,
+                    MediaStore.Images.Media.DATE_ADDED,
+                    MediaStore.Images.Media.DISPLAY_NAME,
+                    MediaStore.Images.Media.RELATIVE_PATH
+                )
+            } else {
+                arrayOf(
+                    MediaStore.Images.Media._ID,
+                    MediaStore.Images.Media.DATE_ADDED,
+                    MediaStore.Images.Media.DISPLAY_NAME
+                )
+            }
+
+            val selection: String
+            val selectionArgs: Array<String>
+            if (useRelativePath) {
+                selection = "${MediaStore.Images.Media.DATE_ADDED} >= ? AND " +
+                    "${MediaStore.Images.Media.RELATIVE_PATH} LIKE ?"
+                selectionArgs = arrayOf(afterSec.toString(), "%Screenshots%")
+            } else {
+                selection = "${MediaStore.Images.Media.DATE_ADDED} >= ?"
+                selectionArgs = arrayOf(afterSec.toString())
+            }
+
             val sortOrder = "${MediaStore.Images.Media.DATE_ADDED} DESC"
             val uri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
 
             contentResolver.query(uri, projection, selection, selectionArgs, sortOrder)?.use { cursor ->
                 if (!cursor.moveToFirst()) return null
                 val idCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
+                val nameCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME)
                 val id = cursor.getLong(idCol)
+                val displayName = cursor.getString(nameCol) ?: id.toString()
                 val contentUri = ContentUris.withAppendedId(uri, id)
-                contentResolver.openInputStream(contentUri)?.use { it.readBytes() }
+                val bytes = contentResolver.openInputStream(contentUri)?.use { it.readBytes() }
+                // The query is already scoped to the Screenshots directory (API 29+) and the
+                // post-shot timestamp, so any match here is the file we just captured.
+                // Delete unconditionally when the read succeeded.
+                if (bytes != null) {
+                    val deleted = contentResolver.delete(contentUri, null, null)
+                    Log.i(TAG, "Deleted fallback screenshot from gallery (MediaStore): $displayName (deleted=$deleted)")
+                }
+                bytes
             }
         } catch (e: Exception) {
             Log.w(TAG, "MediaStore query failed: ${e.message}")
