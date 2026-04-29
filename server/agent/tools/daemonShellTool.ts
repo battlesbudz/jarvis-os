@@ -454,6 +454,8 @@ Look at the screenshot and the element tree above. Return a JSON array of the mo
 - "clickable": true if the element is clickable or tappable
 - "class_name": the class attribute from the element tree (e.g. "android.widget.ImageButton", "android.widget.EditText", "android.widget.TextView")
 
+IMPORTANT: For icon-only buttons (ImageButton, ImageView, etc.) that have no text label, class_name is essential — always include it. Never leave class_name empty or omit it for these elements.
+
 Prioritize: search bars, input fields, buttons, navigation items, interactive content.
 Include elements that have no accessibility label but are visually identifiable as interactive.
 Return ONLY a valid JSON array, no explanation, no markdown fences.`,
