@@ -600,10 +600,59 @@ object OpHandler {
 
     private fun handlePressKey(op: JSONObject): OpResult {
         val key = op.optString("key", "back")
+
+        // select_all and delete are handled via shell key events so they work even when
+        // the accessibility service is unavailable (WebView inputs, custom IME fields).
+        if (key == "select_all" || key == "delete") {
+            return handlePressKeyViaShell(key)
+        }
+
         val svc = JarvisAccessibilityService.instance
             ?: return OpResult(false, error = "Accessibility service not running.")
-        svc.pressKey(key)
-        return OpResult(true, data = JSONObject().put("key", key))
+        val ok = svc.pressKey(key)
+        return if (ok) {
+            OpResult(true, data = JSONObject().put("key", key))
+        } else {
+            OpResult(false, error = "Unknown or unsupported key: $key")
+        }
+    }
+
+    /** Send a key event via the Android 'input keyevent' shell command.
+     *  Works without accessibility — covers WebView / custom IME clear fallback. */
+    private fun handlePressKeyViaShell(key: String): OpResult {
+        val (keycode, useFlag) = when (key) {
+            // KEYCODE_CTRL_A selects all text; --longpress triggers the long-press path
+            // used by many IMEs and WebViews to recognize the Ctrl+A gesture.
+            "select_all" -> Pair("KEYCODE_CTRL_A", true)
+            // KEYCODE_DEL is the standard backspace / delete-backward key (keycode 67).
+            "delete"     -> Pair("KEYCODE_DEL", false)
+            else         -> return OpResult(false, error = "Unknown shell key: $key")
+        }
+        return try {
+            val cmd = if (useFlag)
+                arrayOf("input", "keyevent", "--longpress", keycode)
+            else
+                arrayOf("input", "keyevent", keycode)
+            val proc = Runtime.getRuntime().exec(cmd)
+            val finished = proc.waitFor(3, TimeUnit.SECONDS)
+            if (!finished) {
+                proc.destroyForcibly()
+                Log.w(TAG, "handlePressKeyViaShell timed out key=$key keycode=$keycode")
+                return OpResult(false, error = "shell keyevent timed out for key=$key")
+            }
+            val exitCode = proc.exitValue()
+            if (exitCode != 0) {
+                Log.w(TAG, "handlePressKeyViaShell non-zero exit key=$key keycode=$keycode exitCode=$exitCode")
+                return OpResult(false, error = "shell keyevent exited $exitCode for key=$key")
+            }
+            OpResult(true, data = JSONObject()
+                .put("key", key)
+                .put("method", "shell_keyevent")
+                .put("keycode", keycode))
+        } catch (e: Exception) {
+            Log.w(TAG, "handlePressKeyViaShell failed key=$key: ${e.message}")
+            OpResult(false, error = "shell keyevent failed: ${e.message}")
+        }
     }
 
     private fun handleFileList(op: JSONObject): OpResult {

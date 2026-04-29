@@ -4571,6 +4571,9 @@ Requires: android_screenshot, android_read_screen, and android_tap_type permissi
       //   Step 3 — Re-find node from fresh window traversal + retry ACTION_SET_TEXT
       //   Step 4 — adb keyevent CTRL_A + DEL via Runtime.exec (hardware key injection)
       // Each step verifies the field is empty afterward; falls through on failure.
+      // If all APK steps fail (e.g. accessibility not granted), we fall back to
+      // select-all + delete via android_press_key so Level 2/3 adb paste does not
+      // append to existing text.
       steps.push("Clearing field (android_clear_field)...");
       const clearResult = await sendDaemonOp(ctx.userId, { type: "android_clear_field" }, 8000);
       if (clearResult.ok) {
@@ -4585,7 +4588,21 @@ Requires: android_screenshot, android_read_screen, and android_tap_type permissi
         }
         await sleep(150);
       } else {
-        steps.push(`android_clear_field failed (${clearResult.error || "unknown"}); proceeding anyway.`);
+        steps.push(`android_clear_field failed (${clearResult.error || "unknown"}); trying select-all + delete fallback...`);
+        // Fallback: send select-all (Ctrl+A) then delete via android_press_key.
+        // These route to the Android daemon (ops starting with "android_") so they
+        // reach the phone even when the accessibility service is unavailable.
+        // KEYCODE_CTRL_A (select all) + KEYCODE_DEL covers WebView inputs and custom
+        // IME fields that ACTION_SET_TEXT cannot reach.
+        const selAllResult = await sendDaemonOp(ctx.userId, { type: "android_press_key", key: "select_all" }, 4000);
+        await sleep(100);
+        const delResult = await sendDaemonOp(ctx.userId, { type: "android_press_key", key: "delete" }, 4000);
+        await sleep(150);
+        if (selAllResult.ok && delResult.ok) {
+          steps.push("Select-all + delete fallback sent successfully.");
+        } else {
+          steps.push(`Select-all + delete fallback partial/failed (select-all: ${selAllResult.ok}, delete: ${delResult.ok}); proceeding anyway.`);
+        }
       }
     }
 
@@ -4965,7 +4982,21 @@ Requires: android_screenshot, android_read_screen, and android_tap_type permissi
         if (clearResult.ok) {
           result.steps.push("Field cleared.");
         } else {
-          result.steps.push(`Clear failed (${clearResult.error || "unknown"}); proceeding anyway.`);
+          result.steps.push(`android_clear_field failed (${clearResult.error || "unknown"}); trying select-all + delete fallback...`);
+          // Fallback: send select-all (Ctrl+A) then delete via android_press_key.
+          // These route to the Android daemon (ops starting with "android_") so they
+          // reach the phone even when the accessibility service is unavailable.
+          // KEYCODE_CTRL_A (select all) + KEYCODE_DEL covers WebView inputs and custom
+          // IME fields that ACTION_SET_TEXT cannot reach.
+          const selAllResult = await sendDaemonOp(ctx.userId, { type: "android_press_key", key: "select_all" }, 4000);
+          await sleep(100);
+          const delResult = await sendDaemonOp(ctx.userId, { type: "android_press_key", key: "delete" }, 4000);
+          await sleep(150);
+          if (selAllResult.ok && delResult.ok) {
+            result.steps.push("Select-all + delete fallback sent successfully.");
+          } else {
+            result.steps.push(`Select-all + delete fallback partial/failed (select-all: ${selAllResult.ok}, delete: ${delResult.ok}); proceeding anyway.`);
+          }
         }
       }
 

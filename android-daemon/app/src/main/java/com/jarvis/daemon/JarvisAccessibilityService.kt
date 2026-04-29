@@ -862,13 +862,18 @@ class JarvisAccessibilityService : AccessibilityService() {
     }
 
     // ── Key press ────────────────────────────────────────────────────────────
-    fun pressKey(key: String) {
-        when (key) {
-            "back" -> performGlobalAction(GLOBAL_ACTION_BACK)
-            "home" -> performGlobalAction(GLOBAL_ACTION_HOME)
-            "recents" -> performGlobalAction(GLOBAL_ACTION_RECENTS)
-            "notifications" -> performGlobalAction(GLOBAL_ACTION_NOTIFICATIONS)
-            "enter" -> pressImeAction()
+    // Returns true if the key was recognised and the action was dispatched,
+    // false for unknown keys.  select_all and delete are intentionally absent
+    // here — they are routed through the shell keyevent path in OpHandler so
+    // that they work even when the accessibility service is unavailable.
+    fun pressKey(key: String): Boolean {
+        return when (key) {
+            "back"          -> { performGlobalAction(GLOBAL_ACTION_BACK); true }
+            "home"          -> { performGlobalAction(GLOBAL_ACTION_HOME); true }
+            "recents"       -> { performGlobalAction(GLOBAL_ACTION_RECENTS); true }
+            "notifications" -> { performGlobalAction(GLOBAL_ACTION_NOTIFICATIONS); true }
+            "enter"         -> { pressImeAction(); true }
+            else            -> false
         }
     }
 }

@@ -27,7 +27,7 @@ export type DaemonOp =
   | { type: "android_tap"; x: number; y: number }
   | { type: "android_type"; text: string; submit?: boolean }
   | { type: "android_swipe"; x1: number; y1: number; x2: number; y2: number; durationMs?: number }
-  | { type: "android_press_key"; key: "back" | "home" | "recents" | "volume_up" | "volume_down" | "enter" }
+  | { type: "android_press_key"; key: "back" | "home" | "recents" | "volume_up" | "volume_down" | "enter" | "select_all" | "delete" }
 
   | { type: "android_file_list"; path: string }
   | { type: "android_file_read"; path: string }
