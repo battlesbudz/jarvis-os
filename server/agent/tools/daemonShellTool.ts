@@ -2378,6 +2378,8 @@ export const androidSwipeElementTool: AgentTool = {
   description: `Swipe or scroll on an Android screen element by name instead of raw coordinates.
 Accepts a human-readable label or description string, fuzzy-matches it against the current ScreenMap (calling android_screen_understand internally, with a 500 ms cache hit if available), and fires an android_swipe gesture centred on the best-matching element.
 
+If the element is not visible on the initial screen, the tool first scrolls back to the top of the page (unless reset_scroll is false) so that elements above the current scroll position are never missed, then automatically scrolls down (up to max_scroll_attempts times) and re-reads the screen after each scroll until the element appears or the scroll limit is reached.
+
 Use this tool to scroll lists, swipe carousels, or dismiss elements without knowing pixel coordinates:
   - "swipe up on the feed" — scrolls a feed upward
   - "swipe left on the photo" — advances a carousel
@@ -2388,10 +2390,10 @@ Parameters:
   - direction: one of "up", "down", "left", "right"
   - distance_px: how far to swipe in pixels (default 400)
   - max_age_ms: max age of cached ScreenMap to reuse (default 500, 0 = always fresh)
-  - reset_scroll: when true (default), scroll to top first if the element is not visible, then search downward
-  - max_scroll_attempts: number of downward scroll passes to search for the element below the fold (default 0 = no downward search). After a reset-to-top pass fails, the tool scrolls down up to this many times, re-reads the screen after each pass, and re-scores until the element is found or the limit is reached.
+  - max_scroll_attempts: how many downward scroll passes to perform when the element is off-screen (default 5, 0 to disable)
+  - scroll_distance: pixel distance for each scroll swipe used during the scroll-to-find loop (default 600)
 
-Returns the matched element details, the swipe coordinates used, a screen_changed field (true/false) indicating whether the screen visually changed after the swipe (based on perceptual hash comparison), and hash_distance (the raw Hamming distance between hashes, or null if screenshot was unavailable). If screen_changed is false the element may already be at the scroll boundary, or the swipe may not have landed on a scrollable region.
+Returns the matched element details, the swipe coordinates used, a screen_changed field (true/false) indicating whether the screen visually changed after the swipe (based on perceptual hash comparison), hash_distance (the raw Hamming distance between hashes, or null if screenshot was unavailable), and scrolls_performed (number of scroll passes needed to locate the element). If screen_changed is false the element may already be at the scroll boundary, or the swipe may not have landed on a scrollable region.
 
 Requires: android_screenshot and android_read_screen permissions (same as android_screen_understand), plus android_tap_type permission for the swipe action.`,
   parameters: {
@@ -2414,13 +2416,17 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
         type: "number",
         description: "Maximum age in milliseconds for a cached ScreenMap to be reused (default 500). Set to 0 to always capture a fresh screen.",
       },
-      reset_scroll: {
-        type: "boolean",
-        description: "When true (default), scroll back to the top of the page if the element is not found on the initial screen, then re-read and re-score elements so targets above the current scroll position are never missed. Set to false to skip the reset and only match against the initial viewport. Note: downward search below the fold is controlled separately by max_scroll_attempts and only runs when that value is greater than 0.",
-      },
       max_scroll_attempts: {
         type: "number",
-        description: "Number of downward scroll passes to search for the element below the fold (default 0 = no downward search). After the initial screen and optional reset-to-top pass fail, the tool scrolls down up to this many times, re-reads the screen after each pass, and re-scores until the element is found or the limit is reached. Stops early if the page bottom is detected.",
+        description: "Maximum number of downward scroll passes to perform when the element is not visible on the initial screen (default 5). Set to 0 to disable automatic scrolling.",
+      },
+      scroll_distance: {
+        type: "number",
+        description: "Pixel distance for each scroll swipe used during the scroll-to-find loop (default 600). Larger values scroll further per swipe.",
+      },
+      reset_scroll: {
+        type: "boolean",
+        description: "When true (default), scroll back to the top of the page if the element is not found on the initial screen, then re-read and re-score elements so targets above the current scroll position are never missed. Set to false to skip the reset and only match against the initial viewport.",
       },
     },
     required: ["label", "direction"],
@@ -2473,9 +2479,6 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
     }
 
     const resetScroll = args.reset_scroll === false ? false : true;
-    const maxScrollAttempts = typeof args.max_scroll_attempts === "number" && args.max_scroll_attempts > 0
-      ? Math.floor(args.max_scroll_attempts)
-      : 0;
 
     // ── Resolve ScreenMap (cache or fresh) ────────────────────────────────────
     const maxAge = typeof args.max_age_ms === "number" ? args.max_age_ms : 500;
@@ -2513,11 +2516,11 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       }
     }
 
-    // ── Optional reset: scroll to top if element not found on initial screen ──
+    // ── Optional reset: scroll to top before the downward search loop ─────────
     // Fires only when the element was not found on the initial screen, ensuring
     // the tool never misses elements that sit above the current scroll position
     // because a previous interaction left the page scrolled partway down.
-    // Intentionally decoupled from max_scroll_attempts so reset_scroll=true
+    // Intentionally decoupled from max_scroll_attempts so that reset_scroll=true
     // still takes effect even when the caller disables the downward scroll loop.
     if ((!bestElement || bestScore === 0) && resetScroll) {
       console.log(`[android_swipe_element] element "${label}" not found on initial screen — resetting to top of page before downward scroll-to-find loop`);
@@ -2540,15 +2543,21 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       }
     }
 
-    // ── Downward scroll loop — search below the fold ───────────────────────────
-    // Mirrors the same loop in android_tap_element (~line 3292). Fires only when
-    // the element was not found on the initial screen (or after the reset-to-top
-    // pass) and the caller opted in via max_scroll_attempts > 0.
+    // ── Scroll-to-find: swipe down the page until the element appears ─────────
+    const rawMaxScrollAttempts = typeof args.max_scroll_attempts === "number" ? args.max_scroll_attempts : 5;
+    const maxScrollAttempts = Number.isFinite(rawMaxScrollAttempts) ? Math.max(0, Math.floor(rawMaxScrollAttempts)) : 5;
+    const rawScrollDistance = typeof args.scroll_distance === "number" ? args.scroll_distance : 600;
+    const scrollFindDistance = Number.isFinite(rawScrollDistance) ? Math.min(Math.max(100, Math.floor(rawScrollDistance)), 1800) : 600;
+    let scrollsPerformed = 0;
+
     if ((!bestElement || bestScore === 0) && maxScrollAttempts > 0) {
       for (let scroll = 0; scroll < maxScrollAttempts; scroll++) {
-        console.log(`[android_swipe_element] element not found, scrolling down (pass ${scroll + 1}/${maxScrollAttempts})`);
+        console.log(`[android_swipe_element] element not found, scrolling down to find it (pass ${scroll + 1}/${maxScrollAttempts})`);
 
-        // Pre-scroll state capture for no-op detection (screenshot path)
+        // ── Pre-scroll state capture for no-op detection ──────────────────
+        // Screenshot path: capture before the swipe so we can diff after.
+        // Hierarchy path (FLAG_SECURE / no screenshot): fingerprint the current
+        // element set by label + center coordinates.
         const preScrollScreenshot: string | null = await captureScreenshot(ctx.userId);
         const preScrollFingerprint: string = screenElements
           .map((el) => `${el.label}:${el.center_x}:${el.center_y}`)
@@ -2558,21 +2567,27 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
         // Swipe upward (y1 > y2) to scroll the page down
         const screenMidX = 540;
         const swipeY1 = 1400;
-        const swipeY2 = Math.max(100, swipeY1 - 600);
+        const swipeY2 = Math.max(100, swipeY1 - scrollFindDistance);
         const scrollSwipeResult = await sendDaemonOp(
           ctx.userId,
           { type: "android_swipe", x1: screenMidX, y1: swipeY1, x2: screenMidX, y2: swipeY2, durationMs: 400 },
           10000,
         );
         if (!scrollSwipeResult.ok) {
-          console.log(`[android_swipe_element] swipe failed on pass ${scroll + 1}: ${scrollSwipeResult.error}`);
+          console.log(`[android_swipe_element] scroll swipe failed on pass ${scroll + 1}: ${scrollSwipeResult.error}`);
           break;
         }
+
+        scrollsPerformed = scroll + 1;
 
         // Brief pause so the page settles before re-reading
         await new Promise((resolve) => setTimeout(resolve, 500));
 
-        // No-op scroll detection — screenshot path
+        // ── No-op scroll detection — screenshot path ──────────────────────
+        // Compare a fresh screenshot against the pre-scroll one. If the pixel
+        // diff is below 2% the page has not moved — we are at the bottom.
+        // We check this BEFORE calling buildScreenMapElements (the expensive
+        // Vision/Claude call) so we can skip it when the list is exhausted.
         let screenshotCheckConclusive = false;
         if (preScrollScreenshot) {
           const postScrollScreenshot = await captureScreenshot(ctx.userId);
@@ -2591,7 +2606,12 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
         const refreshed = await buildScreenMapElements(ctx.userId);
         if (!refreshed.ok) break;
 
-        // No-op scroll detection — hierarchy fallback
+        // ── No-op scroll detection — hierarchy fallback ────────────────────
+        // Runs when:
+        //   a) screenshots are unavailable (FLAG_SECURE apps), OR
+        //   b) pre-scroll screenshot existed but post-scroll capture failed
+        //      this pass (screenshotCheckConclusive is false) — so we don't
+        //      silently skip no-op detection when capture is flaky.
         const needsHierarchyCheck = !preScrollScreenshot || !screenshotCheckConclusive;
         if (needsHierarchyCheck && preScrollFingerprint.length > 0) {
           const postFingerprint = refreshed.elements
@@ -2619,7 +2639,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
         screenElements = refreshed.elements;
 
         if (bestElement && bestScore > 0) {
-          console.log(`[android_swipe_element] found "${label}" after ${scroll + 1} scroll(s), score=${bestScore}`);
+          console.log(`[android_swipe_element] found "${label}" after ${scrollsPerformed} scroll(s), score=${bestScore}`);
           break;
         }
       }
@@ -2629,9 +2649,12 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       const elementList = screenElements
         .map((el) => `  • ${el.label}${el.description ? ` — ${el.description}` : ""}`)
         .join("\n");
+      const scrollNote = maxScrollAttempts > 0
+        ? ` Scrolled ${scrollsPerformed} time(s) looking for it.`
+        : "";
       return {
         ok: false,
-        content: `No element matching "${label}" was found on screen.\n\nAvailable elements:\n${elementList || "  (none)"}`,
+        content: `No element matching "${label}" was found on screen.${scrollNote}\n\nAvailable elements:\n${elementList || "  (none)"}`,
         label: `android_swipe_element: no match for "${label}"`,
       };
     }
@@ -2737,7 +2760,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       }
     }
 
-    console.log(`[android_swipe_element] userId=${ctx.userId} swiped ${direction} on "${bestElement.label}" from (${x1},${y1}) to (${x2},${y2}) score=${bestScore} screen_changed=${screenChanged} hash_distance=${hashDistance}`);
+    console.log(`[android_swipe_element] userId=${ctx.userId} swiped ${direction} on "${bestElement.label}" from (${x1},${y1}) to (${x2},${y2}) score=${bestScore} screen_changed=${screenChanged} hash_distance=${hashDistance} scrolls_performed=${scrollsPerformed}`);
 
     return {
       ok: true,
@@ -2755,6 +2778,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
           from: { x: x1, y: y1 },
           to: { x: x2, y: y2 },
         },
+        scrolls_performed: scrollsPerformed,
         screen_changed: screenChanged,
         hash_distance: hashDistance,
         screen_changed_note: screenChanged
@@ -2762,7 +2786,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
           : "The UI did not detectably change after the swipe. The element may already be at the scroll boundary, or the swipe may not have landed on a scrollable region.",
       }),
       label: `Swiped ${direction} on "${bestElement.label}" from (${x1},${y1}) to (${x2},${y2})`,
-      detail: `match_score=${bestScore} bounds=${bestElement.bounds} screen_changed=${screenChanged}${hashDistance !== null ? ` hash_dist=${hashDistance}` : ""}`,
+      detail: `match_score=${bestScore} bounds=${bestElement.bounds} screen_changed=${screenChanged}${hashDistance !== null ? ` hash_dist=${hashDistance}` : ""} scrolls=${scrollsPerformed}`,
     };
   },
 };
