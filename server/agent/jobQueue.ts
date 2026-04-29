@@ -19,6 +19,7 @@ import { emit as diagEmit } from "../diagnostics/diagnosticsService";
 import { logSystemError } from "./errorLogger";
 import { submitAgentJob as _submitAgentJob, getModelForJobType as _getModelForJobType, type SubmitJobInput, type AgentJobType as _AgentJobType } from "./jobClient";
 import { runAgent } from "./harness";
+import { verifyJobOutput } from "./orchestrator";
 import { readRecentErrorsTool, listSourceFilesTool, readSourceFileTool, proposeCodeChangeTool } from "./tools/selfEditTools";
 import { fetchCalendarTool } from "./tools/calendar";
 import { researchHasSourceUrls } from "./researchUtils";
@@ -810,7 +811,7 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
         ? input.model
         : agentDef.model ?? undefined;
 
-      const sub = await runSubAgent({
+      let customSub = await runSubAgent({
         agentType: agentDef.baseType as SubAgentType,
         prompt: job.prompt,
         defaultTitle: job.title,
@@ -818,6 +819,70 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
         model: modelOverride,
         extraSystemPrompt: agentDef.extraPrompt ?? undefined,
       });
+
+      // ── Claude Opus verification loop (custom_agent) ──────────────────────
+      const MAX_CUSTOM_VERIFY_RETRIES = 2;
+      let customVerificationPassed: boolean | null = null;
+      let customVerificationRetries = 0;
+      {
+        const { getModel } = await import("../lib/modelPrefs");
+        const orchModel = await getModel(job.userId, "orchestrator");
+        let correctionContext: string | undefined;
+
+        for (let attempt = 0; attempt <= MAX_CUSTOM_VERIFY_RETRIES; attempt++) {
+          const verification = await verifyJobOutput({
+            agentType: "custom_agent",
+            originalPrompt: job.prompt,
+            result: customSub.body,
+            orchestratorModel: orchModel,
+            correctionContext,
+          });
+
+          if (verification.passed === true) {
+            customVerificationPassed = true;
+            break;
+          }
+
+          if (verification.passed === null) {
+            // Verifier timed out or errored — fail-open: deliver as-is, status unknown
+            customVerificationPassed = null;
+            console.log(
+              `[JobQueue] verify unknown (timeout/error) for custom_agent job ${job.id} — delivering with null status: ${verification.reason}`,
+            );
+            break;
+          }
+
+          // passed === false: content rejected — retry if attempts remain
+          correctionContext = verification.reason;
+          if (attempt < MAX_CUSTOM_VERIFY_RETRIES) {
+            customVerificationRetries++;
+            console.log(
+              `[JobQueue] verify retry ${attempt + 1}/${MAX_CUSTOM_VERIFY_RETRIES} for custom_agent job ${job.id}: ${verification.reason}`,
+            );
+            const revisedPrompt =
+              `${job.prompt}\n\n` +
+              `[Previous attempt was rejected for: ${correctionContext}. Please address this in your response.]`;
+            customSub = await runSubAgent({
+              agentType: agentDef.baseType as SubAgentType,
+              prompt: revisedPrompt,
+              defaultTitle: job.title,
+              context: ctx,
+              model: modelOverride,
+              extraSystemPrompt: agentDef.extraPrompt ?? undefined,
+            });
+          } else {
+            customVerificationPassed = false;
+            console.log(
+              `[JobQueue] verify exhausted for custom_agent job ${job.id} after ${MAX_CUSTOM_VERIFY_RETRIES} retries — delivering best result`,
+            );
+          }
+        }
+      }
+      customSub.meta.verificationPassed = customVerificationPassed;
+      customSub.meta.verificationRetries = customVerificationRetries;
+      // ─────────────────────────────────────────────────────────────────────
+
+      const sub = customSub;
 
       const { db: __db } = await import("../db");
       const { deliverables: _deliverables } = await import("@shared/schema");
@@ -1027,13 +1092,81 @@ Keep the whole briefing under 300 words. Be warm but direct. No filler phrases.`
     // preserve the original resolution path inside runSubAgent.
     const subAgentModelOverride = typeof jobInput.model === "string" ? jobInput.model : undefined;
 
-    const sub = await runSubAgent({
+    let sub = await runSubAgent({
       agentType: job.agentType as SubAgentType,
       prompt: job.prompt,
       defaultTitle: job.title,
       context: ctx,
       model: subAgentModelOverride,
     });
+
+    // ── Claude Opus verification loop ─────────────────────────────────────────
+    // Applies to user-facing deliverable types only. Skipped for system jobs
+    // (weekly_pattern, named_agent_task, morning_brief, goal_decompose) which
+    // are handled separately above with their own structured validation.
+    const VERIFY_AGENT_TYPES = ["research", "writing", "planning", "email"];
+    const MAX_JOB_VERIFY_RETRIES = 2;
+    let verificationPassed: boolean | null = null;
+    let verificationRetries = 0;
+
+    if (VERIFY_AGENT_TYPES.includes(job.agentType)) {
+      const { getModel } = await import("../lib/modelPrefs");
+      const orchModel = await getModel(job.userId, "orchestrator");
+      let correctionContext: string | undefined;
+
+      for (let attempt = 0; attempt <= MAX_JOB_VERIFY_RETRIES; attempt++) {
+        const verification = await verifyJobOutput({
+          agentType: job.agentType,
+          originalPrompt: job.prompt,
+          result: sub.body,
+          orchestratorModel: orchModel,
+          correctionContext,
+        });
+
+        if (verification.passed === true) {
+          verificationPassed = true;
+          break;
+        }
+
+        if (verification.passed === null) {
+          // Verifier timed out or errored — fail-open: deliver as-is, status unknown
+          verificationPassed = null;
+          console.log(
+            `[JobQueue] verify unknown (timeout/error) for job ${job.id} — delivering with null status: ${verification.reason}`,
+          );
+          break;
+        }
+
+        // passed === false: content rejected — retry if attempts remain
+        correctionContext = verification.reason;
+        if (attempt < MAX_JOB_VERIFY_RETRIES) {
+          verificationRetries++;
+          console.log(
+            `[JobQueue] verify retry ${attempt + 1}/${MAX_JOB_VERIFY_RETRIES} for job ${job.id} (${job.agentType}): ${verification.reason}`,
+          );
+          const revisedPrompt =
+            `${job.prompt}\n\n` +
+            `[Previous attempt was rejected for: ${correctionContext}. Please address this in your response.]`;
+          sub = await runSubAgent({
+            agentType: job.agentType as SubAgentType,
+            prompt: revisedPrompt,
+            defaultTitle: job.title,
+            context: ctx,
+            model: subAgentModelOverride,
+          });
+        } else {
+          verificationPassed = false;
+          console.log(
+            `[JobQueue] verify exhausted for job ${job.id} after ${MAX_JOB_VERIFY_RETRIES} retries — delivering best result`,
+          );
+        }
+      }
+    }
+
+    // Attach verification outcome to meta so the UI can surface a badge.
+    sub.meta.verificationPassed = verificationPassed;
+    sub.meta.verificationRetries = verificationRetries;
+    // ─────────────────────────────────────────────────────────────────────────
 
     if (job.agentType === "research" && !researchHasSourceUrls(sub.body)) {
       sub.meta.noSourceUrls = true;

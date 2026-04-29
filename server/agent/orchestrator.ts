@@ -474,3 +474,92 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<Orchest
     traceId,
   };
 }
+
+// ── Agent-type-specific quality criteria ─────────────────────────────────────
+
+const JOB_QUALITY_CRITERIA: Record<string, string> = {
+  research:
+    "Does the output contain concrete findings, cited sources, and directly address the research question? " +
+    "A ## Sources section with real URLs is required.",
+  writing:
+    "Does the document match the requested format and length, and cover the topic described in the prompt?",
+  planning:
+    "Does the plan decompose the goal into actionable, sequenced steps?",
+  email:
+    "Does the email address the named recipient and stated purpose, and is it complete enough to send?",
+  custom_agent:
+    "Does the output satisfy the instructions in the original prompt?",
+  self_heal:
+    "Does this code change logically address the stated problem? Or does it merely compile without fixing the root cause?",
+};
+
+/**
+ * Verify a background job's output quality using Claude Opus.
+ *
+ * Exported so jobQueue.ts and selfHealTool.ts can call it without reimplementing
+ * the Anthropic call.
+ *
+ * Return contract:
+ *   passed: true  — Opus judged the output acceptable
+ *   passed: false — Opus rejected the output (retry or flag for review)
+ *   passed: null  — Verifier could not be reached (timeout / Anthropic error) —
+ *                   FAIL-OPEN: caller must not retry and must treat the result as
+ *                   unknown, delivering the output with verificationPassed = null.
+ */
+export async function verifyJobOutput(opts: {
+  agentType: string;
+  originalPrompt: string;
+  result: string;
+  orchestratorModel: string;
+  correctionContext?: string;
+}): Promise<{ passed: boolean | null; reason: string }> {
+  const VERIFY_TIMEOUT_MS = 8000;
+
+  const criteria =
+    JOB_QUALITY_CRITERIA[opts.agentType] ?? JOB_QUALITY_CRITERIA.custom_agent;
+
+  try {
+    const verifyPromise = anthropic.messages.create({
+      model: opts.orchestratorModel,
+      max_tokens: 512,
+      system:
+        `You are a strict quality verifier for background agent jobs. ` +
+        `Evaluate whether the agent's output meets the quality bar for its type. ` +
+        `Respond with JSON only — no other text: {"passed": true/false, "reason": "brief explanation"}`,
+      messages: [
+        {
+          role: "user",
+          content: [
+            `Agent type: ${opts.agentType}`,
+            `Quality criterion: ${criteria}`,
+            `Original prompt: ${opts.originalPrompt}`,
+            opts.correctionContext ? `Previous rejection reason: ${opts.correctionContext}` : "",
+            `Agent output:\n${opts.result}`,
+          ].filter(Boolean).join("\n\n"),
+        },
+      ],
+    });
+
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("verify_timeout")), VERIFY_TIMEOUT_MS),
+    );
+
+    const response = await Promise.race([verifyPromise, timeoutPromise]);
+    const content = response.content[0];
+    const text = content.type === "text" ? content.text : "";
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      // Unparseable response — treat as unknown (fail-open)
+      return { passed: null, reason: "verify_unparseable" };
+    }
+    const parsed = JSON.parse(jsonMatch[0]) as { passed?: unknown; reason?: unknown };
+    return {
+      passed: parsed.passed === true ? true : parsed.passed === false ? false : null,
+      reason: typeof parsed.reason === "string" ? parsed.reason : "No reason provided",
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    // Timeout or Anthropic error: fail-open — caller delivers as-is with null status
+    return { passed: null, reason: msg === "verify_timeout" ? "verify_timeout" : `verify_error: ${msg}` };
+  }
+}

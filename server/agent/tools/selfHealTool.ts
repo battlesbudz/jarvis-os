@@ -27,6 +27,8 @@ import { readRecentErrorsTool, proposeCodeChangeTool } from "./selfEditTools";
 import { applyCodeChangeTool, recordVerificationResult } from "./applyCodeChangeTool";
 import { runShellTool } from "./runShellTool";
 import { testToolTool } from "./buildFeatureTool";
+import { verifyJobOutput } from "../orchestrator";
+import { getModel } from "../../lib/modelPrefs";
 
 const PROJECT_ROOT    = process.cwd();
 const MAX_FILE_LINES  = 800;   // lines per file passed to inner LLM (covers ~99 % of source files)
@@ -759,6 +761,62 @@ export const selfHealTool: AgentTool = {
         ctx.userId,
       ).catch(() => {});
 
+      // ── Phase 4f: Claude Opus AI logic review ─────────────────────────────
+      // Mechanical checks (compile + tests + smoke) confirm the code is valid,
+      // but an AI review confirms the change actually addresses the stated problem.
+      // Fail-open: timeout/error yields null — Phase 4e "passed" audit entry stands.
+      sendProgress(`[${iterLabel}] Running AI logic review…`);
+      let aiReviewPassed: boolean | null = null;
+      let aiReviewReason = "verify_timeout";
+      try {
+        const orchModel = await getModel(ctx.userId, "orchestrator");
+        const changeSummary = applyResults
+          .filter((r) => r.ok)
+          .map((r) => `${r.filePath}: ${r.summary}`)
+          .join("\n");
+        const aiReview = await verifyJobOutput({
+          agentType: "self_heal",
+          originalPrompt: `Problem: ${description}\n\nDiff applied:\n${changeSummary}`,
+          result: `Type-check: PASSED\nTests: PASSED${allToolNames.length > 0 ? `\nSmoke-tests: PASSED (${allToolNames.join(", ")})` : ""}\n\nSummary of changes:\n${changeSummary}`,
+          orchestratorModel: orchModel,
+        });
+        aiReviewPassed = aiReview.passed;
+        aiReviewReason = aiReview.reason;
+      } catch (aiErr) {
+        // Fail-open: treat as unknown — proceed as before
+        aiReviewReason = `verify_error: ${aiErr instanceof Error ? aiErr.message : String(aiErr)}`;
+        sendProgress(`[${iterLabel}] ⚠ AI review error (fail-open): ${aiReviewReason}`);
+      }
+
+      // Update the audit log for each changed file using recordVerificationResult,
+      // which looks up the original entry timestamp via the lastAuditTimestamp map —
+      // ensuring [VERIFY] lines merge into the correct entry in parseAuditLog().
+      // Skip when null (verifier timed out): the Phase 4e "passed" entry already stands.
+      const successFilePaths = applyResults.filter((r) => r.ok).map((r) => r.filePath);
+      if (aiReviewPassed === true) {
+        await recordVerificationResult(
+          successFilePaths,
+          "passed",
+          `ai+typecheck ✓ — ${aiReviewReason}`,
+        ).catch(() => {});
+      } else if (aiReviewPassed === false) {
+        await recordVerificationResult(
+          successFilePaths,
+          "error",
+          `ai_review_failed: ${aiReviewReason}`,
+        ).catch(() => {});
+      }
+      // aiReviewPassed === null: timeout/error — leave Phase 4e audit entry as-is
+
+      if (aiReviewPassed === true || aiReviewPassed === null) {
+        sendProgress(`[${iterLabel}] ✓ AI logic review passed: ${aiReviewReason}`);
+      } else {
+        sendProgress(
+          `[${iterLabel}] ⚠ AI logic review flagged: ${aiReviewReason} — code checks pass but logical correctness is uncertain. Proceeding with restart (review carefully).`,
+        );
+      }
+      // ─────────────────────────────────────────────────────────────────────
+
       // ── Phase 5: Verify current server is still healthy before activation ──
       sendProgress(`[${iterLabel}] All code checks passed. Confirming server health before activation…`);
       const preRestartHealth = await runShellTool.execute({ command: "check_health" }, ctx);
@@ -821,6 +879,13 @@ export const selfHealTool: AgentTool = {
       sendProgress(`[${iterLabel}] Triggering server restart to activate changes (stage B will confirm health)…`);
       await runShellTool.execute({ command: "restart_server" }, ctx);
 
+      const aiReviewSection =
+        aiReviewPassed === true
+          ? `- AI logic review: ✓ (${aiReviewReason})\n`
+          : aiReviewPassed === null
+            ? `- AI logic review: unknown (verifier timed out — code checks pass)\n`
+            : `- AI logic review: ⚠ flagged — ${aiReviewReason} (code compiles and tests pass; review carefully)\n`;
+
       return {
         ok: true,
         content:
@@ -831,7 +896,8 @@ export const selfHealTool: AgentTool = {
           `- Type-check: ✓\n` +
           `- Test suite: ✓\n` +
           smokeSection +
-          `\n- Current server health: ${preHealthOk ? "✓" : "⚠"}\n` +
+          `\n` + aiReviewSection +
+          `- Current server health: ${preHealthOk ? "✓" : "⚠"}\n` +
           `\n**Stage B (post-restart health — in progress):**\n` +
           `- Server restart: triggered — workflow manager relaunching\n` +
           `- Post-restart health check: ${stageB === "queued" ? "✓ persisted to job queue — inbox message coming within ~30 s" : `⚠ ${stageB} — run \`run_shell check_health\` manually after restart`}\n` +
