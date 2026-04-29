@@ -570,6 +570,21 @@ async function checkWhatsApp(userId: string): Promise<CheckResult> {
   }
 }
 
+async function checkGitHub(userId: string): Promise<CheckResult> {
+  try {
+    const rows = await db.execute(sql`
+      SELECT access_token FROM user_oauth_tokens
+      WHERE user_id = ${userId} AND provider = 'github'
+      LIMIT 1
+    `);
+    const row = (rows as any).rows?.[0] ?? (Array.isArray(rows) ? (rows as any[])[0] : null);
+    if (!row?.access_token) return { status: "unconfigured" };
+    return { status: "healthy" };
+  } catch {
+    return { status: "unconfigured" };
+  }
+}
+
 // ── Write result to DB ────────────────────────────────────────────────────────
 
 /**
@@ -723,6 +738,7 @@ export async function validateUserIntegrations(userId: string): Promise<void> {
     { integration: "discord",  check: () => checkDiscord(userId) },
     { integration: "slack",    check: () => checkSlack(userId) },
     { integration: "whatsapp", check: () => checkWhatsApp(userId) },
+    { integration: "github",   check: () => checkGitHub(userId) },
   ];
 
   await Promise.all(

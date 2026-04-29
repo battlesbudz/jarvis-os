@@ -488,6 +488,58 @@ async function handleCallbackQuery(callbackQuery: any): Promise<void> {
     return;
   }
 
+  if (data.startsWith("merge_pr:")) {
+    const rest = data.slice("merge_pr:".length);
+    const lastColon = rest.lastIndexOf(":");
+    const fullRepo = lastColon >= 0 ? rest.slice(0, lastColon) : rest;
+    const prNumber = lastColon >= 0 ? parseInt(rest.slice(lastColon + 1), 10) : 0;
+
+    const links = await db
+      .select({ userId: schema.telegramLinks.userId })
+      .from(schema.telegramLinks)
+      .where(eq(schema.telegramLinks.chatId, chatId))
+      .limit(1);
+    if (links.length === 0) {
+      await answerCallbackQuery(queryId, "Session not found.");
+      return;
+    }
+    const mergeUserId = links[0].userId;
+    await answerCallbackQuery(queryId, "⏳ Merging...");
+    try {
+      const { getGitHubSettings, getPR, mergePR } = await import("./integrations/github");
+      const settings = await getGitHubSettings(mergeUserId);
+      if (!settings.pat) {
+        await sendMessage(chatId, "❌ GitHub PAT not configured.");
+        return;
+      }
+      const [repoOwner, repoName] = fullRepo.split("/") as [string, string];
+      const pr = await getPR(settings.pat, repoOwner ?? "", repoName ?? "", prNumber);
+      if (!pr) {
+        await sendMessage(chatId, `❌ PR #${prNumber} not found in ${fullRepo}.`);
+        return;
+      }
+      if (pr.ciStatus === "fail") {
+        await sendMessage(chatId, `❌ Cannot merge PR #${prNumber} — CI is failing.`);
+        return;
+      }
+      if (pr.ciStatus === "pending") {
+        await sendMessage(chatId, `⏳ Cannot merge PR #${prNumber} — CI checks still running.`);
+        return;
+      }
+      const result = await mergePR(settings.pat, repoOwner, repoName, prNumber);
+      await sendMessage(
+        chatId,
+        result.ok
+          ? `✅ PR #${prNumber} merged in ${fullRepo}. ${result.message}`
+          : `❌ Failed to merge PR #${prNumber}: ${result.message}`,
+      );
+    } catch (err) {
+      await sendMessage(chatId, "❌ Merge failed — please check your GitHub settings.");
+      console.error("[Telegram merge_pr callback]", err);
+    }
+    return;
+  }
+
   await answerCallbackQuery(queryId);
 }
 
@@ -1191,6 +1243,72 @@ async function processUpdate(update: any): Promise<void> {
         return;
       }
 
+      // ── /pr command ───────────────────────────────────────────────────────
+      // List open GitHub pull requests for the user's tracked repos and format
+      // them as a compact status card with CI emoji and merge buttons.
+      const PR_CMD_RE = /^\/pr(?:@\S+)?(\s|$)/i;
+      if (PR_CMD_RE.test(text)) {
+        const prUserId = link[0].userId;
+        const placeholderId = await sendMessageGetId(chatId, "⏳ Fetching pull requests...").catch(() => null);
+        try {
+          const { getGitHubSettings, listOpenPRs } = await import("./integrations/github");
+          const settings = await getGitHubSettings(prUserId);
+          if (!settings.pat) {
+            const msg = "GitHub not connected. Add your Personal Access Token in Settings → GitHub to use /pr.";
+            if (placeholderId) await editMessage(chatId, placeholderId, msg);
+            else await sendMessage(chatId, msg);
+          } else if (settings.repos.length === 0) {
+            const msg = "No repos configured. Add repos to watch in Settings → GitHub.";
+            if (placeholderId) await editMessage(chatId, placeholderId, msg);
+            else await sendMessage(chatId, msg);
+          } else {
+            const prs = await listOpenPRs(settings.pat, settings.repos);
+            if (prs.length === 0) {
+              const msg = `✅ No open pull requests across: ${settings.repos.join(", ")}`;
+              if (placeholderId) await editMessage(chatId, placeholderId, msg);
+              else await sendMessage(chatId, msg);
+            } else {
+              const lines: string[] = [`*Open Pull Requests (${prs.length})*\n`];
+              for (const pr of prs) {
+                const ci =
+                  pr.ciStatus === "pass" ? "✅"
+                  : pr.ciStatus === "fail" ? "❌"
+                  : pr.ciStatus === "pending" ? "⏳"
+                  : "❓";
+                const draftStr = pr.draft ? " \\[DRAFT\\]" : "";
+                lines.push(`${ci} *${pr.repo}* #${pr.number}${draftStr}`);
+                lines.push(`└ ${pr.title}`);
+                lines.push(`└ by @${pr.author} • \`${pr.branch}\``);
+                if (pr.reviewers.length > 0) lines.push(`└ reviewers: ${pr.reviewers.join(", ")}`);
+                lines.push(`└ [View PR](${pr.url})`);
+                lines.push("");
+              }
+              const cardText = lines.join("\n");
+              const greenPrs = prs.filter((p) => p.ciStatus === "pass" && !p.draft);
+              if (placeholderId) await editMessage(chatId, placeholderId, cardText);
+              else await sendMessage(chatId, cardText);
+              if (greenPrs.length > 0) {
+                const inlineKeyboard = {
+                  inline_keyboard: greenPrs.slice(0, 5).map((p) => [
+                    {
+                      text: `🔀 Merge #${p.number} — ${p.repo}`,
+                      callback_data: `merge_pr:${p.repo}:${p.number}`,
+                    },
+                  ]),
+                };
+                await sendMessage(chatId, "Tap to merge a PR:", inlineKeyboard);
+              }
+            }
+          }
+        } catch (err) {
+          const errMsg = "Sorry, I couldn't fetch your pull requests. Check your GitHub settings.";
+          if (placeholderId) await editMessage(chatId, placeholderId, errMsg);
+          else await sendMessage(chatId, errMsg);
+          console.error("[Telegram /pr]", err);
+        }
+        return;
+      }
+
       // ── /call command and voice trigger phrases ──────────────────────────
       // Intercept before the generic slash command router so we can send an
       // inline keyboard button instead of plain text.
@@ -1216,8 +1334,8 @@ async function processUpdate(update: any): Promise<void> {
       // Only the recognized task commands are intercepted here — unknown slash
       // commands fall through to the coach agent for natural-language handling.
       const TASK_CMD_RE = /^\/([a-z_]+)(?:@\S+)?(?:\s+([\s\S]*))?$/i;
-      // Exclude "call" — it is handled above and would return getHelpText() via the router.
-      const ROUTABLE_CMDS = new Set(SLASH_COMMANDS.filter((c) => c.name !== "call").map((c) => c.name));
+      // Exclude "call" and "pr" — they are handled above and "pr" would return getHelpText() via the router.
+      const ROUTABLE_CMDS = new Set(SLASH_COMMANDS.filter((c) => c.name !== "call" && c.name !== "pr").map((c) => c.name));
       const cmdMatch = text.match(TASK_CMD_RE);
       if (cmdMatch) {
         const rawCmd = cmdMatch[1].toLowerCase();
@@ -2384,4 +2502,59 @@ Return [] if nothing is urgent.`,
 
   setInterval(runScan, SCAN_INTERVAL_MS);
   console.log('Email alert scanner started (30-min interval)');
+}
+
+export async function startGithubCiAlertScanner(): Promise<void> {
+  const SCAN_INTERVAL_MS = 30 * 60 * 1000;
+
+  const runScan = async () => {
+    try {
+      const allPrefs = await db.select().from(schema.userPreferences);
+      for (const prefRow of allPrefs) {
+        const prefs = (prefRow.data as Record<string, unknown>) || {};
+        const pat = prefs.github_pat as string | undefined;
+        const repos = (prefs.github_repos as string[]) || [];
+        if (!pat || repos.length === 0) continue;
+
+        try {
+          const { listOpenPRs } = await import("./integrations/github");
+          const prs = await listOpenPRs(pat, repos);
+          const prevState = (prefs.github_pr_ci_state as Record<string, string>) || {};
+          const newState: Record<string, string> = {};
+          const redAlerts: string[] = [];
+
+          for (const pr of prs) {
+            const key = `${pr.repo}#${pr.number}`;
+            newState[key] = pr.ciStatus;
+            if (prevState[key] === "pass" && pr.ciStatus === "fail") {
+              redAlerts.push(`❌ CI went red on PR #${pr.number} in ${pr.repo}: "${pr.title}"\n${pr.url}`);
+            }
+          }
+
+          const updatedPrefs = { ...prefs, github_pr_ci_state: newState };
+          await db
+            .insert(schema.userPreferences)
+            .values({ userId: prefRow.userId, data: updatedPrefs })
+            .onConflictDoUpdate({
+              target: schema.userPreferences.userId,
+              set: { data: updatedPrefs, updatedAt: new Date() },
+            });
+
+          for (const alert of redAlerts) {
+            const msg = `🚨 *CI Alert* — a PR that was passing is now failing:\n\n${alert}`;
+            await notifyUser(prefRow.userId, "github_ci_alert", msg);
+            console.log(`[GitHubCI] Sent CI red alert to user ${prefRow.userId}`);
+          }
+        } catch (err) {
+          console.warn(`[GitHubCI] Scan failed for user ${prefRow.userId}:`, err);
+        }
+      }
+    } catch (err) {
+      console.error("[GitHubCI] Scanner error:", err);
+    }
+  };
+
+  setTimeout(runScan, 60 * 1000);
+  setInterval(runScan, SCAN_INTERVAL_MS);
+  console.log("GitHub CI alert scanner started (30-min interval)");
 }

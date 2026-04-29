@@ -1139,6 +1139,7 @@ export const INTEGRATION_NAMES = [
   "discord",
   "slack",
   "whatsapp",
+  "github",
 ] as const;
 export type IntegrationName = typeof INTEGRATION_NAMES[number];
 export type IntegrationStatusValue = "healthy" | "expiring_soon" | "broken" | "degraded" | "unconfigured";
