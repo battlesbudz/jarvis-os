@@ -13,6 +13,8 @@ export type ChannelAttachment =
       caption?: string;
       mimeType?: string;
       mcpServerName?: string;
+      /** Optional Google Drive web-view URL for this file — used as fallback link when the file exceeds a channel's upload size limit. */
+      driveLink?: string;
     }
   | {
       kind: "image";

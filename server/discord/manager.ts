@@ -1554,6 +1554,33 @@ export async function postToDiscordChannelById(
 }
 
 /**
+ * Send a file attachment to a specific Discord text channel by ID.
+ * Used by the job-completion notifier so PDF attachments land in the originating channel,
+ * not just in the user's DMs.
+ */
+export async function sendFileToDiscordChannel(
+  userId: string,
+  channelId: string,
+  filename: string,
+  content: Buffer,
+  description?: string,
+): Promise<boolean> {
+  const client = getClientForUser(userId);
+  if (!client || !client.isReady()) return false;
+  try {
+    const { TextChannel } = await import("discord.js");
+    const channel = await client.channels.fetch(channelId);
+    if (!channel || !channel.isTextBased()) return false;
+    const attachment = new AttachmentBuilder(content, { name: filename, description });
+    await (channel as InstanceType<typeof TextChannel>).send({ files: [attachment] });
+    return true;
+  } catch (err) {
+    console.error(`[DiscordManager] sendFileToDiscordChannel failed for channel ${channelId}:`, err);
+    return false;
+  }
+}
+
+/**
  * Post a single message to a channel by name or ID and return its Discord message ID.
  * Used by the multi-script pipeline runner so each script can have its own approval registered.
  * Returns null if the channel was not found or the send failed.
