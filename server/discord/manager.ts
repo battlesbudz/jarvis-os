@@ -420,6 +420,40 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
 
     const userId = pairedUser.userId;
 
+    // ── Mention-triggered voice join ──────────────────────────────────────
+    // When the bot is @mentioned in a guild text channel, the sender is the
+    // integration owner, and they are currently in a voice channel with no
+    // active session for this guild: auto-join so Jarvis responds in voice.
+    // The join is fire-and-forget so normal text processing continues in parallel.
+    if (!isDM && message.mentions.users.has(client.user?.id ?? "")) {
+      const voiceGuildId = message.guild?.id ?? "";
+      if (voiceGuildId) {
+        (async () => {
+          try {
+            const { isIntegrationOwner } = await import("../integrationOwner");
+            const ownerCheck = await isIntegrationOwner(userId);
+            if (!ownerCheck) return;
+            const { getVoiceSessionStatus, joinVoiceSession } = await import("./voiceBridge");
+            if (getVoiceSessionStatus(voiceGuildId).active) return; // already joined
+            const guild = message.guild!;
+            const member = guild.members.cache.get(discordUserId)
+              ?? await guild.members.fetch(discordUserId).catch(() => null);
+            const voiceChannelId = member?.voice.channelId ?? null;
+            if (!voiceChannelId) return; // sender not in a voice channel
+            console.log(`[DiscordManager] mention-triggered voice join — guild=${voiceGuildId} vchannel=${voiceChannelId}`);
+            const result = await joinVoiceSession(client, voiceGuildId, voiceChannelId, message.channelId, userId, discordUserId);
+            if (result.ok) {
+              await message.channel
+                .send(`🎙️ Joining <#${voiceChannelId}>! Speak and I'll respond in voice. Use \`/voice leave\` to disconnect.`)
+                .catch(() => {});
+            }
+          } catch (voiceJoinErr) {
+            console.error("[DiscordManager] mention-triggered voice join error (non-fatal):", voiceJoinErr);
+          }
+        })();
+      }
+    }
+
     // ── Project question reply-thread routing ─────────────────────────────
     // If this message is a Discord reply and the referenced message ID matches
     // a pending question stored in questionMeta, auto-route to answerProjectQuestion.
@@ -1205,6 +1239,7 @@ export async function startUserBot(userId: string, botToken: string): Promise<vo
       GatewayIntentBits.DirectMessages,
       GatewayIntentBits.DirectMessageReactions,
       GatewayIntentBits.GuildMessageReactions,
+      GatewayIntentBits.GuildVoiceStates,
     ],
     partials: [Partials.Channel, Partials.Message, Partials.Reaction],
   });
@@ -1244,6 +1279,15 @@ export function getBotStatus(userId: string): "running" | "stopped" {
   const client = getClientForUser(userId);
   if (!client) return "stopped";
   return client.isReady() ? "running" : "stopped";
+}
+
+/**
+ * Returns the discord.js Client for a given Jarvis userId (or the shared bot as
+ * fallback).  Used by the voice bridge to look up a user's current voice channel
+ * and to pass to @discordjs/voice's joinVoiceChannel.
+ */
+export function getDiscordClientForUser(userId: string): Client | undefined {
+  return getClientForUser(userId);
 }
 
 export async function bootAllBots(): Promise<void> {
@@ -2131,6 +2175,7 @@ export async function bootSharedBot(): Promise<void> {
       GatewayIntentBits.DirectMessages,
       GatewayIntentBits.DirectMessageReactions,
       GatewayIntentBits.GuildMessageReactions,
+      GatewayIntentBits.GuildVoiceStates,
     ],
     partials: [Partials.Channel, Partials.Message, Partials.Reaction],
   });

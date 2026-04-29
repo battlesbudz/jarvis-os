@@ -220,6 +220,30 @@ const PROJECT_COMMAND = {
   ],
 };
 
+// ── /voice command ───────────────────────────────────────────────────────────
+
+const VOICE_COMMAND = {
+  name: "voice",
+  description: "Control Jarvis in voice channels",
+  options: [
+    {
+      type: 1, // SUB_COMMAND
+      name: "join",
+      description: "Jarvis joins the voice channel you're currently in",
+    },
+    {
+      type: 1,
+      name: "leave",
+      description: "Jarvis leaves the voice channel",
+    },
+    {
+      type: 1,
+      name: "status",
+      description: "Show whether Jarvis is in a voice session in this server",
+    },
+  ],
+};
+
 // ── Top-level task commands ──────────────────────────────────────────────────
 // These are registered as top-level Discord slash commands (not subcommands of /jarvis)
 // so they appear as /research, /plan, /write, /brief, /help in the autocomplete menu.
@@ -337,7 +361,7 @@ export async function registerSlashCommands(): Promise<void> {
     // If a new system-level command is registered outside this router, add its name to
     // SYSTEM_COMMAND_NAMES below so it is not mistaken for a stale task command.
     const currentTaskNames = new Set(TASK_COMMANDS.map((tc) => tc.name as string));
-    const SYSTEM_COMMAND_NAMES = new Set(["jarvis", "agents", "agent", "ask"]);
+    const SYSTEM_COMMAND_NAMES = new Set(["jarvis", "agents", "agent", "ask", "voice"]);
     const knownCommandNamespace = new Set([...SYSTEM_COMMAND_NAMES, ...currentTaskNames]);
     const existingByName = new Map(existing.map((ec) => [ec.name, ec]));
     const hasUnknownOrStaleCommand = existing.some((ec) => !knownCommandNamespace.has(ec.name));
@@ -368,7 +392,7 @@ export async function registerSlashCommands(): Promise<void> {
     // intentionally omitted from the PUT payload so Discord removes them automatically.
     // Filter out both "agent" (old) and "agents" (new) so we cleanly replace either.
     const { AGENT_COMMAND, ASK_COMMAND } = await import("./agentCommands");
-    const mergedCommands = [JARVIS_COMMAND, AGENT_COMMAND, ASK_COMMAND, PROJECT_COMMAND, ...TASK_COMMANDS];
+    const mergedCommands = [JARVIS_COMMAND, AGENT_COMMAND, ASK_COMMAND, PROJECT_COMMAND, VOICE_COMMAND, ...TASK_COMMANDS];
 
     const putRes = await fetch(url, {
       method: "PUT",
@@ -1010,6 +1034,102 @@ async function handleProjectCommand(appId: string, interaction: any, userId: str
   }
 }
 
+async function handleVoiceCommand(
+  appId: string,
+  interaction: any,
+  userId: string,
+  guildId: string,
+  discordUserId: string,
+): Promise<void> {
+  const { isIntegrationOwner } = await import("../integrationOwner");
+  if (!(await isIntegrationOwner(userId))) {
+    await editInteractionReply(
+      appId, interaction.token,
+      "⛔ Voice commands are only available to the Jarvis integration owner.",
+      EPHEMERAL,
+    );
+    return;
+  }
+
+  const subcommand: string = interaction.data?.options?.[0]?.name ?? "";
+  const textChannelId: string = interaction.channel_id ?? "";
+
+  const { joinVoiceSession, leaveVoiceSession, getVoiceSessionStatus } = await import("./voiceBridge");
+  const { getDiscordClientForUser } = await import("./manager");
+
+  if (subcommand === "status") {
+    const status = getVoiceSessionStatus(guildId);
+    if (status.active) {
+      await editInteractionReply(
+        appId, interaction.token,
+        `🎙️ Jarvis is active in <#${status.voiceChannelId}>. Use \`/voice leave\` to disconnect.`,
+        EPHEMERAL,
+      );
+    } else {
+      await editInteractionReply(
+        appId, interaction.token,
+        "Jarvis is not in a voice session in this server. Join a voice channel and use `/voice join` to start.",
+        EPHEMERAL,
+      );
+    }
+    return;
+  }
+
+  if (subcommand === "leave") {
+    const left = leaveVoiceSession(guildId);
+    if (left) {
+      await editInteractionReply(appId, interaction.token, "👋 Jarvis has left the voice channel.", EPHEMERAL);
+    } else {
+      await editInteractionReply(appId, interaction.token, "Jarvis isn't in a voice session in this server.", EPHEMERAL);
+    }
+    return;
+  }
+
+  if (subcommand === "join") {
+    const client = getDiscordClientForUser(userId);
+    if (!client || !client.isReady()) {
+      await editInteractionReply(appId, interaction.token, "❌ Discord bot is not running for your account.", EPHEMERAL);
+      return;
+    }
+
+    let voiceChannelId: string | null = null;
+    try {
+      const guild = await client.guilds.fetch(guildId);
+      const member = await guild.members.fetch(discordUserId);
+      voiceChannelId = member.voice.channelId ?? null;
+    } catch (err) {
+      console.error("[SlashCommands] /voice join — member voice state lookup failed:", err);
+    }
+
+    if (!voiceChannelId) {
+      await editInteractionReply(
+        appId, interaction.token,
+        "You're not in a voice channel. Join one first, then run `/voice join`.",
+        EPHEMERAL,
+      );
+      return;
+    }
+
+    const result = await joinVoiceSession(client, guildId, voiceChannelId, textChannelId, userId, discordUserId);
+    if (result.ok) {
+      await editInteractionReply(
+        appId, interaction.token,
+        `🎙️ Jarvis has joined <#${voiceChannelId}>!\n\nSpeak and I'll transcribe, respond in text here, and reply in voice. Use \`/voice leave\` to disconnect.`,
+        EPHEMERAL,
+      );
+    } else {
+      await editInteractionReply(appId, interaction.token, `❌ ${result.error}`, EPHEMERAL);
+    }
+    return;
+  }
+
+  await editInteractionReply(
+    appId, interaction.token,
+    "Unknown subcommand. Use `/voice join`, `/voice leave`, or `/voice status`.",
+    EPHEMERAL,
+  );
+}
+
 async function handleHelp(appId: string, interaction: any): Promise<void> {
   const help = [
     "**Jarvis Slash Commands**",
@@ -1172,6 +1292,30 @@ export async function handleInteraction(interaction: any): Promise<object> {
       setImmediate(() => {
         handleProjectCommand(appId3, interaction, paired3.userId).catch((err) =>
           console.error("[SlashCommands] handleProjectCommand background error:", err),
+        );
+      });
+      return deferredEphemeral();
+    }
+
+    // ── /voice command ────────────────────────────────────────────────────────
+    if (interaction.data?.name === "voice") {
+      const voiceMemberUser = interaction.member?.user ?? interaction.user ?? {};
+      const voiceDiscordUserId: string = voiceMemberUser.id ?? "";
+      const voiceDiscordUsername: string = voiceMemberUser.username ?? voiceMemberUser.global_name ?? voiceDiscordUserId;
+      const voiceGuildId: string = interaction.guild_id ?? "";
+
+      if (!voiceGuildId) {
+        return immediateEphemeral("Voice commands only work in a server, not in DMs.");
+      }
+
+      const voicePaired = await lookupUserByDiscordId(voiceDiscordUserId);
+      if (!voicePaired) {
+        return immediateEphemeral(buildPairingPrompt(voiceDiscordUserId, voiceDiscordUsername));
+      }
+
+      setImmediate(() => {
+        handleVoiceCommand(appId, interaction, voicePaired.userId, voiceGuildId, voiceDiscordUserId).catch((err) =>
+          console.error("[SlashCommands] handleVoiceCommand background error:", err),
         );
       });
       return deferredEphemeral();
