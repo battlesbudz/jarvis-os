@@ -691,6 +691,39 @@ const APP_SEARCH_HINTS: Record<string, AppSearchHint> = {
     extraKeywords: [],
     iconOnly: true,
   },
+  "com.pinterest": {
+    // Pinterest's search is accessed by tapping the magnifying-glass icon in
+    // the bottom navigation bar — there is no persistent visible text field
+    // on the home feed. Once tapped, a search field slides in.
+    // Use resource IDs only; iconOnly to engage the vision fallback path when
+    // the icon has no text label.
+    resourceIds: [
+      "search_edit_text",
+      "search_bar",
+      "search_field",
+      "search_input",
+      "menu_search",
+      "action_search",
+      "search_hint",
+    ],
+    extraKeywords: [],
+    iconOnly: true,
+  },
+  "com.spotify.music": {
+    // Spotify's bottom tab bar has a labelled "Search" tab, so the search
+    // entry point is reachable via keyword matching. Once on the search screen
+    // the text field accepts artist, song, or podcast queries.
+    resourceIds: [
+      "search_edit_text",
+      "search_bar",
+      "search_field",
+      "search_text",
+      "query",
+      "nav_search",
+      "search_input",
+    ],
+    extraKeywords: ["search", "what do you want to play", "artists songs podcasts"],
+  },
 };
 
 /**
