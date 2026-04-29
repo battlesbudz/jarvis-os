@@ -418,6 +418,17 @@ export function classifyBuildFollowUp(
 }
 
 /**
+ * A persisted build-session record fetched from the DB so that
+ * `findSuspendedBuild` can fall back to it when the original ack message
+ * has scrolled past the rolling chat-history window.
+ */
+export interface StoredBuildSession {
+  ackTimestamp: number;
+  reminded: boolean;
+  buildDescription: string;
+}
+
+/**
  * Inspects the chat history (newest-first) and returns information about a
  * "suspended build" — a build ack that has not yet been followed up with a
  * reminder to the user.
@@ -425,29 +436,44 @@ export function classifyBuildFollowUp(
  * Used by coachAgent.ts to append a one-time "heads-up" note when the user
  * returns after being away for longer than SUSPENDED_BUILD_REMINDER_THRESHOLD.
  *
+ * When no ack is found in the rolling window, `storedSession` (fetched from
+ * the `build_sessions` DB table by the caller) is consulted so that reminders
+ * continue to fire even in long conversations.
+ *
  * Returns:
  *  - ackAgeMs        — milliseconds since the build ack was stored (based on
- *                      the message id timestamp), or null when no ack is found
- *                      or the timestamp cannot be parsed.
+ *                      the message id timestamp, or storedSession.ackTimestamp
+ *                      when falling back to the DB record), or null when no
+ *                      ack is found in either source.
  *  - shouldSuppress  — true when the reminder should NOT be shown because:
  *                        (a) SUSPENDED_BUILD_REMINDED_MARKER already appears in
  *                            the messages sent AFTER the current ack (scoped to
  *                            this session, not the full history), or
  *                        (b) the user already sent a build refinement message
- *                            after the ack (the build is not "suspended").
+ *                            after the ack (the build is not "suspended"), or
+ *                        (c) storedSession.reminded is true (DB-level flag).
  *  - buildDescription — the original build goal (via findBuildDescription).
  */
 export function findSuspendedBuild(
   chatHistory: Array<{ id?: string; role: string; content: string }>,
+  storedSession?: StoredBuildSession | null,
 ): { ackAgeMs: number | null; shouldSuppress: boolean; buildDescription: string } {
   const sessionWindow = chatHistory.slice(0, BUILD_SESSION_WINDOW);
   const ackIndex = sessionWindow.findIndex(
     (m) => m.role === "assistant" && m.content.includes(BUILD_ACK_MARKER),
   );
 
-  // No build ack in recent history — nothing to remind about.
+  // No build ack in recent history — fall back to persisted store.
   if (ackIndex === -1) {
-    return { ackAgeMs: null, shouldSuppress: false, buildDescription: "your previous build request" };
+    if (!storedSession) {
+      return { ackAgeMs: null, shouldSuppress: false, buildDescription: "your previous build request" };
+    }
+    const ackAgeMs = Date.now() - storedSession.ackTimestamp;
+    return {
+      ackAgeMs,
+      shouldSuppress: storedSession.reminded,
+      buildDescription: storedSession.buildDescription,
+    };
   }
 
   // In a newest-first array, messages at indices 0..ackIndex-1 are NEWER than
@@ -457,9 +483,12 @@ export function findSuspendedBuild(
   const messagesAfterAck = sessionWindow.slice(0, ackIndex);
 
   // (a) Has the reminder already been delivered in this session?
-  const alreadyReminded = messagesAfterAck.some(
+  //     Also check the DB-level flag in case the ack is in the window but the
+  //     reminder message itself has scrolled out.
+  const alreadyRemindedInHistory = messagesAfterAck.some(
     (m) => m.role === "assistant" && m.content.includes(SUSPENDED_BUILD_REMINDED_MARKER),
   );
+  const alreadyReminded = alreadyRemindedInHistory || (storedSession?.reminded ?? false);
 
   // (b) Has the user already engaged with the build via a refinement message?
   //     If so, the build is active (not suspended) and we must not remind.
@@ -476,7 +505,8 @@ export function findSuspendedBuild(
   const shouldSuppress = alreadyReminded || hasRefinementSinceAck;
 
   // Compute the age of the ack from its id (which is Date.now().toString() when
-  // stored by coachAgent.ts / buildIntentRouter.ts).
+  // stored by coachAgent.ts / buildIntentRouter.ts).  Fall back to the stored
+  // ack timestamp when the message id cannot be parsed (defensive).
   const ackEntry = sessionWindow[ackIndex];
   let ackAgeMs: number | null = null;
   if (ackEntry.id) {
@@ -485,6 +515,9 @@ export function findSuspendedBuild(
     if (!isNaN(ts) && ts > 1_000_000_000_000) {
       ackAgeMs = Date.now() - ts;
     }
+  }
+  if (ackAgeMs === null && storedSession) {
+    ackAgeMs = Date.now() - storedSession.ackTimestamp;
   }
 
   const buildDescription = findBuildDescription(chatHistory);

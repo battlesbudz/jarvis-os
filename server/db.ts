@@ -1500,6 +1500,25 @@ export async function ensureTablesExist() {
         ON skill_candidates (user_id, status)
     `).catch(() => {});
 
+    // ── Build Sessions (Task #982) ────────────────────────────────────────────
+    // Persists build-ack events so the suspended-build reminder fires even when
+    // the ack message has scrolled past the 20-message rolling chat window.
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS build_sessions (
+        id                VARCHAR   PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id           VARCHAR   NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        job_id            VARCHAR,
+        ack_timestamp     BIGINT    NOT NULL,
+        build_description TEXT      NOT NULL,
+        reminded          BOOLEAN   NOT NULL DEFAULT FALSE,
+        created_at        TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `).catch(() => {});
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS build_sessions_user_reminded_idx
+        ON build_sessions (user_id, reminded, created_at DESC)
+    `).catch(() => {});
+
     console.log("Database tables verified");
   } catch (error) {
     console.error("Failed to ensure database tables exist:", error);
