@@ -2,6 +2,7 @@ import { db } from "../db";
 import { inboxItems } from "@shared/schema";
 import type { Channel, ChannelSendOpts, ChannelSendResult } from "./types";
 import { outboundMiddleware } from "./outboundMiddleware";
+import { wasRecentlyPushedViaSSE } from "../webchatSSE";
 
 const NOTIFICATION_SUBJECTS: Record<string, string> = {
   morning_briefing: "Your morning briefing",
@@ -29,6 +30,14 @@ export const inAppChannel: Channel = {
     try {
       const notifType = opts.notificationType ?? "general";
       if (SELF_MANAGED_INBOX_TYPES.has(notifType)) {
+        return { ok: true };
+      }
+      // Skip the inbox write if the same message was already delivered to the
+      // user's open chat tab via SSE within the last 30 seconds. webchatChannel
+      // records the hash of the original (pre-middleware) text on a successful
+      // SSE push, so we compare against the raw text here — before middleware
+      // has a chance to mutate it — to ensure the hashes align.
+      if (wasRecentlyPushedViaSSE(userId, text)) {
         return { ok: true };
       }
       // Run through outbound middleware (whitespace cleaner, length limiter, etc.)

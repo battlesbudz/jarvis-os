@@ -1,4 +1,5 @@
 import type { Response } from "express";
+import crypto from "crypto";
 
 interface Subscriber {
   res: Response;
@@ -62,12 +63,56 @@ export function hasSubscriber(userId: string): boolean {
   return subscribers.has(userId);
 }
 
+// ---------------------------------------------------------------------------
+// Deduplication: track hashes of messages recently pushed via SSE so that
+// inAppChannel can skip writing a duplicate inbox item for the same content.
+// ---------------------------------------------------------------------------
+
+const SSE_DEDUP_TTL_MS = 30_000;
+
+// userId -> Map<sha1Hash, expiresAt>
+const recentPushes = new Map<string, Map<string, number>>();
+
+function hashText(text: string): string {
+  return crypto.createHash("sha1").update(text).digest("hex");
+}
+
+function recordPushedHash(userId: string, text: string): void {
+  const hash = hashText(text);
+  const expiresAt = Date.now() + SSE_DEDUP_TTL_MS;
+  let userMap = recentPushes.get(userId);
+  if (!userMap) {
+    userMap = new Map();
+    recentPushes.set(userId, userMap);
+  }
+  userMap.set(hash, expiresAt);
+}
+
+/**
+ * Returns true if the given text was already successfully pushed to this user
+ * via SSE within the last 30 seconds.  Used by inAppChannel to avoid writing
+ * a duplicate inbox item when the chat tab is open.
+ */
+export function wasRecentlyPushedViaSSE(userId: string, text: string): boolean {
+  const userMap = recentPushes.get(userId);
+  if (!userMap) return false;
+  const hash = hashText(text);
+  const expiresAt = userMap.get(hash);
+  if (expiresAt === undefined) return false;
+  if (Date.now() > expiresAt) {
+    userMap.delete(hash);
+    return false;
+  }
+  return true;
+}
+
 export function pushToSubscriber(userId: string, text: string): boolean {
   const sub = subscribers.get(userId);
   if (!sub) return false;
   try {
     const payload = JSON.stringify({ type: "bot_message", content: text });
     sub.res.write(`data: ${payload}\n\n`);
+    recordPushedHash(userId, text);
     return true;
   } catch {
     removeSubscriberIfCurrent(userId, sub.token);
