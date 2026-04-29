@@ -495,3 +495,534 @@ Return ONLY a valid JSON array, no explanation, no markdown fences.`,
     };
   },
 };
+
+// ── android_search_in_app ─────────────────────────────────────────────────────
+// High-level macro that orchestrates the full in-app search workflow as a
+// resumable, structured sequence. Each step logs its outcome; if any step
+// fails, a structured response tells Jarvis exactly where to resume and why.
+
+/** Check if serialised read_screen output contains any of the given keywords (case-insensitive) */
+function screenContains(raw: string, keywords: string[]): boolean {
+  const lower = raw.toLowerCase();
+  return keywords.some((k) => lower.includes(k.toLowerCase()));
+}
+
+/** Wait for a fixed number of milliseconds */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export const androidSearchInAppTool: AgentTool = {
+  name: "android_search_in_app",
+  description:
+    "High-level macro that performs a complete in-app search on Android as a single resumable sequence: open app → wait for load → detect login walls → locate search bar → tap it (with focus verification) → type query (with text confirmation) → submit → verify results loaded → optional result capture. Returns a structured result with { ok, step_reached, result?, error_at_step?, suggestion? } so Jarvis can tell the user exactly what happened and how to recover. Supply resume_from_step (2-6) after a partial failure to skip the open/load steps and retry from the specific failed step. PREFER this over manually orchestrating individual android_* steps whenever the user asks to search for something inside a specific app.",
+  parameters: {
+    type: "object",
+    properties: {
+      app_package: {
+        type: "string",
+        description: "Android package name of the target app (e.g. \"com.facebook.katana\", \"com.instagram.android\", \"com.twitter.android\")",
+      },
+      app_name: {
+        type: "string",
+        description: "Human-readable name of the app (e.g. \"Facebook\", \"Instagram\"). Used in error messages and labels.",
+      },
+      search_query: {
+        type: "string",
+        description: "The text to search for inside the app.",
+      },
+      search_bar_hint: {
+        type: "string",
+        description: "Optional hint to help identify the search bar — e.g. the placeholder text like \"Search Facebook\" or \"Search Twitter\". When omitted the tool looks for common search bar patterns.",
+      },
+      action_after_search: {
+        type: "string",
+        enum: ["screenshot", "read_text"],
+        description: "Optional action after search results load: \"screenshot\" returns a base64 PNG of the results; \"read_text\" returns the visible text from the results screen.",
+      },
+      resume_from_step: {
+        type: "number",
+        description: "Skip to a specific step (2-6) after a previous partial failure. Use the step_reached value from the prior failure response. Steps 1 (open app) and load-wait are skipped when resuming.",
+      },
+    },
+    required: ["app_package", "app_name", "search_query"],
+  },
+  async execute(args, ctx) {
+    const appPackage = String(args.app_package || "").trim();
+    const appName = String(args.app_name || appPackage).trim();
+    const searchQuery = String(args.search_query || "").trim();
+    const searchBarHint = args.search_bar_hint ? String(args.search_bar_hint).trim() : null;
+    const actionAfterSearch = args.action_after_search ? String(args.action_after_search) : null;
+    const resumeFromStepRaw = typeof args.resume_from_step === "number" ? Math.floor(args.resume_from_step) : null;
+    // resume_from_step must be in range [2, 6] — reject values outside this range so the
+    // macro is never skipped in its entirety or started from an invalid position.
+    if (resumeFromStepRaw !== null && (resumeFromStepRaw < 2 || resumeFromStepRaw > 6)) {
+      return {
+        ok: false,
+        content: JSON.stringify({
+          ok: false,
+          error: `resume_from_step must be between 2 and 6 (got ${resumeFromStepRaw}). Use the step_reached value returned by a prior partial failure.`,
+        }),
+      };
+    }
+    const resumeFromStep = resumeFromStepRaw;
+
+    if (!appPackage) return { ok: false, content: JSON.stringify({ ok: false, error: "app_package is required" }) };
+    if (!searchQuery) return { ok: false, content: JSON.stringify({ ok: false, error: "search_query is required" }) };
+
+    if (!isAndroidDaemonActive(ctx.userId)) {
+      return {
+        ok: false,
+        content: JSON.stringify({
+          ok: false,
+          step_reached: 0,
+          error_at_step: "preflight",
+          error: "Android daemon is not connected. Ask the user to install the Jarvis Android APK and pair it from Profile → Connected Channels → Android Device.",
+        }),
+      };
+    }
+
+    const [canOpenApp, canReadScreen, canTapType] = await Promise.all([
+      isAndroidDaemonActionAllowed(ctx.userId, "android_open_app"),
+      isAndroidDaemonActionAllowed(ctx.userId, "android_read_screen"),
+      isAndroidDaemonActionAllowed(ctx.userId, "android_tap_type"),
+    ]);
+
+    if (!canOpenApp || !canReadScreen || !canTapType) {
+      const missing: string[] = [];
+      if (!canOpenApp) missing.push("android_open_app");
+      if (!canReadScreen) missing.push("android_read_screen");
+      if (!canTapType) missing.push("android_tap_type");
+      return {
+        ok: false,
+        content: JSON.stringify({
+          ok: false,
+          step_reached: 0,
+          error_at_step: "preflight",
+          error: `Missing Android permissions: ${missing.join(", ")}. Ask the user to enable them in Profile → Connected Channels → Android Device → Permissions.`,
+        }),
+      };
+    }
+
+    const label = `android_search_in_app: ${appName} → "${searchQuery.slice(0, 40)}"`;
+    console.log(`[${label}] starting${resumeFromStep ? ` (resume from step ${resumeFromStep})` : ""}`);
+
+    // Per-step outcome log — included in every response so Jarvis and the user can
+    // understand what happened at each stage and which step to retry.
+    const stepLog: Array<{ step: number; outcome: string; detail?: string }> = [];
+
+    // Build the search-keyword list once — shared across steps 2 and 3
+    const SEARCH_KEYWORDS = ["search", "find", "lookup", "query"];
+    if (searchBarHint) SEARCH_KEYWORDS.unshift(searchBarHint.toLowerCase());
+
+    // ── Helper: parse accessibility tree for the best search-bar candidate ────
+    function parseSearchElement(raw: string): { found: boolean; x: number | null; y: number | null } {
+      const lower = raw.toLowerCase();
+      const hasHint = SEARCH_KEYWORDS.some((k) => lower.includes(k));
+      if (!hasHint) return { found: false, x: null, y: null };
+
+      try {
+        const dataObj = JSON.parse(raw);
+        const nodes: Array<Record<string, unknown>> = [];
+        function collectNodes(obj: unknown) {
+          if (!obj || typeof obj !== "object") return;
+          if (Array.isArray(obj)) { obj.forEach(collectNodes); return; }
+          const o = obj as Record<string, unknown>;
+          nodes.push(o);
+          Object.values(o).forEach(collectNodes);
+        }
+        collectNodes(dataObj);
+
+        for (const node of nodes) {
+          const nodeStr = JSON.stringify(node).toLowerCase();
+          const isSearchNode = SEARCH_KEYWORDS.some((k) => nodeStr.includes(k));
+          if (!isSearchNode) continue;
+
+          const bounds = node.bounds as Record<string, number> | undefined;
+          if (bounds && typeof bounds.left === "number" && typeof bounds.top === "number" && typeof bounds.right === "number" && typeof bounds.bottom === "number") {
+            const cx = Math.round((bounds.left + bounds.right) / 2);
+            const cy = Math.round((bounds.top + bounds.bottom) / 2);
+            return { found: true, x: cx, y: cy };
+          }
+          const centerX = node.centerX ?? node.x;
+          const centerY = node.centerY ?? node.y;
+          if (typeof centerX === "number" && typeof centerY === "number") {
+            return { found: true, x: centerX as number, y: centerY as number };
+          }
+          if (typeof node.x === "number" && typeof node.y === "number") {
+            return { found: true, x: node.x as number, y: node.y as number };
+          }
+        }
+        return { found: true, x: null, y: null };
+      } catch {
+        return { found: hasHint, x: null, y: null };
+      }
+    }
+
+    // ── Helper: freshly locate the search element from current screen ─────────
+    async function relocateSearchElement(): Promise<{ found: boolean; x: number | null; y: number | null; screenRaw: string }> {
+      const r = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
+      if (!r.ok) return { found: false, x: null, y: null, screenRaw: "" };
+      const raw = JSON.stringify(r.data || "");
+      const parsed = parseSearchElement(raw);
+      return { ...parsed, screenRaw: raw };
+    }
+
+    let screenRaw = "";
+
+    // ── Step 1: Open app + wait for load ─────────────────────────────────
+    if (!resumeFromStep || resumeFromStep <= 1) {
+      const openResult = await sendDaemonOp(ctx.userId, { type: "android_open_app", packageName: appPackage }, 20000);
+      if (!openResult.ok) {
+        return {
+          ok: false,
+          content: JSON.stringify({
+            ok: false,
+            step_reached: 1,
+            error_at_step: "open_app",
+            error: `Failed to open ${appName}: ${openResult.error || "unknown error"}`,
+            suggestion: `Make sure ${appName} is installed on the device. You can check installed apps with android_file_list or ask the user.`,
+          }),
+        };
+      }
+
+      // Poll read_screen until no loading spinner or until 12s elapses
+      const loadStartedAt = Date.now();
+      const loadDeadline = loadStartedAt + 12000;
+      let loaded = false;
+      while (Date.now() < loadDeadline) {
+        await sleep(2000);
+        const readResult = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
+        if (readResult.ok) {
+          screenRaw = JSON.stringify(readResult.data || "");
+          const hasSpinner = screenContains(screenRaw, ["loading", "please wait", "spinner", "progress"]);
+          if (!hasSpinner) { loaded = true; break; }
+          if (Date.now() - loadStartedAt >= 5000 && screenRaw.length > 100) { loaded = true; break; }
+        }
+      }
+      if (!loaded) {
+        const finalRead = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
+        if (finalRead.ok) { screenRaw = JSON.stringify(finalRead.data || ""); loaded = screenRaw.length > 50; }
+      }
+      if (!loaded) {
+        return {
+          ok: false,
+          content: JSON.stringify({
+            ok: false,
+            step_reached: 1,
+            error_at_step: "app_load_timeout",
+            error: `${appName} did not finish loading within 12 seconds.`,
+            suggestion: "The app may be slow to start, require a network connection, or be stuck. Try android_screenshot to see the current state.",
+          }),
+        };
+      }
+
+      stepLog.push({ step: 1, outcome: "app_loaded" });
+      console.log(`[${label}] step 1 complete — app loaded`);
+
+      // ── Login-wall detection ──────────────────────────────────────────
+      const loginWallKeywords = ["log in", "login", "sign in", "sign up", "continue as", "create account", "register"];
+      if (screenContains(screenRaw, loginWallKeywords)) {
+        stepLog.push({ step: 1, outcome: "blocked_by_login_wall" });
+        return {
+          ok: false,
+          content: JSON.stringify({
+            ok: false,
+            step_reached: 1,
+            blocked_by_login_wall: true,
+            error_at_step: "login_wall",
+            error: `${appName} is showing a login or sign-up screen. The user must be logged in before searching.`,
+            suggestion: `Ask the user to log into ${appName} manually, then try again. You can use android_screenshot to show them the current state.`,
+            steps: stepLog,
+          }),
+        };
+      }
+    } else {
+      // Resuming from a later step — read current screen state
+      const r = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
+      if (r.ok) screenRaw = JSON.stringify(r.data || "");
+    }
+
+    // ── Step 2: Locate search element ─────────────────────────────────────
+    // Three strategies on separate attempts:
+    //   attempt 1 — check current screen as-is
+    //   attempt 2 — press Home then re-open the app to reach its main screen
+    //   attempt 3 — swipe down from top to reveal a hidden search bar
+    if (!resumeFromStep || resumeFromStep <= 2) {
+      let searchElementFound = false;
+      let searchX: number | null = null;
+      let searchY: number | null = null;
+
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        // Always re-read the screen on each attempt so coordinates are fresh
+        const located = await relocateSearchElement();
+        screenRaw = located.screenRaw || screenRaw;
+
+        if (located.found) {
+          searchElementFound = true;
+          searchX = located.x;
+          searchY = located.y;
+          break;
+        }
+
+        if (attempt === 1) {
+          // Navigate to home then reopen the app so we land on the main screen
+          await sendDaemonOp(ctx.userId, { type: "android_press_key", key: "home" }, 10000);
+          await sleep(800);
+          await sendDaemonOp(ctx.userId, { type: "android_open_app", packageName: appPackage }, 15000);
+          await sleep(2000);
+        } else if (attempt === 2) {
+          // Swipe down from near the top to reveal pull-to-reveal search bars
+          await sendDaemonOp(ctx.userId, { type: "android_swipe", x1: 540, y1: 200, x2: 540, y2: 800, durationMs: 400 }, 10000);
+          await sleep(800);
+        }
+      }
+
+      if (!searchElementFound) {
+        stepLog.push({ step: 2, outcome: "failed", detail: "search element not found after 3 location strategies" });
+        return {
+          ok: false,
+          content: JSON.stringify({
+            ok: false,
+            step_reached: 2,
+            error_at_step: "locate_search_bar",
+            error: `Could not find a search bar in ${appName} after 3 location attempts (current screen, home+reopen, swipe-reveal).`,
+            suggestion: "Use android_read_screen to inspect the current screen, then android_tap the search icon manually. Some apps hide the search bar behind a magnifying glass icon. If found, retry with resume_from_step: 3.",
+            steps: stepLog,
+          }),
+        };
+      }
+
+      stepLog.push({ step: 2, outcome: "success", detail: `found at (${searchX}, ${searchY})` });
+      console.log(`[${label}] step 2 complete — search element found at (${searchX}, ${searchY})`);
+
+      // ── Step 3: Tap search bar with locate-then-act loop ─────────────────
+      // Re-locate before each tap attempt so stale coordinates don't cause misses.
+      let tapVerified = false;
+      for (let attempt = 1; attempt <= 4; attempt++) {
+        // Re-locate element fresh on each attempt
+        const freshLocated = await relocateSearchElement();
+        screenRaw = freshLocated.screenRaw || screenRaw;
+        const tapX = freshLocated.x ?? searchX;
+        const tapY = freshLocated.y ?? searchY;
+
+        if (tapX !== null && tapY !== null) {
+          await sendDaemonOp(ctx.userId, { type: "android_tap", x: tapX, y: tapY }, 10000);
+        } else {
+          // Last resort: tap the top-centre of the screen where search bars commonly live
+          await sendDaemonOp(ctx.userId, { type: "android_tap", x: 540, y: 150 }, 10000);
+        }
+        await sleep(1200);
+
+        const afterTap = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
+        if (afterTap.ok) {
+          const afterRaw = JSON.stringify(afterTap.data || "");
+          // Strong signal: accessibility explicitly reports an active input field.
+          // "isFocused\":true" / "focused\":true" appear in most Android a11y trees
+          // when an EditText is active; "inputmethod" indicates the keyboard is shown.
+          // Deliberately avoids "cursor" (too generic) and "keyboard" alone (varies by app).
+          const isFocused = screenContains(afterRaw, ["\"isFocused\":true", "\"focused\":true", "inputmethod", "edittext"]);
+          // Acceptable weaker signal: screen transitioned to a dedicated search activity.
+          // "Cancel" (standalone) + a search keyword is specific to search UX patterns
+          // in apps like Facebook, Instagram, Twitter. Excludes generic commerce "cancel".
+          const isSearchActivity = screenContains(afterRaw, ["\"cancel\"", "cancel\""]) &&
+            !screenContains(afterRaw, ["cancel subscription", "cancel order", "cancel payment", "cancel booking"]) &&
+            screenContains(afterRaw, SEARCH_KEYWORDS);
+          stepLog.push({ step: 3, outcome: tapVerified ? "focus_ok" : "checking", detail: `attempt ${attempt}: isFocused=${isFocused} isSearchActivity=${isSearchActivity}` });
+          if (isFocused || isSearchActivity) {
+            screenRaw = afterRaw;
+            tapVerified = true;
+            break;
+          }
+        }
+      }
+
+      if (!tapVerified) {
+        stepLog.push({ step: 3, outcome: "failed", detail: "4 tap attempts, no focus confirmed" });
+        return {
+          ok: false,
+          content: JSON.stringify({
+            ok: false,
+            step_reached: 3,
+            error_at_step: "tap_search_bar",
+            error: `Tapped the search element 4 times but could not confirm focus in ${appName}. The app may have navigated to a separate search activity with a non-standard accessibility layout.`,
+            suggestion: "Use android_read_screen to check the current screen, then tap the visible input field manually with android_tap. Once focused, retry with resume_from_step: 4.",
+            steps: stepLog,
+          }),
+        };
+      }
+
+      stepLog.push({ step: 3, outcome: "success" });
+      console.log(`[${label}] step 3 complete — search bar focused`);
+    }
+
+    // ── Step 4: Focus-verify → type → confirm text appeared ───────────────
+    if (!resumeFromStep || resumeFromStep <= 4) {
+      // Confirm focus before typing (skip re-verify if we just verified in step 3)
+      if (resumeFromStep === 4) {
+        const focusCheck = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
+        if (focusCheck.ok) {
+          const fcRaw = JSON.stringify(focusCheck.data || "");
+          const isFocused = screenContains(fcRaw, ["focused", "edittext", "cursor", "inputmethod", "keyboard"]);
+          screenRaw = fcRaw;
+          if (!isFocused) {
+            return {
+              ok: false,
+              content: JSON.stringify({
+                ok: false,
+                step_reached: 4,
+                error_at_step: "type_query_no_focus",
+                error: `Resumed at step 4 but the search field no longer appears focused in ${appName}.`,
+                suggestion: "Retry from step 3 (resume_from_step: 3) to re-tap and focus the search bar.",
+              }),
+            };
+          }
+        }
+      }
+
+      await sendDaemonOp(ctx.userId, { type: "android_type", text: searchQuery }, 15000);
+      await sleep(800);
+
+      // Confirm the query text appeared on screen
+      const afterType = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
+      let typeVerified = false;
+      if (afterType.ok) {
+        const afterTypeRaw = JSON.stringify(afterType.data || "");
+        const queryWords = searchQuery.split(/\s+/).filter((w) => w.length > 1);
+        typeVerified = queryWords.length === 0 ||
+          queryWords.some((w) => afterTypeRaw.toLowerCase().includes(w.toLowerCase()));
+        screenRaw = afterTypeRaw;
+      }
+
+      if (!typeVerified) {
+        stepLog.push({ step: 4, outcome: "failed", detail: "query text not found in screen after android_type" });
+        return {
+          ok: false,
+          content: JSON.stringify({
+            ok: false,
+            step_reached: 4,
+            error_at_step: "type_query",
+            error: `Typed "${searchQuery.slice(0, 60)}" but could not confirm the text appeared in ${appName}'s search field.`,
+            suggestion: "The keyboard may not have appeared or the field lost focus. Use android_screenshot to inspect the state, then retry from step 3 (resume_from_step: 3).",
+            steps: stepLog,
+          }),
+        };
+      }
+
+      stepLog.push({ step: 4, outcome: "success", detail: `query confirmed in accessibility tree` });
+      console.log(`[${label}] step 4 complete — query typed and confirmed`);
+    }
+
+    // ── Step 5: Submit search and verify results loaded ────────────────────
+    if (!resumeFromStep || resumeFromStep <= 5) {
+      // Capture pre-submit screen fingerprint: length + node count for change detection
+      const preSubmitLen = screenRaw.length;
+      const preSubmitNodeCount = (screenRaw.match(/"type"|"className"|"contentDesc"/g) || []).length;
+
+      // Primary: send Enter/newline — triggers IME Search/Go action on most keyboards
+      await sendDaemonOp(ctx.userId, { type: "android_type", text: "\n" }, 10000);
+      await sleep(2500);
+
+      function isResultsState(raw: string): boolean {
+        // Results screen criteria (all must be true):
+        // 1. Keyboard/IME has been dismissed — no active input method in a11y tree
+        const keyboardDismissed = !screenContains(raw, ["\"inputmethod\"", "inputmethod_service", "\"isFocused\":true", "\"focused\":true"]);
+        // 2. Screen content changed significantly — more nodes than the typing state
+        const newNodeCount = (raw.match(/"type"|"className"|"contentDesc"/g) || []).length;
+        const contentGrew = newNodeCount > preSubmitNodeCount + 2 || raw.length > preSubmitLen + 300;
+        // 3. Screen is not showing an error dialog that typically indicates failure
+        const isErrorDialog = screenContains(raw, ["network error", "something went wrong", "no connection", "retry"]) &&
+          !screenContains(raw, SEARCH_KEYWORDS);
+        return keyboardDismissed && contentGrew && !isErrorDialog;
+      }
+
+      const afterSearch = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
+      let resultsLoaded = false;
+      if (afterSearch.ok) {
+        const afterSearchRaw = JSON.stringify(afterSearch.data || "");
+        resultsLoaded = isResultsState(afterSearchRaw);
+        screenRaw = afterSearchRaw;
+        stepLog.push({ step: 5, outcome: "enter_sent", detail: `resultsLoaded=${resultsLoaded} after Enter` });
+      }
+
+      // Fallback: locate and tap a visible search/go button
+      if (!resultsLoaded) {
+        const btnLocated = await relocateSearchElement();
+        if (btnLocated.found && btnLocated.x !== null && btnLocated.y !== null) {
+          await sendDaemonOp(ctx.userId, { type: "android_tap", x: btnLocated.x, y: btnLocated.y }, 10000);
+          await sleep(2500);
+          const retryRead = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
+          if (retryRead.ok) {
+            const retryRaw = JSON.stringify(retryRead.data || "");
+            resultsLoaded = isResultsState(retryRaw);
+            screenRaw = retryRaw;
+            stepLog.push({ step: 5, outcome: "button_tap_fallback", detail: `resultsLoaded=${resultsLoaded} after button tap` });
+          }
+        }
+      }
+
+      // Step 5 is strict — if results did not load after both attempts, return a structured failure
+      if (!resultsLoaded) {
+        stepLog.push({ step: 5, outcome: "failed", detail: "results screen not detected after Enter + button tap" });
+        return {
+          ok: false,
+          content: JSON.stringify({
+            ok: false,
+            step_reached: 5,
+            error_at_step: "execute_search",
+            error: `Search was submitted in ${appName} but the results screen did not appear. The app may require a different submission method, may have shown a network error, or may not have recognised the search input.`,
+            suggestion: "Use android_screenshot to see the current state. If results are visually present but the accessibility tree is sparse, retry with resume_from_step: 6 and action_after_search: 'screenshot'.",
+            steps: stepLog,
+          }),
+        };
+      }
+
+      stepLog.push({ step: 5, outcome: "success" });
+      console.log(`[${label}] step 5 complete — results loaded`);
+    }
+
+    // ── Step 6: Optional result action ────────────────────────────────────
+    let resultContent: string | undefined;
+    let screenshotB64: string | undefined;
+
+    if (actionAfterSearch === "screenshot") {
+      const canScreenshot = await isAndroidDaemonActionAllowed(ctx.userId, "android_screenshot");
+      if (canScreenshot) {
+        const ssResult = await sendDaemonOp(ctx.userId, { type: "android_screenshot" }, 20000);
+        if (ssResult.ok && ssResult.data) {
+          const ssData = ssResult.data as Record<string, unknown>;
+          screenshotB64 = typeof ssData.image === "string" ? ssData.image
+            : typeof ssData.screenshot === "string" ? ssData.screenshot
+            : undefined;
+        }
+      }
+    } else if (actionAfterSearch === "read_text") {
+      const readResult = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
+      if (readResult.ok && readResult.data) {
+        resultContent = JSON.stringify(readResult.data).slice(0, 8000);
+      }
+    }
+
+    stepLog.push({ step: 6, outcome: actionAfterSearch ?? "none" });
+
+    const response: Record<string, unknown> = {
+      ok: true,
+      step_reached: 6,
+      app: appName,
+      query: searchQuery,
+      results_loaded: true,
+      steps: stepLog,
+    };
+    if (resultContent !== undefined) response.result = resultContent;
+    if (screenshotB64 !== undefined) response.screenshot = screenshotB64;
+
+    console.log(`[${label}] done — ok=true step_reached=6`);
+
+    const isScreenshot = actionAfterSearch === "screenshot" && screenshotB64;
+    return {
+      ok: true,
+      content: isScreenshot ? JSON.stringify(response) : JSON.stringify(response).slice(0, 12000),
+      label,
+    };
+  },
+};
