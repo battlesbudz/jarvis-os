@@ -1864,23 +1864,61 @@ export default function SettingsScreen() {
               ) : (
                 /* ── Not connected: show connect options ── */
                 <View style={{ marginTop: 12, gap: 8 }}>
-                  {githubOAuthAvailable && (
-                    <Pressable
-                      onPress={startGithubOAuth}
-                      style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 11, backgroundColor: '#6e40c9', borderRadius: 8 }}
-                    >
-                      <Ionicons name="logo-github" size={16} color="#fff" />
-                      <Text style={{ color: '#fff', fontFamily: 'Inter_600SemiBold', fontSize: 13 }}>Connect with GitHub</Text>
-                    </Pressable>
-                  )}
-
-                  {githubOAuthAvailable && (
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginVertical: 2 }}>
-                      <View style={{ flex: 1, height: 1, backgroundColor: Colors.border }} />
-                      <Text style={{ color: Colors.textTertiary, fontSize: 11, fontFamily: 'Inter_400Regular' }}>or use a Personal Access Token</Text>
-                      <View style={{ flex: 1, height: 1, backgroundColor: Colors.border }} />
+                  {githubOAuthAvailable ? (
+                    <View style={{ gap: 6 }}>
+                      <Pressable
+                        onPress={startGithubOAuth}
+                        style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 11, backgroundColor: '#6e40c9', borderRadius: 8 }}
+                      >
+                        <Ionicons name="logo-github" size={16} color="#fff" />
+                        <Text style={{ color: '#fff', fontFamily: 'Inter_600SemiBold', fontSize: 13 }}>Connect with GitHub</Text>
+                      </Pressable>
+                      <Text style={{ color: Colors.textTertiary, fontSize: 11, fontFamily: 'Inter_400Regular', textAlign: 'center' }}>
+                        Requests access: repo, read:user
+                      </Text>
+                    </View>
+                  ) : (
+                    <View style={{ padding: 12, backgroundColor: '#6e40c910', borderRadius: 10, borderWidth: 1, borderColor: '#6e40c930', gap: 6 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <Ionicons name="information-circle-outline" size={15} color="#6e40c9" />
+                        <Text style={{ color: '#6e40c9', fontFamily: 'Inter_600SemiBold', fontSize: 12 }}>
+                          OAuth not configured
+                        </Text>
+                      </View>
+                      <Text style={{ color: Colors.textSecondary, fontSize: 12, fontFamily: 'Inter_400Regular', lineHeight: 17 }}>
+                        To enable one-tap GitHub login, an admin must create a GitHub OAuth App and set the{' '}
+                        <Text style={{ fontFamily: 'Inter_600SemiBold', color: Colors.text }}>GITHUB_CLIENT_ID</Text>
+                        {' '}secret in the Replit environment.
+                      </Text>
+                      <Text style={{ color: Colors.textSecondary, fontSize: 12, fontFamily: 'Inter_400Regular', lineHeight: 17 }}>
+                        Setup steps:{'\n'}
+                        {'1. '}Go to{' '}
+                        <Text
+                          style={{ color: '#6e40c9', fontFamily: 'Inter_600SemiBold' }}
+                          onPress={() => WebBrowser.openBrowserAsync('https://github.com/settings/developers')}
+                        >
+                          github.com/settings/developers
+                        </Text>
+                        {'\n'}
+                        {'2. '}Click "New OAuth App" and fill in any name and homepage URL.{'\n'}
+                        {'3. '}Set Authorization callback URL to any valid URL (Device Flow does not use it).{'\n'}
+                        {'4. '}Enable "Device Flow" in the app settings.{'\n'}
+                        {'5. '}Copy the Client ID and add it as the{' '}
+                        <Text style={{ fontFamily: 'Inter_600SemiBold', color: Colors.text }}>GITHUB_CLIENT_ID</Text>
+                        {' '}secret in Replit.{'\n'}
+                        {'   '}(No client secret needed for Device Flow.)
+                      </Text>
+                      <Text style={{ color: Colors.textTertiary, fontSize: 11, fontFamily: 'Inter_400Regular', marginTop: 2 }}>
+                        Requested scopes: repo, read:user
+                      </Text>
                     </View>
                   )}
+
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginVertical: 2 }}>
+                    <View style={{ flex: 1, height: 1, backgroundColor: Colors.border }} />
+                    <Text style={{ color: Colors.textTertiary, fontSize: 11, fontFamily: 'Inter_400Regular' }}>or use a Personal Access Token</Text>
+                    <View style={{ flex: 1, height: 1, backgroundColor: Colors.border }} />
+                  </View>
 
                   <View style={{ gap: 8 }}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: Colors.border, borderRadius: 8, backgroundColor: Colors.surface, overflow: 'hidden' }}>
