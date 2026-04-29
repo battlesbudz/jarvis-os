@@ -1147,7 +1147,11 @@ Keep the whole briefing under 300 words. Be warm but direct. No filler phrases.`
       const sendBuildPing = (text: string): Promise<void> =>
         notifyJobComplete(job.userId, "build_feature", job.title, text, originChannel, originDiscordChannelId);
 
-      const featureDescription = String(jobInput.feature_description ?? job.prompt);
+      const baseFeatureDescription = String(jobInput.feature_description ?? job.prompt);
+      const conversationContext = jobInput.conversationContext ? String(jobInput.conversationContext) : "";
+      const featureDescription = conversationContext
+        ? `Conversation context (for follow-up understanding):\n${conversationContext}\n\nLatest request: ${baseFeatureDescription}`
+        : baseFeatureDescription;
 
       // ── Phase 1: Research (if requested and not already completed) ──────────
       // Research is queued as a standard agent_jobs record.  claimNextJob has a
