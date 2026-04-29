@@ -5,6 +5,7 @@ import type { ActivationPlan } from "./activationPlanner";
 import { emit as diagEmit } from "../diagnostics/diagnosticsService";
 import { getProvider, accumulateTurn, queryWithFallback, getGlobalFallbackChain, DEFAULT_PROVIDER_MODELS } from "./providers";
 import type { ProviderName, FallbackChainEntry } from "./providers";
+import { checkResponseQuality } from "./responseQuality";
 
 /**
  * Resolve the provider name from a model string.
@@ -900,6 +901,24 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
   // (e.g. the SSE route) know the reply may be an error-recovery response.
   let hadToolError = false;
 
+  // ── Inline Android quality check state ───────────────────────────────────
+  // Extract the last user message text once so the inline quality checker can
+  // reference the original request without re-scanning conversationMessages
+  // every turn. Content may be a string or an array of content parts.
+  const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
+  const inlineUserMessageText: string =
+    typeof lastUserMsg?.content === "string"
+      ? lastUserMsg.content
+      : Array.isArray(lastUserMsg?.content)
+        ? (lastUserMsg.content as Array<{ type: string; text?: string }>)
+            .filter((p) => p.type === "text")
+            .map((p) => p.text ?? "")
+            .join(" ")
+        : "";
+  // Guard: allow at most 2 inline revisions per Android session to prevent
+  // infinite revision loops within the same harness run.
+  let inlineRevisionCount = 0;
+
   for (let turn = 0; turn < effectiveMaxTurns; turn++) {
     // ── Abort check — honour caller cancellation before each turn ───────
     if (signal?.aborted) {
@@ -1189,6 +1208,42 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
     if (!reply && hadToolError) {
       reply = "I couldn't complete that action. Let me try a different approach.";
     }
+
+    // ── Inline Android quality check ──────────────────────────────────
+    // When Android tools are available, consult the quality checker before
+    // returning the reply so that mid-task "announce then stop" patterns are
+    // caught and corrected within the same harness run rather than waiting for
+    // the post-run revision pass in runNamedAgent.
+    // Guard: at most 2 inline revisions per Android session.
+    if (hasAndroidTools && inlineRevisionCount < 2 && inlineUserMessageText) {
+      const qc = checkResponseQuality({
+        userMessage: inlineUserMessageText,
+        agentReply: reply,
+        // Pass the names of tools used across all prior turns so check 1b
+        // (deflection) doesn't fire simply because this specific turn had no
+        // tool calls (earlier turns may have used tools legitimately).
+        toolsUsed: toolCalls.map((tc) => tc.name),
+        androidToolsAvailable: true,
+      });
+
+      if (qc.action === "revise") {
+        inlineRevisionCount++;
+        console.log(
+          `[${channel}/Harness] inline quality check → revise (pass ${inlineRevisionCount}): ${qc.reason.slice(0, 120)}`,
+        );
+        // Append the premature assistant reply and a corrective user-turn so
+        // the model has full context when it retries. The corrective message
+        // uses the QUALITY REMINDER prefix so the model treats it as a system
+        // directive rather than a new user request.
+        conversationMessages.push({ role: "assistant", content: reply });
+        conversationMessages.push({
+          role: "user",
+          content: `[QUALITY REMINDER] ${qc.reason}`,
+        });
+        continue; // loop — model will attempt the action again
+      }
+    }
+
     return {
       reply,
       turns: turn + 1,
