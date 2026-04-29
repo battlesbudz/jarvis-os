@@ -1643,6 +1643,216 @@ async function readScreen(userId: string): Promise<ClickableElement[]> {
   }));
 }
 
+// ── android_swipe_element ──────────────────────────────────────────────────────
+// Fuzzy-matches a label/description string against the ScreenMap and fires an
+// android_swipe gesture starting from the best-matching element's center, in the
+// requested direction. Reuses the screenMapCache (500 ms TTL) just like
+// android_tap_element so a prior android_screen_understand call costs nothing.
+
+export const androidSwipeElementTool: AgentTool = {
+  name: "android_swipe_element",
+  description: `Swipe or scroll on an Android screen element by name instead of raw coordinates.
+Accepts a human-readable label or description string, fuzzy-matches it against the current ScreenMap (calling android_screen_understand internally, with a 500 ms cache hit if available), and fires an android_swipe gesture centred on the best-matching element.
+
+Use this tool to scroll lists, swipe carousels, or dismiss elements without knowing pixel coordinates:
+  - "swipe up on the feed" — scrolls a feed upward
+  - "swipe left on the photo" — advances a carousel
+  - "scroll down in the settings list"
+
+Parameters:
+  - label: human-readable name of the element to swipe on
+  - direction: one of "up", "down", "left", "right"
+  - distance_px: how far to swipe in pixels (default 400)
+  - max_age_ms: max age of cached ScreenMap to reuse (default 500, 0 = always fresh)
+
+Returns the matched element details and the swipe coordinates used.
+
+Requires: android_screenshot and android_read_screen permissions (same as android_screen_understand), plus android_tap_type permission for the swipe action.`,
+  parameters: {
+    type: "object",
+    properties: {
+      label: {
+        type: "string",
+        description: "The label, description, or resource_id (or part thereof) of the element to swipe on. Case-insensitive fuzzy match.",
+      },
+      direction: {
+        type: "string",
+        enum: ["up", "down", "left", "right"],
+        description: "Direction to swipe: 'up' scrolls content upward (finger moves up), 'down' scrolls content downward, 'left' or 'right' for horizontal swipes.",
+      },
+      distance_px: {
+        type: "number",
+        description: "Distance to swipe in pixels (default 400).",
+      },
+      max_age_ms: {
+        type: "number",
+        description: "Maximum age in milliseconds for a cached ScreenMap to be reused (default 500). Set to 0 to always capture a fresh screen.",
+      },
+    },
+    required: ["label", "direction"],
+  },
+  async execute(args, ctx) {
+    const label = String(args.label || "").trim();
+    if (!label) {
+      return { ok: false, content: "label is required.", label: "android_swipe_element: no label" };
+    }
+
+    const direction = String(args.direction || "").toLowerCase().trim();
+    if (!["up", "down", "left", "right"].includes(direction)) {
+      return { ok: false, content: `direction must be one of: up, down, left, right. Got: "${direction}"`, label: "android_swipe_element: invalid direction" };
+    }
+
+    if (!isAndroidDaemonActive(ctx.userId)) {
+      return {
+        ok: false,
+        content: "Android daemon is not connected. Ask the user to install the Jarvis Android APK and pair it (Profile → Connected Channels → Android Device).",
+        label: "android_swipe_element: android offline",
+      };
+    }
+
+    // Permission checks
+    const [screenshotAllowed, readAllowed, swipeAllowed] = await Promise.all([
+      isAndroidDaemonActionAllowed(ctx.userId, "android_screenshot"),
+      isAndroidDaemonActionAllowed(ctx.userId, "android_read_screen"),
+      isAndroidDaemonActionAllowed(ctx.userId, "android_tap_type"),
+    ]);
+    if (!screenshotAllowed) {
+      return {
+        ok: false,
+        content: "android_screenshot permission is not enabled. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.",
+        label: "android_swipe_element: screenshot permission denied",
+      };
+    }
+    if (!readAllowed) {
+      return {
+        ok: false,
+        content: "android_read_screen permission is not enabled. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.",
+        label: "android_swipe_element: read_screen permission denied",
+      };
+    }
+    if (!swipeAllowed) {
+      return {
+        ok: false,
+        content: "android_tap_type permission is not enabled. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.",
+        label: "android_swipe_element: swipe permission denied",
+      };
+    }
+
+    // ── Resolve ScreenMap (cache or fresh) ────────────────────────────────────
+    const maxAge = typeof args.max_age_ms === "number" ? args.max_age_ms : 500;
+    let screenElements: ScreenElement[] = [];
+
+    const cached = screenMapCache.get(ctx.userId);
+    if (cached && maxAge > 0 && Date.now() - cached.ts <= maxAge) {
+      console.log(`[android_swipe_element] userId=${ctx.userId} using cached ScreenMap`);
+      try {
+        const parsed = JSON.parse(cached.result) as { elements?: unknown[] };
+        screenElements = normalizeScreenElements(Array.isArray(parsed.elements) ? parsed.elements : []);
+      } catch {
+        screenElements = [];
+      }
+    }
+
+    if (screenElements.length === 0) {
+      const buildResult = await buildScreenMapElements(ctx.userId);
+      if (!buildResult.ok) {
+        return { ok: false, content: buildResult.content, label: `android_swipe_element: ${buildResult.label}` };
+      }
+      screenElements = buildResult.elements;
+      console.log(`[android_swipe_element] userId=${ctx.userId} fresh ScreenMap: ${screenElements.length} elements`);
+    }
+
+    // ── Fuzzy-match ───────────────────────────────────────────────────────────
+    let bestElement: ScreenElement | null = null;
+    let bestScore = 0;
+
+    for (const el of screenElements) {
+      const score = scoreElement(el, label);
+      if (score > bestScore) {
+        bestScore = score;
+        bestElement = el;
+      }
+    }
+
+    if (!bestElement || bestScore === 0) {
+      const elementList = screenElements
+        .map((el) => `  • ${el.label}${el.description ? ` — ${el.description}` : ""}`)
+        .join("\n");
+      return {
+        ok: false,
+        content: `No element matching "${label}" was found on screen.\n\nAvailable elements:\n${elementList || "  (none)"}`,
+        label: `android_swipe_element: no match for "${label}"`,
+      };
+    }
+
+    // ── Compute swipe coordinates from element center + direction + distance ──
+    const { center_x, center_y } = bestElement;
+    const distance = typeof args.distance_px === "number" && args.distance_px > 0 ? args.distance_px : 400;
+    const half = distance / 2;
+
+    let x1: number, y1: number, x2: number, y2: number;
+    if (direction === "up") {
+      x1 = center_x; y1 = center_y + half;
+      x2 = center_x; y2 = center_y - half;
+    } else if (direction === "down") {
+      x1 = center_x; y1 = center_y - half;
+      x2 = center_x; y2 = center_y + half;
+    } else if (direction === "left") {
+      x1 = center_x + half; y1 = center_y;
+      x2 = center_x - half; y2 = center_y;
+    } else {
+      // right
+      x1 = center_x - half; y1 = center_y;
+      x2 = center_x + half; y2 = center_y;
+    }
+
+    // ── Clamp to valid screen coordinates ─────────────────────────────────────
+    // We don't have the device's actual screen dimensions at call time, so we
+    // clamp only to >= 0 (negative coordinates are always off-screen regardless
+    // of resolution). This prevents crashes/no-ops for elements near the top or
+    // left edge with a large distance_px. Upper-bound clamping would require a
+    // screen-size API call which is deferred as a future enhancement.
+    x1 = Math.max(0, Math.round(x1));
+    y1 = Math.max(0, Math.round(y1));
+    x2 = Math.max(0, Math.round(x2));
+    y2 = Math.max(0, Math.round(y2));
+
+    // ── Fire the swipe ────────────────────────────────────────────────────────
+    const swipeResult = await sendDaemonOp(ctx.userId, { type: "android_swipe", x1, y1, x2, y2, durationMs: 400 }, 15000);
+
+    if (!swipeResult.ok) {
+      return {
+        ok: false,
+        content: `Matched element "${bestElement.label}" at (${center_x}, ${center_y}) but swipe failed: ${swipeResult.error || "unknown error"}`,
+        label: `android_swipe_element: swipe failed`,
+      };
+    }
+
+    console.log(`[android_swipe_element] userId=${ctx.userId} swiped ${direction} on "${bestElement.label}" from (${x1},${y1}) to (${x2},${y2}) score=${bestScore}`);
+
+    return {
+      ok: true,
+      content: JSON.stringify({
+        swiped: {
+          label: bestElement.label,
+          description: bestElement.description,
+          resource_id: bestElement.resource_id,
+          center_x,
+          center_y,
+          bounds: bestElement.bounds,
+          match_score: bestScore,
+          direction,
+          distance_px: distance,
+          from: { x: x1, y: y1 },
+          to: { x: x2, y: y2 },
+        },
+      }),
+      label: `Swiped ${direction} on "${bestElement.label}" from (${x1},${y1}) to (${x2},${y2})`,
+      detail: `match_score=${bestScore} bounds=${bestElement.bounds}`,
+    };
+  },
+};
+
 export const androidTapElementTool: AgentTool = {
   name: "android_tap_element",
   description: `Tap an Android screen element by name instead of raw coordinates.
