@@ -1080,16 +1080,17 @@ object OpHandler {
 
     // ── android_view_hierarchy ───────────────────────────────────────────────
     // Dumps the full on-screen UI element tree and returns it as a flat JSON
-    // array with: resource_id, content_desc, text, bounds ([x1,y1][x2,y2]),
+    // array with: resource-id, content-desc, text, bounds ([x1,y1][x2,y2]),
     // clickable, focusable, scrollable.
     //
     // Implementation note: The task spec mentions running `uiautomator dump`
     // via ADB shell, but that approach is not available from within an Android
     // app — ADB shell commands require a host-side tool or root access.
-    // Instead we traverse the AccessibilityService node tree (rootInActiveWindow),
-    // which provides equivalent data (same fields, same coordinate space) and
-    // works without ADB, shell permissions, or file system writes.
-    // The resulting JSON payload is identical to what UI Automator would emit.
+    // Traverse the AccessibilityService node tree (rootInActiveWindow) to produce
+    // an equivalent of a UIAutomator view hierarchy dump. This approach requires no
+    // ADB/shell access and no file system writes, works on all Android versions ≥ 5,
+    // and is robust on locked-down devices that block uiautomator shell commands.
+    // The JSON field names match UIAutomator XML attribute names exactly (with hyphens).
     private fun handleViewHierarchy(): OpResult {
         val svc = JarvisAccessibilityService.instance
             ?: return OpResult(false, error = "Accessibility service not running. Enable it in Settings > Accessibility > Jarvis Daemon.")
@@ -1104,30 +1105,18 @@ object OpHandler {
             if (node == null || depth > 30) return
             try {
                 node.getBoundsInScreen(rect)
-                // Only include nodes that have a non-zero area on screen
+                // Include all nodes with a non-zero area on screen (matches UIAutomator dump behaviour)
                 if (rect.width() > 0 && rect.height() > 0) {
-                    val resourceId = node.viewIdResourceName ?: ""
-                    val contentDesc = node.contentDescription?.toString() ?: ""
-                    val text = node.text?.toString() ?: ""
-                    val bounds = "[${rect.left},${rect.top}][${rect.right},${rect.bottom}]"
-                    val clickable = node.isClickable
-                    val focusable = node.isFocusable
-                    val scrollable = node.isScrollable
-
-                    // Include node if it has any identifying information or is interactive
-                    if (resourceId.isNotEmpty() || contentDesc.isNotEmpty() ||
-                        text.isNotEmpty() || clickable || focusable || scrollable) {
-                        elements.put(
-                            JSONObject()
-                                .put("resource_id", resourceId)
-                                .put("content_desc", contentDesc)
-                                .put("text", text)
-                                .put("bounds", bounds)
-                                .put("clickable", clickable)
-                                .put("focusable", focusable)
-                                .put("scrollable", scrollable)
-                        )
-                    }
+                    elements.put(
+                        JSONObject()
+                            .put("resource-id", node.viewIdResourceName ?: "")
+                            .put("content-desc", node.contentDescription?.toString() ?: "")
+                            .put("text", node.text?.toString() ?: "")
+                            .put("bounds", "[${rect.left},${rect.top}][${rect.right},${rect.bottom}]")
+                            .put("clickable", node.isClickable)
+                            .put("focusable", node.isFocusable)
+                            .put("scrollable", node.isScrollable)
+                    )
                 }
                 for (i in 0 until node.childCount) {
                     traverse(node.getChild(i), depth + 1)
@@ -1140,12 +1129,8 @@ object OpHandler {
         traverse(root, 0)
         DaemonLog.add("view_hierarchy: ${elements.length()} elements found")
 
-        return OpResult(
-            ok = true,
-            data = JSONObject()
-                .put("elements", elements)
-                .put("count", elements.length())
-                .put("package", root.packageName?.toString() ?: "")
-        )
+        // Return the JSON array directly as the result payload so the server receives
+        // a top-level array (consistent with the tool description and spec).
+        return OpResult(ok = true, data = elements)
     }
 }
