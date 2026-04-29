@@ -3406,7 +3406,7 @@ Parameters:
   - duration_ms: how long to hold in milliseconds (default 800)
   - max_age_ms: max age of cached ScreenMap to reuse (default 500, 0 = always fresh)
 
-Returns the matched element details and the coordinates used.
+Returns the matched element details, coordinates used, and a screen_changed field (true/false) indicating whether the screen visually changed after the long-press (based on perceptual hash comparison). If screen_changed is false, the long-press gesture may not have been recognised — consider retrying with a longer duration_ms or reporting failure.
 
 Requires: android_screenshot and android_read_screen permissions (same as android_screen_understand), plus android_tap_type permission for the gesture.`,
   parameters: {
@@ -3527,14 +3527,14 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       };
     }
 
-    // ── Capture pre-press state (screenshot fast-path + hierarchy fallback) ───
-    const prePressScreenshot: string | null = await captureScreenshot(ctx.userId);
-    const prePressClickable = await readScreen(ctx.userId);
-    const prePressCount = prePressClickable.length;
-    const prePressLabels = new Set(prePressClickable.map((el) => el.label));
-    const prePressResourceIds = new Set(
-      prePressClickable.map((el) => el.resourceId).filter((id): id is string => !!id),
-    );
+    // ── Capture pre-press screenshot hash (best-effort) ──────────────────────
+    let prePressHash: string | null = null;
+    try {
+      const prePressScreenshot = await captureScreenshot(ctx.userId);
+      if (prePressScreenshot) {
+        prePressHash = await computeScreenshotHash(prePressScreenshot);
+      }
+    } catch { /* hash capture is best-effort */ }
 
     // ── Fire the long-press as a zero-distance swipe with hold duration ───────
     const { center_x, center_y } = bestElement;
@@ -3556,50 +3556,24 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       };
     }
 
-    // ── Post-press verification — screenshot fast-path then hierarchy fallback ─
-    const PRESS_SETTLE_MS = 400;
-    await new Promise((resolve) => setTimeout(resolve, PRESS_SETTLE_MS));
-
-    let pressVerified = false;
-
-    // Fast-path: screenshot pixel diff (≥ 0.15 change ratio confirms the long-press).
-    // When conclusive this saves one readScreen round-trip. Skipped on FLAG_SECURE
-    // apps where captureScreenshot returns null.
-    if (prePressScreenshot) {
+    // ── Capture post-press screenshot hash and compare (best-effort) ──────────
+    // screen_changed is always a boolean: false when the comparison is
+    // inconclusive (screenshot unavailable or hash error) so downstream logic
+    // can treat a missing result the same as a no-op press.
+    let screenChanged = false;
+    let hashDistance: number | null = null;
+    try {
       const postPressScreenshot = await captureScreenshot(ctx.userId);
-      if (postPressScreenshot) {
-        try {
-          const changeRatio = await screenshotDiff(prePressScreenshot, postPressScreenshot);
-          if (changeRatio >= 0.15) {
-            pressVerified = true;
-            console.log(`[android_long_press_element] screenshot diff verified (ratio=${changeRatio.toFixed(4)})`);
-          }
-        } catch { /* screenshot diff is best-effort */ }
+      if (postPressScreenshot && prePressHash !== null) {
+        const postPressHash = await computeScreenshotHash(postPressScreenshot);
+        hashDistance = hammingDistance(prePressHash, postPressHash);
+        // A distance > 5 out of 64 bits indicates a meaningful visual change
+        screenChanged = hashDistance > 5;
+        console.log(`[android_long_press_element] userId=${ctx.userId} hash_distance=${hashDistance} screen_changed=${screenChanged}`);
       }
-    }
+    } catch { /* hash capture is best-effort; screenChanged stays false */ }
 
-    // Hierarchy fallback: runs only when screenshot diff is inconclusive (e.g. FLAG_SECURE app
-    // or pixel change below threshold due to re-used resource IDs in scrolled content).
-    if (!pressVerified) {
-      const postPressClickable = await readScreen(ctx.userId);
-      if (postPressClickable.length !== prePressCount) {
-        pressVerified = true;
-      } else {
-        const postPressLabels = new Set(postPressClickable.map((el) => el.label));
-        if ([...postPressLabels].some((l) => !prePressLabels.has(l))) pressVerified = true;
-        if (!pressVerified) {
-          const postPressResourceIds = new Set(
-            postPressClickable.map((el) => el.resourceId).filter((id): id is string => !!id),
-          );
-          if ([...postPressResourceIds].some((id) => !prePressResourceIds.has(id))) pressVerified = true;
-          if (!pressVerified && prePressResourceIds.size > 0) {
-            if ([...prePressResourceIds].some((id) => !postPressResourceIds.has(id))) pressVerified = true;
-          }
-        }
-      }
-    }
-
-    console.log(`[android_long_press_element] userId=${ctx.userId} long-pressed "${bestElement.label}" at (${center_x},${center_y}) for ${durationMs}ms score=${bestScore} verified=${pressVerified}`);
+    console.log(`[android_long_press_element] userId=${ctx.userId} long-pressed "${bestElement.label}" at (${center_x},${center_y}) for ${durationMs}ms score=${bestScore} screen_changed=${screenChanged}`);
 
     return {
       ok: true,
@@ -3614,13 +3588,11 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
           match_score: bestScore,
           duration_ms: durationMs,
         },
-        verified: pressVerified,
-        verified_note: pressVerified
-          ? undefined
-          : "The UI hierarchy did not detectably change after the long-press. The context menu may not have opened, or the hold duration may need to be increased.",
+        screen_changed: screenChanged,
+        hash_distance: hashDistance,
       }),
-      label: `Long-pressed "${bestElement.label}" at (${center_x}, ${center_y}) for ${durationMs}ms`,
-      detail: `match_score=${bestScore} bounds=${bestElement.bounds} duration_ms=${durationMs} verified=${pressVerified}`,
+      label: `Long-pressed "${bestElement.label}" at (${center_x}, ${center_y}) for ${durationMs}ms screen_changed=${screenChanged}`,
+      detail: `match_score=${bestScore} bounds=${bestElement.bounds} duration_ms=${durationMs}${hashDistance !== null ? ` hash_dist=${hashDistance}` : ""}`,
     };
   },
 };
