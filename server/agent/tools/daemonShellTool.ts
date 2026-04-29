@@ -2043,16 +2043,18 @@ CONFIRM/DENY flow: after the user confirms ("yes") or denies ("no"), call this t
           label: `android_find_trained_button: confirmed "${row.elementLabel}" — confidence now ${newConf.toFixed(2)}`,
         };
       } else {
-        const newConf = Math.max(0.0, row.confidence - 0.3);
+        // Decrement by 0.2, mark stale when confidence drops below 0.3 — same rule as REST API PATCH /deny
+        const newConf = Math.max(0.0, row.confidence - 0.2);
+        const nowStale = newConf < 0.3;
         await db.update(buttonLocations).set({
           confidence: newConf,
-          stale: true,
+          stale: nowStale,
           updatedAt: new Date(),
         }).where(eq(buttonLocations.id, entryId));
         return {
           ok: true,
-          content: JSON.stringify({ updated: true, outcome: "deny", entry_id: entryId, label: row.elementLabel, confidence: newConf, stale: true, suggest_retraining: true }),
-          label: `android_find_trained_button: denied "${row.elementLabel}" — marked stale, confidence now ${newConf.toFixed(2)}`,
+          content: JSON.stringify({ updated: true, outcome: "deny", entry_id: entryId, label: row.elementLabel, confidence: newConf, stale: nowStale, suggest_retraining: nowStale }),
+          label: `android_find_trained_button: denied "${row.elementLabel}" — confidence now ${newConf.toFixed(2)}${nowStale ? ", marked stale" : ""}`,
         };
       }
     }

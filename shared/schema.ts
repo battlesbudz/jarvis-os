@@ -1625,7 +1625,7 @@ export const buttonLocations = pgTable("button_locations", {
   coordinatesY: integer("coordinates_y").notNull(),
   /** 64-bit average-hash of the screenshot (hex) for UI-change detection */
   screenshotHash: varchar("screenshot_hash", { length: 256 }),
-  /** Base64 thumbnail stored for visual review */
+  /** Truncated base64 prefix of the training screenshot (first 200 chars) — visual reference only */
   screenshotPath: text("screenshot_path"),
   /** 0.0–1.0 confidence; starts at 0.5, bumped on confirm, drops on deny */
   confidence: real("confidence").notNull().default(0.5),
