@@ -22,6 +22,7 @@ import {
   extractVideoId,
   parseTimedTextXml,
   isPlaylistUrl,
+  getYtdlpStatus,
 } from "../../lib/transcriptCache";
 import { buildVisualSummary } from "../../lib/videoFrames";
 import { callBrowserTool } from "../mcp/playwrightMcpClient";
@@ -416,6 +417,22 @@ export const youtubeTranscriptTool: AgentTool = {
       return result;
     };
 
+    // ── Early check: surface yt-dlp unavailability before attempting audio ────
+    // When force_audio=true the entire pipeline depends on yt-dlp being present.
+    // Check up-front so the user gets a clear message instead of a cryptic failure.
+    if (forceAudio) {
+      const { available: ytdlpOk } = getYtdlpStatus();
+      if (!ytdlpOk) {
+        return {
+          ok: false,
+          content:
+            "Audio transcription is temporarily unavailable — the yt-dlp dependency is not installed on this server. " +
+            "Please try again later. If you have the local worker running on your PC it can handle audio transcription instead.",
+          label: "get_youtube_transcript: yt-dlp unavailable",
+        };
+      }
+    }
+
     try {
       const { segments: rawSegments, noCaptionsDetected } = await fetchTranscriptCached(input, { bypassCache, audioOnly: forceAudio });
       let segments = rawSegments;
@@ -444,24 +461,36 @@ export const youtubeTranscriptTool: AgentTool = {
         // ── Auto-retry with audio mode when no captions were detected ────────
         // Instead of surfacing a hint and making the user ask again, automatically
         // re-run through the audio transcription pipeline one time.
+        // Skip entirely when yt-dlp is unavailable — surface a clear message instead.
         if (noCaptionsDetected && !forceAudio) {
-          console.log(`[get_youtube_transcript] noCaptionsDetected — auto-retrying with audioOnly=true`);
-          try {
-            const { segments: audioSegs } = await fetchTranscriptCached(input, { bypassCache: true, audioOnly: true });
-            if (audioSegs.length > 0) {
-              return withVisuals(buildResult(audioSegs, "audio-transcription (auto-retry)"));
+          const { available: ytdlpOk } = getYtdlpStatus();
+          if (!ytdlpOk) {
+            console.log(`[get_youtube_transcript] noCaptionsDetected but yt-dlp unavailable — skipping audio auto-retry`);
+          } else {
+            console.log(`[get_youtube_transcript] noCaptionsDetected — auto-retrying with audioOnly=true`);
+            try {
+              const { segments: audioSegs } = await fetchTranscriptCached(input, { bypassCache: true, audioOnly: true });
+              if (audioSegs.length > 0) {
+                return withVisuals(buildResult(audioSegs, "audio-transcription (auto-retry)"));
+              }
+            } catch (audioRetryErr) {
+              const retryMsg = audioRetryErr instanceof Error ? audioRetryErr.message : String(audioRetryErr);
+              if (retryMsg.startsWith("YTDLP_UNAVAILABLE:")) {
+                console.warn(`[get_youtube_transcript] audio auto-retry skipped: yt-dlp unavailable`);
+              } else {
+                console.warn(`[get_youtube_transcript] audio auto-retry failed: ${retryMsg}`);
+              }
             }
-          } catch (audioRetryErr) {
-            console.warn(
-              `[get_youtube_transcript] audio auto-retry failed: ${audioRetryErr instanceof Error ? audioRetryErr.message : String(audioRetryErr)}`
-            );
           }
         }
 
         // Build the hint only when the auto-retry (or forceAudio pass) also produced nothing.
+        const { available: ytdlpOkForHint } = getYtdlpStatus();
         const audioHint =
           noCaptionsDetected && !forceAudio
-            ? "\n\n💡 **This video has no official captions and the automatic audio transcription also failed.** You can still try asking me explicitly to transcribe it in audio mode — retrying via a different network path may succeed."
+            ? ytdlpOkForHint
+              ? "\n\n💡 **This video has no official captions and the automatic audio transcription also failed.** You can still try asking me explicitly to transcribe it in audio mode — retrying via a different network path may succeed."
+              : "\n\n⚠️ **This video has no official captions, and audio transcription is currently unavailable** because the yt-dlp dependency is not installed on this server. Please try again later."
             : "";
 
         // ── Strategy 7: Tavily web-search ────────────────────────────────────
@@ -523,6 +552,15 @@ export const youtubeTranscriptTool: AgentTool = {
           ok: false,
           content: "This video doesn't have captions available. The creator may have disabled transcripts, or it may be a live stream.",
           label: "get_youtube_transcript: no captions",
+        };
+      }
+      if (msg.startsWith("YTDLP_UNAVAILABLE:")) {
+        return {
+          ok: false,
+          content:
+            "Audio transcription is temporarily unavailable — the yt-dlp dependency is not installed on this server. " +
+            "Please try again later. If you have the local worker running on your PC it can handle audio transcription instead.",
+          label: "get_youtube_transcript: yt-dlp unavailable",
         };
       }
       if (msg.startsWith("AUDIO_DOWNLOAD_FAILED:")) {
