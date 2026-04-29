@@ -2686,7 +2686,7 @@ Parameters:
 Both fingers move simultaneously in a single GestureDescription so the gesture registers correctly in all zoom-capable views.
 
 Returns the matched element details and the coordinates used for both pointers, plus:
-  - screen_changed: true if a perceptual hash comparison detected a visual change after the gesture (hash_distance > 5)
+  - screen_changed: true if a visual change was detected after the gesture — checked first via perceptual hash (hash_distance > 5), then via a hierarchy fallback that compares element labels and resource IDs when the hash is inconclusive (e.g. FLAG_SECURE app or sub-threshold visual delta)
   - hash_distance: Hamming distance between the pre- and post-pinch perceptual hashes (null if screenshot unavailable)
   - screen_changed_note: present only when screen_changed is false — explains why the view may not have changed
 
@@ -2864,7 +2864,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
     // Photos, PDFs) require simultaneous pointer down events to recognise a pinch.
     const SWIPE_DURATION_MS = 300;
 
-    // ── Pre-pinch perceptual hash ──────────────────────────────────────────────
+    // ── Pre-pinch state capture (perceptual hash fast-path + hierarchy fallback) ─
     let prePinchHash: string | null = null;
     let screenChanged = false;
     let hashDistance: number | null = null;
@@ -2874,6 +2874,12 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
         prePinchHash = await computeScreenshotHash(prePinchScreenshot);
       }
     } catch { /* hash capture is best-effort */ }
+    const prePinchClickable = await readScreen(ctx.userId);
+    const prePinchCount = prePinchClickable.length;
+    const prePinchLabels = new Set(prePinchClickable.map((el) => el.label));
+    const prePinchResourceIds = new Set(
+      prePinchClickable.map((el) => el.resourceId).filter((id): id is string => !!id),
+    );
 
     const pinchResult = await sendDaemonOp(
       ctx.userId,
@@ -2907,6 +2913,27 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
           }
         }
       } catch { /* hash comparison is best-effort */ }
+    }
+
+    // Hierarchy fallback: runs only when hash check is inconclusive (e.g. FLAG_SECURE app
+    // or visual change below threshold). Mirrors the same fallback in android_swipe_element.
+    if (!screenChanged) {
+      const postPinchClickable = await readScreen(ctx.userId);
+      if (postPinchClickable.length !== prePinchCount) {
+        screenChanged = true;
+      } else {
+        const postPinchLabels = new Set(postPinchClickable.map((el) => el.label));
+        if ([...postPinchLabels].some((l) => !prePinchLabels.has(l))) screenChanged = true;
+        if (!screenChanged) {
+          const postPinchResourceIds = new Set(
+            postPinchClickable.map((el) => el.resourceId).filter((id): id is string => !!id),
+          );
+          if ([...postPinchResourceIds].some((id) => !prePinchResourceIds.has(id))) screenChanged = true;
+          if (!screenChanged && prePinchResourceIds.size > 0) {
+            if ([...prePinchResourceIds].some((id) => !postPinchResourceIds.has(id))) screenChanged = true;
+          }
+        }
+      }
     }
 
     console.log(
