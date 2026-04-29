@@ -54,7 +54,8 @@ export type DaemonOp =
   | { type: "android_paste_text"; text: string; fieldDescription?: string }
   | { type: "android_get_focused_field" }
   | { type: "android_clear_field" }
-  | { type: "android_start_training"; label: string; timeoutMs?: number };
+  | { type: "android_start_training"; label: string; timeoutMs?: number }
+  | { type: "android_get_display_size" };
 
 export interface PhoneNotification {
   pkg: string;

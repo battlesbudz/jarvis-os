@@ -491,13 +491,64 @@ Return ONLY a valid JSON array, no explanation, no markdown fences.`,
 // Performs a gentle downward scroll (swipe up gesture) and then re-captures the
 // ScreenMap. Used by android_fill_form and android_type_into_element to find
 // form fields that are below the visible area of the screen.
-// Uses typical mid-screen coordinates that work on most Android devices.
+// Swipe coordinates are computed as a fraction of the actual screen dimensions
+// so the gesture works correctly on tablets, foldables, and any screen density.
 const SCROLL_MAX_ATTEMPTS = 3;
-const SCROLL_SWIPE_X = 540;
-const SCROLL_SWIPE_Y1 = 1350; // start near bottom
-const SCROLL_SWIPE_Y2 = 570;  // end near top (reveals content below)
+// Fallback coordinates for a typical 1080×1920 px Android phone (used when
+// the display size op is unavailable or the daemon does not support it yet).
+const SCROLL_SWIPE_X_DEFAULT = 540;
+const SCROLL_SWIPE_Y1_DEFAULT = 1350; // ~70 % of 1920 (start near bottom)
+const SCROLL_SWIPE_Y2_DEFAULT = 570;  // ~30 % of 1920 (end near top)
+// Proportional fractions applied to the real screen dimensions.
+const SCROLL_SWIPE_X_FRAC  = 0.5;   // horizontal centre
+const SCROLL_SWIPE_Y1_FRAC = 0.70;  // start 70 % down the screen
+const SCROLL_SWIPE_Y2_FRAC = 0.30;  // end   30 % down the screen
 const SCROLL_SWIPE_DURATION_MS = 400;
 const SCROLL_SETTLE_MS = 600;
+
+// ── Display-size cache ────────────────────────────────────────────────────────
+// Keyed by userId.  Populated on the first scroll attempt for a user and kept
+// for the lifetime of the server process (dimensions don't change mid-session).
+// A null entry means the fetch was attempted but failed; callers fall back to
+// the default hardcoded values in that case.
+interface DisplaySize { width: number; height: number }
+const displaySizeCache = new Map<string, DisplaySize | null>();
+
+/**
+ * Fetch the Android device's physical screen dimensions via the daemon's
+ * android_get_display_size op.  The result is cached per userId so that
+ * subsequent calls within the same server session are instant.
+ *
+ * Returns null when the daemon is unavailable, the op is unsupported, or the
+ * response cannot be parsed — callers should fall back to hardcoded defaults.
+ */
+async function getAndroidDisplaySize(userId: string): Promise<DisplaySize | null> {
+  if (displaySizeCache.has(userId)) {
+    return displaySizeCache.get(userId) ?? null;
+  }
+
+  try {
+    const result = await sendDaemonOp(userId, { type: "android_get_display_size" }, 8000);
+    if (result.ok && result.data) {
+      const d = result.data as Record<string, unknown>;
+      const width  = typeof d.width  === "number" ? d.width  : NaN;
+      const height = typeof d.height === "number" ? d.height : NaN;
+      if (width > 0 && height > 0) {
+        const size: DisplaySize = { width, height };
+        displaySizeCache.set(userId, size);
+        console.log(`[displaySize] userId=${userId} resolved to ${width}×${height}`);
+        return size;
+      }
+    }
+  } catch (err) {
+    console.warn(`[displaySize] fetch failed for userId=${userId}:`, err);
+  }
+
+  // Cache the failure so we don't retry on every scroll attempt.
+  displaySizeCache.set(userId, null);
+  console.warn(`[displaySize] userId=${userId} falling back to default 1080×1920`);
+  return null;
+}
 
 type ScrollAndRefreshResult = {
   swipeOk: boolean;
@@ -510,14 +561,27 @@ async function scrollAndRefreshScreenMap(
   tag: string,
 ): Promise<ScrollAndRefreshResult> {
   console.log(`[${tag}] scrolling down to reveal off-screen content`);
+
+  // Resolve real screen dimensions (cached after the first call).
+  const dims = await getAndroidDisplaySize(userId);
+  const swipeX  = dims ? Math.round(dims.width  * SCROLL_SWIPE_X_FRAC)  : SCROLL_SWIPE_X_DEFAULT;
+  const swipeY1 = dims ? Math.round(dims.height * SCROLL_SWIPE_Y1_FRAC) : SCROLL_SWIPE_Y1_DEFAULT;
+  const swipeY2 = dims ? Math.round(dims.height * SCROLL_SWIPE_Y2_FRAC) : SCROLL_SWIPE_Y2_DEFAULT;
+
+  if (dims) {
+    console.log(`[${tag}] swipe coords (proportional): x=${swipeX} y1=${swipeY1} y2=${swipeY2} (screen ${dims.width}×${dims.height})`);
+  } else {
+    console.log(`[${tag}] swipe coords (fallback defaults): x=${swipeX} y1=${swipeY1} y2=${swipeY2}`);
+  }
+
   const swipeResult = await sendDaemonOp(
     userId,
     {
       type: "android_swipe",
-      x1: SCROLL_SWIPE_X,
-      y1: SCROLL_SWIPE_Y1,
-      x2: SCROLL_SWIPE_X,
-      y2: SCROLL_SWIPE_Y2,
+      x1: swipeX,
+      y1: swipeY1,
+      x2: swipeX,
+      y2: swipeY2,
       durationMs: SCROLL_SWIPE_DURATION_MS,
     },
     10000,
