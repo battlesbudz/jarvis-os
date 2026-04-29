@@ -7652,6 +7652,36 @@ Extract up to 8 memories per batch.`;
   // ── Voice Realtime API ────────────────────────────────────────────────────
 
   /**
+   * GET /api/voice/realtime-session
+   * Returns relay availability status. Lets the mobile client check whether the
+   * server-side WebSocket relay is configured before attempting a connection.
+   */
+  app.get("/api/voice/realtime-session", authMiddleware, (_req: Request, res: Response) => {
+    const relayAvailable = !!(process.env.AI_INTEGRATIONS_OPENAI_API_KEY);
+    res.json({
+      relay_available: relayAvailable,
+      relay_url: "/api/voice/ws",
+      model: "gpt-4o-realtime-preview-2024-12-17",
+    });
+  });
+
+  /**
+   * POST /api/voice/relay-ticket
+   * Issues a short-lived (30 s), single-use relay ticket for the authenticated user.
+   * The native client uses this ticket to open the relay WebSocket without embedding
+   * the long-lived JWT in the WebSocket URL (which would appear in server logs/proxies).
+   */
+  app.post("/api/voice/relay-ticket", authMiddleware, (req: Request, res: Response) => {
+    const userId = (req as any).userId as string;
+    import("./voiceRelayRoutes").then(({ createRelayTicket }) => {
+      const ticket = createRelayTicket(userId);
+      res.json({ ticket, ttl_seconds: 30 });
+    }).catch(() => {
+      res.status(503).json({ error: "Voice relay not available" });
+    });
+  });
+
+  /**
    * POST /api/voice/realtime-session
    * Mints a short-lived OpenAI Realtime API ephemeral client secret for WebRTC/WebSocket.
    * The secret expires in ~60 seconds and is scoped to a single session.
@@ -7659,6 +7689,8 @@ Extract up to 8 memories per batch.`;
   app.post("/api/voice/realtime-session", authMiddleware, async (req: Request, res: Response) => {
     const userId = (req as any).userId as string;
     try {
+      const { buildJarvisInstructions } = await import('./voiceRelayRoutes');
+      const instructions = await buildJarvisInstructions(userId);
       const openaiBase = (process.env.AI_INTEGRATIONS_OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/v1\/?$/, '');
       const sessionRes = await fetch(`${openaiBase}/v1/realtime/sessions`, {
         method: 'POST',
@@ -7669,7 +7701,7 @@ Extract up to 8 memories per batch.`;
         body: JSON.stringify({
           model: 'gpt-4o-realtime-preview-2024-12-17',
           voice: 'verse',
-          instructions: `You are Jarvis, an intelligent AI productivity assistant. Keep responses concise and conversational for voice. You can access the user's tasks, schedule, and memories via tools. Be proactive in surfacing relevant information.`,
+          instructions,
           tools: [
             {
               type: 'function',
