@@ -1606,3 +1606,35 @@ export const selfHealAuditLog = pgTable("self_heal_audit_log", {
   diff: text("diff").notNull().default(""),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
+
+// ── Button location training — user-guided tap memory ────────────────────────
+// Each row records a screen element the user has pointed to once; the agent
+// can replay the stored coordinates instead of re-running screen-understand.
+export const buttonLocations = pgTable("button_locations", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  /** Android package name, e.g. com.instagram.android */
+  appPackage: varchar("app_package", { length: 256 }).notNull(),
+  /** Activity / fragment at the time of capture, e.g. com.instagram.android.activity.MainTabActivity */
+  screenContext: varchar("screen_context", { length: 256 }).notNull().default(""),
+  /** Human-readable label the user (or agent) used to name this button */
+  elementLabel: text("element_label").notNull(),
+  /** Center-x from the accessibility node bounds at capture time */
+  coordinatesX: integer("coordinates_x").notNull(),
+  /** Center-y from the accessibility node bounds at capture time */
+  coordinatesY: integer("coordinates_y").notNull(),
+  /** 64-bit average-hash of the screenshot (hex) for UI-change detection */
+  screenshotHash: varchar("screenshot_hash", { length: 256 }),
+  /** Base64 thumbnail stored for visual review */
+  screenshotPath: text("screenshot_path"),
+  /** 0.0–1.0 confidence; starts at 0.5, bumped on confirm, drops on deny */
+  confidence: real("confidence").notNull().default(0.5),
+  lastConfirmedAt: timestamp("last_confirmed_at"),
+  /** Flagged true when a tap fails to find a recognisable element at stored coords */
+  stale: boolean("stale").notNull().default(false),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export type ButtonLocation = typeof buttonLocations.$inferSelect;
+export type InsertButtonLocation = typeof buttonLocations.$inferInsert;

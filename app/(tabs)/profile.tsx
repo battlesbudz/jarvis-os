@@ -225,6 +225,8 @@ export default function ProfileScreen() {
   const [androidDaemonCode, setAndroidDaemonCode] = useState<string | null>(null);
   const [androidDaemonPerms, setAndroidDaemonPerms] = useState<Record<string, boolean> | null>(null);
   const [androidDaemonPermsBusy, setAndroidDaemonPermsBusy] = useState<string | null>(null);
+  const [trainedButtons, setTrainedButtons] = useState<Array<{ id: number; appPackage: string; elementLabel: string; confidence: number; stale: boolean; updatedAt: string }> | null>(null);
+  const [trainedButtonsBusy, setTrainedButtonsBusy] = useState<number | null>(null);
   const [channelBusy, setChannelBusy] = useState<string | null>(null);
   const telegramPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [loadingStatus, setLoadingStatus] = useState(true);
@@ -926,7 +928,7 @@ export default function ProfileScreen() {
     setLifeContext(lc);
     setNotificationsEnabledState(notifications);
     setUserName(name);
-    await Promise.all([loadOAuthStatus(), loadMemories(), loadTelegramStatus(), loadMorningNotes(), loadDocuments(), loadSoul(), loadPeople(), loadChannels(), loadDaemonPerms(), loadAndroidDaemonPerms(), loadDriveStatus(), loadDreamInsights(), loadWebsiteCrawl(), loadWriteBudget(), loadCustomAgents()]);
+    await Promise.all([loadOAuthStatus(), loadMemories(), loadTelegramStatus(), loadMorningNotes(), loadDocuments(), loadSoul(), loadPeople(), loadChannels(), loadDaemonPerms(), loadAndroidDaemonPerms(), loadDriveStatus(), loadDreamInsights(), loadWebsiteCrawl(), loadWriteBudget(), loadCustomAgents(), loadTrainedButtons()]);
     try {
       const importRes = await apiRequest('GET', '/api/chatgpt-import/status');
       const importData = await importRes.json();
@@ -1276,6 +1278,28 @@ export default function ProfileScreen() {
       setAndroidDaemonPerms(data.permissions || null);
     } catch (err) {
       console.error('[android-daemon] permissions load error:', err);
+    }
+  }, []);
+
+  const loadTrainedButtons = useCallback(async () => {
+    try {
+      const res = await apiRequest('GET', '/api/button-locations');
+      const data = await res.json();
+      setTrainedButtons(data.entries || []);
+    } catch (err) {
+      console.error('[trained-buttons] load error:', err);
+    }
+  }, []);
+
+  const handleDeleteTrainedButton = useCallback(async (id: number) => {
+    setTrainedButtonsBusy(id);
+    try {
+      await apiRequest('DELETE', `/api/button-locations/${id}`);
+      setTrainedButtons((prev) => (prev ? prev.filter((b) => b.id !== id) : prev));
+    } catch (err) {
+      console.error('[trained-buttons] delete error:', err);
+    } finally {
+      setTrainedButtonsBusy(null);
     }
   }, []);
 
@@ -3596,6 +3620,38 @@ export default function ProfileScreen() {
                     • (Optional) Notification Access — to forward your notifications to Jarvis
                   </Text>
                 </View>
+              </View>
+            )}
+
+            {/* Trained Buttons — button location memory */}
+            {trainedButtons !== null && trainedButtons.length > 0 && (
+              <View style={{ paddingHorizontal: 16, paddingVertical: 12, borderTopWidth: 1, borderTopColor: Colors.border, backgroundColor: Colors.background }}>
+                <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: Colors.text, marginBottom: 4 }}>
+                  Trained Buttons
+                </Text>
+                <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, lineHeight: 17, marginBottom: 10 }}>
+                  Button locations Jarvis has learned from your taps. Delete any entry to re-train it.
+                </Text>
+                {trainedButtons.map((btn) => (
+                  <View key={btn.id} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderTopWidth: 1, borderTopColor: Colors.border }}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: Colors.text }}>{btn.elementLabel}</Text>
+                      <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, marginTop: 1 }}>
+                        {btn.appPackage.split('.').pop()} · confidence {(btn.confidence * 100).toFixed(0)}%{btn.stale ? ' · ⚠ stale' : ''}
+                      </Text>
+                    </View>
+                    {trainedButtonsBusy === btn.id ? (
+                      <ActivityIndicator size="small" color={Colors.textSecondary} />
+                    ) : (
+                      <Pressable
+                        onPress={() => handleDeleteTrainedButton(btn.id)}
+                        style={{ paddingHorizontal: 10, paddingVertical: 5, borderRadius: 6, backgroundColor: '#FF3B3022' }}
+                      >
+                        <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: '#FF3B30' }}>Remove</Text>
+                      </Pressable>
+                    )}
+                  </View>
+                ))}
               </View>
             )}
 
