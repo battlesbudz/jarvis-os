@@ -4002,6 +4002,114 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
   },
 };
 
+export const androidDragCoordinatesTool: AgentTool = {
+  name: "android_drag_coordinates",
+  description: `Drag from one raw pixel coordinate to another on the Android screen.
+Use this tool when no accessible element labels are available — e.g. canvas apps, game UIs, drawing tools, or any screen where android_drag_element cannot match a named element.
+
+Parameters:
+  - from_x: horizontal pixel coordinate of the drag start point (required)
+  - from_y: vertical pixel coordinate of the drag start point (required)
+  - to_x: horizontal pixel coordinate of the drag end point (required)
+  - to_y: vertical pixel coordinate of the drag end point (required)
+  - hold_ms: how long to hold at the start before dragging in milliseconds (default 800). Increase for apps that need a longer initial press to enter drag mode.
+
+The gesture is fired as a long-hold swipe (identical hold_ms behaviour to android_drag_element).
+
+Requires: android_tap_type permission. No screen-reading or screenshot permissions needed — you must know the coordinates in advance (e.g. from android_screen_understand or the user).`,
+  parameters: {
+    type: "object",
+    properties: {
+      from_x: {
+        type: "number",
+        description: "Horizontal pixel coordinate of the drag start point.",
+      },
+      from_y: {
+        type: "number",
+        description: "Vertical pixel coordinate of the drag start point.",
+      },
+      to_x: {
+        type: "number",
+        description: "Horizontal pixel coordinate of the drag end point.",
+      },
+      to_y: {
+        type: "number",
+        description: "Vertical pixel coordinate of the drag end point.",
+      },
+      hold_ms: {
+        type: "number",
+        description: "How long to hold the initial press before dragging in milliseconds (default 800). Increase for apps that require a longer press to enter drag mode.",
+      },
+    },
+    required: ["from_x", "from_y", "to_x", "to_y"],
+  },
+  async execute(args, ctx) {
+    if (typeof args.from_x !== "number" || typeof args.from_y !== "number") {
+      return { ok: false, content: "from_x and from_y are required numbers.", label: "android_drag_coordinates: missing from coords" };
+    }
+    if (typeof args.to_x !== "number" || typeof args.to_y !== "number") {
+      return { ok: false, content: "to_x and to_y are required numbers.", label: "android_drag_coordinates: missing to coords" };
+    }
+
+    if (!isAndroidDaemonActive(ctx.userId)) {
+      return {
+        ok: false,
+        content: "Android daemon is not connected. Ask the user to install the Jarvis Android APK and pair it (Profile → Connected Channels → Android Device).",
+        label: "android_drag_coordinates: android offline",
+      };
+    }
+
+    const tapAllowed = await isAndroidDaemonActionAllowed(ctx.userId, "android_tap_type");
+    if (!tapAllowed) {
+      return {
+        ok: false,
+        content: "android_tap_type permission is not enabled. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.",
+        label: "android_drag_coordinates: tap permission denied",
+      };
+    }
+
+    const x1 = Math.max(0, Math.round(args.from_x as number));
+    const y1 = Math.max(0, Math.round(args.from_y as number));
+    const x2 = Math.max(0, Math.round(args.to_x as number));
+    const y2 = Math.max(0, Math.round(args.to_y as number));
+
+    const holdMs = typeof args.hold_ms === "number" && args.hold_ms > 0
+      ? Math.min(Math.round(args.hold_ms), 10000)
+      : 800;
+
+    const dragResult = await sendDaemonOp(
+      ctx.userId,
+      { type: "android_swipe", x1, y1, x2, y2, durationMs: holdMs },
+      holdMs + 10000,
+    );
+
+    if (!dragResult.ok) {
+      return {
+        ok: false,
+        content: `Drag from (${x1}, ${y1}) to (${x2}, ${y2}) failed: ${dragResult.error || "unknown error"}`,
+        label: "android_drag_coordinates: drag failed",
+      };
+    }
+
+    console.log(`[android_drag_coordinates] userId=${ctx.userId} dragged from (${x1},${y1}) to (${x2},${y2}) hold_ms=${holdMs}`);
+
+    return {
+      ok: true,
+      content: JSON.stringify({
+        dragged: {
+          from_x: x1,
+          from_y: y1,
+          to_x: x2,
+          to_y: y2,
+          hold_ms: holdMs,
+        },
+      }),
+      label: `Dragged (${x1},${y1}) → (${x2},${y2}) hold_ms=${holdMs}`,
+      detail: `from=(${x1},${y1}) to=(${x2},${y2})`,
+    };
+  },
+};
+
 // ── Perceptual hash helper (average-hash, 64-bit) ─────────────────────────────
 // Down-samples a base64 JPEG/PNG to 8×8 via @napi-rs/canvas and computes the
 // average-hash (aHash) as a 16-char hex string.  Falls back to an MD5 of the
