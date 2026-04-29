@@ -446,6 +446,7 @@ export default function SettingsScreen() {
   // ── GitHub ──
   const [githubConnected, setGithubConnected] = useState(false);
   const [githubTokenType, setGithubTokenType] = useState<'pat' | 'oauth' | null>(null);
+  const [githubUsername, setGithubUsername] = useState<string | null>(null);
   const [githubRepos, setGithubRepos] = useState<string[]>([]);
   const [githubPatInput, setGithubPatInput] = useState('');
   const [githubRepoInput, setGithubRepoInput] = useState('');
@@ -467,6 +468,7 @@ export default function SettingsScreen() {
       const data = await res.json();
       setGithubConnected(!!data.connected);
       setGithubTokenType(data.tokenType ?? null);
+      setGithubUsername(data.username ?? null);
       setGithubRepos(Array.isArray(data.repos) ? data.repos : []);
     } catch {}
   }, []);
@@ -560,6 +562,8 @@ export default function SettingsScreen() {
           try {
             await apiRequest('DELETE', '/api/github/pat');
             setGithubConnected(false);
+            setGithubUsername(null);
+            setGithubTokenType(null);
           } catch {}
         },
       },
@@ -1775,7 +1779,7 @@ export default function SettingsScreen() {
               <Text style={styles.connName}>GitHub</Text>
               <Text style={styles.connSub}>
                 {githubConnected
-                  ? `Connected via ${githubTokenType === 'oauth' ? 'OAuth' : 'PAT'} · ${githubRepos.length} repo${githubRepos.length !== 1 ? 's' : ''} tracked`
+                  ? `${githubUsername ? `@${githubUsername}` : `Via ${githubTokenType === 'oauth' ? 'OAuth' : 'PAT'}`} · ${githubRepos.length} repo${githubRepos.length !== 1 ? 's' : ''} tracked`
                   : 'Connect to enable PR tools and CI monitoring'}
               </Text>
             </View>
@@ -1800,7 +1804,7 @@ export default function SettingsScreen() {
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                     <View style={{ flex: 1, paddingVertical: 8, paddingHorizontal: 12, backgroundColor: Colors.surface, borderRadius: 8, borderWidth: 1, borderColor: Colors.border }}>
                       <Text style={{ color: Colors.success, fontFamily: 'Inter_500Medium', fontSize: 13 }}>
-                        ✓ {githubTokenType === 'oauth' ? 'Connected via GitHub OAuth' : 'Personal Access Token saved'}
+                        ✓ {githubUsername ? `Connected as @${githubUsername}` : githubTokenType === 'oauth' ? 'Connected via GitHub OAuth' : 'Personal Access Token saved'}
                       </Text>
                     </View>
                     <Pressable
