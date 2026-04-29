@@ -49,6 +49,27 @@ export function getProvider(name: ProviderName): BaseProvider {
   return instance;
 }
 
+/**
+ * @internal For use in unit tests only.
+ * Inserts `provider` into the instance cache under `name` so that the next
+ * call to `getProvider(name)` returns the stub rather than constructing a
+ * real provider. Call `_clearProviderCacheForTesting()` after each test to
+ * restore a clean state.
+ */
+export function _overrideProviderForTesting(name: ProviderName, provider: BaseProvider): void {
+  instanceCache.set(name, provider);
+}
+
+/**
+ * @internal For use in unit tests only.
+ * Clears the instance cache so the next call to `getProvider` constructs a
+ * fresh (real) provider instance. Call this after each test that used
+ * `_overrideProviderForTesting` to avoid cross-test contamination.
+ */
+export function _clearProviderCacheForTesting(): void {
+  instanceCache.clear();
+}
+
 export { BaseProvider, accumulateTurn };
 export type { ProviderQueryParams, ProviderTurnResult, ProviderChunk } from "./base";
 export {
