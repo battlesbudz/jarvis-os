@@ -17,7 +17,7 @@ import { runOrchestrator } from "../agent/orchestrator";
 import { preThink, postCheck } from "../agent/qualityLoop";
 import { getModel, MODEL_DEFAULTS } from "../lib/modelPrefs";
 import { contextRegistry } from "../agent/contextRegistry";
-import { classifyBuildIntent, classifyBuildFollowUp, isUnrelatedIntent, hasActiveBuildSession, classifyBuildResume, findBuildDescription, BUILD_ACK_MARKER } from "../agent/queryClassifier";
+import { classifyBuildIntent, classifyBuildFollowUp, isUnrelatedIntent, hasActiveBuildSession, classifyBuildResume, findBuildDescription, BUILD_ACK_MARKER, findSuspendedBuild, SUSPENDED_BUILD_REMINDED_MARKER } from "../agent/queryClassifier";
 import { routeBuildIntent } from "../agent/buildIntentRouter";
 // Side-effect import: registers workspace topic context provider.
 import "../agent/providers/topicContext";
@@ -762,6 +762,42 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
     const phrase = TRANSITION_PHRASES[Math.floor(Math.random() * TRANSITION_PHRASES.length)];
     rawReply = phrase + rawReply;
     console.log(`[${channelName}] build-session context-switch detected — transition note prepended`);
+  }
+
+  // ── Suspended-build reminder ───────────────────────────────────────────────
+  // When the user returns after a long absence (≥ 2 hours) and there is a build
+  // ack in history with no reminder yet delivered, append a single soft note so
+  // the user knows there is still a build waiting for them.
+  //
+  // Conditions:
+  //   1. The orchestrator handled this turn (not a build short-circuit).
+  //   2. We are not already appending a context-switch note (avoid double prefix).
+  //   3. A BUILD_ACK_MARKER exists in chatMessages.
+  //   4. That ack is at least SUSPENDED_BUILD_REMINDER_THRESHOLD_MS old.
+  //   5. The user has not already received a reminder for this ack session AND
+  //      has not sent any build-refinement messages after the ack.
+  const SUSPENDED_BUILD_REMINDER_THRESHOLD_MS = 2 * 60 * 60 * 1000; // 2 hours
+  if (rawReply && !switchingFromBuild) {
+    try {
+      const { ackAgeMs, shouldSuppress, buildDescription } = findSuspendedBuild(chatMessages);
+      if (
+        ackAgeMs !== null &&
+        ackAgeMs >= SUSPENDED_BUILD_REMINDER_THRESHOLD_MS &&
+        !shouldSuppress
+      ) {
+        const REMINDER_PHRASES = [
+          `\n\nBy the way — we ${SUSPENDED_BUILD_REMINDED_MARKER} for "${buildDescription}". Want to continue where you left off?`,
+          `\n\nJust a heads-up: we ${SUSPENDED_BUILD_REMINDED_MARKER} for "${buildDescription}". Let me know whenever you're ready to pick it back up.`,
+          `\n\nReminder: we ${SUSPENDED_BUILD_REMINDED_MARKER} for "${buildDescription}". Say the word and we'll dive back in.`,
+        ];
+        rawReply = rawReply + REMINDER_PHRASES[Math.floor(Math.random() * REMINDER_PHRASES.length)];
+        console.log(
+          `[${channelName}] suspended-build reminder appended (ackAge=${Math.round(ackAgeMs / 3_600_000)}h, build="${buildDescription.slice(0, 60)}")`,
+        );
+      }
+    } catch (reminderErr) {
+      console.warn(`[${channelName}] suspended-build reminder check failed (non-blocking):`, reminderErr);
+    }
   }
 
   const reply = rawReply || "Sorry, I couldn't generate a response right now.";

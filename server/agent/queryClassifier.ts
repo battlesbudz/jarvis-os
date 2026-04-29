@@ -250,6 +250,13 @@ export function hasActiveBuildSession(
 export const BUILD_ACK_MARKER = "queued that build job";
 
 /**
+ * Stable substring embedded in the one-time "suspended build" reminder note.
+ * Its presence in the recent history signals that the reminder has already
+ * been delivered and should not be repeated for this session.
+ */
+export const SUSPENDED_BUILD_REMINDED_MARKER = "still have a build queued";
+
+/**
  * How many messages back (newest-first) to scan when deciding whether an
  * active build session is in progress.  A window of 20 covers roughly 10
  * user/assistant turns, which is more than enough for a typical multi-step
@@ -408,4 +415,78 @@ export function classifyBuildFollowUp(
     BUILD_REFINEMENT_PATTERNS.some((re) => re.test(text)) ||
     BUILD_PATTERNS.some((re) => re.test(text))
   );
+}
+
+/**
+ * Inspects the chat history (newest-first) and returns information about a
+ * "suspended build" — a build ack that has not yet been followed up with a
+ * reminder to the user.
+ *
+ * Used by coachAgent.ts to append a one-time "heads-up" note when the user
+ * returns after being away for longer than SUSPENDED_BUILD_REMINDER_THRESHOLD.
+ *
+ * Returns:
+ *  - ackAgeMs        — milliseconds since the build ack was stored (based on
+ *                      the message id timestamp), or null when no ack is found
+ *                      or the timestamp cannot be parsed.
+ *  - shouldSuppress  — true when the reminder should NOT be shown because:
+ *                        (a) SUSPENDED_BUILD_REMINDED_MARKER already appears in
+ *                            the messages sent AFTER the current ack (scoped to
+ *                            this session, not the full history), or
+ *                        (b) the user already sent a build refinement message
+ *                            after the ack (the build is not "suspended").
+ *  - buildDescription — the original build goal (via findBuildDescription).
+ */
+export function findSuspendedBuild(
+  chatHistory: Array<{ id?: string; role: string; content: string }>,
+): { ackAgeMs: number | null; shouldSuppress: boolean; buildDescription: string } {
+  const sessionWindow = chatHistory.slice(0, BUILD_SESSION_WINDOW);
+  const ackIndex = sessionWindow.findIndex(
+    (m) => m.role === "assistant" && m.content.includes(BUILD_ACK_MARKER),
+  );
+
+  // No build ack in recent history — nothing to remind about.
+  if (ackIndex === -1) {
+    return { ackAgeMs: null, shouldSuppress: false, buildDescription: "your previous build request" };
+  }
+
+  // In a newest-first array, messages at indices 0..ackIndex-1 are NEWER than
+  // the ack (they arrived after it).  Scope all per-session checks to this slice
+  // so that an old reminder or old refinement in a previous session doesn't
+  // bleed into the current one.
+  const messagesAfterAck = sessionWindow.slice(0, ackIndex);
+
+  // (a) Has the reminder already been delivered in this session?
+  const alreadyReminded = messagesAfterAck.some(
+    (m) => m.role === "assistant" && m.content.includes(SUSPENDED_BUILD_REMINDED_MARKER),
+  );
+
+  // (b) Has the user already engaged with the build via a refinement message?
+  //     If so, the build is active (not suspended) and we must not remind.
+  const hasRefinementSinceAck = messagesAfterAck.some((m) => {
+    if (m.role !== "user") return false;
+    const t = m.content.trim();
+    if (t.length < 5) return false;
+    return (
+      BUILD_REFINEMENT_PATTERNS.some((re) => re.test(t)) ||
+      BUILD_PATTERNS.some((re) => re.test(t))
+    );
+  });
+
+  const shouldSuppress = alreadyReminded || hasRefinementSinceAck;
+
+  // Compute the age of the ack from its id (which is Date.now().toString() when
+  // stored by coachAgent.ts / buildIntentRouter.ts).
+  const ackEntry = sessionWindow[ackIndex];
+  let ackAgeMs: number | null = null;
+  if (ackEntry.id) {
+    const ts = parseInt(ackEntry.id, 10);
+    // Validate it looks like a reasonable ms-epoch timestamp (post year 2001)
+    if (!isNaN(ts) && ts > 1_000_000_000_000) {
+      ackAgeMs = Date.now() - ts;
+    }
+  }
+
+  const buildDescription = findBuildDescription(chatHistory);
+  return { ackAgeMs, shouldSuppress, buildDescription };
 }
