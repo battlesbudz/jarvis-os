@@ -1828,6 +1828,12 @@ async function computeScreenshotHash(base64: string): Promise<string> {
   }
 }
 
+// Type guard for the ping op response payload
+interface PingData { foregroundPackage?: string; [key: string]: unknown }
+function isPingData(d: unknown): d is PingData {
+  return typeof d === "object" && d !== null;
+}
+
 // Hamming distance between two 16-char hex hashes (0–64 bits)
 function hammingDistance(a: string, b: string): number {
   if (a.length !== b.length) return 64;
@@ -1969,10 +1975,11 @@ export const androidFindTrainedButtonTool: AgentTool = {
   description: `Look up a trained button location for the current Android app and tap it if a confident match is found.
 Queries the button_locations database for entries matching the given label and app package.
 - High confidence (≥0.7): taps immediately and returns coordinates.
-- Borderline confidence (0.3–0.69): taps and asks the user to confirm it was correct; adjusts confidence up or down.
+- Borderline confidence (0.3–0.69): taps, returns needs_confirmation=true and entry_id. Call this tool again with outcome="confirm" or outcome="deny" and the entry_id once the user replies.
 - Stale entry or confidence < 0.3: offers to re-train the button.
 - No entry found: falls back to android_tap_element, then offers training if that also fails.
-Use this before android_tap_element when you have previously trained a button, or when the button has no accessible label.`,
+Use this before android_tap_element when you have previously trained a button, or when the button has no accessible label.
+CONFIRM/DENY flow: after the user confirms ("yes") or denies ("no"), call this tool again with outcome="confirm" or outcome="deny" and entry_id from the previous response to update confidence in the database immediately.`,
   parameters: {
     type: "object",
     properties: {
@@ -1988,6 +1995,15 @@ Use this before android_tap_element when you have previously trained a button, o
         type: "boolean",
         description: "Set true to skip the android_tap_element fallback (just return the DB lookup result without tapping).",
       },
+      outcome: {
+        type: "string",
+        enum: ["confirm", "deny"],
+        description: "After a borderline-confidence tap, set to 'confirm' (tap was correct — raise confidence) or 'deny' (tap was wrong — lower confidence and mark stale). Requires entry_id.",
+      },
+      entry_id: {
+        type: "number",
+        description: "The numeric ID of the button_locations entry to update. Required when outcome is set.",
+      },
     },
     required: ["label"],
   },
@@ -1995,6 +2011,45 @@ Use this before android_tap_element when you have previously trained a button, o
     const label = String(args.label || "").trim();
     if (!label) {
       return { ok: false, content: "label is required.", label: "android_find_trained_button: no label" };
+    }
+
+    // ── Confirm / Deny path — update confidence immediately ─────────────────
+    const outcome = args.outcome as "confirm" | "deny" | undefined;
+    const entryId = typeof args.entry_id === "number" ? args.entry_id : undefined;
+    if (outcome && entryId !== undefined) {
+      const existing = await db.select().from(buttonLocations).where(
+        and(eq(buttonLocations.id, entryId), eq(buttonLocations.userId, ctx.userId))
+      ).limit(1);
+      if (existing.length === 0) {
+        return { ok: false, content: `No button_locations entry found with id ${entryId}.`, label: "android_find_trained_button: entry not found" };
+      }
+      const row = existing[0];
+      if (outcome === "confirm") {
+        const newConf = Math.min(1.0, row.confidence + 0.15);
+        await db.update(buttonLocations).set({
+          confidence: newConf,
+          stale: false,
+          lastConfirmedAt: new Date(),
+          updatedAt: new Date(),
+        }).where(eq(buttonLocations.id, entryId));
+        return {
+          ok: true,
+          content: JSON.stringify({ updated: true, outcome: "confirm", entry_id: entryId, label: row.elementLabel, confidence: newConf }),
+          label: `android_find_trained_button: confirmed "${row.elementLabel}" — confidence now ${newConf.toFixed(2)}`,
+        };
+      } else {
+        const newConf = Math.max(0.0, row.confidence - 0.3);
+        await db.update(buttonLocations).set({
+          confidence: newConf,
+          stale: true,
+          updatedAt: new Date(),
+        }).where(eq(buttonLocations.id, entryId));
+        return {
+          ok: true,
+          content: JSON.stringify({ updated: true, outcome: "deny", entry_id: entryId, label: row.elementLabel, confidence: newConf, stale: true, suggest_retraining: true }),
+          label: `android_find_trained_button: denied "${row.elementLabel}" — marked stale, confidence now ${newConf.toFixed(2)}`,
+        };
+      }
     }
 
     if (!isAndroidDaemonActive(ctx.userId)) {
@@ -2009,8 +2064,8 @@ Use this before android_tap_element when you have previously trained a button, o
     let appPackage = String(args.app_package || "").trim();
     if (!appPackage) {
       const pingRes = await sendDaemonOp(ctx.userId, { type: "ping" }, 8_000);
-      if (pingRes.ok && pingRes.data && typeof (pingRes.data as any).foregroundPackage === "string") {
-        appPackage = (pingRes.data as any).foregroundPackage;
+      if (pingRes.ok && isPingData(pingRes.data) && typeof pingRes.data.foregroundPackage === "string") {
+        appPackage = pingRes.data.foregroundPackage;
       }
     }
 
@@ -2110,15 +2165,31 @@ Use this before android_tap_element when you have previously trained a button, o
       };
     }
 
-    // Capture pre-tap screenshot for stale detection after the tap
-    const preTapScreenshot = await captureScreenshot(ctx.userId);
-    const preTapClickable = await readScreen(ctx.userId);
-    const preTapCount = preTapClickable.length;
-    const preTapLabels = new Set(preTapClickable.map((e) => e.label));
+    // Capture pre-tap accessibility tree — used for coordinate-aware stale detection
+    const preTapElements = await readScreen(ctx.userId);
+    const COORD_RADIUS = 60; // px — element centre must be within this radius of trained coords
+    const preTapNear = preTapElements.filter(
+      (e) => Math.abs(e.center_x - best.coordinatesX) <= COORD_RADIUS && Math.abs(e.center_y - best.coordinatesY) <= COORD_RADIUS
+    );
+
+    // If no clickable element is present near the trained coordinates, the UI has likely changed
+    if (preTapNear.length === 0) {
+      await db.update(buttonLocations).set({ stale: true, updatedAt: new Date() })
+        .where(eq(buttonLocations.id, best.id));
+      return {
+        ok: false,
+        content: JSON.stringify({
+          found: true,
+          stale: true,
+          message: `No element found near the trained coordinates (${best.coordinatesX}, ${best.coordinatesY}) for "${label}" — the UI layout has likely changed. Entry marked stale. Call android_train_button to re-train.`,
+          suggest_retraining: true,
+        }),
+        label: `android_find_trained_button: no element at coords for "${label}"`,
+      };
+    }
 
     const tapResult = await sendDaemonOp(ctx.userId, { type: "android_tap", x: best.coordinatesX, y: best.coordinatesY }, 12_000);
     if (!tapResult.ok) {
-      // Mark stale
       await db.update(buttonLocations).set({ stale: true, updatedAt: new Date() })
         .where(eq(buttonLocations.id, best.id));
       return {
@@ -2128,28 +2199,33 @@ Use this before android_tap_element when you have previously trained a button, o
       };
     }
 
-    // ── Post-tap verification ───────────────────────────────────────────────
+    // ── Post-tap verification (coordinate-aware) ────────────────────────────
     await new Promise((r) => setTimeout(r, 400));
-    let verified = false;
-    const postTapScreenshot = await captureScreenshot(ctx.userId);
-    if (preTapScreenshot && postTapScreenshot) {
-      try {
-        const changeRatio = await screenshotDiff(preTapScreenshot, postTapScreenshot);
-        if (changeRatio >= 0.15) verified = true;
-      } catch { /* noop */ }
-    }
+    const postTapElements = await readScreen(ctx.userId);
+    const postTapNear = postTapElements.filter(
+      (e) => Math.abs(e.center_x - best.coordinatesX) <= COORD_RADIUS && Math.abs(e.center_y - best.coordinatesY) <= COORD_RADIUS
+    );
+    // Verified if: element at coords disappeared (button triggered navigation/dismiss)
+    // OR element at coords changed label (state flip, e.g. like → unlike)
+    const preTapNearLabels = new Set(preTapNear.map((e) => e.label));
+    const postTapNearLabels = new Set(postTapNear.map((e) => e.label));
+    const elementGone = preTapNear.length > 0 && postTapNear.length === 0;
+    const labelChanged = [...preTapNearLabels].some((l) => !postTapNearLabels.has(l)) ||
+                         [...postTapNearLabels].some((l) => !preTapNearLabels.has(l));
+    // Fallback: screenshot diff if accessibility tree shows no change near coords
+    let verified = elementGone || labelChanged;
     if (!verified) {
-      const postClickable = await readScreen(ctx.userId);
-      if (postClickable.length !== preTapCount) {
-        verified = true;
-      } else {
-        const postLabels = new Set(postClickable.map((e) => e.label));
-        if ([...postLabels].some((l) => !preTapLabels.has(l))) verified = true;
+      const preTapScreenshot = await captureScreenshot(ctx.userId);
+      const postTapScreenshot = await captureScreenshot(ctx.userId);
+      if (preTapScreenshot && postTapScreenshot) {
+        try {
+          const changeRatio = await screenshotDiff(preTapScreenshot, postTapScreenshot);
+          if (changeRatio >= 0.15) verified = true;
+        } catch { /* screenshot diff is best-effort */ }
       }
     }
 
     if (!verified) {
-      // Tap landed but nothing changed — likely stale location
       await db.update(buttonLocations).set({ stale: true, updatedAt: new Date() })
         .where(eq(buttonLocations.id, best.id));
       return {
@@ -2161,7 +2237,7 @@ Use this before android_tap_element when you have previously trained a button, o
           x: best.coordinatesX,
           y: best.coordinatesY,
           confidence: best.confidence,
-          message: `Tapped the stored location for "${label}" but the screen did not change. The location has been marked stale. Call android_train_button to re-train.`,
+          message: `Tapped the stored location for "${label}" but no element at those coordinates changed state. The location has been marked stale. Call android_train_button to re-train.`,
           suggest_retraining: true,
         }),
         label: `android_find_trained_button: unverified tap on "${label}"`,
@@ -2180,9 +2256,10 @@ Use this before android_tap_element when you have previously trained a button, o
         x: best.coordinatesX,
         y: best.coordinatesY,
         confidence: best.confidence,
+        entry_id: best.id,
         needs_confirmation: needsConfirm,
         confirmation_prompt: needsConfirm
-          ? `I tapped the stored location for "${label}" (confidence ${best.confidence.toFixed(2)}). Was that the right button? Reply "yes" to increase confidence or "no" to mark it for re-training.`
+          ? `I tapped the stored location for "${label}" (confidence ${best.confidence.toFixed(2)}). Was that the right button? Reply "yes" or "no" — I'll call android_find_trained_button with outcome="confirm" or outcome="deny" and entry_id=${best.id} to update my memory immediately.`
           : undefined,
       }),
       label: `Tapped trained "${label}" at (${best.coordinatesX},${best.coordinatesY}) confidence=${best.confidence.toFixed(2)}`,

@@ -55,8 +55,13 @@ class JarvisAccessibilityService : AccessibilityService() {
             try {
                 val node = event.source
                 val pkg = event.packageName?.toString() ?: ""
+                // Use the root window's className (the Activity class name, e.g.
+                // "com.instagram.android.activity.MainTabActivity") as screen context.
+                // This is more specific than packageName and correctly differentiates
+                // screens within the same app package.
                 val activityClass = try {
-                    rootInActiveWindow?.packageName?.toString() ?: pkg
+                    rootInActiveWindow?.className?.toString()?.trim()
+                        ?.takeIf { it.isNotEmpty() } ?: pkg
                 } catch (_: Exception) { pkg }
 
                 val bounds = if (node != null) {
