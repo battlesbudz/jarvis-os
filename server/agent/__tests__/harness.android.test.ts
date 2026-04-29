@@ -308,14 +308,19 @@ async function run(): Promise<void> {
     _clearProviderCacheForTesting();
   }
 
-  // ── HA-6: Streaming mode — inline quality check is skipped ──────────────
-  // When onToken is provided the harness should NOT enter the inline revision
-  // loop even if the text reply contains an announce phrase that would normally
-  // trigger checkResponseQuality to return action:"revise".
+  // ── HA-6: Streaming mode — post-stream quality check fires for announce phrases ──
+  // When onToken is provided the harness runs a post-stream quality check AFTER
+  // the streamed chunks are delivered (introduced in task #1049). If the text
+  // reply contains an announce phrase, checkResponseQuality returns action:"revise"
+  // and the harness pushes a corrective turn without re-streaming it to the caller.
   //
-  // Strategy: supply a provider that always returns an announce-phrase text
-  // reply. In streaming mode the provider should only be called once (no
-  // revision turn). We also verify that onToken receives the streamed chunks.
+  // The harness allows at most 2 inline revisions (inlineRevisionCount guard < 2).
+  // With a provider that always returns the same announce-phrase reply the sequence is:
+  //   turn 0 → announce reply streamed → post-stream check → revise (count: 0→1)
+  //   turn 1 → announce reply (not re-streamed) → post-stream check → revise (count: 1→2)
+  //   turn 2 → announce reply (not re-streamed) → guard fails (2 < 2 = false) → finalize
+  // Total provider calls: 3.
+  // We also verify that onToken received the chunks from the initial streamed turn.
   {
     let callCount = 0;
     const announceReply = "I found the results. I will now tap on the first video.";
@@ -347,12 +352,70 @@ async function run(): Promise<void> {
     });
 
     assert(
-      callCount === 1,
-      `HA-6: streaming mode — provider called exactly once (no revision loop) (got ${callCount})`,
+      callCount === 3,
+      `HA-6: streaming mode with announce phrase — provider called 3 times (initial stream + 2 post-stream revisions) (got ${callCount})`,
     );
     assert(
       receivedTokens.includes(announceReply),
-      "HA-6: streaming mode — onToken received the streamed chunk",
+      "HA-6: streaming mode — onToken received the streamed chunk from the initial turn",
+    );
+
+    _clearProviderCacheForTesting();
+  }
+
+  // ── HA-6b: Streaming mode — post-stream quality check is a no-op for clean replies ──
+  // A streaming Android session whose reply contains no announce phrase and has
+  // substantive content (> 80 words) should pass checkResponseQuality on the first
+  // attempt with action:"finalize". The provider must be called exactly once —
+  // confirming the post-stream check adds zero overhead for well-formed replies.
+  {
+    let callCount = 0;
+    // >= 80 words, no announce phrase, no deflection language.
+    // Must be >= 80 words to clear Check 1b (deflection detector fires when
+    // askedForAction=true, toolsUsed=0, AND replyWords<80). The user message
+    // contains action verbs ("open", "tap") and the test makes no tool calls,
+    // so only the word-count guard prevents a false deflection signal.
+    const cleanReply =
+      "The YouTube app is now open and showing the trending videos section on the home screen. " +
+      "The first trending video in the list has been tapped and playback has started successfully. " +
+      "The video title is displayed prominently at the top of the player along with the channel name, " +
+      "subscriber count, and total view count below it. The standard playback controls including " +
+      "play, pause, seek bar, and fullscreen toggle are all visible and responsive at the bottom of " +
+      "the screen. The task has been completed successfully and the video is now playing.";
+
+    class StreamingCleanMockProvider extends BaseProvider {
+      async initialize(): Promise<void> {}
+      async cleanup(): Promise<void> {}
+
+      async *query(_params: ProviderQueryParams): AsyncGenerator<ProviderChunk> {
+        callCount++;
+        yield { type: "text", delta: cleanReply };
+        yield { type: "finish", reason: "stop" };
+      }
+    }
+
+    _overrideProviderForTesting("openai", new StreamingCleanMockProvider());
+
+    const receivedTokens: string[] = [];
+
+    await runAgent({
+      model: "gpt-4o",
+      messages: [
+        { role: "system", content: "You are an android agent." },
+        { role: "user", content: "Open YouTube and tap the first trending video." },
+      ],
+      tools: [androidTapTool],
+      context: { ...minimalContext },
+      onToken: (chunk) => receivedTokens.push(chunk),
+    });
+
+    assert(
+      callCount === 1,
+      `HA-6b: streaming mode with clean reply — provider called exactly once (post-stream check is a no-op) (got ${callCount})`,
+    );
+    assert(
+      receivedTokens.includes(cleanReply),
+      "HA-6b: streaming mode with clean reply — onToken received the clean streamed chunk",
     );
 
     _clearProviderCacheForTesting();
