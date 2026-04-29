@@ -2000,7 +2000,8 @@ async function readScreen(userId: string): Promise<ClickableElement[]> {
     if (!el || typeof el.x !== "number" || typeof el.y !== "number") return false;
     const hasLabel = typeof el.label === "string" && (el.label as string).length > 0;
     const hasResourceId = typeof el.resource_id === "string" && (el.resource_id as string).length > 0;
-    return hasLabel || hasResourceId;
+    const hasClassName = typeof el.class_name === "string" && (el.class_name as string).length > 0;
+    return hasLabel || hasResourceId || hasClassName;
   });
   return valid.map((el) => ({
     label: typeof el.label === "string" ? el.label : "",
