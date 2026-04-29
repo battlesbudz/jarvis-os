@@ -843,6 +843,54 @@ const APP_SEARCH_HINTS: Record<string, AppSearchHint> = {
     ],
     extraKeywords: ["search google play", "search apps", "search"],
   },
+  "com.ubercab": {
+    // Uber's home screen shows a persistent destination/search bar ("Where to?")
+    // at the bottom of the map. It is reachable by resource ID and keyword.
+    resourceIds: [
+      "ub__search_box_destination",
+      "destination_text_input",
+      "search_bar",
+      "search_edit_text",
+      "destination_bar",
+    ],
+    extraKeywords: ["where to?", "where to", "destination", "search"],
+  },
+  "com.doordash.driverapp": {
+    // DoorDash app (package name used across driver and consumer builds in some
+    // markets). Targets the restaurant/item search bar; supplement resource IDs
+    // with common hint strings.
+    resourceIds: [
+      "search_bar",
+      "search_edit_text",
+      "search_input",
+      "search_field",
+      "action_bar_search_text_field",
+    ],
+    extraKeywords: ["search for restaurants", "search for food", "search", "what are you craving?"],
+  },
+  "com.dd.doordash": {
+    // Alternative DoorDash package ID used in some regions / sideloaded builds.
+    resourceIds: [
+      "search_bar",
+      "search_edit_text",
+      "search_input",
+      "search_field",
+      "action_bar_search_text_field",
+    ],
+    extraKeywords: ["search for restaurants", "search for food", "search", "what are you craving?"],
+  },
+  "com.airbnb.android": {
+    // Airbnb's search entry is a prominent destination bar on the home screen.
+    // The field is labelled with hint text like "Where to?" or "Anywhere".
+    resourceIds: [
+      "search_bar",
+      "destination_input",
+      "search_edit_text",
+      "search_input",
+      "search_field",
+    ],
+    extraKeywords: ["where to?", "anywhere", "destination", "search", "where are you going?"],
+  },
 };
 
 /**
