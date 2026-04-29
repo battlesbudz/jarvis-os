@@ -6014,7 +6014,7 @@ Return ONLY the JSON object.`;
       const { createDriveTextFile } = await import('./integrations/googleDrive');
       const drive = await getUserDriveSettings(userId);
       if (!drive.enabled || !drive.accessToken) {
-        return res.status(400).json({ error: "Google Drive is not connected. Enable it in Settings." });
+        return res.status(400).json({ error: "Google Drive is not connected. Enable it in Settings.", code: "DRIVE_NOT_CONNECTED" });
       }
 
       const content = d.body || d.summary || d.title;
