@@ -26,3 +26,50 @@ export function classifyQueryIntent(text: string): "research" | "general" {
   if (!text || text.trim().length === 0) return "general";
   return RESEARCH_PATTERNS.some((re) => re.test(text)) ? "research" : "general";
 }
+
+/**
+ * Patterns that indicate the user wants Jarvis to build a new tool or feature.
+ *
+ * Deliberately narrow to avoid false positives:
+ *   - "build a plan" / "build a schedule" → NOT matched (no tool noun)
+ *   - "write a memo" / "write a report" → NOT matched ("write" excluded from
+ *     the broad pattern; only matched via specific write sub-patterns)
+ *   - "build a weather lookup tool" → matched (allows up to 4 intermediate words)
+ *   - "add a Notion integration" → matched
+ *   - "write a script that does X" → matched
+ *   - "implement a new capability to track stocks" → matched
+ */
+const BUILD_TOOL_NOUNS =
+  "tool|integration|capability|feature|plugin|command|script|function|bot|webhook|connector|module|agent";
+
+const BUILD_PATTERNS = [
+  // (build verb) + up to 4 intermediate words + (tool/feature noun)
+  // "write" is intentionally excluded to avoid "write a memo about a feature".
+  new RegExp(
+    `\\b(build|create|make|implement|add|code)\\s+(?:\\w+\\s+){0,4}(${BUILD_TOOL_NOUNS})\\b`,
+    "i",
+  ),
+  // "write a script|function|tool|bot|integration|module|capability" (specific write forms)
+  new RegExp(
+    `\\bwrite\\s+(?:a\\s+|an\\s+|the\\s+)?(?:new\\s+)?(script|function|tool|integration|module|bot|capability)\\b`,
+    "i",
+  ),
+  // "write (the) code (for|to|that)" — clearly about software development
+  /\bwrite\s+(the\s+)?code\s+(for|to|that)\b/i,
+  // "add support for" or "add an integration for/with"
+  /\badd\s+(support\s+for|an?\s+integration\s+(for|with|to))\b/i,
+  // "extend yourself/Jarvis" or "give yourself/Jarvis a new tool/capability"
+  /\b(extend\s+(yourself|jarvis)|give\s+(yourself|jarvis)\s+(?:a\s+)?(?:new\s+)?(tool|capability|power|ability))\b/i,
+];
+
+/**
+ * Returns true when the user is asking Jarvis to build a new tool or feature.
+ *
+ * Used by coachAgent to short-circuit the orchestrator and route directly to
+ * the build_feature background job, exactly as research intent is routed to
+ * the research job via queue_background_job.
+ */
+export function classifyBuildIntent(text: string): boolean {
+  if (!text || text.trim().length === 0) return false;
+  return BUILD_PATTERNS.some((re) => re.test(text));
+}

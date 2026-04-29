@@ -17,6 +17,8 @@ import { runOrchestrator } from "../agent/orchestrator";
 import { preThink, postCheck } from "../agent/qualityLoop";
 import { getModel, MODEL_DEFAULTS } from "../lib/modelPrefs";
 import { contextRegistry } from "../agent/contextRegistry";
+import { classifyBuildIntent } from "../agent/queryClassifier";
+import { submitAgentJob } from "../agent/jobClient";
 // Side-effect import: registers workspace topic context provider.
 import "../agent/providers/topicContext";
 
@@ -583,6 +585,51 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
   } catch (err) {
     // Best-effort — never block a channel session
     console.warn(`[${channelName}] activation planner failed (non-fatal):`, err);
+  }
+
+  // ── Build-intent short-circuit ────────────────────────────────────────────
+  // Detect "build a tool / add a feature / write a script" requests and route
+  // directly to the build_feature background job — same pattern as research.
+  // This bypasses the orchestrator entirely and returns an immediate ack so
+  // the user knows the build is queued.
+  if (userText && classifyBuildIntent(userText)) {
+    const buildTitle = `Build: ${userText.slice(0, 80)}${userText.length > 80 ? "…" : ""}`;
+    const buildPrompt = userText;
+    const buildInput: Record<string, unknown> = { originChannel: channelName };
+    if (discordChannelId) buildInput.originDiscordChannelId = discordChannelId;
+    try {
+      const jobId = await submitAgentJob({
+        userId,
+        agentType: "build_feature",
+        title: buildTitle,
+        prompt: buildPrompt,
+        input: buildInput,
+      });
+      const ackReply =
+        "Got it — I've queued that build job. I'll notify you when the new tool is ready (usually takes a minute or two).";
+      console.log(
+        `[${channelName}] build intent detected — queued build_feature job=${jobId} user=${userId}`,
+      );
+      // Minimal chat-history save so the next turn has context.
+      const userMsgEntry = { id: Date.now().toString(), role: "user", content: userText };
+      const asstMsgEntry = { id: (Date.now() + 1).toString(), role: "assistant", content: ackReply };
+      const updatedChatBuild = [asstMsgEntry, userMsgEntry, ...chatMessages].slice(0, 100);
+      db.insert(schema.chatHistory)
+        .values({ userId, data: updatedChatBuild })
+        .onConflictDoUpdate({
+          target: schema.chatHistory.userId,
+          set: { data: updatedChatBuild, updatedAt: new Date() },
+        })
+        .catch((err: unknown) => console.error("[coach] build-intent chat history persist failed:", err));
+      logInteraction(userId, channelLower as any, "outbound", ackReply).catch(() => {});
+      // Return the existing session ID (if any) so clients can resume on the next turn.
+      // A new session is not initialised here because the build job runs asynchronously;
+      // the next user message (checking on progress etc.) will start a fresh session then.
+      return { reply: ackReply, rawReply: ackReply, attachments: [], sdkSessionId: activeSessionId };
+    } catch (buildErr) {
+      console.error(`[${channelName}] build intent job submission failed (falling through to orchestrator):`, buildErr);
+      // Fall through to normal orchestrator path on submission error.
+    }
   }
 
   // ── Orchestrator ──────────────────────────────────────────────────────────

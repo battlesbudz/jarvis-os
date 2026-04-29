@@ -17,7 +17,7 @@
 import assert from "node:assert/strict";
 import type { AgentTool } from "../types";
 import type { ActivationPlan, CapabilityManifest, SessionContext } from "../activationPlanner";
-import { classifyQueryIntent } from "../queryClassifier";
+import { classifyQueryIntent, classifyBuildIntent } from "../queryClassifier";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -605,6 +605,58 @@ function applyUnifiedFilter(
     "K: when all action types recover, instruction_overrides.suppressActionTypes must be empty");
 
   console.log("✓ K: Ego override replacement semantics: suppress → recover → clear lifecycle verified");
+}
+
+// ─── Test L: Build intent classifier ────────────────────────────────────────
+// Verifies classifyBuildIntent correctly flags tool/feature build requests and
+// does NOT false-positive on research, writing, or planning messages.
+{
+  const buildQueries = [
+    "build a tool that checks stock prices",
+    "create a new integration for Notion",
+    "add a weather lookup tool",
+    "write a script that fetches my GitHub notifications",
+    "make a tool that monitors my email",
+    "implement a capability to track my expenses",
+    "build an integration with Slack",
+    "add support for sending WhatsApp messages",
+    "write the code for a Reddit reader tool",
+    "create a bot that posts to Twitter",
+    "add a webhook tool for Stripe",
+    "extend yourself with a new Spotify integration",
+    "give Jarvis a new capability for tracking flights",
+    "add a Jarvis command to summarize Slack channels",
+  ];
+  const nonBuildQueries = [
+    "build a plan for next week",
+    "write a memo about Q2 results",
+    "write an email to my manager",
+    "research AI trends",
+    "create a document summarizing the meeting",
+    "make a schedule for tomorrow",
+    "what's on my calendar?",
+    "how am I doing with my goals?",
+    "remind me to call John at 3pm",
+    "find articles about climate change",
+  ];
+
+  let allPassed = true;
+  for (const q of buildQueries) {
+    const result = classifyBuildIntent(q);
+    if (!result) {
+      console.error(`  L: FAIL — expected build intent for: "${q}"`);
+      allPassed = false;
+    }
+  }
+  for (const q of nonBuildQueries) {
+    const result = classifyBuildIntent(q);
+    if (result) {
+      console.error(`  L: FAIL — false positive build intent for: "${q}"`);
+      allPassed = false;
+    }
+  }
+  assert.ok(allPassed, "L: all build-intent classifications must match expected result");
+  console.log(`✓ L: classifyBuildIntent correctly identifies ${buildQueries.length} build + ${nonBuildQueries.length} non-build queries`);
 }
 
 console.log("\nAll assertions passed ✓");
