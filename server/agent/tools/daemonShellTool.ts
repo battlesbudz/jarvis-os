@@ -743,6 +743,43 @@ const APP_SEARCH_HINTS: Record<string, AppSearchHint> = {
     ],
     extraKeywords: ["search", "what do you want to play", "artists songs podcasts"],
   },
+  "com.amazon.mShop.android.shopping": {
+    // Amazon Shopping places a persistent search bar at the top of the home
+    // screen. The field is reliably reached via resource ID; supplement with
+    // a keyword so Jarvis can also find it by label when accessibility text
+    // is available.
+    resourceIds: [
+      "rs_search_src_text",
+      "search_src_text",
+      "search_bar",
+      "action_bar_search_text_field",
+    ],
+    extraKeywords: ["search amazon", "search"],
+  },
+  "com.netflix.mediaclient": {
+    // Netflix's search entry point is a magnifying-glass icon in the
+    // persistent top navigation bar — there is no visible text label.
+    // Use resource IDs only; iconOnly skips keyword matching so the tool
+    // finds the icon by resource ID alone.
+    resourceIds: [
+      "search_bar",
+      "action_search",
+      "menu_search",
+      "search_icon",
+    ],
+    extraKeywords: [],
+    iconOnly: true,
+  },
+  "com.android.vending": {
+    // Google Play shows a persistent search bar in the header across all
+    // main tabs. The field is reachable by both resource ID and keyword.
+    resourceIds: [
+      "search_box_text_input",
+      "search_bar",
+      "action_search",
+    ],
+    extraKeywords: ["search google play", "search apps", "search"],
+  },
 };
 
 /**
