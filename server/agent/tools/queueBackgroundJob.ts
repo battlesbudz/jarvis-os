@@ -1,7 +1,6 @@
 import type { AgentTool } from "../types";
 import { submitAgentJob, type AgentJobType, getModelForJobType } from "../jobQueue";
 import { SUB_AGENT_TYPES, type SubAgentType } from "../subagents";
-import { findDuplicateJob } from "./jobDuplicateGuard";
 import { getProtectedEntityNames, findEntityNearMatch } from "../../memory/protectedEntities";
 
 interface QueueJobArgs {
@@ -290,28 +289,6 @@ Do NOT use for: quick one-sentence answers, reading today's tasks, anything answ
     }
     // ────────────────────────────────────────────────────────────────────────
 
-    // ── Duplicate-job guard ─────────────────────────────────────────────────
-    try {
-      const duplicate = await findDuplicateJob(ctx.userId, agentType, title);
-      if (duplicate) {
-        console.log(
-          `[${ctx.channel || "Coach"}] queue_background_job DUPLICATE SKIPPED type=${agentType} existing="${duplicate.title}" new="${title}"`,
-        );
-        return {
-          // Return ok:true so the coach treats this as a successful no-op
-          // rather than a tool failure that might trigger retry behaviour.
-          ok: true,
-          content: `A ${agentType} job for this topic is already running (id=${duplicate.id}, title="${duplicate.title}") — skipped creating a duplicate. The user will be notified when the existing job completes.`,
-          label: `Duplicate ${agentType} job skipped`,
-          detail: duplicate.id,
-        };
-      }
-    } catch (dupErr) {
-      // Non-fatal: if the guard query fails, proceed with queueing normally.
-      console.warn(`[queue_background_job] duplicate guard query failed:`, dupErr);
-    }
-    // ────────────────────────────────────────────────────────────────────────
-
     try {
       // Inject per-type model routing so the job queue uses the appropriate
       // GPT mini for each sub-agent workload (research/planning → gpt-4.1-mini,
@@ -320,13 +297,26 @@ Do NOT use for: quick one-sentence answers, reading today's tasks, anything answ
       const jobInput: Record<string, unknown> = routedModel ? { model: routedModel } : {};
       if (ctx.channel) jobInput.originChannel = ctx.channel;
       if (ctx.discordChannelId) jobInput.originDiscordChannelId = ctx.discordChannelId;
-      const { id: jobId } = await submitAgentJob({
+      const { id: jobId, isDuplicate } = await submitAgentJob({
         userId: ctx.userId,
         agentType: agentType as AgentJobType,
         title,
         prompt,
         input: jobInput,
       });
+      if (isDuplicate) {
+        console.log(
+          `[${ctx.channel || "Coach"}] queue_background_job DUPLICATE SKIPPED type=${agentType} job=${jobId} title="${title}"`,
+        );
+        return {
+          // Return ok:true so the coach treats this as a successful no-op
+          // rather than a tool failure that might trigger retry behaviour.
+          ok: true,
+          content: `A ${agentType} job for this topic is already running (id=${jobId}) — skipped creating a duplicate. The user will be notified when the existing job completes.`,
+          label: `Duplicate ${agentType} job skipped`,
+          detail: jobId,
+        };
+      }
       console.log(
         `[${ctx.channel || "Coach"}] queue_background_job type=${agentType} job=${jobId} title="${title.slice(0, 60)}"`,
       );
