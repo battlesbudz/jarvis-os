@@ -1215,7 +1215,10 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
     // caught and corrected within the same harness run rather than waiting for
     // the post-run revision pass in runNamedAgent.
     // Guard: at most 2 inline revisions per Android session.
-    if (hasAndroidTools && inlineRevisionCount < 2 && inlineUserMessageText) {
+    // Skip when streaming (onToken set) — chunks have already been sent to the
+    // caller so a mid-stream revision would surface the premature text and then
+    // stream corrected text on top of it, producing a confusing UX.
+    if (hasAndroidTools && inlineRevisionCount < 2 && inlineUserMessageText && !onToken) {
       const qc = checkResponseQuality({
         userMessage: inlineUserMessageText,
         agentReply: reply,
