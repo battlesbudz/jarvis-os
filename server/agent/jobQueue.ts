@@ -9,7 +9,7 @@ import { runWeeklyPatternJob } from "../memory/weeklyJob";
 import { getValidGoogleTokens } from "../userTokenStore";
 import type { ToolContext } from "./types";
 import { notifyUser, getChannel } from "../channels/registry";
-import { postToDiscordChannelById, sendToDiscordUser } from "../discord/manager";
+import { postToDiscordChannelById, sendToDiscordUser, sendFileToDiscordChannel, sendFileToDiscordUser } from "../discord/manager";
 import type { ChannelSendOpts } from "../channels/types";
 import { _notifyJobCompleteCore } from "./notifyJobCompleteCore";
 export type { NotifyJobCompleteDeps } from "./notifyJobCompleteCore";
@@ -44,6 +44,84 @@ async function notifyJobComplete(
   // "Discord", "Telegram" must all be matched case-insensitively.
   const origin = (originChannel ?? "").toLowerCase();
 
+  // Discord's maximum file size for non-Nitro servers.
+  const DISCORD_MAX_FILE_BYTES = 25 * 1024 * 1024;
+
+  /**
+   * Send file attachments from opts to a Discord channel or DM.
+   * Documents and files are uploaded as Discord attachments; if a PDF exceeds
+   * the 25 MB limit a text fallback note is posted instead.
+   */
+  async function sendDiscordAttachments(channelId: string | null): Promise<void> {
+    const { attachmentToBuffer, imageFilename } = await import("../channels/attachmentHelpers");
+    const attachments = opts.attachments || [];
+    for (const att of attachments) {
+      if (att.kind === "document") {
+        // `document` attachments carry a Buffer/string in `content`.
+        const fileContent = Buffer.isBuffer(att.content)
+          ? att.content
+          : Buffer.from(att.content as string);
+
+        if (fileContent.length > DISCORD_MAX_FILE_BYTES) {
+          const sizeMb = (fileContent.length / 1024 / 1024).toFixed(1);
+          // Include the Drive link when available so the user can access the file.
+          const driveClause = att.driveLink
+            ? ` You can also open it directly on Google Drive: ${att.driveLink}`
+            : " You can download the full report from your Jarvis inbox or Google Drive.";
+          const sizeNote =
+            `⚠️ The generated PDF (${sizeMb} MB) exceeds Discord's 25 MB file size limit and could not be attached directly.${driveClause}`;
+          if (channelId) {
+            await postToDiscordChannelById(userId, channelId, sizeNote).catch(() => {});
+          } else {
+            await sendToDiscordUser(userId, sizeNote).catch(() => {});
+          }
+          continue;
+        }
+
+        const sent = channelId
+          ? await sendFileToDiscordChannel(userId, channelId, att.filename, fileContent, att.caption).catch(() => false)
+          : await sendFileToDiscordUser(userId, att.filename, fileContent, att.caption).catch(() => false);
+        if (!sent) {
+          console.warn(`[JobQueue] Discord document attachment failed — userId=${userId} file=${att.filename}`);
+        }
+      } else if (att.kind === "file") {
+        // `file` attachments carry their content via `url` or `data`, not `content`.
+        const buf = await attachmentToBuffer(att).catch(() => null);
+        if (!buf) {
+          console.warn(`[JobQueue] Discord file attachment ${att.filename} had no usable source — skipping`);
+          continue;
+        }
+        if (buf.length > DISCORD_MAX_FILE_BYTES) {
+          const sizeMb = (buf.length / 1024 / 1024).toFixed(1);
+          const sizeNote = `⚠️ The file ${att.filename} (${sizeMb} MB) exceeds Discord's 25 MB limit and could not be attached directly. You can download it from your Jarvis inbox.`;
+          if (channelId) {
+            await postToDiscordChannelById(userId, channelId, sizeNote).catch(() => {});
+          } else {
+            await sendToDiscordUser(userId, sizeNote).catch(() => {});
+          }
+          continue;
+        }
+        const sent = channelId
+          ? await sendFileToDiscordChannel(userId, channelId, att.filename, buf, att.caption).catch(() => false)
+          : await sendFileToDiscordUser(userId, att.filename, buf, att.caption).catch(() => false);
+        if (!sent) {
+          console.warn(`[JobQueue] Discord file attachment failed — userId=${userId} file=${att.filename}`);
+        }
+      } else if (att.kind === "image") {
+        // Resolve image to a buffer and send as a Discord file upload.
+        const buf = await attachmentToBuffer(att).catch(() => null);
+        if (buf) {
+          const imgName = imageFilename(att.mimeType);
+          const sent = channelId
+            ? await sendFileToDiscordChannel(userId, channelId, imgName, buf, att.caption).catch(() => false)
+            : await sendFileToDiscordUser(userId, imgName, buf, att.caption).catch(() => false);
+          if (!sent) console.warn(`[JobQueue] Discord image attachment failed — userId=${userId}`);
+        }
+      }
+      // markdown attachments are already merged into the text body before this point
+    }
+  }
+
   try {
     if (origin.startsWith("discord")) {
       // Route back to the originating Discord channel + in_app inbox.
@@ -53,15 +131,22 @@ async function notifyJobComplete(
         const sent = await postToDiscordChannelById(userId, originDiscordChannelId, text);
         if (sent) {
           notified.push(`discord:channel:${originDiscordChannelId}`);
+          await sendDiscordAttachments(originDiscordChannelId);
         } else {
           // Channel post failed (bot lost access etc.) — fall back to DM.
           const dmSent = await sendToDiscordUser(userId, text);
-          if (dmSent) notified.push("discord:dm");
+          if (dmSent) {
+            notified.push("discord:dm");
+            await sendDiscordAttachments(null);
+          }
         }
       } else {
         // No specific channel ID stored — deliver via user's Discord DM.
         const dmSent = await sendToDiscordUser(userId, text);
-        if (dmSent) notified.push("discord:dm");
+        if (dmSent) {
+          notified.push("discord:dm");
+          await sendDiscordAttachments(null);
+        }
       }
       // Always surface the result in the in-app inbox as well (with attachments if any).
       const inAppCh = getChannel("in_app");
@@ -336,6 +421,27 @@ async function flushResearchBatch(key: string): Promise<void> {
     try {
       const pdfBuffer = await markdownToPdfBuffer(mergedTitle, mergedBody);
       const filename = mergedTitle.replace(/[^A-Za-z0-9._\- ]+/g, "_").slice(0, 80).trim() + ".pdf";
+      console.log(`[JobQueue] generated consolidated PDF for batch anchorTime=${anchorTime} size=${pdfBuffer.length}B`);
+
+      // Attempt Drive upload so the link is available for oversized-file fallbacks.
+      let driveLink: string | undefined;
+      try {
+        const tokens = await getValidGoogleTokens(userId).catch(() => []);
+        const googleAccessToken = tokens?.[0] || null;
+        if (googleAccessToken) {
+          const driveFile = await createDriveBinaryFile(googleAccessToken, filename, pdfBuffer, "application/pdf");
+          driveLink = driveFile.webViewLink || undefined;
+          pdfNote = `\n\n📄 PDF attached and saved to Google Drive: ${driveLink}`;
+          console.log(`[JobQueue] research batch PDF → Drive: ${driveLink}`);
+        } else {
+          pdfNote = `\n\n📄 PDF attached (${filename}).`;
+        }
+      } catch (driveErr) {
+        const driveMsg = driveErr instanceof Error ? driveErr.message : String(driveErr);
+        console.error(`[JobQueue] research batch PDF Drive upload failed:`, driveMsg);
+        pdfNote = `\n\n📄 PDF attached (Drive upload failed: ${driveMsg}).`;
+      }
+
       notifyOpts.attachments = [
         {
           kind: "document",
@@ -343,10 +449,9 @@ async function flushResearchBatch(key: string): Promise<void> {
           content: pdfBuffer,
           caption: mergedTitle,
           mimeType: "application/pdf",
+          driveLink,
         },
       ];
-      pdfNote = `\n\n📄 PDF attached (${filename}).`;
-      console.log(`[JobQueue] generated consolidated PDF for batch anchorTime=${anchorTime} size=${pdfBuffer.length}B`);
     } catch (pdfErr) {
       const pdfMsg = pdfErr instanceof Error ? pdfErr.message : String(pdfErr);
       console.error("[JobQueue] batch PDF generation failed:", pdfMsg);
@@ -794,15 +899,7 @@ writing a clear inbox message explaining what is broken and what the user should
         sub.meta.pdfGenerated = true;
         sub.meta.pdfFilename = filename;
 
-        // Attach PDF for channel delivery
-        ctx.state.pendingAttachments.push({
-          kind: "document",
-          filename,
-          content: pdfBuffer,
-          caption: sub.title,
-          mimeType: "application/pdf",
-        });
-
+        let driveLink: string | null = null;
         if (googleAccessToken) {
           try {
             const driveFile = await createDriveBinaryFile(
@@ -811,7 +908,7 @@ writing a clear inbox message explaining what is broken and what the user should
               pdfBuffer,
               "application/pdf",
             );
-            const driveLink = driveFile.webViewLink || null;
+            driveLink = driveFile.webViewLink || null;
             sub.meta.pdfDriveLink = driveLink;
             pdfNote = `\n\n📄 PDF attached and saved to Google Drive: ${driveLink}`;
             console.log(`[JobQueue] writing job ${job.id} PDF → Drive: ${driveLink}`);
@@ -823,6 +920,17 @@ writing a clear inbox message explaining what is broken and what the user should
         } else {
           pdfNote = `\n\n📄 PDF attached.`;
         }
+
+        // Attach PDF for channel delivery (driveLink included so oversized-file
+        // fallback in Discord/other channels can reference the stored copy).
+        ctx.state.pendingAttachments.push({
+          kind: "document",
+          filename,
+          content: pdfBuffer,
+          caption: sub.title,
+          mimeType: "application/pdf",
+          driveLink: driveLink ?? undefined,
+        });
       } catch (pdfErr) {
         const pdfMsg = pdfErr instanceof Error ? pdfErr.message : String(pdfErr);
         console.error(`[JobQueue] writing PDF generation failed for job ${job.id}:`, pdfMsg);
