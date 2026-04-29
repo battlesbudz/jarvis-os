@@ -1478,6 +1478,44 @@ export type DiscordConfirmToken = typeof discordConfirmTokens.$inferSelect;
 export type InsertDiscordConfirmToken = typeof discordConfirmTokens.$inferInsert;
 
 // ── Self-heal audit log — persists autonomous-write history across restarts ──
+// ── User-Defined Custom Sub-Agents ────────────────────────────────────────────
+// Users can define named, reusable sub-agents with a custom system prompt that
+// is appended to one of the base sub-agent types (research, writing, planning,
+// email). Custom agents are submitted as "custom_agent" jobs and resolved at
+// run time by looking up this table.
+
+export const CUSTOM_AGENT_BASE_TYPES = ["research", "writing", "planning", "email"] as const;
+export type CustomAgentBaseType = typeof CUSTOM_AGENT_BASE_TYPES[number];
+
+export const customAgents = pgTable("custom_agents", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  slug: varchar("slug").notNull(),
+  description: text("description"),
+  baseType: varchar("base_type").$type<CustomAgentBaseType>().notNull().default("research"),
+  extraPrompt: text("extra_prompt"),
+  allowedTools: jsonb("allowed_tools").$type<string[]>(),
+  model: varchar("model"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex("custom_agents_user_slug_idx").on(table.userId, table.slug),
+]);
+
+export const insertCustomAgentSchema = createInsertSchema(customAgents).pick({
+  name: true,
+  slug: true,
+  description: true,
+  baseType: true,
+  extraPrompt: true,
+  allowedTools: true,
+  model: true,
+});
+
+export type InsertCustomAgent = z.infer<typeof insertCustomAgentSchema>;
+export type CustomAgent = typeof customAgents.$inferSelect;
+
 // Each row mirrors one block from server/self-heal-audit.log.  On container
 // restart, selfHealAudit.ts restores the flat file from these rows so audit
 // history is never lost.

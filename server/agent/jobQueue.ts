@@ -778,6 +778,95 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
       return;
     }
 
+    // ── Custom user-defined agent ──────────────────────────────────────────────
+    if (job.agentType === "custom_agent") {
+      const input = (job.input as Record<string, unknown>) ?? {};
+      const customAgentId = String(input.customAgentId ?? "");
+
+      if (!customAgentId) throw new Error("custom_agent job missing customAgentId");
+
+      const { db: _db } = await import("../db");
+      const { customAgents } = await import("@shared/schema");
+      const { eq: _eq } = await import("drizzle-orm");
+
+      const [agentDef] = await _db
+        .select()
+        .from(customAgents)
+        .where(_eq(customAgents.id, customAgentId))
+        .limit(1);
+
+      if (!agentDef) throw new Error(`Custom agent ${customAgentId} not found`);
+
+      const tokens = await getValidGoogleTokens(job.userId).catch(() => []);
+      const googleAccessToken = tokens?.[0] || null;
+      const ctx: ToolContext = {
+        userId: job.userId,
+        googleAccessToken,
+        channel: `JobQueue/custom_agent`,
+        state: { pendingAttachments: [] },
+      };
+
+      const modelOverride = typeof input.model === "string"
+        ? input.model
+        : agentDef.model ?? undefined;
+
+      const sub = await runSubAgent({
+        agentType: agentDef.baseType as SubAgentType,
+        prompt: job.prompt,
+        defaultTitle: job.title,
+        context: ctx,
+        model: modelOverride,
+        extraSystemPrompt: agentDef.extraPrompt ?? undefined,
+      });
+
+      const { db: __db } = await import("../db");
+      const { deliverables: _deliverables } = await import("@shared/schema");
+
+      const inserted = await __db
+        .insert(_deliverables)
+        .values({
+          userId: job.userId,
+          jobId: job.id,
+          agentType: "custom_agent",
+          type: sub.type,
+          title: `[${agentDef.name}] ${sub.title}`,
+          summary: sub.summary,
+          body: sub.body,
+          meta: { ...sub.meta, customAgentId, customAgentName: agentDef.name },
+        })
+        .returning({ id: _deliverables.id });
+
+      const deliverableId = inserted[0]?.id || "";
+
+      await completeJob(job.id, {
+        result: { deliverableId, type: sub.type, title: sub.title, customAgentId },
+        turns: sub.turns,
+        toolCallsCount: sub.toolCallsCount,
+      });
+
+      console.log(
+        `[JobQueue] complete custom_agent job ${job.id} agent="${agentDef.name}" deliverable=${deliverableId}`,
+      );
+
+      const notifyMsg = `${sub.summary || "Ready for review"} — open Inbox to review.`;
+      await notifyJobComplete(
+        job.userId,
+        "custom_agent",
+        `${agentDef.name}: ${sub.title}`,
+        notifyMsg,
+        originChannel,
+        originDiscordChannelId,
+      );
+
+      if (hasWorkflow) {
+        const wfOutput = `${sub.title}\n\n${sub.summary || ""}\n\n${sub.body?.slice(0, 1200) || ""}`.trim();
+        await onWorkflowJobComplete(wfId!, wfStep!, job.id, wfOutput).catch((e) =>
+          console.error("[JobQueue] workflow hook failed:", e),
+        );
+      }
+      return;
+    }
+
     if (job.agentType === "goal_decompose") {
       const result = await runGoalDecomposition(job);
       await completeJob(job.id, {
