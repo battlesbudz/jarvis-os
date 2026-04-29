@@ -5152,6 +5152,31 @@ Return ONLY the JSON object.`;
     }
   });
 
+  app.patch("/api/life-context", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const updates = req.body;
+      const existing = await db
+        .select({ data: schema.lifeContext.data })
+        .from(schema.lifeContext)
+        .where(eq(schema.lifeContext.userId, userId))
+        .limit(1);
+      const current = (existing[0]?.data as any) || {};
+      const merged = { ...current, ...updates };
+      await db.insert(schema.lifeContext)
+        .values({ userId, data: merged, updatedAt: new Date() })
+        .onConflictDoUpdate({
+          target: [schema.lifeContext.userId],
+          set: { data: merged, updatedAt: new Date() },
+        });
+      return res.json(merged);
+    } catch (error) {
+      console.error("Error patching life-context:", error);
+      return res.status(500).json({ error: "Failed to update life context" });
+    }
+  });
+
   app.get("/api/morning-voice-notes", async (req: Request, res: Response) => {
     try {
       const userId = req.userId;
