@@ -4398,6 +4398,15 @@ CONFIRM/DENY flow: after the user confirms ("yes") or denies ("no"), call this t
       (e) => Math.abs(e.x - best.coordinatesX) <= COORD_RADIUS && Math.abs(e.y - best.coordinatesY) <= COORD_RADIUS
     );
 
+    // Map resourceId → label for elements near the trained coords so we can detect
+    // label-value changes on the same element after tapping (e.g. "Mute" → "Unmute").
+    // Set-based checks miss this when both label values are already present nearby.
+    const preTapIdToLabel = new Map<string, string>(
+      preTapNear
+        .filter((e): e is typeof e & { resourceId: string } => !!e.resourceId)
+        .map((e) => [e.resourceId, e.label]),
+    );
+
     // If no clickable element is present near the trained coordinates, the UI has likely changed
     if (preTapNear.length === 0) {
       const newFailCount = (best.failCount ?? 0) + 1;
@@ -4449,8 +4458,22 @@ CONFIRM/DENY flow: after the user confirms ("yes") or denies ("no"), call this t
     const elementGone = preTapNear.length > 0 && postTapNear.length === 0;
     const labelChanged = [...preTapNearLabels].some((l) => !postTapNearLabels.has(l)) ||
                          [...postTapNearLabels].some((l) => !preTapNearLabels.has(l));
+    // Check if any element with the same resource ID changed its label text
+    // (e.g. "Mute" → "Unmute") — set-based checks miss this when both values
+    // were already present nearby before the tap.
+    let resourceIdLabelChanged = false;
+    if (!elementGone && !labelChanged && preTapIdToLabel.size > 0) {
+      const postTapIdToLabel = new Map<string, string>(
+        postTapNear
+          .filter((e): e is typeof e & { resourceId: string } => !!e.resourceId)
+          .map((e) => [e.resourceId, e.label]),
+      );
+      resourceIdLabelChanged = [...postTapIdToLabel.entries()].some(
+        ([id, postLabel]) => preTapIdToLabel.has(id) && preTapIdToLabel.get(id) !== postLabel,
+      );
+    }
     // Fallback: screenshot diff using the true pre-tap screenshot captured before the tap
-    let verified = elementGone || labelChanged;
+    let verified = elementGone || labelChanged || resourceIdLabelChanged;
     if (!verified) {
       const postTapScreenshot = await captureScreenshot(ctx.userId);
       if (preTapScreenshot && postTapScreenshot) {
