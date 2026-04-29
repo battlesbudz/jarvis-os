@@ -20,6 +20,7 @@ import { logSystemError } from "./errorLogger";
 import { submitAgentJob as _submitAgentJob, getModelForJobType as _getModelForJobType, type SubmitJobInput, type AgentJobType as _AgentJobType } from "./jobClient";
 import { runAgent } from "./harness";
 import { readRecentErrorsTool, listSourceFilesTool, readSourceFileTool, proposeCodeChangeTool } from "./tools/selfEditTools";
+import { fetchCalendarTool } from "./tools/calendar";
 import { researchHasSourceUrls } from "./researchUtils";
 import { markdownToPdfBuffer } from "./tools/exportPdf";
 import { createDriveBinaryFile } from "../integrations/googleDrive";
@@ -851,6 +852,70 @@ writing a clear inbox message explaining what is broken and what the user should
 
       if (hasWorkflow) {
         await onWorkflowJobComplete(wfId!, wfStep!, job.id, generalReply).catch((e) =>
+          console.error("[JobQueue] workflow hook failed:", e),
+        );
+      }
+      return;
+    }
+
+    // ── Morning brief agent ──────────────────────────────────────────────────
+    if (job.agentType === "morning_brief") {
+      const briefTokens = await getValidGoogleTokens(job.userId).catch(() => []);
+      const briefGoogleToken = briefTokens?.[0] || null;
+      const briefCtx: ToolContext = {
+        userId: job.userId,
+        googleAccessToken: briefGoogleToken,
+        channel: `JobQueue/morning_brief`,
+        state: { pendingAttachments: [] },
+      };
+      const briefTools = briefGoogleToken ? [fetchCalendarTool] : [];
+      const briefModelOverride = typeof jobInput.model === "string" ? jobInput.model : undefined;
+
+      const briefResult = await runAgent({
+        messages: [
+          {
+            role: "system",
+            content: `You are Jarvis, generating an on-demand morning briefing for the user. The user is NOT in this conversation.
+
+Your job: produce a concise, actionable briefing they can act on immediately.
+
+Structure your response as follows (plain markdown, no extra headers):
+
+## ☀️ Morning Briefing
+
+**Today at a glance** — 2-3 sentences summarising the key focus for the day.
+
+**Calendar** — if you called fetch_calendar, list upcoming events for today/tomorrow. If no calendar is connected, skip this section.
+
+**Goals & priorities** — Summarise what the user should focus on. If no specific goals are in the prompt, suggest a general productivity focus.
+
+**Quick wins** — 2-3 small, specific actions the user can complete today.
+
+Keep the whole briefing under 300 words. Be warm but direct. No filler phrases.`,
+          },
+          { role: "user", content: job.prompt },
+        ],
+        tools: briefTools,
+        context: briefCtx,
+        maxTurns: 4,
+        model: briefModelOverride,
+      });
+
+      await completeJob(job.id, {
+        result: { output: briefResult.reply, agentType: "morning_brief" },
+        turns: briefResult.turns,
+        toolCallsCount: briefResult.toolCalls?.length ?? 0,
+      });
+
+      console.log(`[JobQueue] complete morning_brief job ${job.id} turns=${briefResult.turns}`);
+
+      const briefReply = briefResult.reply?.trim()
+        ? briefResult.reply.slice(0, 3000)
+        : "Your morning briefing is ready. No summary was produced — please try again.";
+      await notifyJobComplete(job.userId, "morning_brief", job.title, briefReply, originChannel, originDiscordChannelId);
+
+      if (hasWorkflow) {
+        await onWorkflowJobComplete(wfId!, wfStep!, job.id, briefReply).catch((e) =>
           console.error("[JobQueue] workflow hook failed:", e),
         );
       }

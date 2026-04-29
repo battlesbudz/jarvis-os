@@ -7,7 +7,7 @@ import { db } from "../db";
 import * as schema from "@shared/schema";
 import type { SubAgentType } from "./subagents";
 
-export type AgentJobType = SubAgentType | "goal_decompose" | "weekly_pattern" | "named_agent_task" | "general";
+export type AgentJobType = SubAgentType | "goal_decompose" | "weekly_pattern" | "named_agent_task" | "general" | "morning_brief";
 
 export interface SubmitJobInput {
   userId: string;
@@ -40,6 +40,7 @@ export const SUB_AGENT_MODEL_ROUTING: Partial<Record<AgentJobType, string>> = {
   planning: "gpt-4.1-mini",
   writing: "gpt-4o-mini",
   email: "gpt-4o-mini",
+  morning_brief: "gpt-4o-mini",
 };
 
 /**
