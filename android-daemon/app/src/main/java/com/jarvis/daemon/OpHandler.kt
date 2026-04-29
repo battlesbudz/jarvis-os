@@ -71,6 +71,7 @@ object OpHandler {
                 "android_view_hierarchy" -> handleViewHierarchy()
                 "android_paste_text" -> handlePasteText(context, op)
                 "android_get_focused_field" -> handleGetFocusedField()
+                "android_clear_field" -> handleClearField()
                 "android_start_training" -> handleStartTraining(op)
                 else -> OpResult(false, error = "Unknown op type: $type")
             }
@@ -551,6 +552,32 @@ object OpHandler {
             .put("isPassword", info.isPassword)
 
         return OpResult(ok = true, data = data)
+    }
+
+    // ── android_clear_field ──────────────────────────────────────────────────
+    // Clears the currently-focused editable field.
+    // Delegates to JarvisAccessibilityService.clearField() which tries:
+    //   Step 1 — ACTION_SET_TEXT("") via the accessibility service
+    //   Step 2 — ACTION_SET_SELECTION (0..len) + ACTION_CUT fallback
+    // Both steps verify the field is actually empty afterward (node refresh).
+    // Returns {ok, method, fieldWasAlreadyEmpty, verifiedEmpty} on success.
+    private fun handleClearField(): OpResult {
+        val svc = JarvisAccessibilityService.instance
+            ?: return OpResult(false, error = "Accessibility service not running. Enable it in Settings > Accessibility > Jarvis Daemon.")
+
+        val result = svc.clearField()
+        return if (result.cleared) {
+            OpResult(
+                ok = true,
+                data = JSONObject()
+                    .put("method", result.method)
+                    .put("cleared", true)
+                    .put("fieldWasAlreadyEmpty", result.fieldWasAlreadyEmpty)
+                    .put("verifiedEmpty", result.verifiedEmpty)
+            )
+        } else {
+            OpResult(false, error = result.error ?: "Could not clear field — check that an editable field is focused")
+        }
     }
 
     private fun handleSwipe(op: JSONObject): OpResult {

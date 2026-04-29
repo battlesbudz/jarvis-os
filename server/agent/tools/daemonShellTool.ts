@@ -3347,12 +3347,25 @@ Requires: android_screenshot, android_read_screen, and android_tap_type permissi
 
     // ── Step 4: Optional clear ────────────────────────────────────────────────
     if (args.clear_first) {
+      // android_clear_field is implemented in the daemon APK as:
+      //   Step 1 — ACTION_SET_TEXT("") with node-refresh verification
+      //   Step 2 — ACTION_SET_SELECTION + ACTION_CUT fallback (WebView / custom IME)
+      // Both steps verify the field is actually empty before reporting success.
       steps.push("Clearing field (android_clear_field)...");
       const clearResult = await sendDaemonOp(ctx.userId, { type: "android_clear_field" }, 8000);
       if (clearResult.ok) {
-        steps.push("Field cleared.");
+        const clearData = (clearResult.data || {}) as Record<string, unknown>;
+        const clearMethod = typeof clearData.method === "string" ? clearData.method : "unknown";
+        const verified = clearData.verifiedEmpty === true;
+        const alreadyEmpty = clearData.fieldWasAlreadyEmpty === true;
+        if (alreadyEmpty) {
+          steps.push("Field was already empty.");
+        } else {
+          steps.push(`Field cleared via ${clearMethod}. Verified empty: ${verified}.`);
+        }
+        await sleep(150);
       } else {
-        steps.push(`Clear failed (${clearResult.error || "unknown"}); proceeding anyway.`);
+        steps.push(`android_clear_field failed (${clearResult.error || "unknown"}); proceeding anyway.`);
       }
     }
 
