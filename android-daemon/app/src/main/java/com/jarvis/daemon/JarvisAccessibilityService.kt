@@ -459,13 +459,36 @@ class JarvisAccessibilityService : AccessibilityService() {
                         "${MediaStore.Images.Media.DATE_ADDED} DESC"
                     )
                     var rowsDeleted = 0
+                    val restrictedUris = mutableListOf<android.net.Uri>()
                     cursor?.use {
                         while (it.moveToNext()) {
                             val id = it.getLong(it.getColumnIndexOrThrow(MediaStore.Images.Media._ID))
                             val uri = android.content.ContentUris.withAppendedId(
                                 MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id
                             )
-                            rowsDeleted += contentResolver.delete(uri, null, null)
+                            try {
+                                rowsDeleted += contentResolver.delete(uri, null, null)
+                            } catch (sec: android.app.RecoverableSecurityException) {
+                                // Already inside the Build.VERSION.SDK_INT >= Q block, so
+                                // referencing RecoverableSecurityException (API 29+) is safe.
+                                Log.w(TAG, "MediaStore delete blocked (RecoverableSecurityException) for ${latestFile.name}; queuing for batch delete request")
+                                restrictedUris.add(uri)
+                            } catch (e: Exception) {
+                                Log.w(TAG, "MediaStore delete failed for ${latestFile.name}: ${e.message}")
+                            }
+                        }
+                    }
+                    if (restrictedUris.isNotEmpty()) {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                            try {
+                                val pi = MediaStore.createDeleteRequest(contentResolver, restrictedUris)
+                                pi.send()
+                                Log.i(TAG, "Sent MediaStore.createDeleteRequest for ${restrictedUris.size} restricted URI(s) (${latestFile.name})")
+                            } catch (e: Exception) {
+                                Log.w(TAG, "MediaStore.createDeleteRequest failed for ${latestFile.name}: ${e.message}")
+                            }
+                        } else {
+                            Log.w(TAG, "Skipping ${restrictedUris.size} MediaStore URI(s) blocked by RecoverableSecurityException on API < 30 (${latestFile.name})")
                         }
                     }
                     Log.i(TAG, "Deleted fallback screenshot from gallery (MediaStore API 29+ by name): ${latestFile.name} (rows=$rowsDeleted)")
@@ -545,8 +568,33 @@ class JarvisAccessibilityService : AccessibilityService() {
                 // post-shot timestamp, so any match here is the file we just captured.
                 // Delete unconditionally when the read succeeded.
                 if (bytes != null) {
-                    val deleted = contentResolver.delete(contentUri, null, null)
-                    Log.i(TAG, "Deleted fallback screenshot from gallery (MediaStore): $displayName (deleted=$deleted)")
+                    try {
+                        val deleted = contentResolver.delete(contentUri, null, null)
+                        Log.i(TAG, "Deleted fallback screenshot from gallery (MediaStore): $displayName (deleted=$deleted)")
+                    } catch (e: Exception) {
+                        // Use a generic catch + runtime type-check here because this code path
+                        // is not guarded by a Build.VERSION.SDK_INT >= Q block. Directly naming
+                        // RecoverableSecurityException in a catch clause on a pre-Q codepath
+                        // can crash the VM. The instanceof check is evaluated only at runtime,
+                        // so on API < 29 it simply falls through to the else branch.
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+                            e is android.app.RecoverableSecurityException) {
+                            Log.w(TAG, "MediaStore delete blocked (RecoverableSecurityException) for $displayName; attempting batch delete request")
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                                try {
+                                    val pi = MediaStore.createDeleteRequest(contentResolver, listOf(contentUri))
+                                    pi.send()
+                                    Log.i(TAG, "Sent MediaStore.createDeleteRequest for $displayName")
+                                } catch (re: Exception) {
+                                    Log.w(TAG, "MediaStore.createDeleteRequest failed for $displayName: ${re.message}")
+                                }
+                            } else {
+                                Log.w(TAG, "Cannot batch-delete $displayName on API < 30; entry left in MediaStore")
+                            }
+                        } else {
+                            Log.w(TAG, "MediaStore delete failed for $displayName: ${e.message}")
+                        }
+                    }
                 }
                 bytes
             }
