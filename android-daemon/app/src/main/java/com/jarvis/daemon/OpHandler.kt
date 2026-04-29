@@ -8,6 +8,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Point
 import android.location.Location
 import android.net.Uri
 import android.os.Build
@@ -16,6 +17,7 @@ import android.os.SystemClock
 import android.telephony.SmsManager
 import android.util.Base64
 import android.util.Log
+import android.view.WindowManager
 import android.webkit.MimeTypeMap
 import androidx.core.content.FileProvider
 import com.google.android.gms.location.FusedLocationProviderClient
@@ -74,6 +76,7 @@ object OpHandler {
                 "android_get_focused_field" -> handleGetFocusedField()
                 "android_clear_field" -> handleClearField()
                 "android_start_training" -> handleStartTraining(op)
+                "android_get_display_size" -> handleGetDisplaySize(context)
                 else -> OpResult(false, error = "Unknown op type: $type")
             }
             val durationMs = SystemClock.elapsedRealtime() - startMs
@@ -1248,6 +1251,39 @@ object OpHandler {
         // Return the JSON array directly as the result payload so the server receives
         // a top-level array (consistent with the tool description and spec).
         return OpResult(ok = true, data = elements)
+    }
+
+    // ── android_get_display_size ─────────────────────────────────────────────
+    // Returns the device's physical screen resolution in pixels so the server
+    // can compute proportional swipe coordinates that work on any screen size.
+    // Uses WindowMetrics (API 30+) with a DisplayMetrics fallback for older devices.
+    @Suppress("DEPRECATION")
+    private fun handleGetDisplaySize(context: Context): OpResult {
+        return try {
+            val wm = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+            val width: Int
+            val height: Int
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                val bounds = wm.currentWindowMetrics.bounds
+                width  = bounds.width()
+                height = bounds.height()
+            } else {
+                val size = Point()
+                wm.defaultDisplay.getRealSize(size)
+                width  = size.x
+                height = size.y
+            }
+            DaemonLog.add("display_size: ${width}×${height}")
+            OpResult(
+                ok = true,
+                data = JSONObject()
+                    .put("width", width)
+                    .put("height", height)
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "handleGetDisplaySize failed", e)
+            OpResult(false, error = "Could not read display size: ${e.message}")
+        }
     }
 
     // ── android_start_training ───────────────────────────────────────────────
