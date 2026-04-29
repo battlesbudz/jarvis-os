@@ -76,7 +76,7 @@ export const spawnSubagentTool: AgentTool = {
       const spawnInput: Record<string, unknown> = routedModel ? { model: routedModel } : {};
       if (ctx.channel) spawnInput.originChannel = ctx.channel;
       if (ctx.discordChannelId) spawnInput.originDiscordChannelId = ctx.discordChannelId;
-      const jobId = await submitAgentJob({
+      const { id: jobId } = await submitAgentJob({
         userId: ctx.userId,
         agentType: agentType as AgentJobType,
         title,

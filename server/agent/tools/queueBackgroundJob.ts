@@ -320,7 +320,7 @@ Do NOT use for: quick one-sentence answers, reading today's tasks, anything answ
       const jobInput: Record<string, unknown> = routedModel ? { model: routedModel } : {};
       if (ctx.channel) jobInput.originChannel = ctx.channel;
       if (ctx.discordChannelId) jobInput.originDiscordChannelId = ctx.discordChannelId;
-      const jobId = await submitAgentJob({
+      const { id: jobId } = await submitAgentJob({
         userId: ctx.userId,
         agentType: agentType as AgentJobType,
         title,

@@ -1057,7 +1057,7 @@ async function processUpdate(update: any): Promise<void> {
                 return;
               }
               const { submitAgentJob } = await import("./agent/jobClient");
-              const jobId = await submitAgentJob({
+              const { id: jobId } = await submitAgentJob({
                 userId,
                 agentType: "custom_agent",
                 title: `${customAgent.name}: ${customPrompt.slice(0, 80)}`,

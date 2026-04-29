@@ -233,7 +233,7 @@ export function registerCustomAgentRoutes(app: Express): void {
         return;
       }
 
-      const jobId = await submitAgentJob({
+      const { id: jobId } = await submitAgentJob({
         userId,
         agentType: "custom_agent",
         title: `${agent.name}: ${prompt.slice(0, 80)}`,

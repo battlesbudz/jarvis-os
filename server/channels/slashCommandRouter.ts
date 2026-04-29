@@ -219,7 +219,7 @@ export async function routeSlashCommand(
   if (discordChannelId) jobInput.originDiscordChannelId = discordChannelId;
 
   try {
-    const jobId = await submitAgentJob({
+    const { id: jobId } = await submitAgentJob({
       userId,
       agentType: def.agentType,
       title,

@@ -824,7 +824,7 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
       if (assignedAgentType && assignedAgentType !== "general" && isKnownType) {
         try {
           const { submitAgentJob } = await import("../agent/jobClient");
-          const jobId = await submitAgentJob({
+          const { id: jobId } = await submitAgentJob({
             userId,
             agentType: assignedAgentType as import("../agent/jobClient").AgentJobType,
             title: userText.slice(0, 80),

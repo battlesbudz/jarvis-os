@@ -1172,13 +1172,13 @@ Keep the whole briefing under 300 words. Be warm but direct. No filler phrases.`
         let researchJobId = String(jobInput.researchJobId ?? "");
 
         if (!researchJobId) {
-          researchJobId = await submitAgentJob({
+          researchJobId = (await submitAgentJob({
             userId: job.userId,
             agentType: "research",
             title: `Research for build: ${featureDescription.slice(0, 80)}`,
             prompt: `Research context for building this Jarvis feature: ${featureDescription}`,
             input: { parentJobId: job.id, originChannel, originDiscordChannelId },
-          });
+          })).id;
           await persistProgress({ researchJobId });
           await sendBuildPing(`🔍 Background research queued (job ${researchJobId.slice(0, 8)}…) — waiting up to 5 min`);
         }

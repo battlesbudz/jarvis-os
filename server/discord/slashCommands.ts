@@ -851,7 +851,7 @@ async function handleCustomAgent(
       const byName = allAgents.find((a) => a.name.toLowerCase() === slug.toLowerCase());
       if (byName) {
         const { submitAgentJob } = await import("../agent/jobClient");
-        const jobId = await submitAgentJob({
+        const { id: jobId } = await submitAgentJob({
           userId,
           agentType: "custom_agent",
           title: `${byName.name}: ${prompt.slice(0, 80)}`,
@@ -882,7 +882,7 @@ async function handleCustomAgent(
     }
 
     const { submitAgentJob } = await import("../agent/jobClient");
-    const jobId = await submitAgentJob({
+    const { id: jobId } = await submitAgentJob({
       userId,
       agentType: "custom_agent",
       title: `${agent.name}: ${prompt.slice(0, 80)}`,

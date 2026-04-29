@@ -105,7 +105,7 @@ export const reviewAgentTaskTool: AgentTool = {
 
     const newTitle = `[Rev ${iterationCount + 2}] ${job.title.replace(/^\[Rev \d+\] /, "")}`;
 
-    const newJobId = await submitAgentJob({
+    const { id: newJobId } = await submitAgentJob({
       userId: ctx.userId,
       agentType: "named_agent_task",
       title: newTitle,

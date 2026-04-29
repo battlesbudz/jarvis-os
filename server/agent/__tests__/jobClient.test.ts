@@ -1,10 +1,15 @@
 /**
  * Unit tests for the deduplication guard inside submitAgentJob.
  *
- * Verifies three behavioural contracts:
- *   1. Duplicate found → existing id is returned; insertJob is never called.
- *   2. No duplicate   → insertJob is called; returned id comes from the insert.
- *   3. Guard throws   → error is swallowed; insertJob is still called (non-fatal).
+ * Verifies the behavioural contracts:
+ *   1. Duplicate found → { id: existingId, isDuplicate: true }; insertJob never called.
+ *   2. No duplicate   → { id: newId, isDuplicate: false }; insertJob called once.
+ *   3. Guard throws   → error is swallowed; insertJob still called (non-fatal);
+ *                       isDuplicate is false (treated as a fresh job).
+ *   4. Correct field values forwarded to insertJob.
+ *   5. Model routing injects the right model into input.
+ *   6. Guard receives the correct arguments.
+ *   7. Two sequential identical submissions — second returns isDuplicate:true.
  *
  * Both findDuplicate and insertJob are injected via deps, so no real DB is needed.
  *
@@ -87,10 +92,10 @@ function makeInsertStub(returnId = "job-new-001"): {
 async function run(): Promise<void> {
 
   // ─────────────────────────────────────────────────────────────────────────
-  // Suite 1: Duplicate found — existing id returned, insert never called
+  // Suite 1: Duplicate found — { id: existingId, isDuplicate: true }; insert never called
   // ─────────────────────────────────────────────────────────────────────────
 
-  console.log("\nSuite 1 — Duplicate found: existing id returned, insert skipped\n");
+  console.log("\nSuite 1 — Duplicate found: isDuplicate:true returned, insert skipped\n");
 
   {
     const insertStub = makeInsertStub("job-never");
@@ -99,17 +104,18 @@ async function run(): Promise<void> {
       insertJob: insertStub.fn,
     };
 
-    const returnedId = await submitAgentJob(makeInput(), deps);
+    const result = await submitAgentJob(makeInput(), deps);
 
-    assertEquals(returnedId, "job-old-001", "DUP-1: returns the existing job id when a duplicate is found");
-    assertEquals(insertStub.calls, 0, "DUP-2: insertJob is never called when a duplicate is found");
+    assertEquals(result.id, "job-old-001", "DUP-1: result.id is the existing job id when a duplicate is found");
+    assertEquals(result.isDuplicate, true, "DUP-2: result.isDuplicate is true when an existing job is reused");
+    assertEquals(insertStub.calls, 0, "DUP-3: insertJob is never called when a duplicate is found");
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // Suite 2: No duplicate — insert is called and its id is returned
+  // Suite 2: No duplicate — { id: newId, isDuplicate: false }; insert called once
   // ─────────────────────────────────────────────────────────────────────────
 
-  console.log("\nSuite 2 — No duplicate: insertJob called once, new id returned\n");
+  console.log("\nSuite 2 — No duplicate: isDuplicate:false returned, insertJob called once\n");
 
   {
     const insertStub = makeInsertStub("job-new-555");
@@ -118,10 +124,11 @@ async function run(): Promise<void> {
       insertJob: insertStub.fn,
     };
 
-    const returnedId = await submitAgentJob(makeInput(), deps);
+    const result = await submitAgentJob(makeInput(), deps);
 
-    assertEquals(returnedId, "job-new-555", "ND-1: returns the id provided by insertJob");
-    assertEquals(insertStub.calls, 1, "ND-2: insertJob is called exactly once when no duplicate exists");
+    assertEquals(result.id, "job-new-555", "ND-1: result.id is the id provided by insertJob");
+    assertEquals(result.isDuplicate, false, "ND-2: result.isDuplicate is false when a new job is inserted");
+    assertEquals(insertStub.calls, 1, "ND-3: insertJob is called exactly once when no duplicate exists");
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -209,10 +216,10 @@ async function run(): Promise<void> {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // Suite 5: Guard errors are non-fatal — insert proceeds normally
+  // Suite 5: Guard errors are non-fatal — insert proceeds; isDuplicate:false
   // ─────────────────────────────────────────────────────────────────────────
 
-  console.log("\nSuite 5 — Guard error is swallowed; insertJob is still called\n");
+  console.log("\nSuite 5 — Guard error is swallowed; insertJob is still called; isDuplicate:false\n");
 
   {
     const insertStub = makeInsertStub("job-after-guard-error");
@@ -224,10 +231,11 @@ async function run(): Promise<void> {
       insertJob: insertStub.fn,
     };
 
-    const returnedId = await submitAgentJob(makeInput(), deps);
+    const result = await submitAgentJob(makeInput(), deps);
 
     assertEquals(insertStub.calls, 1, "GE-1: insertJob is called once after the guard error");
-    assertEquals(returnedId, "job-after-guard-error", "GE-2: the new job id from insertJob is returned");
+    assertEquals(result.id, "job-after-guard-error", "GE-2: result.id comes from insertJob after the guard error");
+    assertEquals(result.isDuplicate, false, "GE-3: isDuplicate is false when the guard fails (treated as fresh job)");
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -259,7 +267,7 @@ async function run(): Promise<void> {
   // Suite 7: Two sequential submissions — second sees the first as duplicate
   // ─────────────────────────────────────────────────────────────────────────
 
-  console.log("\nSuite 7 — Sequential identical submissions: second returns existing id\n");
+  console.log("\nSuite 7 — Sequential identical submissions: second returns isDuplicate:true\n");
 
   {
     const insertStub = makeInsertStub("job-first");
@@ -276,12 +284,14 @@ async function run(): Promise<void> {
       insertJob: insertStub.fn,
     };
 
-    const firstId = await submitAgentJob(makeInput(), deps);
-    const secondId = await submitAgentJob(makeInput(), deps);
+    const first = await submitAgentJob(makeInput(), deps);
+    const second = await submitAgentJob(makeInput(), deps);
 
-    assertEquals(firstId, "job-first", "RC-1: first submission returns the inserted job id");
-    assertEquals(secondId, "job-first", "RC-2: second submission returns the same (existing) job id");
-    assertEquals(insertStub.calls, 1, "RC-3: insertJob is called exactly once across both submissions");
+    assertEquals(first.id, "job-first", "RC-1: first submission returns the inserted job id");
+    assertEquals(first.isDuplicate, false, "RC-2: first submission has isDuplicate:false (new job)");
+    assertEquals(second.id, "job-first", "RC-3: second submission returns the same (existing) job id");
+    assertEquals(second.isDuplicate, true, "RC-4: second submission has isDuplicate:true (duplicate detected)");
+    assertEquals(insertStub.calls, 1, "RC-5: insertJob is called exactly once across both submissions");
   }
 }
 

@@ -244,11 +244,12 @@ export async function enqueueGoalDecomposition(
   goal: { id: string; title: string },
 ): Promise<string> {
   const { submitAgentJob } = await import("./jobQueue");
-  return submitAgentJob({
+  const { id } = await submitAgentJob({
     userId,
     agentType: "goal_decompose",
     title: `Decompose: ${goal.title}`,
     prompt: `Break the goal "${goal.title}" into a phased plan.`,
     input: { goalId: goal.id },
   });
+  return id;
 }

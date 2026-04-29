@@ -292,7 +292,7 @@ export const sessionsSendTool: AgentTool = {
       };
       if (ctx.channel) sessionsInput.originChannel = ctx.channel;
       if (ctx.discordChannelId) sessionsInput.originDiscordChannelId = ctx.discordChannelId;
-      const jobId = await submitAgentJob({
+      const { id: jobId } = await submitAgentJob({
         userId: ctx.userId,
         agentType,
         title,
