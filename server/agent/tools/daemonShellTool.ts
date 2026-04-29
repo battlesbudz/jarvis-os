@@ -2124,9 +2124,15 @@ function scoreElement(element: ScreenElement, query: string): number {
   if (textScore === 0) {
     const words = q.split(/\s+/).filter(Boolean);
     if (words.length > 1) {
+      // Build a combined string of all fields so tokens can be matched across fields
+      const combined = fields.filter(Boolean).join(" ");
       for (const field of fields) {
         if (!field) continue;
         if (words.every((w) => field.includes(w))) { textScore = 50; break; }
+      }
+      // Cross-field token match: all words present somewhere across all fields combined
+      if (textScore === 0 && combined && words.every((w) => combined.includes(w))) {
+        textScore = 45;
       }
       if (textScore === 0) {
         for (const field of fields) {
