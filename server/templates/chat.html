@@ -496,6 +496,7 @@
       let conversation = []; // [{id, role, content}]
       let isStreaming = false;
       let sdkSessionId = null;
+      let sseAbortCtrl = null; // AbortController for the background SSE stream
 
       // ── DOM refs ─────────────────────────────────────────────────────────────
       const initLoading  = document.getElementById('init-loading');
@@ -542,6 +543,71 @@
         authScreen.style.display  = 'none';
         chatScreen.style.display  = 'flex';
         msgInput.focus();
+        connectSSE();
+      }
+
+      // ── Background SSE push stream ────────────────────────────────────────────
+      // Connects to /api/webchat/events so the server can push job results,
+      // morning briefings, and other async notifications into this tab in real
+      // time (rather than waiting for the user to open the inbox).
+      async function connectSSE() {
+        if (sseAbortCtrl) { sseAbortCtrl.abort(); }
+        sseAbortCtrl = new AbortController();
+        const signal = sseAbortCtrl.signal;
+
+        try {
+          const res = await fetch('/api/webchat/events', {
+            headers: { 'Authorization': `Bearer ${jwt}` },
+            signal,
+          });
+
+          if (!res.ok || !res.body) {
+            // 401 means token is gone — don't retry, let signOut handle it
+            if (res.status === 401) { signOut(); return; }
+            // Transient server/proxy error — retry after a short pause
+            setTimeout(() => { if (jwt && currentUserId && !signal.aborted) connectSSE(); }, 5000);
+            return;
+          }
+
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = '';
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+
+            for (const line of lines) {
+              if (!line.startsWith('data: ')) continue;
+              const raw = line.slice(6).trim();
+              if (!raw) continue;
+
+              let event;
+              try { event = JSON.parse(raw); } catch { continue; }
+
+              if (event.type === 'bot_message' && typeof event.content === 'string') {
+                conversation.push({ role: 'assistant', content: event.content });
+                saveHistory();
+                appendBubble('bot', event.content);
+                scrollBottom();
+              }
+            }
+          }
+
+          // Stream ended cleanly (server restart / proxy timeout). Reconnect
+          // so real-time delivery stays active while the tab is open.
+          if (jwt && currentUserId && !signal.aborted) {
+            setTimeout(connectSSE, 3000);
+          }
+        } catch (err) {
+          if (err && err.name === 'AbortError') return;
+          // Reconnect after a brief pause on unexpected disconnect
+          setTimeout(() => { if (jwt && currentUserId) connectSSE(); }, 5000);
+        }
       }
 
       // ── Google Identity Services ──────────────────────────────────────────────
@@ -925,6 +991,7 @@
       });
 
       function signOut() {
+        if (sseAbortCtrl) { sseAbortCtrl.abort(); sseAbortCtrl = null; }
         const leavingUserId = currentUserId;
         jwt = null;
         currentUserId = null;
