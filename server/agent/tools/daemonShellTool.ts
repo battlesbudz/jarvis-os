@@ -2718,6 +2718,19 @@ async function scrollToTop(userId: string, swipeCount: number): Promise<{ swipes
 
   let swipesPerformed = 0;
   for (let i = 0; i < swipeCount; i++) {
+    // ── Pre-swipe state capture for no-op detection ──────────────────────
+    // Screenshot path: diff before/after to detect if page actually moved.
+    // Hierarchy path (FLAG_SECURE / screenshot unavailable, or post-screenshot
+    // capture fails): fingerprint the readable element set by label + coords.
+    // We always read the hierarchy so the fingerprint is available as a fallback
+    // even when a screenshot was taken but the post-swipe capture later fails.
+    const preSwipeScreenshot: string | null = await captureScreenshot(userId);
+    const preSwipeElements = await readScreen(userId);
+    const preSwipeFingerprint: string = preSwipeElements
+      .map((el) => `${el.label}:${el.x}:${el.y}`)
+      .sort()
+      .join("|");
+
     const result = await sendDaemonOp(
       userId,
       { type: "android_swipe", x1: screenMidX, y1: swipeY1, x2: screenMidX, y2: swipeY2, durationMs },
@@ -2728,7 +2741,45 @@ async function scrollToTop(userId: string, swipeCount: number): Promise<{ swipes
       break;
     }
     swipesPerformed++;
-    await sleep(150);
+
+    // Brief pause so the page settles before checking state
+    await sleep(300);
+
+    // ── No-op scroll detection — screenshot path ──────────────────────────
+    // Compare a fresh screenshot against the pre-swipe one. If the pixel
+    // diff is below 2 % the page has not moved — we are already at the top.
+    let screenshotCheckConclusive = false;
+    if (preSwipeScreenshot) {
+      const postSwipeScreenshot = await captureScreenshot(userId);
+      if (postSwipeScreenshot) {
+        screenshotCheckConclusive = true;
+        const diffRatio = await screenshotDiff(preSwipeScreenshot, postSwipeScreenshot).catch(() => 1);
+        if (diffRatio < 0.02) {
+          console.log(
+            `[android_scroll_to_top] no-op scroll detected (diff=${diffRatio.toFixed(4)}) on pass ${i + 1} — already at top, stopping early`,
+          );
+          break;
+        }
+      }
+    }
+
+    // ── No-op scroll detection — hierarchy fallback ───────────────────────
+    // Runs when screenshots are unavailable (FLAG_SECURE) or post-swipe
+    // capture failed this pass (screenshotCheckConclusive is false).
+    const needsHierarchyCheck = !preSwipeScreenshot || !screenshotCheckConclusive;
+    if (needsHierarchyCheck && preSwipeFingerprint.length > 0) {
+      const postElements = await readScreen(userId);
+      const postFingerprint = postElements
+        .map((el) => `${el.label}:${el.x}:${el.y}`)
+        .sort()
+        .join("|");
+      if (postFingerprint === preSwipeFingerprint) {
+        console.log(
+          `[android_scroll_to_top] no-op scroll detected (hierarchy unchanged) on pass ${i + 1} — already at top, stopping early`,
+        );
+        break;
+      }
+    }
   }
   return { swipesPerformed };
 }
