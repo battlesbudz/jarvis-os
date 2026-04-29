@@ -92,6 +92,32 @@ const JARVIS_COMMAND = {
     },
     {
       type: 1,
+      name: "assign_agent",
+      description: "Assign a specialist agent to this channel (all messages route to it)",
+      options: [
+        {
+          type: 3, // STRING
+          name: "type",
+          description: "Agent type: research, writing, planning, email, goal_decompose, or general (restore default)",
+          required: true,
+          choices: [
+            { name: "🔬 Research", value: "research" },
+            { name: "✍️ Writing", value: "writing" },
+            { name: "📋 Planning", value: "planning" },
+            { name: "📧 Email", value: "email" },
+            { name: "🎯 Goal Decomposer", value: "goal_decompose" },
+            { name: "🧠 General Coach (default)", value: "general" },
+          ],
+        },
+      ],
+    },
+    {
+      type: 1,
+      name: "agent_status",
+      description: "Show which specialist agent (if any) is assigned to this channel",
+    },
+    {
+      type: 1,
       name: "help",
       description: "Show all available Jarvis slash commands",
     },
@@ -535,6 +561,95 @@ async function handleResetBudget(
   }
 }
 
+async function handleAssignAgent(
+  appId: string,
+  interaction: any,
+  userId: string,
+): Promise<void> {
+  const { updateChannelAgentType, agentTypeLabel, ASSIGNABLE_AGENT_TYPES } = await import("./manager");
+  const opts: any[] = interaction.data?.options?.[0]?.options ?? [];
+  const requestedType: string = opts.find((o: any) => o.name === "type")?.value ?? "";
+  const channelId: string = interaction.channel_id ?? "";
+
+  if (!channelId) {
+    await editInteractionReply(appId, interaction.token, "❌ Could not determine the channel ID.", EPHEMERAL);
+    return;
+  }
+
+  if (!requestedType) {
+    await editInteractionReply(appId, interaction.token, "❌ Please specify an agent type.", EPHEMERAL);
+    return;
+  }
+
+  if (requestedType === "general") {
+    await updateChannelAgentType(userId, channelId, null);
+    await editInteractionReply(
+      appId,
+      interaction.token,
+      "✅ Channel agent assignment cleared — this channel now routes to the **General Coach** (default).",
+      EPHEMERAL,
+    );
+    return;
+  }
+
+  if ((ASSIGNABLE_AGENT_TYPES as readonly string[]).includes(requestedType)) {
+    await updateChannelAgentType(userId, channelId, requestedType);
+    const label = agentTypeLabel(requestedType);
+    await editInteractionReply(
+      appId,
+      interaction.token,
+      `✅ This channel is now assigned to the **${label}** agent.\n` +
+      `Every message here will be routed directly to that specialist.\n` +
+      `Use \`/jarvis assign_agent general\` to restore default coach routing.`,
+      EPHEMERAL,
+    );
+    return;
+  }
+
+  const valid = [...ASSIGNABLE_AGENT_TYPES, "general"].join(", ");
+  await editInteractionReply(
+    appId,
+    interaction.token,
+    `❌ Unknown agent type: \`${requestedType}\`\nValid options: \`${valid}\``,
+    EPHEMERAL,
+  );
+}
+
+async function handleAgentStatus(
+  appId: string,
+  interaction: any,
+  userId: string,
+): Promise<void> {
+  const { getChannelAgentAssignment, agentTypeLabel, ASSIGNABLE_AGENT_TYPES } = await import("./manager");
+  const channelId: string = interaction.channel_id ?? "";
+
+  if (!channelId) {
+    await editInteractionReply(appId, interaction.token, "❌ Could not determine the channel ID.", EPHEMERAL);
+    return;
+  }
+
+  const assigned = await getChannelAgentAssignment(userId, channelId);
+  if (assigned && assigned !== "general") {
+    await editInteractionReply(
+      appId,
+      interaction.token,
+      `🤖 This channel is assigned to the **${agentTypeLabel(assigned)}** agent.\n` +
+      `Every message is routed directly to that specialist.\n` +
+      `Use \`/jarvis assign_agent general\` to restore default coach routing.`,
+      EPHEMERAL,
+    );
+  } else {
+    const types = (ASSIGNABLE_AGENT_TYPES as readonly string[]).join(", ");
+    await editInteractionReply(
+      appId,
+      interaction.token,
+      `🧠 This channel uses **default coach routing** (no specialist agent assigned).\n` +
+      `Use \`/jarvis assign_agent <type>\` to assign one. Available types: ${types}`,
+      EPHEMERAL,
+    );
+  }
+}
+
 async function handleHelp(appId: string, interaction: any): Promise<void> {
   const help = [
     "**Jarvis Slash Commands**",
@@ -542,6 +657,8 @@ async function handleHelp(appId: string, interaction: any): Promise<void> {
     "`/jarvis chat <message>` — Chat with Jarvis from any channel. Add `public:True` to share the reply.",
     "`/jarvis plan` — Generate your personalized daily plan.",
     "`/jarvis status` — Check the status of active background jobs.",
+    "`/jarvis assign_agent <type>` — Assign a specialist agent to this channel.",
+    "`/jarvis agent_status` — Show which agent is assigned to this channel.",
     "`/jarvis audit` — Show recent autonomous self-repairs Jarvis made.",
     "`/jarvis reset_budget` — Reset the autonomous write counter (owner only).",
     "`/jarvis help` — Show this message.",
@@ -691,6 +808,24 @@ export async function handleInteraction(interaction: any): Promise<object> {
         setImmediate(() => {
           handleResetBudget(appId, interaction, userId).catch((err) =>
             console.error("[SlashCommands] handleResetBudget background error:", err),
+          );
+        });
+        return deferredEphemeral();
+      }
+
+      if (subcommand === "assign_agent") {
+        setImmediate(() => {
+          handleAssignAgent(appId, interaction, userId).catch((err) =>
+            console.error("[SlashCommands] handleAssignAgent background error:", err),
+          );
+        });
+        return deferredEphemeral();
+      }
+
+      if (subcommand === "agent_status") {
+        setImmediate(() => {
+          handleAgentStatus(appId, interaction, userId).catch((err) =>
+            console.error("[SlashCommands] handleAgentStatus background error:", err),
           );
         });
         return deferredEphemeral();
