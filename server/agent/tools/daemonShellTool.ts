@@ -2383,6 +2383,9 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
     const preHierarchyClickable = await readScreen(ctx.userId);
     const preHierarchyCount = preHierarchyClickable.length;
     const preHierarchyLabels = new Set(preHierarchyClickable.map((el) => el.label));
+    const preHierarchyResourceIds = new Set(
+      preHierarchyClickable.map((el) => el.resourceId).filter((id): id is string => !!id),
+    );
 
     // ── Retry loop ────────────────────────────────────────────────────────────
     // Attempts 1-3: tap at Vision-located coordinates with small offsets.
@@ -2453,6 +2456,16 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
           // Check if any new labels appeared compared to the pre-tap baseline
           const postLabels = new Set(postClickable.map((el) => el.label));
           if ([...postLabels].some((l) => !preHierarchyLabels.has(l))) verified = true;
+          // Check if any new resource IDs appeared, or if pre-tap resource IDs disappeared
+          if (!verified) {
+            const postResourceIds = new Set(
+              postClickable.map((el) => el.resourceId).filter((id): id is string => !!id),
+            );
+            if ([...postResourceIds].some((id) => !preHierarchyResourceIds.has(id))) verified = true;
+            if (!verified && preHierarchyResourceIds.size > 0) {
+              if ([...preHierarchyResourceIds].some((id) => !postResourceIds.has(id))) verified = true;
+            }
+          }
         }
       }
 
