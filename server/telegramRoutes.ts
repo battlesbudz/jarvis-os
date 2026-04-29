@@ -268,6 +268,16 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
       return;
     }
 
+    // Edit the placeholder with a heartbeat status during long Android runs.
+    // Only fires when the placeholder has not yet received any streamed tokens
+    // (mirrors the Discord pattern: if streaming content is already visible,
+    // the user can see progress without an additional status edit).
+    const onProgressMessage = (msg: string) => {
+      if (placeholderMsgId && !streamBuf) {
+        editMessage(chatId, placeholderMsgId, `⏳ ${msg}`).catch(() => {});
+      }
+    };
+
     const storedSessionId = await getCoachSession(userId, "Telegram");
     const { reply, attachments, sdkSessionId } = await runCoachAgent({
       userId,
@@ -276,6 +286,7 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
       imageUrl,
       sdkSessionId: storedSessionId,
       onToken,
+      onProgressMessage,
     });
 
     if (sdkSessionId) {
