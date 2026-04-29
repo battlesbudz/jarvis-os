@@ -3060,7 +3060,7 @@ export const androidScrollToTopTool: AgentTool = {
   name: "android_scroll_to_top",
   description: `Scroll the current Android screen back to the very top by performing a series of rapid downward swipes.
 
-Use this before starting a new interaction task whenever a previous scroll-to-find pass (e.g. inside android_tap_element) left the page scrolled partway down. Without a reset, elements near the top of the page may be off-screen and missed by subsequent android_tap_element or android_screen_understand calls.
+Use this before starting a new interaction task whenever a previous scroll-to-find pass left the page scrolled partway down. android_tap_element and android_select_option automatically reset to the top when the target element is not found on the initial screen (reset_scroll defaults to true), so this tool is mainly useful before android_screen_understand calls or when you want to guarantee a clean scroll position at the start of a complex workflow.
 
 Returns the number of swipes performed.`,
   parameters: {
@@ -3112,7 +3112,7 @@ export const androidTapElementTool: AgentTool = {
   description: `Tap an Android screen element by name instead of raw coordinates.
 Accepts a human-readable label or description string, fuzzy-matches it against the current ScreenMap (Vision-based, calling android_screen_understand internally with a 500 ms cache), fires android_tap at the best-matching element's center coordinates, then verifies the tap landed via perceptual hash comparison (hash_distance > 5 out of 64 bits) and/or accessibility hierarchy change. Retries up to 4 times.
 
-If the element is not visible on the initial screen, the tool automatically scrolls down (up to max_scroll_attempts times) and re-reads the screen after each scroll until the element appears or the scroll limit is reached.
+If the element is not visible on the initial screen, the tool first scrolls back to the top of the page (unless reset_scroll is false) so that elements above the current scroll position are never missed, then automatically scrolls down (up to max_scroll_attempts times) and re-reads the screen after each scroll until the element appears or the scroll limit is reached.
 
 Use this tool instead of manually extracting center_x/center_y from android_screen_understand results:
 - Faster: one tool call instead of two
@@ -3150,7 +3150,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       },
       reset_scroll: {
         type: "boolean",
-        description: "When true, scroll back to the top of the page before locating the element (default false). Use this at the start of a new task if a previous scroll-to-find pass may have left the screen scrolled partway down, so elements near the top are not missed.",
+        description: "When true (default), the tool scrolls the page back to the top before starting the downward scroll-to-find loop if the element is not visible on the initial screen. This ensures elements above the current scroll position are never missed. Set to false to skip the reset and start searching from the current scroll position.",
       },
     },
     required: ["label"],
@@ -3197,14 +3197,6 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       };
     }
 
-    // ── Optional scroll-to-top reset before locating ──────────────────────────
-    if (args.reset_scroll === true) {
-      console.log(`[android_tap_element] reset_scroll=true, scrolling to top before locate`);
-      await scrollToTop(ctx.userId, 5);
-      // Invalidate the ScreenMap cache so the fresh top-of-page state is used
-      screenMapCache.delete(ctx.userId);
-    }
-
     const useScreenshot = args.verify_with_screenshot !== false;
 
     // ── Resolve ScreenMap (Vision-based, cache or fresh) ──────────────────────
@@ -3248,7 +3240,35 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
     const maxScrollAttempts = Number.isFinite(rawMaxScrollAttempts) ? Math.max(0, Math.floor(rawMaxScrollAttempts)) : 5;
     const rawScrollDistance = typeof args.scroll_distance === "number" ? args.scroll_distance : 600;
     const scrollDistance = Number.isFinite(rawScrollDistance) ? Math.min(Math.max(100, Math.floor(rawScrollDistance)), 1800) : 600;
+    const resetScroll = args.reset_scroll === false ? false : true;
     let scrollsPerformed = 0;
+
+    // ── Optional reset: scroll to top before the downward search loop ─────────
+    // Fires only when the element was not found on the initial screen, ensuring
+    // the tool never misses elements that sit above the current scroll position
+    // because a previous interaction left the page scrolled partway down.
+    // Intentionally decoupled from max_scroll_attempts so that reset_scroll=true
+    // still takes effect even when the caller disables the downward scroll loop.
+    if ((!bestElement || bestScore === 0) && resetScroll) {
+      console.log(`[android_tap_element] element "${label}" not found on initial screen — resetting to top of page before downward scroll-to-find loop`);
+      await scrollToTop(ctx.userId, 5);
+      // Brief pause so the page settles after scrolling to top
+      await new Promise((resolve) => setTimeout(resolve, 400));
+
+      const afterResetResult = await buildScreenMapElements(ctx.userId);
+      if (afterResetResult.ok) {
+        bestElement = null;
+        bestScore = 0;
+        for (const el of afterResetResult.elements) {
+          const score = scoreElement(el, label);
+          if (score > bestScore) { bestScore = score; bestElement = el; }
+        }
+        screenElements = afterResetResult.elements;
+        if (bestElement && bestScore > 0) {
+          console.log(`[android_tap_element] found "${label}" after scroll-to-top reset, score=${bestScore}`);
+        }
+      }
+    }
 
     if ((!bestElement || bestScore === 0) && maxScrollAttempts > 0) {
       for (let scroll = 0; scroll < maxScrollAttempts; scroll++) {
