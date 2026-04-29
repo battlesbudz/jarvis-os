@@ -2373,7 +2373,8 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
     x2 = Math.max(0, Math.round(x2));
     y2 = Math.max(0, Math.round(y2));
 
-    // ── Capture pre-swipe hierarchy baseline ─────────────────────────────────
+    // ── Capture pre-swipe state (screenshot fast-path + hierarchy fallback) ───
+    const preSwipeScreenshot: string | null = await captureScreenshot(ctx.userId);
     const preSwipeClickable = await readScreen(ctx.userId);
     const preSwipeCount = preSwipeClickable.length;
     const preSwipeLabels = new Set(preSwipeClickable.map((el) => el.label));
@@ -2392,24 +2393,45 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       };
     }
 
-    // ── Post-swipe verification (hierarchy diff, resource-ID-aware) ───────────
+    // ── Post-swipe verification — screenshot fast-path then hierarchy fallback ─
     const SWIPE_SETTLE_MS = 400;
     await new Promise((resolve) => setTimeout(resolve, SWIPE_SETTLE_MS));
 
     let swipeVerified = false;
-    const postSwipeClickable = await readScreen(ctx.userId);
-    if (postSwipeClickable.length !== preSwipeCount) {
-      swipeVerified = true;
-    } else {
-      const postSwipeLabels = new Set(postSwipeClickable.map((el) => el.label));
-      if ([...postSwipeLabels].some((l) => !preSwipeLabels.has(l))) swipeVerified = true;
-      if (!swipeVerified) {
-        const postSwipeResourceIds = new Set(
-          postSwipeClickable.map((el) => el.resourceId).filter((id): id is string => !!id),
-        );
-        if ([...postSwipeResourceIds].some((id) => !preSwipeResourceIds.has(id))) swipeVerified = true;
-        if (!swipeVerified && preSwipeResourceIds.size > 0) {
-          if ([...preSwipeResourceIds].some((id) => !postSwipeResourceIds.has(id))) swipeVerified = true;
+
+    // Fast-path: screenshot pixel diff (≥ 0.15 change ratio confirms the swipe).
+    // When conclusive this saves one readScreen round-trip. Skipped on FLAG_SECURE
+    // apps where captureScreenshot returns null.
+    if (preSwipeScreenshot) {
+      const postSwipeScreenshot = await captureScreenshot(ctx.userId);
+      if (postSwipeScreenshot) {
+        try {
+          const changeRatio = await screenshotDiff(preSwipeScreenshot, postSwipeScreenshot);
+          if (changeRatio >= 0.15) {
+            swipeVerified = true;
+            console.log(`[android_swipe_element] screenshot diff verified (ratio=${changeRatio.toFixed(4)})`);
+          }
+        } catch { /* screenshot diff is best-effort */ }
+      }
+    }
+
+    // Hierarchy fallback: runs only when screenshot diff is inconclusive (e.g. FLAG_SECURE app
+    // or pixel change below threshold due to re-used resource IDs in scrolled content).
+    if (!swipeVerified) {
+      const postSwipeClickable = await readScreen(ctx.userId);
+      if (postSwipeClickable.length !== preSwipeCount) {
+        swipeVerified = true;
+      } else {
+        const postSwipeLabels = new Set(postSwipeClickable.map((el) => el.label));
+        if ([...postSwipeLabels].some((l) => !preSwipeLabels.has(l))) swipeVerified = true;
+        if (!swipeVerified) {
+          const postSwipeResourceIds = new Set(
+            postSwipeClickable.map((el) => el.resourceId).filter((id): id is string => !!id),
+          );
+          if ([...postSwipeResourceIds].some((id) => !preSwipeResourceIds.has(id))) swipeVerified = true;
+          if (!swipeVerified && preSwipeResourceIds.size > 0) {
+            if ([...preSwipeResourceIds].some((id) => !postSwipeResourceIds.has(id))) swipeVerified = true;
+          }
         }
       }
     }
@@ -3385,7 +3407,8 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       };
     }
 
-    // ── Capture pre-press hierarchy baseline ─────────────────────────────────
+    // ── Capture pre-press state (screenshot fast-path + hierarchy fallback) ───
+    const prePressScreenshot: string | null = await captureScreenshot(ctx.userId);
     const prePressClickable = await readScreen(ctx.userId);
     const prePressCount = prePressClickable.length;
     const prePressLabels = new Set(prePressClickable.map((el) => el.label));
@@ -3413,24 +3436,45 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       };
     }
 
-    // ── Post-press verification (hierarchy diff, resource-ID-aware) ───────────
+    // ── Post-press verification — screenshot fast-path then hierarchy fallback ─
     const PRESS_SETTLE_MS = 400;
     await new Promise((resolve) => setTimeout(resolve, PRESS_SETTLE_MS));
 
     let pressVerified = false;
-    const postPressClickable = await readScreen(ctx.userId);
-    if (postPressClickable.length !== prePressCount) {
-      pressVerified = true;
-    } else {
-      const postPressLabels = new Set(postPressClickable.map((el) => el.label));
-      if ([...postPressLabels].some((l) => !prePressLabels.has(l))) pressVerified = true;
-      if (!pressVerified) {
-        const postPressResourceIds = new Set(
-          postPressClickable.map((el) => el.resourceId).filter((id): id is string => !!id),
-        );
-        if ([...postPressResourceIds].some((id) => !prePressResourceIds.has(id))) pressVerified = true;
-        if (!pressVerified && prePressResourceIds.size > 0) {
-          if ([...prePressResourceIds].some((id) => !postPressResourceIds.has(id))) pressVerified = true;
+
+    // Fast-path: screenshot pixel diff (≥ 0.15 change ratio confirms the long-press).
+    // When conclusive this saves one readScreen round-trip. Skipped on FLAG_SECURE
+    // apps where captureScreenshot returns null.
+    if (prePressScreenshot) {
+      const postPressScreenshot = await captureScreenshot(ctx.userId);
+      if (postPressScreenshot) {
+        try {
+          const changeRatio = await screenshotDiff(prePressScreenshot, postPressScreenshot);
+          if (changeRatio >= 0.15) {
+            pressVerified = true;
+            console.log(`[android_long_press_element] screenshot diff verified (ratio=${changeRatio.toFixed(4)})`);
+          }
+        } catch { /* screenshot diff is best-effort */ }
+      }
+    }
+
+    // Hierarchy fallback: runs only when screenshot diff is inconclusive (e.g. FLAG_SECURE app
+    // or pixel change below threshold due to re-used resource IDs in scrolled content).
+    if (!pressVerified) {
+      const postPressClickable = await readScreen(ctx.userId);
+      if (postPressClickable.length !== prePressCount) {
+        pressVerified = true;
+      } else {
+        const postPressLabels = new Set(postPressClickable.map((el) => el.label));
+        if ([...postPressLabels].some((l) => !prePressLabels.has(l))) pressVerified = true;
+        if (!pressVerified) {
+          const postPressResourceIds = new Set(
+            postPressClickable.map((el) => el.resourceId).filter((id): id is string => !!id),
+          );
+          if ([...postPressResourceIds].some((id) => !prePressResourceIds.has(id))) pressVerified = true;
+          if (!pressVerified && prePressResourceIds.size > 0) {
+            if ([...prePressResourceIds].some((id) => !postPressResourceIds.has(id))) pressVerified = true;
+          }
         }
       }
     }
