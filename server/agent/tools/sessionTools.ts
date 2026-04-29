@@ -286,12 +286,18 @@ export const sessionsSendTool: AgentTool = {
     // ────────────────────────────────────────────────────────────────────────
 
     try {
+      const sessionsInput: Record<string, unknown> = {
+        source: "sessions_send",
+        channel: ctx.channel || "agent",
+      };
+      if (ctx.channel) sessionsInput.originChannel = ctx.channel;
+      if (ctx.discordChannelId) sessionsInput.originDiscordChannelId = ctx.discordChannelId;
       const jobId = await submitAgentJob({
         userId: ctx.userId,
         agentType,
         title,
         prompt,
-        input: { source: "sessions_send", channel: ctx.channel || "agent" },
+        input: sessionsInput,
       });
 
       console.log(

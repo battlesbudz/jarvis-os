@@ -147,12 +147,15 @@ Do NOT use for: quick one-sentence answers, reading today's tasks, anything answ
       // GPT mini for each sub-agent workload (research/planning → gpt-4.1-mini,
       // writing/email → gpt-4o-mini).
       const routedModel = getModelForJobType(agentType as AgentJobType);
+      const jobInput: Record<string, unknown> = routedModel ? { model: routedModel } : {};
+      if (ctx.channel) jobInput.originChannel = ctx.channel;
+      if (ctx.discordChannelId) jobInput.originDiscordChannelId = ctx.discordChannelId;
       const jobId = await submitAgentJob({
         userId: ctx.userId,
         agentType: agentType as AgentJobType,
         title,
         prompt,
-        input: routedModel ? { model: routedModel } : undefined,
+        input: jobInput,
       });
       console.log(
         `[${ctx.channel || "Coach"}] queue_background_job type=${agentType} job=${jobId} title="${title.slice(0, 60)}"`,
