@@ -901,12 +901,18 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
       let streamingFailed = false;
       const discordChannelId = message.channelId;
       const storedSessionId = await getCoachSession(userId, "Discord");
+      const onProgressMessage = (msg: string) => {
+        if (placeholder && !streamBuf) {
+          placeholder.edit(`⏳ *${msg}*`).catch(() => {});
+        }
+      };
       try {
         result = await runCoachAgent({
           userId,
           userText: fullUserText,
           channelName: namedAgent ? `Discord #${namedAgent.name.toLowerCase()}` : channelLabel,
           onToken,
+          onProgressMessage,
           discordGuildId,
           discordChannelId,
           sdkSessionId: storedSessionId,
@@ -939,6 +945,7 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
           discordGuildId,
           discordChannelId,
           sdkSessionId: storedSessionId,
+          onProgressMessage,
           // no onToken → forces non-streaming path
         });
       }

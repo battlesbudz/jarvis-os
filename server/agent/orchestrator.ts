@@ -49,6 +49,10 @@ export interface OrchestratorInput {
   maxRetries?: number;
   /** Progress callback called when each sub-task completes */
   onSubtaskComplete?: (index: number, total: number, taskLabel: string, passed: boolean) => void;
+  /** Optional heartbeat callback fired before each sub-task starts (from the 2nd sub-task
+   *  onwards) so callers can surface "Still working…" messages to the user without
+   *  blocking the execution loop. */
+  onProgressMessage?: (message: string) => void;
 }
 
 export interface OrchestratorResult {
@@ -260,6 +264,7 @@ async function executeSubTask(
   dependencyResults: SubTaskResult[],
   correctionContext?: string,
   maxCompletionTokens?: number,
+  onProgressMessage?: (message: string) => void,
 ): Promise<string> {
   const depContext = dependencyResults.length > 0
     ? "\n\nContext from prior sub-tasks:\n" +
@@ -279,6 +284,7 @@ async function executeSubTask(
     context: toolContext,
     maxTurns: 4,
     maxCompletionTokens: maxCompletionTokens ?? 1500,
+    onProgressMessage,
   });
 
   return result.reply || "(no result)";
@@ -339,7 +345,7 @@ function isRunnersUpRequest(text: string): boolean {
 }
 
 export async function runOrchestrator(input: OrchestratorInput): Promise<OrchestratorResult> {
-  const { userId, userRequest, systemContext, tools, toolContext, maxCompletionTokens, maxRetries: maxRetriesOverride, onSubtaskComplete } = input;
+  const { userId, userRequest, systemContext, tools, toolContext, maxCompletionTokens, maxRetries: maxRetriesOverride, onSubtaskComplete, onProgressMessage } = input;
   const MAX_RETRIES = resolveMaxRetries(maxRetriesOverride);
 
   const traceId = `orch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -415,6 +421,13 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<Orchest
       .map((depId) => completedResults.get(depId))
       .filter((r): r is SubTaskResult => r !== undefined);
 
+    // Fire progress heartbeat before each sub-task after the first so the user
+    // knows the agent is still working on a multi-step plan.
+    const stepIndex = completedResults.size + 1;
+    if (stepIndex > 1 && onProgressMessage) {
+      onProgressMessage(`Still working — on step ${stepIndex} of ${subTasks.length}`);
+    }
+
     let taskResult = "(no result)";
     let finalPassed = false;
     let retries = 0;
@@ -423,7 +436,7 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<Orchest
 
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
-        taskResult = await executeSubTask(task, tools, toolContext, depResults, correctionContext, maxCompletionTokens);
+        taskResult = await executeSubTask(task, tools, toolContext, depResults, correctionContext, maxCompletionTokens, onProgressMessage);
       } catch (err) {
         taskResult = `Execution error: ${err instanceof Error ? err.message : String(err)}`;
       }

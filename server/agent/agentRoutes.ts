@@ -664,6 +664,14 @@ export function registerAgentRoutes(app: Express): void {
                 );
               }
             },
+            onProgressMessage: (message: string) => {
+              if (!res.writableEnded) {
+                console.debug(`[AgentRoutes/SSE] progress: ${message}`);
+                res.write(
+                  `data: ${JSON.stringify({ type: "progress", message })}\n\n`,
+                );
+              }
+            },
           });
 
           // Persist user message + assistant reply to the permanent history table.
