@@ -1560,7 +1560,28 @@ function scoreElement(element: ScreenElement, query: string): number {
   return element.clickable ? textScore + 1 : textScore;
 }
 
-interface ClickableElement { label: string; x: number; y: number }
+interface ClickableElement {
+  label: string;
+  x: number;
+  y: number;
+  resourceId?: string;
+  contentDesc?: string;
+}
+
+function matchStringScore(field: string, query: string): number {
+  const f = field.toLowerCase();
+  const q = query.toLowerCase().trim();
+  if (!f || !q) return 0;
+  if (f === q) return 100;
+  if (f.startsWith(q)) return 80;
+  if (f.includes(q)) return 60;
+  const words = q.split(/\s+/).filter(Boolean);
+  if (words.length > 1) {
+    if (words.every((w) => f.includes(w))) return 50;
+    if (words.some((w) => f.includes(w))) return 30;
+  }
+  return 0;
+}
 
 function findBestElement(
   clickable: ClickableElement[],
@@ -1569,7 +1590,15 @@ function findBestElement(
   let best: ClickableElement | null = null;
   let bestScore = 0;
   for (const el of clickable) {
-    const score = matchScore(el.label, targetDescription);
+    const resourceIdLocal = el.resourceId?.includes("/")
+      ? (el.resourceId.split("/").pop() ?? "")
+      : (el.resourceId ?? "");
+    const score = Math.max(
+      matchStringScore(el.label, targetDescription),
+      el.resourceId ? matchStringScore(el.resourceId, targetDescription) : 0,
+      matchStringScore(resourceIdLocal, targetDescription),
+      el.contentDesc ? matchStringScore(el.contentDesc, targetDescription) : 0,
+    );
     if (score > bestScore) {
       bestScore = score;
       best = el;
@@ -1598,10 +1627,20 @@ async function readScreen(userId: string): Promise<ClickableElement[]> {
   const d = res.data as Record<string, unknown>;
   const clickable = d.clickable;
   if (!Array.isArray(clickable)) return [];
-  return clickable.filter(
-    (el): el is ClickableElement =>
-      el && typeof el.label === "string" && typeof el.x === "number" && typeof el.y === "number",
-  );
+  const raw = clickable as Record<string, unknown>[];
+  const valid = raw.filter((el) => {
+    if (!el || typeof el.x !== "number" || typeof el.y !== "number") return false;
+    const hasLabel = typeof el.label === "string" && (el.label as string).length > 0;
+    const hasResourceId = typeof el.resource_id === "string" && (el.resource_id as string).length > 0;
+    return hasLabel || hasResourceId;
+  });
+  return valid.map((el) => ({
+    label: typeof el.label === "string" ? el.label : "",
+    x: el.x as number,
+    y: el.y as number,
+    resourceId: typeof el.resource_id === "string" && el.resource_id ? el.resource_id : undefined,
+    contentDesc: typeof el.content_desc === "string" && el.content_desc ? el.content_desc : undefined,
+  }));
 }
 
 export const androidTapElementTool: AgentTool = {
