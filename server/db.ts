@@ -1467,6 +1467,10 @@ export async function ensureTablesExist() {
         PRIMARY KEY (user_id, app_package)
       )
     `);
+    await db.execute(sql`
+      ALTER TABLE search_bar_locations
+        ADD COLUMN IF NOT EXISTS discovered_resource_id VARCHAR(256)
+    `);
 
     console.log("Database tables verified");
   } catch (error) {

@@ -336,16 +336,34 @@ interface SearchBarCacheEntry {
 }
 const searchBarCoordCache = new Map<string, SearchBarCacheEntry>();
 
+// Learned resource-ID registry — keyed by app package (global, not per-user,
+// because resource IDs are determined by the app, not the user).
+// Populated from DB on startup and updated whenever auto-discovery succeeds.
+// This map is intentionally NOT cleared by the stale-cache retry path so that
+// the learned resource ID can be tried again even after coordinate invalidation.
+export const learnedResourceIds = new Map<string, string>();
+
 // Seed the in-memory cache from the DB immediately when this module is first loaded.
 // The promise is awaited before the first cache read in android_search_in_app so that
 // the very first search after a restart already benefits from persisted coordinates.
 const searchBarCacheReady: Promise<void> = (async () => {
   try {
-    const rows = await db.select().from(searchBarLocations);
+    // Sort descending by updatedAt so that, for each appPackage, the most
+    // recently confirmed resource_id wins when building the learned registry
+    // (deterministic even when multiple users have conflicting IDs).
+    const rows = await db
+      .select()
+      .from(searchBarLocations)
+      .orderBy(drizzleSql`updated_at DESC`);
     for (const row of rows) {
       searchBarCoordCache.set(`${row.userId}:${row.appPackage}`, { x: row.coordinatesX, y: row.coordinatesY });
+      // First-write wins because rows are ordered newest-first, so the
+      // most recent resource_id for each package is set exactly once.
+      if (row.discoveredResourceId && !learnedResourceIds.has(row.appPackage)) {
+        learnedResourceIds.set(row.appPackage, row.discoveredResourceId);
+      }
     }
-    console.log(`[searchBarCache] seeded ${rows.length} entr${rows.length === 1 ? "y" : "ies"} from DB`);
+    console.log(`[searchBarCache] seeded ${rows.length} entr${rows.length === 1 ? "y" : "ies"} from DB (${learnedResourceIds.size} learned resource IDs)`);
   } catch (err) {
     console.warn("[searchBarCache] DB seed failed (non-fatal):", err);
   }
@@ -1137,6 +1155,30 @@ export const androidSearchInAppTool: AgentTool = {
         if (hint?.iconOnly) return { found: false, x: null, y: null };
 
         if (!hint) {
+          // ── Strategy 1.5: learned resource ID (auto-discovered from a prior run) ──
+          // Before running the expensive full-heuristic scorer, try the resource ID
+          // that was persisted the last time auto-discovery succeeded for this app.
+          // This makes repeat searches on previously-unknown apps as fast as
+          // APP_SEARCH_HINTS lookups without requiring a manual registry promotion.
+          const learnedRid = learnedResourceIds.get(appPackage);
+          if (learnedRid) {
+            for (const node of nodes) {
+              const rid = (
+                typeof node.resource_id === "string" ? node.resource_id :
+                typeof node.resourceId === "string" ? node.resourceId :
+                typeof node["resource-id"] === "string" ? (node["resource-id"] as string) :
+                ""
+              ).toLowerCase();
+              if (rid.includes(learnedRid.toLowerCase())) {
+                const coords = extractNodeCoords(node);
+                console.log(`[android_search_in_app] learned resource_id hit: app="${appPackage}" resource_id="${learnedRid}"`);
+                if (coords) return { found: true, x: coords.x, y: coords.y, discoveredResourceId: learnedRid };
+                return { found: true, x: null, y: null, discoveredResourceId: learnedRid };
+              }
+            }
+            console.log(`[android_search_in_app] learned resource_id "${learnedRid}" not in tree for ${appPackage} — falling back to heuristics`);
+          }
+
           // ── Strategy 3b: heuristic auto-discovery for unknown apps ────────
           // Use ranked multi-signal scoring rather than naive "first node that
           // mentions 'search'" — reduces false positives and surfaces the resource
@@ -1416,34 +1458,45 @@ export const androidSearchInAppTool: AgentTool = {
         };
       }
 
-      // ── Cache write: persist newly discovered coordinates ─────────────────────
-      // Compare against the current map entry (may have been updated by the cache-hit
-      // path above). Write only when: (a) no entry exists yet, or (b) the coords
-      // differ by more than 30 px (stale cache — the discovery loop found new ones).
-      // This handles first-time writes, stale-cache refreshes, and avoids no-op rewrites.
+      // ── Cache write: persist newly discovered coordinates and resource ID ────────
+      // Write conditions:
+      //   (a) No entry yet (first discovery for this user+package)
+      //   (b) Coordinates drifted > 30 px (layout change — refresh the cache entry)
+      //   (c) A newly auto-discovered resource_id is available and not yet stored
+      // All three cases mirror to the DB and update the learned-resource-id registry.
       if (searchX !== null && searchY !== null) {
         const currentEntry = searchBarCoordCache.get(coordCacheKey);
         const isFirstWrite = !currentEntry;
         const coordsDiffer = currentEntry &&
           (Math.abs(searchX - currentEntry.x) > 30 || Math.abs(searchY - currentEntry.y) > 30);
-        if (isFirstWrite || coordsDiffer) {
+        const ridIsNew = autoDiscoveredResourceId &&
+          learnedResourceIds.get(appPackage) !== autoDiscoveredResourceId;
+        if (isFirstWrite || coordsDiffer || ridIsNew) {
           searchBarCoordCache.set(coordCacheKey, { x: searchX, y: searchY });
-          console.log(`[${label}] step 2 — ${isFirstWrite ? "cached" : "cache refreshed"}: (${searchX}, ${searchY}) for ${appPackage}`);
+          console.log(`[${label}] step 2 — ${isFirstWrite ? "cached" : "cache refreshed"}: (${searchX}, ${searchY}) for ${appPackage}${autoDiscoveredResourceId ? ` resource_id="${autoDiscoveredResourceId}"` : ""}`);
           // Mirror to DB so the cache survives server restarts.
           const finalX = searchX;
           const finalY = searchY;
+          const finalRid = autoDiscoveredResourceId ?? learnedResourceIds.get(appPackage) ?? null;
+          // Update the in-memory learned registry whenever we have a resource_id.
+          if (finalRid) learnedResourceIds.set(appPackage, finalRid);
           db.insert(searchBarLocations)
-            .values({ userId: ctx.userId, appPackage, coordinatesX: finalX, coordinatesY: finalY })
+            .values({ userId: ctx.userId, appPackage, coordinatesX: finalX, coordinatesY: finalY, discoveredResourceId: finalRid ?? undefined })
             .onConflictDoUpdate({
               target: [searchBarLocations.userId, searchBarLocations.appPackage],
-              set: { coordinatesX: finalX, coordinatesY: finalY, updatedAt: drizzleSql`NOW()` },
+              set: {
+                coordinatesX: finalX,
+                coordinatesY: finalY,
+                ...(finalRid ? { discoveredResourceId: finalRid } : {}),
+                updatedAt: drizzleSql`NOW()`,
+              },
             })
             .catch((err: unknown) => console.warn(`[searchBarCache] DB upsert failed for ${appPackage}:`, err));
         }
       }
 
       const step2Detail = autoDiscoveredResourceId
-        ? `found at (${searchX}, ${searchY}) via auto-discovery; resource_id="${autoDiscoveredResourceId}" — consider adding to APP_SEARCH_HINTS["${appPackage}"]`
+        ? `found at (${searchX}, ${searchY}) via auto-discovery; resource_id="${autoDiscoveredResourceId}" — persisted to learned registry (consider also adding to APP_SEARCH_HINTS["${appPackage}"])`
         : `found at (${searchX}, ${searchY})`;
       stepLog.push({ step: 2, outcome: "success", detail: step2Detail });
       console.log(`[${label}] step 2 complete — search element found at (${searchX}, ${searchY})${autoDiscoveredResourceId ? ` (auto-discovered resource_id="${autoDiscoveredResourceId}")` : ""}`);
