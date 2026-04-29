@@ -861,6 +861,28 @@ class JarvisAccessibilityService : AccessibilityService() {
         dispatchGesture(gesture, null, null)
     }
 
+    // ── Pinch / spread (true simultaneous multi-touch) ───────────────────────
+    // Both pointer strokes share the same GestureDescription so Android injects
+    // them as simultaneous pointer-down events. Apps that require genuine
+    // multi-touch (Maps, Photos, PDFs) will correctly register the pinch.
+    fun performPinch(
+        p1x1: Float, p1y1: Float, p1x2: Float, p1y2: Float,
+        p2x1: Float, p2y1: Float, p2x2: Float, p2y2: Float,
+        durationMs: Long
+    ) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return
+        val clampedDuration = durationMs.coerceIn(50, 3000)
+        val path1 = Path().apply { moveTo(p1x1, p1y1); lineTo(p1x2, p1y2) }
+        val path2 = Path().apply { moveTo(p2x1, p2y1); lineTo(p2x2, p2y2) }
+        val stroke1 = GestureDescription.StrokeDescription(path1, 0, clampedDuration)
+        val stroke2 = GestureDescription.StrokeDescription(path2, 0, clampedDuration)
+        val gesture = GestureDescription.Builder()
+            .addStroke(stroke1)
+            .addStroke(stroke2)
+            .build()
+        dispatchGesture(gesture, null, null)
+    }
+
     // ── Key press ────────────────────────────────────────────────────────────
     // Returns true if the key was recognised and the action was dispatched,
     // false for unknown keys.  select_all and delete are intentionally absent

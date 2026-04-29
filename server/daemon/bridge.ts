@@ -27,6 +27,7 @@ export type DaemonOp =
   | { type: "android_tap"; x: number; y: number }
   | { type: "android_type"; text: string; submit?: boolean }
   | { type: "android_swipe"; x1: number; y1: number; x2: number; y2: number; durationMs?: number }
+  | { type: "android_pinch"; pointer1: { x1: number; y1: number; x2: number; y2: number }; pointer2: { x1: number; y1: number; x2: number; y2: number }; durationMs?: number }
   | { type: "android_press_key"; key: "back" | "home" | "recents" | "volume_up" | "volume_down" | "enter" | "select_all" | "delete" }
 
   | { type: "android_file_list"; path: string }
@@ -544,6 +545,7 @@ export async function sendDaemonOp(
       android_sms_send:       "android_sms",
       android_screen_record:  "android_screen_record",
       android_view_hierarchy: "android_read_screen",
+      android_pinch:          "android_tap_type",
     };
     const requiredPerm = OP_PERM_MAP[op.type];
     if (requiredPerm) {

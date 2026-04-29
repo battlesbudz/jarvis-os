@@ -2392,8 +2392,9 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
 // ── android_pinch_element ──────────────────────────────────────────────────────
 // Pinch-to-zoom gesture centred on a named element, without requiring raw pixel
 // coordinates. Resolves the element via the same ScreenMap cache used by
-// android_tap_element and android_swipe_element, then fires two sequential
-// android_swipe operations that simulate the two fingers of a pinch gesture.
+// android_tap_element and android_swipe_element, then fires a single
+// android_pinch op that injects both pointer streams simultaneously so that
+// apps which require genuine multi-touch (Maps, Photos, PDFs, etc.) respond.
 //
 // Geometry (diagonal pinch along the 45° axis through the element centre):
 //   zoom_in  (spread): finger 1 moves from centre → upper-left
@@ -2406,7 +2407,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
 export const androidPinchElementTool: AgentTool = {
   name: "android_pinch_element",
   description: `Perform a pinch-to-zoom (two-finger spread or pinch) gesture on an Android screen element by name instead of raw coordinates.
-Accepts a human-readable label or description string, fuzzy-matches it against the current ScreenMap (calling android_screen_understand internally, with a 500 ms cache hit if available), and fires two sequential android_swipe gestures that simulate the two fingers of a pinch gesture centred on the best-matching element.
+Accepts a human-readable label or description string, fuzzy-matches it against the current ScreenMap (calling android_screen_understand internally, with a 500 ms cache hit if available), and fires a single android_pinch op that moves both pointer streams simultaneously — required by apps such as Google Maps, Photos, and PDF viewers that need genuine multi-touch input.
 
 Use this tool to zoom in or out on maps, photos, PDFs, or any element that responds to pinch gestures:
   - "zoom in on the map" — spreads two fingers outward on the map element
@@ -2419,11 +2420,11 @@ Parameters:
   - scale_factor: multiplier controlling how far the fingers travel from the element centre (default 2.0; higher = larger gesture)
   - max_age_ms: max age of cached ScreenMap to reuse (default 500, 0 = always fresh)
 
-The gesture is simulated as two sequential diagonal swipe strokes along the 45° axis through the element centre. True simultaneous multi-touch is not yet supported by the daemon; sequential strokes work for most zoom-capable views.
+Both fingers move simultaneously in a single GestureDescription so the gesture registers correctly in all zoom-capable views.
 
-Returns the matched element details and the swipe coordinates used for both fingers.
+Returns the matched element details and the coordinates used for both pointers.
 
-Requires: android_screenshot and android_read_screen permissions (same as android_screen_understand), plus android_tap_type permission for the swipe actions.`,
+Requires: android_screenshot and android_read_screen permissions (same as android_screen_understand), plus android_tap_type permission for the gesture.`,
   parameters: {
     type: "object",
     properties: {
@@ -2590,34 +2591,29 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       finger2 = { x1: farLowerRight.x, y1: farLowerRight.y, x2: centreRounded.x, y2: centreRounded.y };
     }
 
-    // ── Fire the two swipe strokes sequentially ───────────────────────────────
+    // ── Fire both pointer streams simultaneously via android_pinch ────────────
+    // Using a single android_pinch op ensures both fingers are injected into the
+    // same GestureDescription so the gesture registers as true multi-touch.
+    // Sequential android_swipe calls were replaced because most apps (Maps,
+    // Photos, PDFs) require simultaneous pointer down events to recognise a pinch.
     const SWIPE_DURATION_MS = 300;
 
-    const result1 = await sendDaemonOp(
+    const pinchResult = await sendDaemonOp(
       ctx.userId,
-      { type: "android_swipe", x1: finger1.x1, y1: finger1.y1, x2: finger1.x2, y2: finger1.y2, durationMs: SWIPE_DURATION_MS },
+      {
+        type: "android_pinch",
+        pointer1: { x1: finger1.x1, y1: finger1.y1, x2: finger1.x2, y2: finger1.y2 },
+        pointer2: { x1: finger2.x1, y1: finger2.y1, x2: finger2.x2, y2: finger2.y2 },
+        durationMs: SWIPE_DURATION_MS,
+      },
       15000,
     );
 
-    if (!result1.ok) {
+    if (!pinchResult.ok) {
       return {
         ok: false,
-        content: `Matched element "${bestElement.label}" at (${center_x}, ${center_y}) but the first finger swipe failed: ${result1.error || "unknown error"}`,
-        label: "android_pinch_element: finger1 swipe failed",
-      };
-    }
-
-    const result2 = await sendDaemonOp(
-      ctx.userId,
-      { type: "android_swipe", x1: finger2.x1, y1: finger2.y1, x2: finger2.x2, y2: finger2.y2, durationMs: SWIPE_DURATION_MS },
-      15000,
-    );
-
-    if (!result2.ok) {
-      return {
-        ok: false,
-        content: `Matched element "${bestElement.label}" at (${center_x}, ${center_y}) but the second finger swipe failed: ${result2.error || "unknown error"}`,
-        label: "android_pinch_element: finger2 swipe failed",
+        content: `Matched element "${bestElement.label}" at (${center_x}, ${center_y}) but the pinch gesture failed: ${pinchResult.error || "unknown error"}`,
+        label: "android_pinch_element: pinch failed",
       };
     }
 
@@ -2640,8 +2636,8 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
           action,
           scale_factor: scaleFactor,
           reach_px: reach,
-          finger1: { from: { x: finger1.x1, y: finger1.y1 }, to: { x: finger1.x2, y: finger1.y2 } },
-          finger2: { from: { x: finger2.x1, y: finger2.y1 }, to: { x: finger2.x2, y: finger2.y2 } },
+          pointer1: { from: { x: finger1.x1, y: finger1.y1 }, to: { x: finger1.x2, y: finger1.y2 } },
+          pointer2: { from: { x: finger2.x1, y: finger2.y1 }, to: { x: finger2.x2, y: finger2.y2 } },
         },
       }),
       label: `${action === "zoom_in" ? "Zoomed in" : "Zoomed out"} on "${bestElement.label}" (reach=${reach}px)`,

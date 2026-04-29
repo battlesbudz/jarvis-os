@@ -50,6 +50,7 @@ object OpHandler {
                 "android_tap" -> handleTap(op)
                 "android_type" -> handleType(op)
                 "android_swipe" -> handleSwipe(op)
+                "android_pinch" -> handlePinch(op)
                 "android_press_key" -> handlePressKey(op)
                 "android_file_list" -> handleFileList(op)
                 "android_file_read" -> handleFileRead(op)
@@ -596,6 +597,39 @@ object OpHandler {
             ?: return OpResult(false, error = "Accessibility service not running.")
         svc.performSwipe(x1.toFloat(), y1.toFloat(), x2.toFloat(), y2.toFloat(), durationMs)
         return OpResult(true, data = JSONObject().put("swiped", "${x1.toInt()},${y1.toInt()} → ${x2.toInt()},${y2.toInt()}"))
+    }
+
+    private fun handlePinch(op: JSONObject): OpResult {
+        val p1 = op.optJSONObject("pointer1")
+            ?: return OpResult(false, error = "pointer1 required")
+        val p2 = op.optJSONObject("pointer2")
+            ?: return OpResult(false, error = "pointer2 required")
+        val p1x1 = p1.optDouble("x1", Double.NaN)
+        val p1y1 = p1.optDouble("y1", Double.NaN)
+        val p1x2 = p1.optDouble("x2", Double.NaN)
+        val p1y2 = p1.optDouble("y2", Double.NaN)
+        val p2x1 = p2.optDouble("x1", Double.NaN)
+        val p2y1 = p2.optDouble("y1", Double.NaN)
+        val p2x2 = p2.optDouble("x2", Double.NaN)
+        val p2y2 = p2.optDouble("y2", Double.NaN)
+        val durationMs = op.optLong("durationMs", 300L)
+        if (p1x1.isNaN() || p1y1.isNaN() || p1x2.isNaN() || p1y2.isNaN() ||
+            p2x1.isNaN() || p2y1.isNaN() || p2x2.isNaN() || p2y2.isNaN()) {
+            return OpResult(false, error = "pointer1 and pointer2 must each have x1, y1, x2, y2")
+        }
+        val svc = JarvisAccessibilityService.instance
+            ?: return OpResult(false, error = "Accessibility service not running.")
+        svc.performPinch(
+            p1x1.toFloat(), p1y1.toFloat(), p1x2.toFloat(), p1y2.toFloat(),
+            p2x1.toFloat(), p2y1.toFloat(), p2x2.toFloat(), p2y2.toFloat(),
+            durationMs
+        )
+        return OpResult(
+            true,
+            data = JSONObject()
+                .put("pointer1", "${p1x1.toInt()},${p1y1.toInt()} → ${p1x2.toInt()},${p1y2.toInt()}")
+                .put("pointer2", "${p2x1.toInt()},${p2y1.toInt()} → ${p2x2.toInt()},${p2y2.toInt()}")
+        )
     }
 
     private fun handlePressKey(op: JSONObject): OpResult {
