@@ -10,16 +10,16 @@ export const githubCapability: Capability = {
   integrationDependencies: [
     {
       integrationId: "github",
-      label: "GitHub (Personal Access Token)",
+      label: "GitHub (OAuth or Personal Access Token)",
       toolNames: ["list_github_prs", "get_github_pr", "merge_github_pr"],
     },
   ],
   async healthCheck(context) {
     if (!context?.userId) return { healthy: true };
     const { hasGitHubPAT } = await import("../integrations/github");
-    const hasPat = await hasGitHubPAT(context.userId).catch(() => false);
-    if (!hasPat) {
-      return { healthy: false, reason: "GitHub PAT not configured — add a Personal Access Token in Settings → GitHub" };
+    const hasToken = await hasGitHubPAT(context.userId).catch(() => false);
+    if (!hasToken) {
+      return { healthy: false, reason: "GitHub not connected — use 'Connect with GitHub' or add a Personal Access Token in Settings → GitHub" };
     }
     return { healthy: true };
   },
