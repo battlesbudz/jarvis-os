@@ -1,4 +1,4 @@
-import type { AgentTool } from "../types";
+import type { AgentTool, ToolArgs } from "../types";
 import { createDiscordChannel, registerNamedAgent } from "../../discord/manager";
 import { db } from "../../db";
 import { discordAgents } from "@shared/schema";
@@ -58,19 +58,20 @@ export const setupNamedAgentTool: AgentTool = {
     },
     required: ["role"],
   },
-  async execute(args: {
-    name?: string;
-    role: string;
-    persona?: string;
-    loopEnabled?: boolean;
-    loopIntervalMinutes?: number;
-    loopPrompt?: string;
-  }, ctx) {
+  async execute(args: ToolArgs, ctx) {
     const { userId } = ctx;
+    const typedArgs = args as {
+      name?: string;
+      role: string;
+      persona?: string;
+      loopEnabled?: boolean;
+      loopIntervalMinutes?: number;
+      loopPrompt?: string;
+    };
 
-    const role = args.role || "custom";
-    const name = args.name || DEFAULT_NAMES[role] || "Agent";
-    const persona = args.persona || DEFAULT_PERSONAS[role] || DEFAULT_PERSONAS.custom;
+    const role = typedArgs.role || "custom";
+    const name = typedArgs.name || DEFAULT_NAMES[role] || "Agent";
+    const persona = typedArgs.persona || DEFAULT_PERSONAS[role] || DEFAULT_PERSONAS.custom;
     const channelName = `${name.toLowerCase()}-${role}`;
 
     // Create the dedicated channel
@@ -78,7 +79,7 @@ export const setupNamedAgentTool: AgentTool = {
       channelName,
       topic: `${name} — ${role} agent. ${persona.slice(0, 100)}`,
       categoryName: "🧠 Jarvis Workspace",
-      pinMessage: `**${name} — ${role.charAt(0).toUpperCase() + role.slice(1)} Agent**\n\n${persona}\n\n_Message ${name} here to get started. ${args.loopEnabled ? `I'll also proactively post updates every ${args.loopIntervalMinutes ?? 60} minutes.` : "I respond to your messages."}_`,
+      pinMessage: `**${name} — ${role.charAt(0).toUpperCase() + role.slice(1)} Agent**\n\n${persona}\n\n_Message ${name} here to get started. ${typedArgs.loopEnabled ? `I'll also proactively post updates every ${typedArgs.loopIntervalMinutes ?? 60} minutes.` : "I respond to your messages."}_`,
     });
 
     const channelId = channelResult.channelId;
@@ -90,13 +91,13 @@ export const setupNamedAgentTool: AgentTool = {
       persona,
       channelId,
       channelName,
-      loopEnabled: args.loopEnabled,
-      loopIntervalMinutes: args.loopIntervalMinutes,
-      loopPrompt: args.loopPrompt,
+      loopEnabled: typedArgs.loopEnabled,
+      loopIntervalMinutes: typedArgs.loopIntervalMinutes,
+      loopPrompt: typedArgs.loopPrompt,
     });
 
-    const loopInfo = args.loopEnabled
-      ? ` The loop is enabled — ${name} will proactively post updates every ${args.loopIntervalMinutes ?? 60} minutes.`
+    const loopInfo = typedArgs.loopEnabled
+      ? ` The loop is enabled — ${name} will proactively post updates every ${typedArgs.loopIntervalMinutes ?? 60} minutes.`
       : "";
 
     return {

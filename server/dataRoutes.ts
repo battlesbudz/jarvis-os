@@ -74,12 +74,14 @@ function registerSimpleJsonCrud(
   });
 }
 
+const _p = (v: string | string[]): string => Array.isArray(v) ? (v[0] ?? "") : v;
+
 export function registerDataRoutes(app: Express): void {
   app.get("/api/data/plans/:date", async (req: Request, res: Response) => {
     try {
       const userId = requireUserId(req, res);
       if (!userId) return;
-      const { date } = req.params;
+      const date = _p(req.params.date);
       const result = await db
         .select()
         .from(schema.plans)
@@ -115,7 +117,7 @@ export function registerDataRoutes(app: Express): void {
     try {
       const userId = requireUserId(req, res);
       if (!userId) return;
-      const { date } = req.params;
+      const date = _p(req.params.date);
       const { data } = req.body;
 
       // Detect goal-tree task completions (was incomplete → now complete)
@@ -373,7 +375,7 @@ export function registerDataRoutes(app: Express): void {
     try {
       const userId = requireUserId(req, res);
       if (!userId) return;
-      const { date } = req.params;
+      const date = _p(req.params.date);
       const result = await db
         .select()
         .from(schema.energyCheckins)
@@ -390,7 +392,7 @@ export function registerDataRoutes(app: Express): void {
     try {
       const userId = requireUserId(req, res);
       if (!userId) return;
-      const { date } = req.params;
+      const date = _p(req.params.date);
       const { data } = req.body;
       await db
         .insert(schema.energyCheckins)
@@ -410,7 +412,7 @@ export function registerDataRoutes(app: Express): void {
     try {
       const userId = requireUserId(req, res);
       if (!userId) return;
-      const { date } = req.params;
+      const date = _p(req.params.date);
       const result = await db
         .select()
         .from(schema.completedCalendarIds)
@@ -427,7 +429,7 @@ export function registerDataRoutes(app: Express): void {
     try {
       const userId = requireUserId(req, res);
       if (!userId) return;
-      const { date } = req.params;
+      const date = _p(req.params.date);
       const { data } = req.body;
       await db
         .insert(schema.completedCalendarIds)

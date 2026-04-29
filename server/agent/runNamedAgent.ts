@@ -300,11 +300,11 @@ export async function runNamedAgent(opts: RunNamedAgentOptions): Promise<NamedAg
 
     // Non-blocking validation: warn if resolved model is not in the known-valid
     // set so misconfigurations surface in logs without breaking agent execution.
-    const KNOWN_MODELS = new Set([
+    const KNOWN_MODELS = new Set<string>([
       ...AVAILABLE_MODELS.map((m) => m.value),
       ...ORCHESTRATOR_MODELS.map((m) => m.value),
     ]);
-    if (!KNOWN_MODELS.has(model)) {
+    if (model && !KNOWN_MODELS.has(model)) {
       console.warn(`[runNamedAgent] agent=${agentId} resolved unknown model "${model}" — continuing`);
     }
 

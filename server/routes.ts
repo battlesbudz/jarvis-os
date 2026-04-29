@@ -59,6 +59,9 @@ import { YoutubeTranscript } from "youtube-transcript/dist/youtube-transcript.es
 import ytSearch from "yt-search";
 import { buildYouTubeContextBlock } from "./utils/youtubeAutoFetch";
 import { getPromptData, setPromptData } from "./coachSessionPromptCache";
+import { markSoulStale } from "./memory/soul";
+
+const _p = (v: string | string[]): string => Array.isArray(v) ? (v[0] ?? "") : v;
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
@@ -391,7 +394,7 @@ export async function buildPlanFromInputs(body: any): Promise<{
     : 'No history available';
 
   const existingText = Array.isArray(existingTasks) && existingTasks.length > 0
-    ? existingTasks.map((t: any) => `- ${t.title} (${t.category}, ${t.priority}${t.completed ? ', done' : ''})`).join('\n')
+    ? existingTasks.map((t: { title: string; category?: string; priority?: string; completed?: boolean }) => `- ${t.title} (${t.category}, ${t.priority}${t.completed ? ', done' : ''})`).join('\n')
     : 'No existing tasks';
 
   const energyDescriptions: Record<number, string> = {
@@ -483,10 +486,10 @@ Return ONLY the JSON object.`;
     const validCategories = ['fitness', 'finance', 'career', 'personal', 'social'];
     const validPriorities = ['high', 'medium', 'low'];
     const tasks = Array.isArray(parsed.tasks)
-      ? parsed.tasks.slice(0, 7).map((t: any) => ({
+      ? parsed.tasks.slice(0, 7).map((t: Record<string, unknown>) => ({
           title: String(t.title || 'Task'),
-          category: validCategories.includes(t.category) ? t.category : 'personal',
-          priority: validPriorities.includes(t.priority) ? t.priority : 'medium',
+          category: validCategories.includes(t.category as string) ? String(t.category) : 'personal',
+          priority: validPriorities.includes(t.priority as string) ? String(t.priority) : 'medium',
           duration: typeof t.duration === 'number' ? t.duration : undefined,
           time: t.time ? String(t.time) : undefined,
           description: t.description ? String(t.description) : undefined,
@@ -649,7 +652,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Public screenshot endpoint — IDs are random/opaque with 30-min TTL (no auth header needed by Image component)
   app.get("/api/daemon/screenshot/:id", (req: Request, res: Response) => {
-    const entry = screenshotStore.get(req.params.id);
+    const entry = screenshotStore.get(_p(req.params.id));
     if (!entry || entry.expires < Date.now()) {
       return res.status(404).json({ error: 'Screenshot not found or expired' });
     }
@@ -1668,8 +1671,8 @@ Rules:
             .where(and(eq(schema.plans.userId, userId), eq(schema.plans.date, todayKey)));
           if (planResult.length === 0) return { result: 'error', label: 'No plan today', detail: 'No plan found for today' };
           const plan: any = planResult[0].data;
-          const tasks: any[] = Array.isArray(plan.tasks) ? plan.tasks : [];
-          const matched = tasks.find((t: any) => !t.completed && fuzzyMatch(args.taskTitle, t.title));
+          const tasks = (Array.isArray(plan.tasks) ? plan.tasks : []) as Array<{ completed: boolean; title: string; notes?: string; id: string }>;
+          const matched = tasks.find((t) => !t.completed && fuzzyMatch(args.taskTitle, t.title));
           if (!matched) return { result: 'error', label: `Task not found`, detail: `Could not find incomplete task matching "${args.taskTitle}"` };
           matched.completed = true;
           const updatedPlan = { ...plan, tasks };
@@ -2264,7 +2267,7 @@ Rules:
             if (!transcriptItems || transcriptItems.length === 0) {
               return { result: 'error', label: 'No transcript available', detail: `The video '${videoId}' does not have a transcript/captions enabled. This is common for music videos or videos where the creator disabled captions.` };
             }
-            const fullText = transcriptItems.map(t => t.text).join(' ').replace(/\s+/g, ' ').trim();
+            const fullText = transcriptItems.map((t) => t.text).join(' ').replace(/\s+/g, ' ').trim();
             return { result: 'success', label: 'Transcript fetched', detail: `Video ID: ${videoId}\nTranscript (${transcriptItems.length} segments, ${fullText.length} chars total):\n\n${fullText}` };
           } catch (err: any) {
             const msg = err?.message || String(err);
@@ -2325,7 +2328,7 @@ Rules:
                 n: 1,
                 size: preferredSize,
               });
-              b64 = response.data[0]?.b64_json;
+              b64 = response.data?.[0]?.b64_json;
             } catch (sizeErr) {
               // If the preferred size fails, fall back to square 1024x1024
               if (preferredSize !== '1024x1024') {
@@ -2336,7 +2339,7 @@ Rules:
                   n: 1,
                   size: '1024x1024',
                 });
-                b64 = fallback.data[0]?.b64_json;
+                b64 = fallback.data?.[0]?.b64_json;
               } else {
                 throw sizeErr;
               }
@@ -2439,10 +2442,13 @@ Answer (yes/no):`,
   }
 
   app.post("/api/coach/chat", async (req: Request, res: Response) => {
+    let userId: string | null | undefined;
+    let cleanupRun: () => void = () => {};
+    let stopKeepalive: () => void = () => {};
     try {
       const { messages, goals, stats, history, calendarEvents, lifeContext, gmailItems, gmailConnected, slackMessages, slackConnected, coachingMode, telegramMessages, telegramConnected, sdkSessionId: incomingAppSessionId, originChannel: rawOriginChannel } = req.body;
       const originChannel: string = (typeof rawOriginChannel === "string" && rawOriginChannel.trim()) ? rawOriginChannel.trim().toLowerCase() : "appchat";
-      const userId = req.userId;
+      userId = req.userId;
 
       if (!messages || !Array.isArray(messages)) {
         return res.status(400).json({ error: "messages array is required" });
@@ -2561,7 +2567,7 @@ Answer (yes/no):`,
           } catch {}
         }
 
-        soulBlock = await getSoulPromptBlock(userId);
+        soulBlock = await getSoulPromptBlock(userId ?? "");
 
         emotionalStateBlock = '';
         if (userId) {
@@ -2665,7 +2671,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
 
       const chatMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
         { role: "system", content: daemonAbsoluteRule + systemPrompt + proactiveQuestionContext + "\n\nYou can take actions on the user's behalf using the available tools. When a user asks you to add a task, log progress, update their context, etc., use the appropriate tool. Respond naturally — do not mention 'tool calls' or 'functions' to the user. Just confirm what you did conversationally." + (process.env.TAVILY_API_KEY ? "\n\nYou also have a web_search tool. Use it whenever the user asks about current events, live data (weather, stock prices, sports scores, news), or anything requiring real-time information you wouldn't know. Cite your sources naturally in your response." : "") + "\n\nYou have a jarvis_self_diagnose tool. Call it whenever: (a) the user asks about your health, why something isn't working, 'are you OK?', 'what's wrong?', 'why did that fail?', or any question about system reliability; OR (b) you notice a pattern of repeated tool failures in this conversation (2+ different tools returning errors in the same session — call this proactively before the user notices to surface the root cause). It runs a full subsystem check and returns a plain-English diagnosis. When you proactively diagnose yourself, briefly tell the user you noticed something was off and present the diagnosis without being asked." + "\n\nSELF-INSPECTION & CODE PROPOSALS: You have three self-edit tools — list_source_files, read_source_file, and propose_code_change. Use them when: (a) the user asks you to 'look at your own code', 'inspect yourself', 'improve your tools', or 'fix a bug you noticed'; OR (b) you encounter a repeated failure and believe you can fix it with a targeted code change. Workflow: (1) call list_source_files to find the relevant file, (2) call read_source_file to read it fully, (3) call propose_code_change with the complete improved file content and a plain-English reason. The proposal is saved for user review — you NEVER write files directly. Keep proposals minimal and targeted: fix one specific issue per proposal. Never propose changes to the approval gate itself (codeProposalsRoutes.ts). After proposing, tell the user a suggestion is waiting in the Code Proposals screen for their review." },
-        ...messages.map((m: any, idx: number) => {
+        ...messages.map((m: { role: string; content: string }, idx: number) => {
           const isLast = idx === messages.length - 1;
           const content = (isLast && m.role === 'user' && youtubeCtxBlock)
             ? m.content + youtubeCtxBlock
@@ -2689,7 +2695,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
       const abortController = new AbortController();
       const { signal } = abortController;
       activeCoachRuns.set(runId, { controller: abortController, userId: userId ?? '' });
-      const cleanupRun = () => {
+      cleanupRun = () => {
         abortController.abort();
         activeCoachRuns.delete(runId);
       };
@@ -2718,7 +2724,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
           }
         }, 10000);
       };
-      const stopKeepalive = () => {
+      stopKeepalive = () => {
         if (keepaliveInterval) { clearInterval(keepaliveInterval); keepaliveInterval = null; }
       };
       // Clean up if the client disconnects mid-stream
@@ -2893,7 +2899,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
           // Model returned tool calls — execute them all, then loop for next turn
           toolMessages.push(choice.message);
 
-          const hasWebSearch = choice.message.tool_calls.some(tc => tc.function.name === 'web_search');
+          const hasWebSearch = choice.message.tool_calls.some(tc => tc.type === 'function' && tc.function.name === 'web_search');
           if (hasWebSearch && !res.headersSent) {
             res.setHeader('Content-Type', 'text/event-stream');
             res.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -2904,6 +2910,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
           }
 
           for (const tc of choice.message.tool_calls) {
+            if (tc.type !== 'function') continue;
             let args: any = {};
             try { args = JSON.parse(tc.function.arguments); } catch {}
 
@@ -3420,7 +3427,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
   app.delete("/api/webchat/invite/:token", authMiddleware, async (req: Request, res: Response) => {
     try {
       const userId = req.userId!;
-      const { token } = req.params;
+      const token = _p(req.params.token);
 
       const [row] = await db
         .select()
@@ -4016,7 +4023,7 @@ Only return the JSON object, no extra text.`;
       const goalList = Array.isArray(goals) ? goals : [];
 
       const tasksText = taskList.length > 0
-        ? taskList.map((t: any) => `- [${t.priority || 'medium'}] ${t.title}${t.description ? ': ' + t.description : ''} (id: ${t.id})`).join('\n')
+        ? taskList.map((t: { priority?: string; title: string; description?: string; id: string }) => `- [${t.priority || 'medium'}] ${t.title}${t.description ? ': ' + t.description : ''} (id: ${t.id})`).join('\n')
         : 'No tasks planned yet';
 
       const eventsText = eventList.length > 0
@@ -4164,7 +4171,7 @@ Return ONLY the JSON object.`;
       }
 
       const { textToSpeech } = await import('./replit_integrations/audio/client');
-      const audioBuffer = await textToSpeech(trimmedText, resolvedVoice, 'mp3');
+      const audioBuffer = await textToSpeech(trimmedText, (resolvedVoice ?? "nova") as "alloy" | "echo" | "fable" | "onyx" | "nova" | "shimmer", 'mp3');
       res.json({ audio: audioBuffer.toString('base64') });
     } catch (error) {
       console.error("Error generating speech:", error);
@@ -4239,7 +4246,7 @@ Return ONLY the JSON object.`;
         : "nova";
 
       const stream = isElevenLabs && process.env.ELEVENLABS_API_KEY
-        ? await elevenlabsTtsStream(trimmedText, resolvedVoice, "eleven_turbo_v2_5", elLatency, streamAbort.signal)
+        ? await elevenlabsTtsStream(trimmedText, resolvedVoice, "eleven_turbo_v2_5", elLatency as 0 | 1 | 2 | 3 | 4, streamAbort.signal)
         : await textToSpeechStream(trimmedText, openaiVoice, streamAbort.signal);
 
       for await (const base64Chunk of stream) {
@@ -4277,7 +4284,7 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const { id } = req.params;
+      const id = _p(req.params.id);
       const { status } = req.body;
       if (!status || !['done', 'skipped', 'pending'].includes(status)) {
         return res.status(400).json({ error: "status must be 'done', 'skipped', or 'pending'" });
@@ -4297,7 +4304,7 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const { id } = req.params;
+      const id = _p(req.params.id);
       await db
         .delete(schema.commitments)
         .where(and(eq(schema.commitments.id, id), eq(schema.commitments.userId, userId)));
@@ -4367,7 +4374,7 @@ Return ONLY JSON: { "hasCommitment": boolean, "commitment": "the thing they comm
           .limit(10);
       } catch {}
 
-      const soulBlock = await getSoulPromptBlock(userId);
+      const soulBlock = await getSoulPromptBlock(userId ?? "");
       const systemPrompt = buildCoachSystemPrompt(goals || [], stats || {}, history || [], [], lifeContext || null, [], false, [], false, userCommitments, undefined, [], [], false, undefined, undefined, undefined, soulBlock);
 
       res.setHeader('Content-Type', 'text/event-stream');
@@ -4583,7 +4590,7 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const { id } = req.params;
+      const id = _p(req.params.id);
       const { action, updatedContent } = req.body as { action: "keep" | "edit" | "discard"; updatedContent?: string };
       if (!["keep", "edit", "discard"].includes(action)) {
         return res.status(400).json({ error: "action must be keep, edit, or discard" });
@@ -4678,7 +4685,7 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const { id } = req.params;
+      const id = _p(req.params.id);
       const result = await db.execute(sql`
         UPDATE user_memories
         SET relevance_score = 50,
@@ -4701,7 +4708,7 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const { id } = req.params;
+      const id = _p(req.params.id);
       await db.delete(userMemories)
         .where(sql`${userMemories.id} = ${id} AND ${userMemories.userId} = ${userId}`);
       res.json({ ok: true });
@@ -4873,7 +4880,7 @@ Return ONLY the JSON object.`;
         return res.status(403).json({ error: "Owner access required" });
       }
 
-      const fileParam = req.params.file;
+      const fileParam = _p(req.params.file);
       if (!isWFKey(fileParam)) {
         return res.status(400).json({ error: `Invalid file key: ${fileParam}` });
       }
@@ -4897,7 +4904,7 @@ Return ONLY the JSON object.`;
         return res.status(403).json({ error: "Owner access required" });
       }
 
-      const fileParam = req.params.file;
+      const fileParam = _p(req.params.file);
       if (!isWFKey(fileParam)) {
         return res.status(400).json({ error: `Invalid file key: ${fileParam}` });
       }
@@ -4932,7 +4939,7 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      await deletePerson(userId, req.params.id);
+      await deletePerson(userId, _p(req.params.id));
       res.json({ ok: true });
     } catch (error) {
       console.error("Error deleting person:", error);
@@ -5026,7 +5033,7 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const { insightId } = req.params;
+      const insightId = _p(req.params.insightId);
       const insightRows = await db
         .select({ sourceMemoryIds: schema.dreamInsights.sourceMemoryIds })
         .from(schema.dreamInsights)
@@ -5406,7 +5413,7 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const { id } = req.params;
+      const id = _p(req.params.id);
 
       const [item] = await db
         .select()
@@ -5522,7 +5529,7 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const { id } = req.params;
+      const id = _p(req.params.id);
       await db
         .update(schema.jarvisScheduledTasks)
         .set({ completedAt: new Date() })
@@ -5538,7 +5545,7 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const { id } = req.params;
+      const id = _p(req.params.id);
       const updates: Record<string, unknown> = {};
       if (typeof req.body.active === "boolean") updates.active = req.body.active;
       if (req.body.title) updates.title = req.body.title;
@@ -5563,7 +5570,7 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const { id } = req.params;
+      const id = _p(req.params.id);
       await db
         .delete(schema.jarvisScheduledTasks)
         .where(and(eq(schema.jarvisScheduledTasks.id, id), eq(schema.jarvisScheduledTasks.userId, userId)));
@@ -5578,7 +5585,7 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const { id } = req.params;
+      const id = _p(req.params.id);
 
       const [task] = await db
         .select()
@@ -5734,7 +5741,7 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const { id } = req.params;
+      const id = _p(req.params.id);
       const { actionType } = req.body;
       if (!actionType) return res.status(400).json({ error: "actionType is required" });
 
@@ -5810,7 +5817,7 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const { id } = req.params;
+      const id = _p(req.params.id);
       await db
         .delete(schema.inboxRules)
         .where(and(eq(schema.inboxRules.id, id), eq(schema.inboxRules.userId, userId)));
@@ -5825,7 +5832,7 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const { id } = req.params;
+      const id = _p(req.params.id);
       const { active } = req.body;
       const isActive = active === true || active === "true" || active === 1;
       await db
@@ -5859,7 +5866,7 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const { id } = req.params;
+      const id = _p(req.params.id);
       const { editedSubject, editedBody } = req.body as { editedSubject?: string; editedBody?: string };
 
       const [draft] = await db
@@ -5908,7 +5915,7 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const { id } = req.params;
+      const id = _p(req.params.id);
       await db
         .update(schema.emailDrafts)
         .set({ status: "discarded", actedAt: new Date() })
@@ -5925,7 +5932,7 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const goalId = req.params.id;
+      const goalId = _p(req.params.id);
 
       const [goalsRow] = await db
         .select({ data: schema.goals.data })
@@ -5949,7 +5956,7 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const goalId = req.params.id;
+      const goalId = _p(req.params.id);
       const [tree] = await db
         .select()
         .from(schema.goalTrees)
@@ -6043,7 +6050,7 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const { id } = req.params;
+      const id = _p(req.params.id);
       const [job] = await db
         .select()
         .from(schema.agentJobs)
@@ -6111,7 +6118,7 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const id = req.params.id;
+      const id = _p(req.params.id);
       const [d] = await db
         .select()
         .from(schema.deliverables)
@@ -6184,7 +6191,7 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const id = req.params.id;
+      const id = _p(req.params.id);
       const [d] = await db
         .select()
         .from(schema.deliverables)
@@ -6216,7 +6223,7 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const id = req.params.id;
+      const id = _p(req.params.id);
       const { title, summary, body, meta } = req.body as {
         title?: unknown;
         summary?: unknown;
@@ -6258,7 +6265,7 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const id = req.params.id;
+      const id = _p(req.params.id);
       const [d] = await db
         .select({ jobId: schema.deliverables.jobId })
         .from(schema.deliverables)
@@ -6286,7 +6293,7 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const id = req.params.id;
+      const id = _p(req.params.id);
       const [d] = await db
         .select()
         .from(schema.deliverables)
@@ -6399,7 +6406,7 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const { id } = req.params;
+      const id = _p(req.params.id);
       await db
         .delete(userDocuments)
         .where(and(eq(userDocuments.id, id), eq(userDocuments.userId, userId)));
@@ -6690,7 +6697,7 @@ Extract up to 8 memories per batch.`;
   app.patch("/api/nervous-system/watches/:id", async (req: Request, res: Response) => {
     const userId = req.userId;
     if (!userId) return res.status(401).json({ error: "Not authenticated" });
-    const { id } = req.params;
+    const id = _p(req.params.id);
     const { active, label, category } = req.body as { active?: boolean; label?: string; category?: string };
     try {
       const updates: Partial<typeof schema.nervousSystemWatches.$inferInsert> = {};
@@ -6718,7 +6725,7 @@ Extract up to 8 memories per batch.`;
   app.delete("/api/nervous-system/watches/:id", async (req: Request, res: Response) => {
     const userId = req.userId;
     if (!userId) return res.status(401).json({ error: "Not authenticated" });
-    const { id } = req.params;
+    const id = _p(req.params.id);
     try {
       await db
         .delete(schema.nervousSystemWatches)
@@ -6770,7 +6777,7 @@ Extract up to 8 memories per batch.`;
   app.get("/api/gut/signals/item/:itemRef", async (req: Request, res: Response) => {
     const userId = req.userId;
     if (!userId) return res.status(401).json({ error: "Not authenticated" });
-    const { itemRef } = req.params;
+    const itemRef = _p(req.params.itemRef);
     try {
       const { getGutSignalsForUser } = await import("./intelligence/gut");
       const signals = await getGutSignalsForUser(userId, { itemRef, includeResponded: false });
@@ -6784,7 +6791,7 @@ Extract up to 8 memories per batch.`;
   app.post("/api/gut/signals/:id/respond", async (req: Request, res: Response) => {
     const userId = req.userId;
     if (!userId) return res.status(401).json({ error: "Not authenticated" });
-    const { id } = req.params;
+    const id = _p(req.params.id);
     const { response } = req.body as { response?: string };
     const VALID_RESPONSES = ["confirmed", "dismissed", "ignored"];
     if (!response || !VALID_RESPONSES.includes(response)) {
@@ -7069,7 +7076,7 @@ Extract up to 8 memories per batch.`;
   app.get("/api/skill-packs/:packId", async (req: Request, res: Response) => {
     const userId = (req as any).userId as string | undefined;
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
-    const { packId } = req.params;
+    const packId = _p(req.params.packId);
     try {
       const { getStorePackById } = await import("./intelligence/behaviorStore");
       const pack = await getStorePackById(packId, userId);
@@ -7088,7 +7095,7 @@ Extract up to 8 memories per batch.`;
   app.post("/api/skill-packs/:packId/activate", async (req: Request, res: Response) => {
     const userId = (req as any).userId as string | undefined;
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
-    const { packId } = req.params;
+    const packId = _p(req.params.packId);
     try {
       const { setUserPackActive } = await import("./intelligence/behaviorStore");
       await setUserPackActive(userId, packId, true);
@@ -7109,7 +7116,7 @@ Extract up to 8 memories per batch.`;
   app.delete("/api/skill-packs/:packId/activate", async (req: Request, res: Response) => {
     const userId = (req as any).userId as string | undefined;
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
-    const { packId } = req.params;
+    const packId = _p(req.params.packId);
     try {
       const { setUserPackActive } = await import("./intelligence/behaviorStore");
       await setUserPackActive(userId, packId, false);
@@ -7126,7 +7133,7 @@ Extract up to 8 memories per batch.`;
   app.delete("/api/skills/:skillId", async (req: Request, res: Response) => {
     const userId = (req as any).userId as string | undefined;
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
-    const { skillId } = req.params;
+    const skillId = _p(req.params.skillId);
     try {
       const { deleteSkill } = await import("./intelligence/skillWriter");
       const deleted = await deleteSkill(userId, skillId);
@@ -7296,7 +7303,7 @@ Extract up to 8 memories per batch.`;
   app.patch("/api/user-skills/:id/toggle", async (req: Request, res: Response) => {
     const userId = (req as any).userId as string | undefined;
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
-    const { id } = req.params;
+    const id = _p(req.params.id);
     try {
       const { userSkills } = await import("@shared/schema");
       const { eq, and } = await import("drizzle-orm");
@@ -7326,7 +7333,7 @@ Extract up to 8 memories per batch.`;
   app.patch("/api/user-skills/:id", async (req: Request, res: Response) => {
     const userId = (req as any).userId as string | undefined;
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
-    const { id } = req.params;
+    const id = _p(req.params.id);
     const { name, description, instructions, emoji } = req.body as {
       name?: string; description?: string; instructions?: string; emoji?: string;
     };
@@ -7365,7 +7372,7 @@ Extract up to 8 memories per batch.`;
   app.delete("/api/user-skills/:id", async (req: Request, res: Response) => {
     const userId = (req as any).userId as string | undefined;
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
-    const { id } = req.params;
+    const id = _p(req.params.id);
     try {
       const { userSkills } = await import("@shared/schema");
       const { eq, and } = await import("drizzle-orm");
@@ -7424,7 +7431,7 @@ Extract up to 8 memories per batch.`;
   const skillCandidatesReviewHandler = async (req: Request, res: Response) => {
     const userId = (req as any).userId as string | undefined;
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
-    const { id } = req.params;
+    const id = _p(req.params.id);
     const { action, name, instructionText } = req.body as {
       action?: string;
       name?: string;
@@ -7591,7 +7598,7 @@ Extract up to 8 memories per batch.`;
   });
 
   app.get("/api/diagnostics/events", async (req: Request, res: Response) => {
-    const userId = (req as any).userId as string | undefined;
+    const userId = req.userId;
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
     const subsystem = typeof req.query.subsystem === "string" ? req.query.subsystem : undefined;
     if (!subsystem) return res.status(400).json({ error: "subsystem query param required" });
@@ -7603,7 +7610,7 @@ Extract up to 8 memories per batch.`;
       const { getRecentEvents } = await import("./diagnostics/diagnosticsService");
       const events = await getRecentEvents({
         userId,
-        subsystem,
+        subsystem: subsystem as import("@shared/schema").DiagnosticSubsystem,
         limit: 20,
         sinceMinutes: 60,
         excludePatternDetected: true,
@@ -7668,7 +7675,7 @@ Extract up to 8 memories per batch.`;
    *  Body: { segments: Array<{ text, offset, duration }> } */
   app.post("/api/local-worker/jobs/:id/complete", async (req: Request, res: Response) => {
     const token = String(req.query.token || req.body?.token || "");
-    const jobId = req.params.id;
+    const jobId = _p(req.params.id);
     if (!token || !jobId) return res.status(400).json({ error: "token and id required" });
     const segments = req.body?.segments;
     if (!Array.isArray(segments)) return res.status(400).json({ error: "segments array required" });
@@ -7684,7 +7691,7 @@ Extract up to 8 memories per batch.`;
    *  Body: { error: "description" } */
   app.post("/api/local-worker/jobs/:id/fail", async (req: Request, res: Response) => {
     const token = String(req.query.token || req.body?.token || "");
-    const jobId = req.params.id;
+    const jobId = _p(req.params.id);
     if (!token || !jobId) return res.status(400).json({ error: "token and id required" });
     const error = String(req.body?.error || "unknown error");
     const { failJob } = await import("./lib/localWorkerQueue");
@@ -7894,7 +7901,7 @@ Extract up to 8 memories per batch.`;
   app.delete("/api/mcp-servers/:id", async (req: Request, res: Response) => {
     const userId = (req as any).userId as string | undefined;
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
-    const { id } = req.params;
+    const id = _p(req.params.id);
     try {
       const { mcpServerRegistry } = await import("./agent/mcp/mcpServerRegistry");
       const deleted = await mcpServerRegistry.deleteServer(id, userId);
@@ -7910,7 +7917,7 @@ Extract up to 8 memories per batch.`;
   app.patch("/api/mcp-servers/:id/enabled", async (req: Request, res: Response) => {
     const userId = (req as any).userId as string | undefined;
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
-    const { id } = req.params;
+    const id = _p(req.params.id);
     const { enabled } = req.body as { enabled?: boolean };
     if (typeof enabled !== "boolean") {
       return res.status(400).json({ error: "enabled must be a boolean" });
@@ -8152,7 +8159,7 @@ Extract up to 8 memories per batch.`;
    */
   app.post("/api/conversations/:id/voice-transcript", authMiddleware, async (req: Request, res: Response) => {
     try {
-      const conversationId = parseInt(req.params.id, 10);
+      const conversationId = parseInt(_p(req.params.id), 10);
       const entries: Array<{ role: string; text: string }> = req.body?.entries || [];
       if (!Array.isArray(entries) || entries.length === 0) {
         return res.status(400).json({ error: 'entries array is required' });
@@ -8273,7 +8280,7 @@ Extract up to 8 memories per batch.`;
   app.delete("/api/button-locations/:id", authMiddleware, async (req: Request, res: Response) => {
     try {
       const userId = (req as any).userId as string;
-      const id = parseInt(req.params.id, 10);
+      const id = parseInt(_p(req.params.id), 10);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
       const rows = await db.select({ id: schema.buttonLocations.id, userId: schema.buttonLocations.userId })
         .from(schema.buttonLocations).where(eq(schema.buttonLocations.id, id)).limit(1);
@@ -8289,7 +8296,7 @@ Extract up to 8 memories per batch.`;
   app.patch("/api/button-locations/:id/confirm", authMiddleware, async (req: Request, res: Response) => {
     try {
       const userId = (req as any).userId as string;
-      const id = parseInt(req.params.id, 10);
+      const id = parseInt(_p(req.params.id), 10);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
       const rows = await db.select().from(schema.buttonLocations).where(and(eq(schema.buttonLocations.id, id), eq(schema.buttonLocations.userId, userId))).limit(1);
       if (!rows.length) return res.status(404).json({ error: "Not found" });
@@ -8312,7 +8319,7 @@ Extract up to 8 memories per batch.`;
   app.patch("/api/button-locations/:id/deny", authMiddleware, async (req: Request, res: Response) => {
     try {
       const userId = (req as any).userId as string;
-      const id = parseInt(req.params.id, 10);
+      const id = parseInt(_p(req.params.id), 10);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
       const rows = await db.select().from(schema.buttonLocations).where(and(eq(schema.buttonLocations.id, id), eq(schema.buttonLocations.userId, userId))).limit(1);
       if (!rows.length) return res.status(404).json({ error: "Not found" });

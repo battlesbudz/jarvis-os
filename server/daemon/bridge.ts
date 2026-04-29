@@ -760,7 +760,7 @@ export function startDaemonBridge(server: HttpServer): void {
           try { ws.send(JSON.stringify(hello)); } catch { /* noop */ }
           console.log(`[daemon] reconnected userId=${pairedUserId} platform=${reconnPlatform} daemonId=${rm.daemonId}`);
           // Sync wake/talk settings to daemon after reconnect (fire-and-forget)
-          if (reconnPlatform === "android") setTimeout(() => syncWakeSettingsToDaemon(pairedUserId), 1500);
+          if (reconnPlatform === "android") setTimeout(() => syncWakeSettingsToDaemon(pairedUserId ?? ""), 1500);
         } catch (err) {
           console.error("[daemon] reconnect lookup failed:", err);
           try { ws.send(JSON.stringify({ type: "hello", ok: false, error: "reconnect failed" })); } catch { /* noop */ }
@@ -822,7 +822,7 @@ export function startDaemonBridge(server: HttpServer): void {
       }
 
       // Training tap — user physically tapped the screen while training mode was active
-      if (m.type === "training_tap" && pairedUserId) {
+      if ((m.type as string) === "training_tap" && pairedUserId) {
         const tm = m as { type: string; x?: number; y?: number; appPackage?: string; screenContext?: string; elementLabel?: string; screenshot?: string };
         const waiter = trainingWaiters.get(pairedUserId);
         if (waiter) {
@@ -841,7 +841,7 @@ export function startDaemonBridge(server: HttpServer): void {
       }
 
       // Voice utterance from daemon Talk Mode — run through AI and respond via TTS
-      if (m.type === "voice_user_utterance" && pairedUserId) {
+      if ((m.type as string) === "voice_user_utterance" && pairedUserId) {
         const text = (m as { type: string; text?: string }).text ?? "";
         if (text) {
           processDaemonUtterance(pairedUserId, text).catch(err =>

@@ -1462,12 +1462,12 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
           diagEmit({
             userId: job.userId,
             subsystem: "job_queue",
-            severity: "warn",
+            severity: "warning",
             message: `Job ${job.id} (build_feature) aborted at step "${step.label}"`,
             metadata: { jobId: job.id, agentType: job.agentType, failedStep: step.step_id },
           }).catch(() => {});
           if (hasWorkflow) {
-            await onWorkflowJobFail(wfId!, wfStep!, job.id, failReason.slice(0, 600)).catch((e) =>
+            await onWorkflowJobFail(wfId!, wfStep!, failReason).catch((e) =>
               console.error("[JobQueue] workflow fail hook error:", e),
             );
           }
@@ -1735,13 +1735,13 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
 
         // Attach PDF for channel delivery (driveLink included so oversized-file
         // fallback in Discord/other channels can reference the stored copy).
-        ctx.state.pendingAttachments.push({
+        ctx.state.pendingAttachments!.push({
           kind: "document",
           filename,
           content: pdfBuffer,
           caption: sub.title,
           mimeType: "application/pdf",
-          driveLink: driveLink ?? undefined,
+          driveLink: (sub.meta?.pdfDriveLink as string | undefined) ?? undefined,
         });
       } catch (pdfErr) {
         const pdfMsg = pdfErr instanceof Error ? pdfErr.message : String(pdfErr);

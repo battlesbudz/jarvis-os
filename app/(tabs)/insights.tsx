@@ -683,7 +683,7 @@ export default function InsightsScreen() {
   const [isWorkingOnPhone, setIsWorkingOnPhone] = useState(false);
   const [phoneWorkingMessage, setPhoneWorkingMessage] = useState('Working on your phone...');
   const [goals, setGoals] = useState<Goal[]>([]);
-  const [stats, setStats] = useState<UserStats>({ streak: 0, totalCompleted: 0, bestStreak: 0 });
+  const [stats, setStats] = useState<UserStats>({ streak: 0, totalCompleted: 0, bestStreak: 0, xp: 0, badges: [], claimedRewards: [], dailyXpEarned: { date: new Date().toISOString().slice(0, 10), xp: 0 } });
   const [history, setHistory] = useState<any[]>([]);
   const [calendarEvents, setCalendarEvents] = useState<{ title: string; time: string }[]>([]);
   const [lifeContext, setLifeContext] = useState<LifeContext | null>(null);
@@ -787,7 +787,7 @@ export default function InsightsScreen() {
   const channelConnectPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const calendarEventsRef = useRef<typeof calendarEvents>([]);
   const goalsRef = useRef<typeof goals>([]);
-  const statsRef = useRef<typeof stats>({ streak: 0, totalCompleted: 0, bestStreak: 0 });
+  const statsRef = useRef<typeof stats>({ streak: 0, totalCompleted: 0, bestStreak: 0, xp: 0, badges: [], claimedRewards: [], dailyXpEarned: { date: new Date().toISOString().slice(0, 10), xp: 0 } });
   const historyRef = useRef<typeof history>([]);
   const lifeContextRef = useRef<typeof lifeContext>(null);
   const flatListRef = useRef<FlatList>(null);
@@ -1672,7 +1672,7 @@ export default function InsightsScreen() {
 
     let loadedGoals: Goal[] = [];
     let loadedHistory: any[] = [];
-    let loadedStats: UserStats = { streak: 0, totalCompleted: 0, bestStreak: 0 } as UserStats;
+    let loadedStats: UserStats = { streak: 0, totalCompleted: 0, bestStreak: 0, xp: 0, badges: [], claimedRewards: [], dailyXpEarned: { date: new Date().toISOString().slice(0, 10), xp: 0 } };
     let loadedLifeContext: LifeContext | null = null;
     let loadedCommitments: Commitment[] = [];
     try {
@@ -2206,7 +2206,7 @@ export default function InsightsScreen() {
         // If phone actions were underway when the stream dropped, the task likely
         // completed (the notification arrived) but the response text was lost when
         // you switched apps. Show a contextual message instead of a generic error.
-        const errContent = gotPhoneWorking
+        const errContent = isWorkingOnPhone
           ? "Your phone task finished — the connection dropped when you switched apps. If you got a notification, it completed successfully. Ask me to recap what I did and I'll tell you."
           : 'Sorry, I had trouble connecting. Please try again.';
         const errMsg: ChatMessage = {

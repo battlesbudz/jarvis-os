@@ -78,6 +78,8 @@ import { isIntegrationOwner } from "../integrationOwner";
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
+const _p = (v: string | string[]): string => Array.isArray(v) ? (v[0] ?? "") : v;
+
 function formatRelative(date: Date): string {
   const diffMs = Date.now() - date.getTime();
   const diffMin = Math.floor(diffMs / 60000);
@@ -327,7 +329,7 @@ export function registerAgentRoutes(app: Express): void {
   app.post("/api/agents/approvals/:gateId/approve", async (req: Request, res: Response) => {
     try {
       const userId = req.userId!;
-      const gate = await getGate(req.params.gateId);
+      const gate = await getGate(_p(req.params.gateId));
       if (!gate) {
         res.status(404).json({ error: "Gate not found" });
         return;
@@ -340,7 +342,7 @@ export function registerAgentRoutes(app: Express): void {
         res.status(400).json({ error: "Gate already resolved" });
         return;
       }
-      const approved = await approveGate(req.params.gateId, userId);
+      const approved = await approveGate(_p(req.params.gateId), userId);
       if (!approved) {
         res.status(500).json({ error: "Failed to persist gate approval — DB write may have failed" });
         return;
@@ -352,7 +354,7 @@ export function registerAgentRoutes(app: Express): void {
   app.post("/api/agents/approvals/:gateId/reject", async (req: Request, res: Response) => {
     try {
       const userId = req.userId!;
-      const gate = await getGate(req.params.gateId);
+      const gate = await getGate(_p(req.params.gateId));
       if (!gate) {
         res.status(404).json({ error: "Gate not found" });
         return;
@@ -365,7 +367,7 @@ export function registerAgentRoutes(app: Express): void {
         res.status(400).json({ error: "Gate already resolved" });
         return;
       }
-      const rejected = await rejectGate(req.params.gateId, userId);
+      const rejected = await rejectGate(_p(req.params.gateId), userId);
       if (!rejected) {
         res.status(500).json({ error: "Failed to persist gate rejection — DB write may have failed" });
         return;
@@ -424,7 +426,7 @@ export function registerAgentRoutes(app: Express): void {
   app.get("/api/agents/:id", async (req: Request, res: Response) => {
     try {
       const userId = req.userId!;
-      const agent = await getAgent(req.params.id);
+      const agent = await getAgent(_p(req.params.id));
       if (!agent || agent.userId !== userId) {
         res.status(404).json({ error: "Agent not found" });
         return;
@@ -437,7 +439,7 @@ export function registerAgentRoutes(app: Express): void {
   const _handleAgentUpdate = async (req: Request, res: Response) => {
     try {
       const userId = req.userId!;
-      if (!(await ownerCheck(req.params.id, userId))) {
+      if (!(await ownerCheck(_p(req.params.id), userId))) {
         res.status(404).json({ error: "Agent not found" });
         return;
       }
@@ -454,8 +456,8 @@ export function registerAgentRoutes(app: Express): void {
             : undefined,
         }),
       };
-      await updateAgent(req.params.id, patch);
-      const agent = await getAgent(req.params.id);
+      await updateAgent(_p(req.params.id), patch);
+      const agent = await getAgent(_p(req.params.id));
       res.json({ agent });
     } catch (err) { handleError(res, err); }
   };
@@ -466,11 +468,11 @@ export function registerAgentRoutes(app: Express): void {
   app.delete("/api/agents/:id", async (req: Request, res: Response) => {
     try {
       const userId = req.userId!;
-      if (!(await ownerCheck(req.params.id, userId))) {
+      if (!(await ownerCheck(_p(req.params.id), userId))) {
         res.status(404).json({ error: "Agent not found" });
         return;
       }
-      await deleteAgent(req.params.id);
+      await deleteAgent(_p(req.params.id));
       res.json({ ok: true });
     } catch (err) { handleError(res, err); }
   });
@@ -479,11 +481,11 @@ export function registerAgentRoutes(app: Express): void {
   app.post("/api/agents/:id/enable", async (req: Request, res: Response) => {
     try {
       const userId = req.userId!;
-      if (!(await ownerCheck(req.params.id, userId))) {
+      if (!(await ownerCheck(_p(req.params.id), userId))) {
         res.status(404).json({ error: "Agent not found" });
         return;
       }
-      await enableAgent(req.params.id);
+      await enableAgent(_p(req.params.id));
       res.json({ ok: true });
     } catch (err) { handleError(res, err); }
   });
@@ -492,11 +494,11 @@ export function registerAgentRoutes(app: Express): void {
   app.post("/api/agents/:id/disable", async (req: Request, res: Response) => {
     try {
       const userId = req.userId!;
-      if (!(await ownerCheck(req.params.id, userId))) {
+      if (!(await ownerCheck(_p(req.params.id), userId))) {
         res.status(404).json({ error: "Agent not found" });
         return;
       }
-      await disableAgent(req.params.id);
+      await disableAgent(_p(req.params.id));
       res.json({ ok: true });
     } catch (err) { handleError(res, err); }
   });
@@ -505,7 +507,7 @@ export function registerAgentRoutes(app: Express): void {
   app.post("/api/agents/:id/channel", async (req: Request, res: Response) => {
     try {
       const userId = req.userId!;
-      if (!(await ownerCheck(req.params.id, userId))) {
+      if (!(await ownerCheck(_p(req.params.id), userId))) {
         res.status(404).json({ error: "Agent not found" });
         return;
       }
@@ -514,7 +516,7 @@ export function registerAgentRoutes(app: Express): void {
         res.status(400).json({ error: "platform and channelId are required" });
         return;
       }
-      await assignChannel(req.params.id, platform, channelId);
+      await assignChannel(_p(req.params.id), platform, channelId);
       res.json({ ok: true });
     } catch (err) { handleError(res, err); }
   });
@@ -523,16 +525,17 @@ export function registerAgentRoutes(app: Express): void {
   app.delete("/api/agents/:id/channel", async (req: Request, res: Response) => {
     try {
       const userId = req.userId!;
-      if (!(await ownerCheck(req.params.id, userId))) {
+      if (!(await ownerCheck(_p(req.params.id), userId))) {
         res.status(404).json({ error: "Agent not found" });
         return;
       }
-      const { platform, channelId } = req.query as { platform: string; channelId: string };
+      const platform = typeof req.query.platform === "string" ? req.query.platform : "";
+      const channelId = typeof req.query.channelId === "string" ? req.query.channelId : "";
       if (!platform || !channelId) {
         res.status(400).json({ error: "platform and channelId are required" });
         return;
       }
-      await removeChannel(req.params.id, platform, channelId);
+      await removeChannel(_p(req.params.id), platform, channelId);
       res.json({ ok: true });
     } catch (err) { handleError(res, err); }
   });
@@ -541,7 +544,7 @@ export function registerAgentRoutes(app: Express): void {
   app.post("/api/agents/:id/run", async (req: Request, res: Response) => {
     try {
       const userId = req.userId!;
-      if (!(await ownerCheck(req.params.id, userId))) {
+      if (!(await ownerCheck(_p(req.params.id), userId))) {
         res.status(404).json({ error: "Agent not found" });
         return;
       }
@@ -551,7 +554,7 @@ export function registerAgentRoutes(app: Express): void {
         return;
       }
       const result = await runNamedAgent({
-        agentId: req.params.id,
+        agentId: _p(req.params.id),
         userId,
         userMessage: message,
         platform,
@@ -573,7 +576,7 @@ export function registerAgentRoutes(app: Express): void {
   app.post("/api/agents/:id/chat", async (req: Request, res: Response) => {
     try {
       const userId = req.userId!;
-      if (!(await ownerCheck(req.params.id, userId))) {
+      if (!(await ownerCheck(_p(req.params.id), userId))) {
         res.status(404).json({ error: "Agent not found" });
         return;
       }
@@ -593,7 +596,7 @@ export function registerAgentRoutes(app: Express): void {
         // Generate a run ID so the client can abort this specific run.
         const runId = randomUUID();
         const abortController = new AbortController();
-        activeRuns.set(runId, { controller: abortController, agentId: req.params.id, userId });
+        activeRuns.set(runId, { controller: abortController, agentId: _p(req.params.id), userId });
 
         res.setHeader("Content-Type", "text/event-stream");
         res.setHeader("Cache-Control", "no-cache, no-transform");
@@ -624,7 +627,7 @@ export function registerAgentRoutes(app: Express): void {
         try {
           let fullReply = "";
           const result = await runNamedAgent({
-            agentId: req.params.id,
+            agentId: _p(req.params.id),
             userId,
             userMessage: message,
             conversationHistory: conversationHistory ?? [],
@@ -671,7 +674,7 @@ export function registerAgentRoutes(app: Express): void {
             { role: "user", content: message },
             ...(replyText ? [{ role: "assistant" as const, content: replyText }] : []),
           ];
-          persistChatMessages(req.params.id, userId, toStore).catch(() => {});
+          persistChatMessages(_p(req.params.id), userId, toStore).catch(() => {});
 
           // Forward the session ID to the client via both a header (first turn)
           // and an SSE event (all turns) so it can resume on the next message.
@@ -724,7 +727,7 @@ export function registerAgentRoutes(app: Express): void {
         }
       } else {
         const result = await runNamedAgent({
-          agentId: req.params.id,
+          agentId: _p(req.params.id),
           userId,
           userMessage: message,
           conversationHistory: conversationHistory ?? [],
@@ -739,7 +742,7 @@ export function registerAgentRoutes(app: Express): void {
             { role: "user", content: message },
             ...(assistantReply ? [{ role: "assistant" as const, content: assistantReply }] : []),
           ];
-          persistChatMessages(req.params.id, userId, toStore).catch(() => {});
+          persistChatMessages(_p(req.params.id), userId, toStore).catch(() => {});
         }
         res.json({
           reply: result.reply,
@@ -770,7 +773,7 @@ export function registerAgentRoutes(app: Express): void {
   app.post("/api/agents/:id/abort", async (req: Request, res: Response) => {
     try {
       const userId = req.userId!;
-      if (!(await ownerCheck(req.params.id, userId))) {
+      if (!(await ownerCheck(_p(req.params.id), userId))) {
         res.status(404).json({ error: "Agent not found" });
         return;
       }
@@ -786,7 +789,7 @@ export function registerAgentRoutes(app: Express): void {
         return;
       }
       // Verify the run belongs to the requesting user AND the stated agent.
-      if (run.agentId !== req.params.id || run.userId !== userId) {
+      if (run.agentId !== _p(req.params.id) || run.userId !== userId) {
         res.status(403).json({ error: "Forbidden: this run belongs to a different agent or user" });
         return;
       }
@@ -803,7 +806,7 @@ export function registerAgentRoutes(app: Express): void {
   app.get("/api/agents/:id/session", async (req: Request, res: Response) => {
     try {
       const userId = req.userId!;
-      if (!(await ownerCheck(req.params.id, userId))) {
+      if (!(await ownerCheck(_p(req.params.id), userId))) {
         res.status(404).json({ error: "Agent not found" });
         return;
       }
@@ -812,7 +815,7 @@ export function registerAgentRoutes(app: Express): void {
         res.status(400).json({ error: "sdkSessionId is required" });
         return;
       }
-      const result = await resumeSession(sdkSessionId, req.params.id, userId);
+      const result = await resumeSession(sdkSessionId, _p(req.params.id), userId);
       if (!result || !result.resumed) {
         res.json({ messages: [], sdkSessionId });
         return;
@@ -837,13 +840,13 @@ export function registerAgentRoutes(app: Express): void {
   app.get("/api/agents/:id/history", async (req: Request, res: Response) => {
     try {
       const userId = req.userId!;
-      if (!(await ownerCheck(req.params.id, userId))) {
+      if (!(await ownerCheck(_p(req.params.id), userId))) {
         res.status(404).json({ error: "Agent not found" });
         return;
       }
       const rawLimit = Number(req.query.limit ?? 0);
       const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(Math.floor(rawLimit), 1000) : 0;
-      const messages = await getChatHistory(req.params.id, userId, limit);
+      const messages = await getChatHistory(_p(req.params.id), userId, limit);
       res.json({ messages });
     } catch (err) { handleError(res, err); }
   });
@@ -852,13 +855,13 @@ export function registerAgentRoutes(app: Express): void {
   app.get("/api/agents/:id/policy", async (req: Request, res: Response) => {
     try {
       const userId = req.userId!;
-      if (!(await ownerCheck(req.params.id, userId))) {
+      if (!(await ownerCheck(_p(req.params.id), userId))) {
         res.status(404).json({ error: "Agent not found" });
         return;
       }
-      const policy = await getAgentPolicy(req.params.id);
+      const policy = await getAgentPolicy(_p(req.params.id));
       res.json({
-        agentId: req.params.id,
+        agentId: _p(req.params.id),
         scope: policy?.scope ?? "global",
         allowlist: policy?.allowlist ?? [],
       });
@@ -869,7 +872,7 @@ export function registerAgentRoutes(app: Express): void {
   app.put("/api/agents/:id/policy", async (req: Request, res: Response) => {
     try {
       const userId = req.userId!;
-      if (!(await ownerCheck(req.params.id, userId))) {
+      if (!(await ownerCheck(_p(req.params.id), userId))) {
         res.status(404).json({ error: "Agent not found" });
         return;
       }
@@ -878,8 +881,8 @@ export function registerAgentRoutes(app: Express): void {
         res.status(400).json({ error: `scope must be one of: ${AGENT_POLICY_SCOPES.join(", ")}` });
         return;
       }
-      await setAgentPolicyScope(req.params.id, userId, scope as AgentPolicyScope);
-      const policy = await getAgentPolicy(req.params.id);
+      await setAgentPolicyScope(_p(req.params.id), userId, scope as AgentPolicyScope);
+      const policy = await getAgentPolicy(_p(req.params.id));
       res.json({ ok: true, scope: policy?.scope ?? scope, allowlist: policy?.allowlist ?? [] });
     } catch (err) { handleError(res, err); }
   });
@@ -888,7 +891,7 @@ export function registerAgentRoutes(app: Express): void {
   app.post("/api/agents/:id/policy/allowlist", async (req: Request, res: Response) => {
     try {
       const userId = req.userId!;
-      if (!(await ownerCheck(req.params.id, userId))) {
+      if (!(await ownerCheck(_p(req.params.id), userId))) {
         res.status(404).json({ error: "Agent not found" });
         return;
       }
@@ -897,7 +900,7 @@ export function registerAgentRoutes(app: Express): void {
         res.status(400).json({ error: "pattern is required" });
         return;
       }
-      const entry = await addAllowlistPattern(req.params.id, userId, pattern.trim());
+      const entry = await addAllowlistPattern(_p(req.params.id), userId, pattern.trim());
       res.status(201).json({ ok: true, entry });
     } catch (err) { handleError(res, err); }
   });
@@ -906,11 +909,11 @@ export function registerAgentRoutes(app: Express): void {
   app.delete("/api/agents/:id/policy/allowlist/:patternId", async (req: Request, res: Response) => {
     try {
       const userId = req.userId!;
-      if (!(await ownerCheck(req.params.id, userId))) {
+      if (!(await ownerCheck(_p(req.params.id), userId))) {
         res.status(404).json({ error: "Agent not found" });
         return;
       }
-      const removed = await removeAllowlistPattern(req.params.patternId, req.params.id);
+      const removed = await removeAllowlistPattern(_p(req.params.patternId), _p(req.params.id));
       if (!removed) {
         res.status(404).json({ error: "Pattern not found" });
         return;
@@ -923,15 +926,15 @@ export function registerAgentRoutes(app: Express): void {
   app.get("/api/agents/:id/memories", async (req: Request, res: Response) => {
     try {
       const userId = req.userId!;
-      if (!(await ownerCheck(req.params.id, userId))) {
+      if (!(await ownerCheck(_p(req.params.id), userId))) {
         res.status(404).json({ error: "Agent not found" });
         return;
       }
       const query = String(req.query.q ?? "");
       const limit = Math.min(Number(req.query.limit ?? 20), 50);
       const [memories, count] = await Promise.all([
-        readAgentMemories(req.params.id, userId, query, limit),
-        getAgentMemoryCount(req.params.id, userId),
+        readAgentMemories(_p(req.params.id), userId, query, limit),
+        getAgentMemoryCount(_p(req.params.id), userId),
       ]);
       res.json({ memories, count });
     } catch (err) { handleError(res, err); }
@@ -941,11 +944,11 @@ export function registerAgentRoutes(app: Express): void {
   app.delete("/api/agents/:id/memories", async (req: Request, res: Response) => {
     try {
       const userId = req.userId!;
-      if (!(await ownerCheck(req.params.id, userId))) {
+      if (!(await ownerCheck(_p(req.params.id), userId))) {
         res.status(404).json({ error: "Agent not found" });
         return;
       }
-      const deleted = await clearAgentMemory(req.params.id, userId);
+      const deleted = await clearAgentMemory(_p(req.params.id), userId);
       res.json({ ok: true, deleted });
     } catch (err) { handleError(res, err); }
   });
@@ -954,14 +957,14 @@ export function registerAgentRoutes(app: Express): void {
   app.get("/api/agents/:id/messages", async (req: Request, res: Response) => {
     try {
       const userId = req.userId!;
-      if (!(await ownerCheck(req.params.id, userId))) {
+      if (!(await ownerCheck(_p(req.params.id), userId))) {
         res.status(404).json({ error: "Agent not found" });
         return;
       }
       const limit = Math.min(Number(req.query.limit ?? 20), 50);
       const [messages, stats] = await Promise.all([
-        getAgentMessages(req.params.id, userId, limit),
-        getMessageStats(req.params.id, userId),
+        getAgentMessages(_p(req.params.id), userId, limit),
+        getMessageStats(_p(req.params.id), userId),
       ]);
       res.json({ messages, stats });
     } catch (err) { handleError(res, err); }
@@ -971,7 +974,7 @@ export function registerAgentRoutes(app: Express): void {
   app.get("/api/agents/:id/export", async (req: Request, res: Response) => {
     try {
       const userId = req.userId!;
-      const agent = await getAgent(req.params.id);
+      const agent = await getAgent(_p(req.params.id));
       if (!agent || agent.userId !== userId) {
         res.status(404).json({ error: "Agent not found" });
         return;

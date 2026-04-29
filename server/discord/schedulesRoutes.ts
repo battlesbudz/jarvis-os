@@ -18,12 +18,14 @@ import {
 } from "./schedules";
 import { executeApprovalAction } from "./approvalActions";
 
+const _p = (v: string | string[]): string => Array.isArray(v) ? (v[0] ?? "") : v;
+
 export function registerDiscordScheduleRoutes(app: Express): void {
 
   // ── Schedules ──────────────────────────────────────────────────────────────
 
   app.get("/api/discord/schedules", authMiddleware, async (req: Request, res: Response) => {
-    const userId = (req as any).userId;
+    const userId = req.userId!;
     try {
       const schedules = await listSchedules(userId);
       const withNext = schedules.map((s) => ({
@@ -38,7 +40,7 @@ export function registerDiscordScheduleRoutes(app: Express): void {
   });
 
   app.post("/api/discord/schedules", authMiddleware, async (req: Request, res: Response) => {
-    const userId = (req as any).userId;
+    const userId = req.userId!;
     const { channelName, label, cronExpression, prompt, guildId, channelId, pipelineNext } = req.body;
     if (!channelName || !label || !cronExpression || !prompt) {
       return res.status(400).json({ error: "channelName, label, cronExpression, prompt are required" });
@@ -61,8 +63,8 @@ export function registerDiscordScheduleRoutes(app: Express): void {
   });
 
   app.delete("/api/discord/schedules/:id", authMiddleware, async (req: Request, res: Response) => {
-    const userId = (req as any).userId;
-    const { id } = req.params;
+    const userId = req.userId!;
+    const id = _p(req.params.id);
     try {
       await deleteSchedule(userId, id);
       res.json({ ok: true });
@@ -73,8 +75,8 @@ export function registerDiscordScheduleRoutes(app: Express): void {
   });
 
   app.post("/api/discord/schedules/:id/toggle", authMiddleware, async (req: Request, res: Response) => {
-    const userId = (req as any).userId;
-    const { id } = req.params;
+    const userId = req.userId!;
+    const id = _p(req.params.id);
     const { enabled } = req.body;
     try {
       await toggleSchedule(userId, id, !!enabled);
@@ -86,8 +88,8 @@ export function registerDiscordScheduleRoutes(app: Express): void {
   });
 
   app.post("/api/discord/schedules/:id/run", authMiddleware, async (req: Request, res: Response) => {
-    const userId = (req as any).userId;
-    const { id } = req.params;
+    const userId = req.userId!;
+    const id = _p(req.params.id);
     try {
       // Verify ownership
       const rows = await db.select().from(discordChannelSchedules)
@@ -107,7 +109,7 @@ export function registerDiscordScheduleRoutes(app: Express): void {
   // ── Approvals ──────────────────────────────────────────────────────────────
 
   app.get("/api/discord/approvals", authMiddleware, async (req: Request, res: Response) => {
-    const userId = (req as any).userId;
+    const userId = req.userId!;
     try {
       const approvals = await db
         .select()
@@ -126,8 +128,8 @@ export function registerDiscordScheduleRoutes(app: Express): void {
   });
 
   app.post("/api/discord/approvals/:messageId/resolve", authMiddleware, async (req: Request, res: Response) => {
-    const userId = (req as any).userId;
-    const { messageId } = req.params;
+    const userId = req.userId!;
+    const messageId = _p(req.params.messageId);
     const { action } = req.body; // "approve" or "reject"
     try {
       const rows = await db
@@ -172,7 +174,7 @@ export function registerDiscordScheduleRoutes(app: Express): void {
   // ── Named Agents ──────────────────────────────────────────────────────────
 
   app.get("/api/discord/agents", authMiddleware, async (req: Request, res: Response) => {
-    const userId = (req as any).userId;
+    const userId = req.userId!;
     try {
       const agents = await db
         .select()
@@ -186,8 +188,8 @@ export function registerDiscordScheduleRoutes(app: Express): void {
   });
 
   app.post("/api/discord/agents/:id/toggle", authMiddleware, async (req: Request, res: Response) => {
-    const userId = (req as any).userId;
-    const { id } = req.params;
+    const userId = req.userId!;
+    const id = _p(req.params.id);
     const { loopEnabled } = req.body;
     try {
       const rows = await db.select().from(discordAgents)
@@ -209,7 +211,7 @@ export function registerDiscordScheduleRoutes(app: Express): void {
   // ── Activity Feed ──────────────────────────────────────────────────────────
 
   app.get("/api/discord/activity", authMiddleware, async (req: Request, res: Response) => {
-    const userId = (req as any).userId;
+    const userId = req.userId!;
     try {
       const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
       const logs = await db

@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import type { TextItem } from "pdfjs-dist";
+import type { TextItem } from "pdfjs-dist/types/src/display/api";
 import { db } from "./db";
 import { eq, desc } from "drizzle-orm";
 import { userDocuments } from "@shared/schema";
@@ -67,7 +67,9 @@ async function extractFromPdfWithPdfjs(buffer: Buffer): Promise<string> {
 }
 
 async function extractFromPdfWithPdfParse(buffer: Buffer): Promise<string> {
-  const pdfParse = (await import("pdf-parse")).default;
+  type PdfParseFn = (buffer: Buffer, options?: Record<string, unknown>) => Promise<{ text: string }>;
+  const pdfModule = await import("pdf-parse") as unknown as { default?: PdfParseFn } & PdfParseFn;
+  const pdfParse: PdfParseFn = pdfModule.default ?? pdfModule;
   const data = await pdfParse(buffer);
   return data.text || "";
 }

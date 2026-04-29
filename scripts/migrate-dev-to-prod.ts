@@ -21,13 +21,13 @@ const pool = new pg.Pool({ connectionString: DATABASE_URL });
 
 async function queryOne(table: string): Promise<unknown> {
   const result = await pool.query(`SELECT data FROM ${table} WHERE user_id = $1`, [DEV_USER_ID]);
-  return result.rows.length > 0 ? result.rows[0].data : null;
+  return result.rows.length > 0 ? (result.rows[0] as { data: unknown }).data : null;
 }
 
 async function queryDateKeyed(table: string): Promise<Record<string, unknown>> {
   const result = await pool.query(`SELECT date, data FROM ${table} WHERE user_id = $1`, [DEV_USER_ID]);
   const map: Record<string, unknown> = {};
-  for (const row of result.rows) {
+  for (const row of result.rows as Array<{ date: string; data: unknown }>) {
     map[row.date] = row.data;
   }
   return map;

@@ -108,7 +108,7 @@ export function wasRecentlyPushedViaSSE(userId: string, text: string): boolean {
 
 // Sweep expired entries from recentPushes every 5 minutes so the map stays
 // bounded even when many users connect once and never reconnect.
-setInterval(() => {
+const _sseSweepTimer = setInterval(() => {
   const now = Date.now();
   for (const [userId, userMap] of recentPushes) {
     for (const [hash, expiresAt] of userMap) {
@@ -120,7 +120,8 @@ setInterval(() => {
       recentPushes.delete(userId);
     }
   }
-}, 5 * 60_000).unref();
+}, 5 * 60_000);
+if (typeof (_sseSweepTimer as unknown as NodeJS.Timeout).unref === "function") (_sseSweepTimer as unknown as NodeJS.Timeout).unref();
 
 export function pushToSubscriber(userId: string, text: string): boolean {
   const sub = subscribers.get(userId);

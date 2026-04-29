@@ -14,7 +14,7 @@ import { db } from "../../db";
 import { mcpServers } from "@shared/schema";
 import { eq, and } from "drizzle-orm";
 import { McpClient, McpToolDefinition, McpPromptDefinition } from "./mcpClient";
-import type { AgentTool } from "../types";
+import type { AgentTool, JsonSchema } from "../types";
 import { resolveCredential } from "../../lib/credentialResolver";
 
 // ── SSRF deny-list ────────────────────────────────────────────────────────────
@@ -205,7 +205,7 @@ class McpServerRegistry {
     return {
       name: toolName,
       description: `[MCP: ${serverName}] ${def.description ?? def.name}`,
-      parameters: def.inputSchema ?? { type: "object", properties: {} },
+      parameters: (def.inputSchema ?? { type: "object", properties: {} }) as JsonSchema,
       async execute(args, ctx) {
         try {
           if (args && typeof args === "object") scanForPrivateUrls(args);

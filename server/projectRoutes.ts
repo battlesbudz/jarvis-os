@@ -13,6 +13,8 @@ import {
 } from "./agent/projectRunner";
 import { authMiddleware } from "./auth";
 
+const _p = (v: string | string[]): string => Array.isArray(v) ? (v[0] ?? "") : v;
+
 export function registerProjectRoutes(app: Express): void {
   // GET /api/projects — list user's projects
   app.get("/api/projects", authMiddleware, async (req: Request, res: Response) => {
@@ -59,7 +61,7 @@ export function registerProjectRoutes(app: Express): void {
   app.get("/api/projects/:id", authMiddleware, async (req: Request, res: Response) => {
     try {
       const userId = (req as any).userId as string;
-      const { id } = req.params;
+      const id = _p(req.params.id);
 
       const status = await getProjectStatus(id);
       if (!status) return res.status(404).json({ error: "Project not found" });
@@ -76,7 +78,7 @@ export function registerProjectRoutes(app: Express): void {
   app.patch("/api/projects/:id", authMiddleware, async (req: Request, res: Response) => {
     try {
       const userId = (req as any).userId as string;
-      const { id } = req.params;
+      const id = _p(req.params.id);
       const { action, answer, autonomousMode } = req.body as {
         action?: "pause" | "resume";
         answer?: string;
@@ -122,7 +124,7 @@ export function registerProjectRoutes(app: Express): void {
   app.delete("/api/projects/:id", authMiddleware, async (req: Request, res: Response) => {
     try {
       const userId = (req as any).userId as string;
-      const { id } = req.params;
+      const id = _p(req.params.id);
 
       const [project] = await db
         .select()

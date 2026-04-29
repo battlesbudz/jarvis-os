@@ -1,4 +1,4 @@
-import type { AgentTool } from "../types";
+import type { AgentTool, ToolArgs } from "../types";
 import { createDiscordChannel } from "../../discord/manager";
 import { consumeConfirmToken } from "../discordConfirmStore";
 
@@ -34,7 +34,8 @@ export const discordCreateChannelTool: AgentTool = {
     },
     required: ["channelName"],
   },
-  async execute(args: { channelName: string; topic?: string; categoryName?: string; pinMessage?: string }, ctx) {
+  async execute(args: ToolArgs, ctx) {
+    const { channelName, topic, categoryName, pinMessage } = args as { channelName: string; topic?: string; categoryName?: string; pinMessage?: string };
     const { userId } = ctx;
 
     if (!await consumeConfirmToken(userId, "create_channel")) {
@@ -48,10 +49,10 @@ export const discordCreateChannelTool: AgentTool = {
     }
 
     const result = await createDiscordChannel(userId, {
-      channelName: args.channelName,
-      topic: args.topic,
-      categoryName: args.categoryName,
-      pinMessage: args.pinMessage,
+      channelName,
+      topic,
+      categoryName,
+      pinMessage,
       ctxGuildId: ctx.discordGuildId,
     });
 

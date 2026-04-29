@@ -20,6 +20,8 @@ import { isPathAllowedForProposal } from "./safeWritePolicy";
 
 const PROJECT_ROOT = process.cwd();
 
+const _p = (v: string | string[]): string => Array.isArray(v) ? (v[0] ?? "") : v;
+
 /**
  * Schedules a post-fix verification job after a debug-originated proposal is approved.
  * Waits 8 seconds (let the server restart begin) then enqueues a general agent job
@@ -87,7 +89,7 @@ export function registerCodeProposalsRoutes(app: Express): void {
 
   // GET /api/code-proposals — list all proposals for the authenticated user
   app.get("/api/code-proposals", async (req: Request, res: Response) => {
-    const userId = (req as any).userId as string | undefined;
+    const userId = req.userId;
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
     if (!await requireOwner(userId, res)) return;
 
@@ -117,7 +119,7 @@ export function registerCodeProposalsRoutes(app: Express): void {
 
   // GET /api/code-proposals/:id — full detail including diff content
   app.get("/api/code-proposals/:id", async (req: Request, res: Response) => {
-    const userId = (req as any).userId as string | undefined;
+    const userId = req.userId;
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
     if (!await requireOwner(userId, res)) return;
 
@@ -125,7 +127,7 @@ export function registerCodeProposalsRoutes(app: Express): void {
       const [row] = await db
         .select()
         .from(codeProposals)
-        .where(and(eq(codeProposals.id, req.params.id), eq(codeProposals.userId, userId)))
+        .where(and(eq(codeProposals.id, _p(req.params.id)), eq(codeProposals.userId, userId)))
         .limit(1);
 
       if (!row) return res.status(404).json({ error: "Proposal not found" });
@@ -138,7 +140,7 @@ export function registerCodeProposalsRoutes(app: Express): void {
 
   // POST /api/code-proposals/:id/approve — write file + mark approved
   app.post("/api/code-proposals/:id/approve", async (req: Request, res: Response) => {
-    const userId = (req as any).userId as string | undefined;
+    const userId = req.userId;
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
     if (!await requireOwner(userId, res)) return;
 
@@ -146,7 +148,7 @@ export function registerCodeProposalsRoutes(app: Express): void {
       const [row] = await db
         .select()
         .from(codeProposals)
-        .where(and(eq(codeProposals.id, req.params.id), eq(codeProposals.userId, userId)))
+        .where(and(eq(codeProposals.id, _p(req.params.id)), eq(codeProposals.userId, userId)))
         .limit(1);
 
       if (!row) return res.status(404).json({ error: "Proposal not found" });
@@ -202,7 +204,7 @@ export function registerCodeProposalsRoutes(app: Express): void {
 
   // POST /api/code-proposals/:id/reject — archive with optional note
   app.post("/api/code-proposals/:id/reject", async (req: Request, res: Response) => {
-    const userId = (req as any).userId as string | undefined;
+    const userId = req.userId;
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
     if (!await requireOwner(userId, res)) return;
 
@@ -212,7 +214,7 @@ export function registerCodeProposalsRoutes(app: Express): void {
       const [row] = await db
         .select({ id: codeProposals.id, status: codeProposals.status })
         .from(codeProposals)
-        .where(and(eq(codeProposals.id, req.params.id), eq(codeProposals.userId, userId)))
+        .where(and(eq(codeProposals.id, _p(req.params.id)), eq(codeProposals.userId, userId)))
         .limit(1);
 
       if (!row) return res.status(404).json({ error: "Proposal not found" });

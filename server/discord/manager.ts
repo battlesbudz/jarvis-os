@@ -1,4 +1,4 @@
-import { Client, GatewayIntentBits, Events, Partials, Message, DMChannel, AttachmentBuilder, type GuildBasedChannel, type TextChannel, type MessageReaction, type PartialMessageReaction, type User as DiscordUser, type PartialUser } from "discord.js";
+import { Client, GatewayIntentBits, Events, Partials, Message, DMChannel, AttachmentBuilder, type GuildBasedChannel, type TextChannel, type MessageReaction, type PartialMessageReaction, type User as DiscordUser, type PartialUser, type SendableChannels } from "discord.js";
 import { db } from "../db";
 import { eq, and, sql } from "drizzle-orm";
 import { channelLinks, users, discordPendingApprovals, discordAgents } from "@shared/schema";
@@ -443,7 +443,7 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
             console.log(`[DiscordManager] mention-triggered voice join — guild=${voiceGuildId} vchannel=${voiceChannelId}`);
             const result = await joinVoiceSession(client, voiceGuildId, voiceChannelId, message.channelId, userId, discordUserId);
             if (result.ok) {
-              await message.channel
+              if (message.channel.isSendable()) await message.channel
                 .send(`🎙️ Joining <#${voiceChannelId}>! Speak and I'll respond in voice. Use \`/voice leave\` to disconnect.`)
                 .catch(() => {});
             }
@@ -491,7 +491,7 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
     let earlyPlaceholder: Message | null = null;
     if (!_hasAudioAtt) {
       try {
-        earlyPlaceholder = await message.channel.send("_Thinking…_");
+        if (message.channel.isSendable()) earlyPlaceholder = await message.channel.send("_Thinking…_");
       } catch {
         // Non-fatal — reply will still be delivered even if placeholder fails.
       }
@@ -578,7 +578,7 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
 
     if (audioAtt && !userText) {
       try {
-        typingMsg = await message.channel.send("🎤 Transcribing voice message…");
+        if (message.channel.isSendable()) typingMsg = await message.channel.send("🎤 Transcribing voice message…");
         const resp = await fetch(audioAtt.url);
         const arrBuf = await resp.arrayBuffer();
         const buf = Buffer.from(arrBuf);
@@ -588,7 +588,8 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
         const format = detectAudioFormat(buf);
         const transcript = await speechToText(buf, format);
         if (!transcript?.trim()) {
-          await typingMsg.edit("Sorry, I couldn't make out that voice message — could you type it out?");
+          if (typingMsg) await typingMsg.edit("Sorry, I couldn't make out that voice message — could you type it out?");
+          else await message.reply("Sorry, I couldn't make out that voice message — could you type it out?").catch(() => {});
           return;
         }
         userText = transcript.trim();
@@ -596,10 +597,12 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
         // Show transcript briefly, then transition to thinking state in the
         // same message so the user only ever sees ONE bot message per voice
         // input (not a separate "Thinking…" message on top of the transcript).
-        await typingMsg.edit(`🎤 *"${preview}"* — _Thinking…_`);
+        if (typingMsg) await typingMsg.edit(`🎤 *"${preview}"* — _Thinking…_`);
+        else await message.reply(`🎤 *"${preview}"* — _Thinking…_`).catch(() => {});
       } catch (err) {
         console.error("[DiscordManager] voice transcription failed:", err);
         if (typingMsg) await typingMsg.edit("Sorry, transcription failed — please type your message.").catch(() => {});
+        else await message.reply("Sorry, transcription failed — please type your message.").catch(() => {});
         return;
       }
     }
@@ -1061,7 +1064,7 @@ export async function sendDiscordAudio(userId: string, channelId: string, ogg: B
       console.warn(`[DiscordManager] sendDiscordAudio: channel ${channelId} not found or not sendable`);
       return false;
     }
-    const ch = channel as TextChannel | DMChannel;
+    const ch = channel as SendableChannels;
     await ch.send({ files: [{ attachment: ogg, name: "voice-note.ogg" }] });
     return true;
   } catch (err) {
@@ -1093,7 +1096,7 @@ export async function sendDiscordImage(
       console.warn(`[DiscordManager] sendDiscordImage: channel ${channelId} not found or not sendable`);
       return false;
     }
-    const ch = channel as TextChannel | DMChannel;
+    const ch = channel as SendableChannels;
     await ch.send({
       content: caption || undefined,
       files: [{ attachment: imageBuffer, name: filename }],
@@ -1125,7 +1128,7 @@ export async function sendDiscordMessage(
       console.warn(`[DiscordManager] sendDiscordMessage: channel ${channelId} not found or not sendable`);
       return null;
     }
-    const ch = channel as TextChannel | DMChannel;
+    const ch = channel as SendableChannels;
     const msg = await ch.send(content);
     return msg.id;
   } catch (err) {
@@ -1155,7 +1158,7 @@ export async function editDiscordMessage(
       console.warn(`[DiscordManager] editDiscordMessage: channel ${channelId} not found or not text-based`);
       return false;
     }
-    const ch = channel as TextChannel | DMChannel;
+    const ch = channel as SendableChannels;
     const msg = await ch.messages.fetch(messageId);
     await msg.edit(content);
     return true;
@@ -1183,7 +1186,7 @@ export async function sendDiscordVideo(
       console.warn(`[DiscordManager] sendDiscordVideo: channel ${channelId} not found or not sendable`);
       return false;
     }
-    const ch = channel as TextChannel | DMChannel;
+    const ch = channel as SendableChannels;
     await ch.send({
       content: caption || undefined,
       files: [{ attachment: videoBuffer, name: filename }],
@@ -1200,14 +1203,14 @@ async function editOrSendLong(msg: Message, text: string): Promise<void> {
   const chunks = splitIntoChunks(text, 1900);
   await msg.edit(chunks[0]).catch(() => {});
   for (let i = 1; i < chunks.length; i++) {
-    await msg.channel.send(chunks[i]).catch(() => {});
+    if (msg.channel.isSendable()) await msg.channel.send(chunks[i]).catch(() => {});
   }
 }
 
 async function sendLong(channel: { send(t: string): Promise<unknown> }, text: string): Promise<void> {
   const chunks = splitIntoChunks(text, 1900);
   for (const chunk of chunks) {
-    await channel.send(chunk).catch(() => {});
+    await (channel as SendableChannels).send(chunk).catch(() => {});
   }
 }
 
@@ -1462,7 +1465,7 @@ export async function sendToDiscordUserGetId(
     let lastMsgId: string | undefined;
     let lastChannelId: string | undefined;
     for (const chunk of chunks) {
-      const sent = await channel.send(chunk);
+      const sent = await (channel as SendableChannels).send(chunk);
       lastMsgId = sent.id;
       lastChannelId = sent.channelId;
     }
@@ -1507,7 +1510,7 @@ export async function sendFileToDiscordUser(
     if (!channel) return false;
 
     const attachment = new AttachmentBuilder(content, { name: filename, description });
-    await channel.send({ files: [attachment] });
+    await (channel as SendableChannels).send({ files: [attachment] });
     return true;
   } catch (err) {
     console.error(`[DiscordManager] sendFileToDiscordUser failed for ${userId}:`, err);
@@ -1787,7 +1790,7 @@ export async function postToDiscordChannelById(
 
     const chunks = splitIntoChunks(text, 1900);
     for (const chunk of chunks) {
-      await (channel as InstanceType<typeof TextChannel>).send(chunk);
+      await (channel as SendableChannels).send(chunk);
     }
     return true;
   } catch (err) {
@@ -1815,7 +1818,7 @@ export async function sendFileToDiscordChannel(
     const channel = await client.channels.fetch(channelId);
     if (!channel || !channel.isTextBased()) return false;
     const attachment = new AttachmentBuilder(content, { name: filename, description });
-    await (channel as InstanceType<typeof TextChannel>).send({ files: [attachment] });
+    await (channel as SendableChannels).send({ files: [attachment] });
     return true;
   } catch (err) {
     console.error(`[DiscordManager] sendFileToDiscordChannel failed for channel ${channelId}:`, err);
@@ -1987,7 +1990,8 @@ export async function pinDiscordMessage(
   try {
     const channel = await client.channels.fetch(channelId);
     if (!channel || !channel.isTextBased()) return false;
-    const msg = await (channel as TextChannel).messages.fetch(messageId);
+    const textChannel = channel as TextChannel;
+    const msg = await textChannel.messages.fetch(messageId);
     if (!msg) return false;
     await msg.pin();
     return true;

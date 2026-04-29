@@ -46,6 +46,8 @@ If the user says "run my X agent", find the matching slug here, then queue a cus
 
     if (agents.length === 0) {
       return {
+        ok: true,
+        content: "You have no custom agents yet. You can create them from the app's Profile tab under 'Custom Agents'.",
         agents: [],
         message: "You have no custom agents yet. You can create them from the app's Profile tab under 'Custom Agents'.",
       };
@@ -84,7 +86,13 @@ If the user says "run my X agent", find the matching slug here, then queue a cus
       hasCustomPrompt: !!a.extraPrompt,
     }));
 
+    const summary = runResult
+      ? `Found ${agents.length} custom agent(s). Queued job for "${runResult.agentName}".`
+      : `Found ${agents.length} custom agent(s).`;
+
     return {
+      ok: true,
+      content: summary,
       agents: agentList,
       count: agents.length,
       ...(runResult

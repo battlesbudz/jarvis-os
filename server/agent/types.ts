@@ -16,6 +16,8 @@ export interface PendingAttachment {
   text?: string;
   /** Name of the MCP server that produced this attachment */
   mcpServerName?: string;
+  /** Optional Google Drive web-view URL — used as fallback link when file exceeds channel upload size limit */
+  driveLink?: string;
 }
 
 /** Plan stored on the daily `plans` row (loose shape — owned by telegramRoutes). */

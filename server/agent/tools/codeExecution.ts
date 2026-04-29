@@ -88,7 +88,7 @@
  * Each call is fully stateless — no state persists between invocations.
  */
 
-import { spawn } from "child_process";
+import { spawn, type SpawnOptions } from "child_process";
 import fs from "fs/promises";
 import path from "path";
 import os from "os";
@@ -374,9 +374,10 @@ export function runPythonSandbox(code: string, timeoutMs: number): Promise<ExecR
     const chunks: Buffer[] = [];
     let timedOut = false;
 
-    const child = spawn("python3", ["-c", script], {
-      stdio: ["ignore", "pipe", "pipe"],
+        const child = spawn("python3", ["-c", script], {
+      stdio: ["ignore", "pipe", "pipe"] as const,
       env: {
+        ...process.env,
         PATH: process.env.PATH ?? "/usr/bin:/bin",
         PYTHONIOENCODING: "utf-8",
         PYTHONUNBUFFERED: "1",
@@ -393,7 +394,7 @@ export function runPythonSandbox(code: string, timeoutMs: number): Promise<ExecR
       child.kill("SIGKILL");
     }, Math.min(timeoutMs, MAX_TIMEOUT_MS));
 
-    child.on("close", (exitCode) => {
+    child.on("close", (exitCode: number | null) => {
       clearTimeout(timer);
       const raw = Buffer.concat(chunks).toString("utf8");
       const stdout = raw.length > MAX_OUTPUT_CHARS
@@ -402,7 +403,7 @@ export function runPythonSandbox(code: string, timeoutMs: number): Promise<ExecR
       resolve({ stdout, timedOut, exitCode });
     });
 
-    child.on("error", (err) => {
+    child.on("error", (err: Error) => {
       clearTimeout(timer);
       resolve({
         stdout: `Failed to start Python: ${err.message}`,
@@ -770,10 +771,11 @@ function runPythonInWorkspace(
     const chunks: Buffer[] = [];
     let timedOut = false;
 
-    const child = spawn("python3", ["-c", script], {
+        const child = spawn("python3", ["-c", script], {
       cwd: workspaceDir,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["ignore", "pipe", "pipe"] as const,
       env: {
+        ...process.env,
         PATH: process.env.PATH ?? "/usr/bin:/bin",
         PYTHONIOENCODING: "utf-8",
         PYTHONUNBUFFERED: "1",
@@ -790,7 +792,7 @@ function runPythonInWorkspace(
       child.kill("SIGKILL");
     }, Math.min(timeoutMs, WORKSPACE_TIMEOUT_MS));
 
-    child.on("close", (exitCode) => {
+    child.on("close", (exitCode: number | null) => {
       clearTimeout(timer);
       const raw = Buffer.concat(chunks).toString("utf8");
       const stdout = raw.length > WORKSPACE_MAX_OUTPUT_CHARS
@@ -799,7 +801,7 @@ function runPythonInWorkspace(
       resolve({ stdout, timedOut, exitCode });
     });
 
-    child.on("error", (err) => {
+    child.on("error", (err: Error) => {
       clearTimeout(timer);
       resolve({ stdout: `Failed to start Python: ${err.message}`, timedOut: false, exitCode: -1 });
     });

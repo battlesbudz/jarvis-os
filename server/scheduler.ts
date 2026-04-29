@@ -881,7 +881,7 @@ export async function runMorningPlanBuild() {
               title: t.title,
               category: t.category,
               priority: t.priority,
-              duration: t.duration,
+              duration: t.duration ?? 0,
               time: t.time,
               description: t.description,
               completed: false,

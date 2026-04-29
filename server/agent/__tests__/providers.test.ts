@@ -161,7 +161,7 @@ function convertResponse(
 ): ProviderChunk[] {
   const p = makeClaudeInternal();
   const msg: FakeAnthropicMessage = { content: blocks, stop_reason: stopReason };
-  const gen = p._convertResponse(msg as unknown as Anthropic.Message);
+  const gen = p._convertResponse(msg);
   const chunks: ProviderChunk[] = [];
   for (const c of gen) chunks.push(c);
   return chunks;

@@ -60,6 +60,7 @@ function makeAgent(permOverrides: Partial<AgentPermissions> = {}): DiscordAgent 
     stuckSince: null,
     heartbeatFailCount: 0,
     preferredModel: null,
+    mentionPatterns: [],
   };
 }
 

@@ -407,7 +407,7 @@ oauthRouter.get('/status', async (req: Request, res: Response) => {
 oauthRouter.delete('/:provider/disconnect', async (req: Request, res: Response) => {
   const userId = req.userId;
   if (!userId) return res.status(401).json({ error: 'Not authenticated' });
-  const { provider } = req.params;
+  const provider = String(req.params.provider);
   if (!['google', 'microsoft', 'slack'].includes(provider)) {
     return res.status(400).json({ error: 'Unknown provider' });
   }

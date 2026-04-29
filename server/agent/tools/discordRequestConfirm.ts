@@ -1,4 +1,4 @@
-import type { AgentTool } from "../types";
+import type { AgentTool, ToolArgs } from "../types";
 import { setConfirmToken, type DiscordConfirmAction } from "../discordConfirmStore";
 
 export const discordRequestConfirmTool: AgentTool = {
@@ -26,13 +26,14 @@ export const discordRequestConfirmTool: AgentTool = {
     },
     required: ["action", "question"],
   },
-  async execute(args: { action: DiscordConfirmAction; question: string }, ctx) {
+  async execute(args: ToolArgs, ctx) {
+    const { action, question } = args as { action: DiscordConfirmAction; question: string };
     const { userId } = ctx;
-    await setConfirmToken(userId, args.action);
+    await setConfirmToken(userId, action);
     return {
       ok: true,
-      content: args.question,
-      label: `Discord: awaiting confirmation for ${args.action}`,
+      content: question,
+      label: `Discord: awaiting confirmation for ${action}`,
     };
   },
 };
