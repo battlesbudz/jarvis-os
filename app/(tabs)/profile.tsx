@@ -358,6 +358,35 @@ export default function ProfileScreen() {
   } | null>(null);
   const [writeBudgetResetting, setWriteBudgetResetting] = useState(false);
 
+  interface SkillCandidate {
+    id: string;
+    name: string;
+    triggerDescription: string;
+    instructionText: string;
+    sourceType: 'curator' | 'synthesiser';
+    createdAt: string;
+  }
+  interface ActiveUserSkill {
+    id: string;
+    name: string;
+    emoji: string;
+    description: string;
+    instructions: string;
+    isBuiltIn: boolean;
+    isActive: boolean;
+  }
+  const [skillCandidatesList, setSkillCandidatesList] = useState<SkillCandidate[]>([]);
+  const [activeUserSkills, setActiveUserSkills] = useState<ActiveUserSkill[]>([]);
+  const [skillsLoading, setSkillsLoading] = useState(false);
+  const [skillBusy, setSkillBusy] = useState<string | null>(null);
+  const [editingCandidateId, setEditingCandidateId] = useState<string | null>(null);
+  const [editCandidateDraft, setEditCandidateDraft] = useState({ name: '', instructionText: '' });
+  const [addSkillVisible, setAddSkillVisible] = useState(false);
+  const [addSkillDraft, setAddSkillDraft] = useState({ name: '', description: '', instructionText: '' });
+  const [addSkillSaving, setAddSkillSaving] = useState(false);
+  const [editingSkillId, setEditingSkillId] = useState<string | null>(null);
+  const [editSkillDraft, setEditSkillDraft] = useState({ name: '', description: '', instructions: '' });
+
   const [websiteCrawl, setWebsiteCrawl] = useState<{
     status: 'idle' | 'crawling' | 'done' | 'error';
     url?: string;
@@ -679,6 +708,111 @@ export default function ProfileScreen() {
     }
   }, []);
 
+  const loadSkills = useCallback(async () => {
+    setSkillsLoading(true);
+    try {
+      const [candidatesRes, skillsRes] = await Promise.all([
+        apiRequest('GET', '/api/skills/candidates'),
+        apiRequest('GET', '/api/user-skills'),
+      ]);
+      const candidatesData = await candidatesRes.json();
+      const skillsData = await skillsRes.json();
+      setSkillCandidatesList(candidatesData.candidates || []);
+      setActiveUserSkills((skillsData.skills || []).filter((s: ActiveUserSkill) => !s.isBuiltIn));
+    } catch {}
+    setSkillsLoading(false);
+  }, []);
+
+  const handleSaveSkillEdit = useCallback(async (skillId: string) => {
+    if (!editSkillDraft.name.trim() || !editSkillDraft.instructions.trim()) {
+      Alert.alert('Required fields', 'Skill name and instructions are required.');
+      return;
+    }
+    setSkillBusy(skillId);
+    try {
+      const res = await apiRequest('PATCH', `/api/user-skills/${skillId}`, {
+        name: editSkillDraft.name.trim(),
+        description: editSkillDraft.description.trim() || undefined,
+        instructions: editSkillDraft.instructions.trim(),
+      });
+      const data = await res.json();
+      setActiveUserSkills(prev => prev.map(s => s.id === skillId ? { ...s, ...data.skill } : s));
+      setEditingSkillId(null);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch {
+      Alert.alert('Error', 'Could not update skill');
+    } finally {
+      setSkillBusy(null);
+    }
+  }, [editSkillDraft]);
+
+  const handleAddSkill = useCallback(async () => {
+    if (!addSkillDraft.name.trim() || !addSkillDraft.instructionText.trim()) {
+      Alert.alert('Required fields', 'Skill name and instructions are required.');
+      return;
+    }
+    setAddSkillSaving(true);
+    try {
+      await apiRequest('POST', '/api/user-skills', {
+        name: addSkillDraft.name.trim().slice(0, 80),
+        emoji: '⚡',
+        description: addSkillDraft.description.trim().slice(0, 200) || 'Custom skill',
+        instructions: addSkillDraft.instructionText.trim().slice(0, 3000),
+        isActive: true,
+      });
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      setAddSkillVisible(false);
+      setAddSkillDraft({ name: '', description: '', instructionText: '' });
+      await loadSkills();
+    } catch {
+      Alert.alert('Error', 'Could not create skill');
+    } finally {
+      setAddSkillSaving(false);
+    }
+  }, [addSkillDraft, loadSkills]);
+
+  const handleReviewCandidate = useCallback(async (id: string, action: 'accept' | 'edit' | 'dismiss', opts?: { name?: string; instructionText?: string }) => {
+    setSkillBusy(id);
+    try {
+      await apiRequest('PATCH', `/api/skills/candidates/${id}/review`, { action, ...opts });
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      setSkillCandidatesList(prev => prev.filter(c => c.id !== id));
+      setEditingCandidateId(null);
+      if (action === 'accept' || action === 'edit') await loadSkills();
+    } catch (err) {
+      Alert.alert('Error', 'Could not update skill candidate');
+    } finally {
+      setSkillBusy(null);
+    }
+  }, [loadSkills]);
+
+  const handleToggleSkill = useCallback(async (skillId: string) => {
+    setSkillBusy(skillId);
+    try {
+      const res = await apiRequest('PATCH', `/api/user-skills/${skillId}/toggle`);
+      const data = await res.json();
+      setActiveUserSkills(prev => prev.map(s => s.id === skillId ? { ...s, isActive: data.skill.isActive } : s));
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    } catch {}
+    setSkillBusy(null);
+  }, []);
+
+  const handleDeleteSkill = useCallback(async (skillId: string) => {
+    Alert.alert('Remove Skill', 'This will remove the skill from Jarvis permanently.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Remove', style: 'destructive',
+        onPress: async () => {
+          try {
+            await apiRequest('DELETE', `/api/user-skills/${skillId}`);
+            setActiveUserSkills(prev => prev.filter(s => s.id !== skillId));
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          } catch {}
+        },
+      },
+    ]);
+  }, []);
+
   const loadCustomAgents = useCallback(async () => {
     setCustomAgentsLoading(true);
     try {
@@ -946,7 +1080,7 @@ export default function ProfileScreen() {
     }
     setNotificationsEnabledState(notifications);
     setUserName(name);
-    await Promise.all([loadOAuthStatus(), loadMemories(), loadTelegramStatus(), loadMorningNotes(), loadDocuments(), loadSoul(), loadPeople(), loadChannels(), loadDaemonPerms(), loadAndroidDaemonPerms(), loadDriveStatus(), loadDreamInsights(), loadWebsiteCrawl(), loadWriteBudget(), loadCustomAgents(), loadTrainedButtons(), loadPendingMemories()]);
+    await Promise.all([loadOAuthStatus(), loadMemories(), loadTelegramStatus(), loadMorningNotes(), loadDocuments(), loadSoul(), loadPeople(), loadChannels(), loadDaemonPerms(), loadAndroidDaemonPerms(), loadDriveStatus(), loadDreamInsights(), loadWebsiteCrawl(), loadWriteBudget(), loadCustomAgents(), loadTrainedButtons(), loadPendingMemories(), loadSkills()]);
     try {
       const importRes = await apiRequest('GET', '/api/chatgpt-import/status');
       const importData = await importRes.json();
@@ -972,7 +1106,7 @@ export default function ProfileScreen() {
   // useCallback([], []) / stable refs declared after loadAll — omit from deps
   // to avoid temporal-dead-zone ReferenceErrors at initialisation.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loadOAuthStatus, loadMemories, loadTelegramStatus, loadMorningNotes, loadDocuments, loadSoul, loadPeople, loadChannels, loadDriveStatus, loadDreamInsights, loadWebsiteCrawl, loadCustomAgents]);
+  }, [loadOAuthStatus, loadMemories, loadTelegramStatus, loadMorningNotes, loadDocuments, loadSoul, loadPeople, loadChannels, loadDriveStatus, loadDreamInsights, loadWebsiteCrawl, loadCustomAgents, loadSkills]);
 
   const handleToggleEmailAlerts = useCallback(async () => {
     const newValue = !emailAlertsEnabled;
@@ -4381,6 +4515,264 @@ export default function ProfileScreen() {
             Invoke via Discord: <Text style={{ fontFamily: 'Inter_500Medium' }}>/jarvis agent &lt;slug&gt; &lt;prompt&gt;</Text>{'\n'}
             Telegram: <Text style={{ fontFamily: 'Inter_500Medium' }}>/agent &lt;slug&gt; &lt;prompt&gt;</Text>
           </Text>
+        </Animated.View>
+
+        {/* My Skills */}
+        <Animated.View entering={FadeInDown.duration(400).delay(465)}>
+          <Text style={[styles.sectionTitle, { marginTop: 28, marginBottom: 4 }]}>My Skills</Text>
+          <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: Colors.textTertiary, marginBottom: 12 }}>
+            Jarvis learns from your patterns and suggests custom skills. Accept to activate them.
+          </Text>
+
+          {skillsLoading ? (
+            <ActivityIndicator size="small" color={Colors.primary} style={{ marginVertical: 12 }} />
+          ) : (
+            <>
+              {/* Suggested candidates */}
+              {skillCandidatesList.length > 0 && (
+                <>
+                  <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: Colors.textSecondary, textTransform: 'uppercase', letterSpacing: 0.7, marginBottom: 8 }}>
+                    Suggested
+                  </Text>
+                  <View style={[styles.platformsList, { gap: 0, marginBottom: 16 }]}>
+                    {skillCandidatesList.map((candidate, idx) => {
+                      const isEditing = editingCandidateId === candidate.id;
+                      const isBusy = skillBusy === candidate.id;
+                      return (
+                        <View
+                          key={candidate.id}
+                          style={[
+                            styles.memoryRow,
+                            idx < skillCandidatesList.length - 1 && styles.memoryRowBorder,
+                            { flexDirection: 'column', alignItems: 'flex-start', gap: 8, paddingVertical: 12 },
+                          ]}
+                        >
+                          <View style={{ flexDirection: 'row', alignItems: 'center', width: '100%', gap: 8 }}>
+                            <View style={{ flex: 1 }}>
+                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+                                <Text style={{ fontSize: 14, fontFamily: 'Inter_600SemiBold', color: Colors.text }}>{candidate.name}</Text>
+                                <View style={{ backgroundColor: candidate.sourceType === 'synthesiser' ? '#8B5CF620' : Colors.primary + '20', borderRadius: 8, paddingHorizontal: 6, paddingVertical: 2 }}>
+                                  <Text style={{ fontSize: 10, fontFamily: 'Inter_600SemiBold', color: candidate.sourceType === 'synthesiser' ? '#8B5CF6' : Colors.primary }}>
+                                    {candidate.sourceType === 'synthesiser' ? 'learned' : 'pattern'}
+                                  </Text>
+                                </View>
+                              </View>
+                              <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, lineHeight: 17 }} numberOfLines={isEditing ? undefined : 2}>
+                                {candidate.triggerDescription}
+                              </Text>
+                            </View>
+                          </View>
+                          {isEditing ? (
+                            <View style={{ width: '100%', gap: 8 }}>
+                              <TextInput
+                                value={editCandidateDraft.name}
+                                onChangeText={v => setEditCandidateDraft(d => ({ ...d, name: v }))}
+                                placeholder="Skill name"
+                                placeholderTextColor={Colors.textTertiary}
+                                style={{ backgroundColor: Colors.surface, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, fontSize: 13, fontFamily: 'Inter_400Regular', color: Colors.text, borderWidth: 1, borderColor: Colors.border }}
+                              />
+                              <TextInput
+                                value={editCandidateDraft.instructionText}
+                                onChangeText={v => setEditCandidateDraft(d => ({ ...d, instructionText: v }))}
+                                placeholder="Instructions for Jarvis…"
+                                placeholderTextColor={Colors.textTertiary}
+                                multiline
+                                numberOfLines={4}
+                                style={{ backgroundColor: Colors.surface, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, fontSize: 12, fontFamily: 'Inter_400Regular', color: Colors.text, borderWidth: 1, borderColor: Colors.border, minHeight: 80, textAlignVertical: 'top' }}
+                              />
+                              <View style={{ flexDirection: 'row', gap: 8, justifyContent: 'flex-end' }}>
+                                <Pressable onPress={() => setEditingCandidateId(null)} style={{ paddingHorizontal: 14, paddingVertical: 7, borderRadius: 8, backgroundColor: Colors.surface, borderWidth: 1, borderColor: Colors.border }}>
+                                  <Text style={{ fontSize: 13, fontFamily: 'Inter_500Medium', color: Colors.textSecondary }}>Cancel</Text>
+                                </Pressable>
+                                <Pressable
+                                  onPress={() => handleReviewCandidate(candidate.id, 'edit', { name: editCandidateDraft.name.trim() || undefined, instructionText: editCandidateDraft.instructionText.trim() || undefined })}
+                                  disabled={isBusy}
+                                  style={{ paddingHorizontal: 14, paddingVertical: 7, borderRadius: 8, backgroundColor: Colors.primary, opacity: isBusy ? 0.5 : 1 }}
+                                >
+                                  {isBusy ? <ActivityIndicator size="small" color="#fff" /> : <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: '#fff' }}>Save & Accept</Text>}
+                                </Pressable>
+                              </View>
+                            </View>
+                          ) : (
+                            <View style={{ flexDirection: 'row', gap: 8, alignSelf: 'flex-end' }}>
+                              <Pressable
+                                onPress={() => { setEditingCandidateId(candidate.id); setEditCandidateDraft({ name: candidate.name, instructionText: candidate.instructionText }); }}
+                                style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: Colors.surface, borderWidth: 1, borderColor: Colors.border }}
+                              >
+                                <Text style={{ fontSize: 12, fontFamily: 'Inter_500Medium', color: Colors.textSecondary }}>Edit</Text>
+                              </Pressable>
+                              <Pressable
+                                onPress={() => handleReviewCandidate(candidate.id, 'dismiss')}
+                                disabled={isBusy}
+                                style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: '#EF444415', opacity: isBusy ? 0.5 : 1 }}
+                              >
+                                {isBusy ? <ActivityIndicator size="small" color="#EF4444" /> : <Text style={{ fontSize: 12, fontFamily: 'Inter_500Medium', color: '#EF4444' }}>Dismiss</Text>}
+                              </Pressable>
+                              <Pressable
+                                onPress={() => handleReviewCandidate(candidate.id, 'accept')}
+                                disabled={isBusy}
+                                style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: Colors.primary + '18', opacity: isBusy ? 0.5 : 1 }}
+                              >
+                                {isBusy ? <ActivityIndicator size="small" color={Colors.primary} /> : <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: Colors.primary }}>Accept</Text>}
+                              </Pressable>
+                            </View>
+                          )}
+                        </View>
+                      );
+                    })}
+                  </View>
+                </>
+              )}
+
+              {/* Active custom skills */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: Colors.textSecondary, textTransform: 'uppercase', letterSpacing: 0.7 }}>
+                  Custom Skills
+                </Text>
+                <Pressable
+                  onPress={() => { setAddSkillVisible(v => !v); setAddSkillDraft({ name: '', description: '', instructionText: '' }); }}
+                  style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8, backgroundColor: Colors.primary + '18' }}
+                >
+                  <Ionicons name={addSkillVisible ? 'close' : 'add'} size={14} color={Colors.primary} />
+                  <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: Colors.primary }}>{addSkillVisible ? 'Cancel' : 'Add Skill'}</Text>
+                </Pressable>
+              </View>
+              {addSkillVisible && (
+                <View style={{ backgroundColor: Colors.surface, borderRadius: 12, borderWidth: 1, borderColor: Colors.border, padding: 14, gap: 10, marginBottom: 12 }}>
+                  <TextInput
+                    value={addSkillDraft.name}
+                    onChangeText={v => setAddSkillDraft(d => ({ ...d, name: v }))}
+                    placeholder="Skill name (e.g. Always use bullet points)"
+                    placeholderTextColor={Colors.textTertiary}
+                    style={{ backgroundColor: Colors.background, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, fontSize: 13, fontFamily: 'Inter_400Regular', color: Colors.text, borderWidth: 1, borderColor: Colors.border }}
+                  />
+                  <TextInput
+                    value={addSkillDraft.description}
+                    onChangeText={v => setAddSkillDraft(d => ({ ...d, description: v }))}
+                    placeholder="When should Jarvis use this skill? (optional)"
+                    placeholderTextColor={Colors.textTertiary}
+                    style={{ backgroundColor: Colors.background, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, fontSize: 13, fontFamily: 'Inter_400Regular', color: Colors.text, borderWidth: 1, borderColor: Colors.border }}
+                  />
+                  <TextInput
+                    value={addSkillDraft.instructionText}
+                    onChangeText={v => setAddSkillDraft(d => ({ ...d, instructionText: v }))}
+                    placeholder="Instructions for Jarvis (be specific)…"
+                    placeholderTextColor={Colors.textTertiary}
+                    multiline
+                    numberOfLines={4}
+                    style={{ backgroundColor: Colors.background, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, fontSize: 12, fontFamily: 'Inter_400Regular', color: Colors.text, borderWidth: 1, borderColor: Colors.border, minHeight: 80, textAlignVertical: 'top' }}
+                  />
+                  <Pressable
+                    onPress={handleAddSkill}
+                    disabled={addSkillSaving}
+                    style={{ paddingVertical: 10, borderRadius: 10, backgroundColor: Colors.primary, alignItems: 'center', opacity: addSkillSaving ? 0.5 : 1 }}
+                  >
+                    {addSkillSaving ? <ActivityIndicator size="small" color="#fff" /> : <Text style={{ fontSize: 14, fontFamily: 'Inter_600SemiBold', color: '#fff' }}>Create Skill</Text>}
+                  </Pressable>
+                </View>
+              )}
+              {activeUserSkills.length === 0 ? (
+                <View style={[styles.memoryEmptyCard, { alignItems: 'flex-start', paddingVertical: 16 }]}>
+                  <View style={styles.memoryEmptyIcon}>
+                    <Ionicons name="sparkles-outline" size={20} color={Colors.primary} />
+                  </View>
+                  <Text style={styles.memoryEmptyText}>
+                    {skillCandidatesList.length > 0
+                      ? 'Accept a suggestion above to create your first custom skill.'
+                      : 'No custom skills yet. Jarvis will suggest some as it learns your patterns each week.'}
+                  </Text>
+                </View>
+              ) : (
+                <View style={[styles.platformsList, { gap: 0 }]}>
+                  {activeUserSkills.map((skill, idx) => {
+                    const isEditingThis = editingSkillId === skill.id;
+                    const isBusy = skillBusy === skill.id;
+                    return (
+                      <View key={skill.id} style={[styles.memoryRow, idx < activeUserSkills.length - 1 && styles.memoryRowBorder, { flexDirection: 'column', alignItems: 'flex-start', gap: 8, paddingVertical: 12 }]}>
+                        {isEditingThis ? (
+                          <View style={{ width: '100%', gap: 8 }}>
+                            <TextInput
+                              value={editSkillDraft.name}
+                              onChangeText={v => setEditSkillDraft(d => ({ ...d, name: v }))}
+                              placeholder="Skill name"
+                              placeholderTextColor={Colors.textTertiary}
+                              style={{ backgroundColor: Colors.surface, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, fontSize: 13, fontFamily: 'Inter_400Regular', color: Colors.text, borderWidth: 1, borderColor: Colors.border }}
+                            />
+                            <TextInput
+                              value={editSkillDraft.description}
+                              onChangeText={v => setEditSkillDraft(d => ({ ...d, description: v }))}
+                              placeholder="When should Jarvis use this? (optional)"
+                              placeholderTextColor={Colors.textTertiary}
+                              style={{ backgroundColor: Colors.surface, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, fontSize: 12, fontFamily: 'Inter_400Regular', color: Colors.text, borderWidth: 1, borderColor: Colors.border }}
+                            />
+                            <TextInput
+                              value={editSkillDraft.instructions}
+                              onChangeText={v => setEditSkillDraft(d => ({ ...d, instructions: v }))}
+                              placeholder="Instructions for Jarvis…"
+                              placeholderTextColor={Colors.textTertiary}
+                              multiline
+                              numberOfLines={4}
+                              style={{ backgroundColor: Colors.surface, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, fontSize: 12, fontFamily: 'Inter_400Regular', color: Colors.text, borderWidth: 1, borderColor: Colors.border, minHeight: 80, textAlignVertical: 'top' }}
+                            />
+                            <View style={{ flexDirection: 'row', gap: 8, justifyContent: 'flex-end' }}>
+                              <Pressable onPress={() => setEditingSkillId(null)} style={{ paddingHorizontal: 14, paddingVertical: 7, borderRadius: 8, backgroundColor: Colors.surface, borderWidth: 1, borderColor: Colors.border }}>
+                                <Text style={{ fontSize: 13, fontFamily: 'Inter_500Medium', color: Colors.textSecondary }}>Cancel</Text>
+                              </Pressable>
+                              <Pressable
+                                onPress={() => handleSaveSkillEdit(skill.id)}
+                                disabled={isBusy}
+                                style={{ paddingHorizontal: 14, paddingVertical: 7, borderRadius: 8, backgroundColor: Colors.primary, opacity: isBusy ? 0.5 : 1 }}
+                              >
+                                {isBusy ? <ActivityIndicator size="small" color="#fff" /> : <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: '#fff' }}>Save</Text>}
+                              </Pressable>
+                            </View>
+                          </View>
+                        ) : (
+                          <>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', width: '100%' }}>
+                              <View style={[styles.memoryContent, { flex: 1 }]}>
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+                                  <Text style={{ fontSize: 14 }}>{skill.emoji}</Text>
+                                  <Text style={[styles.memoryText, { fontWeight: '600', fontSize: 14 }]}>{skill.name}</Text>
+                                </View>
+                                <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, lineHeight: 17 }} numberOfLines={2}>
+                                  {skill.description}
+                                </Text>
+                              </View>
+                              <View style={{ flexDirection: 'row', gap: 6, alignItems: 'center' }}>
+                                {isBusy ? (
+                                  <ActivityIndicator size="small" color={Colors.primary} />
+                                ) : (
+                                  <>
+                                    <Pressable
+                                      onPress={() => { setEditingSkillId(skill.id); setEditSkillDraft({ name: skill.name, description: skill.description, instructions: skill.instructions }); }}
+                                      hitSlop={8}
+                                      style={{ padding: 4 }}
+                                    >
+                                      <Ionicons name="pencil-outline" size={16} color={Colors.textSecondary} />
+                                    </Pressable>
+                                    <Switch
+                                      value={skill.isActive}
+                                      onValueChange={() => handleToggleSkill(skill.id)}
+                                      trackColor={{ true: Colors.primary, false: Colors.border }}
+                                      thumbColor="#fff"
+                                    />
+                                    <Pressable onPress={() => handleDeleteSkill(skill.id)} hitSlop={8} style={{ padding: 4 }}>
+                                      <Ionicons name="trash-outline" size={17} color="#EF4444" />
+                                    </Pressable>
+                                  </>
+                                )}
+                              </View>
+                            </View>
+                          </>
+                        )}
+                      </View>
+                    );
+                  })}
+                </View>
+              )}
+            </>
+          )}
         </Animated.View>
 
         {/* Settings */}

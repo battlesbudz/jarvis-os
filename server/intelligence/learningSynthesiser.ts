@@ -48,6 +48,7 @@ export async function synthesiseLearnings(
   applyToMemory = true,
   archiveAfter = false,
   triggeredBy: "manual" | "scheduler" = "manual",
+  callerUserId?: string,
 ): Promise<SynthesisResult> {
   const [corrections, errors] = await Promise.all([
     readWorkspaceFile("corrections"),
@@ -139,6 +140,23 @@ Instructions:
     console.log(
       `[LearningSynthesiser] Appended ${bullets.length} bullet(s) to MEMORY.md`,
     );
+
+    // Emit each bullet as a skill candidate for the workspace owner to review.
+    // Workspace files (CORRECTIONS.md / ERRORS.md) are owner-scoped, so candidates
+    // are emitted only for the integration owner — never to every user account.
+    // Best-effort: failures here are non-fatal.
+    try {
+      const { emitSynthesiserCandidate } = await import("./skillCurator");
+      const { getIntegrationOwnerId } = await import("../integrationOwner");
+      const targetUserId = callerUserId ?? await getIntegrationOwnerId();
+      if (targetUserId) {
+        for (const bullet of bullets) {
+          emitSynthesiserCandidate(targetUserId, bullet).catch(() => {});
+        }
+      }
+    } catch (err) {
+      console.error("[LearningSynthesiser] skill candidate emission failed (non-fatal):", err);
+    }
 
     if (archiveAfter) {
       await Promise.all([
