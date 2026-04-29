@@ -299,6 +299,27 @@ export default function InboxScreen() {
     },
   });
 
+  const saveToDriveMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await apiRequest('POST', `/api/deliverables/${id}/save-to-drive`, {});
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to save to Drive');
+      return data as { ok: boolean; driveLink: string };
+    },
+    onSuccess: (data, id) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/deliverables'] });
+      if (data.driveLink) {
+        Alert.alert('Saved to Drive', 'Your document has been saved to Google Drive.', [
+          { text: 'Open', onPress: () => Linking.openURL(data.driveLink) },
+          { text: 'OK' },
+        ]);
+      }
+    },
+    onError: (err: Error) => {
+      Alert.alert('Error', err.message || 'Could not save to Drive.');
+    },
+  });
+
   const rejectGateMutation = useMutation({
     mutationFn: async (id: string) => {
       const res = await apiRequest('POST', `/api/deliverables/${id}/reject`, {});
@@ -570,7 +591,8 @@ export default function InboxScreen() {
           const busy =
             (approveDeliverableMutation.isPending && approveDeliverableMutation.variables === d.id) ||
             (discardDeliverableMutation.isPending && discardDeliverableMutation.variables === d.id) ||
-            (rejectGateMutation.isPending && rejectGateMutation.variables === d.id);
+            (rejectGateMutation.isPending && rejectGateMutation.variables === d.id) ||
+            (saveToDriveMutation.isPending && saveToDriveMutation.variables === d.id);
           const meta = d.meta as { to?: string; subject?: string; noSourceUrls?: boolean } | null;
           return (
             <Animated.View key={d.id} entering={FadeInDown.duration(300).delay(index * 60)}>
@@ -624,7 +646,7 @@ export default function InboxScreen() {
                   </Text>
                 </View>
 
-                {d.driveLink && (
+                {d.driveLink ? (
                   <Pressable
                     style={styles.driveLinkRow}
                     onPress={() => Linking.openURL(d.driveLink!)}
@@ -633,6 +655,20 @@ export default function InboxScreen() {
                     <Ionicons name="logo-google" size={14} color={Colors.primary} />
                     <Text style={styles.driveLinkText}>Open in Drive</Text>
                     <Ionicons name="open-outline" size={13} color={Colors.primary} />
+                  </Pressable>
+                ) : (
+                  <Pressable
+                    style={styles.saveToDriveRow}
+                    onPress={() => saveToDriveMutation.mutate(d.id)}
+                    disabled={busy}
+                    testID={`deliverable-save-to-drive-${d.id}`}
+                  >
+                    {saveToDriveMutation.isPending && saveToDriveMutation.variables === d.id ? (
+                      <ActivityIndicator size="small" color={Colors.primary} />
+                    ) : (
+                      <Ionicons name="logo-google" size={14} color={Colors.primary} />
+                    )}
+                    <Text style={styles.driveLinkText}>Save to Drive</Text>
                   </Pressable>
                 )}
 
@@ -1397,6 +1433,19 @@ const styles = StyleSheet.create({
     paddingVertical: 7,
     paddingHorizontal: 10,
     backgroundColor: Colors.primary + '12',
+    borderRadius: 8,
+    marginBottom: 10,
+    alignSelf: 'flex-start' as const,
+  },
+  saveToDriveRow: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: 6,
+    paddingVertical: 7,
+    paddingHorizontal: 10,
+    backgroundColor: Colors.primary + '08',
+    borderWidth: 1,
+    borderColor: Colors.primary + '30',
     borderRadius: 8,
     marginBottom: 10,
     alignSelf: 'flex-start' as const,
