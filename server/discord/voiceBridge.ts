@@ -32,6 +32,16 @@ export interface VoiceSession {
   processingQueue: Promise<void>;
 }
 
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+/**
+ * Noise gate: minimum number of Opus frames required before an utterance is
+ * sent to Whisper STT.  Each Discord Opus frame is 20 ms, so the default of
+ * 24 frames ≈ 480 ms.  Raise this value to be more aggressive about filtering
+ * background noise; lower it if short commands are being silently dropped.
+ */
+const MIN_OPUS_FRAMES = 24;
+
 // ── State ────────────────────────────────────────────────────────────────────
 
 const activeSessions = new Map<string, VoiceSession>();
@@ -209,6 +219,14 @@ function attachReceiverHandlers(session: VoiceSession, client: Client): void {
       const currentSession = activeSessions.get(session.guildId);
       if (!currentSession || opusChunks.length === 0) return;
 
+      // Noise gate: discard utterances that are too short to be real speech.
+      if (opusChunks.length < MIN_OPUS_FRAMES) {
+        console.log(
+          `[VoiceBridge] Noise gate dropped utterance — ${opusChunks.length} frames < ${MIN_OPUS_FRAMES} minimum (guild=${session.guildId})`,
+        );
+        return;
+      }
+
       currentSession.processingQueue = currentSession.processingQueue.then(async () => {
         const refreshed = activeSessions.get(session.guildId);
         if (!refreshed) return;
@@ -242,7 +260,10 @@ async function processVoiceUtterance(
     return;
   }
 
-  if (!transcript) return;
+  if (!transcript) {
+    console.log(`[VoiceBridge] Empty transcript from Whisper — utterance silently discarded (guild=${guildId})`);
+    return;
+  }
 
   await sendToTextChannel(client, textChannelId, `🎤 *"${transcript}"*`);
 
