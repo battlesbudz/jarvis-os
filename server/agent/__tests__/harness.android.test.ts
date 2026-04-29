@@ -7,6 +7,10 @@
  *   HA-3: Injects the sequential-execution rule into the first system message.
  *   HA-4: Fires onProgressMessage at turn 15 with the expected text.
  *   HA-5: Fires onProgressMessage at turn 20 with the expected text.
+ *   HA-6: Streaming mode — inline quality check is skipped.
+ *   HA-7: Non-streaming mode — inline quality check still fires.
+ *   HA-8: daemon_action tool → effectiveMaxTurns raised to 25.
+ *   HA-9: run_daemon_shell tool → effectiveMaxTurns raised to 25.
  *
  * Run with: tsx server/agent/__tests__/harness.android.test.ts
  *
@@ -113,6 +117,28 @@ const genericSearchTool: AgentTool = {
     required: ["query"],
   },
   execute: async () => ({ ok: true, content: "Search result." }),
+};
+
+const daemonActionTool: AgentTool = {
+  name: "daemon_action",
+  description: "Perform a daemon action on the device.",
+  parameters: {
+    type: "object",
+    properties: { action: { type: "string" } },
+    required: ["action"],
+  },
+  execute: async () => ({ ok: true, content: "Daemon action executed." }),
+};
+
+const runDaemonShellTool: AgentTool = {
+  name: "run_daemon_shell",
+  description: "Run a shell command via the daemon.",
+  parameters: {
+    type: "object",
+    properties: { command: { type: "string" } },
+    required: ["command"],
+  },
+  execute: async () => ({ ok: true, content: "Shell command executed." }),
 };
 
 // ── Minimal context (no DB required) ────────────────────────────────────────
@@ -377,6 +403,52 @@ async function run(): Promise<void> {
     assert(
       result.reply === cleanReply,
       "HA-7: non-streaming mode — harness returns the clean revised reply",
+    );
+
+    _clearProviderCacheForTesting();
+  }
+
+  // ── HA-8: daemon_action tool raises effectiveMaxTurns to EXACTLY 25 ─────
+  // Same strategy as HA-1: supply 25 consecutive tool-call turns. If the
+  // budget is 25 the forced-final call is #26 (callCount === 26).
+  {
+    const { provider, state } = makeMockProvider(25, "daemon_action");
+    _overrideProviderForTesting("openai", provider);
+
+    await runAgent({
+      model: "gpt-4o",
+      messages: [{ role: "system", content: "You are a helpful assistant." }],
+      tools: [daemonActionTool],
+      context: { ...minimalContext },
+      maxTurns: 6,
+    });
+
+    assert(
+      state.callCount === 26,
+      `HA-8: daemon_action session made exactly 26 provider calls (25 tool turns + 1 forced-final), proving effectiveMaxTurns === 25 (got ${state.callCount})`,
+    );
+
+    _clearProviderCacheForTesting();
+  }
+
+  // ── HA-9: run_daemon_shell tool raises effectiveMaxTurns to EXACTLY 25 ──
+  // Same strategy as HA-1: supply 25 consecutive tool-call turns. If the
+  // budget is 25 the forced-final call is #26 (callCount === 26).
+  {
+    const { provider, state } = makeMockProvider(25, "run_daemon_shell");
+    _overrideProviderForTesting("openai", provider);
+
+    await runAgent({
+      model: "gpt-4o",
+      messages: [{ role: "system", content: "You are a helpful assistant." }],
+      tools: [runDaemonShellTool],
+      context: { ...minimalContext },
+      maxTurns: 6,
+    });
+
+    assert(
+      state.callCount === 26,
+      `HA-9: run_daemon_shell session made exactly 26 provider calls (25 tool turns + 1 forced-final), proving effectiveMaxTurns === 25 (got ${state.callCount})`,
     );
 
     _clearProviderCacheForTesting();
