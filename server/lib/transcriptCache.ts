@@ -145,6 +145,8 @@ let ytdlpUpgradePromise: Promise<void> | null = null;
 let ytdlpCmd = "yt-dlp";
 /** True once ensureYtdlpUpgraded() confirms the active yt-dlp is >= 2023.11.16. */
 let ytdlpSupportsImpersonate = false;
+/** True once ensureYtdlpUpgraded() confirms the resolved ytdlpCmd actually responds to --version. */
+let ytdlpAvailable = false;
 
 // ── Persisted impersonate-flag cache ─────────────────────────────────────────
 // If --impersonate is discovered to be broken at runtime we write a small JSON
@@ -193,6 +195,14 @@ function parseYtdlpVersionDate(v: string): string {
 
 /** Returns the resolved yt-dlp command after any pip upgrade. Call after ensureYtdlpUpgraded(). */
 export function getYtdlpCmd(): string { return ytdlpCmd; }
+/**
+ * Returns the availability status of yt-dlp after ensureYtdlpUpgraded() has run.
+ * Callers can check this before attempting audio work to surface a clear error
+ * instead of a cryptic "command not found" failure.
+ */
+export function getYtdlpStatus(): { available: boolean; cmd: string } {
+  return { available: ytdlpAvailable, cmd: ytdlpCmd };
+}
 /** Ensures yt-dlp is up-to-date and sets ytdlpCmd appropriately. Safe to call multiple times. */
 export { ensureYtdlpUpgraded };
 
@@ -285,6 +295,23 @@ async function ensureYtdlpUpgraded(): Promise<void> {
     } catch (err) {
       console.warn(
         `[transcriptCache] yt-dlp upgrade skipped: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+
+    // ── Final availability probe ─────────────────────────────────────────────
+    // After all upgrade paths have run (or failed), confirm that the resolved
+    // ytdlpCmd actually responds to --version.  If it doesn't, the subsequent
+    // exec() calls would fail with an opaque "command not found" error, so we
+    // surface a clear startup warning here instead.
+    try {
+      await execAsync(`${ytdlpCmd} --version`, { timeout: 10_000 });
+      ytdlpAvailable = true;
+    } catch {
+      ytdlpAvailable = false;
+      console.warn(
+        `[transcriptCache] yt-dlp is NOT available (cmd: "${ytdlpCmd}" did not respond to --version). ` +
+        "Audio transcription will fail until yt-dlp is installed. " +
+        "Install it via: python3 -m pip install yt-dlp"
       );
     }
   })();
