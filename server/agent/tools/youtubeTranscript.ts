@@ -417,7 +417,8 @@ export const youtubeTranscriptTool: AgentTool = {
     };
 
     try {
-      let segments = await fetchTranscriptCached(input, { bypassCache, audioOnly: forceAudio });
+      const { segments: rawSegments, noCaptionsDetected } = await fetchTranscriptCached(input, { bypassCache, audioOnly: forceAudio });
+      let segments = rawSegments;
 
       // ── Strategy 5: browser fallback if server-side got nothing ──────────────
       // YouTube increasingly blocks server-side requests from cloud IPs. Running
@@ -440,6 +441,14 @@ export const youtubeTranscriptTool: AgentTool = {
           }
         }
 
+        // ── Build the audio-mode hint shown when the no-captions path was taken
+        // and every strategy (including Phase 3 audio transcription) returned nothing.
+        // Only shown when forceAudio is not already set — it would be redundant otherwise.
+        const audioHint =
+          noCaptionsDetected && !forceAudio
+            ? "\n\n💡 **This video has no official captions.** Try asking me to transcribe it with audio mode (`force_audio=true`) — I'll download the audio and run it through speech-to-text."
+            : "";
+
         // ── Strategy 7: Tavily web-search ────────────────────────────────────
         // All transcript methods exhausted — search the web for any available
         // summaries or third-party transcripts instead.
@@ -448,14 +457,20 @@ export const youtubeTranscriptTool: AgentTool = {
         // be semantically misleading.
         console.log(`[get_youtube_transcript] all strategies empty — trying Tavily web search`);
         const tavilyResult = await fetchViaTavily(input);
-        if (tavilyResult) return tavilyResult;
+        if (tavilyResult) {
+          return {
+            ...tavilyResult,
+            content: tavilyResult.content + audioHint,
+          };
+        }
 
         return {
           ok: false,
           content:
             "No transcript could be retrieved for this video. It may have captions disabled, " +
             "be a live stream, or be blocked from server access. If you have the local worker " +
-            "running on your PC, it can often succeed where the server cannot.",
+            "running on your PC, it can often succeed where the server cannot." +
+            audioHint,
           label: "get_youtube_transcript: all strategies exhausted",
         };
       }
