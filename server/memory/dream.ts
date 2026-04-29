@@ -21,6 +21,21 @@ import { extractAndStore } from "./extractor";
 import { markSoulStale } from "./soul";
 import { emit as diagEmit } from "../diagnostics/diagnosticsService";
 
+async function isMemoryReviewEnabledForUser(userId: string): Promise<boolean> {
+  try {
+    const rows = await db
+      .select({ data: schema.lifeContext.data })
+      .from(schema.lifeContext)
+      .where(eq(schema.lifeContext.userId, userId))
+      .limit(1);
+    const data = rows[0]?.data as Record<string, unknown> | undefined;
+    if (data && typeof data.memoryReviewEnabled === "boolean") return data.memoryReviewEnabled;
+    return true;
+  } catch {
+    return true;
+  }
+}
+
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
@@ -350,6 +365,18 @@ Output JSON:
               inArray(schema.userMemories.id, promotedIds),
             ),
           );
+        // Apply review gate: semantic/procedural long_term promotions need approval.
+        const reviewEnabled = await isMemoryReviewEnabledForUser(userId);
+        if (reviewEnabled) {
+          await db.execute(sql`
+            UPDATE user_memories
+            SET pending_review = TRUE, review_status = 'pending'
+            WHERE user_id = ${userId}
+              AND id = ANY(${promotedIds}::varchar[])
+              AND memory_type IN ('semantic','procedural')
+              AND (pending_review = FALSE OR pending_review IS NULL)
+          `).catch(() => {});
+        }
         promoted += promotedIds.length;
       }
 

@@ -170,6 +170,11 @@ export const userMemories = pgTable("user_memories", {
   memoryType: varchar("memory_type").notNull().default("semantic"),
   expiresAt: timestamp("expires_at"),
   accessCount: integer("access_count").notNull().default(0),
+  // Human-in-the-loop review gate (Phase 6).
+  // pending_review = true  → memory is awaiting user approval before becoming active
+  // review_status: "active" (default, fully live) | "pending" (awaiting review) | "kept" | "edited" | "discarded"
+  pendingReview: boolean("pending_review").notNull().default(false),
+  reviewStatus: varchar("review_status").notNull().default("active"),
 });
 
 // Biomimetic memory tiers — mirrors human memory architecture.

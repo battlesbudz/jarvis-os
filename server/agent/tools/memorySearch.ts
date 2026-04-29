@@ -138,6 +138,7 @@ export const memoryGetTool: AgentTool = {
         WHERE user_id = ${ctx.userId}
           AND LOWER(category) = LOWER(${category})
           AND (expires_at IS NULL OR expires_at >= NOW())
+          AND (pending_review = FALSE OR pending_review IS NULL)
         ORDER BY confidence DESC, relevance_score DESC
         LIMIT ${limit}
       `);

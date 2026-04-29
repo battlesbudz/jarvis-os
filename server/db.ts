@@ -1472,6 +1472,10 @@ export async function ensureTablesExist() {
         ADD COLUMN IF NOT EXISTS discovered_resource_id VARCHAR(256)
     `);
 
+    // ── Memory Review Gate (Phase 6) ─────────────────────────────────────────
+    await db.execute(sql`ALTER TABLE user_memories ADD COLUMN IF NOT EXISTS pending_review BOOLEAN NOT NULL DEFAULT FALSE`).catch(() => {});
+    await db.execute(sql`ALTER TABLE user_memories ADD COLUMN IF NOT EXISTS review_status VARCHAR NOT NULL DEFAULT 'active'`).catch(() => {});
+
     console.log("Database tables verified");
   } catch (error) {
     console.error("Failed to ensure database tables exist:", error);

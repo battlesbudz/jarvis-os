@@ -716,9 +716,18 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
         metadata: { jobId: job.id, agentType: job.agentType, recovery: true },
       }).catch(() => {});
       console.log(`[JobQueue] complete weekly_pattern job ${job.id} → ${result.patternCount} patterns`);
+      const pendingReviewCount = result.pendingReviewCount ?? 0;
+      let pendingLine = "";
+      if (pendingReviewCount > 0) {
+        const previews = (result.pendingReviewPreviews ?? []).slice(0, 5);
+        const previewList = previews.length > 0
+          ? "\n" + previews.map((p, i) => `  ${i + 1}. ${p.length > 80 ? p.slice(0, 80) + "…" : p}`).join("\n")
+          : "";
+        pendingLine = `\n\n🧠 ${pendingReviewCount} new long-term memor${pendingReviewCount === 1 ? "y is" : "ies are"} waiting for your approval before JARVIS uses ${pendingReviewCount === 1 ? "it" : "them"}:${previewList}\n\nOpen the Profile tab → Memory Review section to keep, edit, or discard each one.`;
+      }
       const weeklyMsg = result.driveLink
-        ? `${result.patternCount} pattern(s) identified, ${result.promotedMemories} promoted to long-term memory.\n${result.summary}\n\n📁 Saved to Google Drive: ${result.driveLink}`
-        : `${result.patternCount} pattern(s) identified, ${result.promotedMemories} promoted to long-term memory.\n${result.summary}`;
+        ? `${result.patternCount} pattern(s) identified, ${result.promotedMemories} promoted to long-term memory.\n${result.summary}\n\n📁 Saved to Google Drive: ${result.driveLink}${pendingLine}`
+        : `${result.patternCount} pattern(s) identified, ${result.promotedMemories} promoted to long-term memory.\n${result.summary}${pendingLine}`;
       await notifyJobComplete(
         job.userId,
         "weekly_pattern",

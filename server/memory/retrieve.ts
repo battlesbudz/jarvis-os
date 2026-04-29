@@ -156,6 +156,7 @@ export async function retrieveRelevantMemories(
       FROM user_memories
       WHERE user_id = ${userId}
         AND (expires_at IS NULL OR expires_at >= NOW())
+        AND (pending_review = FALSE OR pending_review IS NULL)
       ORDER BY fts_rank DESC NULLS LAST, relevance_score DESC
       LIMIT 60
     `);

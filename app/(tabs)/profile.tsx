@@ -86,6 +86,16 @@ interface Memory {
   extractedAt: string;
 }
 
+interface PendingMemory {
+  id: string;
+  content: string;
+  category: string;
+  memory_type: string;
+  tier: string;
+  confidence: number;
+  extracted_at: string;
+}
+
 interface MorningVoiceNote {
   id: string;
   recordedAt: string;
@@ -227,6 +237,10 @@ export default function ProfileScreen() {
   const [androidDaemonPermsBusy, setAndroidDaemonPermsBusy] = useState<string | null>(null);
   const [trainedButtons, setTrainedButtons] = useState<Array<{ id: number; appPackage: string; elementLabel: string; confidence: number; stale: boolean; updatedAt: string }> | null>(null);
   const [trainedButtonsBusy, setTrainedButtonsBusy] = useState<number | null>(null);
+  const [pendingMemories, setPendingMemories] = useState<PendingMemory[]>([]);
+  const [pendingMemoriesLoading, setPendingMemoriesLoading] = useState(false);
+  const [editingMemoryId, setEditingMemoryId] = useState<string | null>(null);
+  const [editingMemoryText, setEditingMemoryText] = useState('');
   const [channelBusy, setChannelBusy] = useState<string | null>(null);
   const telegramPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [loadingStatus, setLoadingStatus] = useState(true);
@@ -928,7 +942,7 @@ export default function ProfileScreen() {
     setLifeContext(lc);
     setNotificationsEnabledState(notifications);
     setUserName(name);
-    await Promise.all([loadOAuthStatus(), loadMemories(), loadTelegramStatus(), loadMorningNotes(), loadDocuments(), loadSoul(), loadPeople(), loadChannels(), loadDaemonPerms(), loadAndroidDaemonPerms(), loadDriveStatus(), loadDreamInsights(), loadWebsiteCrawl(), loadWriteBudget(), loadCustomAgents(), loadTrainedButtons()]);
+    await Promise.all([loadOAuthStatus(), loadMemories(), loadTelegramStatus(), loadMorningNotes(), loadDocuments(), loadSoul(), loadPeople(), loadChannels(), loadDaemonPerms(), loadAndroidDaemonPerms(), loadDriveStatus(), loadDreamInsights(), loadWebsiteCrawl(), loadWriteBudget(), loadCustomAgents(), loadTrainedButtons(), loadPendingMemories()]);
     try {
       const importRes = await apiRequest('GET', '/api/chatgpt-import/status');
       const importData = await importRes.json();
@@ -950,9 +964,9 @@ export default function ProfileScreen() {
         setTtsLatencyTier(prefs.ttsLatencyTier as 0 | 2 | 4);
       }
     } catch {}
-  // loadDaemonPerms and loadAndroidDaemonPerms are useCallback([], []) — they are
-  // referentially stable and safe to omit from deps; including them causes a
-  // temporal-dead-zone ReferenceError because they are declared after loadAll.
+  // loadDaemonPerms, loadAndroidDaemonPerms, and loadPendingMemories are all
+  // useCallback([], []) / stable refs declared after loadAll — omit from deps
+  // to avoid temporal-dead-zone ReferenceErrors at initialisation.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadOAuthStatus, loadMemories, loadTelegramStatus, loadMorningNotes, loadDocuments, loadSoul, loadPeople, loadChannels, loadDriveStatus, loadDreamInsights, loadWebsiteCrawl, loadCustomAgents]);
 
@@ -1300,6 +1314,34 @@ export default function ProfileScreen() {
       console.error('[trained-buttons] delete error:', err);
     } finally {
       setTrainedButtonsBusy(null);
+    }
+  }, []);
+
+  const loadPendingMemories = useCallback(async () => {
+    setPendingMemoriesLoading(true);
+    try {
+      const res = await apiRequest('GET', '/api/memory/pending-review');
+      const data = await res.json();
+      setPendingMemories(Array.isArray(data) ? data : (data.memories ?? []));
+    } catch (err) {
+      console.error('[pending-memories] load error:', err);
+    } finally {
+      setPendingMemoriesLoading(false);
+    }
+  }, []);
+
+  const handleReviewMemory = useCallback(async (
+    id: string,
+    action: 'keep' | 'edit' | 'discard',
+    editedContent?: string,
+  ) => {
+    try {
+      await apiRequest('PATCH', `/api/memory/${id}/review`, { action, updatedContent: editedContent });
+      setPendingMemories((prev) => prev.filter((m) => m.id !== id));
+      setEditingMemoryId(null);
+      setEditingMemoryText('');
+    } catch (err) {
+      console.error('[pending-memories] review error:', err);
     }
   }, []);
 
@@ -2046,6 +2088,127 @@ export default function ProfileScreen() {
               </View>
             )}
           </View>
+        </Animated.View>
+
+        {/* Memory Review */}
+        <Animated.View entering={FadeInDown.duration(400).delay(413)}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 28 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Text style={styles.sectionTitle}>Memory Review</Text>
+              {pendingMemories.length > 0 && (
+                <View style={{ backgroundColor: Colors.primary ?? '#6C63FF', borderRadius: 10, minWidth: 20, paddingHorizontal: 6, paddingVertical: 2, alignItems: 'center' }}>
+                  <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>{pendingMemories.length}</Text>
+                </View>
+              )}
+            </View>
+            <Pressable onPress={loadPendingMemories} hitSlop={8} disabled={pendingMemoriesLoading}>
+              {pendingMemoriesLoading
+                ? <ActivityIndicator size="small" color={Colors.textTertiary} />
+                : <Ionicons name="refresh" size={16} color={Colors.textSecondary} />}
+            </Pressable>
+          </View>
+          <Text style={styles.sectionSubtitle}>
+            New long-term memories waiting for your approval before JARVIS uses them
+          </Text>
+          {pendingMemoriesLoading ? (
+            <View style={styles.memoryEmptyCard}>
+              <ActivityIndicator size="small" color={Colors.textTertiary} />
+            </View>
+          ) : pendingMemories.length === 0 ? (
+            <View style={styles.memoryEmptyCard}>
+              <View style={styles.memoryEmptyIcon}>
+                <Ionicons name="checkmark-circle-outline" size={22} color={Colors.textTertiary} />
+              </View>
+              <Text style={styles.memoryEmptyText}>All caught up — no memories waiting for review</Text>
+            </View>
+          ) : (
+            <View style={styles.memoryList}>
+              {pendingMemories.map((mem, idx) => (
+                <View key={mem.id} style={[styles.memoryRow, idx < pendingMemories.length - 1 && styles.memoryRowBorder]}>
+                  <View style={{ flex: 1 }}>
+                    <View style={{ flexDirection: 'row', gap: 6, marginBottom: 4, flexWrap: 'wrap' }}>
+                      <View style={{ backgroundColor: Colors.surface, borderRadius: 6, paddingHorizontal: 7, paddingVertical: 2 }}>
+                        <Text style={{ color: Colors.textSecondary, fontSize: 11, fontWeight: '500' }}>{mem.memory_type}</Text>
+                      </View>
+                      <View style={{ backgroundColor: Colors.surface, borderRadius: 6, paddingHorizontal: 7, paddingVertical: 2 }}>
+                        <Text style={{ color: Colors.textSecondary, fontSize: 11, fontWeight: '500' }}>{mem.category.replace(/_/g, ' ')}</Text>
+                      </View>
+                    </View>
+                    {editingMemoryId === mem.id ? (
+                      <View>
+                        <TextInput
+                          value={editingMemoryText}
+                          onChangeText={setEditingMemoryText}
+                          multiline
+                          autoFocus
+                          placeholderTextColor={Colors.textTertiary}
+                          style={{
+                            backgroundColor: Colors.background,
+                            borderRadius: 8,
+                            padding: 10,
+                            color: Colors.text,
+                            fontSize: 14,
+                            lineHeight: 20,
+                            minHeight: 60,
+                            textAlignVertical: 'top',
+                            borderWidth: 1,
+                            borderColor: Colors.border,
+                            marginBottom: 8,
+                          }}
+                        />
+                        <View style={{ flexDirection: 'row', gap: 8 }}>
+                          <Pressable
+                            onPress={() => handleReviewMemory(mem.id, 'edit', editingMemoryText)}
+                            style={{ flex: 1, backgroundColor: Colors.text, padding: 10, borderRadius: 8, alignItems: 'center' }}
+                          >
+                            <Text style={{ color: Colors.background, fontWeight: '600', fontSize: 13 }}>Save & Keep</Text>
+                          </Pressable>
+                          <Pressable
+                            onPress={() => { setEditingMemoryId(null); setEditingMemoryText(''); }}
+                            style={{ flex: 1, backgroundColor: Colors.surface, padding: 10, borderRadius: 8, alignItems: 'center' }}
+                          >
+                            <Text style={{ color: Colors.text, fontWeight: '500', fontSize: 13 }}>Cancel</Text>
+                          </Pressable>
+                        </View>
+                      </View>
+                    ) : (
+                      <View>
+                        <Text style={{ color: Colors.text, fontSize: 14, lineHeight: 20, marginBottom: 10 }}>{mem.content}</Text>
+                        <View style={{ flexDirection: 'row', gap: 8 }}>
+                          <Pressable
+                            onPress={() => handleReviewMemory(mem.id, 'keep')}
+                            style={{ flex: 1, backgroundColor: Colors.surface, padding: 9, borderRadius: 8, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 4 }}
+                          >
+                            <Ionicons name="checkmark" size={14} color={Colors.text} />
+                            <Text style={{ color: Colors.text, fontWeight: '600', fontSize: 13 }}>Keep</Text>
+                          </Pressable>
+                          <Pressable
+                            onPress={() => { setEditingMemoryId(mem.id); setEditingMemoryText(mem.content); }}
+                            style={{ flex: 1, backgroundColor: Colors.surface, padding: 9, borderRadius: 8, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 4 }}
+                          >
+                            <Ionicons name="create-outline" size={14} color={Colors.text} />
+                            <Text style={{ color: Colors.text, fontWeight: '600', fontSize: 13 }}>Edit</Text>
+                          </Pressable>
+                          <Pressable
+                            onPress={() => handleReviewMemory(mem.id, 'discard')}
+                            style={{ flex: 1, backgroundColor: Colors.surface, padding: 9, borderRadius: 8, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 4 }}
+                          >
+                            <Ionicons name="trash-outline" size={14} color="#EF4444" />
+                            <Text style={{ color: '#EF4444', fontWeight: '600', fontSize: 13 }}>Discard</Text>
+                          </Pressable>
+                        </View>
+                      </View>
+                    )}
+                    {mem.extracted_at && (
+                      <Text style={{ color: Colors.textTertiary, fontSize: 11, marginTop: 6 }}>
+                        Extracted {new Date(mem.extracted_at).toLocaleDateString()}
+                      </Text>
+                    )}
+                  </View>
+                </View>
+              ))}
+            </View>
+          )}
         </Animated.View>
 
         {/* People */}
