@@ -39,3 +39,6 @@ yarn-error.*
 .vercel
 
 .env
+
+# runtime cache files
+.ytdlp-flags.json
