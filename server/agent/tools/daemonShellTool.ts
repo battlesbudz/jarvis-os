@@ -359,6 +359,7 @@ export interface ScreenElement {
   bounds: string;
   resource_id: string;
   clickable: boolean;
+  className?: string;
 }
 
 // ── buildScreenMapElements ─────────────────────────────────────────────────────
@@ -433,6 +434,7 @@ Look at the screenshot and the element tree above. Return a JSON array of the mo
 - "bounds": exact bounds string from the element tree (e.g. "[0,100][1080,200]")
 - "resource_id": the resource-id from the element tree (empty string if none)
 - "clickable": true if the element is clickable or tappable
+- "class_name": the class attribute from the element tree (e.g. "android.widget.ImageButton", "android.widget.EditText", "android.widget.TextView")
 
 Prioritize: search bars, input fields, buttons, navigation items, interactive content.
 Include elements that have no accessibility label but are visually identifiable as interactive.
@@ -468,7 +470,7 @@ Return ONLY a valid JSON array, no explanation, no markdown fences.`,
 export const androidScreenUnderstandTool: AgentTool = {
   name: "android_screen_understand",
   description: `Capture and deeply understand the current Android screen by combining a screenshot with the full UI Automator element hierarchy.
-Returns a ScreenMap     a structured JSON array of the most important interactive elements, each with: label, description, center_x, center_y (tap coordinates), bounds, resource_id, and clickable flag.
+Returns a ScreenMap     a structured JSON array of the most important interactive elements, each with: label, description, center_x, center_y (tap coordinates), bounds, resource_id, clickable flag, and className (Android widget class, e.g. "android.widget.ImageButton") when available.
 
 Use this tool when:
 - android_read_screen doesn't expose coordinates for the element you need
@@ -1856,6 +1858,7 @@ function normalizeScreenElements(raw: unknown[]): ScreenElement[] {
     const cx = Number(e.center_x);
     const cy = Number(e.center_y);
     if (!isFinite(cx) || !isFinite(cy)) return [];
+    const className = e.class_name ?? e.className;
     return [{
       label: String(e.label ?? ""),
       description: String(e.description ?? ""),
@@ -1864,6 +1867,7 @@ function normalizeScreenElements(raw: unknown[]): ScreenElement[] {
       bounds: String(e.bounds ?? ""),
       resource_id: String(e.resource_id ?? ""),
       clickable: Boolean(e.clickable),
+      ...(className ? { className: String(className) } : {}),
     }];
   });
 }
