@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Best-effort yt-dlp upgrade via pip --user before the dev server starts.
-# Overrides the stale Nix-pinned binary (2024.05.27) without touching replit.nix.
+# Overrides the stale Nix-pinned binary without touching replit.nix.
 # --break-system-packages is required in Nix environments that enforce PEP 668;
 # with --user it writes only to ~/.local, never to the immutable /nix/store.
 # The production path (npm run server:prod) is covered by ensureYtdlpUpgraded()

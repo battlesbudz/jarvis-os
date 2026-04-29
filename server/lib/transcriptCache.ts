@@ -78,6 +78,18 @@ async function ensureYtdlpUpgraded(): Promise<void> {
   if (ytdlpUpgradePromise) return ytdlpUpgradePromise;
   ytdlpUpgradePromise = (async () => {
     try {
+      // Capture the Nix binary's current version as a baseline before upgrading
+      // so that any version comparison is always against the real installed value.
+      let nixParsed = "";
+      let nixVersion = "unknown";
+      try {
+        const { stdout: nixVer } = await execAsync("yt-dlp --version", { timeout: 10_000 });
+        nixVersion = nixVer.trim();
+        nixParsed = parseYtdlpVersionDate(nixVersion);
+      } catch {
+        // Nix binary may not be present — that is fine; nixParsed stays ""
+      }
+
       // Run pip upgrade — non-fatal. --break-system-packages is needed in
       // Nix/PEP-668 environments; with --user it only touches ~/.local.
       await execAsync(
@@ -91,32 +103,45 @@ async function ensureYtdlpUpgraded(): Promise<void> {
         { timeout: 10_000 }
       );
       const version = modVer.trim();
-      // If pip installed something newer than the stale Nix binary, use the module
-      if (version && version !== "2024.05.27") {
+      const modParsed = parseYtdlpVersionDate(version);
+
+      // Prefer the pip-managed module when it is strictly newer than the Nix binary.
+      // Using a proper date comparison (YYYY.MM.DD, lexicographically safe) means
+      // this will remain correct when the Nix package is updated in future.
+      if (modParsed && modParsed > nixParsed) {
         ytdlpCmd = "python3 -m yt_dlp";
         console.log(`[transcriptCache] yt-dlp upgraded to ${version} (using python3 -m yt_dlp)`);
-        const parsed = parseYtdlpVersionDate(version);
-        ytdlpSupportsImpersonate = !!parsed && parsed >= MIN_IMPERSONATE_VERSION;
+        ytdlpSupportsImpersonate = modParsed >= MIN_IMPERSONATE_VERSION;
         if (!ytdlpSupportsImpersonate) {
           console.warn(
             `[transcriptCache] yt-dlp too old for --impersonate (v${version}) — running without browser impersonation`
           );
         }
       } else {
-        // pip didn't help — also try updating PATH in case binary landed in ~/.local/bin
+        // Module is not newer than the Nix binary — also try updating PATH in case
+        // the pip binary landed in ~/.local/bin and is already on disk.
         const { stdout: base } = await execAsync("python3 -m site --user-base", { timeout: 5_000 });
         const userBin = `${base.trim()}/bin`;
         if (!process.env.PATH?.startsWith(userBin)) {
           process.env.PATH = `${userBin}:${process.env.PATH ?? ""}`;
         }
-        const { stdout: binVer } = await execAsync("yt-dlp --version", { timeout: 10_000 });
-        const binVersion = binVer.trim();
-        console.log(`[transcriptCache] yt-dlp version: ${binVersion} (using Nix binary)`);
-        const parsed = parseYtdlpVersionDate(binVersion);
-        ytdlpSupportsImpersonate = !!parsed && parsed >= MIN_IMPERSONATE_VERSION;
+        // Re-read the version after PATH mutation — a newer pip-installed binary may now
+        // be visible in ~/.local/bin, so ytdlpSupportsImpersonate must reflect the binary
+        // that will actually be invoked, not the pre-mutation Nix snapshot.
+        let activeVersion = nixVersion;
+        let activeParsed = nixParsed;
+        try {
+          const { stdout: postVer } = await execAsync("yt-dlp --version", { timeout: 10_000 });
+          const v = postVer.trim();
+          if (v) { activeVersion = v; activeParsed = parseYtdlpVersionDate(v); }
+        } catch {
+          // Stick with the pre-mutation snapshot if the binary is still unavailable
+        }
+        console.log(`[transcriptCache] yt-dlp version: ${activeVersion} (using Nix binary)`);
+        ytdlpSupportsImpersonate = !!activeParsed && activeParsed >= MIN_IMPERSONATE_VERSION;
         if (!ytdlpSupportsImpersonate) {
           console.warn(
-            `[transcriptCache] yt-dlp too old for --impersonate (v${binVersion}) — running without browser impersonation`
+            `[transcriptCache] yt-dlp too old for --impersonate (v${activeVersion}) — running without browser impersonation`
           );
         }
       }
