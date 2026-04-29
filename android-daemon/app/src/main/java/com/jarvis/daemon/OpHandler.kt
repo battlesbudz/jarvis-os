@@ -635,24 +635,26 @@ object OpHandler {
     private fun handlePressKey(op: JSONObject): OpResult {
         val key = op.optString("key", "back")
 
-        // select_all and delete are handled via shell key events so they work even when
-        // the accessibility service is unavailable (WebView inputs, custom IME fields).
+        val svc = JarvisAccessibilityService.instance
+        if (svc != null) {
+            val ok = svc.pressKey(key)
+            if (ok) return OpResult(true, data = JSONObject().put("key", key).put("method", "native"))
+        }
+
+        // select_all and delete fall back to the shell keyevent path when the
+        // accessibility service is unavailable or pressKey returned false (e.g.
+        // no focused editable found — covers WebViews and custom IME fields).
         if (key == "select_all" || key == "delete") {
             return handlePressKeyViaShell(key)
         }
 
-        val svc = JarvisAccessibilityService.instance
-            ?: return OpResult(false, error = "Accessibility service not running.")
-        val ok = svc.pressKey(key)
-        return if (ok) {
-            OpResult(true, data = JSONObject().put("key", key))
-        } else {
-            OpResult(false, error = "Unknown or unsupported key: $key")
-        }
+        return OpResult(false, error = if (svc == null) "Accessibility service not running." else "Unknown or unsupported key: $key")
     }
 
-    /** Send a key event via the Android 'input keyevent' shell command.
-     *  Works without accessibility — covers WebView / custom IME clear fallback. */
+    /** Shell fallback for select_all and delete key events.
+     *  Used when the accessibility service is unavailable or pressSelectAll /
+     *  pressDelete returned false (e.g. no focused editable node — covers
+     *  WebViews and custom IME fields that ignore accessibility actions). */
     private fun handlePressKeyViaShell(key: String): OpResult {
         val (keycode, useFlag) = when (key) {
             // KEYCODE_CTRL_A selects all text; --longpress triggers the long-press path

@@ -10,9 +10,12 @@ import android.graphics.Rect
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import android.provider.MediaStore
 import android.util.Base64
 import android.util.Log
+import android.view.InputEvent
+import android.view.KeyEvent
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.annotation.RequiresApi
@@ -885,9 +888,10 @@ class JarvisAccessibilityService : AccessibilityService() {
 
     // ── Key press ────────────────────────────────────────────────────────────
     // Returns true if the key was recognised and the action was dispatched,
-    // false for unknown keys.  select_all and delete are intentionally absent
-    // here — they are routed through the shell keyevent path in OpHandler so
-    // that they work even when the accessibility service is unavailable.
+    // false for unknown keys.
+    // select_all and delete inject native KeyEvents (KEYCODE_A + META_CTRL_ON,
+    // KEYCODE_DEL) via InputManager when the accessibility service is running.
+    // OpHandler falls back to the shell keyevent path if this returns false.
     fun pressKey(key: String): Boolean {
         return when (key) {
             "back"          -> { performGlobalAction(GLOBAL_ACTION_BACK); true }
@@ -895,7 +899,44 @@ class JarvisAccessibilityService : AccessibilityService() {
             "recents"       -> { performGlobalAction(GLOBAL_ACTION_RECENTS); true }
             "notifications" -> { performGlobalAction(GLOBAL_ACTION_NOTIFICATIONS); true }
             "enter"         -> { pressImeAction(); true }
+            "select_all"    -> pressSelectAll()
+            "delete"        -> pressDelete()
             else            -> false
         }
     }
+
+    /** Inject a KeyEvent (ACTION_DOWN + ACTION_UP) via InputManager.injectInputEvent().
+     *  This dispatches a hardware-style key event into the focused window without
+     *  spawning a shell subprocess.  Uses reflection because injectInputEvent is a
+     *  @hide API — accessible at runtime on all AOSP/OEM builds.
+     *  Returns true if both DOWN and UP were accepted by the system. */
+    private fun injectKeyEvent(keycode: Int, metaState: Int = 0): Boolean {
+        return try {
+            val imClass = Class.forName("android.hardware.input.InputManager")
+            val getInstance = imClass.getMethod("getInstance")
+            val im = getInstance.invoke(null)
+            val injectMethod = imClass.getMethod("injectInputEvent", InputEvent::class.java, Int::class.java)
+            val downTime = SystemClock.uptimeMillis()
+            val down = KeyEvent(downTime, downTime, KeyEvent.ACTION_DOWN, keycode, 0, metaState)
+            val up   = KeyEvent(downTime, SystemClock.uptimeMillis(), KeyEvent.ACTION_UP, keycode, 0, metaState)
+            val okDown = injectMethod.invoke(im, down, 0) as Boolean
+            val okUp   = injectMethod.invoke(im, up,   0) as Boolean
+            val ok = okDown && okUp
+            Log.d(TAG, "injectKeyEvent keycode=$keycode meta=$metaState method=native ok=$ok")
+            ok
+        } catch (e: Exception) {
+            Log.w(TAG, "injectKeyEvent keycode=$keycode meta=$metaState method=native failed: ${e.message}")
+            false
+        }
+    }
+
+    /** Select all text in the focused window by injecting KEYCODE_A with META_CTRL_ON.
+     *  Returns false if injection fails so that OpHandler can fall back to the shell path. */
+    private fun pressSelectAll(): Boolean =
+        injectKeyEvent(KeyEvent.KEYCODE_A, KeyEvent.META_CTRL_ON)
+
+    /** Delete/backspace by injecting KEYCODE_DEL.
+     *  Returns false if injection fails so that OpHandler can fall back to the shell path. */
+    private fun pressDelete(): Boolean =
+        injectKeyEvent(KeyEvent.KEYCODE_DEL)
 }
