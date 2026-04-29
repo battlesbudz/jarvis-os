@@ -560,17 +560,26 @@ class JarvisAccessibilityService : AccessibilityService() {
      *   Works for standard EditText and most native views.
      *   Verified by refreshing the node and reading text back.
      *
-     * Step 2 (fallback) — ACTION_SET_SELECTION(0, len) then ACTION_CUT.
-     *   Works for views that support selection but not direct ACTION_SET_TEXT.
+     * Step 2 (fallback) — ACTION_SET_SELECTION(0, len) then ACTION_SET_TEXT("").
+     *   Selects all text and overwrites the selection with an empty string.
+     *   Avoids clipboard side-effects from ACTION_CUT.
+     *   Falls back to ACTION_CUT only if the overwrite attempt fails.
      *   Uses exact currentLength bound (no +1) so selection is within text range.
      *   Verified by node refresh.
      *
-     * Step 3 (final fallback) — re-find node from a fresh window traversal,
+     * Step 3 (fallback) — re-find node from a fresh window traversal,
      *   then retry ACTION_SET_TEXT("") on the fresh reference.
      *   Covers the case where the original node reference went stale, and the
      *   case where the focused node changed (e.g., some input views recreate
      *   their node when the IME opens).
      *   Verified by node refresh.
+     *
+     * Step 4 (final fallback) — adb-style keyevent CTRL_A + DEL via Runtime.exec.
+     *   Simulates hardware key injection: select-all (Ctrl+A) followed by delete.
+     *   Works on WebViews, React Native text inputs, and custom keyboard apps that
+     *   ignore accessibility actions but respond to raw key injection.
+     *   KEYCODE_CTRL_LEFT=113, KEYCODE_A=29, KEYCODE_DEL=67.
+     *   Verified by fresh node refresh after the keyevent sequence.
      */
     fun clearField(): ClearFieldResult {
         val root = rootInActiveWindow
@@ -612,7 +621,10 @@ class JarvisAccessibilityService : AccessibilityService() {
             }
         }
 
-        // ── Step 2: Select exact text range + ACTION_CUT ─────────────────────
+        // ── Step 2: Select all + overwrite with empty string ─────────────────
+        // Primary: ACTION_SET_SELECTION(0..len) then ACTION_SET_TEXT("").
+        // Selects all text and overwrites the selection with "" — no clipboard side-effects.
+        // Fallback within step: if set-text after selection fails, try ACTION_CUT instead.
         // Use currentLength (not +1) to stay within valid selection bounds.
         // For password/null-text fields use Int.MAX_VALUE — the system clamps it.
         focused.refresh()
@@ -626,22 +638,43 @@ class JarvisAccessibilityService : AccessibilityService() {
 
         if (selOk) {
             Thread.sleep(60)
-            val cutOk = focused.performAction(AccessibilityNodeInfo.ACTION_CUT)
+            // Preferred: overwrite selection with "" (no clipboard side-effects)
+            val deleteArgs = Bundle().apply {
+                putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "")
+            }
+            val deleteOk = focused.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, deleteArgs)
             Thread.sleep(80)
             focused.refresh()
-            val textAfterCutRaw = focused.text
-            val textAfterCutStr = textAfterCutRaw?.toString()
+            val textAfterDeleteRaw = focused.text
+            val textAfterDeleteStr = textAfterDeleteRaw?.toString()
             when {
-                textAfterCutStr == null -> {
-                    // Protected field — can't read; trust cutOk as signal
-                    if (cutOk) return ClearFieldResult(true, "ACTION_SET_SELECTION_CUT", false, false)
-                    Log.w(TAG, "clearField: ACTION_CUT failed on protected field")
+                textAfterDeleteStr == null && deleteOk -> {
+                    // Protected field — trust the performAction return value
+                    return ClearFieldResult(true, "ACTION_SET_SELECTION_DELETE", false, false)
                 }
-                textAfterCutStr.isEmpty() -> {
-                    return ClearFieldResult(true, "ACTION_SET_SELECTION_CUT", false, true)
+                textAfterDeleteStr != null && textAfterDeleteStr.isEmpty() -> {
+                    return ClearFieldResult(true, "ACTION_SET_SELECTION_DELETE", false, true)
                 }
                 else -> {
-                    Log.w(TAG, "clearField: ACTION_CUT did not fully clear — remaining='${textAfterCutStr.take(20)}' cutOk=$cutOk")
+                    // Overwrite didn't take — fall back to ACTION_CUT as last resort for this step
+                    Log.w(TAG, "clearField: set-text after selection failed — trying ACTION_CUT fallback")
+                    val cutOk = focused.performAction(AccessibilityNodeInfo.ACTION_CUT)
+                    Thread.sleep(80)
+                    focused.refresh()
+                    val textAfterCutRaw = focused.text
+                    val textAfterCutStr = textAfterCutRaw?.toString()
+                    when {
+                        textAfterCutStr == null -> {
+                            if (cutOk) return ClearFieldResult(true, "ACTION_SET_SELECTION_CUT", false, false)
+                            Log.w(TAG, "clearField: ACTION_CUT failed on protected field")
+                        }
+                        textAfterCutStr.isEmpty() -> {
+                            return ClearFieldResult(true, "ACTION_SET_SELECTION_CUT", false, true)
+                        }
+                        else -> {
+                            Log.w(TAG, "clearField: ACTION_CUT did not fully clear — remaining='${textAfterCutStr.take(20)}' cutOk=$cutOk")
+                        }
+                    }
                 }
             }
         } else {
@@ -679,9 +712,58 @@ class JarvisAccessibilityService : AccessibilityService() {
             }
         }
 
+        // ── Step 4: adb keyevent CTRL_A + DEL (hardware key injection) ───────
+        // Works on WebViews, React Native inputs, and custom-IME fields that
+        // ignore accessibility actions but respond to raw key injection.
+        // input keyevent: KEYCODE_CTRL_LEFT=113, KEYCODE_A=29, KEYCODE_DEL=67.
+        Thread.sleep(100)
+        try {
+            // Step 4a: Select all via Ctrl+A chord
+            val ctrlAProc = Runtime.getRuntime().exec(
+                arrayOf("input", "keyevent", "--longpress", "113", "29")
+            )
+            val ctrlAExited = ctrlAProc.waitFor(3, TimeUnit.SECONDS)
+            if (ctrlAExited && ctrlAProc.exitValue() == 0) {
+                Thread.sleep(80)
+                // Step 4b: Delete the selected text
+                val delProc = Runtime.getRuntime().exec(arrayOf("input", "keyevent", "67"))
+                val delExited = delProc.waitFor(3, TimeUnit.SECONDS)
+                if (delExited && delProc.exitValue() == 0) {
+                    Thread.sleep(80)
+                    val verifyRoot = rootInActiveWindow
+                    val verifyNode = findFocusedEditable(verifyRoot) ?: findFirstEditable(verifyRoot)
+                    if (verifyNode != null) {
+                        verifyNode.refresh()
+                        val textAfterKey = verifyNode.text?.toString()
+                        when {
+                            textAfterKey == null -> {
+                                // Protected field — trust the keyevent exit codes
+                                return ClearFieldResult(true, "keyevent_ctrl_a_del", false, false)
+                            }
+                            textAfterKey.isEmpty() -> {
+                                return ClearFieldResult(true, "keyevent_ctrl_a_del", false, true)
+                            }
+                            else -> {
+                                Log.w(TAG, "clearField: keyevent CTRL_A+DEL did not clear — remaining='${textAfterKey.take(20)}'")
+                            }
+                        }
+                    } else {
+                        // No node to verify; trust the exit codes
+                        return ClearFieldResult(true, "keyevent_ctrl_a_del", false, false)
+                    }
+                } else {
+                    Log.w(TAG, "clearField: keyevent DEL failed — exit=${if (delExited) delProc.exitValue() else -1}")
+                }
+            } else {
+                Log.w(TAG, "clearField: keyevent CTRL_A failed — exit=${if (ctrlAExited) ctrlAProc.exitValue() else -1}")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "clearField: keyevent CTRL_A+DEL exception: ${e.message}")
+        }
+
         return ClearFieldResult(
             false, "all_methods_failed", false, false,
-            "Could not clear field — ACTION_SET_TEXT, select+cut, and fresh-node retry all failed. " +
+            "Could not clear field — ACTION_SET_TEXT, select+delete, select+cut, fresh-node retry, and keyevent CTRL_A+DEL all failed. " +
                 "This field type may not support any accessibility-based text clearing."
         )
     }

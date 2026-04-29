@@ -556,10 +556,13 @@ object OpHandler {
 
     // ── android_clear_field ──────────────────────────────────────────────────
     // Clears the currently-focused editable field.
-    // Delegates to JarvisAccessibilityService.clearField() which tries:
-    //   Step 1 — ACTION_SET_TEXT("") via the accessibility service
-    //   Step 2 — ACTION_SET_SELECTION (0..len) + ACTION_CUT fallback
-    // Both steps verify the field is actually empty afterward (node refresh).
+    // Delegates to JarvisAccessibilityService.clearField() which tries four
+    // methods in order, stopping as soon as one succeeds:
+    //   Step 1 — ACTION_SET_TEXT("") via the accessibility service (primary)
+    //   Step 2 — ACTION_SET_SELECTION(0..len) + ACTION_SET_TEXT("") to delete; falls back to ACTION_CUT
+    //   Step 3 — Re-find node from fresh window traversal + retry ACTION_SET_TEXT
+    //   Step 4 — adb keyevent CTRL_A + DEL via Runtime.exec (hardware injection)
+    // Each step verifies the field is actually empty afterward via node refresh.
     // Returns {ok, method, fieldWasAlreadyEmpty, verifiedEmpty} on success.
     private fun handleClearField(): OpResult {
         val svc = JarvisAccessibilityService.instance

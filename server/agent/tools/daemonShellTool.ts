@@ -4188,10 +4188,12 @@ Requires: android_screenshot, android_read_screen, and android_tap_type permissi
 
     // ── Step 4: Optional clear ────────────────────────────────────────────────
     if (args.clear_first) {
-      // android_clear_field is implemented in the daemon APK as:
+      // android_clear_field is implemented natively in the daemon APK via a 4-step chain:
       //   Step 1 — ACTION_SET_TEXT("") with node-refresh verification
-      //   Step 2 — ACTION_SET_SELECTION + ACTION_CUT fallback (WebView / custom IME)
-      // Both steps verify the field is actually empty before reporting success.
+      //   Step 2 — ACTION_SET_SELECTION(0..len) + ACTION_CUT (select-all + cut)
+      //   Step 3 — Re-find node from fresh window traversal + retry ACTION_SET_TEXT
+      //   Step 4 — adb keyevent CTRL_A + DEL via Runtime.exec (hardware key injection)
+      // Each step verifies the field is empty afterward; falls through on failure.
       steps.push("Clearing field (android_clear_field)...");
       const clearResult = await sendDaemonOp(ctx.userId, { type: "android_clear_field" }, 8000);
       if (clearResult.ok) {
