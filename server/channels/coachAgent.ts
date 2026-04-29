@@ -592,7 +592,7 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
   // directly to the build_feature background job — same pattern as research.
   // This bypasses the orchestrator entirely and returns an immediate ack so
   // the user knows the build is queued.  Duplicate detection is handled inside
-  // routeBuildIntent so the same request cannot spawn multiple parallel jobs.
+  // submitAgentJob so the same request cannot spawn multiple parallel jobs.
   if (userText && (classifyBuildIntent(userText) || classifyBuildFollowUp(userText, chatMessages))) {
     try {
       const buildResult = await routeBuildIntent({

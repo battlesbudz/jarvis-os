@@ -153,6 +153,7 @@ async function run(): Promise<void> {
 
   console.log("\nSuite 3 — Optional discordChannelId is forwarded to the job\n");
 
+
   {
     const capturedInputs: Array<Record<string, unknown>> = [];
     const capturingSubmit: BuildRouteDeps["submit"] = async (jobInput) => {
@@ -246,6 +247,7 @@ async function run(): Promise<void> {
     assert(noReply === undefined, "CA-5: non-build request is not dispatched (classifyBuildIntent gate)");
   }
 }
+
 
 // ── Run and report ────────────────────────────────────────────────────────────
 
