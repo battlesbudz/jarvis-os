@@ -12,16 +12,17 @@ import {
   getDaemonLastSeen,
 } from "../../daemon/bridge";
 import { anthropic, ORCHESTRATOR_MODEL } from "../../lib/anthropicClient";
+import { screenshotDiff } from "../../lib/screenshotDiff";
 
-// ── Shell safety: server-side preflight for early UX feedback ─────────────────
+//        Shell safety: server-side preflight for early UX feedback                                                    
 // Mirrors the daemon-side commandEscapesRoot strategy so the agent gets a fast
 // error message before the round-trip. The daemon is the authoritative boundary.
 // The server normalizes absolute paths (to collapse /usr/../etc tricks) but cannot
-// resolve relative tokens against the user's ROOT — those are flagged conservatively.
+// resolve relative tokens against the user's ROOT     those are flagged conservatively.
 
 const SAFE_DEVICE_FILES_SET = new Set(["/dev/null", "/dev/stdin", "/dev/stdout", "/dev/stderr", "/dev/zero"]);
 
-// System command binary prefixes — the first token of each shell segment may be
+// System command binary prefixes     the first token of each shell segment may be
 // an absolute path to a system binary; file arguments must stay inside the workspace.
 const CMD_BIN_PREFIXES = [
   "/usr/", "/bin/", "/sbin/", "/opt/homebrew/", "/usr/local/",
@@ -74,9 +75,9 @@ function detectsOutsideRoot(cmd: string): boolean {
         const norm = path.normalize(token);
         if (!SAFE_DEVICE_FILES_SET.has(norm)) {
           if (isCmd && isCmdBin(norm)) {
-            // First token is system binary — allow it.
+            // First token is system binary     allow it.
           } else {
-            // Absolute file argument — server can't verify it's in user's ROOT,
+            // Absolute file argument     server can't verify it's in user's ROOT,
             // so flag it; daemon will do the definitive ROOT-containment check.
             return true;
           }
@@ -94,7 +95,7 @@ function detectsOutsideRoot(cmd: string): boolean {
 export const daemonShellTool: AgentTool = {
   name: "daemon_shell",
   description:
-    "Run a shell command on the user's desktop via the paired desktop daemon. Returns stdout, stderr, exit code, and duration. Use this proactively when the user asks to run a script, build an app, run tests, execute local automation, read a local file via shell, or do any computation on their machine. Requires the desktop daemon to be paired and the 'shell' permission enabled in Profile → Connected Channels → Desktop Daemon → Permissions. When the daemon is offline, returns a clear explanation and how to start it. For desktop notifications, file reads, or screenshots, prefer daemon_action.",
+    "Run a shell command on the user's desktop via the paired desktop daemon. Returns stdout, stderr, exit code, and duration. Use this proactively when the user asks to run a script, build an app, run tests, execute local automation, read a local file via shell, or do any computation on their machine. Requires the desktop daemon to be paired and the 'shell' permission enabled in Profile     Connected Channels     Desktop Daemon     Permissions. When the daemon is offline, returns a clear explanation and how to start it. For desktop notifications, file reads, or screenshots, prefer daemon_action.",
   parameters: {
     type: "object",
     properties: {
@@ -123,7 +124,7 @@ export const daemonShellTool: AgentTool = {
       return {
         ok: false,
         content:
-          "Desktop daemon is not connected. To use daemon_shell, the user needs to:\n1. Download jarvis-daemon.js from Profile → Connected Channels → Desktop Daemon\n2. Run: JARVIS_SERVER=<url> JARVIS_PAIR_CODE=<code> node jarvis-daemon.js\nThe daemon reconnects automatically after network drops.",
+          "Desktop daemon is not connected. To use daemon_shell, the user needs to:\n1. Download jarvis-daemon.js from Profile     Connected Channels     Desktop Daemon\n2. Run: JARVIS_SERVER=<url> JARVIS_PAIR_CODE=<code> node jarvis-daemon.js\nThe daemon reconnects automatically after network drops.",
         label: "daemon_shell: desktop offline",
       };
     }
@@ -133,24 +134,24 @@ export const daemonShellTool: AgentTool = {
       return {
         ok: false,
         content:
-          "Shell execution is not permitted on this daemon. The user must enable it in Profile → Connected Channels → Desktop Daemon → Permissions → Shell Execution.",
+          "Shell execution is not permitted on this daemon. The user must enable it in Profile     Connected Channels     Desktop Daemon     Permissions     Shell Execution.",
         label: "daemon_shell: shell permission denied",
       };
     }
 
-    // Look up the allow_outside_root permission — sent to daemon so it can enforce.
+    // Look up the allow_outside_root permission     sent to daemon so it can enforce.
     // The server also does a preflight regex check to surface clear error messages
     // before the round-trip, but the daemon is the authoritative security boundary.
     const allowOutsideRoot = await isDaemonActionAllowed(ctx.userId, "allow_outside_root");
 
-    // Preflight heuristic check (UX-only — daemon enforces authoritatively)
+    // Preflight heuristic check (UX-only     daemon enforces authoritatively)
     if (!allowOutsideRoot && detectsOutsideRoot(command)) {
       return {
         ok: false,
         content:
           `The command "${command.slice(0, 80)}" appears to navigate or write outside the daemon workspace root. ` +
           "This is blocked by default. The user can enable unrestricted shell access in " +
-          "Profile → Connected Channels → Desktop Daemon → Permissions → Allow Outside Root.",
+          "Profile     Connected Channels     Desktop Daemon     Permissions     Allow Outside Root.",
         label: "daemon_shell: outside-root blocked",
       };
     }
@@ -203,7 +204,7 @@ export const daemonShellTool: AgentTool = {
     return {
       ok: result.ok,
       content: content.slice(0, 12000),
-      label: `Shell: ${command.slice(0, 40)}${command.length > 40 ? "…" : ""}`,
+      label: `Shell: ${command.slice(0, 40)}${command.length > 40 ? "   " : ""}`,
       detail: `exit=${exitCode} dur=${durationMs}ms`,
     };
   },
@@ -277,24 +278,24 @@ export const daemonStatusTool: AgentTool = {
     const lines: string[] = [];
 
     if (desktopActive) {
-      lines.push(`Desktop daemon: CONNECTED${desktopMeta.hostname ? ` (${desktopMeta.hostname})` : ""}${desktopLastSeen ? ` — last seen ${desktopLastSeen}` : ""}`);
+      lines.push(`Desktop daemon: CONNECTED${desktopMeta.hostname ? ` (${desktopMeta.hostname})` : ""}${desktopLastSeen ? `     last seen ${desktopLastSeen}` : ""}`);
       lines.push(`  Enabled capabilities: ${desktopCapabilities.length > 0 ? desktopCapabilities.join(", ") : "none"}`);
       if (!desktopPerms?.shell) {
-        lines.push(`  Note: 'shell' is disabled. Enable it in Profile → Connected Channels → Desktop Daemon → Permissions to use daemon_shell.`);
+        lines.push(`  Note: 'shell' is disabled. Enable it in Profile     Connected Channels     Desktop Daemon     Permissions to use daemon_shell.`);
       }
     } else {
-      lines.push(`Desktop daemon: OFFLINE${desktopLastSeen ? ` — last seen ${desktopLastSeen}` : ""}`);
-      lines.push("  To connect: run jarvis-daemon.js with your pair code from Profile → Connected Channels → Desktop Daemon.");
+      lines.push(`Desktop daemon: OFFLINE${desktopLastSeen ? `     last seen ${desktopLastSeen}` : ""}`);
+      lines.push("  To connect: run jarvis-daemon.js with your pair code from Profile     Connected Channels     Desktop Daemon.");
     }
 
     lines.push("");
 
     if (androidActive) {
-      lines.push(`Android daemon: CONNECTED${androidMeta.hostname ? ` (${androidMeta.hostname})` : ""}${androidLastSeen ? ` — last seen ${androidLastSeen}` : ""}`);
+      lines.push(`Android daemon: CONNECTED${androidMeta.hostname ? ` (${androidMeta.hostname})` : ""}${androidLastSeen ? `     last seen ${androidLastSeen}` : ""}`);
       lines.push(`  Enabled capabilities: ${androidCapabilities.length > 0 ? androidCapabilities.join(", ") : "none"}`);
     } else {
-      lines.push(`Android daemon: OFFLINE${androidLastSeen ? ` — last seen ${androidLastSeen}` : ""}`);
-      lines.push("  To connect: install the Jarvis Android APK and pair it from Profile → Connected Channels → Android Device.");
+      lines.push(`Android daemon: OFFLINE${androidLastSeen ? `     last seen ${androidLastSeen}` : ""}`);
+      lines.push("  To connect: install the Jarvis Android APK and pair it from Profile     Connected Channels     Android Device.");
     }
 
     console.log(`[daemon_status] userId=${ctx.userId} desktop=${desktopActive} android=${androidActive}`);
@@ -308,7 +309,7 @@ export const daemonStatusTool: AgentTool = {
   },
 };
 
-// ── ScreenMap cache ────────────────────────────────────────────────────────────
+//        ScreenMap cache                                                                                                                                                                                     
 // 500 ms per-user cache so back-to-back calls don't hit Claude Vision twice.
 interface ScreenMapEntry {
   ts: number;
@@ -433,7 +434,7 @@ Return ONLY a valid JSON array, no explanation, no markdown fences.`,
 export const androidScreenUnderstandTool: AgentTool = {
   name: "android_screen_understand",
   description: `Capture and deeply understand the current Android screen by combining a screenshot with the full UI Automator element hierarchy.
-Returns a ScreenMap — a structured JSON array of the most important interactive elements, each with: label, description, center_x, center_y (tap coordinates), bounds, resource_id, and clickable flag.
+Returns a ScreenMap     a structured JSON array of the most important interactive elements, each with: label, description, center_x, center_y (tap coordinates), bounds, resource_id, and clickable flag.
 
 Use this tool when:
 - android_read_screen doesn't expose coordinates for the element you need
@@ -441,7 +442,7 @@ Use this tool when:
 - Multiple elements share a similar label and you need to disambiguate by position
 - You need exact tap coordinates before calling daemon_action with android_tap
 
-After calling this tool, use center_x/center_y from the returned elements as the x/y arguments for android_tap — no coordinate guessing needed.
+After calling this tool, use center_x/center_y from the returned elements as the x/y arguments for android_tap     no coordinate guessing needed.
 
 Results are cached for 500 ms, so two rapid calls will not double-count API usage.`,
   parameters: {
@@ -453,7 +454,7 @@ Results are cached for 500 ms, so two rapid calls will not double-count API usag
     if (!isAndroidDaemonActive(ctx.userId)) {
       return {
         ok: false,
-        content: "Android daemon is not connected. Ask the user to install the Jarvis Android APK and pair it (Profile → Connected Channels → Android Device).",
+        content: "Android daemon is not connected. Ask the user to install the Jarvis Android APK and pair it (Profile     Connected Channels     Android Device).",
         label: "android_screen_understand: android offline",
       };
     }
@@ -467,19 +468,19 @@ Results are cached for 500 ms, so two rapid calls will not double-count API usag
     if (!screenshotAllowed) {
       return {
         ok: false,
-        content: "android_screenshot permission is not enabled. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.",
+        content: "android_screenshot permission is not enabled. Ask the user to enable it in Profile     Connected Channels     Android Device     Permissions.",
         label: "android_screen_understand: screenshot permission denied",
       };
     }
     if (!readAllowed) {
       return {
         ok: false,
-        content: "android_read_screen permission is not enabled. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.",
+        content: "android_read_screen permission is not enabled. Ask the user to enable it in Profile     Connected Channels     Android Device     Permissions.",
         label: "android_screen_understand: read_screen permission denied",
       };
     }
 
-    // ── 500ms cache check ────────────────────────────────────────────────────
+    //        500ms cache check                                                                                                                                                             
     const cached = screenMapCache.get(ctx.userId);
     if (cached && Date.now() - cached.ts < 500) {
       console.log(`[android_screen_understand] userId=${ctx.userId} serving from cache`);
@@ -505,7 +506,7 @@ Results are cached for 500 ms, so two rapid calls will not double-count API usag
   },
 };
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+//        Helpers                                                                                                                                                                                                       
 
 function sleep(ms: number): Promise<void> {
   return new Promise((res) => setTimeout(res, ms));
@@ -527,7 +528,7 @@ function extractFocusedFieldText(data: unknown): { focused: boolean; text?: stri
       resourceId: typeof d.resourceId === "string" ? d.resourceId : undefined,
     };
   }
-  // Fallback: android_read_screen returns raw text — look for focused="true" in XML-like output
+  // Fallback: android_read_screen returns raw text     look for focused="true" in XML-like output
   const raw = typeof d.content === "string" ? d.content : typeof d === "string" ? String(d) : "";
   const focused = /focused="true"/i.test(raw) || /\bfocused=true\b/i.test(raw);
   // Try to extract the text from the focused node (between class=... text="..." focused="true")
@@ -542,7 +543,7 @@ function screenContains(raw: string, keywords: string[]): boolean {
   return keywords.some((k) => lower.includes(k.toLowerCase()));
 }
 
-// ── android_search_in_app ─────────────────────────────────────────────────────
+//        android_search_in_app                                                                                                                                                                
 // High-level macro that orchestrates the full in-app search workflow as a
 // resumable, structured sequence. Each step logs its outcome; if any step
 // fails, a structured response tells Jarvis exactly where to resume and why.
@@ -650,7 +651,7 @@ function extractNodeCoords(node: Record<string, unknown>): { x: number; y: numbe
 export const androidSearchInAppTool: AgentTool = {
   name: "android_search_in_app",
   description:
-    "High-level macro that performs a complete in-app search on Android as a single resumable sequence: open app → wait for load → detect login walls → locate search bar → tap it (with focus verification) → type query (with text confirmation) → submit → verify results loaded → optional result capture. Returns a structured result with { ok, step_reached, result?, error_at_step?, suggestion? } so Jarvis can tell the user exactly what happened and how to recover. Supply resume_from_step (2-6) after a partial failure to skip the open/load steps and retry from the specific failed step. PREFER this over manually orchestrating individual android_* steps whenever the user asks to search for something inside a specific app.",
+    "High-level macro that performs a complete in-app search on Android as a single resumable sequence: open app     wait for load     detect login walls     locate search bar     tap it (with focus verification)     type query (with text confirmation)     submit     verify results loaded     optional result capture. Returns a structured result with { ok, step_reached, result?, error_at_step?, suggestion? } so Jarvis can tell the user exactly what happened and how to recover. Supply resume_from_step (2-6) after a partial failure to skip the open/load steps and retry from the specific failed step. PREFER this over manually orchestrating individual android_* steps whenever the user asks to search for something inside a specific app.",
   parameters: {
     type: "object",
     properties: {
@@ -668,7 +669,7 @@ export const androidSearchInAppTool: AgentTool = {
       },
       search_bar_hint: {
         type: "string",
-        description: "Optional hint to help identify the search bar — e.g. the placeholder text like \"Search Facebook\" or \"Search Twitter\". When omitted the tool looks for common search bar patterns.",
+        description: "Optional hint to help identify the search bar     e.g. the placeholder text like \"Search Facebook\" or \"Search Twitter\". When omitted the tool looks for common search bar patterns.",
       },
       action_after_search: {
         type: "string",
@@ -710,7 +711,7 @@ export const androidSearchInAppTool: AgentTool = {
           ok: false,
           step_reached: 0,
           error_at_step: "preflight",
-          error: "Android daemon is not connected. Ask the user to install the Jarvis Android APK and pair it from Profile → Connected Channels → Android Device.",
+          error: "Android daemon is not connected. Ask the user to install the Jarvis Android APK and pair it from Profile     Connected Channels     Android Device.",
         }),
       };
     }
@@ -732,19 +733,19 @@ export const androidSearchInAppTool: AgentTool = {
           ok: false,
           step_reached: 0,
           error_at_step: "preflight",
-          error: `Missing Android permissions: ${missing.join(", ")}. Ask the user to enable them in Profile → Connected Channels → Android Device → Permissions.`,
+          error: `Missing Android permissions: ${missing.join(", ")}. Ask the user to enable them in Profile     Connected Channels     Android Device     Permissions.`,
         }),
       };
     }
 
-    const label = `android_search_in_app: ${appName} → "${searchQuery.slice(0, 40)}"`;
+    const label = `android_search_in_app: ${appName}     "${searchQuery.slice(0, 40)}"`;
     console.log(`[${label}] starting${resumeFromStep ? ` (resume from step ${resumeFromStep})` : ""}`);
 
-    // Per-step outcome log — included in every response so Jarvis and the user can
+    // Per-step outcome log     included in every response so Jarvis and the user can
     // understand what happened at each stage and which step to retry.
     const stepLog: Array<{ step: number; outcome: string; detail?: string }> = [];
 
-    // Build the search-keyword list once — shared across steps 2 and 3
+    // Build the search-keyword list once     shared across steps 2 and 3
     const SEARCH_KEYWORDS = ["search", "find", "lookup", "query"];
     if (searchBarHint) SEARCH_KEYWORDS.unshift(searchBarHint.toLowerCase());
 
@@ -825,7 +826,7 @@ export const androidSearchInAppTool: AgentTool = {
       }
     }
 
-    // ── Helper: freshly locate the search element from current screen ─────────
+    //        Helper: freshly locate the search element from current screen                            
     async function relocateSearchElement(): Promise<{ found: boolean; x: number | null; y: number | null; screenRaw: string }> {
       const r = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
       if (!r.ok) return { found: false, x: null, y: null, screenRaw: "" };
@@ -836,7 +837,7 @@ export const androidSearchInAppTool: AgentTool = {
 
     let screenRaw = "";
 
-    // ── Step 1: Open app + wait for load ─────────────────────────────────
+    //        Step 1: Open app + wait for load                                                                                                    
     if (!resumeFromStep || resumeFromStep <= 1) {
       const openResult = await sendDaemonOp(ctx.userId, { type: "android_open_app", packageName: appPackage }, 20000);
       if (!openResult.ok) {
@@ -884,9 +885,9 @@ export const androidSearchInAppTool: AgentTool = {
       }
 
       stepLog.push({ step: 1, outcome: "app_loaded" });
-      console.log(`[${label}] step 1 complete — app loaded`);
+      console.log(`[${label}] step 1 complete     app loaded`);
 
-      // ── Login-wall detection ──────────────────────────────────────────
+      //        Login-wall detection                                                                                                                               
       const loginWallKeywords = ["log in", "login", "sign in", "sign up", "continue as", "create account", "register"];
       if (screenContains(screenRaw, loginWallKeywords)) {
         stepLog.push({ step: 1, outcome: "blocked_by_login_wall" });
@@ -904,7 +905,7 @@ export const androidSearchInAppTool: AgentTool = {
         };
       }
     } else {
-      // Resuming from a later step — read current screen state
+      // Resuming from a later step     read current screen state
       const r = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
       if (r.ok) screenRaw = JSON.stringify(r.data || "");
     }
@@ -916,9 +917,9 @@ export const androidSearchInAppTool: AgentTool = {
 
     // ── Step 2: Locate search element ─────────────────────────────────────
     // Three strategies on separate attempts:
-    //   attempt 1 — check current screen as-is
-    //   attempt 2 — press Home then re-open the app to reach its main screen
-    //   attempt 3 — swipe down from top to reveal a hidden search bar
+    //   attempt 1     check current screen as-is
+    //   attempt 2     press Home then re-open the app to reach its main screen
+    //   attempt 3     swipe down from top to reveal a hidden search bar
     if (!resumeFromStep || resumeFromStep <= 2) {
       let searchElementFound = false;
 
@@ -1026,10 +1027,10 @@ export const androidSearchInAppTool: AgentTool = {
       }
 
       stepLog.push({ step: 3, outcome: "success" });
-      console.log(`[${label}] step 3 complete — search bar focused`);
+      console.log(`[${label}] step 3 complete     search bar focused`);
     }
 
-    // ── Step 4: Focus-verify → type → confirm text appeared ───────────────
+    //        Step 4: Focus-verify     type     confirm text appeared                                              
     if (!resumeFromStep || resumeFromStep <= 4) {
       // Confirm focus before typing (skip re-verify if we just verified in step 3)
       if (resumeFromStep === 4) {
@@ -1083,24 +1084,24 @@ export const androidSearchInAppTool: AgentTool = {
       }
 
       stepLog.push({ step: 4, outcome: "success", detail: `query confirmed in accessibility tree` });
-      console.log(`[${label}] step 4 complete — query typed and confirmed`);
+      console.log(`[${label}] step 4 complete     query typed and confirmed`);
     }
 
-    // ── Step 5: Submit search and verify results loaded ────────────────────
+    //        Step 5: Submit search and verify results loaded                                                             
     if (!resumeFromStep || resumeFromStep <= 5) {
       // Capture pre-submit screen fingerprint: length + node count for change detection
       const preSubmitLen = screenRaw.length;
       const preSubmitNodeCount = (screenRaw.match(/"type"|"className"|"contentDesc"/g) || []).length;
 
-      // Primary: send Enter/newline — triggers IME Search/Go action on most keyboards
+      // Primary: send Enter/newline     triggers IME Search/Go action on most keyboards
       await sendDaemonOp(ctx.userId, { type: "android_type", text: "\n" }, 10000);
       await sleep(2500);
 
       function isResultsState(raw: string): boolean {
         // Results screen criteria (all must be true):
-        // 1. Keyboard/IME has been dismissed — no active input method in a11y tree
+        // 1. Keyboard/IME has been dismissed     no active input method in a11y tree
         const keyboardDismissed = !screenContains(raw, ["\"inputmethod\"", "inputmethod_service", "\"isFocused\":true", "\"focused\":true"]);
-        // 2. Screen content changed significantly — more nodes than the typing state
+        // 2. Screen content changed significantly     more nodes than the typing state
         const newNodeCount = (raw.match(/"type"|"className"|"contentDesc"/g) || []).length;
         const contentGrew = newNodeCount > preSubmitNodeCount + 2 || raw.length > preSubmitLen + 300;
         // 3. Screen is not showing an error dialog that typically indicates failure
@@ -1134,7 +1135,7 @@ export const androidSearchInAppTool: AgentTool = {
         }
       }
 
-      // Step 5 is strict — if results did not load after both attempts, return a structured failure
+      // Step 5 is strict     if results did not load after both attempts, return a structured failure
       if (!resultsLoaded) {
         stepLog.push({ step: 5, outcome: "failed", detail: "results screen not detected after Enter + button tap" });
         return {
@@ -1151,10 +1152,10 @@ export const androidSearchInAppTool: AgentTool = {
       }
 
       stepLog.push({ step: 5, outcome: "success" });
-      console.log(`[${label}] step 5 complete — results loaded`);
+      console.log(`[${label}] step 5 complete     results loaded`);
     }
 
-    // ── Step 6: Optional result action ────────────────────────────────────
+    //        Step 6: Optional result action                                                                                                             
     let resultContent: string | undefined;
     let screenshotB64: string | undefined;
 
@@ -1189,7 +1190,7 @@ export const androidSearchInAppTool: AgentTool = {
     if (resultContent !== undefined) response.result = resultContent;
     if (screenshotB64 !== undefined) response.screenshot = screenshotB64;
 
-    console.log(`[${label}] done — ok=true step_reached=6`);
+    console.log(`[${label}] done     ok=true step_reached=6`);
 
     const isScreenshot = actionAfterSearch === "screenshot" && screenshotB64;
     return {
@@ -1202,14 +1203,14 @@ export const androidSearchInAppTool: AgentTool = {
 
 export const androidTypeInFieldTool: AgentTool = {
   name: "android_type_in_field",
-  description: `Reliable text input for Android fields. Wraps the full focus-verify → input → confirm sequence:
+  description: `Reliable text input for Android fields. Wraps the full focus-verify     input     confirm sequence:
 
 1. CONFIRM FOCUS: checks if the target field is currently focused using android_get_focused_field.
    If not focused and tap coordinates are provided, taps the field and waits 300 ms for the keyboard to open, then re-checks.
 
-2. INPUT — three-level fallback chain, each dispatched explicitly:
-   - Level 1 (android_type): accessibility service ACTION_SET_TEXT — fastest path, works in standard EditText fields
-   - Level 2 (android_paste_text): daemon tries "input text" exec (adb-style, %%s escaping) first, then clipboard + ACTION_PASTE — designed for custom-IME fields (Facebook/Instagram search, WebView inputs)
+2. INPUT     three-level fallback chain, each dispatched explicitly:
+   - Level 1 (android_type): accessibility service ACTION_SET_TEXT     fastest path, works in standard EditText fields
+   - Level 2 (android_paste_text): daemon tries "input text" exec (adb-style, %%s escaping) first, then clipboard + ACTION_PASTE     designed for custom-IME fields (Facebook/Instagram search, WebView inputs)
    - Level 3 (android_paste_text retry): explicit retry when Level 2 fails transiently; server escalates from android_type to android_paste_text on verification failure
 
 3. VERIFY: reads the field text after input and confirms it matches what was expected.
@@ -1239,7 +1240,7 @@ Requires android_tap_type permission to be enabled.`,
       },
       field_description: {
         type: "string",
-        description: "Human-readable description of the target field — used in logs and result output (e.g. 'Facebook search bar').",
+        description: "Human-readable description of the target field     used in logs and result output (e.g. 'Facebook search bar').",
       },
       submit: {
         type: "boolean",
@@ -1252,12 +1253,11 @@ Requires android_tap_type permission to be enabled.`,
     const text = String(args.text || "").trim();
     if (!text) {
       return { ok: false, content: "text is required.", label: "android_type_in_field: no text" };
-    }
-
     if (!isAndroidDaemonActive(ctx.userId)) {
+    }
       return {
         ok: false,
-        content: "Android daemon is not connected. Ask the user to install the Jarvis Android APK and pair it (Profile → Connected Channels → Android Device).",
+        content: "Android daemon is not connected. Ask the user to install the Jarvis Android APK and pair it (Profile     Connected Channels     Android Device).",
         label: "android_type_in_field: android offline",
       };
     }
@@ -1266,7 +1266,7 @@ Requires android_tap_type permission to be enabled.`,
     if (!tapTypeAllowed) {
       return {
         ok: false,
-        content: "android_tap_type permission is not enabled. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.",
+        content: "android_tap_type permission is not enabled. Ask the user to enable it in Profile     Connected Channels     Android Device     Permissions.",
         label: "android_type_in_field: permission denied",
       };
     }
@@ -1275,14 +1275,14 @@ Requires android_tap_type permission to be enabled.`,
     const hasTapCoords = typeof args.tap_x === "number" && typeof args.tap_y === "number";
     const steps: string[] = [];
 
-    // ── Step 1: Confirm focus ─────────────────────────────────────────────────
+    //        Step 1: Confirm focus                                                                                                                                                    
     steps.push("Checking field focus...");
     let focusResult = await sendDaemonOp(ctx.userId, { type: "android_get_focused_field" }, 8000);
     let focusInfo = extractFocusedFieldText(focusResult.data);
 
     if (!focusInfo.focused) {
       if (hasTapCoords) {
-        steps.push(`Field not focused — tapping (${args.tap_x}, ${args.tap_y}) to focus...`);
+        steps.push(`Field not focused     tapping (${args.tap_x}, ${args.tap_y}) to focus...`);
         await sendDaemonOp(ctx.userId, { type: "android_tap", x: args.tap_x as number, y: args.tap_y as number }, 8000);
         await sleep(300);
         focusResult = await sendDaemonOp(ctx.userId, { type: "android_get_focused_field" }, 8000);
@@ -1290,42 +1290,23 @@ Requires android_tap_type permission to be enabled.`,
         if (focusInfo.focused) {
           steps.push("Field is now focused.");
         } else {
-          steps.push("Field still not focused after tap — attempting input anyway.");
+          steps.push("Field still not focused after tap     attempting input anyway.");
         }
       } else {
-        steps.push("Field not focused and no tap coordinates provided — attempting input on current focused element.");
+        steps.push("Field not focused and no tap coordinates provided     attempting input on current focused element.");
       }
     } else {
       steps.push(`Field is focused${focusInfo.resourceId ? ` (${focusInfo.resourceId})` : ""}.`);
     }
 
-    // ── Step 2: Three-level input fallback chain ──────────────────────────────
-    //
-    // Level 1 — android_type: accessibility service ACTION_SET_TEXT.
-    //           Fast, reliable for most standard EditText fields.
-    //
-    // Level 2 — android_paste_text (adb input text primary):
-    //           The daemon op tries `input text` exec first (adb-style, no shell
-    //           interpolation, %s/%% encoding). Falls back internally to clipboard
-    //           + ACTION_PASTE if exec fails.  Designed for custom-IME fields
-    //           (Facebook/Instagram search bars, WebView inputs).
-    //
-    // Level 3 — android_paste_text retry forced to clipboard path:
-    //           If level 2 returned ok but verification fails, retry with an
-    //           explicit clipboard-only signal so the daemon skips the exec path
-    //           and goes straight to clipboard paste — covers edge cases where
-    //           exec succeeds (exit 0) but text doesn't appear.
-    //
-    // After each successful op, android_get_focused_field is called to verify
-    // the text actually appeared in the field.
-
+    //        Step 2: Three-level input fallback chain                                                                                           
     let methodUsed: string | null = null;
     let inputOk = false;
     let daemonVerified = false;
     let fieldText: string | null = null;
 
-    // ── Level 1: android_type (accessibility ACTION_SET_TEXT) ─────────────────
-    steps.push("Level 1 — android_type (accessibility ACTION_SET_TEXT)...");
+    //        Level 1: android_type (accessibility ACTION_SET_TEXT)                                                    
+    steps.push("Level 1     android_type (accessibility ACTION_SET_TEXT)...");
     const typeResult = await sendDaemonOp(ctx.userId, { type: "android_type", text }, 10000);
     if (typeResult.ok) {
       methodUsed = "android_type";
@@ -1335,9 +1316,9 @@ Requires android_tap_type permission to be enabled.`,
       steps.push(`android_type failed (${typeResult.error || "no editable field focused"}). Moving to Level 2.`);
     }
 
-    // ── Level 2: android_paste_text (adb input text → clipboard fallback) ─────
+    //        Level 2: android_paste_text (adb input text     clipboard fallback)                
     if (!inputOk) {
-      steps.push("Level 2 — android_paste_text (adb input text primary, clipboard fallback)...");
+      steps.push("Level 2     android_paste_text (adb input text primary, clipboard fallback)...");
       const pasteResult = await sendDaemonOp(ctx.userId, { type: "android_paste_text", text, fieldDescription: fieldDesc }, 15000);
       if (pasteResult.ok) {
         const pasteData = (pasteResult.data || {}) as Record<string, unknown>;
@@ -1352,13 +1333,9 @@ Requires android_tap_type permission to be enabled.`,
       }
     }
 
-    // ── Level 3: Clipboard-only retry (skips adb exec path) ──────────────────
-    // If Level 2 failed entirely, send android_paste_text once more. The daemon
-    // will try adb again then clipboard — this covers transient exec failures.
-    // If Level 1 succeeded but verification (below) shows the text is missing,
-    // we fall through here after the verification block.
+    //        Level 3: Clipboard-only retry (skips adb exec path)                                                       
     if (!inputOk) {
-      steps.push("Level 3 — android_paste_text retry (clipboard-only path)...");
+      steps.push("Level 3     android_paste_text retry (clipboard-only path)...");
       const retryResult = await sendDaemonOp(ctx.userId, { type: "android_paste_text", text, fieldDescription: fieldDesc }, 15000);
       if (retryResult.ok) {
         const retryData = (retryResult.data || {}) as Record<string, unknown>;
@@ -1385,9 +1362,7 @@ Requires android_tap_type permission to be enabled.`,
       };
     }
 
-    // ── Step 3: Server-side verification ──────────────────────────────────────
-    // For android_paste_text paths the daemon already verified; for android_type
-    // we must verify ourselves by reading the field text back.
+    //        Step 3: Server-side verification                                                                                                                   
     let verified = daemonVerified;
 
     if (methodUsed === "android_type" || !daemonVerified) {
@@ -1397,7 +1372,6 @@ Requires android_tap_type permission to be enabled.`,
       const verifyInfo = extractFocusedFieldText(verifyResult.data);
       fieldText = verifyInfo.text ?? null;
 
-      // Password fields hide their content — treat as verified when field is focused
       const isPassword = (verifyResult.data as Record<string, unknown> | null)?.isPassword === true;
       verified = isPassword
         ? verifyInfo.focused
@@ -1408,8 +1382,7 @@ Requires android_tap_type permission to be enabled.`,
           );
 
       if (!verified && methodUsed === "android_type") {
-        // android_type appeared to succeed but text not in field — escalate to Level 2
-        steps.push(`Verification failed after android_type (field: "${fieldText ?? "empty"}") — escalating to android_paste_text...`);
+        steps.push(`Verification failed after android_type (field: "${fieldText ?? "empty"}")     escalating to android_paste_text...`);
         const escalateResult = await sendDaemonOp(ctx.userId, { type: "android_paste_text", text, fieldDescription: fieldDesc }, 15000);
         if (escalateResult.ok) {
           const esc = (escalateResult.data || {}) as Record<string, unknown>;
@@ -1431,7 +1404,7 @@ Requires android_tap_type permission to be enabled.`,
       }
     }
 
-    // ── Step 4: Optional submit ────────────────────────────────────────────────
+    //        Step 4: Optional submit                                                                                                                                                 
     if (args.submit && inputOk) {
       await sendDaemonOp(ctx.userId, { type: "android_press_key", key: "enter" }, 6000);
       steps.push("Submitted (IME Enter/Go key pressed).");
@@ -1442,15 +1415,16 @@ Requires android_tap_type permission to be enabled.`,
     return {
       ok: inputOk,
       content: JSON.stringify(summary),
-      label: `android_type_in_field: "${text.slice(0, 30)}" → ${methodUsed} verified=${verified}`,
+      label: `android_type_in_field: "${text.slice(0, 30)}"     ${methodUsed} verified=${verified}`,
       detail: steps.join(" | "),
     };
   },
 };
 // ── android_tap_element ────────────────────────────────────────────────────────
-// Fuzzy-matches a label/description string against the ScreenMap and fires a tap
-// at the best-matching element's center coordinates. Reuses the screenMapCache so
-// a prior android_screen_understand call within 500 ms incurs no extra Vision cost.
+// Uses the ScreenMap (Vision-based) to locate an element by fuzzy label match,
+// then taps it with a locate-tap-verify retry loop (up to 4 attempts).
+// Reuses the screenMapCache so a prior android_screen_understand call within
+// 500 ms incurs no extra Vision cost.
 
 // ── normalizeScreenElements ────────────────────────────────────────────────────
 // LLM-generated JSON may have missing/null fields or non-numeric coordinates.
@@ -1526,21 +1500,64 @@ function scoreElement(element: ScreenElement, query: string): number {
   // Boost score by 1 for clickable elements so ties always resolve in favour of
   // tappable UI components over non-interactive containers with matching labels.
   return element.clickable ? textScore + 1 : textScore;
+
+interface ClickableElement { label: string; x: number; y: number }
+
+function findBestElement(
+  clickable: ClickableElement[],
+  targetDescription: string,
+): ClickableElement | null {
+  let best: ClickableElement | null = null;
+  let bestScore = 0;
+  for (const el of clickable) {
+    const score = matchScore(el.label, targetDescription);
+    if (score > bestScore) {
+      bestScore = score;
+      best = el;
+    }
+  }
+  return bestScore > 0 ? best : null;
+}
+
+/** Capture a screenshot and return base64 string, or null on failure. */
+async function captureScreenshot(userId: string): Promise<string | null> {
+  const res = await sendDaemonOp(userId, { type: "android_screenshot" }, 15000);
+  if (!res.ok) return null;
+  const d = res.data as Record<string, unknown> | undefined;
+  if (!d) return null;
+  const img = (d.image || d.screenshot || d.base64) as string | undefined;
+  if (typeof img === "string" && img.length > 100) return img;
+  // Some daemons return the whole data object as the image
+  if (typeof res.data === "string" && (res.data as string).length > 100) return res.data as string;
+  return null;
+}
+
+/** Read the screen and return the clickable element list. */
+async function readScreen(userId: string): Promise<ClickableElement[]> {
+  const res = await sendDaemonOp(userId, { type: "android_read_screen" }, 20000);
+  if (!res.ok || !res.data) return [];
+  const d = res.data as Record<string, unknown>;
+  const clickable = d.clickable;
+  if (!Array.isArray(clickable)) return [];
+  return clickable.filter(
+    (el): el is ClickableElement =>
+      el && typeof el.label === "string" && typeof el.x === "number" && typeof el.y === "number",
+  );
 }
 
 export const androidTapElementTool: AgentTool = {
   name: "android_tap_element",
   description: `Tap an Android screen element by name instead of raw coordinates.
-Accepts a human-readable label or description string, fuzzy-matches it against the current ScreenMap (calling android_screen_understand internally, with a 500 ms cache hit if available), and fires android_tap at the best-matching element's center coordinates.
+Accepts a human-readable label or description string, fuzzy-matches it against the current ScreenMap (Vision-based, calling android_screen_understand internally with a 500 ms cache), fires android_tap at the best-matching element's center coordinates, then verifies the tap landed via screenshot pixel diff (≥15%) and/or accessibility hierarchy change. Retries up to 4 times.
 
 Use this tool instead of manually extracting center_x/center_y from android_screen_understand results:
 - Faster: one tool call instead of two
-- More reliable: no coordinate copy-paste errors
+- More reliable: coordinate copy-paste errors eliminated, tap verified
 - Handles unlabeled or icon-only buttons via description matching
 
 The label is matched (case-insensitive) against each element's label, description, and resource_id. The highest-confidence match is tapped.
 
-Returns the matched element details and the coordinates used for the tap.
+Returns the matched element details, tap coordinates, and verification status.
 
 Requires: android_screenshot and android_read_screen permissions (same as android_screen_understand), plus android_tap_type permission for the tap action.`,
   parameters: {
@@ -1553,6 +1570,10 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       max_age_ms: {
         type: "number",
         description: "Maximum age in milliseconds for a cached ScreenMap to be reused (default 500). Set to 0 to always capture a fresh screen.",
+      },
+      verify_with_screenshot: {
+        type: "boolean",
+        description: "Whether to take before/after screenshots to verify the tap (default true). Set false to rely only on accessibility hierarchy comparison (faster but less reliable).",
       },
     },
     required: ["label"],
@@ -1571,7 +1592,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       };
     }
 
-    // Permission checks
+    // Permission checks (parallel)
     const [screenshotAllowed, readAllowed, tapAllowed] = await Promise.all([
       isAndroidDaemonActionAllowed(ctx.userId, "android_screenshot"),
       isAndroidDaemonActionAllowed(ctx.userId, "android_read_screen"),
@@ -1599,7 +1620,9 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       };
     }
 
-    // ── Resolve ScreenMap (cache or fresh) ────────────────────────────────────
+    const useScreenshot = args.verify_with_screenshot !== false;
+
+    // ── Resolve ScreenMap (Vision-based, cache or fresh) ──────────────────────
     const maxAge = typeof args.max_age_ms === "number" ? args.max_age_ms : 500;
     let screenElements: ScreenElement[] = [];
 
@@ -1615,7 +1638,6 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
     }
 
     if (screenElements.length === 0) {
-      // Need a fresh screen capture — use shared buildScreenMapElements helper
       const buildResult = await buildScreenMapElements(ctx.userId);
       if (!buildResult.ok) {
         return { ok: false, content: buildResult.content, label: `android_tap_element: ${buildResult.label}` };
@@ -1647,19 +1669,105 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       };
     }
 
-    // ── Fire the tap ──────────────────────────────────────────────────────────
-    const { center_x, center_y } = bestElement;
-    const tapResult = await sendDaemonOp(ctx.userId, { type: "android_tap", x: center_x, y: center_y }, 15000);
+    // ── Capture pre-tap baselines (once, before any tap) ─────────────────────
+    const preScreenshot: string | null = useScreenshot ? await captureScreenshot(ctx.userId) : null;
+    const preHierarchyClickable = await readScreen(ctx.userId);
+    const preHierarchyCount = preHierarchyClickable.length;
+    const preHierarchyLabels = new Set(preHierarchyClickable.map((el) => el.label));
 
-    if (!tapResult.ok) {
-      return {
-        ok: false,
-        content: `Matched element "${bestElement.label}" at (${center_x}, ${center_y}) but tap failed: ${tapResult.error || "unknown error"}`,
-        label: `android_tap_element: tap failed`,
-      };
+    // ── Retry loop ────────────────────────────────────────────────────────────
+    // Attempts 1-3: tap at Vision-located coordinates with small offsets.
+    // Attempt 4 (FRESH-LOCATE FALLBACK): re-run buildScreenMapElements to get
+    // the freshest Vision coords before the final tap attempt.
+    const MAX_ATTEMPTS = 4;
+    const SETTLE_MS = 400;
+    const OFFSETS: Array<[number, number]> = [[0, 0], [5, 5], [-5, -5]];
+    let locatedX = bestElement.center_x;
+    let locatedY = bestElement.center_y;
+    let tapped_at: { x: number; y: number } | null = null;
+    let verified = false;
+    let actualAttempts = 0;
+
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      actualAttempts = attempt;
+
+      let tapX: number;
+      let tapY: number;
+
+      if (attempt < MAX_ATTEMPTS) {
+        const [dx, dy] = OFFSETS[attempt - 1];
+        tapX = Math.round(locatedX + dx);
+        tapY = Math.round(locatedY + dy);
+      } else {
+        // Attempt 4: fresh Vision re-locate
+        const freshBuild = await buildScreenMapElements(ctx.userId);
+        if (!freshBuild.ok) break;
+        let freshBest: ScreenElement | null = null;
+        let freshBestScore = 0;
+        for (const el of freshBuild.elements) {
+          const score = scoreElement(el, label);
+          if (score > freshBestScore) { freshBestScore = score; freshBest = el; }
+        }
+        if (!freshBest || freshBestScore === 0) break;
+        tapX = Math.round(freshBest.center_x);
+        tapY = Math.round(freshBest.center_y);
+      }
+
+      const tapResult = await sendDaemonOp(ctx.userId, { type: "android_tap", x: tapX, y: tapY }, 15000);
+      tapped_at = { x: tapX, y: tapY };
+
+      if (!tapResult.ok) {
+        console.log(`[android_tap_element] attempt ${attempt} tap op failed: ${tapResult.error}`);
+        if (attempt < MAX_ATTEMPTS) continue;
+        break;
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, SETTLE_MS));
+
+      // Primary: pixel diff verification
+      if (useScreenshot && preScreenshot) {
+        const postScreenshot = await captureScreenshot(ctx.userId);
+        if (postScreenshot) {
+          const changeRatio = await screenshotDiff(preScreenshot, postScreenshot).catch(() => 0);
+          if (changeRatio >= 0.15) verified = true;
+        }
+      }
+
+      // Secondary: accessibility hierarchy change vs. pre-tap baseline.
+      // Always run this check (not just when screenshot diff fails) so that
+      // FLAG_SECURE apps (no screenshot) are handled correctly.
+      if (!verified) {
+        const postClickable = await readScreen(ctx.userId);
+        if (postClickable.length !== preHierarchyCount) {
+          verified = true;
+        } else {
+          // Check if any new labels appeared compared to the pre-tap baseline
+          const postLabels = new Set(postClickable.map((el) => el.label));
+          if ([...postLabels].some((l) => !preHierarchyLabels.has(l))) verified = true;
+        }
+      }
+
+      if (verified) break;
+      console.log(`[android_tap_element] attempt ${attempt} unverified at (${tapX},${tapY}), retrying...`);
     }
 
-    console.log(`[android_tap_element] userId=${ctx.userId} tapped "${bestElement.label}" at (${center_x},${center_y}) score=${bestScore}`);
+    console.log(`[android_tap_element] userId=${ctx.userId} label="${label}" verified=${verified} attempts=${actualAttempts} at=${JSON.stringify(tapped_at)} score=${bestScore}`);
+
+    if (!verified) {
+      return {
+        ok: false,
+        content: JSON.stringify({
+          ok: false,
+          element_found: true,
+          matched: bestElement.label,
+          tapped_at,
+          attempts: actualAttempts,
+          verified: false,
+          reason: `Element "${bestElement.label}" was located (score=${bestScore}) and tapped ${actualAttempts} time(s) but the UI did not detectably change. The tap may have missed or the action may require a different interaction. Try calling android_read_screen to confirm the current screen state.`,
+        }),
+        label: `android_tap_element: unverified tap on "${bestElement.label}"`,
+      };
+    }
 
     return {
       ok: true,
@@ -1668,14 +1776,16 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
           label: bestElement.label,
           description: bestElement.description,
           resource_id: bestElement.resource_id,
-          center_x,
-          center_y,
+          center_x: tapped_at!.x,
+          center_y: tapped_at!.y,
           bounds: bestElement.bounds,
           match_score: bestScore,
         },
+        attempts: actualAttempts,
+        verified: true,
       }),
-      label: `Tapped "${bestElement.label}" at (${center_x}, ${center_y})`,
-      detail: `match_score=${bestScore} bounds=${bestElement.bounds}`,
+      label: `Tapped "${bestElement.label}" at (${tapped_at!.x}, ${tapped_at!.y})`,
+      detail: `match_score=${bestScore} bounds=${bestElement.bounds} attempts=${actualAttempts}`,
     };
   },
 };
