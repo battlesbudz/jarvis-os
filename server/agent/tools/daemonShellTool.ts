@@ -3220,6 +3220,232 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
   },
 };
 
+// ── android_select_option ─────────────────────────────────────────────────────
+export const androidSelectOptionTool: AgentTool = {
+  name: "android_select_option",
+  description: `Open an Android dropdown/spinner and select an option by name.
+
+Handles the two-step interaction that dropdown/spinner controls require: tapping to open the list, waiting for the list to appear, then tapping the desired option.
+
+Step 1 — Open dropdown: Fuzzy-matches \`label\` against the current ScreenMap and taps the matching element (same ScreenMap logic as android_tap_element).
+Step 2 — Pick option: Waits 500 ms (configurable via wait_ms) for the list to appear, captures a fresh ScreenMap, fuzzy-matches \`option\` against the new elements, and taps the best match.
+
+Use this tool instead of manually calling android_tap_element twice for dropdown interactions:
+- "select 'Monthly' from the billing period dropdown"
+- "choose 'English' in the language spinner"
+- "pick 'USA' from the country selector"
+- "set the sort order to 'Newest first'"
+
+Returns the matched dropdown element, the matched option element, and both match scores.
+
+Requires: android_screenshot and android_read_screen permissions (same as android_screen_understand), plus android_tap_type permission for the tap actions.`,
+  parameters: {
+    type: "object",
+    properties: {
+      label: {
+        type: "string",
+        description: "The label, description, or resource_id (or part thereof) of the dropdown/spinner element to open. Case-insensitive fuzzy match.",
+      },
+      option: {
+        type: "string",
+        description: "The text of the option to select once the dropdown list is open. Case-insensitive fuzzy match.",
+      },
+      wait_ms: {
+        type: "number",
+        description: "Milliseconds to wait after tapping the dropdown before reading the new screen (default 500). Increase for slow-loading lists.",
+      },
+    },
+    required: ["label", "option"],
+  },
+  async execute(args, ctx) {
+    const label = String(args.label || "").trim();
+    const option = String(args.option || "").trim();
+
+    if (!label) {
+      return { ok: false, content: "label is required.", label: "android_select_option: no label" };
+    }
+    if (!option) {
+      return { ok: false, content: "option is required.", label: "android_select_option: no option" };
+    }
+
+    if (!isAndroidDaemonActive(ctx.userId)) {
+      return {
+        ok: false,
+        content: "Android daemon is not connected. Ask the user to install the Jarvis Android APK and pair it (Profile → Connected Channels → Android Device).",
+        label: "android_select_option: android offline",
+      };
+    }
+
+    const [screenshotAllowed, readAllowed, tapAllowed] = await Promise.all([
+      isAndroidDaemonActionAllowed(ctx.userId, "android_screenshot"),
+      isAndroidDaemonActionAllowed(ctx.userId, "android_read_screen"),
+      isAndroidDaemonActionAllowed(ctx.userId, "android_tap_type"),
+    ]);
+    if (!screenshotAllowed) {
+      return {
+        ok: false,
+        content: "android_screenshot permission is not enabled. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.",
+        label: "android_select_option: screenshot permission denied",
+      };
+    }
+    if (!readAllowed) {
+      return {
+        ok: false,
+        content: "android_read_screen permission is not enabled. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.",
+        label: "android_select_option: read_screen permission denied",
+      };
+    }
+    if (!tapAllowed) {
+      return {
+        ok: false,
+        content: "android_tap_type permission is not enabled. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.",
+        label: "android_select_option: tap permission denied",
+      };
+    }
+
+    // ── Step 1: Resolve ScreenMap, fuzzy-match the dropdown, tap it ───────────
+    const buildResult = await buildScreenMapElements(ctx.userId);
+    if (!buildResult.ok) {
+      return { ok: false, content: buildResult.content, label: `android_select_option: ${buildResult.label}` };
+    }
+
+    let dropdownBest: ScreenElement | null = null;
+    let dropdownScore = 0;
+    for (const el of buildResult.elements) {
+      const score = scoreElement(el, label);
+      if (score > dropdownScore) { dropdownScore = score; dropdownBest = el; }
+    }
+
+    if (!dropdownBest || dropdownScore === 0) {
+      const elementList = buildResult.elements
+        .map((el) => `  • ${el.label}${el.description ? ` — ${el.description}` : ""}`)
+        .join("\n");
+      return {
+        ok: false,
+        content: `No dropdown matching "${label}" was found on screen.\n\nAvailable elements:\n${elementList || "  (none)"}`,
+        label: `android_select_option: no dropdown match for "${label}"`,
+      };
+    }
+
+    const dropdownDesc = dropdownBest.label || dropdownBest.description || label;
+    console.log(`[android_select_option] userId=${ctx.userId} tapping dropdown "${dropdownDesc}" at (${dropdownBest.center_x},${dropdownBest.center_y}) score=${dropdownScore}`);
+
+    const tapDropdownResult = await sendDaemonOp(
+      ctx.userId,
+      { type: "android_tap", x: dropdownBest.center_x, y: dropdownBest.center_y },
+      15000,
+    );
+    if (!tapDropdownResult.ok) {
+      return {
+        ok: false,
+        content: JSON.stringify({
+          ok: false,
+          dropdown: dropdownDesc,
+          dropdown_score: dropdownScore,
+          error: `Failed to tap dropdown: ${tapDropdownResult.error || "unknown error"}`,
+        }),
+        label: `android_select_option: tap dropdown failed for "${dropdownDesc}"`,
+      };
+    }
+
+    // ── Step 2: Wait for list to appear, capture fresh ScreenMap ─────────────
+    const waitMs = typeof args.wait_ms === "number" && args.wait_ms > 0
+      ? Math.min(Math.round(args.wait_ms), 5000)
+      : 500;
+    await sleep(waitMs);
+
+    const freshBuild = await buildScreenMapElements(ctx.userId);
+    if (!freshBuild.ok) {
+      return {
+        ok: false,
+        content: JSON.stringify({
+          ok: false,
+          dropdown: dropdownDesc,
+          dropdown_score: dropdownScore,
+          dropdown_tapped: true,
+          error: `Dropdown opened but failed to read new screen: ${freshBuild.content}`,
+        }),
+        label: `android_select_option: screen read failed after opening dropdown`,
+      };
+    }
+
+    // ── Step 3: Fuzzy-match the option and tap it ─────────────────────────────
+    let optionBest: ScreenElement | null = null;
+    let optionScore = 0;
+    for (const el of freshBuild.elements) {
+      const score = scoreElement(el, option);
+      if (score > optionScore) { optionScore = score; optionBest = el; }
+    }
+
+    if (!optionBest || optionScore === 0) {
+      const elementList = freshBuild.elements
+        .map((el) => `  • ${el.label}${el.description ? ` — ${el.description}` : ""}`)
+        .join("\n");
+      return {
+        ok: false,
+        content: JSON.stringify({
+          ok: false,
+          dropdown: dropdownDesc,
+          dropdown_score: dropdownScore,
+          dropdown_tapped: true,
+          error: `Dropdown "${dropdownDesc}" was opened but no option matching "${option}" was found.\n\nVisible options:\n${elementList || "  (none)"}`,
+        }),
+        label: `android_select_option: no option match for "${option}" in "${dropdownDesc}"`,
+      };
+    }
+
+    const optionDesc = optionBest.label || optionBest.description || option;
+    console.log(`[android_select_option] userId=${ctx.userId} tapping option "${optionDesc}" at (${optionBest.center_x},${optionBest.center_y}) score=${optionScore}`);
+
+    const tapOptionResult = await sendDaemonOp(
+      ctx.userId,
+      { type: "android_tap", x: optionBest.center_x, y: optionBest.center_y },
+      15000,
+    );
+    if (!tapOptionResult.ok) {
+      return {
+        ok: false,
+        content: JSON.stringify({
+          ok: false,
+          dropdown: dropdownDesc,
+          dropdown_score: dropdownScore,
+          dropdown_tapped: true,
+          option: optionDesc,
+          option_score: optionScore,
+          error: `Option "${optionDesc}" found but tap failed: ${tapOptionResult.error || "unknown error"}`,
+        }),
+        label: `android_select_option: tap option failed for "${optionDesc}"`,
+      };
+    }
+
+    console.log(`[android_select_option] userId=${ctx.userId} selected "${optionDesc}" from "${dropdownDesc}" dropdown_score=${dropdownScore} option_score=${optionScore}`);
+
+    return {
+      ok: true,
+      content: JSON.stringify({
+        dropdown: {
+          label: dropdownBest.label,
+          description: dropdownBest.description,
+          resource_id: dropdownBest.resource_id,
+          center_x: dropdownBest.center_x,
+          center_y: dropdownBest.center_y,
+          match_score: dropdownScore,
+        },
+        option: {
+          label: optionBest.label,
+          description: optionBest.description,
+          resource_id: optionBest.resource_id,
+          center_x: optionBest.center_x,
+          center_y: optionBest.center_y,
+          match_score: optionScore,
+        },
+      }),
+      label: `Selected "${optionDesc}" from "${dropdownDesc}"`,
+      detail: `dropdown_score=${dropdownScore} option_score=${optionScore}`,
+    };
+  },
+};
+
 // ── Perceptual hash helper (average-hash, 64-bit) ─────────────────────────────
 // Down-samples a base64 JPEG/PNG to 8×8 via @napi-rs/canvas and computes the
 // average-hash (aHash) as a 16-char hex string.  Falls back to an MD5 of the
