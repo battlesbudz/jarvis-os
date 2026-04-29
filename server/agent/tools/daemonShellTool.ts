@@ -3554,6 +3554,277 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
   },
 };
 
+// ── android_drag_element ──────────────────────────────────────────────────────
+// Long-press a source element by name, then drag to a destination element by
+// name (or in a direction/distance), firing a single android_swipe with a
+// configurable hold duration so the OS recognises it as a drag gesture.
+
+export const androidDragElementTool: AgentTool = {
+  name: "android_drag_element",
+  description: `Drag an Android screen element to another element (or in a direction) using names instead of raw coordinates.
+Resolves both the source and destination via the shared ScreenMap cache (same 500 ms TTL used by android_tap_element and android_long_press_element), then fires a single android_swipe from the source center to the destination center with a long hold duration so the OS treats the gesture as a drag.
+
+Use this tool for Android drag-and-drop patterns:
+  - "drag 'Song A' to 'Song B'" — reorders items in a playlist
+  - "drag the widget to the trash" — drag-to-delete
+  - "drag 'App icon' up 300 pixels" — move a widget on the home screen
+
+Parameters:
+  - from_label: human-readable name of the element to drag (required)
+  - to_label: human-readable name of the drop target element. Provide either to_label OR direction+distance_px — not both.
+  - direction: direction to drag when no named target exists ("up", "down", "left", "right")
+  - distance_px: how far to drag in pixels when using direction (default 400)
+  - hold_ms: how long to hold at the start before dragging in milliseconds (default 800). Increase for apps that need a longer initial press.
+  - max_age_ms: max age of cached ScreenMap to reuse (default 500, 0 = always fresh)
+
+Returns the resolved source/destination coordinates and match scores.
+
+Requires: android_screenshot and android_read_screen permissions (same as android_screen_understand), plus android_tap_type permission for the gesture.`,
+  parameters: {
+    type: "object",
+    properties: {
+      from_label: {
+        type: "string",
+        description: "The label, description, or resource_id (or part thereof) of the element to drag. Case-insensitive fuzzy match.",
+      },
+      to_label: {
+        type: "string",
+        description: "The label, description, or resource_id (or part thereof) of the drop target element. Provide either to_label OR direction+distance_px.",
+      },
+      direction: {
+        type: "string",
+        enum: ["up", "down", "left", "right"],
+        description: "Direction to drag when no named destination element is available. Must pair with distance_px.",
+      },
+      distance_px: {
+        type: "number",
+        description: "Distance to drag in pixels when using direction mode (default 400).",
+      },
+      hold_ms: {
+        type: "number",
+        description: "How long to hold the initial press before dragging in milliseconds (default 800). Increase for apps that require a longer press to enter drag mode.",
+      },
+      max_age_ms: {
+        type: "number",
+        description: "Maximum age in milliseconds for a cached ScreenMap to be reused (default 500). Set to 0 to always capture a fresh screen.",
+      },
+    },
+    required: ["from_label"],
+  },
+  async execute(args, ctx) {
+    const fromLabel = String(args.from_label || "").trim();
+    if (!fromLabel) {
+      return { ok: false, content: "from_label is required.", label: "android_drag_element: no from_label" };
+    }
+
+    const toLabel = typeof args.to_label === "string" ? args.to_label.trim() : "";
+    const direction = typeof args.direction === "string" ? args.direction.toLowerCase().trim() : "";
+
+    if (!toLabel && !direction) {
+      return {
+        ok: false,
+        content: "Provide either to_label (drag to a named element) or direction + distance_px (drag in a direction).",
+        label: "android_drag_element: no destination",
+      };
+    }
+
+    if (toLabel && direction) {
+      return {
+        ok: false,
+        content: "Provide either to_label or direction+distance_px — not both. Use to_label to drag to a named element, or direction to drag a fixed distance.",
+        label: "android_drag_element: ambiguous destination",
+      };
+    }
+
+    if (direction && !["up", "down", "left", "right"].includes(direction)) {
+      return {
+        ok: false,
+        content: `direction must be one of: up, down, left, right. Got: "${direction}"`,
+        label: "android_drag_element: invalid direction",
+      };
+    }
+
+    if (!isAndroidDaemonActive(ctx.userId)) {
+      return {
+        ok: false,
+        content: "Android daemon is not connected. Ask the user to install the Jarvis Android APK and pair it (Profile → Connected Channels → Android Device).",
+        label: "android_drag_element: android offline",
+      };
+    }
+
+    const [screenshotAllowed, readAllowed, tapAllowed] = await Promise.all([
+      isAndroidDaemonActionAllowed(ctx.userId, "android_screenshot"),
+      isAndroidDaemonActionAllowed(ctx.userId, "android_read_screen"),
+      isAndroidDaemonActionAllowed(ctx.userId, "android_tap_type"),
+    ]);
+    if (!screenshotAllowed) {
+      return {
+        ok: false,
+        content: "android_screenshot permission is not enabled. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.",
+        label: "android_drag_element: screenshot permission denied",
+      };
+    }
+    if (!readAllowed) {
+      return {
+        ok: false,
+        content: "android_read_screen permission is not enabled. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.",
+        label: "android_drag_element: read_screen permission denied",
+      };
+    }
+    if (!tapAllowed) {
+      return {
+        ok: false,
+        content: "android_tap_type permission is not enabled. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.",
+        label: "android_drag_element: tap permission denied",
+      };
+    }
+
+    // ── Resolve ScreenMap (cache or fresh) ────────────────────────────────────
+    const maxAge = typeof args.max_age_ms === "number" ? args.max_age_ms : 500;
+    let screenElements: ScreenElement[] = [];
+
+    const cached = screenMapCache.get(ctx.userId);
+    if (cached && maxAge > 0 && Date.now() - cached.ts <= maxAge) {
+      console.log(`[android_drag_element] userId=${ctx.userId} using cached ScreenMap`);
+      try {
+        const parsed = JSON.parse(cached.result) as { elements?: unknown[] };
+        screenElements = normalizeScreenElements(Array.isArray(parsed.elements) ? parsed.elements : []);
+      } catch {
+        screenElements = [];
+      }
+    }
+
+    if (screenElements.length === 0) {
+      const buildResult = await buildScreenMapElements(ctx.userId);
+      if (!buildResult.ok) {
+        return { ok: false, content: buildResult.content, label: `android_drag_element: ${buildResult.label}` };
+      }
+      screenElements = buildResult.elements;
+      console.log(`[android_drag_element] userId=${ctx.userId} fresh ScreenMap: ${screenElements.length} elements`);
+    }
+
+    // ── Fuzzy-match source element ────────────────────────────────────────────
+    let fromElement: ScreenElement | null = null;
+    let fromScore = 0;
+    for (const el of screenElements) {
+      const score = scoreElement(el, fromLabel);
+      if (score > fromScore) {
+        fromScore = score;
+        fromElement = el;
+      }
+    }
+
+    if (!fromElement || fromScore === 0) {
+      const elementList = screenElements
+        .map((el) => `  • ${el.label}${el.description ? ` — ${el.description}` : ""}`)
+        .join("\n");
+      return {
+        ok: false,
+        content: `No element matching "${fromLabel}" was found on screen.\n\nAvailable elements:\n${elementList || "  (none)"}`,
+        label: `android_drag_element: no match for from_label "${fromLabel}"`,
+      };
+    }
+
+    // ── Resolve destination coordinates ──────────────────────────────────────
+    let x1 = fromElement.center_x;
+    let y1 = fromElement.center_y;
+    let x2: number;
+    let y2: number;
+    let toElementLabel: string;
+    let toScore = 0;
+
+    if (toLabel) {
+      // Named target — fuzzy-match a second element
+      let toElement: ScreenElement | null = null;
+      for (const el of screenElements) {
+        const score = scoreElement(el, toLabel);
+        if (score > toScore) {
+          toScore = score;
+          toElement = el;
+        }
+      }
+
+      if (!toElement || toScore === 0) {
+        const elementList = screenElements
+          .map((el) => `  • ${el.label}${el.description ? ` — ${el.description}` : ""}`)
+          .join("\n");
+        return {
+          ok: false,
+          content: `No element matching "${toLabel}" was found on screen.\n\nAvailable elements:\n${elementList || "  (none)"}`,
+          label: `android_drag_element: no match for to_label "${toLabel}"`,
+        };
+      }
+
+      x2 = toElement.center_x;
+      y2 = toElement.center_y;
+      toElementLabel = toElement.label;
+    } else {
+      // Direction + distance mode
+      const distance = typeof args.distance_px === "number" && args.distance_px > 0 ? args.distance_px : 400;
+      if (direction === "up") {
+        x2 = x1; y2 = y1 - distance;
+      } else if (direction === "down") {
+        x2 = x1; y2 = y1 + distance;
+      } else if (direction === "left") {
+        x2 = x1 - distance; y2 = y1;
+      } else {
+        // right
+        x2 = x1 + distance; y2 = y1;
+      }
+      toElementLabel = `${direction} ${args.distance_px ?? 400}px`;
+    }
+
+    // Clamp coordinates to >= 0
+    x1 = Math.max(0, Math.round(x1));
+    y1 = Math.max(0, Math.round(y1));
+    x2 = Math.max(0, Math.round(x2));
+    y2 = Math.max(0, Math.round(y2));
+
+    const holdMs = typeof args.hold_ms === "number" && args.hold_ms > 0
+      ? Math.min(Math.round(args.hold_ms), 10000)
+      : 800;
+
+    // ── Fire the drag as a long-hold swipe ────────────────────────────────────
+    const dragResult = await sendDaemonOp(
+      ctx.userId,
+      { type: "android_swipe", x1, y1, x2, y2, durationMs: holdMs },
+      holdMs + 10000,
+    );
+
+    if (!dragResult.ok) {
+      return {
+        ok: false,
+        content: `Matched source "${fromElement.label}" at (${x1}, ${y1}) but drag failed: ${dragResult.error || "unknown error"}`,
+        label: `android_drag_element: drag failed`,
+      };
+    }
+
+    console.log(`[android_drag_element] userId=${ctx.userId} dragged "${fromElement.label}" from (${x1},${y1}) to "${toElementLabel}" at (${x2},${y2}) hold_ms=${holdMs} from_score=${fromScore} to_score=${toScore}`);
+
+    return {
+      ok: true,
+      content: JSON.stringify({
+        dragged: {
+          from_label: fromElement.label,
+          from_description: fromElement.description,
+          from_resource_id: fromElement.resource_id,
+          from_center_x: x1,
+          from_center_y: y1,
+          from_bounds: fromElement.bounds,
+          from_match_score: fromScore,
+          to_label: toElementLabel,
+          to_center_x: x2,
+          to_center_y: y2,
+          to_match_score: toScore || null,
+          hold_ms: holdMs,
+        },
+      }),
+      label: `Dragged "${fromElement.label}" → "${toElementLabel}" hold_ms=${holdMs}`,
+      detail: `from=(${x1},${y1}) to=(${x2},${y2}) from_score=${fromScore}${toScore ? ` to_score=${toScore}` : ""}`,
+    };
+  },
+};
+
 // ── Perceptual hash helper (average-hash, 64-bit) ─────────────────────────────
 // Down-samples a base64 JPEG/PNG to 8×8 via @napi-rs/canvas and computes the
 // average-hash (aHash) as a 16-char hex string.  Falls back to an MD5 of the
