@@ -3873,8 +3873,11 @@ Parameters:
   - distance_px: how far to drag in pixels when using direction (default 400)
   - hold_ms: how long to hold at the start before dragging in milliseconds (default 800). Increase for apps that need a longer initial press.
   - max_age_ms: max age of cached ScreenMap to reuse (default 500, 0 = always fresh)
+  - auto_retry: automatically retry with a longer hold_ms when the screen did not change (default true)
+  - max_retries: max number of additional retry attempts when auto_retry is true (default 2)
+  - hold_ms_step: milliseconds added to hold_ms on each retry (default 400)
 
-Returns the resolved source/destination coordinates, match scores, and a screen_changed field (true/false) indicating whether the screen visually changed after the drag (based on perceptual hash comparison). If screen_changed is false, the drag gesture may not have been accepted — consider retrying with a longer hold_ms or reporting failure.
+Returns the resolved source/destination coordinates, match scores, a screen_changed field (true/false) indicating whether the screen visually changed after the drag (based on perceptual hash comparison), and an attempts count. When auto_retry is true (the default), the tool automatically retries the gesture with an incrementally longer hold_ms whenever screen_changed is false, up to max_retries additional attempts.
 
 Requires: android_screenshot and android_read_screen permissions (same as android_screen_understand), plus android_tap_type permission for the gesture.`,
   parameters: {
@@ -3904,6 +3907,18 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       max_age_ms: {
         type: "number",
         description: "Maximum age in milliseconds for a cached ScreenMap to be reused (default 500). Set to 0 to always capture a fresh screen.",
+      },
+      auto_retry: {
+        type: "boolean",
+        description: "When true (default), automatically retry the drag gesture with a longer hold_ms whenever the screen did not visually change after the attempt.",
+      },
+      max_retries: {
+        type: "number",
+        description: "Maximum number of additional retry attempts when auto_retry is true (default 2, capped at 10). Each retry increases hold_ms by hold_ms_step.",
+      },
+      hold_ms_step: {
+        type: "number",
+        description: "How many milliseconds to add to hold_ms on each retry (default 400).",
       },
     },
     required: ["from_label"],
@@ -4077,52 +4092,73 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
     x2 = Math.max(0, Math.round(x2));
     y2 = Math.max(0, Math.round(y2));
 
-    const holdMs = typeof args.hold_ms === "number" && args.hold_ms > 0
+    const baseHoldMs = typeof args.hold_ms === "number" && args.hold_ms > 0
       ? Math.min(Math.round(args.hold_ms), 10000)
       : 800;
+    const autoRetry = args.auto_retry !== false; // default true
+    const maxRetries = typeof args.max_retries === "number" && args.max_retries >= 0 ? Math.min(Math.round(args.max_retries), 10) : 2;
+    const holdMsStep = typeof args.hold_ms_step === "number" && args.hold_ms_step > 0 ? Math.round(args.hold_ms_step) : 400;
+    const totalAttempts = autoRetry ? 1 + maxRetries : 1;
 
-    // ── Capture pre-drag screenshot hash (best-effort) ───────────────────────
-    let preDragHash: string | null = null;
-    try {
-      const preDragScreenshot = await captureScreenshot(ctx.userId);
-      if (preDragScreenshot) {
-        preDragHash = await computeScreenshotHash(preDragScreenshot);
-      }
-    } catch { /* hash capture is best-effort */ }
-
-    // ── Fire the drag as a long-hold swipe ────────────────────────────────────
-    const dragResult = await sendDaemonOp(
-      ctx.userId,
-      { type: "android_swipe", x1, y1, x2, y2, durationMs: holdMs },
-      holdMs + 10000,
-    );
-
-    if (!dragResult.ok) {
-      return {
-        ok: false,
-        content: `Matched source "${fromElement.label}" at (${x1}, ${y1}) but drag failed: ${dragResult.error || "unknown error"}`,
-        label: `android_drag_element: drag failed`,
-      };
-    }
-
-    // ── Capture post-drag screenshot hash and compare (best-effort) ───────────
-    // screen_changed is always a boolean: false when the comparison is
-    // inconclusive (screenshot unavailable or hash error) so downstream logic
-    // can treat a missing result the same as a no-op drag.
     let screenChanged = false;
     let hashDistance: number | null = null;
-    try {
-      const postDragScreenshot = await captureScreenshot(ctx.userId);
-      if (postDragScreenshot && preDragHash !== null) {
-        const postDragHash = await computeScreenshotHash(postDragScreenshot);
-        hashDistance = hammingDistance(preDragHash, postDragHash);
-        // A distance > 5 out of 64 bits indicates a meaningful visual change
-        screenChanged = hashDistance > 5;
-        console.log(`[android_drag_element] userId=${ctx.userId} hash_distance=${hashDistance} screen_changed=${screenChanged}`);
-      }
-    } catch { /* hash capture is best-effort; screenChanged stays false */ }
+    let attempts = 0;
+    let currentHoldMs = baseHoldMs;
 
-    console.log(`[android_drag_element] userId=${ctx.userId} dragged "${fromElement.label}" from (${x1},${y1}) to "${toElementLabel}" at (${x2},${y2}) hold_ms=${holdMs} from_score=${fromScore} to_score=${toScore}`);
+    for (let attempt = 0; attempt < totalAttempts; attempt++) {
+      attempts = attempt + 1;
+      currentHoldMs = Math.min(baseHoldMs + attempt * holdMsStep, 10000);
+
+      // ── Capture pre-drag screenshot hash (best-effort) ─────────────────────
+      let preDragHash: string | null = null;
+      try {
+        const preDragScreenshot = await captureScreenshot(ctx.userId);
+        if (preDragScreenshot) {
+          preDragHash = await computeScreenshotHash(preDragScreenshot);
+        }
+      } catch { /* hash capture is best-effort */ }
+
+      // ── Fire the drag as a long-hold swipe ──────────────────────────────────
+      const dragResult = await sendDaemonOp(
+        ctx.userId,
+        { type: "android_swipe", x1, y1, x2, y2, durationMs: currentHoldMs },
+        currentHoldMs + 10000,
+      );
+
+      if (!dragResult.ok) {
+        return {
+          ok: false,
+          content: `Matched source "${fromElement.label}" at (${x1}, ${y1}) but drag failed: ${dragResult.error || "unknown error"}`,
+          label: `android_drag_element: drag failed`,
+        };
+      }
+
+      // ── Capture post-drag screenshot hash and compare (best-effort) ─────────
+      // screen_changed is always a boolean: false when the comparison is
+      // inconclusive (screenshot unavailable or hash error) so downstream logic
+      // can treat a missing result the same as a no-op drag.
+      screenChanged = false;
+      hashDistance = null;
+      try {
+        const postDragScreenshot = await captureScreenshot(ctx.userId);
+        if (postDragScreenshot && preDragHash !== null) {
+          const postDragHash = await computeScreenshotHash(postDragScreenshot);
+          hashDistance = hammingDistance(preDragHash, postDragHash);
+          // A distance > 5 out of 64 bits indicates a meaningful visual change
+          screenChanged = hashDistance > 5;
+          console.log(`[android_drag_element] userId=${ctx.userId} attempt=${attempts} hold_ms=${currentHoldMs} hash_distance=${hashDistance} screen_changed=${screenChanged}`);
+        }
+      } catch { /* hash capture is best-effort; screenChanged stays false */ }
+
+      if (screenChanged) break;
+
+      if (autoRetry && attempt < totalAttempts - 1) {
+        const nextHoldMs = Math.min(baseHoldMs + (attempt + 1) * holdMsStep, 10000);
+        console.log(`[android_drag_element] userId=${ctx.userId} attempt=${attempts} screen_changed=false, retrying with hold_ms=${nextHoldMs}`);
+      }
+    }
+
+    console.log(`[android_drag_element] userId=${ctx.userId} dragged "${fromElement.label}" from (${x1},${y1}) to "${toElementLabel}" at (${x2},${y2}) hold_ms=${currentHoldMs} attempts=${attempts} from_score=${fromScore} to_score=${toScore}`);
 
     return {
       ok: true,
@@ -4139,12 +4175,13 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
           to_center_x: x2,
           to_center_y: y2,
           to_match_score: toScore || null,
-          hold_ms: holdMs,
+          hold_ms: currentHoldMs,
         },
         screen_changed: screenChanged,
         hash_distance: hashDistance,
+        attempts,
       }),
-      label: `Dragged "${fromElement.label}" → "${toElementLabel}" hold_ms=${holdMs} screen_changed=${screenChanged}`,
+      label: `Dragged "${fromElement.label}" → "${toElementLabel}" hold_ms=${currentHoldMs} attempts=${attempts} screen_changed=${screenChanged}`,
       detail: `from=(${x1},${y1}) to=(${x2},${y2}) from_score=${fromScore}${toScore ? ` to_score=${toScore}` : ""}${hashDistance !== null ? ` hash_dist=${hashDistance}` : ""}`,
     };
   },
