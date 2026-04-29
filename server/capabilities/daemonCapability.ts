@@ -1,12 +1,12 @@
 import type { Capability } from "./types";
 import { daemonActionTool } from "../agent/tools/daemon";
-import { daemonShellTool, daemonStatusTool } from "../agent/tools/daemonShellTool";
+import { daemonShellTool, daemonStatusTool, androidScreenUnderstandTool } from "../agent/tools/daemonShellTool";
 
 export const daemonCapability: Capability = {
   id: "daemon",
   label: "Daemon",
   toolGroups: ["coaching", "system"],
-  tools: [daemonActionTool, daemonShellTool, daemonStatusTool],
+  tools: [daemonActionTool, daemonShellTool, daemonStatusTool, androidScreenUnderstandTool],
   configRequirements: [],
   async healthCheck() {
     return { healthy: true };

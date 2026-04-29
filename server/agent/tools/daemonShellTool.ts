@@ -5,11 +5,13 @@ import {
   isDesktopDaemonActive,
   isAndroidDaemonActive,
   isDaemonActionAllowed,
+  isAndroidDaemonActionAllowed,
   getDaemonPermissions,
   getAndroidDaemonPermissions,
   getDaemonDeviceMeta,
   getDaemonLastSeen,
 } from "../../daemon/bridge";
+import { anthropic, ORCHESTRATOR_MODEL } from "../../lib/anthropicClient";
 
 // ── Shell safety: server-side preflight for early UX feedback ─────────────────
 // Mirrors the daemon-side commandEscapesRoot strategy so the agent gets a fast
@@ -302,6 +304,194 @@ export const daemonStatusTool: AgentTool = {
       content: lines.join("\n"),
       label: `Daemon status: desktop=${desktopActive ? "online" : "offline"} android=${androidActive ? "online" : "offline"}`,
       detail: JSON.stringify(status),
+    };
+  },
+};
+
+// ── ScreenMap cache ────────────────────────────────────────────────────────────
+// 500 ms per-user cache so back-to-back calls don't hit Claude Vision twice.
+interface ScreenMapEntry {
+  ts: number;
+  result: string;
+}
+const screenMapCache = new Map<string, ScreenMapEntry>();
+
+export interface ScreenElement {
+  label: string;
+  description: string;
+  center_x: number;
+  center_y: number;
+  bounds: string;
+  resource_id: string;
+  clickable: boolean;
+}
+
+export const androidScreenUnderstandTool: AgentTool = {
+  name: "android_screen_understand",
+  description: `Capture and deeply understand the current Android screen by combining a screenshot with the full UI Automator element hierarchy.
+Returns a ScreenMap — a structured JSON array of the most important interactive elements, each with: label, description, center_x, center_y (tap coordinates), bounds, resource_id, and clickable flag.
+
+Use this tool when:
+- android_read_screen doesn't expose coordinates for the element you need
+- You need to find an unlabeled element (icon-only button, search bar with no text)
+- Multiple elements share a similar label and you need to disambiguate by position
+- You need exact tap coordinates before calling daemon_action with android_tap
+
+After calling this tool, use center_x/center_y from the returned elements as the x/y arguments for android_tap — no coordinate guessing needed.
+
+Results are cached for 500 ms, so two rapid calls will not double-count API usage.`,
+  parameters: {
+    type: "object",
+    properties: {},
+    required: [],
+  },
+  async execute(_args, ctx) {
+    if (!isAndroidDaemonActive(ctx.userId)) {
+      return {
+        ok: false,
+        content: "Android daemon is not connected. Ask the user to install the Jarvis Android APK and pair it (Profile → Connected Channels → Android Device).",
+        label: "android_screen_understand: android offline",
+      };
+    }
+
+    // Require both screenshot AND read_screen permissions since this tool
+    // internally calls android_screenshot and android_view_hierarchy.
+    const [screenshotAllowed, readAllowed] = await Promise.all([
+      isAndroidDaemonActionAllowed(ctx.userId, "android_screenshot"),
+      isAndroidDaemonActionAllowed(ctx.userId, "android_read_screen"),
+    ]);
+    if (!screenshotAllowed) {
+      return {
+        ok: false,
+        content: "android_screenshot permission is not enabled. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.",
+        label: "android_screen_understand: screenshot permission denied",
+      };
+    }
+    if (!readAllowed) {
+      return {
+        ok: false,
+        content: "android_read_screen permission is not enabled. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.",
+        label: "android_screen_understand: read_screen permission denied",
+      };
+    }
+
+    // ── 500ms cache check ────────────────────────────────────────────────────
+    const cached = screenMapCache.get(ctx.userId);
+    if (cached && Date.now() - cached.ts < 500) {
+      console.log(`[android_screen_understand] userId=${ctx.userId} serving from cache`);
+      return { ok: true, content: cached.result, label: "android_screen_understand: cached" };
+    }
+
+    // ── Parallel: screenshot + view hierarchy ────────────────────────────────
+    const [screenshotResult, hierarchyResult] = await Promise.all([
+      sendDaemonOp(ctx.userId, { type: "android_screenshot" }, 30000),
+      sendDaemonOp(ctx.userId, { type: "android_view_hierarchy" }, 30000),
+    ]);
+
+    if (!screenshotResult.ok) {
+      return {
+        ok: false,
+        content: `Failed to capture screenshot: ${screenshotResult.error || "unknown error"}`,
+        label: "android_screen_understand: screenshot failed",
+      };
+    }
+    if (!hierarchyResult.ok) {
+      return {
+        ok: false,
+        content: `Failed to dump view hierarchy: ${hierarchyResult.error || "unknown error"}`,
+        label: "android_screen_understand: hierarchy failed",
+      };
+    }
+
+    // Screenshot data comes back as { screenshot: base64, format: "jpeg" }
+    // matching the Android daemon's handleScreenshot() response format.
+    const screenshotData = screenshotResult.data as Record<string, unknown> | undefined;
+    const base64Image = (screenshotData?.screenshot as string) || (screenshotData?.image as string) || "";
+    if (!base64Image) {
+      return {
+        ok: false,
+        content: "Screenshot returned no image data.",
+        label: "android_screen_understand: no image",
+      };
+    }
+
+    // View hierarchy comes back as { elements: [...], count: N, package: "..." }
+    // from the Android daemon's handleViewHierarchy() response.
+    const hierarchyData = hierarchyResult.data as Record<string, unknown> | undefined;
+    const rawElements = hierarchyData?.elements ?? hierarchyData;
+    const elementsJson = typeof rawElements === "string"
+      ? rawElements
+      : JSON.stringify(rawElements);
+
+    // ── Claude Vision call ───────────────────────────────────────────────────
+    let screenElements: ScreenElement[] = [];
+    try {
+      const claudeResponse = await anthropic.messages.create({
+        model: ORCHESTRATOR_MODEL,
+        max_tokens: 2048,
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "image",
+                source: {
+                  type: "base64",
+                  media_type: "image/jpeg",
+                  data: base64Image,
+                },
+              },
+              {
+                type: "text",
+                text: `You are analyzing an Android screen for UI automation.
+
+Here is the UI Automator element tree (JSON):
+${elementsJson}
+
+Look at the screenshot and the element tree above. Return a JSON array of the most important interactive elements visible on screen. For each element include:
+- "label": short human-readable name (e.g. "Search bar", "Post button", "Back")
+- "description": what this element does or contains
+- "center_x": horizontal center pixel coordinate for tapping
+- "center_y": vertical center pixel coordinate for tapping
+- "bounds": exact bounds string from the element tree (e.g. "[0,100][1080,200]")
+- "resource_id": the resource-id from the element tree (empty string if none)
+- "clickable": true if the element is clickable or tappable
+
+Prioritize: search bars, input fields, buttons, navigation items, interactive content.
+Include elements that have no accessibility label but are visually identifiable as interactive.
+Return ONLY a valid JSON array, no explanation, no markdown fences.`,
+              },
+            ],
+          },
+        ],
+      });
+
+      const responseText = claudeResponse.content[0]?.type === "text"
+        ? claudeResponse.content[0].text.trim()
+        : "[]";
+
+      // Strip markdown fences if present
+      const cleaned = responseText.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+      screenElements = JSON.parse(cleaned) as ScreenElement[];
+      if (!Array.isArray(screenElements)) screenElements = [];
+    } catch (err) {
+      console.error("[android_screen_understand] Claude Vision error:", err);
+      return {
+        ok: false,
+        content: `Vision analysis failed: ${err instanceof Error ? err.message : String(err)}`,
+        label: "android_screen_understand: vision error",
+      };
+    }
+
+    const result = JSON.stringify({ ok: true, elements: screenElements, count: screenElements.length });
+    screenMapCache.set(ctx.userId, { ts: Date.now(), result });
+    console.log(`[android_screen_understand] userId=${ctx.userId} found ${screenElements.length} elements`);
+
+    return {
+      ok: true,
+      content: result,
+      label: `android_screen_understand: ${screenElements.length} elements`,
+      detail: `${screenElements.length} interactive elements mapped`,
     };
   },
 };
