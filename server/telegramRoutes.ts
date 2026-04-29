@@ -509,7 +509,7 @@ async function handleCallbackQuery(callbackQuery: any): Promise<void> {
       const { getGitHubSettings, getPR, mergePR } = await import("./integrations/github");
       const settings = await getGitHubSettings(mergeUserId);
       if (!settings.pat) {
-        await sendMessage(chatId, "❌ GitHub PAT not configured.");
+        await sendMessage(chatId, "❌ GitHub not connected — add a token in Settings → GitHub.");
         return;
       }
       const [repoOwner, repoName] = fullRepo.split("/") as [string, string];
@@ -1254,7 +1254,7 @@ async function processUpdate(update: any): Promise<void> {
           const { getGitHubSettings, listOpenPRs } = await import("./integrations/github");
           const settings = await getGitHubSettings(prUserId);
           if (!settings.pat) {
-            const msg = "GitHub not connected. Add your Personal Access Token in Settings → GitHub to use /pr.";
+            const msg = "GitHub not connected. Connect via OAuth or add a token in Settings → GitHub to use /pr.";
             if (placeholderId) await editMessage(chatId, placeholderId, msg);
             else await sendMessage(chatId, msg);
           } else if (settings.repos.length === 0) {

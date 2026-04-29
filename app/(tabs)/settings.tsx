@@ -445,12 +445,20 @@ export default function SettingsScreen() {
 
   // ── GitHub ──
   const [githubConnected, setGithubConnected] = useState(false);
+  const [githubTokenType, setGithubTokenType] = useState<'pat' | 'oauth' | null>(null);
   const [githubRepos, setGithubRepos] = useState<string[]>([]);
   const [githubPatInput, setGithubPatInput] = useState('');
   const [githubRepoInput, setGithubRepoInput] = useState('');
   const [githubSaving, setGithubSaving] = useState(false);
   const [githubExpanded, setGithubExpanded] = useState(false);
   const [githubPatVisible, setGithubPatVisible] = useState(false);
+  const [githubOAuthAvailable, setGithubOAuthAvailable] = useState(false);
+  const [githubOAuthFlowing, setGithubOAuthFlowing] = useState(false);
+  const [githubUserCode, setGithubUserCode] = useState<string | null>(null);
+  const [githubVerificationUri, setGithubVerificationUri] = useState<string | null>(null);
+  const [githubOAuthPolling, setGithubOAuthPolling] = useState(false);
+  const [githubCodeCopied, setGithubCodeCopied] = useState(false);
+  const githubPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const loadGithubSettings = useCallback(async () => {
     try {
@@ -458,9 +466,79 @@ export default function SettingsScreen() {
       if (!res.ok) return;
       const data = await res.json();
       setGithubConnected(!!data.connected);
+      setGithubTokenType(data.tokenType ?? null);
       setGithubRepos(Array.isArray(data.repos) ? data.repos : []);
     } catch {}
   }, []);
+
+  const loadGithubOAuthAvailable = useCallback(async () => {
+    try {
+      const res = await apiRequest('GET', '/api/github/oauth-available');
+      if (!res.ok) return;
+      const data = await res.json();
+      setGithubOAuthAvailable(!!data.available);
+    } catch {}
+  }, []);
+
+  const cancelGithubOAuth = useCallback(() => {
+    if (githubPollRef.current) {
+      clearInterval(githubPollRef.current);
+      githubPollRef.current = null;
+    }
+    setGithubOAuthFlowing(false);
+    setGithubOAuthPolling(false);
+    setGithubUserCode(null);
+    setGithubVerificationUri(null);
+    setGithubCodeCopied(false);
+  }, []);
+
+  const startGithubOAuth = useCallback(async () => {
+    try {
+      setGithubOAuthFlowing(true);
+      const res = await apiRequest('POST', '/api/github/device/start', {});
+      if (!res.ok) {
+        Alert.alert('Error', 'Could not start GitHub login. Please try again.');
+        setGithubOAuthFlowing(false);
+        return;
+      }
+      const data = await res.json();
+      setGithubUserCode(data.user_code);
+      setGithubVerificationUri(data.verification_uri);
+      const pollInterval = Math.max((data.interval ?? 5) * 1000, 5000);
+      const expiresAt = Date.now() + (data.expires_in ?? 900) * 1000;
+      setGithubOAuthPolling(true);
+      githubPollRef.current = setInterval(async () => {
+        if (Date.now() > expiresAt) {
+          cancelGithubOAuth();
+          Alert.alert('Expired', 'The authorization window expired. Please try again.');
+          return;
+        }
+        try {
+          const pollRes = await apiRequest('POST', '/api/github/device/poll', { device_code: data.device_code });
+          if (!pollRes.ok) return;
+          const pollData = await pollRes.json();
+          if (pollData.status === 'authorized') {
+            cancelGithubOAuth();
+            setGithubConnected(true);
+            setGithubTokenType('oauth');
+            await loadGithubSettings();
+          } else if (pollData.status === 'error') {
+            cancelGithubOAuth();
+            Alert.alert('Authorization failed', pollData.message ?? 'GitHub denied the request.');
+          }
+        } catch {}
+      }, pollInterval);
+    } catch {
+      setGithubOAuthFlowing(false);
+    }
+  }, [cancelGithubOAuth, loadGithubSettings]);
+
+  const copyGithubUserCode = useCallback(async () => {
+    if (!githubUserCode) return;
+    await Clipboard.setStringAsync(githubUserCode);
+    setGithubCodeCopied(true);
+    setTimeout(() => setGithubCodeCopied(false), 2000);
+  }, [githubUserCode]);
 
   const saveGithubPat = useCallback(async () => {
     if (!githubPatInput.trim()) return;
@@ -1176,10 +1254,15 @@ export default function SettingsScreen() {
     loadMcpServerKey();
     loadWorkspaceFiles();
     loadGithubSettings();
+    loadGithubOAuthAvailable();
     return () => {
       if (telegramPollRef.current) {
         clearInterval(telegramPollRef.current);
         telegramPollRef.current = null;
+      }
+      if (githubPollRef.current) {
+        clearInterval(githubPollRef.current);
+        githubPollRef.current = null;
       }
     };
   }, [loadAll, loadNervousSystem, loadThreatLog, loadBuildHistory, loadHealth, loadMcpServers, loadMcpServerKey, loadWorkspaceFiles]));
@@ -1692,8 +1775,8 @@ export default function SettingsScreen() {
               <Text style={styles.connName}>GitHub</Text>
               <Text style={styles.connSub}>
                 {githubConnected
-                  ? `Connected · ${githubRepos.length} repo${githubRepos.length !== 1 ? 's' : ''} tracked`
-                  : 'Add a Personal Access Token to enable PR tools'}
+                  ? `Connected via ${githubTokenType === 'oauth' ? 'OAuth' : 'PAT'} · ${githubRepos.length} repo${githubRepos.length !== 1 ? 's' : ''} tracked`
+                  : 'Connect to enable PR tools and CI monitoring'}
               </Text>
             </View>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
@@ -1710,53 +1793,120 @@ export default function SettingsScreen() {
 
           {githubExpanded && (
             <View style={{ paddingHorizontal: 16, paddingBottom: 16 }}>
-              {/* PAT section */}
-              <Text style={[styles.connSub, { marginTop: 12, marginBottom: 6, color: Colors.textSecondary }]}>
-                Personal Access Token (PAT)
-              </Text>
+
+              {/* ── Connected state ── */}
               {githubConnected ? (
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                  <View style={{ flex: 1, paddingVertical: 8, paddingHorizontal: 12, backgroundColor: Colors.surface, borderRadius: 8, borderWidth: 1, borderColor: Colors.border }}>
-                    <Text style={{ color: Colors.success, fontFamily: 'Inter_500Medium', fontSize: 13 }}>
-                      ✓ Token saved
+                <View style={{ marginTop: 12 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <View style={{ flex: 1, paddingVertical: 8, paddingHorizontal: 12, backgroundColor: Colors.surface, borderRadius: 8, borderWidth: 1, borderColor: Colors.border }}>
+                      <Text style={{ color: Colors.success, fontFamily: 'Inter_500Medium', fontSize: 13 }}>
+                        ✓ {githubTokenType === 'oauth' ? 'Connected via GitHub OAuth' : 'Personal Access Token saved'}
+                      </Text>
+                    </View>
+                    <Pressable
+                      onPress={removeGithubPat}
+                      style={{ paddingVertical: 8, paddingHorizontal: 12, backgroundColor: Colors.error + '20', borderRadius: 8, borderWidth: 1, borderColor: Colors.error + '40' }}
+                    >
+                      <Text style={{ color: Colors.error, fontFamily: 'Inter_500Medium', fontSize: 13 }}>Disconnect</Text>
+                    </Pressable>
+                  </View>
+                </View>
+              ) : githubOAuthFlowing ? (
+                /* ── Device Flow in progress ── */
+                <View style={{ marginTop: 12, gap: 12 }}>
+                  <View style={{ padding: 14, backgroundColor: '#6e40c910', borderRadius: 10, borderWidth: 1, borderColor: '#6e40c930', gap: 10 }}>
+                    <Text style={{ color: Colors.text, fontFamily: 'Inter_600SemiBold', fontSize: 13 }}>
+                      Authorize on GitHub
                     </Text>
+                    <Text style={{ color: Colors.textSecondary, fontSize: 12, fontFamily: 'Inter_400Regular' }}>
+                      1. Go to{' '}
+                      <Text
+                        style={{ color: '#6e40c9', fontFamily: 'Inter_600SemiBold' }}
+                        onPress={() => githubVerificationUri && WebBrowser.openBrowserAsync(githubVerificationUri)}
+                      >
+                        {githubVerificationUri ?? 'github.com/login/device'}
+                      </Text>
+                    </Text>
+                    <Text style={{ color: Colors.textSecondary, fontSize: 12, fontFamily: 'Inter_400Regular' }}>
+                      2. Enter this code:
+                    </Text>
+                    <Pressable
+                      onPress={copyGithubUserCode}
+                      style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, paddingVertical: 14, backgroundColor: Colors.surface, borderRadius: 8, borderWidth: 1, borderColor: Colors.border }}
+                    >
+                      <Text style={{ color: '#6e40c9', fontFamily: 'Inter_700Bold', fontSize: 22, letterSpacing: 4 }}>
+                        {githubUserCode ?? '—'}
+                      </Text>
+                      <Ionicons
+                        name={githubCodeCopied ? 'checkmark-outline' : 'copy-outline'}
+                        size={18}
+                        color={githubCodeCopied ? Colors.success : Colors.textSecondary}
+                      />
+                    </Pressable>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                      {githubOAuthPolling && <ActivityIndicator size="small" color="#6e40c9" />}
+                      <Text style={{ flex: 1, color: Colors.textTertiary, fontSize: 11, fontFamily: 'Inter_400Regular' }}>
+                        {githubOAuthPolling ? 'Waiting for authorization…' : 'Starting…'}
+                      </Text>
+                    </View>
                   </View>
                   <Pressable
-                    onPress={removeGithubPat}
-                    style={{ paddingVertical: 8, paddingHorizontal: 12, backgroundColor: Colors.error + '20', borderRadius: 8, borderWidth: 1, borderColor: Colors.error + '40' }}
+                    onPress={cancelGithubOAuth}
+                    style={{ paddingVertical: 10, alignItems: 'center', borderRadius: 8, borderWidth: 1, borderColor: Colors.border }}
                   >
-                    <Text style={{ color: Colors.error, fontFamily: 'Inter_500Medium', fontSize: 13 }}>Remove</Text>
+                    <Text style={{ color: Colors.textSecondary, fontFamily: 'Inter_500Medium', fontSize: 13 }}>Cancel</Text>
                   </Pressable>
                 </View>
               ) : (
-                <View style={{ gap: 8 }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: Colors.border, borderRadius: 8, backgroundColor: Colors.surface, overflow: 'hidden' }}>
-                    <TextInput
-                      style={{ flex: 1, paddingVertical: 10, paddingHorizontal: 12, color: Colors.text, fontFamily: 'Inter_400Regular', fontSize: 13 }}
-                      placeholder="ghp_xxxxxxxxxxxx"
-                      placeholderTextColor={Colors.textTertiary}
-                      value={githubPatInput}
-                      onChangeText={setGithubPatInput}
-                      secureTextEntry={!githubPatVisible}
-                      autoCapitalize="none"
-                      autoCorrect={false}
-                    />
-                    <Pressable onPress={() => setGithubPatVisible(v => !v)} style={{ padding: 10 }}>
-                      <Ionicons name={githubPatVisible ? 'eye-off-outline' : 'eye-outline'} size={16} color={Colors.textSecondary} />
+                /* ── Not connected: show connect options ── */
+                <View style={{ marginTop: 12, gap: 8 }}>
+                  {githubOAuthAvailable && (
+                    <Pressable
+                      onPress={startGithubOAuth}
+                      style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 11, backgroundColor: '#6e40c9', borderRadius: 8 }}
+                    >
+                      <Ionicons name="logo-github" size={16} color="#fff" />
+                      <Text style={{ color: '#fff', fontFamily: 'Inter_600SemiBold', fontSize: 13 }}>Connect with GitHub</Text>
                     </Pressable>
+                  )}
+
+                  {githubOAuthAvailable && (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginVertical: 2 }}>
+                      <View style={{ flex: 1, height: 1, backgroundColor: Colors.border }} />
+                      <Text style={{ color: Colors.textTertiary, fontSize: 11, fontFamily: 'Inter_400Regular' }}>or use a Personal Access Token</Text>
+                      <View style={{ flex: 1, height: 1, backgroundColor: Colors.border }} />
+                    </View>
+                  )}
+
+                  <View style={{ gap: 8 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: Colors.border, borderRadius: 8, backgroundColor: Colors.surface, overflow: 'hidden' }}>
+                      <TextInput
+                        style={{ flex: 1, paddingVertical: 10, paddingHorizontal: 12, color: Colors.text, fontFamily: 'Inter_400Regular', fontSize: 13 }}
+                        placeholder="ghp_xxxxxxxxxxxx"
+                        placeholderTextColor={Colors.textTertiary}
+                        value={githubPatInput}
+                        onChangeText={setGithubPatInput}
+                        secureTextEntry={!githubPatVisible}
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                      />
+                      <Pressable onPress={() => setGithubPatVisible(v => !v)} style={{ padding: 10 }}>
+                        <Ionicons name={githubPatVisible ? 'eye-off-outline' : 'eye-outline'} size={16} color={Colors.textSecondary} />
+                      </Pressable>
+                    </View>
+                    <Pressable
+                      onPress={saveGithubPat}
+                      disabled={githubSaving || !githubPatInput.trim()}
+                      style={{ paddingVertical: 10, paddingHorizontal: 16, backgroundColor: '#6e40c9', borderRadius: 8, alignItems: 'center', opacity: githubSaving || !githubPatInput.trim() ? 0.5 : 1 }}
+                    >
+                      {githubSaving
+                        ? <ActivityIndicator size="small" color="#fff" />
+                        : <Text style={{ color: '#fff', fontFamily: 'Inter_600SemiBold', fontSize: 13 }}>Save Token</Text>}
+                    </Pressable>
+                    <Text style={{ color: Colors.textTertiary, fontSize: 11, fontFamily: 'Inter_400Regular' }}>
+                      Generate a token at github.com/settings/tokens with repo + read:user scope.
+                    </Text>
                   </View>
-                  <Pressable
-                    onPress={saveGithubPat}
-                    disabled={githubSaving || !githubPatInput.trim()}
-                    style={{ paddingVertical: 10, paddingHorizontal: 16, backgroundColor: '#6e40c9', borderRadius: 8, alignItems: 'center', opacity: githubSaving || !githubPatInput.trim() ? 0.5 : 1 }}
-                  >
-                    {githubSaving
-                      ? <ActivityIndicator size="small" color="#fff" />
-                      : <Text style={{ color: '#fff', fontFamily: 'Inter_600SemiBold', fontSize: 13 }}>Save Token</Text>}
-                  </Pressable>
-                  <Text style={{ color: Colors.textTertiary, fontSize: 11, fontFamily: 'Inter_400Regular' }}>
-                    Generate a token at github.com/settings/tokens with repo + read:user scope.
-                  </Text>
                 </View>
               )}
 

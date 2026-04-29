@@ -237,6 +237,27 @@ Users can install or author their own "skills" — reusable instruction sets tha
 ### How Injection Works
 Active DB skills are fetched in `runAgent()` inside `harness.ts` and appended to the first system message as an `## Active Skills` block. This runs after the existing learnt-skills (crystallized file-based) and before the behaviour-packs blocks, so user skills layer cleanly on top of the platform defaults. Injection is best-effort (wrapped in try/catch) so failures never block a conversation.
 
+## GitHub Integration (Task #936)
+
+Jarvis can connect to GitHub to monitor pull requests and CI status. Supports both OAuth (Device Flow) and manual Personal Access Tokens.
+
+### Connection Methods
+- **OAuth Device Flow** — Enabled when `GITHUB_CLIENT_ID` env var is set. User clicks "Connect with GitHub", gets a short user code, visits `github.com/login/device`, enters the code, and Jarvis polls automatically until authorization completes. Token stored with `accountEmail: "oauth"` in `user_tokens`.
+- **PAT (Personal Access Token)** — Fallback method for users who prefer manual tokens. Token stored with `accountEmail: "pat"` in `user_tokens`.
+
+### Architecture
+- **`server/integrations/github.ts`** — `getGitHubSettings`, `saveGitHubSettings` (now accepts `tokenType?: "pat"|"oauth"`), `listOpenPRs`, `getPR`, `mergePR`, `getDiffSummary`. The `tokenType` field is stored in the `accountEmail` column and returned from `getGitHubSettings`.
+- **`server/capabilities/githubCapability.ts`** — Capability module registering `list_github_prs`, `get_github_pr`, `merge_github_pr` tools in the `github` tool group.
+- **`server/agent/tools/githubPrTools.ts`** — Tool implementations for PR operations.
+- **Device Flow API routes** (in `server/routes.ts`):
+  - `GET /api/github/oauth-available` — Returns `{ available: bool }` based on `GITHUB_CLIENT_ID` being set.
+  - `POST /api/github/device/start` — Initiates Device Flow; returns `device_code`, `user_code`, `verification_uri`, `expires_in`, `interval`.
+  - `POST /api/github/device/poll` — Polls GitHub for token; on success saves it and returns `{ status: "authorized" }`.
+- **`app/(tabs)/settings.tsx`** — GitHub section shows "Connect with GitHub" button (OAuth) when available, with an inline code card showing the user code for entry at github.com/login/device. Falls back to PAT entry when OAuth is not configured.
+
+### Configuration
+Set the `GITHUB_CLIENT_ID` secret (from a GitHub OAuth App — Device Flow does not require a client secret) to enable the OAuth connect button. Without it, only PAT is available.
+
 ## Jarvis Self-Inspection & Code Proposals (Task #452)
 
 Jarvis can now read its own source code, reason about it, propose targeted improvements, and apply approved changes — with the user always in the approval gate.

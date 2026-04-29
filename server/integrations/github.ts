@@ -31,11 +31,13 @@ export interface GitHubDiffSummary {
 export interface GitHubSettings {
   pat: string | null;
   repos: string[];
+  tokenType?: "pat" | "oauth";
 }
 
 export async function getGitHubSettings(userId: string): Promise<GitHubSettings> {
   const token = await getUserToken(userId, "github").catch(() => null);
   const pat = token?.accessToken || null;
+  const tokenType = token?.accountEmail === "oauth" ? "oauth" : (pat ? "pat" : undefined);
 
   const rows = await db
     .select({ data: schema.userPreferences.data })
@@ -46,22 +48,25 @@ export async function getGitHubSettings(userId: string): Promise<GitHubSettings>
   return {
     pat,
     repos: (prefs.github_repos as string[]) || [],
+    tokenType,
   };
 }
 
 export async function saveGitHubSettings(
   userId: string,
-  patch: Partial<GitHubSettings>,
+  patch: Partial<GitHubSettings> & { tokenType?: "pat" | "oauth" },
 ): Promise<void> {
   if (patch.pat !== undefined) {
-    if (patch.pat === null) {
-      await deleteUserToken(userId, "github");
-    } else {
+    // Always delete all existing GitHub tokens first to ensure exactly one
+    // token row exists per user — prevents non-deterministic LIMIT 1 reads
+    // when a user switches between PAT and OAuth (different accountEmail values).
+    await deleteUserToken(userId, "github");
+    if (patch.pat !== null) {
       await saveUserToken({
         userId,
         provider: "github",
         accessToken: patch.pat,
-        accountEmail: "pat",
+        accountEmail: patch.tokenType ?? "pat",
       });
     }
   }
