@@ -2421,6 +2421,16 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       for (let scroll = 0; scroll < maxScrollAttempts; scroll++) {
         console.log(`[android_tap_element] element not found, scrolling down (pass ${scroll + 1}/${maxScrollAttempts})`);
 
+        // ── Pre-scroll state capture for no-op detection ──────────────────
+        // Screenshot path: capture before the swipe so we can diff after.
+        // Hierarchy path (FLAG_SECURE / no screenshot): fingerprint the current
+        // element set by label + center coordinates.
+        const preScrollScreenshot: string | null = useScreenshot ? await captureScreenshot(ctx.userId) : null;
+        const preScrollFingerprint: string = screenElements
+          .map((el) => `${el.label}:${el.center_x}:${el.center_y}`)
+          .sort()
+          .join("|");
+
         // Swipe upward (y1 > y2) to scroll the page down
         const screenMidX = 540;
         const swipeY1 = 1400;
@@ -2440,8 +2450,51 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
         // Brief pause so the page settles before re-reading
         await new Promise((resolve) => setTimeout(resolve, 500));
 
+        // ── No-op scroll detection — screenshot path ──────────────────────
+        // Compare a fresh screenshot against the pre-scroll one. If the pixel
+        // diff is below 2 % the page has not moved — we are at the bottom.
+        // We check this BEFORE calling buildScreenMapElements (the expensive
+        // Vision/Claude call) so we can skip it when the list is exhausted.
+        // Track whether we got a conclusive screenshot-based answer so that we
+        // can fall through to the hierarchy fallback when capture fails.
+        let screenshotCheckConclusive = false;
+        if (preScrollScreenshot) {
+          const postScrollScreenshot = await captureScreenshot(ctx.userId);
+          if (postScrollScreenshot) {
+            screenshotCheckConclusive = true;
+            const diffRatio = await screenshotDiff(preScrollScreenshot, postScrollScreenshot).catch(() => 1);
+            if (diffRatio < 0.02) {
+              console.log(
+                `[android_tap_element] no-op scroll detected (diff=${diffRatio.toFixed(4)}) on pass ${scroll + 1} — already at bottom, stopping early`,
+              );
+              break;
+            }
+          }
+        }
+
         const refreshed = await buildScreenMapElements(ctx.userId);
         if (!refreshed.ok) break;
+
+        // ── No-op scroll detection — hierarchy fallback ────────────────────
+        // Runs when:
+        //   a) screenshots are unavailable (FLAG_SECURE apps), OR
+        //   b) pre-scroll screenshot existed but post-scroll capture failed
+        //      this pass (screenshotCheckConclusive is false) — so we don't
+        //      silently skip no-op detection when capture is flaky.
+        const needsHierarchyCheck = !preScrollScreenshot || !screenshotCheckConclusive;
+        if (needsHierarchyCheck && preScrollFingerprint.length > 0) {
+          const postFingerprint = refreshed.elements
+            .map((el) => `${el.label}:${el.center_x}:${el.center_y}`)
+            .sort()
+            .join("|");
+          if (postFingerprint === preScrollFingerprint) {
+            console.log(
+              `[android_tap_element] no-op scroll detected (hierarchy unchanged) on pass ${scroll + 1} — already at bottom, stopping early`,
+            );
+            screenElements = refreshed.elements;
+            break;
+          }
+        }
 
         bestElement = null;
         bestScore = 0;
