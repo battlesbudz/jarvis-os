@@ -586,7 +586,7 @@ export const NOTIFICATION_TYPES = [
 ] as const;
 export type NotificationType = typeof NOTIFICATION_TYPES[number];
 
-export const CHANNEL_NAMES = ["telegram", "whatsapp", "slack", "daemon", "discord", "in_app"] as const;
+export const CHANNEL_NAMES = ["telegram", "whatsapp", "slack", "daemon", "discord", "in_app", "webchat"] as const;
 export type ChannelName = typeof CHANNEL_NAMES[number];
 
 /**
@@ -604,6 +604,7 @@ export const SIMPLE_ORIGIN_CHANNELS = [
   "coach",
   "appchat",
   "voice",
+  "webchat",
 ] as const;
 export type SimpleOriginChannel = typeof SIMPLE_ORIGIN_CHANNELS[number];
 

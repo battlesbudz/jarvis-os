@@ -120,7 +120,8 @@ export async function _notifyJobCompleteCore(
         case "app":
         case "coach":
         case "appchat":
-        case "voice": {
+        case "voice":
+        case "webchat": {
           const inAppCh = getChannel("in_app");
           if (inAppCh) {
             await inAppCh.sendMessage(userId, text, { notificationType: "approval_request" }).catch(() => {});

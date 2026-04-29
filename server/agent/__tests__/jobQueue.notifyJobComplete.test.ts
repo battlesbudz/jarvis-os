@@ -458,6 +458,34 @@ async function run() {
     );
   }
 
+  // ── T15: originChannel = "webchat" (treated same as "app") ──────────────
+  console.log("\nT15: originChannel=webchat");
+  {
+    const deps = makeDeps();
+    await _notifyJobCompleteCore(USER, JOB_TYPE, TITLE, BODY, "webchat", undefined, deps);
+
+    assert(
+      deps._calls.notifyUser.length === 0,
+      "T15-a: notifyUser is NOT called for webchat origin",
+    );
+    assert(
+      deps._calls.postToDiscordChannelById.length === 0,
+      "T15-b: postToDiscordChannelById is NOT called for webchat origin",
+    );
+    assert(
+      deps._calls.sendToDiscordUser.length === 0,
+      "T15-c: sendToDiscordUser is NOT called for webchat origin",
+    );
+    assert(
+      deps._channels.get("telegram")!.calls.length === 0,
+      "T15-d: telegram channel NOT called for webchat origin",
+    );
+    assert(
+      deps._channels.get("in_app")!.calls.length === 1,
+      "T15-e: in_app channel sendMessage called once for webchat origin",
+    );
+  }
+
   // ── TGUARD: every SIMPLE_ORIGIN_CHANNELS value has an explicit test case ──
   //
   // This test enumerates the canonical origin list from @shared/schema and
@@ -482,6 +510,7 @@ async function run() {
       "coach",    // T7
       "appchat",  // T13
       "voice",    // T14
+      "webchat",  // T15
     ]);
 
     assert(

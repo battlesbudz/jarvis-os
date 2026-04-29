@@ -60,6 +60,21 @@
         display: block;
       }
 
+      .chat-cta {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 12px 22px;
+        background: #111;
+        color: #fff;
+        border-radius: 10px;
+        font-size: 15px;
+        font-weight: 500;
+        text-decoration: none;
+        transition: opacity 0.15s;
+      }
+      .chat-cta:hover { opacity: 0.85; }
+
       .steps-container {
         display: flex;
         flex-direction: column;
@@ -262,6 +277,10 @@
 
       /* Dark mode */
       @media (prefers-color-scheme: dark) {
+        .chat-cta {
+          background: #f0f0f0;
+          color: #111;
+        }
         body {
           background: #0d0d0d;
           color: #e0e0e0;
@@ -338,6 +357,15 @@
       <div class="content" id="content">
         <h1>APP_NAME_PLACEHOLDER</h1>
         <p class="subtitle">Preview this app on your phone</p>
+
+        <div style="margin-bottom: 28px;">
+          <a href="/chat" class="chat-cta">
+            <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24" style="flex-shrink:0">
+              <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+            </svg>
+            Chat with Jarvis in your browser
+          </a>
+        </div>
 
         <div class="steps-container">
           <div class="step">

@@ -289,10 +289,24 @@ function configureExpoAndLanding(app: express.Application) {
   app.use("/assets", express.static(path.resolve(process.cwd(), "assets")));
   app.use(express.static(path.resolve(process.cwd(), "static-build")));
 
+  // Serve web chat page at /chat — must come before the SPA catch-all
+  const chatTemplatePath = path.resolve(process.cwd(), "server", "templates", "chat.html");
+  app.get("/chat", (req: Request, res: Response) => {
+    try {
+      let html = fs.readFileSync(chatTemplatePath, "utf-8");
+      const googleClientId = process.env.GOOGLE_WEB_CLIENT_ID || "";
+      html = html.replace(/GOOGLE_CLIENT_ID_PLACEHOLDER/g, googleClientId);
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.status(200).send(html);
+    } catch {
+      res.status(500).send("Chat page unavailable");
+    }
+  });
+
   // SPA catch-all: for web build, serve index.html for any non-API, non-asset path
   // so that client-side Expo Router navigation works in Chrome
   app.use((req: Request, res: Response, next: NextFunction) => {
-    if (req.path.startsWith("/api") || req.path.startsWith("/assets")) return next();
+    if (req.path.startsWith("/api") || req.path.startsWith("/assets") || req.path === "/chat") return next();
     if (fs.existsSync(webIndexPath)) {
       return res.sendFile(webIndexPath);
     }
