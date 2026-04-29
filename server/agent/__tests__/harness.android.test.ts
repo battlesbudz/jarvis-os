@@ -266,6 +266,122 @@ async function run(): Promise<void> {
     _clearProviderCacheForTesting();
   }
 
+  // ── HA-6: Streaming mode — inline quality check is skipped ──────────────
+  // When onToken is provided the harness should NOT enter the inline revision
+  // loop even if the text reply contains an announce phrase that would normally
+  // trigger checkResponseQuality to return action:"revise".
+  //
+  // Strategy: supply a provider that always returns an announce-phrase text
+  // reply. In streaming mode the provider should only be called once (no
+  // revision turn). We also verify that onToken receives the streamed chunks.
+  {
+    let callCount = 0;
+    const announceReply = "I found the results. I will now tap on the first video.";
+
+    class StreamingAnnounceMockProvider extends BaseProvider {
+      async initialize(): Promise<void> {}
+      async cleanup(): Promise<void> {}
+
+      async *query(_params: ProviderQueryParams): AsyncGenerator<ProviderChunk> {
+        callCount++;
+        yield { type: "text", delta: announceReply };
+        yield { type: "finish", reason: "stop" };
+      }
+    }
+
+    _overrideProviderForTesting("openai", new StreamingAnnounceMockProvider());
+
+    const receivedTokens: string[] = [];
+
+    await runAgent({
+      model: "gpt-4o",
+      messages: [
+        { role: "system", content: "You are an android agent." },
+        { role: "user", content: "Open YouTube and tap the first trending video." },
+      ],
+      tools: [androidTapTool],
+      context: { ...minimalContext },
+      onToken: (chunk) => receivedTokens.push(chunk),
+    });
+
+    assert(
+      callCount === 1,
+      `HA-6: streaming mode — provider called exactly once (no revision loop) (got ${callCount})`,
+    );
+    assert(
+      receivedTokens.includes(announceReply),
+      "HA-6: streaming mode — onToken received the streamed chunk",
+    );
+
+    _clearProviderCacheForTesting();
+  }
+
+  // ── HA-7: Non-streaming mode — inline quality check still fires ──────────
+  // Regression test: without onToken the quality check should still run in
+  // Android sessions. When a text reply (after at least one tool call) contains
+  // an announce phrase the harness loops and calls the provider again.
+  //
+  // Provider sequence:
+  //   turn 0 → tool call (android_tap)   — toolsUsed becomes ["android_tap"]
+  //   turn 1 → announce text reply        — quality check fires (pass 1, revise)
+  //   turn 2 → clean text reply           — quality check passes (finalize)
+  // Total provider calls: 3.
+  {
+    let callCount = 0;
+    const announceReply = "I found the results. I will now tap on the first video.";
+    // After toolsUsed=["android_tap"] the deflection check (1b) is suppressed;
+    // this reply has no announce phrase so it passes the quality check.
+    const cleanReply = "The trending video is now playing.";
+
+    class NonStreamingAnnounceMockProvider extends BaseProvider {
+      async initialize(): Promise<void> {}
+      async cleanup(): Promise<void> {}
+
+      async *query(params: ProviderQueryParams): AsyncGenerator<ProviderChunk> {
+        const turn = callCount++;
+
+        if (turn === 0 && params.toolChoice !== "none") {
+          // First turn: emit a tool call so android_tap is recorded in toolsUsed.
+          yield { type: "tool_call_start", index: 0, id: `call_${turn}`, name: "android_tap" };
+          yield { type: "tool_call_args", index: 0, args: '{"x":100,"y":200}' };
+          yield { type: "finish", reason: "tool_calls" };
+        } else if (turn === 1) {
+          // Second turn: text reply with announce phrase — triggers quality revision.
+          yield { type: "text", delta: announceReply };
+          yield { type: "finish", reason: "stop" };
+        } else {
+          // Third turn: clean reply — passes quality check.
+          yield { type: "text", delta: cleanReply };
+          yield { type: "finish", reason: "stop" };
+        }
+      }
+    }
+
+    _overrideProviderForTesting("openai", new NonStreamingAnnounceMockProvider());
+
+    const result = await runAgent({
+      model: "gpt-4o",
+      messages: [
+        { role: "system", content: "You are an android agent." },
+        { role: "user", content: "Open YouTube and tap the first trending video." },
+      ],
+      tools: [androidTapTool],
+      context: { ...minimalContext },
+      // No onToken — non-streaming session
+    });
+
+    assert(
+      callCount === 3,
+      `HA-7: non-streaming mode — provider called 3 times (1 tool turn + 1 announce + 1 clean after revision) (got ${callCount})`,
+    );
+    assert(
+      result.reply === cleanReply,
+      "HA-7: non-streaming mode — harness returns the clean revised reply",
+    );
+
+    _clearProviderCacheForTesting();
+  }
+
   // ── Summary ──────────────────────────────────────────────────────────────
   console.log(`\nResults: ${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);
