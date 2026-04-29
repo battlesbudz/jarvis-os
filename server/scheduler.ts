@@ -2,7 +2,7 @@ import { db } from './db';
 import { eq, and, lt, lte, or, sql, isNull } from 'drizzle-orm';
 import * as schema from '@shared/schema';
 
-import { notifyUser } from './channels/registry';
+import { notifyUser, getActiveChannelsFor } from './channels/registry';
 import { logInteraction } from './interactionLog';
 import { isActionSuppressed } from './intelligence/actionLog';
 import { buildPlanForUser } from './routes';
@@ -397,6 +397,36 @@ async function runDueScheduledTasks(now: Date): Promise<void> {
   }
 }
 
+/**
+ * Appends a "🎙 Voice call" inline keyboard to the user's Telegram chat after
+ * a proactive notification, but ONLY when:
+ *   a) The given notificationType targets Telegram in the user's channel prefs
+ *   b) The user has an active Telegram link
+ *   c) REPLIT_DOMAINS is set (production / staging environment)
+ *
+ * This is best-effort — errors are logged but never surfaced to the caller.
+ */
+async function appendVoiceCallKeyboardOnTelegram(
+  userId: string,
+  notificationType: schema.NotificationType,
+): Promise<void> {
+  try {
+    const activeChannels = await getActiveChannelsFor(userId, notificationType);
+    if (!activeChannels.includes('telegram')) return;
+    const { buildVoiceCallKeyboard, isTelegramConfigured, sendMessage: tgSend } = await import('./integrations/telegram');
+    if (!isTelegramConfigured()) return;
+    const links = await db.select().from(schema.telegramLinks).where(eq(schema.telegramLinks.userId, userId)).limit(1);
+    const chatId = links[0]?.chatId;
+    if (!chatId) return;
+    const keyboard = buildVoiceCallKeyboard({ includeTextReplyButton: true });
+    if (keyboard) {
+      await tgSend(chatId, '📞 Want to talk it through?', keyboard);
+    }
+  } catch (err) {
+    console.error(`[Scheduler] appendVoiceCallKeyboard failed for ${userId}:`, err);
+  }
+}
+
 async function handleDueTask(
   task: typeof schema.jarvisScheduledTasks.$inferSelect,
   firedAt: Date,
@@ -455,6 +485,7 @@ async function handleDueTask(
 
     try {
       await notifyUser(task.userId, 'scheduled_task_result', notifText);
+      await appendVoiceCallKeyboardOnTelegram(task.userId, 'scheduled_task_result');
     } catch (err) {
       console.error(`[Scheduler] notifyUser failed for task ${task.id}:`, err);
     }
@@ -499,6 +530,7 @@ async function handleDueTask(
     if (agentReply) {
       try {
         await notifyUser(task.userId, 'scheduled_task_result', agentReply);
+        await appendVoiceCallKeyboardOnTelegram(task.userId, 'scheduled_task_result');
       } catch (err) {
         console.error(`[Scheduler] notifyUser (agent) failed for task ${task.id}:`, err);
       }
@@ -1007,6 +1039,9 @@ export async function runMorningPlanBuild() {
           const taskListLines = newTasks.slice(0, 5).map((t, i) => `${i + 1}. ${t.title}`).join('\n');
           const morningMsg = `☀️ Good morning! Your plan for today:\n\n${taskListLines}${newTasks.length > 5 ? `\n…and ${newTasks.length - 5} more` : ''}\n\n📌 Focus first: ${topTask.title}${predictionText ? `\n${predictionText}` : ''}`;
           await notifyUser(user.id, 'morning_briefing', morningMsg);
+
+          // Append a voice call button on Telegram if Telegram is an active channel.
+          await appendVoiceCallKeyboardOnTelegram(user.id, 'morning_briefing');
         }
       } catch (notifyErr) {
         console.error(`[Scheduler] Morning notification failed for ${user.id}:`, notifyErr);

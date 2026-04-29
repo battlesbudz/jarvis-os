@@ -658,6 +658,44 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   /**
+   * GET /go/voice-call — public deep-link redirect page
+   *
+   * Opened when the user taps the "🎙 Voice call" inline keyboard button in Telegram.
+   * On mobile with the native app installed the OS intercepts jarvis://voice-realtime
+   * and opens the app directly. If the app is not installed (or on desktop) the page
+   * falls back to the HTTPS web version of the voice-realtime screen after 1.5 s.
+   */
+  app.get("/go/voice-call", (_req: Request, res: Response) => {
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.setHeader("Cache-Control", "no-cache");
+    res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Opening Jarvis Voice Call…</title>
+  <style>
+    body { margin: 0; display: flex; flex-direction: column; align-items: center;
+           justify-content: center; min-height: 100vh; font-family: system-ui, sans-serif;
+           background: #0F0F0F; color: #e5e5e5; text-align: center; padding: 1rem; }
+    a { color: #6366F1; }
+  </style>
+</head>
+<body>
+  <p>Opening Jarvis voice call…</p>
+  <p><a href="/voice-realtime">Tap here</a> if the app doesn't open automatically.</p>
+  <script>
+    // Attempt to open the native app via custom URL scheme.
+    // If the app is installed, the OS will launch it; the page stays open but unfocused.
+    // After 1.5 s we redirect to the web version as a fallback.
+    try { window.location.href = 'jarvis://voice-realtime'; } catch (e) { /* ignore */ }
+    setTimeout(function () { window.location.replace('/voice-realtime'); }, 1500);
+  </script>
+</body>
+</html>`);
+  });
+
+  /**
    * POST /api/discord/interactions — public (Ed25519-verified, no JWT needed)
    *
    * Discord sends all slash-command interactions here. This must be registered
