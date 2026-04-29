@@ -140,6 +140,51 @@ const BUILD_SESSION_END_PATTERNS = [
 ];
 
 /**
+ * Patterns for requests that are clearly unrelated to building a tool — email,
+ * calendar, task management, and similar everyday assistant actions.
+ *
+ * When a user is in an active build session and sends one of these, Jarvis
+ * should exit build mode and handle the request normally through the
+ * orchestrator rather than treating it as a build refinement.
+ *
+ * Deliberately broad so that natural phrasing ("can you check my email",
+ * "do I have any meetings", "remind me to…") is caught without requiring
+ * an explicit "never mind" signal from the user.
+ */
+const UNRELATED_INTENT_PATTERNS = [
+  // ── Email / inbox ──────────────────────────────────────────────────────────
+  /\b(check|read|open|show|see|get|fetch|look\s+at)\s+(me\s+)?(my\s+)?(email|emails?|inbox|mail|messages?|gmail|outlook)\b/i,
+  /\b(any\s+)?(new\s+)?(email|emails?|messages?)\s+(in\s+my\s+inbox|from|about)\b/i,
+  /\b(send|write|compose|draft|reply\s+to|respond\s+to)\s+(an?\s+)?(email|message)\b/i,
+  /\b(unread|recent)\s+(email|emails?|messages?|mail)\b/i,
+
+  // ── Calendar / scheduling ──────────────────────────────────────────────────
+  /\b(schedule|book|set\s+up|arrange|plan)\s+(a\s+)?(meeting|call|appointment|event|session|interview|sync|standup|1:?1|one.on.one)\b/i,
+  /\b(what|do\s+i\s+have)\s+(meetings?|events?|appointments?|calls?|on\s+my\s+calendar)\b/i,
+  /\bwhat'?s?\s+(on\s+my\s+)?calendar\b/i,
+  /\b(add|put|block)\s+(it\s+)?on\s+(my\s+)?calendar\b/i,
+  /\bcancel\s+(a\s+|the\s+|my\s+)?(meeting|event|appointment|call)\b/i,
+  /\b(reschedule|move)\s+(a\s+|the\s+|my\s+)?(meeting|event|appointment|call)\b/i,
+  /\b(am\s+i|are\s+we)\s+free\s+(at|on|tomorrow|today)\b/i,
+  /\b(any\s+)?(meetings?|events?|calls?)\s+(today|tomorrow|this\s+week|tonight|this\s+afternoon|this\s+morning)\b/i,
+  /\bwhat\s+(meetings?|events?|do\s+i\s+have)\s+(today|tomorrow|this\s+week|on\s+\w+)\b/i,
+
+  // ── Tasks / reminders ──────────────────────────────────────────────────────
+  /\b(add|create|set)\s+(a\s+)?(task|to.?do|reminder|alarm)\b/i,
+  /\b(remind\s+me|set\s+a\s+reminder)\s+(to|about|at|in)\b/i,
+  /\b(what|show)\s+(are\s+)?(my\s+)?(tasks?|to.?dos?|reminders?)\b/i,
+  /\bmark\s+(it|this|that)\s+as\s+(done|complete|finished)\b/i,
+
+  // ── General assistant pivots (non-build) ───────────────────────────────────
+  /\bsummarise\s+(my|the|today'?s?)\s+(day|emails?|messages?|inbox|calendar)\b/i,
+  /\bwhat'?s?\s+(happening|going\s+on)\s+(today|tonight|this\s+week)\b/i,
+  /\b(play|pause|skip|stop)\s+(music|song|track|playlist|podcast|video)\b/i,
+  /\bset\s+(a\s+)?(timer|alarm|countdown)\b/i,
+  /\bwhat('?s|\s+is)\s+the\s+(weather|temperature|forecast)\b/i,
+  /\b(find|look\s+up|search\s+for)\s+(a\s+|an\s+)?(restaurant|flight|hotel|recipe)\b/i,
+];
+
+/**
  * Short phrases that are trivial acknowledgements and should NOT reset the
  * build session — they carry no topic signal.
  */
@@ -175,6 +220,13 @@ export function classifyBuildFollowUp(
     return false;
   }
 
+  // Unrelated-intent check — email, calendar, reminders, and similar everyday
+  // requests that have nothing to do with building a tool.  Exit build mode
+  // immediately so the orchestrator can handle the request normally.
+  if (UNRELATED_INTENT_PATTERNS.some((re) => re.test(text))) {
+    return false;
+  }
+
   // Locate the most-recent build ack within the sliding window.
   // Using findIndex preserves the exact position so we can inspect the turns
   // that occurred *after* the ack (smaller indices = more recent in history).
@@ -205,6 +257,8 @@ export function classifyBuildFollowUp(
     if (t.length < 10 || TRIVIAL_ACK_PATTERN.test(t)) return false;
     // Explicit session-end phrase in a prior turn → definitive topic change
     if (BUILD_SESSION_END_PATTERNS.some((re) => re.test(t))) return true;
+    // Unrelated intent in a prior turn (email, calendar, tasks…) → topic change
+    if (UNRELATED_INTENT_PATTERNS.some((re) => re.test(t))) return true;
     // Any build or refinement signal keeps the session alive
     if (BUILD_PATTERNS.some((re) => re.test(t))) return false;
     if (BUILD_REFINEMENT_PATTERNS.some((re) => re.test(t))) return false;
