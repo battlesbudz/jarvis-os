@@ -1610,11 +1610,15 @@ export const selfHealAuditLog = pgTable("self_heal_audit_log", {
 // ── Search-bar coordinate persistence ────────────────────────────────────────
 // One row per (user_id, app_package) — stores the last known (x, y) of the
 // search bar so the in-memory cache can be re-seeded after a server restart.
+// discoveredResourceId is the resource-id string found by auto-discovery so
+// future searches on the same app can try it directly (as a learned registry
+// entry) before falling back to full heuristic scoring.
 export const searchBarLocations = pgTable("search_bar_locations", {
   userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   appPackage: varchar("app_package", { length: 256 }).notNull(),
   coordinatesX: integer("coordinates_x").notNull(),
   coordinatesY: integer("coordinates_y").notNull(),
+  discoveredResourceId: varchar("discovered_resource_id", { length: 256 }),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 }, (table) => [
   primaryKey({ columns: [table.userId, table.appPackage] }),
