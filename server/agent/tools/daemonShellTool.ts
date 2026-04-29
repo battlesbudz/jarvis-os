@@ -4497,6 +4497,8 @@ Resolves both the source and destination via the shared ScreenMap cache (same 50
 
 If the source element (from_label) is not visible on the initial screen, the tool first scrolls back to the top of the page (unless reset_scroll is false) so that elements above the current scroll position are never missed, then automatically scrolls down (up to max_scroll_attempts times) and re-reads the screen after each scroll until the element appears or the scroll limit is reached.
 
+The same two-phase strategy applies to the destination element (to_label): the tool first scrolls down to find it; if that fails and reset_scroll is true, it resets to the top and scans downward again from the beginning — ensuring elements above the original scroll position are never missed when searching for the drop target.
+
 Use this tool for Android drag-and-drop patterns:
   - "drag 'Song A' to 'Song B'" — reorders items in a playlist
   - "drag the widget to the trash" — drag-to-delete
@@ -4509,9 +4511,9 @@ Parameters:
   - distance_px: how far to drag in pixels when using direction (default 400)
   - hold_ms: how long to hold at the start before dragging in milliseconds (default 800). Increase for apps that need a longer initial press.
   - max_age_ms: max age of cached ScreenMap to reuse (default 500, 0 = always fresh)
-  - max_scroll_attempts: maximum downward scroll passes when the source element is off-screen (default 5, 0 = disable)
+  - max_scroll_attempts: maximum downward scroll passes per search phase for both source and destination elements (default 5, 0 = disable)
   - scroll_distance: pixel distance for each search-scroll swipe (default 600, clamped 100–1800). Only affects the search loop, not the drag gesture distance.
-  - reset_scroll: scroll to top before the downward search loop (default true)
+  - reset_scroll: scroll to top before the downward search loop for both the source and destination elements (default true). When true and the destination is not found after the initial downward scan, the tool resets to the top of the page and rescans downward so drop targets above the original scroll position are never missed.
   - auto_retry: automatically retry with a longer hold_ms when the screen did not change (default true)
   - max_retries: max number of additional retry attempts when auto_retry is true (default 2)
   - hold_ms_step: milliseconds added to hold_ms on each retry (default 400)
@@ -4549,15 +4551,15 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       },
       max_scroll_attempts: {
         type: "number",
-        description: "Maximum number of downward scroll passes to perform when the source element is not visible on the initial screen (default 5). Set to 0 to disable automatic scrolling.",
+        description: "Maximum number of downward scroll passes to perform per search phase for both the source and destination elements (default 5). Set to 0 to disable automatic scrolling.",
       },
       scroll_distance: {
         type: "number",
-        description: "Pixel distance for each search-scroll swipe (default 600, clamped 100–1800). Only affects the search loop used to locate the source element, not the drag gesture distance.",
+        description: "Pixel distance for each search-scroll swipe (default 600, clamped 100–1800). Only affects the search loops used to locate elements, not the drag gesture distance.",
       },
       reset_scroll: {
         type: "boolean",
-        description: "When true (default), scroll back to the top of the page before locating the source element if it is not visible on the initial screen. This ensures elements above the current scroll position are never missed. Set to false to skip the reset and search from the current scroll position.",
+        description: "When true (default), scroll back to the top of the page before the downward search loop for both the source and destination elements. For the destination, if it is not found after scrolling down, the tool resets to the top and rescans downward — ensuring drop targets above the original scroll position are never missed. Set to false to search from the current scroll position only.",
       },
       auto_retry: {
         type: "boolean",
@@ -4881,6 +4883,106 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
           if (toElement && toScore > 0) {
             console.log(`[android_drag_element] found destination "${toLabel}" after ${scrollsPerformed} total scroll(s), score=${toScore}`);
             break;
+          }
+        }
+      }
+
+      // ── Reset-to-top phase for destination (when reset_scroll=true) ───────────
+      // After scrolling downward, if the drop target is still missing, reset to
+      // the top of the page and scan downward again from the beginning — this
+      // covers the case where the destination sits above the original scroll
+      // position (e.g. dragging from the bottom of a list to near the top).
+      if ((!toElement || toScore === 0) && resetScroll && maxScrollAttempts > 0) {
+        console.log(`[android_drag_element] destination "${toLabel}" not found after downward scan — resetting to top to search upward coverage`);
+        await scrollToTop(ctx.userId, 5);
+        await new Promise((resolve) => setTimeout(resolve, 400));
+
+        const afterResetResult = await buildScreenMapElements(ctx.userId);
+        if (afterResetResult.ok) {
+          screenElements = afterResetResult.elements;
+          toElement = null;
+          toScore = 0;
+          for (const el of screenElements) {
+            const score = scoreElement(el, toLabel);
+            if (score > toScore) { toScore = score; toElement = el; }
+          }
+          if (toElement && toScore > 0) {
+            console.log(`[android_drag_element] found destination "${toLabel}" immediately after scroll-to-top reset, score=${toScore}`);
+          }
+        }
+
+        // If still not found after the top reset, scan downward again from the top
+        if ((!toElement || toScore === 0) && afterResetResult.ok) {
+          for (let scroll = 0; scroll < maxScrollAttempts; scroll++) {
+            console.log(`[android_drag_element] destination element not found, re-scanning downward from top (pass ${scroll + 1}/${maxScrollAttempts})`);
+
+            const preScrollScreenshot: string | null = await captureScreenshot(ctx.userId);
+            const preScrollFingerprint: string = screenElements
+              .map((el) => `${el.label}:${el.center_x}:${el.center_y}`)
+              .sort()
+              .join("|");
+
+            const screenMidX = 540;
+            const swipeY1 = 1400;
+            const swipeY2 = Math.max(100, swipeY1 - scrollDistance);
+            const swipeResult = await sendDaemonOp(
+              ctx.userId,
+              { type: "android_swipe", x1: screenMidX, y1: swipeY1, x2: screenMidX, y2: swipeY2, durationMs: 400 },
+              10000,
+            );
+            if (!swipeResult.ok) {
+              console.log(`[android_drag_element] destination re-scan swipe failed on pass ${scroll + 1}: ${swipeResult.error}`);
+              break;
+            }
+
+            scrollsPerformed = scrollsPerformed + 1;
+            await new Promise((resolve) => setTimeout(resolve, 500));
+
+            // No-op scroll detection via screenshot
+            let screenshotCheckConclusive = false;
+            if (preScrollScreenshot) {
+              try {
+                const postScrollScreenshot = await captureScreenshot(ctx.userId);
+                if (postScrollScreenshot) {
+                  const preHash = await computeScreenshotHash(preScrollScreenshot);
+                  const postHash = await computeScreenshotHash(postScrollScreenshot);
+                  const dist = hammingDistance(preHash, postHash);
+                  screenshotCheckConclusive = true;
+                  if (dist <= 3) {
+                    console.log(`[android_drag_element] destination re-scan scroll no-op detected (hash_dist=${dist}), stopping`);
+                    break;
+                  }
+                }
+              } catch { /* best-effort */ }
+            }
+
+            const freshResult = await buildScreenMapElements(ctx.userId);
+            if (!freshResult.ok) break;
+            screenElements = freshResult.elements;
+
+            // No-op detection via fingerprint fallback
+            if (!screenshotCheckConclusive) {
+              const postScrollFingerprint: string = screenElements
+                .map((el) => `${el.label}:${el.center_x}:${el.center_y}`)
+                .sort()
+                .join("|");
+              if (postScrollFingerprint === preScrollFingerprint) {
+                console.log(`[android_drag_element] destination re-scan scroll no-op detected (fingerprint unchanged), stopping`);
+                break;
+              }
+            }
+
+            toElement = null;
+            toScore = 0;
+            for (const el of screenElements) {
+              const score = scoreElement(el, toLabel);
+              if (score > toScore) { toScore = score; toElement = el; }
+            }
+
+            if (toElement && toScore > 0) {
+              console.log(`[android_drag_element] found destination "${toLabel}" after ${scrollsPerformed} total scroll(s) (re-scan from top), score=${toScore}`);
+              break;
+            }
           }
         }
       }
