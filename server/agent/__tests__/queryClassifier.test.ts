@@ -251,13 +251,96 @@ assert(
   ]),
   "BF-E4: history contains only user messages (no assistant) → false",
 );
-// Ack buried under a newer non-ack assistant message — ack must be in the MOST RECENT assistant turn
+// Intermediate non-ack assistant reply does NOT reset the session — only user
+// topic changes do.  A later refinement should still route to build_feature.
 assert(
-  !classifyBuildFollowUp("now add retry logic", [
+  classifyBuildFollowUp("now add retry logic", [
     { role: "assistant", content: "Your calendar is clear tomorrow." },
     { role: "assistant", content: `I've ${BUILD_ACK_MARKER} for you.` },
   ]),
-  "BF-E5: ack present but overridden by newer non-ack assistant message → false",
+  "BF-E5: ack with intermediate non-ack assistant reply, no user topic change → true",
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// classifyBuildFollowUp — build session persists across multiple turns
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Three consecutive refinements — each should still be in build mode
+assert(
+  classifyBuildFollowUp("also add rate limiting", [
+    // newest-first: two prior refinements already processed
+    { role: "assistant", content: `Great — I've ${BUILD_ACK_MARKER} for that update.` },
+    { role: "user", content: "now add retry logic" },
+    { role: "assistant", content: `Sure — I've ${BUILD_ACK_MARKER} for the retry logic.` },
+    { role: "user", content: "build a weather lookup tool" },
+  ]),
+  "BF-MS1: third consecutive refinement stays in build session → true",
+);
+
+assert(
+  classifyBuildFollowUp("make it also support Celsius", [
+    { role: "assistant", content: `Done — I've ${BUILD_ACK_MARKER} for the Fahrenheit support.` },
+    { role: "user", content: "add Fahrenheit conversion" },
+    { role: "assistant", content: `Got it — I've ${BUILD_ACK_MARKER} for the initial tool.` },
+    { role: "user", content: "build a temperature converter tool" },
+  ]),
+  "BF-MS2: second refinement of a multi-turn build session → true",
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// classifyBuildFollowUp — session resets when user changes topic
+// ─────────────────────────────────────────────────────────────────────────────
+
+// After a general user question, refinement no longer routes to build
+assert(
+  !classifyBuildFollowUp("now add retry logic", [
+    { role: "assistant", content: "Your calendar is clear tomorrow." },
+    { role: "user", content: "what meetings do I have today?" },
+    { role: "assistant", content: `I've ${BUILD_ACK_MARKER} for you.` },
+    { role: "user", content: "build a weather tool" },
+  ]),
+  "BF-RS1: general user question after ack resets session → false",
+);
+
+// Explicit session-end in a prior user turn resets the session
+assert(
+  !classifyBuildFollowUp("now add retry logic", [
+    { role: "assistant", content: "Understood, I'll stop." },
+    { role: "user", content: "never mind that" },
+    { role: "assistant", content: `I've ${BUILD_ACK_MARKER} for you.` },
+    { role: "user", content: "build a weather tool" },
+  ]),
+  "BF-RS2: explicit cancel phrase in prior user turn resets session → false",
+);
+
+// Trivial ack does NOT reset the session
+assert(
+  classifyBuildFollowUp("also add caching", [
+    { role: "assistant", content: `I've ${BUILD_ACK_MARKER} for you.` },
+    { role: "user", content: "ok" },
+    { role: "assistant", content: `I've ${BUILD_ACK_MARKER} for you.` },
+    { role: "user", content: "build a weather tool" },
+  ]),
+  "BF-RS3: trivial 'ok' ack does not reset session → true",
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// classifyBuildFollowUp — mixed phrasing (praise + refinement in same turn)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// "that's great, now add retry logic" — the wrap-up pattern fires on "that's great"
+// before the refinement portion is evaluated, so the function returns false.
+// This is a known heuristic trade-off: the user should send the refinement
+// separately if they want it routed to build_feature.
+assert(
+  !classifyBuildFollowUp("that's great, now add retry logic", historyWithAck()),
+  "BF-MX1: mixed wrap-up + refinement — session-end pattern takes priority → false (known heuristic edge case)",
+);
+
+// Pure refinement without praise still routes correctly (no regression)
+assert(
+  classifyBuildFollowUp("now add retry logic", historyWithAck()),
+  "BF-MX2: pure refinement without wrap-up phrase → true",
 );
 
 // ── Print summary ─────────────────────────────────────────────────────────────
