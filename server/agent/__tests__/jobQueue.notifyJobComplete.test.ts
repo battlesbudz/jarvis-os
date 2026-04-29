@@ -401,6 +401,62 @@ async function run() {
     );
   }
 
+  // ── T13: originChannel = "appchat" (treated same as "app") ────────────────
+  console.log("\nT13: originChannel=appchat");
+  {
+    const deps = makeDeps();
+    await _notifyJobCompleteCore(USER, JOB_TYPE, TITLE, BODY, "appchat", undefined, deps);
+
+    assert(
+      deps._calls.notifyUser.length === 0,
+      "T13-a: notifyUser is NOT called for appchat origin",
+    );
+    assert(
+      deps._calls.postToDiscordChannelById.length === 0,
+      "T13-b: postToDiscordChannelById is NOT called for appchat origin",
+    );
+    assert(
+      deps._calls.sendToDiscordUser.length === 0,
+      "T13-c: sendToDiscordUser is NOT called for appchat origin",
+    );
+    assert(
+      deps._channels.get("telegram")!.calls.length === 0,
+      "T13-d: telegram channel NOT called for appchat origin",
+    );
+    assert(
+      deps._channels.get("in_app")!.calls.length === 1,
+      "T13-e: in_app channel sendMessage called once for appchat origin",
+    );
+  }
+
+  // ── T14: originChannel = "voice" (treated same as "app") ──────────────────
+  console.log("\nT14: originChannel=voice");
+  {
+    const deps = makeDeps();
+    await _notifyJobCompleteCore(USER, JOB_TYPE, TITLE, BODY, "voice", undefined, deps);
+
+    assert(
+      deps._calls.notifyUser.length === 0,
+      "T14-a: notifyUser is NOT called for voice origin",
+    );
+    assert(
+      deps._calls.postToDiscordChannelById.length === 0,
+      "T14-b: postToDiscordChannelById is NOT called for voice origin",
+    );
+    assert(
+      deps._calls.sendToDiscordUser.length === 0,
+      "T14-c: sendToDiscordUser is NOT called for voice origin",
+    );
+    assert(
+      deps._channels.get("telegram")!.calls.length === 0,
+      "T14-d: telegram channel NOT called for voice origin",
+    );
+    assert(
+      deps._channels.get("in_app")!.calls.length === 1,
+      "T14-e: in_app channel sendMessage called once for voice origin",
+    );
+  }
+
   // ── Summary ────────────────────────────────────────────────────────────────
   console.log(`\nResults: ${passed} passed, ${failed} failed`);
   if (failed === 0) {
