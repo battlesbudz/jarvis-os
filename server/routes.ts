@@ -855,6 +855,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   /**
+   * GET /api/admin/audio-transcription-stats
+   * Returns a snapshot of Phase 3 audio transcription failure telemetry.
+   * Shows attempt count, failure breakdown by error class, and the 50 most
+   * recent failure events (video ID, error class, noCaptions flag, message).
+   */
+  app.get("/api/admin/audio-transcription-stats", async (req: Request, res: Response) => {
+    if (!requireAdminSecret(req, res)) return;
+    try {
+      const { getAudioTranscriptTelemetry } = await import("./lib/transcriptCache");
+      res.json(getAudioTranscriptTelemetry());
+    } catch (err) {
+      console.error("[Admin/AudioStats] failed:", err);
+      res.status(500).json({ error: "Failed to retrieve audio transcription telemetry" });
+    }
+  });
+
+  /**
    * GET /api/admin/search-bar-registry
    * Lists all auto-discovered search-bar resource IDs stored in the DB.
    * Each entry shows the app package, the discovered resource_id, how many
