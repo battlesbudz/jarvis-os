@@ -953,15 +953,68 @@ export const androidSearchInAppTool: AgentTool = {
         }
       }
 
+      // ── Vision fallback for iconOnly apps (e.g. TikTok) ────────────────────
+      // When resource-ID matching fails for an icon-only search entry point, use
+      // Claude Vision (android_screen_understand internally) to locate the magnifying-
+      // glass icon visually. This avoids asking the user to intervene manually.
+      if (!searchElementFound && APP_SEARCH_HINTS[appPackage]?.iconOnly) {
+        stepLog.push({ step: 2, outcome: "vision_fallback_attempt", detail: "resource IDs not found; trying vision-based detection for icon-only search button" });
+        console.log(`[${label}] step 2 — iconOnly app: resource IDs exhausted, attempting vision fallback via buildScreenMapElements`);
+
+        const canScreenshot = await isAndroidDaemonActionAllowed(ctx.userId, "android_screenshot");
+        if (canScreenshot) {
+          const visionResult = await buildScreenMapElements(ctx.userId);
+          if (visionResult.ok) {
+            // Prefer elements with strong search semantics before falling back to
+            // generic terms ("find", "lookup") that could match unrelated UI.
+            // Tier 1: "search" or "magnif" (magnifying glass) — unambiguous search signals
+            // Tier 2: "find" or "lookup" — only tried when tier 1 yields nothing
+            const SEARCH_VISION_TIER1 = ["search", "magnif"];
+            const SEARCH_VISION_TIER2 = ["find", "lookup"];
+            const findByTerms = (terms: string[]) =>
+              visionResult.elements.find((el) => {
+                const combined = `${el.label} ${el.description}`.toLowerCase();
+                return terms.some((term) => combined.includes(term));
+              });
+            const searchVisionElement = findByTerms(SEARCH_VISION_TIER1) ?? findByTerms(SEARCH_VISION_TIER2);
+
+            if (searchVisionElement) {
+              searchElementFound = true;
+              searchX = typeof searchVisionElement.center_x === "number" ? searchVisionElement.center_x : null;
+              searchY = typeof searchVisionElement.center_y === "number" ? searchVisionElement.center_y : null;
+              stepLog.push({
+                step: 2,
+                outcome: "vision_fallback_success",
+                detail: `vision found "${searchVisionElement.label}" at (${searchX}, ${searchY}): ${searchVisionElement.description}`,
+              });
+              console.log(`[${label}] step 2 — vision fallback succeeded: "${searchVisionElement.label}" at (${searchX}, ${searchY})`);
+            } else {
+              stepLog.push({ step: 2, outcome: "vision_fallback_no_match", detail: `vision returned ${visionResult.elements.length} elements but none matched search/magnifying-glass terms` });
+              console.log(`[${label}] step 2 — vision fallback found no search element among ${visionResult.elements.length} elements`);
+            }
+          } else {
+            stepLog.push({ step: 2, outcome: "vision_fallback_error", detail: "buildScreenMapElements failed — screenshot or vision unavailable" });
+            console.log(`[${label}] step 2 — vision fallback failed: buildScreenMapElements returned not-ok`);
+          }
+        } else {
+          stepLog.push({ step: 2, outcome: "vision_fallback_skipped", detail: "android_screenshot permission not granted; cannot use vision fallback" });
+          console.log(`[${label}] step 2 — vision fallback skipped: android_screenshot permission not granted`);
+        }
+      }
+
       if (!searchElementFound) {
-        stepLog.push({ step: 2, outcome: "failed", detail: "search element not found after 3 location strategies" });
+        const isIconOnly = !!APP_SEARCH_HINTS[appPackage]?.iconOnly;
+        const locationSummary = isIconOnly
+          ? "3 accessibility-tree strategies (current screen, home+reopen, swipe-reveal) and a vision-based fallback"
+          : "3 location strategies (current screen, home+reopen, swipe-reveal)";
+        stepLog.push({ step: 2, outcome: "failed", detail: `search element not found after ${locationSummary}` });
         return {
           ok: false,
           content: JSON.stringify({
             ok: false,
             step_reached: 2,
             error_at_step: "locate_search_bar",
-            error: `Could not find a search bar in ${appName} after 3 location attempts (current screen, home+reopen, swipe-reveal).`,
+            error: `Could not find a search bar in ${appName} after ${locationSummary}.`,
             suggestion: "Use android_read_screen to inspect the current screen, then android_tap the search icon manually. Some apps hide the search bar behind a magnifying glass icon. If found, retry with resume_from_step: 3.",
             steps: stepLog,
           }),
