@@ -3576,6 +3576,8 @@ export const androidLongPressElementTool: AgentTool = {
   description: `Long-press an Android screen element by name instead of raw coordinates.
 Accepts a human-readable label or description string, fuzzy-matches it against the current ScreenMap (calling android_screen_understand internally with a 500 ms cache), then simulates a long-press hold by firing android_swipe from and to the same element center with a configurable duration.
 
+If the element is not visible on the initial screen, the tool first scrolls back to the top of the page (unless reset_scroll is false) so that elements above the current scroll position are never missed, then automatically scrolls down (up to max_scroll_attempts times) and re-reads the screen after each scroll until the element appears or the scroll limit is reached.
+
 Use this tool for Android UI patterns that require a long-press:
 - "long press on the message" — opens a context menu
 - "long press on the icon" — enters drag/rearrange mode
@@ -3585,6 +3587,9 @@ Parameters:
   - label: human-readable name of the element to long-press
   - duration_ms: how long to hold in milliseconds (default 800)
   - max_age_ms: max age of cached ScreenMap to reuse (default 500, 0 = always fresh)
+  - max_scroll_attempts: maximum downward scroll passes when element is off-screen (default 5, 0 = disable)
+  - scroll_distance: pixel distance per scroll swipe (default 600)
+  - reset_scroll: scroll to top before the downward search loop (default true)
 
 Returns the matched element details, coordinates used, and a screen_changed field (true/false) indicating whether the screen visually changed after the long-press (based on perceptual hash comparison). If screen_changed is false, the long-press gesture may not have been recognised — consider retrying with a longer duration_ms or reporting failure.
 
@@ -3603,6 +3608,14 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       max_age_ms: {
         type: "number",
         description: "Maximum age in milliseconds for a cached ScreenMap to be reused (default 500). Set to 0 to always capture a fresh screen.",
+      },
+      max_scroll_attempts: {
+        type: "number",
+        description: "Maximum number of downward scroll passes to perform when the element is not visible on the initial screen (default 5). Set to 0 to disable automatic scrolling.",
+      },
+      scroll_distance: {
+        type: "number",
+        description: "Pixel distance for each scroll swipe (default 600). Larger values scroll further per swipe.",
       },
       reset_scroll: {
         type: "boolean",
@@ -3653,6 +3666,11 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
     }
 
     const resetScroll = args.reset_scroll === false ? false : true;
+    const rawMaxScrollAttempts = typeof args.max_scroll_attempts === "number" ? args.max_scroll_attempts : 5;
+    const maxScrollAttempts = Number.isFinite(rawMaxScrollAttempts) ? Math.max(0, Math.floor(rawMaxScrollAttempts)) : 5;
+    const rawScrollDistance = typeof args.scroll_distance === "number" ? args.scroll_distance : 600;
+    const scrollDistance = Number.isFinite(rawScrollDistance) ? Math.min(Math.max(100, Math.floor(rawScrollDistance)), 1800) : 600;
+    let scrollsPerformed = 0;
 
     // ── Resolve ScreenMap (cache or fresh) ────────────────────────────────────
     const maxAge = typeof args.max_age_ms === "number" ? args.max_age_ms : 500;
@@ -3715,13 +3733,99 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       }
     }
 
+    if ((!bestElement || bestScore === 0) && maxScrollAttempts > 0) {
+      for (let scroll = 0; scroll < maxScrollAttempts; scroll++) {
+        console.log(`[android_long_press_element] element not found, scrolling down (pass ${scroll + 1}/${maxScrollAttempts})`);
+
+        // ── Pre-scroll state capture for no-op detection ──────────────────
+        const preScrollScreenshot: string | null = await captureScreenshot(ctx.userId);
+        const preScrollFingerprint: string = screenElements
+          .map((el) => `${el.label}:${el.center_x}:${el.center_y}`)
+          .sort()
+          .join("|");
+
+        // Swipe upward (y1 > y2) to scroll the page down
+        const screenMidX = 540;
+        const swipeY1 = 1400;
+        const swipeY2 = Math.max(100, swipeY1 - scrollDistance);
+        const swipeResult = await sendDaemonOp(
+          ctx.userId,
+          { type: "android_swipe", x1: screenMidX, y1: swipeY1, x2: screenMidX, y2: swipeY2, durationMs: 400 },
+          10000,
+        );
+        if (!swipeResult.ok) {
+          console.log(`[android_long_press_element] swipe failed on pass ${scroll + 1}: ${swipeResult.error}`);
+          break;
+        }
+
+        scrollsPerformed = scroll + 1;
+
+        // Brief pause so the page settles before re-reading
+        await new Promise((resolve) => setTimeout(resolve, 500));
+
+        // ── No-op scroll detection — screenshot path ──────────────────────
+        let screenshotCheckConclusive = false;
+        if (preScrollScreenshot) {
+          const postScrollScreenshot = await captureScreenshot(ctx.userId);
+          if (postScrollScreenshot) {
+            screenshotCheckConclusive = true;
+            const diffRatio = await screenshotDiff(preScrollScreenshot, postScrollScreenshot).catch(() => 1);
+            if (diffRatio < 0.02) {
+              console.log(
+                `[android_long_press_element] no-op scroll detected (diff=${diffRatio.toFixed(4)}) on pass ${scroll + 1} — already at bottom, stopping early`,
+              );
+              break;
+            }
+          }
+        }
+
+        const refreshed = await buildScreenMapElements(ctx.userId);
+        if (!refreshed.ok) break;
+
+        // ── No-op scroll detection — hierarchy fallback ────────────────────
+        const needsHierarchyCheck = !preScrollScreenshot || !screenshotCheckConclusive;
+        if (needsHierarchyCheck && preScrollFingerprint.length > 0) {
+          const postFingerprint = refreshed.elements
+            .map((el) => `${el.label}:${el.center_x}:${el.center_y}`)
+            .sort()
+            .join("|");
+          if (postFingerprint === preScrollFingerprint) {
+            console.log(
+              `[android_long_press_element] no-op scroll detected (hierarchy unchanged) on pass ${scroll + 1} — already at bottom, stopping early`,
+            );
+            screenElements = refreshed.elements;
+            break;
+          }
+        }
+
+        bestElement = null;
+        bestScore = 0;
+        for (const el of refreshed.elements) {
+          const score = scoreElement(el, label);
+          if (score > bestScore) {
+            bestScore = score;
+            bestElement = el;
+          }
+        }
+        screenElements = refreshed.elements;
+
+        if (bestElement && bestScore > 0) {
+          console.log(`[android_long_press_element] found "${label}" after ${scrollsPerformed} scroll(s), score=${bestScore}`);
+          break;
+        }
+      }
+    }
+
     if (!bestElement || bestScore === 0) {
       const elementList = screenElements
         .map((el) => `  • ${el.label}${el.description ? ` — ${el.description}` : ""}`)
         .join("\n");
+      const scrollNote = maxScrollAttempts > 0
+        ? ` Scrolled ${scrollsPerformed} time(s) looking for it.`
+        : "";
       return {
         ok: false,
-        content: `No element matching "${label}" was found on screen.\n\nAvailable elements:\n${elementList || "  (none)"}`,
+        content: `No element matching "${label}" was found on screen.${scrollNote}\n\nAvailable elements:\n${elementList || "  (none)"}`,
         label: `android_long_press_element: no match for "${label}"`,
       };
     }
@@ -3787,11 +3891,12 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
           match_score: bestScore,
           duration_ms: durationMs,
         },
+        scrolls_performed: scrollsPerformed,
         screen_changed: screenChanged,
         hash_distance: hashDistance,
       }),
       label: `Long-pressed "${bestElement.label}" at (${center_x}, ${center_y}) for ${durationMs}ms screen_changed=${screenChanged}`,
-      detail: `match_score=${bestScore} bounds=${bestElement.bounds} duration_ms=${durationMs}${hashDistance !== null ? ` hash_dist=${hashDistance}` : ""}`,
+      detail: `match_score=${bestScore} bounds=${bestElement.bounds} duration_ms=${durationMs} scrolls=${scrollsPerformed}${hashDistance !== null ? ` hash_dist=${hashDistance}` : ""}`,
     };
   },
 };
