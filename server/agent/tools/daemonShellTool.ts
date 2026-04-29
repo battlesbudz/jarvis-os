@@ -3502,3 +3502,362 @@ Requires: android_screenshot, android_read_screen, and android_tap_type permissi
     };
   },
 };
+
+// ── android_fill_form ──────────────────────────────────────────────────────────
+// Batch version of android_type_into_element. Accepts a list of {label, text,
+// clear_first?, submit_last?} pairs and fills them in sequence, reusing the
+// ScreenMap captured at the start (refreshing it if an element can't be found
+// after a page transition). Returns per-field results.
+
+export const androidFillFormTool: AgentTool = {
+  name: "android_fill_form",
+  description: `Fill multiple Android input fields in one step.
+
+Accepts a list of fields (label + text pairs) and fills them in order, using the same ScreenMap + scoreElement matching as android_type_into_element. Replaces multiple sequential android_type_into_element calls for login forms, registration pages, and filter dialogs.
+
+Steps performed internally:
+1. Capture a fresh ScreenMap once at the start (screenshot + view hierarchy → Claude Vision)
+2. For each field: fuzzy-match label, tap to focus, optionally clear, type via three-level fallback (android_type → android_paste_text → retry), verify
+3. If a field label is not found in the current ScreenMap, refresh the ScreenMap once (handles page transitions between fields)
+4. If submit_last is true on a field, press Enter/IME Go after typing it
+
+Returns an array of per-field results so you can see which fields succeeded or failed.
+
+Requires: android_screenshot, android_read_screen, and android_tap_type permissions.`,
+  parameters: {
+    type: "object",
+    properties: {
+      fields: {
+        type: "array",
+        description: "Ordered list of fields to fill.",
+        items: {
+          type: "object",
+          properties: {
+            label: {
+              type: "string",
+              description: "The label, description, or resource_id (or part thereof) of the input field. Case-insensitive fuzzy match.",
+            },
+            text: {
+              type: "string",
+              description: "The text to type into the field.",
+            },
+            clear_first: {
+              type: "boolean",
+              description: "If true, clear the field contents before typing. Default false.",
+            },
+            submit_last: {
+              type: "boolean",
+              description: "If true, press Enter/IME Go after typing into this field. Useful for submitting the last field or moving to the next screen. Default false.",
+            },
+          },
+          required: ["label", "text"],
+        },
+        minItems: 1,
+      },
+    },
+    required: ["fields"],
+  },
+  async execute(args, ctx) {
+    const rawFields = Array.isArray(args.fields) ? args.fields : [];
+    if (rawFields.length === 0) {
+      return { ok: false, content: "fields array is required and must not be empty.", label: "android_fill_form: no fields" };
+    }
+
+    if (!isAndroidDaemonActive(ctx.userId)) {
+      return {
+        ok: false,
+        content: "Android daemon is not connected. Ask the user to install the Jarvis Android APK and pair it (Profile → Connected Channels → Android Device).",
+        label: "android_fill_form: android offline",
+      };
+    }
+
+    const [screenshotAllowed, readAllowed, tapAllowed] = await Promise.all([
+      isAndroidDaemonActionAllowed(ctx.userId, "android_screenshot"),
+      isAndroidDaemonActionAllowed(ctx.userId, "android_read_screen"),
+      isAndroidDaemonActionAllowed(ctx.userId, "android_tap_type"),
+    ]);
+    if (!screenshotAllowed) {
+      return {
+        ok: false,
+        content: "android_screenshot permission is not enabled. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.",
+        label: "android_fill_form: screenshot permission denied",
+      };
+    }
+    if (!readAllowed) {
+      return {
+        ok: false,
+        content: "android_read_screen permission is not enabled. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.",
+        label: "android_fill_form: read_screen permission denied",
+      };
+    }
+    if (!tapAllowed) {
+      return {
+        ok: false,
+        content: "android_tap_type permission is not enabled. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.",
+        label: "android_fill_form: tap permission denied",
+      };
+    }
+
+    // ── Step 1: Capture a fresh ScreenMap at the start ─────────────────────────
+    let screenElements: ScreenElement[] = [];
+    const initialBuild = await buildScreenMapElements(ctx.userId);
+    if (!initialBuild.ok) {
+      return { ok: false, content: initialBuild.content, label: `android_fill_form: ${initialBuild.label}` };
+    }
+    screenElements = initialBuild.elements;
+    console.log(`[android_fill_form] userId=${ctx.userId} initial ScreenMap: ${screenElements.length} elements`);
+
+    type FieldResult = {
+      label: string;
+      text: string;
+      ok: boolean;
+      field_matched: string | null;
+      match_score: number;
+      method_used: string | null;
+      verified: boolean;
+      field_text: string | null;
+      steps: string[];
+      error?: string;
+    };
+
+    const fieldResults: FieldResult[] = [];
+    let allOk = true;
+
+    for (let i = 0; i < rawFields.length; i++) {
+      const fieldSpec = rawFields[i] as { label?: unknown; text?: unknown; clear_first?: unknown; submit_last?: unknown };
+      const fieldLabel = String(fieldSpec.label || "").trim();
+      const fieldText = String(fieldSpec.text || "");
+      const clearFirst = fieldSpec.clear_first === true;
+      const submitLast = fieldSpec.submit_last === true;
+
+      const result: FieldResult = {
+        label: fieldLabel,
+        text: fieldText,
+        ok: false,
+        field_matched: null,
+        match_score: 0,
+        method_used: null,
+        verified: false,
+        field_text: null,
+        steps: [],
+      };
+
+      if (!fieldLabel) {
+        result.error = "label is required";
+        result.steps.push("Skipped: label is empty.");
+        fieldResults.push(result);
+        allOk = false;
+        continue;
+      }
+
+      // ── Fuzzy-match the element ──────────────────────────────────────────────
+      let bestElement: ScreenElement | null = null;
+      let bestScore = 0;
+
+      for (const el of screenElements) {
+        const score = scoreElement(el, fieldLabel);
+        if (score > bestScore) {
+          bestScore = score;
+          bestElement = el;
+        }
+      }
+
+      // If not found, refresh ScreenMap once (page may have changed)
+      if (!bestElement || bestScore === 0) {
+        result.steps.push(`No match for "${fieldLabel}" in current ScreenMap (${screenElements.length} elements). Refreshing...`);
+        console.log(`[android_fill_form] userId=${ctx.userId} field="${fieldLabel}" not found — refreshing ScreenMap`);
+        const refreshed = await buildScreenMapElements(ctx.userId);
+        if (refreshed.ok) {
+          screenElements = refreshed.elements;
+          result.steps.push(`ScreenMap refreshed: ${screenElements.length} elements.`);
+          for (const el of screenElements) {
+            const score = scoreElement(el, fieldLabel);
+            if (score > bestScore) {
+              bestScore = score;
+              bestElement = el;
+            }
+          }
+        } else {
+          result.steps.push(`ScreenMap refresh failed: ${refreshed.label}`);
+        }
+      }
+
+      if (!bestElement || bestScore === 0) {
+        const elementList = screenElements
+          .map((el) => `  • ${el.label}${el.description ? ` — ${el.description}` : ""}`)
+          .join("\n");
+        result.error = `No element matching "${fieldLabel}" found after ScreenMap refresh.\nAvailable elements:\n${elementList || "  (none)"}`;
+        result.steps.push(result.error);
+        fieldResults.push(result);
+        allOk = false;
+        continue;
+      }
+
+      const { center_x, center_y } = bestElement;
+      const matchedDesc = bestElement.label || bestElement.description || fieldLabel;
+      result.field_matched = matchedDesc;
+      result.match_score = bestScore;
+      result.steps.push(`Matched "${matchedDesc}" at (${center_x}, ${center_y}) score=${bestScore}.`);
+
+      // ── Tap to focus ──────────────────────────────────────────────────────────
+      result.steps.push(`Tapping (${center_x}, ${center_y}) to focus...`);
+      const tapResult = await sendDaemonOp(ctx.userId, { type: "android_tap", x: center_x, y: center_y }, 15000);
+      if (!tapResult.ok) {
+        result.error = `Tap failed: ${tapResult.error || "unknown"}`;
+        result.steps.push(result.error);
+        fieldResults.push(result);
+        allOk = false;
+        continue;
+      }
+      await sleep(300);
+      result.steps.push("Tapped; waiting for keyboard.");
+
+      // ── Optional clear ────────────────────────────────────────────────────────
+      if (clearFirst) {
+        result.steps.push("Clearing field (android_clear_field)...");
+        const clearResult = await sendDaemonOp(ctx.userId, { type: "android_clear_field" }, 8000);
+        if (clearResult.ok) {
+          result.steps.push("Field cleared.");
+        } else {
+          result.steps.push(`Clear failed (${clearResult.error || "unknown"}); proceeding anyway.`);
+        }
+      }
+
+      // ── Three-level input fallback chain ──────────────────────────────────────
+      let methodUsed: string | null = null;
+      let inputOk = false;
+      let daemonVerified = false;
+      let verifiedFieldText: string | null = null;
+
+      // Level 1 — android_type
+      result.steps.push("Level 1 — android_type (accessibility ACTION_SET_TEXT)...");
+      const typeResult = await sendDaemonOp(ctx.userId, { type: "android_type", text: fieldText }, 10000);
+      if (typeResult.ok) {
+        methodUsed = "android_type";
+        inputOk = true;
+        result.steps.push("android_type accepted.");
+      } else {
+        result.steps.push(`android_type failed (${typeResult.error || "no editable field focused"}). Moving to Level 2.`);
+      }
+
+      // Level 2 — android_paste_text
+      if (!inputOk) {
+        result.steps.push("Level 2 — android_paste_text...");
+        const pasteResult = await sendDaemonOp(ctx.userId, { type: "android_paste_text", text: fieldText, fieldDescription: matchedDesc }, 15000);
+        if (pasteResult.ok) {
+          const pasteData = (pasteResult.data || {}) as Record<string, unknown>;
+          const daemonMethod = typeof pasteData.method_used === "string" ? pasteData.method_used : "unknown";
+          methodUsed = `android_paste_text:${daemonMethod}`;
+          inputOk = true;
+          daemonVerified = pasteData.verified === true;
+          verifiedFieldText = typeof pasteData.field_text === "string" ? pasteData.field_text : null;
+          result.steps.push(`android_paste_text succeeded via ${daemonMethod}. Daemon verified: ${daemonVerified}.`);
+        } else {
+          result.steps.push(`android_paste_text failed (${pasteResult.error || "unknown"}). Moving to Level 3.`);
+        }
+      }
+
+      // Level 3 — clipboard-only retry
+      if (!inputOk) {
+        result.steps.push("Level 3 — android_paste_text retry (clipboard-only)...");
+        const retryResult = await sendDaemonOp(ctx.userId, { type: "android_paste_text", text: fieldText, fieldDescription: matchedDesc }, 15000);
+        if (retryResult.ok) {
+          const retryData = (retryResult.data || {}) as Record<string, unknown>;
+          const retryMethod = typeof retryData.method_used === "string" ? retryData.method_used : "unknown";
+          methodUsed = `android_paste_text:${retryMethod}:L3`;
+          inputOk = true;
+          daemonVerified = retryData.verified === true;
+          verifiedFieldText = typeof retryData.field_text === "string" ? retryData.field_text : null;
+          result.steps.push(`Level 3 retry succeeded via ${retryMethod}. Verified: ${daemonVerified}.`);
+        } else {
+          result.steps.push(`Level 3 retry failed (${retryResult.error || "unknown"}). All input methods exhausted.`);
+        }
+      }
+
+      if (!inputOk) {
+        result.error = "All input levels failed.";
+        result.steps.push(result.error);
+        result.method_used = null;
+        fieldResults.push(result);
+        allOk = false;
+        continue;
+      }
+
+      // ── Server-side verification ───────────────────────────────────────────────
+      let verified = daemonVerified;
+
+      if (methodUsed === "android_type" || !daemonVerified) {
+        await sleep(200);
+        result.steps.push("Verifying via android_get_focused_field...");
+        const verifyResult = await sendDaemonOp(ctx.userId, { type: "android_get_focused_field" }, 8000);
+        const verifyInfo = extractFocusedFieldText(verifyResult.data);
+        verifiedFieldText = verifyInfo.text ?? null;
+
+        const isPassword = (verifyResult.data as Record<string, unknown> | null)?.isPassword === true;
+        verified = isPassword
+          ? verifyInfo.focused
+          : typeof verifiedFieldText === "string" && (
+              verifiedFieldText === fieldText ||
+              verifiedFieldText.trim() === fieldText.trim() ||
+              verifiedFieldText.includes(fieldText)
+            );
+
+        if (!verified && methodUsed === "android_type") {
+          result.steps.push(`Verification failed after android_type — escalating to android_paste_text...`);
+          const escalateResult = await sendDaemonOp(ctx.userId, { type: "android_paste_text", text: fieldText, fieldDescription: matchedDesc }, 15000);
+          if (escalateResult.ok) {
+            const esc = (escalateResult.data || {}) as Record<string, unknown>;
+            const escMethod = typeof esc.method_used === "string" ? esc.method_used : "unknown";
+            methodUsed = `android_paste_text:${escMethod}:escalated`;
+            daemonVerified = esc.verified === true;
+            verifiedFieldText = typeof esc.field_text === "string" ? esc.field_text : null;
+            verified = daemonVerified;
+            result.steps.push(`Escalation succeeded via ${escMethod}. Verified: ${verified}.`);
+          } else {
+            result.steps.push(`Escalation failed: ${escalateResult.error || "unknown"}`);
+          }
+        }
+
+        if (verified) {
+          result.steps.push("Verification passed: text confirmed in field.");
+        } else {
+          result.steps.push(`Verification inconclusive: field text="${verifiedFieldText ?? "empty"}".`);
+        }
+      }
+
+      // ── Optional submit_last ───────────────────────────────────────────────────
+      if (submitLast && inputOk) {
+        await sendDaemonOp(ctx.userId, { type: "android_press_key", key: "enter" }, 6000);
+        result.steps.push("Submitted (IME Enter/Go key pressed).");
+        // Invalidate both the cache and the local array so the next field always
+        // captures a fresh ScreenMap (the page may have navigated away).
+        screenMapCache.delete(ctx.userId);
+        screenElements = [];
+      }
+
+      result.ok = inputOk;
+      result.method_used = methodUsed;
+      result.verified = verified;
+      result.field_text = verifiedFieldText;
+
+      console.log(`[android_fill_form] userId=${ctx.userId} field="${matchedDesc}" method=${methodUsed} verified=${verified}`);
+      fieldResults.push(result);
+    }
+
+    const successCount = fieldResults.filter((r) => r.ok).length;
+    const summary = {
+      ok: allOk,
+      fields_total: fieldResults.length,
+      fields_succeeded: successCount,
+      fields_failed: fieldResults.length - successCount,
+      results: fieldResults,
+    };
+
+    return {
+      ok: allOk,
+      content: JSON.stringify(summary),
+      label: `android_fill_form: ${successCount}/${fieldResults.length} fields filled`,
+      detail: fieldResults.map((r) => `${r.label}: ${r.ok ? "ok" : "FAILED"}`).join(" | "),
+    };
+  },
+};
