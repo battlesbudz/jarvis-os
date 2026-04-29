@@ -6,7 +6,7 @@ import OpenAI from "openai";
 import { db } from "./db";
 import { eq, and, desc, sql, gte, asc } from "drizzle-orm";
 import * as schema from "@shared/schema";
-import { userMemories, morningVoiceNotes, userPreferences, proactiveQuestionsSent, inboxItems, inboxRules, userDocuments } from "@shared/schema";
+import { userMemories, morningVoiceNotes, userPreferences, proactiveQuestionsSent, inboxItems, inboxRules, userDocuments, webchatInviteTokens } from "@shared/schema";
 import { processDocument, getUserDocumentContext, SUPPORTED_MIME_TYPES, SUPPORTED_EXTENSIONS, MAX_DOCS_PER_USER } from "./documentProcessor";
 import { resizeTask, generateSmartPlan, unblockTask } from "./ai";
 import {
@@ -28,7 +28,7 @@ import {
   sendGmailEmail,
 } from "./integrations/gmail";
 import { getSlackMessages } from "./integrations/slack";
-import { authRouter, authMiddleware } from "./auth";
+import { authRouter, authMiddleware, generateToken } from "./auth";
 import { mobileAuthRouter } from "./mobileAuthRoutes";
 import { registerDataRoutes } from "./dataRoutes";
 import { registerTelegramRoutes } from "./telegramRoutes";
@@ -807,6 +807,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (err) {
       console.error("[Admin/ProviderHealth] check threw:", err);
       res.status(500).json({ error: "Failed to run provider health checks" });
+    }
+  });
+
+  // GET /api/webchat/invite/redeem — no auth required; guest redeems invite token
+  app.get("/api/webchat/invite/redeem", async (req: Request, res: Response) => {
+    try {
+      const { token } = req.query as { token?: string };
+      if (!token) return res.status(400).json({ error: "token is required" });
+
+      const [row] = await db
+        .select()
+        .from(webchatInviteTokens)
+        .where(eq(webchatInviteTokens.token, token))
+        .limit(1);
+
+      if (!row) return res.status(404).json({ error: "Invite link not found" });
+      if (row.expiresAt < new Date()) {
+        return res.status(410).json({ error: "This invite link has expired" });
+      }
+
+      const jwtToken = generateToken(row.userId);
+      return res.json({ token: jwtToken, userId: row.userId });
+    } catch (error) {
+      console.error("Error redeeming webchat invite token:", error);
+      return res.status(500).json({ error: "Failed to redeem invite token" });
     }
   });
 
@@ -3228,6 +3253,28 @@ You can extend yourself by building new tools directly. Generate the complete Ty
     run.controller.abort();
     activeCoachRuns.delete(runId);
     return res.json({ ok: true });
+  });
+
+  // ── Web-chat invite tokens ────────────────────────────────────────────────
+  // POST /api/webchat/invite — owner generates a 24-hour shareable link token
+  app.post("/api/webchat/invite", authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId!;
+      const { randomBytes } = await import("crypto");
+      const token = randomBytes(32).toString("hex");
+      const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 h
+
+      await db.insert(webchatInviteTokens).values({ token, userId, expiresAt });
+
+      const host = req.headers["x-forwarded-host"] || req.headers.host || "localhost";
+      const protocol = req.headers["x-forwarded-proto"] || (req.secure ? "https" : "http");
+      const url = `${protocol}://${host}/chat?invite=${token}`;
+
+      return res.json({ token, url, expiresAt });
+    } catch (error) {
+      console.error("Error creating webchat invite token:", error);
+      return res.status(500).json({ error: "Failed to create invite token" });
+    }
   });
 
   app.post("/api/coach/execute-confirmed", async (req: Request, res: Response) => {
