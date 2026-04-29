@@ -495,6 +495,27 @@ export const agentJobs = pgTable("agent_jobs", {
   completedAt: timestamp("completed_at"),
 });
 
+/**
+ * Persistent record of a build-ack event so the suspended-build reminder
+ * survives rolling off the chat-history window (which only keeps 20 messages).
+ *
+ * One row per build intent queued.  The `reminded` flag is flipped to true
+ * once coachAgent.ts has appended the one-time heads-up note, ensuring the
+ * once-only guarantee holds even when the original ack is no longer visible
+ * in the rolling message window.
+ */
+export const buildSessions = pgTable("build_sessions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  jobId: varchar("job_id"),
+  ackTimestamp: bigint("ack_timestamp", { mode: "number" }).notNull(),
+  buildDescription: text("build_description").notNull(),
+  reminded: boolean("reminded").notNull().default(false),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export type BuildSession = typeof buildSessions.$inferSelect;
+
 export const deliverables = pgTable("deliverables", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),

@@ -17,7 +17,7 @@ import { runOrchestrator } from "../agent/orchestrator";
 import { preThink, postCheck } from "../agent/qualityLoop";
 import { getModel, MODEL_DEFAULTS } from "../lib/modelPrefs";
 import { contextRegistry } from "../agent/contextRegistry";
-import { classifyBuildIntent, classifyBuildFollowUp, isUnrelatedIntent, hasActiveBuildSession, classifyBuildResume, findBuildDescription, BUILD_ACK_MARKER, findSuspendedBuild, SUSPENDED_BUILD_REMINDED_MARKER } from "../agent/queryClassifier";
+import { classifyBuildIntent, classifyBuildFollowUp, isUnrelatedIntent, hasActiveBuildSession, classifyBuildResume, findBuildDescription, BUILD_ACK_MARKER, findSuspendedBuild, SUSPENDED_BUILD_REMINDED_MARKER, type StoredBuildSession } from "../agent/queryClassifier";
 import { routeBuildIntent } from "../agent/buildIntentRouter";
 // Side-effect import: registers workspace topic context provider.
 import "../agent/providers/topicContext";
@@ -604,9 +604,10 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
       });
       if (buildResult.handled && buildResult.reply) {
         const ackReply = buildResult.reply;
+        const ackTs = Date.now();
         // Minimal chat-history save so the next turn has context.
-        const userMsgEntry = { id: Date.now().toString(), role: "user", content: userText };
-        const asstMsgEntry = { id: (Date.now() + 1).toString(), role: "assistant", content: ackReply };
+        const userMsgEntry = { id: ackTs.toString(), role: "user", content: userText };
+        const asstMsgEntry = { id: (ackTs + 1).toString(), role: "assistant", content: ackReply };
         const updatedChatBuild = [asstMsgEntry, userMsgEntry, ...chatMessages].slice(0, 100);
         db.insert(schema.chatHistory)
           .values({ userId, data: updatedChatBuild })
@@ -615,6 +616,18 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
             set: { data: updatedChatBuild, updatedAt: new Date() },
           })
           .catch((err: unknown) => console.error("[coach] build-intent chat history persist failed:", err));
+        // Persist the ack to build_sessions so the suspended-build reminder can
+        // fire even after the ack message has scrolled out of the 20-msg window.
+        const persistedJobId = buildResult.jobId ?? buildResult.duplicateJobId ?? null;
+        db.insert(schema.buildSessions)
+          .values({
+            userId,
+            jobId: persistedJobId,
+            ackTimestamp: ackTs,
+            buildDescription: userText.slice(0, 500),
+            reminded: false,
+          })
+          .catch((err: unknown) => console.error("[coach] build-session persist failed:", err));
         logInteraction(userId, channelLower as any, "outbound", ackReply).catch(() => {});
         // Return the existing session ID (if any) so clients can resume on the next turn.
         // A new session is not initialised here because the build job runs asynchronously;
@@ -779,7 +792,32 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
   const SUSPENDED_BUILD_REMINDER_THRESHOLD_MS = 2 * 60 * 60 * 1000; // 2 hours
   if (rawReply && !switchingFromBuild) {
     try {
-      const { ackAgeMs, shouldSuppress, buildDescription } = findSuspendedBuild(chatMessages);
+      // Fetch the most-recent non-reminded build session from the DB so we can
+      // surface reminders even when the original ack has scrolled past the
+      // 20-message rolling chat window.
+      let storedSession: StoredBuildSession | null = null;
+      let storedSessionId: string | null = null;
+      try {
+        const rows = await db
+          .select()
+          .from(schema.buildSessions)
+          .where(eq(schema.buildSessions.userId, userId))
+          .orderBy(desc(schema.buildSessions.createdAt))
+          .limit(1);
+        if (rows.length > 0) {
+          const row = rows[0];
+          storedSessionId = row.id;
+          storedSession = {
+            ackTimestamp: Number(row.ackTimestamp),
+            reminded: row.reminded,
+            buildDescription: row.buildDescription,
+          };
+        }
+      } catch (dbErr) {
+        console.warn(`[${channelName}] build_sessions lookup failed (non-blocking):`, dbErr);
+      }
+
+      const { ackAgeMs, shouldSuppress, buildDescription } = findSuspendedBuild(chatMessages, storedSession);
       if (
         ackAgeMs !== null &&
         ackAgeMs >= SUSPENDED_BUILD_REMINDER_THRESHOLD_MS &&
@@ -794,6 +832,15 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
         console.log(
           `[${channelName}] suspended-build reminder appended (ackAge=${Math.round(ackAgeMs / 3_600_000)}h, build="${buildDescription.slice(0, 60)}")`,
         );
+        // Mark only the specific session row as reminded so the once-only guarantee
+        // holds per-session — using the row id avoids over-suppressing other queued
+        // builds the user may have.
+        if (storedSessionId) {
+          db.update(schema.buildSessions)
+            .set({ reminded: true })
+            .where(eq(schema.buildSessions.id, storedSessionId))
+            .catch((err: unknown) => console.error("[coach] build-session remind flag update failed:", err));
+        }
       }
     } catch (reminderErr) {
       console.warn(`[${channelName}] suspended-build reminder check failed (non-blocking):`, reminderErr);
