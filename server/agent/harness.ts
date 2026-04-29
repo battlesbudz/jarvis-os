@@ -102,6 +102,15 @@ export interface RunAgentOptions {
    */
   onToolError?: (toolName: string, message: string) => void;
   /**
+   * Optional heartbeat callback fired mid-run when an Android task is still
+   * in progress after turn 15. Called with a short status message so callers
+   * (e.g. the SSE route / Discord channel) can forward it to the user without
+   * the agent consuming a model turn to do so.
+   *
+   * message — human-readable progress text, e.g. "Still working — on step 17"
+   */
+  onProgressMessage?: (message: string) => void;
+  /**
    * Pre-computed activation plan from the ActivationPlanner.
    *
    * When provided, three things happen inside runAgent:
@@ -765,6 +774,54 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
   }
 
   const toolMap = new Map(tools.map((t) => [t.name, t]));
+
+  // ── Android/daemon task detection ────────────────────────────────────────
+  // Detect whether any tool in the active set is an Android or daemon-shell
+  // tool. Android UI navigation sequences (screenshot → read → tap → verify)
+  // require 3–5 turns per sub-step, so a 4-step task like "open YouTube,
+  // search, tap channel, open video" easily needs 15–20 turns.
+  //
+  // Heuristic: any tool whose name starts with "android_" or equals
+  // "run_daemon_shell" or "daemon_action" is counted as an Android/daemon tool.
+  //
+  // IMPORTANT: If the max-turns ceiling below is lowered, also update the
+  // heartbeat threshold inside the turn loop (currently turn >= 15) so the
+  // progress message still fires before the budget is exhausted.
+  const hasAndroidTools = tools.some(
+    (t) => t.name.startsWith("android_") || t.name === "run_daemon_shell" || t.name === "daemon_action",
+  );
+
+  // Raise the effective turn budget for Android-heavy sessions. The default 6
+  // is far too low for multi-step UI navigation; 25 allows complex flows to
+  // complete without hitting the ceiling mid-task.
+  const effectiveMaxTurns = hasAndroidTools ? Math.max(maxTurns, 25) : maxTurns;
+  if (hasAndroidTools && effectiveMaxTurns > maxTurns) {
+    console.log(
+      `[${channel}/Harness] android tools detected — raising maxTurns ${maxTurns} → ${effectiveMaxTurns}`,
+    );
+  }
+
+  // ── Android sequential-execution instruction ─────────────────────────────
+  // When Android tools are present, inject a hard rule into the system prompt
+  // that forbids the model from announcing intent without immediately following
+  // through with the corresponding tool call. This prevents the "I will now tap
+  // the channel. Proceeding..." → turn ends pattern.
+  if (hasAndroidTools) {
+    const androidRule =
+      "\n\n---\n## Android Task Execution Rule\n" +
+      "CRITICAL: Never send a reply that announces you are about to do something " +
+      "and then stop. Immediately call the appropriate tool — do not describe the " +
+      "next step first. Announcing intent without following through with a tool call " +
+      "is a failure mode. If you have multiple steps remaining, execute each one by " +
+      "calling the relevant tool in the same turn before returning any text reply.";
+    messages = messages.map((m, i) => {
+      if (i === 0 && m.role === "system") {
+        return { ...m, content: (m.content ?? "") + androidRule };
+      }
+      return m;
+    });
+  }
+
   const openAITools = tools.length > 0 ? tools.map(toOpenAITool) : undefined;
 
   // Inject the active tool set so surface-scoped tools (e.g. test_tool)
@@ -843,10 +900,21 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
   // (e.g. the SSE route) know the reply may be an error-recovery response.
   let hadToolError = false;
 
-  for (let turn = 0; turn < maxTurns; turn++) {
+  for (let turn = 0; turn < effectiveMaxTurns; turn++) {
     // ── Abort check — honour caller cancellation before each turn ───────
     if (signal?.aborted) {
       throw new DOMException("Agent run aborted by caller", "AbortError");
+    }
+
+    // ── Android heartbeat — notify user the task is still running ────────
+    // When an Android-heavy session reaches turn 15 and Android tools are
+    // still available, emit a lightweight progress message via the optional
+    // onProgressMessage callback. This does NOT consume a model turn — it is
+    // purely informational so the user knows the agent has not stalled.
+    // Fires once every 5 turns after the threshold to avoid flooding.
+    if (hasAndroidTools && turn >= 15 && (turn - 15) % 5 === 0 && opts.onProgressMessage) {
+      opts.onProgressMessage(`Still working — on step ${turn + 1} of the plan`);
+      console.log(`[${channel}/Harness] android heartbeat at turn=${turn}`);
     }
 
     // ── Provider query (streaming or non-streaming) ─────────────────────
@@ -1131,7 +1199,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
   }
 
   // Hit max turns. Force a final answer with tools disabled.
-  console.warn(`[${channel}/Agent] hit maxTurns=${maxTurns}, forcing final answer`);
+  console.warn(`[${channel}/Agent] hit maxTurns=${effectiveMaxTurns}, forcing final answer`);
   try {
     const finalResult = await runProviderQuery({
       model,
@@ -1156,7 +1224,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
 
   return {
     reply,
-    turns: maxTurns,
+    turns: effectiveMaxTurns,
     toolCalls,
     finishReason: hadToolError ? "tool_error" : lastFinish,
     messages: conversationMessages,
