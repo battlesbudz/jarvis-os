@@ -411,7 +411,7 @@ export async function sendTelegramDocument(
     const form: FormData = new FormData();
     form.append('chat_id', chatId);
     if (caption) form.append('caption', caption.slice(0, 1024));
-    form.append('document', new Blob([buf], { type: mimeType }), filename);
+    form.append('document', new Blob([new Uint8Array(buf)], { type: mimeType }), filename);
     const res = await fetch(`${BASE}/sendDocument`, { method: 'POST', body: form });
     if (!res.ok) {
       console.error('Telegram sendDocument error:', await res.text());
@@ -576,7 +576,7 @@ export async function sendVoice(
     const form = new FormData();
     form.append("chat_id", chatId);
     if (caption) form.append("caption", caption.slice(0, 1024));
-    form.append("voice", new Blob([audioBuffer], { type: "audio/ogg" }), "voice.ogg");
+    form.append("voice", new Blob([new Uint8Array(audioBuffer)], { type: "audio/ogg" }), "voice.ogg");
     const res = await fetch(`${BASE}/sendVoice`, { method: "POST", body: form });
     if (!res.ok) {
       console.error("Telegram sendVoice error:", await res.text());
@@ -651,7 +651,7 @@ export async function sendPhoto(
     const form = new FormData();
     form.append("chat_id", chatId);
     if (caption) form.append("caption", caption.slice(0, 1024));
-    form.append("photo", new Blob([imageBuffer], { type: actualMime }), actualFilename);
+    form.append("photo", new Blob([new Uint8Array(imageBuffer)], { type: actualMime }), actualFilename);
     const res = await fetch(`${BASE}/sendPhoto`, { method: "POST", body: form });
     if (!res.ok) {
       console.error("Telegram sendPhoto error:", await res.text());
@@ -679,7 +679,7 @@ export async function sendVideo(
     const form = new FormData();
     form.append("chat_id", chatId);
     if (caption) form.append("caption", caption.slice(0, 1024));
-    form.append("video", new Blob([videoBuffer], { type: "video/mp4" }), "video.mp4");
+    form.append("video", new Blob([new Uint8Array(videoBuffer)], { type: "video/mp4" }), "video.mp4");
     const res = await fetch(`${BASE}/sendVideo`, { method: "POST", body: form });
     if (!res.ok) {
       console.error("Telegram sendVideo error:", await res.text());

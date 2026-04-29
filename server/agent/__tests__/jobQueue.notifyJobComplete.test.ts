@@ -110,7 +110,7 @@ function makeDeps(opts: {
 }
 
 const USER = "user-abc";
-const JOB_TYPE = "coach" as const;
+const JOB_TYPE: import("../jobClient").AgentJobType = "general";
 const TITLE = "Task done";
 const BODY = "Here are the results.";
 

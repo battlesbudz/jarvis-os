@@ -1,4 +1,4 @@
-import type { AgentTool } from "../types";
+import type { AgentTool, ToolArgs } from "../types";
 import { postToDiscordChannel } from "../../discord/manager";
 
 export const discordSendToChannelTool: AgentTool = {
@@ -27,17 +27,18 @@ export const discordSendToChannelTool: AgentTool = {
     },
     required: ["channelName", "message"],
   },
-  async execute(args: { channelName: string; message: string }, ctx) {
+  async execute(args: ToolArgs, ctx) {
+    const { channelName, message } = args as { channelName: string; message: string };
     const { userId } = ctx;
-    const ok = await postToDiscordChannel(userId, args.channelName, null, args.message);
+    const ok = await postToDiscordChannel(userId, channelName, null, message);
 
     if (!ok) {
       return {
         ok: false,
         content:
-          `Could not post to #${args.channelName}. ` +
+          `Could not post to #${channelName}. ` +
           "Check that the channel exists, the bot has access to it, and the Discord integration is running.",
-        label: `Discord post to #${args.channelName} failed`,
+        label: `Discord post to #${channelName} failed`,
       };
     }
 

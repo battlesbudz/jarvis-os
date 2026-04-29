@@ -82,7 +82,7 @@ export const memorySearchTool: AgentTool = {
       }
 
       const formatted = top
-        .map((m, i) => `[${i + 1}] [${m.tier}/${m.memoryType}] (${m.category}, confidence: ${m.confidence}%) ${m.content}`)
+        .map((m, i: number) => `[${i + 1}] [${m.tier}/${m.memoryType}] (${m.category}, confidence: ${m.confidence}%) ${m.content}`)
         .join("\n");
 
       const content = `Found ${top.length} relevant memories for: "${query}"\n\nFormat: [tier/type] (category, confidence%)\n\n${formatted}`;
@@ -132,7 +132,7 @@ export const memoryGetTool: AgentTool = {
     const limit = Math.min(40, Math.max(1, Number(args.limit) || 20));
 
     try {
-      const rows = await db.execute<MemoryRow>(sql`
+      const rawRowsResult = await db.execute(sql`
         SELECT id, content, category, tier, memory_type, relevance_score, confidence, access_count
         FROM user_memories
         WHERE user_id = ${ctx.userId}
@@ -143,7 +143,7 @@ export const memoryGetTool: AgentTool = {
         LIMIT ${limit}
       `);
 
-      const memories = rows.rows ?? [];
+      const memories = (rawRowsResult.rows ?? []) as MemoryRow[];
 
       if (memories.length === 0) {
         return {

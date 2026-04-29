@@ -245,8 +245,7 @@ async function testRunStepAttempts(): Promise<void> {
     );
     assert(result.stepPassed === true, "T9-a: stepPassed is true after recovery");
     assertEquals(result.stepRetries, 1, "T9-b: stepRetries is 1");
-    assert(
-      result.correctionContext?.includes("TypeScript type-check failed"),
+    assert(!!(result.correctionContext?.includes("TypeScript type-check failed")),
       "T9-c: correctionContext mentions type-check failure",
     );
   }
@@ -312,8 +311,7 @@ async function testRunStepAttempts(): Promise<void> {
     );
     assert(result.stepPassed === true, "T13-a: stepPassed=true after recovery from timeout");
     assertEquals(result.stepRetries, 1, "T13-b: stepRetries=1 (one retry from the timeout)");
-    assert(
-      result.correctionContext?.includes("timed out"),
+    assert(!!(result.correctionContext?.includes("timed out")),
       "T13-c: correctionContext mentions timeout",
     );
   }
@@ -386,11 +384,11 @@ async function testRunStepAttempts(): Promise<void> {
     );
     assert(receivedContexts.length >= 2, "T17-a: runWorker called at least twice");
     assert(
-      receivedContexts[1]?.includes("TypeScript type-check failed"),
+      !!(receivedContexts[1]?.includes("TypeScript type-check failed")),
       "T17-b: retry receives type-check error in correctionContext",
     );
     assert(
-      receivedContexts[1]?.includes("TS error here"),
+      !!(receivedContexts[1]?.includes("TS error here")),
       "T17-c: retry context contains the actual TS error output",
     );
   }

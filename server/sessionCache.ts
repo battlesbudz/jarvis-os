@@ -60,9 +60,8 @@ export class SessionCache {
   startSweep(sweepIntervalMs = DEFAULT_SWEEP_MS): void {
     if (this.sweepTimer) return;
     this.sweepTimer = setInterval(() => this._sweep(), sweepIntervalMs);
-    if (typeof this.sweepTimer.unref === "function") {
-      this.sweepTimer.unref();
-    }
+    const sweepTimer = this.sweepTimer as unknown as NodeJS.Timeout;
+    if (typeof sweepTimer.unref === "function") sweepTimer.unref();
   }
 
   private _sweep(): void {

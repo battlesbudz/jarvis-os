@@ -48,15 +48,14 @@ export const reviewAgentTaskTool: AgentTool = {
     required: ["job_id", "verdict"],
   },
   async execute(args, ctx) {
-    const a = args as ReviewAgentTaskArgs;
-    const jobId = String(a.job_id ?? "").trim();
-    const verdict = String(a.verdict ?? "").trim();
+    const jobId = String(args.job_id ?? "").trim();
+    const verdict = String(args.verdict ?? "").trim();
 
     if (!jobId) return { ok: false, content: "job_id is required.", label: "Missing job_id" };
     if (!["approved", "revision_needed"].includes(verdict)) {
       return { ok: false, content: "verdict must be 'approved' or 'revision_needed'.", label: "Invalid verdict" };
     }
-    if (verdict === "revision_needed" && !String(a.feedback ?? "").trim()) {
+    if (verdict === "revision_needed" && !String(args.feedback ?? "").trim()) {
       return { ok: false, content: "feedback is required when verdict is revision_needed.", label: "Missing feedback" };
     }
 
@@ -94,7 +93,7 @@ export const reviewAgentTaskTool: AgentTool = {
     }
 
     // revision_needed — spawn a new job with feedback injected
-    const feedback = String(a.feedback ?? "").trim();
+    const feedback = String(args.feedback ?? "").trim();
     const revisionPrompt =
       `## Original Task\n${job.prompt}\n\n` +
       `## Your Previous Output (Iteration ${iterationCount + 1})\n${previousOutput || "(no output recorded)"}\n\n` +

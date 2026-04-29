@@ -33,7 +33,7 @@ const PRE_AUTH_WINDOW_MS = 60_000;
 
 // Periodic cleanup: delete expired rows from DB every 5 minutes to prevent unbounded growth.
 const EVICTION_INTERVAL_MS = 5 * 60 * 1000;
-setInterval(async () => {
+const _mcpEvictTimer = setInterval(async () => {
   const now = Date.now();
   await db.execute(sql`
     DELETE FROM mcp_rate_limits
@@ -42,7 +42,8 @@ setInterval(async () => {
       OR
       (bucket LIKE 'pre-auth:%' AND ${now} - window_start >= ${PRE_AUTH_WINDOW_MS})
   `).catch(() => {});
-}, EVICTION_INTERVAL_MS).unref(); // .unref() so the timer never prevents process exit
+}, EVICTION_INTERVAL_MS);
+if (typeof (_mcpEvictTimer as unknown as NodeJS.Timeout).unref === "function") (_mcpEvictTimer as unknown as NodeJS.Timeout).unref();
 
 // ── Key generation ─────────────────────────────────────────────────────────────
 

@@ -17,6 +17,8 @@ import { submitAgentJob } from "./jobClient";
 
 // ── Slug helpers ──────────────────────────────────────────────────────────────
 
+const _p = (v: string | string[]): string => Array.isArray(v) ? (v[0] ?? "") : v;
+
 function toSlug(name: string): string {
   return name
     .toLowerCase()
@@ -116,7 +118,7 @@ export function registerCustomAgentRoutes(app: Express): void {
       const [agent] = await db
         .select()
         .from(schema.customAgents)
-        .where(and(eq(schema.customAgents.id, req.params.id), eq(schema.customAgents.userId, userId)))
+        .where(and(eq(schema.customAgents.id, _p(req.params.id)), eq(schema.customAgents.userId, userId)))
         .limit(1);
       if (!agent) {
         res.status(404).json({ error: "Custom agent not found" });
@@ -135,7 +137,7 @@ export function registerCustomAgentRoutes(app: Express): void {
       const [existing] = await db
         .select()
         .from(schema.customAgents)
-        .where(and(eq(schema.customAgents.id, req.params.id), eq(schema.customAgents.userId, userId)))
+        .where(and(eq(schema.customAgents.id, _p(req.params.id)), eq(schema.customAgents.userId, userId)))
         .limit(1);
       if (!existing) {
         res.status(404).json({ error: "Custom agent not found" });
@@ -184,7 +186,7 @@ export function registerCustomAgentRoutes(app: Express): void {
       const [updated] = await db
         .update(schema.customAgents)
         .set(patch)
-        .where(eq(schema.customAgents.id, req.params.id))
+        .where(eq(schema.customAgents.id, _p(req.params.id)))
         .returning();
 
       res.json({ agent: updated });
@@ -198,7 +200,7 @@ export function registerCustomAgentRoutes(app: Express): void {
       const [existing] = await db
         .select({ id: schema.customAgents.id })
         .from(schema.customAgents)
-        .where(and(eq(schema.customAgents.id, req.params.id), eq(schema.customAgents.userId, userId)))
+        .where(and(eq(schema.customAgents.id, _p(req.params.id)), eq(schema.customAgents.userId, userId)))
         .limit(1);
       if (!existing) {
         res.status(404).json({ error: "Custom agent not found" });
@@ -206,7 +208,7 @@ export function registerCustomAgentRoutes(app: Express): void {
       }
       await db
         .delete(schema.customAgents)
-        .where(eq(schema.customAgents.id, req.params.id));
+        .where(eq(schema.customAgents.id, _p(req.params.id)));
       res.json({ ok: true });
     } catch (err) { handleError(res, err); }
   });
@@ -220,7 +222,7 @@ export function registerCustomAgentRoutes(app: Express): void {
       const [agent] = await db
         .select()
         .from(schema.customAgents)
-        .where(and(eq(schema.customAgents.id, req.params.id), eq(schema.customAgents.userId, userId)))
+        .where(and(eq(schema.customAgents.id, _p(req.params.id)), eq(schema.customAgents.userId, userId)))
         .limit(1);
       if (!agent) {
         res.status(404).json({ error: "Custom agent not found" });
@@ -257,7 +259,7 @@ export function registerCustomAgentRoutes(app: Express): void {
       const [agent] = await db
         .select()
         .from(schema.customAgents)
-        .where(and(eq(schema.customAgents.slug, req.params.slug), eq(schema.customAgents.userId, userId)))
+        .where(and(eq(schema.customAgents.slug, _p(req.params.slug)), eq(schema.customAgents.userId, userId)))
         .limit(1);
       if (!agent) {
         res.status(404).json({ error: "Custom agent not found" });

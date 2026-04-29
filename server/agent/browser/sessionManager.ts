@@ -80,4 +80,4 @@ const cleanupInterval = setInterval(async () => {
 }, CLEANUP_INTERVAL_MS);
 
 // Don't hold the event loop open in tests
-if (cleanupInterval.unref) cleanupInterval.unref();
+if (typeof (cleanupInterval as unknown as NodeJS.Timeout).unref === "function") (cleanupInterval as unknown as NodeJS.Timeout).unref();

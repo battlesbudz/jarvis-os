@@ -70,7 +70,7 @@ async function getRecentlySurfacedSenders(userId: string, since: Date): Promise<
       and(
         eq(schema.inboxItems.userId, userId),
         inArray(schema.inboxItems.sourceId, sentSourceIds),
-        inArray(schema.inboxItems.sourceType, EMAIL_SOURCE_TYPES)
+        inArray(schema.inboxItems.sourceType, [...EMAIL_SOURCE_TYPES])
       )
     );
 
@@ -179,7 +179,7 @@ export async function runCuriosityScan(): Promise<void> {
       `SELECT pg_try_advisory_lock($1::bigint) AS acquired`,
       [CURIOSITY_SCAN_LOCK_ID]
     );
-    lockAcquired = lockResult.rows[0]?.acquired === true;
+    lockAcquired = (lockResult.rows[0] as { acquired: boolean } | undefined)?.acquired === true;
     if (!lockAcquired) {
       console.log("[Curiosity] Scan already in progress (DB advisory lock held) — skipping concurrent run");
       lockClient.release();

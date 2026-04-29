@@ -1,4 +1,4 @@
-import type { AgentTool } from "../types";
+import type { AgentTool, ToolArgs } from "../types";
 import { db } from "../../db";
 import { discordPendingApprovals } from "@shared/schema";
 
@@ -55,33 +55,34 @@ export const registerApprovalTool: AgentTool = {
     },
     required: ["messageId", "channelId", "type", "content", "onApprove"],
   },
-  async execute(args: {
-    messageId: string;
-    channelId: string;
-    guildId?: string;
-    type: string;
-    content: string;
-    onApprove: Record<string, unknown>;
-    onReject?: Record<string, unknown>;
-  }, ctx) {
+  async execute(args: ToolArgs, ctx) {
     const { userId } = ctx;
+    const typedArgs = args as {
+      messageId: string;
+      channelId: string;
+      guildId?: string;
+      type: string;
+      content: string;
+      onApprove: Record<string, unknown>;
+      onReject?: Record<string, unknown>;
+    };
 
     try {
       await db.insert(discordPendingApprovals).values({
-        messageId: args.messageId,
+        messageId: typedArgs.messageId,
         userId,
-        channelId: args.channelId,
-        guildId: args.guildId,
-        type: args.type,
-        content: args.content,
-        onApprove: args.onApprove,
-        onReject: args.onReject ?? null,
+        channelId: typedArgs.channelId,
+        guildId: typedArgs.guildId,
+        type: typedArgs.type,
+        content: typedArgs.content,
+        onApprove: typedArgs.onApprove,
+        onReject: typedArgs.onReject ?? null,
         status: "pending",
       }).onConflictDoNothing();
 
       return {
         ok: true,
-        content: `Approval registered for message ${args.messageId}. The user can react with ✅ to approve or ❌ to skip.`,
+        content: `Approval registered for message ${typedArgs.messageId}. The user can react with ✅ to approve or ❌ to skip.`,
         label: "Approval registered",
       };
     } catch (err) {

@@ -53,12 +53,12 @@ export async function buildAiContextSections(
   }
 
   try {
-    const rows = await db.execute<PatternRow>(sql`
+    const rows = await db.execute(sql`
       SELECT patterns, summary FROM weekly_insights
       WHERE user_id = ${userId}
       ORDER BY created_at DESC LIMIT 1
     `);
-    const row = rows.rows?.[0];
+    const row = (rows.rows?.[0] ?? null) as PatternRow | null;
     if (row) {
       const patterns: PatternEntry[] = Array.isArray(row.patterns)
         ? (row.patterns as PatternEntry[])

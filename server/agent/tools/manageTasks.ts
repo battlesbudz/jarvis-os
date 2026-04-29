@@ -47,26 +47,19 @@ export const manageTasksTool: AgentTool = {
     const userId = ctx.userId;
     const dateKey: string = ctx.state?.dateKey || new Date().toISOString().slice(0, 10);
 
-    interface ManageTasksArgs {
-      action: string;
-      title?: string;
-      content?: string;
-      due_date?: string;
-      commitment_id?: string;
-    }
-    const a = args as ManageTasksArgs;
+
 
     try {
-      switch (a.action) {
+      switch (String(args.action ?? "")) {
         case "add_plan_task": {
-          if (!a.title) {
+          if (!args.title) {
             return { ok: false, content: "Error: title is required for add_plan_task", label: "Missing title" };
           }
           const todayPlan: AgentPlan | null = ctx.state?.todayPlan ?? null;
           const tasks: AgentPlan["tasks"] = todayPlan?.tasks ? [...todayPlan.tasks] : [];
           const newTask = {
             id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
-            title: a.title,
+            title: String(args.title ?? ""),
             completed: false,
           };
           tasks.push(newTask);
@@ -81,32 +74,32 @@ export const manageTasksTool: AgentTool = {
           if (ctx.state) ctx.state.todayPlan = planData;
           return {
             ok: true,
-            content: `Added "${a.title}" to today's plan. Today now has ${tasks.length} task(s).`,
+            content: `Added "${String(args.title ?? "")}" to today's plan. Today now has ${tasks.length} task(s).`,
             label: "Task added",
-            detail: a.title,
+            detail: String(args.title ?? ""),
           };
         }
 
         case "add_commitment": {
-          if (!a.content) {
+          if (!args.content) {
             return { ok: false, content: "Error: content is required for add_commitment", label: "Missing content" };
           }
           await db.insert(schema.commitments).values({
             userId,
-            content: a.content,
-            dueDate: a.due_date || null,
+            content: String(args.content ?? ""),
+            dueDate: typeof args.due_date === "string" ? args.due_date : null,
             sourceMessage: `Added via ${ctx.channel || "agent"}`,
           });
           return {
             ok: true,
-            content: `Added commitment: "${a.content}"${a.due_date ? ` (due ${a.due_date})` : ""}`,
+            content: `Added commitment: "${String(args.content ?? "")}"${args.due_date ? ` (due ${String(args.due_date)})` : ""}`,
             label: "Commitment added",
-            detail: a.content,
+            detail: String(args.content ?? ""),
           };
         }
 
         case "complete_commitment": {
-          if (!a.commitment_id) {
+          if (!args.commitment_id) {
             return { ok: false, content: "Error: commitment_id is required for complete_commitment", label: "Missing id" };
           }
           const updated = await db
@@ -114,7 +107,7 @@ export const manageTasksTool: AgentTool = {
             .set({ status: "done", resolvedAt: new Date() })
             .where(
               and(
-                eq(schema.commitments.id, a.commitment_id),
+                eq(schema.commitments.id, String(args.commitment_id ?? "")),
                 eq(schema.commitments.userId, userId),
                 eq(schema.commitments.status, "pending")
               )
@@ -123,15 +116,15 @@ export const manageTasksTool: AgentTool = {
           if (updated.length === 0) {
             return {
               ok: false,
-              content: `No pending commitment found with id "${a.commitment_id}".`,
+              content: `No pending commitment found with id "${String(args.commitment_id ?? "")}".`,
               label: "Commitment not found",
             };
           }
           return {
             ok: true,
-            content: `Marked commitment as done (id: ${a.commitment_id}).`,
+            content: `Marked commitment as done (id: ${String(args.commitment_id ?? "")}).`,
             label: "Commitment completed",
-            detail: a.commitment_id,
+            detail: String(args.commitment_id ?? ""),
           };
         }
 
@@ -189,7 +182,7 @@ export const manageTasksTool: AgentTool = {
         }
 
         default:
-          return { ok: false, content: `Unknown action: ${a.action}`, label: "Unknown action" };
+          return { ok: false, content: `Unknown action: ${String(args.action ?? "")}`, label: "Unknown action" };
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

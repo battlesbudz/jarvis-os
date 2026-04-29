@@ -611,6 +611,7 @@ export const NOTIFICATION_TYPES = [
   "general",
   "self_repair",
   "scheduled_task_result",
+  "github_ci_alert",
 ] as const;
 export type NotificationType = typeof NOTIFICATION_TYPES[number];
 

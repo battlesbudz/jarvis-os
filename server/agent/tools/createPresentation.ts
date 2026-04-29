@@ -41,7 +41,7 @@ async function outlineToPptxBuffer(outline: PresentationOutline): Promise<Buffer
   titleSlide.background = { color: COLORS.navy };
 
   // Accent bar
-  titleSlide.addShape(pres.shapes.RECTANGLE, {
+  titleSlide.addShape(pres.ShapeType.rect, {
     x: 0, y: 4.5, w: 10, h: 1.125,
     fill: { color: COLORS.accent },
     line: { color: COLORS.accent },
@@ -84,7 +84,7 @@ async function outlineToPptxBuffer(outline: PresentationOutline): Promise<Buffer
     s.background = { color: COLORS.offWhite };
 
     // Header bar
-    s.addShape(pres.shapes.RECTANGLE, {
+    s.addShape(pres.ShapeType.rect, {
       x: 0, y: 0, w: 10, h: 1.0,
       fill: { color: COLORS.navy },
       line: { color: COLORS.navy },
@@ -144,7 +144,7 @@ async function outlineToPptxBuffer(outline: PresentationOutline): Promise<Buffer
   const outro = pres.addSlide();
   outro.background = { color: COLORS.navy };
 
-  outro.addShape(pres.shapes.RECTANGLE, {
+  outro.addShape(pres.ShapeType.rect, {
     x: 0, y: 2.4, w: 10, h: 0.08,
     fill: { color: COLORS.accent },
     line: { color: COLORS.accent },

@@ -150,7 +150,7 @@ export async function retrieveRelevantMemories(
   // Excludes memories where expires_at IS NOT NULL AND expires_at < NOW().
   let rows: { rows: MemoryRow[] };
   try {
-    rows = await db.execute<MemoryRow>(sql`
+    const rawRows = await db.execute(sql`
       SELECT id, content, category, tier, memory_type, relevance_score, confidence, access_count, embedding, extracted_at,
              ts_rank(to_tsvector('english', content), plainto_tsquery('english', ${q})) AS fts_rank
       FROM user_memories
@@ -160,6 +160,7 @@ export async function retrieveRelevantMemories(
       ORDER BY fts_rank DESC NULLS LAST, relevance_score DESC
       LIMIT 60
     `);
+    rows = { rows: (rawRows.rows ?? []) as MemoryRow[] };
     diagEmit({
       userId,
       subsystem: "memory",

@@ -28,9 +28,9 @@ contextRegistry.register(
         .where(and(eq(channelLinks.userId, input.userId), eq(channelLinks.channel, "discord")))
         .limit(1);
 
-      if (!link?.meta) return;
+      if (!link?.metadata) return;
 
-      const workspace = (link.meta as { workspace?: WorkspaceMeta }).workspace;
+      const workspace = (link.metadata as { workspace?: WorkspaceMeta }).workspace;
       if (!workspace) return;
 
       const topic = getTopicForChannel(workspace, input.channelId);

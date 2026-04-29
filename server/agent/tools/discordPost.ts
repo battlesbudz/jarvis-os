@@ -1,4 +1,4 @@
-import type { AgentTool } from "../types";
+import type { AgentTool, ToolArgs } from "../types";
 import { postToDiscordWorkspace, classifyTopic, WORKSPACE_TOPICS } from "../../discord/manager";
 import { consumeConfirmToken } from "../discordConfirmStore";
 
@@ -35,7 +35,8 @@ export const discordPostTool: AgentTool = {
     },
     required: ["message"],
   },
-  async execute(args: { message: string; topic?: string }, ctx) {
+  async execute(args: ToolArgs, ctx) {
+    const { message, topic } = args as { message: string; topic?: string };
     const { userId } = ctx;
 
     if (!await consumeConfirmToken(userId, "post")) {
@@ -48,10 +49,10 @@ export const discordPostTool: AgentTool = {
       };
     }
 
-    const topicKey = args.topic ?? classifyTopic(args.message);
+    const topicKey = topic ?? classifyTopic(message);
     const topicMeta = WORKSPACE_TOPICS.find((t) => t.key === topicKey);
 
-    const posted = await postToDiscordWorkspace(userId, topicKey, args.message);
+    const posted = await postToDiscordWorkspace(userId, topicKey, message);
 
     if (!posted) {
       return {

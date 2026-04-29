@@ -89,7 +89,7 @@ ANDROID actions (available when an Android device daemon is paired):
 - android_read_screen: return the visible text and UI element tree via accessibility.
   Call this immediately after any navigation (android_browse, android_open_app) and after every scroll to understand what is currently on screen before acting.
 - android_tap: tap at x/y pixel coordinates on the screen. Use android_read_screen first to identify the correct coordinates of the element you want to tap.
-- android_type: type text using the accessibility service. After typing a search query into a search bar, always follow immediately with `android_press_key` {key: 'enter'} to submit — do not wait for results to appear on their own. Alternatively, use `android_search_in_app` which handles the full open → type → submit flow automatically.
+- android_type: type text using the accessibility service. After typing a search query into a search bar, always follow immediately with \`android_press_key\` {key: \'enter\'} to submit — do not wait for results to appear on their own. Alternatively, use \`android_search_in_app\` which handles the full open → type → submit flow automatically.
 - android_swipe: swipe from (x1,y1) to (x2,y2). For scrolling DOWN (reveal content below): x1=540, y1=1600, x2=540, y2=400, durationMs=500. For scrolling UP (reveal content above): x1=540, y1=400, x2=540, y2=1600, durationMs=500. Always call android_read_screen after each swipe to check what became visible before deciding to scroll again.
 - android_press_key: press a system key — "back", "home", "recents", "volume_up", "volume_down"
 - android_file_list: list files in any path on the device (gallery, downloads, any folder)

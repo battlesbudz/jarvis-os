@@ -1726,7 +1726,7 @@ export default function ProfileScreen() {
     setConnectingId('telegram');
     try {
       await apiRequest('DELETE', '/api/telegram/disconnect');
-      setTelegramStatus({ connected: false, username: null, configured: true });
+      setTelegramStatus({ connected: false, username: null, configured: true, webhookHealthy: null, webhookLastChecked: null });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (e) {
       console.error('Telegram disconnect error:', e);
@@ -3296,7 +3296,7 @@ export default function ProfileScreen() {
                 )}
                 {((channelData.meta?.discord as any)?.allowlistedGuilds || []).map((g: any) => (
                   <View key={`${g.guildId}-${g.channelId}`} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 6, gap: 8 }}>
-                    <Ionicons name="hash" size={14} color={Colors.textSecondary} />
+                    <Ionicons name="grid-outline" size={14} color={Colors.textSecondary} />
                     <View style={{ flex: 1 }}>
                       <Text style={{ fontSize: 12, fontFamily: 'Inter_500Medium', color: Colors.text }}>
                         {g.channelName} <Text style={{ color: Colors.textSecondary }}>in {g.guildName}</Text>

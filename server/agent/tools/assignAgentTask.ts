@@ -52,9 +52,8 @@ export const assignAgentTaskTool: AgentTool = {
     required: ["agent_id", "task"],
   },
   async execute(args, ctx) {
-    const a = args as AssignAgentTaskArgs;
-    const agentId = String(a.agent_id ?? "").trim();
-    const task = String(a.task ?? "").trim();
+    const agentId = String(args.agent_id ?? "").trim();
+    const task = String(args.task ?? "").trim();
 
     if (!agentId) return { ok: false, content: "agent_id is required.", label: "Missing agent_id" };
     if (!task) return { ok: false, content: "task is required.", label: "Missing task" };
@@ -65,11 +64,11 @@ export const assignAgentTaskTool: AgentTool = {
     if (agent.userId !== ctx.userId) return { ok: false, content: "Agent does not belong to you.", label: "Permission denied" };
     if (!agent.isActive) return { ok: false, content: `Agent ${agent.name} is disabled. Enable it first.`, label: "Agent disabled" };
 
-    const prompt = a.context
-      ? `## Context\n${a.context.trim()}\n\n## Task\n${task}`
+    const prompt = args.context
+      ? `## Context\n${String(args.context).trim()}\n\n## Task\n${task}`
       : task;
 
-    const title = String(a.title ?? "").trim() || `${agent.name}: ${task.slice(0, 60)}${task.length > 60 ? "…" : ""}`;
+    const title = String(args.title ?? "").trim() || `${agent.name}: ${task.slice(0, 60)}${task.length > 60 ? "…" : ""}`;
 
     const { id: jobId } = await submitAgentJob({
       userId: ctx.userId,

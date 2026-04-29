@@ -1017,8 +1017,8 @@ async function processUpdate(update: any): Promise<void> {
             const agents = await listAgents(userId, true);
             const agent = agents.find((a) => a.name.toLowerCase() === name.toLowerCase());
             if (!agent || !perm) { await sendMessage(chatId, "Usage: /agent set-permission <name> <perm> on|off"); return; }
-            const currentPerms = (agent.permissions as Record<string, boolean>) ?? {};
-            await updateAgent(agent.id, { permissions: { ...currentPerms, [perm]: enabled } });
+            const currentPerms = { ...(agent.permissions ?? schema.DEFAULT_AGENT_PERMISSIONS) };
+            await updateAgent(agent.id, { permissions: { ...currentPerms, [perm]: enabled } as schema.AgentPermissions });
             await sendMessage(chatId, `✅ Permission \`${perm}\` for *${name}* set to *${enabled ? "ON" : "OFF"}*`, { parse_mode: "Markdown" });
             return;
           }

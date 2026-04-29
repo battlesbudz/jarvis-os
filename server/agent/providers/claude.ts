@@ -66,8 +66,8 @@ function toAgentMessage(m: OAIMessage): AgentChatMessage {
   return {
     role: m.role as AgentChatMessage["role"],
     content: typeof m.content === "string" ? m.content : null,
-    tool_calls: (m as any).tool_calls,
-    tool_call_id: (m as any).tool_call_id,
+    tool_calls: "tool_calls" in m ? (m as OpenAI.Chat.Completions.ChatCompletionAssistantMessageParam).tool_calls as AgentChatMessage["tool_calls"] : undefined,
+    tool_call_id: "tool_call_id" in m ? (m as OpenAI.Chat.Completions.ChatCompletionToolMessageParam).tool_call_id : undefined,
   };
 }
 

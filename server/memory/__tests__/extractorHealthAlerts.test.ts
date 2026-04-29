@@ -206,7 +206,7 @@ async function cleanup(): Promise<void> {
  * to simulate a degraded memory subsystem for a given user.
  * Returns the inserted row's id.
  */
-async function insertDegradedEvent(userId: string): Promise<number> {
+async function insertDegradedEvent(userId: string): Promise<string> {
   const rows = await db
     .insert(schema.diagnosticEvents)
     .values({

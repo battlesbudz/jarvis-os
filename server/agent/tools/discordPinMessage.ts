@@ -1,4 +1,4 @@
-import type { AgentTool } from "../types";
+import type { AgentTool, ToolArgs } from "../types";
 import { pinDiscordMessage } from "../../discord/manager";
 
 export const discordPinMessageTool: AgentTool = {
@@ -22,9 +22,10 @@ export const discordPinMessageTool: AgentTool = {
     },
     required: ["channelId", "messageId"],
   },
-  async execute(args: { channelId: string; messageId: string }, ctx) {
+  async execute(args: ToolArgs, ctx) {
+    const { channelId, messageId } = args as { channelId: string; messageId: string };
     const { userId } = ctx;
-    const pinned = await pinDiscordMessage(userId, args.channelId, args.messageId);
+    const pinned = await pinDiscordMessage(userId, channelId, messageId);
 
     if (!pinned) {
       return {
@@ -36,7 +37,7 @@ export const discordPinMessageTool: AgentTool = {
 
     return {
       ok: true,
-      content: `Message ${args.messageId} has been pinned in the channel.`,
+      content: `Message ${messageId} has been pinned in the channel.`,
       label: "Message pinned",
     };
   },

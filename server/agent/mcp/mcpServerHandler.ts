@@ -64,6 +64,7 @@ const MCP_TOOL_GROUPS: ToolGroup[] = [
  * represent the owner-user, who has full access to their own Jarvis tools.
  */
 const ALL_PERMISSIONS: AgentPermissions = {
+  can_run_code: true,
   can_search_web: true,
   can_use_browser: true,
   can_send_emails: true,
@@ -214,7 +215,7 @@ async function buildPermittedTools(userId: string): Promise<AgentTool[]> {
   let hasGoogle = false;
   try {
     const { getValidGoogleToken } = await import("../../userTokenStore");
-    const tok = await getValidGoogleToken(userId, "calendar");
+    const tok = await getValidGoogleToken(userId);
     hasGoogle = !!tok;
   } catch {
     hasGoogle = false;
@@ -234,7 +235,7 @@ async function buildToolContext(
   let googleAccessToken: string | null = null;
   try {
     const { getValidGoogleToken } = await import("../../userTokenStore");
-    googleAccessToken = await getValidGoogleToken(userId, "calendar");
+    googleAccessToken = await getValidGoogleToken(userId);
   } catch {
     // Google not connected — Google-gated tools already excluded from permittedTools
   }
