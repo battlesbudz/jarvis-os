@@ -3664,8 +3664,8 @@ export const androidSelectOptionTool: AgentTool = {
 
 Handles the two-step interaction that dropdown/spinner controls require: tapping to open the list, waiting for the list to appear, then tapping the desired option.
 
-Step 1 — Open dropdown: Fuzzy-matches \`label\` against the current ScreenMap and taps the matching element (same ScreenMap logic as android_tap_element).
-Step 2 — Pick option: Waits 500 ms (configurable via wait_ms) for the list to appear, captures a fresh ScreenMap, fuzzy-matches \`option\` against the new elements, and taps the best match.
+Step 1 — Open dropdown: Fuzzy-matches \`label\` against the current ScreenMap and taps the matching element. If the dropdown control is not visible on the initial screen, the tool automatically scrolls down (up to max_scroll_attempts times) and re-reads the screen after each scroll until the element appears or the scroll limit is reached.
+Step 2 — Pick option: Waits 500 ms (configurable via wait_ms) for the list to appear, captures a fresh ScreenMap, fuzzy-matches \`option\` against the new elements, and taps the best match. If the option is not visible on the initial screen, the tool also scrolls within the open list to find it.
 
 Use this tool instead of manually calling android_tap_element twice for dropdown interactions:
 - "select 'Monthly' from the billing period dropdown"
@@ -3673,7 +3673,7 @@ Use this tool instead of manually calling android_tap_element twice for dropdown
 - "pick 'USA' from the country selector"
 - "set the sort order to 'Newest first'"
 
-Returns the matched dropdown element, the matched option element, and both match scores.
+Returns the matched dropdown element, the matched option element, both match scores, plus dropdown_scrolls_performed (scrolls used to find the dropdown control) and option_scrolls_performed (scrolls used to find the option inside the list).
 
 Requires: android_screenshot and android_read_screen permissions (same as android_screen_understand), plus android_tap_type permission for the tap actions.`,
   parameters: {
@@ -3690,6 +3690,14 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       wait_ms: {
         type: "number",
         description: "Milliseconds to wait after tapping the dropdown before reading the new screen (default 500). Increase for slow-loading lists.",
+      },
+      max_scroll_attempts: {
+        type: "number",
+        description: "Maximum number of downward scroll passes to perform when the dropdown label or option is not visible on the initial screen (default 5). Set to 0 to disable automatic scrolling.",
+      },
+      scroll_distance: {
+        type: "number",
+        description: "Pixel distance for each scroll swipe when searching for the option (default 600). Larger values scroll further per swipe.",
       },
     },
     required: ["label", "option"],
@@ -3740,7 +3748,13 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       };
     }
 
-    // ── Step 1: Resolve ScreenMap, fuzzy-match the dropdown, tap it ───────────
+    // Parse scroll params (shared by Step 1 and Step 3)
+    const rawMaxScrollAttempts = typeof args.max_scroll_attempts === "number" ? args.max_scroll_attempts : 5;
+    const maxScrollAttempts = Number.isFinite(rawMaxScrollAttempts) ? Math.max(0, Math.floor(rawMaxScrollAttempts)) : 5;
+    const rawScrollDistance = typeof args.scroll_distance === "number" ? args.scroll_distance : 600;
+    const scrollDistance = Number.isFinite(rawScrollDistance) ? Math.min(Math.max(100, Math.floor(rawScrollDistance)), 1800) : 600;
+
+    // ── Step 1: Resolve ScreenMap, fuzzy-match the dropdown, scroll if needed ──
     const buildResult = await buildScreenMapElements(ctx.userId);
     if (!buildResult.ok) {
       return { ok: false, content: buildResult.content, label: `android_select_option: ${buildResult.label}` };
@@ -3748,24 +3762,113 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
 
     let dropdownBest: ScreenElement | null = null;
     let dropdownScore = 0;
-    for (const el of buildResult.elements) {
+    let dropdownElements: ScreenElement[] = buildResult.elements;
+    let scrollsPerformed = 0;
+
+    for (const el of dropdownElements) {
       const score = scoreElement(el, label);
       if (score > dropdownScore) { dropdownScore = score; dropdownBest = el; }
     }
 
+    // ── Scroll-to-find: swipe down the page until the dropdown label appears ───
+    if ((!dropdownBest || dropdownScore === 0) && maxScrollAttempts > 0) {
+      for (let scroll = 0; scroll < maxScrollAttempts; scroll++) {
+        console.log(`[android_select_option] dropdown not found, scrolling down (pass ${scroll + 1}/${maxScrollAttempts})`);
+
+        // Pre-scroll fingerprint for no-op detection (hierarchy fallback)
+        const preScrollFingerprint: string = dropdownElements
+          .map((el) => `${el.label}:${el.center_x}:${el.center_y}`)
+          .sort()
+          .join("|");
+
+        // Pre-scroll screenshot for no-op detection (screenshot path)
+        const preScrollScreenshot: string | null = await captureScreenshot(ctx.userId);
+
+        // Swipe upward (y1 > y2) to scroll the page down
+        const screenMidX = 540;
+        const swipeY1 = 1400;
+        const swipeY2 = Math.max(100, swipeY1 - scrollDistance);
+        const swipeResult = await sendDaemonOp(
+          ctx.userId,
+          { type: "android_swipe", x1: screenMidX, y1: swipeY1, x2: screenMidX, y2: swipeY2, durationMs: 400 },
+          10000,
+        );
+        if (!swipeResult.ok) {
+          console.log(`[android_select_option] swipe failed on pass ${scroll + 1}: ${swipeResult.error}`);
+          break;
+        }
+
+        scrollsPerformed = scroll + 1;
+
+        // Brief pause so the page settles before re-reading
+        await new Promise((resolve) => setTimeout(resolve, 500));
+
+        // ── No-op scroll detection — screenshot path ──────────────────────
+        let screenshotCheckConclusive = false;
+        if (preScrollScreenshot) {
+          const postScrollScreenshot = await captureScreenshot(ctx.userId);
+          if (postScrollScreenshot) {
+            screenshotCheckConclusive = true;
+            const diffRatio = await screenshotDiff(preScrollScreenshot, postScrollScreenshot).catch(() => 1);
+            if (diffRatio < 0.02) {
+              console.log(
+                `[android_select_option] no-op scroll detected (diff=${diffRatio.toFixed(4)}) on pass ${scroll + 1} — already at bottom, stopping early`,
+              );
+              break;
+            }
+          }
+        }
+
+        const refreshed = await buildScreenMapElements(ctx.userId);
+        if (!refreshed.ok) break;
+
+        // ── No-op scroll detection — hierarchy fallback ────────────────────
+        const needsHierarchyCheck = !preScrollScreenshot || !screenshotCheckConclusive;
+        if (needsHierarchyCheck && preScrollFingerprint.length > 0) {
+          const postFingerprint = refreshed.elements
+            .map((el) => `${el.label}:${el.center_x}:${el.center_y}`)
+            .sort()
+            .join("|");
+          if (postFingerprint === preScrollFingerprint) {
+            console.log(
+              `[android_select_option] no-op scroll detected (hierarchy unchanged) on pass ${scroll + 1} — already at bottom, stopping early`,
+            );
+            dropdownElements = refreshed.elements;
+            break;
+          }
+        }
+
+        dropdownBest = null;
+        dropdownScore = 0;
+        for (const el of refreshed.elements) {
+          const score = scoreElement(el, label);
+          if (score > dropdownScore) { dropdownScore = score; dropdownBest = el; }
+        }
+        dropdownElements = refreshed.elements;
+
+        if (dropdownBest && dropdownScore > 0) {
+          console.log(`[android_select_option] found dropdown "${label}" after ${scrollsPerformed} scroll(s), score=${dropdownScore}`);
+          break;
+        }
+      }
+    }
+
     if (!dropdownBest || dropdownScore === 0) {
-      const elementList = buildResult.elements
+      const elementList = dropdownElements
         .map((el) => `  • ${el.label}${el.description ? ` — ${el.description}` : ""}`)
         .join("\n");
+      const scrollNote = maxScrollAttempts > 0
+        ? ` Scrolled ${scrollsPerformed} time(s) looking for it.`
+        : "";
       return {
         ok: false,
-        content: `No dropdown matching "${label}" was found on screen.\n\nAvailable elements:\n${elementList || "  (none)"}`,
+        content: `No dropdown matching "${label}" was found on screen.${scrollNote}\n\nAvailable elements:\n${elementList || "  (none)"}`,
         label: `android_select_option: no dropdown match for "${label}"`,
       };
     }
 
     const dropdownDesc = dropdownBest.label || dropdownBest.description || label;
-    console.log(`[android_select_option] userId=${ctx.userId} tapping dropdown "${dropdownDesc}" at (${dropdownBest.center_x},${dropdownBest.center_y}) score=${dropdownScore}`);
+    console.log(`[android_select_option] userId=${ctx.userId} tapping dropdown "${dropdownDesc}" at (${dropdownBest.center_x},${dropdownBest.center_y}) score=${dropdownScore} scrolls=${scrollsPerformed}`);
 
     const tapDropdownResult = await sendDaemonOp(
       ctx.userId,
@@ -3779,6 +3882,8 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
           ok: false,
           dropdown: dropdownDesc,
           dropdown_score: dropdownScore,
+          scrolls_performed: scrollsPerformed,
+          dropdown_scrolls_performed: scrollsPerformed,
           error: `Failed to tap dropdown: ${tapDropdownResult.error || "unknown error"}`,
         }),
         label: `android_select_option: tap dropdown failed for "${dropdownDesc}"`,
@@ -3800,24 +3905,116 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
           dropdown: dropdownDesc,
           dropdown_score: dropdownScore,
           dropdown_tapped: true,
+          scrolls_performed: scrollsPerformed,
+          dropdown_scrolls_performed: scrollsPerformed,
           error: `Dropdown opened but failed to read new screen: ${freshBuild.content}`,
         }),
         label: `android_select_option: screen read failed after opening dropdown`,
       };
     }
 
-    // ── Step 3: Fuzzy-match the option and tap it ─────────────────────────────
+    // ── Step 3: Fuzzy-match the option, scroll-to-find if needed ─────────────
+    let optionScrollsPerformed = 0;
+
     let optionBest: ScreenElement | null = null;
     let optionScore = 0;
-    for (const el of freshBuild.elements) {
+    let optionElements: ScreenElement[] = freshBuild.elements;
+
+    for (const el of optionElements) {
       const score = scoreElement(el, option);
       if (score > optionScore) { optionScore = score; optionBest = el; }
     }
 
+    // ── Scroll-to-find: swipe down the dropdown until the option appears ──────
+    if ((!optionBest || optionScore === 0) && maxScrollAttempts > 0) {
+      for (let scroll = 0; scroll < maxScrollAttempts; scroll++) {
+        console.log(`[android_select_option] option not found, scrolling down (pass ${scroll + 1}/${maxScrollAttempts})`);
+
+        // Pre-scroll fingerprint for no-op detection (hierarchy fallback)
+        const preScrollFingerprint: string = optionElements
+          .map((el) => `${el.label}:${el.center_x}:${el.center_y}`)
+          .sort()
+          .join("|");
+
+        // Pre-scroll screenshot for no-op detection (screenshot path)
+        const preScrollScreenshot: string | null = await captureScreenshot(ctx.userId);
+
+        // Swipe upward (y1 > y2) to scroll the dropdown list down
+        const screenMidX = 540;
+        const swipeY1 = 1400;
+        const swipeY2 = Math.max(100, swipeY1 - scrollDistance);
+        const swipeResult = await sendDaemonOp(
+          ctx.userId,
+          { type: "android_swipe", x1: screenMidX, y1: swipeY1, x2: screenMidX, y2: swipeY2, durationMs: 400 },
+          10000,
+        );
+        if (!swipeResult.ok) {
+          console.log(`[android_select_option] swipe failed on pass ${scroll + 1}: ${swipeResult.error}`);
+          break;
+        }
+
+        optionScrollsPerformed = scroll + 1;
+
+        // Brief pause so the list settles before re-reading
+        await new Promise((resolve) => setTimeout(resolve, 500));
+
+        // ── No-op scroll detection — screenshot path ──────────────────────
+        let screenshotCheckConclusive = false;
+        if (preScrollScreenshot) {
+          const postScrollScreenshot = await captureScreenshot(ctx.userId);
+          if (postScrollScreenshot) {
+            screenshotCheckConclusive = true;
+            const diffRatio = await screenshotDiff(preScrollScreenshot, postScrollScreenshot).catch(() => 1);
+            if (diffRatio < 0.02) {
+              console.log(
+                `[android_select_option] no-op scroll detected (diff=${diffRatio.toFixed(4)}) on pass ${scroll + 1} — already at bottom, stopping early`,
+              );
+              break;
+            }
+          }
+        }
+
+        const refreshed = await buildScreenMapElements(ctx.userId);
+        if (!refreshed.ok) break;
+
+        // ── No-op scroll detection — hierarchy fallback ────────────────────
+        const needsHierarchyCheck = !preScrollScreenshot || !screenshotCheckConclusive;
+        if (needsHierarchyCheck && preScrollFingerprint.length > 0) {
+          const postFingerprint = refreshed.elements
+            .map((el) => `${el.label}:${el.center_x}:${el.center_y}`)
+            .sort()
+            .join("|");
+          if (postFingerprint === preScrollFingerprint) {
+            console.log(
+              `[android_select_option] no-op scroll detected (hierarchy unchanged) on pass ${scroll + 1} — already at bottom, stopping early`,
+            );
+            optionElements = refreshed.elements;
+            break;
+          }
+        }
+
+        optionBest = null;
+        optionScore = 0;
+        for (const el of refreshed.elements) {
+          const score = scoreElement(el, option);
+          if (score > optionScore) { optionScore = score; optionBest = el; }
+        }
+        optionElements = refreshed.elements;
+
+        if (optionBest && optionScore > 0) {
+          console.log(`[android_select_option] found option "${option}" after ${optionScrollsPerformed} scroll(s), score=${optionScore}`);
+          break;
+        }
+      }
+    }
+
     if (!optionBest || optionScore === 0) {
-      const elementList = freshBuild.elements
+      const elementList = optionElements
         .map((el) => `  • ${el.label}${el.description ? ` — ${el.description}` : ""}`)
         .join("\n");
+      const scrollNote = maxScrollAttempts > 0
+        ? ` Scrolled ${optionScrollsPerformed} time(s) looking for it.`
+        : "";
       return {
         ok: false,
         content: JSON.stringify({
@@ -3825,14 +4022,17 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
           dropdown: dropdownDesc,
           dropdown_score: dropdownScore,
           dropdown_tapped: true,
-          error: `Dropdown "${dropdownDesc}" was opened but no option matching "${option}" was found.\n\nVisible options:\n${elementList || "  (none)"}`,
+          scrolls_performed: scrollsPerformed,
+          dropdown_scrolls_performed: scrollsPerformed,
+          option_scrolls_performed: optionScrollsPerformed,
+          error: `Dropdown "${dropdownDesc}" was opened but no option matching "${option}" was found.${scrollNote}\n\nVisible options:\n${elementList || "  (none)"}`,
         }),
         label: `android_select_option: no option match for "${option}" in "${dropdownDesc}"`,
       };
     }
 
     const optionDesc = optionBest.label || optionBest.description || option;
-    console.log(`[android_select_option] userId=${ctx.userId} tapping option "${optionDesc}" at (${optionBest.center_x},${optionBest.center_y}) score=${optionScore}`);
+    console.log(`[android_select_option] userId=${ctx.userId} tapping option "${optionDesc}" at (${optionBest.center_x},${optionBest.center_y}) score=${optionScore} dropdown_scrolls=${scrollsPerformed} option_scrolls=${optionScrollsPerformed}`);
 
     const tapOptionResult = await sendDaemonOp(
       ctx.userId,
@@ -3847,6 +4047,9 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
           dropdown: dropdownDesc,
           dropdown_score: dropdownScore,
           dropdown_tapped: true,
+          scrolls_performed: scrollsPerformed,
+          dropdown_scrolls_performed: scrollsPerformed,
+          option_scrolls_performed: optionScrollsPerformed,
           option: optionDesc,
           option_score: optionScore,
           error: `Option "${optionDesc}" found but tap failed: ${tapOptionResult.error || "unknown error"}`,
@@ -3855,7 +4058,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       };
     }
 
-    console.log(`[android_select_option] userId=${ctx.userId} selected "${optionDesc}" from "${dropdownDesc}" dropdown_score=${dropdownScore} option_score=${optionScore}`);
+    console.log(`[android_select_option] userId=${ctx.userId} selected "${optionDesc}" from "${dropdownDesc}" dropdown_score=${dropdownScore} option_score=${optionScore} dropdown_scrolls=${scrollsPerformed} option_scrolls=${optionScrollsPerformed}`);
 
     return {
       ok: true,
@@ -3876,9 +4079,12 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
           center_y: optionBest.center_y,
           match_score: optionScore,
         },
+        scrolls_performed: scrollsPerformed,
+        dropdown_scrolls_performed: scrollsPerformed,
+        option_scrolls_performed: optionScrollsPerformed,
       }),
       label: `Selected "${optionDesc}" from "${dropdownDesc}"`,
-      detail: `dropdown_score=${dropdownScore} option_score=${optionScore}`,
+      detail: `dropdown_score=${dropdownScore} option_score=${optionScore} dropdown_scrolls=${scrollsPerformed} option_scrolls=${optionScrollsPerformed}`,
     };
   },
 };
