@@ -951,6 +951,8 @@ export async function ensureTablesExist() {
     await db.execute(sql`ALTER TABLE jarvis_scheduled_tasks ADD COLUMN IF NOT EXISTS last_shell_result JSONB`).catch(() => {});
     // Atomic claim column — prevents duplicate execution when tasks take >1 scheduler tick
     await db.execute(sql`ALTER TABLE jarvis_scheduled_tasks ADD COLUMN IF NOT EXISTS in_progress_at TIMESTAMP`).catch(() => {});
+    // Pause/resume support — active=false skips a task in the scheduler
+    await db.execute(sql`ALTER TABLE jarvis_scheduled_tasks ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT true`).catch(() => {});
 
     // ── Prediction Engine (Task #156) ─────────────────────────────────────────
     await db.execute(sql`

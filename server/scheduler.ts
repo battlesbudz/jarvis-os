@@ -372,6 +372,7 @@ async function runDueScheduledTasks(now: Date): Promise<void> {
         and(
           lte(schema.jarvisScheduledTasks.scheduledAt, now),
           isNull(schema.jarvisScheduledTasks.completedAt),
+          eq(schema.jarvisScheduledTasks.active, true),
           or(
             isNull(schema.jarvisScheduledTasks.inProgressAt),
             lt(schema.jarvisScheduledTasks.inProgressAt, staleThreshold),

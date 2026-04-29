@@ -440,6 +440,7 @@ export const jarvisScheduledTasks = pgTable("jarvis_scheduled_tasks", {
   shellCommand: text("shell_command"),
   lastShellResult: jsonb("last_shell_result").$type<{ exitCode: number; stdout: string; stderr: string; durationMs: number; ranAt: string } | null>(),
   inProgressAt: timestamp("in_progress_at"),
+  active: boolean("active").notNull().default(true),
 });
 
 // ── Workflow Engine ────────────────────────────────────────────────────────────

@@ -74,7 +74,7 @@ export const scheduleJarvisTaskTool: AgentTool = {
 
       return {
         ok: true,
-        content: `Scheduled: "${title}" for ${when}${a.recurrence ? ` (${a.recurrence})` : ""}. It will appear in your Mission Control calendar.`,
+        content: `Scheduled: "${title}" for ${when}${a.recurrence ? ` (${a.recurrence})` : ""}.\n\n[View in Scheduled Tasks →](gameplan://scheduled)`,
         label: `Scheduled: ${title}`,
         detail: JSON.stringify({ id: task.id, title, scheduledAt: task.scheduledAt }),
       };

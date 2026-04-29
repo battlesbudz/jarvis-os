@@ -334,7 +334,7 @@ export const cronCreateTool: AgentTool = {
 
       return {
         ok: true,
-        content: `Scheduled "${title}" for ${when}${recurrence ? ` (repeats: ${recurrence})` : ""}.${shellNote}\nJob ID: ${task.id}`,
+        content: `Scheduled "${title}" for ${when}${recurrence ? ` (repeats: ${recurrence})` : ""}.${shellNote}\nJob ID: ${task.id}\n\n[View in Scheduled Tasks →](gameplan://scheduled)`,
         label: `Scheduled: ${title}`,
         detail: JSON.stringify({ id: task.id, scheduledAt: task.scheduledAt }),
       };
