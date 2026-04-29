@@ -124,6 +124,7 @@ import { selfHealTool } from "./selfHealTool";
 import { workspaceUpdateTool } from "./workspaceUpdateTool";
 import { listCustomAgentsTool } from "./listCustomAgents";
 import { runTournamentTool } from "./runTournamentTool";
+import { listGithubPrsTool, getGithubPrTool, mergeGithubPrTool } from "./githubPrTools";
 
 // ── Tool Groups ────────────────────────────────────────────────────────────────
 // Each group represents a functional capability cluster. Channels declare which
@@ -352,11 +353,8 @@ export {
   selfHealTool,
   workspaceUpdateTool,
   listCustomAgentsTool,
-<<<<<<< HEAD
   runTournamentTool,
-=======
   listGithubPrsTool,
   getGithubPrTool,
   mergeGithubPrTool,
->>>>>>> 9cd6ce7 (feat: GitHub PR dashboard — PAT settings, agent tools, Telegram /pr command, CI alert scanner)
 };

@@ -274,6 +274,7 @@ export default function ProfileScreen() {
   const [expandedInsightMemoryId, setExpandedInsightMemoryId] = useState<string | null>(null);
   const [insightMemoriesCache, setInsightMemoriesCache] = useState<Record<string, { id: string; content: string; category: string; confidence: number }[]>>({});
   const [dreamEnabled, setDreamEnabled] = useState(true);
+  const [memoryReviewEnabled, setMemoryReviewEnabled] = useState(true);
   const [timezone, setTimezone] = useState('America/New_York');
   const [showTimezoneModal, setShowTimezoneModal] = useState(false);
   const [emailAlertsEnabled, setEmailAlertsEnabled] = useState(true);
@@ -940,6 +941,9 @@ export default function ProfileScreen() {
     ]);
     setStats(s);
     setLifeContext(lc);
+    if (lc && typeof lc.memoryReviewEnabled === 'boolean') {
+      setMemoryReviewEnabled(lc.memoryReviewEnabled);
+    }
     setNotificationsEnabledState(notifications);
     setUserName(name);
     await Promise.all([loadOAuthStatus(), loadMemories(), loadTelegramStatus(), loadMorningNotes(), loadDocuments(), loadSoul(), loadPeople(), loadChannels(), loadDaemonPerms(), loadAndroidDaemonPerms(), loadDriveStatus(), loadDreamInsights(), loadWebsiteCrawl(), loadWriteBudget(), loadCustomAgents(), loadTrainedButtons(), loadPendingMemories()]);
@@ -987,6 +991,15 @@ export default function ProfileScreen() {
     } catch {}
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   }, [dreamEnabled]);
+
+  const handleToggleMemoryReview = useCallback(async () => {
+    const newValue = !memoryReviewEnabled;
+    setMemoryReviewEnabled(newValue);
+    try {
+      await apiRequest('PATCH', '/api/life-context', { memoryReviewEnabled: newValue });
+    } catch {}
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  }, [memoryReviewEnabled]);
 
   const handleToggleDiscordTts = useCallback(async () => {
     const next = !discordTtsEnabled;
@@ -2095,20 +2108,34 @@ export default function ProfileScreen() {
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 28 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
               <Text style={styles.sectionTitle}>Memory Review</Text>
-              {pendingMemories.length > 0 && (
+              {memoryReviewEnabled && pendingMemories.length > 0 && (
                 <View style={{ backgroundColor: Colors.primary ?? '#6C63FF', borderRadius: 10, minWidth: 20, paddingHorizontal: 6, paddingVertical: 2, alignItems: 'center' }}>
                   <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>{pendingMemories.length}</Text>
                 </View>
               )}
             </View>
-            <Pressable onPress={loadPendingMemories} hitSlop={8} disabled={pendingMemoriesLoading}>
-              {pendingMemoriesLoading
-                ? <ActivityIndicator size="small" color={Colors.textTertiary} />
-                : <Ionicons name="refresh" size={16} color={Colors.textSecondary} />}
-            </Pressable>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+              <Pressable onPress={handleToggleMemoryReview} style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Ionicons
+                  name={memoryReviewEnabled ? 'shield-checkmark' : 'shield-checkmark-outline'}
+                  size={15}
+                  color={memoryReviewEnabled ? '#10B981' : Colors.border}
+                />
+                <Text style={{ fontSize: 12, fontFamily: 'Inter_500Medium', color: memoryReviewEnabled ? '#10B981' : Colors.textTertiary }}>
+                  {memoryReviewEnabled ? 'On' : 'Off'}
+                </Text>
+              </Pressable>
+              <Pressable onPress={loadPendingMemories} hitSlop={8} disabled={pendingMemoriesLoading}>
+                {pendingMemoriesLoading
+                  ? <ActivityIndicator size="small" color={Colors.textTertiary} />
+                  : <Ionicons name="refresh" size={16} color={Colors.textSecondary} />}
+              </Pressable>
+            </View>
           </View>
           <Text style={styles.sectionSubtitle}>
-            New long-term memories waiting for your approval before JARVIS uses them
+            {memoryReviewEnabled
+              ? 'New long-term memories waiting for your approval before JARVIS uses them'
+              : 'Review gate off — new memories are stored automatically'}
           </Text>
           {pendingMemoriesLoading ? (
             <View style={styles.memoryEmptyCard}>

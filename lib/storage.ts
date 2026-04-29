@@ -269,6 +269,7 @@ export interface LifeContext {
   currentBlocker: string;
   freeText: string;
   lastUpdated: string;
+  memoryReviewEnabled?: boolean;
 }
 
 export interface CoachAction {
