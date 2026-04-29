@@ -9,9 +9,10 @@ import {
   ActivityIndicator,
   StatusBar,
   Alert,
+  Animated,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import Animated, {
+import RAnimated, {
   useSharedValue,
   useAnimatedStyle,
   withRepeat,
@@ -104,15 +105,170 @@ function uint8ToBase64(bytes: Uint8Array): string {
   return result;
 }
 
+/** Sample max PCM16 amplitude from a base64 audio chunk (returns 0–1). */
+function samplePcmAmplitude(base64Chunk: string): number {
+  try {
+    const bytes = base64ToUint8Array(base64Chunk);
+    let max = 0;
+    // PCM16 = 2 bytes per sample
+    const step = Math.max(2, Math.floor(bytes.length / 128) * 2);
+    for (let i = 0; i < bytes.length - 1; i += step) {
+      // Little-endian signed int16
+      let sample = bytes[i] | (bytes[i + 1] << 8);
+      if (sample > 32767) sample -= 65536;
+      const abs = Math.abs(sample);
+      if (abs > max) max = abs;
+    }
+    return Math.min(1, max / 32767);
+  } catch {
+    return 0;
+  }
+}
+
+// ── Waveform Bars Component ────────────────────────────────────────────────
+
+const BAR_COUNT = 24;
+const BAR_MIN_H = 3;
+const BAR_MAX_H = 44;
+
+// Deterministic per-bar multipliers so bars look natural, not uniform
+const BAR_MULTIPLIERS = Array.from({ length: BAR_COUNT }, (_, i) => {
+  const pos = i / (BAR_COUNT - 1); // 0..1
+  // Bell curve peaking in the middle
+  const bell = Math.exp(-Math.pow((pos - 0.5) * 3, 2));
+  // Add some variance
+  const hash = Math.sin(i * 2.3) * 0.5 + 0.5;
+  return 0.4 + bell * 0.4 + hash * 0.2;
+});
+
+interface WaveformBarsProps {
+  color: string;
+  ampRef: React.MutableRefObject<number>;
+  state: SessionState;
+}
+
+function WaveformBars({ color, ampRef, state }: WaveformBarsProps) {
+  const barAnims = useRef<Animated.Value[]>(
+    Array.from({ length: BAR_COUNT }, () => new Animated.Value(BAR_MIN_H))
+  ).current;
+
+  const breatheRef = useRef<Animated.CompositeAnimation | null>(null);
+  const frameRef = useRef<number | null>(null);
+  const stateRef = useRef(state);
+  stateRef.current = state;
+
+  useEffect(() => {
+    if (breatheRef.current) {
+      breatheRef.current.stop();
+      breatheRef.current = null;
+    }
+    if (frameRef.current) {
+      cancelAnimationFrame(frameRef.current);
+      frameRef.current = null;
+    }
+
+    if (state === 'idle' || state === 'ended' || state === 'connecting') {
+      barAnims.forEach(b => Animated.timing(b, { toValue: BAR_MIN_H, duration: 300, useNativeDriver: false }).start());
+      return;
+    }
+
+    if (state === 'thinking') {
+      // Gentle uniform breathe
+      const breathe = () => {
+        const animations = barAnims.map((b, i) =>
+          Animated.sequence([
+            Animated.delay(i * 30),
+            Animated.timing(b, { toValue: BAR_MIN_H + 8, duration: 700, useNativeDriver: false }),
+            Animated.timing(b, { toValue: BAR_MIN_H + 2, duration: 700, useNativeDriver: false }),
+          ])
+        );
+        breatheRef.current = Animated.parallel(animations);
+        breatheRef.current.start(({ finished }) => {
+          if (finished && stateRef.current === 'thinking') breathe();
+        });
+      };
+      breathe();
+      return;
+    }
+
+    // Active states (listening / speaking / muted) — drive from amplitude
+    let lastFrame = 0;
+    const FRAME_MS = 50; // 20fps update
+
+    const tick = (ts: number) => {
+      if (ts - lastFrame >= FRAME_MS) {
+        lastFrame = ts;
+        const amp = ampRef.current;
+        barAnims.forEach((b, i) => {
+          const m = BAR_MULTIPLIERS[i];
+          let target: number;
+          if (state === 'muted') {
+            target = BAR_MIN_H;
+          } else {
+            // Add per-bar jitter so wave looks natural
+            const jitter = (Math.random() * 0.3 + 0.85);
+            target = BAR_MIN_H + (BAR_MAX_H - BAR_MIN_H) * amp * m * jitter;
+          }
+          Animated.timing(b, {
+            toValue: Math.max(BAR_MIN_H, Math.min(BAR_MAX_H, target)),
+            duration: FRAME_MS,
+            useNativeDriver: false,
+          }).start();
+        });
+      }
+      frameRef.current = requestAnimationFrame(tick);
+    };
+    frameRef.current = requestAnimationFrame(tick);
+
+    return () => {
+      if (frameRef.current) cancelAnimationFrame(frameRef.current);
+    };
+  }, [state]);
+
+  return (
+    <View style={waveStyles.container}>
+      {barAnims.map((anim, i) => (
+        <Animated.View
+          key={i}
+          style={[
+            waveStyles.bar,
+            {
+              height: anim,
+              backgroundColor: color,
+              opacity: 0.7 + BAR_MULTIPLIERS[i] * 0.3,
+            },
+          ]}
+        />
+      ))}
+    </View>
+  );
+}
+
+const waveStyles = StyleSheet.create({
+  container: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 3,
+    height: BAR_MAX_H + 8,
+    marginVertical: 8,
+  },
+  bar: {
+    width: 4,
+    borderRadius: 2,
+    minHeight: BAR_MIN_H,
+  },
+});
+
 // ── State label config ────────────────────────────────────────────────────────
-const STATE_CONFIG: Record<SessionState, { label: string; color: string; glow: string }> = {
-  idle:       { label: 'Tap to start', color: Colors.textTertiary, glow: Colors.textTertiary },
-  connecting: { label: 'Connecting…',  color: Colors.textSecondary, glow: Colors.textSecondary },
-  listening:  { label: 'Listening',    color: Colors.cyan, glow: Colors.cyan },
-  thinking:   { label: 'Thinking…',   color: Colors.violet, glow: Colors.violet },
-  speaking:   { label: 'Speaking',     color: Colors.violet, glow: Colors.violet },
-  muted:      { label: 'Muted',        color: Colors.warning, glow: Colors.warning },
-  ended:      { label: 'Session ended', color: Colors.textTertiary, glow: Colors.textTertiary },
+const STATE_CONFIG: Record<SessionState, { label: string; color: string }> = {
+  idle:       { label: 'Tap to start',   color: Colors.textTertiary },
+  connecting: { label: 'Connecting…',    color: Colors.textSecondary },
+  listening:  { label: 'Listening',      color: Colors.cyan },
+  thinking:   { label: 'Thinking…',      color: Colors.violet },
+  speaking:   { label: 'Speaking',       color: Colors.violet },
+  muted:      { label: 'Muted',          color: Colors.warning },
+  ended:      { label: 'Session ended',  color: Colors.textTertiary },
 };
 
 // ── Main Component ────────────────────────────────────────────────────────────
@@ -127,11 +283,18 @@ export default function VoiceRealtimeScreen() {
   const [muted, setMuted] = useState(false);
   const [savingTranscript, setSavingTranscript] = useState(false);
 
+  // Amplitude ref — written at ~20fps, read by WaveformBars
+  const ampRef = useRef(0);
+
   // ── WebRTC refs (web only) ───────────────────────────────────────────────
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const dcRef = useRef<RTCDataChannel | null>(null);
   const audioElRef = useRef<HTMLAudioElement | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
+  const webAnalyserRef = useRef<AnalyserNode | null>(null);
+  const webAmpFrameRef = useRef<number | null>(null);
+  const webAudioCtxRef = useRef<AudioContext | null>(null);
+  const endSessionRef = useRef<(() => Promise<void>) | null>(null);
 
   // ── Native refs ──────────────────────────────────────────────────────────
   const nativeRecorder = useAudioRecorder({
@@ -139,6 +302,7 @@ export default function VoiceRealtimeScreen() {
     sampleRate: 24000,
     numberOfChannels: 1,
     bitRate: 384000,
+    isMeteringEnabled: true,
     android: { outputFormat: 'default', audioEncoder: 'default' },
     ios: { audioQuality: AudioQuality.LOW, linearPCMBitDepth: 16, linearPCMIsBigEndian: false, linearPCMIsFloat: false },
     web: { mimeType: 'audio/webm', bitsPerSecond: 48000 },
@@ -149,30 +313,24 @@ export default function VoiceRealtimeScreen() {
   const currentUserTextRef = useRef('');
   const currentAssistantTextRef = useRef('');
 
-  // ── Animation ────────────────────────────────────────────────────────────
-  const pulseScale = useSharedValue(1);
-  const pulseOpacity = useSharedValue(0.5);
+  // Metering loop for native mic amplitude
+  const meterLoopRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // ── Reanimated (orb ring pulse only) ─────────────────────────────────────
   const ring1Scale = useSharedValue(1);
   const ring2Scale = useSharedValue(1);
   const ring1Opacity = useSharedValue(0);
   const ring2Opacity = useSharedValue(0);
 
   const scrollRef = useRef<ScrollView>(null);
+  const stateRef = useRef(state);
+  stateRef.current = state;
 
   useEffect(() => {
-    const cfg = STATE_CONFIG[state];
-    cancelAnimation(pulseScale);
     cancelAnimation(ring1Scale);
     cancelAnimation(ring2Scale);
 
     if (state === 'listening') {
-      pulseScale.value = withRepeat(
-        withSequence(
-          withTiming(1.08, { duration: 600, easing: Easing.inOut(Easing.ease) }),
-          withTiming(1.0, { duration: 600, easing: Easing.inOut(Easing.ease) }),
-        ), -1
-      );
-      pulseOpacity.value = withTiming(1);
       ring1Opacity.value = withRepeat(
         withSequence(withTiming(0.4, { duration: 0 }), withTiming(0, { duration: 1200 })),
         -1, false
@@ -190,13 +348,6 @@ export default function VoiceRealtimeScreen() {
         -1, false
       );
     } else if (state === 'speaking') {
-      pulseScale.value = withRepeat(
-        withSequence(
-          withTiming(1.12, { duration: 400, easing: Easing.inOut(Easing.ease) }),
-          withTiming(1.04, { duration: 400, easing: Easing.inOut(Easing.ease) }),
-        ), -1
-      );
-      pulseOpacity.value = withTiming(1);
       ring1Opacity.value = withRepeat(
         withSequence(withTiming(0.25, { duration: 0 }), withTiming(0, { duration: 800 })),
         -1, false
@@ -206,36 +357,12 @@ export default function VoiceRealtimeScreen() {
         -1, false
       );
       ring2Opacity.value = withTiming(0, { duration: 300 });
-    } else if (state === 'thinking') {
-      pulseScale.value = withRepeat(
-        withSequence(
-          withTiming(1.05, { duration: 800, easing: Easing.inOut(Easing.ease) }),
-          withTiming(0.97, { duration: 800, easing: Easing.inOut(Easing.ease) }),
-        ), -1
-      );
-      pulseOpacity.value = withTiming(0.7);
-      ring1Opacity.value = withTiming(0, { duration: 300 });
-      ring2Opacity.value = withTiming(0, { duration: 300 });
-    } else if (state === 'connecting') {
-      pulseScale.value = withRepeat(
-        withTiming(1.06, { duration: 1000, easing: Easing.inOut(Easing.ease) }),
-        -1, true
-      );
-      pulseOpacity.value = withTiming(0.6);
-      ring1Opacity.value = withTiming(0);
-      ring2Opacity.value = withTiming(0);
     } else {
-      pulseScale.value = withTiming(1, { duration: 300 });
-      pulseOpacity.value = withTiming(0.4, { duration: 300 });
       ring1Opacity.value = withTiming(0, { duration: 300 });
       ring2Opacity.value = withTiming(0, { duration: 300 });
     }
   }, [state]);
 
-  const orbStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: pulseScale.value }],
-    opacity: pulseOpacity.value,
-  }));
   const ring1Style = useAnimatedStyle(() => ({
     transform: [{ scale: ring1Scale.value }],
     opacity: ring1Opacity.value,
@@ -245,7 +372,7 @@ export default function VoiceRealtimeScreen() {
     opacity: ring2Opacity.value,
   }));
 
-  // ── Fetch ephemeral token ─────────────────────────────────────────────────
+  // ── Fetch ephemeral token (web WebRTC only) ───────────────────────────────
   const fetchEphemeralToken = useCallback(async (): Promise<{ clientSecret: string; sessionId: string } | null> => {
     try {
       const url = new URL('/api/voice/realtime-session', getApiUrl());
@@ -275,6 +402,46 @@ export default function VoiceRealtimeScreen() {
     }
   }, []);
 
+  // ── Web amplitude metering via AnalyserNode ───────────────────────────────
+  const startWebAmpMeter = useCallback((stream: MediaStream) => {
+    try {
+      const ctx = new AudioContext();
+      webAudioCtxRef.current = ctx;
+      const src = ctx.createMediaStreamSource(stream);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 256;
+      src.connect(analyser);
+      webAnalyserRef.current = analyser;
+      const buf = new Uint8Array(analyser.frequencyBinCount);
+      const tick = () => {
+        // Only drive waveform from mic while listening — speaking uses PCM delta amplitude
+        if (stateRef.current === 'listening') {
+          analyser.getByteFrequencyData(buf);
+          let sum = 0;
+          for (let i = 0; i < buf.length; i++) sum += buf[i];
+          ampRef.current = Math.min(1, (sum / buf.length) / 128);
+        }
+        webAmpFrameRef.current = requestAnimationFrame(tick);
+      };
+      webAmpFrameRef.current = requestAnimationFrame(tick);
+    } catch {
+      // non-fatal
+    }
+  }, []);
+
+  const stopWebAmpMeter = useCallback(() => {
+    if (webAmpFrameRef.current) {
+      cancelAnimationFrame(webAmpFrameRef.current);
+      webAmpFrameRef.current = null;
+    }
+    webAnalyserRef.current = null;
+    if (webAudioCtxRef.current) {
+      webAudioCtxRef.current.close().catch(() => {});
+      webAudioCtxRef.current = null;
+    }
+    ampRef.current = 0;
+  }, []);
+
   // ── WebRTC session (web) ──────────────────────────────────────────────────
   const startWebSession = useCallback(async () => {
     setState('connecting');
@@ -289,6 +456,7 @@ export default function VoiceRealtimeScreen() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       localStreamRef.current = stream;
+      startWebAmpMeter(stream);
 
       const pc = new RTCPeerConnection();
       pcRef.current = pc;
@@ -347,7 +515,7 @@ export default function VoiceRealtimeScreen() {
       cleanupWebSession();
       setState('idle');
     }
-  }, [fetchEphemeralToken]);
+  }, [fetchEphemeralToken, startWebAmpMeter]);
 
   const handleRealtimeEvent = useCallback(
     (evt: Record<string, unknown>, clientSecret: string, dc: RTCDataChannel) => {
@@ -357,11 +525,15 @@ export default function VoiceRealtimeScreen() {
         setState('listening');
       } else if (type === 'input_audio_buffer.speech_stopped') {
         setState('thinking');
+        ampRef.current = 0;
       } else if (type === 'response.created') {
         setState('thinking');
         currentAssistantTextRef.current = '';
+        ampRef.current = 0;
       } else if (type === 'response.audio.delta') {
         setState('speaking');
+        const delta = (evt.delta as string) || '';
+        if (delta) ampRef.current = samplePcmAmplitude(delta);
       } else if (type === 'response.audio_transcript.delta') {
         const delta = (evt.delta as string) || '';
         currentAssistantTextRef.current += delta;
@@ -373,6 +545,7 @@ export default function VoiceRealtimeScreen() {
         }
         currentAssistantTextRef.current = '';
         setCurrentSpeech('');
+        ampRef.current = 0;
         setState('listening');
       } else if (type === 'conversation.item.input_audio_transcription.completed') {
         const text = ((evt.transcript as string) || '').trim();
@@ -397,6 +570,7 @@ export default function VoiceRealtimeScreen() {
           dc.send(JSON.stringify({ type: 'response.create' }));
         });
       } else if (type === 'response.cancelled' || type === 'response.done') {
+        ampRef.current = 0;
         setState('listening');
       } else if (type === 'error') {
         console.error('[voice] Realtime error:', evt);
@@ -406,6 +580,7 @@ export default function VoiceRealtimeScreen() {
   );
 
   const cleanupWebSession = useCallback(() => {
+    stopWebAmpMeter();
     localStreamRef.current?.getTracks().forEach(t => t.stop());
     localStreamRef.current = null;
     pcRef.current?.close();
@@ -416,9 +591,43 @@ export default function VoiceRealtimeScreen() {
       audioElRef.current.remove();
       audioElRef.current = null;
     }
+    ampRef.current = 0;
+  }, [stopWebAmpMeter]);
+
+  // ── Native metering (mic amplitude while recording) ───────────────────────
+  const startNativeMeterLoop = useCallback(() => {
+    if (meterLoopRef.current) clearInterval(meterLoopRef.current);
+    meterLoopRef.current = setInterval(() => {
+      // Only drive waveform from mic while listening — speaking state uses PCM delta amplitude
+      if (stateRef.current !== 'listening') return;
+      if (!nativeRecorder.isRecording) return;
+      try {
+        // Poll metering from the recorder status (isMeteringEnabled=true provides dBFS)
+        const status = nativeRecorder.getStatus();
+        const metering = status.metering;
+        if (typeof metering === 'number') {
+          // metering is in dBFS (-160 to 0). Map to 0..1 using -60dBFS floor
+          const clamped = Math.max(-60, Math.min(0, metering));
+          ampRef.current = (clamped + 60) / 60;
+        } else {
+          // No metering value yet — quiet idle signal
+          ampRef.current = 0.05;
+        }
+      } catch {
+        ampRef.current = 0.05;
+      }
+    }, 50);
+  }, [nativeRecorder]);
+
+  const stopNativeMeterLoop = useCallback(() => {
+    if (meterLoopRef.current) {
+      clearInterval(meterLoopRef.current);
+      meterLoopRef.current = null;
+    }
+    ampRef.current = 0;
   }, []);
 
-  // ── Native WebSocket session ──────────────────────────────────────────────
+  // ── Native WebSocket session via server relay ─────────────────────────────
   const startNativeSession = useCallback(async () => {
     setState('connecting');
 
@@ -429,9 +638,18 @@ export default function VoiceRealtimeScreen() {
       return;
     }
 
-    const tokenData = await fetchEphemeralToken();
-    if (!tokenData) {
-      Alert.alert('Connection failed', 'Could not create a voice session.');
+    // Obtain a short-lived single-use relay ticket (30s TTL).
+    // This avoids embedding the long-lived JWT in the WebSocket URL.
+    let relayTicket: string | null = null;
+    try {
+      const ticketUrl = new URL('/api/voice/relay-ticket', getApiUrl());
+      const ticketRes = await authFetch(ticketUrl.toString(), { method: 'POST' });
+      if (!ticketRes.ok) throw new Error(`Ticket fetch failed: ${ticketRes.status}`);
+      const ticketData = await ticketRes.json();
+      relayTicket = ticketData.ticket;
+    } catch (err) {
+      console.error('[voice] Failed to get relay ticket:', err);
+      Alert.alert('Connection failed', 'Could not start a voice session. Please try again.');
       setState('idle');
       return;
     }
@@ -441,10 +659,15 @@ export default function VoiceRealtimeScreen() {
       playsInSilentMode: true,
     });
 
-    const ws = new WebSocket(
-      `wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-12-17`,
-      ['realtime', `openai-insecure-api-key.${tokenData.clientSecret}`, 'openai-beta.realtime-v1']
-    );
+    // Build relay URL — replace https/http with wss/ws
+    const apiBase = getApiUrl();
+    const relayUrl = apiBase
+      .replace(/^https:\/\//, 'wss://')
+      .replace(/^http:\/\//, 'ws://')
+      .replace(/\/+$/, '');
+    const wsUrl = `${relayUrl}/api/voice/ws?ticket=${encodeURIComponent(relayTicket!)}`;
+
+    const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
     audioPcmChunksRef.current = [];
 
@@ -462,19 +685,20 @@ export default function VoiceRealtimeScreen() {
     };
 
     ws.onerror = () => {
-      Alert.alert('Connection error', 'Voice session disconnected.');
-      endSession();
+      Alert.alert('Connection error', 'Voice session disconnected. Please try again.');
+      endSessionRef.current?.();
     };
 
     ws.onclose = () => {
-      if (state !== 'ended') endSession();
+      if (stateRef.current !== 'ended') endSessionRef.current?.();
     };
-  }, [fetchEphemeralToken, state]);
+  }, []);
 
   const nativeRecordLoopRef = useRef(false);
 
   const startNativeRecordingLoop = useCallback(async () => {
     nativeRecordLoopRef.current = true;
+    startNativeMeterLoop();
 
     while (nativeRecordLoopRef.current && wsRef.current?.readyState === WebSocket.OPEN) {
       try {
@@ -499,8 +723,6 @@ export default function VoiceRealtimeScreen() {
         FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
 
         // Strip the 44-byte WAV header before sending raw PCM16 to OpenAI.
-        // iOS linearPCM .wav files have a fixed 44-byte RIFF header;
-        // Android default .wav output also uses a 44-byte header.
         const binaryStr = atob(base64);
         const wavBytes = new Uint8Array(binaryStr.length);
         for (let i = 0; i < binaryStr.length; i++) wavBytes[i] = binaryStr.charCodeAt(i);
@@ -525,7 +747,8 @@ export default function VoiceRealtimeScreen() {
         await new Promise<void>(r => setTimeout(r, 100));
       }
     }
-  }, []);
+    stopNativeMeterLoop();
+  }, [nativeRecorder, startNativeMeterLoop, stopNativeMeterLoop]);
 
   const handleNativeRealtimeEvent = useCallback(
     (evt: Record<string, unknown>) => {
@@ -537,13 +760,18 @@ export default function VoiceRealtimeScreen() {
         nativeSoundRef.current?.pause();
       } else if (type === 'input_audio_buffer.speech_stopped') {
         setState('thinking');
+        ampRef.current = 0;
       } else if (type === 'response.created') {
         setState('thinking');
         currentAssistantTextRef.current = '';
         audioPcmChunksRef.current = [];
+        ampRef.current = 0;
       } else if (type === 'response.audio.delta') {
         const delta = (evt.delta as string) || '';
-        if (delta) audioPcmChunksRef.current.push(delta);
+        if (delta) {
+          audioPcmChunksRef.current.push(delta);
+          ampRef.current = samplePcmAmplitude(delta);
+        }
         setState('speaking');
       } else if (type === 'response.audio.done') {
         playNativeAudio();
@@ -556,6 +784,7 @@ export default function VoiceRealtimeScreen() {
         if (text) setTranscript(prev => [...prev, { role: 'assistant', text }]);
         currentAssistantTextRef.current = '';
         setCurrentSpeech('');
+        ampRef.current = 0;
       } else if (type === 'conversation.item.input_audio_transcription.completed') {
         const text = ((evt.transcript as string) || '').trim();
         if (text) setTranscript(prev => [...prev, { role: 'user', text }]);
@@ -576,6 +805,10 @@ export default function VoiceRealtimeScreen() {
         });
       } else if (type === 'response.cancelled') {
         audioPcmChunksRef.current = [];
+        ampRef.current = 0;
+        setState('listening');
+      } else if (type === 'response.done') {
+        ampRef.current = 0;
         setState('listening');
       }
     },
@@ -615,6 +848,7 @@ export default function VoiceRealtimeScreen() {
           nativeSoundRef.current = null;
           FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
           await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+          ampRef.current = 0;
           setState('listening');
         }
       });
@@ -626,6 +860,7 @@ export default function VoiceRealtimeScreen() {
 
   const cleanupNativeSession = useCallback(async () => {
     nativeRecordLoopRef.current = false;
+    stopNativeMeterLoop();
     if (nativeRecorder.isRecording) {
       await nativeRecorder.stop().catch(() => {});
     }
@@ -636,7 +871,31 @@ export default function VoiceRealtimeScreen() {
       nativeSoundRef.current = null;
     }
     await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: false }).catch(() => {});
-  }, [nativeRecorder]);
+    ampRef.current = 0;
+  }, [nativeRecorder, stopNativeMeterLoop]);
+
+  // ── Interrupt (while Jarvis speaks) ──────────────────────────────────────
+  const interruptJarvis = useCallback(() => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+    if (Platform.OS === 'web') {
+      dcRef.current?.send(JSON.stringify({ type: 'response.cancel' }));
+      // Stop web audio element
+      if (audioElRef.current) {
+        audioElRef.current.pause();
+      }
+    } else {
+      wsRef.current?.send(JSON.stringify({ type: 'response.cancel' }));
+      // Immediately stop any currently-playing native audio
+      if (nativeSoundRef.current) {
+        nativeSoundRef.current.pause();
+        nativeSoundRef.current.remove();
+        nativeSoundRef.current = null;
+      }
+    }
+    audioPcmChunksRef.current = [];
+    ampRef.current = 0;
+    setState('listening');
+  }, []);
 
   // ── Mute toggle ───────────────────────────────────────────────────────────
   const toggleMute = useCallback(() => {
@@ -647,6 +906,7 @@ export default function VoiceRealtimeScreen() {
     } else {
       if (newMuted) {
         nativeRecordLoopRef.current = false;
+        stopNativeMeterLoop();
         if (nativeRecorder.isRecording) nativeRecorder.stop().catch(() => {});
         setState('muted');
       } else {
@@ -655,7 +915,7 @@ export default function VoiceRealtimeScreen() {
       }
     }
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-  }, [muted, nativeRecorder, startNativeRecordingLoop]);
+  }, [muted, nativeRecorder, startNativeRecordingLoop, stopNativeMeterLoop]);
 
   // ── Session end ───────────────────────────────────────────────────────────
   const saveTranscript = useCallback(async (entries: TranscriptEntry[]) => {
@@ -702,6 +962,8 @@ export default function VoiceRealtimeScreen() {
 
     setTimeout(() => router.back(), 2000);
   }, [transcript, cleanupWebSession, cleanupNativeSession, saveTranscript, router]);
+  // Keep ref current so WS handlers with [] deps always call the latest version
+  endSessionRef.current = endSession;
 
   // ── Cleanup on unmount ────────────────────────────────────────────────────
   useEffect(() => {
@@ -710,6 +972,7 @@ export default function VoiceRealtimeScreen() {
         cleanupWebSession();
       } else {
         nativeRecordLoopRef.current = false;
+        stopNativeMeterLoop();
         if (nativeRecorder.isRecording) nativeRecorder.stop().catch(() => {});
         wsRef.current?.close();
         nativeSoundRef.current?.remove();
@@ -738,6 +1001,7 @@ export default function VoiceRealtimeScreen() {
   const cfg = STATE_CONFIG[state];
   const isActive = state !== 'idle' && state !== 'ended';
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
+  const isSpeaking = state === 'speaking';
 
   return (
     <View style={[styles.root, { paddingTop: topPad }]}>
@@ -753,13 +1017,21 @@ export default function VoiceRealtimeScreen() {
           <Text style={styles.headerTitle}>JARVIS VOICE</Text>
         </View>
         <View style={styles.headerRight}>
-          {isActive && (
+          {isActive ? (
             <Pressable onPress={toggleMute} style={styles.muteBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
               <Ionicons
                 name={muted ? 'mic-off' : 'mic'}
                 size={18}
                 color={muted ? Colors.warning : Colors.textSecondary}
               />
+            </Pressable>
+          ) : (
+            <Pressable
+              onPress={() => router.push('/(tabs)/settings')}
+              style={styles.muteBtn}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Ionicons name="settings-outline" size={18} color={Colors.textSecondary} />
             </Pressable>
           )}
         </View>
@@ -773,14 +1045,14 @@ export default function VoiceRealtimeScreen() {
         showsVerticalScrollIndicator={false}
       >
         {transcript.length === 0 && state === 'idle' && (
-          <Animated.View entering={FadeIn} style={styles.emptyState}>
+          <RAnimated.View entering={FadeIn} style={styles.emptyState}>
             <Ionicons name="mic-circle-outline" size={36} color={Colors.textTertiary} />
             <Text style={styles.emptyText}>Real-time voice conversation with Jarvis</Text>
             <Text style={styles.emptySubtext}>Tap the orb below to start</Text>
-          </Animated.View>
+          </RAnimated.View>
         )}
         {transcript.map((entry, i) => (
-          <Animated.View
+          <RAnimated.View
             key={i}
             entering={FadeIn.duration(300)}
             style={[
@@ -799,40 +1071,63 @@ export default function VoiceRealtimeScreen() {
                 {entry.text}
               </Text>
             </View>
-          </Animated.View>
+          </RAnimated.View>
         ))}
         {currentSpeech ? (
-          <Animated.View entering={FadeIn} style={[styles.transcriptRow, styles.transcriptRowAssistant]}>
+          <RAnimated.View entering={FadeIn} style={[styles.transcriptRow, styles.transcriptRowAssistant]}>
             <View style={[styles.transcriptBubble, styles.bubbleAssistant, styles.bubbleLive]}>
               <Text style={[styles.transcriptText, styles.transcriptTextAssistant]}>
                 {currentSpeech}
                 <Text style={styles.cursor}>▌</Text>
               </Text>
             </View>
-          </Animated.View>
+          </RAnimated.View>
         ) : null}
       </ScrollView>
 
-      {/* ── Orb ── */}
+      {/* ── Waveform + Orb area ── */}
       <View style={styles.orbContainer}>
-        <Animated.View style={[styles.orbRing, ring1Style, { borderColor: cfg.color + '50' }]} />
-        <Animated.View style={[styles.orbRing2, ring2Style, { borderColor: cfg.color + '30' }]} />
-        <Pressable onPress={state === 'idle' ? startSession : undefined} disabled={state === 'connecting'}>
-          <Animated.View style={[styles.orb, orbStyle, { backgroundColor: cfg.color + '22', borderColor: cfg.color + '55' }]}>
-            {state === 'connecting' ? (
-              <ActivityIndicator size="large" color={cfg.color} />
-            ) : state === 'ended' ? (
-              <Ionicons name="checkmark" size={40} color={cfg.color} />
-            ) : (
-              <Ionicons
-                name={state === 'idle' ? 'mic' : state === 'muted' ? 'mic-off' : state === 'speaking' ? 'volume-high' : 'radio'}
-                size={40}
-                color={cfg.color}
-              />
-            )}
-          </Animated.View>
-        </Pressable>
+        {/* Waveform bars — visible when active */}
+        {isActive && (
+          <WaveformBars
+            color={cfg.color}
+            ampRef={ampRef}
+            state={state}
+          />
+        )}
+
+        {/* Orb with ripple rings */}
+        <View style={styles.orbWrapper}>
+          <RAnimated.View style={[styles.orbRing, ring1Style, { borderColor: cfg.color + '50' }]} />
+          <RAnimated.View style={[styles.orbRing2, ring2Style, { borderColor: cfg.color + '30' }]} />
+          <Pressable onPress={state === 'idle' ? startSession : undefined} disabled={state === 'connecting'}>
+            <View style={[styles.orb, { backgroundColor: cfg.color + '22', borderColor: cfg.color + '55' }]}>
+              {state === 'connecting' ? (
+                <ActivityIndicator size="large" color={cfg.color} />
+              ) : state === 'ended' ? (
+                <Ionicons name="checkmark" size={40} color={cfg.color} />
+              ) : (
+                <Ionicons
+                  name={state === 'idle' ? 'mic' : state === 'muted' ? 'mic-off' : state === 'speaking' ? 'volume-high' : 'radio'}
+                  size={40}
+                  color={cfg.color}
+                />
+              )}
+            </View>
+          </Pressable>
+        </View>
+
         <Text style={[styles.stateLabel, { color: cfg.color }]}>{cfg.label}</Text>
+
+        {/* Interrupt button — large tap target while Jarvis speaks */}
+        {isSpeaking && (
+          <RAnimated.View entering={FadeIn.duration(200)} exiting={FadeOut.duration(150)}>
+            <Pressable onPress={interruptJarvis} style={styles.interruptBtn}>
+              <Ionicons name="stop-circle" size={18} color={Colors.violet} />
+              <Text style={styles.interruptText}>Interrupt</Text>
+            </Pressable>
+          </RAnimated.View>
+        )}
       </View>
 
       {/* ── Bottom Controls ── */}
@@ -848,10 +1143,10 @@ export default function VoiceRealtimeScreen() {
             <Text style={styles.savingText}>Saving transcript…</Text>
           </View>
         ) : state === 'ended' ? (
-          <Animated.View entering={FadeIn} style={styles.doneRow}>
+          <RAnimated.View entering={FadeIn} style={styles.doneRow}>
             <Ionicons name="checkmark-circle" size={18} color={Colors.success} />
             <Text style={styles.doneText}>Session saved</Text>
-          </Animated.View>
+          </RAnimated.View>
         ) : (
           <Text style={styles.hintText}>
             {Platform.OS === 'web'
@@ -866,7 +1161,7 @@ export default function VoiceRealtimeScreen() {
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 
-const ORB_SIZE = 140;
+const ORB_SIZE = 120;
 const RING_SIZE = ORB_SIZE + 40;
 const RING2_SIZE = ORB_SIZE + 80;
 
@@ -914,7 +1209,6 @@ const styles = StyleSheet.create({
   },
   transcriptScroll: {
     flex: 1,
-    marginHorizontal: 0,
   },
   transcriptContent: {
     paddingHorizontal: 16,
@@ -989,7 +1283,14 @@ const styles = StyleSheet.create({
   orbContainer: {
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 32,
+    paddingVertical: 16,
+    gap: 4,
+  },
+  orbWrapper: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: RING2_SIZE,
+    height: RING2_SIZE,
   },
   orb: {
     width: ORB_SIZE,
@@ -1014,11 +1315,28 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   stateLabel: {
-    marginTop: 20,
     fontSize: 13,
     fontFamily: 'Inter_500Medium',
     letterSpacing: 1.5,
     textTransform: 'uppercase',
+    marginTop: 4,
+  },
+  interruptBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: Colors.violetDim,
+    borderWidth: 1,
+    borderColor: Colors.violet + '50',
+    borderRadius: 20,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    marginTop: 8,
+  },
+  interruptText: {
+    fontSize: 14,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.violet,
   },
   bottomBar: {
     paddingHorizontal: 24,

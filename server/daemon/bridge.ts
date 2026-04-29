@@ -680,7 +680,7 @@ export function startDaemonBridge(server: HttpServer): void {
 
   server.on("upgrade", (req, socket, head) => {
     if (!req.url || !req.url.startsWith("/api/daemon/ws")) {
-      socket.destroy();
+      // Not our path — leave the socket alone so other upgrade handlers can claim it
       return;
     }
     wss.handleUpgrade(req, socket, head, (ws: WebSocket) => wss.emit("connection", ws, req));

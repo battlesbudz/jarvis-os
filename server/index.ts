@@ -16,6 +16,7 @@ import { registerWhatsAppWebhook } from "./channels/whatsappWebhook";
 import { registerSlackWebhook } from "./channels/slackWebhook";
 import { seedAllSessions } from "./channels/sessionStore";
 import { startDaemonBridge } from "./daemon/bridge";
+import { registerVoiceRelay } from "./voiceRelayRoutes";
 import { bootAllBots as bootDiscordBots, bootSharedBot } from "./discord/manager";
 import { pruneAuditLogArchivesOnStartup } from "./agent/tools/applyCodeChangeTool";
 import { telegramLinks, inboxItems } from "@shared/schema";
@@ -438,6 +439,23 @@ function setupErrorHandler(app: express.Application) {
 
   initChannels();
   startDaemonBridge(server);
+
+  // Voice relay: server-side WebSocket proxy to OpenAI Realtime API.
+  // Must be registered before any catch-all upgrade handler so the path is claimed first.
+  registerVoiceRelay(server);
+
+  // Catch-all upgrade guard: registered last, so this only sees sockets that no
+  // prior handler claimed. Paths that ARE handled (daemon, voice relay) are explicitly
+  // excluded so we never touch an already-upgraded WebSocket connection.
+  const KNOWN_WS_PATHS = ["/api/daemon/ws", "/api/voice/ws"];
+  server.on("upgrade", (req, socket) => {
+    const pathname = (req.url || "").split("?")[0];
+    const isKnown = KNOWN_WS_PATHS.some(p => pathname.startsWith(p));
+    if (!isKnown && !socket.destroyed) {
+      socket.write("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n");
+      socket.destroy();
+    }
+  });
 
   // One-time cleanup: remove excess audit log archives that built up before
   // auto-pruning was added (non-blocking, errors are swallowed inside helper).
