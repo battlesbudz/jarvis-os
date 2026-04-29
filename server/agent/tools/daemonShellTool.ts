@@ -4651,6 +4651,22 @@ Requires: android_tap_type permission. No screen-reading or screenshot permissio
       ? Math.min(Math.round(args.hold_ms), 10000)
       : 800;
 
+    // ── Capture pre-drag screenshot hash and hierarchy snapshot (best-effort) ──
+    let preDragHash: string | null = null;
+    try {
+      const preDragScreenshot = await captureScreenshot(ctx.userId);
+      if (preDragScreenshot) {
+        preDragHash = await computeScreenshotHash(preDragScreenshot);
+      }
+    } catch { /* hash capture is best-effort */ }
+
+    const preDragClickable = await readScreen(ctx.userId);
+    const preDragCount = preDragClickable.length;
+    const preDragLabels = new Set(preDragClickable.map((el) => el.label));
+    const preDragResourceIds = new Set(
+      preDragClickable.map((el) => el.resourceId).filter((id): id is string => !!id),
+    );
+
     const dragResult = await sendDaemonOp(
       ctx.userId,
       { type: "android_swipe", x1, y1, x2, y2, durationMs: holdMs },
@@ -4665,7 +4681,51 @@ Requires: android_tap_type permission. No screen-reading or screenshot permissio
       };
     }
 
-    console.log(`[android_drag_coordinates] userId=${ctx.userId} dragged from (${x1},${y1}) to (${x2},${y2}) hold_ms=${holdMs}`);
+    // ── Post-drag verification — perceptual hash fast-path then hierarchy fallback ─
+    // screen_changed is always a boolean: false when comparison is inconclusive
+    // (screenshot unavailable or hash error) so downstream logic can treat a
+    // missing result the same as a no-op drag.
+    let screenChanged = false;
+    let hashDistance: number | null = null;
+
+    // Fast-path: perceptual hash comparison (distance > 5 out of 64 bits confirms the drag).
+    // Skipped on FLAG_SECURE apps where captureScreenshot returns null.
+    if (preDragHash !== null) {
+      try {
+        const postDragScreenshot = await captureScreenshot(ctx.userId);
+        if (postDragScreenshot) {
+          const postDragHash = await computeScreenshotHash(postDragScreenshot);
+          hashDistance = hammingDistance(preDragHash, postDragHash);
+          if (hashDistance > 5) {
+            screenChanged = true;
+            console.log(`[android_drag_coordinates] perceptual hash verified (hash_distance=${hashDistance})`);
+          }
+        }
+      } catch { /* hash comparison is best-effort */ }
+    }
+
+    // Hierarchy fallback: runs only when hash check is inconclusive (e.g. FLAG_SECURE app
+    // or visual change below threshold due to re-used resource IDs in dragged content).
+    if (!screenChanged) {
+      const postDragClickable = await readScreen(ctx.userId);
+      if (postDragClickable.length !== preDragCount) {
+        screenChanged = true;
+      } else {
+        const postDragLabels = new Set(postDragClickable.map((el) => el.label));
+        if ([...postDragLabels].some((l) => !preDragLabels.has(l))) screenChanged = true;
+        if (!screenChanged) {
+          const postDragResourceIds = new Set(
+            postDragClickable.map((el) => el.resourceId).filter((id): id is string => !!id),
+          );
+          if ([...postDragResourceIds].some((id) => !preDragResourceIds.has(id))) screenChanged = true;
+          if (!screenChanged && preDragResourceIds.size > 0) {
+            if ([...preDragResourceIds].some((id) => !postDragResourceIds.has(id))) screenChanged = true;
+          }
+        }
+      }
+    }
+
+    console.log(`[android_drag_coordinates] userId=${ctx.userId} dragged from (${x1},${y1}) to (${x2},${y2}) hold_ms=${holdMs} screen_changed=${screenChanged} hash_distance=${hashDistance}`);
 
     return {
       ok: true,
@@ -4677,9 +4737,11 @@ Requires: android_tap_type permission. No screen-reading or screenshot permissio
           to_y: y2,
           hold_ms: holdMs,
         },
+        screen_changed: screenChanged,
+        hash_distance: hashDistance,
       }),
-      label: `Dragged (${x1},${y1}) → (${x2},${y2}) hold_ms=${holdMs}`,
-      detail: `from=(${x1},${y1}) to=(${x2},${y2})`,
+      label: `Dragged (${x1},${y1}) → (${x2},${y2}) hold_ms=${holdMs} screen_changed=${screenChanged}`,
+      detail: `from=(${x1},${y1}) to=(${x2},${y2})${hashDistance !== null ? ` hash_dist=${hashDistance}` : ""}`,
     };
   },
 };
