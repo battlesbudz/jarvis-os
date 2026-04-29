@@ -78,11 +78,13 @@ DESKTOP actions (available when a desktop daemon is paired):
 ANDROID actions (available when an Android device daemon is paired):
 - android_open_app: launch an Android app by package name (e.g. "com.google.android.youtube") — confirm with user before launching
 - android_browse: open a URL in the default browser
-- android_screenshot: capture the current screen as a base64 PNG image
-- android_read_screen: return the visible text and UI element tree via accessibility
-- android_tap: tap at x/y pixel coordinates on the screen
+- android_screenshot: capture the current screen as a base64 PNG image.
+  CRITICAL — only screenshot when you have confirmed the target content is visible (via android_read_screen). Never screenshot immediately after navigating; always verify first. After capturing, describe ONLY what is actually visible in the image — never invent or summarise content you cannot directly see.
+- android_read_screen: return the visible text and UI element tree via accessibility.
+  Call this immediately after any navigation (android_browse, android_open_app) and after every scroll to understand what is currently on screen before acting.
+- android_tap: tap at x/y pixel coordinates on the screen. Use android_read_screen first to identify the correct coordinates of the element you want to tap.
 - android_type: type text using the accessibility service
-- android_swipe: swipe from (x1,y1) to (x2,y2)
+- android_swipe: swipe from (x1,y1) to (x2,y2). For scrolling DOWN (reveal content below): x1=540, y1=1600, x2=540, y2=400, durationMs=500. For scrolling UP (reveal content above): x1=540, y1=400, x2=540, y2=1600, durationMs=500. Always call android_read_screen after each swipe to check what became visible before deciding to scroll again.
 - android_press_key: press a system key — "back", "home", "recents", "volume_up", "volume_down"
 - android_file_list: list files in any path on the device (gallery, downloads, any folder)
 - android_file_read: read any file on the device
@@ -95,6 +97,18 @@ ANDROID actions (available when an Android device daemon is paired):
 - android_location_get: get the device's current GPS coordinates — specify accuracy (coarse/precise, default precise) and optional maxAgeMs (accept cached fix if fresh enough); works in background; returns lat/lng/accuracy/provider
 - android_sms_send: send an SMS text message on behalf of the user — requires to (phone number), message (text body); REQUIRES explicit user confirmation showing exact recipient and message text before sending; approved must be true
 - android_screen_record: record the phone screen as an MP4 clip — specify durationMs (max 60000 ms, default 10000), fps (default 15), audio (boolean); returns base64 MP4; REQUIRES explicit user confirmation; app must be foregrounded
+
+VISUAL BROWSING WORKFLOW — follow this for any task that involves reading or screenshotting content in an app or browser:
+1. Navigate: android_browse or android_open_app
+2. Read: android_read_screen — understand what is currently visible
+3. Check: is the target content (posts, articles, buttons) visible in the element tree?
+4. If NOT visible: android_swipe to scroll down (x1=540, y1=1600, x2=540, y2=400, durationMs=500), then go back to step 2
+5. Repeat steps 3-4 up to 5 times maximum — stop and report to the user if content is still not found after 5 scrolls
+6. When target IS visible (confirmed in read_screen output): android_screenshot
+7. Describe only what the screenshot actually shows — no assumptions about off-screen content
+8. If target never becomes visible: report back to the user and suggest alternatives (e.g. "I scrolled through the page but couldn't find any posts — the page may require interaction or may be behind a login")
+
+Never skip step 2. Never screenshot before confirming visibility. Never describe content that is not visible in the captured image.
 
 Always confirm with the user before tap/type/swipe actions and before android_notification_reply, android_sms_send, android_camera_clip, and android_screen_record. Use android_read_screen or android_screenshot to understand context before acting. Require confirmation before any destructive shell or file_write actions. When an Android daemon is paired, prefer android_* actions. Returns the daemon's response or an error if not paired.`,
   parameters: {
