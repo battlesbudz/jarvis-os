@@ -1478,6 +1478,15 @@ export const discordConfirmTokens = pgTable("discord_confirm_tokens", {
 export type DiscordConfirmToken = typeof discordConfirmTokens.$inferSelect;
 export type InsertDiscordConfirmToken = typeof discordConfirmTokens.$inferInsert;
 
+// ── Web-chat invite tokens — short-lived links for sharing Jarvis access ─────
+export const webchatInviteTokens = pgTable("webchat_invite_tokens", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  token: text("token").notNull().unique(),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  expiresAt: timestamp("expires_at").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
 // ── Self-heal audit log — persists autonomous-write history across restarts ──
 // ── User-Defined Custom Sub-Agents ────────────────────────────────────────────
 // Users can define named, reusable sub-agents with a custom system prompt that

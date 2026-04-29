@@ -1386,6 +1386,21 @@ export async function ensureTablesExist() {
       ALTER TABLE deliverables ADD COLUMN IF NOT EXISTS drive_link TEXT
     `).catch(() => {});
 
+    // ── Web-chat invite tokens — short-lived links for sharing Jarvis access ──
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS webchat_invite_tokens (
+        id         VARCHAR   PRIMARY KEY DEFAULT gen_random_uuid(),
+        token      TEXT      NOT NULL UNIQUE,
+        user_id    VARCHAR   NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        expires_at TIMESTAMP NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `).catch(() => {});
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS webchat_invite_tokens_token_idx
+        ON webchat_invite_tokens (token)
+    `).catch(() => {});
+
     console.log("Database tables verified");
   } catch (error) {
     console.error("Failed to ensure database tables exist:", error);
