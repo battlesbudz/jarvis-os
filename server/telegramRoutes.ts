@@ -786,10 +786,10 @@ async function processUpdate(update: any): Promise<void> {
           if (!sub || sub === "help") {
             await sendMessage(chatId,
               `*Agent commands* (also: /agents)\n\n` +
-              `/agents list — your agents\n` +
-              `/agents run <name> <message> — run an agent\n` +
+              `/agents list — your named agents\n` +
+              `/agents run <name> <message> — run a named agent\n` +
               `/agents council <question> — ask all agents\n` +
-              `/agents create <name> <role> — create agent\n` +
+              `/agents create <name> <role> — create named agent\n` +
               `/agents assign <name> — assign this chat\n` +
               `/agents unassign <name> — remove this chat from agent\n` +
               `/agents disable <name> — disable agent\n` +
@@ -798,7 +798,9 @@ async function processUpdate(update: any): Promise<void> {
               `/agents memory <name> — show memories\n` +
               `/agents clear-memory <name> — wipe memories\n` +
               `/agents approvals — pending approvals\n` +
-              `/ask <name> <question> — quick query`,
+              `/ask <name> <question> — quick query\n\n` +
+              `*Custom sub-agents:*\n` +
+              `/agent <slug> <prompt> — run a custom agent (manage in Profile → Custom Agents)`,
               { parse_mode: "Markdown" },
             );
             return;
@@ -947,7 +949,49 @@ async function processUpdate(update: any): Promise<void> {
             return;
           }
 
-          await sendMessage(chatId, `Unknown subcommand "${sub}". Send /agent help for usage.`);
+          // Unknown sub-command — check if it's a custom agent slug
+          // e.g. /agent tech-research [prompt...]
+          {
+            const { db: _db } = await import("./db");
+            const { customAgents: _customAgents } = await import("@shared/schema");
+            const { eq: _eq, and: _and } = await import("drizzle-orm");
+
+            const candidateSlug = sub;
+            const [customAgent] = await _db
+              .select()
+              .from(_customAgents)
+              .where(_and(_eq(_customAgents.userId, userId), _eq(_customAgents.slug, candidateSlug)))
+              .limit(1);
+
+            if (customAgent) {
+              const customPrompt = parts.slice(2).join(" ").trim();
+              if (!customPrompt) {
+                await sendMessage(chatId, `Usage: /agent ${candidateSlug} <prompt>`);
+                return;
+              }
+              const { submitAgentJob } = await import("./agent/jobClient");
+              const jobId = await submitAgentJob({
+                userId,
+                agentType: "custom_agent",
+                title: `${customAgent.name}: ${customPrompt.slice(0, 80)}`,
+                prompt: customPrompt,
+                input: {
+                  customAgentId: customAgent.id,
+                  customAgentSlug: customAgent.slug,
+                  customAgentName: customAgent.name,
+                  originChannel: "telegram",
+                },
+              });
+              await sendMessage(
+                chatId,
+                `🤖 Queued *${customAgent.name}* — I'll send you the result when it's ready.\n_Job: \`${jobId.slice(0, 8)}\`_`,
+                { parse_mode: "Markdown" },
+              );
+              return;
+            }
+
+            await sendMessage(chatId, `Unknown subcommand "${sub}". Send /agent help for usage.\n\nTip: run custom sub-agents with /agent <slug> <prompt>`);
+          }
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           await sendMessage(chatId, `❌ Error: ${msg.slice(0, 500)}`);

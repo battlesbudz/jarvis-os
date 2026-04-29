@@ -35,6 +35,7 @@ import { registerTelegramRoutes } from "./telegramRoutes";
 import { registerChannelRoutes } from "./channels/routes";
 import { registerDiscordScheduleRoutes } from "./discord/schedulesRoutes";
 import { registerAgentRoutes } from "./agent/agentRoutes";
+import { registerCustomAgentRoutes } from "./agent/customAgentRoutes";
 import { registerCodeProposalsRoutes } from "./agent/codeProposalsRoutes";
 import { registerDoctorRoutes } from "./doctor/doctorRoutes";
 import { registerDownloadRoutes } from "./downloadRoutes";
@@ -816,6 +817,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   registerChannelRoutes(app);
   registerDiscordScheduleRoutes(app);
   registerAgentRoutes(app);
+  registerCustomAgentRoutes(app);
   registerCodeProposalsRoutes(app);
   registerDoctorRoutes(app);
   app.use("/api/drive", driveRouter);

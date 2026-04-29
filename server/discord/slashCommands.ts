@@ -120,6 +120,25 @@ const JARVIS_COMMAND = {
     },
     {
       type: 1,
+      name: "agent",
+      description: "Run one of your custom sub-agents by slug",
+      options: [
+        {
+          type: 3,
+          name: "slug",
+          description: "Custom agent slug (from your Profile → Custom Agents list)",
+          required: true,
+        },
+        {
+          type: 3,
+          name: "prompt",
+          description: "What you want the agent to do",
+          required: true,
+        },
+      ],
+    },
+    {
+      type: 1,
       name: "help",
       description: "Show all available Jarvis slash commands",
     },
@@ -699,6 +718,96 @@ async function handleAgentStatus(
   }
 }
 
+async function handleCustomAgent(
+  appId: string,
+  interaction: any,
+  userId: string,
+): Promise<void> {
+  const opts: any[] = interaction.data?.options?.[0]?.options ?? [];
+  const slug = (opts.find((o: any) => o.name === "slug")?.value ?? "").trim();
+  const prompt = (opts.find((o: any) => o.name === "prompt")?.value ?? "").trim();
+
+  if (!slug || !prompt) {
+    await editInteractionReply(appId, interaction.token, "❌ Please provide both a slug and a prompt.", EPHEMERAL);
+    return;
+  }
+
+  try {
+    const { db: _db } = await import("../db");
+    const { customAgents: _customAgents } = await import("@shared/schema");
+    const { eq: _eq, and: _and } = await import("drizzle-orm");
+
+    const [agent] = await _db
+      .select()
+      .from(_customAgents)
+      .where(_and(_eq(_customAgents.userId, userId), _eq(_customAgents.slug, slug)))
+      .limit(1);
+
+    if (!agent) {
+      // Try by name as fallback
+      const allAgents = await _db
+        .select()
+        .from(_customAgents)
+        .where(_eq(_customAgents.userId, userId));
+      const byName = allAgents.find((a) => a.name.toLowerCase() === slug.toLowerCase());
+      if (byName) {
+        const { submitAgentJob } = await import("../agent/jobClient");
+        const jobId = await submitAgentJob({
+          userId,
+          agentType: "custom_agent",
+          title: `${byName.name}: ${prompt.slice(0, 80)}`,
+          prompt,
+          input: {
+            customAgentId: byName.id,
+            customAgentSlug: byName.slug,
+            customAgentName: byName.name,
+            originChannel: "Discord",
+            originDiscordChannelId: interaction.channel_id ?? "",
+          },
+        });
+        await editInteractionReply(
+          appId, interaction.token,
+          `🤖 Queued **${byName.name}** — I'll notify you here when it's done. (Job ID: \`${jobId.slice(0, 8)}\`)`,
+          EPHEMERAL,
+        );
+        return;
+      }
+
+      const agentList = allAgents.map((a) => `• \`${a.slug}\` — ${a.name}`).join("\n");
+      await editInteractionReply(
+        appId, interaction.token,
+        `❌ No custom agent found with slug \`${slug}\`.\n\nYour agents:\n${agentList || "_None yet — create one in Profile → Custom Agents_"}`,
+        EPHEMERAL,
+      );
+      return;
+    }
+
+    const { submitAgentJob } = await import("../agent/jobClient");
+    const jobId = await submitAgentJob({
+      userId,
+      agentType: "custom_agent",
+      title: `${agent.name}: ${prompt.slice(0, 80)}`,
+      prompt,
+      input: {
+        customAgentId: agent.id,
+        customAgentSlug: agent.slug,
+        customAgentName: agent.name,
+        originChannel: "Discord",
+        originDiscordChannelId: interaction.channel_id ?? "",
+      },
+    });
+
+    await editInteractionReply(
+      appId, interaction.token,
+      `🤖 Queued **${agent.name}** (${agent.baseType}) — I'll notify you here when it's done.\nJob ID: \`${jobId.slice(0, 8)}\``,
+      EPHEMERAL,
+    );
+  } catch (err) {
+    console.error("[SlashCommands] custom agent error:", err);
+    await editInteractionReply(appId, interaction.token, "❌ Failed to queue the custom agent job.", EPHEMERAL);
+  }
+}
+
 async function handleHelp(appId: string, interaction: any): Promise<void> {
   const help = [
     "**Jarvis Slash Commands**",
@@ -716,11 +825,12 @@ async function handleHelp(appId: string, interaction: any): Promise<void> {
     "`/jarvis status` — Check the status of active background jobs.",
     "`/jarvis assign_agent <type>` — Assign a specialist agent to this channel.",
     "`/jarvis agent_status` — Show which agent is assigned to this channel.",
+    "`/jarvis agent <slug> <prompt>` — Run one of your custom sub-agents.",
     "`/jarvis audit` — Show recent autonomous self-repairs Jarvis made.",
     "`/jarvis reset_budget` — Reset the autonomous write counter (owner only).",
     "",
     "💡 Replies are private by default (only you see them).",
-    "Connect Jarvis in the app under **Settings → Channels → Discord** to get started.",
+    "Manage custom agents in the app under **Profile → Custom Agents**.",
   ].join("\n");
 
   await editInteractionReply(appId, interaction.token, help, EPHEMERAL);
@@ -928,6 +1038,15 @@ export async function handleInteraction(interaction: any): Promise<object> {
         setImmediate(() => {
           handleAgentStatus(appId, interaction, userId).catch((err) =>
             console.error("[SlashCommands] handleAgentStatus background error:", err),
+          );
+        });
+        return deferredEphemeral();
+      }
+
+      if (subcommand === "agent") {
+        setImmediate(() => {
+          handleCustomAgent(appId, interaction, userId).catch((err) =>
+            console.error("[SlashCommands] handleCustomAgent background error:", err),
           );
         });
         return deferredEphemeral();

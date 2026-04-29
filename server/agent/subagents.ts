@@ -204,6 +204,12 @@ export interface RunSubAgentOptions {
    * sub-agent workloads to different models without touching the agent loop.
    */
   model?: string;
+  /**
+   * Additional system prompt text appended after the base agent prompt.
+   * Used by custom user-defined agents to inject specialization context
+   * without replacing the base prompt.
+   */
+  extraSystemPrompt?: string;
 }
 
 /**
@@ -221,6 +227,11 @@ export async function runSubAgent(opts: RunSubAgentOptions): Promise<SubAgentRes
   // relationship context for whoever the user is writing to. Other
   // sub-agent types stay lean.
   let systemPrompt = spec.systemPrompt;
+
+  // Append custom user-defined specialization prompt if provided.
+  if (opts.extraSystemPrompt && opts.extraSystemPrompt.trim()) {
+    systemPrompt = `${systemPrompt}\n\n--- CUSTOM AGENT INSTRUCTIONS ---\n${opts.extraSystemPrompt.trim()}`;
+  }
   if (opts.agentType === "email" && opts.context.userId) {
     const enrich: string[] = [];
     try {

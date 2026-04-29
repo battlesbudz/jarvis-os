@@ -306,6 +306,31 @@ export default function ProfileScreen() {
   const [driveLoading, setDriveLoading] = useState(false);
   const [driveEnabling, setDriveEnabling] = useState(false);
 
+  interface CustomAgent {
+    id: string;
+    name: string;
+    slug: string;
+    description: string | null;
+    baseType: 'research' | 'writing' | 'planning' | 'email';
+    extraPrompt: string | null;
+    model: string | null;
+    createdAt: string;
+  }
+  const [customAgents, setCustomAgents] = useState<CustomAgent[]>([]);
+  const [customAgentsLoading, setCustomAgentsLoading] = useState(false);
+  const [customAgentModal, setCustomAgentModal] = useState<{
+    visible: boolean;
+    mode: 'create' | 'edit';
+    agent?: CustomAgent;
+  }>({ visible: false, mode: 'create' });
+  const [customAgentForm, setCustomAgentForm] = useState({
+    name: '',
+    description: '',
+    baseType: 'research' as 'research' | 'writing' | 'planning' | 'email',
+    extraPrompt: '',
+  });
+  const [customAgentSaving, setCustomAgentSaving] = useState(false);
+
   const [writeBudget, setWriteBudget] = useState<{
     count: number;
     max: number;
@@ -636,6 +661,80 @@ export default function ProfileScreen() {
     }
   }, []);
 
+  const loadCustomAgents = useCallback(async () => {
+    setCustomAgentsLoading(true);
+    try {
+      const res = await apiRequest('GET', '/api/custom-agents');
+      const data = await res.json();
+      setCustomAgents(data.agents || []);
+    } catch {
+      setCustomAgents([]);
+    } finally {
+      setCustomAgentsLoading(false);
+    }
+  }, []);
+
+  const handleOpenCreateCustomAgent = useCallback(() => {
+    setCustomAgentForm({ name: '', description: '', baseType: 'research', extraPrompt: '' });
+    setCustomAgentModal({ visible: true, mode: 'create' });
+  }, []);
+
+  const handleOpenEditCustomAgent = useCallback((agent: CustomAgent) => {
+    setCustomAgentForm({
+      name: agent.name,
+      description: agent.description || '',
+      baseType: agent.baseType,
+      extraPrompt: agent.extraPrompt || '',
+    });
+    setCustomAgentModal({ visible: true, mode: 'edit', agent });
+  }, []);
+
+  const handleSaveCustomAgent = useCallback(async () => {
+    if (!customAgentForm.name.trim()) return;
+    setCustomAgentSaving(true);
+    try {
+      if (customAgentModal.mode === 'create') {
+        await apiRequest('POST', '/api/custom-agents', {
+          name: customAgentForm.name.trim(),
+          description: customAgentForm.description.trim() || null,
+          baseType: customAgentForm.baseType,
+          extraPrompt: customAgentForm.extraPrompt.trim() || null,
+        });
+      } else if (customAgentModal.agent) {
+        await apiRequest('PUT', `/api/custom-agents/${customAgentModal.agent.id}`, {
+          name: customAgentForm.name.trim(),
+          description: customAgentForm.description.trim() || null,
+          baseType: customAgentForm.baseType,
+          extraPrompt: customAgentForm.extraPrompt.trim() || null,
+        });
+      }
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      setCustomAgentModal({ visible: false, mode: 'create' });
+      await loadCustomAgents();
+    } catch (err) {
+      Alert.alert('Error', err instanceof Error ? err.message : 'Could not save agent');
+    } finally {
+      setCustomAgentSaving(false);
+    }
+  }, [customAgentForm, customAgentModal, loadCustomAgents]);
+
+  const handleDeleteCustomAgent = useCallback(async (id: string) => {
+    Alert.alert('Delete Custom Agent', 'Are you sure you want to delete this agent?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete', style: 'destructive', onPress: async () => {
+          try {
+            await apiRequest('DELETE', `/api/custom-agents/${id}`);
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            await loadCustomAgents();
+          } catch (err) {
+            Alert.alert('Error', err instanceof Error ? err.message : 'Could not delete agent');
+          }
+        }
+      }
+    ]);
+  }, [loadCustomAgents]);
+
   const startDocumentPoll = useCallback(() => {
     if (documentPollRef.current) clearInterval(documentPollRef.current);
     const poll = setInterval(async () => {
@@ -826,7 +925,7 @@ export default function ProfileScreen() {
     setLifeContext(lc);
     setNotificationsEnabledState(notifications);
     setUserName(name);
-    await Promise.all([loadOAuthStatus(), loadMemories(), loadTelegramStatus(), loadMorningNotes(), loadDocuments(), loadSoul(), loadPeople(), loadChannels(), loadDaemonPerms(), loadAndroidDaemonPerms(), loadDriveStatus(), loadDreamInsights(), loadWebsiteCrawl(), loadWriteBudget()]);
+    await Promise.all([loadOAuthStatus(), loadMemories(), loadTelegramStatus(), loadMorningNotes(), loadDocuments(), loadSoul(), loadPeople(), loadChannels(), loadDaemonPerms(), loadAndroidDaemonPerms(), loadDriveStatus(), loadDreamInsights(), loadWebsiteCrawl(), loadWriteBudget(), loadCustomAgents()]);
     try {
       const importRes = await apiRequest('GET', '/api/chatgpt-import/status');
       const importData = await importRes.json();
@@ -852,7 +951,7 @@ export default function ProfileScreen() {
   // referentially stable and safe to omit from deps; including them causes a
   // temporal-dead-zone ReferenceError because they are declared after loadAll.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loadOAuthStatus, loadMemories, loadTelegramStatus, loadMorningNotes, loadDocuments, loadSoul, loadPeople, loadChannels, loadDriveStatus, loadDreamInsights, loadWebsiteCrawl]);
+  }, [loadOAuthStatus, loadMemories, loadTelegramStatus, loadMorningNotes, loadDocuments, loadSoul, loadPeople, loadChannels, loadDriveStatus, loadDreamInsights, loadWebsiteCrawl, loadCustomAgents]);
 
   const handleToggleEmailAlerts = useCallback(async () => {
     const newValue = !emailAlertsEnabled;
@@ -3916,6 +4015,70 @@ export default function ProfileScreen() {
           </View>
         </Animated.View>
 
+        {/* Custom Agents */}
+        <Animated.View entering={FadeInDown.duration(400).delay(460)}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 28, marginBottom: 4 }}>
+            <Text style={styles.sectionTitle}>Custom Agents</Text>
+            <Pressable
+              onPress={handleOpenCreateCustomAgent}
+              style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 4, paddingHorizontal: 10, borderRadius: 20, backgroundColor: Colors.primary + '18' }}
+            >
+              <Ionicons name="add" size={16} color={Colors.primary} />
+              <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: Colors.primary }}>New</Text>
+            </Pressable>
+          </View>
+          <View style={[styles.platformsList, { gap: 0 }]}>
+            {customAgentsLoading ? (
+              <ActivityIndicator size="small" color={Colors.primary} style={{ marginVertical: 12 }} />
+            ) : customAgents.length === 0 ? (
+              <View style={[styles.memoryEmptyCard, { alignItems: 'flex-start', paddingVertical: 16 }]}>
+                <View style={styles.memoryEmptyIcon}>
+                  <Ionicons name="flash-outline" size={20} color={Colors.primary} />
+                </View>
+                <Text style={styles.memoryEmptyText}>No custom agents yet — create one to invoke via the app, Discord, or Telegram.</Text>
+              </View>
+            ) : (
+              customAgents.map((agent, idx) => {
+                const typeColors: Record<string, string> = {
+                  research: '#6366F1',
+                  writing: '#10B981',
+                  planning: '#F59E0B',
+                  email: '#3B82F6',
+                };
+                const typeColor = typeColors[agent.baseType] || Colors.primary;
+                return (
+                  <View key={agent.id} style={[styles.memoryRow, idx < customAgents.length - 1 && styles.memoryRowBorder]}>
+                    <View style={styles.memoryContent}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 2 }}>
+                        <Text style={[styles.memoryText, { fontWeight: '600', fontSize: 14 }]}>{agent.name}</Text>
+                        <View style={{ backgroundColor: typeColor + '20', borderRadius: 8, paddingHorizontal: 7, paddingVertical: 2 }}>
+                          <Text style={{ fontSize: 10, fontFamily: 'Inter_600SemiBold', color: typeColor, textTransform: 'uppercase' }}>{agent.baseType}</Text>
+                        </View>
+                      </View>
+                      <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: Colors.textTertiary, marginBottom: 1 }}><Text style={{ fontFamily: 'Inter_500Medium' }}>@{agent.slug}</Text></Text>
+                      {agent.description ? (
+                        <Text style={[styles.memoryText, { fontSize: 12, color: Colors.textSecondary }]} numberOfLines={2}>{agent.description}</Text>
+                      ) : null}
+                    </View>
+                    <View style={{ flexDirection: 'row', gap: 6 }}>
+                      <Pressable onPress={() => handleOpenEditCustomAgent(agent)} hitSlop={8} style={{ padding: 4 }}>
+                        <Ionicons name="pencil-outline" size={17} color={Colors.textTertiary} />
+                      </Pressable>
+                      <Pressable onPress={() => handleDeleteCustomAgent(agent.id)} hitSlop={8} style={{ padding: 4 }}>
+                        <Ionicons name="trash-outline" size={17} color="#EF4444" />
+                      </Pressable>
+                    </View>
+                  </View>
+                );
+              })
+            )}
+          </View>
+          <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: Colors.textTertiary, marginTop: 8, marginHorizontal: 2 }}>
+            Invoke via Discord: <Text style={{ fontFamily: 'Inter_500Medium' }}>/jarvis agent &lt;slug&gt; &lt;prompt&gt;</Text>{'\n'}
+            Telegram: <Text style={{ fontFamily: 'Inter_500Medium' }}>/agent &lt;slug&gt; &lt;prompt&gt;</Text>
+          </Text>
+        </Animated.View>
+
         {/* Settings */}
         <Animated.View entering={FadeInDown.duration(400).delay(480)}>
           <Text style={[styles.sectionTitle, { marginTop: 28 }]}>Settings</Text>
@@ -4063,6 +4226,87 @@ export default function ProfileScreen() {
         }}
         onClose={() => setSheetVisible(false)}
       />
+
+      {/* Custom Agent Create/Edit Modal */}
+      <Modal
+        visible={customAgentModal.visible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setCustomAgentModal({ visible: false, mode: 'create' })}
+      >
+        <Pressable style={styles.tzOverlay} onPress={() => setCustomAgentModal({ visible: false, mode: 'create' })}>
+          <Pressable style={[styles.tzSheet, { paddingBottom: 32 }]} onPress={() => {}}>
+            <View style={styles.tzHandle} />
+            <Text style={[styles.tzTitle, { marginBottom: 4 }]}>
+              {customAgentModal.mode === 'create' ? 'New Custom Agent' : 'Edit Custom Agent'}
+            </Text>
+            <Text style={[styles.tzSubtitle, { marginBottom: 16 }]}>
+              Custom agents are specialized sub-agents you can invoke from Discord or Telegram.
+            </Text>
+
+            <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: Colors.textSecondary, marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 }}>Name</Text>
+            <TextInput
+              value={customAgentForm.name}
+              onChangeText={(v) => setCustomAgentForm((f) => ({ ...f, name: v }))}
+              placeholder="e.g. Tech Researcher"
+              placeholderTextColor={Colors.textTertiary}
+              style={{ backgroundColor: Colors.surface, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, fontFamily: 'Inter_400Regular', color: Colors.text, borderWidth: 1, borderColor: Colors.border, marginBottom: 12 }}
+            />
+
+            <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: Colors.textSecondary, marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 }}>Type</Text>
+            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
+              {(['research', 'writing', 'planning', 'email'] as const).map((t) => {
+                const selected = customAgentForm.baseType === t;
+                const typeColors: Record<string, string> = { research: '#6366F1', writing: '#10B981', planning: '#F59E0B', email: '#3B82F6' };
+                const c = typeColors[t];
+                return (
+                  <Pressable
+                    key={t}
+                    onPress={() => setCustomAgentForm((f) => ({ ...f, baseType: t }))}
+                    style={{ flex: 1, paddingVertical: 8, borderRadius: 10, backgroundColor: selected ? c : Colors.surface, borderWidth: 1, borderColor: selected ? c : Colors.border, alignItems: 'center' }}
+                  >
+                    <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: selected ? '#fff' : Colors.textSecondary, textTransform: 'capitalize' }}>{t}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: Colors.textSecondary, marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 }}>Description <Text style={{ fontWeight: '400', textTransform: 'none' }}>(optional)</Text></Text>
+            <TextInput
+              value={customAgentForm.description}
+              onChangeText={(v) => setCustomAgentForm((f) => ({ ...f, description: v }))}
+              placeholder="What does this agent specialise in?"
+              placeholderTextColor={Colors.textTertiary}
+              style={{ backgroundColor: Colors.surface, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, fontFamily: 'Inter_400Regular', color: Colors.text, borderWidth: 1, borderColor: Colors.border, marginBottom: 12 }}
+            />
+
+            <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: Colors.textSecondary, marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 }}>Extra Instructions <Text style={{ fontWeight: '400', textTransform: 'none' }}>(optional)</Text></Text>
+            <TextInput
+              value={customAgentForm.extraPrompt}
+              onChangeText={(v) => setCustomAgentForm((f) => ({ ...f, extraPrompt: v }))}
+              placeholder="Any specific instructions appended to the base agent system prompt…"
+              placeholderTextColor={Colors.textTertiary}
+              multiline
+              numberOfLines={4}
+              style={{ backgroundColor: Colors.surface, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 13, fontFamily: 'Inter_400Regular', color: Colors.text, borderWidth: 1, borderColor: Colors.border, minHeight: 90, textAlignVertical: 'top', marginBottom: 20 }}
+            />
+
+            <Pressable
+              onPress={handleSaveCustomAgent}
+              disabled={customAgentSaving || !customAgentForm.name.trim()}
+              style={{ backgroundColor: customAgentForm.name.trim() ? Colors.primary : Colors.border, borderRadius: 12, paddingVertical: 14, alignItems: 'center' }}
+            >
+              {customAgentSaving ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Text style={{ fontSize: 15, fontFamily: 'Inter_600SemiBold', color: customAgentForm.name.trim() ? '#fff' : Colors.textTertiary }}>
+                  {customAgentModal.mode === 'create' ? 'Create Agent' : 'Save Changes'}
+                </Text>
+              )}
+            </Pressable>
+          </Pressable>
+        </Pressable>
+      </Modal>
 
       <Modal
         visible={showTimezoneModal}
