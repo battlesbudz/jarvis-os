@@ -2286,7 +2286,8 @@ Answer (yes/no):`,
 
   app.post("/api/coach/chat", async (req: Request, res: Response) => {
     try {
-      const { messages, goals, stats, history, calendarEvents, lifeContext, gmailItems, gmailConnected, slackMessages, slackConnected, coachingMode, telegramMessages, telegramConnected, sdkSessionId: incomingAppSessionId } = req.body;
+      const { messages, goals, stats, history, calendarEvents, lifeContext, gmailItems, gmailConnected, slackMessages, slackConnected, coachingMode, telegramMessages, telegramConnected, sdkSessionId: incomingAppSessionId, originChannel: rawOriginChannel } = req.body;
+      const originChannel: string = (typeof rawOriginChannel === "string" && rawOriginChannel.trim()) ? rawOriginChannel.trim().toLowerCase() : "appchat";
       const userId = req.userId;
 
       if (!messages || !Array.isArray(messages)) {
@@ -2602,6 +2603,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
         // Shared MCP tool context (pendingAttachments accumulate across turns)
         const mcpToolCtx: import("./agent/types").ToolContext = {
           userId,
+          channel: originChannel,
           state: {
             pendingAttachments: [],
             onProgress: (msg: string) => {

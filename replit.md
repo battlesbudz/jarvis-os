@@ -118,6 +118,16 @@ Jarvis is now anticipatory — it generates forward-looking predictions daily fr
 - **App UI** — "JARVIS FORESIGHT" panel in the Today tab (`app/(tabs)/index.tsx`) shows today's predictions with confidence bars and observation counts. Only shown when predictions exist or are loading.
 - **Confidence threshold** — Only predictions ≥ 55% are surfaced (configurable). Morning briefings only include ≥ 65%.
 
+## Web Chat Interface (Task #744)
+A browser-based chat UI is available at `/chat` on the Express server — no mobile app required.
+
+- **Route** — `GET /chat` in `server/index.ts` reads `server/templates/chat.html`, injects `GOOGLE_WEB_CLIENT_ID` server-side, and returns the page. Registered before the SPA catch-all so it is not overridden by the Expo web build.
+- **Auth** — Google Identity Services (GIS) library: user clicks "Continue with Google", receives an ID token, which is exchanged for a Jarvis JWT via `POST /api/auth/google`. JWT is stored in `localStorage`.
+- **Chat UI** — Vanilla-JS single-page app inside `chat.html`. Sends `POST /api/coach/chat` with `messages`, `sdkSessionId` (for server-side prompt caching), and `originChannel: "webchat"`. Streams SSE tokens and renders them in real time.
+- **History** — Conversation history is stored in `localStorage` per browser session.
+- **Webchat channel** — `server/channels/webchatChannel.ts` registers "webchat" as a ChannelName. Background job results are delivered via `in_app` inbox (webchat channel delegates to inAppChannel). "webchat" added to `CHANNEL_NAMES` in `shared/schema.ts`.
+- **Landing page** — "Chat with Jarvis in your browser" CTA button added to `server/templates/landing-page.html`.
+
 ## External Dependencies
 -   **AI Services:** OpenAI (gpt-5-mini, Whisper, TTS "alloy")
 -   **Database:** PostgreSQL
