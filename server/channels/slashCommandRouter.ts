@@ -64,6 +64,11 @@ export const SLASH_COMMANDS: SlashCommandDef[] = [
     argRequired: true,
   },
   {
+    name: "pr",
+    description: "Check open GitHub pull requests and CI status",
+    agentType: null,
+  },
+  {
     name: "help",
     description: "Show all available slash commands",
     agentType: null,

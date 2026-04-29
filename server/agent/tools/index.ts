@@ -145,6 +145,7 @@ export type ToolGroup =
   | "connections" // check_connections, generate_reconnect_link, connect_channel
   | "mcp"         // auto-discovered tools from connected MCP servers
   | "compute"     // run_python — sandboxed code execution
+  | "github"      // list_github_prs, get_github_pr, merge_github_pr
 
 // ── Registry-derived data (single source of truth for capability tools) ────────
 // GOOGLE_GATED and TOOL_GROUP_MAP come entirely from the capability registry.
@@ -351,5 +352,11 @@ export {
   selfHealTool,
   workspaceUpdateTool,
   listCustomAgentsTool,
+<<<<<<< HEAD
   runTournamentTool,
+=======
+  listGithubPrsTool,
+  getGithubPrTool,
+  mergeGithubPrTool,
+>>>>>>> 9cd6ce7 (feat: GitHub PR dashboard — PAT settings, agent tools, Telegram /pr command, CI alert scanner)
 };

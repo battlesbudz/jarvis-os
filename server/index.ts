@@ -2,7 +2,7 @@ import express from "express";
 import type { Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { ensureTablesExist, db } from "./db";
-import { registerTelegramWebhook, startProactiveScheduler, startTelegramPolling, startEmailAlertScanner, runProactiveStartupCatchup } from "./telegramRoutes";
+import { registerTelegramWebhook, startProactiveScheduler, startTelegramPolling, startEmailAlertScanner, runProactiveStartupCatchup, startGithubCiAlertScanner } from "./telegramRoutes";
 import { startMomentumExpiryScheduler } from "./momentumCoach";
 import { startHeartbeat } from "./heartbeat";
 import { startJobQueueWorker } from "./agent/jobQueue";
@@ -577,6 +577,9 @@ function setupErrorHandler(app: express.Application) {
       startMomentumExpiryScheduler();
       startEmailAlertScanner().catch(err => {
         console.error("Failed to start email alert scanner:", err);
+      });
+      startGithubCiAlertScanner().catch(err => {
+        console.error("Failed to start GitHub CI alert scanner:", err);
       });
       startCuriosityScanner().catch(err => {
         console.error("Failed to start curiosity scanner:", err);

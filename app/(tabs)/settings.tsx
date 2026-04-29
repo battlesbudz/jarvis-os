@@ -443,6 +443,74 @@ export default function SettingsScreen() {
     }
   }, [ttsVoice]);
 
+  // ── GitHub ──
+  const [githubConnected, setGithubConnected] = useState(false);
+  const [githubRepos, setGithubRepos] = useState<string[]>([]);
+  const [githubPatInput, setGithubPatInput] = useState('');
+  const [githubRepoInput, setGithubRepoInput] = useState('');
+  const [githubSaving, setGithubSaving] = useState(false);
+  const [githubExpanded, setGithubExpanded] = useState(false);
+  const [githubPatVisible, setGithubPatVisible] = useState(false);
+
+  const loadGithubSettings = useCallback(async () => {
+    try {
+      const res = await apiRequest('GET', '/api/github/settings');
+      if (!res.ok) return;
+      const data = await res.json();
+      setGithubConnected(!!data.connected);
+      setGithubRepos(Array.isArray(data.repos) ? data.repos : []);
+    } catch {}
+  }, []);
+
+  const saveGithubPat = useCallback(async () => {
+    if (!githubPatInput.trim()) return;
+    setGithubSaving(true);
+    try {
+      await apiRequest('PATCH', '/api/github/settings', { pat: githubPatInput.trim() });
+      setGithubConnected(true);
+      setGithubPatInput('');
+      await loadGithubSettings();
+    } catch {}
+    setGithubSaving(false);
+  }, [githubPatInput, loadGithubSettings]);
+
+  const removeGithubPat = useCallback(async () => {
+    Alert.alert('Remove GitHub Token', 'This will disconnect GitHub. Your repos list will be preserved.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Remove', style: 'destructive', onPress: async () => {
+          try {
+            await apiRequest('DELETE', '/api/github/pat');
+            setGithubConnected(false);
+          } catch {}
+        },
+      },
+    ]);
+  }, []);
+
+  const addGithubRepo = useCallback(async () => {
+    const repo = githubRepoInput.trim();
+    if (!repo || !repo.includes('/')) {
+      Alert.alert('Invalid format', 'Enter a repo as "owner/repo" e.g. acme/backend');
+      return;
+    }
+    if (githubRepos.includes(repo)) return;
+    const updated = [...githubRepos, repo];
+    try {
+      await apiRequest('PATCH', '/api/github/settings', { repos: updated });
+      setGithubRepos(updated);
+      setGithubRepoInput('');
+    } catch {}
+  }, [githubRepoInput, githubRepos]);
+
+  const removeGithubRepo = useCallback(async (repo: string) => {
+    const updated = githubRepos.filter(r => r !== repo);
+    try {
+      await apiRequest('PATCH', '/api/github/settings', { repos: updated });
+      setGithubRepos(updated);
+    } catch {}
+  }, [githubRepos]);
+
   // ── Build History ──
   const [buildHistory, setBuildHistory] = useState<BuildLogEntry[]>([]);
   const [buildHistoryExpanded, setBuildHistoryExpanded] = useState(false);
@@ -1107,6 +1175,7 @@ export default function SettingsScreen() {
     loadMcpServers();
     loadMcpServerKey();
     loadWorkspaceFiles();
+    loadGithubSettings();
     return () => {
       if (telegramPollRef.current) {
         clearInterval(telegramPollRef.current);
@@ -1609,6 +1678,135 @@ export default function SettingsScreen() {
         </ErrorBoundary>
 
         <ErrorBoundary FallbackComponent={SectionFallback}>
+        {/* ── GITHUB ── */}
+        <SectionHeader label="GITHUB" accent="#6e40c9" />
+        <View style={styles.card}>
+          <Pressable
+            onPress={() => setGithubExpanded(e => !e)}
+            style={styles.connRow}
+          >
+            <View style={[styles.connIconWrap, { backgroundColor: '#6e40c920' }]}>
+              <Ionicons name="git-branch-outline" size={18} color="#6e40c9" />
+            </View>
+            <View style={styles.connInfo}>
+              <Text style={styles.connName}>GitHub</Text>
+              <Text style={styles.connSub}>
+                {githubConnected
+                  ? `Connected · ${githubRepos.length} repo${githubRepos.length !== 1 ? 's' : ''} tracked`
+                  : 'Add a Personal Access Token to enable PR tools'}
+              </Text>
+            </View>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              {githubConnected && (
+                <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: Colors.success }} />
+              )}
+              <Ionicons
+                name={githubExpanded ? 'chevron-up-outline' : 'chevron-down-outline'}
+                size={16}
+                color={Colors.textSecondary}
+              />
+            </View>
+          </Pressable>
+
+          {githubExpanded && (
+            <View style={{ paddingHorizontal: 16, paddingBottom: 16 }}>
+              {/* PAT section */}
+              <Text style={[styles.connSub, { marginTop: 12, marginBottom: 6, color: Colors.textSecondary }]}>
+                Personal Access Token (PAT)
+              </Text>
+              {githubConnected ? (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <View style={{ flex: 1, paddingVertical: 8, paddingHorizontal: 12, backgroundColor: Colors.surface, borderRadius: 8, borderWidth: 1, borderColor: Colors.border }}>
+                    <Text style={{ color: Colors.success, fontFamily: 'Inter_500Medium', fontSize: 13 }}>
+                      ✓ Token saved
+                    </Text>
+                  </View>
+                  <Pressable
+                    onPress={removeGithubPat}
+                    style={{ paddingVertical: 8, paddingHorizontal: 12, backgroundColor: Colors.error + '20', borderRadius: 8, borderWidth: 1, borderColor: Colors.error + '40' }}
+                  >
+                    <Text style={{ color: Colors.error, fontFamily: 'Inter_500Medium', fontSize: 13 }}>Remove</Text>
+                  </Pressable>
+                </View>
+              ) : (
+                <View style={{ gap: 8 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: Colors.border, borderRadius: 8, backgroundColor: Colors.surface, overflow: 'hidden' }}>
+                    <TextInput
+                      style={{ flex: 1, paddingVertical: 10, paddingHorizontal: 12, color: Colors.text, fontFamily: 'Inter_400Regular', fontSize: 13 }}
+                      placeholder="ghp_xxxxxxxxxxxx"
+                      placeholderTextColor={Colors.textTertiary}
+                      value={githubPatInput}
+                      onChangeText={setGithubPatInput}
+                      secureTextEntry={!githubPatVisible}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                    />
+                    <Pressable onPress={() => setGithubPatVisible(v => !v)} style={{ padding: 10 }}>
+                      <Ionicons name={githubPatVisible ? 'eye-off-outline' : 'eye-outline'} size={16} color={Colors.textSecondary} />
+                    </Pressable>
+                  </View>
+                  <Pressable
+                    onPress={saveGithubPat}
+                    disabled={githubSaving || !githubPatInput.trim()}
+                    style={{ paddingVertical: 10, paddingHorizontal: 16, backgroundColor: '#6e40c9', borderRadius: 8, alignItems: 'center', opacity: githubSaving || !githubPatInput.trim() ? 0.5 : 1 }}
+                  >
+                    {githubSaving
+                      ? <ActivityIndicator size="small" color="#fff" />
+                      : <Text style={{ color: '#fff', fontFamily: 'Inter_600SemiBold', fontSize: 13 }}>Save Token</Text>}
+                  </Pressable>
+                  <Text style={{ color: Colors.textTertiary, fontSize: 11, fontFamily: 'Inter_400Regular' }}>
+                    Generate a token at github.com/settings/tokens with repo + read:user scope.
+                  </Text>
+                </View>
+              )}
+
+              {/* Repos section */}
+              <Text style={[styles.connSub, { marginTop: 16, marginBottom: 6, color: Colors.textSecondary }]}>
+                Tracked Repositories
+              </Text>
+              {githubRepos.length > 0 && (
+                <View style={{ gap: 6, marginBottom: 8 }}>
+                  {githubRepos.map((repo) => (
+                    <View key={repo} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 8, backgroundColor: Colors.surface, borderRadius: 8, borderWidth: 1, borderColor: Colors.border }}>
+                      <Ionicons name="git-branch-outline" size={14} color="#6e40c9" style={{ marginRight: 8 }} />
+                      <Text style={{ flex: 1, color: Colors.text, fontFamily: 'Inter_400Regular', fontSize: 13 }}>{repo}</Text>
+                      <Pressable onPress={() => removeGithubRepo(repo)} hitSlop={8}>
+                        <Ionicons name="close-outline" size={18} color={Colors.textTertiary} />
+                      </Pressable>
+                    </View>
+                  ))}
+                </View>
+              )}
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                <TextInput
+                  style={{ flex: 1, paddingVertical: 10, paddingHorizontal: 12, color: Colors.text, fontFamily: 'Inter_400Regular', fontSize: 13, borderWidth: 1, borderColor: Colors.border, borderRadius: 8, backgroundColor: Colors.surface }}
+                  placeholder="owner/repo (e.g. acme/backend)"
+                  placeholderTextColor={Colors.textTertiary}
+                  value={githubRepoInput}
+                  onChangeText={setGithubRepoInput}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  onSubmitEditing={addGithubRepo}
+                />
+                <Pressable
+                  onPress={addGithubRepo}
+                  disabled={!githubRepoInput.trim()}
+                  style={{ paddingHorizontal: 14, paddingVertical: 10, backgroundColor: '#6e40c920', borderRadius: 8, borderWidth: 1, borderColor: '#6e40c940', justifyContent: 'center', opacity: githubRepoInput.trim() ? 1 : 0.4 }}
+                >
+                  <Ionicons name="add-outline" size={18} color="#6e40c9" />
+                </Pressable>
+              </View>
+              {githubConnected && (
+                <Text style={{ color: Colors.textTertiary, fontSize: 11, fontFamily: 'Inter_400Regular', marginTop: 8 }}>
+                  Ask Jarvis "what are my open PRs?" or use /pr on Telegram.
+                </Text>
+              )}
+            </View>
+          )}
+        </View>
+        </ErrorBoundary>
+
+        <ErrorBoundary FallbackComponent={SectionFallback}>
         {/* ── CONNECTED TOOLS (MCP) ── */}
         <SectionHeader label="CONNECTED TOOLS" accent="#10B981" />
         <View style={styles.card}>
@@ -1616,7 +1814,7 @@ export default function SettingsScreen() {
             <ActivityIndicator size="small" color="#10B981" style={{ padding: 16 }} />
           ) : mcpServers.length === 0 ? (
             <View style={{ padding: 16, alignItems: 'center' }}>
-              <Ionicons name="extension-puzzle-outline" size={28} color={Colors.textMuted} style={{ marginBottom: 8 }} />
+              <Ionicons name="extension-puzzle-outline" size={28} color={Colors.textTertiary} style={{ marginBottom: 8 }} />
               <Text style={[styles.connSub, { textAlign: 'center' }]}>
                 No MCP servers connected.{'\n'}Add a server to extend Jarvis with new tools.
               </Text>
@@ -1628,7 +1826,7 @@ export default function SettingsScreen() {
                   <Ionicons
                     name={server.transport === 'http' ? 'cloud-outline' : 'terminal-outline'}
                     size={18}
-                    color={server.connected ? '#10B981' : Colors.textMuted}
+                    color={server.connected ? '#10B981' : Colors.textTertiary}
                   />
                 </View>
                 <View style={styles.connInfo}>
@@ -1708,7 +1906,7 @@ export default function SettingsScreen() {
                 padding: 12, fontSize: 14, borderWidth: 1, borderColor: Colors.border, marginBottom: 10,
               }}
               placeholder="Name (e.g. Filesystem)"
-              placeholderTextColor={Colors.textMuted}
+              placeholderTextColor={Colors.textTertiary}
               value={mcpAddName}
               onChangeText={setMcpAddName}
             />
@@ -1721,7 +1919,7 @@ export default function SettingsScreen() {
                   fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
                 }]}
                 placeholder="Command (e.g. node /path/to/server.js)"
-                placeholderTextColor={Colors.textMuted}
+                placeholderTextColor={Colors.textTertiary}
                 value={mcpAddCommand}
                 onChangeText={setMcpAddCommand}
                 autoCapitalize="none"
@@ -1735,7 +1933,7 @@ export default function SettingsScreen() {
                     padding: 12, fontSize: 13, borderWidth: 1, borderColor: Colors.border, marginBottom: 10,
                   }}
                   placeholder="URL (https://...)"
-                  placeholderTextColor={Colors.textMuted}
+                  placeholderTextColor={Colors.textTertiary}
                   value={mcpAddUrl}
                   onChangeText={setMcpAddUrl}
                   autoCapitalize="none"
@@ -1774,7 +1972,7 @@ export default function SettingsScreen() {
                       padding: 12, fontSize: 13, borderWidth: 1, borderColor: Colors.border, marginBottom: 10,
                     }}
                     placeholder="Auth token (optional)"
-                    placeholderTextColor={Colors.textMuted}
+                    placeholderTextColor={Colors.textTertiary}
                     value={mcpAddToken}
                     onChangeText={setMcpAddToken}
                     autoCapitalize="none"
@@ -1792,7 +1990,7 @@ export default function SettingsScreen() {
                           fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
                         }}
                         placeholder="ENV_VAR_NAME"
-                        placeholderTextColor={Colors.textMuted}
+                        placeholderTextColor={Colors.textTertiary}
                         value={mcpAddEnvKey}
                         onChangeText={(v) => {
                           const normalized = v.toUpperCase().replace(/[^A-Z0-9_]/g, '');
@@ -1937,7 +2135,7 @@ export default function SettingsScreen() {
                 <Ionicons
                   name={mcpKeyCopied ? 'checkmark-circle' : 'copy-outline'}
                   size={18}
-                  color={mcpKeyCopied ? '#10B981' : mcpRawKey ? Colors.textSecondary : Colors.textMuted}
+                  color={mcpKeyCopied ? '#10B981' : mcpRawKey ? Colors.textSecondary : Colors.textTertiary}
                 />
               </Pressable>
             )}

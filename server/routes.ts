@@ -8148,6 +8148,47 @@ Extract up to 8 memories per batch.`;
     }
   });
 
+  // ── GitHub Settings ─────────────────────────────────────────────────────────
+  app.get("/api/github/settings", authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const userId = (req as any).userId as string;
+      const { getGitHubSettings } = await import("./integrations/github");
+      const settings = await getGitHubSettings(userId);
+      res.json({ connected: !!settings.pat, repos: settings.repos });
+    } catch (err) {
+      console.error("[GitHub] GET settings error:", err);
+      res.status(500).json({ error: "Failed to load GitHub settings" });
+    }
+  });
+
+  app.patch("/api/github/settings", authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const userId = (req as any).userId as string;
+      const { pat, repos } = req.body as { pat?: string; repos?: string[] };
+      const { saveGitHubSettings } = await import("./integrations/github");
+      await saveGitHubSettings(userId, {
+        ...(pat !== undefined ? { pat: pat || null } : {}),
+        ...(repos !== undefined ? { repos } : {}),
+      });
+      res.json({ ok: true });
+    } catch (err) {
+      console.error("[GitHub] PATCH settings error:", err);
+      res.status(500).json({ error: "Failed to save GitHub settings" });
+    }
+  });
+
+  app.delete("/api/github/pat", authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const userId = (req as any).userId as string;
+      const { saveGitHubSettings } = await import("./integrations/github");
+      await saveGitHubSettings(userId, { pat: null });
+      res.json({ ok: true });
+    } catch (err) {
+      console.error("[GitHub] DELETE pat error:", err);
+      res.status(500).json({ error: "Failed to remove GitHub PAT" });
+    }
+  });
+
   const httpServer = createServer(app);
   return httpServer;
 }
