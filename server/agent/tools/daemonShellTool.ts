@@ -326,6 +326,110 @@ export interface ScreenElement {
   clickable: boolean;
 }
 
+// ── buildScreenMapElements ─────────────────────────────────────────────────────
+// Shared ScreenMap acquisition logic used by both android_screen_understand and
+// android_tap_element. Captures screenshot + view hierarchy in parallel, calls
+// Claude Vision, normalizes the output, updates the cache, and returns elements.
+// Callers must check permissions before invoking this.
+type BuildScreenMapResult =
+  | { ok: true; elements: ScreenElement[] }
+  | { ok: false; content: string; label: string };
+
+async function buildScreenMapElements(userId: string): Promise<BuildScreenMapResult> {
+  const [screenshotResult, hierarchyResult] = await Promise.all([
+    sendDaemonOp(userId, { type: "android_screenshot" }, 30000),
+    sendDaemonOp(userId, { type: "android_view_hierarchy" }, 30000),
+  ]);
+
+  if (!screenshotResult.ok) {
+    return {
+      ok: false,
+      content: `Failed to capture screenshot: ${screenshotResult.error || "unknown error"}`,
+      label: "buildScreenMap: screenshot failed",
+    };
+  }
+  if (!hierarchyResult.ok) {
+    return {
+      ok: false,
+      content: `Failed to dump view hierarchy: ${hierarchyResult.error || "unknown error"}`,
+      label: "buildScreenMap: hierarchy failed",
+    };
+  }
+
+  const screenshotData = screenshotResult.data as Record<string, unknown> | undefined;
+  const base64Image = (screenshotData?.screenshot as string) || (screenshotData?.image as string) || "";
+  if (!base64Image) {
+    return {
+      ok: false,
+      content: "Screenshot returned no image data.",
+      label: "buildScreenMap: no image",
+    };
+  }
+
+  const hierarchyData = hierarchyResult.data as Record<string, unknown> | undefined;
+  const rawElements = hierarchyData?.elements ?? hierarchyData;
+  const elementsJson = typeof rawElements === "string" ? rawElements : JSON.stringify(rawElements);
+
+  let screenElements: ScreenElement[] = [];
+  try {
+    const claudeResponse = await anthropic.messages.create({
+      model: ORCHESTRATOR_MODEL,
+      max_tokens: 2048,
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "image",
+              source: { type: "base64", media_type: "image/jpeg", data: base64Image },
+            },
+            {
+              type: "text",
+              text: `You are analyzing an Android screen for UI automation.
+
+Here is the UI Automator element tree (JSON):
+${elementsJson}
+
+Look at the screenshot and the element tree above. Return a JSON array of the most important interactive elements visible on screen. For each element include:
+- "label": short human-readable name (e.g. "Search bar", "Post button", "Back")
+- "description": what this element does or contains
+- "center_x": horizontal center pixel coordinate for tapping
+- "center_y": vertical center pixel coordinate for tapping
+- "bounds": exact bounds string from the element tree (e.g. "[0,100][1080,200]")
+- "resource_id": the resource-id from the element tree (empty string if none)
+- "clickable": true if the element is clickable or tappable
+
+Prioritize: search bars, input fields, buttons, navigation items, interactive content.
+Include elements that have no accessibility label but are visually identifiable as interactive.
+Return ONLY a valid JSON array, no explanation, no markdown fences.`,
+            },
+          ],
+        },
+      ],
+    });
+
+    const responseText = claudeResponse.content[0]?.type === "text"
+      ? claudeResponse.content[0].text.trim()
+      : "[]";
+    const cleaned = responseText.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+    const raw = JSON.parse(cleaned);
+    screenElements = normalizeScreenElements(Array.isArray(raw) ? raw : []);
+  } catch (err) {
+    console.error("[buildScreenMapElements] Claude Vision error:", err);
+    return {
+      ok: false,
+      content: `Vision analysis failed: ${err instanceof Error ? err.message : String(err)}`,
+      label: "buildScreenMap: vision error",
+    };
+  }
+
+  const cacheEntry = JSON.stringify({ ok: true, elements: screenElements, count: screenElements.length });
+  screenMapCache.set(userId, { ts: Date.now(), result: cacheEntry });
+  console.log(`[buildScreenMapElements] userId=${userId} found ${screenElements.length} elements`);
+
+  return { ok: true, elements: screenElements };
+}
+
 export const androidScreenUnderstandTool: AgentTool = {
   name: "android_screen_understand",
   description: `Capture and deeply understand the current Android screen by combining a screenshot with the full UI Automator element hierarchy.
@@ -382,109 +486,14 @@ Results are cached for 500 ms, so two rapid calls will not double-count API usag
       return { ok: true, content: cached.result, label: "android_screen_understand: cached" };
     }
 
-    // ── Parallel: screenshot + view hierarchy ────────────────────────────────
-    const [screenshotResult, hierarchyResult] = await Promise.all([
-      sendDaemonOp(ctx.userId, { type: "android_screenshot" }, 30000),
-      sendDaemonOp(ctx.userId, { type: "android_view_hierarchy" }, 30000),
-    ]);
-
-    if (!screenshotResult.ok) {
-      return {
-        ok: false,
-        content: `Failed to capture screenshot: ${screenshotResult.error || "unknown error"}`,
-        label: "android_screen_understand: screenshot failed",
-      };
-    }
-    if (!hierarchyResult.ok) {
-      return {
-        ok: false,
-        content: `Failed to dump view hierarchy: ${hierarchyResult.error || "unknown error"}`,
-        label: "android_screen_understand: hierarchy failed",
-      };
+    // ── Build ScreenMap via shared helper ────────────────────────────────────
+    const buildResult = await buildScreenMapElements(ctx.userId);
+    if (!buildResult.ok) {
+      return { ok: false, content: buildResult.content, label: `android_screen_understand: ${buildResult.label}` };
     }
 
-    // Screenshot data comes back as { screenshot: base64, format: "jpeg" }
-    // matching the Android daemon's handleScreenshot() response format.
-    const screenshotData = screenshotResult.data as Record<string, unknown> | undefined;
-    const base64Image = (screenshotData?.screenshot as string) || (screenshotData?.image as string) || "";
-    if (!base64Image) {
-      return {
-        ok: false,
-        content: "Screenshot returned no image data.",
-        label: "android_screen_understand: no image",
-      };
-    }
-
-    // View hierarchy comes back as { elements: [...], count: N, package: "..." }
-    // from the Android daemon's handleViewHierarchy() response.
-    const hierarchyData = hierarchyResult.data as Record<string, unknown> | undefined;
-    const rawElements = hierarchyData?.elements ?? hierarchyData;
-    const elementsJson = typeof rawElements === "string"
-      ? rawElements
-      : JSON.stringify(rawElements);
-
-    // ── Claude Vision call ───────────────────────────────────────────────────
-    let screenElements: ScreenElement[] = [];
-    try {
-      const claudeResponse = await anthropic.messages.create({
-        model: ORCHESTRATOR_MODEL,
-        max_tokens: 2048,
-        messages: [
-          {
-            role: "user",
-            content: [
-              {
-                type: "image",
-                source: {
-                  type: "base64",
-                  media_type: "image/jpeg",
-                  data: base64Image,
-                },
-              },
-              {
-                type: "text",
-                text: `You are analyzing an Android screen for UI automation.
-
-Here is the UI Automator element tree (JSON):
-${elementsJson}
-
-Look at the screenshot and the element tree above. Return a JSON array of the most important interactive elements visible on screen. For each element include:
-- "label": short human-readable name (e.g. "Search bar", "Post button", "Back")
-- "description": what this element does or contains
-- "center_x": horizontal center pixel coordinate for tapping
-- "center_y": vertical center pixel coordinate for tapping
-- "bounds": exact bounds string from the element tree (e.g. "[0,100][1080,200]")
-- "resource_id": the resource-id from the element tree (empty string if none)
-- "clickable": true if the element is clickable or tappable
-
-Prioritize: search bars, input fields, buttons, navigation items, interactive content.
-Include elements that have no accessibility label but are visually identifiable as interactive.
-Return ONLY a valid JSON array, no explanation, no markdown fences.`,
-              },
-            ],
-          },
-        ],
-      });
-
-      const responseText = claudeResponse.content[0]?.type === "text"
-        ? claudeResponse.content[0].text.trim()
-        : "[]";
-
-      // Strip markdown fences if present
-      const cleaned = responseText.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
-      screenElements = JSON.parse(cleaned) as ScreenElement[];
-      if (!Array.isArray(screenElements)) screenElements = [];
-    } catch (err) {
-      console.error("[android_screen_understand] Claude Vision error:", err);
-      return {
-        ok: false,
-        content: `Vision analysis failed: ${err instanceof Error ? err.message : String(err)}`,
-        label: "android_screen_understand: vision error",
-      };
-    }
-
+    const { elements: screenElements } = buildResult;
     const result = JSON.stringify({ ok: true, elements: screenElements, count: screenElements.length });
-    screenMapCache.set(ctx.userId, { ts: Date.now(), result });
     console.log(`[android_screen_understand] userId=${ctx.userId} found ${screenElements.length} elements`);
 
     return {
@@ -1295,6 +1304,238 @@ Requires android_tap_type permission to be enabled.`,
       content: JSON.stringify(summary),
       label: `android_type_in_field: "${text.slice(0, 30)}" → ${methodUsed} verified=${verified}`,
       detail: steps.join(" | "),
+    };
+  },
+};
+// ── android_tap_element ────────────────────────────────────────────────────────
+// Fuzzy-matches a label/description string against the ScreenMap and fires a tap
+// at the best-matching element's center coordinates. Reuses the screenMapCache so
+// a prior android_screen_understand call within 500 ms incurs no extra Vision cost.
+
+// ── normalizeScreenElements ────────────────────────────────────────────────────
+// LLM-generated JSON may have missing/null fields or non-numeric coordinates.
+// Drop malformed entries so downstream code can assume a valid ScreenElement shape.
+function normalizeScreenElements(raw: unknown[]): ScreenElement[] {
+  return raw.flatMap((el) => {
+    if (!el || typeof el !== "object") return [];
+    const e = el as Record<string, unknown>;
+    const cx = Number(e.center_x);
+    const cy = Number(e.center_y);
+    if (!isFinite(cx) || !isFinite(cy)) return [];
+    return [{
+      label: String(e.label ?? ""),
+      description: String(e.description ?? ""),
+      center_x: cx,
+      center_y: cy,
+      bounds: String(e.bounds ?? ""),
+      resource_id: String(e.resource_id ?? ""),
+      clickable: Boolean(e.clickable),
+    }];
+  });
+}
+
+function scoreElement(element: ScreenElement, query: string): number {
+  const q = query.toLowerCase().trim();
+  // Safely stringify all fields (normalizeScreenElements guarantees strings, but
+  // be defensive here since scoreElement may be called from other contexts).
+  const resourceId = String(element.resource_id ?? "");
+  const resourceIdLocal = resourceId.includes("/") ? (resourceId.split("/").pop() ?? "") : "";
+  const fields = [
+    String(element.label ?? ""),
+    String(element.description ?? ""),
+    resourceId,
+    resourceIdLocal,
+  ].map((f) => f.toLowerCase());
+
+  let textScore = 0;
+  for (const field of fields) {
+    if (!field) continue;
+    if (field === q) { textScore = 100; break; }
+  }
+  if (textScore === 0) {
+    for (const field of fields) {
+      if (!field) continue;
+      if (field.startsWith(q)) { textScore = 80; break; }
+    }
+  }
+  if (textScore === 0) {
+    for (const field of fields) {
+      if (!field) continue;
+      if (field.includes(q)) { textScore = 60; break; }
+    }
+  }
+  // token-level: every word in query present in some field
+  if (textScore === 0) {
+    const words = q.split(/\s+/).filter(Boolean);
+    if (words.length > 1) {
+      for (const field of fields) {
+        if (!field) continue;
+        if (words.every((w) => field.includes(w))) { textScore = 50; break; }
+      }
+      if (textScore === 0) {
+        for (const field of fields) {
+          if (!field) continue;
+          if (words.some((w) => field.includes(w))) { textScore = 30; break; }
+        }
+      }
+    }
+  }
+
+  if (textScore === 0) return 0;
+
+  // Boost score by 1 for clickable elements so ties always resolve in favour of
+  // tappable UI components over non-interactive containers with matching labels.
+  return element.clickable ? textScore + 1 : textScore;
+}
+
+export const androidTapElementTool: AgentTool = {
+  name: "android_tap_element",
+  description: `Tap an Android screen element by name instead of raw coordinates.
+Accepts a human-readable label or description string, fuzzy-matches it against the current ScreenMap (calling android_screen_understand internally, with a 500 ms cache hit if available), and fires android_tap at the best-matching element's center coordinates.
+
+Use this tool instead of manually extracting center_x/center_y from android_screen_understand results:
+- Faster: one tool call instead of two
+- More reliable: no coordinate copy-paste errors
+- Handles unlabeled or icon-only buttons via description matching
+
+The label is matched (case-insensitive) against each element's label, description, and resource_id. The highest-confidence match is tapped.
+
+Returns the matched element details and the coordinates used for the tap.
+
+Requires: android_screenshot and android_read_screen permissions (same as android_screen_understand), plus android_tap_type permission for the tap action.`,
+  parameters: {
+    type: "object",
+    properties: {
+      label: {
+        type: "string",
+        description: "The label, description, or resource_id (or part thereof) of the element to tap. Case-insensitive fuzzy match.",
+      },
+      max_age_ms: {
+        type: "number",
+        description: "Maximum age in milliseconds for a cached ScreenMap to be reused (default 500). Set to 0 to always capture a fresh screen.",
+      },
+    },
+    required: ["label"],
+  },
+  async execute(args, ctx) {
+    const label = String(args.label || "").trim();
+    if (!label) {
+      return { ok: false, content: "label is required.", label: "android_tap_element: no label" };
+    }
+
+    if (!isAndroidDaemonActive(ctx.userId)) {
+      return {
+        ok: false,
+        content: "Android daemon is not connected. Ask the user to install the Jarvis Android APK and pair it (Profile → Connected Channels → Android Device).",
+        label: "android_tap_element: android offline",
+      };
+    }
+
+    // Permission checks
+    const [screenshotAllowed, readAllowed, tapAllowed] = await Promise.all([
+      isAndroidDaemonActionAllowed(ctx.userId, "android_screenshot"),
+      isAndroidDaemonActionAllowed(ctx.userId, "android_read_screen"),
+      isAndroidDaemonActionAllowed(ctx.userId, "android_tap_type"),
+    ]);
+    if (!screenshotAllowed) {
+      return {
+        ok: false,
+        content: "android_screenshot permission is not enabled. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.",
+        label: "android_tap_element: screenshot permission denied",
+      };
+    }
+    if (!readAllowed) {
+      return {
+        ok: false,
+        content: "android_read_screen permission is not enabled. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.",
+        label: "android_tap_element: read_screen permission denied",
+      };
+    }
+    if (!tapAllowed) {
+      return {
+        ok: false,
+        content: "android_tap_type permission is not enabled. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.",
+        label: "android_tap_element: tap permission denied",
+      };
+    }
+
+    // ── Resolve ScreenMap (cache or fresh) ────────────────────────────────────
+    const maxAge = typeof args.max_age_ms === "number" ? args.max_age_ms : 500;
+    let screenElements: ScreenElement[] = [];
+
+    const cached = screenMapCache.get(ctx.userId);
+    if (cached && maxAge > 0 && Date.now() - cached.ts <= maxAge) {
+      console.log(`[android_tap_element] userId=${ctx.userId} using cached ScreenMap`);
+      try {
+        const parsed = JSON.parse(cached.result) as { elements?: unknown[] };
+        screenElements = normalizeScreenElements(Array.isArray(parsed.elements) ? parsed.elements : []);
+      } catch {
+        screenElements = [];
+      }
+    }
+
+    if (screenElements.length === 0) {
+      // Need a fresh screen capture — use shared buildScreenMapElements helper
+      const buildResult = await buildScreenMapElements(ctx.userId);
+      if (!buildResult.ok) {
+        return { ok: false, content: buildResult.content, label: `android_tap_element: ${buildResult.label}` };
+      }
+      screenElements = buildResult.elements;
+      console.log(`[android_tap_element] userId=${ctx.userId} fresh ScreenMap: ${screenElements.length} elements`);
+    }
+
+    // ── Fuzzy-match ───────────────────────────────────────────────────────────
+    let bestElement: ScreenElement | null = null;
+    let bestScore = 0;
+
+    for (const el of screenElements) {
+      const score = scoreElement(el, label);
+      if (score > bestScore) {
+        bestScore = score;
+        bestElement = el;
+      }
+    }
+
+    if (!bestElement || bestScore === 0) {
+      const elementList = screenElements
+        .map((el) => `  • ${el.label}${el.description ? ` — ${el.description}` : ""}`)
+        .join("\n");
+      return {
+        ok: false,
+        content: `No element matching "${label}" was found on screen.\n\nAvailable elements:\n${elementList || "  (none)"}`,
+        label: `android_tap_element: no match for "${label}"`,
+      };
+    }
+
+    // ── Fire the tap ──────────────────────────────────────────────────────────
+    const { center_x, center_y } = bestElement;
+    const tapResult = await sendDaemonOp(ctx.userId, { type: "android_tap", x: center_x, y: center_y }, 15000);
+
+    if (!tapResult.ok) {
+      return {
+        ok: false,
+        content: `Matched element "${bestElement.label}" at (${center_x}, ${center_y}) but tap failed: ${tapResult.error || "unknown error"}`,
+        label: `android_tap_element: tap failed`,
+      };
+    }
+
+    console.log(`[android_tap_element] userId=${ctx.userId} tapped "${bestElement.label}" at (${center_x},${center_y}) score=${bestScore}`);
+
+    return {
+      ok: true,
+      content: JSON.stringify({
+        tapped: {
+          label: bestElement.label,
+          description: bestElement.description,
+          resource_id: bestElement.resource_id,
+          center_x,
+          center_y,
+          bounds: bestElement.bounds,
+          match_score: bestScore,
+        },
+      }),
+      label: `Tapped "${bestElement.label}" at (${center_x}, ${center_y})`,
+      detail: `match_score=${bestScore} bounds=${bestElement.bounds}`,
     };
   },
 };
