@@ -1010,7 +1010,7 @@ export interface FetchTranscriptOptions {
 export async function fetchTranscriptCached(
   input: string,
   options: FetchTranscriptOptions = {}
-): Promise<TranscriptResponse[]> {
+): Promise<{ segments: TranscriptResponse[]; noCaptionsDetected: boolean }> {
   const { bypassCache = false, config, audioOnly = false } = options;
   const videoId = extractVideoId(input);
 
@@ -1022,7 +1022,7 @@ export async function fetchTranscriptCached(
     if (hit) {
       const age = Math.round((Date.now() - hit.cachedAt) / 1000);
       console.log(`[transcriptCache] HIT  ${videoId} — ${hit.segments.length} segs, cached ${age}s ago`);
-      return hit.segments;
+      return { segments: hit.segments, noCaptionsDetected: false };
     }
   }
 
@@ -1067,7 +1067,7 @@ export async function fetchTranscriptCached(
       );
     }
 
-    return segments;
+    return { segments, noCaptionsDetected: false };
   }
 
   // ── Phase 1: InnerTube metadata check ────────────────────────────────────
@@ -1216,7 +1216,7 @@ export async function fetchTranscriptCached(
     );
   }
 
-  return segments;
+  return { segments, noCaptionsDetected: noCaptions };
 }
 
 /** Manually invalidate a single video's cache entry (e.g. on explicit user request). */

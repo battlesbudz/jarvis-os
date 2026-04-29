@@ -57,7 +57,7 @@ export async function buildYouTubeContextBlock(message: string): Promise<string>
     }
 
     try {
-      const segments = await fetchTranscriptCached(url);
+      const { segments } = await fetchTranscriptCached(url);
 
       if (!segments || segments.length === 0) continue;
 
