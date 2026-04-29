@@ -1,0 +1,142 @@
+import type { Express, Request, Response } from "express";
+import { db } from "./db";
+import { eq, and } from "drizzle-orm";
+import * as schema from "@shared/schema";
+import {
+  startProject,
+  pauseProject,
+  resumeProject,
+  answerProjectQuestion,
+  getProjectStatus,
+  getUserProjects,
+  setAutonomousMode,
+} from "./agent/projectRunner";
+import { authMiddleware } from "./auth";
+
+export function registerProjectRoutes(app: Express): void {
+  // GET /api/projects — list user's projects
+  app.get("/api/projects", authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const userId = (req as any).userId as string;
+      const projects = await getUserProjects(userId);
+      res.json(projects);
+    } catch (err) {
+      console.error("[ProjectRoutes] GET /api/projects failed:", err);
+      res.status(500).json({ error: "Failed to load projects" });
+    }
+  });
+
+  // POST /api/projects — create a new project
+  app.post("/api/projects", authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const userId = (req as any).userId as string;
+      const { title, description, goal, autonomousMode, originChannel } = req.body as {
+        title?: string;
+        description?: string;
+        goal?: string;
+        autonomousMode?: boolean;
+        originChannel?: string;
+      };
+
+      if (!title || !goal) {
+        return res.status(400).json({ error: "title and goal are required" });
+      }
+
+      const projectId = await startProject(userId, title, description ?? "", goal, originChannel ?? "app");
+
+      if (autonomousMode) {
+        await setAutonomousMode(projectId, true);
+      }
+
+      res.json({ projectId, status: "planning" });
+    } catch (err) {
+      console.error("[ProjectRoutes] POST /api/projects failed:", err);
+      res.status(500).json({ error: "Failed to create project" });
+    }
+  });
+
+  // GET /api/projects/:id — project detail + plan + sessions
+  app.get("/api/projects/:id", authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const userId = (req as any).userId as string;
+      const { id } = req.params;
+
+      const status = await getProjectStatus(id);
+      if (!status) return res.status(404).json({ error: "Project not found" });
+      if (status.project.userId !== userId) return res.status(403).json({ error: "Forbidden" });
+
+      res.json(status);
+    } catch (err) {
+      console.error("[ProjectRoutes] GET /api/projects/:id failed:", err);
+      res.status(500).json({ error: "Failed to load project" });
+    }
+  });
+
+  // PATCH /api/projects/:id — update project (pause/resume/answer/auto mode)
+  app.patch("/api/projects/:id", authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const userId = (req as any).userId as string;
+      const { id } = req.params;
+      const { action, answer, autonomousMode } = req.body as {
+        action?: "pause" | "resume";
+        answer?: string;
+        autonomousMode?: boolean;
+      };
+
+      const [project] = await db
+        .select()
+        .from(schema.jarvisProjects)
+        .where(and(eq(schema.jarvisProjects.id, id), eq(schema.jarvisProjects.userId, userId)))
+        .limit(1);
+
+      if (!project) return res.status(404).json({ error: "Project not found" });
+
+      if (action === "pause") {
+        await pauseProject(id);
+        return res.json({ status: "paused" });
+      }
+
+      if (action === "resume") {
+        await resumeProject(id);
+        return res.json({ status: "building" });
+      }
+
+      if (answer !== undefined) {
+        await answerProjectQuestion(id, answer);
+        return res.json({ status: "building" });
+      }
+
+      if (autonomousMode !== undefined) {
+        await setAutonomousMode(id, autonomousMode);
+        return res.json({ autonomousMode });
+      }
+
+      res.status(400).json({ error: "No valid action provided" });
+    } catch (err) {
+      console.error("[ProjectRoutes] PATCH /api/projects/:id failed:", err);
+      res.status(500).json({ error: "Failed to update project" });
+    }
+  });
+
+  // DELETE /api/projects/:id — delete a project
+  app.delete("/api/projects/:id", authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const userId = (req as any).userId as string;
+      const { id } = req.params;
+
+      const [project] = await db
+        .select()
+        .from(schema.jarvisProjects)
+        .where(and(eq(schema.jarvisProjects.id, id), eq(schema.jarvisProjects.userId, userId)))
+        .limit(1);
+
+      if (!project) return res.status(404).json({ error: "Project not found" });
+
+      await db.delete(schema.jarvisProjects).where(eq(schema.jarvisProjects.id, id));
+      res.json({ deleted: true });
+    } catch (err) {
+      console.error("[ProjectRoutes] DELETE /api/projects/:id failed:", err);
+      res.status(500).json({ error: "Failed to delete project" });
+    }
+  });
+}

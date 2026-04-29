@@ -656,6 +656,11 @@ export function startScheduler() {
     // Named agent autonomous loops — check every minute
     await runAgentLoops(now);
 
+    // Autonomous project sessions — kick off due sessions every minute
+    runDueAutonomousProjectSessions().catch((err) =>
+      console.error('[Scheduler] runDueAutonomousProjectSessions failed:', err),
+    );
+
     // User-scheduled tasks (cron_create) — check every minute; shell-command
     // tasks run via the desktop daemon; prompt-based tasks re-invoke the agent
     runDueScheduledTasks(now).catch((err) =>
@@ -664,7 +669,53 @@ export function startScheduler() {
 
   }, 60 * 1000);
 
-  console.log('[Scheduler] Started — morning plan 7:00 AM daily, weekly patterns Sunday 3:00 AM, learning synthesis Sunday 4:30 AM, session cleanup 4:00 AM daily, Discord confirm token cleanup 4:05 AM daily, memory TTL cleanup 4:30 AM daily, interaction log cleanup 5:00 AM daily, action log cleanup 5:15 AM daily, embedding backfill 6:00 AM daily, Discord schedules every minute');
+  console.log('[Scheduler] Started — morning plan 7:00 AM daily, weekly patterns Sunday 3:00 AM, learning synthesis Sunday 4:30 AM, session cleanup 4:00 AM daily, Discord confirm token cleanup 4:05 AM daily, memory TTL cleanup 4:30 AM daily, interaction log cleanup 5:00 AM daily, action log cleanup 5:15 AM daily, embedding backfill 6:00 AM daily, Discord schedules every minute, autonomous project sessions every minute');
+}
+
+/**
+ * Poll for autonomous projects whose next_run_at has passed and submit job sessions.
+ * Runs every 60s from the scheduler loop. Uses a DB-level claim (clearing next_run_at)
+ * to avoid double-queuing under concurrent ticks.
+ */
+async function runDueAutonomousProjectSessions(): Promise<void> {
+  const now = new Date();
+
+  // Claim projects atomically: clear next_run_at so concurrent ticks skip them.
+  const due = await db
+    .update(schema.jarvisProjects)
+    .set({ nextRunAt: null })
+    .where(
+      and(
+        eq(schema.jarvisProjects.autonomousMode, true),
+        or(
+          eq(schema.jarvisProjects.status, "building"),
+          eq(schema.jarvisProjects.status, "waiting_for_input"),
+        ),
+        lte(schema.jarvisProjects.nextRunAt, now),
+      ),
+    )
+    .returning({
+      id: schema.jarvisProjects.id,
+      userId: schema.jarvisProjects.userId,
+      title: schema.jarvisProjects.title,
+    });
+
+  if (due.length === 0) return;
+
+  const { submitAgentJob } = await import('./agent/jobClient');
+
+  for (const project of due) {
+    console.log(`[Scheduler] Autonomous project session due: ${project.id} (${project.title ?? "untitled"})`);
+    await submitAgentJob({
+      userId: project.userId,
+      agentType: "project_session",
+      title: `Build: ${project.title ?? "Project"} (autonomous session)`,
+      prompt: `Continue building project ${project.id}`,
+      input: { projectId: project.id },
+    }).catch((err) => {
+      console.error(`[Scheduler] Failed to enqueue project_session for ${project.id}:`, err);
+    });
+  }
 }
 
 /**
