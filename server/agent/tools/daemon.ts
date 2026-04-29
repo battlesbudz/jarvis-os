@@ -113,6 +113,8 @@ VISUAL BROWSING WORKFLOW — follow this for any task that involves reading or s
 
 Never skip step 2. Never screenshot before confirming visibility. Never describe content that is not visible in the captured image.
 
+IN-APP SEARCH — IMPORTANT: If the user asks you to search for something inside a specific app (e.g. "search for John on Facebook", "find a recipe in Instagram"), use the android_search_in_app tool instead of manually chaining android_open_app → android_tap → android_type. android_search_in_app handles the full sequence (open, wait for load, login-wall detection, locate search bar, tap, type, submit) and returns structured error recovery info if any step fails.
+
 Always confirm with the user before tap/type/swipe actions and before android_notification_reply, android_sms_send, android_camera_clip, and android_screen_record. Use android_read_screen or android_screenshot to understand context before acting. Require confirmation before any destructive shell or file_write actions. When an Android daemon is paired, prefer android_* actions. Returns the daemon's response or an error if not paired.`,
   parameters: {
     type: "object",
