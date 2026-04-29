@@ -27,6 +27,7 @@ import { completePairing as completeDiscordPairing } from "./discord/manager";
 import { getSession as getCoachSession, setSession as setCoachSession } from "./channels/sessionStore";
 import OpenAI from "openai";
 import { claimAndMark } from "./lib/proactiveDedup";
+import { routeSlashCommand, registerTelegramBotCommands, SLASH_COMMANDS } from "./channels/slashCommandRouter";
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
@@ -954,6 +955,24 @@ async function processUpdate(update: any): Promise<void> {
         return;
       }
 
+      // ── Slash command router: /research, /plan, /write, /brief, /help ─────
+      // Commands may arrive as "/research topic" or "/research@BotName topic".
+      // Only the recognized task commands are intercepted here — unknown slash
+      // commands fall through to the coach agent for natural-language handling.
+      const TASK_CMD_RE = /^\/([a-z_]+)(?:@\S+)?(?:\s+([\s\S]*))?$/i;
+      const ROUTABLE_CMDS = new Set(SLASH_COMMANDS.map((c) => c.name));
+      const cmdMatch = text.match(TASK_CMD_RE);
+      if (cmdMatch) {
+        const rawCmd = cmdMatch[1].toLowerCase();
+        if (ROUTABLE_CMDS.has(rawCmd)) {
+          const cmdUserId = link[0].userId;
+          const rawArgs = (cmdMatch[2] ?? "").trim();
+          const ackText = await routeSlashCommand(rawCmd, rawArgs, cmdUserId, "telegram");
+          await sendMessage(chatId, ackText);
+          return;
+        }
+      }
+
       const userId = link[0].userId;
 
       await handleCoachReply(userId, chatId, text, imageUrl);
@@ -974,6 +993,10 @@ export async function startTelegramPolling(): Promise<void> {
   if (pollingActive) return;
   pollingActive = true;
   console.log('[Telegram] Polling started (dev mode — webhook not modified)');
+  // Register slash command menu for the dev bot too.
+  registerTelegramBotCommands().catch((err) =>
+    console.warn("[Telegram] setMyCommands failed (non-fatal):", err),
+  );
 
   const poll = async () => {
     if (!pollingActive) return;
@@ -997,6 +1020,10 @@ export function registerTelegramWebhook(app: Express): void {
     res.sendStatus(200);
     await processUpdate(req.body);
   });
+  // Register the slash command menu on every startup (idempotent on Telegram's side).
+  registerTelegramBotCommands().catch((err) =>
+    console.warn("[Telegram] setMyCommands failed (non-fatal):", err),
+  );
 }
 
 export function registerTelegramRoutes(app: Express): void {

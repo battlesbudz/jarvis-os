@@ -5,6 +5,7 @@
  * 1. Registering /jarvis subcommands with the Discord REST API (idempotent).
  * 2. Verifying and dispatching incoming interaction POSTs.
  * 3. Subcommand handlers: chat, plan, status, help.
+ * 4. Top-level task commands: /research, /plan, /write, /brief, /help.
  */
 
 import * as crypto from "node:crypto";
@@ -13,6 +14,7 @@ import { eq, and, desc } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { channelLinks } from "@shared/schema";
 import { runCoachAgent } from "../channels/coachAgent";
+import { routeSlashCommand, getHelpText, SLASH_COMMANDS } from "../channels/slashCommandRouter";
 
 import { generateSlashCommandPairingCode } from "./manager";
 
@@ -124,6 +126,29 @@ const JARVIS_COMMAND = {
   ],
 };
 
+// ── Top-level task commands ──────────────────────────────────────────────────
+// These are registered as top-level Discord slash commands (not subcommands of /jarvis)
+// so they appear as /research, /plan, /write, /brief, /help in the autocomplete menu.
+// They bypass the coach loop and queue directly to the appropriate sub-agent.
+
+const TASK_COMMANDS = SLASH_COMMANDS.map((cmd) => {
+  const def: Record<string, unknown> = {
+    name: cmd.name,
+    description: cmd.description,
+  };
+  if (cmd.argName) {
+    def.options = [
+      {
+        type: 3, // STRING
+        name: cmd.argName,
+        description: cmd.argDescription || cmd.argName,
+        required: cmd.argRequired ?? false,
+      },
+    ];
+  }
+  return def;
+});
+
 // ── Signature verification ───────────────────────────────────────────────────
 
 /**
@@ -209,27 +234,47 @@ export async function registerSlashCommands(): Promise<void> {
     const existing: Array<{ name: string; id: string; description?: string; options?: unknown }> = await listRes.json();
     const existingJarvis = existing.find((c) => c.name === "jarvis");
 
-    // Check if the /jarvis definition has changed before issuing a PUT.
-    // We compare description and serialized options; if identical, skip the
-    // network round-trip to avoid unnecessary Discord API calls on every boot.
+    // Check if the /jarvis definition and all task commands are present and unchanged.
+    // We compare name, description, and serialized options for each task command.
+    //
+    // Stale-command detection: any existing command that is not in the "known namespace"
+    // (system commands + current task commands) is unexpected and triggers a re-registration
+    // so it gets removed. This catches removed task commands without relying on a count heuristic.
+    // If a new system-level command is registered outside this router, add its name to
+    // SYSTEM_COMMAND_NAMES below so it is not mistaken for a stale task command.
+    const currentTaskNames = new Set(TASK_COMMANDS.map((tc) => tc.name as string));
+    const SYSTEM_COMMAND_NAMES = new Set(["jarvis", "agents", "agent", "ask"]);
+    const knownCommandNamespace = new Set([...SYSTEM_COMMAND_NAMES, ...currentTaskNames]);
+    const existingByName = new Map(existing.map((ec) => [ec.name, ec]));
+    const hasUnknownOrStaleCommand = existing.some((ec) => !knownCommandNamespace.has(ec.name));
+    const allTaskCommandsUnchanged = !hasUnknownOrStaleCommand && TASK_COMMANDS.every((tc) => {
+      const found = existingByName.get(tc.name as string);
+      if (!found) return false;
+      const wantedDesc = (tc.description as string) ?? "";
+      const wantedOpts = JSON.stringify((tc.options as unknown[]) ?? []);
+      return found.description === wantedDesc && JSON.stringify(found.options ?? []) === wantedOpts;
+    });
+
     if (existingJarvis) {
       const existingOptions = JSON.stringify(existingJarvis.options ?? []);
       const wantedOptions = JSON.stringify(JARVIS_COMMAND.options);
       const existingDesc = existingJarvis.description ?? "";
-      if (existingDesc === JARVIS_COMMAND.description && existingOptions === wantedOptions) {
-        console.log(`[SlashCommands] /jarvis command unchanged — skipping registration update (${scope})`);
+      if (
+        existingDesc === JARVIS_COMMAND.description &&
+        existingOptions === wantedOptions &&
+        allTaskCommandsUnchanged
+      ) {
+        console.log(`[SlashCommands] all commands unchanged — skipping registration update (${scope})`);
         return;
       }
     }
 
-    // Build the merged command list: keep all existing non-jarvis/non-agent(s)/non-ask
-    // commands, then add/replace the /jarvis, /agents, and /ask commands.
+    // Build the merged command list: only include commands that are explicitly managed
+    // by this router. Unknown or stale commands (outside the known namespace) are
+    // intentionally omitted from the PUT payload so Discord removes them automatically.
     // Filter out both "agent" (old) and "agents" (new) so we cleanly replace either.
     const { AGENT_COMMAND, ASK_COMMAND } = await import("./agentCommands");
-    const otherCommands = existing.filter(
-      (c) => c.name !== "jarvis" && c.name !== "agent" && c.name !== "agents" && c.name !== "ask",
-    );
-    const mergedCommands = [...otherCommands, JARVIS_COMMAND, AGENT_COMMAND, ASK_COMMAND];
+    const mergedCommands = [JARVIS_COMMAND, AGENT_COMMAND, ASK_COMMAND, ...TASK_COMMANDS];
 
     const putRes = await fetch(url, {
       method: "PUT",
@@ -248,9 +293,13 @@ export async function registerSlashCommands(): Promise<void> {
 
     const registered: any[] = await putRes.json();
     const jarvisEntry = registered.find((c) => c.name === "jarvis");
+    const registeredTaskNames = TASK_COMMANDS.map((tc) => `/${tc.name as string}`);
     const action = existingJarvis ? "updated" : "registered";
     console.log(
       `[SlashCommands] /jarvis command ${action} (id=${jarvisEntry?.id}), total commands in scope: ${registered.length} — ${scope}`,
+    );
+    console.log(
+      `[SlashCommands] task commands registered: ${registeredTaskNames.join(", ")} (${scope})`,
     );
   } catch (err) {
     console.error("[SlashCommands] registerSlashCommands error:", err);
@@ -654,14 +703,21 @@ async function handleHelp(appId: string, interaction: any): Promise<void> {
   const help = [
     "**Jarvis Slash Commands**",
     "",
+    "**Task commands** (queue a job — result appears in your inbox):",
+    "`/research <topic>` — Research a topic and get a brief.",
+    "`/plan [goal]` — Build a goal or project action plan.",
+    "`/write <topic>` — Draft a document.",
+    "`/brief` — Get your morning briefing on demand.",
+    "`/help` — Show this message.",
+    "",
+    "**System commands** (`/jarvis` subcommands):",
     "`/jarvis chat <message>` — Chat with Jarvis from any channel. Add `public:True` to share the reply.",
-    "`/jarvis plan` — Generate your personalized daily plan.",
+    "`/jarvis plan` — Generate your personalized daily plan (inline).",
     "`/jarvis status` — Check the status of active background jobs.",
     "`/jarvis assign_agent <type>` — Assign a specialist agent to this channel.",
     "`/jarvis agent_status` — Show which agent is assigned to this channel.",
     "`/jarvis audit` — Show recent autonomous self-repairs Jarvis made.",
     "`/jarvis reset_budget` — Reset the autonomous write counter (owner only).",
-    "`/jarvis help` — Show this message.",
     "",
     "💡 Replies are private by default (only you see them).",
     "Connect Jarvis in the app under **Settings → Channels → Discord** to get started.",
@@ -740,6 +796,52 @@ export async function handleInteraction(interaction: any): Promise<object> {
         } catch (err) {
           console.error("[SlashCommands] /ask error:", err);
           await editInteractionReply(appId, interaction.token, "❌ Ask command failed.", EPHEMERAL);
+        }
+      });
+      return deferredEphemeral();
+    }
+
+    // ── Top-level task commands: /research, /plan, /write, /brief, /help ────
+    const TASK_COMMAND_NAMES = new Set(TASK_COMMANDS.map((c) => c.name as string));
+    if (TASK_COMMAND_NAMES.has(interaction.data?.name)) {
+      const cmdName = interaction.data.name as string;
+      const memberUser2 = interaction.member?.user ?? interaction.user ?? {};
+      const discordUserId2: string = memberUser2.id ?? "";
+      const discordUsername2: string = memberUser2.username ?? memberUser2.global_name ?? discordUserId2;
+
+      if (cmdName === "help") {
+        return immediateEphemeral(getHelpText("discord"));
+      }
+
+      const paired2 = await lookupUserByDiscordId(discordUserId2);
+      if (!paired2) {
+        return immediateEphemeral(buildPairingPrompt(discordUserId2, discordUsername2));
+      }
+
+      const appId2 = process.env.DISCORD_APP_ID || process.env.DISCORD_CLIENT_ID || "";
+      const userId2 = paired2.userId;
+      const discordChannelId2: string | undefined =
+        typeof interaction.channel_id === "string" ? interaction.channel_id : undefined;
+      setImmediate(async () => {
+        try {
+          const opts2: any[] = interaction.data?.options ?? [];
+          const args = String(opts2[0]?.value ?? "");
+          const ack = await routeSlashCommand({
+            command: cmdName,
+            args,
+            userId: userId2,
+            channel: "discord",
+            discordChannelId: discordChannelId2,
+          });
+          await editInteractionReply(appId2, interaction.token, ack, EPHEMERAL);
+        } catch (err) {
+          console.error(`[SlashCommands] /${cmdName} error:`, err);
+          await editInteractionReply(
+            appId2,
+            interaction.token,
+            "Sorry, something went wrong — please try again.",
+            EPHEMERAL,
+          );
         }
       });
       return deferredEphemeral();
