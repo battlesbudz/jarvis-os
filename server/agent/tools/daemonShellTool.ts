@@ -3073,6 +3073,7 @@ CONFIRM/DENY flow: after the user confirms ("yes") or denies ("no"), call this t
         await db.update(buttonLocations).set({
           confidence: newConf,
           stale: false,
+          failCount: 0,
           lastConfirmedAt: new Date(),
           updatedAt: new Date(),
         }).where(eq(buttonLocations.id, entryId));
@@ -3082,18 +3083,33 @@ CONFIRM/DENY flow: after the user confirms ("yes") or denies ("no"), call this t
           label: `android_find_trained_button: confirmed "${row.elementLabel}" — confidence now ${newConf.toFixed(2)}`,
         };
       } else {
-        // Decrement by 0.2, mark stale when confidence drops below 0.3 — same rule as REST API PATCH /deny
+        // Decrement by 0.2, mark stale when confidence drops below 0.3 OR fail_count reaches threshold of 3
         const newConf = Math.max(0.0, row.confidence - 0.2);
-        const nowStale = newConf < 0.3;
+        const newFailCount = (row.failCount ?? 0) + 1;
+        const nowStale = newConf < 0.3 || newFailCount >= 3;
         await db.update(buttonLocations).set({
           confidence: newConf,
           stale: nowStale,
+          failCount: newFailCount,
           updatedAt: new Date(),
         }).where(eq(buttonLocations.id, entryId));
+        const retrainMsg = newFailCount >= 3
+          ? `"${row.elementLabel}" has missed ${newFailCount} taps in a row — it has been marked stale. Call android_train_button to re-train this button so Jarvis can find it reliably.`
+          : undefined;
         return {
           ok: true,
-          content: JSON.stringify({ updated: true, outcome: "deny", entry_id: entryId, label: row.elementLabel, confidence: newConf, stale: nowStale, suggest_retraining: nowStale }),
-          label: `android_find_trained_button: denied "${row.elementLabel}" — confidence now ${newConf.toFixed(2)}${nowStale ? ", marked stale" : ""}`,
+          content: JSON.stringify({
+            updated: true,
+            outcome: "deny",
+            entry_id: entryId,
+            label: row.elementLabel,
+            confidence: newConf,
+            fail_count: newFailCount,
+            stale: nowStale,
+            suggest_retraining: nowStale,
+            ...(retrainMsg ? { message: retrainMsg } : {}),
+          }),
+          label: `android_find_trained_button: denied "${row.elementLabel}" — confidence now ${newConf.toFixed(2)}, fail_count=${newFailCount}${nowStale ? ", marked stale" : ""}`,
         };
       }
     }
@@ -3262,28 +3278,39 @@ CONFIRM/DENY flow: after the user confirms ("yes") or denies ("no"), call this t
 
     // If no clickable element is present near the trained coordinates, the UI has likely changed
     if (preTapNear.length === 0) {
-      await db.update(buttonLocations).set({ stale: true, updatedAt: new Date() })
+      const newFailCount = (best.failCount ?? 0) + 1;
+      const nowStale = newFailCount >= 3;
+      await db.update(buttonLocations).set({ stale: nowStale, failCount: newFailCount, updatedAt: new Date() })
         .where(eq(buttonLocations.id, best.id));
+      const retrainPrompt = nowStale
+        ? ` Jarvis has missed this button ${newFailCount} times in a row — please call android_train_button to re-train it.`
+        : ` (Miss ${newFailCount}/3 — Jarvis will suggest re-training after 3 misses.)`;
       return {
         ok: false,
         content: JSON.stringify({
           found: true,
-          stale: true,
-          message: `No element found near the trained coordinates (${best.coordinatesX}, ${best.coordinatesY}) for "${label}" — the UI layout has likely changed. Entry marked stale. Call android_train_button to re-train.`,
-          suggest_retraining: true,
+          stale: nowStale,
+          fail_count: newFailCount,
+          message: `No element found near the trained coordinates (${best.coordinatesX}, ${best.coordinatesY}) for "${label}" — the UI layout may have changed.${retrainPrompt}`,
+          suggest_retraining: nowStale,
         }),
-        label: `android_find_trained_button: no element at coords for "${label}"`,
+        label: `android_find_trained_button: no element at coords for "${label}" (fail_count=${newFailCount})`,
       };
     }
 
     const tapResult = await sendDaemonOp(ctx.userId, { type: "android_tap", x: best.coordinatesX, y: best.coordinatesY }, 12_000);
     if (!tapResult.ok) {
-      await db.update(buttonLocations).set({ stale: true, updatedAt: new Date() })
+      const newFailCount = (best.failCount ?? 0) + 1;
+      const nowStale = newFailCount >= 3;
+      await db.update(buttonLocations).set({ stale: nowStale, failCount: newFailCount, updatedAt: new Date() })
         .where(eq(buttonLocations.id, best.id));
+      const retrainHint = nowStale
+        ? ` Jarvis has missed this button ${newFailCount} times in a row — please call android_train_button to re-train it.`
+        : ` (Miss ${newFailCount}/3.)`;
       return {
         ok: false,
-        content: `Tap at stored location (${best.coordinatesX}, ${best.coordinatesY}) failed: ${tapResult.error}. Entry marked stale — call android_train_button to re-train.`,
-        label: `android_find_trained_button: tap failed for "${label}"`,
+        content: `Tap at stored location (${best.coordinatesX}, ${best.coordinatesY}) failed: ${tapResult.error}.${retrainHint}`,
+        label: `android_find_trained_button: tap failed for "${label}" (fail_count=${newFailCount})`,
       };
     }
 
@@ -3313,8 +3340,13 @@ CONFIRM/DENY flow: after the user confirms ("yes") or denies ("no"), call this t
     }
 
     if (!verified) {
-      await db.update(buttonLocations).set({ stale: true, updatedAt: new Date() })
+      const newFailCount = (best.failCount ?? 0) + 1;
+      const nowStale = newFailCount >= 3;
+      await db.update(buttonLocations).set({ stale: nowStale, failCount: newFailCount, updatedAt: new Date() })
         .where(eq(buttonLocations.id, best.id));
+      const retrainMsg = nowStale
+        ? `Jarvis has missed the "${label}" button ${newFailCount} times in a row — please call android_train_button to re-train it so Jarvis can find it reliably.`
+        : `Tapped the stored location for "${label}" but the screen did not change as expected (miss ${newFailCount}/3).`;
       return {
         ok: false,
         content: JSON.stringify({
@@ -3324,10 +3356,12 @@ CONFIRM/DENY flow: after the user confirms ("yes") or denies ("no"), call this t
           x: best.coordinatesX,
           y: best.coordinatesY,
           confidence: best.confidence,
-          message: `Tapped the stored location for "${label}" but no element at those coordinates changed state. The location has been marked stale. Call android_train_button to re-train.`,
-          suggest_retraining: true,
+          fail_count: newFailCount,
+          stale: nowStale,
+          message: retrainMsg,
+          suggest_retraining: nowStale,
         }),
-        label: `android_find_trained_button: unverified tap on "${label}"`,
+        label: `android_find_trained_button: unverified tap on "${label}" (fail_count=${newFailCount})`,
       };
     }
 
