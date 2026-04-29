@@ -203,6 +203,29 @@ export async function readAuditEntries(limit = 20): Promise<AuditEntry[]> {
 }
 
 /**
+ * Append an AI-review verification line to the flat audit log.
+ * Format matches the existing [VERIFY] convention so parseAuditLog()
+ * picks it up and merges it into the corresponding entry automatically.
+ *
+ * Status examples:
+ *   "passed (ai+typecheck)"
+ *   "ai_review_failed: does not address the root cause"
+ */
+export async function appendAuditVerifyLine(
+  file: string,
+  timestamp: string,
+  status: string,
+): Promise<void> {
+  const line = `\n[VERIFY] ${timestamp} ${file}: ${status}\n`;
+  try {
+    await fs.appendFile(AUDIT_LOG_PATH, line, "utf-8");
+  } catch (err) {
+    // Non-fatal — audit log may be absent during first run
+    console.warn(`[selfHealAudit] appendAuditVerifyLine failed (non-fatal):`, err);
+  }
+}
+
+/**
  * Return the total number of audit entries in the log.
  */
 export async function countAuditEntries(): Promise<number> {

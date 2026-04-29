@@ -615,7 +615,15 @@ export default function InboxScreen() {
             (discardDeliverableMutation.isPending && discardDeliverableMutation.variables === d.id) ||
             (rejectGateMutation.isPending && rejectGateMutation.variables === d.id) ||
             (saveToDriveMutation.isPending && saveToDriveMutation.variables === d.id);
-          const meta = d.meta as { to?: string; subject?: string; noSourceUrls?: boolean } | null;
+          const meta = d.meta as {
+            to?: string;
+            subject?: string;
+            noSourceUrls?: boolean;
+            verificationPassed?: boolean | null;
+            verificationRetries?: number;
+          } | null;
+          const verificationPassed = meta?.verificationPassed;
+          const verificationRetries = meta?.verificationRetries ?? 0;
           return (
             <Animated.View key={d.id} entering={FadeInDown.duration(300).delay(index * 60)}>
               <View style={styles.draftCard}>
@@ -658,6 +666,31 @@ export default function InboxScreen() {
                     <Ionicons name="warning-outline" size={13} color="#B45309" />
                     <Text style={styles.noSourcesWarningText}>
                       This research may not include live web data — treat findings with caution.
+                    </Text>
+                  </View>
+                )}
+
+                {verificationPassed === true && (
+                  <View style={[styles.verifyBadge, styles.verifyBadgePass]}>
+                    <Ionicons name="checkmark-circle" size={12} color="#16A34A" />
+                    <Text style={[styles.verifyBadgeText, { color: '#16A34A' }]}>
+                      Verified{verificationRetries > 0 ? ` (${verificationRetries} retr${verificationRetries === 1 ? 'y' : 'ies'})` : ''}
+                    </Text>
+                  </View>
+                )}
+                {verificationPassed === false && (
+                  <View style={[styles.verifyBadge, styles.verifyBadgeFail]}>
+                    <Ionicons name="flag" size={12} color="#DC2626" />
+                    <Text style={[styles.verifyBadgeText, { color: '#DC2626' }]}>
+                      Review carefully — quality check did not pass after {verificationRetries} retr{verificationRetries === 1 ? 'y' : 'ies'}
+                    </Text>
+                  </View>
+                )}
+                {verificationPassed === null && (
+                  <View style={[styles.verifyBadge, styles.verifyBadgeUnknown]}>
+                    <Ionicons name="help-circle-outline" size={12} color="#92400E" />
+                    <Text style={[styles.verifyBadgeText, { color: '#92400E' }]}>
+                      Quality check timed out — verify before acting
                     </Text>
                   </View>
                 )}
@@ -1447,6 +1480,34 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter_400Regular',
     color: '#92400E',
     lineHeight: 17,
+  },
+  verifyBadge: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: 5,
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    marginBottom: 8,
+    borderWidth: 1,
+  },
+  verifyBadgePass: {
+    backgroundColor: '#F0FDF4',
+    borderColor: '#86EFAC',
+  },
+  verifyBadgeFail: {
+    backgroundColor: '#FEF2F2',
+    borderColor: '#FECACA',
+  },
+  verifyBadgeUnknown: {
+    backgroundColor: '#FFFBEB',
+    borderColor: '#FCD34D',
+  },
+  verifyBadgeText: {
+    flex: 1,
+    fontSize: 11,
+    fontFamily: 'Inter_500Medium',
+    lineHeight: 15,
   },
   driveLinkRow: {
     flexDirection: 'row' as const,
