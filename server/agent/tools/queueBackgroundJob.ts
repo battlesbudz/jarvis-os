@@ -9,6 +9,140 @@ interface QueueJobArgs {
   prompt?: string;
   title?: string;
   skip_entity_check?: boolean;
+  skip_location_check?: boolean;
+}
+
+/**
+ * Commonly confused US city names — bare city name (lower-cased) → list of states.
+ * If a prompt contains one of these names with no adjacent state qualifier, the
+ * tool pauses and asks the coach to confirm which city the user meant.
+ */
+const AMBIGUOUS_CITIES: Record<string, string[]> = {
+  springfield:  ["IL", "MA", "MO", "OH", "OR"],
+  watertown:    ["MA", "NY", "SD", "WI"],
+  portland:     ["ME", "OR"],
+  greenville:   ["NC", "SC", "TX", "MS"],
+  jackson:      ["MS", "TN", "MI"],
+  rochester:    ["MN", "NY"],
+  lexington:    ["KY", "VA"],
+  franklin:     ["TN", "PA", "VA", "MA"],
+  columbia:     ["MD", "MO", "SC"],
+  henderson:    ["NV", "KY", "NC", "TX"],
+  clinton:      ["MS", "IA", "MA", "NY"],
+  auburn:       ["AL", "ME", "NY", "WA"],
+  burlington:   ["VT", "NC", "IA", "MA"],
+  camden:       ["NJ", "SC", "AR"],
+  concord:      ["NH", "NC", "CA"],
+  dover:        ["DE", "NH", "NJ"],
+  fairfield:    ["CA", "CT", "OH"],
+  florence:     ["AL", "SC", "KY"],
+  georgetown:   ["TX", "SC", "KY"],
+  manhattan:    ["KS", "NY"],
+  marion:       ["OH", "IN", "IA"],
+  midland:      ["TX", "MI"],
+  milford:      ["CT", "MA", "NH"],
+  newark:       ["NJ", "DE", "OH"],
+  richmond:     ["VA", "CA", "KY"],
+  salem:        ["OR", "MA", "VA", "NH", "OH"],
+  savannah:     ["GA", "TN"],
+  troy:         ["NY", "OH", "AL", "MI"],
+  wilmington:   ["NC", "DE"],
+};
+
+/**
+ * US state names and abbreviations used to detect adjacent state qualifiers.
+ */
+const STATE_ABBREVS = new Set([
+  "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN","IA",
+  "KS","KY","LA","ME","MD","MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ",
+  "NM","NY","NC","ND","OH","OK","OR","PA","RI","SC","SD","TN","TX","UT","VT",
+  "VA","WA","WV","WI","WY","DC",
+]);
+const STATE_NAMES = new Set([
+  "alabama","alaska","arizona","arkansas","california","colorado","connecticut",
+  "delaware","florida","georgia","hawaii","idaho","illinois","indiana","iowa",
+  "kansas","kentucky","louisiana","maine","maryland","massachusetts","michigan",
+  "minnesota","mississippi","missouri","montana","nebraska","nevada",
+  "new hampshire","new jersey","new mexico","new york","north carolina",
+  "north dakota","ohio","oklahoma","oregon","pennsylvania","rhode island",
+  "south carolina","south dakota","tennessee","texas","utah","vermont",
+  "virginia","washington","west virginia","wisconsin","wyoming",
+]);
+
+/**
+ * Checks whether a state qualifier appears *directly* after the city name at
+ * position `idx` in `lower` (the lowercased prompt) and `orig` (original case).
+ *
+ * "Directly after" means: optional comma + optional whitespace + state token,
+ * within ~30 chars. Accepted forms:
+ *   "Watertown, NY"        — comma + uppercase abbrev
+ *   "Watertown NY"         — space + uppercase abbrev
+ *   "Watertown, ny"        — comma + lowercase abbrev
+ *   "Watertown, New York"  — comma or space + full state name
+ *   "Watertown in New York"— "in" + full state name (within the suffix)
+ *
+ * Returns true if any state qualifier is found directly adjacent.
+ */
+function hasAdjacentStateQualifier(
+  lower: string,
+  orig: string,
+  cityEndIdx: number,
+): boolean {
+  // Suffix: up to 40 chars immediately after the city token.
+  const suffixLower = lower.slice(cityEndIdx, cityEndIdx + 40);
+  const suffixOrig  = orig.slice(cityEndIdx, cityEndIdx + 40);
+
+  // Check for full state names in the suffix.
+  for (const name of STATE_NAMES) {
+    if (suffixLower.includes(name)) return true;
+  }
+
+  // Check for state abbreviation patterns directly adjacent (comma or space).
+  // Two accepted forms to minimise false-positives:
+  //   a) Comma-prefixed any case:  ", NY"  or  ", ny"  — comma signals a geographic qualifier
+  //   b) Space-prefixed UPPERCASE: " NY" — uppercase strongly signals an abbreviation,
+  //      not a preposition like "in" (which would match as Indiana if we allowed lowercase)
+  const commaAbbrev = suffixOrig.match(/^,\s{0,2}([A-Za-z]{2})\b/);
+  if (commaAbbrev && STATE_ABBREVS.has(commaAbbrev[1].toUpperCase())) return true;
+
+  const spaceUpperAbbrev = suffixOrig.match(/^\s{1,2}([A-Z]{2})\b/);
+  if (spaceUpperAbbrev && STATE_ABBREVS.has(spaceUpperAbbrev[1])) return true;
+
+  return false;
+}
+
+/**
+ * Returns the first bare ambiguous city occurrence found in `prompt` that has
+ * no adjacent state qualifier. Iterates ALL occurrences of every city name so
+ * that a later bare mention is caught even if the first has a qualifier.
+ *
+ * Returns null if every city occurrence in the prompt is properly qualified.
+ */
+function findAmbiguousCity(prompt: string): { city: string; states: string[] } | null {
+  const lower = prompt.toLowerCase();
+
+  for (const [city, states] of Object.entries(AMBIGUOUS_CITIES)) {
+    let searchFrom = 0;
+
+    while (searchFrom < lower.length) {
+      const idx = lower.indexOf(city, searchFrom);
+      if (idx === -1) break;
+
+      const cityEndIdx = idx + city.length;
+      searchFrom = cityEndIdx; // advance past this match for next iteration
+
+      // Require word boundaries: character before and after must not be a word char.
+      const before = idx > 0 ? lower[idx - 1] : " ";
+      const after = cityEndIdx < lower.length ? lower[cityEndIdx] : " ";
+      if (/\w/.test(before) || /\w/.test(after)) continue;
+
+      // If this occurrence has no adjacent state qualifier, it is ambiguous.
+      if (!hasAdjacentStateQualifier(lower, prompt, cityEndIdx)) {
+        return { city, states };
+      }
+    }
+  }
+  return null;
 }
 
 /**
@@ -39,6 +173,8 @@ Choose agent_type based on the request:
 
 ENTITY CHECK: Before queueing research or writing jobs, the tool automatically checks the prompt against the user's known projects and products. If a near-match (possible typo) is found, the tool will pause and return a confirmation request — relay this to the user and wait for their reply before re-calling. If the user explicitly confirms they want to search as-is (not the matched entity), set skip_entity_check=true on the next call. If they confirm the corrected name, update the prompt and re-call without skip_entity_check.
 
+LOCATION CHECK: Before queueing any job, the tool checks whether the prompt contains a bare city name that matches multiple US cities in different states (e.g. "Watertown" could be MA, NY, SD, or WI). If found without a state qualifier, the tool will pause and return a LOCATION_CHECK_REQUIRED message — relay this to the user, wait for their state confirmation, then re-call with the confirmed city+state in the prompt and skip_location_check=true.
+
 Do NOT use for: quick one-sentence answers, reading today's tasks, anything answered by another tool, or any Discord server action (listing/deleting channels — use discord_list_channels and discord_delete_channel instead).`,
   parameters: {
     type: "object",
@@ -51,7 +187,7 @@ Do NOT use for: quick one-sentence answers, reading today's tasks, anything answ
       prompt: {
         type: "string",
         description:
-          "Complete instructions for the sub-agent. Include all context the sub-agent needs to work autonomously — the user is not in this conversation. For email type, name the recipient and purpose.",
+          "Complete instructions for the sub-agent. Include ALL context it needs: domain topic (e.g. 'animal shelters' not just 'shelters'), full location with state/country (e.g. 'Watertown, NY' not just 'Watertown'), any constraints or preferences from earlier in the conversation. The sub-agent has no access to the conversation history — everything must be in this prompt. For email type, name the recipient and purpose.",
       },
       title: {
         type: "string",
@@ -63,6 +199,11 @@ Do NOT use for: quick one-sentence answers, reading today's tasks, anything answ
         description:
           "Set to true ONLY after the user has explicitly confirmed they want to search for this exact term despite it resembling a known project or product in their profile. Default: false.",
       },
+      skip_location_check: {
+        type: "boolean",
+        description:
+          "Set to true ONLY after the user has confirmed the specific city and state (e.g. 'Watertown, NY'). Update the prompt to include the confirmed city+state before re-calling. Default: false.",
+      },
     },
     required: ["agent_type", "prompt"],
   },
@@ -71,6 +212,7 @@ Do NOT use for: quick one-sentence answers, reading today's tasks, anything answ
     const agentType = String(a.agent_type || "").trim() as SubAgentType;
     const prompt = String(a.prompt || "").trim();
     const skipEntityCheck = Boolean(a.skip_entity_check);
+    const skipLocationCheck = Boolean(a.skip_location_check);
 
     if (!SUB_AGENT_TYPES.includes(agentType as (typeof SUB_AGENT_TYPES)[number])) {
       return {
@@ -116,6 +258,34 @@ Do NOT use for: quick one-sentence answers, reading today's tasks, anything answ
       } catch (entityErr) {
         // Non-fatal: if the entity check fails, proceed normally.
         console.warn(`[queue_background_job] entity check failed:`, entityErr);
+      }
+    }
+    // ────────────────────────────────────────────────────────────────────────
+
+    // ── Ambiguous-location pre-flight check ──────────────────────────────────
+    // Scan the prompt for bare city names that are well-known US naming conflicts
+    // (e.g. "Watertown" without a state). If found, pause and ask the user to
+    // confirm which city they mean before queuing the job.
+    if (!skipLocationCheck) {
+      const ambiguous = findAmbiguousCity(prompt);
+      if (ambiguous) {
+        const stateList = ambiguous.states.join(", ");
+        const cityTitle = ambiguous.city.charAt(0).toUpperCase() + ambiguous.city.slice(1);
+        console.log(
+          `[${ctx.channel || "Coach"}] queue_background_job LOCATION CHECK: ` +
+          `"${cityTitle}" is ambiguous (${stateList}) — pausing for confirmation`,
+        );
+        return {
+          ok: true,
+          content:
+            `LOCATION_CHECK_REQUIRED — The prompt mentions "${cityTitle}" which matches cities in ` +
+            `multiple states (${stateList}). Please relay this to the user: ` +
+            `"I want to make sure I look up the right place — which ${cityTitle} did you mean? (${stateList})" ` +
+            `After the user confirms the state, update the prompt to use the full city+state (e.g. "${cityTitle}, NY") ` +
+            `and re-call with skip_location_check=true. Do NOT queue the job until you receive their reply.`,
+          label: "Location confirmation needed",
+          detail: `${cityTitle} → ${stateList}`,
+        };
       }
     }
     // ────────────────────────────────────────────────────────────────────────
