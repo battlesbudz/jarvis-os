@@ -320,7 +320,10 @@ async function run(): Promise<void> {
   //   turn 1 → announce reply (not re-streamed) → post-stream check → revise (count: 1→2)
   //   turn 2 → announce reply (not re-streamed) → guard fails (2 < 2 = false) → finalize
   // Total provider calls: 3.
-  // We also verify that onToken received the chunks from the initial streamed turn.
+  // We also verify that onToken received the chunks from the initial streamed turn, and
+  // crucially that it received ONLY those chunks — the corrective revision turns must
+  // NOT be re-streamed (HA-6c). If suppressNextStream logic regresses, receivedTokens
+  // would contain 3 entries instead of 1, catching the bug immediately.
   {
     let callCount = 0;
     const announceReply = "I found the results. I will now tap on the first video.";
@@ -358,6 +361,10 @@ async function run(): Promise<void> {
     assert(
       receivedTokens.includes(announceReply),
       "HA-6: streaming mode — onToken received the streamed chunk from the initial turn",
+    );
+    assert(
+      receivedTokens.length === 1,
+      `HA-6c: corrective revision turns were suppressed — onToken received exactly 1 chunk, not ${receivedTokens.length} (suppressNextStream regression guard)`,
     );
 
     _clearProviderCacheForTesting();
