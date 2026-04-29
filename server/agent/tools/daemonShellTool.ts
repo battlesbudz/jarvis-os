@@ -3718,7 +3718,7 @@ export const androidSelectOptionTool: AgentTool = {
 
 Handles the two-step interaction that dropdown/spinner controls require: tapping to open the list, waiting for the list to appear, then tapping the desired option.
 
-Step 1 — Open dropdown: Fuzzy-matches \`label\` against the current ScreenMap and taps the matching element. If the dropdown control is not visible on the initial screen, the tool automatically scrolls down (up to max_scroll_attempts times) and re-reads the screen after each scroll until the element appears or the scroll limit is reached.
+Step 1 — Open dropdown: Fuzzy-matches \`label\` against the current ScreenMap and taps the matching element. If the dropdown control is not visible on the initial screen, the tool first scrolls back to the top of the page (unless reset_scroll is false) so that dropdowns above the current scroll position are never missed, then automatically scrolls down (up to max_scroll_attempts times) and re-reads the screen after each scroll until the element appears or the scroll limit is reached.
 Step 2 — Pick option: Waits 500 ms (configurable via wait_ms) for the list to appear, captures a fresh ScreenMap, fuzzy-matches \`option\` against the new elements, and taps the best match. If the option is not visible on the initial screen, the tool also scrolls within the open list to find it.
 
 Use this tool instead of manually calling android_tap_element twice for dropdown interactions:
@@ -3752,6 +3752,10 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       scroll_distance: {
         type: "number",
         description: "Pixel distance for each scroll swipe when searching for the option (default 600). Larger values scroll further per swipe.",
+      },
+      reset_scroll: {
+        type: "boolean",
+        description: "When true (default), the tool scrolls the page back to the top before starting the downward scroll-to-find loop. This ensures dropdowns that are above the current scroll position are never missed. Set to false to skip the reset and start searching from the current scroll position.",
       },
     },
     required: ["label", "option"],
@@ -3807,6 +3811,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
     const maxScrollAttempts = Number.isFinite(rawMaxScrollAttempts) ? Math.max(0, Math.floor(rawMaxScrollAttempts)) : 5;
     const rawScrollDistance = typeof args.scroll_distance === "number" ? args.scroll_distance : 600;
     const scrollDistance = Number.isFinite(rawScrollDistance) ? Math.min(Math.max(100, Math.floor(rawScrollDistance)), 1800) : 600;
+    const resetScroll = args.reset_scroll === false ? false : true;
 
     // ── Step 1: Resolve ScreenMap, fuzzy-match the dropdown, scroll if needed ──
     const buildResult = await buildScreenMapElements(ctx.userId);
@@ -3822,6 +3827,32 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
     for (const el of dropdownElements) {
       const score = scoreElement(el, label);
       if (score > dropdownScore) { dropdownScore = score; dropdownBest = el; }
+    }
+
+    // ── Optional reset: scroll to top before the downward search loop ─────────
+    // This ensures the tool never misses a dropdown that sits above the current
+    // scroll position because a previous interaction left the page scrolled down.
+    // Intentionally decoupled from max_scroll_attempts so that reset_scroll=true
+    // still takes effect even when the caller disables the downward scroll loop.
+    if ((!dropdownBest || dropdownScore === 0) && resetScroll) {
+      console.log(`[android_select_option] dropdown "${label}" not found on initial screen — resetting to top of page before downward scroll-to-find loop`);
+      await scrollToTop(ctx.userId, 5);
+      // Brief pause so the page settles after scrolling to top
+      await new Promise((resolve) => setTimeout(resolve, 400));
+
+      const afterResetResult = await buildScreenMapElements(ctx.userId);
+      if (afterResetResult.ok) {
+        dropdownBest = null;
+        dropdownScore = 0;
+        for (const el of afterResetResult.elements) {
+          const score = scoreElement(el, label);
+          if (score > dropdownScore) { dropdownScore = score; dropdownBest = el; }
+        }
+        dropdownElements = afterResetResult.elements;
+        if (dropdownBest && dropdownScore > 0) {
+          console.log(`[android_select_option] found dropdown "${label}" after scroll-to-top reset, score=${dropdownScore}`);
+        }
+      }
     }
 
     // ── Scroll-to-find: swipe down the page until the dropdown label appears ───
