@@ -17,7 +17,7 @@ import { runOrchestrator } from "../agent/orchestrator";
 import { preThink, postCheck } from "../agent/qualityLoop";
 import { getModel, MODEL_DEFAULTS } from "../lib/modelPrefs";
 import { contextRegistry } from "../agent/contextRegistry";
-import { classifyBuildIntent, classifyBuildFollowUp, isUnrelatedIntent, hasActiveBuildSession } from "../agent/queryClassifier";
+import { classifyBuildIntent, classifyBuildFollowUp, isUnrelatedIntent, hasActiveBuildSession, classifyBuildResume, findBuildDescription, BUILD_ACK_MARKER } from "../agent/queryClassifier";
 import { routeBuildIntent } from "../agent/buildIntentRouter";
 // Side-effect import: registers workspace topic context provider.
 import "../agent/providers/topicContext";
@@ -625,6 +625,38 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
       console.error(`[${channelName}] build intent job submission failed (falling through to orchestrator):`, buildErr);
       // Fall through to normal orchestrator path on submission error.
     }
+  }
+
+  // ── Build-session resume signal ───────────────────────────────────────────
+  // Detect phrases like "back to the build", "let's resume", "continue where we
+  // left off" that signal the user wants to re-enter build mode after Jarvis
+  // stepped away to handle an unrelated request.
+  //
+  // Strategy: reply with a short acknowledgement that embeds BUILD_ACK_MARKER
+  // so that the NEXT user message (e.g. "now add retry logic") is correctly
+  // routed to the build_feature job by classifyBuildFollowUp.
+  if (userText && classifyBuildResume(userText, chatMessages)) {
+    const buildDesc = findBuildDescription(chatMessages);
+    const RESUME_PHRASES = [
+      `Back to it — I've already ${BUILD_ACK_MARKER} for that. We were working on: "${buildDesc}". What would you like to change or add?`,
+      `Picking up where we left off — I've ${BUILD_ACK_MARKER} for that already. The build was: "${buildDesc}". Ready when you are.`,
+      `Resuming — I've ${BUILD_ACK_MARKER} for "${buildDesc}". What's next?`,
+    ];
+    const resumeReply = RESUME_PHRASES[Math.floor(Math.random() * RESUME_PHRASES.length)];
+    // Persist to chat history (same minimal pattern as build-intent short-circuit)
+    const userMsgEntry  = { id: Date.now().toString(),       role: "user",      content: userText    };
+    const asstMsgEntry  = { id: (Date.now() + 1).toString(), role: "assistant", content: resumeReply };
+    const updatedChatResume = [asstMsgEntry, userMsgEntry, ...chatMessages].slice(0, 100);
+    db.insert(schema.chatHistory)
+      .values({ userId, data: updatedChatResume })
+      .onConflictDoUpdate({
+        target: schema.chatHistory.userId,
+        set: { data: updatedChatResume, updatedAt: new Date() },
+      })
+      .catch((err: unknown) => console.error("[coach] build-resume chat history persist failed:", err));
+    logInteraction(userId, channelLower as any, "outbound", resumeReply).catch(() => {});
+    console.log(`[${channelName}] build-session resume detected — sending ack with BUILD_ACK_MARKER`);
+    return { reply: resumeReply, rawReply: resumeReply, attachments: [], sdkSessionId: activeSessionId };
   }
 
   // ── Build-session context-switch detection ────────────────────────────────

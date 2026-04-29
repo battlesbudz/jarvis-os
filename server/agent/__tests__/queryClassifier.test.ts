@@ -9,6 +9,8 @@
 import {
   classifyBuildIntent,
   classifyBuildFollowUp,
+  classifyBuildResume,
+  findBuildDescription,
   BUILD_ACK_MARKER,
 } from "../queryClassifier";
 
@@ -434,6 +436,142 @@ assert(
 assert(
   classifyBuildFollowUp("add retry logic", historyWithAck()),
   "UI-NM3: 'add retry logic' still routes to build (control) → true",
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// classifyBuildResume — core resume-phrase detection
+// ─────────────────────────────────────────────────────────────────────────────
+
+function historyWithSuspendedBuild(): Array<{ role: string; content: string }> {
+  // Simulates: build started → topic change → unrelated reply (newest-first)
+  return [
+    { role: "assistant", content: "Here are your emails: ..." },
+    { role: "user", content: "check my email" },
+    { role: "assistant", content: `Got it — I've ${BUILD_ACK_MARKER}. I'll notify you when the new tool is ready.` },
+    { role: "user", content: "build me a weather lookup tool" },
+  ];
+}
+
+// Positive cases — resume phrase + prior ack → true
+assert(
+  classifyBuildResume("back to the build", historyWithSuspendedBuild()),
+  "BR-1: 'back to the build' with prior ack → true",
+);
+assert(
+  classifyBuildResume("let's continue the build", historyWithSuspendedBuild()),
+  "BR-2: 'let's continue the build' with prior ack → true",
+);
+assert(
+  classifyBuildResume("ok let's resume", historyWithSuspendedBuild()),
+  "BR-3: 'ok let's resume' with prior ack → true",
+);
+assert(
+  classifyBuildResume("continue where we left off", historyWithSuspendedBuild()),
+  "BR-4: 'continue where we left off' with prior ack → true",
+);
+assert(
+  classifyBuildResume("pick up where we left off", historyWithSuspendedBuild()),
+  "BR-5: 'pick up where we left off' with prior ack → true",
+);
+assert(
+  classifyBuildResume("let's get back to the build", historyWithSuspendedBuild()),
+  "BR-6: 'let's get back to the build' with prior ack → true",
+);
+assert(
+  classifyBuildResume("resume the feature", historyWithSuspendedBuild()),
+  "BR-7: 'resume the feature' with prior ack → true",
+);
+assert(
+  classifyBuildResume("where were we with the build", historyWithSuspendedBuild()),
+  "BR-8: 'where were we with the build' with prior ack → true",
+);
+assert(
+  classifyBuildResume("back to the tool", historyWithSuspendedBuild()),
+  "BR-9: 'back to the tool' with prior ack → true",
+);
+assert(
+  classifyBuildResume("back to building", historyWithSuspendedBuild()),
+  "BR-10: 'back to building' with prior ack → true",
+);
+
+// Negative cases — no ack in history → false (no session to resume)
+assert(
+  !classifyBuildResume("back to the build", historyWithoutAck()),
+  "BR-N1: 'back to the build' with no prior ack → false",
+);
+assert(
+  !classifyBuildResume("continue where we left off", []),
+  "BR-N2: resume phrase with empty history → false",
+);
+
+// Negative cases — non-resume phrases with an ack → false
+assert(
+  !classifyBuildResume("where were we", historyWithSuspendedBuild()),
+  "BR-N3a: bare 'where were we' without build noun → false (too ambiguous without context)",
+);
+assert(
+  !classifyBuildResume("ok continue", historyWithSuspendedBuild()),
+  "BR-N3b: 'ok continue' without 'let's' → false (too ambiguous without context)",
+);
+assert(
+  !classifyBuildResume("check my email", historyWithSuspendedBuild()),
+  "BR-N3: unrelated phrase with ack → false",
+);
+assert(
+  !classifyBuildResume("now add retry logic", historyWithSuspendedBuild()),
+  "BR-N4: refinement phrase is not a resume signal → false",
+);
+assert(
+  !classifyBuildResume("", historyWithSuspendedBuild()),
+  "BR-N5: empty message → false",
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// findBuildDescription — extracts what was being built
+// ─────────────────────────────────────────────────────────────────────────────
+
+assert(
+  findBuildDescription(historyWithSuspendedBuild()) === "build me a weather lookup tool",
+  "FBD-1: extracts the user message that preceded the ack",
+);
+
+assert(
+  findBuildDescription([]) === "your previous build request",
+  "FBD-2: empty history → generic fallback",
+);
+
+assert(
+  findBuildDescription(historyWithoutAck()) === "your previous build request",
+  "FBD-3: no ack in history → generic fallback",
+);
+
+// Long message should be truncated to 120 chars
+const longDesc = "build me a ".padEnd(200, "x");
+assert(
+  findBuildDescription([
+    { role: "assistant", content: `Got it — I've ${BUILD_ACK_MARKER}.` },
+    { role: "user", content: longDesc },
+  ]).length <= 120,
+  "FBD-4: very long build description is truncated to ≤120 chars",
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Integration: resume ack re-activates classifyBuildFollowUp on next turn
+// ─────────────────────────────────────────────────────────────────────────────
+
+// After a resume ack (which embeds BUILD_ACK_MARKER), the next refinement
+// message should be routed by classifyBuildFollowUp as if in an active session.
+const resumeAck = `Back to it — I've already queued that build job for that. We were working on: "build me a weather lookup tool". What would you like to change or add?`;
+assert(
+  classifyBuildFollowUp("now add retry logic", [
+    { role: "assistant", content: resumeAck },
+    { role: "user", content: "back to the build" },
+    { role: "assistant", content: "Here are your emails." },
+    { role: "user", content: "check my email" },
+    { role: "assistant", content: `Got it — I've ${BUILD_ACK_MARKER}. I'll notify you when the new tool is ready.` },
+    { role: "user", content: "build me a weather lookup tool" },
+  ]),
+  "INT-1: refinement after resume ack is routed as a build follow-up → true",
 );
 
 // ── Print summary ─────────────────────────────────────────────────────────────

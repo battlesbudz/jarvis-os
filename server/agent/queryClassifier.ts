@@ -122,6 +122,92 @@ export function isUnrelatedIntent(text: string): boolean {
 }
 
 /**
+ * Patterns that indicate the user wants to resume a previously-suspended build
+ * session after Jarvis stepped away to handle an unrelated request.
+ *
+ * Examples matched:
+ *   - "back to the build"
+ *   - "let's continue the build"
+ *   - "ok let's resume"
+ *   - "continue where we left off"
+ *   - "get back to the tool"
+ *   - "resume the feature"
+ */
+const BUILD_RESUME_PATTERNS = [
+  // "back to (the)? (build|tool|feature|script|bot|integration|module|…)"
+  /\bback\s+to\s+(the\s+)?(build|tool|feature|script|bot|integration|module|plugin|agent|capability|command|function|webhook|connector)\b/i,
+  // "resume (the)? build / tool / …"
+  /\bresume\s+(the\s+)?(build|tool|feature|script|bot|integration|module|plugin|agent|capability|command|function|webhook|connector)\b/i,
+  // "continue (the|where we left off|with the build|…)"
+  /\bcontinue\s+(the\s+)?(build|tool|feature|script|bot|integration|module|plugin|agent|capability|command|function|webhook|connector)\b/i,
+  /\bcontinue\s+where\s+we\s+left\s+off\b/i,
+  /\bpick\s+up\s+where\s+we\s+left\s+off\b/i,
+  // "let's (get back|go back|return|resume|continue)" with optional "to the build/tool"
+  /\blet'?s?\s+(get\s+back|go\s+back|return|resume|continue)\s+(to\s+(the\s+)?)?(build|tool|feature|script|building)\b/i,
+  // "back to building / back to coding"
+  /\bback\s+to\s+(building|coding|it)\b/i,
+  // "ok(ay)?, let's (resume|continue|get back)" — require explicit "let's" to avoid
+  // matching generic "ok continue" in unrelated contexts
+  /\b(ok|okay)[,.]?\s+let'?s?\s+(resume|continue|get\s+back)\b/i,
+  // "where were we with the build/tool" or "where did we leave off (with X)"
+  // Requires build/tool noun to avoid matching the phrase in unrelated conversations
+  /\bwhere\s+(were\s+we|did\s+we\s+leave\s+off)\s+(with\s+(the\s+)?)?(build|tool|feature|script|bot|integration|module|it)\b/i,
+];
+
+/**
+ * Returns true when the user is signalling that they want to resume a build
+ * session that was previously suspended by a topic-change (e.g. checking email).
+ *
+ * Requires:
+ *   1. The current message matches a BUILD_RESUME_PATTERNS phrase.
+ *   2. A BUILD_ACK_MARKER exists somewhere in the recent history window —
+ *      meaning a build was started even if a topic-change has since occurred.
+ *
+ * Unlike classifyBuildFollowUp, this does NOT require the session to still be
+ * active (i.e. it intentionally ignores whether a topic-change happened).
+ */
+export function classifyBuildResume(
+  text: string,
+  chatHistory: Array<{ role: string; content: string }>,
+): boolean {
+  if (!text || text.trim().length === 0) return false;
+  if (!BUILD_RESUME_PATTERNS.some((re) => re.test(text))) return false;
+  // Require that a build ack exists somewhere in the recent window
+  const window = chatHistory.slice(0, BUILD_SESSION_WINDOW);
+  return window.some(
+    (m) => m.role === "assistant" && m.content.includes(BUILD_ACK_MARKER),
+  );
+}
+
+/**
+ * Scans the chat history (newest-first) and returns a short description of
+ * what was originally requested to be built.
+ *
+ * Looks for the user message that immediately preceded the most-recent
+ * BUILD_ACK_MARKER in the assistant's reply.  Falls back to a generic
+ * "your previous build request" when no specific message can be found.
+ */
+export function findBuildDescription(
+  chatHistory: Array<{ role: string; content: string }>,
+): string {
+  const window = chatHistory.slice(0, BUILD_SESSION_WINDOW);
+  const ackIndex = window.findIndex(
+    (m) => m.role === "assistant" && m.content.includes(BUILD_ACK_MARKER),
+  );
+  if (ackIndex === -1) return "your previous build request";
+
+  // The user message that came just before (i.e. higher index in newest-first) the ack
+  for (let i = ackIndex + 1; i < window.length; i++) {
+    if (window[i].role === "user") {
+      const content = window[i].content.trim();
+      // Truncate long messages so the resume ack stays concise
+      return content.length > 120 ? content.slice(0, 117) + "…" : content;
+    }
+  }
+  return "your previous build request";
+}
+
+/**
  * Returns true when there is an active build session in the recent chat history.
  *
  * An active session exists when:
