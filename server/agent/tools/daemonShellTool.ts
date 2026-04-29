@@ -909,6 +909,11 @@ export const androidSearchInAppTool: AgentTool = {
       if (r.ok) screenRaw = JSON.stringify(r.data || "");
     }
 
+    // Shared coords: populated by step 2 locate logic, used as fallback in step 3 tap loop.
+    // Declared outside both step blocks so step 3 can reference them even when step 2 was skipped.
+    let searchX: number | null = null;
+    let searchY: number | null = null;
+
     // ── Step 2: Locate search element ─────────────────────────────────────
     // Three strategies on separate attempts:
     //   attempt 1 — check current screen as-is
@@ -916,8 +921,6 @@ export const androidSearchInAppTool: AgentTool = {
     //   attempt 3 — swipe down from top to reveal a hidden search bar
     if (!resumeFromStep || resumeFromStep <= 2) {
       let searchElementFound = false;
-      let searchX: number | null = null;
-      let searchY: number | null = null;
 
       for (let attempt = 1; attempt <= 3; attempt++) {
         // Always re-read the screen on each attempt so coordinates are fresh
@@ -961,9 +964,13 @@ export const androidSearchInAppTool: AgentTool = {
 
       stepLog.push({ step: 2, outcome: "success", detail: `found at (${searchX}, ${searchY})` });
       console.log(`[${label}] step 2 complete — search element found at (${searchX}, ${searchY})`);
+    }
 
-      // ── Step 3: Tap search bar with locate-then-act loop ─────────────────
-      // Re-locate before each tap attempt so stale coordinates don't cause misses.
+    // ── Step 3: Tap search bar with locate-then-act loop ──────────────────
+    // Kept as a separate resumable step so resume_from_step: 3 re-runs only the
+    // tap/focus-verify logic without repeating the full locate strategies above.
+    // Re-locate before each tap attempt so stale coordinates don't cause misses.
+    if (!resumeFromStep || resumeFromStep <= 3) {
       let tapVerified = false;
       for (let attempt = 1; attempt <= 4; attempt++) {
         // Re-locate element fresh on each attempt
