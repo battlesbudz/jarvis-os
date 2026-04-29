@@ -181,6 +181,68 @@ function isYouTubeAuthGate(originalUrl: string, pageText: string, finalUrl?: str
   return false;
 }
 
+// ── Social media auth-gate detection ──────────────────────────────────────────
+
+const SOCIAL_LOGIN_DOMAINS: Record<string, string> = {
+  "facebook.com": "Facebook",
+  "fb.com": "Facebook",
+  "instagram.com": "Instagram",
+  "twitter.com": "Twitter/X",
+  "x.com": "Twitter/X",
+  "linkedin.com": "LinkedIn",
+  "tiktok.com": "TikTok",
+  "pinterest.com": "Pinterest",
+};
+
+/** URL patterns that indicate the final page is a social login/consent wall. */
+const SOCIAL_AUTH_URL_PATTERNS: RegExp[] = [
+  /facebook\.com\/login/,
+  /facebook\.com\/checkpoint/,
+  /facebook\.com\/recover/,
+  /instagram\.com\/accounts\/login/,
+  /twitter\.com\/i\/flow\/login/,
+  /x\.com\/i\/flow\/login/,
+  /linkedin\.com\/login/,
+  /linkedin\.com\/uas\/login/,
+  /tiktok\.com\/login/,
+  /pinterest\.com\/login/,
+];
+
+function getSocialLoginPlatform(url: string): string | null {
+  for (const [domain, label] of Object.entries(SOCIAL_LOGIN_DOMAINS)) {
+    if (url.includes(domain)) return label;
+  }
+  return null;
+}
+
+/**
+ * Return the platform name when a social-media-targeted navigation has hit an
+ * auth/login wall, or null if no gate is detected.
+ *
+ * Detection signals (all require the original URL to be a known social domain):
+ *   1. Final navigated URL matches a platform-specific login URL pattern.
+ *   2. Original URL matches a platform-specific login URL pattern.
+ *   3. Page text contains common login-wall phrases.
+ */
+function isSocialAuthGate(originalUrl: string, pageText: string, finalUrl?: string | null): string | null {
+  const platform = getSocialLoginPlatform(originalUrl);
+  if (!platform) return null;
+
+  if (finalUrl && SOCIAL_AUTH_URL_PATTERNS.some((rx) => rx.test(finalUrl))) return platform;
+  if (SOCIAL_AUTH_URL_PATTERNS.some((rx) => rx.test(originalUrl))) return platform;
+
+  const textLower = pageText.toLowerCase().slice(0, 3000);
+  const loginSignals = [
+    "log in to", "log in with", "sign in to", "sign up to",
+    "create an account", "join to see", "to see more from",
+    "connect with friends", "you must be logged in",
+    "register to view", "login required",
+  ];
+  if (loginSignals.some((s) => textLower.includes(s))) return platform;
+
+  return null;
+}
+
 // ── browser_navigate ───────────────────────────────────────────────────────────
 
 export const browserNavigateTool: AgentTool = {
@@ -238,6 +300,21 @@ export const browserNavigateTool: AgentTool = {
           content:
             `YouTube is asking for a sign-in on this page and the headless browser cannot proceed.${ytNote}`,
           label: "browser_navigate: YouTube auth gate",
+        };
+      }
+
+      // Detect social media login walls (Facebook, Instagram, Twitter/X, LinkedIn, TikTok, Pinterest)
+      // and return a clear error rather than letting the agent screenshot an empty/gated page.
+      const socialPlatform = isSocialAuthGate(url, pageText, finalUrl);
+      if (socialPlatform) {
+        const effectiveUrl = finalUrl ?? url;
+        console.warn(`[${ctx.channel || "Agent"}] browser_navigate hit ${socialPlatform} auth gate → ${effectiveUrl}`);
+        return {
+          ok: false,
+          content:
+            `This page requires you to be signed in to view content. ${socialPlatform} (and most major social platforms) blocks anonymous browsers — Jarvis cannot read posts, profiles, or content that requires a login. ` +
+            `Try: searching for the page's content via web_search to find publicly cached or indexed information, or ask the user to share a screenshot directly.`,
+          label: `browser_navigate: ${socialPlatform} auth gate`,
         };
       }
 
@@ -387,7 +464,13 @@ export const browserScreenshotTool: AgentTool = {
   name: "browser_screenshot",
   description:
     "Capture a screenshot of the current browser page and return it as a base64-encoded PNG image. " +
-    "Use this to visually inspect the current page state or read content that isn't accessible as text.",
+    "Use this to visually inspect the current page state or read content that isn't accessible as text.\n\n" +
+    "CRITICAL — only describe what you can actually see: After capturing, you MUST describe " +
+    "only content that is visibly present in the screenshot. If the page shows a login prompt, " +
+    "header only, error page, or anything other than the content you were asked to capture, " +
+    "state clearly what IS visible and stop. NEVER describe, invent, summarise, or guess at " +
+    "content that is not directly visible in the image. Fabricating post content, article " +
+    "text, or any other information you cannot see is a critical accuracy violation.",
   parameters: {
     type: "object",
     properties: {
@@ -412,12 +495,50 @@ export const browserScreenshotTool: AgentTool = {
         return { ok: false, content: "Screenshot taken but image data unavailable.", label: "browser_screenshot: no data" };
       }
 
-      console.log(`[${ctx.channel || "Agent"}] browser_screenshot full=${fullPage} encoded_size=${base64.length}`);
+      // Get current page text to check for login walls and emit a structured hint.
+      let loginHint = "";
+      let contentVisible = true;
+      let wallType: "social_login" | "login_or_access" | "none" = "none";
+      let detectedPlatform: string | undefined;
+      try {
+        const snapResult = await callBrowserTool(ctx.userId, "browser_snapshot", {});
+        if (!snapResult.isError) {
+          const pageText = mcpText(snapResult.content);
+          // Try to determine the current URL from the snapshot so we can run the
+          // platform-aware social auth check (isSocialAuthGate uses the URL to
+          // identify which social network we are on).
+          const currentUrl = extractFinalUrl(pageText) ?? "";
+          const socialPlatform = isSocialAuthGate(currentUrl, pageText, null);
+          const looksLikeLoginPage =
+            pageText.toLowerCase().includes("log in") && pageText.length < 5000;
+          if (socialPlatform) {
+            contentVisible = false;
+            wallType = "social_login";
+            detectedPlatform = socialPlatform;
+            loginHint =
+              `\n\n⚠️ NOTE: This page appears to be a ${socialPlatform} login wall. The target content may not be visible. Describe ONLY what you can see in the image.`;
+          } else if (looksLikeLoginPage) {
+            contentVisible = false;
+            wallType = "login_or_access";
+            loginHint =
+              `\n\n⚠️ NOTE: This page appears to be a login or access wall. The target content may not be visible. Describe ONLY what you can see in the image.`;
+          }
+        }
+      } catch {
+        // Non-fatal — proceed without the hint if snapshot fails
+      }
+
+      console.log(`[${ctx.channel || "Agent"}] browser_screenshot full=${fullPage} encoded_size=${base64.length} contentVisible=${contentVisible}`);
       return {
         ok: true,
-        content: `Screenshot captured.\n\n[image/png;base64,${base64}]`,
+        content: `Screenshot captured.\n\n[image/png;base64,${base64}]${loginHint}`,
         label: "Screenshot captured",
         detail: `${Math.round(base64.length * 3 / 4)} bytes`,
+        metadata: {
+          contentVisible,
+          wallType,
+          ...(detectedPlatform ? { platform: detectedPlatform } : {}),
+        },
       };
     } catch (err) {
       const msg = err instanceof Error ? err.message.split("\n")[0] : String(err);
