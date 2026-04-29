@@ -5926,6 +5926,49 @@ Return ONLY the JSON object.`;
     }
   });
 
+  app.post("/api/deliverables/:id/save-to-drive", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const id = req.params.id;
+      const [d] = await db
+        .select()
+        .from(schema.deliverables)
+        .where(and(eq(schema.deliverables.id, id), eq(schema.deliverables.userId, userId)))
+        .limit(1);
+      if (!d) return res.status(404).json({ error: "Deliverable not found" });
+      if (d.driveLink) return res.json({ ok: true, driveLink: d.driveLink });
+
+      const { getUserDriveSettings } = await import('./driveRoutes');
+      const { createDriveTextFile } = await import('./integrations/googleDrive');
+      const drive = await getUserDriveSettings(userId);
+      if (!drive.enabled || !drive.accessToken) {
+        return res.status(400).json({ error: "Google Drive is not connected. Enable it in Settings." });
+      }
+
+      const content = d.body || d.summary || d.title;
+      const baseName = (d.title.slice(0, 95) || "Jarvis Document").replace(/\.md$/, '');
+      const fileName = `${baseName}.md`;
+      const created = await createDriveTextFile(
+        drive.accessToken,
+        fileName,
+        content,
+        { folderId: drive.folderId || undefined }
+      );
+
+      const [updated] = await db
+        .update(schema.deliverables)
+        .set({ driveLink: created.webViewLink })
+        .where(eq(schema.deliverables.id, id))
+        .returning();
+
+      res.json({ ok: true, driveLink: created.webViewLink, deliverable: updated });
+    } catch (err) {
+      console.error("Error saving deliverable to Drive:", err);
+      res.status(500).json({ error: "Failed to save to Drive" });
+    }
+  });
+
   app.get("/api/documents", async (req: Request, res: Response) => {
     try {
       const userId = req.userId;
