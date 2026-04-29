@@ -184,6 +184,28 @@ async function cleanUpOldInteractionLogs(): Promise<void> {
   }
 }
 
+/**
+ * Prune stale build_sessions rows on two policies:
+ *   1. reminded=true rows older than 30 days — already acted on, no further use.
+ *   2. reminded=false rows older than 14 days — build is effectively abandoned.
+ */
+async function cleanUpOldBuildSessions(): Promise<void> {
+  try {
+    const result = await db.execute(sql`
+      DELETE FROM build_sessions
+      WHERE
+        (reminded = true  AND created_at < NOW() - INTERVAL '30 days')
+        OR
+        (reminded = false AND created_at < NOW() - INTERVAL '14 days')
+      RETURNING id
+    `);
+    const count = (result.rows ?? []).length;
+    console.log(`[Scheduler] Build session cleanup: ${count} row(s) deleted`);
+  } catch (err) {
+    console.error('[Scheduler] cleanUpOldBuildSessions failed:', err);
+  }
+}
+
 /** Hard-delete jarvis_action_log rows older than ACTION_LOG_RETENTION_DAYS. */
 async function cleanUpOldActionLogs(): Promise<void> {
   try {
@@ -682,6 +704,12 @@ export function startScheduler() {
       cleanUpOldActionLogs();
     }
 
+    // Daily 05:30 — prune stale build_sessions rows (reminded >30 days old,
+    // or un-reminded rows abandoned for >14 days).
+    if (h === 5 && m === 30) {
+      cleanUpOldBuildSessions();
+    }
+
     // Daily 06:00 — backfill embedding vectors for any user_memories rows that
     // still have embedding IS NULL.  The job is incremental (batched) and
     // aborts early if the embeddings endpoint is unavailable, so it is safe to
@@ -712,7 +740,7 @@ export function startScheduler() {
 
   }, 60 * 1000);
 
-  console.log('[Scheduler] Started — morning plan 7:00 AM daily, weekly patterns Sunday 3:00 AM, learning synthesis Sunday 4:30 AM, session cleanup 4:00 AM daily, Discord confirm token cleanup 4:05 AM daily, memory TTL cleanup 4:30 AM daily, interaction log cleanup 5:00 AM daily, action log cleanup 5:15 AM daily, embedding backfill 6:00 AM daily, Discord schedules every minute, autonomous project sessions every minute');
+  console.log('[Scheduler] Started — morning plan 7:00 AM daily, weekly patterns Sunday 3:00 AM, learning synthesis Sunday 4:30 AM, session cleanup 4:00 AM daily, Discord confirm token cleanup 4:05 AM daily, memory TTL cleanup 4:30 AM daily, interaction log cleanup 5:00 AM daily, action log cleanup 5:15 AM daily, build session cleanup 5:30 AM daily, embedding backfill 6:00 AM daily, Discord schedules every minute, autonomous project sessions every minute');
 }
 
 /**
