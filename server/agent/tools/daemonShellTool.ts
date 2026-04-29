@@ -2052,6 +2052,7 @@ function scoreElement(element: ScreenElement, query: string): number {
     String(element.description ?? ""),
     resourceId,
     resourceIdLocal,
+    String(element.className ?? ""),
   ].map((f) => f.toLowerCase());
 
   let textScore = 0;
