@@ -489,6 +489,50 @@ function evictOldest(): void {
 // if needed (Whisper API limit: 25 MB), transcribes each chunk, and combines.
 // Labels output as AI-generated so users know it isn't from official captions.
 
+// ── YouTube rate-limit circuit breaker ────────────────────────────────────────
+// When YouTube returns HTTP 429 / TOO_MANY_REQUESTS, further yt-dlp audio
+// download attempts are suspended for YTDLP_RATE_LIMIT_COOLDOWN_MS milliseconds.
+// Requests that arrive while the circuit is open are rejected immediately
+// (without spawning yt-dlp) by throwing a RATE_LIMITED error.
+// The circuit resets automatically once the cool-down window has elapsed.
+
+/** Cool-down duration after a 429 (default 90 s; override via env var). */
+const YTDLP_RATE_LIMIT_COOLDOWN_MS =
+  parseInt(process.env.YTDLP_RATE_LIMIT_COOLDOWN_MS ?? "", 10) || 90_000;
+
+/** Timestamp (ms since epoch) at which the circuit reopens. 0 = circuit closed. */
+let ytdlpRateLimitedUntil = 0;
+
+/**
+ * Opens the circuit for YTDLP_RATE_LIMIT_COOLDOWN_MS milliseconds and logs it.
+ * Safe to call multiple times — repeated calls simply extend the deadline.
+ */
+function openRateLimitCircuit(): void {
+  const wasOpen = Date.now() < ytdlpRateLimitedUntil;
+  ytdlpRateLimitedUntil = Date.now() + YTDLP_RATE_LIMIT_COOLDOWN_MS;
+  if (!wasOpen) {
+    console.warn(
+      `[transcriptCache] circuit OPEN — YouTube rate-limited (429). ` +
+      `Audio downloads paused for ${YTDLP_RATE_LIMIT_COOLDOWN_MS / 1000} s ` +
+      `(until ${new Date(ytdlpRateLimitedUntil).toISOString()}).`
+    );
+  }
+}
+
+/**
+ * Checks whether the rate-limit circuit is currently open.
+ * Logs a reset message the first time the circuit is found to have expired.
+ */
+function isRateLimitCircuitOpen(): boolean {
+  if (ytdlpRateLimitedUntil === 0) return false;
+  if (Date.now() >= ytdlpRateLimitedUntil) {
+    console.log(`[transcriptCache] circuit RESET — rate-limit cool-down expired. Resuming audio downloads.`);
+    ytdlpRateLimitedUntil = 0;
+    return false;
+  }
+  return true;
+}
+
 /** Max audio file size we'll attempt to transcribe (~30-40 min at typical bitrate). */
 const AUDIO_MAX_BYTES = 80 * 1024 * 1024;
 /** Whisper API file size limit with headroom. */
@@ -586,6 +630,16 @@ async function transcribeBuffer(buf: Buffer, ext: "wav" | "mp3"): Promise<string
 
 async function fetchAudioTranscript(videoId: string, originalInput?: string): Promise<TranscriptResponse[]> {
   if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) return [];
+
+  // Circuit breaker: refuse to launch yt-dlp while YouTube is rate-limiting us.
+  if (isRateLimitCircuitOpen()) {
+    const remainingSec = Math.ceil((ytdlpRateLimitedUntil - Date.now()) / 1000);
+    console.warn(
+      `[transcriptCache] circuit OPEN — skipping audio download for ${videoId} ` +
+      `(${remainingSec} s remaining in cool-down). Throwing RATE_LIMITED.`
+    );
+    throw new Error(`RATE_LIMITED: YouTube is rate-limiting this server. Retry in ${remainingSec} s.`);
+  }
 
   // Ensure the latest yt-dlp is on PATH (runs once per process, covers prod too)
   await ensureYtdlpUpgraded();
@@ -691,6 +745,7 @@ async function fetchAudioTranscript(videoId: string, originalInput?: string): Pr
           lower.includes("429") || lower.includes("too many requests") ||
           lower.includes("http error 429")
         ) {
+          openRateLimitCircuit();
           throw new Error(`TOO_MANY_REQUESTS: ${stderrMsg}`);
         }
         // Non-terminal: record stderr and try the next URL candidate
@@ -1363,7 +1418,7 @@ export async function fetchTranscriptCached(
       }
     } catch (audioErr) {
       const msg = audioErr instanceof Error ? audioErr.message : String(audioErr);
-      if (/^(LOGIN_REQUIRED|CONTENT_RESTRICTED|TOO_MANY_REQUESTS):/.test(msg)) {
+      if (/^(LOGIN_REQUIRED|CONTENT_RESTRICTED|TOO_MANY_REQUESTS|RATE_LIMITED):/.test(msg)) {
         recordAudioFailure(resolvedId, "yt-dlp-blocked", true, msg);
         throw audioErr;
       }
@@ -1521,7 +1576,7 @@ export async function fetchTranscriptCached(
       }
     } catch (audioErr) {
       const msg = audioErr instanceof Error ? audioErr.message : String(audioErr);
-      if (/^(LOGIN_REQUIRED|CONTENT_RESTRICTED|TOO_MANY_REQUESTS):/.test(msg)) {
+      if (/^(LOGIN_REQUIRED|CONTENT_RESTRICTED|TOO_MANY_REQUESTS|RATE_LIMITED):/.test(msg)) {
         recordAudioFailure(resolvedId, "yt-dlp-blocked", noCaptions, msg);
         throw audioErr;
       }

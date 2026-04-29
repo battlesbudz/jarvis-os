@@ -511,7 +511,7 @@ export const youtubeTranscriptTool: AgentTool = {
           label: "get_youtube_transcript: content restricted",
         };
       }
-      if (msg.startsWith("TOO_MANY_REQUESTS") || lower.includes("too many requests") || lower.includes("429")) {
+      if (msg.startsWith("TOO_MANY_REQUESTS") || msg.startsWith("RATE_LIMITED") || lower.includes("too many requests") || lower.includes("429")) {
         return {
           ok: false,
           content: "YouTube is rate-limiting transcript requests right now. Please wait a moment and try again.",
