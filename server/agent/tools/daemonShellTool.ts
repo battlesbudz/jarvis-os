@@ -1697,28 +1697,42 @@ Requires android_tap_type permission to be enabled.`,
     const hasTapCoords = typeof args.tap_x === "number" && typeof args.tap_y === "number";
     const steps: string[] = [];
 
+    function emitProgress(message: string): void {
+      if (ctx.state.onProgress) {
+        ctx.state.onProgress(message);
+      } else {
+        notifyUser(ctx.userId, "general", message).catch(() => {});
+      }
+    }
+
     //        Step 1: Confirm focus                                                                                                                                                    
     steps.push("Checking field focus...");
+    emitProgress(`Checking focus on ${fieldDesc}…`);
     let focusResult = await sendDaemonOp(ctx.userId, { type: "android_get_focused_field" }, 8000);
     let focusInfo = extractFocusedFieldText(focusResult.data);
 
     if (!focusInfo.focused) {
       if (hasTapCoords) {
         steps.push(`Field not focused     tapping (${args.tap_x}, ${args.tap_y}) to focus...`);
+        emitProgress(`Tapping to focus ${fieldDesc}…`);
         await sendDaemonOp(ctx.userId, { type: "android_tap", x: args.tap_x as number, y: args.tap_y as number }, 8000);
         await sleep(300);
         focusResult = await sendDaemonOp(ctx.userId, { type: "android_get_focused_field" }, 8000);
         focusInfo = extractFocusedFieldText(focusResult.data);
         if (focusInfo.focused) {
           steps.push("Field is now focused.");
+          emitProgress(`${fieldDesc} focused ✓`);
         } else {
           steps.push("Field still not focused after tap     attempting input anyway.");
+          emitProgress(`Focus unconfirmed — attempting input…`);
         }
       } else {
         steps.push("Field not focused and no tap coordinates provided     attempting input on current focused element.");
+        emitProgress(`No tap coordinates — typing into current focused element…`);
       }
     } else {
       steps.push(`Field is focused${focusInfo.resourceId ? ` (${focusInfo.resourceId})` : ""}.`);
+      emitProgress(`${fieldDesc} already focused ✓`);
     }
 
     //        Step 2: Three-level input fallback chain                                                                                           
@@ -1729,6 +1743,7 @@ Requires android_tap_type permission to be enabled.`,
 
     //        Level 1: android_type (accessibility ACTION_SET_TEXT)                                                    
     steps.push("Level 1     android_type (accessibility ACTION_SET_TEXT)...");
+    emitProgress(`Typing text into ${fieldDesc}…`);
     const typeResult = await sendDaemonOp(ctx.userId, { type: "android_type", text }, 10000);
     if (typeResult.ok) {
       methodUsed = "android_type";
@@ -1736,6 +1751,7 @@ Requires android_tap_type permission to be enabled.`,
       steps.push("android_type accepted by accessibility service.");
     } else {
       steps.push(`android_type failed (${typeResult.error || "no editable field focused"}). Moving to Level 2.`);
+      emitProgress(`Direct input failed — trying clipboard paste…`);
     }
 
     //        Level 2: android_paste_text (adb input text     clipboard fallback)                
@@ -1752,6 +1768,7 @@ Requires android_tap_type permission to be enabled.`,
         steps.push(`android_paste_text succeeded via ${daemonMethod}. Daemon verified: ${daemonVerified}.`);
       } else {
         steps.push(`android_paste_text failed (${pasteResult.error || "unknown error"}). Moving to Level 3.`);
+        emitProgress(`Clipboard paste failed — retrying…`);
       }
     }
 
@@ -1774,6 +1791,7 @@ Requires android_tap_type permission to be enabled.`,
 
     if (!inputOk) {
       steps.push("All three input levels failed.");
+      emitProgress(`All input methods failed for ${fieldDesc} ✗`);
       const summary = { ok: false, method_used: null, verified: false, field_text: null, steps, field: fieldDesc };
       console.log(`[android_type_in_field] userId=${ctx.userId} field="${fieldDesc}" ALL_FAILED`);
       return {
@@ -1790,6 +1808,7 @@ Requires android_tap_type permission to be enabled.`,
     if (methodUsed === "android_type" || !daemonVerified) {
       await sleep(200);
       steps.push("Verifying text appeared in field via android_get_focused_field...");
+      emitProgress(`Verifying text in ${fieldDesc}…`);
       const verifyResult = await sendDaemonOp(ctx.userId, { type: "android_get_focused_field" }, 8000);
       const verifyInfo = extractFocusedFieldText(verifyResult.data);
       fieldText = verifyInfo.text ?? null;
@@ -1805,6 +1824,7 @@ Requires android_tap_type permission to be enabled.`,
 
       if (!verified && methodUsed === "android_type") {
         steps.push(`Verification failed after android_type (field: "${fieldText ?? "empty"}")     escalating to android_paste_text...`);
+        emitProgress(`Text not confirmed — escalating to clipboard paste…`);
         const escalateResult = await sendDaemonOp(ctx.userId, { type: "android_paste_text", text, fieldDescription: fieldDesc }, 15000);
         if (escalateResult.ok) {
           const esc = (escalateResult.data || {}) as Record<string, unknown>;
@@ -1821,13 +1841,19 @@ Requires android_tap_type permission to be enabled.`,
 
       if (verified) {
         steps.push("Verification passed: text confirmed in field.");
+        emitProgress(`Text verified in ${fieldDesc} ✓`);
       } else {
         steps.push(`Verification inconclusive: field text="${fieldText ?? "empty"}". Field may hide text (custom IME, password) or accessibility tree not updated yet.`);
+        emitProgress(`Input sent to ${fieldDesc} (verification inconclusive)`);
       }
+    } else {
+      // Daemon already verified the text on its side — skip server-side check
+      emitProgress(`Text input complete ✓`);
     }
 
     //        Step 4: Optional submit                                                                                                                                                 
     if (args.submit && inputOk) {
+      emitProgress(`Submitting…`);
       await sendDaemonOp(ctx.userId, { type: "android_press_key", key: "enter" }, 6000);
       steps.push("Submitted (IME Enter/Go key pressed).");
     }
