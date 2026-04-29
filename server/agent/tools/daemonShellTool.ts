@@ -4758,6 +4758,21 @@ Requires: android_screenshot, android_read_screen, and android_tap_type permissi
         } else {
           steps.push(`Select-all + delete fallback partial/failed (select-all: ${selAllResult.ok}, delete: ${delResult.ok}); proceeding anyway.`);
         }
+        // Verify the field is actually empty after the fallback — KEYCODE_CTRL_A
+        // may not be supported by all input types (e.g. some WebView fields), so
+        // the deletion could have silently failed even when the key-events were sent.
+        const fallbackVerifyResult = await sendDaemonOp(ctx.userId, { type: "android_get_focused_field" }, 6000);
+        if (!fallbackVerifyResult.ok) {
+          steps.push("Select-all + delete fallback: verification inconclusive (android_get_focused_field failed). Proceeding with unknown clear status.");
+        } else {
+          const fallbackFieldInfo = extractFocusedFieldText(fallbackVerifyResult.data);
+          const fallbackRemainingText = fallbackFieldInfo.text;
+          if (fallbackRemainingText === undefined || fallbackRemainingText === "") {
+            steps.push("Select-all + delete fallback verified: field is empty.");
+          } else {
+            steps.push(`Select-all + delete fallback: field not empty after clear attempt. Remaining text: "${fallbackRemainingText}". Level 2/3 paste may append to existing content.`);
+          }
+        }
       }
     }
 
@@ -5161,6 +5176,21 @@ Requires: android_screenshot, android_read_screen, and android_tap_type permissi
             result.steps.push("Select-all + delete fallback sent successfully.");
           } else {
             result.steps.push(`Select-all + delete fallback partial/failed (select-all: ${selAllResult.ok}, delete: ${delResult.ok}); proceeding anyway.`);
+          }
+          // Verify the field is actually empty after the fallback — KEYCODE_CTRL_A
+          // may not be supported by all input types (e.g. some WebView fields), so
+          // the deletion could have silently failed even when the key-events were sent.
+          const fallbackVerifyResult = await sendDaemonOp(ctx.userId, { type: "android_get_focused_field" }, 6000);
+          if (!fallbackVerifyResult.ok) {
+            result.steps.push("Select-all + delete fallback: verification inconclusive (android_get_focused_field failed). Proceeding with unknown clear status.");
+          } else {
+            const fallbackFieldInfo = extractFocusedFieldText(fallbackVerifyResult.data);
+            const fallbackRemainingText = fallbackFieldInfo.text;
+            if (fallbackRemainingText === undefined || fallbackRemainingText === "") {
+              result.steps.push("Select-all + delete fallback verified: field is empty.");
+            } else {
+              result.steps.push(`Select-all + delete fallback: field not empty after clear attempt. Remaining text: "${fallbackRemainingText}". Level 2/3 paste may append to existing content.`);
+            }
           }
         }
       }
