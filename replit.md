@@ -253,10 +253,20 @@ Jarvis can connect to GitHub to monitor pull requests and CI status. Supports bo
   - `GET /api/github/oauth-available` — Returns `{ available: bool }` based on `GITHUB_CLIENT_ID` being set.
   - `POST /api/github/device/start` — Initiates Device Flow; returns `device_code`, `user_code`, `verification_uri`, `expires_in`, `interval`.
   - `POST /api/github/device/poll` — Polls GitHub for token; on success saves it and returns `{ status: "authorized" }`.
-- **`app/(tabs)/settings.tsx`** — GitHub section shows "Connect with GitHub" button (OAuth) when available, with an inline code card showing the user code for entry at github.com/login/device. Falls back to PAT entry when OAuth is not configured.
+- **`app/(tabs)/settings.tsx`** — GitHub section shows "Connect with GitHub" button (OAuth) when available, with an inline code card showing the user code for entry at github.com/login/device. When OAuth is not configured, shows an in-app setup guide card with step-by-step instructions for creating a GitHub OAuth App and setting `GITHUB_CLIENT_ID`. Falls back to PAT entry when OAuth is not configured.
 
 ### Configuration
 Set the `GITHUB_CLIENT_ID` secret (from a GitHub OAuth App — Device Flow does not require a client secret) to enable the OAuth connect button. Without it, only PAT is available.
+
+To create a GitHub OAuth App for Device Flow:
+1. Go to github.com/settings/developers → "New OAuth App"
+2. Fill in any app name and homepage URL.
+3. Set Authorization callback URL to any valid URL (Device Flow does not use it).
+4. Enable "Device Flow" in the OAuth App settings.
+5. Copy the Client ID and set it as the `GITHUB_CLIENT_ID` secret in Replit.
+   - No client secret is needed for Device Flow.
+
+Requested scopes: `repo`, `read:user`
 
 ## Jarvis Self-Inspection & Code Proposals (Task #452)
 
