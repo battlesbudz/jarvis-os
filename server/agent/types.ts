@@ -62,6 +62,12 @@ export interface ToolResult {
   /** Audit trail surfaced to the UI/logs (action card, etc.) */
   label?: string;
   detail?: string;
+  /**
+   * Optional machine-readable metadata emitted alongside the content string.
+   * Tools can use this to give downstream consumers (the orchestrator, UI, tests)
+   * a structured signal without polluting the content seen by the model.
+   */
+  metadata?: Record<string, unknown>;
 }
 
 /** JSON-Schema (draft-7 subset) for tool parameters. */
