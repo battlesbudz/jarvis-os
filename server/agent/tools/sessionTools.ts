@@ -1,10 +1,9 @@
 import type { AgentTool } from "../types";
 import { db } from "../../db";
-import { eq, and, desc, sql } from "drizzle-orm";
+import { eq, and, desc } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { submitAgentJob } from "../jobQueue";
 import type { AgentJobType } from "../jobQueue";
-import { findDuplicateJob } from "./jobDuplicateGuard";
 
 export const sessionsListTool: AgentTool = {
   name: "sessions_list",
@@ -266,25 +265,6 @@ export const sessionsSendTool: AgentTool = {
       };
     }
 
-    // ── Duplicate-job guard ─────────────────────────────────────────────────
-    try {
-      const duplicate = await findDuplicateJob(ctx.userId, agentType, title);
-      if (duplicate) {
-        console.log(
-          `[${ctx.channel || "Agent"}] sessions_send DUPLICATE SKIPPED type=${agentType} existing="${duplicate.title}" new="${title}"`,
-        );
-        return {
-          ok: true,
-          content: `A ${agentType} job for this topic is already running (id=${duplicate.id}, title="${duplicate.title}") — skipped creating a duplicate. The user will be notified when the existing job completes.`,
-          label: `Duplicate ${agentType} job skipped`,
-          detail: duplicate.id,
-        };
-      }
-    } catch (dupErr) {
-      console.warn(`[sessions_send] duplicate guard query failed:`, dupErr);
-    }
-    // ────────────────────────────────────────────────────────────────────────
-
     try {
       const sessionsInput: Record<string, unknown> = {
         source: "sessions_send",
@@ -292,13 +272,25 @@ export const sessionsSendTool: AgentTool = {
       };
       if (ctx.channel) sessionsInput.originChannel = ctx.channel;
       if (ctx.discordChannelId) sessionsInput.originDiscordChannelId = ctx.discordChannelId;
-      const { id: jobId } = await submitAgentJob({
+      const { id: jobId, isDuplicate } = await submitAgentJob({
         userId: ctx.userId,
         agentType,
         title,
         prompt,
         input: sessionsInput,
       });
+
+      if (isDuplicate) {
+        console.log(
+          `[${ctx.channel || "Agent"}] sessions_send DUPLICATE SKIPPED type=${agentType} job=${jobId} title="${title}"`,
+        );
+        return {
+          ok: true,
+          content: `A ${agentType} job for this topic is already running (id=${jobId}) — skipped creating a duplicate. The user will be notified when the existing job completes.`,
+          label: `Duplicate ${agentType} job skipped`,
+          detail: jobId,
+        };
+      }
 
       console.log(
         `[${ctx.channel || "Agent"}] sessions_send spawned ${agentType} job ${jobId} title="${title}"`,
