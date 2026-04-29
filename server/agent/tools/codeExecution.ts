@@ -89,7 +89,11 @@
  */
 
 import { spawn } from "child_process";
+import fs from "fs/promises";
+import path from "path";
+import os from "os";
 import type { AgentTool } from "../types";
+import { isIntegrationOwner } from "../../integrationOwner";
 
 // ── Layer 1: modules blocked for user-code imports ────────────────────────────
 
@@ -493,5 +497,454 @@ export const codeExecutionTool: AgentTool = {
       content: `\`\`\`\n${trimmed}\n\`\`\``,
       label: succeeded ? "Success" : `Exit ${exitCode}`,
     };
+  },
+};
+
+// ── exec_in_workspace — writable temp-workspace mode ─────────────────────────
+//
+// Unlike the stateless codeExecutionTool above, this provides an isolated
+// temp directory per build job where Python scripts can write files, then
+// be executed to verify their output.
+//
+// Security model (lighter than the full sandbox — appropriate only for the
+// owner-gated build loop):
+//   • Process isolation: subprocess boundary
+//   • RLIMIT_AS = 256 MB, RLIMIT_NPROC = 0, RLIMIT_FSIZE = 10 MB
+//   • Network stdlib modules blocked via import hook
+//   • subprocess, multiprocessing blocked via import hook
+//   • builtins.open is allowed within the workspace cwd
+//   • SIGKILL after 30 s wall-clock timeout
+//
+// One workspace directory per job_id.  Caller must call cleanupJobWorkspace
+// (or use the "cleanup" action via the tool) after the job finishes.
+
+/** Module-level map: jobId → absolute temp directory path. */
+const _jobWorkspaces = new Map<string, string>();
+
+/** Create (or return) the temp workspace directory for a given jobId. */
+async function getOrCreateWorkspace(jobId: string): Promise<string> {
+  const existing = _jobWorkspaces.get(jobId);
+  if (existing) return existing;
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), `jarvis-build-${jobId}-`));
+  _jobWorkspaces.set(jobId, dir);
+  return dir;
+}
+
+/**
+ * Delete the temp workspace directory for a job and remove it from the map.
+ * Safe to call even if no workspace was created.
+ */
+export async function cleanupJobWorkspace(jobId: string): Promise<void> {
+  const dir = _jobWorkspaces.get(jobId);
+  if (!dir) return;
+  _jobWorkspaces.delete(jobId);
+  try {
+    await fs.rm(dir, { recursive: true, force: true });
+    console.log(`[exec_in_workspace] cleaned up workspace for job ${jobId}: ${dir}`);
+  } catch (err) {
+    console.warn(`[exec_in_workspace] cleanup failed for ${jobId}:`, err);
+  }
+}
+
+const WORKSPACE_BLOCKED_MODULES = [
+  "socket", "_socket", "socketserver", "ssl", "_ssl",
+  "http", "urllib", "ftplib", "smtplib", "poplib", "imaplib",
+  "telnetlib", "xmlrpc", "select", "_select", "selectors",
+  "subprocess", "multiprocessing", "_multiprocessing",
+  "concurrent", "asyncio", "_asyncio",
+  "ctypes", "_ctypes", "cffi",
+  "requests", "aiohttp", "httpx", "paramiko", "pycurl", "urllib3", "httplib2",
+];
+
+const WORKSPACE_MAX_FILE_BYTES = 10 * 1024 * 1024; // 10 MB
+const WORKSPACE_MEM_BYTES = 256 * 1024 * 1024;     // 256 MB
+const WORKSPACE_TIMEOUT_MS = 30_000;
+const WORKSPACE_MAX_OUTPUT_CHARS = 8_000;
+
+function buildWorkspaceScript(userCode: string, workspaceRoot: string): string {
+  const b64 = Buffer.from(userCode, "utf8").toString("base64");
+  const blocked = JSON.stringify(WORKSPACE_BLOCKED_MODULES);
+  // JSON-encode the workspace root to safely embed it in the Python script
+  const wsRootLiteral = JSON.stringify(workspaceRoot);
+
+  return `import base64 as _b64, sys as _sys, traceback as _traceback, io as _io
+
+# ── Pre-warm safe stdlib ──────────────────────────────────────────────────────
+import math, cmath, json, re, csv, io, collections, itertools, functools
+import decimal, fractions, statistics, random, ast, textwrap, string, pprint
+import hashlib, base64, struct, copy, time, calendar, heapq, bisect, array
+import datetime, enum, dataclasses, os, pathlib
+try:
+    import typing
+except Exception:
+    pass
+
+import builtins as _builtins_mod
+
+# ── OS resource limits ────────────────────────────────────────────────────────
+try:
+    import resource as _resource
+    _resource.setrlimit(_resource.RLIMIT_AS, (${WORKSPACE_MEM_BYTES}, ${WORKSPACE_MEM_BYTES}))
+    _resource.setrlimit(_resource.RLIMIT_NPROC, (0, 0))
+    _resource.setrlimit(_resource.RLIMIT_FSIZE, (${WORKSPACE_MAX_FILE_BYTES}, ${WORKSPACE_MAX_FILE_BYTES}))
+except Exception:
+    pass
+
+# ── Filesystem write confinement (Layer 2b) ───────────────────────────────────
+_WORKSPACE_ROOT = ${wsRootLiteral}
+_ws_root_resolved = str(pathlib.Path(_WORKSPACE_ROOT).resolve())
+
+def _check_write_path(p):
+    resolved = str(pathlib.Path(str(p)).resolve())
+    if not (resolved + '/').startswith(_ws_root_resolved + '/'):
+        raise PermissionError(
+            f"Workspace write confinement: writes outside workspace are not allowed.\\n"
+            f"  Attempted path: {resolved}\\n"
+            f"  Workspace root: {_ws_root_resolved}"
+        )
+
+_real_open = _builtins_mod.open
+# Directories safe to read from (Python stdlib, system files, etc.)
+_READ_SAFE_PREFIXES = ('/usr/', '/lib/', '/lib64/', '/opt/', '/proc/', '/sys/', '/dev/', '/tmp/', '/etc/')
+
+def _ws_open(file, mode='r', *args, **kwargs):
+    if any(c in str(mode) for c in ('w', 'a', 'x')):
+        _check_write_path(file)
+    else:
+        # Read confinement: block reads from home/root directories outside workspace
+        # (prevents model from exfiltrating codebase secrets via run_python output)
+        _p = str(pathlib.Path(str(file)).resolve())
+        if (_p.startswith('/home/') or _p.startswith('/root/')) and not (
+            (_p + '/').startswith(_ws_root_resolved + '/')
+        ):
+            raise PermissionError(
+                f"Workspace read confinement: reads from {_p} not allowed outside workspace root"
+            )
+    return _real_open(file, mode, *args, **kwargs)
+_builtins_mod.open = _ws_open
+
+_orig_pw_text = pathlib.Path.write_text
+_orig_pw_bytes = pathlib.Path.write_bytes
+def _ws_pw_text(self, data, *a, **kw):
+    _check_write_path(self)
+    return _orig_pw_text(self, data, *a, **kw)
+def _ws_pw_bytes(self, data):
+    _check_write_path(self)
+    return _orig_pw_bytes(self, data)
+pathlib.Path.write_text = _ws_pw_text
+pathlib.Path.write_bytes = _ws_pw_bytes
+
+# Guard other pathlib.Path filesystem mutation helpers
+_orig_path_unlink = pathlib.Path.unlink
+_orig_path_rmdir = pathlib.Path.rmdir
+_orig_path_mkdir = pathlib.Path.mkdir
+_orig_path_rename = pathlib.Path.rename
+_orig_path_replace = pathlib.Path.replace
+_orig_path_symlink_to = pathlib.Path.symlink_to
+
+def _ws_path_unlink(self, *a, **kw):
+    _check_write_path(self)
+    return _orig_path_unlink(self, *a, **kw)
+def _ws_path_rmdir(self):
+    _check_write_path(self)
+    return _orig_path_rmdir(self)
+def _ws_path_mkdir(self, *a, **kw):
+    _check_write_path(self)
+    return _orig_path_mkdir(self, *a, **kw)
+def _ws_path_rename(self, target):
+    _check_write_path(self)
+    _check_write_path(target)
+    return _orig_path_rename(self, target)
+def _ws_path_replace(self, target):
+    _check_write_path(self)
+    _check_write_path(target)
+    return _orig_path_replace(self, target)
+def _ws_path_symlink_to(self, target, *a, **kw):
+    _check_write_path(self)
+    return _orig_path_symlink_to(self, target, *a, **kw)
+
+pathlib.Path.unlink = _ws_path_unlink
+pathlib.Path.rmdir = _ws_path_rmdir
+pathlib.Path.mkdir = _ws_path_mkdir
+pathlib.Path.rename = _ws_path_rename
+pathlib.Path.replace = _ws_path_replace
+pathlib.Path.symlink_to = _ws_path_symlink_to
+
+_orig_os_open = os.open
+def _ws_os_open(path, flags, *a, **kw):
+    if flags & (os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND):
+        _check_write_path(path)
+    return _orig_os_open(path, flags, *a, **kw)
+os.open = _ws_os_open
+
+# Guard single-path delete/mutate operations
+for _fname in ('unlink', 'remove', 'rmdir', 'removedirs', 'truncate'):
+    if hasattr(os, _fname):
+        _orig_fn = getattr(os, _fname)
+        def _make_single_guard(fn):
+            def _g(path, *a, **kw):
+                _check_write_path(path)
+                return fn(path, *a, **kw)
+            return _g
+        setattr(os, _fname, _make_single_guard(_orig_fn))
+
+# Guard two-path rename/link operations (check both src and dst)
+for _fname in ('rename', 'renames', 'replace'):
+    if hasattr(os, _fname):
+        _orig_fn = getattr(os, _fname)
+        def _make_rename_guard(fn):
+            def _g(src, dst, *a, **kw):
+                _check_write_path(src)
+                _check_write_path(dst)
+                return fn(src, dst, *a, **kw)
+            return _g
+        setattr(os, _fname, _make_rename_guard(_orig_fn))
+
+# Guard mkdir and makedirs
+for _fname in ('mkdir', 'makedirs'):
+    if hasattr(os, _fname):
+        _orig_fn = getattr(os, _fname)
+        def _make_mkdir_guard(fn):
+            def _g(path, *a, **kw):
+                _check_write_path(path)
+                return fn(path, *a, **kw)
+            return _g
+        setattr(os, _fname, _make_mkdir_guard(_orig_fn))
+
+# Guard os.symlink and os.link (dst path is index 1)
+for _fname in ('symlink', 'link'):
+    if hasattr(os, _fname):
+        _orig_fn = getattr(os, _fname)
+        def _make_link_guard(fn):
+            def _g(src, dst, *a, **kw):
+                _check_write_path(dst)
+                return fn(src, dst, *a, **kw)
+            return _g
+        setattr(os, _fname, _make_link_guard(_orig_fn))
+
+# ── Network import hook ───────────────────────────────────────────────────────
+_BLOCKED_MODS = set(${blocked})
+_real_import = _builtins_mod.__import__
+
+def _safe_import(name, *args, **kwargs):
+    top = name.split('.')[0]
+    if top in _BLOCKED_MODS:
+        raise ImportError(f"Import of {name!r} is not permitted in this workspace.")
+    return _real_import(name, *args, **kwargs)
+
+_builtins_mod.__import__ = _safe_import
+
+# ── Recursion cap ─────────────────────────────────────────────────────────────
+_sys.setrecursionlimit(500)
+
+# ── Execute user code ─────────────────────────────────────────────────────────
+_USER_CODE = _b64.b64decode('${b64}').decode('utf-8')
+_buf = _io.StringIO()
+_sys.stdout = _buf
+_sys.stderr = _buf
+
+try:
+    exec(compile(_USER_CODE, '<workspace>', 'exec'), {
+        '__builtins__': _builtins_mod,
+        '__import__': _safe_import,
+    })
+except SystemExit:
+    pass
+except Exception:
+    _buf.write(_traceback.format_exc())
+finally:
+    _sys.stdout = _sys.__stdout__
+    _sys.stderr = _sys.__stderr__
+
+print(_buf.getvalue(), end='')
+`;
+}
+
+function runPythonInWorkspace(
+  workspaceDir: string,
+  code: string,
+  timeoutMs: number,
+): Promise<{ stdout: string; timedOut: boolean; exitCode: number | null }> {
+  return new Promise((resolve) => {
+    const script = buildWorkspaceScript(code, workspaceDir);
+    const chunks: Buffer[] = [];
+    let timedOut = false;
+
+    const child = spawn("python3", ["-c", script], {
+      cwd: workspaceDir,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: {
+        PATH: process.env.PATH ?? "/usr/bin:/bin",
+        PYTHONIOENCODING: "utf-8",
+        PYTHONUNBUFFERED: "1",
+        PYTHONNOUSERSITE: "1",
+        PYTHONPATH: "",
+      },
+    });
+
+    child.stdout.on("data", (chunk: Buffer) => chunks.push(chunk));
+    child.stderr.on("data", (chunk: Buffer) => chunks.push(chunk));
+
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGKILL");
+    }, Math.min(timeoutMs, WORKSPACE_TIMEOUT_MS));
+
+    child.on("close", (exitCode) => {
+      clearTimeout(timer);
+      const raw = Buffer.concat(chunks).toString("utf8");
+      const stdout = raw.length > WORKSPACE_MAX_OUTPUT_CHARS
+        ? raw.slice(0, WORKSPACE_MAX_OUTPUT_CHARS) + "\n… [output truncated]"
+        : raw;
+      resolve({ stdout, timedOut, exitCode });
+    });
+
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      resolve({ stdout: `Failed to start Python: ${err.message}`, timedOut: false, exitCode: -1 });
+    });
+  });
+}
+
+/**
+ * exec_in_workspace — isolated writable temp workspace for build-loop verification.
+ *
+ * Actions:
+ *   write_file  — write content to a file in the job's temp workspace
+ *   run_python  — execute Python code/file inside the workspace (file writes allowed)
+ *   read_file   — read a file from the workspace
+ *   list_files  — list files in the workspace
+ *   cleanup     — delete the workspace directory
+ *
+ * The workspace is scoped to the job_id and survives across multiple calls within
+ * the same server process.  cleanupJobWorkspace() is called by the job handler
+ * after the final step completes.
+ */
+export const execInWorkspaceTool: AgentTool = {
+  name: "exec_in_workspace",
+  description:
+    "Execute Python code in an isolated writable temp workspace scoped to the current build job. " +
+    "Unlike run_python, scripts here can write and read files within the workspace directory. " +
+    "Use during build steps to verify Python scripts before committing them to the codebase. " +
+    "Actions: write_file (write a file), run_python (run code/file), read_file, list_files, cleanup.",
+  parameters: {
+    type: "object",
+    properties: {
+      action: {
+        type: "string",
+        enum: ["write_file", "run_python", "read_file", "list_files", "cleanup"],
+        description: "Operation to perform in the workspace.",
+      },
+      job_id: {
+        type: "string",
+        description: "Build job identifier — scopes the workspace directory.",
+      },
+      file_path: {
+        type: "string",
+        description: "Relative file path within the workspace (e.g. 'script.py'). Required for write_file, read_file, and optionally for run_python.",
+      },
+      content: {
+        type: "string",
+        description: "File content (for write_file) or inline Python code (for run_python when file_path is omitted).",
+      },
+    },
+    required: ["action", "job_id"],
+  },
+
+  async execute(args, ctx) {
+    if (!await isIntegrationOwner(ctx.userId)) {
+      return { ok: false, content: "Access denied: only the account owner may use exec_in_workspace.", label: "exec_in_workspace: forbidden" };
+    }
+
+    const action   = String(args.action  ?? "").trim();
+    const jobId    = String(args.job_id  ?? "").trim();
+    const filePath = String(args.file_path ?? "").trim();
+    const content  = String(args.content ?? "");
+
+    if (!jobId) return { ok: false, content: "job_id is required.", label: "exec_in_workspace: error" };
+
+    if (action === "cleanup") {
+      await cleanupJobWorkspace(jobId);
+      return { ok: true, content: `Workspace for job ${jobId} removed.`, label: "exec_in_workspace: cleanup" };
+    }
+
+    const workspace = await getOrCreateWorkspace(jobId);
+
+    if (action === "list_files") {
+      try {
+        const entries = await fs.readdir(workspace, { withFileTypes: true });
+        const names = entries.map((e) => `${e.isDirectory() ? "[dir] " : ""}${e.name}`).join("\n");
+        return { ok: true, content: names || "(empty workspace)", label: "exec_in_workspace: list_files" };
+      } catch (err) {
+        return { ok: false, content: `list_files failed: ${err instanceof Error ? err.message : String(err)}`, label: "exec_in_workspace: error" };
+      }
+    }
+
+    if (action === "write_file") {
+      if (!filePath) return { ok: false, content: "file_path is required for write_file.", label: "exec_in_workspace: error" };
+      const absPath = path.resolve(workspace, filePath);
+      if (!absPath.startsWith(workspace + path.sep) && absPath !== workspace) {
+        return { ok: false, content: "Path traversal not allowed.", label: "exec_in_workspace: error" };
+      }
+      try {
+        await fs.mkdir(path.dirname(absPath), { recursive: true });
+        await fs.writeFile(absPath, content, "utf8");
+        return { ok: true, content: `Written ${filePath} (${content.length} bytes) to workspace.`, label: "exec_in_workspace: write_file" };
+      } catch (err) {
+        return { ok: false, content: `write_file failed: ${err instanceof Error ? err.message : String(err)}`, label: "exec_in_workspace: error" };
+      }
+    }
+
+    if (action === "read_file") {
+      if (!filePath) return { ok: false, content: "file_path is required for read_file.", label: "exec_in_workspace: error" };
+      const absPath = path.resolve(workspace, filePath);
+      if (!absPath.startsWith(workspace + path.sep) && absPath !== workspace) {
+        return { ok: false, content: "Path traversal not allowed.", label: "exec_in_workspace: error" };
+      }
+      try {
+        const text = await fs.readFile(absPath, "utf8");
+        const trimmed = text.slice(0, WORKSPACE_MAX_OUTPUT_CHARS);
+        return { ok: true, content: trimmed + (text.length > WORKSPACE_MAX_OUTPUT_CHARS ? "\n… [truncated]" : ""), label: "exec_in_workspace: read_file" };
+      } catch (err) {
+        return { ok: false, content: `read_file failed: ${err instanceof Error ? err.message : String(err)}`, label: "exec_in_workspace: error" };
+      }
+    }
+
+    if (action === "run_python") {
+      // Allow either inline code (content) or a file path to run
+      let codeToRun = content;
+      if (!codeToRun && filePath) {
+        const absPath = path.resolve(workspace, filePath);
+        if (!absPath.startsWith(workspace + path.sep) && absPath !== workspace) {
+          return { ok: false, content: "Path traversal not allowed.", label: "exec_in_workspace: error" };
+        }
+        try {
+          codeToRun = await fs.readFile(absPath, "utf8");
+        } catch (err) {
+          return { ok: false, content: `Cannot read ${filePath}: ${err instanceof Error ? err.message : String(err)}`, label: "exec_in_workspace: error" };
+        }
+      }
+      if (!codeToRun) return { ok: false, content: "Provide content (inline code) or file_path for run_python.", label: "exec_in_workspace: error" };
+
+      const { stdout, timedOut, exitCode } = await runPythonInWorkspace(workspace, codeToRun, WORKSPACE_TIMEOUT_MS);
+
+      if (timedOut) {
+        return {
+          ok: false,
+          content: `Execution timed out after ${WORKSPACE_TIMEOUT_MS / 1000}s.` + (stdout.trim() ? `\n\nPartial output:\n${stdout}` : ""),
+          label: "exec_in_workspace: timeout",
+        };
+      }
+
+      const trimmed = stdout.trimEnd();
+      const succeeded = exitCode === 0;
+      return {
+        ok: succeeded,
+        content: trimmed ? `\`\`\`\n${trimmed}\n\`\`\`` : (succeeded ? "Code ran with no output." : `Exit ${exitCode}, no output.`),
+        label: succeeded ? "exec_in_workspace: ok" : `exec_in_workspace: exit ${exitCode}`,
+      };
+    }
+
+    return { ok: false, content: `Unknown action '${action}'.`, label: "exec_in_workspace: error" };
   },
 };

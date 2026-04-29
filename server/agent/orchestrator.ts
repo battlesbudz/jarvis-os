@@ -491,6 +491,10 @@ const JOB_QUALITY_CRITERIA: Record<string, string> = {
     "Does the output satisfy the instructions in the original prompt?",
   self_heal:
     "Does this code change logically address the stated problem? Or does it merely compile without fixing the root cause?",
+  build_feature:
+    "Does the code change implement the step's acceptance criteria? " +
+    "Does TypeScript type-check pass (exit code 0)? Is the implementation clean, minimal, and follows existing Jarvis patterns? " +
+    "Does the worker output indicate the change was applied to disk via apply_code_change?",
 };
 
 /**

@@ -2,7 +2,7 @@ import { db } from "../db";
 import { eq, and, sql, gte, asc } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import type { SubAgentType } from "./subagents";
-import { runSubAgent } from "./subagents";
+import { runSubAgent, BUILD_FEATURE_WORKER_SYSTEM_PROMPT } from "./subagents";
 import { runGoalDecomposition } from "./goalDecomposer";
 import { runNamedAgent } from "./runNamedAgent";
 import { runWeeklyPatternJob } from "../memory/weeklyJob";
@@ -616,7 +616,19 @@ async function claimNextJob(): Promise<typeof schema.agentJobs.$inferSelect | nu
     candidate AS (
       SELECT id FROM agent_jobs
       WHERE status = 'queued'
-        AND user_id NOT IN (SELECT user_id FROM busy_users)
+        AND (
+          user_id NOT IN (SELECT user_id FROM busy_users)
+          -- Parent-child bypass: allow a queued child job to run concurrently when its
+          -- declared parent job is currently running (used for build_feature research jobs).
+          OR (
+            (input->>'parentJobId') IS NOT NULL
+            AND EXISTS (
+              SELECT 1 FROM agent_jobs parent_job
+              WHERE parent_job.id = (agent_jobs.input->>'parentJobId')
+                AND parent_job.status IN ('running', 'cancelling')
+            )
+          )
+        )
       ORDER BY created_at ASC
       LIMIT 1
       FOR UPDATE SKIP LOCKED
@@ -1098,6 +1110,468 @@ Keep the whole briefing under 300 words. Be warm but direct. No filler phrases.`
 
       if (hasWorkflow) {
         await onWorkflowJobComplete(wfId!, wfStep!, job.id, briefReply).catch((e) =>
+          console.error("[JobQueue] workflow hook failed:", e),
+        );
+      }
+      return;
+    }
+
+    // ── Build-feature multi-step job ─────────────────────────────────────────
+    if (job.agentType === "build_feature") {
+      // Lazy imports to avoid circular dependency at module load time
+      const { applyCodeChangeTool } = await import("./tools/applyCodeChangeTool");
+      const { runShellTool: buildShellTool } = await import("./tools/runShellTool");
+      const { cleanupJobWorkspace, execInWorkspaceTool } = await import("./tools/codeExecution");
+      const { anthropic, ORCHESTRATOR_MAX_TOKENS } = await import("../lib/anthropicClient");
+      const { getModel } = await import("../lib/modelPrefs");
+
+      const orchModel = await getModel(job.userId, "orchestrator");
+
+      const buildCtx: ToolContext = {
+        userId: job.userId,
+        googleAccessToken: null,
+        channel: `JobQueue/build_feature`,
+        state: { pendingAttachments: [] },
+      };
+
+      /** Persist progress state into agent_jobs.input (merge, not replace). */
+      const persistProgress = async (updates: Record<string, unknown>): Promise<void> => {
+        const merged = { ...jobInput, ...updates };
+        await db.update(schema.agentJobs)
+          .set({ input: merged })
+          .where(eq(schema.agentJobs.id, job.id));
+        Object.assign(jobInput, updates);
+      };
+
+      /** Fire a brief progress notification to the origin channel. */
+      const sendBuildPing = (text: string): Promise<void> =>
+        notifyJobComplete(job.userId, "build_feature", job.title, text, originChannel, originDiscordChannelId);
+
+      const featureDescription = String(jobInput.feature_description ?? job.prompt);
+
+      // ── Phase 1: Research (if requested and not already completed) ──────────
+      // Research is queued as a standard agent_jobs record.  claimNextJob has a
+      // parent-child bypass: when a queued job's input.parentJobId matches a currently
+      // running job, it is allowed to run concurrently (no deadlock).
+      // Max wait: 5 minutes, then proceed without research.
+      let researchBody = String(jobInput.researchBody ?? "");
+      if (Boolean(jobInput.research_required ?? false) && !researchBody) {
+        let researchJobId = String(jobInput.researchJobId ?? "");
+
+        if (!researchJobId) {
+          researchJobId = await submitAgentJob({
+            userId: job.userId,
+            agentType: "research",
+            title: `Research for build: ${featureDescription.slice(0, 80)}`,
+            prompt: `Research context for building this Jarvis feature: ${featureDescription}`,
+            input: { parentJobId: job.id, originChannel, originDiscordChannelId },
+          });
+          await persistProgress({ researchJobId });
+          await sendBuildPing(`🔍 Background research queued (job ${researchJobId.slice(0, 8)}…) — waiting up to 5 min`);
+        }
+
+        // Poll for the research job to reach a terminal state (max 5 minutes).
+        const RESEARCH_POLL_INTERVAL_MS = 10_000;
+        const RESEARCH_MAX_WAIT_MS = 5 * 60 * 1000;
+        const researchPollStart = Date.now();
+        let researchStatus = "";
+        while (Date.now() - researchPollStart < RESEARCH_MAX_WAIT_MS) {
+          const [row] = await db
+            .select({ status: schema.agentJobs.status })
+            .from(schema.agentJobs)
+            .where(eq(schema.agentJobs.id, researchJobId))
+            .limit(1);
+          researchStatus = row?.status ?? "unknown";
+          if (researchStatus === "complete" || researchStatus === "failed") break;
+          await new Promise((r) => setTimeout(r, RESEARCH_POLL_INTERVAL_MS));
+        }
+
+        if (researchStatus === "complete") {
+          const [deliv] = await db
+            .select({ body: schema.deliverables.body })
+            .from(schema.deliverables)
+            .where(eq(schema.deliverables.jobId, researchJobId))
+            .limit(1);
+          if (deliv?.body) {
+            researchBody = deliv.body.slice(0, 4000);
+            await persistProgress({ researchBody });
+            console.log(`[JobQueue] build_feature job ${job.id} — research complete (${researchBody.length} chars)`);
+          }
+        } else {
+          console.warn(`[JobQueue] build_feature job ${job.id} — research job ${researchJobId} did not complete (status=${researchStatus}), proceeding without research`);
+        }
+      }
+
+      // ── Phase 2: Plan with Claude Opus ──────────────────────────────────────
+      interface BuildStep {
+        step_id: string;
+        label: string;
+        what_to_build: string;
+        acceptance_criteria: string;
+        files_affected: string[];
+      }
+
+      let plan = (jobInput.plan as BuildStep[] | null) ?? null;
+
+      if (!plan) {
+        const planCtx = [
+          featureDescription,
+          researchBody ? `\n\nResearch findings:\n${researchBody}` : "",
+        ].join("");
+
+        const planResp = await anthropic.messages.create({
+          model: orchModel,
+          max_tokens: ORCHESTRATOR_MAX_TOKENS,
+          system: `You are an expert TypeScript/Node.js engineer planning how to build a new Jarvis tool or feature.
+Decompose the feature into discrete, independently verifiable implementation steps.
+Output a JSON array inside a \`\`\`json block. Each element:
+{
+  "step_id": "s1",
+  "label": "Short verb phrase (4-6 words)",
+  "what_to_build": "Detailed implementation instruction for a code worker",
+  "acceptance_criteria": "Concrete, measurable criterion — what makes this step done correctly",
+  "files_affected": ["server/agent/tools/foo.ts"]
+}
+
+Jarvis tool patterns:
+- Tools live in server/agent/tools/<name>.ts and export \`const <name>Tool: AgentTool\`
+- New tools must be registered in server/agent/tools/index.ts (ALL_TOOLS + telegramCoachTools)
+- Express routes go in server/<name>Routes.ts, mounted in server/index.ts
+- Shared DB schema lives in shared/schema.ts (Drizzle ORM + drizzle-kit)
+
+Keep the plan minimal: 2-5 steps for most features. Each step is one focused code change.`,
+          messages: [{ role: "user", content: `Feature to build:\n${planCtx}` }],
+        });
+
+        const planText = planResp.content[0].type === "text" ? planResp.content[0].text : "";
+        const jsonMatch = planText.match(/```json\s*([\s\S]*?)\s*```/);
+        const raw = jsonMatch ? jsonMatch[1] : planText.trim();
+
+        try {
+          const parsed = JSON.parse(raw);
+          plan = (Array.isArray(parsed) ? parsed : [parsed]).map(
+            (item: Record<string, unknown>, i: number): BuildStep => ({
+              step_id: String(item.step_id ?? `s${i + 1}`),
+              label: String(item.label ?? `Step ${i + 1}`),
+              what_to_build: String(item.what_to_build ?? featureDescription),
+              acceptance_criteria: String(item.acceptance_criteria ?? "Implements the described change correctly"),
+              files_affected: Array.isArray(item.files_affected)
+                ? (item.files_affected as unknown[]).map(String)
+                : [],
+            })
+          );
+        } catch {
+          plan = [{
+            step_id: "s1",
+            label: "Implement feature",
+            what_to_build: featureDescription,
+            acceptance_criteria: "Feature is implemented and TypeScript type-check passes",
+            files_affected: [],
+          }];
+        }
+
+        await persistProgress({ plan, currentStepIndex: 0, completedSteps: [] });
+        console.log(`[JobQueue] build_feature job ${job.id} — plan with ${plan.length} step(s)`);
+        await sendBuildPing(`📋 Build plan ready (${plan.length} step${plan.length === 1 ? "" : "s"}) — beginning implementation`);
+      }
+
+      // ── Phase 3: Implement + verify loop (per step) ─────────────────────────
+      const currentStepIndex: number =
+        typeof jobInput.currentStepIndex === "number" ? jobInput.currentStepIndex : 0;
+      const completedSteps: Record<string, unknown>[] = Array.isArray(jobInput.completedSteps)
+        ? (jobInput.completedSteps as Record<string, unknown>[])
+        : [];
+
+      const workerTools = [
+        applyCodeChangeTool,
+        buildShellTool,
+        listSourceFilesTool,
+        readSourceFileTool,
+        execInWorkspaceTool,
+      ];
+
+      const MAX_STEP_RETRIES = 2;
+
+      for (let stepIdx = currentStepIndex; stepIdx < plan.length; stepIdx++) {
+        const step = plan[stepIdx];
+        let stepPassed = false;
+        let stepRetries = 0;
+        let correctionContext: string | undefined;
+
+        console.log(
+          `[JobQueue] build_feature job ${job.id} — step ${stepIdx + 1}/${plan.length}: "${step.label}"`
+        );
+
+        for (let attempt = 0; attempt <= MAX_STEP_RETRIES; attempt++) {
+          const workerPrompt = [
+            `Implement build step: "${step.label}"`,
+            ``,
+            `WHAT TO BUILD:`,
+            step.what_to_build,
+            ``,
+            `ACCEPTANCE CRITERIA:`,
+            step.acceptance_criteria,
+            ``,
+            `FILES LIKELY AFFECTED:`,
+            step.files_affected.length > 0
+              ? step.files_affected.join(", ")
+              : "TBD — use list_source_files to explore first",
+            ``,
+            `BUILD CONTEXT:`,
+            `Feature: ${featureDescription.slice(0, 400)}`,
+            `Job ID: ${job.id}  ← use this as job_id when calling exec_in_workspace`,
+            researchBody ? `Research: ${researchBody.slice(0, 500)}` : "",
+            correctionContext
+              ? `\nPrevious attempt rejected — fix specifically: ${correctionContext}`
+              : "",
+          ].filter(Boolean).join("\n");
+
+          const workerResult = await runAgent({
+            model: "gpt-4.1-mini",
+            messages: [
+              { role: "system", content: BUILD_FEATURE_WORKER_SYSTEM_PROMPT },
+              { role: "user", content: workerPrompt },
+            ],
+            tools: workerTools,
+            context: buildCtx,
+            maxTurns: 8,
+            maxCompletionTokens: 2000,
+          });
+
+          const workerOutput = workerResult.reply || "(no output)";
+
+          // b. Mechanical gate: TypeScript type_check must pass before AI review
+          const typeCheckResult = await buildShellTool.execute({ command: "type_check" }, buildCtx);
+
+          if (!typeCheckResult.ok) {
+            correctionContext = `TypeScript type-check failed:\n${typeCheckResult.content.slice(0, 800)}`;
+            stepRetries++;
+            if (attempt < MAX_STEP_RETRIES) {
+              console.log(
+                `[JobQueue] build_feature step "${step.label}" type-check retry ${stepRetries}/${MAX_STEP_RETRIES}`
+              );
+              continue;  // retry — do NOT proceed to AI verify when type-check fails
+            }
+            // Final attempt still failing type-check → step fails immediately
+            console.log(
+              `[JobQueue] build_feature step "${step.label}" type-check failed on final attempt — step FAILED`
+            );
+            break;  // stepPassed remains false
+          }
+
+          // c. AI verify: Claude Opus checks whether the step meets acceptance criteria
+          //    Only reached if type_check passed above.
+          //    Enrich input with actual file excerpts so Opus has code evidence.
+          const fileSnippets: string[] = [];
+          for (const filePath of step.files_affected.slice(0, 3)) {
+            if (!filePath || filePath.includes("TBD")) continue;
+            try {
+              const fileRead = await readSourceFileTool.execute({ file_path: filePath }, buildCtx);
+              if (fileRead.ok && fileRead.content) {
+                fileSnippets.push(`### ${filePath}\n\`\`\`\n${fileRead.content.slice(0, 700)}\n\`\`\``);
+              }
+            } catch { /* non-fatal */ }
+          }
+
+          const verifyInput = [
+            `Worker output:\n${workerOutput.slice(0, 800)}`,
+            `\nTypeScript type-check: ✅ passed`,
+            fileSnippets.length > 0
+              ? `\n\nActual file excerpts (post-implementation):\n${fileSnippets.join("\n\n")}`
+              : "",
+          ].filter(Boolean).join("\n");
+
+          const verification = await verifyJobOutput({
+            agentType: "build_feature",
+            originalPrompt: `Step: ${step.label}\nAcceptance criteria: ${step.acceptance_criteria}`,
+            result: verifyInput,
+            orchestratorModel: orchModel,
+            correctionContext,
+          });
+
+          if (verification.passed === true) {
+            stepPassed = true;
+            break;
+          }
+
+          if (verification.passed === null) {
+            // Verifier timed out — fail-closed: treat as failure for build_feature
+            console.log(
+              `[JobQueue] build_feature step "${step.label}" verifier timed out — treating as failure`
+            );
+            if (attempt < MAX_STEP_RETRIES) {
+              correctionContext = "AI verifier timed out — retrying step from scratch";
+              stepRetries++;
+              continue;
+            }
+            // All retries used — step fails
+            break;
+          }
+
+          // AI verify returned passed=false
+          if (attempt < MAX_STEP_RETRIES) {
+            correctionContext = verification.reason;
+            stepRetries++;
+            console.log(
+              `[JobQueue] build_feature step "${step.label}" AI-verify retry ${stepRetries}/${MAX_STEP_RETRIES}: ${verification.reason}`
+            );
+          }
+        }
+
+        // d. Step complete — persist progress
+        completedSteps.push({
+          step_id: step.step_id,
+          label: step.label,
+          passed: stepPassed,
+          retries: stepRetries,
+        });
+
+        const nextStepIdx = stepIdx + 1;
+        await persistProgress({
+          currentStepIndex: nextStepIdx,
+          completedSteps,
+          verificationPassed: stepPassed,
+          verificationRetries: stepRetries,
+        });
+
+        // If all retries exhausted and step still failed → abort the build
+        if (!stepPassed) {
+          const failReason =
+            `Build aborted at step ${stepIdx + 1}/${plan.length} — "${step.label}" ` +
+            `failed verification after ${stepRetries + 1} attempt(s). ` +
+            (correctionContext ? `Last rejection: ${correctionContext.slice(0, 300)}` : "");
+          await sendBuildPing(
+            `❌ Build failed at step "${step.label}" (${stepIdx + 1}/${plan.length}) — ` +
+            `all ${stepRetries + 1} attempt(s) exhausted. Aborting.`
+          );
+          await cleanupJobWorkspace(job.id).catch(() => {});
+          await failJob(job.id, failReason, job.userId);
+          diagEmit({
+            userId: job.userId,
+            subsystem: "job_queue",
+            severity: "warn",
+            message: `Job ${job.id} (build_feature) aborted at step "${step.label}"`,
+            metadata: { jobId: job.id, agentType: job.agentType, failedStep: step.step_id },
+          }).catch(() => {});
+          if (hasWorkflow) {
+            await onWorkflowJobFail(wfId!, wfStep!, job.id, failReason.slice(0, 600)).catch((e) =>
+              console.error("[JobQueue] workflow fail hook error:", e),
+            );
+          }
+          return;
+        }
+
+        // Progress ping to origin channel
+        const nextStep = nextStepIdx < plan.length ? plan[nextStepIdx] : null;
+        const retryNote = stepRetries > 0
+          ? ` (${stepRetries} retr${stepRetries === 1 ? "y" : "ies"})`
+          : "";
+        await sendBuildPing(
+          `✅ Step ${stepIdx + 1}/${plan.length} complete — "${step.label}"${retryNote}\n` +
+          (nextStep ? `Next: "${nextStep.label}"` : "All steps done — running final check…")
+        );
+      }
+
+      // ── Phase 4: Final type-check + smoke tests + Claude Opus synthesis ────────
+      const finalTypeCheck = await buildShellTool.execute({ command: "type_check" }, buildCtx);
+
+      // Run the test suite as a smoke test (non-fatal — used only to enrich the summary)
+      let finalTestResult: { ok: boolean; content: string } | null = null;
+      try {
+        finalTestResult = await buildShellTool.execute({ command: "run_tests" }, buildCtx);
+        console.log(
+          `[JobQueue] build_feature job ${job.id} — smoke tests: ${finalTestResult.ok ? "✅ passed" : "❌ failed"}`
+        );
+      } catch (testErr) {
+        console.warn(`[JobQueue] build_feature smoke-test invocation failed (non-fatal):`, testErr);
+      }
+
+      const stepSummaryLines = completedSteps.map((s, i) =>
+        `${i + 1}. ${String(s.label ?? "")} — ${s.passed ? "✅ passed" : "⚠️ had issues"} (${Number(s.retries ?? 0)} retr${Number(s.retries ?? 0) === 1 ? "y" : "ies"})`
+      );
+
+      let synthesis = stepSummaryLines.join("\n");
+      try {
+        const synthResp = await anthropic.messages.create({
+          model: orchModel,
+          max_tokens: 600,
+          system: `You are Jarvis summarizing a completed multi-step feature build. Be concise and specific.`,
+          messages: [{
+            role: "user",
+            content: [
+              `Feature built: ${featureDescription}`,
+              ``,
+              `Steps completed:`,
+              stepSummaryLines.join("\n"),
+              ``,
+              `Final TypeScript type-check: ${finalTypeCheck.ok ? "✅ passed" : `⚠️ ${finalTypeCheck.content.slice(0, 200)}`}`,
+              finalTestResult
+                ? `Smoke tests (npm test): ${finalTestResult.ok ? "✅ passed" : `⚠️ ${finalTestResult.content.slice(0, 300)}`}`
+                : "",
+              ``,
+              `Write a clear 3-5 sentence summary of what was built, what files changed, and any caveats.`,
+            ].filter(Boolean).join("\n"),
+          }],
+        });
+        if (synthResp.content[0].type === "text") {
+          synthesis = synthResp.content[0].text;
+        }
+      } catch (synthErr) {
+        console.error(`[JobQueue] build_feature synthesis failed (non-fatal):`, synthErr);
+      }
+
+      // Clean up temp workspace
+      await cleanupJobWorkspace(job.id).catch(() => {});
+
+      // Schedule server restart to activate new code
+      setTimeout(() => process.kill(process.pid, "SIGTERM"), 2_000);
+
+      // Collect the unique files that were declared as changed across all plan steps
+      const changedFiles: string[] = [
+        ...new Set(plan.flatMap((s) => s.files_affected ?? []).filter((f) => f && !f.includes("TBD"))),
+      ];
+
+      const allPassed = completedSteps.every((s) => s.passed === true);
+      await completeJob(job.id, {
+        result: {
+          featureDescription,
+          stepsCompleted: plan.length,
+          allPassed,
+          completedSteps,
+          changedFiles,
+          finalTypeCheckPassed: finalTypeCheck.ok,
+          finalTestsPassed: finalTestResult?.ok ?? null,
+        },
+        turns: plan.length,
+        toolCallsCount: completedSteps.length,
+      });
+
+      diagEmit({
+        userId: job.userId,
+        subsystem: "job_queue",
+        severity: "info",
+        message: `Job ${job.id} (build_feature) completed — ${plan.length} step(s), allPassed=${allPassed}`,
+        metadata: { jobId: job.id, agentType: job.agentType },
+      }).catch(() => {});
+
+      const changedFilesSection =
+        changedFiles.length > 0
+          ? `\n**Files changed:** ${changedFiles.join(", ")}`
+          : "";
+
+      const finalMsg = [
+        `✅ Build complete — ${plan.length} step${plan.length === 1 ? "" : "s"}${allPassed ? ", all passed" : ""}`,
+        ``,
+        synthesis,
+        changedFilesSection,
+        `The server is restarting to activate the new feature.`,
+      ].filter(Boolean).join("\n");
+
+      console.log(`[JobQueue] complete build_feature job ${job.id} → ${plan.length} steps, allPassed=${allPassed}`);
+      await notifyJobComplete(job.userId, "build_feature", job.title, finalMsg, originChannel, originDiscordChannelId);
+
+      if (hasWorkflow) {
+        await onWorkflowJobComplete(wfId!, wfStep!, job.id, synthesis.slice(0, 1200)).catch((e) =>
           console.error("[JobQueue] workflow hook failed:", e),
         );
       }
