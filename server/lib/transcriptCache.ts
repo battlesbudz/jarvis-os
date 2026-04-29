@@ -28,7 +28,7 @@
  * Duplicate strategies are never retried within the same request.
  */
 
-import { exec } from "child_process";
+import { exec, spawn } from "child_process";
 import { promisify } from "util";
 import { readdir, readFile, rm, stat as fsStat } from "fs/promises";
 import { mkdtempSync } from "fs";
@@ -36,6 +36,95 @@ import path from "path";
 import os from "os";
 
 const execAsync = promisify(exec);
+
+/**
+ * Stderr patterns that indicate YouTube is blocking/throttling the request.
+ * Detecting these early lets us kill the yt-dlp process immediately instead of
+ * waiting for the full 120-second timeout to expire.
+ */
+const YTDLP_EARLY_ABORT_PATTERNS: Array<{ pattern: RegExp; code: string }> = [
+  { pattern: /sign in to confirm|sign in to watch|not a bot/i,   code: "CONTENT_RESTRICTED" },
+  { pattern: /age.?restricted|age.?gated/i,                       code: "CONTENT_RESTRICTED" },
+  { pattern: /http error 403|: 403\b/i,                           code: "CONTENT_RESTRICTED" },
+  { pattern: /too many requests|http error 429|: 429\b/i,         code: "TOO_MANY_REQUESTS"  },
+  { pattern: /private video|video unavailable|this video is unavailable/i, code: "LOGIN_REQUIRED" },
+];
+
+/**
+ * Spawns a yt-dlp command and watches stderr line-by-line for known-bad patterns.
+ * When a throttling / restriction pattern is detected mid-execution the child
+ * process is killed immediately and the returned Promise rejects — typically
+ * within a few seconds instead of after the full `timeoutMs` timeout.
+ *
+ * The rejection error has the shape `{ message, stderr }` to stay compatible
+ * with the existing `execAsync` error-handling code.
+ */
+function spawnYtdlp(cmd: string, timeoutMs: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(cmd, { shell: true, stdio: ["ignore", "pipe", "pipe"] });
+    const startMs = Date.now();
+
+    const stderrChunks: Buffer[] = [];
+    let aborted = false;
+
+    const abort = (code: string, fullStderr: string) => {
+      if (aborted) return;
+      aborted = true;
+      clearTimeout(timer);
+      try { child.kill("SIGKILL"); } catch { /* already gone */ }
+      const err = Object.assign(
+        new Error(`${code}: ${fullStderr}`),
+        { stderr: fullStderr }
+      );
+      reject(err);
+    };
+
+    const timer = setTimeout(() => {
+      const fullStderr = stderrChunks.map((b) => b.toString()).join("").trim();
+      abort("YTDLP_TIMEOUT", fullStderr || "yt-dlp timed out");
+    }, timeoutMs);
+
+    child.stderr!.on("data", (chunk: Buffer) => {
+      stderrChunks.push(chunk);
+      if (aborted) return;
+      // Test against accumulated stderr so patterns split across chunk boundaries
+      // are still caught. Only the trailing 512 bytes are needed since patterns
+      // are short single-line strings, but we always include the full new chunk.
+      const accumulated = stderrChunks.map((b) => b.toString()).join("");
+      const window = accumulated.length > 512 ? accumulated.slice(-512) : accumulated;
+      for (const { pattern, code } of YTDLP_EARLY_ABORT_PATTERNS) {
+        if (pattern.test(window)) {
+          const elapsedMs = Date.now() - startMs;
+          console.warn(
+            `[transcriptCache] yt-dlp early abort (${code}) after ${elapsedMs} ms — ` +
+            `pattern matched in stderr: ${chunk.toString().trim()}`
+          );
+          abort(code, accumulated.trim());
+          return;
+        }
+      }
+    });
+
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      if (aborted) return;
+      const fullStderr = stderrChunks.map((b) => b.toString()).join("").trim();
+      if (code !== 0) {
+        reject(Object.assign(
+          new Error(`yt-dlp exited with code ${code}: ${fullStderr}`),
+          { stderr: fullStderr }
+        ));
+      } else {
+        resolve();
+      }
+    });
+
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      if (!aborted) reject(err);
+    });
+  });
+}
 
 import type { TranscriptConfig, TranscriptResponse } from "youtube-transcript";
 
@@ -470,7 +559,10 @@ async function fetchAudioTranscript(videoId: string, originalInput?: string): Pr
           );
         };
         try {
-          await execAsync(buildCmd(ytdlpSupportsImpersonate), { timeout: 120_000 });
+          // spawnYtdlp monitors stderr in real-time and aborts the process as soon
+          // as a throttling / restriction pattern is detected — avoiding the full
+          // 120 s timeout for known-bad responses like HTTP 403 or "sign in to confirm".
+          await spawnYtdlp(buildCmd(ytdlpSupportsImpersonate), 120_000);
         } catch (firstErr) {
           const firstErrObj = firstErr as { stderr?: string; message?: string };
           const firstStderr = (firstErrObj.stderr ?? "").trim() || (firstErr instanceof Error ? firstErr.message : String(firstErr));
@@ -487,7 +579,7 @@ async function fetchAudioTranscript(videoId: string, originalInput?: string): Pr
                 `disabling flag and retrying without it. stderr: ${firstStderr}`
             );
             ytdlpSupportsImpersonate = false;
-            await execAsync(buildCmd(false), { timeout: 120_000 });
+            await spawnYtdlp(buildCmd(false), 120_000);
           } else {
             throw firstErr;
           }
@@ -499,15 +591,29 @@ async function fetchAudioTranscript(videoId: string, originalInput?: string): Pr
         console.warn(
           `[transcriptCache] yt-dlp audio download failed for ${videoId} (url=${url}):\n${stderrMsg}`
         );
-        // Surface terminal errors immediately — no further URL will help
+        // Surface terminal errors immediately — no further URL will help.
+        // Also check the error message prefix set by spawnYtdlp on early-abort
+        // (e.g. "CONTENT_RESTRICTED: ...") so coded errors short-circuit instantly.
+        const errMsg = (dlErr instanceof Error ? dlErr.message : String(dlErr));
         const lower = stderrMsg.toLowerCase();
-        if (lower.includes("private video") || lower.includes("video unavailable")) {
+        if (
+          errMsg.startsWith("LOGIN_REQUIRED") ||
+          lower.includes("private video") || lower.includes("video unavailable")
+        ) {
           throw new Error(`LOGIN_REQUIRED: ${stderrMsg}`);
         }
-        if (lower.includes("age-restricted") || lower.includes("sign in to confirm")) {
+        if (
+          errMsg.startsWith("CONTENT_RESTRICTED") ||
+          lower.includes("age-restricted") || lower.includes("sign in to confirm") ||
+          lower.includes("http error 403") || lower.includes(": 403")
+        ) {
           throw new Error(`CONTENT_RESTRICTED: ${stderrMsg}`);
         }
-        if (lower.includes("429") || lower.includes("too many requests")) {
+        if (
+          errMsg.startsWith("TOO_MANY_REQUESTS") ||
+          lower.includes("429") || lower.includes("too many requests") ||
+          lower.includes("http error 429")
+        ) {
           throw new Error(`TOO_MANY_REQUESTS: ${stderrMsg}`);
         }
         // Non-terminal: record stderr and try the next URL candidate
