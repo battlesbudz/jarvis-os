@@ -543,6 +543,147 @@ class JarvisAccessibilityService : AccessibilityService() {
         return focused.performAction(actionImeEnterCompat)
     }
 
+    data class ClearFieldResult(
+        val cleared: Boolean,
+        val method: String,
+        val fieldWasAlreadyEmpty: Boolean,
+        val verifiedEmpty: Boolean,
+        val error: String? = null
+    )
+
+    /**
+     * Clear all text from the currently-focused editable field.
+     *
+     * Step 1 (primary) — ACTION_SET_TEXT("") via accessibility.
+     *   Works for standard EditText and most native views.
+     *   Verified by refreshing the node and reading text back.
+     *
+     * Step 2 (fallback) — ACTION_SET_SELECTION(0, len) then ACTION_CUT.
+     *   Works for views that support selection but not direct ACTION_SET_TEXT.
+     *   Uses exact currentLength bound (no +1) so selection is within text range.
+     *   Verified by node refresh.
+     *
+     * Step 3 (final fallback) — re-find node from a fresh window traversal,
+     *   then retry ACTION_SET_TEXT("") on the fresh reference.
+     *   Covers the case where the original node reference went stale, and the
+     *   case where the focused node changed (e.g., some input views recreate
+     *   their node when the IME opens).
+     *   Verified by node refresh.
+     */
+    fun clearField(): ClearFieldResult {
+        val root = rootInActiveWindow
+        val focused = findFocusedEditable(root) ?: findFirstEditable(root)
+            ?: return ClearFieldResult(false, "none", false, false, "No editable field found — tap a text input first")
+
+        // Check if the field already has content to clear.
+        // Only skip clearing if we can positively confirm the text is empty (not null).
+        // focused.text is null on password/obfuscated fields — in that case proceed with
+        // the clear attempt rather than assuming empty.
+        val initialText = focused.text?.toString()
+        if (initialText != null && initialText.isEmpty()) {
+            return ClearFieldResult(true, "already_empty", true, true)
+        }
+
+        // ── Step 1: ACTION_SET_TEXT("") ──────────────────────────────────────
+        val setTextArgs = Bundle().apply {
+            putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "")
+        }
+        val setTextOk = focused.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, setTextArgs)
+
+        if (setTextOk) {
+            Thread.sleep(80)
+            focused.refresh()
+            val textAfterRaw = focused.text  // null = unreadable (password/obfuscated field)
+            val textAfterStr = textAfterRaw?.toString()
+            when {
+                textAfterStr == null -> {
+                    // Can't read text (protected field) — trust ACTION_SET_TEXT return value,
+                    // but flag that we could not verify independently.
+                    return ClearFieldResult(true, "ACTION_SET_TEXT", false, false)
+                }
+                textAfterStr.isEmpty() -> {
+                    return ClearFieldResult(true, "ACTION_SET_TEXT", false, true)
+                }
+                else -> {
+                    Log.w(TAG, "clearField: ACTION_SET_TEXT returned ok but text remains — trying select+cut")
+                }
+            }
+        }
+
+        // ── Step 2: Select exact text range + ACTION_CUT ─────────────────────
+        // Use currentLength (not +1) to stay within valid selection bounds.
+        // For password/null-text fields use Int.MAX_VALUE — the system clamps it.
+        focused.refresh()
+        val currentLength = focused.text?.length ?: (initialText?.length ?: Int.MAX_VALUE)
+
+        val selArgs = Bundle().apply {
+            putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, 0)
+            putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, currentLength)
+        }
+        val selOk = focused.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, selArgs)
+
+        if (selOk) {
+            Thread.sleep(60)
+            val cutOk = focused.performAction(AccessibilityNodeInfo.ACTION_CUT)
+            Thread.sleep(80)
+            focused.refresh()
+            val textAfterCutRaw = focused.text
+            val textAfterCutStr = textAfterCutRaw?.toString()
+            when {
+                textAfterCutStr == null -> {
+                    // Protected field — can't read; trust cutOk as signal
+                    if (cutOk) return ClearFieldResult(true, "ACTION_SET_SELECTION_CUT", false, false)
+                    Log.w(TAG, "clearField: ACTION_CUT failed on protected field")
+                }
+                textAfterCutStr.isEmpty() -> {
+                    return ClearFieldResult(true, "ACTION_SET_SELECTION_CUT", false, true)
+                }
+                else -> {
+                    Log.w(TAG, "clearField: ACTION_CUT did not fully clear — remaining='${textAfterCutStr.take(20)}' cutOk=$cutOk")
+                }
+            }
+        } else {
+            Log.w(TAG, "clearField: ACTION_SET_SELECTION failed — node may not support selection")
+        }
+
+        // ── Step 3: Fresh node reference + retry ACTION_SET_TEXT("") ─────────
+        // The original `focused` reference may have become stale if the IME
+        // caused the view hierarchy to rebuild.  Re-traverse from the root.
+        Thread.sleep(100)
+        val freshRoot = rootInActiveWindow
+        val freshNode = findFocusedEditable(freshRoot) ?: findFirstEditable(freshRoot)
+        if (freshNode != null) {
+            val freshArgs = Bundle().apply {
+                putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "")
+            }
+            val freshOk = freshNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, freshArgs)
+            if (freshOk) {
+                Thread.sleep(80)
+                freshNode.refresh()
+                val textAfterFreshRaw = freshNode.text
+                val textAfterFreshStr = textAfterFreshRaw?.toString()
+                when {
+                    textAfterFreshStr == null -> {
+                        // Protected field — trust ACTION_SET_TEXT return value
+                        return ClearFieldResult(true, "ACTION_SET_TEXT_fresh_node", false, false)
+                    }
+                    textAfterFreshStr.isEmpty() -> {
+                        return ClearFieldResult(true, "ACTION_SET_TEXT_fresh_node", false, true)
+                    }
+                    else -> {
+                        Log.w(TAG, "clearField: fresh ACTION_SET_TEXT also failed — remaining='${textAfterFreshStr.take(20)}'")
+                    }
+                }
+            }
+        }
+
+        return ClearFieldResult(
+            false, "all_methods_failed", false, false,
+            "Could not clear field — ACTION_SET_TEXT, select+cut, and fresh-node retry all failed. " +
+                "This field type may not support any accessibility-based text clearing."
+        )
+    }
+
     private fun findFocusedEditable(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
         if (node == null) return null
         if (node.isEditable && node.isFocused) return node
