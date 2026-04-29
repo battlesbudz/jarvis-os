@@ -2187,6 +2187,14 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
     x2 = Math.max(0, Math.round(x2));
     y2 = Math.max(0, Math.round(y2));
 
+    // ── Capture pre-swipe hierarchy baseline ─────────────────────────────────
+    const preSwipeClickable = await readScreen(ctx.userId);
+    const preSwipeCount = preSwipeClickable.length;
+    const preSwipeLabels = new Set(preSwipeClickable.map((el) => el.label));
+    const preSwipeResourceIds = new Set(
+      preSwipeClickable.map((el) => el.resourceId).filter((id): id is string => !!id),
+    );
+
     // ── Fire the swipe ────────────────────────────────────────────────────────
     const swipeResult = await sendDaemonOp(ctx.userId, { type: "android_swipe", x1, y1, x2, y2, durationMs: 400 }, 15000);
 
@@ -2198,7 +2206,29 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       };
     }
 
-    console.log(`[android_swipe_element] userId=${ctx.userId} swiped ${direction} on "${bestElement.label}" from (${x1},${y1}) to (${x2},${y2}) score=${bestScore}`);
+    // ── Post-swipe verification (hierarchy diff, resource-ID-aware) ───────────
+    const SWIPE_SETTLE_MS = 400;
+    await new Promise((resolve) => setTimeout(resolve, SWIPE_SETTLE_MS));
+
+    let swipeVerified = false;
+    const postSwipeClickable = await readScreen(ctx.userId);
+    if (postSwipeClickable.length !== preSwipeCount) {
+      swipeVerified = true;
+    } else {
+      const postSwipeLabels = new Set(postSwipeClickable.map((el) => el.label));
+      if ([...postSwipeLabels].some((l) => !preSwipeLabels.has(l))) swipeVerified = true;
+      if (!swipeVerified) {
+        const postSwipeResourceIds = new Set(
+          postSwipeClickable.map((el) => el.resourceId).filter((id): id is string => !!id),
+        );
+        if ([...postSwipeResourceIds].some((id) => !preSwipeResourceIds.has(id))) swipeVerified = true;
+        if (!swipeVerified && preSwipeResourceIds.size > 0) {
+          if ([...preSwipeResourceIds].some((id) => !postSwipeResourceIds.has(id))) swipeVerified = true;
+        }
+      }
+    }
+
+    console.log(`[android_swipe_element] userId=${ctx.userId} swiped ${direction} on "${bestElement.label}" from (${x1},${y1}) to (${x2},${y2}) score=${bestScore} verified=${swipeVerified}`);
 
     return {
       ok: true,
@@ -2216,9 +2246,13 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
           from: { x: x1, y: y1 },
           to: { x: x2, y: y2 },
         },
+        verified: swipeVerified,
+        verified_note: swipeVerified
+          ? undefined
+          : "The UI hierarchy did not detectably change after the swipe. The element may already be at the scroll boundary, or the swipe may not have landed on a scrollable region.",
       }),
       label: `Swiped ${direction} on "${bestElement.label}" from (${x1},${y1}) to (${x2},${y2})`,
-      detail: `match_score=${bestScore} bounds=${bestElement.bounds}`,
+      detail: `match_score=${bestScore} bounds=${bestElement.bounds} verified=${swipeVerified}`,
     };
   },
 };
@@ -3106,6 +3140,14 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       };
     }
 
+    // ── Capture pre-press hierarchy baseline ─────────────────────────────────
+    const prePressClickable = await readScreen(ctx.userId);
+    const prePressCount = prePressClickable.length;
+    const prePressLabels = new Set(prePressClickable.map((el) => el.label));
+    const prePressResourceIds = new Set(
+      prePressClickable.map((el) => el.resourceId).filter((id): id is string => !!id),
+    );
+
     // ── Fire the long-press as a zero-distance swipe with hold duration ───────
     const { center_x, center_y } = bestElement;
     const durationMs = typeof args.duration_ms === "number" && args.duration_ms > 0
@@ -3126,7 +3168,29 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       };
     }
 
-    console.log(`[android_long_press_element] userId=${ctx.userId} long-pressed "${bestElement.label}" at (${center_x},${center_y}) for ${durationMs}ms score=${bestScore}`);
+    // ── Post-press verification (hierarchy diff, resource-ID-aware) ───────────
+    const PRESS_SETTLE_MS = 400;
+    await new Promise((resolve) => setTimeout(resolve, PRESS_SETTLE_MS));
+
+    let pressVerified = false;
+    const postPressClickable = await readScreen(ctx.userId);
+    if (postPressClickable.length !== prePressCount) {
+      pressVerified = true;
+    } else {
+      const postPressLabels = new Set(postPressClickable.map((el) => el.label));
+      if ([...postPressLabels].some((l) => !prePressLabels.has(l))) pressVerified = true;
+      if (!pressVerified) {
+        const postPressResourceIds = new Set(
+          postPressClickable.map((el) => el.resourceId).filter((id): id is string => !!id),
+        );
+        if ([...postPressResourceIds].some((id) => !prePressResourceIds.has(id))) pressVerified = true;
+        if (!pressVerified && prePressResourceIds.size > 0) {
+          if ([...prePressResourceIds].some((id) => !postPressResourceIds.has(id))) pressVerified = true;
+        }
+      }
+    }
+
+    console.log(`[android_long_press_element] userId=${ctx.userId} long-pressed "${bestElement.label}" at (${center_x},${center_y}) for ${durationMs}ms score=${bestScore} verified=${pressVerified}`);
 
     return {
       ok: true,
@@ -3141,9 +3205,13 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
           match_score: bestScore,
           duration_ms: durationMs,
         },
+        verified: pressVerified,
+        verified_note: pressVerified
+          ? undefined
+          : "The UI hierarchy did not detectably change after the long-press. The context menu may not have opened, or the hold duration may need to be increased.",
       }),
       label: `Long-pressed "${bestElement.label}" at (${center_x}, ${center_y}) for ${durationMs}ms`,
-      detail: `match_score=${bestScore} bounds=${bestElement.bounds} duration_ms=${durationMs}`,
+      detail: `match_score=${bestScore} bounds=${bestElement.bounds} duration_ms=${durationMs} verified=${pressVerified}`,
     };
   },
 };
