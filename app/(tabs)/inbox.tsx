@@ -13,6 +13,7 @@ import {
   TextInput,
   ScrollView,
   KeyboardAvoidingView,
+  Linking,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
@@ -66,6 +67,7 @@ interface Deliverable {
   status: string;
   triageStatus: string | null;
   triageNote: string | null;
+  driveLink: string | null;
   createdAt: string;
   actedAt: string | null;
 }
@@ -621,6 +623,18 @@ export default function InboxScreen() {
                     {d.summary || d.body}
                   </Text>
                 </View>
+
+                {d.driveLink && (
+                  <Pressable
+                    style={styles.driveLinkRow}
+                    onPress={() => Linking.openURL(d.driveLink!)}
+                    testID={`deliverable-drive-link-${d.id}`}
+                  >
+                    <Ionicons name="logo-google" size={14} color={Colors.primary} />
+                    <Text style={styles.driveLinkText}>Open in Drive</Text>
+                    <Ionicons name="open-outline" size={13} color={Colors.primary} />
+                  </Pressable>
+                )}
 
                 <View style={styles.actionsRow}>
                   {d.type === 'approval_gate' ? (
@@ -1375,6 +1389,22 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter_400Regular',
     color: '#92400E',
     lineHeight: 17,
+  },
+  driveLinkRow: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: 6,
+    paddingVertical: 7,
+    paddingHorizontal: 10,
+    backgroundColor: Colors.primary + '12',
+    borderRadius: 8,
+    marginBottom: 10,
+    alignSelf: 'flex-start' as const,
+  },
+  driveLinkText: {
+    fontSize: 13,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.primary,
   },
   draftBodyBox: {
     backgroundColor: Colors.surfaceAlt,

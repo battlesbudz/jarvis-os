@@ -416,6 +416,7 @@ async function flushResearchBatch(key: string): Promise<void> {
   // consolidated body and deliver it as a channel attachment.
   const notifyOpts: ChannelSendOpts = {};
   let pdfNote = "";
+  let batchDriveLink: string | undefined;
 
   if (wantsPdf && mergedBody) {
     try {
@@ -431,6 +432,7 @@ async function flushResearchBatch(key: string): Promise<void> {
         if (googleAccessToken) {
           const driveFile = await createDriveBinaryFile(googleAccessToken, filename, pdfBuffer, "application/pdf");
           driveLink = driveFile.webViewLink || undefined;
+          batchDriveLink = driveLink;
           pdfNote = `\n\n📄 PDF attached and saved to Google Drive: ${driveLink}`;
           console.log(`[JobQueue] research batch PDF → Drive: ${driveLink}`);
         } else {
@@ -474,6 +476,15 @@ async function flushResearchBatch(key: string): Promise<void> {
   }
   // ─────────────────────────────────────────────────────────────────────────
 
+  // Persist the Drive link on the deliverable so the app can surface it.
+  if (batchDriveLink && mergedDeliverableId) {
+    await db
+      .update(schema.deliverables)
+      .set({ driveLink: batchDriveLink })
+      .where(eq(schema.deliverables.id, mergedDeliverableId))
+      .catch((e) => console.error("[JobQueue] failed to save driveLink on deliverable:", e));
+  }
+
   const bodiedJobs = jobs.filter((j) => j.body);
   const notifyBody = (bodiedJobs[0]?.body ?? jobs[0].body) + pdfNote;
 
@@ -489,7 +500,6 @@ async function flushResearchBatch(key: string): Promise<void> {
     console.log(`[JobQueue] flushing batched research notification: ${jobs.length} job(s) → userId=${userId} batchOriginChannel=${batchOriginChannel || "none"}`);
     await notifyJobComplete(userId, "research", combinedTitle, notifyBody, batchOriginChannel, batchOriginDiscordChannelId, notifyOpts);
   }
-  void mergedDeliverableId; // referenced for logging above; suppress unused-var warning
 }
 
 /**
@@ -953,6 +963,7 @@ writing a clear inbox message explaining what is broken and what the user should
         summary: sub.summary,
         body: sub.body,
         meta: sub.meta,
+        driveLink: (sub.meta?.pdfDriveLink as string | undefined) ?? null,
       })
       .returning({ id: schema.deliverables.id });
 
