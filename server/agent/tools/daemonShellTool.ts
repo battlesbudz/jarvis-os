@@ -467,6 +467,51 @@ Return ONLY a valid JSON array, no explanation, no markdown fences.`,
   return { ok: true, elements: screenElements };
 }
 
+// ── scrollAndRefreshScreenMap ──────────────────────────────────────────────────
+// Performs a gentle downward scroll (swipe up gesture) and then re-captures the
+// ScreenMap. Used by android_fill_form and android_type_into_element to find
+// form fields that are below the visible area of the screen.
+// Uses typical mid-screen coordinates that work on most Android devices.
+const SCROLL_MAX_ATTEMPTS = 3;
+const SCROLL_SWIPE_X = 540;
+const SCROLL_SWIPE_Y1 = 1350; // start near bottom
+const SCROLL_SWIPE_Y2 = 570;  // end near top (reveals content below)
+const SCROLL_SWIPE_DURATION_MS = 400;
+const SCROLL_SETTLE_MS = 600;
+
+type ScrollAndRefreshResult = {
+  swipeOk: boolean;
+  swipeError?: string;
+  screenMap: BuildScreenMapResult;
+};
+
+async function scrollAndRefreshScreenMap(
+  userId: string,
+  tag: string,
+): Promise<ScrollAndRefreshResult> {
+  console.log(`[${tag}] scrolling down to reveal off-screen content`);
+  const swipeResult = await sendDaemonOp(
+    userId,
+    {
+      type: "android_swipe",
+      x1: SCROLL_SWIPE_X,
+      y1: SCROLL_SWIPE_Y1,
+      x2: SCROLL_SWIPE_X,
+      y2: SCROLL_SWIPE_Y2,
+      durationMs: SCROLL_SWIPE_DURATION_MS,
+    },
+    10000,
+  );
+  const swipeOk = swipeResult.ok;
+  if (!swipeOk) {
+    console.warn(`[${tag}] scroll swipe failed: ${swipeResult.error}`);
+    // Non-fatal — still attempt to refresh the ScreenMap even if the swipe failed
+  }
+  await sleep(SCROLL_SETTLE_MS);
+  const screenMap = await buildScreenMapElements(userId);
+  return { swipeOk, swipeError: swipeResult.ok ? undefined : (swipeResult.error ?? "unknown"), screenMap };
+}
+
 export const androidScreenUnderstandTool: AgentTool = {
   name: "android_screen_understand",
   description: `Capture and deeply understand the current Android screen by combining a screenshot with the full UI Automator element hierarchy.
@@ -4077,14 +4122,15 @@ Combines android_tap_element (finds the field via fuzzy label match) with androi
 Steps performed internally:
 1. Resolve ScreenMap (uses 500 ms cache if available, otherwise captures fresh screenshot + view hierarchy)
 2. Fuzzy-match \`label\` against element labels, descriptions, and resource_ids (same scoring as android_tap_element)
-3. Tap the matched element to focus it, then wait for the keyboard
-4. Optionally clear the field first if \`clear_first\` is true
-5. Type via three-level fallback: android_type → android_paste_text → android_paste_text retry
-6. Verify the text appeared in the field via android_get_focused_field
+3. If the field is not visible, scroll down and re-capture the ScreenMap up to 3 times before giving up
+4. Tap the matched element to focus it, then wait for the keyboard
+5. Optionally clear the field first if \`clear_first\` is true
+6. Type via three-level fallback: android_type → android_paste_text → android_paste_text retry
+7. Verify the text appeared in the field via android_get_focused_field
 
 Use this instead of manually: reading the screen → finding coordinates → tapping → typing.
 
-Returns: matched field details (label, coordinates, match_score), input method used, and whether the text was verified.
+Returns: matched field details (label, coordinates, match_score, scroll_attempts), input method used, and whether the text was verified.
 
 Requires: android_screenshot, android_read_screen, and android_tap_type permissions.`,
   parameters: {
@@ -4183,9 +4229,10 @@ Requires: android_screenshot, android_read_screen, and android_tap_type permissi
       console.log(`[android_type_into_element] userId=${ctx.userId} fresh ScreenMap: ${screenElements.length} elements`);
     }
 
-    // ── Step 2: Fuzzy-match the element ───────────────────────────────────────
+    // ── Step 2: Fuzzy-match the element (with scroll-then-retry for off-screen fields) ──
     let bestElement: ScreenElement | null = null;
     let bestScore = 0;
+    let scrollAttempts = 0;
 
     for (const el of screenElements) {
       const score = scoreElement(el, label);
@@ -4195,20 +4242,42 @@ Requires: android_screenshot, android_read_screen, and android_tap_type permissi
       }
     }
 
+    // If not found on the initial screen, scroll down and retry up to SCROLL_MAX_ATTEMPTS times
+    while ((!bestElement || bestScore === 0) && scrollAttempts < SCROLL_MAX_ATTEMPTS) {
+      scrollAttempts++;
+      console.log(`[android_type_into_element] userId=${ctx.userId} field="${label}" not found — scroll attempt ${scrollAttempts}/${SCROLL_MAX_ATTEMPTS}`);
+      const scrolled = await scrollAndRefreshScreenMap(ctx.userId, "android_type_into_element");
+      if (!scrolled.swipeOk) {
+        console.warn(`[android_type_into_element] scroll swipe failed (attempt ${scrollAttempts}): ${scrolled.swipeError}`);
+      }
+      if (scrolled.screenMap.ok) {
+        screenElements = scrolled.screenMap.elements;
+        const swipeStatus = scrolled.swipeOk ? "scrolled" : `scroll swipe failed (${scrolled.swipeError ?? "unknown"})`;
+        console.log(`[android_type_into_element] scroll attempt ${scrollAttempts}: ${swipeStatus} — ScreenMap has ${screenElements.length} elements`);
+        for (const el of screenElements) {
+          const score = scoreElement(el, label);
+          if (score > bestScore) {
+            bestScore = score;
+            bestElement = el;
+          }
+        }
+      }
+    }
+
     if (!bestElement || bestScore === 0) {
       const elementList = screenElements
         .map((el) => `  • ${el.label}${el.description ? ` — ${el.description}` : ""}`)
         .join("\n");
       return {
         ok: false,
-        content: `No element matching "${label}" was found on screen.\n\nAvailable elements:\n${elementList || "  (none)"}`,
+        content: `No element matching "${label}" was found on screen after ${scrollAttempts} scroll attempt(s).\n\nAvailable elements:\n${elementList || "  (none)"}`,
         label: `android_type_into_element: no match for "${label}"`,
       };
     }
 
     const { center_x, center_y } = bestElement;
     const fieldDesc = bestElement.label || bestElement.description || label;
-    const steps: string[] = [`Matched element "${fieldDesc}" at (${center_x}, ${center_y}) score=${bestScore}.`];
+    const steps: string[] = [`Matched element "${fieldDesc}" at (${center_x}, ${center_y}) score=${bestScore}${scrollAttempts > 0 ? ` after ${scrollAttempts} scroll(s)` : ""}.`];
 
     // ── Step 3: Tap to focus ──────────────────────────────────────────────────
     steps.push(`Tapping (${center_x}, ${center_y}) to focus field...`);
@@ -4369,10 +4438,11 @@ Requires: android_screenshot, android_read_screen, and android_tap_type permissi
       method_used: methodUsed,
       verified,
       field_text: fieldText,
+      scroll_attempts: scrollAttempts,
       steps,
     };
 
-    console.log(`[android_type_into_element] userId=${ctx.userId} field="${fieldDesc}" method=${methodUsed} verified=${verified}`);
+    console.log(`[android_type_into_element] userId=${ctx.userId} field="${fieldDesc}" method=${methodUsed} verified=${verified} scrollAttempts=${scrollAttempts}`);
 
     return {
       ok: inputOk,
@@ -4399,9 +4469,10 @@ Steps performed internally:
 1. Capture a fresh ScreenMap once at the start (screenshot + view hierarchy → Claude Vision)
 2. For each field: fuzzy-match label, tap to focus, optionally clear, type via three-level fallback (android_type → android_paste_text → retry), verify
 3. If a field label is not found in the current ScreenMap, refresh the ScreenMap once (handles page transitions between fields)
-4. If submit_last is true on a field, press Enter/IME Go after typing it
+4. If still not found, scroll down and re-capture the ScreenMap up to 3 times to find fields that are off-screen
+5. If submit_last is true on a field, press Enter/IME Go after typing it
 
-Returns an array of per-field results so you can see which fields succeeded or failed.
+Returns an array of per-field results (including scroll_attempts per field) so you can see which fields succeeded or failed and how many scrolls were needed.
 
 Requires: android_screenshot, android_read_screen, and android_tap_type permissions.`,
   parameters: {
@@ -4496,6 +4567,7 @@ Requires: android_screenshot, android_read_screen, and android_tap_type permissi
       method_used: string | null;
       verified: boolean;
       field_text: string | null;
+      scroll_attempts: number;
       steps: string[];
       error?: string;
     };
@@ -4519,6 +4591,7 @@ Requires: android_screenshot, android_read_screen, and android_tap_type permissi
         method_used: null,
         verified: false,
         field_text: null,
+        scroll_attempts: 0,
         steps: [],
       };
 
@@ -4542,7 +4615,7 @@ Requires: android_screenshot, android_read_screen, and android_tap_type permissi
         }
       }
 
-      // If not found, refresh ScreenMap once (page may have changed)
+      // If not found, refresh ScreenMap once (handles same-page state change)
       if (!bestElement || bestScore === 0) {
         result.steps.push(`No match for "${fieldLabel}" in current ScreenMap (${screenElements.length} elements). Refreshing...`);
         console.log(`[android_fill_form] userId=${ctx.userId} field="${fieldLabel}" not found — refreshing ScreenMap`);
@@ -4562,11 +4635,33 @@ Requires: android_screenshot, android_read_screen, and android_tap_type permissi
         }
       }
 
+      // If still not found, scroll down and retry up to SCROLL_MAX_ATTEMPTS times
+      while ((!bestElement || bestScore === 0) && result.scroll_attempts < SCROLL_MAX_ATTEMPTS) {
+        result.scroll_attempts++;
+        result.steps.push(`Field "${fieldLabel}" still not found — scrolling down (attempt ${result.scroll_attempts}/${SCROLL_MAX_ATTEMPTS})...`);
+        console.log(`[android_fill_form] userId=${ctx.userId} field="${fieldLabel}" not found — scroll attempt ${result.scroll_attempts}/${SCROLL_MAX_ATTEMPTS}`);
+        const scrolled = await scrollAndRefreshScreenMap(ctx.userId, "android_fill_form");
+        const swipeStatus = scrolled.swipeOk ? "swipe ok" : `swipe failed: ${scrolled.swipeError ?? "unknown"}`;
+        if (scrolled.screenMap.ok) {
+          screenElements = scrolled.screenMap.elements;
+          result.steps.push(`Scroll attempt ${result.scroll_attempts}: ${swipeStatus} — ScreenMap refreshed (${screenElements.length} elements).`);
+          for (const el of screenElements) {
+            const score = scoreElement(el, fieldLabel);
+            if (score > bestScore) {
+              bestScore = score;
+              bestElement = el;
+            }
+          }
+        } else {
+          result.steps.push(`Scroll attempt ${result.scroll_attempts}: ${swipeStatus} — ScreenMap refresh failed: ${scrolled.screenMap.label}`);
+        }
+      }
+
       if (!bestElement || bestScore === 0) {
         const elementList = screenElements
           .map((el) => `  • ${el.label}${el.description ? ` — ${el.description}` : ""}`)
           .join("\n");
-        result.error = `No element matching "${fieldLabel}" found after ScreenMap refresh.\nAvailable elements:\n${elementList || "  (none)"}`;
+        result.error = `No element matching "${fieldLabel}" found after ScreenMap refresh and ${result.scroll_attempts} scroll attempt(s).\nAvailable elements:\n${elementList || "  (none)"}`;
         result.steps.push(result.error);
         fieldResults.push(result);
         allOk = false;
@@ -4577,7 +4672,7 @@ Requires: android_screenshot, android_read_screen, and android_tap_type permissi
       const matchedDesc = bestElement.label || bestElement.description || fieldLabel;
       result.field_matched = matchedDesc;
       result.match_score = bestScore;
-      result.steps.push(`Matched "${matchedDesc}" at (${center_x}, ${center_y}) score=${bestScore}.`);
+      result.steps.push(`Matched "${matchedDesc}" at (${center_x}, ${center_y}) score=${bestScore}${result.scroll_attempts > 0 ? ` after ${result.scroll_attempts} scroll(s)` : ""}.`);
 
       // ── Tap to focus ──────────────────────────────────────────────────────────
       result.steps.push(`Tapping (${center_x}, ${center_y}) to focus...`);
@@ -4720,7 +4815,7 @@ Requires: android_screenshot, android_read_screen, and android_tap_type permissi
       result.verified = verified;
       result.field_text = verifiedFieldText;
 
-      console.log(`[android_fill_form] userId=${ctx.userId} field="${matchedDesc}" method=${methodUsed} verified=${verified}`);
+      console.log(`[android_fill_form] userId=${ctx.userId} field="${matchedDesc}" method=${methodUsed} verified=${verified} scrollAttempts=${result.scroll_attempts}`);
       fieldResults.push(result);
     }
 
