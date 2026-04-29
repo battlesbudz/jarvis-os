@@ -472,7 +472,7 @@ class JarvisAccessibilityService : AccessibilityService() {
         }
         val resourceId = node.viewIdResourceName?.toString()?.trim() ?: ""
         val className = node.className?.toString()?.trim() ?: ""
-        if (node.isClickable && (label != null || resourceId.isNotEmpty())) {
+        if (node.isClickable && (label != null || resourceId.isNotEmpty() || className.isNotEmpty())) {
             val bounds = Rect()
             node.getBoundsInScreen(bounds)
             val obj = JSONObject()
