@@ -3587,7 +3587,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       },
       reset_scroll: {
         type: "boolean",
-        description: "When true, scroll back to the top of the page before locating the element (default false). Use this at the start of a new task if a previous scroll-to-find pass may have left the screen scrolled partway down, so elements near the top are not missed.",
+        description: "When true (default), scroll back to the top of the page before locating the element if it is not visible on the initial screen. This ensures elements above the current scroll position are never missed when a previous interaction left the page scrolled partway down. Set to false to skip the reset and search from the current scroll position.",
       },
     },
     required: ["label"],
@@ -3633,13 +3633,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       };
     }
 
-    // ── Optional scroll-to-top reset before locating ──────────────────────────
-    if (args.reset_scroll === true) {
-      console.log(`[android_long_press_element] reset_scroll=true, scrolling to top before locate`);
-      await scrollToTop(ctx.userId, 5);
-      // Invalidate the ScreenMap cache so the fresh top-of-page state is used
-      screenMapCache.delete(ctx.userId);
-    }
+    const resetScroll = args.reset_scroll === false ? false : true;
 
     // ── Resolve ScreenMap (cache or fresh) ────────────────────────────────────
     const maxAge = typeof args.max_age_ms === "number" ? args.max_age_ms : 500;
@@ -3674,6 +3668,31 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       if (score > bestScore) {
         bestScore = score;
         bestElement = el;
+      }
+    }
+
+    // ── Optional reset: scroll to top if element not found on initial screen ──
+    // Fires only when the element was not found on the initial screen, ensuring
+    // the tool never misses elements that sit above the current scroll position
+    // because a previous interaction left the page scrolled partway down.
+    if ((!bestElement || bestScore === 0) && resetScroll) {
+      console.log(`[android_long_press_element] element "${label}" not found on initial screen — resetting to top of page`);
+      await scrollToTop(ctx.userId, 5);
+      // Brief pause so the page settles after scrolling to top
+      await new Promise((resolve) => setTimeout(resolve, 400));
+
+      const afterResetResult = await buildScreenMapElements(ctx.userId);
+      if (afterResetResult.ok) {
+        bestElement = null;
+        bestScore = 0;
+        for (const el of afterResetResult.elements) {
+          const score = scoreElement(el, label);
+          if (score > bestScore) { bestScore = score; bestElement = el; }
+        }
+        screenElements = afterResetResult.elements;
+        if (bestElement && bestScore > 0) {
+          console.log(`[android_long_press_element] found "${label}" after scroll-to-top reset, score=${bestScore}`);
+        }
       }
     }
 
