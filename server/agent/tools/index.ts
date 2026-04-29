@@ -37,7 +37,7 @@ import { driveCreateFileTool, driveListFilesTool, driveReadFileTool } from "./go
 import { fetchCalendarTool } from "./calendar";
 import { spawnSubagentTool } from "./spawnSubagent";
 import { daemonActionTool } from "./daemon";
-import { daemonShellTool, daemonStatusTool, androidScreenUnderstandTool, androidSearchInAppTool, androidTypeInFieldTool, androidTapElementTool, androidSwipeElementTool, androidTrainButtonTool, androidFindTrainedButtonTool, androidTypeIntoElementTool, androidLongPressElementTool, androidFillFormTool, androidScrollToTopTool } from "./daemonShellTool";
+import { daemonShellTool, daemonStatusTool, androidScreenUnderstandTool, androidSearchInAppTool, androidTypeInFieldTool, androidTapElementTool, androidSwipeElementTool, androidPinchElementTool, androidTrainButtonTool, androidFindTrainedButtonTool, androidTypeIntoElementTool, androidLongPressElementTool, androidFillFormTool, androidScrollToTopTool } from "./daemonShellTool";
 import { checkConnectionsTool, generateReconnectLinkTool } from "./connections";
 import { createCalendarEventTool } from "./calendarCreate";
 import { sendEmailTool } from "./sendEmail";
@@ -250,6 +250,7 @@ export {
   androidTypeInFieldTool,
   androidTapElementTool,
   androidSwipeElementTool,
+  androidPinchElementTool,
   androidLongPressElementTool,
   androidScrollToTopTool,
   androidTrainButtonTool,
