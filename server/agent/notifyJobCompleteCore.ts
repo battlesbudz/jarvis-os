@@ -6,7 +6,12 @@
  */
 
 import type { Channel, ChannelSendResult } from "../channels/types";
-import type { ChannelName, NotificationType } from "@shared/schema";
+import {
+  SIMPLE_ORIGIN_CHANNELS,
+  type ChannelName,
+  type NotificationType,
+  type SimpleOriginChannel,
+} from "@shared/schema";
 import type { AgentJobType } from "./jobClient";
 
 export type { AgentJobType };
@@ -22,6 +27,11 @@ export interface NotifyJobCompleteDeps {
   ): Promise<{ channel: ChannelName; result: ChannelSendResult }[]>;
 }
 
+/** Type guard: returns true when `s` is one of the canonical simple origins. */
+function isSimpleOrigin(s: string): s is SimpleOriginChannel {
+  return (SIMPLE_ORIGIN_CHANNELS as readonly string[]).includes(s);
+}
+
 /**
  * Core channel-routing logic for job-completion notifications.
  *
@@ -33,6 +43,12 @@ export interface NotifyJobCompleteDeps {
  *
  * All four external dependencies are injected so tests can mock them without
  * needing Jest module mocking — just pass mock implementations directly.
+ *
+ * Exhaustiveness guarantee
+ * ────────────────────────
+ * The switch below covers every value in SimpleOriginChannel.  Its default
+ * branch contains a `never` assertion so TypeScript raises a compile-time error
+ * if a new value is added to SIMPLE_ORIGIN_CHANNELS without a matching case.
  */
 export async function _notifyJobCompleteCore(
   userId: string,
@@ -54,6 +70,8 @@ export async function _notifyJobCompleteCore(
   const origin = (originChannel ?? "").toLowerCase();
 
   try {
+    // Discord is handled via prefix match because callers pass strings like
+    // "Discord #general" — it cannot be part of the simple-origin union.
     if (origin.startsWith("discord")) {
       const notified: string[] = [];
       if (originDiscordChannelId) {
@@ -77,31 +95,53 @@ export async function _notifyJobCompleteCore(
       return;
     }
 
-    if (origin === "telegram") {
-      const notified: string[] = [];
-      const telegramCh = getChannel("telegram");
-      if (telegramCh) {
-        const r = await telegramCh.sendMessage(userId, text, { notificationType: "approval_request" }).catch(() => ({ ok: false as const }));
-        if (r.ok) notified.push("telegram");
+    // All remaining recognised origins are in SIMPLE_ORIGIN_CHANNELS.
+    // The switch is exhaustive over SimpleOriginChannel: TypeScript will
+    // error on the `never` assertion below if a new value is added to
+    // SIMPLE_ORIGIN_CHANNELS without a corresponding case here.
+    if (isSimpleOrigin(origin)) {
+      switch (origin) {
+        case "telegram": {
+          const notified: string[] = [];
+          const telegramCh = getChannel("telegram");
+          if (telegramCh) {
+            const r = await telegramCh.sendMessage(userId, text, { notificationType: "approval_request" }).catch(() => ({ ok: false as const }));
+            if (r.ok) notified.push("telegram");
+          }
+          const inAppCh = getChannel("in_app");
+          if (inAppCh) {
+            await inAppCh.sendMessage(userId, text, { notificationType: "approval_request" }).catch(() => {});
+            notified.push("in_app");
+          }
+          console.log(`[JobQueue] notifyJobComplete originChannel=${originChannel} → [${notified.join(", ") || "none"}]`);
+          return;
+        }
+
+        case "app":
+        case "coach":
+        case "appchat":
+        case "voice": {
+          const inAppCh = getChannel("in_app");
+          if (inAppCh) {
+            await inAppCh.sendMessage(userId, text, { notificationType: "approval_request" }).catch(() => {});
+          }
+          console.log(`[JobQueue] notifyJobComplete originChannel=${originChannel} → [in_app]`);
+          return;
+        }
+
+        default: {
+          // Exhaustiveness check — this line must never be reachable at runtime.
+          // If TypeScript reports an error here, a new SimpleOriginChannel value
+          // was added to SIMPLE_ORIGIN_CHANNELS in shared/schema.ts without a
+          // matching case in this switch.  Add the case above to fix it.
+          const _exhaustive: never = origin;
+          console.warn(`[JobQueue] unhandled simple origin: ${_exhaustive}`);
+        }
       }
-      const inAppCh = getChannel("in_app");
-      if (inAppCh) {
-        await inAppCh.sendMessage(userId, text, { notificationType: "approval_request" }).catch(() => {});
-        notified.push("in_app");
-      }
-      console.log(`[JobQueue] notifyJobComplete originChannel=${originChannel} → [${notified.join(", ") || "none"}]`);
-      return;
     }
 
-    if (origin === "app" || origin === "coach" || origin === "appchat" || origin === "voice") {
-      const inAppCh = getChannel("in_app");
-      if (inAppCh) {
-        await inAppCh.sendMessage(userId, text, { notificationType: "approval_request" }).catch(() => {});
-      }
-      console.log(`[JobQueue] notifyJobComplete originChannel=${originChannel} → [in_app]`);
-      return;
-    }
-
+    // origin is undefined, empty, or an unrecognised string — fall back to the
+    // user's configured notification preferences.
     const results = await notifyUser(userId, "approval_request", text);
     const delivered = results.filter((r) => r.result.ok).map((r) => r.channel).join(", ");
     console.log(`[JobQueue] notifyJobComplete originChannel=${originChannel || "none"} → [${delivered || "none"}]`);
