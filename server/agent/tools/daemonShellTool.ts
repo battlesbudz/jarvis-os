@@ -2569,6 +2569,12 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
     const preHierarchyResourceIds = new Set(
       preHierarchyClickable.map((el) => el.resourceId).filter((id): id is string => !!id),
     );
+    // Map resourceId → label so we can detect label-value changes on the same element
+    const preHierarchyIdToLabel = new Map<string, string>(
+      preHierarchyClickable
+        .filter((el): el is typeof el & { resourceId: string } => !!el.resourceId)
+        .map((el) => [el.resourceId, el.label]),
+    );
 
     // ── Retry loop ────────────────────────────────────────────────────────────
     // Attempts 1-3: tap at Vision-located coordinates with small offsets.
@@ -2647,6 +2653,18 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
             if ([...postResourceIds].some((id) => !preHierarchyResourceIds.has(id))) verified = true;
             if (!verified && preHierarchyResourceIds.size > 0) {
               if ([...preHierarchyResourceIds].some((id) => !postResourceIds.has(id))) verified = true;
+            }
+            // Check if any element with the same resource ID changed its label text
+            // (e.g. "Show more" → "Show less") — set-based checks miss this case
+            if (!verified && preHierarchyIdToLabel.size > 0) {
+              const postIdToLabel = new Map<string, string>(
+                postClickable
+                  .filter((el): el is typeof el & { resourceId: string } => !!el.resourceId)
+                  .map((el) => [el.resourceId, el.label]),
+              );
+              if ([...postIdToLabel.entries()].some(
+                ([id, postLabel]) => preHierarchyIdToLabel.has(id) && preHierarchyIdToLabel.get(id) !== postLabel,
+              )) verified = true;
             }
           }
         }
