@@ -332,6 +332,81 @@ const WHISPER_MAX_BYTES = 23 * 1024 * 1024;
 /** Length of each WAV chunk sent to Whisper (10 minutes). */
 const AUDIO_CHUNK_SECS = 600;
 
+// ── Audio transcription telemetry ─────────────────────────────────────────────
+// Tracks every non-terminal failure so product/infra can gauge how often
+// Phase 3 audio transcription silently fails and which failure class dominates.
+
+export type AudioErrorClass =
+  | "empty-output"           // fetchAudioTranscript returned [] (Whisper empty, file too large, no file written, etc.)
+  | "yt-dlp-blocked"         // terminal errors re-thrown (LOGIN_REQUIRED, CONTENT_RESTRICTED, TOO_MANY_REQUESTS)
+  | "yt-dlp-download-failed" // AUDIO_DOWNLOAD_FAILED — all URL candidates failed yt-dlp
+  | "whisper-failure"        // non-terminal error during Whisper transcription step
+  | "ffmpeg-failure"         // non-terminal ffmpeg conversion error
+  | "non-terminal-error";    // other non-terminal errors not matched above
+
+export interface AudioTranscriptFailureEvent {
+  timestamp: string;
+  videoId: string;
+  errorClass: AudioErrorClass;
+  noCaptions: boolean;
+  message: string;
+}
+
+const AUDIO_TELEMETRY_MAX = 200;
+const audioFailureEvents: AudioTranscriptFailureEvent[] = [];
+const audioFailureCounts: Record<AudioErrorClass, number> = {
+  "empty-output": 0,
+  "yt-dlp-blocked": 0,
+  "yt-dlp-download-failed": 0,
+  "whisper-failure": 0,
+  "ffmpeg-failure": 0,
+  "non-terminal-error": 0,
+};
+let audioAttemptCount = 0;
+
+function recordAudioFailure(
+  videoId: string,
+  errorClass: AudioErrorClass,
+  noCaptions: boolean,
+  message: string
+): void {
+  audioFailureCounts[errorClass] = (audioFailureCounts[errorClass] ?? 0) + 1;
+  const event: AudioTranscriptFailureEvent = {
+    timestamp: new Date().toISOString(),
+    videoId,
+    errorClass,
+    noCaptions,
+    message: message.slice(0, 500),
+  };
+  audioFailureEvents.push(event);
+  if (audioFailureEvents.length > AUDIO_TELEMETRY_MAX) audioFailureEvents.shift();
+  console.log(
+    `[audio-telemetry] FAILURE videoId=${videoId} class=${errorClass} noCaptions=${noCaptions} msg=${message.slice(0, 200)}`
+  );
+}
+
+function classifyAudioError(msg: string): AudioErrorClass {
+  const lower = msg.toLowerCase();
+  if (lower.includes("whisper") || lower.includes("transcri")) return "whisper-failure";
+  if (lower.includes("ffmpeg")) return "ffmpeg-failure";
+  if (lower.includes("yt-dlp") || lower.includes("download") || lower.includes("audio_download")) {
+    return "yt-dlp-download-failed";
+  }
+  return "non-terminal-error";
+}
+
+/** Returns a snapshot of audio transcription telemetry for admin/debug use. */
+export function getAudioTranscriptTelemetry() {
+  const totalFailures = Object.values(audioFailureCounts).reduce((a, b) => a + b, 0);
+  return {
+    attempts: audioAttemptCount,
+    totalFailures,
+    failureRate: audioAttemptCount > 0 ? totalFailures / audioAttemptCount : null,
+    counts: { ...audioFailureCounts },
+    recentFailures: [...audioFailureEvents].reverse().slice(0, 50),
+  };
+}
+
 async function transcribeBuffer(buf: Buffer, ext: "wav" | "mp3"): Promise<string> {
   const { openai } = await import("../replit_integrations/audio/client");
   const { toFile } = await import("openai");
@@ -1086,6 +1161,7 @@ export async function fetchTranscriptCached(
   // ── audioOnly fast-path: skip Phases 1 & 2 entirely ──────────────────────
   if (audioOnly) {
     console.log(`[transcriptCache] audioOnly=true for ${resolvedId} — going straight to audio transcription`);
+    audioAttemptCount++;
     try {
       const audioSegs = await fetchAudioTranscript(resolvedId, input);
       if (audioSegs.length > 0) {
@@ -1095,15 +1171,27 @@ export async function fetchTranscriptCached(
           `[transcriptCache] yt-dlp audio download OK ${resolvedId} — ` +
             `${audioSegs.reduce((n, s) => n + s.text.length, 0)} chars`
         );
+      } else {
+        const hasOpenAIKey = !!process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
+        const emptyReason = hasOpenAIKey
+          ? "fetchAudioTranscript returned 0 segments (Whisper empty output, file too large, or audio download produced no file)"
+          : "OpenAI API key not configured — audio transcription skipped";
+        recordAudioFailure(resolvedId, "empty-output", true, emptyReason);
       }
     } catch (audioErr) {
       const msg = audioErr instanceof Error ? audioErr.message : String(audioErr);
-      if (/^(LOGIN_REQUIRED|CONTENT_RESTRICTED|TOO_MANY_REQUESTS):/.test(msg)) throw audioErr;
+      if (/^(LOGIN_REQUIRED|CONTENT_RESTRICTED|TOO_MANY_REQUESTS):/.test(msg)) {
+        recordAudioFailure(resolvedId, "yt-dlp-blocked", true, msg);
+        throw audioErr;
+      }
       if (msg.startsWith("AUDIO_DOWNLOAD_FAILED:")) {
-        console.warn(`[transcriptCache] audio-download-failed for ${resolvedId}: ${msg.slice("AUDIO_DOWNLOAD_FAILED:".length).trim()}`);
+        const detail = msg.slice("AUDIO_DOWNLOAD_FAILED:".length).trim();
+        console.warn(`[transcriptCache] audio-download-failed for ${resolvedId}: ${detail}`);
+        recordAudioFailure(resolvedId, "yt-dlp-download-failed", true, detail);
         throw audioErr;
       }
       console.warn(`[transcriptCache] audio transcription failed for ${resolvedId}: ${msg}`);
+      recordAudioFailure(resolvedId, classifyAudioError(msg), true, msg);
     }
 
     if (videoId && segments.length > 0) {
@@ -1231,6 +1319,7 @@ export async function fetchTranscriptCached(
       ? "no captions — going straight to audio transcription"
       : "all subtitle strategies failed — trying audio transcription";
     console.log(`[transcriptCache] ${reason} for ${resolvedId}`);
+    audioAttemptCount++;
     try {
       const audioSegs = await fetchAudioTranscript(resolvedId, input);
       if (audioSegs.length > 0) {
@@ -1240,17 +1329,29 @@ export async function fetchTranscriptCached(
           `[transcriptCache] yt-dlp audio download OK ${resolvedId} — ` +
             `${audioSegs.reduce((n, s) => n + s.text.length, 0)} chars`
         );
+      } else {
+        const hasOpenAIKey = !!process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
+        const emptyReason = hasOpenAIKey
+          ? "fetchAudioTranscript returned 0 segments (Whisper empty output, file too large, or audio download produced no file)"
+          : "OpenAI API key not configured — audio transcription skipped";
+        recordAudioFailure(resolvedId, "empty-output", noCaptions, emptyReason);
       }
     } catch (audioErr) {
       const msg = audioErr instanceof Error ? audioErr.message : String(audioErr);
-      if (/^(LOGIN_REQUIRED|CONTENT_RESTRICTED|TOO_MANY_REQUESTS):/.test(msg)) throw audioErr;
+      if (/^(LOGIN_REQUIRED|CONTENT_RESTRICTED|TOO_MANY_REQUESTS):/.test(msg)) {
+        recordAudioFailure(resolvedId, "yt-dlp-blocked", noCaptions, msg);
+        throw audioErr;
+      }
       if (msg.startsWith("AUDIO_DOWNLOAD_FAILED:")) {
+        const detail = msg.slice("AUDIO_DOWNLOAD_FAILED:".length).trim();
         console.warn(
-          `[transcriptCache] audio-download-failed for ${resolvedId}: ${msg.slice("AUDIO_DOWNLOAD_FAILED:".length).trim()}`
+          `[transcriptCache] audio-download-failed for ${resolvedId}: ${detail}`
         );
+        recordAudioFailure(resolvedId, "yt-dlp-download-failed", noCaptions, detail);
         throw audioErr;
       }
       console.warn(`[transcriptCache] audio transcription non-terminal failure for ${resolvedId}: ${msg}`);
+      recordAudioFailure(resolvedId, classifyAudioError(msg), noCaptions, msg);
     }
   }
 
