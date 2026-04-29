@@ -1632,6 +1632,8 @@ export const buttonLocations = pgTable("button_locations", {
   lastConfirmedAt: timestamp("last_confirmed_at"),
   /** Flagged true when a tap fails to find a recognisable element at stored coords */
   stale: boolean("stale").notNull().default(false),
+  /** Number of consecutive non-confirmed taps; resets to 0 on confirm; at ≥ 3 the entry is marked stale */
+  failCount: integer("fail_count").notNull().default(0),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });

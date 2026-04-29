@@ -7977,6 +7977,7 @@ Extract up to 8 memories per batch.`;
       const [updated] = await db.update(schema.buttonLocations).set({
         confidence: newConfidence,
         stale: false,
+        failCount: 0,
         lastConfirmedAt: new Date(),
         updatedAt: new Date(),
       }).where(eq(schema.buttonLocations.id, id)).returning();
@@ -7996,9 +7997,12 @@ Extract up to 8 memories per batch.`;
       if (!rows.length) return res.status(404).json({ error: "Not found" });
       const current = rows[0];
       const newConfidence = Math.max(0, current.confidence - 0.2);
+      const newFailCount = (current.failCount ?? 0) + 1;
+      const nowStale = newConfidence < 0.3 || newFailCount >= 3;
       const [updated] = await db.update(schema.buttonLocations).set({
         confidence: newConfidence,
-        stale: newConfidence < 0.3,
+        stale: nowStale,
+        failCount: newFailCount,
         updatedAt: new Date(),
       }).where(eq(schema.buttonLocations.id, id)).returning();
       res.json({ entry: updated });
