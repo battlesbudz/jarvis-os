@@ -28,6 +28,11 @@ class JarvisAccessibilityService : AccessibilityService() {
         private const val TAG = "JarvisA11y"
         var instance: JarvisAccessibilityService? = null
             private set
+
+        /** Set to true by the android_start_training op; cleared after one tap is captured. */
+        @Volatile var trainingModeActive: Boolean = false
+        /** Human-readable label for the element being trained (used as fallback name). */
+        @Volatile var trainingLabel: String = ""
     }
 
     override fun onServiceConnected() {
@@ -36,7 +41,67 @@ class JarvisAccessibilityService : AccessibilityService() {
         Log.i(TAG, "Accessibility service connected")
     }
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) { /* not needed for op-driven control */ }
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        // Intercept user taps when training mode is active
+        if (trainingModeActive && event != null &&
+            event.eventType == AccessibilityEvent.TYPE_VIEW_CLICKED) {
+            trainingModeActive = false // consume — one tap only
+            captureTrainingTap(event)
+        }
+    }
+
+    private fun captureTrainingTap(event: AccessibilityEvent) {
+        Thread {
+            try {
+                val node = event.source
+                val pkg = event.packageName?.toString() ?: ""
+                val activityClass = try {
+                    rootInActiveWindow?.packageName?.toString() ?: pkg
+                } catch (_: Exception) { pkg }
+
+                val bounds = if (node != null) {
+                    val r = Rect()
+                    node.getBoundsInScreen(r)
+                    r
+                } else Rect(0, 0, 0, 0)
+                val cx = (bounds.left + bounds.right) / 2
+                val cy = (bounds.top + bounds.bottom) / 2
+
+                val text = node?.text?.toString()?.trim()
+                val contentDesc = node?.contentDescription?.toString()?.trim()
+                val viewId = node?.viewIdResourceName?.toString()?.trim()
+                val nodeClass = node?.className?.toString()?.trim()
+
+                val label = when {
+                    !text.isNullOrEmpty() -> text
+                    !contentDesc.isNullOrEmpty() -> contentDesc
+                    !viewId.isNullOrEmpty() -> viewId.substringAfterLast("/")
+                    !nodeClass.isNullOrEmpty() -> nodeClass.substringAfterLast(".")
+                    trainingLabel.isNotEmpty() -> trainingLabel
+                    else -> "button"
+                }
+
+                // Take screenshot for hash storage (best-effort)
+                val screenshotB64 = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    try { takeScreenshotBase64() } catch (_: Exception) { null }
+                } else null
+
+                val payload = org.json.JSONObject()
+                    .put("type", "training_tap")
+                    .put("x", cx)
+                    .put("y", cy)
+                    .put("appPackage", pkg)
+                    .put("screenContext", activityClass)
+                    .put("elementLabel", label)
+                if (screenshotB64 != null) payload.put("screenshot", screenshotB64)
+
+                DaemonLog.add("training_tap: ($cx,$cy) pkg=$pkg label=$label")
+                WebSocketService.sendEvent(payload.toString())
+            } catch (e: Exception) {
+                Log.e(TAG, "captureTrainingTap failed: ${e.message}")
+            }
+        }.start()
+    }
 
     override fun onInterrupt() {
         Log.w(TAG, "Accessibility service interrupted")

@@ -1,4 +1,5 @@
 import path from "path";
+import { createHash } from "crypto";
 import type { AgentTool } from "../types";
 import {
   sendDaemonOp,
@@ -10,9 +11,13 @@ import {
   getAndroidDaemonPermissions,
   getDaemonDeviceMeta,
   getDaemonLastSeen,
+  waitForTrainingTap,
 } from "../../daemon/bridge";
 import { anthropic, ORCHESTRATOR_MODEL } from "../../lib/anthropicClient";
 import { screenshotDiff } from "../../lib/screenshotDiff";
+import { db } from "../../db";
+import { buttonLocations } from "@shared/schema";
+import { eq, and, desc } from "drizzle-orm";
 
 //        Shell safety: server-side preflight for early UX feedback                                                    
 // Mirrors the daemon-side commandEscapesRoot strategy so the agent gets a fast
@@ -1787,6 +1792,400 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       }),
       label: `Tapped "${bestElement.label}" at (${tapped_at!.x}, ${tapped_at!.y})`,
       detail: `match_score=${bestScore} bounds=${bestElement.bounds} attempts=${actualAttempts}`,
+    };
+  },
+};
+
+// ── Perceptual hash helper (average-hash, 64-bit) ─────────────────────────────
+// Down-samples a base64 JPEG/PNG to 8×8 via @napi-rs/canvas and computes the
+// average-hash (aHash) as a 16-char hex string.  Falls back to an MD5 of the
+// raw bytes when canvas is unavailable.
+async function computeScreenshotHash(base64: string): Promise<string> {
+  try {
+    const { createCanvas, loadImage } = await import("@napi-rs/canvas");
+    const strip = (s: string) => s.replace(/^data:[^;]+;base64,/, "");
+    const img = await loadImage(Buffer.from(strip(base64), "base64"));
+    const canvas = createCanvas(8, 8);
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(img as never, 0, 0, 8, 8);
+    const data = ctx.getImageData(0, 0, 8, 8).data;
+    // Convert to grayscale
+    const gray: number[] = [];
+    for (let i = 0; i < data.length; i += 4) {
+      gray.push((data[i] * 299 + data[i + 1] * 587 + data[i + 2] * 114) / 1000);
+    }
+    const avg = gray.reduce((a, b) => a + b, 0) / gray.length;
+    // Build 64-bit hash as bits
+    let hash = BigInt(0);
+    for (let i = 0; i < gray.length; i++) {
+      if (gray[i] >= avg) hash |= BigInt(1) << BigInt(i);
+    }
+    return hash.toString(16).padStart(16, "0");
+  } catch {
+    // Fallback: MD5 of compressed screenshot bytes
+    const strip = (s: string) => s.replace(/^data:[^;]+;base64,/, "");
+    return createHash("md5").update(Buffer.from(strip(base64), "base64")).digest("hex").slice(0, 16);
+  }
+}
+
+// Hamming distance between two 16-char hex hashes (0–64 bits)
+function hammingDistance(a: string, b: string): number {
+  if (a.length !== b.length) return 64;
+  let dist = 0;
+  const v1 = BigInt("0x" + a);
+  const v2 = BigInt("0x" + b);
+  let xor = v1 ^ v2;
+  while (xor > BigInt(0)) {
+    dist += Number(xor & BigInt(1));
+    xor >>= BigInt(1);
+  }
+  return dist;
+}
+
+// ── android_train_button ──────────────────────────────────────────────────────
+export const androidTrainButtonTool: AgentTool = {
+  name: "android_train_button",
+  description: `Start a human-in-the-loop training session to teach Jarvis the location of a button in an Android app.
+Sends a START_TRAINING command to the Android daemon which enables a one-shot tap interceptor.
+The next button the user physically taps on their screen is captured — coordinates, app package, screen context, element label, and a screenshot are saved to the database.
+Confidence starts at 0.5. Use android_find_trained_button in future sessions to recall the stored location.
+Use this when:
+- The user says "help me find [button name]" or "teach Jarvis where [something] is"
+- android_tap_element fails because the button has no accessible label (icon-only buttons, dynamic IDs)
+- You want to pre-learn a frequently-used action to avoid repeated screen analysis`,
+  parameters: {
+    type: "object",
+    properties: {
+      label: {
+        type: "string",
+        description: "Human-readable name for the button being trained, e.g. 'search icon', 'post button', 'like button'.",
+      },
+      timeout_seconds: {
+        type: "number",
+        description: "How many seconds to wait for the user to tap (default 60, max 120).",
+      },
+    },
+    required: ["label"],
+  },
+  async execute(args, ctx) {
+    const label = String(args.label || "").trim();
+    if (!label) {
+      return { ok: false, content: "label is required.", label: "android_train_button: no label" };
+    }
+
+    if (!isAndroidDaemonActive(ctx.userId)) {
+      return {
+        ok: false,
+        content: "Android daemon is not connected. Ask the user to install the Jarvis Android APK and pair it (Profile → Connected Channels → Android Device).",
+        label: "android_train_button: android offline",
+      };
+    }
+
+    const tapAllowed = await isAndroidDaemonActionAllowed(ctx.userId, "android_tap_type");
+    if (!tapAllowed) {
+      return {
+        ok: false,
+        content: "android_tap_type permission must be enabled to use button training. Enable it in Profile → Connected Channels → Android Device → Permissions.",
+        label: "android_train_button: tap permission denied",
+      };
+    }
+
+    const timeoutMs = Math.min(Math.max((Number(args.timeout_seconds) || 60) * 1000, 15_000), 120_000);
+
+    // 1. Enable training mode on the daemon
+    const startResult = await sendDaemonOp(ctx.userId, { type: "android_start_training", label, timeoutMs }, 10_000);
+    if (!startResult.ok) {
+      return { ok: false, content: `Failed to start training mode: ${startResult.error}`, label: "android_train_button: start failed" };
+    }
+
+    // 2. Wait for the user to tap
+    let tapEvent;
+    try {
+      tapEvent = await waitForTrainingTap(ctx.userId, label, timeoutMs);
+    } catch (err) {
+      return { ok: false, content: String(err), label: "android_train_button: timeout" };
+    }
+
+    // 3. Compute screenshot hash (best-effort)
+    let screenshotHash: string | null = null;
+    if (tapEvent.screenshotBase64) {
+      try { screenshotHash = await computeScreenshotHash(tapEvent.screenshotBase64); } catch { /* noop */ }
+    }
+
+    // 4. Upsert — if an entry for this user+app+context+label already exists, update it
+    const existing = await db.select().from(buttonLocations).where(
+      and(
+        eq(buttonLocations.userId, ctx.userId),
+        eq(buttonLocations.appPackage, tapEvent.appPackage),
+        eq(buttonLocations.elementLabel, label),
+      )
+    ).limit(1);
+
+    if (existing.length > 0) {
+      await db.update(buttonLocations).set({
+        coordinatesX: tapEvent.x,
+        coordinatesY: tapEvent.y,
+        screenContext: tapEvent.screenContext,
+        screenshotHash: screenshotHash ?? existing[0].screenshotHash,
+        screenshotPath: tapEvent.screenshotBase64 ? tapEvent.screenshotBase64.slice(0, 200) : existing[0].screenshotPath,
+        confidence: 0.5,
+        stale: false,
+        updatedAt: new Date(),
+      }).where(eq(buttonLocations.id, existing[0].id));
+    } else {
+      await db.insert(buttonLocations).values({
+        userId: ctx.userId,
+        appPackage: tapEvent.appPackage,
+        screenContext: tapEvent.screenContext,
+        elementLabel: label,
+        coordinatesX: tapEvent.x,
+        coordinatesY: tapEvent.y,
+        screenshotHash: screenshotHash ?? null,
+        screenshotPath: tapEvent.screenshotBase64 ? tapEvent.screenshotBase64.slice(0, 200) : null,
+        confidence: 0.5,
+      });
+    }
+
+    return {
+      ok: true,
+      content: JSON.stringify({
+        saved: true,
+        label,
+        appPackage: tapEvent.appPackage,
+        screenContext: tapEvent.screenContext,
+        x: tapEvent.x,
+        y: tapEvent.y,
+        confidence: 0.5,
+        message: `Learned "${label}" at (${tapEvent.x}, ${tapEvent.y}) in ${tapEvent.appPackage}. Confidence starts at 0.5 — it will increase as the location is confirmed correct.`,
+      }),
+      label: `Trained "${label}" at (${tapEvent.x},${tapEvent.y}) in ${tapEvent.appPackage}`,
+    };
+  },
+};
+
+// ── android_find_trained_button ───────────────────────────────────────────────
+export const androidFindTrainedButtonTool: AgentTool = {
+  name: "android_find_trained_button",
+  description: `Look up a trained button location for the current Android app and tap it if a confident match is found.
+Queries the button_locations database for entries matching the given label and app package.
+- High confidence (≥0.7): taps immediately and returns coordinates.
+- Borderline confidence (0.3–0.69): taps and asks the user to confirm it was correct; adjusts confidence up or down.
+- Stale entry or confidence < 0.3: offers to re-train the button.
+- No entry found: falls back to android_tap_element, then offers training if that also fails.
+Use this before android_tap_element when you have previously trained a button, or when the button has no accessible label.`,
+  parameters: {
+    type: "object",
+    properties: {
+      label: {
+        type: "string",
+        description: "The human-readable label used when the button was trained.",
+      },
+      app_package: {
+        type: "string",
+        description: "The Android package name of the app, e.g. com.instagram.android. If not provided, Jarvis reads the current foreground app.",
+      },
+      skip_fallback: {
+        type: "boolean",
+        description: "Set true to skip the android_tap_element fallback (just return the DB lookup result without tapping).",
+      },
+    },
+    required: ["label"],
+  },
+  async execute(args, ctx) {
+    const label = String(args.label || "").trim();
+    if (!label) {
+      return { ok: false, content: "label is required.", label: "android_find_trained_button: no label" };
+    }
+
+    if (!isAndroidDaemonActive(ctx.userId)) {
+      return {
+        ok: false,
+        content: "Android daemon is not connected.",
+        label: "android_find_trained_button: android offline",
+      };
+    }
+
+    // Resolve app package — use provided, or query foreground from daemon
+    let appPackage = String(args.app_package || "").trim();
+    if (!appPackage) {
+      const pingRes = await sendDaemonOp(ctx.userId, { type: "ping" }, 8_000);
+      if (pingRes.ok && pingRes.data && typeof (pingRes.data as any).foregroundPackage === "string") {
+        appPackage = (pingRes.data as any).foregroundPackage;
+      }
+    }
+
+    // Query DB — prefer non-stale, highest confidence
+    const rows = await db.select().from(buttonLocations).where(
+      and(
+        eq(buttonLocations.userId, ctx.userId),
+        ...(appPackage ? [eq(buttonLocations.appPackage, appPackage)] : []),
+        eq(buttonLocations.elementLabel, label),
+      )
+    ).orderBy(desc(buttonLocations.confidence)).limit(5);
+
+    if (rows.length === 0) {
+      return {
+        ok: false,
+        content: JSON.stringify({
+          found: false,
+          message: `No trained location found for "${label}"${appPackage ? ` in ${appPackage}` : ""}. Call android_train_button to teach Jarvis where this button is.`,
+          suggest_training: true,
+        }),
+        label: `android_find_trained_button: no entry for "${label}"`,
+      };
+    }
+
+    // Prefer non-stale rows
+    const best = rows.find((r) => !r.stale) ?? rows[0];
+
+    if (best.stale || best.confidence < 0.3) {
+      return {
+        ok: false,
+        content: JSON.stringify({
+          found: true,
+          stale: true,
+          label: best.elementLabel,
+          appPackage: best.appPackage,
+          confidence: best.confidence,
+          message: `Stored location for "${label}" is stale or low-confidence (${best.confidence.toFixed(2)}). The UI may have changed. Call android_train_button to re-train this button.`,
+          suggest_retraining: true,
+        }),
+        label: `android_find_trained_button: stale entry for "${label}"`,
+      };
+    }
+
+    const skipFallback = args.skip_fallback === true;
+    if (skipFallback) {
+      return {
+        ok: true,
+        content: JSON.stringify({
+          found: true,
+          id: best.id,
+          label: best.elementLabel,
+          appPackage: best.appPackage,
+          screenContext: best.screenContext,
+          x: best.coordinatesX,
+          y: best.coordinatesY,
+          confidence: best.confidence,
+        }),
+        label: `Found "${label}" at (${best.coordinatesX},${best.coordinatesY}) confidence=${best.confidence.toFixed(2)}`,
+      };
+    }
+
+    // ── Screenshot hash check (stale detection before tapping) ─────────────────
+    if (best.screenshotHash) {
+      const currentScreenshot = await captureScreenshot(ctx.userId);
+      if (currentScreenshot) {
+        try {
+          const currentHash = await computeScreenshotHash(currentScreenshot);
+          const dist = hammingDistance(best.screenshotHash, currentHash);
+          // dist > 20 out of 64 bits = significant UI change (>31%)
+          if (dist > 20) {
+            // Mark stale and suggest re-training
+            await db.update(buttonLocations).set({ stale: true, updatedAt: new Date() })
+              .where(eq(buttonLocations.id, best.id));
+            return {
+              ok: false,
+              content: JSON.stringify({
+                found: true,
+                stale: true,
+                hashDist: dist,
+                message: `The screen layout looks different from when "${label}" was trained (hash distance ${dist}/64). The stored location has been marked stale. Call android_train_button to re-train.`,
+                suggest_retraining: true,
+              }),
+              label: `android_find_trained_button: UI changed, stale flagged for "${label}"`,
+            };
+          }
+        } catch { /* hash check is best-effort */ }
+      }
+    }
+
+    // ── Tap at stored coordinates ───────────────────────────────────────────
+    const tapAllowed = await isAndroidDaemonActionAllowed(ctx.userId, "android_tap_type");
+    if (!tapAllowed) {
+      return {
+        ok: false,
+        content: `Found "${label}" at (${best.coordinatesX}, ${best.coordinatesY}) but android_tap_type permission is disabled. Enable it in Profile → Connected Channels → Android Device → Permissions.`,
+        label: `android_find_trained_button: tap permission denied`,
+      };
+    }
+
+    // Capture pre-tap screenshot for stale detection after the tap
+    const preTapScreenshot = await captureScreenshot(ctx.userId);
+    const preTapClickable = await readScreen(ctx.userId);
+    const preTapCount = preTapClickable.length;
+    const preTapLabels = new Set(preTapClickable.map((e) => e.label));
+
+    const tapResult = await sendDaemonOp(ctx.userId, { type: "android_tap", x: best.coordinatesX, y: best.coordinatesY }, 12_000);
+    if (!tapResult.ok) {
+      // Mark stale
+      await db.update(buttonLocations).set({ stale: true, updatedAt: new Date() })
+        .where(eq(buttonLocations.id, best.id));
+      return {
+        ok: false,
+        content: `Tap at stored location (${best.coordinatesX}, ${best.coordinatesY}) failed: ${tapResult.error}. Entry marked stale — call android_train_button to re-train.`,
+        label: `android_find_trained_button: tap failed for "${label}"`,
+      };
+    }
+
+    // ── Post-tap verification ───────────────────────────────────────────────
+    await new Promise((r) => setTimeout(r, 400));
+    let verified = false;
+    const postTapScreenshot = await captureScreenshot(ctx.userId);
+    if (preTapScreenshot && postTapScreenshot) {
+      try {
+        const changeRatio = await screenshotDiff(preTapScreenshot, postTapScreenshot);
+        if (changeRatio >= 0.15) verified = true;
+      } catch { /* noop */ }
+    }
+    if (!verified) {
+      const postClickable = await readScreen(ctx.userId);
+      if (postClickable.length !== preTapCount) {
+        verified = true;
+      } else {
+        const postLabels = new Set(postClickable.map((e) => e.label));
+        if ([...postLabels].some((l) => !preTapLabels.has(l))) verified = true;
+      }
+    }
+
+    if (!verified) {
+      // Tap landed but nothing changed — likely stale location
+      await db.update(buttonLocations).set({ stale: true, updatedAt: new Date() })
+        .where(eq(buttonLocations.id, best.id));
+      return {
+        ok: false,
+        content: JSON.stringify({
+          tapped: true,
+          verified: false,
+          label: best.elementLabel,
+          x: best.coordinatesX,
+          y: best.coordinatesY,
+          confidence: best.confidence,
+          message: `Tapped the stored location for "${label}" but the screen did not change. The location has been marked stale. Call android_train_button to re-train.`,
+          suggest_retraining: true,
+        }),
+        label: `android_find_trained_button: unverified tap on "${label}"`,
+      };
+    }
+
+    // ── Success — conditionally ask for user confirmation ──────────────────
+    const needsConfirm = best.confidence < 0.7;
+    return {
+      ok: true,
+      content: JSON.stringify({
+        tapped: true,
+        verified: true,
+        label: best.elementLabel,
+        appPackage: best.appPackage,
+        x: best.coordinatesX,
+        y: best.coordinatesY,
+        confidence: best.confidence,
+        needs_confirmation: needsConfirm,
+        confirmation_prompt: needsConfirm
+          ? `I tapped the stored location for "${label}" (confidence ${best.confidence.toFixed(2)}). Was that the right button? Reply "yes" to increase confidence or "no" to mark it for re-training.`
+          : undefined,
+      }),
+      label: `Tapped trained "${label}" at (${best.coordinatesX},${best.coordinatesY}) confidence=${best.confidence.toFixed(2)}`,
     };
   },
 };

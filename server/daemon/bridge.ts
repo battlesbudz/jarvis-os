@@ -51,7 +51,8 @@ export type DaemonOp =
   | { type: "android_screen_record"; durationMs?: number; fps?: number; audio?: boolean }
   | { type: "android_view_hierarchy" }
   | { type: "android_paste_text"; text: string; fieldDescription?: string }
-  | { type: "android_get_focused_field" };
+  | { type: "android_get_focused_field" }
+  | { type: "android_start_training"; label: string; timeoutMs?: number };
 
 export interface PhoneNotification {
   pkg: string;
@@ -85,6 +86,52 @@ let opCounter = 0;
 
 // Wake word event subscriptions: userId → set of callbacks
 const wakeWordTriggerCallbacks = new Map<string, Set<(e: { phrase: string; transcript: string; daemonHandling: boolean }) => void>>();
+
+// ── Training tap subscriptions ───────────────────────────────────────────────
+// One pending waiter per user at a time.  android_train_button tool sets this;
+// the training_tap event handler resolves it.
+export interface TrainingTapEvent {
+  x: number;
+  y: number;
+  appPackage: string;
+  screenContext: string;
+  elementLabel: string;
+  screenshotBase64?: string;
+}
+
+interface TrainingWaiter {
+  label: string;
+  resolve: (event: TrainingTapEvent) => void;
+  reject: (reason: string) => void;
+  timer: ReturnType<typeof setTimeout>;
+}
+
+const trainingWaiters = new Map<string, TrainingWaiter>();
+
+/**
+ * Register a one-shot listener for the next training_tap event from the
+ * Android daemon for this user.  Times out after timeoutMs (default 60 s).
+ * The returned Promise resolves with the event payload, or rejects on timeout.
+ */
+export function waitForTrainingTap(
+  userId: string,
+  label: string,
+  timeoutMs = 60_000,
+): Promise<TrainingTapEvent> {
+  return new Promise<TrainingTapEvent>((resolve, reject) => {
+    // Cancel any previous waiter for this user
+    const prior = trainingWaiters.get(userId);
+    if (prior) {
+      clearTimeout(prior.timer);
+      prior.reject("superseded by new training session");
+    }
+    const timer = setTimeout(() => {
+      trainingWaiters.delete(userId);
+      reject("Training timed out — no tap received within the allowed time.");
+    }, timeoutMs);
+    trainingWaiters.set(userId, { label, resolve, reject, timer });
+  });
+}
 
 export function subscribeWakeWordTrigger(
   userId: string,
@@ -766,6 +813,25 @@ export function startDaemonBridge(server: HttpServer): void {
           arr.unshift(ne.notification); // newest first
           while (arr.length > MAX_NOTIFS_PER_USER) arr.pop();
           userNotifications.set(pairedUserId, arr);
+        }
+        return;
+      }
+
+      // Training tap — user physically tapped the screen while training mode was active
+      if (m.type === "training_tap" && pairedUserId) {
+        const tm = m as { type: string; x?: number; y?: number; appPackage?: string; screenContext?: string; elementLabel?: string; screenshot?: string };
+        const waiter = trainingWaiters.get(pairedUserId);
+        if (waiter) {
+          clearTimeout(waiter.timer);
+          trainingWaiters.delete(pairedUserId);
+          waiter.resolve({
+            x: tm.x ?? 0,
+            y: tm.y ?? 0,
+            appPackage: tm.appPackage ?? "",
+            screenContext: tm.screenContext ?? "",
+            elementLabel: tm.elementLabel ?? waiter.label,
+            screenshotBase64: tm.screenshot,
+          });
         }
         return;
       }

@@ -71,6 +71,7 @@ object OpHandler {
                 "android_view_hierarchy" -> handleViewHierarchy()
                 "android_paste_text" -> handlePasteText(context, op)
                 "android_get_focused_field" -> handleGetFocusedField()
+                "android_start_training" -> handleStartTraining(op)
                 else -> OpResult(false, error = "Unknown op type: $type")
             }
             val durationMs = SystemClock.elapsedRealtime() - startMs
@@ -1132,5 +1133,28 @@ object OpHandler {
         // Return the JSON array directly as the result payload so the server receives
         // a top-level array (consistent with the tool description and spec).
         return OpResult(ok = true, data = elements)
+    }
+
+    // ── android_start_training ───────────────────────────────────────────────
+    // Enables training mode on the accessibility service.  The next user tap on
+    // any clickable element will be captured and emitted back as a training_tap
+    // event over the WebSocket.  Training mode is automatically cleared after
+    // one tap, or when this op is called again with a new label.
+    private fun handleStartTraining(op: JSONObject): OpResult {
+        val label = op.optString("label", "button")
+        val svc = JarvisAccessibilityService.instance
+            ?: return OpResult(false, error = "Accessibility service not running — enable it in Settings > Accessibility > Jarvis Daemon.")
+
+        JarvisAccessibilityService.trainingLabel = label
+        JarvisAccessibilityService.trainingModeActive = true
+
+        DaemonLog.add("training mode ON — waiting for tap (label=$label)")
+        return OpResult(
+            ok = true,
+            data = JSONObject()
+                .put("trainingActive", true)
+                .put("label", label)
+                .put("message", "Training mode enabled. Tap the '$label' button to record its location.")
+        )
     }
 }
