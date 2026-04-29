@@ -234,10 +234,11 @@ export async function registerTelegramBotCommands(): Promise<void> {
     return;
   }
 
-  const commands = SLASH_COMMANDS.map((c) => ({
-    command: c.name,
-    description: c.description,
-  }));
+  // Include all shared commands plus the Telegram-only /call command.
+  const commands = [
+    ...SLASH_COMMANDS.map((c) => ({ command: c.name, description: c.description })),
+    { command: "call", description: "Start a voice call with Jarvis" },
+  ];
 
   try {
     const res = await fetch(`https://api.telegram.org/bot${token}/setMyCommands`, {

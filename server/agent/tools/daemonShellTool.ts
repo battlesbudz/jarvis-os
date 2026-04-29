@@ -1500,6 +1500,7 @@ function scoreElement(element: ScreenElement, query: string): number {
   // Boost score by 1 for clickable elements so ties always resolve in favour of
   // tappable UI components over non-interactive containers with matching labels.
   return element.clickable ? textScore + 1 : textScore;
+}
 
 interface ClickableElement { label: string; x: number; y: number }
 

@@ -2,7 +2,7 @@ import type { Express, Request, Response } from "express";
 import { db } from "./db";
 import { eq, and, desc, sql, gte, lte } from "drizzle-orm";
 import * as schema from "@shared/schema";
-import { sendMessage, sendLongMessage, sendMessageWithButtons, sendTelegramDocument, sendPhoto, sendVoice, sendChatAction, answerCallbackQuery, isTelegramConfigured, getUpdates, downloadTelegramFile, downloadTelegramFileBuffer, getWebhookHealth, ensureWebhook, getExpectedWebhookUrl, sendMessageGetId, editMessage } from "./integrations/telegram";
+import { sendMessage, sendLongMessage, sendMessageWithButtons, sendTelegramDocument, sendPhoto, sendVoice, sendChatAction, answerCallbackQuery, isTelegramConfigured, getUpdates, downloadTelegramFile, downloadTelegramFileBuffer, getWebhookHealth, ensureWebhook, getExpectedWebhookUrl, sendMessageGetId, editMessage, buildVoiceCallKeyboard } from "./integrations/telegram";
 import { attachmentToBuffer, collectMarkdownExtras } from "./channels/attachmentHelpers";
 import { outboundMiddleware } from "./channels/outboundMiddleware";
 import type { ChannelAttachment } from "./channels/types";
@@ -480,6 +480,11 @@ async function handleCallbackQuery(callbackQuery: any): Promise<void> {
 
     await answerCallbackQuery(queryId, "Got it! +XP incoming...");
     await handleMomentumDone(claimedUserId, chatId, stepIndex);
+    return;
+  }
+
+  if (data === 'voice_dismiss') {
+    await answerCallbackQuery(queryId, "Got it — reply any time to keep the conversation going.");
     return;
   }
 
@@ -1186,12 +1191,33 @@ async function processUpdate(update: any): Promise<void> {
         return;
       }
 
+      // ── /call command and voice trigger phrases ──────────────────────────
+      // Intercept before the generic slash command router so we can send an
+      // inline keyboard button instead of plain text.
+      const VOICE_CALL_CMD_RE = /^\/call(?:@\S+)?(\s|$)/i;
+      const VOICE_TRIGGER_RE = /\b(voice\s+call|call\s+me|let['']?s\s+talk)\b/i;
+      if (VOICE_CALL_CMD_RE.test(text) || VOICE_TRIGGER_RE.test(text)) {
+        // /call and trigger phrases: single button only (no "💬 Text reply" — we're already in text)
+        const keyboard = buildVoiceCallKeyboard();
+        if (keyboard) {
+          await sendMessage(
+            chatId,
+            "Tap below to open a voice session with me:",
+            keyboard,
+          );
+        } else {
+          await sendMessage(chatId, "Voice calls are available in the Jarvis app. Open the app and go to the Voice screen to start a session.");
+        }
+        return;
+      }
+
       // ── Slash command router: /research, /plan, /write, /brief, /help ─────
       // Commands may arrive as "/research topic" or "/research@BotName topic".
       // Only the recognized task commands are intercepted here — unknown slash
       // commands fall through to the coach agent for natural-language handling.
       const TASK_CMD_RE = /^\/([a-z_]+)(?:@\S+)?(?:\s+([\s\S]*))?$/i;
-      const ROUTABLE_CMDS = new Set(SLASH_COMMANDS.map((c) => c.name));
+      // Exclude "call" — it is handled above and would return getHelpText() via the router.
+      const ROUTABLE_CMDS = new Set(SLASH_COMMANDS.filter((c) => c.name !== "call").map((c) => c.name));
       const cmdMatch = text.match(TASK_CMD_RE);
       if (cmdMatch) {
         const rawCmd = cmdMatch[1].toLowerCase();

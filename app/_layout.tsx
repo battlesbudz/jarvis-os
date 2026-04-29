@@ -101,6 +101,40 @@ function useDeepLinkAuth() {
   }, [handleAuthUrl]);
 }
 
+/**
+ * Handles deep link navigation (non-auth). Routes jarvis://voice-realtime to
+ * the voice-realtime screen so that Telegram's "🎙 Voice call" button opens
+ * the app directly to the voice session.
+ */
+function useDeepLinkNavigation() {
+  const { isAuthenticated } = useAuth();
+
+  const handleNavUrl = useCallback((url: string) => {
+    try {
+      const parsed = Linking.parse(url);
+      const screen = parsed.hostname ?? '';
+      if (screen === 'voice-realtime') {
+        router.push('/voice-realtime');
+      }
+    } catch {
+      // ignore malformed URLs
+    }
+  }, []);
+
+  useEffect(() => {
+    if (Platform.OS === 'web' || !isAuthenticated) return;
+
+    Linking.getInitialURL().then((url) => {
+      if (url) handleNavUrl(url);
+    });
+
+    const sub = Linking.addEventListener('url', (event) => {
+      handleNavUrl(event.url);
+    });
+    return () => sub.remove();
+  }, [handleNavUrl, isAuthenticated]);
+}
+
 async function registerExpoPushToken(): Promise<string | undefined> {
   if (Platform.OS === 'web') return undefined;
   try {
@@ -149,6 +183,7 @@ function useExpoPushTokenRegistration() {
 function AppNavigator() {
   const { isLoading } = useProtectedRoute();
   useDeepLinkAuth();
+  useDeepLinkNavigation();
   useExpoPushTokenRegistration();
 
   useEffect(() => {

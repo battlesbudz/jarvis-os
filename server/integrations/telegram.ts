@@ -87,11 +87,47 @@ export interface TelegramUpdate {
 
 export interface InlineKeyboardButton {
   text: string;
-  callback_data: string;
+  callback_data?: string;
+  url?: string;
 }
 
 export interface InlineKeyboardMarkup {
   inline_keyboard: InlineKeyboardButton[][];
+}
+
+/**
+ * Returns the deep-link redirect URL for the voice call button.
+ * Points to /go/voice-call — a public Express route that first attempts to
+ * open the native app via jarvis://voice-realtime and falls back to the HTTPS
+ * web version of the voice screen after 1.5 s if the app is not installed.
+ * Returns null in dev mode when REPLIT_DOMAINS is not set.
+ */
+function getVoiceCallUrl(): string | null {
+  const domain = (process.env.REPLIT_DOMAINS || '').split(',')[0]?.trim();
+  if (!domain) return null;
+  return `https://${domain}/go/voice-call`;
+}
+
+/**
+ * Builds an inline keyboard with a "🎙 Voice call" URL button.
+ * When tapped the button opens /go/voice-call which:
+ *   1. Attempts to launch the native app via jarvis://voice-realtime
+ *   2. Falls back to the HTTPS web voice screen after 1.5 s
+ *
+ * Returns null if no URL can be determined (dev mode without REPLIT_DOMAINS).
+ */
+export function buildVoiceCallKeyboard(opts?: {
+  includeTextReplyButton?: boolean;
+}): InlineKeyboardMarkup | null {
+  const url = getVoiceCallUrl();
+  if (!url) return null;
+  const row: InlineKeyboardButton[] = [
+    { text: '🎙 Open voice call', url },
+  ];
+  if (opts?.includeTextReplyButton) {
+    row.push({ text: '💬 Text reply', callback_data: 'voice_dismiss' });
+  }
+  return { inline_keyboard: [row] };
 }
 
 export async function sendMessage(
