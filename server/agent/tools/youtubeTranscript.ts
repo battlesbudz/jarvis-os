@@ -441,12 +441,27 @@ export const youtubeTranscriptTool: AgentTool = {
           }
         }
 
-        // ── Build the audio-mode hint shown when the no-captions path was taken
-        // and every strategy (including Phase 3 audio transcription) returned nothing.
-        // Only shown when forceAudio is not already set — it would be redundant otherwise.
+        // ── Auto-retry with audio mode when no captions were detected ────────
+        // Instead of surfacing a hint and making the user ask again, automatically
+        // re-run through the audio transcription pipeline one time.
+        if (noCaptionsDetected && !forceAudio) {
+          console.log(`[get_youtube_transcript] noCaptionsDetected — auto-retrying with audioOnly=true`);
+          try {
+            const { segments: audioSegs } = await fetchTranscriptCached(input, { bypassCache: true, audioOnly: true });
+            if (audioSegs.length > 0) {
+              return withVisuals(buildResult(audioSegs, "audio-transcription (auto-retry)"));
+            }
+          } catch (audioRetryErr) {
+            console.warn(
+              `[get_youtube_transcript] audio auto-retry failed: ${audioRetryErr instanceof Error ? audioRetryErr.message : String(audioRetryErr)}`
+            );
+          }
+        }
+
+        // Build the hint only when the auto-retry (or forceAudio pass) also produced nothing.
         const audioHint =
           noCaptionsDetected && !forceAudio
-            ? "\n\n💡 **This video has no official captions.** Try asking me to transcribe it with audio mode (`force_audio=true`) — I'll download the audio and run it through speech-to-text."
+            ? "\n\n💡 **This video has no official captions and the automatic audio transcription also failed.** You can still try asking me explicitly to transcribe it in audio mode — retrying via a different network path may succeed."
             : "";
 
         // ── Strategy 7: Tavily web-search ────────────────────────────────────
