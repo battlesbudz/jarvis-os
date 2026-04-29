@@ -348,19 +348,66 @@ export const learnedResourceIds = new Map<string, string>();
 // the very first search after a restart already benefits from persisted coordinates.
 const searchBarCacheReady: Promise<void> = (async () => {
   try {
+    // The seed runs at module-load time, potentially before the inline migration in
+    // db.ts has added the coordinates_valid column. Use a try/fallback pattern: first
+    // attempt the full query (with coordinates_valid); on column-not-found error, fall
+    // back to the legacy query and treat all rows as valid (pre-migration behaviour).
     // Sort descending by updatedAt so that, for each appPackage, the most
     // recently confirmed resource_id wins when building the learned registry
     // (deterministic even when multiple users have conflicting IDs).
-    const rows = await db
-      .select()
-      .from(searchBarLocations)
-      .orderBy(drizzleSql`updated_at DESC`);
+    type SeedRow = {
+      user_id: string;
+      app_package: string;
+      coordinates_x: number;
+      coordinates_y: number;
+      discovered_resource_id: string | null;
+      coordinates_valid: boolean;
+    };
+    let rows: SeedRow[];
+    try {
+      const result = await db.execute(drizzleSql`
+        SELECT user_id, app_package, coordinates_x, coordinates_y,
+               discovered_resource_id, coordinates_valid
+        FROM search_bar_locations
+        ORDER BY updated_at DESC
+      `);
+      rows = result.rows as SeedRow[];
+    } catch (colErr: unknown) {
+      // Column missing (migration not yet applied) — fall back without it.
+      // SQLSTATE 42703 = "undefined_column"; prefer the structured code field
+      // provided by pg/pg-pool before falling back to message-string matching.
+      const pgCode = (colErr as { code?: string }).code;
+      const errMsg = colErr instanceof Error ? colErr.message : String(colErr);
+      const isUndefinedColumn = pgCode === "42703" ||
+        (!pgCode && (errMsg.includes("coordinates_valid") || errMsg.includes("42703")));
+      if (isUndefinedColumn) {
+        const fallback = await db.execute(drizzleSql`
+          SELECT user_id, app_package, coordinates_x, coordinates_y,
+                 discovered_resource_id
+          FROM search_bar_locations
+          ORDER BY updated_at DESC
+        `);
+        rows = (fallback.rows as Omit<SeedRow, "coordinates_valid">[]).map(
+          (r) => ({ ...r, coordinates_valid: true }),
+        );
+      } else {
+        throw colErr;
+      }
+    }
     for (const row of rows) {
-      searchBarCoordCache.set(`${row.userId}:${row.appPackage}`, { x: row.coordinatesX, y: row.coordinatesY });
+      // Only restore coordinate cache from rows where coordinates are still valid.
+      // Rows where coordinates_valid=false were soft-invalidated (stale cache cleared)
+      // but preserved so that discovered_resource_id can still seed learnedResourceIds.
+      if (row.coordinates_valid !== false) {
+        searchBarCoordCache.set(`${row.user_id}:${row.app_package}`, { x: row.coordinates_x, y: row.coordinates_y });
+      }
+      // Always seed learnedResourceIds from any row that has a discovered resource ID,
+      // including soft-invalidated rows — the resource ID is still valid even when
+      // the coordinates are stale.
       // First-write wins because rows are ordered newest-first, so the
       // most recent resource_id for each package is set exactly once.
-      if (row.discoveredResourceId && !learnedResourceIds.has(row.appPackage)) {
-        learnedResourceIds.set(row.appPackage, row.discoveredResourceId);
+      if (row.discovered_resource_id && !learnedResourceIds.has(row.app_package)) {
+        learnedResourceIds.set(row.app_package, row.discovered_resource_id);
       }
     }
     console.log(`[searchBarCache] seeded ${rows.length} entr${rows.length === 1 ? "y" : "ies"} from DB (${learnedResourceIds.size} learned resource IDs)`);
@@ -1452,9 +1499,13 @@ export const androidSearchInAppTool: AgentTool = {
         const hadEntry = searchBarCoordCache.delete(coordCacheKey);
         if (hadEntry) {
           console.log(`[${label}] step 2 — stale cache cleared for ${appPackage} (retry path)`);
-          db.delete(searchBarLocations)
+          // Soft-invalidate the DB row instead of deleting it so that
+          // discoveredResourceId is preserved and can re-seed learnedResourceIds
+          // on the next server restart even before new coordinates are discovered.
+          db.update(searchBarLocations)
+            .set({ coordinatesValid: false, updatedAt: drizzleSql`NOW()` })
             .where(and(eq(searchBarLocations.userId, ctx.userId), eq(searchBarLocations.appPackage, appPackage)))
-            .catch((err: unknown) => console.warn(`[searchBarCache] DB delete failed for ${appPackage}:`, err));
+            .catch((err: unknown) => console.warn(`[searchBarCache] DB soft-invalidate failed for ${appPackage}:`, err));
         }
       }
 
@@ -1532,6 +1583,14 @@ export const androidSearchInAppTool: AgentTool = {
               searchElementFound = true;
               searchX = typeof searchVisionElement.center_x === "number" ? searchVisionElement.center_x : null;
               searchY = typeof searchVisionElement.center_y === "number" ? searchVisionElement.center_y : null;
+              // If vision found a resource_id and auto-discovery didn't already provide
+              // one, capture it so the cache write can persist it in learnedResourceIds.
+              // This ensures subsequent accessibility-tree lookups can use the fast-path
+              // (Strategy 1.5) instead of falling back to vision every time.
+              if (!autoDiscoveredResourceId && searchVisionElement.resource_id) {
+                autoDiscoveredResourceId = searchVisionElement.resource_id;
+                console.log(`[${label}] step 2 — vision fallback captured resource_id="${autoDiscoveredResourceId}" for ${appPackage}`);
+              }
               stepLog.push({
                 step: 2,
                 outcome: "vision_fallback_success",
@@ -1595,12 +1654,13 @@ export const androidSearchInAppTool: AgentTool = {
           // Update the in-memory learned registry whenever we have a resource_id.
           if (finalRid) learnedResourceIds.set(appPackage, finalRid);
           db.insert(searchBarLocations)
-            .values({ userId: ctx.userId, appPackage, coordinatesX: finalX, coordinatesY: finalY, discoveredResourceId: finalRid ?? undefined })
+            .values({ userId: ctx.userId, appPackage, coordinatesX: finalX, coordinatesY: finalY, discoveredResourceId: finalRid ?? undefined, coordinatesValid: true })
             .onConflictDoUpdate({
               target: [searchBarLocations.userId, searchBarLocations.appPackage],
               set: {
                 coordinatesX: finalX,
                 coordinatesY: finalY,
+                coordinatesValid: true,
                 ...(finalRid ? { discoveredResourceId: finalRid } : {}),
                 updatedAt: drizzleSql`NOW()`,
               },
