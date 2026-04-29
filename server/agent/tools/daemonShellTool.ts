@@ -1918,11 +1918,12 @@ Use this when:
       try { screenshotHash = await computeScreenshotHash(tapEvent.screenshotBase64); } catch { /* noop */ }
     }
 
-    // 4. Upsert — if an entry for this user+app+context+label already exists, update it
+    // 4. Upsert — key on user+app+screenContext+label to avoid cross-screen collisions
     const existing = await db.select().from(buttonLocations).where(
       and(
         eq(buttonLocations.userId, ctx.userId),
         eq(buttonLocations.appPackage, tapEvent.appPackage),
+        eq(buttonLocations.screenContext, tapEvent.screenContext),
         eq(buttonLocations.elementLabel, label),
       )
     ).limit(1);
@@ -1990,6 +1991,10 @@ CONFIRM/DENY flow: after the user confirms ("yes") or denies ("no"), call this t
       app_package: {
         type: "string",
         description: "The Android package name of the app, e.g. com.instagram.android. If not provided, Jarvis reads the current foreground app.",
+      },
+      screen_context: {
+        type: "string",
+        description: "The current screen/activity context (e.g. 'com.instagram.android.activity.MainTabActivity'). Narrows the DB match to entries trained on the same screen. Read from the most recent android_read_screen or android_screen_understand result if available.",
       },
       skip_fallback: {
         type: "boolean",
@@ -2069,29 +2074,69 @@ CONFIRM/DENY flow: after the user confirms ("yes") or denies ("no"), call this t
       }
     }
 
-    // Query DB — prefer non-stale, highest confidence
+    const screenContextArg = String(args.screen_context || "").trim();
+
+    // Query DB — ordered by confidence; up to 10 rows so we can prefer by screen context
     const rows = await db.select().from(buttonLocations).where(
       and(
         eq(buttonLocations.userId, ctx.userId),
         ...(appPackage ? [eq(buttonLocations.appPackage, appPackage)] : []),
         eq(buttonLocations.elementLabel, label),
       )
-    ).orderBy(desc(buttonLocations.confidence)).limit(5);
+    ).orderBy(desc(buttonLocations.confidence)).limit(10);
 
     if (rows.length === 0) {
+      // ── Accessibility-tree fallback ────────────────────────────────────────
+      // No trained entry: try readScreen to find a matching visible element
+      const skipFallbackEarly = args.skip_fallback === true;
+      if (!skipFallbackEarly) {
+        const screenElements = await readScreen(ctx.userId);
+        const labelLower = label.toLowerCase();
+        const match = screenElements.find((e) => e.label.toLowerCase().includes(labelLower));
+        if (match) {
+          const tapAllowed = await isAndroidDaemonActionAllowed(ctx.userId, "android_tap_type");
+          if (tapAllowed) {
+            const fallbackTap = await sendDaemonOp(ctx.userId, { type: "android_tap", x: match.x, y: match.y }, 12_000);
+            if (fallbackTap.ok) {
+              return {
+                ok: true,
+                content: JSON.stringify({
+                  tapped: true,
+                  found_via: "accessibility_fallback",
+                  label: match.label,
+                  x: match.x,
+                  y: match.y,
+                  suggest_training: true,
+                  message: `No trained location exists for "${label}" — found a visible element "${match.label}" via accessibility tree and tapped it at (${match.x},${match.y}). Call android_train_button to save this location for future use.`,
+                }),
+                label: `android_find_trained_button: fallback tap "${match.label}" at (${match.x},${match.y})`,
+              };
+            }
+          }
+        }
+      }
       return {
         ok: false,
         content: JSON.stringify({
           found: false,
-          message: `No trained location found for "${label}"${appPackage ? ` in ${appPackage}` : ""}. Call android_train_button to teach Jarvis where this button is.`,
+          message: `No trained location found for "${label}"${appPackage ? ` in ${appPackage}` : ""} and no matching accessible element was visible on screen. Call android_train_button to teach Jarvis where this button is.`,
           suggest_training: true,
         }),
         label: `android_find_trained_button: no entry for "${label}"`,
       };
     }
 
-    // Prefer non-stale rows
-    const best = rows.find((r) => !r.stale) ?? rows[0];
+    // Prefer: exact screen_context match → non-stale → highest confidence
+    const sortedRows = [...rows].sort((a, b) => {
+      const aCtxMatch = screenContextArg && a.screenContext === screenContextArg ? 1 : 0;
+      const bCtxMatch = screenContextArg && b.screenContext === screenContextArg ? 1 : 0;
+      if (bCtxMatch !== aCtxMatch) return bCtxMatch - aCtxMatch; // screen context match first
+      const aStalePenalty = a.stale ? -1 : 0;
+      const bStalePenalty = b.stale ? -1 : 0;
+      if (bStalePenalty !== aStalePenalty) return bStalePenalty - aStalePenalty; // non-stale first
+      return b.confidence - a.confidence; // highest confidence last tiebreak
+    });
+    const best = sortedRows[0];
 
     if (best.stale || best.confidence < 0.3) {
       return {
@@ -2165,11 +2210,13 @@ CONFIRM/DENY flow: after the user confirms ("yes") or denies ("no"), call this t
       };
     }
 
-    // Capture pre-tap accessibility tree — used for coordinate-aware stale detection
+    // Capture pre-tap state — accessibility tree + screenshot — BEFORE tap
     const preTapElements = await readScreen(ctx.userId);
+    const preTapScreenshot = await captureScreenshot(ctx.userId);
     const COORD_RADIUS = 60; // px — element centre must be within this radius of trained coords
+    // ClickableElement uses .x/.y (not .center_x/.center_y)
     const preTapNear = preTapElements.filter(
-      (e) => Math.abs(e.center_x - best.coordinatesX) <= COORD_RADIUS && Math.abs(e.center_y - best.coordinatesY) <= COORD_RADIUS
+      (e) => Math.abs(e.x - best.coordinatesX) <= COORD_RADIUS && Math.abs(e.y - best.coordinatesY) <= COORD_RADIUS
     );
 
     // If no clickable element is present near the trained coordinates, the UI has likely changed
@@ -2203,7 +2250,7 @@ CONFIRM/DENY flow: after the user confirms ("yes") or denies ("no"), call this t
     await new Promise((r) => setTimeout(r, 400));
     const postTapElements = await readScreen(ctx.userId);
     const postTapNear = postTapElements.filter(
-      (e) => Math.abs(e.center_x - best.coordinatesX) <= COORD_RADIUS && Math.abs(e.center_y - best.coordinatesY) <= COORD_RADIUS
+      (e) => Math.abs(e.x - best.coordinatesX) <= COORD_RADIUS && Math.abs(e.y - best.coordinatesY) <= COORD_RADIUS
     );
     // Verified if: element at coords disappeared (button triggered navigation/dismiss)
     // OR element at coords changed label (state flip, e.g. like → unlike)
@@ -2212,10 +2259,9 @@ CONFIRM/DENY flow: after the user confirms ("yes") or denies ("no"), call this t
     const elementGone = preTapNear.length > 0 && postTapNear.length === 0;
     const labelChanged = [...preTapNearLabels].some((l) => !postTapNearLabels.has(l)) ||
                          [...postTapNearLabels].some((l) => !preTapNearLabels.has(l));
-    // Fallback: screenshot diff if accessibility tree shows no change near coords
+    // Fallback: screenshot diff using the true pre-tap screenshot captured before the tap
     let verified = elementGone || labelChanged;
     if (!verified) {
-      const preTapScreenshot = await captureScreenshot(ctx.userId);
       const postTapScreenshot = await captureScreenshot(ctx.userId);
       if (preTapScreenshot && postTapScreenshot) {
         try {
