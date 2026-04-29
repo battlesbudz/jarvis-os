@@ -23,6 +23,14 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Colors from '@/constants/colors';
 import { getApiUrl, apiRequest } from '@/lib/query-client';
 
+class DriveApiError extends Error {
+  code: string;
+  constructor(message: string, code: string) {
+    super(message);
+    this.code = code;
+  }
+}
+
 interface InboxItem {
   id: string;
   sourceType: string;
@@ -303,7 +311,7 @@ export default function InboxScreen() {
     mutationFn: async (id: string) => {
       const res = await apiRequest('POST', `/api/deliverables/${id}/save-to-drive`, {});
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to save to Drive');
+      if (!res.ok) throw new DriveApiError(data.error || 'Failed to save to Drive', data.code || 'DRIVE_ERROR');
       return data as { ok: boolean; driveLink: string };
     },
     onSuccess: (data, id) => {
@@ -316,7 +324,21 @@ export default function InboxScreen() {
       }
     },
     onError: (err: Error) => {
-      Alert.alert('Error', err.message || 'Could not save to Drive.');
+      if (err instanceof DriveApiError && err.code === 'DRIVE_NOT_CONNECTED') {
+        Alert.alert(
+          'Google Drive not connected',
+          'Connect Google Drive in Settings to save documents directly to your Drive.',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Go to Settings',
+              onPress: () => router.push({ pathname: '/(tabs)/profile', params: { focus: 'drive' } }),
+            },
+          ],
+        );
+      } else {
+        Alert.alert('Error', err.message || 'Could not save to Drive.');
+      }
     },
   });
 

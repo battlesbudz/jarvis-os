@@ -192,6 +192,7 @@ export default function ProfileScreen() {
   const { focus } = useLocalSearchParams<{ focus?: string }>();
   const scrollViewRef = useRef<ScrollView>(null);
   const webhookRowRef = useRef<View>(null);
+  const driveRowRef = useRef<View>(null);
   const { logout, username: authUsername, userEmail: authUserEmail } = useAuth();
   const [stats, setStats] = useState<UserStats>({
     streak: 0, totalCompleted: 0, bestStreak: 0, xp: 0, badges: [], claimedRewards: [],
@@ -1549,6 +1550,23 @@ export default function ProfileScreen() {
     return () => clearTimeout(timer);
   }, [focus]);
 
+  useEffect(() => {
+    if (focus !== 'drive') return;
+    const timer = setTimeout(() => {
+      const scrollNode = findNodeHandle(scrollViewRef.current);
+      if (scrollNode && driveRowRef.current) {
+        driveRowRef.current.measureLayout(
+          scrollNode,
+          (_x, y) => {
+            scrollViewRef.current?.scrollTo({ y: Math.max(0, y - 24), animated: true });
+          },
+          () => {}
+        );
+      }
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [focus]);
+
   const lifetimeXp = getLifetimeXp(stats);
   const xpInfo = getXpForNextLevel(lifetimeXp);
   const level = getLevel(lifetimeXp);
@@ -2453,6 +2471,7 @@ export default function ProfileScreen() {
           </View>
 
           {/* Google Drive */}
+          <View ref={driveRowRef}>
           {driveStatus?.googleConnected && (
             <View style={[styles.platformsList, { marginTop: 12 }]}>
               <View style={[styles.platformRow, driveStatus.enabled ? styles.platformRowBorder : undefined]}>
@@ -2517,6 +2536,7 @@ export default function ProfileScreen() {
               )}
             </View>
           )}
+          </View>
 
           <View ref={webhookRowRef} style={[styles.platformsList, { marginTop: 12 }]}>
             <View style={styles.platformRow}>
