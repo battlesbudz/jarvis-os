@@ -52,6 +52,7 @@ import { isUserPaired, sendDaemonOp, pingDaemon, getOpAuditLog, isDaemonActionAl
 import type { DaemonAction, DaemonOp } from "./daemon/bridge";
 import { telegramLinks, channelLinks } from "@shared/schema";
 import { connectChannelTool } from "./agent/tools/connectChannel";
+import { registerSubscriber, removeSubscriberIfCurrent } from "./webchatSSE";
 import { YoutubeTranscript } from "youtube-transcript/dist/youtube-transcript.esm.js";
 import ytSearch from "yt-search";
 import { buildYouTubeContextBlock } from "./utils/youtubeAutoFetch";
@@ -810,6 +811,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.use(authMiddleware);
+
+  // ── Webchat SSE push stream ─────────────────────────────────────────────────
+  // The /chat page connects here so background job results can be pushed in
+  // real time instead of accumulating in the in_app inbox.
+  app.get("/api/webchat/events", (req: Request, res: Response) => {
+    const userId = req.userId;
+    if (!userId) return res.status(401).json({ error: "Not authenticated" });
+
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
+    res.flushHeaders();
+
+    res.write(": connected\n\n");
+
+    const token = registerSubscriber(userId, res);
+
+    req.on("close", () => {
+      removeSubscriberIfCurrent(userId, token);
+    });
+  });
+
   app.use("/api/oauth", oauthRouter);
 
   registerDataRoutes(app);
