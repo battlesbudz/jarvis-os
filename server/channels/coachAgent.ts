@@ -17,7 +17,7 @@ import { runOrchestrator } from "../agent/orchestrator";
 import { preThink, postCheck } from "../agent/qualityLoop";
 import { getModel, MODEL_DEFAULTS } from "../lib/modelPrefs";
 import { contextRegistry } from "../agent/contextRegistry";
-import { classifyBuildIntent } from "../agent/queryClassifier";
+import { classifyBuildIntent, classifyBuildFollowUp, BUILD_ACK_MARKER } from "../agent/queryClassifier";
 import { submitAgentJob } from "../agent/jobClient";
 // Side-effect import: registers workspace topic context provider.
 import "../agent/providers/topicContext";
@@ -592,7 +592,7 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
   // directly to the build_feature background job — same pattern as research.
   // This bypasses the orchestrator entirely and returns an immediate ack so
   // the user knows the build is queued.
-  if (userText && classifyBuildIntent(userText)) {
+  if (userText && (classifyBuildIntent(userText) || classifyBuildFollowUp(userText, chatMessages))) {
     const buildTitle = `Build: ${userText.slice(0, 80)}${userText.length > 80 ? "…" : ""}`;
     const buildPrompt = userText;
     const buildInput: Record<string, unknown> = { originChannel: channelName };
@@ -613,8 +613,9 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
         prompt: buildPrompt,
         input: buildInput,
       });
-      const ackReply =
-        "Got it — I've queued that build job. I'll notify you when the new tool is ready (usually takes a minute or two).";
+      // BUILD_ACK_MARKER is embedded verbatim so classifyBuildFollowUp can
+      // recognise this turn as a completed build ack — keeping the two in sync.
+      const ackReply = `Got it — I've ${BUILD_ACK_MARKER}. I'll notify you when the new tool is ready (usually takes a minute or two).`;
       console.log(
         `[${channelName}] build intent detected — queued build_feature job=${jobId} user=${userId}`,
       );

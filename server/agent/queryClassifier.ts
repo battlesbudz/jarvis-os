@@ -63,6 +63,41 @@ const BUILD_PATTERNS = [
 ];
 
 /**
+ * Patterns that identify iterative build refinements / follow-up tweaks.
+ *
+ * These cover messages that don't contain a tool noun but are clearly asking
+ * Jarvis to adjust something it just built:
+ *   - "now add retry logic"
+ *   - "also add error handling"
+ *   - "update it to support timeouts"
+ *   - "change it to use async/await"
+ *   - "fix the bug in it"
+ *   - "make it also log to console"
+ *   - "rename the variable X to Y"
+ *   - "refactor it to be cleaner"
+ */
+const BUILD_REFINEMENT_PATTERNS = [
+  // "now add X" / "also add X" / "then add X"
+  /\b(now|also|then)\s+add\b/i,
+  // "also make it (do|support|handle|work|log|return|accept|use) X"
+  /\balso\s+make\s+it\b/i,
+  // "update it to …" / "change it to …" / "modify it to …"
+  /\b(update|change|modify|adjust)\s+it\s+to\b/i,
+  // "fix (the|a|any)? X in it" / "fix the bug in it" / "fix it to …"
+  /\bfix\s+(the\s+|a\s+|any\s+)?\w+(\s+\w+)?\s+in\s+it\b/i,
+  /\bfix\s+it\s+to\b/i,
+  // "make it (also )? (support|handle|accept|return|log|use|work|run) …"
+  /\bmake\s+it\s+(also\s+)?(support|handle|accept|return|log|use|work|run|check|retry|validate|include|exclude|store|save|send|fetch|call|catch|throw|wrap|expose|add)\b/i,
+  // "add retry logic" / "add error handling" / "add logging" / "add caching"
+  // without a build verb — covers common dev tweaks that need no tool noun
+  /\badd\s+(retry|error\s+handling|logging|caching|validation|rate.?limit|timeout|auth|authentication|pagination|sorting|filtering|debounce|throttl)\b/i,
+  // "refactor it …" / "clean it up" / "simplify it"
+  /\b(refactor|clean\s+up|simplify|optimis|optimiz)\s+(it|the)\b/i,
+  // "rename X to Y (in it)" 
+  /\brename\s+\S+\s+to\s+\S+/i,
+];
+
+/**
  * Returns true when the user is asking Jarvis to build a new tool or feature.
  *
  * Used by coachAgent to short-circuit the orchestrator and route directly to
@@ -72,4 +107,44 @@ const BUILD_PATTERNS = [
 export function classifyBuildIntent(text: string): boolean {
   if (!text || text.trim().length === 0) return false;
   return BUILD_PATTERNS.some((re) => re.test(text));
+}
+
+/**
+ * Stable substring that Jarvis always includes in the ack reply when a build
+ * job is successfully queued.  Exported so coachAgent.ts can embed it in the
+ * reply it sends — keeping the marker and the reply in sync automatically and
+ * avoiding a hidden copy-paste coupling.
+ */
+export const BUILD_ACK_MARKER = "queued that build job";
+
+/**
+ * Returns true when the current message is a follow-up refinement to an
+ * ongoing build conversation.
+ *
+ * Two conditions must both be true:
+ *   1. The most-recent assistant message in chatHistory contains the build-ack
+ *      marker (i.e. Jarvis already acknowledged a build request this session).
+ *   2. The current message matches at least one BUILD_REFINEMENT_PATTERN OR
+ *      one of the regular BUILD_PATTERNS (the user may rephrase the original
+ *      request entirely).
+ *
+ * chatHistory is stored newest-first (as per coachAgent convention).
+ */
+export function classifyBuildFollowUp(
+  text: string,
+  chatHistory: Array<{ role: string; content: string }>,
+): boolean {
+  if (!text || text.trim().length === 0) return false;
+
+  // Find the most-recent assistant message
+  const lastAssistant = chatHistory.find((m) => m.role === "assistant");
+  if (!lastAssistant || !lastAssistant.content.includes(BUILD_ACK_MARKER)) {
+    return false;
+  }
+
+  // The prior turn was a build ack — any refinement pattern now qualifies
+  return (
+    BUILD_REFINEMENT_PATTERNS.some((re) => re.test(text)) ||
+    BUILD_PATTERNS.some((re) => re.test(text))
+  );
 }
