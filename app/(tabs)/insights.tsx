@@ -42,6 +42,8 @@ import {
   getChatHistory,
   saveChatHistory,
   clearChatHistory,
+  getCoachSessionId,
+  saveCoachSessionId,
   getLifeContext,
   getCoachingMode,
   saveCoachingMode,
@@ -738,6 +740,7 @@ export default function InsightsScreen() {
   const speakAbortRef = useRef<AbortController | null>(null);
   const chatAbortControllerRef = useRef<AbortController | null>(null);
   const chatRunIdRef = useRef<string | null>(null);
+  const sdkSessionIdRef = useRef<string | null>(null);
   const streamingAssistantIdRef = useRef<string | null>(null);
   const isSpeakingRef = useRef(false);
   const webRecorderRef = useRef<MediaRecorder | null>(null);
@@ -1673,13 +1676,14 @@ export default function InsightsScreen() {
     let loadedLifeContext: LifeContext | null = null;
     let loadedCommitments: Commitment[] = [];
     try {
-      const [lg, ls, lh, savedMessages, lc, savedMode] = await Promise.all([
+      const [lg, ls, lh, savedMessages, lc, savedMode, savedSessionId] = await Promise.all([
         getGoals(),
         getStats(),
         getCompletionHistory(),
         getChatHistory(),
         getLifeContext(),
         getCoachingMode(),
+        getCoachSessionId(),
       ]);
       loadedGoals = lg;
       loadedStats = ls;
@@ -1692,6 +1696,7 @@ export default function InsightsScreen() {
       setLifeContext(lc);
       setCoachingMode(savedMode);
       coachingModeRef.current = savedMode;
+      sdkSessionIdRef.current = savedSessionId;
 
       // Fetch commitments
       try {
@@ -1959,6 +1964,7 @@ export default function InsightsScreen() {
           telegramConnected: telegramConnectedRef.current,
           commitments: commitmentsRef.current,
           coachingMode: coachingModeRef.current,
+          sdkSessionId: sdkSessionIdRef.current || undefined,
         }),
         signal: fetchAbort.signal,
       });
@@ -1998,7 +2004,10 @@ export default function InsightsScreen() {
             if (data === '[DONE]') continue;
             try {
               const parsed = JSON.parse(data);
-              if (parsed.type === 'aborted') {
+              if (parsed.type === 'session_init' && parsed.sdkSessionId) {
+                sdkSessionIdRef.current = parsed.sdkSessionId;
+                saveCoachSessionId(parsed.sdkSessionId).catch(() => {});
+              } else if (parsed.type === 'aborted') {
                 streamAborted = true;
                 break outer;
               } else if (parsed.type === 'confirm_required') {
@@ -2401,7 +2410,8 @@ export default function InsightsScreen() {
       setConfirmClear(true);
       return;
     }
-    await clearChatHistory();
+    await Promise.all([clearChatHistory(), saveCoachSessionId(null)]);
+    sdkSessionIdRef.current = null;
     setMessages([]);
     setConfirmClear(false);
   }, [confirmClear]);

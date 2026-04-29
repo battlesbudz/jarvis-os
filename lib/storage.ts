@@ -802,6 +802,36 @@ export async function clearChatHistory(): Promise<void> {
   }
 }
 
+export async function getCoachSessionId(): Promise<string | null> {
+  try {
+    const baseUrl = getApiUrl();
+    const url = new URL('/api/data/coach-session-id', baseUrl);
+    const authHeaders = await getAuthHeaders();
+    const res = await fetch(url.toString(), { headers: { ...authHeaders } });
+    if (!res.ok) return null;
+    const json = await res.json() as { sdkSessionId: string | null };
+    return json.sdkSessionId || null;
+  } catch {
+    return null;
+  }
+}
+
+export async function saveCoachSessionId(sdkSessionId: string | null): Promise<void> {
+  try {
+    const baseUrl = getApiUrl();
+    const url = new URL('/api/data/coach-session-id', baseUrl);
+    const authHeaders = await getAuthHeaders();
+    const res = await fetch(url.toString(), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...authHeaders },
+      body: JSON.stringify({ sdkSessionId }),
+    });
+    if (!res.ok) console.warn('[storage] saveCoachSessionId failed:', res.status);
+  } catch (e) {
+    console.warn('[storage] saveCoachSessionId error:', e);
+  }
+}
+
 export async function getDailyCoachNote(): Promise<{ note: string; date: string } | null> {
   try {
     const result = await apiGet('/api/data/user-preferences');
