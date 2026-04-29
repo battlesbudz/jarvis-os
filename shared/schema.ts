@@ -1618,12 +1618,16 @@ export const selfHealAuditLog = pgTable("self_heal_audit_log", {
 // discoveredResourceId is the resource-id string found by auto-discovery so
 // future searches on the same app can try it directly (as a learned registry
 // entry) before falling back to full heuristic scoring.
+// coordinatesValid is set to false when a stale entry is detected (instead of
+// deleting the row) so that discoveredResourceId survives invalidation and can
+// still seed the learnedResourceIds registry on the next server restart.
 export const searchBarLocations = pgTable("search_bar_locations", {
   userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   appPackage: varchar("app_package", { length: 256 }).notNull(),
   coordinatesX: integer("coordinates_x").notNull(),
   coordinatesY: integer("coordinates_y").notNull(),
   discoveredResourceId: varchar("discovered_resource_id", { length: 256 }),
+  coordinatesValid: boolean("coordinates_valid").notNull().default(true),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 }, (table) => [
   primaryKey({ columns: [table.userId, table.appPackage] }),

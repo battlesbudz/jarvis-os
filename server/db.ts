@@ -1471,6 +1471,12 @@ export async function ensureTablesExist() {
       ALTER TABLE search_bar_locations
         ADD COLUMN IF NOT EXISTS discovered_resource_id VARCHAR(256)
     `);
+    // coordinates_valid allows soft-invalidation of stale entries (coordinates_valid=false)
+    // without losing the discovered_resource_id for the learnedResourceIds registry.
+    await db.execute(sql`
+      ALTER TABLE search_bar_locations
+        ADD COLUMN IF NOT EXISTS coordinates_valid BOOLEAN NOT NULL DEFAULT TRUE
+    `);
 
     // ── Memory Review Gate (Phase 6) ─────────────────────────────────────────
     await db.execute(sql`ALTER TABLE user_memories ADD COLUMN IF NOT EXISTS pending_review BOOLEAN NOT NULL DEFAULT FALSE`).catch(() => {});
