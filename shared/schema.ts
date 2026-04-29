@@ -589,6 +589,24 @@ export type NotificationType = typeof NOTIFICATION_TYPES[number];
 export const CHANNEL_NAMES = ["telegram", "whatsapp", "slack", "daemon", "discord", "in_app"] as const;
 export type ChannelName = typeof CHANNEL_NAMES[number];
 
+/**
+ * Canonical simple-origin values recognised by _notifyJobCompleteCore.
+ * "discord*" is handled separately via a startsWith prefix check and is NOT
+ * listed here — it matches any string that begins with "discord".
+ *
+ * IMPORTANT: every value added here MUST also be handled in the switch inside
+ * notifyJobCompleteCore.ts.  TypeScript will produce a compile-time error on
+ * the exhaustiveness assertion in that switch's default branch if you forget.
+ */
+export const SIMPLE_ORIGIN_CHANNELS = [
+  "telegram",
+  "app",
+  "coach",
+  "appchat",
+  "voice",
+] as const;
+export type SimpleOriginChannel = typeof SIMPLE_ORIGIN_CHANNELS[number];
+
 // Discord OS — Phase 1: scheduled channel reports
 export const discordChannelSchedules = pgTable("discord_channel_schedules", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),

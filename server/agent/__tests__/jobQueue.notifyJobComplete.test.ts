@@ -10,6 +10,7 @@
 
 import { _notifyJobCompleteCore, type NotifyJobCompleteDeps } from "../notifyJobCompleteCore";
 import type { Channel, ChannelSendResult } from "../../channels/types";
+import { SIMPLE_ORIGIN_CHANNELS } from "@shared/schema";
 import type { ChannelName, NotificationType } from "@shared/schema";
 
 // ── Test bookkeeping ──────────────────────────────────────────────────────────
@@ -454,6 +455,50 @@ async function run() {
     assert(
       deps._channels.get("in_app")!.calls.length === 1,
       "T14-e: in_app channel sendMessage called once for voice origin",
+    );
+  }
+
+  // ── TGUARD: every SIMPLE_ORIGIN_CHANNELS value has an explicit test case ──
+  //
+  // This test enumerates the canonical origin list from @shared/schema and
+  // cross-checks it against a registry of tested values maintained right here.
+  //
+  // HOW TO UPDATE: when you add a new value to SIMPLE_ORIGIN_CHANNELS in
+  // shared/schema.ts, also:
+  //   1. Add a test block (Tn) for the new origin above.
+  //   2. Add the new value to `testedOrigins` below.
+  //
+  // Failure of TGUARD-b means a value exists in SIMPLE_ORIGIN_CHANNELS that
+  // has no test case yet.  Failure of TGUARD-c means a value was removed from
+  // SIMPLE_ORIGIN_CHANNELS but the registry here was not trimmed — keep both
+  // in sync.
+  console.log("\nTGUARD: all SIMPLE_ORIGIN_CHANNELS values are explicitly tested");
+  {
+    // One entry per test block above that covers a simple (non-discord) origin.
+    // Keep this set in sync with SIMPLE_ORIGIN_CHANNELS in shared/schema.ts.
+    const testedOrigins = new Set<string>([
+      "telegram", // T1, T2
+      "app",      // T6
+      "coach",    // T7
+      "appchat",  // T13
+      "voice",    // T14
+    ]);
+
+    assert(
+      SIMPLE_ORIGIN_CHANNELS.length > 0,
+      "TGUARD-a: SIMPLE_ORIGIN_CHANNELS is non-empty (sanity check)",
+    );
+
+    for (const origin of SIMPLE_ORIGIN_CHANNELS) {
+      assert(
+        testedOrigins.has(origin),
+        `TGUARD-b: "${origin}" has an explicit test case in this suite`,
+      );
+    }
+
+    assert(
+      SIMPLE_ORIGIN_CHANNELS.length === testedOrigins.size,
+      `TGUARD-c: testedOrigins registry (${testedOrigins.size} entries) matches SIMPLE_ORIGIN_CHANNELS length (${SIMPLE_ORIGIN_CHANNELS.length}) — no orphaned or missing entries`,
     );
   }
 
