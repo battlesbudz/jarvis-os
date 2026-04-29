@@ -30,7 +30,7 @@
 
 import { exec, spawn } from "child_process";
 import { promisify } from "util";
-import { readdir, readFile, rm, stat as fsStat } from "fs/promises";
+import { readdir, readFile, rm, stat as fsStat, writeFile } from "fs/promises";
 import { mkdtempSync } from "fs";
 import path from "path";
 import os from "os";
@@ -146,6 +146,39 @@ let ytdlpCmd = "yt-dlp";
 /** True once ensureYtdlpUpgraded() confirms the active yt-dlp is >= 2023.11.16. */
 let ytdlpSupportsImpersonate = false;
 
+// ── Persisted impersonate-flag cache ─────────────────────────────────────────
+// If --impersonate is discovered to be broken at runtime we write a small JSON
+// file so the next server boot skips the wasted first attempt entirely.
+// The file is cleared automatically when a version upgrade re-enables the flag.
+
+const YTDLP_FLAGS_PATH = path.join(process.cwd(), ".ytdlp-flags.json");
+
+async function loadPersistedImpersonateDisabled(): Promise<boolean> {
+  try {
+    const raw = await readFile(YTDLP_FLAGS_PATH, "utf8");
+    const data = JSON.parse(raw) as { impersonateDisabled?: boolean };
+    return data.impersonateDisabled === true;
+  } catch {
+    return false;
+  }
+}
+
+async function persistImpersonateDisabled(): Promise<void> {
+  try {
+    await writeFile(YTDLP_FLAGS_PATH, JSON.stringify({ impersonateDisabled: true }), "utf8");
+  } catch (e) {
+    console.warn("[transcriptCache] Failed to persist impersonate flag:", e instanceof Error ? e.message : String(e));
+  }
+}
+
+async function clearPersistedImpersonateDisabled(): Promise<void> {
+  try {
+    await rm(YTDLP_FLAGS_PATH, { force: true });
+  } catch {
+    // best-effort
+  }
+}
+
 /** Minimum yt-dlp version that supports --impersonate (added 2023.11.16). */
 const MIN_IMPERSONATE_VERSION = "2023.11.16";
 
@@ -166,6 +199,15 @@ export { ensureYtdlpUpgraded };
 async function ensureYtdlpUpgraded(): Promise<void> {
   if (ytdlpUpgradePromise) return ytdlpUpgradePromise;
   ytdlpUpgradePromise = (async () => {
+    // Load any persisted override from the previous run before doing the version
+    // check — if impersonate was already discovered to be broken we start with it
+    // disabled so the first download attempt doesn't waste a round-trip.
+    const persistedDisabled = await loadPersistedImpersonateDisabled();
+    if (persistedDisabled) {
+      ytdlpSupportsImpersonate = false;
+      console.log("[transcriptCache] Loaded persisted impersonate=false override from disk");
+    }
+
     try {
       // Capture the Nix binary's current version as a baseline before upgrading
       // so that any version comparison is always against the real installed value.
@@ -201,7 +243,10 @@ async function ensureYtdlpUpgraded(): Promise<void> {
         ytdlpCmd = "python3 -m yt_dlp";
         console.log(`[transcriptCache] yt-dlp upgraded to ${version} (using python3 -m yt_dlp)`);
         ytdlpSupportsImpersonate = modParsed >= MIN_IMPERSONATE_VERSION;
-        if (!ytdlpSupportsImpersonate) {
+        if (ytdlpSupportsImpersonate) {
+          // Version now supports impersonate — clear any stale persisted override
+          await clearPersistedImpersonateDisabled();
+        } else {
           console.warn(
             `[transcriptCache] yt-dlp too old for --impersonate (v${version}) — running without browser impersonation`
           );
@@ -228,7 +273,10 @@ async function ensureYtdlpUpgraded(): Promise<void> {
         }
         console.log(`[transcriptCache] yt-dlp version: ${activeVersion} (using Nix binary)`);
         ytdlpSupportsImpersonate = !!activeParsed && activeParsed >= MIN_IMPERSONATE_VERSION;
-        if (!ytdlpSupportsImpersonate) {
+        if (ytdlpSupportsImpersonate) {
+          // Version now supports impersonate — clear any stale persisted override
+          await clearPersistedImpersonateDisabled();
+        } else {
           console.warn(
             `[transcriptCache] yt-dlp too old for --impersonate (v${activeVersion}) — running without browser impersonation`
           );
@@ -579,6 +627,8 @@ async function fetchAudioTranscript(videoId: string, originalInput?: string): Pr
                 `disabling flag and retrying without it. stderr: ${firstStderr}`
             );
             ytdlpSupportsImpersonate = false;
+            // Persist so subsequent server boots skip the failed attempt
+            persistImpersonateDisabled().catch(() => null);
             await spawnYtdlp(buildCmd(false), 120_000);
           } else {
             throw firstErr;
