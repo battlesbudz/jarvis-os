@@ -404,15 +404,81 @@ class JarvisAccessibilityService : AccessibilityService() {
             Log.i(TAG, "Deleted fallback screenshot from gallery (filesystem): ${latestFile.name} (deleted=$fileDeleted)")
 
             // Also remove the MediaStore entry so the gallery doesn't show a broken thumbnail.
+            // On Android 10+ (API 29+) the DATA column is deprecated under scoped storage and
+            // may be empty, so we query by DISPLAY_NAME + RELATIVE_PATH to find the entry ID
+            // and then delete by content URI. On older APIs we fall back to the DATA column.
             try {
-                val rowsDeleted = contentResolver.delete(
-                    MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                    "${MediaStore.Images.Media.DATA} = ?",
-                    arrayOf(latestFile.absolutePath)
-                )
-                Log.i(TAG, "Deleted fallback screenshot from gallery (MediaStore by path): ${latestFile.name} (rows=$rowsDeleted)")
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    // Build the expected relative path, e.g. "Pictures/Screenshots/"
+                    val relativePath = latestFile.parentFile
+                        ?.let { parent ->
+                            // Convert absolute path to a relative path rooted at the
+                            // external storage root (e.g. /storage/emulated/0/Pictures/... ->
+                            // Pictures/...)
+                            val externalRoot = android.os.Environment
+                                .getExternalStorageDirectory().absolutePath
+                            if (parent.absolutePath.startsWith(externalRoot)) {
+                                parent.absolutePath.removePrefix(externalRoot).trimStart('/') + "/"
+                            } else {
+                                null
+                            }
+                        }
+
+                    if (relativePath == null) {
+                        Log.w(TAG, "MediaStore delete: could not derive RELATIVE_PATH for ${latestFile.absolutePath}; " +
+                            "falling back to DISPLAY_NAME + DATE_ADDED timestamp guard")
+                    }
+
+                    // DATE_ADDED is in epoch seconds; lastModified() is in milliseconds.
+                    // Use a 30-second look-back window to handle any delay between file write
+                    // and MediaStore indexing. When relativePath is available we rely on it
+                    // instead of the timestamp to keep the selection precise.
+                    val dateAddedFloor = latestFile.lastModified() / 1000 - 30
+
+                    val selection = buildString {
+                        append("${MediaStore.Images.Media.DISPLAY_NAME} = ?")
+                        if (relativePath != null) {
+                            append(" AND ${MediaStore.Images.Media.RELATIVE_PATH} = ?")
+                        } else {
+                            // No path available — narrow by timestamp to avoid deleting
+                            // same-named images in other directories.
+                            append(" AND ${MediaStore.Images.Media.DATE_ADDED} >= ?")
+                        }
+                    }
+                    val selectionArgs = if (relativePath != null) {
+                        arrayOf(latestFile.name, relativePath)
+                    } else {
+                        arrayOf(latestFile.name, dateAddedFloor.toString())
+                    }
+
+                    val cursor = contentResolver.query(
+                        MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                        arrayOf(MediaStore.Images.Media._ID),
+                        selection,
+                        selectionArgs,
+                        "${MediaStore.Images.Media.DATE_ADDED} DESC"
+                    )
+                    var rowsDeleted = 0
+                    cursor?.use {
+                        while (it.moveToNext()) {
+                            val id = it.getLong(it.getColumnIndexOrThrow(MediaStore.Images.Media._ID))
+                            val uri = android.content.ContentUris.withAppendedId(
+                                MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id
+                            )
+                            rowsDeleted += contentResolver.delete(uri, null, null)
+                        }
+                    }
+                    Log.i(TAG, "Deleted fallback screenshot from gallery (MediaStore API 29+ by name): ${latestFile.name} (rows=$rowsDeleted)")
+                } else {
+                    val rowsDeleted = contentResolver.delete(
+                        MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                        "${MediaStore.Images.Media.DATA} = ?",
+                        arrayOf(latestFile.absolutePath)
+                    )
+                    Log.i(TAG, "Deleted fallback screenshot from gallery (MediaStore legacy by path): ${latestFile.name} (rows=$rowsDeleted)")
+                }
             } catch (e: Exception) {
-                Log.w(TAG, "MediaStore delete by path failed: ${e.message}")
+                Log.w(TAG, "MediaStore delete failed: ${e.message}")
             }
 
             Base64.encodeToString(bytes, Base64.NO_WRAP)
