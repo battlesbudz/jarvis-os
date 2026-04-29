@@ -54,6 +54,20 @@ import type { TranscriptConfig, TranscriptResponse } from "youtube-transcript";
 let ytdlpUpgradePromise: Promise<void> | null = null;
 /** The yt-dlp invocation to use — updated to `python3 -m yt_dlp` if pip succeeds. */
 let ytdlpCmd = "yt-dlp";
+/** True once ensureYtdlpUpgraded() confirms the active yt-dlp is >= 2023.11.16. */
+let ytdlpSupportsImpersonate = false;
+
+/** Minimum yt-dlp version that supports --impersonate (added 2023.11.16). */
+const MIN_IMPERSONATE_VERSION = "2023.11.16";
+
+/**
+ * Extracts the leading YYYY.MM.DD portion of a yt-dlp version string so it can
+ * be compared lexicographically (the zero-padded date format makes this safe).
+ */
+function parseYtdlpVersionDate(v: string): string {
+  const m = v.match(/^(\d{4}\.\d{2}\.\d{2})/);
+  return m ? m[1] : "";
+}
 
 /** Returns the resolved yt-dlp command after any pip upgrade. Call after ensureYtdlpUpgraded(). */
 export function getYtdlpCmd(): string { return ytdlpCmd; }
@@ -81,6 +95,13 @@ async function ensureYtdlpUpgraded(): Promise<void> {
       if (version && version !== "2024.05.27") {
         ytdlpCmd = "python3 -m yt_dlp";
         console.log(`[transcriptCache] yt-dlp upgraded to ${version} (using python3 -m yt_dlp)`);
+        const parsed = parseYtdlpVersionDate(version);
+        ytdlpSupportsImpersonate = !!parsed && parsed >= MIN_IMPERSONATE_VERSION;
+        if (!ytdlpSupportsImpersonate) {
+          console.warn(
+            `[transcriptCache] yt-dlp too old for --impersonate (v${version}) — running without browser impersonation`
+          );
+        }
       } else {
         // pip didn't help — also try updating PATH in case binary landed in ~/.local/bin
         const { stdout: base } = await execAsync("python3 -m site --user-base", { timeout: 5_000 });
@@ -89,7 +110,15 @@ async function ensureYtdlpUpgraded(): Promise<void> {
           process.env.PATH = `${userBin}:${process.env.PATH ?? ""}`;
         }
         const { stdout: binVer } = await execAsync("yt-dlp --version", { timeout: 10_000 });
-        console.log(`[transcriptCache] yt-dlp version: ${binVer.trim()} (using Nix binary)`);
+        const binVersion = binVer.trim();
+        console.log(`[transcriptCache] yt-dlp version: ${binVersion} (using Nix binary)`);
+        const parsed = parseYtdlpVersionDate(binVersion);
+        ytdlpSupportsImpersonate = !!parsed && parsed >= MIN_IMPERSONATE_VERSION;
+        if (!ytdlpSupportsImpersonate) {
+          console.warn(
+            `[transcriptCache] yt-dlp too old for --impersonate (v${binVersion}) — running without browser impersonation`
+          );
+        }
       }
     } catch (err) {
       console.warn(
@@ -326,14 +355,15 @@ async function fetchAudioTranscript(videoId: string, originalInput?: string): Pr
         // ytdlpCmd is set to `python3 -m yt_dlp` if pip upgrade succeeded; falls
         // back to the Nix binary otherwise.
         // --impersonate chrome + realistic UA makes YouTube treat the request
-        // as a real browser rather than a bot. --retries 3 handles transient
-        // network errors without hard-failing.
+        // as a real browser rather than a bot (requires yt-dlp >= 2023.11.16).
+        // --retries 3 handles transient network errors without hard-failing.
+        const impersonateFlag = ytdlpSupportsImpersonate ? "--impersonate chrome " : "";
         await execAsync(
           `${ytdlpCmd} -f "bestaudio[filesize<80M]/bestaudio" --extract-audio --audio-format mp3 ` +
             `--no-playlist --no-warnings --quiet --no-progress ` +
             `--max-filesize 80M ` +
             `--retries 3 ` +
-            `--impersonate chrome ` +
+            `${impersonateFlag}` +
             `--user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" ` +
             `--output "${outputTemplate}" -- "${url}"`,
           { timeout: 120_000 }
