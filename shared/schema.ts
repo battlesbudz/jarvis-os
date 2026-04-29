@@ -1408,6 +1408,24 @@ export const userSkills = pgTable("user_skills", {
 export type UserSkill = typeof userSkills.$inferSelect;
 export type InsertUserSkill = typeof userSkills.$inferInsert;
 
+// ── Skill Candidates (Task #872) ──────────────────────────────────────────────
+// AI-generated skill proposals from the SkillCurator or LearningSynthesiser.
+// Users review pending candidates and can accept, edit, or dismiss them.
+// Accepted/edited candidates are written to user_skills (isActive=true).
+export const skillCandidates = pgTable("skill_candidates", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  triggerDescription: text("trigger_description").notNull(),
+  instructionText: text("instruction_text").notNull(),
+  sourceType: varchar("source_type").$type<"curator" | "synthesiser">().notNull().default("curator"),
+  status: varchar("status").$type<"pending" | "accepted" | "edited" | "dismissed">().notNull().default("pending"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export type SkillCandidate = typeof skillCandidates.$inferSelect;
+export type InsertSkillCandidate = typeof skillCandidates.$inferInsert;
+
 export const mcpServers = pgTable("mcp_servers", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id").references(() => users.id, { onDelete: "cascade" }),

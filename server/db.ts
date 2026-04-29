@@ -1482,6 +1482,24 @@ export async function ensureTablesExist() {
     await db.execute(sql`ALTER TABLE user_memories ADD COLUMN IF NOT EXISTS pending_review BOOLEAN NOT NULL DEFAULT FALSE`).catch(() => {});
     await db.execute(sql`ALTER TABLE user_memories ADD COLUMN IF NOT EXISTS review_status VARCHAR NOT NULL DEFAULT 'active'`).catch(() => {});
 
+    // ── Skill Candidates (Task #872) ─────────────────────────────────────────
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS skill_candidates (
+        id                 VARCHAR   PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id            VARCHAR   NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        name               TEXT      NOT NULL,
+        trigger_description TEXT     NOT NULL,
+        instruction_text   TEXT      NOT NULL,
+        source_type        VARCHAR   NOT NULL DEFAULT 'curator',
+        status             VARCHAR   NOT NULL DEFAULT 'pending',
+        created_at         TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `).catch(() => {});
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS skill_candidates_user_status_idx
+        ON skill_candidates (user_id, status)
+    `).catch(() => {});
+
     console.log("Database tables verified");
   } catch (error) {
     console.error("Failed to ensure database tables exist:", error);

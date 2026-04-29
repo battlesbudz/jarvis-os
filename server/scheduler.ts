@@ -596,7 +596,8 @@ export function startScheduler() {
       }
     }
 
-    // Sunday 04:30 — synthesise learnings from CORRECTIONS.md & ERRORS.md.
+    // Sunday 04:30 — synthesise learnings from CORRECTIONS.md & ERRORS.md,
+    // and run the SkillCurator to propose new skills from interaction patterns.
     // Operates on the owner's global workspace files (a single shared file set,
     // not per-user). Runs after the weekly pattern job pass (03:00). Deduped
     // per week via lastSynthesisRunKey so restarts within the same minute are safe.
@@ -606,7 +607,9 @@ export function startScheduler() {
         lastSynthesisRunKey = key;
         import('./intelligence/learningSynthesiser').then(({ synthesiseLearnings }) => {
           console.log('[Scheduler] Running weekly learning synthesis...');
-          synthesiseLearnings(true, 'scheduler').then((result) => {
+          // archiveAfter=true: archives (resets) CORRECTIONS.md + ERRORS.md after
+          // each weekly synthesis run so only new learnings accumulate each week.
+          synthesiseLearnings(true, true, 'scheduler').then((result) => {
             if (result.skipped) {
               console.log(`[Scheduler] Weekly synthesis skipped: ${result.skipReason}`);
               console.log(`[Audit] workspace_synthesise triggered=weekly skipped=true reason="${result.skipReason}"`);
@@ -621,6 +624,14 @@ export function startScheduler() {
             console.error('[Scheduler] Weekly learning synthesis failed:', err);
           });
         }).catch((err) => console.error('[Scheduler] learningSynthesiser import failed:', err));
+
+        // Run SkillCurator in parallel — auto-propose new skills from interaction history.
+        import('./intelligence/skillCurator').then(({ curateSkillsForAllUsers }) => {
+          console.log('[Scheduler] Running weekly skill curation...');
+          curateSkillsForAllUsers().catch((err) => {
+            console.error('[Scheduler] Weekly skill curation failed:', err);
+          });
+        }).catch((err) => console.error('[Scheduler] skillCurator import failed:', err));
       }
     }
 

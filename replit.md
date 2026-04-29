@@ -255,3 +255,22 @@ Jarvis can now read its own source code, reason about it, propose targeted impro
 - Allowed base directories: `server/`, `shared/`, `app/`, `components/`, `hooks/`, `constants/`, `lib/`.
 - Absolute paths, `..` traversal, and paths outside the allow-list are rejected at both layers.
 - The approval gate code (`codeProposalsRoutes.ts`) is explicitly excluded from the tool's self-modification instructions.
+
+## Skill Curator — Auto-Learning Permanent Skills (Task #872)
+
+Jarvis can now auto-detect habits from orchestration traces and interaction logs and turn them into permanent skills the user can review and activate.
+
+### Database
+- **`skill_candidates`** table — `id, user_id, name, trigger_description, instruction_text, source_type (curator|synthesiser), status (pending|accepted|edited|dismissed), created_at`.
+
+### Backend Services
+- **`server/intelligence/skillCurator.ts`** — `curateSkillsForUser(userId)` queries the past 7 days of orchestration traces and interaction logs, calls gpt-4o-mini to identify recurring patterns, and inserts them as `pending` skill candidates. `curateSkillsForAllUsers()` runs across all users. `emitSynthesiserCandidate(userId, bullet)` converts a learning-synthesiser bullet into a candidate (also via LLM).
+- **`server/intelligence/learningSynthesiser.ts`** — When triggered by the scheduler, each synthesis bullet is emitted as a skill candidate via `emitSynthesiserCandidate`.
+- **`server/scheduler.ts`** — `curateSkillsForAllUsers` runs in parallel with learning synthesis every Sunday at 4:30 AM.
+- **`server/routes.ts`** — `GET /api/skills/candidates` (canonical; `/api/skill-candidates` is a legacy alias), `PATCH /api/skills/candidates/:id/review` (`{action: accept|edit|dismiss, name?, instructionText?}`). Accepted candidates are promoted to a new `user_skills` row with `isActive: true`. `PATCH /api/user-skills/:id` edits an existing custom skill (name/description/instructions/emoji).
+
+### Frontend (Profile > My Skills)
+- **`app/(tabs)/profile.tsx`** — New "My Skills" section with two sub-panels:
+  - **Suggested** — pending candidates with Accept / Edit / Dismiss buttons. Edit opens an inline form to tweak name and instructions before accepting.
+  - **Active Custom Skills** — all non-built-in user_skills with a toggle (active/inactive) and delete button.
+  - Mirrors the Memory Review card design (`memoryRow` / `memoryEmptyCard` styles).
