@@ -2189,6 +2189,91 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
   },
 };
 
+// ── android_scroll_to_top ─────────────────────────────────────────────────────
+// Scrolls the current Android screen back to the very top by performing a
+// series of rapid downward swipes (finger from top → bottom so content moves up).
+// Use this before starting a new locate-and-tap task whenever a previous
+// scroll-to-find pass may have left the page scrolled partway down.
+
+/**
+ * Perform `swipeCount` downward swipes to scroll the screen back to the top.
+ * Shared by both androidScrollToTopTool and the reset_scroll path inside
+ * androidTapElementTool so the logic is not duplicated.
+ */
+async function scrollToTop(userId: string, swipeCount: number): Promise<{ swipesPerformed: number }> {
+  const screenMidX = 540;
+  const swipeY1 = 300;   // start near the top of the screen
+  const swipeY2 = 1500;  // end near the bottom  (finger ↓ → content scrolls up)
+  const durationMs = 250;
+
+  let swipesPerformed = 0;
+  for (let i = 0; i < swipeCount; i++) {
+    const result = await sendDaemonOp(
+      userId,
+      { type: "android_swipe", x1: screenMidX, y1: swipeY1, x2: screenMidX, y2: swipeY2, durationMs },
+      10000,
+    );
+    if (!result.ok) {
+      console.log(`[android_scroll_to_top] swipe ${i + 1} failed: ${result.error}`);
+      break;
+    }
+    swipesPerformed++;
+    await sleep(150);
+  }
+  return { swipesPerformed };
+}
+
+export const androidScrollToTopTool: AgentTool = {
+  name: "android_scroll_to_top",
+  description: `Scroll the current Android screen back to the very top by performing a series of rapid downward swipes.
+
+Use this before starting a new interaction task whenever a previous scroll-to-find pass (e.g. inside android_tap_element) left the page scrolled partway down. Without a reset, elements near the top of the page may be off-screen and missed by subsequent android_tap_element or android_screen_understand calls.
+
+Returns the number of swipes performed.`,
+  parameters: {
+    type: "object",
+    properties: {
+      swipe_count: {
+        type: "number",
+        description: "Number of full-page downward swipes to perform (default 5). Increase for very long lists.",
+      },
+    },
+    required: [],
+  },
+  async execute(args, ctx) {
+    if (!isAndroidDaemonActive(ctx.userId)) {
+      return {
+        ok: false,
+        content: "Android daemon is not connected. Ask the user to install the Jarvis Android APK and pair it (Profile → Connected Channels → Android Device).",
+        label: "android_scroll_to_top: android offline",
+      };
+    }
+
+    const canTap = await isAndroidDaemonActionAllowed(ctx.userId, "android_tap_type");
+    if (!canTap) {
+      return {
+        ok: false,
+        content: "android_tap_type permission is not enabled. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.",
+        label: "android_scroll_to_top: tap permission denied",
+      };
+    }
+
+    const rawCount = typeof args.swipe_count === "number" ? Math.floor(args.swipe_count) : 5;
+    const swipeCount = Math.max(1, Math.min(rawCount, 20));
+
+    const { swipesPerformed } = await scrollToTop(ctx.userId, swipeCount);
+
+    console.log(`[android_scroll_to_top] userId=${ctx.userId} performed ${swipesPerformed} swipe(s) to top`);
+
+    return {
+      ok: true,
+      content: JSON.stringify({ swipes_performed: swipesPerformed, message: `Scrolled to top using ${swipesPerformed} swipe(s).` }),
+      label: `android_scroll_to_top: ${swipesPerformed} swipe(s)`,
+      detail: `swipes=${swipesPerformed}`,
+    };
+  },
+};
+
 export const androidTapElementTool: AgentTool = {
   name: "android_tap_element",
   description: `Tap an Android screen element by name instead of raw coordinates.
@@ -2229,6 +2314,10 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       scroll_distance: {
         type: "number",
         description: "Pixel distance for each scroll swipe (default 600). Larger values scroll further per swipe.",
+      },
+      reset_scroll: {
+        type: "boolean",
+        description: "When true, scroll back to the top of the page before locating the element (default false). Use this at the start of a new task if a previous scroll-to-find pass may have left the screen scrolled partway down, so elements near the top are not missed.",
       },
     },
     required: ["label"],
@@ -2273,6 +2362,14 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
         content: "android_tap_type permission is not enabled. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.",
         label: "android_tap_element: tap permission denied",
       };
+    }
+
+    // ── Optional scroll-to-top reset before locating ──────────────────────────
+    if (args.reset_scroll === true) {
+      console.log(`[android_tap_element] reset_scroll=true, scrolling to top before locate`);
+      await scrollToTop(ctx.userId, 5);
+      // Invalidate the ScreenMap cache so the fresh top-of-page state is used
+      screenMapCache.delete(ctx.userId);
     }
 
     const useScreenshot = args.verify_with_screenshot !== false;
