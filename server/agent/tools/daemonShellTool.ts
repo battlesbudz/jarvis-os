@@ -1338,14 +1338,22 @@ export const androidSearchInAppTool: AgentTool = {
         }
       }
 
-      // ── Vision fallback for iconOnly apps (e.g. TikTok) ────────────────────
+      // ── Vision fallback for iconOnly apps and unknown apps ──────────────────
       // When resource-ID matching fails for an icon-only search entry point, use
       // Claude Vision (android_screen_understand internally) to locate the magnifying-
       // glass icon visually. This avoids asking the user to intervene manually.
-      if (!searchElementFound && APP_SEARCH_HINTS[appPackage]?.iconOnly) {
+      // For unknown apps (not in APP_SEARCH_HINTS) we also attempt the vision path
+      // automatically — many apps use an icon-only search entry point that the
+      // accessibility tree doesn't expose with a recognisable label.
+      const isIconOnlyRegistered = !!APP_SEARCH_HINTS[appPackage]?.iconOnly;
+      const isUnknownApp = !APP_SEARCH_HINTS[appPackage];
+      if (!searchElementFound && (isIconOnlyRegistered || isUnknownApp)) {
         emitProgress(`Trying vision-based search button detection…`);
-        stepLog.push({ step: 2, outcome: "vision_fallback_attempt", detail: "resource IDs not found; trying vision-based detection for icon-only search button" });
-        console.log(`[${label}] step 2 — iconOnly app: resource IDs exhausted, attempting vision fallback via buildScreenMapElements`);
+        const visionAttemptReason = isIconOnlyRegistered
+          ? "resource IDs not found; trying vision-based detection for icon-only search button"
+          : "app not in known-app registry; trying vision-based detection as automatic fallback";
+        stepLog.push({ step: 2, outcome: "vision_fallback_attempt", detail: visionAttemptReason });
+        console.log(`[${label}] step 2 — ${isIconOnlyRegistered ? "iconOnly app" : "unknown app"}: resource IDs exhausted, attempting vision fallback via buildScreenMapElements`);
 
         const canScreenshot = await isAndroidDaemonActionAllowed(ctx.userId, "android_screenshot");
         if (canScreenshot) {
@@ -1389,8 +1397,8 @@ export const androidSearchInAppTool: AgentTool = {
       }
 
       if (!searchElementFound) {
-        const isIconOnly = !!APP_SEARCH_HINTS[appPackage]?.iconOnly;
-        const locationSummary = isIconOnly
+        const usedVisionFallback = isIconOnlyRegistered || isUnknownApp;
+        const locationSummary = usedVisionFallback
           ? "3 accessibility-tree strategies (current screen, home+reopen, swipe-reveal) and a vision-based fallback"
           : "3 location strategies (current screen, home+reopen, swipe-reveal)";
         stepLog.push({ step: 2, outcome: "failed", detail: `search element not found after ${locationSummary}` });
