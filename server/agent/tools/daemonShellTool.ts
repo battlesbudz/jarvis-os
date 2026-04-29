@@ -4665,6 +4665,215 @@ Requires: android_tap_type permission. No screen-reading or screenshot permissio
   },
 };
 
+// ── android_pinch_coordinates ─────────────────────────────────────────────────
+// Coordinate-based pinch-to-zoom tool.  Accepts an explicit pixel centre and a
+// reach radius instead of an element label.  Useful for canvas apps, game UIs,
+// or any screen where android_pinch_element cannot match a named element.
+// Applies the same perceptual-hash fast-path + accessibility-hierarchy fallback
+// as android_pinch_element so screen-change detection works even in FLAG_SECURE
+// apps where screenshots come back as solid black.
+
+export const androidPinchCoordinatesTool: AgentTool = {
+  name: "android_pinch_coordinates",
+  description: `Perform a pinch-to-zoom (two-finger spread or pinch) gesture on the Android screen using explicit pixel coordinates.
+Use this tool when no accessible element labels are available — e.g. canvas apps, game UIs, map views, or any screen where android_pinch_element cannot match a named element.
+
+Parameters:
+  - center_x: horizontal pixel coordinate of the pinch centre (required)
+  - center_y: vertical pixel coordinate of the pinch centre (required)
+  - action: "zoom_in" (spread two fingers outward) or "zoom_out" (pinch two fingers inward) (required)
+  - reach_px: half-distance each finger travels from the centre in pixels (default 300, max 1000)
+  - duration_ms: gesture duration in milliseconds (default 300, max 2000)
+
+Returns: screen_changed (bool), hash_distance (int | null), and the four pointer coordinates used.
+Requires: android_tap_type permission. Coordinates must be known in advance (e.g. from android_screen_understand or user input).
+Note: screen_changed verification uses screenshot hashing and accessibility hierarchy comparison as a best-effort check. If screenshot or read_screen permissions are not enabled, the tool still fires the gesture but screen_changed may report false even when the view actually changed.`,
+  parameters: {
+    type: "object",
+    properties: {
+      center_x: {
+        type: "number",
+        description: "Horizontal pixel coordinate of the pinch centre.",
+      },
+      center_y: {
+        type: "number",
+        description: "Vertical pixel coordinate of the pinch centre.",
+      },
+      action: {
+        type: "string",
+        enum: ["zoom_in", "zoom_out"],
+        description: "'zoom_in' spreads two fingers outward from the centre (pinch-out). 'zoom_out' moves two fingers inward toward the centre (pinch-in).",
+      },
+      reach_px: {
+        type: "number",
+        description: "Half-distance each finger travels from the centre in pixels (default 300, max 1000). Larger values produce a more dramatic zoom.",
+      },
+      duration_ms: {
+        type: "number",
+        description: "Gesture duration in milliseconds (default 300, max 2000).",
+      },
+    },
+    required: ["center_x", "center_y", "action"],
+  },
+  async execute(args, ctx) {
+    if (typeof args.center_x !== "number" || typeof args.center_y !== "number") {
+      return { ok: false, content: "center_x and center_y are required numbers.", label: "android_pinch_coordinates: missing centre coords" };
+    }
+    if (args.action !== "zoom_in" && args.action !== "zoom_out") {
+      return { ok: false, content: "action must be 'zoom_in' or 'zoom_out'.", label: "android_pinch_coordinates: invalid action" };
+    }
+
+    if (!isAndroidDaemonActive(ctx.userId)) {
+      return {
+        ok: false,
+        content: "Android daemon is not connected. Ask the user to install the Jarvis Android APK and pair it (Profile → Connected Channels → Android Device).",
+        label: "android_pinch_coordinates: android offline",
+      };
+    }
+
+    const tapAllowed = await isAndroidDaemonActionAllowed(ctx.userId, "android_tap_type");
+    if (!tapAllowed) {
+      return {
+        ok: false,
+        content: "android_tap_type permission is not enabled. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.",
+        label: "android_pinch_coordinates: tap permission denied",
+      };
+    }
+
+    const cx = Math.max(0, Math.round(args.center_x as number));
+    const cy = Math.max(0, Math.round(args.center_y as number));
+    const action = args.action as "zoom_in" | "zoom_out";
+    const reach = Math.min(
+      typeof args.reach_px === "number" && args.reach_px > 0 ? Math.round(args.reach_px) : 300,
+      1000,
+    );
+    const durationMs = Math.min(
+      typeof args.duration_ms === "number" && args.duration_ms > 0 ? Math.round(args.duration_ms) : 300,
+      2000,
+    );
+
+    // Compute the four finger path endpoints along the 45° diagonal axis.
+    const delta = Math.round(reach / Math.SQRT2);
+    // Corners relative to centre along the diagonal; clamp to >= 0 so
+    // coordinates are always valid even near the screen edge.
+    const upperLeft  = { x: Math.max(0, cx - delta), y: Math.max(0, cy - delta) };
+    const lowerRight = { x: cx + delta, y: cy + delta };
+
+    let finger1: { x1: number; y1: number; x2: number; y2: number };
+    let finger2: { x1: number; y1: number; x2: number; y2: number };
+    if (action === "zoom_in") {
+      // Spread: both fingers move outward from centre
+      finger1 = { x1: cx, y1: cy, x2: upperLeft.x,  y2: upperLeft.y  };
+      finger2 = { x1: cx, y1: cy, x2: lowerRight.x, y2: lowerRight.y };
+    } else {
+      // Pinch: both fingers move inward toward centre
+      finger1 = { x1: upperLeft.x,  y1: upperLeft.y,  x2: cx, y2: cy };
+      finger2 = { x1: lowerRight.x, y1: lowerRight.y, x2: cx, y2: cy };
+    }
+
+    // ── Pre-pinch state capture (perceptual hash fast-path + hierarchy fallback) ─
+    let prePinchHash: string | null = null;
+    let screenChanged = false;
+    let hashDistance: number | null = null;
+    try {
+      const prePinchScreenshot = await captureScreenshot(ctx.userId);
+      if (prePinchScreenshot) {
+        prePinchHash = await computeScreenshotHash(prePinchScreenshot);
+      }
+    } catch { /* hash capture is best-effort */ }
+    const prePinchClickable = await readScreen(ctx.userId);
+    const prePinchCount = prePinchClickable.length;
+    const prePinchLabels = new Set(prePinchClickable.map((el) => el.label));
+    const prePinchResourceIds = new Set(
+      prePinchClickable.map((el) => el.resourceId).filter((id): id is string => !!id),
+    );
+
+    const pinchResult = await sendDaemonOp(
+      ctx.userId,
+      {
+        type: "android_pinch",
+        pointer1: { x1: finger1.x1, y1: finger1.y1, x2: finger1.x2, y2: finger1.y2 },
+        pointer2: { x1: finger2.x1, y1: finger2.y1, x2: finger2.x2, y2: finger2.y2 },
+        durationMs,
+      },
+      15000,
+    );
+
+    if (!pinchResult.ok) {
+      return {
+        ok: false,
+        content: `Pinch at (${cx}, ${cy}) failed: ${pinchResult.error || "unknown error"}`,
+        label: "android_pinch_coordinates: pinch failed",
+      };
+    }
+
+    // ── Post-pinch perceptual hash comparison ─────────────────────────────────
+    if (prePinchHash !== null) {
+      try {
+        const postPinchScreenshot = await captureScreenshot(ctx.userId);
+        if (postPinchScreenshot) {
+          const postPinchHash = await computeScreenshotHash(postPinchScreenshot);
+          hashDistance = hammingDistance(prePinchHash, postPinchHash);
+          if (hashDistance > 5) {
+            screenChanged = true;
+            console.log(`[android_pinch_coordinates] perceptual hash verified (hash_distance=${hashDistance})`);
+          }
+        }
+      } catch { /* hash comparison is best-effort */ }
+    }
+
+    // ── Hierarchy fallback ─────────────────────────────────────────────────────
+    // Runs when hash check is inconclusive (e.g. FLAG_SECURE app or visual
+    // change below threshold).  Mirrors the same fallback in android_pinch_element
+    // and android_swipe_element.
+    if (!screenChanged) {
+      const postPinchClickable = await readScreen(ctx.userId);
+      if (postPinchClickable.length !== prePinchCount) {
+        screenChanged = true;
+      } else {
+        const postPinchLabels = new Set(postPinchClickable.map((el) => el.label));
+        if ([...postPinchLabels].some((l) => !prePinchLabels.has(l))) screenChanged = true;
+        if (!screenChanged) {
+          const postPinchResourceIds = new Set(
+            postPinchClickable.map((el) => el.resourceId).filter((id): id is string => !!id),
+          );
+          if ([...postPinchResourceIds].some((id) => !prePinchResourceIds.has(id))) screenChanged = true;
+          if (!screenChanged && prePinchResourceIds.size > 0) {
+            if ([...prePinchResourceIds].some((id) => !postPinchResourceIds.has(id))) screenChanged = true;
+          }
+        }
+      }
+    }
+
+    console.log(
+      `[android_pinch_coordinates] userId=${ctx.userId} action=${action} centre=(${cx},${cy}) reach=${reach}px ` +
+      `screen_changed=${screenChanged}${hashDistance !== null ? ` hash_distance=${hashDistance}` : ""}`,
+    );
+
+    return {
+      ok: true,
+      content: JSON.stringify({
+        pinched: {
+          center_x: cx,
+          center_y: cy,
+          action,
+          reach_px: reach,
+          duration_ms: durationMs,
+          pointer1: { from: { x: finger1.x1, y: finger1.y1 }, to: { x: finger1.x2, y: finger1.y2 } },
+          pointer2: { from: { x: finger2.x1, y: finger2.y1 }, to: { x: finger2.x2, y: finger2.y2 } },
+        },
+        screen_changed: screenChanged,
+        hash_distance: hashDistance,
+        screen_changed_note: screenChanged
+          ? undefined
+          : "The UI did not detectably change after the pinch. The view may not support pinch-to-zoom, or the gesture may not have landed on a zoomable region.",
+      }),
+      label: `${action === "zoom_in" ? "Zoomed in" : "Zoomed out"} at (${cx},${cy}) reach=${reach}px`,
+      detail: `centre=(${cx},${cy}) reach=${reach}px duration=${durationMs}ms screen_changed=${screenChanged}${hashDistance !== null ? ` hash_dist=${hashDistance}` : ""}`,
+    };
+  },
+};
+
 // ── Perceptual hash helper (average-hash, 64-bit) ─────────────────────────────
 // Down-samples a base64 JPEG/PNG to 8×8 via @napi-rs/canvas and computes the
 // average-hash (aHash) as a 16-char hex string.  Falls back to an MD5 of the
