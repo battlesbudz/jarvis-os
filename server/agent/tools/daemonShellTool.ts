@@ -4766,7 +4766,14 @@ Steps performed internally:
 2. For each field: fuzzy-match label, tap to focus, optionally clear, type via three-level fallback (android_type → android_paste_text → retry), verify
 3. If a field label is not found in the current ScreenMap, refresh the ScreenMap once (handles page transitions between fields)
 4. If still not found, scroll down and re-capture the ScreenMap up to 3 times to find fields that are off-screen
-5. If submit_last is true on a field, press Enter/IME Go after typing it
+5. If submit_last is true on a field, press Enter/IME Go after typing it, then wait 1.5 s and compare screenshots to detect navigation
+
+When submit_last is used, each field result includes:
+- navigation_detected: true if the screen changed significantly after submit (diff ≥ 20 %)
+- navigation_diff_ratio: raw change ratio (0–1) for reference
+- new_screen_elements: ScreenMap of the destination screen when navigation was detected
+
+If navigation_detected is false after a submit, the form may not have submitted successfully and a retry or investigation may be needed.
 
 Returns an array of per-field results (including scroll_attempts per field) so you can see which fields succeeded or failed and how many scrolls were needed.
 
@@ -4866,6 +4873,9 @@ Requires: android_screenshot, android_read_screen, and android_tap_type permissi
       scroll_attempts: number;
       steps: string[];
       error?: string;
+      navigation_detected?: boolean | null;
+      navigation_diff_ratio?: number;
+      new_screen_elements?: ScreenElement[];
     };
 
     const fieldResults: FieldResult[] = [];
@@ -5112,12 +5122,64 @@ Requires: android_screenshot, android_read_screen, and android_tap_type permissi
 
       // ── Optional submit_last ───────────────────────────────────────────────────
       if (submitLast && inputOk) {
+        // Capture a pre-submit screenshot so we can detect navigation afterwards.
+        const preSubmitScreenshot = await captureScreenshot(ctx.userId).catch(() => null);
+
         await sendDaemonOp(ctx.userId, { type: "android_press_key", key: "enter" }, 6000);
         result.steps.push("Submitted (IME Enter/Go key pressed).");
-        // Invalidate both the cache and the local array so the next field always
-        // captures a fresh ScreenMap (the page may have navigated away).
-        screenMapCache.delete(ctx.userId);
-        screenElements = [];
+
+        // Wait for the app to settle after the submit (navigation or validation).
+        await sleep(1500);
+
+        // Capture a post-submit screenshot and compare.
+        const postSubmitScreenshot = await captureScreenshot(ctx.userId).catch(() => null);
+
+        // null = unknown (capture or diff failed); true/false = confirmed outcome.
+        let navigationDetected: boolean | null = null;
+        let diffRatio: number | undefined;
+
+        if (preSubmitScreenshot && postSubmitScreenshot) {
+          try {
+            diffRatio = await screenshotDiff(preSubmitScreenshot, postSubmitScreenshot);
+            navigationDetected = diffRatio >= 0.20;
+            result.steps.push(
+              `Post-submit screen diff: ${(diffRatio * 100).toFixed(1)}% change — navigation ${navigationDetected ? "DETECTED" : "not detected"}.`,
+            );
+          } catch {
+            result.steps.push("Post-submit screenshot diff failed (non-fatal); navigation status unknown.");
+            // navigationDetected stays null — we cannot assert either way.
+          }
+        } else {
+          result.steps.push("Could not capture pre/post-submit screenshots for navigation check (navigation status unknown).");
+          // navigationDetected stays null.
+        }
+
+        result.navigation_detected = navigationDetected;
+        if (diffRatio !== undefined) result.navigation_diff_ratio = diffRatio;
+
+        if (navigationDetected === true) {
+          // Capture the new screen's elements so the agent can act on them immediately.
+          result.steps.push("Navigation detected — capturing new screen elements...");
+          const newScreenBuild = await buildScreenMapElements(ctx.userId);
+          if (newScreenBuild.ok) {
+            result.new_screen_elements = newScreenBuild.elements;
+            screenElements = newScreenBuild.elements;
+            result.steps.push(`New screen has ${newScreenBuild.elements.length} elements.`);
+          } else {
+            result.steps.push(`New screen capture failed: ${newScreenBuild.label}`);
+            // Still invalidate the old map so the next operation gets a fresh one.
+            screenMapCache.delete(ctx.userId);
+            screenElements = [];
+          }
+        } else {
+          // Confirmed no change, or unknown — invalidate the cache so the next
+          // field always captures a fresh ScreenMap.
+          screenMapCache.delete(ctx.userId);
+          screenElements = [];
+          if (navigationDetected === false) {
+            result.steps.push("Screen appears unchanged after submit — the form may not have submitted successfully.");
+          }
+        }
       }
 
       result.ok = inputOk;
@@ -5130,18 +5192,45 @@ Requires: android_screenshot, android_read_screen, and android_tap_type permissi
     }
 
     const successCount = fieldResults.filter((r) => r.ok).length;
+
+    // Derive top-level navigation outcome from any field that had submit_last.
+    // navigation_detected per-field is: true (navigated), false (confirmed same), null (unknown).
+    const submitFields = fieldResults.filter((r) => r.navigation_detected !== undefined);
+    const anyNavigated = submitFields.some((r) => r.navigation_detected === true);
+    const confirmedNoNav = submitFields.length > 0 && !anyNavigated && submitFields.every((r) => r.navigation_detected === false);
+    const unknownNav = submitFields.length > 0 && !anyNavigated && !confirmedNoNav;
+
+    // Top-level navigation_detected: true | false | null (unknown)
+    const topLevelNavDetected: boolean | null | undefined =
+      submitFields.length === 0 ? undefined :
+      anyNavigated ? true :
+      confirmedNoNav ? false :
+      null; // some or all checks were inconclusive
+
     const summary = {
       ok: allOk,
       fields_total: fieldResults.length,
       fields_succeeded: successCount,
       fields_failed: fieldResults.length - successCount,
+      ...(topLevelNavDetected !== undefined && {
+        navigation_detected: topLevelNavDetected,
+        navigation_note:
+          topLevelNavDetected === true
+            ? "Screen changed after submit — navigation confirmed."
+            : topLevelNavDetected === false
+              ? "Screen did not change after submit — the form may not have submitted successfully."
+              : "Navigation status could not be determined (screenshot capture or diff failed).",
+      }),
       results: fieldResults,
     };
+
+    const navSuffix = confirmedNoNav ? " (no nav after submit)" : anyNavigated ? " (navigated)" : unknownNav ? " (nav unknown)" : "";
+    console.log(`[android_fill_form] userId=${ctx.userId} ${successCount}/${fieldResults.length} ok${navSuffix}`);
 
     return {
       ok: allOk,
       content: JSON.stringify(summary),
-      label: `android_fill_form: ${successCount}/${fieldResults.length} fields filled`,
+      label: `android_fill_form: ${successCount}/${fieldResults.length} fields filled${navSuffix}`,
       detail: fieldResults.map((r) => `${r.label}: ${r.ok ? "ok" : "FAILED"}`).join(" | "),
     };
   },
