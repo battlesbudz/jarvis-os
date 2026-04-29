@@ -595,7 +595,7 @@ async function processUpdate(update: any): Promise<void> {
 
     const message = update.message;
     if (!message) return;
-    if (!message.text && !message.photo && !message.document && !message.voice && !message.audio && !message.video_note) return;
+    if (!message.text && !message.photo && !message.document && !message.voice && !message.audio && !message.video_note && !message.video) return;
 
     const chatId = message.chat.id.toString();
     const chatType = message.chat.type;
@@ -644,6 +644,44 @@ async function processUpdate(update: any): Promise<void> {
       } catch (err) {
         console.error('[Telegram] Voice transcription failed:', err);
         await sendMessage(chatId, "Sorry, I couldn't understand that voice message. Could you try again or type it out?");
+        return;
+      }
+    }
+
+    const MAX_VIDEO_BYTES = 20 * 1024 * 1024;
+    let videoFileId: string | undefined;
+    let videoFileSize: number | undefined;
+    if (message.video) {
+      videoFileId = message.video.file_id;
+      videoFileSize = message.video.file_size;
+    } else if (message.document && message.document.mime_type?.startsWith('video/')) {
+      videoFileId = message.document.file_id;
+      videoFileSize = message.document.file_size;
+    }
+    if (videoFileId && !text) {
+      if (videoFileSize && videoFileSize > MAX_VIDEO_BYTES) {
+        await sendMessage(chatId, "This video is too large for me to download via Telegram (max 20 MB). Share the YouTube URL directly and I'll download just the audio — it's much faster.");
+        return;
+      }
+      try {
+        const file = await downloadTelegramFileBuffer(videoFileId);
+        if (!file) {
+          await sendMessage(chatId, "Sorry, I couldn't download that video. Could you try again or share the YouTube URL instead?");
+          return;
+        }
+        const { speechToText, detectAudioFormat } = await import('./replit_integrations/audio/client');
+        const format = detectAudioFormat(file.buffer);
+        const transcript = await speechToText(file.buffer, format === 'unknown' ? 'mp4' : format);
+        if (!transcript || !transcript.trim()) {
+          await sendMessage(chatId, "Sorry, I couldn't transcribe that video. Could you try again or type it out?");
+          return;
+        }
+        text = transcript.trim();
+        const preview = text.length > 100 ? text.slice(0, 100) + '...' : text;
+        await sendMessage(chatId, `(📹 Video transcript: "${preview}")`);
+      } catch (err) {
+        console.error('[Telegram] Video transcription failed:', err);
+        await sendMessage(chatId, "Sorry, I couldn't transcribe that video. Could you try again or share the YouTube URL instead?");
         return;
       }
     }
