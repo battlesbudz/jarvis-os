@@ -636,6 +636,61 @@ const APP_SEARCH_HINTS: Record<string, AppSearchHint> = {
     extraKeywords: [],
     iconOnly: true,
   },
+  "com.google.android.youtube": {
+    // YouTube's search is accessed via a magnifying-glass icon in the top-right
+    // toolbar — there is no persistent text bar visible on the home feed.
+    // Rely on resource ID matching; skip text-label keyword matching.
+    resourceIds: [
+      "search_edit_text",
+      "search_bar",
+      "menu_search",
+      "action_search",
+      "search_icon",
+      "toolbar_search",
+    ],
+    extraKeywords: [],
+    iconOnly: true,
+  },
+  "com.reddit.frontpage": {
+    // Reddit uses a Compose-based search header. The search field is a
+    // text composable rather than a classic android.widget.EditText, so
+    // supplement resource IDs with descriptive keywords.
+    resourceIds: [
+      "search_bar",
+      "search_edit_text",
+      "search_input",
+      "action_bar_search_text_field",
+      "search_field",
+    ],
+    extraKeywords: ["search reddit", "search"],
+  },
+  "com.whatsapp": {
+    // WhatsApp surfaces search in multiple contexts: the top-level chat
+    // list search and per-chat message search. Both use the same resource
+    // ID family, so a shared list covers both flows.
+    resourceIds: [
+      "search_src_text",
+      "search_bar",
+      "search_plate",
+      "search_text",
+      "action_bar_search_text_field",
+    ],
+    extraKeywords: ["search chats", "search messages", "search"],
+  },
+  "com.snapchat.android": {
+    // Snapchat's Spotlight / story search is reached by swiping or tapping
+    // a search icon — there is no persistent text label in the entry point.
+    // Use resource IDs only; skip keyword matching.
+    resourceIds: [
+      "search_edit_text",
+      "search_bar",
+      "search_icon",
+      "action_search",
+      "spotlight_search_input",
+    ],
+    extraKeywords: [],
+    iconOnly: true,
+  },
 };
 
 /**
