@@ -994,12 +994,46 @@ export default function ProfileScreen() {
 
   const handleToggleMemoryReview = useCallback(async () => {
     const newValue = !memoryReviewEnabled;
-    setMemoryReviewEnabled(newValue);
-    try {
-      await apiRequest('PATCH', '/api/life-context', { memoryReviewEnabled: newValue });
-    } catch {}
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-  }, [memoryReviewEnabled]);
+
+    const applyToggle = async () => {
+      setMemoryReviewEnabled(newValue);
+      try {
+        await apiRequest('PATCH', '/api/life-context', { memoryReviewEnabled: newValue });
+      } catch {}
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    };
+
+    const bulkApprove = async () => {
+      try {
+        await apiRequest('PATCH', '/api/memories/pending/approve-all', {});
+        setPendingMemories([]);
+      } catch {}
+    };
+
+    if (!newValue && pendingMemories.length > 0) {
+      Alert.alert(
+        'Approve queued memories?',
+        `Approve ${pendingMemories.length} queued ${pendingMemories.length === 1 ? 'memory' : 'memories'} now?`,
+        [
+          {
+            text: 'Skip',
+            style: 'cancel',
+            onPress: applyToggle,
+          },
+          {
+            text: 'Yes',
+            onPress: async () => {
+              await applyToggle();
+              await bulkApprove();
+            },
+          },
+        ]
+      );
+      return;
+    }
+
+    await applyToggle();
+  }, [memoryReviewEnabled, pendingMemories]);
 
   const handleToggleDiscordTts = useCallback(async () => {
     const next = !discordTtsEnabled;
@@ -2144,9 +2178,13 @@ export default function ProfileScreen() {
           ) : pendingMemories.length === 0 ? (
             <View style={styles.memoryEmptyCard}>
               <View style={styles.memoryEmptyIcon}>
-                <Ionicons name="checkmark-circle-outline" size={22} color={Colors.textTertiary} />
+                <Ionicons name={memoryReviewEnabled ? 'checkmark-circle-outline' : 'shield-checkmark-outline'} size={22} color={Colors.textTertiary} />
               </View>
-              <Text style={styles.memoryEmptyText}>All caught up — no memories waiting for review</Text>
+              <Text style={styles.memoryEmptyText}>
+                {memoryReviewEnabled
+                  ? 'All caught up — no memories waiting for review'
+                  : 'Review gate off — new memories are stored automatically'}
+              </Text>
             </View>
           ) : (
             <View style={styles.memoryList}>

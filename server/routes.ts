@@ -4630,6 +4630,29 @@ Return ONLY the JSON object.`;
     }
   });
 
+  app.patch("/api/memories/pending/approve-all", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const result = await db.execute(sql`
+        UPDATE user_memories
+        SET pending_review = FALSE, review_status = 'kept'
+        WHERE user_id = ${userId}
+          AND pending_review = TRUE
+          AND review_status = 'pending'
+        RETURNING id
+      `);
+      const count = (result.rows ?? []).length;
+      if (count > 0) {
+        markSoulStale(userId).catch(() => {});
+      }
+      res.json({ ok: true, approved: count });
+    } catch (error) {
+      console.error("Error bulk-approving pending memories:", error);
+      res.status(500).json({ error: "Failed to approve pending memories" });
+    }
+  });
+
   app.get("/api/memories/fading", async (req: Request, res: Response) => {
     try {
       const userId = req.userId;
