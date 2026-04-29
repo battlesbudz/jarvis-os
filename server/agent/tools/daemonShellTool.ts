@@ -2178,6 +2178,10 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
         type: "number",
         description: "Maximum age in milliseconds for a cached ScreenMap to be reused (default 500). Set to 0 to always capture a fresh screen.",
       },
+      reset_scroll: {
+        type: "boolean",
+        description: "When true, scroll back to the top of the page before locating the element (default false). Use this at the start of a new task if a previous scroll-to-find pass may have left the screen scrolled partway down, so elements near the top are not missed.",
+      },
     },
     required: ["label", "direction"],
   },
@@ -2226,6 +2230,14 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
         content: "android_tap_type permission is not enabled. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.",
         label: "android_swipe_element: swipe permission denied",
       };
+    }
+
+    // ── Optional scroll-to-top reset before locating ──────────────────────────
+    if (args.reset_scroll === true) {
+      console.log(`[android_swipe_element] reset_scroll=true, scrolling to top before locate`);
+      await scrollToTop(ctx.userId, 5);
+      // Invalidate the ScreenMap cache so the fresh top-of-page state is used
+      screenMapCache.delete(ctx.userId);
     }
 
     // ── Resolve ScreenMap (cache or fresh) ────────────────────────────────────
@@ -3169,6 +3181,10 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
         type: "number",
         description: "Maximum age in milliseconds for a cached ScreenMap to be reused (default 500). Set to 0 to always capture a fresh screen.",
       },
+      reset_scroll: {
+        type: "boolean",
+        description: "When true, scroll back to the top of the page before locating the element (default false). Use this at the start of a new task if a previous scroll-to-find pass may have left the screen scrolled partway down, so elements near the top are not missed.",
+      },
     },
     required: ["label"],
   },
@@ -3211,6 +3227,14 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
         content: "android_tap_type permission is not enabled. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.",
         label: "android_long_press_element: tap permission denied",
       };
+    }
+
+    // ── Optional scroll-to-top reset before locating ──────────────────────────
+    if (args.reset_scroll === true) {
+      console.log(`[android_long_press_element] reset_scroll=true, scrolling to top before locate`);
+      await scrollToTop(ctx.userId, 5);
+      // Invalidate the ScreenMap cache so the fresh top-of-page state is used
+      screenMapCache.delete(ctx.userId);
     }
 
     // ── Resolve ScreenMap (cache or fresh) ────────────────────────────────────
