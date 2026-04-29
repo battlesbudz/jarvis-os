@@ -753,6 +753,109 @@ function extractNodeCoords(node: Record<string, unknown>): { x: number; y: numbe
   return null;
 }
 
+/**
+ * Heuristically rank accessibility-tree nodes to find the most likely search
+ * bar when no APP_SEARCH_HINTS entry exists for the app.
+ *
+ * Scoring signals (higher = more confident):
+ *   +40  resource-id contains a search-related keyword
+ *   +30  class name indicates a text-input widget (EditText, SearchView, …)
+ *   +25  content-desc mentions search/find/query
+ *   +25  hint text mentions search/find/query
+ *   +20  node is explicitly marked editable
+ *   +15  visible text mentions search/find/query
+ *   + 5  node is focusable
+ *
+ * Returns the best candidate (score > 0) with its resource-id so the caller
+ * can log it for future promotion to APP_SEARCH_HINTS.
+ */
+function autoDiscoverSearchNode(
+  nodes: Array<Record<string, unknown>>,
+  appPkg: string,
+): { found: boolean; x: number | null; y: number | null; discoveredResourceId?: string } {
+  const SEARCH_RID_TERMS   = ["search", "find", "query", "lookup"];
+  const SEARCH_LABEL_TERMS = ["search", "find", "query"];
+  const EDITABLE_CLASSES   = ["edittext", "textfield", "searchview", "editview", "searchbar"];
+
+  type Candidate = { score: number; node: Record<string, unknown>; resourceId: string };
+  const candidates: Candidate[] = [];
+
+  for (const node of nodes) {
+    let score = 0;
+
+    const rid = (
+      typeof node.resource_id === "string" ? node.resource_id :
+      typeof node.resourceId  === "string" ? node.resourceId  :
+      typeof node["resource-id"] === "string" ? (node["resource-id"] as string) :
+      ""
+    ).toLowerCase();
+
+    const className = (
+      typeof node.className === "string" ? node.className :
+      typeof node.class     === "string" ? node.class     : ""
+    ).toLowerCase();
+
+    const contentDesc = (
+      typeof node["content-desc"]  === "string" ? node["content-desc"]  :
+      typeof node.contentDesc      === "string" ? node.contentDesc      :
+      typeof node.content_desc     === "string" ? node.content_desc     : ""
+    ).toLowerCase();
+
+    const hint = (typeof node.hint === "string" ? node.hint : "").toLowerCase();
+    const text = (typeof node.text === "string" ? node.text : "").toLowerCase();
+
+    const isEditable  = node.isEditable  === true || node["isEditable"]  === true || node.editable === true;
+    const isFocusable = node.focusable   === true || node.isFocusable   === true;
+
+    const hasSearchRid   = SEARCH_RID_TERMS.some((p)   => rid.includes(p));
+    const hasSearchDesc  = SEARCH_LABEL_TERMS.some((p) => contentDesc.includes(p));
+    const hasSearchHint  = SEARCH_LABEL_TERMS.some((p) => hint.includes(p));
+    const hasSearchText  = SEARCH_LABEL_TERMS.some((p) => text.includes(p));
+
+    // Require at least one explicit search-semantic signal before scoring.
+    // Structural signals alone (EditText class, editable, focusable) are too broad
+    // and would match unrelated inputs (login fields, comment boxes, etc.).
+    const hasSemanticSignal = hasSearchRid || hasSearchDesc || hasSearchHint || hasSearchText;
+    if (!hasSemanticSignal) continue;
+
+    if (hasSearchRid)                                             score += 40;
+    if (EDITABLE_CLASSES.some((c)   => className.includes(c)))   score += 30;
+    if (hasSearchDesc)                                            score += 25;
+    if (hasSearchHint)                                            score += 25;
+    if (isEditable)                                               score += 20;
+    if (hasSearchText)                                            score += 15;
+    if (isFocusable)                                              score +=  5;
+
+    if (score > 0) candidates.push({ score, node, resourceId: rid });
+  }
+
+  if (candidates.length === 0) return { found: false, x: null, y: null };
+
+  candidates.sort((a, b) => b.score - a.score);
+  const best = candidates[0];
+  const coords = extractNodeCoords(best.node);
+
+  if (best.resourceId) {
+    console.log(
+      `[android_search_in_app] auto-discovery: app="${appPkg}" ` +
+      `resource_id="${best.resourceId}" score=${best.score} ` +
+      `— consider promoting to APP_SEARCH_HINTS`,
+    );
+  } else {
+    console.log(
+      `[android_search_in_app] auto-discovery: app="${appPkg}" ` +
+      `found candidate (no resource_id) score=${best.score}`,
+    );
+  }
+
+  return {
+    found: true,
+    x: coords?.x ?? null,
+    y: coords?.y ?? null,
+    discoveredResourceId: best.resourceId || undefined,
+  };
+}
+
 export const androidSearchInAppTool: AgentTool = {
   name: "android_search_in_app",
   description:
@@ -873,14 +976,19 @@ export const androidSearchInAppTool: AgentTool = {
     //   1. App-specific resource IDs from APP_SEARCH_HINTS (most reliable — avoids
     //      false positives from coincidental keyword matches)
     //   2. App-specific extra keywords from APP_SEARCH_HINTS (supplement generic list)
-    //   3. Generic SEARCH_KEYWORDS fallback (original behaviour for unknown apps)
+    //   3a. For known apps (hint exists, not iconOnly): generic SEARCH_KEYWORDS fallback
+    //   3b. For unknown apps (no hint): ranked heuristic auto-discovery via
+    //       autoDiscoverSearchNode — scores nodes by class, resource-id, desc, hint,
+    //       editability, focusability. Logs discovered resource-id for registry promotion.
     // For iconOnly apps (e.g. TikTok) only strategy 1 is attempted because the
     // search entry point has no visible text label.
-    function parseSearchElement(raw: string): { found: boolean; x: number | null; y: number | null } {
+    function parseSearchElement(raw: string): { found: boolean; x: number | null; y: number | null; discoveredResourceId?: string } {
       const hint = APP_SEARCH_HINTS[appPackage];
       const lower = raw.toLowerCase();
 
       // Quick presence check — gather all possible signals before the expensive JSON parse.
+      // For unknown apps we always attempt the parse so autoDiscoverSearchNode can inspect
+      // the full tree, so we relax the early-return gate when no hint is registered.
       const allSignals = hint
         ? [...hint.resourceIds, ...hint.extraKeywords, ...(hint.iconOnly ? [] : SEARCH_KEYWORDS)]
         : SEARCH_KEYWORDS;
@@ -888,7 +996,8 @@ export const androidSearchInAppTool: AgentTool = {
 
       // Icon-only apps: skip the early return so JSON parsing is still attempted
       // (the resource ID may still be present in the serialised tree).
-      if (!hint?.iconOnly && !hasAnySignal) return { found: false, x: null, y: null };
+      // Unknown apps: always parse — auto-discovery needs the full node list.
+      if (hint && !hint.iconOnly && !hasAnySignal) return { found: false, x: null, y: null };
 
       try {
         const dataObj = JSON.parse(raw);
@@ -919,17 +1028,23 @@ export const androidSearchInAppTool: AgentTool = {
           }
         }
 
-        // ── Strategy 2 & 3: keyword matching ─────────────────────────────
+        // ── Strategy 2 & 3: keyword matching or auto-discovery ────────────
         // For iconOnly apps (e.g. TikTok) the search entry point has no text label,
         // so keyword matching is meaningless. Return not-found here; Step 2's fallback
         // strategies (home+reopen, swipe-reveal) will retry, and the caller's error
         // message guides the user to tap the icon manually if all attempts fail.
         if (hint?.iconOnly) return { found: false, x: null, y: null };
 
-        const matchKeywords = hint
-          ? [...hint.extraKeywords, ...SEARCH_KEYWORDS]
-          : SEARCH_KEYWORDS;
+        if (!hint) {
+          // ── Strategy 3b: heuristic auto-discovery for unknown apps ────────
+          // Use ranked multi-signal scoring rather than naive "first node that
+          // mentions 'search'" — reduces false positives and surfaces the resource
+          // ID so it can be promoted to APP_SEARCH_HINTS in the future.
+          return autoDiscoverSearchNode(nodes, appPackage);
+        }
 
+        // ── Strategy 3a: keyword matching for known apps (hint exists) ─────
+        const matchKeywords = [...hint.extraKeywords, ...SEARCH_KEYWORDS];
         for (const node of nodes) {
           const nodeStr = JSON.stringify(node).toLowerCase();
           const isSearchNode = matchKeywords.some((k) => nodeStr.includes(k));
@@ -939,14 +1054,14 @@ export const androidSearchInAppTool: AgentTool = {
           return { found: true, x: null, y: null };
         }
 
-        return { found: hasAnySignal && !(hint?.iconOnly ?? false), x: null, y: null };
+        return { found: hasAnySignal, x: null, y: null };
       } catch {
         return { found: hasAnySignal && !(hint?.iconOnly ?? false), x: null, y: null };
       }
     }
 
     //        Helper: freshly locate the search element from current screen                            
-    async function relocateSearchElement(): Promise<{ found: boolean; x: number | null; y: number | null; screenRaw: string }> {
+    async function relocateSearchElement(): Promise<{ found: boolean; x: number | null; y: number | null; screenRaw: string; discoveredResourceId?: string }> {
       const r = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
       if (!r.ok) return { found: false, x: null, y: null, screenRaw: "" };
       const raw = JSON.stringify(r.data || "");
@@ -1081,6 +1196,10 @@ export const androidSearchInAppTool: AgentTool = {
       }
 
       // ── Full 3-attempt discovery loop (cache miss or retry) ──────────────────
+      // autoDiscoveredResourceId is populated when autoDiscoverSearchNode finds a
+      // candidate for an unknown app — logged in the step 2 success entry so the
+      // resource ID can be promoted to APP_SEARCH_HINTS in the future.
+      let autoDiscoveredResourceId: string | undefined = undefined;
       if (!searchElementFound) {
         for (let attempt = 1; attempt <= 3; attempt++) {
           if (attempt > 1) {
@@ -1094,6 +1213,7 @@ export const androidSearchInAppTool: AgentTool = {
             searchElementFound = true;
             searchX = located.x;
             searchY = located.y;
+            if (located.discoveredResourceId) autoDiscoveredResourceId = located.discoveredResourceId;
             break;
           }
 
@@ -1197,8 +1317,11 @@ export const androidSearchInAppTool: AgentTool = {
         }
       }
 
-      stepLog.push({ step: 2, outcome: "success", detail: `found at (${searchX}, ${searchY})` });
-      console.log(`[${label}] step 2 complete — search element found at (${searchX}, ${searchY})`);
+      const step2Detail = autoDiscoveredResourceId
+        ? `found at (${searchX}, ${searchY}) via auto-discovery; resource_id="${autoDiscoveredResourceId}" — consider adding to APP_SEARCH_HINTS["${appPackage}"]`
+        : `found at (${searchX}, ${searchY})`;
+      stepLog.push({ step: 2, outcome: "success", detail: step2Detail });
+      console.log(`[${label}] step 2 complete — search element found at (${searchX}, ${searchY})${autoDiscoveredResourceId ? ` (auto-discovered resource_id="${autoDiscoveredResourceId}")` : ""}`);
       emitProgress(`Search bar found ✓`);
     }
 
