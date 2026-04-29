@@ -2,6 +2,7 @@ import type { AgentTool } from "../types";
 import { tavilySearch, formatSearchResults } from "../../integrations/search";
 import type { SearchResult } from "../../integrations/search";
 import { callBrowserTool } from "../mcp/playwrightMcpClient";
+import { getProtectedEntityNames, findEntityNearMatch } from "../../memory/protectedEntities";
 
 type TavilyLikeResult = Awaited<ReturnType<typeof tavilySearch>>;
 function emptyTavilyResult(answer: string): TavilyLikeResult {
@@ -85,13 +86,32 @@ export const webSearchTool: AgentTool = {
       return { ok: false, content: "Web search is not configured.", label: "Search unavailable" };
     }
     const query = String(args.query || "");
+
+    // Entity near-match note — non-blocking advisory so the caller can catch
+    // potential typos surfaced to the user in real-time coach conversations.
+    let entityNote = "";
+    if (ctx.userId) {
+      try {
+        const entityNames = await getProtectedEntityNames(ctx.userId);
+        const nearMatch = findEntityNearMatch(query, entityNames);
+        if (nearMatch) {
+          entityNote =
+            `\n\n⚠ NOTE: "${nearMatch.queryWord}" closely resembles ` +
+            `"${nearMatch.matchedEntity}" (a goal/project in this user's profile). ` +
+            `If the results seem off-topic, the search term may contain a typo.`;
+        }
+      } catch {
+        // Non-fatal — do not block the search.
+      }
+    }
+
     try {
       const results = await tavilySearch(query);
       const formatted = formatSearchResults(results);
       console.log(`[${ctx.channel || "Agent"}] search_web "${query}" → ${results.results?.length || 0} results`);
       return {
         ok: true,
-        content: formatted || "No results found.",
+        content: (formatted || "No results found.") + entityNote,
         label: `Web search: ${query}`,
         detail: formatted,
       };
@@ -138,6 +158,27 @@ export const researchTopicTool: AgentTool = {
       ? subQueriesRaw.slice(0, 4).map((q) => String(q))
       : [topic];
 
+    // Entity near-match note — non-blocking advisory for callers to surface.
+    let entityNote = "";
+    if (ctx.userId) {
+      try {
+        const entityNames = await getProtectedEntityNames(ctx.userId);
+        const nearMatch = findEntityNearMatch(topic, entityNames);
+        if (nearMatch) {
+          entityNote =
+            `\n\n⚠ ENTITY NOTE: The topic "${nearMatch.queryWord}" closely resembles ` +
+            `"${nearMatch.matchedEntity}" (a goal/project in this user's profile). ` +
+            `If you are running in a live conversation, check with the user whether the name is correct before proceeding.`;
+          console.log(
+            `[${ctx.channel || "Agent"}] research_topic entity near-match: ` +
+            `"${nearMatch.queryWord}" ≈ "${nearMatch.matchedEntity}" (dist=${nearMatch.distance})`,
+          );
+        }
+      } catch {
+        // Non-fatal — do not block research.
+      }
+    }
+
     try {
       const rawResults: TavilyLikeResult[] = await Promise.all(
         queries.map((q) =>
@@ -165,7 +206,7 @@ export const researchTopicTool: AgentTool = {
         return `### Query: ${q}\n${formatted || "(no results)"}`;
       });
 
-      const aggregated = `Research findings on: ${topic}\n\n` + sections.join("\n\n");
+      const aggregated = `Research findings on: ${topic}\n\n` + sections.join("\n\n") + entityNote;
 
       console.log(`[${ctx.channel || "Agent"}] research_topic "${topic}" — ${queries.length} sub-queries`);
 

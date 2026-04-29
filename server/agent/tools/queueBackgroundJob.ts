@@ -2,11 +2,13 @@ import type { AgentTool } from "../types";
 import { submitAgentJob, type AgentJobType, getModelForJobType } from "../jobQueue";
 import { SUB_AGENT_TYPES, type SubAgentType } from "../subagents";
 import { findDuplicateJob } from "./jobDuplicateGuard";
+import { getProtectedEntityNames, findEntityNearMatch } from "../../memory/protectedEntities";
 
 interface QueueJobArgs {
   agent_type?: string;
   prompt?: string;
   title?: string;
+  skip_entity_check?: boolean;
 }
 
 /**
@@ -18,6 +20,8 @@ interface QueueJobArgs {
  *  - Has a title field with a sensible default derived from the prompt
  *  - Emphasises the "detect and delegate" use case in its description
  *  - Guards against duplicate jobs for the same topic within a 10-minute window
+ *  - Checks the prompt against the user's known projects/products and asks for
+ *    confirmation if a near-match (possible typo) is detected
  */
 export const queueBackgroundJobTool: AgentTool = {
   name: "queue_background_job",
@@ -32,6 +36,8 @@ Choose agent_type based on the request:
 - writing: drafting memos, notes, blog posts, documents, reports
 - planning: phased project plans, goal breakdowns, action plans
 - email: composing an outbound email on the user's behalf
+
+ENTITY CHECK: Before queueing research or writing jobs, the tool automatically checks the prompt against the user's known projects and products. If a near-match (possible typo) is found, the tool will pause and return a confirmation request — relay this to the user and wait for their reply before re-calling. If the user explicitly confirms they want to search as-is (not the matched entity), set skip_entity_check=true on the next call. If they confirm the corrected name, update the prompt and re-call without skip_entity_check.
 
 Do NOT use for: quick one-sentence answers, reading today's tasks, anything answered by another tool, or any Discord server action (listing/deleting channels — use discord_list_channels and discord_delete_channel instead).`,
   parameters: {
@@ -52,6 +58,11 @@ Do NOT use for: quick one-sentence answers, reading today's tasks, anything answ
         description:
           "Short label for the Inbox card (≤80 chars). If omitted, a title will be derived from the prompt.",
       },
+      skip_entity_check: {
+        type: "boolean",
+        description:
+          "Set to true ONLY after the user has explicitly confirmed they want to search for this exact term despite it resembling a known project or product in their profile. Default: false.",
+      },
     },
     required: ["agent_type", "prompt"],
   },
@@ -59,6 +70,7 @@ Do NOT use for: quick one-sentence answers, reading today's tasks, anything answ
     const a = args as QueueJobArgs;
     const agentType = String(a.agent_type || "").trim() as SubAgentType;
     const prompt = String(a.prompt || "").trim();
+    const skipEntityCheck = Boolean(a.skip_entity_check);
 
     if (!SUB_AGENT_TYPES.includes(agentType as (typeof SUB_AGENT_TYPES)[number])) {
       return {
@@ -72,6 +84,41 @@ Do NOT use for: quick one-sentence answers, reading today's tasks, anything answ
     }
 
     const title = String(a.title || "").trim() || deriveTitle(agentType, prompt);
+
+    // ── Protected-entity pre-flight check ────────────────────────────────────
+    // Only run for research/writing jobs (the ones most likely to produce a
+    // useless result if the wrong entity name is searched), and only when the
+    // caller has not already confirmed the search term is intentional.
+    if (!skipEntityCheck && ctx.userId && (agentType === "research" || agentType === "writing")) {
+      try {
+        const entityNames = await getProtectedEntityNames(ctx.userId);
+        const nearMatch = findEntityNearMatch(prompt, entityNames);
+        if (nearMatch) {
+          console.log(
+            `[${ctx.channel || "Coach"}] queue_background_job ENTITY CHECK: ` +
+            `query word "${nearMatch.queryWord}" is close to known entity ` +
+            `"${nearMatch.matchedEntity}" (distance=${nearMatch.distance}) — pausing for confirmation`,
+          );
+          return {
+            ok: true,
+            content:
+              `ENTITY_CHECK_REQUIRED — I noticed the search includes "${nearMatch.queryWord}", ` +
+              `which looks very similar to "${nearMatch.matchedEntity}" — a project or product I have in your profile. ` +
+              `Please relay this to the user: "I'm about to search for '${nearMatch.queryWord}' — ` +
+              `did you mean '${nearMatch.matchedEntity}' (a project I have in your profile)? ` +
+              `Reply 'yes' to use that name, or 'no' to search as-is." ` +
+              `After the user replies: if they say yes, update the prompt with the corrected name and re-call. ` +
+              `If they say no, re-call with skip_entity_check=true. Do NOT queue the job until you receive their reply.`,
+            label: "Entity confirmation needed",
+            detail: `${nearMatch.queryWord} ≈ ${nearMatch.matchedEntity}`,
+          };
+        }
+      } catch (entityErr) {
+        // Non-fatal: if the entity check fails, proceed normally.
+        console.warn(`[queue_background_job] entity check failed:`, entityErr);
+      }
+    }
+    // ────────────────────────────────────────────────────────────────────────
 
     // ── Duplicate-job guard ─────────────────────────────────────────────────
     try {
@@ -140,4 +187,3 @@ function deriveTitle(agentType: SubAgentType, prompt: string): string {
   const snippet = prompt.slice(0, 60).replace(/\s+/g, " ").trim();
   return `${prefix} ${snippet}${prompt.length > 60 ? "…" : ""}`;
 }
-
