@@ -322,6 +322,17 @@ interface ScreenMapEntry {
 }
 const screenMapCache = new Map<string, ScreenMapEntry>();
 
+//        Search-bar coordinate cache                                                                                                                                                                          
+// Persists the last known (x, y) of the search bar for each userId + app_package pair.
+// After a successful discovery, coordinates are written here so repeat searches skip the
+// 3-attempt locate loop entirely. The entry is invalidated (overwritten) when discovery
+// finds coordinates that differ by more than 30 px, indicating an app layout change.
+interface SearchBarCacheEntry {
+  x: number;
+  y: number;
+}
+const searchBarCoordCache = new Map<string, SearchBarCacheEntry>();
+
 export interface ScreenElement {
   label: string;
   description: string;
@@ -921,35 +932,69 @@ export const androidSearchInAppTool: AgentTool = {
     let searchY: number | null = null;
 
     // ── Step 2: Locate search element ─────────────────────────────────────
-    // Three strategies on separate attempts:
-    //   attempt 1     check current screen as-is
-    //   attempt 2     press Home then re-open the app to reach its main screen
-    //   attempt 3     swipe down from top to reveal a hidden search bar
+    // Strategy (fast-path first):
+    //   0. Cache fast-path (fresh calls only, not retries):
+    //      Use cached (x, y) directly — no screen read. Step 3 verifies focus by
+    //      tapping those coords; if step 3 fails the agent retries with
+    //      resume_from_step: 2, which clears the stale cache entry and runs the
+    //      full discovery loop to find the corrected position.
+    //   1. Read current screen as-is
+    //   2. Press Home then re-open the app to reach its main screen
+    //   3. Swipe down from top to reveal a hidden search bar
+    const coordCacheKey = `${ctx.userId}:${appPackage}`;
     if (!resumeFromStep || resumeFromStep <= 2) {
       let searchElementFound = false;
 
-      for (let attempt = 1; attempt <= 3; attempt++) {
-        // Always re-read the screen on each attempt so coordinates are fresh
-        const located = await relocateSearchElement();
-        screenRaw = located.screenRaw || screenRaw;
-
-        if (located.found) {
+      // ── Cache fast-path (skip discovery on repeat calls) ─────────────────────
+      // Applied only on fresh invocations (resumeFromStep is null/undefined).
+      // When the agent retries step 2 it means the cached coords failed step 3
+      // focus verification — the entry is stale and must be cleared so the
+      // discovery loop can locate the correct position.
+      if (!resumeFromStep) {
+        const cachedSearchCoords = searchBarCoordCache.get(coordCacheKey);
+        if (cachedSearchCoords) {
+          // Trust cached coordinates directly — no screen read required.
+          // Step 3's tap + focus check is the verification gate.
+          searchX = cachedSearchCoords.x;
+          searchY = cachedSearchCoords.y;
           searchElementFound = true;
-          searchX = located.x;
-          searchY = located.y;
-          break;
+          stepLog.push({ step: 2, outcome: "cache_hit", detail: `using cached coordinates (${searchX}, ${searchY}) — discovery loop skipped` });
+          console.log(`[${label}] step 2 — cache hit for ${appPackage}: using (${searchX}, ${searchY}) (no screen read)`);
         }
+      } else if (resumeFromStep === 2) {
+        // Retry path: clear the stale cache entry so this run's discovery result
+        // replaces it, and subsequent fresh calls benefit from the new coordinates.
+        const hadEntry = searchBarCoordCache.delete(coordCacheKey);
+        if (hadEntry) {
+          console.log(`[${label}] step 2 — stale cache cleared for ${appPackage} (retry path)`);
+        }
+      }
 
-        if (attempt === 1) {
-          // Navigate to home then reopen the app so we land on the main screen
-          await sendDaemonOp(ctx.userId, { type: "android_press_key", key: "home" }, 10000);
-          await sleep(800);
-          await sendDaemonOp(ctx.userId, { type: "android_open_app", packageName: appPackage }, 15000);
-          await sleep(2000);
-        } else if (attempt === 2) {
-          // Swipe down from near the top to reveal pull-to-reveal search bars
-          await sendDaemonOp(ctx.userId, { type: "android_swipe", x1: 540, y1: 200, x2: 540, y2: 800, durationMs: 400 }, 10000);
-          await sleep(800);
+      // ── Full 3-attempt discovery loop (cache miss or retry) ──────────────────
+      if (!searchElementFound) {
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          // Always re-read the screen on each attempt so coordinates are fresh
+          const located = await relocateSearchElement();
+          screenRaw = located.screenRaw || screenRaw;
+
+          if (located.found) {
+            searchElementFound = true;
+            searchX = located.x;
+            searchY = located.y;
+            break;
+          }
+
+          if (attempt === 1) {
+            // Navigate to home then reopen the app so we land on the main screen
+            await sendDaemonOp(ctx.userId, { type: "android_press_key", key: "home" }, 10000);
+            await sleep(800);
+            await sendDaemonOp(ctx.userId, { type: "android_open_app", packageName: appPackage }, 15000);
+            await sleep(2000);
+          } else if (attempt === 2) {
+            // Swipe down from near the top to reveal pull-to-reveal search bars
+            await sendDaemonOp(ctx.userId, { type: "android_swipe", x1: 540, y1: 200, x2: 540, y2: 800, durationMs: 400 }, 10000);
+            await sleep(800);
+          }
         }
       }
 
@@ -1021,6 +1066,22 @@ export const androidSearchInAppTool: AgentTool = {
         };
       }
 
+      // ── Cache write: persist newly discovered coordinates ─────────────────────
+      // Compare against the current map entry (may have been updated by the cache-hit
+      // path above). Write only when: (a) no entry exists yet, or (b) the coords
+      // differ by more than 30 px (stale cache — the discovery loop found new ones).
+      // This handles first-time writes, stale-cache refreshes, and avoids no-op rewrites.
+      if (searchX !== null && searchY !== null) {
+        const currentEntry = searchBarCoordCache.get(coordCacheKey);
+        const isFirstWrite = !currentEntry;
+        const coordsDiffer = currentEntry &&
+          (Math.abs(searchX - currentEntry.x) > 30 || Math.abs(searchY - currentEntry.y) > 30);
+        if (isFirstWrite || coordsDiffer) {
+          searchBarCoordCache.set(coordCacheKey, { x: searchX, y: searchY });
+          console.log(`[${label}] step 2 — ${isFirstWrite ? "cached" : "cache refreshed"}: (${searchX}, ${searchY}) for ${appPackage}`);
+        }
+      }
+
       stepLog.push({ step: 2, outcome: "success", detail: `found at (${searchX}, ${searchY})` });
       console.log(`[${label}] step 2 complete — search element found at (${searchX}, ${searchY})`);
     }
@@ -1028,15 +1089,28 @@ export const androidSearchInAppTool: AgentTool = {
     // ── Step 3: Tap search bar with locate-then-act loop ──────────────────
     // Kept as a separate resumable step so resume_from_step: 3 re-runs only the
     // tap/focus-verify logic without repeating the full locate strategies above.
-    // Re-locate before each tap attempt so stale coordinates don't cause misses.
+    // On the first attempt: use coordinates already established by step 2 (cache
+    // hit or fresh discovery) without an extra screen read. On subsequent attempts
+    // (focus not yet verified): re-locate to get fresher coordinates in case the
+    // layout shifted between step 2 and the tap.
     if (!resumeFromStep || resumeFromStep <= 3) {
       let tapVerified = false;
       for (let attempt = 1; attempt <= 4; attempt++) {
-        // Re-locate element fresh on each attempt
-        const freshLocated = await relocateSearchElement();
-        screenRaw = freshLocated.screenRaw || screenRaw;
-        const tapX = freshLocated.x ?? searchX;
-        const tapY = freshLocated.y ?? searchY;
+        let tapX: number | null = null;
+        let tapY: number | null = null;
+
+        if (attempt === 1 && searchX !== null && searchY !== null) {
+          // First attempt: trust coordinates from step 2 (cache hit or discovery) —
+          // no extra screen read needed, saving one round-trip.
+          tapX = searchX;
+          tapY = searchY;
+        } else {
+          // Subsequent attempts or no prior coords: re-locate for fresh coordinates.
+          const freshLocated = await relocateSearchElement();
+          screenRaw = freshLocated.screenRaw || screenRaw;
+          tapX = freshLocated.x ?? searchX;
+          tapY = freshLocated.y ?? searchY;
+        }
 
         if (tapX !== null && tapY !== null) {
           await sendDaemonOp(ctx.userId, { type: "android_tap", x: tapX, y: tapY }, 10000);
