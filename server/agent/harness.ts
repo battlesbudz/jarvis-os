@@ -918,6 +918,11 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
   // Guard: allow at most 2 inline revisions per Android session to prevent
   // infinite revision loops within the same harness run.
   let inlineRevisionCount = 0;
+  // When a post-stream quality revision is triggered, the corrective model
+  // turn should NOT be streamed to the caller — the prior chunks were already
+  // delivered, so emitting a second streaming pass would produce duplicate /
+  // overlapping text in live-edit UIs (e.g. Discord).
+  let suppressNextStream = false;
 
   for (let turn = 0; turn < effectiveMaxTurns; turn++) {
     // ── Abort check — honour caller cancellation before each turn ───────
@@ -963,9 +968,54 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
     // Replay buffered text tokens only for pure text replies so the
     // caller's live-edit UI (e.g. Discord) sees progressive updates on
     // the final turn but stays quiet during tool-call turns.
-    if (onToken && !msgToolCalls && turnResult.textChunks.length > 0) {
+    // suppressNextStream is set by the post-stream quality check when it
+    // triggers a corrective turn — we must not re-stream old/corrective text
+    // on top of chunks the caller already received.
+    if (onToken && !msgToolCalls && turnResult.textChunks.length > 0 && !suppressNextStream) {
       for (const chunk of turnResult.textChunks) {
         onToken(chunk);
+      }
+    }
+    suppressNextStream = false;
+
+    // ── Post-stream quality check (streaming sessions only) ──────────────
+    // The inline quality check below is guarded by !onToken so it is skipped
+    // when streaming (chunks were already sent before the guard is reached).
+    // This block restores quality-check coverage for streaming Android sessions
+    // by running the same check here, after chunks have been fully replayed and
+    // the complete reply is assembled. When a revision is needed we push a
+    // corrective turn and continue the loop; the retry turn is NOT re-streamed
+    // (suppressNextStream = true) so the caller only receives the final reply.
+    if (
+      onToken &&
+      !msgToolCalls &&
+      hasAndroidTools &&
+      inlineRevisionCount < 2 &&
+      inlineUserMessageText &&
+      msgContent
+    ) {
+      const qc = checkResponseQuality({
+        userMessage: inlineUserMessageText,
+        agentReply: msgContent,
+        toolsUsed: toolCalls.map((tc) => tc.name),
+        androidToolsAvailable: true,
+      });
+
+      if (qc.action === "revise") {
+        inlineRevisionCount++;
+        console.log(
+          `[${channel}/Harness] post-stream quality check → revise (pass ${inlineRevisionCount}): ${qc.reason.slice(0, 120)}`,
+        );
+        if (opts.onProgressMessage) {
+          opts.onProgressMessage(`[Quality check] Revising response…`);
+        }
+        conversationMessages.push({ role: "assistant", content: msgContent });
+        conversationMessages.push({
+          role: "user",
+          content: `[QUALITY REMINDER] ${qc.reason}`,
+        });
+        suppressNextStream = true;
+        continue;
       }
     }
 
