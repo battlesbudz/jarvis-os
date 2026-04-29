@@ -3256,24 +3256,84 @@ You can extend yourself by building new tools directly. Generate the complete Ty
   });
 
   // ── Web-chat invite tokens ────────────────────────────────────────────────
-  // POST /api/webchat/invite — owner generates a 24-hour shareable link token
+  // GET /api/webchat/invite/active — returns the owner's current unexpired token (if any)
+  app.get("/api/webchat/invite/active", authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId!;
+      const [row] = await db
+        .select()
+        .from(webchatInviteTokens)
+        .where(and(eq(webchatInviteTokens.userId, userId), gte(webchatInviteTokens.expiresAt, new Date())))
+        .limit(1);
+
+      if (!row) return res.json({ active: false });
+
+      const host = req.headers["x-forwarded-host"] || req.headers.host || "localhost";
+      const protocol = req.headers["x-forwarded-proto"] || (req.secure ? "https" : "http");
+      const url = `${protocol}://${host}/chat?invite=${row.token}`;
+
+      return res.json({ active: true, token: row.token, url, expiresAt: row.expiresAt });
+    } catch (error) {
+      console.error("Error fetching active webchat invite token:", error);
+      return res.status(500).json({ error: "Failed to fetch active invite token" });
+    }
+  });
+
+  // POST /api/webchat/invite — owner generates (or retrieves) a 24-hour shareable link token
   app.post("/api/webchat/invite", authMiddleware, async (req: Request, res: Response) => {
     try {
       const userId = req.userId!;
+
+      const host = req.headers["x-forwarded-host"] || req.headers.host || "localhost";
+      const protocol = req.headers["x-forwarded-proto"] || (req.secure ? "https" : "http");
+
+      // Return existing unexpired token if one already exists
+      const [existing] = await db
+        .select()
+        .from(webchatInviteTokens)
+        .where(and(eq(webchatInviteTokens.userId, userId), gte(webchatInviteTokens.expiresAt, new Date())))
+        .limit(1);
+
+      if (existing) {
+        const url = `${protocol}://${host}/chat?invite=${existing.token}`;
+        return res.json({ token: existing.token, url, expiresAt: existing.expiresAt });
+      }
+
       const { randomBytes } = await import("crypto");
       const token = randomBytes(32).toString("hex");
       const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 h
 
       await db.insert(webchatInviteTokens).values({ token, userId, expiresAt });
 
-      const host = req.headers["x-forwarded-host"] || req.headers.host || "localhost";
-      const protocol = req.headers["x-forwarded-proto"] || (req.secure ? "https" : "http");
       const url = `${protocol}://${host}/chat?invite=${token}`;
-
       return res.json({ token, url, expiresAt });
     } catch (error) {
       console.error("Error creating webchat invite token:", error);
       return res.status(500).json({ error: "Failed to create invite token" });
+    }
+  });
+
+  // DELETE /api/webchat/invite/:token — owner revokes an active invite link
+  app.delete("/api/webchat/invite/:token", authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId!;
+      const { token } = req.params;
+
+      const [row] = await db
+        .select()
+        .from(webchatInviteTokens)
+        .where(eq(webchatInviteTokens.token, token))
+        .limit(1);
+
+      if (!row) return res.status(404).json({ error: "Token not found" });
+      if (row.userId !== userId) return res.status(403).json({ error: "Forbidden" });
+
+      await db.delete(webchatInviteTokens).where(eq(webchatInviteTokens.token, token));
+
+      return res.json({ ok: true });
+    } catch (error) {
+      console.error("Error revoking webchat invite token:", error);
+      return res.status(500).json({ error: "Failed to revoke invite token" });
     }
   });
 

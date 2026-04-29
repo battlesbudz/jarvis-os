@@ -436,6 +436,145 @@
         text-align: center;
       }
 
+      /* ── Share TTL badge ─────────────────────────────────────────────────────── */
+      #share-ttl {
+        display: none;
+        font-size: 11px;
+        color: var(--text-muted);
+        white-space: nowrap;
+        align-self: center;
+        margin-right: 2px;
+      }
+
+      /* ── Invite sheet modal ───────────────────────────────────────────────────── */
+      #invite-sheet-overlay {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: rgba(0,0,0,0.4);
+        z-index: 200;
+        align-items: flex-end;
+        justify-content: center;
+      }
+      #invite-sheet-overlay.open { display: flex; }
+
+      #invite-sheet {
+        background: var(--bg);
+        border-radius: 20px 20px 0 0;
+        padding: 24px 20px 32px;
+        width: 100%;
+        max-width: 760px;
+        animation: slideUp 0.22s ease;
+      }
+
+      @keyframes slideUp { from { transform: translateY(100%); } to { transform: none; } }
+
+      .invite-sheet-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 20px;
+      }
+
+      .invite-sheet-title {
+        font-size: 16px;
+        font-weight: 600;
+        color: var(--text);
+      }
+
+      #invite-sheet-close {
+        width: 28px;
+        height: 28px;
+        border: none;
+        background: var(--surface);
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        color: var(--text-muted);
+        font-size: 16px;
+        line-height: 1;
+      }
+
+      .invite-link-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 10px 12px;
+        margin-bottom: 16px;
+      }
+
+      #invite-link-text {
+        flex: 1;
+        font-size: 13px;
+        color: var(--text-muted);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        min-width: 0;
+      }
+
+      #invite-copy-btn {
+        flex-shrink: 0;
+        border: none;
+        background: var(--accent);
+        color: var(--accent-fg);
+        border-radius: 7px;
+        padding: 6px 12px;
+        font-size: 13px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: opacity 0.15s;
+      }
+      #invite-copy-btn:hover { opacity: 0.85; }
+
+      .invite-ttl-row {
+        font-size: 13px;
+        color: var(--text-muted);
+        margin-bottom: 20px;
+      }
+
+      .invite-ttl-row strong { color: var(--text); }
+
+      #invite-revoke-btn {
+        width: 100%;
+        padding: 12px;
+        border: 1px solid #e53e3e;
+        background: none;
+        border-radius: 10px;
+        font-size: 14px;
+        font-weight: 500;
+        color: #e53e3e;
+        cursor: pointer;
+        transition: background 0.15s;
+      }
+      #invite-revoke-btn:hover { background: rgba(229,62,62,0.08); }
+
+      #invite-generate-btn {
+        width: 100%;
+        padding: 12px;
+        border: none;
+        background: var(--accent);
+        color: var(--accent-fg);
+        border-radius: 10px;
+        font-size: 14px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: opacity 0.15s;
+      }
+      #invite-generate-btn:hover { opacity: 0.85; }
+
+      .invite-sheet-hint {
+        font-size: 12px;
+        color: var(--text-muted);
+        text-align: center;
+        margin-top: 12px;
+      }
+
       /* ── Error screen ────────────────────────────────────────────────────────── */
       #invite-error-screen {
         display: none;
@@ -457,6 +596,30 @@
 
     <!-- Toast -->
     <div id="toast"></div>
+
+    <!-- Invite sheet modal -->
+    <div id="invite-sheet-overlay">
+      <div id="invite-sheet">
+        <div class="invite-sheet-header">
+          <span class="invite-sheet-title">Share access</span>
+          <button id="invite-sheet-close" aria-label="Close">×</button>
+        </div>
+        <!-- Active-link state -->
+        <div id="invite-active-section" style="display:none">
+          <div class="invite-link-row">
+            <span id="invite-link-text"></span>
+            <button id="invite-copy-btn">Copy</button>
+          </div>
+          <div class="invite-ttl-row">Active link — expires in <strong id="invite-ttl-label"></strong></div>
+          <button id="invite-revoke-btn">Revoke link</button>
+        </div>
+        <!-- No-link state -->
+        <div id="invite-none-section" style="display:none">
+          <button id="invite-generate-btn">Create invite link</button>
+          <p class="invite-sheet-hint">Valid for 24 hours · one-time shareable</p>
+        </div>
+      </div>
+    </div>
 
     <!-- Invite error screen -->
     <div id="invite-error-screen">
@@ -493,6 +656,7 @@
           </div>
         </div>
         <div class="header-actions">
+          <span id="share-ttl"></span>
           <button class="icon-btn" id="share-btn" title="Share access" style="display:none">
             <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
               <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
@@ -578,11 +742,21 @@
       const clearBtn         = document.getElementById('clear-btn');
       const signoutBtn       = document.getElementById('signout-btn');
       const shareBtn         = document.getElementById('share-btn');
+      const shareTtl         = document.getElementById('share-ttl');
       const guestBanner      = document.getElementById('guest-banner');
       const toastEl          = document.getElementById('toast');
       const inviteErrScreen  = document.getElementById('invite-error-screen');
       const inviteErrTitle   = document.getElementById('invite-error-title');
       const inviteErrMsg     = document.getElementById('invite-error-msg');
+      const inviteSheetOverlay   = document.getElementById('invite-sheet-overlay');
+      const inviteSheetClose     = document.getElementById('invite-sheet-close');
+      const inviteActiveSection  = document.getElementById('invite-active-section');
+      const inviteNoneSection    = document.getElementById('invite-none-section');
+      const inviteLinkText       = document.getElementById('invite-link-text');
+      const inviteCopyBtn        = document.getElementById('invite-copy-btn');
+      const inviteTtlLabel       = document.getElementById('invite-ttl-label');
+      const inviteRevokeBtn      = document.getElementById('invite-revoke-btn');
+      const inviteGenerateBtn    = document.getElementById('invite-generate-btn');
 
       // ── Toast ─────────────────────────────────────────────────────────────────
       let toastTimer = null;
@@ -602,6 +776,154 @@
         inviteErrTitle.textContent   = title;
         inviteErrMsg.textContent     = msg;
       }
+
+      // ── Invite sheet ──────────────────────────────────────────────────────────
+      let activeInviteToken    = null;
+      let activeInviteUrl      = null;
+      let activeInviteExp      = null;
+      let ttlRefreshInterval   = null;
+
+      function formatTTL(expiresAt) {
+        const ms = new Date(expiresAt) - Date.now();
+        if (ms <= 0) return 'expired';
+        const hours = Math.floor(ms / 3600000);
+        const mins  = Math.floor((ms % 3600000) / 60000);
+        if (hours > 0) return `${hours}h`;
+        return `${mins}m`;
+      }
+
+      function updateShareTtlBadge() {
+        if (activeInviteExp && !isGuest) {
+          if (new Date(activeInviteExp) <= new Date()) {
+            // Token has expired — clear local state silently
+            activeInviteToken = null;
+            activeInviteUrl   = null;
+            activeInviteExp   = null;
+            shareTtl.style.display = 'none';
+            return;
+          }
+          shareTtl.textContent = `shared — ${formatTTL(activeInviteExp)} left`;
+          shareTtl.style.display = 'inline';
+        } else {
+          shareTtl.style.display = 'none';
+        }
+      }
+
+      async function checkActiveInvite() {
+        if (isGuest) return;
+        try {
+          const res = await fetch('/api/webchat/invite/active', {
+            headers: { 'Authorization': `Bearer ${jwt}` },
+          });
+          if (!res.ok) return;
+          const data = await res.json();
+          if (data.active) {
+            activeInviteToken = data.token;
+            activeInviteUrl   = data.url;
+            activeInviteExp   = data.expiresAt;
+          } else {
+            activeInviteToken = null;
+            activeInviteUrl   = null;
+            activeInviteExp   = null;
+          }
+          updateShareTtlBadge();
+        } catch { /* non-critical */ }
+      }
+
+      function openInviteSheet() {
+        if (activeInviteToken) {
+          inviteLinkText.textContent  = activeInviteUrl;
+          inviteTtlLabel.textContent  = formatTTL(activeInviteExp);
+          inviteActiveSection.style.display = '';
+          inviteNoneSection.style.display   = 'none';
+        } else {
+          inviteActiveSection.style.display = 'none';
+          inviteNoneSection.style.display   = '';
+        }
+        inviteSheetOverlay.classList.add('open');
+      }
+
+      function closeInviteSheet() {
+        inviteSheetOverlay.classList.remove('open');
+      }
+
+      inviteSheetClose.addEventListener('click', closeInviteSheet);
+      inviteSheetOverlay.addEventListener('click', function (e) {
+        if (e.target === inviteSheetOverlay) closeInviteSheet();
+      });
+
+      inviteCopyBtn.addEventListener('click', async function () {
+        if (!activeInviteUrl) return;
+        try {
+          await navigator.clipboard.writeText(activeInviteUrl);
+          showToast('Link copied!');
+        } catch {
+          window.prompt('Copy this link:', activeInviteUrl);
+        }
+      });
+
+      inviteGenerateBtn.addEventListener('click', async function () {
+        inviteGenerateBtn.disabled = true;
+        inviteGenerateBtn.textContent = 'Creating…';
+        try {
+          const res = await fetch('/api/webchat/invite', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${jwt}`,
+            },
+          });
+          if (res.status === 401) { signOut(); return; }
+          if (!res.ok) { showToast('Could not generate link. Try again.'); return; }
+          const data = await res.json();
+          activeInviteToken = data.token;
+          activeInviteUrl   = data.url;
+          activeInviteExp   = data.expiresAt;
+          updateShareTtlBadge();
+          // Switch sheet to active state
+          inviteLinkText.textContent  = activeInviteUrl;
+          inviteTtlLabel.textContent  = formatTTL(activeInviteExp);
+          inviteActiveSection.style.display = '';
+          inviteNoneSection.style.display   = 'none';
+          // Copy to clipboard automatically
+          try {
+            await navigator.clipboard.writeText(activeInviteUrl);
+            showToast('Link created & copied! Valid for 24 hours.');
+          } catch {
+            showToast('Link created! Valid for 24 hours.');
+          }
+        } catch {
+          showToast('Network error. Please try again.');
+        } finally {
+          inviteGenerateBtn.disabled = false;
+          inviteGenerateBtn.textContent = 'Create invite link';
+        }
+      });
+
+      inviteRevokeBtn.addEventListener('click', async function () {
+        if (!activeInviteToken) return;
+        inviteRevokeBtn.disabled = true;
+        inviteRevokeBtn.textContent = 'Revoking…';
+        try {
+          const res = await fetch(`/api/webchat/invite/${encodeURIComponent(activeInviteToken)}`, {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${jwt}` },
+          });
+          if (res.status === 401) { signOut(); return; }
+          if (!res.ok) { showToast('Could not revoke link. Try again.'); return; }
+          activeInviteToken = null;
+          activeInviteUrl   = null;
+          activeInviteExp   = null;
+          updateShareTtlBadge();
+          closeInviteSheet();
+          showToast('Invite link revoked.');
+        } catch {
+          showToast('Network error. Please try again.');
+        } finally {
+          inviteRevokeBtn.disabled = false;
+          inviteRevokeBtn.textContent = 'Revoke link';
+        }
+      });
 
       // ── Init ─────────────────────────────────────────────────────────────────
       async function init() {
@@ -666,10 +988,16 @@
         // Owner sees share button; guests see the guest banner instead
         if (isGuest) {
           shareBtn.style.display   = 'none';
+          shareTtl.style.display   = 'none';
           guestBanner.style.display = 'block';
         } else {
           shareBtn.style.display   = 'flex';
           guestBanner.style.display = 'none';
+          checkActiveInvite();
+          // Refresh TTL badge every 60 s so it stays accurate during long sessions
+          if (!ttlRefreshInterval) {
+            ttlRefreshInterval = setInterval(updateShareTtlBadge, 60_000);
+          }
         }
         msgInput.focus();
         connectSSE();
@@ -1140,32 +1468,11 @@
       shareBtn.addEventListener('click', async function () {
         shareBtn.disabled = true;
         try {
-          const res = await fetch('/api/webchat/invite', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${jwt}`,
-            },
-          });
-          if (res.status === 401) { signOut(); return; }
-          if (!res.ok) {
-            showToast('Could not generate link. Try again.');
-            return;
-          }
-          const data = await res.json();
-          const url = data.url;
-          try {
-            await navigator.clipboard.writeText(url);
-            showToast('Link copied! Valid for 24 hours.');
-          } catch {
-            // Clipboard blocked — prompt fallback
-            window.prompt('Copy this link (valid 24 h):', url);
-          }
-        } catch {
-          showToast('Network error. Please try again.');
+          await checkActiveInvite();
         } finally {
           shareBtn.disabled = false;
         }
+        openInviteSheet();
       });
 
       // ── Boot ─────────────────────────────────────────────────────────────────
