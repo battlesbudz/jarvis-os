@@ -547,6 +547,106 @@ function screenContains(raw: string, keywords: string[]): boolean {
 // resumable, structured sequence. Each step logs its outcome; if any step
 // fails, a structured response tells Jarvis exactly where to resume and why.
 
+// ── App-specific search bar detection registry ────────────────────────────────
+// Maps known Android package names to search-bar detection hints so the generic
+// keyword heuristic is supplemented (or replaced) with reliable app-specific
+// signals. The tool checks this map first; generic heuristics are used only as
+// a fallback.
+interface AppSearchHint {
+  /** resource-id substrings to match (case-insensitive partial match) */
+  resourceIds: string[];
+  /** Additional text / content-desc keywords specific to this app */
+  extraKeywords: string[];
+  /**
+   * When true the search entry point has no visible text label (e.g. TikTok's
+   * magnifying-glass icon). Keyword matching is skipped; only resource IDs are
+   * tried. The tool must find the element via resource ID alone.
+   */
+  iconOnly?: boolean;
+}
+
+const APP_SEARCH_HINTS: Record<string, AppSearchHint> = {
+  "com.facebook.katana": {
+    resourceIds: [
+      "search_box",
+      "search_box_text_field",
+      "action_bar_search_text_field",
+      "action_search",
+      "search_input",
+    ],
+    extraKeywords: ["search facebook", "search"],
+  },
+  "com.instagram.android": {
+    resourceIds: [
+      "action_bar_search_edit_text",
+      "search_edit_text",
+      "search_bar",
+      "igds_search_bar",
+    ],
+    extraKeywords: ["search"],
+  },
+  "com.twitter.android": {
+    resourceIds: [
+      ":id/query",         // full Twitter/X search field resource ID suffix
+      "search_src_text",
+      "search_bar",
+      "toolbar_search_query",
+      "search_field",
+    ],
+    extraKeywords: ["search twitter", "search x", "search"],
+  },
+  "com.linkedin.android": {
+    resourceIds: [
+      "com.linkedin.android:id/search_bar_hint",
+      "search_bar_hint",
+      "search_bar",
+      "action_bar_search_text_field",
+      "nav_search",
+    ],
+    extraKeywords: ["search"],
+  },
+  "com.zhiliaoapp.musically": {
+    // TikTok's search is a magnifying-glass icon with no text label.
+    // Rely entirely on resource ID — skip keyword matching.
+    resourceIds: [
+      "et_search",
+      "search_bar",
+      "action_bar_search",
+      "search_icon",
+      "title_bar_search",
+    ],
+    extraKeywords: [],
+    iconOnly: true,
+  },
+};
+
+/**
+ * Extract tap coordinates from an accessibility tree node.
+ * Returns null when no usable coordinates are present.
+ */
+function extractNodeCoords(node: Record<string, unknown>): { x: number; y: number } | null {
+  const bounds = node.bounds as Record<string, number> | undefined;
+  if (
+    bounds &&
+    typeof bounds.left === "number" &&
+    typeof bounds.top === "number" &&
+    typeof bounds.right === "number" &&
+    typeof bounds.bottom === "number"
+  ) {
+    return {
+      x: Math.round((bounds.left + bounds.right) / 2),
+      y: Math.round((bounds.top + bounds.bottom) / 2),
+    };
+  }
+  const cx = node.centerX ?? node.x;
+  const cy = node.centerY ?? node.y;
+  if (typeof cx === "number" && typeof cy === "number") return { x: cx, y: cy };
+  if (typeof node.x === "number" && typeof node.y === "number") {
+    return { x: node.x as number, y: node.y as number };
+  }
+  return null;
+}
+
 export const androidSearchInAppTool: AgentTool = {
   name: "android_search_in_app",
   description:
@@ -649,10 +749,26 @@ export const androidSearchInAppTool: AgentTool = {
     if (searchBarHint) SEARCH_KEYWORDS.unshift(searchBarHint.toLowerCase());
 
     // ── Helper: parse accessibility tree for the best search-bar candidate ────
+    // Strategy (in priority order):
+    //   1. App-specific resource IDs from APP_SEARCH_HINTS (most reliable — avoids
+    //      false positives from coincidental keyword matches)
+    //   2. App-specific extra keywords from APP_SEARCH_HINTS (supplement generic list)
+    //   3. Generic SEARCH_KEYWORDS fallback (original behaviour for unknown apps)
+    // For iconOnly apps (e.g. TikTok) only strategy 1 is attempted because the
+    // search entry point has no visible text label.
     function parseSearchElement(raw: string): { found: boolean; x: number | null; y: number | null } {
+      const hint = APP_SEARCH_HINTS[appPackage];
       const lower = raw.toLowerCase();
-      const hasHint = SEARCH_KEYWORDS.some((k) => lower.includes(k));
-      if (!hasHint) return { found: false, x: null, y: null };
+
+      // Quick presence check — gather all possible signals before the expensive JSON parse.
+      const allSignals = hint
+        ? [...hint.resourceIds, ...hint.extraKeywords, ...(hint.iconOnly ? [] : SEARCH_KEYWORDS)]
+        : SEARCH_KEYWORDS;
+      const hasAnySignal = allSignals.some((k) => lower.includes(k.toLowerCase()));
+
+      // Icon-only apps: skip the early return so JSON parsing is still attempted
+      // (the resource ID may still be present in the serialised tree).
+      if (!hint?.iconOnly && !hasAnySignal) return { found: false, x: null, y: null };
 
       try {
         const dataObj = JSON.parse(raw);
@@ -666,29 +782,46 @@ export const androidSearchInAppTool: AgentTool = {
         }
         collectNodes(dataObj);
 
-        for (const node of nodes) {
-          const nodeStr = JSON.stringify(node).toLowerCase();
-          const isSearchNode = SEARCH_KEYWORDS.some((k) => nodeStr.includes(k));
-          if (!isSearchNode) continue;
-
-          const bounds = node.bounds as Record<string, number> | undefined;
-          if (bounds && typeof bounds.left === "number" && typeof bounds.top === "number" && typeof bounds.right === "number" && typeof bounds.bottom === "number") {
-            const cx = Math.round((bounds.left + bounds.right) / 2);
-            const cy = Math.round((bounds.top + bounds.bottom) / 2);
-            return { found: true, x: cx, y: cy };
-          }
-          const centerX = node.centerX ?? node.x;
-          const centerY = node.centerY ?? node.y;
-          if (typeof centerX === "number" && typeof centerY === "number") {
-            return { found: true, x: centerX as number, y: centerY as number };
-          }
-          if (typeof node.x === "number" && typeof node.y === "number") {
-            return { found: true, x: node.x as number, y: node.y as number };
+        // ── Strategy 1: app-specific resource ID matching ─────────────────
+        if (hint && hint.resourceIds.length > 0) {
+          for (const node of nodes) {
+            const rid = (
+              typeof node.resource_id === "string" ? node.resource_id :
+              typeof node.resourceId === "string" ? node.resourceId :
+              typeof node["resource-id"] === "string" ? (node["resource-id"] as string) :
+              ""
+            ).toLowerCase();
+            const matchesRid = hint.resourceIds.some((r) => rid.includes(r.toLowerCase()));
+            if (!matchesRid) continue;
+            const coords = extractNodeCoords(node);
+            if (coords) return { found: true, x: coords.x, y: coords.y };
+            return { found: true, x: null, y: null };
           }
         }
-        return { found: true, x: null, y: null };
+
+        // ── Strategy 2 & 3: keyword matching ─────────────────────────────
+        // For iconOnly apps (e.g. TikTok) the search entry point has no text label,
+        // so keyword matching is meaningless. Return not-found here; Step 2's fallback
+        // strategies (home+reopen, swipe-reveal) will retry, and the caller's error
+        // message guides the user to tap the icon manually if all attempts fail.
+        if (hint?.iconOnly) return { found: false, x: null, y: null };
+
+        const matchKeywords = hint
+          ? [...hint.extraKeywords, ...SEARCH_KEYWORDS]
+          : SEARCH_KEYWORDS;
+
+        for (const node of nodes) {
+          const nodeStr = JSON.stringify(node).toLowerCase();
+          const isSearchNode = matchKeywords.some((k) => nodeStr.includes(k));
+          if (!isSearchNode) continue;
+          const coords = extractNodeCoords(node);
+          if (coords) return { found: true, x: coords.x, y: coords.y };
+          return { found: true, x: null, y: null };
+        }
+
+        return { found: hasAnySignal && !(hint?.iconOnly ?? false), x: null, y: null };
       } catch {
-        return { found: hasHint, x: null, y: null };
+        return { found: hasAnySignal && !(hint?.iconOnly ?? false), x: null, y: null };
       }
     }
 
