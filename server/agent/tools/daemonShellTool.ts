@@ -2685,7 +2685,10 @@ Parameters:
 
 Both fingers move simultaneously in a single GestureDescription so the gesture registers correctly in all zoom-capable views.
 
-Returns the matched element details and the coordinates used for both pointers.
+Returns the matched element details and the coordinates used for both pointers, plus:
+  - screen_changed: true if a perceptual hash comparison detected a visual change after the gesture (hash_distance > 5)
+  - hash_distance: Hamming distance between the pre- and post-pinch perceptual hashes (null if screenshot unavailable)
+  - screen_changed_note: present only when screen_changed is false — explains why the view may not have changed
 
 Requires: android_screenshot and android_read_screen permissions (same as android_screen_understand), plus android_tap_type permission for the gesture.`,
   parameters: {
@@ -2861,6 +2864,17 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
     // Photos, PDFs) require simultaneous pointer down events to recognise a pinch.
     const SWIPE_DURATION_MS = 300;
 
+    // ── Pre-pinch perceptual hash ──────────────────────────────────────────────
+    let prePinchHash: string | null = null;
+    let screenChanged = false;
+    let hashDistance: number | null = null;
+    try {
+      const prePinchScreenshot = await captureScreenshot(ctx.userId);
+      if (prePinchScreenshot) {
+        prePinchHash = await computeScreenshotHash(prePinchScreenshot);
+      }
+    } catch { /* hash capture is best-effort */ }
+
     const pinchResult = await sendDaemonOp(
       ctx.userId,
       {
@@ -2880,9 +2894,25 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       };
     }
 
+    // ── Post-pinch perceptual hash comparison ─────────────────────────────────
+    if (prePinchHash !== null) {
+      try {
+        const postPinchScreenshot = await captureScreenshot(ctx.userId);
+        if (postPinchScreenshot) {
+          const postPinchHash = await computeScreenshotHash(postPinchScreenshot);
+          hashDistance = hammingDistance(prePinchHash, postPinchHash);
+          if (hashDistance > 5) {
+            screenChanged = true;
+            console.log(`[android_pinch_element] perceptual hash verified (hash_distance=${hashDistance})`);
+          }
+        }
+      } catch { /* hash comparison is best-effort */ }
+    }
+
     console.log(
       `[android_pinch_element] userId=${ctx.userId} action=${action} on "${bestElement.label}" ` +
-      `centre=(${centreRounded.x},${centreRounded.y}) reach=${reach}px scale=${scaleFactor} score=${bestScore}`,
+      `centre=(${centreRounded.x},${centreRounded.y}) reach=${reach}px scale=${scaleFactor} score=${bestScore} ` +
+      `screen_changed=${screenChanged}${hashDistance !== null ? ` hash_distance=${hashDistance}` : ""}`,
     );
 
     return {
@@ -2902,9 +2932,14 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
           pointer1: { from: { x: finger1.x1, y: finger1.y1 }, to: { x: finger1.x2, y: finger1.y2 } },
           pointer2: { from: { x: finger2.x1, y: finger2.y1 }, to: { x: finger2.x2, y: finger2.y2 } },
         },
+        screen_changed: screenChanged,
+        hash_distance: hashDistance,
+        screen_changed_note: screenChanged
+          ? undefined
+          : "The UI did not detectably change after the pinch. The view may not support pinch-to-zoom, or the gesture may not have landed on a zoomable region.",
       }),
       label: `${action === "zoom_in" ? "Zoomed in" : "Zoomed out"} on "${bestElement.label}" (reach=${reach}px)`,
-      detail: `match_score=${bestScore} scale_factor=${scaleFactor} bounds=${bestElement.bounds}`,
+      detail: `match_score=${bestScore} scale_factor=${scaleFactor} bounds=${bestElement.bounds} screen_changed=${screenChanged}${hashDistance !== null ? ` hash_dist=${hashDistance}` : ""}`,
     };
   },
 };
