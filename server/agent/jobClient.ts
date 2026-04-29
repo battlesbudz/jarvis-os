@@ -96,6 +96,21 @@ async function realInsertJob(values: {
   return inserted[0]?.id ?? "";
 }
 
+/** Result returned by {@link submitAgentJob}. */
+export interface SubmitJobResult {
+  /** The job id — either newly created or the id of an already-running duplicate. */
+  id: string;
+  /**
+   * `true` when an existing queued/running job was found and reused;
+   * `false` when a brand-new job row was inserted.
+   *
+   * Callers can use this to give users different feedback, e.g.:
+   *   - `isDuplicate: false` → "Starting…"
+   *   - `isDuplicate: true`  → "Already on it!"
+   */
+  isDuplicate: boolean;
+}
+
 /**
  * Enqueue a new agent job, with built-in deduplication.
  *
@@ -109,8 +124,11 @@ async function realInsertJob(values: {
  *
  * Both the duplicate-check and the DB insert are injectable via `deps` so
  * that tests can exercise all branches without a real database.
+ *
+ * @returns `{ id, isDuplicate }` — `isDuplicate` is `true` when an existing
+ *   job was reused, `false` when a fresh job was inserted.
  */
-export async function submitAgentJob(input: SubmitJobInput, deps: SubmitJobDeps = {}): Promise<string> {
+export async function submitAgentJob(input: SubmitJobInput, deps: SubmitJobDeps = {}): Promise<SubmitJobResult> {
   const guardFn = deps.findDuplicate ?? findDuplicateJob;
   const insertFn = deps.insertJob ?? realInsertJob;
 
@@ -121,7 +139,7 @@ export async function submitAgentJob(input: SubmitJobInput, deps: SubmitJobDeps 
       console.log(
         `[JobQueue] duplicate suppressed — returning existing job=${existing.id} type=${input.agentType} user=${input.userId} title="${input.title.slice(0, 60)}"`,
       );
-      return existing.id;
+      return { id: existing.id, isDuplicate: true };
     }
   } catch (dupErr) {
     // Non-fatal — log and proceed to insert normally so the system stays
@@ -150,5 +168,5 @@ export async function submitAgentJob(input: SubmitJobInput, deps: SubmitJobDeps 
   console.log(
     `[JobQueue] queued job ${id} type=${input.agentType} model=${model} user=${input.userId} title="${input.title.slice(0, 60)}"`,
   );
-  return id;
+  return { id, isDuplicate: false };
 }

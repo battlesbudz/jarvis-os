@@ -1,21 +1,29 @@
 /**
  * Integration-level tests for the build-intent routing path.
  *
- * These tests verify two critical behavioural contracts:
- *   1. A duplicate request does NOT enqueue a second job when a matching
- *      build_feature job is already queued or running for the same user.
- *   2. The reply returned by routeBuildIntent contains BUILD_ACK_MARKER so
- *      that classifyBuildFollowUp can detect an active build session on the
- *      next conversation turn.
+ * These tests verify the behavioural contracts of routeBuildIntent after the
+ * deduplication logic moved into submitAgentJob.  routeBuildIntent now always
+ * calls submit() and branches on the returned `isDuplicate` flag instead of
+ * running its own pre-check.
  *
- * All external dependencies (job queue, duplicate guard) are stubbed — no
- * database or HTTP stack is required.
+ * Critical contracts:
+ *   1. Fresh job  → BUILD_ACK_MARKER is in the reply, result.jobId is set.
+ *   2. Duplicate  → submit() is still called once, result.duplicateJobId is set,
+ *                   and BUILD_ACK_MARKER is still in the reply.
+ *   3. discordChannelId is forwarded into the job input.
+ *   4. Two rapid identical requests → each calls submit() once; the one that
+ *      gets isDuplicate:true surfaces the duplicate ack.
+ *   5. coachAgent dispatch simulation — outbound reply always includes
+ *      BUILD_ACK_MARKER regardless of fresh/duplicate branch.
+ *
+ * All external dependencies are stubbed — no database or HTTP stack required.
  *
  * Run with: tsx server/agent/__tests__/coachBuildRouting.test.ts
  */
 
 import { routeBuildIntent, type BuildRouteDeps, type BuildRouteInput } from "../buildIntentRouter";
 import { BUILD_ACK_MARKER } from "../queryClassifier";
+import type { SubmitJobResult } from "../jobClient";
 
 // ── Test bookkeeping ──────────────────────────────────────────────────────────
 
@@ -47,7 +55,10 @@ function assertEquals<T>(actual: T, expected: T, label: string): void {
 
 // ── Stub factories ────────────────────────────────────────────────────────────
 
-/** Creates a stub submit function that records calls and returns the given id. */
+/**
+ * Creates a submit stub that records calls and returns the given id with
+ * isDuplicate:false (simulating a freshly-enqueued job).
+ */
 function makeSubmitStub(returnId = "job-001"): {
   fn: BuildRouteDeps["submit"];
   calls: number;
@@ -55,17 +66,25 @@ function makeSubmitStub(returnId = "job-001"): {
   const stub = { calls: 0 } as { calls: number; fn: BuildRouteDeps["submit"] };
   stub.fn = async (_input) => {
     stub.calls++;
-    return returnId;
+    return { id: returnId, isDuplicate: false };
   };
   return stub;
 }
 
-/** A findDuplicate stub that always reports no existing job. */
-const noDuplicate: BuildRouteDeps["findDuplicate"] = async () => null;
-
-/** A findDuplicate stub that always reports an existing job with the given id. */
-function duplicateExists(id = "job-existing"): BuildRouteDeps["findDuplicate"] {
-  return async () => ({ id, title: `Build: some existing feature` });
+/**
+ * Creates a submit stub that returns isDuplicate:true (simulating the
+ * deduplication guard inside submitAgentJob detecting an existing job).
+ */
+function makeDuplicateSubmitStub(existingId = "job-existing"): {
+  fn: BuildRouteDeps["submit"];
+  calls: number;
+} {
+  const stub = { calls: 0 } as { calls: number; fn: BuildRouteDeps["submit"] };
+  stub.fn = async (_input) => {
+    stub.calls++;
+    return { id: existingId, isDuplicate: true };
+  };
+  return stub;
 }
 
 /** Minimal valid routing input. */
@@ -83,43 +102,44 @@ function makeInput(overrides: Partial<BuildRouteInput> = {}): BuildRouteInput {
 
 async function run(): Promise<void> {
   // ─────────────────────────────────────────────────────────────────────────
-  // Suite 1: BUILD_ACK_MARKER in the ack reply
+  // Suite 1: BUILD_ACK_MARKER in the ack reply — fresh job
   // ─────────────────────────────────────────────────────────────────────────
 
-  console.log("\nSuite 1 — BUILD_ACK_MARKER is embedded in the ack reply\n");
+  console.log("\nSuite 1 — BUILD_ACK_MARKER is embedded in the ack reply (fresh job)\n");
 
   {
     const submitStub = makeSubmitStub("job-111");
-    const deps: BuildRouteDeps = { submit: submitStub.fn, findDuplicate: noDuplicate };
+    const deps: BuildRouteDeps = { submit: submitStub.fn };
 
     const result = await routeBuildIntent(makeInput(), deps);
 
     assert(result.handled === true, "BA-1: result.handled is true for a fresh build request");
-    assert(typeof result.reply === "string", "BA-2: result.reply is a string");
+    assertEquals(submitStub.calls, 1, "BA-2: submit is called exactly once");
+    assert(typeof result.reply === "string", "BA-3: result.reply is a string");
     assert(
       !!result.reply && result.reply.includes(BUILD_ACK_MARKER),
-      `BA-3: reply contains BUILD_ACK_MARKER ("${BUILD_ACK_MARKER}")`,
+      `BA-4: reply contains BUILD_ACK_MARKER ("${BUILD_ACK_MARKER}")`,
     );
-    assertEquals(result.jobId, "job-111", "BA-4: result.jobId matches the value returned by submit");
-    assert(result.duplicateJobId === undefined, "BA-5: result.duplicateJobId is absent for a fresh job");
+    assertEquals(result.jobId, "job-111", "BA-5: result.jobId matches the value returned by submit");
+    assert(result.duplicateJobId === undefined, "BA-6: result.duplicateJobId is absent for a fresh job");
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // Suite 2: Deduplication — no second job queued when one already exists
+  // Suite 2: Deduplication — submit returns isDuplicate:true
   // ─────────────────────────────────────────────────────────────────────────
 
-  console.log("\nSuite 2 — Deduplication prevents a second job being enqueued\n");
+  console.log("\nSuite 2 — submit returns isDuplicate:true → duplicate ack is returned\n");
 
   {
-    const submitStub = makeSubmitStub("job-999");
-    const deps: BuildRouteDeps = { submit: submitStub.fn, findDuplicate: duplicateExists("job-existing") };
+    const submitStub = makeDuplicateSubmitStub("job-existing");
+    const deps: BuildRouteDeps = { submit: submitStub.fn };
 
     const result = await routeBuildIntent(makeInput(), deps);
 
     assert(result.handled === true, "DD-1: result.handled is true even for a duplicate (ack is returned)");
-    assertEquals(submitStub.calls, 0, "DD-2: submit was NOT called — no second job enqueued");
+    assertEquals(submitStub.calls, 1, "DD-2: submit is called exactly once (deduplication is inside submitAgentJob)");
     assert(result.jobId === undefined, "DD-3: result.jobId is absent (no new job created)");
-    assertEquals(result.duplicateJobId, "job-existing", "DD-4: result.duplicateJobId matches the existing job");
+    assertEquals(result.duplicateJobId, "job-existing", "DD-4: result.duplicateJobId matches the existing job id");
     assert(typeof result.reply === "string" && result.reply.length > 0, "DD-5: a non-empty ack reply is still returned");
     assert(
       !!result.reply && result.reply.includes(BUILD_ACK_MARKER),
@@ -128,42 +148,18 @@ async function run(): Promise<void> {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // Suite 3: Deduplication does not block when the guard itself errors
+  // Suite 3: discordChannelId is forwarded into the job input
   // ─────────────────────────────────────────────────────────────────────────
 
-  console.log("\nSuite 3 — Guard errors are non-fatal; job is enqueued normally\n");
-
-  {
-    const submitStub = makeSubmitStub("job-222");
-    const erroringGuard: BuildRouteDeps["findDuplicate"] = async () => {
-      throw new Error("DB connection lost");
-    };
-    const deps: BuildRouteDeps = { submit: submitStub.fn, findDuplicate: erroringGuard };
-
-    const result = await routeBuildIntent(makeInput(), deps);
-
-    assert(result.handled === true, "GE-1: result.handled is true even when the guard throws");
-    assertEquals(submitStub.calls, 1, "GE-2: submit was called once (guard error is non-fatal)");
-    assertEquals(result.jobId, "job-222", "GE-3: jobId is present after guard error");
-    assert(
-      !!result.reply && result.reply.includes(BUILD_ACK_MARKER),
-      "GE-4: ack reply still contains BUILD_ACK_MARKER after guard error",
-    );
-  }
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // Suite 4: discordChannelId is forwarded into the job input
-  // ─────────────────────────────────────────────────────────────────────────
-
-  console.log("\nSuite 4 — Optional discordChannelId is forwarded to the job\n");
+  console.log("\nSuite 3 — Optional discordChannelId is forwarded to the job\n");
 
   {
     const capturedInputs: Array<Record<string, unknown>> = [];
     const capturingSubmit: BuildRouteDeps["submit"] = async (jobInput) => {
       capturedInputs.push(jobInput.input as Record<string, unknown>);
-      return "job-333";
+      return { id: "job-333", isDuplicate: false };
     };
-    const deps: BuildRouteDeps = { submit: capturingSubmit, findDuplicate: noDuplicate };
+    const deps: BuildRouteDeps = { submit: capturingSubmit };
 
     await routeBuildIntent(makeInput({ discordChannelId: "ch-discord-99" }), deps);
 
@@ -176,31 +172,20 @@ async function run(): Promise<void> {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // Suite 5: Two rapid identical requests — only one job is created
+  // Suite 4: Two rapid identical requests — isDuplicate:true on second call
   // ─────────────────────────────────────────────────────────────────────────
 
-  console.log("\nSuite 5 — Two rapid identical requests yield exactly one enqueued job\n");
+  console.log("\nSuite 4 — Two rapid identical requests: second gets isDuplicate:true\n");
 
   {
-    let jobCounter = 0;
-    const sequentialIds = ["job-A", "job-B"];
-
-    const submitStub: BuildRouteDeps["submit"] = async () => {
-      return sequentialIds[jobCounter++] ?? "job-extra";
+    let callCount = 0;
+    const sequentialSubmit: BuildRouteDeps["submit"] = async (): Promise<SubmitJobResult> => {
+      callCount++;
+      if (callCount === 1) return { id: "job-A", isDuplicate: false };
+      return { id: "job-A", isDuplicate: true };
     };
 
-    // Simulate a guard that "knows" about the first job after it has been submitted.
-    // First call → no duplicate; second call → duplicate exists (id = "job-A").
-    let firstCallDone = false;
-    const dynamicGuard: BuildRouteDeps["findDuplicate"] = async () => {
-      if (!firstCallDone) {
-        firstCallDone = true;
-        return null;
-      }
-      return { id: "job-A", title: "Build: build a weather lookup tool" };
-    };
-
-    const deps: BuildRouteDeps = { submit: submitStub, findDuplicate: dynamicGuard };
+    const deps: BuildRouteDeps = { submit: sequentialSubmit };
     const input = makeInput();
 
     const [result1, result2] = await Promise.all([
@@ -209,45 +194,36 @@ async function run(): Promise<void> {
     ]);
 
     assert(result1.handled && result2.handled, "RR-1: both requests report handled=true");
-    assertEquals(jobCounter, 1, "RR-2: submit was invoked exactly once across two concurrent requests");
+    assertEquals(callCount, 2, "RR-2: submit is invoked twice (once per request; dedup is internal to submitAgentJob)");
 
-    const firstJobId = result1.jobId ?? result2.jobId;
-    assert(firstJobId === "job-A", "RR-3: the enqueued job has the expected id");
+    const freshResult = result1.jobId !== undefined ? result1 : result2;
+    const dupResult = result1.duplicateJobId !== undefined ? result1 : result2;
 
-    const duplicateResult = result1.duplicateJobId !== undefined ? result1 : result2;
-    assert(duplicateResult.duplicateJobId === "job-A", "RR-4: the duplicate response references the first job");
+    assertEquals(freshResult.jobId, "job-A", "RR-3: the fresh result carries the correct jobId");
+    assertEquals(dupResult.duplicateJobId, "job-A", "RR-4: the duplicate result references the same job");
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // Suite 6: coachAgent dispatch simulation — the reply surfaced to the user
-  //          contains BUILD_ACK_MARKER regardless of whether the request is
-  //          fresh or a duplicate (mirrors what coachAgent does with the
-  //          result of routeBuildIntent before returning to the caller).
+  // Suite 5: coachAgent dispatch simulation — outbound reply always includes
+  //          BUILD_ACK_MARKER regardless of fresh/duplicate branch.
   // ─────────────────────────────────────────────────────────────────────────
 
-  console.log("\nSuite 6 — coachAgent dispatch: outbound reply always includes BUILD_ACK_MARKER\n");
+  console.log("\nSuite 5 — coachAgent dispatch: outbound reply always includes BUILD_ACK_MARKER\n");
 
   {
-    // Simulate the coachAgent dispatch path:
-    //   1. classifyBuildIntent fires → routeBuildIntent is called
-    //   2. The returned reply is what the channel adapter returns to the user
-    // We test both the fresh-job and duplicate-job branches.
-
     async function simulateCoachDispatch(
       userText: string,
       deps: BuildRouteDeps,
     ): Promise<string | undefined> {
-      // Mirror the classifyBuildIntent guard in coachAgent.ts line 595
       const { classifyBuildIntent } = await import("../queryClassifier");
       if (!userText || !classifyBuildIntent(userText)) return undefined;
       const result = await routeBuildIntent({ userId: "u1", userText, channelName: "Telegram", chatMessages: [] }, deps);
-      // Mirror `if (buildResult.handled && buildResult.reply)` in coachAgent.ts
       if (result.handled && result.reply) return result.reply;
       return undefined;
     }
 
     // Fresh job path
-    const freshDeps: BuildRouteDeps = { submit: makeSubmitStub("job-F").fn, findDuplicate: noDuplicate };
+    const freshDeps: BuildRouteDeps = { submit: makeSubmitStub("job-F").fn };
     const freshReply = await simulateCoachDispatch("build a slack notification tool", freshDeps);
     assert(typeof freshReply === "string", "CA-1: fresh build dispatch produces a reply string");
     assert(
@@ -256,7 +232,7 @@ async function run(): Promise<void> {
     );
 
     // Duplicate job path
-    const dupDeps: BuildRouteDeps = { submit: makeSubmitStub().fn, findDuplicate: duplicateExists("job-D") };
+    const dupDeps: BuildRouteDeps = { submit: makeDuplicateSubmitStub("job-D").fn };
     const dupReply = await simulateCoachDispatch("build a slack notification tool", dupDeps);
     assert(typeof dupReply === "string", "CA-3: duplicate build dispatch still produces a reply string");
     assert(
@@ -265,7 +241,7 @@ async function run(): Promise<void> {
     );
 
     // Non-build request — classifyBuildIntent gates it out
-    const noBuildDeps: BuildRouteDeps = { submit: makeSubmitStub().fn, findDuplicate: noDuplicate };
+    const noBuildDeps: BuildRouteDeps = { submit: makeSubmitStub().fn };
     const noReply = await simulateCoachDispatch("what is on my calendar today", noBuildDeps);
     assert(noReply === undefined, "CA-5: non-build request is not dispatched (classifyBuildIntent gate)");
   }

@@ -5981,7 +5981,7 @@ Return ONLY the JSON object.`;
         return res.status(400).json({ error: "title and prompt are required" });
       }
       const { submitAgentJob } = await import("./agent/jobQueue");
-      const jobId = await submitAgentJob({
+      const { id: jobId } = await submitAgentJob({
         userId,
         agentType: agentType as (typeof allowed)[number],
         title,

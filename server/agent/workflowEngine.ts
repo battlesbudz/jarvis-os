@@ -67,7 +67,7 @@ export async function executeWorkflowStep(
 
   const enrichedPrompt = buildStepPrompt({ ...workflow, steps }, stepIdx);
   const step = steps[stepIdx];
-  const jobId = await submitAgentJob({
+  const { id: jobId } = await submitAgentJob({
     userId: workflow.userId,
     agentType: (step.agentType || DEFAULT_AGENT_TYPE) as Parameters<typeof submitAgentJob>[0]["agentType"],
     title: step.title,

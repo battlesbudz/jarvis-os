@@ -59,7 +59,7 @@ If the user says "run my X agent", find the matching slug here, then queue a cus
     if (runSlug && runPrompt) {
       const agent = agents.find((a) => a.slug === runSlug || a.name.toLowerCase() === runSlug.toLowerCase());
       if (agent) {
-        const jobId = await submitAgentJob({
+        const { id: jobId } = await submitAgentJob({
           userId,
           agentType: "custom_agent",
           title: `${agent.name}: ${runPrompt.slice(0, 80)}`,

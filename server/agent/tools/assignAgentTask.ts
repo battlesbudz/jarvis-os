@@ -71,7 +71,7 @@ export const assignAgentTaskTool: AgentTool = {
 
     const title = String(a.title ?? "").trim() || `${agent.name}: ${task.slice(0, 60)}${task.length > 60 ? "…" : ""}`;
 
-    const jobId = await submitAgentJob({
+    const { id: jobId } = await submitAgentJob({
       userId: ctx.userId,
       agentType: "named_agent_task",
       title,

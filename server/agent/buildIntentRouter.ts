@@ -10,7 +10,6 @@
 
 import { BUILD_ACK_MARKER } from "./queryClassifier";
 import { submitAgentJob } from "./jobClient";
-import { findDuplicateJob } from "./tools/jobDuplicateGuard";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -35,7 +34,6 @@ export interface BuildRouteResult {
 
 export interface BuildRouteDeps {
   submit: typeof submitAgentJob;
-  findDuplicate: typeof findDuplicateJob;
 }
 
 // ── Core routing function ─────────────────────────────────────────────────────
@@ -43,10 +41,10 @@ export interface BuildRouteDeps {
 /**
  * Attempt to route `input` as a build-feature background job.
  *
- * Deduplication: if a queued or running build_feature job with a similar title
- * already exists for the user (within the last 10 minutes) the function
- * returns an ack reply that references the existing job without enqueuing a
- * second one.
+ * Deduplication is handled inside `submitAgentJob` — if a queued or running
+ * build_feature job with a similar title already exists for the user (within
+ * the last 10 minutes) it returns `isDuplicate: true` without inserting a
+ * second row.  `routeBuildIntent` uses that flag to pick the right ack message.
  *
  * @param input   Routing context (caller-supplied).
  * @param deps    Injectable dependencies (real or stubbed).
@@ -55,31 +53,14 @@ export interface BuildRouteDeps {
  */
 export async function routeBuildIntent(
   input: BuildRouteInput,
-  deps: BuildRouteDeps = { submit: submitAgentJob, findDuplicate: findDuplicateJob },
+  deps: BuildRouteDeps = { submit: submitAgentJob },
 ): Promise<BuildRouteResult> {
   const { userId, userText, channelName, chatMessages, discordChannelId } = input;
-  const { submit, findDuplicate } = deps;
+  const { submit } = deps;
 
   const buildTitle = `Build: ${userText.slice(0, 80)}${userText.length > 80 ? "…" : ""}`;
 
-  // ── Deduplication check ──────────────────────────────────────────────────
-  let existingJob: { id: string; title: string } | null = null;
-  try {
-    existingJob = await findDuplicate(userId, "build_feature", buildTitle);
-  } catch (dupErr) {
-    // Non-fatal — log and proceed to enqueue normally.
-    console.warn("[buildIntentRouter] duplicate-check failed (proceeding):", dupErr);
-  }
-
-  if (existingJob) {
-    const ackReply = `Got it — I've already ${BUILD_ACK_MARKER} for something very similar (job ${existingJob.id}). I'll let you know as soon as it's done.`;
-    console.log(
-      `[${channelName}] build intent is a duplicate of job=${existingJob.id} — skipping enqueue user=${userId}`,
-    );
-    return { handled: true, reply: ackReply, duplicateJobId: existingJob.id };
-  }
-
-  // ── Enqueue a new build job ──────────────────────────────────────────────
+  // ── Enqueue (or detect duplicate) ────────────────────────────────────────
   const buildPrompt = userText;
   const buildInput: Record<string, unknown> = { originChannel: channelName };
   if (discordChannelId) buildInput.originDiscordChannelId = discordChannelId;
@@ -91,13 +72,21 @@ export async function routeBuildIntent(
     .join("\n");
   if (recentForBuild) buildInput.conversationContext = recentForBuild;
 
-  const jobId = await submit({
+  const { id: jobId, isDuplicate } = await submit({
     userId,
     agentType: "build_feature",
     title: buildTitle,
     prompt: buildPrompt,
     input: buildInput,
   });
+
+  if (isDuplicate) {
+    const ackReply = `Got it — I've already ${BUILD_ACK_MARKER} for something very similar (job ${jobId}). I'll let you know as soon as it's done.`;
+    console.log(
+      `[${channelName}] build intent is a duplicate of job=${jobId} — skipping enqueue user=${userId}`,
+    );
+    return { handled: true, reply: ackReply, duplicateJobId: jobId };
+  }
 
   // BUILD_ACK_MARKER is embedded verbatim so classifyBuildFollowUp can
   // recognise this turn as a completed build ack — keeping the two in sync.
