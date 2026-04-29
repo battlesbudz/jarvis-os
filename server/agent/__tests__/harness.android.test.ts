@@ -246,8 +246,24 @@ async function run(): Promise<void> {
       "HA-3: first system message contains 'Android Task Execution Rule' heading",
     );
     assert(
-      capturedSystemContent?.includes("Immediately call the appropriate tool") ?? false,
-      "HA-3: sequential-execution rule body present ('Immediately call the appropriate tool')",
+      !(capturedSystemContent?.includes("Immediately call the appropriate tool") ?? false),
+      "HA-3: conflicting phrase 'Immediately call the appropriate tool' is NOT present",
+    );
+    assert(
+      capturedSystemContent?.includes("Chain tool calls directly") ?? false,
+      "HA-3: new sequential-execution rule body present ('Chain tool calls directly')",
+    );
+    assert(
+      capturedSystemContent?.includes("android_read_screen after every navigation") ?? false,
+      "HA-3: screen-reading carve-out present ('android_read_screen after every navigation')",
+    );
+    assert(
+      capturedSystemContent?.includes("When the user provides a direct URL to a specific video or page") ?? false,
+      "HA-3: direct-URL instruction present ('When the user provides a direct URL to a specific video or page')",
+    );
+    assert(
+      capturedSystemContent?.includes("do not open the app manually and search for it") ?? false,
+      "HA-3: direct-URL instruction forbids manual search ('do not open the app manually and search for it')",
     );
 
     _clearProviderCacheForTesting();

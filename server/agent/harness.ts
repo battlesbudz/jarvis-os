@@ -804,17 +804,21 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
 
   // ── Android sequential-execution instruction ─────────────────────────────
   // When Android tools are present, inject a hard rule into the system prompt
-  // that forbids the model from announcing intent without immediately following
-  // through with the corresponding tool call. This prevents the "I will now tap
-  // the channel. Proceeding..." → turn ends pattern.
+  // that forbids the model from sending text announcements between tool calls.
+  // This prevents the "I will now tap the channel. Proceeding..." → turn ends
+  // pattern without conflicting with the screen-reading requirement.
   if (hasAndroidTools) {
     const androidRule =
       "\n\n---\n## Android Task Execution Rule\n" +
-      "CRITICAL: Never send a reply that announces you are about to do something " +
-      "and then stop. Immediately call the appropriate tool — do not describe the " +
-      "next step first. Announcing intent without following through with a tool call " +
-      "is a failure mode. If you have multiple steps remaining, execute each one by " +
-      "calling the relevant tool in the same turn before returning any text reply.";
+      "Chain tool calls directly: after each tool result, proceed immediately to your " +
+      "next tool call without sending any text announcement in between. Never send a " +
+      "standalone reply like 'I will now tap...' or 'Proceeding now...' — just call the " +
+      "next tool. This rule does NOT override screen-reading: you must still call " +
+      "android_read_screen after every navigation before tapping anything.\n\n" +
+      "When the user provides a direct URL to a specific video or page, use `daemon_action` " +
+      "with action `android_browse` and the full URL immediately — do not open the app " +
+      "manually and search for it. Example: for youtube.com/watch?v=… call android_browse " +
+      "with that URL; do not open the YouTube app and type in the search bar.";
     messages = messages.map((m, i) => {
       if (i === 0 && m.role === "system") {
         return { ...m, content: (m.content ?? "") + androidRule };
