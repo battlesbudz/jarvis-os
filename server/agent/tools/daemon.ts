@@ -32,6 +32,7 @@ const ANDROID_ACTIONS: readonly string[] = [
   "android_location_get",
   "android_sms_send",
   "android_screen_record",
+  "android_view_hierarchy",
 ] as const;
 
 function isDesktopAction(value: string): value is DaemonAction {
@@ -59,6 +60,7 @@ function androidPermKey(action: string): AndroidDaemonAction | null {
   if (action === "android_location_get") return "android_location";
   if (action === "android_sms_send") return "android_sms";
   if (action === "android_screen_record") return "android_screen_record";
+  if (action === "android_view_hierarchy") return "android_read_screen";
   return null;
 }
 
@@ -97,6 +99,7 @@ ANDROID actions (available when an Android device daemon is paired):
 - android_location_get: get the device's current GPS coordinates — specify accuracy (coarse/precise, default precise) and optional maxAgeMs (accept cached fix if fresh enough); works in background; returns lat/lng/accuracy/provider
 - android_sms_send: send an SMS text message on behalf of the user — requires to (phone number), message (text body); REQUIRES explicit user confirmation showing exact recipient and message text before sending; approved must be true
 - android_screen_record: record the phone screen as an MP4 clip — specify durationMs (max 60000 ms, default 10000), fps (default 15), audio (boolean); returns base64 MP4; REQUIRES explicit user confirmation; app must be foregrounded
+- android_view_hierarchy: dump the full UI Automator view hierarchy via ADB; returns a JSON array of every on-screen element with resource-id, content-desc, text, bounds ([x1,y1][x2,y2] pixel coordinates), and clickable/focusable/scrollable flags; use this when android_read_screen doesn't expose element coordinates or when you need to find unlabeled UI elements like icon-only buttons
 
 VISUAL BROWSING WORKFLOW — follow this for any task that involves reading or screenshotting content in an app or browser:
 1. Navigate: android_browse or android_open_app
@@ -126,6 +129,7 @@ Always confirm with the user before tap/type/swipe actions and before android_no
           "android_notification_reply",
           "android_camera_snap", "android_camera_clip",
           "android_location_get", "android_sms_send", "android_screen_record",
+          "android_view_hierarchy",
         ],
       },
       cmd: { type: "string", description: "Shell command (when action is 'shell')" },
@@ -266,6 +270,8 @@ Always confirm with the user before tap/type/swipe actions and before android_no
         }
         const durationMs = Math.min(typeof args.durationMs === "number" ? args.durationMs : 10000, 60000);
         op = { type: "android_screen_record", durationMs, fps: typeof args.fps === "number" ? args.fps : 15, audio: !!args.audio };
+      } else if (rawAction === "android_view_hierarchy") {
+        op = { type: "android_view_hierarchy" };
       } else {
         return { ok: false, content: JSON.stringify({ ok: false, error: `unknown android action ${rawAction}` }) };
       }

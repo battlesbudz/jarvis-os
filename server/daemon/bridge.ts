@@ -47,7 +47,8 @@ export type DaemonOp =
   | { type: "android_camera_clip"; facing?: "front" | "back"; durationMs?: number; audio?: boolean }
   | { type: "android_location_get"; accuracy?: "coarse" | "precise"; maxAgeMs?: number }
   | { type: "android_sms_send"; to: string; message: string }
-  | { type: "android_screen_record"; durationMs?: number; fps?: number; audio?: boolean };
+  | { type: "android_screen_record"; durationMs?: number; fps?: number; audio?: boolean }
+  | { type: "android_view_hierarchy" };
 
 export interface PhoneNotification {
   pkg: string;
@@ -486,11 +487,12 @@ export async function sendDaemonOp(
   // the user's permission settings, even if the tool layer check is skipped.
   if (isAndroidOp) {
     const OP_PERM_MAP: Partial<Record<string, AndroidDaemonAction>> = {
-      android_camera_snap:   "android_camera",
-      android_camera_clip:   "android_camera",
-      android_location_get:  "android_location",
-      android_sms_send:      "android_sms",
-      android_screen_record: "android_screen_record",
+      android_camera_snap:    "android_camera",
+      android_camera_clip:    "android_camera",
+      android_location_get:   "android_location",
+      android_sms_send:       "android_sms",
+      android_screen_record:  "android_screen_record",
+      android_view_hierarchy: "android_read_screen",
     };
     const requiredPerm = OP_PERM_MAP[op.type];
     if (requiredPerm) {

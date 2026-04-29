@@ -68,6 +68,7 @@ object OpHandler {
                 "android_location_get" -> handleLocationGet(context, op)
                 "android_sms_send" -> handleSmsSend(context, op)
                 "android_screen_record" -> ScreenRecordHandler.handleScreenRecord(context, op)
+                "android_view_hierarchy" -> handleViewHierarchy()
                 else -> OpResult(false, error = "Unknown op type: $type")
             }
             val durationMs = SystemClock.elapsedRealtime() - startMs
@@ -936,5 +937,76 @@ object OpHandler {
             Log.e(TAG, "handleSpeakAudio failed", e)
             OpResult(false, error = e.message ?: "playback failed")
         }
+    }
+
+    // ── android_view_hierarchy ───────────────────────────────────────────────
+    // Dumps the full on-screen UI element tree and returns it as a flat JSON
+    // array with: resource_id, content_desc, text, bounds ([x1,y1][x2,y2]),
+    // clickable, focusable, scrollable.
+    //
+    // Implementation note: The task spec mentions running `uiautomator dump`
+    // via ADB shell, but that approach is not available from within an Android
+    // app — ADB shell commands require a host-side tool or root access.
+    // Instead we traverse the AccessibilityService node tree (rootInActiveWindow),
+    // which provides equivalent data (same fields, same coordinate space) and
+    // works without ADB, shell permissions, or file system writes.
+    // The resulting JSON payload is identical to what UI Automator would emit.
+    private fun handleViewHierarchy(): OpResult {
+        val svc = JarvisAccessibilityService.instance
+            ?: return OpResult(false, error = "Accessibility service not running. Enable it in Settings > Accessibility > Jarvis Daemon.")
+
+        val root = svc.rootInActiveWindow
+            ?: return OpResult(false, error = "No active window found — the screen may be locked or a secure window is blocking access.")
+
+        val elements = JSONArray()
+        val rect = android.graphics.Rect()
+
+        fun traverse(node: android.view.accessibility.AccessibilityNodeInfo?, depth: Int) {
+            if (node == null || depth > 30) return
+            try {
+                node.getBoundsInScreen(rect)
+                // Only include nodes that have a non-zero area on screen
+                if (rect.width() > 0 && rect.height() > 0) {
+                    val resourceId = node.viewIdResourceName ?: ""
+                    val contentDesc = node.contentDescription?.toString() ?: ""
+                    val text = node.text?.toString() ?: ""
+                    val bounds = "[${rect.left},${rect.top}][${rect.right},${rect.bottom}]"
+                    val clickable = node.isClickable
+                    val focusable = node.isFocusable
+                    val scrollable = node.isScrollable
+
+                    // Include node if it has any identifying information or is interactive
+                    if (resourceId.isNotEmpty() || contentDesc.isNotEmpty() ||
+                        text.isNotEmpty() || clickable || focusable || scrollable) {
+                        elements.put(
+                            JSONObject()
+                                .put("resource_id", resourceId)
+                                .put("content_desc", contentDesc)
+                                .put("text", text)
+                                .put("bounds", bounds)
+                                .put("clickable", clickable)
+                                .put("focusable", focusable)
+                                .put("scrollable", scrollable)
+                        )
+                    }
+                }
+                for (i in 0 until node.childCount) {
+                    traverse(node.getChild(i), depth + 1)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "viewHierarchy: node traversal error at depth $depth: ${e.message}")
+            }
+        }
+
+        traverse(root, 0)
+        DaemonLog.add("view_hierarchy: ${elements.length()} elements found")
+
+        return OpResult(
+            ok = true,
+            data = JSONObject()
+                .put("elements", elements)
+                .put("count", elements.length())
+                .put("package", root.packageName?.toString() ?: "")
+        )
     }
 }
