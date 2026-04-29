@@ -5178,6 +5178,31 @@ Return ONLY the JSON object.`;
     }
   });
 
+  app.patch("/api/jarvis/scheduled-tasks/:id", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const { id } = req.params;
+      const updates: Record<string, unknown> = {};
+      if (typeof req.body.active === "boolean") updates.active = req.body.active;
+      if (req.body.title) updates.title = req.body.title;
+      if (req.body.description !== undefined) updates.description = req.body.description || null;
+      if (req.body.scheduledAt) updates.scheduledAt = new Date(req.body.scheduledAt);
+      if (req.body.recurrence !== undefined) updates.recurrence = req.body.recurrence || null;
+      if (Object.keys(updates).length === 0) return res.status(400).json({ error: "No updatable fields provided" });
+      const [task] = await db
+        .update(schema.jarvisScheduledTasks)
+        .set(updates)
+        .where(and(eq(schema.jarvisScheduledTasks.id, id), eq(schema.jarvisScheduledTasks.userId, userId)))
+        .returning();
+      if (!task) return res.status(404).json({ error: "Task not found" });
+      res.json(task);
+    } catch (err) {
+      console.error("Error updating jarvis scheduled task:", err);
+      res.status(500).json({ error: "Failed to update task" });
+    }
+  });
+
   app.delete("/api/jarvis/scheduled-tasks/:id", async (req: Request, res: Response) => {
     try {
       const userId = req.userId;

@@ -50,7 +50,8 @@ function tokenize(text: string): Token[] {
 
 function renderInline(text: string, baseColor: string): React.ReactNode[] {
   const parts: React.ReactNode[] = [];
-  const regex = /(\*\*(.+?)\*\*)|(https?:\/\/[^\s)\]]+)/g;
+  // Matches: markdown links [label](url), bold **text**, or bare URLs (http/https/custom schemes)
+  const regex = /(\[([^\]]+)\]\(([^)]+)\))|(\*\*(.+?)\*\*)|((?:https?|gameplan):\/\/[^\s)\]]+)/g;
   let last = 0;
   let match: RegExpExecArray | null;
   let keyIdx = 0;
@@ -64,12 +65,27 @@ function renderInline(text: string, baseColor: string): React.ReactNode[] {
       );
     }
     if (match[1]) {
+      // Markdown link [label](url)
+      const label = match[2];
+      const url = match[3];
+      parts.push(
+        <Text
+          key={`l${keyIdx++}`}
+          style={{ color: '#818CF8', textDecorationLine: 'underline' }}
+          onPress={() => Linking.openURL(url)}
+        >
+          {label}
+        </Text>
+      );
+    } else if (match[4]) {
+      // Bold **text**
       parts.push(
         <Text key={`b${keyIdx++}`} style={{ color: baseColor, fontFamily: 'Inter_700Bold' }}>
-          {match[2]}
+          {match[5]}
         </Text>
       );
     } else {
+      // Bare URL
       const url = match[0];
       parts.push(
         <Text
