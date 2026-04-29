@@ -28,6 +28,8 @@ export interface DiscordLinkMeta {
   dmChannelId?: string;
   allowlistedGuilds?: AllowlistedGuild[];
   workspace?: import("./workspace").WorkspaceMeta;
+  /** Per-channel specialist agent assignments: channelId → AgentJobType (or "general" for coach) */
+  channelAgents?: Record<string, string>;
 }
 
 export interface AllowlistedGuild {
@@ -209,6 +211,64 @@ async function lookupUserByDiscordId(
     console.error("[DiscordManager] reverse lookup failed:", err);
     return null;
   }
+}
+
+// ── Channel agent assignment helpers ──────────────────────────────────────
+
+/** Valid agent types that can be assigned to a channel. */
+export const ASSIGNABLE_AGENT_TYPES = ["research", "writing", "planning", "email", "goal_decompose"] as const;
+export type AssignableAgentType = typeof ASSIGNABLE_AGENT_TYPES[number];
+
+/**
+ * Persist a per-channel specialist agent assignment into channel_links.metadata.
+ * Pass null to clear the assignment (restore coach routing).
+ */
+export async function updateChannelAgentType(
+  userId: string,
+  channelId: string,
+  agentType: string | null,
+): Promise<void> {
+  const rows = await db
+    .select()
+    .from(channelLinks)
+    .where(and(eq(channelLinks.userId, userId), eq(channelLinks.channel, "discord")))
+    .limit(1);
+  const existing = (rows[0]?.metadata as DiscordLinkMeta) ?? {};
+  const channelAgents: Record<string, string> = { ...(existing.channelAgents ?? {}) };
+  if (agentType === null) {
+    delete channelAgents[channelId];
+  } else {
+    channelAgents[channelId] = agentType;
+  }
+  const updated: DiscordLinkMeta = { ...existing, channelAgents };
+  await db
+    .update(channelLinks)
+    .set({ metadata: updated as unknown })
+    .where(and(eq(channelLinks.userId, userId), eq(channelLinks.channel, "discord")));
+}
+
+/**
+ * Read the assigned agent type for a specific channel, or null if none set.
+ * Used by slash command handlers.
+ */
+export async function getChannelAgentAssignment(userId: string, channelId: string): Promise<string | null> {
+  const link = await lookupLink(userId);
+  return link?.meta.channelAgents?.[channelId] ?? null;
+}
+
+/**
+ * Format a human-readable label for an agent type.
+ */
+export function agentTypeLabel(agentType: string): string {
+  const labels: Record<string, string> = {
+    research: "🔬 Research",
+    writing: "✍️ Writing",
+    planning: "📋 Planning",
+    email: "📧 Email",
+    goal_decompose: "🎯 Goal Decomposer",
+    general: "🧠 General Coach",
+  };
+  return labels[agentType] ?? agentType;
 }
 
 // ── Message handler factory ────────────────────────────────────────────────
@@ -491,6 +551,55 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
 
     console.log(`[DiscordManager] processing message: "${userText.slice(0, 80)}…"`);
 
+    // ── Text command: !assign-agent / !agent-status ──────────────────────
+    // Handled before any agent routing so these control commands always work.
+    const trimmedCmd = userText.trim();
+    const assignMatch = trimmedCmd.match(/^[!/]assign-agent\s+(\S+)$/i);
+    const statusMatch = /^[!/]agent-status$/i.test(trimmedCmd);
+
+    if (!isDM && (assignMatch || statusMatch)) {
+      if (earlyPlaceholder) await earlyPlaceholder.delete().catch(() => {});
+
+      if (assignMatch) {
+        const requestedType = assignMatch[1].toLowerCase();
+        if (requestedType === "reset" || requestedType === "general") {
+          // Clear the assignment
+          await updateChannelAgentType(userId, message.channelId, null);
+          await message.reply(
+            "✅ Channel agent assignment cleared — this channel now routes to the **General Coach** (default).",
+          ).catch(() => {});
+        } else if ((ASSIGNABLE_AGENT_TYPES as readonly string[]).includes(requestedType)) {
+          await updateChannelAgentType(userId, message.channelId, requestedType);
+          await message.reply(
+            `✅ This channel is now assigned to the **${agentTypeLabel(requestedType)}** agent. ` +
+            `Every message here will be routed directly to that specialist.\n` +
+            `Use \`!assign-agent reset\` or \`!assign-agent general\` to restore default coach routing.`,
+          ).catch(() => {});
+        } else {
+          const valid = [...ASSIGNABLE_AGENT_TYPES, "general", "reset"].join(", ");
+          await message.reply(
+            `❌ Unknown agent type: \`${requestedType}\`\nValid options: \`${valid}\``,
+          ).catch(() => {});
+        }
+      } else if (statusMatch) {
+        // Fetch current metadata for this user
+        const linkMeta = (await lookupLink(userId))?.meta ?? {};
+        const assigned = linkMeta.channelAgents?.[message.channelId];
+        if (assigned) {
+          await message.reply(
+            `🤖 This channel is assigned to the **${agentTypeLabel(assigned)}** agent.\n` +
+            `Use \`!assign-agent reset\` to restore default coach routing.`,
+          ).catch(() => {});
+        } else {
+          await message.reply(
+            "🧠 This channel uses **default coach routing** (no specialist agent assigned).\n" +
+            `Use \`!assign-agent <type>\` to assign one. Valid types: ${ASSIGNABLE_AGENT_TYPES.join(", ")}`,
+          ).catch(() => {});
+        }
+      }
+      return;
+    }
+
     // ── Resolve placeholder ─────────────────────────────────────────────
     // Priority: voice transcription placeholder (typingMsg) → early text
     // placeholder sent before DB lookups (earlyPlaceholder) → null.
@@ -639,6 +748,53 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
     // continue with the standard coach pipeline so they still get a response.
     if (namedAgentFailed && placeholder) {
       await placeholder.edit("_Agent encountered an issue — routing to Jarvis instead…_").catch(() => {});
+    }
+
+    // ── Phase 6c: Per-channel specialist agent routing ─────────────────
+    // If this channel has a specialist agent assigned (via !assign-agent or
+    // /jarvis assign_agent), bypass the coach and submit a background job
+    // directly to that agent type. Only applies to guild channels (not DMs).
+    if (!isDM && !namedAgentFailed) {
+      const channelMeta = link2?.meta ?? {};
+      const assignedAgentType = channelMeta.channelAgents?.[message.channelId];
+      const isKnownType = assignedAgentType
+        ? (ASSIGNABLE_AGENT_TYPES as readonly string[]).includes(assignedAgentType)
+        : false;
+      if (assignedAgentType && assignedAgentType !== "general" && isKnownType) {
+        try {
+          const { submitAgentJob } = await import("../agent/jobClient");
+          const jobId = await submitAgentJob({
+            userId,
+            agentType: assignedAgentType as import("../agent/jobClient").AgentJobType,
+            title: userText.slice(0, 80),
+            prompt: userText,
+            // Pass origin context so the job completion notification is routed
+            // back to this Discord channel rather than falling back to DM/in-app.
+            input: {
+              originChannel: channelLabel,
+              originDiscordChannelId: message.channelId,
+            },
+          });
+          const label = agentTypeLabel(assignedAgentType);
+          const confirmMsg =
+            `⚡ **${label} agent** is on it (job \`${jobId.slice(0, 8)}\`).\n` +
+            `_I'll send the result here when it's ready._`;
+          if (placeholder) {
+            await placeholder.edit(confirmMsg).catch(() => {});
+          } else {
+            await message.reply(confirmMsg).catch(() => {});
+          }
+          console.log(`[DiscordManager] channel ${message.channelId} routed to specialist "${assignedAgentType}" (job=${jobId}) for user ${userId}`);
+          return;
+        } catch (jobErr) {
+          console.error("[DiscordManager] specialist channel job submission failed — falling back to coach:", jobErr);
+          if (placeholder) {
+            await placeholder.edit("_Couldn't reach the specialist agent — routing to Jarvis instead…_").catch(() => {});
+          }
+        }
+      } else if (assignedAgentType && !isKnownType) {
+        console.warn(`[DiscordManager] channel ${message.channelId} has unknown agent type "${assignedAgentType}" — falling back to coach`);
+      }
     }
 
     // ── Phase 6b: Legacy persona injection (pre-new-agent-system rows) ────
