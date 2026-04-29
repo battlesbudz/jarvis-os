@@ -32,6 +32,18 @@ export interface GitHubSettings {
   pat: string | null;
   repos: string[];
   tokenType?: "pat" | "oauth";
+  username?: string | null;
+}
+
+export async function getGitHubUser(token: string): Promise<string | null> {
+  try {
+    const res = await githubRequest(token, "/user");
+    if (!res.ok) return null;
+    const data = (await res.json()) as { login?: string };
+    return data.login ?? null;
+  } catch {
+    return null;
+  }
 }
 
 export async function getGitHubSettings(userId: string): Promise<GitHubSettings> {
@@ -49,6 +61,7 @@ export async function getGitHubSettings(userId: string): Promise<GitHubSettings>
     pat,
     repos: (prefs.github_repos as string[]) || [],
     tokenType,
+    username: (prefs.github_username as string) || null,
   };
 }
 
@@ -71,14 +84,23 @@ export async function saveGitHubSettings(
     }
   }
 
-  if (patch.repos !== undefined) {
+  const needsPrefsUpdate = patch.repos !== undefined || patch.username !== undefined;
+  if (needsPrefsUpdate) {
     const rows = await db
       .select({ data: schema.userPreferences.data })
       .from(schema.userPreferences)
       .where(eq(schema.userPreferences.userId, userId))
       .limit(1);
     const current = (rows[0]?.data as Record<string, unknown>) || {};
-    const updated: Record<string, unknown> = { ...current, github_repos: patch.repos };
+    const updated: Record<string, unknown> = { ...current };
+    if (patch.repos !== undefined) updated.github_repos = patch.repos;
+    if (patch.username !== undefined) {
+      if (patch.username === null) {
+        delete updated.github_username;
+      } else {
+        updated.github_username = patch.username;
+      }
+    }
     await db
       .insert(schema.userPreferences)
       .values({ userId, data: updated })

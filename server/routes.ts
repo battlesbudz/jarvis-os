@@ -8337,9 +8337,16 @@ Extract up to 8 memories per batch.`;
   app.get("/api/github/settings", authMiddleware, async (req: Request, res: Response) => {
     try {
       const userId = (req as any).userId as string;
-      const { getGitHubSettings } = await import("./integrations/github");
+      const { getGitHubSettings, getGitHubUser, saveGitHubSettings } = await import("./integrations/github");
       const settings = await getGitHubSettings(userId);
-      res.json({ connected: !!settings.pat, repos: settings.repos, tokenType: settings.tokenType ?? null });
+      let username = settings.username ?? null;
+      if (settings.pat && !username) {
+        username = await getGitHubUser(settings.pat);
+        if (username) {
+          await saveGitHubSettings(userId, { username });
+        }
+      }
+      res.json({ connected: !!settings.pat, repos: settings.repos, tokenType: settings.tokenType ?? null, username });
     } catch (err) {
       console.error("[GitHub] GET settings error:", err);
       res.status(500).json({ error: "Failed to load GitHub settings" });
@@ -8350,11 +8357,18 @@ Extract up to 8 memories per batch.`;
     try {
       const userId = (req as any).userId as string;
       const { pat, repos } = req.body as { pat?: string; repos?: string[] };
-      const { saveGitHubSettings } = await import("./integrations/github");
-      await saveGitHubSettings(userId, {
+      const { saveGitHubSettings, getGitHubUser } = await import("./integrations/github");
+      const patch: Parameters<typeof saveGitHubSettings>[1] = {
         ...(pat !== undefined ? { pat: pat || null } : {}),
         ...(repos !== undefined ? { repos } : {}),
-      });
+      };
+      if (pat) {
+        const username = await getGitHubUser(pat);
+        patch.username = username;
+      } else if (pat !== undefined && !pat) {
+        patch.username = null;
+      }
+      await saveGitHubSettings(userId, patch);
       res.json({ ok: true });
     } catch (err) {
       console.error("[GitHub] PATCH settings error:", err);
@@ -8366,7 +8380,7 @@ Extract up to 8 memories per batch.`;
     try {
       const userId = (req as any).userId as string;
       const { saveGitHubSettings } = await import("./integrations/github");
-      await saveGitHubSettings(userId, { pat: null });
+      await saveGitHubSettings(userId, { pat: null, username: null });
       res.json({ ok: true });
     } catch (err) {
       console.error("[GitHub] DELETE pat error:", err);
@@ -8433,8 +8447,9 @@ Extract up to 8 memories per batch.`;
         error_description?: string;
       };
       if (data.access_token) {
-        const { saveGitHubSettings } = await import("./integrations/github");
-        await saveGitHubSettings(userId, { pat: data.access_token, tokenType: "oauth" });
+        const { saveGitHubSettings, getGitHubUser } = await import("./integrations/github");
+        const username = await getGitHubUser(data.access_token);
+        await saveGitHubSettings(userId, { pat: data.access_token, tokenType: "oauth", username });
         return res.json({ status: "authorized" });
       }
       if (data.error === "authorization_pending" || data.error === "slow_down") {
