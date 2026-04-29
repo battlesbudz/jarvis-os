@@ -402,6 +402,16 @@ function parseSrt(content: string): TranscriptResponse[] {
 // ── yt-dlp subtitle extraction ────────────────────────────────────────────────
 
 async function fetchYtDlpTranscript(videoId: string): Promise<TranscriptResponse[]> {
+  // Circuit breaker: skip subtitle download while YouTube is rate-limiting us.
+  if (isRateLimitCircuitOpen()) {
+    const remainingSec = Math.ceil((ytdlpRateLimitedUntil - Date.now()) / 1000);
+    console.warn(
+      `[transcriptCache] circuit OPEN — skipping subtitle download for ${videoId} ` +
+      `(${remainingSec} s remaining in cool-down). Returning [].`
+    );
+    return [];
+  }
+
   let tmpDir: string;
   try {
     tmpDir = mkdtempSync(path.join(os.tmpdir(), `ytdlp-${videoId}-`));
@@ -453,6 +463,7 @@ async function fetchYtDlpTranscript(videoId: string): Promise<TranscriptResponse
       throw new Error(`CONTENT_RESTRICTED: ${raw}`);
     }
     if (lower.includes("429") || lower.includes("too many requests")) {
+      openRateLimitCircuit();
       throw new Error(`TOO_MANY_REQUESTS: ${raw}`);
     }
     console.warn(`[transcriptCache] yt-dlp non-terminal failure for ${videoId}: ${raw}`);
