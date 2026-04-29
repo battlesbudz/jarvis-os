@@ -110,6 +110,52 @@ export function classifyBuildIntent(text: string): boolean {
 }
 
 /**
+ * Returns true when the user's message is clearly unrelated to building a tool
+ * (e.g. email, calendar, tasks, reminders).
+ *
+ * Exported so coachAgent can detect when the user is switching away from an
+ * active build session without calling the full classifyBuildFollowUp logic.
+ */
+export function isUnrelatedIntent(text: string): boolean {
+  if (!text || text.trim().length === 0) return false;
+  return UNRELATED_INTENT_PATTERNS.some((re) => re.test(text));
+}
+
+/**
+ * Returns true when there is an active build session in the recent chat history.
+ *
+ * An active session exists when:
+ *   1. A build-ack message appears within the last BUILD_SESSION_WINDOW entries.
+ *   2. No substantive user message between that ack and the present signals a
+ *      topic change (same logic as classifyBuildFollowUp, minus the final
+ *      refinement-pattern check).
+ *
+ * chatHistory is stored newest-first (as per coachAgent convention).
+ */
+export function hasActiveBuildSession(
+  chatHistory: Array<{ role: string; content: string }>,
+): boolean {
+  const window = chatHistory.slice(0, BUILD_SESSION_WINDOW);
+  const ackIndex = window.findIndex(
+    (m) => m.role === "assistant" && m.content.includes(BUILD_ACK_MARKER),
+  );
+  if (ackIndex === -1) return false;
+
+  const userTurnsAfterAck = window.slice(0, ackIndex).filter((m) => m.role === "user");
+  const hasTopicChange = userTurnsAfterAck.some((m) => {
+    const t = m.content.trim();
+    if (t.length < 10 || TRIVIAL_ACK_PATTERN.test(t)) return false;
+    if (BUILD_SESSION_END_PATTERNS.some((re) => re.test(t))) return true;
+    if (UNRELATED_INTENT_PATTERNS.some((re) => re.test(t))) return true;
+    if (BUILD_PATTERNS.some((re) => re.test(t))) return false;
+    if (BUILD_REFINEMENT_PATTERNS.some((re) => re.test(t))) return false;
+    return true;
+  });
+
+  return !hasTopicChange;
+}
+
+/**
  * Stable substring that Jarvis always includes in the ack reply when a build
  * job is successfully queued.  Exported so coachAgent.ts can embed it in the
  * reply it sends — keeping the marker and the reply in sync automatically and

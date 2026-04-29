@@ -17,7 +17,7 @@ import { runOrchestrator } from "../agent/orchestrator";
 import { preThink, postCheck } from "../agent/qualityLoop";
 import { getModel, MODEL_DEFAULTS } from "../lib/modelPrefs";
 import { contextRegistry } from "../agent/contextRegistry";
-import { classifyBuildIntent, classifyBuildFollowUp } from "../agent/queryClassifier";
+import { classifyBuildIntent, classifyBuildFollowUp, isUnrelatedIntent, hasActiveBuildSession } from "../agent/queryClassifier";
 import { routeBuildIntent } from "../agent/buildIntentRouter";
 // Side-effect import: registers workspace topic context provider.
 import "../agent/providers/topicContext";
@@ -627,6 +627,14 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
     }
   }
 
+  // ── Build-session context-switch detection ────────────────────────────────
+  // When the user was mid-build but just sent an unrelated request, flag this
+  // so we can prepend a brief soft transition note to the orchestrator reply.
+  const switchingFromBuild =
+    !!userText &&
+    isUnrelatedIntent(userText) &&
+    hasActiveBuildSession(chatMessages);
+
   // ── Orchestrator ──────────────────────────────────────────────────────────
   // Always route through the orchestrator — it is the foundational execution
   // architecture. Falls back to direct harness on any orchestrator error.
@@ -707,6 +715,22 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
   console.log(
     `[qualityLoop] guidance="${turnGuidance.slice(0, 80)}" postCheck=${postCheckPassed ? "passed" : "failed"} retried=${retried}`,
   );
+
+  // ── Build-session transition note ─────────────────────────────────────────
+  // When the user was mid-build and just sent an unrelated request (e.g. "check
+  // my email"), prepend a brief soft note so they know Jarvis has stepped out
+  // of build mode. Applied after the quality gate so the post-check evaluates
+  // the substantive reply without the prefix influencing the quality score.
+  if (switchingFromBuild && rawReply) {
+    const TRANSITION_PHRASES = [
+      "Switching gears — ",
+      "Sure, setting the build aside for now — ",
+      "On it — stepping away from the build — ",
+    ];
+    const phrase = TRANSITION_PHRASES[Math.floor(Math.random() * TRANSITION_PHRASES.length)];
+    rawReply = phrase + rawReply;
+    console.log(`[${channelName}] build-session context-switch detected — transition note prepended`);
+  }
 
   const reply = rawReply || "Sorry, I couldn't generate a response right now.";
   const attachments = (agentCtx.state.pendingAttachments || []) as ChannelAttachment[];
