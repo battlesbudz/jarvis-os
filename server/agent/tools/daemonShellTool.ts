@@ -3709,7 +3709,7 @@ Parameters:
   - duration_ms: how long to hold in milliseconds (default 800)
   - max_age_ms: max age of cached ScreenMap to reuse (default 500, 0 = always fresh)
   - max_scroll_attempts: maximum downward scroll passes when element is off-screen (default 5, 0 = disable)
-  - scroll_distance: pixel distance per scroll swipe (default 600)
+  - scroll_distance: pixel distance per scroll swipe (default 600, clamped 100–1800). Only affects the search loop, not the long-press gesture.
   - reset_scroll: scroll to top before the downward search loop (default true)
 
 Returns the matched element details, coordinates used, and a screen_changed field (true/false) indicating whether the screen visually changed after the long-press (based on perceptual hash comparison). If screen_changed is false, the long-press gesture may not have been recognised — consider retrying with a longer duration_ms or reporting failure.
@@ -3736,7 +3736,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       },
       scroll_distance: {
         type: "number",
-        description: "Pixel distance for each scroll swipe (default 600). Larger values scroll further per swipe.",
+        description: "Pixel distance for each search-scroll swipe (default 600, clamped 100–1800). Only affects the search loop used to locate the element, not the long-press gesture.",
       },
       reset_scroll: {
         type: "boolean",
@@ -4495,6 +4495,8 @@ export const androidDragElementTool: AgentTool = {
   description: `Drag an Android screen element to another element (or in a direction) using names instead of raw coordinates.
 Resolves both the source and destination via the shared ScreenMap cache (same 500 ms TTL used by android_tap_element and android_long_press_element), then fires a single android_swipe from the source center to the destination center with a long hold duration so the OS treats the gesture as a drag.
 
+If the source element (from_label) is not visible on the initial screen, the tool first scrolls back to the top of the page (unless reset_scroll is false) so that elements above the current scroll position are never missed, then automatically scrolls down (up to max_scroll_attempts times) and re-reads the screen after each scroll until the element appears or the scroll limit is reached.
+
 Use this tool for Android drag-and-drop patterns:
   - "drag 'Song A' to 'Song B'" — reorders items in a playlist
   - "drag the widget to the trash" — drag-to-delete
@@ -4507,6 +4509,9 @@ Parameters:
   - distance_px: how far to drag in pixels when using direction (default 400)
   - hold_ms: how long to hold at the start before dragging in milliseconds (default 800). Increase for apps that need a longer initial press.
   - max_age_ms: max age of cached ScreenMap to reuse (default 500, 0 = always fresh)
+  - max_scroll_attempts: maximum downward scroll passes when the source element is off-screen (default 5, 0 = disable)
+  - scroll_distance: pixel distance for each search-scroll swipe (default 600, clamped 100–1800). Only affects the search loop, not the drag gesture distance.
+  - reset_scroll: scroll to top before the downward search loop (default true)
   - auto_retry: automatically retry with a longer hold_ms when the screen did not change (default true)
   - max_retries: max number of additional retry attempts when auto_retry is true (default 2)
   - hold_ms_step: milliseconds added to hold_ms on each retry (default 400)
@@ -4541,6 +4546,18 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       max_age_ms: {
         type: "number",
         description: "Maximum age in milliseconds for a cached ScreenMap to be reused (default 500). Set to 0 to always capture a fresh screen.",
+      },
+      max_scroll_attempts: {
+        type: "number",
+        description: "Maximum number of downward scroll passes to perform when the source element is not visible on the initial screen (default 5). Set to 0 to disable automatic scrolling.",
+      },
+      scroll_distance: {
+        type: "number",
+        description: "Pixel distance for each search-scroll swipe (default 600, clamped 100–1800). Only affects the search loop used to locate the source element, not the drag gesture distance.",
+      },
+      reset_scroll: {
+        type: "boolean",
+        description: "When true (default), scroll back to the top of the page before locating the source element if it is not visible on the initial screen. This ensures elements above the current scroll position are never missed. Set to false to skip the reset and search from the current scroll position.",
       },
       auto_retry: {
         type: "boolean",
@@ -4625,6 +4642,13 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       };
     }
 
+    const resetScroll = args.reset_scroll === false ? false : true;
+    const rawMaxScrollAttempts = typeof args.max_scroll_attempts === "number" ? args.max_scroll_attempts : 5;
+    const maxScrollAttempts = Number.isFinite(rawMaxScrollAttempts) ? Math.max(0, Math.floor(rawMaxScrollAttempts)) : 5;
+    const rawScrollDistance = typeof args.scroll_distance === "number" ? args.scroll_distance : 600;
+    const scrollDistance = Number.isFinite(rawScrollDistance) ? Math.min(Math.max(100, Math.floor(rawScrollDistance)), 1800) : 600;
+    let scrollsPerformed = 0;
+
     // ── Resolve ScreenMap (cache or fresh) ────────────────────────────────────
     const maxAge = typeof args.max_age_ms === "number" ? args.max_age_ms : 500;
     let screenElements: ScreenElement[] = [];
@@ -4657,6 +4681,102 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       if (score > fromScore) {
         fromScore = score;
         fromElement = el;
+      }
+    }
+
+    // ── Optional reset: scroll to top if source element not found ─────────────
+    if ((!fromElement || fromScore === 0) && resetScroll) {
+      console.log(`[android_drag_element] element "${fromLabel}" not found on initial screen — resetting to top of page`);
+      await scrollToTop(ctx.userId, 5);
+      await new Promise((resolve) => setTimeout(resolve, 400));
+
+      const afterResetResult = await buildScreenMapElements(ctx.userId);
+      if (afterResetResult.ok) {
+        fromElement = null;
+        fromScore = 0;
+        for (const el of afterResetResult.elements) {
+          const score = scoreElement(el, fromLabel);
+          if (score > fromScore) { fromScore = score; fromElement = el; }
+        }
+        screenElements = afterResetResult.elements;
+        if (fromElement && fromScore > 0) {
+          console.log(`[android_drag_element] found "${fromLabel}" after scroll-to-top reset, score=${fromScore}`);
+        }
+      }
+    }
+
+    // ── Scroll-to-find loop ────────────────────────────────────────────────────
+    if ((!fromElement || fromScore === 0) && maxScrollAttempts > 0) {
+      for (let scroll = 0; scroll < maxScrollAttempts; scroll++) {
+        console.log(`[android_drag_element] source element not found, scrolling down (pass ${scroll + 1}/${maxScrollAttempts})`);
+
+        const preScrollScreenshot: string | null = await captureScreenshot(ctx.userId);
+        const preScrollFingerprint: string = screenElements
+          .map((el) => `${el.label}:${el.center_x}:${el.center_y}`)
+          .sort()
+          .join("|");
+
+        const screenMidX = 540;
+        const swipeY1 = 1400;
+        const swipeY2 = Math.max(100, swipeY1 - scrollDistance);
+        const swipeResult = await sendDaemonOp(
+          ctx.userId,
+          { type: "android_swipe", x1: screenMidX, y1: swipeY1, x2: screenMidX, y2: swipeY2, durationMs: 400 },
+          10000,
+        );
+        if (!swipeResult.ok) {
+          console.log(`[android_drag_element] swipe failed on pass ${scroll + 1}: ${swipeResult.error}`);
+          break;
+        }
+
+        scrollsPerformed = scroll + 1;
+        await new Promise((resolve) => setTimeout(resolve, 500));
+
+        // No-op scroll detection via screenshot
+        let screenshotCheckConclusive = false;
+        if (preScrollScreenshot) {
+          try {
+            const postScrollScreenshot = await captureScreenshot(ctx.userId);
+            if (postScrollScreenshot) {
+              const preHash = await computeScreenshotHash(preScrollScreenshot);
+              const postHash = await computeScreenshotHash(postScrollScreenshot);
+              const dist = hammingDistance(preHash, postHash);
+              screenshotCheckConclusive = true;
+              if (dist <= 3) {
+                console.log(`[android_drag_element] scroll no-op detected (hash_dist=${dist}), stopping`);
+                break;
+              }
+            }
+          } catch { /* best-effort */ }
+        }
+
+        const freshResult = await buildScreenMapElements(ctx.userId);
+        if (!freshResult.ok) break;
+        screenElements = freshResult.elements;
+
+        // No-op detection via fingerprint fallback
+        if (!screenshotCheckConclusive) {
+          const postScrollFingerprint: string = screenElements
+            .map((el) => `${el.label}:${el.center_x}:${el.center_y}`)
+            .sort()
+            .join("|");
+          if (postScrollFingerprint === preScrollFingerprint) {
+            console.log(`[android_drag_element] scroll no-op detected (fingerprint unchanged), stopping`);
+            break;
+          }
+        }
+
+        fromElement = null;
+        fromScore = 0;
+        for (const el of screenElements) {
+          const score = scoreElement(el, fromLabel);
+          if (score > fromScore) { fromScore = score; fromElement = el; }
+        }
+
+        if (fromElement && fromScore > 0) {
+          console.log(`[android_drag_element] found "${fromLabel}" after ${scrollsPerformed} scroll(s), score=${fromScore}`);
+          break;
+        }
       }
     }
 
@@ -4792,7 +4912,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       }
     }
 
-    console.log(`[android_drag_element] userId=${ctx.userId} dragged "${fromElement.label}" from (${x1},${y1}) to "${toElementLabel}" at (${x2},${y2}) hold_ms=${currentHoldMs} attempts=${attempts} from_score=${fromScore} to_score=${toScore}`);
+    console.log(`[android_drag_element] userId=${ctx.userId} dragged "${fromElement.label}" from (${x1},${y1}) to "${toElementLabel}" at (${x2},${y2}) hold_ms=${currentHoldMs} attempts=${attempts} scrolls=${scrollsPerformed} from_score=${fromScore} to_score=${toScore}`);
 
     return {
       ok: true,
@@ -4811,12 +4931,13 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
           to_match_score: toScore || null,
           hold_ms: currentHoldMs,
         },
+        scrolls_performed: scrollsPerformed,
         screen_changed: screenChanged,
         hash_distance: hashDistance,
         attempts,
       }),
       label: `Dragged "${fromElement.label}" → "${toElementLabel}" hold_ms=${currentHoldMs} attempts=${attempts} screen_changed=${screenChanged}`,
-      detail: `from=(${x1},${y1}) to=(${x2},${y2}) from_score=${fromScore}${toScore ? ` to_score=${toScore}` : ""}${hashDistance !== null ? ` hash_dist=${hashDistance}` : ""}`,
+      detail: `from=(${x1},${y1}) to=(${x2},${y2}) from_score=${fromScore}${toScore ? ` to_score=${toScore}` : ""} scrolls=${scrollsPerformed}${hashDistance !== null ? ` hash_dist=${hashDistance}` : ""}`,
     };
   },
 };
