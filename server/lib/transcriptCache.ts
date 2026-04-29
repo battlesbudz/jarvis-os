@@ -546,6 +546,7 @@ const AUDIO_CHUNK_SECS = 600;
 
 export type AudioErrorClass =
   | "empty-output"           // fetchAudioTranscript returned [] (Whisper empty, file too large, no file written, etc.)
+  | "yt-dlp-not-installed"   // yt-dlp binary not available after ensureYtdlpUpgraded() ran
   | "yt-dlp-blocked"         // terminal errors re-thrown (LOGIN_REQUIRED, CONTENT_RESTRICTED, TOO_MANY_REQUESTS)
   | "yt-dlp-download-failed" // AUDIO_DOWNLOAD_FAILED — all URL candidates failed yt-dlp
   | "whisper-failure"        // non-terminal error during Whisper transcription step
@@ -564,6 +565,7 @@ const AUDIO_TELEMETRY_MAX = 200;
 const audioFailureEvents: AudioTranscriptFailureEvent[] = [];
 const audioFailureCounts: Record<AudioErrorClass, number> = {
   "empty-output": 0,
+  "yt-dlp-not-installed": 0,
   "yt-dlp-blocked": 0,
   "yt-dlp-download-failed": 0,
   "whisper-failure": 0,
@@ -643,6 +645,14 @@ async function fetchAudioTranscript(videoId: string, originalInput?: string): Pr
 
   // Ensure the latest yt-dlp is on PATH (runs once per process, covers prod too)
   await ensureYtdlpUpgraded();
+
+  // Surface a clear error instead of a cryptic "command not found" failure
+  if (!ytdlpAvailable) {
+    throw new Error(
+      "YTDLP_UNAVAILABLE: Audio transcription is temporarily unavailable — the yt-dlp dependency is not installed or could not be found. " +
+      "Please try again later or contact support."
+    );
+  }
 
   let tmpDir: string;
   try {
@@ -1418,6 +1428,11 @@ export async function fetchTranscriptCached(
       }
     } catch (audioErr) {
       const msg = audioErr instanceof Error ? audioErr.message : String(audioErr);
+      if (msg.startsWith("YTDLP_UNAVAILABLE:")) {
+        console.warn(`[transcriptCache] audio transcription skipped: yt-dlp not available`);
+        recordAudioFailure(resolvedId, "yt-dlp-not-installed", true, msg);
+        throw audioErr;
+      }
       if (/^(LOGIN_REQUIRED|CONTENT_RESTRICTED|TOO_MANY_REQUESTS|RATE_LIMITED):/.test(msg)) {
         recordAudioFailure(resolvedId, "yt-dlp-blocked", true, msg);
         throw audioErr;
@@ -1576,6 +1591,11 @@ export async function fetchTranscriptCached(
       }
     } catch (audioErr) {
       const msg = audioErr instanceof Error ? audioErr.message : String(audioErr);
+      if (msg.startsWith("YTDLP_UNAVAILABLE:")) {
+        console.warn(`[transcriptCache] audio transcription skipped: yt-dlp not available`);
+        recordAudioFailure(resolvedId, "yt-dlp-not-installed", noCaptions, msg);
+        throw audioErr;
+      }
       if (/^(LOGIN_REQUIRED|CONTENT_RESTRICTED|TOO_MANY_REQUESTS|RATE_LIMITED):/.test(msg)) {
         recordAudioFailure(resolvedId, "yt-dlp-blocked", noCaptions, msg);
         throw audioErr;
