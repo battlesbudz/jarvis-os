@@ -1607,6 +1607,21 @@ export const selfHealAuditLog = pgTable("self_heal_audit_log", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+// ── Search-bar coordinate persistence ────────────────────────────────────────
+// One row per (user_id, app_package) — stores the last known (x, y) of the
+// search bar so the in-memory cache can be re-seeded after a server restart.
+export const searchBarLocations = pgTable("search_bar_locations", {
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  appPackage: varchar("app_package", { length: 256 }).notNull(),
+  coordinatesX: integer("coordinates_x").notNull(),
+  coordinatesY: integer("coordinates_y").notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => [
+  primaryKey({ columns: [table.userId, table.appPackage] }),
+]);
+
+export type SearchBarLocation = typeof searchBarLocations.$inferSelect;
+
 // ── Button location training — user-guided tap memory ────────────────────────
 // Each row records a screen element the user has pointed to once; the agent
 // can replay the stored coordinates instead of re-running screen-understand.
