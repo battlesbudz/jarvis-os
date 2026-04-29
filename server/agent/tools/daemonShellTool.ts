@@ -2371,6 +2371,177 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
   },
 };
 
+// ── android_long_press_element ────────────────────────────────────────────────
+// Resolves an element by name using the same ScreenMap cache as android_tap_element
+// then simulates a long-press by firing android_swipe from/to the same point
+// with a configurable hold duration (default 800 ms).
+
+export const androidLongPressElementTool: AgentTool = {
+  name: "android_long_press_element",
+  description: `Long-press an Android screen element by name instead of raw coordinates.
+Accepts a human-readable label or description string, fuzzy-matches it against the current ScreenMap (calling android_screen_understand internally with a 500 ms cache), then simulates a long-press hold by firing android_swipe from and to the same element center with a configurable duration.
+
+Use this tool for Android UI patterns that require a long-press:
+- "long press on the message" — opens a context menu
+- "long press on the icon" — enters drag/rearrange mode
+- "long press on the item to delete"
+
+Parameters:
+  - label: human-readable name of the element to long-press
+  - duration_ms: how long to hold in milliseconds (default 800)
+  - max_age_ms: max age of cached ScreenMap to reuse (default 500, 0 = always fresh)
+
+Returns the matched element details and the coordinates used.
+
+Requires: android_screenshot and android_read_screen permissions (same as android_screen_understand), plus android_tap_type permission for the gesture.`,
+  parameters: {
+    type: "object",
+    properties: {
+      label: {
+        type: "string",
+        description: "The label, description, or resource_id (or part thereof) of the element to long-press. Case-insensitive fuzzy match.",
+      },
+      duration_ms: {
+        type: "number",
+        description: "How long to hold the press in milliseconds (default 800). Increase for apps that require a longer hold.",
+      },
+      max_age_ms: {
+        type: "number",
+        description: "Maximum age in milliseconds for a cached ScreenMap to be reused (default 500). Set to 0 to always capture a fresh screen.",
+      },
+    },
+    required: ["label"],
+  },
+  async execute(args, ctx) {
+    const label = String(args.label || "").trim();
+    if (!label) {
+      return { ok: false, content: "label is required.", label: "android_long_press_element: no label" };
+    }
+
+    if (!isAndroidDaemonActive(ctx.userId)) {
+      return {
+        ok: false,
+        content: "Android daemon is not connected. Ask the user to install the Jarvis Android APK and pair it (Profile → Connected Channels → Android Device).",
+        label: "android_long_press_element: android offline",
+      };
+    }
+
+    const [screenshotAllowed, readAllowed, tapAllowed] = await Promise.all([
+      isAndroidDaemonActionAllowed(ctx.userId, "android_screenshot"),
+      isAndroidDaemonActionAllowed(ctx.userId, "android_read_screen"),
+      isAndroidDaemonActionAllowed(ctx.userId, "android_tap_type"),
+    ]);
+    if (!screenshotAllowed) {
+      return {
+        ok: false,
+        content: "android_screenshot permission is not enabled. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.",
+        label: "android_long_press_element: screenshot permission denied",
+      };
+    }
+    if (!readAllowed) {
+      return {
+        ok: false,
+        content: "android_read_screen permission is not enabled. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.",
+        label: "android_long_press_element: read_screen permission denied",
+      };
+    }
+    if (!tapAllowed) {
+      return {
+        ok: false,
+        content: "android_tap_type permission is not enabled. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.",
+        label: "android_long_press_element: tap permission denied",
+      };
+    }
+
+    // ── Resolve ScreenMap (cache or fresh) ────────────────────────────────────
+    const maxAge = typeof args.max_age_ms === "number" ? args.max_age_ms : 500;
+    let screenElements: ScreenElement[] = [];
+
+    const cached = screenMapCache.get(ctx.userId);
+    if (cached && maxAge > 0 && Date.now() - cached.ts <= maxAge) {
+      console.log(`[android_long_press_element] userId=${ctx.userId} using cached ScreenMap`);
+      try {
+        const parsed = JSON.parse(cached.result) as { elements?: unknown[] };
+        screenElements = normalizeScreenElements(Array.isArray(parsed.elements) ? parsed.elements : []);
+      } catch {
+        screenElements = [];
+      }
+    }
+
+    if (screenElements.length === 0) {
+      const buildResult = await buildScreenMapElements(ctx.userId);
+      if (!buildResult.ok) {
+        return { ok: false, content: buildResult.content, label: `android_long_press_element: ${buildResult.label}` };
+      }
+      screenElements = buildResult.elements;
+      console.log(`[android_long_press_element] userId=${ctx.userId} fresh ScreenMap: ${screenElements.length} elements`);
+    }
+
+    // ── Fuzzy-match ───────────────────────────────────────────────────────────
+    let bestElement: ScreenElement | null = null;
+    let bestScore = 0;
+
+    for (const el of screenElements) {
+      const score = scoreElement(el, label);
+      if (score > bestScore) {
+        bestScore = score;
+        bestElement = el;
+      }
+    }
+
+    if (!bestElement || bestScore === 0) {
+      const elementList = screenElements
+        .map((el) => `  • ${el.label}${el.description ? ` — ${el.description}` : ""}`)
+        .join("\n");
+      return {
+        ok: false,
+        content: `No element matching "${label}" was found on screen.\n\nAvailable elements:\n${elementList || "  (none)"}`,
+        label: `android_long_press_element: no match for "${label}"`,
+      };
+    }
+
+    // ── Fire the long-press as a zero-distance swipe with hold duration ───────
+    const { center_x, center_y } = bestElement;
+    const durationMs = typeof args.duration_ms === "number" && args.duration_ms > 0
+      ? Math.min(Math.round(args.duration_ms), 10000)
+      : 800;
+
+    const pressResult = await sendDaemonOp(
+      ctx.userId,
+      { type: "android_swipe", x1: center_x, y1: center_y, x2: center_x, y2: center_y, durationMs },
+      durationMs + 10000,
+    );
+
+    if (!pressResult.ok) {
+      return {
+        ok: false,
+        content: `Matched element "${bestElement.label}" at (${center_x}, ${center_y}) but long-press failed: ${pressResult.error || "unknown error"}`,
+        label: `android_long_press_element: gesture failed`,
+      };
+    }
+
+    console.log(`[android_long_press_element] userId=${ctx.userId} long-pressed "${bestElement.label}" at (${center_x},${center_y}) for ${durationMs}ms score=${bestScore}`);
+
+    return {
+      ok: true,
+      content: JSON.stringify({
+        long_pressed: {
+          label: bestElement.label,
+          description: bestElement.description,
+          resource_id: bestElement.resource_id,
+          center_x,
+          center_y,
+          bounds: bestElement.bounds,
+          match_score: bestScore,
+          duration_ms: durationMs,
+        },
+      }),
+      label: `Long-pressed "${bestElement.label}" at (${center_x}, ${center_y}) for ${durationMs}ms`,
+      detail: `match_score=${bestScore} bounds=${bestElement.bounds} duration_ms=${durationMs}`,
+    };
+  },
+};
+
 // ── Perceptual hash helper (average-hash, 64-bit) ─────────────────────────────
 // Down-samples a base64 JPEG/PNG to 8×8 via @napi-rs/canvas and computes the
 // average-hash (aHash) as a 16-char hex string.  Falls back to an MD5 of the
