@@ -1,4 +1,5 @@
 import { createHash } from 'crypto';
+import { activeCoachRuns } from "./runRegistry";
 import { buildGmailSourceId, gmailMessageIdExistsForUser } from "./utils/gmailSourceId";
 import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "node:http";
@@ -1559,7 +1560,6 @@ Rules:
   }
 
   const pendingConfirmations = new Map<string, { userId: string; tool: string; args: any; expiresAt: number }>();
-  const activeCoachRuns = new Map<string, { controller: AbortController; userId: string }>();
   setInterval(() => {
     const now = Date.now();
     for (const [token, entry] of pendingConfirmations.entries()) {

@@ -28,6 +28,7 @@ import { getSession as getCoachSession, setSession as setCoachSession } from "./
 import OpenAI from "openai";
 import { claimAndMark } from "./lib/proactiveDedup";
 import { routeSlashCommand, registerTelegramBotCommands, SLASH_COMMANDS } from "./channels/slashCommandRouter";
+import { getActiveRunForUser, activeCoachRuns } from "./runRegistry";
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
@@ -724,6 +725,22 @@ async function processUpdate(update: any): Promise<void> {
       const link = await db.select().from(schema.telegramLinks).where(eq(schema.telegramLinks.chatId, chatId)).limit(1);
       if (link.length === 0) {
         await sendMessage(chatId, "Your Telegram isn't linked to a GamePlan account yet. Open the app, go to Profile > Connected Apps > Telegram, and send the link code here.");
+        return;
+      }
+
+      // ── Stop-intent detection ──────────────────────────────────────────
+      // If the user sends a stop/cancel intent while a task is running, abort it
+      // immediately instead of queuing the message as a normal chat turn.
+      if (text && /^(stop|cancel|abort|enough|quit|nevermind|stop it|please stop)\.?$/i.test(text.trim())) {
+        const linkedUserId = link[0].userId;
+        const activeRun = getActiveRunForUser(linkedUserId);
+        if (activeRun) {
+          activeRun.controller.abort();
+          activeCoachRuns.delete(activeRun.runId);
+          await sendMessage(chatId, "Stopping — cancelled the current task.");
+        } else {
+          await sendMessage(chatId, "Nothing is currently running.");
+        }
         return;
       }
 
