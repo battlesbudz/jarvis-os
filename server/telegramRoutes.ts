@@ -670,6 +670,36 @@ async function processUpdate(update: any): Promise<void> {
         return;
       }
 
+      // ── Project question reply-thread routing ─────────────────────────
+      // If this message is a Telegram reply and the replied-to message_id
+      // matches a pending question stored in questionMeta, auto-answer it.
+      const replyToMsgId = (message.reply_to_message as { message_id?: number } | undefined)?.message_id;
+      if (replyToMsgId && text && link.length > 0) {
+        try {
+          const { answerProjectQuestion } = await import("./agent/projectRunner");
+          const pendingProjects = await db
+            .select()
+            .from(schema.jarvisProjects)
+            .where(
+              and(
+                eq(schema.jarvisProjects.userId, link[0].userId),
+                eq(schema.jarvisProjects.status, "waiting_for_input"),
+              ),
+            );
+          const matched = pendingProjects.find((p) => {
+            const meta = p.questionMeta as Record<string, unknown> | null | undefined;
+            return meta?.telegramMessageId === replyToMsgId && meta?.telegramChatId === chatId;
+          });
+          if (matched) {
+            await answerProjectQuestion(matched.id, text);
+            await sendMessage(chatId, `✅ Got it! Resuming project *${matched.title ?? matched.id.slice(0, 8)}*...`, { parse_mode: "Markdown" });
+            return;
+          }
+        } catch (replyErr) {
+          console.error("[Telegram] project reply routing error:", replyErr);
+        }
+      }
+
       // ── Discord pairing via Telegram ──────────────────────────────────
       // Reuses the same approval UX: user DMs Discord bot → gets 6-char code →
       // sends "approve XXXXXX" (or "pair discord XXXXXX") here to confirm.
@@ -995,6 +1025,163 @@ async function processUpdate(update: any): Promise<void> {
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           await sendMessage(chatId, `❌ Error: ${msg.slice(0, 500)}`);
+        }
+        return;
+      }
+
+      // ── /project commands ──────────────────────────────────────────────────
+      if (text.startsWith("/project")) {
+        const projectUserId = link[0].userId;
+        const parts = text.trim().split(/\s+/);
+        const sub = (parts[1] ?? "").toLowerCase();
+
+        try {
+          const {
+            startProject, pauseProject, resumeProject, answerProjectQuestion,
+            getProjectStatus, getUserProjects, setAutonomousMode,
+          } = await import("./agent/projectRunner");
+
+          if (!sub || sub === "help") {
+            await sendMessage(
+              chatId,
+              `*Jarvis Projects* — 24/7 autonomous building\n\n` +
+              `/project new <title> — <goal> — start a new project\n` +
+              `/project list — list your active projects\n` +
+              `/project status <id> — full project status\n` +
+              `/project pause <id> — pause a project\n` +
+              `/project resume <id> — resume a paused project\n` +
+              `/project answer <id> <answer> — answer a pending question\n` +
+              `/project auto on <id> — enable 24/7 autonomous mode\n` +
+              `/project auto off <id> — disable autonomous mode\n` +
+              `/project help — show this message`,
+              { parse_mode: "Markdown" },
+            );
+            return;
+          }
+
+          if (sub === "new") {
+            const rest = parts.slice(2).join(" ");
+            const separatorIdx = rest.indexOf(" — ");
+            if (separatorIdx === -1) {
+              await sendMessage(chatId, "Usage: /project new <title> — <goal>\nExample: /project new Website redesign — Modern, fast site that converts 2x better");
+              return;
+            }
+            const title = rest.slice(0, separatorIdx).trim();
+            const goal = rest.slice(separatorIdx + 3).trim();
+            if (!title || !goal) {
+              await sendMessage(chatId, "Please provide both a title and a goal separated by ' — '");
+              return;
+            }
+            await sendMessage(chatId, `📋 Creating project *${title}*... I'll send you the plan shortly.`, { parse_mode: "Markdown" });
+            const projectId = await startProject(projectUserId, title, "", goal, "telegram");
+            await sendMessage(chatId, `✅ Project created (id: \`${projectId.slice(0, 8)}\`). I'm generating the plan now — you'll hear back in a moment.`, { parse_mode: "Markdown" });
+            return;
+          }
+
+          if (sub === "list") {
+            const projects = await getUserProjects(projectUserId);
+            if (projects.length === 0) {
+              await sendMessage(chatId, "You have no projects yet. Start one with /project new <title> — <goal>");
+              return;
+            }
+            const statusEmoji: Record<string, string> = {
+              draft: "📝", planning: "🗺", building: "🔨", waiting_for_input: "❓",
+              paused: "⏸", complete: "✅", failed: "❌",
+            };
+            const lines = projects.map((p) => {
+              const emoji = statusEmoji[p.status] ?? "•";
+              const plan = Array.isArray(p.plan) ? (p.plan as schema.ProjectPlanStep[]) : [];
+              const steps = plan.length;
+              const done = plan.filter((s) => s.status === "complete").length;
+              return `${emoji} *${p.title}* — ${p.status}${steps > 0 ? ` (${done}/${steps} steps)` : ""}\nid: \`${p.id.slice(0, 8)}\``;
+            });
+            await sendMessage(chatId, `*Your Projects (${projects.length})*\n\n${lines.join("\n\n")}`, { parse_mode: "Markdown" });
+            return;
+          }
+
+          if (sub === "status" && parts[2]) {
+            const projectIdPrefix = parts[2];
+            const projects = await getUserProjects(projectUserId);
+            const project = projects.find((p) => p.id.startsWith(projectIdPrefix) || p.title?.toLowerCase().includes(projectIdPrefix.toLowerCase()));
+            if (!project) {
+              await sendMessage(chatId, `Project not found. Use /project list to see your projects.`);
+              return;
+            }
+            const status = await getProjectStatus(project.id);
+            if (!status) {
+              await sendMessage(chatId, "Project not found.");
+              return;
+            }
+            const { completedCount, totalCount, nextStep } = status;
+            const autoMode = status.project.autonomousMode ? "ON ⚡" : "off";
+            const msg =
+              `📋 *${status.project.title}*\n` +
+              `Status: ${status.project.status}\n` +
+              `Progress: ${completedCount}/${totalCount} steps\n` +
+              `Autonomous mode: ${autoMode}\n` +
+              (status.project.questionPending ? `❓ Waiting for: ${status.project.questionPending.slice(0, 200)}\n` : "") +
+              (nextStep ? `⏭ Next: ${nextStep.label}\n` : "") +
+              `Sessions: ${status.sessions.length}\n` +
+              `id: \`${status.project.id.slice(0, 8)}\``;
+            await sendMessage(chatId, msg, { parse_mode: "Markdown" });
+            return;
+          }
+
+          if ((sub === "pause" || sub === "resume") && parts[2]) {
+            const projectIdPrefix = parts[2];
+            const projects = await getUserProjects(projectUserId);
+            const project = projects.find((p) => p.id.startsWith(projectIdPrefix));
+            if (!project) {
+              await sendMessage(chatId, "Project not found.");
+              return;
+            }
+            if (sub === "pause") {
+              await pauseProject(project.id);
+              await sendMessage(chatId, `⏸ Project *${project.title}* paused.`, { parse_mode: "Markdown" });
+            } else {
+              await resumeProject(project.id);
+              await sendMessage(chatId, `▶️ Project *${project.title}* resumed — next session queued.`, { parse_mode: "Markdown" });
+            }
+            return;
+          }
+
+          if (sub === "answer" && parts[2]) {
+            const projectIdPrefix = parts[2];
+            const answer = parts.slice(3).join(" ");
+            if (!answer) {
+              await sendMessage(chatId, "Usage: /project answer <id> <your answer>");
+              return;
+            }
+            const projects = await getUserProjects(projectUserId);
+            const project = projects.find((p) => p.id.startsWith(projectIdPrefix));
+            if (!project) {
+              await sendMessage(chatId, "Project not found.");
+              return;
+            }
+            await answerProjectQuestion(project.id, answer);
+            await sendMessage(chatId, `✅ Answer received. Resuming project *${project.title}*...`, { parse_mode: "Markdown" });
+            return;
+          }
+
+          if (sub === "auto" && parts[2] && parts[3]) {
+            const toggle = parts[2].toLowerCase();
+            const projectIdPrefix = parts[3];
+            const projects = await getUserProjects(projectUserId);
+            const project = projects.find((p) => p.id.startsWith(projectIdPrefix));
+            if (!project) {
+              await sendMessage(chatId, "Project not found.");
+              return;
+            }
+            const enabled = toggle === "on";
+            await setAutonomousMode(project.id, enabled);
+            await sendMessage(chatId, `${enabled ? "⚡ Autonomous mode ON" : "⏸ Autonomous mode OFF"} for *${project.title}*.${enabled ? " I'll keep building every 30 minutes." : ""}`, { parse_mode: "Markdown" });
+            return;
+          }
+
+          await sendMessage(chatId, "Unknown /project subcommand. Send /project help for usage.");
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          await sendMessage(chatId, `❌ Project error: ${msg.slice(0, 400)}`);
         }
         return;
       }

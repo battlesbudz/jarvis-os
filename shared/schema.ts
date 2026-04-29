@@ -1526,6 +1526,68 @@ export const insertCustomAgentSchema = createInsertSchema(customAgents).pick({
 export type InsertCustomAgent = z.infer<typeof insertCustomAgentSchema>;
 export type CustomAgent = typeof customAgents.$inferSelect;
 
+// ── Jarvis Projects — persistent 24/7 autonomous build projects ───────────────
+// A project is a multi-session, goal-oriented work item that Jarvis can work on
+// autonomously across many sessions, pausing for user input when needed.
+
+export interface ProjectPlanStep {
+  step_id: string;
+  label: string;
+  phase: string;
+  status: "pending" | "running" | "complete" | "failed" | "skipped";
+  acceptance_criteria?: string;
+  output?: string;
+  completedAt?: string;
+}
+
+export type ProjectStatus =
+  | "draft"
+  | "planning"
+  | "building"
+  | "waiting_for_input"
+  | "paused"
+  | "complete"
+  | "failed";
+
+export const jarvisProjects = pgTable("jarvis_projects", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  title: text("title"),
+  description: text("description"),
+  goal: text("goal"),
+  plan: jsonb("plan").$type<ProjectPlanStep[]>().notNull().default(sql`'[]'::jsonb`),
+  currentStepIndex: integer("current_step_index").notNull().default(0),
+  status: varchar("status").$type<ProjectStatus>().notNull().default("draft"),
+  autonomousMode: boolean("autonomous_mode").notNull().default(false),
+  nextRunAt: timestamp("next_run_at"),
+  questionPending: text("question_pending"),
+  questionAskedAt: timestamp("question_asked_at"),
+  questionMeta: jsonb("question_meta").default(sql`'{}'::jsonb`),
+  originChannel: varchar("origin_channel"),
+  lastProgressAt: timestamp("last_progress_at"),
+  consecutiveErrors: integer("consecutive_errors").notNull().default(0),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export type JarvisProject = typeof jarvisProjects.$inferSelect;
+export type InsertJarvisProject = typeof jarvisProjects.$inferInsert;
+
+export const jarvisProjectSessions = pgTable("jarvis_project_sessions", {
+  id: serial("id").primaryKey(),
+  projectId: varchar("project_id").notNull().references(() => jarvisProjects.id, { onDelete: "cascade" }),
+  sessionNumber: integer("session_number").notNull().default(1),
+  stepsCompleted: integer("steps_completed").notNull().default(0),
+  stepLabels: jsonb("step_labels").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+  durationMs: integer("duration_ms"),
+  verificationRetries: integer("verification_retries").notNull().default(0),
+  status: varchar("status").notNull().default("complete"),
+  summary: text("summary"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export type JarvisProjectSession = typeof jarvisProjectSessions.$inferSelect;
+
 // Each row mirrors one block from server/self-heal-audit.log.  On container
 // restart, selfHealAudit.ts restores the flat file from these rows so audit
 // history is never lost.

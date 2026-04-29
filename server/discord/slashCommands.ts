@@ -145,6 +145,81 @@ const JARVIS_COMMAND = {
   ],
 };
 
+// ── /project command ─────────────────────────────────────────────────────────
+
+const PROJECT_COMMAND = {
+  name: "project",
+  description: "Manage Jarvis autonomous build projects",
+  options: [
+    {
+      type: 1, // SUB_COMMAND
+      name: "new",
+      description: "Start a new autonomous project",
+      options: [
+        {
+          type: 3, name: "title", description: "Project title", required: true,
+        },
+        {
+          type: 3, name: "goal", description: "What does done look like?", required: true,
+        },
+        {
+          type: 5, name: "auto", description: "Run autonomously without approval between sessions?", required: false,
+        },
+      ],
+    },
+    {
+      type: 1, // SUB_COMMAND
+      name: "list",
+      description: "List your active projects",
+    },
+    {
+      type: 1,
+      name: "status",
+      description: "Get status of a specific project",
+      options: [{ type: 3, name: "id", description: "Project ID", required: true }],
+    },
+    {
+      type: 1,
+      name: "pause",
+      description: "Pause a project",
+      options: [{ type: 3, name: "id", description: "Project ID", required: true }],
+    },
+    {
+      type: 1,
+      name: "resume",
+      description: "Resume a paused project",
+      options: [{ type: 3, name: "id", description: "Project ID", required: true }],
+    },
+    {
+      type: 1,
+      name: "answer",
+      description: "Answer a pending question from a project",
+      options: [
+        { type: 3, name: "id", description: "Project ID", required: true },
+        { type: 3, name: "answer", description: "Your answer", required: true },
+      ],
+    },
+    {
+      type: 1,
+      name: "auto",
+      description: "Enable or disable autonomous mode for a project",
+      options: [
+        { type: 3, name: "id", description: "Project ID", required: true },
+        {
+          type: 3,
+          name: "mode",
+          description: "on or off",
+          required: true,
+          choices: [
+            { name: "on", value: "on" },
+            { name: "off", value: "off" },
+          ],
+        },
+      ],
+    },
+  ],
+};
+
 // ── Top-level task commands ──────────────────────────────────────────────────
 // These are registered as top-level Discord slash commands (not subcommands of /jarvis)
 // so they appear as /research, /plan, /write, /brief, /help in the autocomplete menu.
@@ -293,7 +368,7 @@ export async function registerSlashCommands(): Promise<void> {
     // intentionally omitted from the PUT payload so Discord removes them automatically.
     // Filter out both "agent" (old) and "agents" (new) so we cleanly replace either.
     const { AGENT_COMMAND, ASK_COMMAND } = await import("./agentCommands");
-    const mergedCommands = [JARVIS_COMMAND, AGENT_COMMAND, ASK_COMMAND, ...TASK_COMMANDS];
+    const mergedCommands = [JARVIS_COMMAND, AGENT_COMMAND, ASK_COMMAND, PROJECT_COMMAND, ...TASK_COMMANDS];
 
     const putRes = await fetch(url, {
       method: "PUT",
@@ -808,6 +883,133 @@ async function handleCustomAgent(
   }
 }
 
+async function handleProjectCommand(appId: string, interaction: any, userId: string): Promise<void> {
+  const subcommand: string = interaction.data?.options?.[0]?.name ?? "";
+  const opts: Record<string, unknown>[] = interaction.data?.options?.[0]?.options ?? [];
+  const getOpt = (name: string): string => String(opts.find((o) => o.name === name)?.value ?? "");
+
+  const {
+    startProject,
+    pauseProject,
+    resumeProject,
+    answerProjectQuestion,
+    getProjectStatus,
+    getUserProjects,
+    setAutonomousMode,
+  } = await import("../agent/projectRunner");
+
+  // Resolve a project by id-prefix OR title substring (case-insensitive), scoped to userId.
+  // Parity with Telegram handler's lookup semantics.
+  const resolveProject = async (query: string) => {
+    if (!query) return null;
+    const all = await getUserProjects(userId);
+    const lower = query.toLowerCase();
+    const match = all.find(
+      (p) =>
+        p.id.startsWith(query) ||
+        (p.title ?? "").toLowerCase().includes(lower),
+    );
+    return match ?? null;
+  };
+
+  try {
+    if (subcommand === "new") {
+      const title = getOpt("title");
+      const goal = getOpt("goal");
+      const autoMode = opts.find((o) => o.name === "auto")?.value === true;
+      if (!title || !goal) {
+        await editInteractionReply(appId, interaction.token, "❌ `title` and `goal` are required.", EPHEMERAL);
+        return;
+      }
+      const projectId = await startProject(userId, title, "", goal, "discord");
+      if (autoMode) await setAutonomousMode(projectId, true);
+      await editInteractionReply(
+        appId, interaction.token,
+        `📋 **Project created!**\nTitle: ${title}\nID: \`${projectId.slice(0, 8)}...\`\n\nI'm planning the steps now and will notify you here when ready.${autoMode ? "\n⚡ Autonomous mode enabled." : ""}`,
+        EPHEMERAL,
+      );
+    } else if (subcommand === "list") {
+      const projects = await getUserProjects(userId);
+      if (!projects.length) {
+        await editInteractionReply(appId, interaction.token, "You have no projects yet. Use `/project new` to create one.", EPHEMERAL);
+        return;
+      }
+      const lines = projects.slice(0, 10).map((p) => {
+        const emoji = p.status === "complete" ? "✅" : p.status === "building" ? "🔨" : p.status === "paused" ? "⏸️" : p.status === "waiting_for_input" ? "❓" : "📋";
+        return `${emoji} **${p.title ?? "Untitled"}** — \`${p.id.slice(0, 8)}\` (${p.status})`;
+      });
+      await editInteractionReply(appId, interaction.token, `**Your Projects:**\n\n${lines.join("\n")}`, EPHEMERAL);
+    } else if (subcommand === "status") {
+      const query = getOpt("id");
+      const project = await resolveProject(query);
+      if (!project) {
+        await editInteractionReply(appId, interaction.token, "❌ Project not found. Use `/project list` to see your projects.", EPHEMERAL);
+        return;
+      }
+      const status = await getProjectStatus(project.id);
+      if (!status) {
+        await editInteractionReply(appId, interaction.token, "❌ Project not found.", EPHEMERAL);
+        return;
+      }
+      const { completedCount, totalCount, nextStep } = status;
+      const msg = [
+        `📋 **${project.title}** (${project.status})`,
+        totalCount > 0 ? `Progress: ${completedCount}/${totalCount} steps` : "",
+        nextStep ? `Next: ${nextStep.label}` : "",
+        project.questionPending ? `❓ Waiting for your answer: ${project.questionPending}` : "",
+      ].filter(Boolean).join("\n");
+      await editInteractionReply(appId, interaction.token, msg, EPHEMERAL);
+    } else if (subcommand === "pause") {
+      const project = await resolveProject(getOpt("id"));
+      if (!project) {
+        await editInteractionReply(appId, interaction.token, "❌ Project not found. Use `/project list` to see your projects.", EPHEMERAL);
+        return;
+      }
+      await pauseProject(project.id);
+      await editInteractionReply(appId, interaction.token, `⏸️ Project **${project.title ?? project.id.slice(0, 8)}** paused.`, EPHEMERAL);
+    } else if (subcommand === "resume") {
+      const project = await resolveProject(getOpt("id"));
+      if (!project) {
+        await editInteractionReply(appId, interaction.token, "❌ Project not found. Use `/project list` to see your projects.", EPHEMERAL);
+        return;
+      }
+      await resumeProject(project.id);
+      await editInteractionReply(appId, interaction.token, `▶️ Project **${project.title ?? project.id.slice(0, 8)}** resumed — next session queued.`, EPHEMERAL);
+    } else if (subcommand === "answer") {
+      const answer = getOpt("answer");
+      const project = await resolveProject(getOpt("id"));
+      if (!project) {
+        await editInteractionReply(appId, interaction.token, "❌ Project not found. Use `/project list` to see your projects.", EPHEMERAL);
+        return;
+      }
+      await answerProjectQuestion(project.id, answer);
+      await editInteractionReply(appId, interaction.token, `✅ Answer received — resuming project **${project.title ?? project.id.slice(0, 8)}**.`, EPHEMERAL);
+    } else if (subcommand === "auto") {
+      const mode = getOpt("mode");
+      const project = await resolveProject(getOpt("id"));
+      if (!project) {
+        await editInteractionReply(appId, interaction.token, "❌ Project not found. Use `/project list` to see your projects.", EPHEMERAL);
+        return;
+      }
+      const enabled = mode === "on";
+      await setAutonomousMode(project.id, enabled);
+      await editInteractionReply(
+        appId,
+        interaction.token,
+        enabled
+          ? `⚡ Autonomous mode **enabled** for **${project.title ?? project.id.slice(0, 8)}**. Jarvis will resume automatically every 30 min.`
+          : `⏸️ Autonomous mode **disabled** for **${project.title ?? project.id.slice(0, 8)}**. Use \`/project resume\` to run the next session manually.`,
+        EPHEMERAL,
+      );
+    } else {
+      await editInteractionReply(appId, interaction.token, "Unknown /project subcommand. Try `/project new`, `/project list`, `/project status`, `/project pause`, `/project resume`, `/project answer`, or `/project auto`.", EPHEMERAL);
+    }
+  } catch (err) {
+    console.error("[SlashCommands] /project error:", err);
+    await editInteractionReply(appId, interaction.token, `❌ Error: ${err instanceof Error ? err.message : "Unknown error"}`, EPHEMERAL);
+  }
+}
+
 async function handleHelp(appId: string, interaction: any): Promise<void> {
   const help = [
     "**Jarvis Slash Commands**",
@@ -953,6 +1155,24 @@ export async function handleInteraction(interaction: any): Promise<object> {
             EPHEMERAL,
           );
         }
+      });
+      return deferredEphemeral();
+    }
+
+    // ── /project command ─────────────────────────────────────────────────────
+    if (interaction.data?.name === "project") {
+      const memberUser3 = interaction.member?.user ?? interaction.user ?? {};
+      const discordUserId3: string = memberUser3.id ?? "";
+      const discordUsername3: string = memberUser3.username ?? memberUser3.global_name ?? discordUserId3;
+      const paired3 = await lookupUserByDiscordId(discordUserId3);
+      if (!paired3) {
+        return immediateEphemeral(buildPairingPrompt(discordUserId3, discordUsername3));
+      }
+      const appId3 = process.env.DISCORD_APP_ID || process.env.DISCORD_CLIENT_ID || "";
+      setImmediate(() => {
+        handleProjectCommand(appId3, interaction, paired3.userId).catch((err) =>
+          console.error("[SlashCommands] handleProjectCommand background error:", err),
+        );
       });
       return deferredEphemeral();
     }

@@ -7,7 +7,7 @@ import { db } from "../db";
 import * as schema from "@shared/schema";
 import type { SubAgentType } from "./subagents";
 
-export type AgentJobType = SubAgentType | "goal_decompose" | "weekly_pattern" | "named_agent_task" | "general" | "morning_brief" | "custom_agent";
+export type AgentJobType = SubAgentType | "goal_decompose" | "weekly_pattern" | "named_agent_task" | "general" | "morning_brief" | "custom_agent" | "project_session";
 
 export interface SubmitJobInput {
   userId: string;

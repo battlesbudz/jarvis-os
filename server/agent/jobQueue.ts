@@ -957,6 +957,34 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
       return;
     }
 
+    // ── Jarvis Project session ─────────────────────────────────────────────────
+    if (job.agentType === "project_session") {
+      const input = (job.input as Record<string, unknown>) ?? {};
+      const projectId = String(input.projectId ?? "");
+      if (!projectId) throw new Error("project_session job missing projectId");
+      const userAnswer = typeof input.userAnswer === "string" ? input.userAnswer : undefined;
+
+      console.log(`[JobQueue] project_session start: project=${projectId}${userAnswer ? " (with user answer)" : ""}`);
+      const { runProjectSession } = await import("./projectRunner");
+      const sessionResult = await runProjectSession(projectId, userAnswer);
+
+      await completeJob(job.id, {
+        result: {
+          projectId,
+          status: sessionResult.status,
+          stepsCompleted: sessionResult.stepsCompleted,
+          summary: sessionResult.summary,
+        },
+        turns: 1,
+        toolCallsCount: 0,
+      });
+
+      console.log(
+        `[JobQueue] project_session complete: project=${projectId} status=${sessionResult.status} stepsCompleted=${sessionResult.stepsCompleted}`,
+      );
+      return;
+    }
+
     // ── General-purpose diagnostic agent (e.g. auto-debug from IntegrationValidator) ─
     if (job.agentType === "general") {
       const generalCtx: ToolContext = {

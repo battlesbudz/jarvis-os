@@ -37,6 +37,7 @@ import { registerDiscordScheduleRoutes } from "./discord/schedulesRoutes";
 import { registerAgentRoutes } from "./agent/agentRoutes";
 import { registerCustomAgentRoutes } from "./agent/customAgentRoutes";
 import { registerCodeProposalsRoutes } from "./agent/codeProposalsRoutes";
+import { registerProjectRoutes } from "./projectRoutes";
 import { registerDoctorRoutes } from "./doctor/doctorRoutes";
 import { registerDownloadRoutes } from "./downloadRoutes";
 import { isIntegrationOwner, claimIntegrationOwnership } from "./integrationOwner";
@@ -869,6 +870,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   registerAgentRoutes(app);
   registerCustomAgentRoutes(app);
   registerCodeProposalsRoutes(app);
+  registerProjectRoutes(app);
   registerDoctorRoutes(app);
   app.use("/api/drive", driveRouter);
 

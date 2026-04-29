@@ -420,6 +420,33 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
 
     const userId = pairedUser.userId;
 
+    // ── Project question reply-thread routing ─────────────────────────────
+    // If this message is a Discord reply and the referenced message ID matches
+    // a pending question stored in questionMeta, auto-route to answerProjectQuestion.
+    const replyRefMsgId = message.reference?.messageId;
+    const replyRefChannelId = message.reference?.channelId;
+    if (replyRefMsgId && message.content?.trim()) {
+      try {
+        const { answerProjectQuestion } = await import("../agent/projectRunner");
+        const { jarvisProjects } = await import("@shared/schema");
+        const pendingProjects = await db
+          .select()
+          .from(jarvisProjects)
+          .where(and(eq(jarvisProjects.userId, userId), eq(jarvisProjects.status, "waiting_for_input")));
+        const matched = pendingProjects.find((p) => {
+          const meta = p.questionMeta as Record<string, unknown> | null | undefined;
+          return meta?.discordMessageId === replyRefMsgId && meta?.discordChannelId === replyRefChannelId;
+        });
+        if (matched) {
+          await answerProjectQuestion(matched.id, message.content.trim());
+          await message.reply(`✅ Got it! Resuming project **${matched.title ?? matched.id.slice(0, 8)}**...`).catch(() => {});
+          return;
+        }
+      } catch (replyErr) {
+        console.error("[DiscordManager] project reply routing error:", replyErr);
+      }
+    }
+
     // ── Send "Thinking…" placeholder ─────────────────────────────────────
     // Sent HERE — after claimMessageId won the atomic DB race AND after we
     // have confirmed the sender is a paired user.  This guarantees exactly
@@ -1351,11 +1378,23 @@ export async function completePairing(userId: string, code: string): Promise<{ o
 // ── Outbound send ────────────────────────────────────────────────────────────
 
 export async function sendToDiscordUser(userId: string, text: string): Promise<boolean> {
+  const result = await sendToDiscordUserGetId(userId, text);
+  return result.sent;
+}
+
+/**
+ * Send a DM to a Discord user and return the sent message ID and channel ID.
+ * Useful for reply-thread routing (e.g. storing in questionMeta).
+ */
+export async function sendToDiscordUserGetId(
+  userId: string,
+  text: string,
+): Promise<{ sent: boolean; messageId?: string; channelId?: string }> {
   const client = getClientForUser(userId);
-  if (!client || !client.isReady()) return false;
+  if (!client || !client.isReady()) return { sent: false };
 
   const link = await lookupLink(userId);
-  if (!link) return false;
+  if (!link) return { sent: false };
 
   let dmChannelId = link.meta.dmChannelId;
   const discordUserId = link.address;
@@ -1373,16 +1412,20 @@ export async function sendToDiscordUser(userId: string, text: string): Promise<b
     }
 
     const channel = await client.channels.fetch(dmChannelId) as DMChannel | null;
-    if (!channel) return false;
+    if (!channel) return { sent: false };
 
     const chunks = splitIntoChunks(text, 1900);
+    let lastMsgId: string | undefined;
+    let lastChannelId: string | undefined;
     for (const chunk of chunks) {
-      await channel.send(chunk);
+      const sent = await channel.send(chunk);
+      lastMsgId = sent.id;
+      lastChannelId = sent.channelId;
     }
-    return true;
+    return { sent: true, messageId: lastMsgId, channelId: lastChannelId };
   } catch (err) {
-    console.error(`[DiscordManager] sendToDiscordUser failed for ${userId}:`, err);
-    return false;
+    console.error(`[DiscordManager] sendToDiscordUserGetId failed for ${userId}:`, err);
+    return { sent: false };
   }
 }
 
