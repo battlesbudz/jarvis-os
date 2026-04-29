@@ -1659,3 +1659,36 @@ export const buttonLocations = pgTable("button_locations", {
 
 export type ButtonLocation = typeof buttonLocations.$inferSelect;
 export type InsertButtonLocation = typeof buttonLocations.$inferInsert;
+
+// ── Tournament Mode — multi-agent competitive answer selection ─────────────────
+// Each row records a tournament run: N agents ran the same task, a judge scored
+// them, and the winner was returned to the user. The full outputs array lets the
+// user retrieve runners-up on request via the run_tournament tool.
+
+export interface TournamentOutput {
+  agentIndex: number;
+  approach: string;
+  body: string;
+}
+
+export interface TournamentScore {
+  agentIndex: number;
+  score: number;
+  reasoning: string;
+}
+
+export const tournamentRuns = pgTable("tournament_runs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  task: text("task").notNull(),
+  agentType: varchar("agent_type").notNull(),
+  numAgents: integer("num_agents").notNull().default(3),
+  outputs: jsonb("outputs").$type<TournamentOutput[]>().notNull().default(sql`'[]'::jsonb`),
+  scores: jsonb("scores").$type<TournamentScore[]>().notNull().default(sql`'[]'::jsonb`),
+  /** Approach label of the winning agent (e.g. "structured-analytical"). */
+  winnerId: text("winner_id").notNull().default(""),
+  judgeCriteria: text("judge_criteria"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export type TournamentRun = typeof tournamentRuns.$inferSelect;
