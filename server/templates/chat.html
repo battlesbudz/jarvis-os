@@ -480,17 +480,20 @@
       'use strict';
 
       const GOOGLE_CLIENT_ID = 'GOOGLE_CLIENT_ID_PLACEHOLDER';
-      const TOKEN_KEY = 'jarvis_web_token';
-      const USER_KEY  = 'jarvis_web_userId';
+      const TOKEN_KEY      = 'jarvis_web_token';
+      const USER_KEY       = 'jarvis_web_userId';
+      function sessionIdKey(userId) {
+        return `jarvis_web_sdkSessionId:${userId}`;
+      }
 
-      function historyKey(userId) {
-        return `jarvis_web_history:${userId}`;
+      function mkMsgId() {
+        return Date.now().toString() + Math.random().toString(36).substr(2, 9);
       }
 
       // ── State ────────────────────────────────────────────────────────────────
       let jwt = null;
       let currentUserId = null;
-      let conversation = []; // [{role, content}]
+      let conversation = []; // [{id, role, content}]
       let isStreaming = false;
       let sdkSessionId = null;
 
@@ -509,12 +512,13 @@
       const signoutBtn   = document.getElementById('signout-btn');
 
       // ── Init ─────────────────────────────────────────────────────────────────
-      function init() {
+      async function init() {
         jwt = localStorage.getItem(TOKEN_KEY);
         currentUserId = localStorage.getItem(USER_KEY);
+        sdkSessionId = currentUserId ? (localStorage.getItem(sessionIdKey(currentUserId)) || null) : null;
         if (jwt && currentUserId) {
-          showChat();
-          restoreHistory();
+          const ok = await restoreHistory(); // loads history before revealing UI
+          if (ok) showChat();
         } else {
           signOut(); // clear any partial state, then show auth
         }
@@ -592,8 +596,8 @@
           if (!currentUserId) throw new Error('Server did not return a userId');
           localStorage.setItem(TOKEN_KEY, jwt);
           localStorage.setItem(USER_KEY, currentUserId);
-          showChat();
-          restoreHistory();
+          const ok = await restoreHistory();
+          if (ok) showChat();
         } catch (e) {
           showAuthError('Network error. Please try again.');
         }
@@ -605,22 +609,82 @@
       }
 
       // ── History ───────────────────────────────────────────────────────────────
-      function saveHistory() {
-        if (!currentUserId) return;
-        try { localStorage.setItem(historyKey(currentUserId), JSON.stringify(conversation)); } catch {}
+      async function saveHistory() {
+        if (!jwt) return;
+        try {
+          // conversation is oldest-first internally; the server stores newest-first
+          // (matching the mobile app's inverted FlatList order), so reverse before saving.
+          const res = await fetch('/api/data/chat-history', {
+            method: 'PUT',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${jwt}`,
+            },
+            body: JSON.stringify({ data: [...conversation].reverse() }),
+          });
+          if (!res.ok) console.warn('[Jarvis] saveHistory failed:', res.status);
+        } catch (e) { console.warn('[Jarvis] saveHistory error:', e); }
       }
 
-      function restoreHistory() {
-        if (!currentUserId) return;
+      async function restoreHistory() {
+        if (!jwt) return false;
         try {
-          const raw = localStorage.getItem(historyKey(currentUserId));
-          if (!raw) return;
-          const hist = JSON.parse(raw);
-          if (!Array.isArray(hist) || hist.length === 0) return;
-          conversation = hist;
+          const [histRes, sessionRes] = await Promise.all([
+            fetch('/api/data/chat-history', { headers: { 'Authorization': `Bearer ${jwt}` } }),
+            fetch('/api/data/coach-session-id', { headers: { 'Authorization': `Bearer ${jwt}` } }),
+          ]);
+          if (histRes.status === 401) { signOut(); return false; }
+
+          if (sessionRes.ok) {
+            const sJson = await sessionRes.json();
+            if (sJson.sdkSessionId) {
+              sdkSessionId = sJson.sdkSessionId;
+              if (currentUserId) {
+                try { localStorage.setItem(sessionIdKey(currentUserId), sdkSessionId); } catch {}
+              }
+            } else {
+              // Server has no session ID (e.g., cleared elsewhere) — reset local state
+              sdkSessionId = null;
+              if (currentUserId) {
+                try { localStorage.removeItem(sessionIdKey(currentUserId)); } catch {}
+              }
+            }
+          }
+
+          if (!histRes.ok) return true;
+          const json = await histRes.json();
+          const hist = json.data;
+          if (!Array.isArray(hist) || hist.length === 0) return true;
+          // Mobile stores messages newest-first; web renders oldest-first (top→bottom),
+          // so reverse on load so the conversation reads chronologically.
+          // Preserve all message fields (actions, attachments, etc.) so web saves
+          // don't strip metadata that mobile may have stored.
+          conversation = [...hist].reverse().map(m => ({
+            ...m,
+            id: m.id || mkMsgId(),
+            content: m.content || '',
+          }));
           conversation.forEach(m => appendBubble(m.role === 'user' ? 'user' : 'bot', m.content, false));
           scrollBottom();
-        } catch {}
+        } catch (e) { console.warn('[Jarvis] restoreHistory render error:', e); }
+        return true;
+      }
+
+      async function clearHistoryOnServer() {
+        if (!jwt) return;
+        try {
+          await Promise.all([
+            fetch('/api/data/chat-history', {
+              method: 'DELETE',
+              headers: { 'Authorization': `Bearer ${jwt}` },
+            }),
+            fetch('/api/data/coach-session-id', {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${jwt}` },
+              body: JSON.stringify({ sdkSessionId: null }),
+            }),
+          ]);
+        } catch (e) { console.warn('[Jarvis] clearHistoryOnServer error:', e); }
       }
 
       // ── Messages UI ───────────────────────────────────────────────────────────
@@ -698,7 +762,7 @@
         msgInput.style.height = 'auto';
         sendBtn.disabled = true;
 
-        conversation.push({ role: 'user', content: text });
+        conversation.push({ id: mkMsgId(), role: 'user', content: text });
         appendBubble('user', text);
         scrollBottom();
 
@@ -735,15 +799,12 @@
           if (!response.ok) {
             removeTypingIndicator();
             appendBubble('bot', 'Something went wrong. Please try again.');
+            await saveHistory(); // persist user message even on failed request
             setStatus('Your AI chief of staff');
             isStreaming = false;
             syncSendBtn();
             return;
           }
-
-          // Grab session ID from response header
-          const newSessionId = response.headers.get('x-run-id') || response.headers.get('X-Run-Id');
-          if (newSessionId) sdkSessionId = newSessionId;
 
           const reader = response.body.getReader();
           const decoder = new TextDecoder();
@@ -768,6 +829,14 @@
 
               if (event.type === 'session_init' && event.sdkSessionId) {
                 sdkSessionId = event.sdkSessionId;
+                if (currentUserId) {
+                  try { localStorage.setItem(sessionIdKey(currentUserId), sdkSessionId); } catch {}
+                }
+                fetch('/api/data/coach-session-id', {
+                  method: 'PUT',
+                  headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${jwt}` },
+                  body: JSON.stringify({ sdkSessionId }),
+                }).catch(() => {});
                 continue;
               }
 
@@ -799,9 +868,11 @@
         }
 
         if (botText) {
-          conversation.push({ role: 'assistant', content: botText });
-          saveHistory();
+          conversation.push({ id: mkMsgId(), role: 'assistant', content: botText });
         }
+        // Always save at end-of-turn so user messages are never lost,
+        // even if the stream failed before producing an assistant reply.
+        await saveHistory();
 
         isStreaming = false;
         setStatus('Your AI chief of staff');
@@ -818,11 +889,12 @@
       }
 
       // ── Clear & Sign-out ──────────────────────────────────────────────────────
-      clearBtn.addEventListener('click', function () {
+      clearBtn.addEventListener('click', async function () {
         if (!confirm('Clear this conversation?')) return;
         conversation = [];
         sdkSessionId = null;
-        saveHistory();
+        if (currentUserId) { try { localStorage.removeItem(sessionIdKey(currentUserId)); } catch {} }
+        await clearHistoryOnServer();
         messagesEl.innerHTML = '';
         const empty = document.createElement('div');
         empty.className = 'empty-state';
@@ -853,15 +925,14 @@
       });
 
       function signOut() {
-        if (currentUserId) {
-          try { localStorage.removeItem(historyKey(currentUserId)); } catch {}
-        }
+        const leavingUserId = currentUserId;
         jwt = null;
         currentUserId = null;
         conversation = [];
         sdkSessionId = null;
-        localStorage.removeItem(TOKEN_KEY);
-        localStorage.removeItem(USER_KEY);
+        try { localStorage.removeItem(TOKEN_KEY); } catch {}
+        try { localStorage.removeItem(USER_KEY); } catch {}
+        if (leavingUserId) { try { localStorage.removeItem(sessionIdKey(leavingUserId)); } catch {} }
         showAuth();
       }
 

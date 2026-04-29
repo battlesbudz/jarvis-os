@@ -296,6 +296,50 @@ export function registerDataRoutes(app: Express): void {
   registerSimpleJsonCrud(app, "timer-settings", schema.timerSettings);
   registerSimpleJsonCrud(app, "user-preferences", schema.userPreferences);
 
+  app.get("/api/data/coach-session-id", async (req: Request, res: Response) => {
+    try {
+      const userId = requireUserId(req, res);
+      if (!userId) return;
+      const result = await db
+        .select({ data: schema.userPreferences.data })
+        .from(schema.userPreferences)
+        .where(eq(schema.userPreferences.userId, userId));
+      const prefs = (result[0]?.data as any) || {};
+      res.json({ sdkSessionId: prefs._coachSessionId || null });
+    } catch (e) {
+      console.error("Error fetching coach-session-id:", e);
+      res.status(500).json({ error: "Failed to fetch coach-session-id" });
+    }
+  });
+
+  app.put("/api/data/coach-session-id", async (req: Request, res: Response) => {
+    try {
+      const userId = requireUserId(req, res);
+      if (!userId) return;
+      const { sdkSessionId } = req.body;
+      if (sdkSessionId !== null && sdkSessionId !== undefined && typeof sdkSessionId !== 'string') {
+        return res.status(400).json({ error: "sdkSessionId must be a string or null" });
+      }
+      const result = await db
+        .select({ data: schema.userPreferences.data })
+        .from(schema.userPreferences)
+        .where(eq(schema.userPreferences.userId, userId));
+      const prefs = (result[0]?.data as any) || {};
+      prefs._coachSessionId = sdkSessionId || null;
+      await db
+        .insert(schema.userPreferences)
+        .values({ userId, data: prefs, updatedAt: new Date() })
+        .onConflictDoUpdate({
+          target: [schema.userPreferences.userId],
+          set: { data: prefs, updatedAt: new Date() },
+        });
+      res.json({ ok: true });
+    } catch (e) {
+      console.error("Error saving coach-session-id:", e);
+      res.status(500).json({ error: "Failed to save coach-session-id" });
+    }
+  });
+
   app.post("/api/data/auto-built-plan/dismiss", async (req: Request, res: Response) => {
     try {
       const userId = requireUserId(req, res);
