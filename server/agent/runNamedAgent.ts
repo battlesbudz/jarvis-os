@@ -101,6 +101,13 @@ export interface RunNamedAgentOptions {
    */
   onToolError?: (toolName: string, message: string) => void;
   /**
+   * Optional heartbeat callback fired mid-run when an Android task is still
+   * in progress after turn 15. Threaded through to runAgent. Callers (e.g.
+   * the SSE route / Discord channel handler) can forward this message to the
+   * user so they know the task is still running rather than stuck.
+   */
+  onProgressMessage?: (message: string) => void;
+  /**
    * Per-request model override. Resolution order (first wins):
    *   1. opts.model (caller override)
    *   2. agent.preferredModel (per-agent DB setting)
@@ -344,6 +351,7 @@ export async function runNamedAgent(opts: RunNamedAgentOptions): Promise<NamedAg
       signal,
       onIntegrationError: opts.onIntegrationError,
       onToolError: opts.onToolError,
+      onProgressMessage: opts.onProgressMessage,
     });
 
     // ── Session management — update or initialise after successful run ─────────
@@ -393,10 +401,14 @@ export async function runNamedAgent(opts: RunNamedAgentOptions): Promise<NamedAg
 
     if (!opts.isRevisionPass && qualityCheckEnabled) {
       const toolNames = result.toolCalls.map((tc) => tc.name);
+      const androidToolsAvailable = permittedTools.some(
+        (t) => t.name.startsWith("android_") || t.name === "run_daemon_shell" || t.name === "daemon_action",
+      );
       const qc = checkResponseQuality({
         userMessage,
         agentReply: result.reply,
         toolsUsed: toolNames,
+        androidToolsAvailable,
         agentId,
         userId,
       });

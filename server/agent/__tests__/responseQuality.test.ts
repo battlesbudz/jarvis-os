@@ -47,19 +47,23 @@ assert(
 );
 
 // Action verb in message but reply is long and substantive — no deflection
-// (reply is 42+ words so replyWords < 40 threshold is not met)
+// Threshold raised to 80 words: reply must exceed 80 words to avoid deflection flag.
 const longReplyDeflect = {
   userMessage: "Search for the latest news on AI.",
   agentReply:
-    "I don't have direct web access to fetch live news, but I can point you to the best sources. " +
-    "For AI news, check TechCrunch, The Verge, MIT Technology Review, and Hacker News. " +
-    "Alternatively, follow researchers like Andrej Karpathy or Yann LeCun on Twitter. " +
-    "Would you like me to help you set up a news digest instead?",
+    "I don't have direct web access to fetch live news, but I can point you to the best sources " +
+    "for staying current on AI developments. " +
+    "For AI news, check TechCrunch, The Verge, MIT Technology Review, and Hacker News — all updated daily. " +
+    "Alternatively, follow researchers like Andrej Karpathy, Yann LeCun, or Geoffrey Hinton on Twitter and LinkedIn " +
+    "for first-hand commentary on recent breakthroughs. " +
+    "If you want a curated digest, newsletters like The Batch from DeepLearning.AI or Import AI by Jack Clark " +
+    "are excellent weekly summaries covering the most important papers and industry events. " +
+    "Would you like me to help you set up a regular news digest or summarise a specific topic instead?",
   toolsUsed: [],
 };
 assert(
   checkResponseQuality(longReplyDeflect).action === "finalize",
-  "RQ-3: long explanatory reply (40+ words) not flagged as deflection",
+  "RQ-3: long explanatory reply (80+ words) not flagged as deflection",
 );
 
 // ── Terse response check ───────────────────────────────────────────────────────
@@ -104,13 +108,18 @@ assert(
   "RQ-6: apology reason text correct",
 );
 
-// Long apology with explanation should not be flagged
+// Long apology with explanation should not be flagged.
+// Reply must exceed 80 words to pass the deflection check threshold (raised from 40).
 const longApologyWithContext = {
   userMessage: "Book me a table at the French Laundry.",
   agentReply:
-    "I apologize, but I don't have the ability to make real-world restaurant reservations directly. " +
-    "You can book via OpenTable at opentable.com or call the restaurant at +1 (707) 944-2380. " +
-    "Would you like me to help you draft a reservation request email instead?",
+    "I apologize, but I don't have the ability to make real-world restaurant reservations directly — " +
+    "I can't access OpenTable, Resy, or similar booking platforms on your behalf right now. " +
+    "To make a reservation at The French Laundry, your best options are: " +
+    "visit opentable.com and search for The French Laundry, or call the restaurant directly " +
+    "at +1 (707) 944-2380 — note that tables are highly sought-after and often booked weeks in advance, " +
+    "so calling early in the morning gives you the best chance. " +
+    "Would you like me to help you draft a polite reservation request email or remind you to call at a specific time?",
   toolsUsed: [],
 };
 assert(
@@ -142,6 +151,65 @@ const senderTest = {
 assert(
   checkResponseQuality(senderTest).action === "finalize",
   "RQ-9: 'sender' does not match 'send' verb — no deflection flag",
+);
+
+// ── Android "announce then stop" detector ──────────────────────────────────────
+
+// Android tools available, no tool used, reply contains announce phrase → revise
+const androidAnnounceStop = {
+  userMessage: "Open YouTube, search for Alex Hormozi, and tap his channel.",
+  agentReply:
+    "I found the YouTube search results for Alex Hormozi. I will now tap on his channel to open it. Proceeding...",
+  toolsUsed: [],
+  androidToolsAvailable: true,
+};
+const androidAnnounceResult = checkResponseQuality(androidAnnounceStop);
+assert(
+  androidAnnounceResult.action === "revise",
+  "RQ-10: Android 'announce then stop' pattern → revise",
+);
+assert(
+  "reason" in androidAnnounceResult && androidAnnounceResult.reason.includes("tool"),
+  "RQ-10: Android announce reason mentions 'tool'",
+);
+
+// Same announce phrase but no Android tools available → finalize (generic path handles it)
+const announceNoAndroid = {
+  userMessage: "What's the weather like?",
+  agentReply: "I will now check the weather for you. Proceeding with the lookup.",
+  toolsUsed: [],
+  androidToolsAvailable: false,
+};
+assert(
+  checkResponseQuality(announceNoAndroid).action === "finalize",
+  "RQ-11: Announce phrase without Android tools and no action verb in message → finalize",
+);
+
+// Real production failure path: tools WERE used in earlier steps, final reply
+// announces the next step instead of calling the tool. This is the most common
+// "announce then stop" scenario — step 1 completed, step 2 announced but not done.
+const androidToolUsedThenAnnounce = {
+  userMessage: "Open YouTube, search for Alex Hormozi, and tap his channel.",
+  agentReply:
+    "I searched for Alex Hormozi on YouTube and found the results. I will now tap on his channel to open it.",
+  toolsUsed: ["daemon_action", "daemon_action"], // tools used in steps 1 & 2
+  androidToolsAvailable: true,
+};
+assert(
+  checkResponseQuality(androidToolUsedThenAnnounce).action === "revise",
+  "RQ-12: Android announce phrase caught even when earlier steps used tools (real failure path)",
+);
+
+// Android tools available, tool was used AND reply has no announce phrase — finalize
+const androidToolUsedNoAnnounce = {
+  userMessage: "Open YouTube and search for Alex Hormozi.",
+  agentReply: "I found Alex Hormozi's channel. Here are his latest videos.",
+  toolsUsed: ["daemon_action"],
+  androidToolsAvailable: true,
+};
+assert(
+  checkResponseQuality(androidToolUsedNoAnnounce).action === "finalize",
+  "RQ-13: Android tools present, tool used, no announce phrase → finalize",
 );
 
 // ── Print summary ──────────────────────────────────────────────────────────────
