@@ -3754,7 +3754,7 @@ Parameters:
   - hold_ms: how long to hold at the start before dragging in milliseconds (default 800). Increase for apps that need a longer initial press.
   - max_age_ms: max age of cached ScreenMap to reuse (default 500, 0 = always fresh)
 
-Returns the resolved source/destination coordinates and match scores.
+Returns the resolved source/destination coordinates, match scores, and a screen_changed field (true/false) indicating whether the screen visually changed after the drag (based on perceptual hash comparison). If screen_changed is false, the drag gesture may not have been accepted — consider retrying with a longer hold_ms or reporting failure.
 
 Requires: android_screenshot and android_read_screen permissions (same as android_screen_understand), plus android_tap_type permission for the gesture.`,
   parameters: {
@@ -3961,6 +3961,15 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       ? Math.min(Math.round(args.hold_ms), 10000)
       : 800;
 
+    // ── Capture pre-drag screenshot hash (best-effort) ───────────────────────
+    let preDragHash: string | null = null;
+    try {
+      const preDragScreenshot = await captureScreenshot(ctx.userId);
+      if (preDragScreenshot) {
+        preDragHash = await computeScreenshotHash(preDragScreenshot);
+      }
+    } catch { /* hash capture is best-effort */ }
+
     // ── Fire the drag as a long-hold swipe ────────────────────────────────────
     const dragResult = await sendDaemonOp(
       ctx.userId,
@@ -3975,6 +3984,23 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
         label: `android_drag_element: drag failed`,
       };
     }
+
+    // ── Capture post-drag screenshot hash and compare (best-effort) ───────────
+    // screen_changed is always a boolean: false when the comparison is
+    // inconclusive (screenshot unavailable or hash error) so downstream logic
+    // can treat a missing result the same as a no-op drag.
+    let screenChanged = false;
+    let hashDistance: number | null = null;
+    try {
+      const postDragScreenshot = await captureScreenshot(ctx.userId);
+      if (postDragScreenshot && preDragHash !== null) {
+        const postDragHash = await computeScreenshotHash(postDragScreenshot);
+        hashDistance = hammingDistance(preDragHash, postDragHash);
+        // A distance > 5 out of 64 bits indicates a meaningful visual change
+        screenChanged = hashDistance > 5;
+        console.log(`[android_drag_element] userId=${ctx.userId} hash_distance=${hashDistance} screen_changed=${screenChanged}`);
+      }
+    } catch { /* hash capture is best-effort; screenChanged stays false */ }
 
     console.log(`[android_drag_element] userId=${ctx.userId} dragged "${fromElement.label}" from (${x1},${y1}) to "${toElementLabel}" at (${x2},${y2}) hold_ms=${holdMs} from_score=${fromScore} to_score=${toScore}`);
 
@@ -3995,9 +4021,11 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
           to_match_score: toScore || null,
           hold_ms: holdMs,
         },
+        screen_changed: screenChanged,
+        hash_distance: hashDistance,
       }),
-      label: `Dragged "${fromElement.label}" → "${toElementLabel}" hold_ms=${holdMs}`,
-      detail: `from=(${x1},${y1}) to=(${x2},${y2}) from_score=${fromScore}${toScore ? ` to_score=${toScore}` : ""}`,
+      label: `Dragged "${fromElement.label}" → "${toElementLabel}" hold_ms=${holdMs} screen_changed=${screenChanged}`,
+      detail: `from=(${x1},${y1}) to=(${x2},${y2}) from_score=${fromScore}${toScore ? ` to_score=${toScore}` : ""}${hashDistance !== null ? ` hash_dist=${hashDistance}` : ""}`,
     };
   },
 };
